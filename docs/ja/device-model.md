@@ -1,0 +1,228 @@
+# 装置ルーティングモデル
+
+> English version: [../en/device-model.md](../en/device-model.md)
+
+本ツールが扱う YAMAHA URX シリーズのルーティング構造と接続制約を定義する。
+これは GUI 上で「接続可能な経路のみ結線できる」制約 (constraint engine) の根拠であり、
+コード (`src/models/`) のデータ定義はこのドキュメントと一致させる。
+
+## 出典
+
+- 公式ブロックダイアグラム: `USB AUDIO INTERFACE URX44V URX44 URX22 V1.2 Block Diagram`
+  (Yamaha Corporation, 2025、ファイル ID `MWEM-B0`)。
+  URL: <https://usa.yamaha.com/files/download/other_assets/5/2927055/URX44V_URX44_URX22_Block_Diagram_En_B0.pdf>
+- 公式ユーザーガイド (HTML): <https://manual.yamaha.com/audio/music_audio_production/urx44_urx22/ug/en-US/>
+
+> 著作物のため PDF 自体はリポジトリに含めない。構造を本ドキュメントに自分の表現で再構成する。
+
+## 機種パラメータ
+
+| 項目 | URX22 | URX44 | URX44V |
+| --- | --- | --- | --- |
+| モノ入力チャンネル | CH1–2 | CH1–4 | CH1–4 |
+| ステレオ入力チャンネル | CH3/4, 5/6, 7/8, 9/10 | CH5/6, 7/8, 9/10, 11/12 | CH5/6, 7/8, 9/10, 11/12 |
+| MIC/LINE combo 入力 | 2 (1 は Hi-Z) | 4 (3/4 は Hi-Z) | 4 (3/4 は Hi-Z) |
+| MIC IN (front mini) | あり (MIC/LINE 1 入力に内部結線) | 同左 | 同左 |
+| AUX IN | あり | あり | あり |
+| アナログ出力 | MAIN OUT | MAIN OUT + LINE OUT | MAIN OUT + LINE OUT |
+| USB ポート | MAIN(32bit) + SUB(16bit) | MAIN + SUB | MAIN + SUB |
+| USB DAW 録音 ch | 10 | 12 | 12 |
+| microSD 録音 | なし | あり (最大16track) | あり |
+| HDMI | なし | なし | IN / THRU (8→2 down-mix) |
+| MIX Bus | STEREO + MIX1 + MIX2 | 同左 | 同左 |
+| FX Bus | FX1 + FX2 | 同左 | 同左 |
+
+## 信号フロー概略
+
+```mermaid
+flowchart LR
+  subgraph IN[入力ソース]
+    ML[MIC/LINE 1/2, 3/4]
+    AUX[AUX IN]
+    SD[microSD Playback]
+    UMA[USB MAIN A/B/C]
+    UDAW[USB DAW 1/2 … 11/12]
+    USUB[USB SUB]
+    HDMI[HDMI down-mix]
+    ALL[All Input / All USB DAW]
+  end
+
+  subgraph CH[ミキサーチャンネル]
+    MONO["モノ CH<br/>Φ→HPF→GATE→COMP→EQ→INS FX"]
+    ST["ステレオ CH<br/>EQ→INS FX→DUCKER"]
+  end
+
+  subgraph BUS[Bus]
+    STEREO[STEREO MAIN]
+    MIX1[MIX 1]
+    MIX2[MIX 2]
+    FX1[FX 1]
+    FX2[FX 2]
+    STREAM[STREAMING]
+    MON[MONITOR 1-2]
+  end
+
+  subgraph OUT[出力]
+    MAIN[MAIN OUT]
+    LINE[LINE OUT]
+    USBOUT[USB MAIN OUT A/B/C - SUB]
+    SDREC[microSD Rec]
+    DUCK[Ducker 1-4 Source]
+  end
+
+  IN --> CH
+  MONO --> STEREO & MIX1 & MIX2 & FX1 & FX2
+  ST --> STEREO & MIX1 & MIX2 & FX1 & FX2
+  FX1 & FX2 --> STEREO & MIX1 & MIX2
+  MIX1 & MIX2 -->|TO ST| STEREO
+  STEREO & MIX1 & MIX2 --> STREAM & MON
+  STEREO & MIX1 & MIX2 & STREAM --> MAIN & LINE & USBOUT & SDREC
+  MONO & ST & STEREO & MIX1 & MIX2 -->|key| DUCK
+```
+
+## 接続の決定点 (constraint engine の根拠)
+
+ルーティングは自由結線ではなく、装置内の固定信号路に対する **限られた決定点** で構成される。
+各決定点は「接続元の集合」と「受け口の多重度」を持つ。本ツールはこれを `RoutingRule` として表現する。
+
+接続種別 (`kind`):
+
+- `source` — 受け口は **1 本のみ** (セレクタ)。チャンネルの入力ソース選択、Bus のソース選択。
+- `patch` — 受け口は **1 本のみ** (出力パッチ / Signal Assign)。
+- `key` — 受け口は **1 本のみ** (Ducker のサイドチェイントリガ選択)。`source` と同じセレクタだが、
+  モノペアのソースミラーリングを持たないため独立した種別とする (後述 §10)。
+- `send` — 受け口は **複数可** (Bus はミックス加算)。レベル/パン/PRE-POST を持つ。チャンネル/FX から Bus への送り。
+  ただし固定の主フェーダー経路 (CH/FX リターン → STEREO) は LEVEL/PAN のみで **PRE/POST を持たない** (後述 §2)。
+- `sendSwitch` — 受け口は **複数可** だが **ON/OFF のみ** (個別のレベル/パンを持たない送り)。MIX→STEREO の「TO ST」送り。
+
+> `source` / `patch` / `key` の受け口は選択ワイヤを 2 本受け付けない (ソースは 1 本のみ)。
+> `key` のワイヤはキャンバス上で `source` と同じ青のセレクタ色で描画される。
+
+### 1. チャンネル入力ソース (`source`, 受け口 1 本)
+
+各ミキサーチャンネルは以下から入力ソースを 1 つ選択する。MIC/LINE と USB DAW は実機の入力選択が
+2ch ペア単位 (1/2, 3/4 / 1/2…11/12) のため、それぞれ 1 つのソースノードで表す。front mini ジャックは
+MIC/LINE 1 入力に内部結線され、独立したソース選択肢としては存在しない。
+
+| 選択肢 | URX22 | URX44 | URX44V |
+| --- | --- | --- | --- |
+| MIC/LINE 1/2 | ✓ | ✓ | ✓ |
+| MIC/LINE 3/4 | — | ✓ | ✓ |
+| AUX IN | ✓ | ✓ | ✓ |
+| microSD Playback | — | ✓ | ✓ |
+| USB MAIN A / B / C | ✓ | ✓ | ✓ |
+| USB DAW 1/2 … N | ✓ (…9/10) | ✓ (…11/12) | ✓ (…11/12) |
+| USB SUB | ✓ | ✓ | ✓ |
+| HDMI (down-mix) | — | — | ✓ |
+| All Input | ✓ | ✓ | ✓ |
+| All USB DAW | ✓ | ✓ | ✓ |
+
+> URX44V では全チャンネル (CH1–4, 5/6, 7/8, 9/10, 11/12) が USB MAIN A/B/C・USB DAW 各ペア・USB SUB を
+> 入力ソースとして選択可能 (実機確認済み)。
+>
+> **モノ CH のペア連動**: CH1–4 は CH1/2・CH3/4 がペアを成し、片方の入力ソースを確定するともう片方も同じ
+> ソースに確定する (例: CH1 で MIC/LINE 1/2 を選ぶと CH2 も MIC/LINE 1/2 になる)。本ツールは同一ソースノードを
+> 両 CH へ結線して表現する (L/R は CH の位置で暗黙的に決まる)。
+
+### 2. チャンネル → Bus send (`send`, 受け口 複数可)
+
+各チャンネル出力は以下の Bus へ送れる (MIX / FX 送りは ON/LEVEL、PRE/POST、PAN/BAL を持つ)。
+PRE/POST は **その送りを STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取るか後 (POST) で取るか**を示す。
+基準である STEREO 送り自身は PRE/POST を持たない。
+
+- STEREO (TO ST) — **固定**: チャンネルの主フェーダー経路。ブロックダイアグラムでは破線の SEND ブロックの
+  *外側*にあり、常に結線され付け替え・削除はできない (`fixed` 送り)。本ツールは全計画に初期接続済みで
+  シードし、LEVEL/PAN のみ編集可能 (**PRE/POST は持たない** — この経路が PRE/POST の基準点のため)。
+- MIX 1 / MIX 2 (PRE/POST あり)
+- FX 1 / FX 2 (PRE/POST あり)
+
+> 盤面上では PRE の MIX/FX 送りを **破線＋ソース直後の琥珀色「PRE」タップマーカー**で表示し、接続を選択せずに
+> 視認できる。POST (既定) は実線・無印。画像出力 (PNG/PDF) にも反映される。
+
+### 3. Bus 間 (`send` / `sendSwitch`)
+
+- FX 1 / FX 2 リターン → STEREO / MIX 1 / MIX 2 (`send`。**リターン → STEREO** は FX の主経路で
+  同様に**固定** = 常時結線・削除不可・**PRE/POST なし**。初期レベルは **-∞ (オフ)** でシードし、上げるまで
+  主ミックスに加算されない。MIX 1/2 への送りは任意で PRE/POST あり)
+- OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`send`)
+- MIX 1 / MIX 2 → STEREO (`sendSwitch`、ブロックダイアグラムの MIX 1–2 OUT 内「TO ST」。ON/OFF のみで独立した LEVEL/PAN は持たない)
+
+### 4. ストリーミング / モニタソース (`source`, 受け口 1 本)
+
+- STREAMING 入力ソース ← STEREO OUT / MIX 1 OUT / MIX 2 OUT (DELAY あり)
+- MONITOR 1–2 ソース ← STEREO OUT / MIX 1 OUT / MIX 2 OUT (MONO)
+
+### 5. 出力パッチ (`patch`, 受け口 1 本)
+
+アナログ出力 (MAIN / LINE) のソース選択。
+
+| 出力 | 選択可能ソース | URX22 | URX44/44V |
+| --- | --- | --- | --- |
+| MAIN OUT | STEREO / MIX1 / MIX2 / STREAM / MONITOR1 / MONITOR2 | ✓ | ✓ |
+| LINE OUT | 同上 | — | ✓ |
+
+> PHONES 1 / 2 / front は MONITOR 1 / MONITOR 2 / MONITOR 1 への **1 対 1 固定結線**で
+> ソース選択を持たないため、DAW Rec と同様に**編集対象ノードとして表現しない**
+> (ユーザーガイド: 「Monitor 1、2 の信号は PHONES 1、2 から出力されます」)。
+
+### 6. USB OUT Signal Assign (`patch`, 受け口 1 本)
+
+| 出力 | 選択可能ソース |
+| --- | --- |
+| USB MAIN OUT A / B / C | STEREO OUT / STREAM OUT / MIX1 OUT / MIX2 OUT / CH 1–N OUT |
+| USB SUB OUT | 同上 |
+
+### 7. DAW Rec Signal Assign (固定、ノード非表示)
+
+- CH n OUT → USB DAW OUT n の **1 対 1 固定結線** (ブロックダイアグラムにソース選択 box は無い)
+- ルーティングを変更できないため、**編集対象ノードとしては表現しない** (`USB DAW OUT` ノードは持たない)
+- N = 10 (URX22) / 12 (URX44, URX44V)
+
+### 8. SD Rec Signal Assign (`patch`, 受け口 1 本、URX44 / URX44V のみ)
+
+- microSD Rec 1/2 … 15/16 ← STEREO OUT / MIX 1–2 OUT / CH 1–N OUT (最大16track)
+- microSD 再生は 2track (ステレオ)。本モデルでは入力ソース `microSD Playback` 1 個として表す。
+
+> **録音トラック数の根拠**: URX44V は microSD へ **最大16トラック録音 / 2トラック再生**
+> (Yamaha 公式 URX44V 製品スペック)。URX44 も microSD 録音に対応する。
+> DAW 録音は USB 経由で **1–12 が個別チャンネル**として扱える (実機確認済み)。
+
+> **v0.1 の簡略化**: microSD Rec は本来トラックスロット単位だが、v0.1 ではノード過多を避けるため
+> 1 つのグループノードとして複数ソースを受ける (`send`) 表現に簡略化している。
+> スロット単位の割当 UI は Phase 2 で対応する。
+
+### 9. HDMI THRU (固定パススルー、ノード非表示、URX44V のみ)
+
+- HDMI 入力 (Audio 2ch + Video) → HDMI THRU の **1 対 1 固定結線**。ソース選択を伴わないため、
+  DAW Rec と同様に**編集対象ノードとして表現しない**。
+- HDMI 入力自体はチャンネルの選択可能な入力ソースとして残る。
+
+### 10. Ducker キーソース (`key`, 受け口 1 本)
+
+- Ducker 1–4 Source ← CH 1–N OUT / STEREO OUT / MIX 1 OUT / MIX 2 OUT (サイドチェーンのトリガ選択)
+- 各 Ducker は 1 つのステレオチャンネルに搭載されるため、Ducker 1–4 は機種のステレオペアに順番に対応する: URX22 = CH 3/4・5/6・7/8・9/10、URX44 / URX44V = CH 5/6・7/8・9/10・11/12。盤面のノードラベルは単に `Ducker` とし、搭載先ペアは副題 (`CH 5/6 · Source`) に表示する。1–4 の序数はブロックダイアグラム上の列挙であり、ぶら下げ位置で搭載先 CH が分かるためノードには重ねて表示しない。
+- 表示上、Ducker は独立した出力ではなく搭載先チャンネルに属するため、専用種別 `ducker` のノードとして対応ステレオチャンネルの真下にぶら下げて描く (配置・移動・非表示の挙動は [architecture.md](architecture.md) 参照)。
+
+## 固定 (結線不可) の要素
+
+- チャンネルストリップの処理順 (Φ → HPF → GATE → COMP → EQ → INS FX) は固定。
+- モノ CH とステレオ CH の構成は固定 (機種で本数のみ変化)。
+- **CH n → STEREO と FX 1/2 リターン → STEREO は固定の送り** (主フェーダー / リターンの経路)。
+  常時結線され初期接続済みで表示し、削除不可。上記の要素と異なり LEVEL/PAN を編集できるため、
+  (表示ノード間の) 配線として描画する。固定なのは経路のみ。
+- PHONES 1/2/front は MONITOR Bus への 1 対 1 固定結線 (ソース選択なし、ノード非表示)。
+- CUE Bus (ソロ/モニタ割り込み) は **表現しない**: ルーティングが電源 OFF で削除され、
+  保存する計画として永続的な割当を保持できないため。
+
+## サンプルレート依存の制約
+
+| 制約 | 条件 |
+| --- | --- |
+| INS FX 利用不可 | サンプルレート 96 kHz 超 |
+| FX2 利用不可 | サンプルレート 96 kHz 超 |
+| HDMI EQ 利用不可 | サンプルレート 176.4 / 192 kHz |
+| HDMI down-mix EQ | 入力が 2ch のときのみ有効 |
+
+> Phase 2 ではこれらを **警告** として表示する (インスペクタの注記 + 該当ノードの減光・破線表示)。
+> 結線自体の禁止には用いない。サンプルレートは計画ごとに設定し、計画 JSON に保存する。
+> 結線の厳密化は将来の実機反映で行う。

@@ -1,0 +1,145 @@
+// English is the base language and the source of truth for the message shape.
+// Every other catalog (see ja.ts) must satisfy the derived Messages type, so
+// adding a key here makes TypeScript require a translation everywhere.
+
+export const en = {
+  toolbar: {
+    model: "Model",
+    rate: "Rate",
+    new: "New",
+    open: "Open",
+    save: "Save",
+    exportPng: "Export PNG",
+    exportPdf: "Export PDF",
+    arrange: "Arrange",
+    hideUnused: "Hide unused",
+    theme: "Toggle theme",
+    light: "Light",
+    dark: "Dark",
+    language: "Language",
+  },
+  inspector: {
+    title: "Inspector",
+    hint:
+      "Drag nodes to place them, then drag from an output port (right) to an " +
+      "input port (left) to connect. Connectable ports are highlighted in green " +
+      "while connecting. Click the pen on a node to add a note, then click the " +
+      "note to edit it.",
+    type: "Type",
+    inputsFrom: (n: number): string => `Inputs (${n})`,
+    outputsTo: (n: number): string => `Outputs (${n})`,
+    connection: "Connection",
+    from: "From",
+    to: "To",
+    parameters: "Parameters",
+    level: "Level",
+    pan: "Pan",
+    prePost: "Pre/Post",
+    selectionOnly: "Selection only — no send parameters.",
+    fixedConnection: "Fixed connection — always enabled, cannot be removed.",
+    deleteConnection: "Delete this connection",
+    hideNode: "Hide this node",
+    notesPlaceholder: "Add a note inside this node… (shown on the canvas and in exports)",
+    recentPlans: "Recent plans",
+    none: "-",
+    connKind: {
+      source: "Input source select (single)",
+      patch: "Output patch (single)",
+      key: "Ducker key source (single)",
+      send: "Bus send (summing)",
+      sendSwitch: "Bus send (ON/OFF switch)",
+    },
+    nodeKind: {
+      input: "Input source",
+      channel: "Mixer channel",
+      bus: "Bus",
+      output: "Output",
+      ducker: "Ducker",
+    },
+    legend: {
+      signals: "Connection types",
+      nodes: "Nodes",
+      source: "Source select",
+      send: "Bus send",
+      sendSwitch: "Send (ON/OFF)",
+      patch: "Output patch",
+      pre: "Pre-fader send",
+    },
+  },
+  shelf: {
+    title: "Hidden",
+    showAll: "Show all",
+    restore: (label: string): string => `Show ${label}`,
+  },
+  selbar: {
+    title: " selected",
+    hide: (n: number): string => `Hide ${n}`,
+    allConnected: "All connected",
+    partialTip: "Connected nodes stay — only unconnected ones hide.",
+    clear: "Clear",
+  },
+  tooltip: {
+    addNote: "Add a note",
+    collapseNote: "Minimize note",
+    expandNote: "Expand note",
+  },
+  warning: {
+    title: "Sample-rate notes",
+    insFx: "Insert FX unavailable above 96 kHz.",
+    fx2: "FX2 bus unavailable above 96 kHz.",
+    hdmiEq: "HDMI EQ unavailable at 176.4 / 192 kHz.",
+  },
+  status: {
+    loaded: (model: string): string => `Loaded ${model} — drag to place and connect`,
+    switchedModel: (model: string): string => `Switched to ${model}`,
+    sampleRate: (rate: string): string => `Sample rate: ${rate}`,
+    newPlan: "Created a new plan",
+    planLoaded: "Plan loaded",
+    planSaved: "Plan saved",
+    savedTo: (name: string): string => `Saved to ${name}`,
+    openedFrom: (name: string): string => `Opened ${name}`,
+    canceled: "Canceled",
+    pngExported: "PNG exported",
+    pdfExported: "PDF exported",
+    arranged: "Arranged to the default layout",
+    connected: "Connected",
+    connectionDeleted: "Connection deleted",
+    fixedConnection: "Fixed connection — cannot be removed",
+    noteMinimized: "Note minimized",
+    noteExpanded: "Note expanded",
+    hidUnused: (n: number): string => `Hid ${n} unused node${n === 1 ? "" : "s"}`,
+    noneToHide: "No unused nodes to hide",
+    hidNode: (label: string): string => `Hid ${label}`,
+    hidSelected: (n: number, skipped: number): string => {
+      const base = `Hid ${n} node${n === 1 ? "" : "s"}`;
+      return skipped ? `${base} · ${skipped} still connected` : base;
+    },
+    shownNode: (label: string): string => `Showing ${label}`,
+    shownAll: "Showing all nodes",
+    themeDark: "Switched to dark mode",
+    themeLight: "Switched to light mode",
+    language: (name: string): string => `Language: ${name}`,
+    loadError: (message: string): string => `Load error: ${message}`,
+    updateDownloading: "Downloading update… the app will restart",
+  },
+  confirm: {
+    discard: "You have unsaved changes. Discard them?",
+    update: (version: string): string => `Version ${version} is available. Update now?`,
+  },
+  filter: {
+    plan: "URX Router plan",
+    png: "PNG image",
+    pdf: "PDF document",
+  },
+  error: {
+    noRule: "This route cannot be connected",
+    duplicate: "Already connected",
+    singleInput: "This input accepts only one source (remove the existing connection first)",
+    cannotConnect: "Cannot connect",
+    unknownModel: (model: string): string => `Unknown model: ${model}`,
+    notPlanFile: "This is not a URX Router plan file",
+    missingModel: "The plan file has no modelId",
+  },
+};
+
+export type Messages = typeof en;

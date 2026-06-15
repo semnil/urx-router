@@ -1,0 +1,132 @@
+// Editable routing plan: the user's choices on top of an immutable DeviceModel.
+// Serializes to a versioned JSON document that future hardware reflection will
+// reuse as the input.
+
+import type { ConnectionKind, DeviceModel, ModelId } from "../models/types";
+import { parseRef } from "../models/types";
+import { DEFAULT_SAMPLE_RATE } from "./constraints";
+
+// LEVEL fader range in dB. The floor reads as -∞ (off) in the inspector.
+export const LEVEL_MIN_DB = -60;
+export const LEVEL_MAX_DB = 10;
+
+export interface ConnParams {
+  level?: number;
+  pan?: number;
+  tap?: "pre" | "post";
+}
+
+export interface PlanConnection {
+  from: string; // "nodeId:portId" (out)
+  to: string; // "nodeId:portId" (in)
+  kind: ConnectionKind;
+  params?: ConnParams;
+}
+
+export interface NodePos {
+  x: number;
+  y: number;
+}
+
+export interface Plan {
+  modelId: ModelId;
+  /** Mixer sample rate in Hz; drives the FX-disable warnings. */
+  sampleRate: number;
+  positions: Record<string, NodePos>;
+  connections: PlanConnection[];
+  /** Node ids the user collapsed off the canvas (only ever unconnected nodes). */
+  hidden: string[];
+  /** Free-text annotation per node id, drawn inside the node frame. */
+  notes: Record<string, string>;
+  /** Node ids whose in-frame note panel is minimized to the header. */
+  noteCollapsed: string[];
+}
+
+export const PLAN_FORMAT = "urx-router-plan";
+export const PLAN_VERSION = 1;
+
+// Language-agnostic load failures. The UI maps the code to a localized message.
+export type PlanErrorCode = "notPlanFile" | "missingModel";
+
+export class PlanError extends Error {
+  constructor(readonly code: PlanErrorCode) {
+    super(code);
+    this.name = "PlanError";
+  }
+}
+
+export function emptyPlan(modelId: ModelId): Plan {
+  return {
+    modelId,
+    sampleRate: DEFAULT_SAMPLE_RATE,
+    positions: {},
+    connections: [],
+    hidden: [],
+    notes: {},
+    noteCollapsed: [],
+  };
+}
+
+export function serialize(plan: Plan): string {
+  return JSON.stringify(
+    {
+      format: PLAN_FORMAT,
+      version: PLAN_VERSION,
+      modelId: plan.modelId,
+      sampleRate: plan.sampleRate,
+      positions: plan.positions,
+      connections: plan.connections,
+      hidden: plan.hidden,
+      notes: plan.notes,
+      noteCollapsed: plan.noteCollapsed,
+    },
+    null,
+    2,
+  );
+}
+
+export function deserialize(text: string): Plan {
+  const data = JSON.parse(text) as Record<string, unknown>;
+  if (data.format !== PLAN_FORMAT) {
+    throw new PlanError("notPlanFile");
+  }
+  if (typeof data.modelId !== "string") {
+    throw new PlanError("missingModel");
+  }
+  return {
+    modelId: data.modelId as ModelId,
+    sampleRate: typeof data.sampleRate === "number" ? data.sampleRate : DEFAULT_SAMPLE_RATE,
+    positions: (data.positions as Record<string, NodePos>) ?? {},
+    connections: Array.isArray(data.connections) ? (data.connections as PlanConnection[]) : [],
+    hidden: Array.isArray(data.hidden) ? (data.hidden as string[]) : [],
+    notes: isStringRecord(data.notes) ? data.notes : {},
+    noteCollapsed: Array.isArray(data.noteCollapsed) ? (data.noteCollapsed as string[]) : [],
+  };
+}
+
+function isStringRecord(v: unknown): v is Record<string, string> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+export function hasConnection(plan: Plan, from: string, to: string): boolean {
+  return plan.connections.some((c) => c.from === from && c.to === to);
+}
+
+// Materialize the model's fixed (non-removable) wires into the plan when missing,
+// so they show pre-connected and survive plans saved before they existed. Idempotent
+// and leaves any existing entry (with its level/pan) untouched.
+export function ensureFixedConnections(model: DeviceModel, plan: Plan): void {
+  for (const rule of model.rules) {
+    if (!rule.fixed || hasConnection(plan, rule.from, rule.to)) continue;
+    const conn: PlanConnection = { from: rule.from, to: rule.to, kind: rule.kind };
+    // FX returns into STEREO (the only bus-sourced fixed sends) default to -∞ so a
+    // return is not summed into the main mix until raised; channel main paths stay at unity.
+    const fromKind = model.nodes.find((n) => n.id === parseRef(rule.from).nodeId)?.kind;
+    if (fromKind === "bus") conn.params = { level: LEVEL_MIN_DB };
+    plan.connections.push(conn);
+  }
+}
+
+export function removeConnection(plan: Plan, from: string, to: string): void {
+  plan.connections = plan.connections.filter((c) => !(c.from === from && c.to === to));
+}
