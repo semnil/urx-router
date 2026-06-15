@@ -1,0 +1,80 @@
+// Connection constraint engine. A wire is legal only when the DeviceModel
+// declares a matching rule, and single-input receivers (selectors / patches)
+// reject a second wire.
+
+import { isSingleInput } from "../models/types";
+import type { DeviceModel, RoutingRule } from "../models/types";
+import type { Plan } from "./plan";
+import { hasConnection } from "./plan";
+
+// Language-agnostic failure codes. The UI maps these to localized messages so
+// core stays free of any i18n dependency.
+export type ConnectError = "noRule" | "duplicate" | "singleInput";
+
+export interface ConnectResult {
+  ok: boolean;
+  reason?: ConnectError;
+}
+
+function findRule(model: DeviceModel, from: string, to: string): RoutingRule | undefined {
+  return model.rules.find((rule) => rule.from === from && rule.to === to);
+}
+
+export function ruleKind(model: DeviceModel, from: string, to: string): RoutingRule["kind"] | undefined {
+  return findRule(model, from, to)?.kind;
+}
+
+/** Whether this route is a structural wire that the user may not remove. */
+export function isFixedConnection(model: DeviceModel, from: string, to: string): boolean {
+  return findRule(model, from, to)?.fixed === true;
+}
+
+// Whether a send carries a PRE/POST tap: a send's PRE/POST is taken relative to
+// the channel's STEREO main-fader level, so the fixed STEREO / FX-return main
+// paths (which ARE that reference) carry no tap of their own. Only editable
+// sends (CH/FX/OSC -> MIX/FX, SD rec) expose it.
+export function sendHasTap(model: DeviceModel, from: string, to: string): boolean {
+  return ruleKind(model, from, to) === "send" && !isFixedConnection(model, from, to);
+}
+
+export function canConnect(model: DeviceModel, plan: Plan, from: string, to: string): ConnectResult {
+  const rule = findRule(model, from, to);
+  if (!rule) return { ok: false, reason: "noRule" };
+  if (hasConnection(plan, from, to)) return { ok: false, reason: "duplicate" };
+  // A single-input receiver rejects a second single-input (source/patch) wire.
+  // Summing / switch sends to the same port are ignored here, so a bus keeps
+  // accepting them.
+  if (isSingleInput(rule.kind) && plan.connections.some((c) => c.to === to && isSingleInput(c.kind))) {
+    return { ok: false, reason: "singleInput" };
+  }
+  return { ok: true };
+}
+
+/** The mono channel that shares its input source with `nodeId`, if any. */
+export function partnerChannel(model: DeviceModel, nodeId: string): string | undefined {
+  for (const [a, b] of model.channelPairs) {
+    if (a === nodeId) return b;
+    if (b === nodeId) return a;
+  }
+  return undefined;
+}
+
+/** Input-port refs that the given output port may currently connect to. */
+export function legalTargets(model: DeviceModel, plan: Plan, from: string): Set<string> {
+  const targets = new Set<string>();
+  for (const rule of model.rules) {
+    if (rule.from !== from) continue;
+    if (canConnect(model, plan, from, rule.to).ok) targets.add(rule.to);
+  }
+  return targets;
+}
+
+/** Output-port refs that may currently connect into the given input port. */
+export function legalSources(model: DeviceModel, plan: Plan, to: string): Set<string> {
+  const sources = new Set<string>();
+  for (const rule of model.rules) {
+    if (rule.to !== to) continue;
+    if (canConnect(model, plan, rule.from, to).ok) sources.add(rule.from);
+  }
+  return sources;
+}

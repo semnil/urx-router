@@ -1,0 +1,45 @@
+name: Post-merge
+
+# Heavier jobs that run only after a change lands on main, to keep PR feedback
+# fast. The frontend build/unit gate runs per-PR in ci.yml.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+      # Fails if a dependency carries a license not in about.toml's accepted
+      # list, so a new crate can't silently drop a required notice.
+      - run: cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
+        working-directory: src-tauri
+      - uses: actions/upload-artifact@v7
+        with:
+          name: third-party-licenses
+          path: src-tauri/THIRD_PARTY_LICENSES.html
+          retention-days: 30

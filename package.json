@@ -1,0 +1,31 @@
+{
+  "name": "urx-router",
+  "version": "0.1.0",
+  "description": "Routing planner for YAMAHA URX22 / URX44 / URX44V USB audio interfaces",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.7.1",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:demo": "tsc --noEmit && vite build --mode demo",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "preview": "vite preview --port 4173 --strictPort",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@tauri-apps/cli": "^2.0.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+[package]
+name = "urx-router"
+version = "0.1.0"
+description = "Routing planner for YAMAHA URX series audio interfaces"
+license = "MIT"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "urx_router_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Auto-update is desktop-only: the updater downloads and swaps the installed
+# bundle, and process restarts the app afterwards.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

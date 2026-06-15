@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Frontend dev dependencies (pnpm; Dependabot reads pnpm-lock.yaml).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Tauri shell crates.
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # The workflow actions used above.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

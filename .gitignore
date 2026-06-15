@@ -1,0 +1,31 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+*.log
+
+# Local editor / preview tooling
+.claude/
+
+# Tauri build artifacts
+src-tauri/target/
+src-tauri/gen/
+
+# Generated third-party license bundle (regenerate with `cargo about generate`)
+src-tauri/THIRD_PARTY_LICENSES.html
+
+# Playwright E2E artifacts
+test-results/
+playwright-report/
+
+# Intermediate icon source (regenerate with scripts/gen-icon.mjs) and unused
+# mobile icon sets (this project targets desktop only)
+scripts/app-icon.png
+src-tauri/icons/android/
+src-tauri/icons/ios/
+
+# Local routing plans saved during development
+/plans/
+
+# Copyrighted Yamaha reference PDFs — local copies only (see reference/README.md)
+reference/*.pdf

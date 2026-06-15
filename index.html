@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>URX Router</title>
+  </head>
+  <body>
+    <div id="app">
+      <header id="toolbar">
+        <div class="brand">
+          <span class="led"></span>
+          <span class="word">URX·ROUTER</span>
+          <span class="meta">routing planner</span>
+          <span class="seg" aria-hidden="true">
+            <i style="height: 9px"></i>
+            <i style="height: 15px"></i>
+            <i style="height: 12px"></i>
+            <i style="height: 18px"></i>
+            <i style="height: 8px"></i>
+            <i style="height: 13px"></i>
+          </span>
+        </div>
+        <label class="model-select">
+          <span id="lbl-model">Model</span>
+          <select id="model-picker"></select>
+        </label>
+        <label class="model-select">
+          <span id="lbl-rate">Rate</span>
+          <select id="rate-picker"></select>
+        </label>
+        <span class="spacer"></span>
+        <div class="tools">
+          <button id="btn-new" type="button">New</button>
+          <button id="btn-open" type="button" data-demo-hide>Open</button>
+          <button id="btn-save" class="primary" type="button" data-demo-hide>Save</button>
+          <span class="tool-sep" data-demo-hide></span>
+          <button id="btn-export" type="button" data-demo-hide>Export PNG</button>
+          <button id="btn-export-pdf" type="button" data-demo-hide>Export PDF</button>
+          <span class="tool-sep"></span>
+          <button id="btn-auto" type="button">Arrange</button>
+          <button id="btn-hide-unused" type="button">Hide unused</button>
+          <span class="tool-sep"></span>
+          <button id="btn-theme" type="button"></button>
+          <button id="btn-lang" type="button"></button>
+        </div>
+      </header>
+      <main id="stage">
+        <div id="graph-host"></div>
+        <aside id="inspector"></aside>
+      </main>
+      <footer id="statusbar"></footer>
+    </div>
+    <input id="file-input" type="file" accept="application/json,.json" hidden />
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
