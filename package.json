@@ -16,7 +16,7 @@
     "tauri": "tauri"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
+    "@playwright/test": "^1.61.0",
     "@tauri-apps/cli": "^2.0.0",
     "esbuild": "^0.28.1",
     "typescript": "^6.0.3",
