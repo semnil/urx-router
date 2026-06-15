@@ -91,9 +91,9 @@ flowchart LR
 - `patch` — 受け口は **1 本のみ** (出力パッチ / Signal Assign)。
 - `key` — 受け口は **1 本のみ** (Ducker のサイドチェイントリガ選択)。`source` と同じセレクタだが、
   モノペアのソースミラーリングを持たないため独立した種別とする (後述 §10)。
-- `send` — 受け口は **複数可** (Bus はミックス加算)。レベル/パン/PRE-POST を持つ。チャンネル/FX から Bus への送り。
+- `send` — 受け口は **複数可** (Bus はミックス加算)。レベル/パン/PRE-POST を持つ。チャンネル/FX から Bus への Send。
   ただし固定の主フェーダー経路 (CH/FX リターン → STEREO) は LEVEL/PAN のみで **PRE/POST を持たない** (後述 §2)。
-- `sendSwitch` — 受け口は **複数可** だが **ON/OFF のみ** (個別のレベル/パンを持たない送り)。MIX→STEREO の「TO ST」送り。
+- `sendSwitch` — 受け口は **複数可** だが **ON/OFF のみ** (個別のレベル/パンを持たない Send)。MIX→STEREO の「TO ST」Send。
 
 > `source` / `patch` / `key` の受け口は選択ワイヤを 2 本受け付けない (ソースは 1 本のみ)。
 > `key` のワイヤはキャンバス上で `source` と同じ青のセレクタ色で描画される。
@@ -126,24 +126,24 @@ MIC/LINE 1 入力に内部結線され、独立したソース選択肢として
 
 ### 2. チャンネル → Bus send (`send`, 受け口 複数可)
 
-各チャンネル出力は以下の Bus へ送れる (MIX / FX 送りは ON/LEVEL、PRE/POST、PAN/BAL を持つ)。
-PRE/POST は **その送りを STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取るか後 (POST) で取るか**を示す。
-基準である STEREO 送り自身は PRE/POST を持たない。
+各チャンネル出力は以下の Bus へ Send できる (MIX / FX Send は ON/LEVEL、PRE/POST、PAN/BAL を持つ)。
+PRE/POST は **その Send を STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取るか後 (POST) で取るか**を示す。
+基準である STEREO Send 自身は PRE/POST を持たない。
 
 - STEREO (TO ST) — **固定**: チャンネルの主フェーダー経路。ブロックダイアグラムでは破線の SEND ブロックの
-  *外側*にあり、常に結線され付け替え・削除はできない (`fixed` 送り)。本ツールは全計画に初期接続済みで
+  *外側*にあり、常に結線され付け替え・削除はできない (`fixed` Send)。本ツールは全計画に初期接続済みで
   シードし、LEVEL/PAN のみ編集可能 (**PRE/POST は持たない** — この経路が PRE/POST の基準点のため)。
 - MIX 1 / MIX 2 (PRE/POST あり)
 - FX 1 / FX 2 (PRE/POST あり)
 
-> 盤面上では PRE の MIX/FX 送りを **破線＋ソース直後の琥珀色「PRE」タップマーカー**で表示し、接続を選択せずに
+> 盤面上では PRE の MIX/FX Send を **破線＋ソース直後の琥珀色「PRE」タップマーカー**で表示し、接続を選択せずに
 > 視認できる。POST (既定) は実線・無印。画像出力 (PNG/PDF) にも反映される。
 
 ### 3. Bus 間 (`send` / `sendSwitch`)
 
 - FX 1 / FX 2 リターン → STEREO / MIX 1 / MIX 2 (`send`。**リターン → STEREO** は FX の主経路で
   同様に**固定** = 常時結線・削除不可・**PRE/POST なし**。初期レベルは **-∞ (オフ)** でシードし、上げるまで
-  主ミックスに加算されない。MIX 1/2 への送りは任意で PRE/POST あり)
+  主ミックスに加算されない。MIX 1/2 への Send は任意で PRE/POST あり)
 - OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`send`)
 - MIX 1 / MIX 2 → STEREO (`sendSwitch`、ブロックダイアグラムの MIX 1–2 OUT 内「TO ST」。ON/OFF のみで独立した LEVEL/PAN は持たない)
 
@@ -207,7 +207,7 @@ PRE/POST は **その送りを STEREO 主フェーダー (= CH → STEREO のレ
 
 - チャンネルストリップの処理順 (Φ → HPF → GATE → COMP → EQ → INS FX) は固定。
 - モノ CH とステレオ CH の構成は固定 (機種で本数のみ変化)。
-- **CH n → STEREO と FX 1/2 リターン → STEREO は固定の送り** (主フェーダー / リターンの経路)。
+- **CH n → STEREO と FX 1/2 リターン → STEREO は固定の Send** (主フェーダー / リターンの経路)。
   常時結線され初期接続済みで表示し、削除不可。上記の要素と異なり LEVEL/PAN を編集できるため、
   (表示ノード間の) 配線として描画する。固定なのは経路のみ。
 - PHONES 1/2/front は MONITOR Bus への 1 対 1 固定結線 (ソース選択なし、ノード非表示)。

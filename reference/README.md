@@ -41,5 +41,4 @@ with the built-in macOS QuickLook and crop it block by block.
 qlmanage -t -s 8000 -o /tmp/bd reference/URX44V_URX44_URX22_Block_Diagram_En_B0.pdf
 ```
 
-Crop regions of the PNG with Python (PIL) `Image.crop`. Even tiny labels — MIX "TO ST", the CUE
-sends, DUCKER — are legible this way.
+Crop regions of the PNG with Python (PIL) `Image.crop`. Even tiny labels — MIX "TO ST", DUCKER — are legible this way.

@@ -34,7 +34,7 @@ export const ja: Messages = {
     level: "レベル",
     pan: "パン",
     prePost: "PRE/POST",
-    selectionOnly: "選択のみ — 送りパラメータはありません。",
+    selectionOnly: "選択のみ — Send パラメータはありません。",
     fixedConnection: "固定接続 — 常時有効で削除できません。",
     deleteConnection: "この接続を削除",
     hideNode: "このノードを隠す",

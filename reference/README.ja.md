@@ -40,5 +40,4 @@ PNG 化してからブロック単位に切り出して読む。
 qlmanage -t -s 8000 -o /tmp/bd reference/URX44V_URX44_URX22_Block_Diagram_En_B0.pdf
 ```
 
-生成された PNG を Python (PIL) の `Image.crop` で領域ごとに切り出して確認する。MIX「TO ST」・CUE 送り・
-DUCKER など微小ラベルもこの手順で判読できる。
+生成された PNG を Python (PIL) の `Image.crop` で領域ごとに切り出して確認する。MIX「TO ST」・DUCKER など微小ラベルもこの手順で判読できる。
