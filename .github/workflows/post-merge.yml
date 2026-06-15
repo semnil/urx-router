@@ -19,7 +19,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
@@ -38,7 +38,7 @@ jobs:
       # list, so a new crate can't silently drop a required notice.
       - run: cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
         working-directory: src-tauri
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: third-party-licenses
           path: src-tauri/THIRD_PARTY_LICENSES.html

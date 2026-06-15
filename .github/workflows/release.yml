@@ -128,7 +128,7 @@ jobs:
           args: ${{ matrix.args }}
       # On a manual dispatch there is no release to attach to, so surface the
       # bundles as downloadable job artifacts instead.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: needs.check-tag.outputs.validTag != 'true'
         with:
           name: urx-router-${{ matrix.platform }}
