@@ -28,6 +28,15 @@ export interface NodeParams {
   hpfFreq?: number;
   /** PHANTOM: +48V phantom power (analog mic channels only). Absent or false = off. */
   phantom?: boolean;
+  /** PHASE: polarity invert (Ø) on a mono mic channel. Absent or false = off. */
+  phase?: boolean;
+  /** PHASE_L / PHASE_R: independent polarity invert for a stereo channel's L/R sides. */
+  phaseL?: boolean;
+  phaseR?: boolean;
+  /** CLIP_SAFE: head-amp clip protection (analog mic channels only). Absent or false = off. */
+  clipSafe?: boolean;
+  /** HI_Z: high-impedance instrument input (CH3/CH4 only). Absent or false = off. */
+  hiZ?: boolean;
   /** HA_GAIN: head-amp input gain in dB (-16 … +70). Absent = device default. */
   gain?: number;
   /** A node-level fader in dB (e.g. monitor level). Absent = device default. */

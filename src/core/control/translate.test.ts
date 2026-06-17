@@ -107,17 +107,47 @@ describe("planToCommands", () => {
     expect(cmds.some((c) => c.name === "HPF_ON")).toBe(false);
   });
 
-  it("emits +48V phantom on mono channels but not stereo", () => {
+  it("emits mic-strip toggles (+48V / Clip Safe / phase) on mono channels but not stereo", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
-    plan.nodeParams.ch1 = { phantom: true };
-    plan.nodeParams.ch_5_6 = { phantom: true };
+    plan.nodeParams.ch1 = { phantom: true, phase: true, clipSafe: true };
+    plan.nodeParams.ch_5_6 = { phantom: true, clipSafe: true };
     const cmds = planToCommands(model, plan);
-    const mono = cmds.find((c) => c.name === "PHANTOM");
-    // Mono CH1 = param 0 at y0; stereo channels have no phantom.
-    expect(mono!.vdValue).toBe(1);
-    expect(mono!.request.uri).toBe("/vd/parameters/0:0:0?operation=value");
-    expect(cmds.filter((c) => c.name === "PHANTOM")).toHaveLength(1);
+    const phantom = cmds.find((c) => c.name === "PHANTOM");
+    const phase = cmds.find((c) => c.name === "PHASE");
+    const clip = cmds.find((c) => c.name === "CLIP_SAFE");
+    // Mono CH1: +48V=param 0, phase=24, Clip Safe=5, all at y0.
+    expect(phantom!.request.uri).toBe("/vd/parameters/0:0:0?operation=value");
+    expect(phase!.request.uri).toBe("/vd/parameters/24:0:0?operation=value");
+    expect(clip!.request.uri).toBe("/vd/parameters/5:0:0?operation=value");
+    // Stereo channels have neither +48V nor Clip Safe.
+    expect(cmds.some((c) => ["PHANTOM", "CLIP_SAFE"].includes(c.name) && c.y !== 0)).toBe(false);
+    expect(cmds.filter((c) => ["PHANTOM", "PHASE", "CLIP_SAFE"].includes(c.name))).toHaveLength(3);
+  });
+
+  it("emits independent L/R phase on a stereo channel (211/212)", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch_5_6 = { phaseL: true, phaseR: false };
+    const cmds = planToCommands(model, plan);
+    const l = cmds.find((c) => c.name === "PHASE_L");
+    const r = cmds.find((c) => c.name === "PHASE_R");
+    // CH5/6 = stereo index 0: L=211:0:0, R=212:0:0, independent.
+    expect(l!.vdValue).toBe(1);
+    expect(l!.request.uri).toBe("/vd/parameters/211:0:0?operation=value");
+    expect(r!.vdValue).toBe(0);
+    expect(r!.request.uri).toBe("/vd/parameters/212:0:0?operation=value");
+  });
+
+  it("emits Hi-Z only on CH3/CH4, not other channels", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { hiZ: true };
+    plan.nodeParams.ch3 = { hiZ: true };
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "HI_Z");
+    // CH3 = param 6 at y2; CH1 has no Hi-Z so it is dropped.
+    expect(cmds).toHaveLength(1);
+    expect(cmds[0].request.uri).toBe("/vd/parameters/6:0:2?operation=value");
   });
 
   it("emits STEREO_MASTER_ON from the stereo bus node param", () => {

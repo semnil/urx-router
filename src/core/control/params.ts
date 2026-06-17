@@ -36,8 +36,20 @@ export const PARAMS = {
   HPF_ON: { id: 25, axis: "input", encoding: "bool" },
   /** Input channel HPF cutoff frequency (40 … 120 Hz). Confirmed by live scan. */
   HPF_FREQ: { id: 26, axis: "input", encoding: "freq" },
-  /** Input channel +48V phantom power (analog mic channels). Confirmed by live scan. */
+  // Analog mic-strip toggles (CH1-4 only). Confirmed by live scan.
+  /** Input channel +48V phantom power. */
   PHANTOM: { id: 0, axis: "input", encoding: "bool" },
+  /** Input channel phase / polarity invert (Ø), mono mic channels. */
+  PHASE: { id: 24, axis: "input", encoding: "bool" },
+  // Stereo channels invert L/R independently, indexed by stereo position.
+  /** Stereo channel L-side polarity invert. */
+  PHASE_L: { id: 211, axis: "global", encoding: "bool" },
+  /** Stereo channel R-side polarity invert. */
+  PHASE_R: { id: 212, axis: "global", encoding: "bool" },
+  /** Input channel Clip Safe (auto head-amp clip protection). */
+  CLIP_SAFE: { id: 5, axis: "input", encoding: "bool" },
+  /** Input channel Hi-Z (high-impedance instrument input; CH3/CH4 only). */
+  HI_Z: { id: 6, axis: "input", encoding: "bool" },
   /** Input channel head-amp (HA) gain (-16 … +70 dB). */
   HA_GAIN: { id: 1, axis: "input", encoding: "gain" },
   /** Output (mix) fader level. */

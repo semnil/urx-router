@@ -85,6 +85,14 @@ export function isStereoChannel(nodeId: string): boolean {
   return /^ch_\d+_\d+$/.test(nodeId);
 }
 
+// Hi-Z (instrument) input is on specific mono channels per model: CH3/CH4 on
+// URX44/44V (verified on 44V), CH2 on URX22 (extrapolated, unverified).
+const HI_Z_CHANNELS: Record<string, string[]> = {
+  URX44V: ["ch3", "ch4"],
+  URX44: ["ch3", "ch4"],
+  URX22: ["ch2"],
+};
+
 /** Input gain for a channel: which param, the linked instances, range, and whether it is the analog A.Gain. */
 export interface ChannelGain {
   param: number;
@@ -94,14 +102,32 @@ export interface ChannelGain {
   analog: boolean;
 }
 
+/**
+ * One polarity-invert (Ø) toggle. Mono channels have a single one; a stereo
+ * channel has two independent ones (its L and R sides).
+ */
+export interface PhaseToggle {
+  name: ParamName;
+  /** The NodeParams field this toggle reads/writes. */
+  key: "phase" | "phaseL" | "phaseR";
+  param: number;
+  y: number;
+  /** "" for a mono channel; "L" / "R" for the two sides of a stereo channel. */
+  side: "" | "L" | "R";
+}
+
 export interface ChannelControl {
   fader: number;
   on: number;
   pan: number;
   y: number;
   hasHpf: boolean;
-  /** +48V phantom power exists only on the analog mic (mono) channels. */
-  hasPhantom: boolean;
+  /** The analog mic-strip toggles (+48V / Clip Safe) exist only on the mono mic channels. */
+  hasMicStrip: boolean;
+  /** Hi-Z (instrument input) exists only on CH3/CH4. */
+  hasHiZ: boolean;
+  /** Polarity invert: one toggle on a mono channel, two (L/R) on a stereo one. */
+  phases: PhaseToggle[];
   gain: ChannelGain | null;
 }
 
@@ -123,10 +149,11 @@ function stereoIndexMap(model: DeviceModel): Map<string, number> {
  * Resolve everything live control needs for a channel node, in one place:
  * fader / ON / pan device params + instance index, whether it has an HPF, and
  * its gain (param, linked instances, range, A.Gain vs D.Gain). Mono channels use
- * 139/140/141/25 at the input index with the analog A.Gain (param 1) and +48V
- * phantom (param 0); stereo channels use the separate 266/267/268 block at the
- * stereo index, the digital D.Gain written to both L/R instances, and no HPF or
- * phantom. Null for non-channels.
+ * 139/140/141/25 at the input index with the analog A.Gain (param 1), the
+ * mic-strip toggles (+48V/Clip Safe) and a single phase (24); stereo channels
+ * use the separate 266/267/268 block at the stereo index, the digital D.Gain
+ * written to both L/R instances, independent L/R phase (211/212), and no HPF or
+ * mic strip. Null for non-channels.
  */
 export function channelControl(model: DeviceModel, nodeId: string): ChannelControl | null {
   if (isStereoChannel(nodeId)) {
@@ -139,7 +166,13 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
       pan: STEREO_PAN,
       y: si,
       hasHpf: false,
-      hasPhantom: false,
+      hasMicStrip: false,
+      hasHiZ: false,
+      // Stereo channels invert L and R independently (params 211 / 212).
+      phases: [
+        { name: "PHASE_L", key: "phaseL", param: PARAMS.PHASE_L.id, y: si, side: "L" },
+        { name: "PHASE_R", key: "phaseR", param: PARAMS.PHASE_R.id, y: si, side: "R" },
+      ],
       gain:
         dParam === undefined
           ? null
@@ -155,7 +188,9 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
     pan: PARAMS.CH_PAN.id,
     y,
     hasHpf: true,
-    hasPhantom: true,
+    hasMicStrip: true,
+    hasHiZ: (HI_Z_CHANNELS[model.id] ?? []).includes(nodeId),
+    phases: [{ name: "PHASE", key: "phase", param: PARAMS.PHASE.id, y, side: "" }],
     gain: { param: PARAMS.HA_GAIN.id, instances: [y], minDb: A_GAIN_MIN_DB, maxDb: A_GAIN_MAX_DB, analog: true },
   };
 }
@@ -258,7 +293,14 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (np.on !== undefined) out.push(rawCommand("CH_ON", cc.on, "bool", cc.y, np.on ? 1 : 0));
     if (cc.hasHpf && np.hpf !== undefined) out.push(command("HPF_ON", cc.y, np.hpf ? 1 : 0));
     if (cc.hasHpf && np.hpfFreq !== undefined) out.push(command("HPF_FREQ", cc.y, np.hpfFreq));
-    if (cc.hasPhantom && np.phantom !== undefined) out.push(command("PHANTOM", cc.y, np.phantom ? 1 : 0));
+    if (cc.hasMicStrip && np.phantom !== undefined) out.push(command("PHANTOM", cc.y, np.phantom ? 1 : 0));
+    if (cc.hasMicStrip && np.clipSafe !== undefined) out.push(command("CLIP_SAFE", cc.y, np.clipSafe ? 1 : 0));
+    // Polarity invert: one toggle (mono) or two independent L/R (stereo).
+    for (const ph of cc.phases) {
+      const v = np[ph.key];
+      if (v !== undefined) out.push(rawCommand(ph.name, ph.param, "bool", ph.y, v ? 1 : 0));
+    }
+    if (cc.hasHiZ && np.hiZ !== undefined) out.push(command("HI_Z", cc.y, np.hiZ ? 1 : 0));
     if (cc.gain && np.gain !== undefined) {
       // A.Gain (mono) is one instance; D.Gain (stereo) writes both linked L/R.
       for (const yi of cc.gain.instances) out.push(rawCommand("HA_GAIN", cc.gain.param, "gain", yi, np.gain));

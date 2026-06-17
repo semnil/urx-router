@@ -51,7 +51,13 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
         update.hpf = vdToBool(await vdGet(PARAMS.HPF_ON.id, 0, cc.y));
         update.hpfFreq = vdToFreq(await vdGet(PARAMS.HPF_FREQ.id, 0, cc.y));
       }
-      if (cc.hasPhantom) update.phantom = vdToBool(await vdGet(PARAMS.PHANTOM.id, 0, cc.y));
+      if (cc.hasMicStrip) {
+        update.phantom = vdToBool(await vdGet(PARAMS.PHANTOM.id, 0, cc.y));
+        update.clipSafe = vdToBool(await vdGet(PARAMS.CLIP_SAFE.id, 0, cc.y));
+      }
+      if (cc.hasHiZ) update.hiZ = vdToBool(await vdGet(PARAMS.HI_Z.id, 0, cc.y));
+      // Polarity invert: one (mono) or two independent L/R (stereo).
+      for (const ph of cc.phases) update[ph.key] = vdToBool(await vdGet(ph.param, 0, ph.y));
       conn.params = { ...conn.params, level, pan };
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...update };
       applied++;
