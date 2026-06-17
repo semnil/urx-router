@@ -103,7 +103,17 @@ const inspectorActions = {
     if (patch.on !== undefined) graph.repaintNodes();
     // Toggles re-render to update the active button; sliders (gain/level) mutate
     // in place so they keep focus while dragging.
-    if (patch.on !== undefined || patch.hpf !== undefined || patch.phantom !== undefined) refreshInspector();
+    if (
+      patch.on !== undefined ||
+      patch.hpf !== undefined ||
+      patch.phantom !== undefined ||
+      patch.phase !== undefined ||
+      patch.phaseL !== undefined ||
+      patch.phaseR !== undefined ||
+      patch.clipSafe !== undefined ||
+      patch.hiZ !== undefined
+    )
+      refreshInspector();
   },
   onOpenRecent: (path: string) => void openRecent(path),
   onHideNode: (id: string) => graph.hideNode(id),

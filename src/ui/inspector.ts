@@ -115,11 +115,34 @@ export function renderInspector(
           actions.onUpdateNodeParams(node.id, { on: v }),
         ),
       );
-      // +48V phantom and HPF exist only on the analog (mono) mic channels.
-      if (cc?.hasPhantom) {
+      // The analog mic-strip toggles (+48V / Clip Safe) and HPF exist only on the
+      // mono mic channels.
+      if (cc?.hasMicStrip) {
         host.append(
           boolToggle(m.inspector.phantom, np.phantom ?? false, (v) =>
             actions.onUpdateNodeParams(node.id, { phantom: v }),
+          ),
+        );
+        host.append(
+          boolToggle(m.inspector.clipSafe, np.clipSafe ?? false, (v) =>
+            actions.onUpdateNodeParams(node.id, { clipSafe: v }),
+          ),
+        );
+      }
+      // Polarity invert (Ø): one toggle on mono, two (L/R) on stereo channels.
+      for (const ph of cc?.phases ?? []) {
+        const label = ph.side ? `${m.inspector.phase} ${ph.side}` : m.inspector.phase;
+        host.append(
+          boolToggle(label, np[ph.key] ?? false, (v) =>
+            actions.onUpdateNodeParams(node.id, { [ph.key]: v }),
+          ),
+        );
+      }
+      // Hi-Z (instrument input) exists only on specific channels (CH3/CH4).
+      if (cc?.hasHiZ) {
+        host.append(
+          boolToggle(m.inspector.hiZ, np.hiZ ?? false, (v) =>
+            actions.onUpdateNodeParams(node.id, { hiZ: v }),
           ),
         );
       }
