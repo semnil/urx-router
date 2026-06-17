@@ -130,6 +130,30 @@ describe("planToCommands", () => {
     expect(master!.request.uri).toBe("/vd/parameters/582:0:0?operation=value");
   });
 
+  it("emits the STEREO master fader on its single instance", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams["bus.stereo"] = { level: 2 };
+    const cmds = planToCommands(model, plan);
+    const fader = cmds.filter((c) => c.name === "STEREO_MASTER_FADER");
+    expect(fader).toHaveLength(1);
+    expect(fader[0].vdValue).toBe(200);
+    expect(fader[0].request.uri).toBe("/vd/parameters/581:0:0?operation=value");
+  });
+
+  it("emits the MIX output fader on both L/R instances", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams["bus.mix2"] = { level: 1.2 };
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "OUT_FADER");
+    // MIX2 = param 674 at y2 and y3 (linked), 1.2 dB = 120.
+    expect(cmds.map((c) => c.request.uri)).toEqual([
+      "/vd/parameters/674:0:2?operation=value",
+      "/vd/parameters/674:0:3?operation=value",
+    ]);
+    expect(cmds.every((c) => c.vdValue === 120)).toBe(true);
+  });
+
   it("emits MONITOR_LEVEL for the monitor buses", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

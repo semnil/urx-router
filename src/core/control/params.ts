@@ -46,6 +46,8 @@ export const PARAMS = {
   OUT_EQ_ON: { id: 591, axis: "output", encoding: "bool" },
   /** Monitor level (y = monitor 0..3). Wider -96 dB floor than the fader. */
   MONITOR_LEVEL: { id: 724, axis: "global", encoding: "monitor" },
+  /** STEREO master fader (y = 0, level down to -∞). */
+  STEREO_MASTER_FADER: { id: 581, axis: "global", encoding: "level" },
   /** STEREO master ON (y = 0). */
   STEREO_MASTER_ON: { id: 582, axis: "global", encoding: "bool" },
 } as const satisfies Record<string, ParamSpec>;
