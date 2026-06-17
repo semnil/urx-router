@@ -10,7 +10,7 @@ import type { NodeParams, Plan } from "../plan";
 import { ensureFixedConnections } from "../plan";
 import { vdGet } from "../platform";
 import { PARAMS } from "./params";
-import { channelControl } from "./translate";
+import { busFader, channelControl } from "./translate";
 import { vdToBool, vdToFreq, vdToGain, vdToLevel, vdToMonitorLevel, vdToPan } from "./vd";
 
 export interface ReadbackResult {
@@ -55,6 +55,19 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       conn.params = { ...conn.params, level, pan };
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...update };
       applied++;
+    } catch (e) {
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Bus output faders: STEREO master (581) and MIX (674); read the first instance.
+  for (const node of model.nodes) {
+    if (node.kind !== "bus") continue;
+    const bf = busFader(node.id);
+    if (!bf) continue;
+    try {
+      const level = vdToLevel(await vdGet(bf.param, 0, bf.instances[0]));
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], level };
     } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }

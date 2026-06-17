@@ -7,7 +7,7 @@ import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, NodeParams, Plan, PlanConnection } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
-import { channelControl, isStereoChannel } from "../core/control/translate";
+import { busFader, channelControl, isStereoChannel } from "../core/control/translate";
 import {
   HPF_FREQ_DEFAULT_HZ,
   HPF_FREQ_MAX_HZ,
@@ -143,16 +143,21 @@ export function renderInspector(
       }
     }
 
-    // STEREO bus master ON/OFF (reuses nodeParams.on; translate resolves it to
-    // STEREO_MASTER_ON for this node rather than a channel's CH_ON).
-    if (node.id === "bus.stereo") {
+    // Bus output fader: STEREO master (581) and MIX 1/2 (674). Reuses
+    // nodeParams.level. STEREO additionally has a master ON/OFF (STEREO_MASTER_ON).
+    if (busFader(node.id)) {
       const np = plan.nodeParams[node.id] ?? {};
       host.append(subheading(m.inspector.parameters));
       host.append(
-        boolToggle(m.inspector.master, np.on ?? true, (v) =>
-          actions.onUpdateNodeParams(node.id, { on: v }),
-        ),
+        faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
       );
+      if (node.id === "bus.stereo") {
+        host.append(
+          boolToggle(m.inspector.master, np.on ?? true, (v) =>
+            actions.onUpdateNodeParams(node.id, { on: v }),
+          ),
+        );
+      }
     }
 
     // Monitor bus level (MONITOR_LEVEL). Reuses nodeParams.level.
@@ -330,6 +335,12 @@ function gainControl(
 
 function formatGainDb(v: number): string {
   return `${v > 0 ? "+" : ""}${v} dB`;
+}
+
+// Node-level bus output fader (STEREO master / MIX): -∞ then -60.0 … +10.0 dB,
+// the same level scale as a send.
+function faderControl(cur: number, onChange: (v: number) => void): HTMLElement {
+  return rangeSlider(t().inspector.level, LEVEL_MIN, LEVEL_MAX, 0.5, cur, formatDb, onChange);
 }
 
 // Monitor level slider: -∞ then -96.0 … +10.0 dB. The bottom notch

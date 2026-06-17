@@ -160,6 +160,30 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
   };
 }
 
+/** A bus output fader: which param and the linked instances it writes. */
+export interface BusFader {
+  name: ParamName;
+  param: number;
+  instances: number[];
+}
+
+// MIX bus output faders share param 674 (level_gain, out axis); each stereo MIX
+// occupies an L/R instance pair the device keeps linked. STEREO has its own
+// single master fader (581).
+const MIX_FADER_INSTANCES: Record<string, number[]> = {
+  "bus.mix1": [0, 1],
+  "bus.mix2": [2, 3],
+};
+
+/** Output fader for a bus node (STEREO master / MIX), or null if it has none. */
+export function busFader(nodeId: string): BusFader | null {
+  if (nodeId === "bus.stereo") {
+    return { name: "STEREO_MASTER_FADER", param: PARAMS.STEREO_MASTER_FADER.id, instances: [0] };
+  }
+  const mix = MIX_FADER_INSTANCES[nodeId];
+  return mix ? { name: "OUT_FADER", param: PARAMS.OUT_FADER.id, instances: mix } : null;
+}
+
 /**
  * Translate a plan into the list of vd value-set commands it currently implies.
  * Deterministic and side-effect free; the same plan always yields the same list,
@@ -193,6 +217,15 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       // A.Gain (mono) is one instance; D.Gain (stereo) writes both linked L/R.
       for (const yi of cc.gain.instances) out.push(rawCommand("HA_GAIN", cc.gain.param, "gain", yi, np.gain));
     }
+  }
+
+  // Bus output faders: STEREO master (581, single) and MIX (674, L/R-linked).
+  for (const node of model.nodes) {
+    if (node.kind !== "bus") continue;
+    const bf = busFader(node.id);
+    const np = plan.nodeParams[node.id];
+    if (!bf || np?.level === undefined) continue;
+    for (const yi of bf.instances) out.push(rawCommand(bf.name, bf.param, "level", yi, np.level));
   }
 
   // STEREO bus master ON/OFF (global, y = 0).
