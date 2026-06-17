@@ -170,15 +170,15 @@ describe("planToCommands", () => {
       params: { level: 5, pan: 100, tap: "pre" },
     });
     const cmds = planToCommands(model, plan);
-    const lvl = cmds.filter((c) => c.name === "MIX_SEND_LEVEL");
+    const lvl = cmds.filter((c) => c.name === "SEND_LEVEL");
     // MIX1 mono = base 146: level at 146 and 152 (L/R), both 5 dB = 500.
     expect(lvl.map((c) => c.request.uri)).toEqual([
       "/vd/parameters/146:0:0?operation=value",
       "/vd/parameters/152:0:0?operation=value",
     ]);
     expect(lvl.every((c) => c.vdValue === 500)).toBe(true);
-    expect(cmds.filter((c) => c.name === "MIX_SEND_ON").every((c) => c.vdValue === 1)).toBe(true);
-    const tap = cmds.find((c) => c.name === "MIX_SEND_TAP");
+    expect(cmds.filter((c) => c.name === "SEND_ON").every((c) => c.vdValue === 1)).toBe(true);
+    const tap = cmds.find((c) => c.name === "SEND_TAP");
     // PRE = 1, single param at base+5 = 151.
     expect(tap!.vdValue).toBe(1);
     expect(tap!.request.uri).toBe("/vd/parameters/151:0:0?operation=value");
@@ -188,12 +188,36 @@ describe("planToCommands", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
     plan.connections.push({ from: "ch_5_6:out", to: "bus.mix2:in", kind: "send", params: { level: 0 } });
-    const cmds = planToCommands(model, plan).filter((c) => c.name === "MIX_SEND_LEVEL");
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "SEND_LEVEL");
     // Stereo MIX2 = base 273 + 12 = 285: level at 285 and 291, stereo index y0.
     expect(cmds.map((c) => c.request.uri)).toEqual([
       "/vd/parameters/285:0:0?operation=value",
       "/vd/parameters/291:0:0?operation=value",
     ]);
+  });
+
+  it("emits a CH → FX send as a single mono level/on/tap, no pan", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.connections.push({
+      from: "ch1:out",
+      to: "bus.fx1:in",
+      kind: "send",
+      params: { level: 7.2, pan: 50, tap: "pre" },
+    });
+    plan.connections.push({ from: "ch_5_6:out", to: "bus.fx2:in", kind: "send", params: { level: 0 } });
+    const cmds = planToCommands(model, plan);
+    // Mono FX1 block base 193: level 194, on 196, tap 193 (single, no pan).
+    const monoLvl = cmds.filter((c) => c.name === "SEND_LEVEL" && c.paramId === 194);
+    expect(monoLvl).toHaveLength(1);
+    expect(monoLvl[0].vdValue).toBe(720);
+    expect(cmds.find((c) => c.name === "SEND_ON" && c.paramId === 196)!.vdValue).toBe(1);
+    const tap = cmds.find((c) => c.name === "SEND_TAP" && c.paramId === 193);
+    expect(tap!.vdValue).toBe(1);
+    // Stereo FX2 = base 320+4 = 324: level 325.
+    expect(cmds.some((c) => c.name === "SEND_LEVEL" && c.paramId === 325)).toBe(true);
+    // FX sends carry no pan.
+    expect(cmds.some((c) => c.name === "SEND_PAN" && [195, 197].includes(c.paramId))).toBe(false);
   });
 
   it("emits the STEREO master fader on its single instance", () => {

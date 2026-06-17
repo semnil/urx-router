@@ -6,7 +6,7 @@
 
 import type { DeviceModel } from "../../models/types";
 import { ref } from "../../models/types";
-import type { NodeParams, Plan } from "../plan";
+import type { ConnParams, NodeParams, Plan } from "../plan";
 import { ensureFixedConnections } from "../plan";
 import { vdGet } from "../platform";
 import { PARAMS } from "./params";
@@ -66,9 +66,9 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     }
   }
 
-  // CH → MIX sends: reflect each send's device state as a wire. An ON send
-  // becomes (or updates) a connection carrying its level/pan/tap; an OFF send
-  // removes any existing wire. Read the first (L) instance of each L/R pair.
+  // CH → MIX/FX sends: reflect each send's device state as a wire. An ON send
+  // becomes (or updates) a connection carrying its level (+ pan / tap where the
+  // bus has them); an OFF send removes any existing wire.
   for (const node of model.nodes) {
     if (node.kind !== "channel") continue;
     for (const bus of model.nodes) {
@@ -81,10 +81,9 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
         const on = vdToBool(await vdGet(sc.on[0], 0, sc.y));
         const idx = plan.connections.findIndex((c) => c.from === from && c.to === to);
         if (on) {
-          const level = vdToLevel(await vdGet(sc.level[0], 0, sc.y));
-          const pan = vdToPan(await vdGet(sc.pan[0], 0, sc.y));
-          const tap = vdToBool(await vdGet(sc.tap, 0, sc.y)) ? ("pre" as const) : ("post" as const);
-          const params = { level, pan, tap };
+          const params: ConnParams = { level: vdToLevel(await vdGet(sc.level[0], 0, sc.y)) };
+          if (sc.pan.length) params.pan = vdToPan(await vdGet(sc.pan[0], 0, sc.y));
+          params.tap = vdToBool(await vdGet(sc.tap, 0, sc.y)) ? "pre" : "post";
           if (idx >= 0) plan.connections[idx].params = { ...plan.connections[idx].params, ...params };
           else plan.connections.push({ from, to, kind: "send", params });
         } else if (idx >= 0) {
