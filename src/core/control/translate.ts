@@ -97,6 +97,8 @@ export interface ChannelControl {
   pan: number;
   y: number;
   hasHpf: boolean;
+  /** +48V phantom power exists only on the analog mic (mono) channels. */
+  hasPhantom: boolean;
   gain: ChannelGain | null;
 }
 
@@ -118,9 +120,10 @@ function stereoIndexMap(model: DeviceModel): Map<string, number> {
  * Resolve everything live control needs for a channel node, in one place:
  * fader / ON / pan device params + instance index, whether it has an HPF, and
  * its gain (param, linked instances, range, A.Gain vs D.Gain). Mono channels use
- * 139/140/141/25 at the input index with the analog A.Gain (param 1); stereo
- * channels use the separate 266/267/268 block at the stereo index, the digital
- * D.Gain written to both L/R instances, and no HPF. Null for non-channels.
+ * 139/140/141/25 at the input index with the analog A.Gain (param 1) and +48V
+ * phantom (param 0); stereo channels use the separate 266/267/268 block at the
+ * stereo index, the digital D.Gain written to both L/R instances, and no HPF or
+ * phantom. Null for non-channels.
  */
 export function channelControl(model: DeviceModel, nodeId: string): ChannelControl | null {
   if (isStereoChannel(nodeId)) {
@@ -133,6 +136,7 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
       pan: STEREO_PAN,
       y: si,
       hasHpf: false,
+      hasPhantom: false,
       gain:
         dParam === undefined
           ? null
@@ -148,6 +152,7 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
     pan: PARAMS.CH_PAN.id,
     y,
     hasHpf: true,
+    hasPhantom: true,
     gain: { param: PARAMS.HA_GAIN.id, instances: [y], minDb: A_GAIN_MIN_DB, maxDb: A_GAIN_MAX_DB, analog: true },
   };
 }
@@ -179,6 +184,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (!cc) continue;
     if (np.on !== undefined) out.push(rawCommand("CH_ON", cc.on, "bool", cc.y, np.on ? 1 : 0));
     if (cc.hasHpf && np.hpf !== undefined) out.push(command("HPF_ON", cc.y, np.hpf ? 1 : 0));
+    if (cc.hasPhantom && np.phantom !== undefined) out.push(command("PHANTOM", cc.y, np.phantom ? 1 : 0));
     if (cc.gain && np.gain !== undefined) {
       // A.Gain (mono) is one instance; D.Gain (stereo) writes both linked L/R.
       for (const yi of cc.gain.instances) out.push(rawCommand("HA_GAIN", cc.gain.param, "gain", yi, np.gain));

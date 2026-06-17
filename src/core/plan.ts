@@ -24,6 +24,8 @@ export interface NodeParams {
   on?: boolean;
   /** HPF_ON: high-pass filter engaged. Absent or false = off. */
   hpf?: boolean;
+  /** PHANTOM: +48V phantom power (analog mic channels only). Absent or false = off. */
+  phantom?: boolean;
   /** HA_GAIN: head-amp input gain in dB (-16 … +70). Absent = device default. */
   gain?: number;
   /** A node-level fader in dB (e.g. monitor level). Absent = device default. */

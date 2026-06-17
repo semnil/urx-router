@@ -107,7 +107,14 @@ export function renderInspector(
           actions.onUpdateNodeParams(node.id, { on: v }),
         ),
       );
-      // HPF exists only on the analog (mono) channels.
+      // +48V phantom and HPF exist only on the analog (mono) mic channels.
+      if (cc?.hasPhantom) {
+        host.append(
+          boolToggle(m.inspector.phantom, np.phantom ?? false, (v) =>
+            actions.onUpdateNodeParams(node.id, { phantom: v }),
+          ),
+        );
+      }
       if (cc?.hasHpf) {
         host.append(
           boolToggle(m.inspector.hpf, np.hpf ?? false, (v) =>

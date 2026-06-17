@@ -34,6 +34,8 @@ export const PARAMS = {
   CH_PAN: { id: 141, axis: "input", encoding: "pan" },
   /** Input channel HPF ON. */
   HPF_ON: { id: 25, axis: "input", encoding: "bool" },
+  /** Input channel +48V phantom power (analog mic channels). Confirmed by live scan. */
+  PHANTOM: { id: 0, axis: "input", encoding: "bool" },
   /** Input channel head-amp (HA) gain (-16 … +70 dB). */
   HA_GAIN: { id: 1, axis: "input", encoding: "gain" },
   /** Output (mix) fader level. */

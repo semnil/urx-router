@@ -94,6 +94,19 @@ describe("planToCommands", () => {
     expect(cmds.some((c) => c.name === "HPF_ON")).toBe(false);
   });
 
+  it("emits +48V phantom on mono channels but not stereo", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { phantom: true };
+    plan.nodeParams.ch_5_6 = { phantom: true };
+    const cmds = planToCommands(model, plan);
+    const mono = cmds.find((c) => c.name === "PHANTOM");
+    // Mono CH1 = param 0 at y0; stereo channels have no phantom.
+    expect(mono!.vdValue).toBe(1);
+    expect(mono!.request.uri).toBe("/vd/parameters/0:0:0?operation=value");
+    expect(cmds.filter((c) => c.name === "PHANTOM")).toHaveLength(1);
+  });
+
   it("emits STEREO_MASTER_ON from the stereo bus node param", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

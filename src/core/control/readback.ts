@@ -48,6 +48,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       // Gain: A.Gain (mono) / D.Gain (stereo, linked L/R — read the first instance).
       if (cc.gain) update.gain = vdToGain(await vdGet(cc.gain.param, 0, cc.gain.instances[0]));
       if (cc.hasHpf) update.hpf = vdToBool(await vdGet(PARAMS.HPF_ON.id, 0, cc.y));
+      if (cc.hasPhantom) update.phantom = vdToBool(await vdGet(PARAMS.PHANTOM.id, 0, cc.y));
       conn.params = { ...conn.params, level, pan };
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...update };
       applied++;

@@ -42,6 +42,7 @@ export const en = {
     prePost: "Pre/Post",
     channelOn: "Channel",
     hpf: "HPF",
+    phantom: "+48V",
     gainAnalog: "A.Gain",
     gainDigital: "D.Gain",
     master: "Master",
