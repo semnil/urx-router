@@ -41,6 +41,7 @@ export const ja: Messages = {
     prePost: "PRE/POST",
     channelOn: "チャンネル",
     hpf: "HPF",
+    phantom: "+48V",
     gainAnalog: "A.Gain",
     gainDigital: "D.Gain",
     master: "マスター",
