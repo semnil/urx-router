@@ -88,6 +88,7 @@ test("notes and collapse state round-trip through save and open", async ({ page 
   await node(page, "ch1").locator(".note-toggle").click(); // minimize
   await expect(node(page, "ch1").locator(".note-panel")).toHaveCount(0);
 
+  await page.click("#btn-file");
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.click("#btn-save"),
@@ -100,6 +101,7 @@ test("notes and collapse state round-trip through save and open", async ({ page 
   await expect(node(page, "ch1").locator(".note-toggle")).toHaveCount(0);
   await expect(node(page, "ch1").locator(".note-add")).toHaveCount(1);
 
+  await page.click("#btn-file");
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser"),
     page.click("#btn-open"),

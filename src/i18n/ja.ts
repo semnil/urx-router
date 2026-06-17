@@ -7,6 +7,7 @@ export const ja: Messages = {
     model: "機種",
     rate: "レート",
     new: "新規",
+    file: "ファイル",
     open: "開く",
     save: "保存",
     exportPng: "PNG 出力",

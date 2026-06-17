@@ -7,6 +7,7 @@ export const en = {
     model: "Model",
     rate: "Rate",
     new: "New",
+    file: "File",
     open: "Open",
     save: "Save",
     exportPng: "Export PNG",

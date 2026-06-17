@@ -97,6 +97,7 @@ test("hidden state round-trips through save and open", async ({ page }, testInfo
   await page.click("#btn-hide-unused");
   const hiddenCount = await chips(page).count();
 
+  await page.click("#btn-file");
   const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
   const saved = testInfo.outputPath("URX44V-plan.json");
   await download.saveAs(saved);
@@ -104,6 +105,7 @@ test("hidden state round-trips through save and open", async ({ page }, testInfo
   await page.click("#btn-new");
   await expect(page.locator(".hidden-shelf")).toBeHidden();
 
+  await page.click("#btn-file");
   const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
   await chooser.setFiles(saved);
 

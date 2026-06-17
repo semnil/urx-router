@@ -100,6 +100,7 @@ function applyStaticI18n(): void {
   $("lbl-model").textContent = m.toolbar.model;
   $("lbl-rate").textContent = m.toolbar.rate;
   $("btn-new").textContent = m.toolbar.new;
+  $("lbl-file").textContent = m.toolbar.file;
   $("btn-open").textContent = m.toolbar.open;
   $("btn-save").textContent = m.toolbar.save;
   $("btn-export").textContent = m.toolbar.exportPng;
@@ -272,6 +273,74 @@ themeBtn.addEventListener("click", () => {
 langBtn.addEventListener("click", () => {
   setLang(getLang() === "en" ? "ja" : "en");
 });
+
+// Wire the File dropdown: open/close, click-outside, and roving keyboard focus
+// across its menu items. The panel is positioned fixed (toolbar clips overflow),
+// so its coordinates are derived from the trigger each time it opens.
+setupMenu($<HTMLButtonElement>("btn-file"), $<HTMLElement>("file-menu"));
+
+function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
+  const items = (): HTMLButtonElement[] =>
+    Array.from(panel.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+  let open = false;
+
+  function setOpen(next: boolean, focusFirst = false): void {
+    if (next === open) {
+      if (next && focusFirst) items()[0]?.focus();
+      return;
+    }
+    open = next;
+    trigger.setAttribute("aria-expanded", String(next));
+    panel.hidden = !next;
+    if (next) {
+      const r = trigger.getBoundingClientRect();
+      panel.style.top = `${Math.round(r.bottom + 8)}px`;
+      panel.style.right = `${Math.round(window.innerWidth - r.right)}px`;
+      if (focusFirst) items()[0]?.focus();
+      document.addEventListener("pointerdown", onOutside, true);
+      document.addEventListener("keydown", onKey, true);
+    } else {
+      document.removeEventListener("pointerdown", onOutside, true);
+      document.removeEventListener("keydown", onKey, true);
+    }
+  }
+
+  function onOutside(e: PointerEvent): void {
+    const target = e.target as Node;
+    if (!panel.contains(target) && !trigger.contains(target)) setOpen(false);
+  }
+
+  function onKey(e: KeyboardEvent): void {
+    const list = items();
+    const i = list.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "Escape") {
+      setOpen(false);
+      trigger.focus();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      list[(i + 1) % list.length]?.focus();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      list[(i - 1 + list.length) % list.length]?.focus();
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      list[0]?.focus();
+    } else if (e.key === "End") {
+      e.preventDefault();
+      list[list.length - 1]?.focus();
+    }
+  }
+
+  trigger.addEventListener("click", () => setOpen(!open, true));
+  trigger.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setOpen(true, true);
+    }
+  });
+  // Each item runs its own action listener; close the menu once one is chosen.
+  for (const item of items()) item.addEventListener("click", () => setOpen(false));
+}
 
 onLangChange(() => {
   applyStaticI18n();
