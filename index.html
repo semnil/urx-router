@@ -63,6 +63,33 @@
               <button id="btn-export-pdf" class="menu-item" type="button" role="menuitem">Export PDF</button>
             </div>
           </div>
+          <span class="tool-sep" data-control-hide></span>
+          <div class="menu" data-control-hide>
+            <button
+              id="btn-device"
+              class="menu-trigger"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="device-menu"
+            >
+              <span id="lbl-device">Device</span>
+              <svg class="caret" viewBox="0 0 10 6" aria-hidden="true">
+                <path
+                  d="M1 1l4 4 4-4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <div id="device-menu" class="menu-panel" role="menu" aria-labelledby="btn-device" hidden>
+              <button id="btn-fetch" class="menu-item" type="button" role="menuitem">Fetch from device</button>
+              <button id="btn-write" class="menu-item" type="button" role="menuitem" disabled>Write to device</button>
+            </div>
+          </div>
           <span class="tool-sep"></span>
           <button id="btn-auto" type="button">Arrange</button>
           <button id="btn-hide-unused" type="button">Hide unused</button>

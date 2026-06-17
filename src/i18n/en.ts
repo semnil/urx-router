@@ -14,6 +14,9 @@ export const en = {
     exportPdf: "Export PDF",
     arrange: "Arrange",
     hideUnused: "Hide unused",
+    device: "Device",
+    fetchDevice: "Fetch from device",
+    writeDevice: "Write to device",
     theme: "Toggle theme",
     light: "Light",
     dark: "Dark",
@@ -36,6 +39,10 @@ export const en = {
     level: "Level",
     pan: "Pan",
     prePost: "Pre/Post",
+    channelOn: "Channel",
+    hpf: "HPF",
+    on: "ON",
+    off: "OFF",
     selectionOnly: "Selection only — no send parameters.",
     fixedConnection: "Fixed connection — always enabled, cannot be removed.",
     deleteConnection: "Delete this connection",
@@ -103,6 +110,12 @@ export const en = {
     pngExported: "PNG exported",
     pdfExported: "PDF exported",
     arranged: "Arranged to the default layout",
+    fetchConnecting: "Connecting to the device…",
+    fetchedDevice: (model: string, n: number): string =>
+      `Fetched ${n} channel${n === 1 ? "" : "s"} from ${model}`,
+    fetchPartial: (n: number, failed: number): string =>
+      `Fetched ${n}, ${failed} failed`,
+    fetchError: (message: string): string => `Device fetch failed: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",
     fixedConnection: "Fixed connection — cannot be removed",
@@ -126,6 +139,8 @@ export const en = {
   confirm: {
     discard: "You have unsaved changes. Discard them?",
     update: (version: string): string => `Version ${version} is available. Update now?`,
+    switchModel: (device: string, ui: string): string =>
+      `The connected device is ${device}, but ${ui} is selected. Switch to ${device} (replacing the current plan) and fetch?`,
   },
   filter: {
     plan: "URX Router plan",

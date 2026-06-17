@@ -369,6 +369,22 @@ button {
   outline: none;
 }
 
+/* A not-yet-available action (e.g. device write before it ships): dimmed, no
+   rail, and inert to hover/click. */
+.menu-panel .menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.menu-panel .menu-item:disabled:hover {
+  background: transparent;
+  color: var(--ctl-text);
+}
+
+.menu-panel .menu-item:disabled:hover::before {
+  height: 0;
+}
+
 .menu-sep {
   height: 1px;
   margin: 4px 6px;

@@ -4,7 +4,7 @@
 
 import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
-import type { ConnParams, Plan, PlanConnection } from "../core/plan";
+import type { ConnParams, NodeParams, Plan, PlanConnection } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
 import { rateConstraints } from "../core/constraints";
@@ -17,6 +17,7 @@ import type { Messages } from "../i18n/en";
 export interface InspectorActions {
   onDeleteConnection: (from: string, to: string) => void;
   onUpdateParams: (from: string, to: string, patch: ConnParams) => void;
+  onUpdateNodeParams: (id: string, patch: NodeParams) => void;
   onOpenRecent: (path: string) => void;
   onHideNode: (id: string) => void;
 }
@@ -77,6 +78,24 @@ export function renderInspector(
     for (const c of incoming) host.append(connRow(`${endpointLabel(c.from)} →`, c.kind));
     host.append(subheading(m.inspector.outputsTo(outgoing.length)));
     for (const c of outgoing) host.append(connRow(`→ ${endpointLabel(c.to)}`, c.kind));
+
+    // Channel node device parameters: ON (mute) and HPF. Stored per node id, so
+    // they edit plan.nodeParams rather than a wire. Defaults match the device
+    // (channel on, HPF off) until a fetch or edit sets them explicitly.
+    if (node.kind === "channel") {
+      const np = plan.nodeParams[node.id] ?? {};
+      host.append(subheading(m.inspector.parameters));
+      host.append(
+        boolToggle(m.inspector.channelOn, np.on ?? true, (v) =>
+          actions.onUpdateNodeParams(node.id, { on: v }),
+        ),
+      );
+      host.append(
+        boolToggle(m.inspector.hpf, np.hpf ?? false, (v) =>
+          actions.onUpdateNodeParams(node.id, { hpf: v }),
+        ),
+      );
+    }
 
     // Shelving is offered for a node with no editable wires; fixed STEREO wires
     // are hidden along with the node, so they do not block it (see graph.ts). A
@@ -205,6 +224,26 @@ function sliderControl(
     onUpdate(conn.from, conn.to, { [key]: v });
   });
   row.append(slider);
+  return row;
+}
+
+// A two-button ON/OFF toggle for a node-level boolean (channel on, HPF), styled
+// like the PRE/POST control. Highlights the active state and reports the chosen
+// value on click.
+function boolToggle(label: string, value: boolean, onChange: (v: boolean) => void): HTMLElement {
+  const { row } = paramBlock(label, "");
+  const group = document.createElement("div");
+  group.className = "toggle";
+  const make = (on: boolean, text: string): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    b.classList.toggle("on", value === on);
+    b.addEventListener("click", () => onChange(on));
+    return b;
+  };
+  group.append(make(true, t().inspector.on), make(false, t().inspector.off));
+  row.append(group);
   return row;
 }
 
