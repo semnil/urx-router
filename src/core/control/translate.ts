@@ -160,6 +160,40 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
   };
 }
 
+/** A CH → MIX send: the params for its level/pan/on (L/R-linked) and PRE/POST tap. */
+export interface SendControl {
+  y: number;
+  level: number[];
+  pan: number[];
+  on: number[];
+  tap: number;
+}
+
+// CH → MIX sends are laid out as 12-param stereo-bus blocks (L slot + R slot, 6
+// params each: level/pan/on at offsets 0/1/2, PRE/POST at offset 5 in the L slot
+// only). Mono channels use a block based at 146 (y = input index); stereo
+// channels a parallel block at 273 (y = stereo index). Confirmed by live scan.
+const MIX_SEND_BASE_MONO = 146;
+const MIX_SEND_BASE_STEREO = 273;
+const MIX_SEND_STRIDE = 12;
+const MIX_SEND_BUS_INDEX: Record<string, number> = { "bus.mix1": 0, "bus.mix2": 1 };
+
+/** Send params for a CH → MIX-bus pair, or null if it is not such a send. */
+export function sendControl(model: DeviceModel, channelId: string, busId: string): SendControl | null {
+  const mixIndex = MIX_SEND_BUS_INDEX[busId];
+  if (mixIndex === undefined) return null;
+  const cc = channelControl(model, channelId);
+  if (!cc) return null;
+  const base = (isStereoChannel(channelId) ? MIX_SEND_BASE_STEREO : MIX_SEND_BASE_MONO) + MIX_SEND_STRIDE * mixIndex;
+  return {
+    y: cc.y,
+    level: [base, base + 6],
+    pan: [base + 1, base + 7],
+    on: [base + 2, base + 8],
+    tap: base + 5,
+  };
+}
+
 /** A bus output fader: which param and the linked instances it writes. */
 export interface BusFader {
   name: ParamName;
@@ -200,6 +234,18 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       out.push(rawCommand("CH_FADER", cc.fader, "level", cc.y, conn.params?.level ?? 0));
       out.push(rawCommand("CH_PAN", cc.pan, "pan", cc.y, conn.params?.pan ?? 0));
     }
+  }
+
+  // CH → MIX bus sends. The wire's presence means the send is on; its params
+  // carry level / pan / PRE-POST tap. Level/pan/on are written to both L/R
+  // instances (the device keeps them linked); the tap is a single param.
+  for (const conn of plan.connections) {
+    const sc = sendControl(model, parseRef(conn.from).nodeId, parseRef(conn.to).nodeId);
+    if (!sc) continue;
+    for (const p of sc.level) out.push(rawCommand("MIX_SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
+    for (const p of sc.pan) out.push(rawCommand("MIX_SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
+    for (const p of sc.on) out.push(rawCommand("MIX_SEND_ON", p, "bool", sc.y, 1));
+    out.push(rawCommand("MIX_SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
   }
 
   // Channel node parameters: ON / HPF / gain.
