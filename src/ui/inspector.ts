@@ -7,7 +7,8 @@ import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, NodeParams, Plan, PlanConnection } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
-import { HA_GAIN_MAX_DB, HA_GAIN_MIN_DB } from "../core/control/vd";
+import { channelControl, isStereoChannel } from "../core/control/translate";
+import { MONITOR_MAX_DB, MONITOR_MIN_DB, MONITOR_OFF_DB } from "../core/control/vd";
 import { rateConstraints } from "../core/constraints";
 import type { RateWarning } from "../core/constraints";
 import type { RecentEntry } from "../core/storage";
@@ -89,25 +90,31 @@ export function renderInspector(
     // (channel on, HPF off) until a fetch or edit sets them explicitly.
     if (node.kind === "channel") {
       const np = plan.nodeParams[node.id] ?? {};
+      const cc = channelControl(model, node.id);
       host.append(subheading(m.inspector.parameters));
-      // Mono channels (ch1..) carry an analog preamp → "A.Gain"; stereo channels
-      // (ch_a_b) are digital → "D.Gain", matching the device's own labels.
-      const gainLabel = /^ch\d+$/.test(node.id) ? m.inspector.gainAnalog : m.inspector.gainDigital;
-      host.append(
-        gainControl(gainLabel, np.gain ?? HA_GAIN_DEFAULT_DB, (v) =>
-          actions.onUpdateNodeParams(node.id, { gain: v }),
-        ),
-      );
+      // Gain label / range come from the channel descriptor: mono = A.Gain
+      // (-8..+70), stereo = D.Gain (-24..+24), matching the device's own labels.
+      if (cc?.gain) {
+        const gainLabel = cc.gain.analog ? m.inspector.gainAnalog : m.inspector.gainDigital;
+        host.append(
+          gainControl(gainLabel, cc.gain.minDb, cc.gain.maxDb, np.gain ?? HA_GAIN_DEFAULT_DB, (v) =>
+            actions.onUpdateNodeParams(node.id, { gain: v }),
+          ),
+        );
+      }
       host.append(
         boolToggle(m.inspector.channelOn, np.on ?? true, (v) =>
           actions.onUpdateNodeParams(node.id, { on: v }),
         ),
       );
-      host.append(
-        boolToggle(m.inspector.hpf, np.hpf ?? false, (v) =>
-          actions.onUpdateNodeParams(node.id, { hpf: v }),
-        ),
-      );
+      // HPF exists only on the analog (mono) channels.
+      if (cc?.hasHpf) {
+        host.append(
+          boolToggle(m.inspector.hpf, np.hpf ?? false, (v) =>
+            actions.onUpdateNodeParams(node.id, { hpf: v }),
+          ),
+        );
+      }
     }
 
     // STEREO bus master ON/OFF (reuses nodeParams.on; translate resolves it to
@@ -119,6 +126,15 @@ export function renderInspector(
         boolToggle(m.inspector.master, np.on ?? true, (v) =>
           actions.onUpdateNodeParams(node.id, { on: v }),
         ),
+      );
+    }
+
+    // Monitor bus level (MONITOR_LEVEL). Reuses nodeParams.level.
+    if (node.id === "bus.mon1" || node.id === "bus.mon2") {
+      const np = plan.nodeParams[node.id] ?? {};
+      host.append(subheading(m.inspector.parameters));
+      host.append(
+        monitorLevelControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
       );
     }
 
@@ -153,7 +169,9 @@ export function renderInspector(
     const fields = PARAM_FIELDS[conn.kind].filter((f) => f !== "tap" || sendHasTap(model, from, to));
     if (fields.length) {
       host.append(subheading(m.inspector.parameters));
-      for (const f of fields) host.append(paramControl(f, conn, actions.onUpdateParams));
+      // A stereo channel's "pan" is a balance; label it BALANCE to match the device.
+      const panLabel = isStereoChannel(parseRef(from).nodeId) ? m.inspector.balance : m.inspector.pan;
+      for (const f of fields) host.append(paramControl(f, conn, actions.onUpdateParams, panLabel));
     } else {
       host.append(hint(m.inspector.selectionOnly));
     }
@@ -217,11 +235,44 @@ function field(label: string, value: string): HTMLElement {
 
 type UpdateParams = (from: string, to: string, patch: ConnParams) => void;
 
-function paramControl(field: ParamField, conn: PlanConnection, onUpdate: UpdateParams): HTMLElement {
+function paramControl(
+  field: ParamField,
+  conn: PlanConnection,
+  onUpdate: UpdateParams,
+  panLabel: string,
+): HTMLElement {
   if (field === "tap") return tapControl(conn, onUpdate);
   return field === "level"
     ? sliderControl(conn, onUpdate, "level", t().inspector.level, LEVEL_MIN, LEVEL_MAX, 0.5, 0, formatDb)
-    : sliderControl(conn, onUpdate, "pan", t().inspector.pan, -100, 100, 1, 0, formatPan);
+    : sliderControl(conn, onUpdate, "pan", panLabel, -100, 100, 1, 0, formatPan);
+}
+
+// A labeled range slider that updates its value readout and reports the numeric
+// value on every input. Mutates in place (no re-render) so it keeps focus while
+// dragging. Shared by the connection (sliderControl) and node-level controls.
+function rangeSlider(
+  label: string,
+  min: number,
+  max: number,
+  step: number,
+  cur: number,
+  fmt: (v: number) => string,
+  onInput: (v: number) => void,
+): HTMLElement {
+  const { row, value } = paramBlock(label, fmt(cur));
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = String(min);
+  slider.max = String(max);
+  slider.step = String(step);
+  slider.value = String(cur);
+  slider.addEventListener("input", () => {
+    const v = Number(slider.value);
+    value.textContent = fmt(v);
+    onInput(v);
+  });
+  row.append(slider);
+  return row;
 }
 
 function sliderControl(
@@ -235,45 +286,34 @@ function sliderControl(
   fallback: number,
   fmt: (v: number) => string,
 ): HTMLElement {
-  const cur = conn.params?.[key] ?? fallback;
-  const { row, value } = paramBlock(label, fmt(cur));
-  const slider = document.createElement("input");
-  slider.type = "range";
-  slider.min = String(min);
-  slider.max = String(max);
-  slider.step = String(step);
-  slider.value = String(cur);
-  slider.addEventListener("input", () => {
-    const v = Number(slider.value);
-    value.textContent = fmt(v);
-    onUpdate(conn.from, conn.to, { [key]: v });
-  });
-  row.append(slider);
-  return row;
+  return rangeSlider(label, min, max, step, conn.params?.[key] ?? fallback, fmt, (v) =>
+    onUpdate(conn.from, conn.to, { [key]: v }),
+  );
 }
 
-// A slider for a node-level dB value (HA gain). Mutates in place: the value
-// label updates on input and the caller persists without a re-render, so the
-// slider keeps focus while dragging (see onUpdateNodeParams in main.ts).
-function gainControl(label: string, cur: number, onChange: (v: number) => void): HTMLElement {
-  const { row, value } = paramBlock(label, formatGainDb(cur));
-  const slider = document.createElement("input");
-  slider.type = "range";
-  slider.min = String(HA_GAIN_MIN_DB);
-  slider.max = String(HA_GAIN_MAX_DB);
-  slider.step = "1";
-  slider.value = String(cur);
-  slider.addEventListener("input", () => {
-    const v = Number(slider.value);
-    value.textContent = formatGainDb(v);
-    onChange(v);
-  });
-  row.append(slider);
-  return row;
+// Node-level gain slider (HA / D.Gain): integer dB steps over the given range.
+function gainControl(
+  label: string,
+  min: number,
+  max: number,
+  cur: number,
+  onChange: (v: number) => void,
+): HTMLElement {
+  return rangeSlider(label, min, max, 1, cur, formatGainDb, onChange);
 }
 
 function formatGainDb(v: number): string {
   return `${v > 0 ? "+" : ""}${v} dB`;
+}
+
+// Monitor level slider: -∞ then -96.0 … +10.0 dB. The bottom notch
+// (MONITOR_OFF_DB, just under -96) is the off position.
+function monitorLevelControl(cur: number, onChange: (v: number) => void): HTMLElement {
+  return rangeSlider(t().inspector.level, MONITOR_OFF_DB, MONITOR_MAX_DB, 0.5, cur, formatMonitorDb, onChange);
+}
+
+function formatMonitorDb(v: number): string {
+  return v < MONITOR_MIN_DB ? "-∞ dB" : `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
 }
 
 // A two-button ON/OFF toggle for a node-level boolean (channel on, HPF), styled

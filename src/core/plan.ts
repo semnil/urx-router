@@ -26,6 +26,8 @@ export interface NodeParams {
   hpf?: boolean;
   /** HA_GAIN: head-amp input gain in dB (-16 … +70). Absent = device default. */
   gain?: number;
+  /** A node-level fader in dB (e.g. monitor level). Absent = device default. */
+  level?: number;
 }
 
 export interface PlanConnection {

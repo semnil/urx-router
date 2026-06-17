@@ -21,10 +21,20 @@ export const VD_LEVEL_MAX = 1000;
 /** Pan extent on the device: ±63 (full L … full R). */
 export const VD_PAN_MAX = 63;
 
-// Head-amp (HA) gain range from the ha_gain table: -16 … +70 dB, encoded as
-// centi-dB like level but with its own bounds and no -∞ sentinel.
-export const HA_GAIN_MIN_DB = -16;
-export const HA_GAIN_MAX_DB = 70;
+// HA gain is one param (id 1) but its usable range depends on the input type:
+// analog preamp channels (A.Gain) run -8 … +70 dB, digital channels (D.Gain)
+// -24 … +24 dB. Encoded as centi-dB like level but with no -∞ sentinel.
+export const A_GAIN_MIN_DB = -8;
+export const A_GAIN_MAX_DB = 70;
+export const D_GAIN_MIN_DB = -24;
+export const D_GAIN_MAX_DB = 24;
+
+// Monitor level uses the level_gain table down to -96 dB (lower floor than the
+// channel fader): -∞ then -96.0 … +10.0 dB. The slider's bottom notch
+// (MONITOR_OFF_DB, just under -96) is the -∞ / off position.
+export const MONITOR_MIN_DB = -96;
+export const MONITOR_MAX_DB = 10;
+export const MONITOR_OFF_DB = -96.5;
 
 /** Plan pan range, matching the inspector slider (-100 … +100). */
 export const PAN_MIN = -100;
@@ -61,14 +71,31 @@ export function vdToPan(value: number): number {
   return clamp(Math.round((value / VD_PAN_MAX) * PAN_MAX), PAN_MIN, PAN_MAX);
 }
 
-/** Plan HA gain dB → broker centi-dB (no -∞; clamped to the HA range). */
+// HA gain converters clamp to the union of the analog/digital ranges; the UI
+// slider enforces the tighter per-type bounds.
+const GAIN_MIN_DB = D_GAIN_MIN_DB; // -24, the lower of the two
+const GAIN_MAX_DB = A_GAIN_MAX_DB; // +70, the higher of the two
+
+/** Plan HA gain dB → broker centi-dB (no -∞). */
 export function gainToVd(db: number): number {
-  return clamp(Math.round(db * 100), HA_GAIN_MIN_DB * 100, HA_GAIN_MAX_DB * 100);
+  return clamp(Math.round(db * 100), GAIN_MIN_DB * 100, GAIN_MAX_DB * 100);
 }
 
 /** Broker centi-dB → plan HA gain dB. */
 export function vdToGain(value: number): number {
-  return clamp(Math.round(value / 100), HA_GAIN_MIN_DB, HA_GAIN_MAX_DB);
+  return clamp(Math.round(value / 100), GAIN_MIN_DB, GAIN_MAX_DB);
+}
+
+/** Plan monitor dB → broker centi-dB. Below -96 dB is the -∞ (off) sentinel. */
+export function monitorLevelToVd(db: number): number {
+  if (db < MONITOR_MIN_DB) return VD_LEVEL_OFF;
+  return clamp(Math.round(db * 100), MONITOR_MIN_DB * 100, VD_LEVEL_MAX);
+}
+
+/** Broker centi-dB → plan monitor dB. The off sentinel maps to the slider floor. */
+export function vdToMonitorLevel(value: number): number {
+  if (value <= VD_LEVEL_OFF) return MONITOR_OFF_DB;
+  return clamp(value / 100, MONITOR_MIN_DB, MONITOR_MAX_DB);
 }
 
 /** On/off → broker 0/1. */

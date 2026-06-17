@@ -1,19 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../plan";
 import {
-  HA_GAIN_MAX_DB,
-  HA_GAIN_MIN_DB,
+  A_GAIN_MAX_DB,
+  D_GAIN_MIN_DB,
+  MONITOR_MIN_DB,
+  MONITOR_OFF_DB,
   VD_LEVEL_MAX,
   VD_LEVEL_OFF,
   VD_PAN_MAX,
   boolToVd,
   gainToVd,
   levelToVd,
+  monitorLevelToVd,
   panToVd,
   vdAddr,
   vdSet,
   vdToGain,
   vdToLevel,
+  vdToMonitorLevel,
   vdToPan,
 } from "./vd";
 
@@ -60,20 +64,40 @@ describe("pan encoding", () => {
 });
 
 describe("HA gain encoding", () => {
-  it("maps dB to centi-dB within the HA range", () => {
+  it("maps dB to centi-dB", () => {
     expect(gainToVd(0)).toBe(0);
     expect(gainToVd(-8)).toBe(-800);
-    expect(gainToVd(70)).toBe(7000);
+    expect(gainToVd(70)).toBe(7000); // A.Gain max
+    expect(gainToVd(-24)).toBe(-2400); // D.Gain min
   });
 
-  it("clamps to the HA bounds", () => {
-    expect(gainToVd(HA_GAIN_MIN_DB - 10)).toBe(HA_GAIN_MIN_DB * 100);
-    expect(gainToVd(HA_GAIN_MAX_DB + 10)).toBe(HA_GAIN_MAX_DB * 100);
+  it("clamps to the union of the analog/digital ranges", () => {
+    expect(gainToVd(D_GAIN_MIN_DB - 10)).toBe(D_GAIN_MIN_DB * 100);
+    expect(gainToVd(A_GAIN_MAX_DB + 10)).toBe(A_GAIN_MAX_DB * 100);
   });
 
   it("round-trips through vdToGain", () => {
     expect(vdToGain(gainToVd(-8))).toBe(-8);
     expect(vdToGain(2400)).toBe(24);
+  });
+});
+
+describe("monitor level encoding", () => {
+  it("maps dB to centi-dB down to the -96 floor", () => {
+    expect(monitorLevelToVd(0)).toBe(0);
+    expect(monitorLevelToVd(MONITOR_MIN_DB)).toBe(MONITOR_MIN_DB * 100); // -9600
+    expect(monitorLevelToVd(10)).toBe(VD_LEVEL_MAX);
+  });
+
+  it("treats below -96 as the off sentinel", () => {
+    expect(monitorLevelToVd(MONITOR_OFF_DB)).toBe(VD_LEVEL_OFF);
+    expect(monitorLevelToVd(-200)).toBe(VD_LEVEL_OFF);
+  });
+
+  it("decodes the off sentinel to the slider floor", () => {
+    expect(vdToMonitorLevel(VD_LEVEL_OFF)).toBe(MONITOR_OFF_DB);
+    expect(vdToMonitorLevel(-9600)).toBe(MONITOR_MIN_DB);
+    expect(vdToMonitorLevel(0)).toBe(0);
   });
 });
 

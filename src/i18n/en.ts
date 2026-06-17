@@ -38,6 +38,7 @@ export const en = {
     parameters: "Parameters",
     level: "Level",
     pan: "Pan",
+    balance: "Balance",
     prePost: "Pre/Post",
     channelOn: "Channel",
     hpf: "HPF",

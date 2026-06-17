@@ -6,12 +6,12 @@
 
 import type { DeviceModel } from "../../models/types";
 import { ref } from "../../models/types";
-import type { Plan } from "../plan";
+import type { NodeParams, Plan } from "../plan";
 import { ensureFixedConnections } from "../plan";
 import { vdGet } from "../platform";
 import { PARAMS } from "./params";
-import { channelInputIndex } from "./translate";
-import { vdToBool, vdToGain, vdToLevel, vdToPan } from "./vd";
+import { channelControl } from "./translate";
+import { vdToBool, vdToGain, vdToLevel, vdToMonitorLevel, vdToPan } from "./vd";
 
 export interface ReadbackResult {
   /** Channels whose level/pan were updated from the device. */
@@ -33,20 +33,23 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
 
   for (const node of model.nodes) {
     if (node.kind !== "channel") continue;
-    const y = channelInputIndex(node.id);
-    if (y === null) continue;
+    // Mono → 139/140/141 at input index; stereo → 266/267/268 at stereo index.
+    const cc = channelControl(model, node.id);
+    if (!cc) continue;
     const conn = plan.connections.find(
       (c) => c.from === ref(node.id, "out") && c.to === ref("bus.stereo", "in"),
     );
     if (!conn) continue;
     try {
-      const level = vdToLevel(await vdGet(PARAMS.CH_FADER.id, 0, y));
-      const pan = vdToPan(await vdGet(PARAMS.CH_PAN.id, 0, y));
-      const on = vdToBool(await vdGet(PARAMS.CH_ON.id, 0, y));
-      const hpf = vdToBool(await vdGet(PARAMS.HPF_ON.id, 0, y));
-      const gain = vdToGain(await vdGet(PARAMS.HA_GAIN.id, 0, y));
+      const level = vdToLevel(await vdGet(cc.fader, 0, cc.y));
+      const pan = vdToPan(await vdGet(cc.pan, 0, cc.y));
+      const on = vdToBool(await vdGet(cc.on, 0, cc.y));
+      const update: NodeParams = { on };
+      // Gain: A.Gain (mono) / D.Gain (stereo, linked L/R — read the first instance).
+      if (cc.gain) update.gain = vdToGain(await vdGet(cc.gain.param, 0, cc.gain.instances[0]));
+      if (cc.hasHpf) update.hpf = vdToBool(await vdGet(PARAMS.HPF_ON.id, 0, cc.y));
       conn.params = { ...conn.params, level, pan };
-      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], on, hpf, gain };
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...update };
       applied++;
     } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
@@ -59,6 +62,16 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     plan.nodeParams["bus.stereo"] = { ...plan.nodeParams["bus.stereo"], on: masterOn };
   } catch (e) {
     errors.push(`STEREO: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // Monitor bus levels: bus.mon1 → y0, bus.mon2 → y1.
+  for (const [id, y] of [["bus.mon1", 0], ["bus.mon2", 1]] as const) {
+    try {
+      const level = vdToMonitorLevel(await vdGet(PARAMS.MONITOR_LEVEL.id, 0, y));
+      plan.nodeParams[id] = { ...plan.nodeParams[id], level };
+    } catch (e) {
+      errors.push(`${id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
   return { applied, errors };
 }

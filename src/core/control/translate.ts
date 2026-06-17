@@ -13,22 +13,20 @@ import { parseRef } from "../../models/types";
 import type { Plan } from "../plan";
 import { isFixedConnection } from "../routing";
 import type { ParamName, ParamSpec } from "./params";
-import { PARAMS } from "./params";
-import { boolToVd, gainToVd, levelToVd, panToVd, vdSet } from "./vd";
+import { D_GAIN_PARAM, PARAMS, STEREO_FADER, STEREO_ON, STEREO_PAN } from "./params";
+import {
+  A_GAIN_MIN_DB,
+  A_GAIN_MAX_DB,
+  boolToVd,
+  D_GAIN_MIN_DB,
+  D_GAIN_MAX_DB,
+  gainToVd,
+  levelToVd,
+  monitorLevelToVd,
+  panToVd,
+  vdSet,
+} from "./vd";
 import type { VdSetRequest } from "./vd";
-
-/**
- * Input-channel y index for a channel node, or null if it is not an input
- * channel. Mono channels "ch{n}" map to y = n-1; a stereo channel "ch_{a}_{b}"
- * maps to the L index of its pair (y = a-1). Matches the broker's input axis 0..11.
- */
-export function channelInputIndex(nodeId: string): number | null {
-  const mono = /^ch(\d+)$/.exec(nodeId);
-  if (mono) return Number(mono[1]) - 1;
-  const stereo = /^ch_(\d+)_\d+$/.exec(nodeId);
-  if (stereo) return Number(stereo[1]) - 1;
-  return null;
-}
 
 export interface VdCommand {
   /** Catalog parameter this command sets. */
@@ -46,12 +44,14 @@ export interface VdCommand {
   request: VdSetRequest;
 }
 
-function encode(spec: ParamSpec, planValue: number): number {
-  switch (spec.encoding) {
+function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number {
+  switch (encoding) {
     case "level":
       return levelToVd(planValue);
     case "gain":
       return gainToVd(planValue);
+    case "monitor":
+      return monitorLevelToVd(planValue);
     case "pan":
       return panToVd(planValue);
     case "bool":
@@ -59,11 +59,97 @@ function encode(spec: ParamSpec, planValue: number): number {
   }
 }
 
+// Build a command for an explicit param id (used where the id is not a fixed
+// registry entry: the stereo-channel block and the per-channel D.Gain).
+function rawCommand(
+  name: ParamName,
+  paramId: number,
+  encoding: ParamSpec["encoding"],
+  y: number,
+  planValue: number,
+): VdCommand {
+  const vdValue = encodeValue(encoding, planValue);
+  return { name, paramId, x: 0, y, planValue, vdValue, request: vdSet(paramId, y, vdValue) };
+}
+
 function command(name: ParamName, y: number, planValue: number): VdCommand {
   const spec = PARAMS[name];
-  const vdValue = encode(spec, planValue);
-  const x = 0;
-  return { name, paramId: spec.id, x, y, planValue, vdValue, request: vdSet(spec.id, y, vdValue, x) };
+  return rawCommand(name, spec.id, spec.encoding, y, planValue);
+}
+
+/** True for a stereo mixer-channel node id (e.g. "ch_5_6"). */
+export function isStereoChannel(nodeId: string): boolean {
+  return /^ch_\d+_\d+$/.test(nodeId);
+}
+
+/** Input gain for a channel: which param, the linked instances, range, and whether it is the analog A.Gain. */
+export interface ChannelGain {
+  param: number;
+  instances: number[];
+  minDb: number;
+  maxDb: number;
+  analog: boolean;
+}
+
+export interface ChannelControl {
+  fader: number;
+  on: number;
+  pan: number;
+  y: number;
+  hasHpf: boolean;
+  gain: ChannelGain | null;
+}
+
+// Stereo channels are indexed by their position among the model's stereo
+// channels (which shifts with the mono count). The map is built once per model.
+const stereoIndexCache = new WeakMap<DeviceModel, Map<string, number>>();
+function stereoIndexMap(model: DeviceModel): Map<string, number> {
+  let map = stereoIndexCache.get(model);
+  if (!map) {
+    map = new Map();
+    let i = 0;
+    for (const n of model.nodes) if (n.kind === "channel" && isStereoChannel(n.id)) map.set(n.id, i++);
+    stereoIndexCache.set(model, map);
+  }
+  return map;
+}
+
+/**
+ * Resolve everything live control needs for a channel node, in one place:
+ * fader / ON / pan device params + instance index, whether it has an HPF, and
+ * its gain (param, linked instances, range, A.Gain vs D.Gain). Mono channels use
+ * 139/140/141/25 at the input index with the analog A.Gain (param 1); stereo
+ * channels use the separate 266/267/268 block at the stereo index, the digital
+ * D.Gain written to both L/R instances, and no HPF. Null for non-channels.
+ */
+export function channelControl(model: DeviceModel, nodeId: string): ChannelControl | null {
+  if (isStereoChannel(nodeId)) {
+    const si = stereoIndexMap(model).get(nodeId);
+    if (si === undefined) return null;
+    const dParam = D_GAIN_PARAM[nodeId];
+    return {
+      fader: STEREO_FADER,
+      on: STEREO_ON,
+      pan: STEREO_PAN,
+      y: si,
+      hasHpf: false,
+      gain:
+        dParam === undefined
+          ? null
+          : { param: dParam, instances: [0, 1], minDb: D_GAIN_MIN_DB, maxDb: D_GAIN_MAX_DB, analog: false },
+    };
+  }
+  const mono = /^ch(\d+)$/.exec(nodeId);
+  if (!mono) return null;
+  const y = Number(mono[1]) - 1;
+  return {
+    fader: PARAMS.CH_FADER.id,
+    on: PARAMS.CH_ON.id,
+    pan: PARAMS.CH_PAN.id,
+    y,
+    hasHpf: true,
+    gain: { param: PARAMS.HA_GAIN.id, instances: [y], minDb: A_GAIN_MIN_DB, maxDb: A_GAIN_MAX_DB, analog: true },
+  };
 }
 
 /**
@@ -77,27 +163,36 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     // Channel main fader / pan: the fixed CH → STEREO send carries the channel's
     // level and pan, which are the CH_FADER / CH_PAN device parameters.
     if (parseRef(conn.to).nodeId === "bus.stereo" && isFixedConnection(model, conn.from, conn.to)) {
-      const y = channelInputIndex(parseRef(conn.from).nodeId);
-      if (y === null) continue;
-      out.push(command("CH_FADER", y, conn.params?.level ?? 0));
-      out.push(command("CH_PAN", y, conn.params?.pan ?? 0));
+      const cc = channelControl(model, parseRef(conn.from).nodeId);
+      if (!cc) continue;
+      out.push(rawCommand("CH_FADER", cc.fader, "level", cc.y, conn.params?.level ?? 0));
+      out.push(rawCommand("CH_PAN", cc.pan, "pan", cc.y, conn.params?.pan ?? 0));
     }
   }
 
-  // Channel node parameters: CH_ON / HPF_ON, set per input channel when present.
+  // Channel node parameters: ON / HPF / gain.
   for (const node of model.nodes) {
     if (node.kind !== "channel") continue;
     const np = plan.nodeParams[node.id];
     if (!np) continue;
-    const y = channelInputIndex(node.id);
-    if (y === null) continue;
-    if (np.on !== undefined) out.push(command("CH_ON", y, np.on ? 1 : 0));
-    if (np.hpf !== undefined) out.push(command("HPF_ON", y, np.hpf ? 1 : 0));
-    if (np.gain !== undefined) out.push(command("HA_GAIN", y, np.gain));
+    const cc = channelControl(model, node.id);
+    if (!cc) continue;
+    if (np.on !== undefined) out.push(rawCommand("CH_ON", cc.on, "bool", cc.y, np.on ? 1 : 0));
+    if (cc.hasHpf && np.hpf !== undefined) out.push(command("HPF_ON", cc.y, np.hpf ? 1 : 0));
+    if (cc.gain && np.gain !== undefined) {
+      // A.Gain (mono) is one instance; D.Gain (stereo) writes both linked L/R.
+      for (const yi of cc.gain.instances) out.push(rawCommand("HA_GAIN", cc.gain.param, "gain", yi, np.gain));
+    }
   }
 
   // STEREO bus master ON/OFF (global, y = 0).
   const stereo = plan.nodeParams["bus.stereo"];
   if (stereo?.on !== undefined) out.push(command("STEREO_MASTER_ON", 0, stereo.on ? 1 : 0));
+
+  // Monitor bus levels: bus.mon1 → y0, bus.mon2 → y1.
+  for (const [id, y] of [["bus.mon1", 0], ["bus.mon2", 1]] as const) {
+    const np = plan.nodeParams[id];
+    if (np?.level !== undefined) out.push(command("MONITOR_LEVEL", y, np.level));
+  }
   return out;
 }

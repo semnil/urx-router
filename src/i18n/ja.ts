@@ -37,6 +37,7 @@ export const ja: Messages = {
     parameters: "パラメータ",
     level: "レベル",
     pan: "パン",
+    balance: "バランス",
     prePost: "PRE/POST",
     channelOn: "チャンネル",
     hpf: "HPF",
