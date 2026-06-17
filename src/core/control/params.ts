@@ -42,6 +42,17 @@ export const PARAMS = {
   HA_GAIN: { id: 1, axis: "input", encoding: "gain" },
   /** Output (mix) fader level. */
   OUT_FADER: { id: 674, axis: "output", encoding: "level" },
+  // CH → MIX bus send. Each send spans an L/R instance pair (the actual ids are
+  // computed per channel/bus in translate.ts); these anchors are the MIX1 mono
+  // slot and only name the command + encoding.
+  /** CH → MIX send level (L/R-linked). */
+  MIX_SEND_LEVEL: { id: 146, axis: "input", encoding: "level" },
+  /** CH → MIX send pan (L/R-linked). */
+  MIX_SEND_PAN: { id: 147, axis: "input", encoding: "pan" },
+  /** CH → MIX send ON (L/R-linked). */
+  MIX_SEND_ON: { id: 148, axis: "input", encoding: "bool" },
+  /** CH → MIX send PRE/POST tap (single; 1 = PRE). */
+  MIX_SEND_TAP: { id: 151, axis: "input", encoding: "bool" },
   /** Output (mix) EQ ON. */
   OUT_EQ_ON: { id: 591, axis: "output", encoding: "bool" },
   /** Monitor level (y = monitor 0..3). Wider -96 dB floor than the fader. */
