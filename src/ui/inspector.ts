@@ -8,7 +8,15 @@ import type { ConnParams, NodeParams, Plan, PlanConnection } from "../core/plan"
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
 import { channelControl, isStereoChannel } from "../core/control/translate";
-import { MONITOR_MAX_DB, MONITOR_MIN_DB, MONITOR_OFF_DB } from "../core/control/vd";
+import {
+  HPF_FREQ_DEFAULT_HZ,
+  HPF_FREQ_MAX_HZ,
+  HPF_FREQ_MIN_HZ,
+  HPF_FREQ_STEP_HZ,
+  MONITOR_MAX_DB,
+  MONITOR_MIN_DB,
+  MONITOR_OFF_DB,
+} from "../core/control/vd";
 import { rateConstraints } from "../core/constraints";
 import type { RateWarning } from "../core/constraints";
 import type { RecentEntry } from "../core/storage";
@@ -119,6 +127,17 @@ export function renderInspector(
         host.append(
           boolToggle(m.inspector.hpf, np.hpf ?? false, (v) =>
             actions.onUpdateNodeParams(node.id, { hpf: v }),
+          ),
+        );
+        host.append(
+          rangeSlider(
+            m.inspector.hpfFreq,
+            HPF_FREQ_MIN_HZ,
+            HPF_FREQ_MAX_HZ,
+            HPF_FREQ_STEP_HZ,
+            np.hpfFreq ?? HPF_FREQ_DEFAULT_HZ,
+            (v) => `${v} Hz`,
+            (v) => actions.onUpdateNodeParams(node.id, { hpfFreq: v }),
           ),
         );
       }

@@ -14,7 +14,7 @@
 export type ParamAxis = "input" | "output" | "global";
 
 /** Value encoding, mapping to the converters in vd.ts. */
-export type ParamEncoding = "level" | "gain" | "monitor" | "pan" | "bool";
+export type ParamEncoding = "level" | "gain" | "monitor" | "pan" | "bool" | "freq";
 
 export interface ParamSpec {
   /** Broker param_id (first field of the "{id}:{x}:{y}" address). */
@@ -34,6 +34,8 @@ export const PARAMS = {
   CH_PAN: { id: 141, axis: "input", encoding: "pan" },
   /** Input channel HPF ON. */
   HPF_ON: { id: 25, axis: "input", encoding: "bool" },
+  /** Input channel HPF cutoff frequency (40 … 120 Hz). Confirmed by live scan. */
+  HPF_FREQ: { id: 26, axis: "input", encoding: "freq" },
   /** Input channel +48V phantom power (analog mic channels). Confirmed by live scan. */
   PHANTOM: { id: 0, axis: "input", encoding: "bool" },
   /** Input channel head-amp (HA) gain (-16 … +70 dB). */

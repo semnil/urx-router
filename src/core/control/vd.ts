@@ -40,6 +40,14 @@ export const MONITOR_OFF_DB = -96.5;
 export const PAN_MIN = -100;
 export const PAN_MAX = 100;
 
+// HPF cutoff frequency (param 26): broker value is Hz×10 (the 0.1 Hz unit shared
+// with EQ frequency). Range 40 … 120 Hz, default 80 Hz, 20 Hz steps — i.e. the
+// five detents 40/60/80/100/120 Hz (confirmed by live scan: broker 400 … 1200).
+export const HPF_FREQ_MIN_HZ = 40;
+export const HPF_FREQ_MAX_HZ = 120;
+export const HPF_FREQ_STEP_HZ = 20;
+export const HPF_FREQ_DEFAULT_HZ = 80;
+
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
@@ -96,6 +104,16 @@ export function monitorLevelToVd(db: number): number {
 export function vdToMonitorLevel(value: number): number {
   if (value <= VD_LEVEL_OFF) return MONITOR_OFF_DB;
   return clamp(value / 100, MONITOR_MIN_DB, MONITOR_MAX_DB);
+}
+
+/** Plan HPF frequency (Hz) → broker 0.1 Hz units. */
+export function freqToVd(hz: number): number {
+  return clamp(Math.round(hz * 10), HPF_FREQ_MIN_HZ * 10, HPF_FREQ_MAX_HZ * 10);
+}
+
+/** Broker 0.1 Hz units → plan HPF frequency (Hz). */
+export function vdToFreq(value: number): number {
+  return clamp(Math.round(value / 10), HPF_FREQ_MIN_HZ, HPF_FREQ_MAX_HZ);
 }
 
 /** On/off → broker 0/1. */
