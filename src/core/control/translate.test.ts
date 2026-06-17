@@ -86,6 +86,19 @@ describe("planToCommands", () => {
     expect(on!.vdValue).toBe(0);
   });
 
+  it("encodes HPF frequency in 0.1 Hz units on mono channels", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { hpfFreq: 120 };
+    plan.nodeParams.ch_5_6 = { hpfFreq: 120 };
+    const cmds = planToCommands(model, plan);
+    const freq = cmds.find((c) => c.name === "HPF_FREQ");
+    // 120 Hz = broker 1200 at param 26:0:0; stereo channels have no HPF.
+    expect(freq!.vdValue).toBe(1200);
+    expect(freq!.request.uri).toBe("/vd/parameters/26:0:0?operation=value");
+    expect(cmds.filter((c) => c.name === "HPF_FREQ")).toHaveLength(1);
+  });
+
   it("omits HPF on stereo channels", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

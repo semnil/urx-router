@@ -20,6 +20,7 @@ import {
   boolToVd,
   D_GAIN_MIN_DB,
   D_GAIN_MAX_DB,
+  freqToVd,
   gainToVd,
   levelToVd,
   monitorLevelToVd,
@@ -54,6 +55,8 @@ function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number
       return monitorLevelToVd(planValue);
     case "pan":
       return panToVd(planValue);
+    case "freq":
+      return freqToVd(planValue);
     case "bool":
       return boolToVd(planValue !== 0);
   }
@@ -184,6 +187,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (!cc) continue;
     if (np.on !== undefined) out.push(rawCommand("CH_ON", cc.on, "bool", cc.y, np.on ? 1 : 0));
     if (cc.hasHpf && np.hpf !== undefined) out.push(command("HPF_ON", cc.y, np.hpf ? 1 : 0));
+    if (cc.hasHpf && np.hpfFreq !== undefined) out.push(command("HPF_FREQ", cc.y, np.hpfFreq));
     if (cc.hasPhantom && np.phantom !== undefined) out.push(command("PHANTOM", cc.y, np.phantom ? 1 : 0));
     if (cc.gain && np.gain !== undefined) {
       // A.Gain (mono) is one instance; D.Gain (stereo) writes both linked L/R.
