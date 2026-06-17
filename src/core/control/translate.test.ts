@@ -67,6 +67,16 @@ describe("planToCommands", () => {
     expect(gain!.request.uri).toBe("/vd/parameters/1:0:0?operation=value");
   });
 
+  it("emits STEREO_MASTER_ON from the stereo bus node param", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams["bus.stereo"] = { on: false };
+    const cmds = planToCommands(model, plan);
+    const master = cmds.find((c) => c.name === "STEREO_MASTER_ON");
+    expect(master!.vdValue).toBe(0);
+    expect(master!.request.uri).toBe("/vd/parameters/582:0:0?operation=value");
+  });
+
   it("omits node-param commands when none are set", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

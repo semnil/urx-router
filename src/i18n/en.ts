@@ -43,6 +43,7 @@ export const en = {
     hpf: "HPF",
     gainAnalog: "A.Gain",
     gainDigital: "D.Gain",
+    master: "Master",
     on: "ON",
     off: "OFF",
     selectionOnly: "Selection only — no send parameters.",

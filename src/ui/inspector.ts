@@ -110,6 +110,18 @@ export function renderInspector(
       );
     }
 
+    // STEREO bus master ON/OFF (reuses nodeParams.on; translate resolves it to
+    // STEREO_MASTER_ON for this node rather than a channel's CH_ON).
+    if (node.id === "bus.stereo") {
+      const np = plan.nodeParams[node.id] ?? {};
+      host.append(subheading(m.inspector.parameters));
+      host.append(
+        boolToggle(m.inspector.master, np.on ?? true, (v) =>
+          actions.onUpdateNodeParams(node.id, { on: v }),
+        ),
+      );
+    }
+
     // Shelving is offered for a node with no editable wires; fixed STEREO wires
     // are hidden along with the node, so they do not block it (see graph.ts). A
     // ducker may always be shelved — its key-source wire is hidden with it.

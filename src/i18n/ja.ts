@@ -42,6 +42,7 @@ export const ja: Messages = {
     hpf: "HPF",
     gainAnalog: "A.Gain",
     gainDigital: "D.Gain",
+    master: "マスター",
     on: "ON",
     off: "OFF",
     selectionOnly: "選択のみ — Send パラメータはありません。",

@@ -52,5 +52,13 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
+
+  // STEREO bus master ON/OFF — a single global parameter, read once.
+  try {
+    const masterOn = vdToBool(await vdGet(PARAMS.STEREO_MASTER_ON.id, 0, 0));
+    plan.nodeParams["bus.stereo"] = { ...plan.nodeParams["bus.stereo"], on: masterOn };
+  } catch (e) {
+    errors.push(`STEREO: ${e instanceof Error ? e.message : String(e)}`);
+  }
   return { applied, errors };
 }

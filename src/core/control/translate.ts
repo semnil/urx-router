@@ -95,5 +95,9 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (np.hpf !== undefined) out.push(command("HPF_ON", y, np.hpf ? 1 : 0));
     if (np.gain !== undefined) out.push(command("HA_GAIN", y, np.gain));
   }
+
+  // STEREO bus master ON/OFF (global, y = 0).
+  const stereo = plan.nodeParams["bus.stereo"];
+  if (stereo?.on !== undefined) out.push(command("STEREO_MASTER_ON", 0, stereo.on ? 1 : 0));
   return out;
 }
