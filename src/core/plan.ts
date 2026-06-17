@@ -24,6 +24,8 @@ export interface NodeParams {
   on?: boolean;
   /** HPF_ON: high-pass filter engaged. Absent or false = off. */
   hpf?: boolean;
+  /** HA_GAIN: head-amp input gain in dB (-16 … +70). Absent = device default. */
+  gain?: number;
 }
 
 export interface PlanConnection {

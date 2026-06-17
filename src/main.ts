@@ -101,7 +101,9 @@ const inspectorActions = {
     dirty = true;
     // CH_ON drives the on-canvas mute dimming; repaint nodes so it shows at once.
     if (patch.on !== undefined) graph.repaintNodes();
-    refreshInspector();
+    // Toggles re-render to update the active button; the gain slider mutates in
+    // place so it keeps focus while dragging.
+    if (patch.gain === undefined) refreshInspector();
   },
   onOpenRecent: (path: string) => void openRecent(path),
   onHideNode: (id: string) => graph.hideNode(id),

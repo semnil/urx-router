@@ -11,7 +11,7 @@ import { ensureFixedConnections } from "../plan";
 import { vdGet } from "../platform";
 import { PARAMS } from "./params";
 import { channelInputIndex } from "./translate";
-import { vdToBool, vdToLevel, vdToPan } from "./vd";
+import { vdToBool, vdToGain, vdToLevel, vdToPan } from "./vd";
 
 export interface ReadbackResult {
   /** Channels whose level/pan were updated from the device. */
@@ -44,8 +44,9 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       const pan = vdToPan(await vdGet(PARAMS.CH_PAN.id, 0, y));
       const on = vdToBool(await vdGet(PARAMS.CH_ON.id, 0, y));
       const hpf = vdToBool(await vdGet(PARAMS.HPF_ON.id, 0, y));
+      const gain = vdToGain(await vdGet(PARAMS.HA_GAIN.id, 0, y));
       conn.params = { ...conn.params, level, pan };
-      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], on, hpf };
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], on, hpf, gain };
       applied++;
     } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);

@@ -41,6 +41,8 @@ export const en = {
     prePost: "Pre/Post",
     channelOn: "Channel",
     hpf: "HPF",
+    gainAnalog: "A.Gain",
+    gainDigital: "D.Gain",
     on: "ON",
     off: "OFF",
     selectionOnly: "Selection only — no send parameters.",

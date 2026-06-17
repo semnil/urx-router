@@ -14,7 +14,7 @@
 export type ParamAxis = "input" | "output" | "global";
 
 /** Value encoding, mapping to the converters in vd.ts. */
-export type ParamEncoding = "level" | "pan" | "bool";
+export type ParamEncoding = "level" | "gain" | "pan" | "bool";
 
 export interface ParamSpec {
   /** Broker param_id (first field of the "{id}:{x}:{y}" address). */
@@ -34,6 +34,8 @@ export const PARAMS = {
   CH_PAN: { id: 141, axis: "input", encoding: "pan" },
   /** Input channel HPF ON. */
   HPF_ON: { id: 25, axis: "input", encoding: "bool" },
+  /** Input channel head-amp (HA) gain (-16 … +70 dB). */
+  HA_GAIN: { id: 1, axis: "input", encoding: "gain" },
   /** Output (mix) fader level. */
   OUT_FADER: { id: 674, axis: "output", encoding: "level" },
   /** Output (mix) EQ ON. */

@@ -21,6 +21,11 @@ export const VD_LEVEL_MAX = 1000;
 /** Pan extent on the device: ±63 (full L … full R). */
 export const VD_PAN_MAX = 63;
 
+// Head-amp (HA) gain range from the ha_gain table: -16 … +70 dB, encoded as
+// centi-dB like level but with its own bounds and no -∞ sentinel.
+export const HA_GAIN_MIN_DB = -16;
+export const HA_GAIN_MAX_DB = 70;
+
 /** Plan pan range, matching the inspector slider (-100 … +100). */
 export const PAN_MIN = -100;
 export const PAN_MAX = 100;
@@ -54,6 +59,16 @@ export function panToVd(pan: number): number {
 /** Broker ±63 → plan pan (-100 … +100). */
 export function vdToPan(value: number): number {
   return clamp(Math.round((value / VD_PAN_MAX) * PAN_MAX), PAN_MIN, PAN_MAX);
+}
+
+/** Plan HA gain dB → broker centi-dB (no -∞; clamped to the HA range). */
+export function gainToVd(db: number): number {
+  return clamp(Math.round(db * 100), HA_GAIN_MIN_DB * 100, HA_GAIN_MAX_DB * 100);
+}
+
+/** Broker centi-dB → plan HA gain dB. */
+export function vdToGain(value: number): number {
+  return clamp(Math.round(value / 100), HA_GAIN_MIN_DB, HA_GAIN_MAX_DB);
 }
 
 /** On/off → broker 0/1. */

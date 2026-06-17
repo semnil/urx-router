@@ -7,6 +7,7 @@ import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, NodeParams, Plan, PlanConnection } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
+import { HA_GAIN_MAX_DB, HA_GAIN_MIN_DB } from "../core/control/vd";
 import { rateConstraints } from "../core/constraints";
 import type { RateWarning } from "../core/constraints";
 import type { RecentEntry } from "../core/storage";
@@ -37,6 +38,10 @@ type ParamField = "level" | "pan" | "tap";
 
 const LEVEL_MIN = LEVEL_MIN_DB;
 const LEVEL_MAX = LEVEL_MAX_DB;
+
+// HA gain slider position shown for a channel whose gain has not been fetched or
+// set yet; matches the device's default head-amp gain.
+const HA_GAIN_DEFAULT_DB = -8;
 
 export function renderInspector(
   host: HTMLElement,
@@ -85,6 +90,14 @@ export function renderInspector(
     if (node.kind === "channel") {
       const np = plan.nodeParams[node.id] ?? {};
       host.append(subheading(m.inspector.parameters));
+      // Mono channels (ch1..) carry an analog preamp → "A.Gain"; stereo channels
+      // (ch_a_b) are digital → "D.Gain", matching the device's own labels.
+      const gainLabel = /^ch\d+$/.test(node.id) ? m.inspector.gainAnalog : m.inspector.gainDigital;
+      host.append(
+        gainControl(gainLabel, np.gain ?? HA_GAIN_DEFAULT_DB, (v) =>
+          actions.onUpdateNodeParams(node.id, { gain: v }),
+        ),
+      );
       host.append(
         boolToggle(m.inspector.channelOn, np.on ?? true, (v) =>
           actions.onUpdateNodeParams(node.id, { on: v }),
@@ -225,6 +238,30 @@ function sliderControl(
   });
   row.append(slider);
   return row;
+}
+
+// A slider for a node-level dB value (HA gain). Mutates in place: the value
+// label updates on input and the caller persists without a re-render, so the
+// slider keeps focus while dragging (see onUpdateNodeParams in main.ts).
+function gainControl(label: string, cur: number, onChange: (v: number) => void): HTMLElement {
+  const { row, value } = paramBlock(label, formatGainDb(cur));
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = String(HA_GAIN_MIN_DB);
+  slider.max = String(HA_GAIN_MAX_DB);
+  slider.step = "1";
+  slider.value = String(cur);
+  slider.addEventListener("input", () => {
+    const v = Number(slider.value);
+    value.textContent = formatGainDb(v);
+    onChange(v);
+  });
+  row.append(slider);
+  return row;
+}
+
+function formatGainDb(v: number): string {
+  return `${v > 0 ? "+" : ""}${v} dB`;
 }
 
 // A two-button ON/OFF toggle for a node-level boolean (channel on, HPF), styled

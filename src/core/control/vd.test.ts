@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../plan";
 import {
+  HA_GAIN_MAX_DB,
+  HA_GAIN_MIN_DB,
   VD_LEVEL_MAX,
   VD_LEVEL_OFF,
   VD_PAN_MAX,
   boolToVd,
+  gainToVd,
   levelToVd,
   panToVd,
   vdAddr,
   vdSet,
+  vdToGain,
   vdToLevel,
   vdToPan,
 } from "./vd";
@@ -52,6 +56,24 @@ describe("pan encoding", () => {
   it("round-trips center", () => {
     expect(vdToPan(panToVd(0))).toBe(0);
     expect(vdToPan(VD_PAN_MAX)).toBe(100);
+  });
+});
+
+describe("HA gain encoding", () => {
+  it("maps dB to centi-dB within the HA range", () => {
+    expect(gainToVd(0)).toBe(0);
+    expect(gainToVd(-8)).toBe(-800);
+    expect(gainToVd(70)).toBe(7000);
+  });
+
+  it("clamps to the HA bounds", () => {
+    expect(gainToVd(HA_GAIN_MIN_DB - 10)).toBe(HA_GAIN_MIN_DB * 100);
+    expect(gainToVd(HA_GAIN_MAX_DB + 10)).toBe(HA_GAIN_MAX_DB * 100);
+  });
+
+  it("round-trips through vdToGain", () => {
+    expect(vdToGain(gainToVd(-8))).toBe(-8);
+    expect(vdToGain(2400)).toBe(24);
   });
 });
 

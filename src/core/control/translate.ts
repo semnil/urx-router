@@ -14,7 +14,7 @@ import type { Plan } from "../plan";
 import { isFixedConnection } from "../routing";
 import type { ParamName, ParamSpec } from "./params";
 import { PARAMS } from "./params";
-import { boolToVd, levelToVd, panToVd, vdSet } from "./vd";
+import { boolToVd, gainToVd, levelToVd, panToVd, vdSet } from "./vd";
 import type { VdSetRequest } from "./vd";
 
 /**
@@ -50,6 +50,8 @@ function encode(spec: ParamSpec, planValue: number): number {
   switch (spec.encoding) {
     case "level":
       return levelToVd(planValue);
+    case "gain":
+      return gainToVd(planValue);
     case "pan":
       return panToVd(planValue);
     case "bool":
@@ -91,6 +93,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (y === null) continue;
     if (np.on !== undefined) out.push(command("CH_ON", y, np.on ? 1 : 0));
     if (np.hpf !== undefined) out.push(command("HPF_ON", y, np.hpf ? 1 : 0));
+    if (np.gain !== undefined) out.push(command("HA_GAIN", y, np.gain));
   }
   return out;
 }

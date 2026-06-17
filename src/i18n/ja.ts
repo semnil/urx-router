@@ -40,6 +40,8 @@ export const ja: Messages = {
     prePost: "PRE/POST",
     channelOn: "チャンネル",
     hpf: "HPF",
+    gainAnalog: "A.Gain",
+    gainDigital: "D.Gain",
     on: "ON",
     off: "OFF",
     selectionOnly: "選択のみ — Send パラメータはありません。",

@@ -54,14 +54,17 @@ describe("planToCommands", () => {
   it("emits CH_ON / HPF_ON from node params", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
-    plan.nodeParams.ch1 = { on: false, hpf: true };
+    plan.nodeParams.ch1 = { on: false, hpf: true, gain: -8 };
     const cmds = planToCommands(model, plan);
     const on = cmds.find((c) => c.name === "CH_ON" && c.y === 0);
     const hpf = cmds.find((c) => c.name === "HPF_ON" && c.y === 0);
+    const gain = cmds.find((c) => c.name === "HA_GAIN" && c.y === 0);
     expect(on!.vdValue).toBe(0);
     expect(on!.request.uri).toBe("/vd/parameters/140:0:0?operation=value");
     expect(hpf!.vdValue).toBe(1);
     expect(hpf!.request.uri).toBe("/vd/parameters/25:0:0?operation=value");
+    expect(gain!.vdValue).toBe(-800);
+    expect(gain!.request.uri).toBe("/vd/parameters/1:0:0?operation=value");
   });
 
   it("omits node-param commands when none are set", () => {
