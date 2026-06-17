@@ -195,7 +195,10 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
   };
 }
 
-/** A CH → MIX send: the params for its level/pan/on (L/R-linked) and PRE/POST tap. */
+/**
+ * A CH → bus send. `level`/`pan`/`on` are instance lists (MIX writes both linked
+ * L/R; FX writes a single mono send and has no pan). `tap` is the PRE/POST param.
+ */
 export interface SendControl {
   y: number;
   level: number[];
@@ -213,20 +216,30 @@ const MIX_SEND_BASE_STEREO = 273;
 const MIX_SEND_STRIDE = 12;
 const MIX_SEND_BUS_INDEX: Record<string, number> = { "bus.mix1": 0, "bus.mix2": 1 };
 
-/** Send params for a CH → MIX-bus pair, or null if it is not such a send. */
+// CH → FX sends are 4-param mono blocks: PRE/POST tap at +0, level at +1, on at
+// +3 (no pan). Mono channels base at 193 (y = input index); stereo channels at
+// 320 (y = stereo index). Confirmed by live scan.
+const FX_SEND_BASE_MONO = 193;
+const FX_SEND_BASE_STEREO = 320;
+const FX_SEND_STRIDE = 4;
+const FX_SEND_BUS_INDEX: Record<string, number> = { "bus.fx1": 0, "bus.fx2": 1 };
+
+/** Send params for a CH → MIX/FX-bus pair, or null if it is not such a send. */
 export function sendControl(model: DeviceModel, channelId: string, busId: string): SendControl | null {
-  const mixIndex = MIX_SEND_BUS_INDEX[busId];
-  if (mixIndex === undefined) return null;
   const cc = channelControl(model, channelId);
   if (!cc) return null;
-  const base = (isStereoChannel(channelId) ? MIX_SEND_BASE_STEREO : MIX_SEND_BASE_MONO) + MIX_SEND_STRIDE * mixIndex;
-  return {
-    y: cc.y,
-    level: [base, base + 6],
-    pan: [base + 1, base + 7],
-    on: [base + 2, base + 8],
-    tap: base + 5,
-  };
+  const stereo = isStereoChannel(channelId);
+  const mixIndex = MIX_SEND_BUS_INDEX[busId];
+  if (mixIndex !== undefined) {
+    const base = (stereo ? MIX_SEND_BASE_STEREO : MIX_SEND_BASE_MONO) + MIX_SEND_STRIDE * mixIndex;
+    return { y: cc.y, level: [base, base + 6], pan: [base + 1, base + 7], on: [base + 2, base + 8], tap: base + 5 };
+  }
+  const fxIndex = FX_SEND_BUS_INDEX[busId];
+  if (fxIndex !== undefined) {
+    const base = (stereo ? FX_SEND_BASE_STEREO : FX_SEND_BASE_MONO) + FX_SEND_STRIDE * fxIndex;
+    return { y: cc.y, level: [base + 1], pan: [], on: [base + 3], tap: base };
+  }
+  return null;
 }
 
 /** A bus output fader: which param and the linked instances it writes. */
@@ -271,16 +284,16 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     }
   }
 
-  // CH → MIX bus sends. The wire's presence means the send is on; its params
-  // carry level / pan / PRE-POST tap. Level/pan/on are written to both L/R
-  // instances (the device keeps them linked); the tap is a single param.
+  // CH → MIX/FX bus sends. The wire's presence means the send is on; its params
+  // carry level / pan / PRE-POST tap. MIX writes both linked L/R instances; FX is
+  // a single mono send with no pan.
   for (const conn of plan.connections) {
     const sc = sendControl(model, parseRef(conn.from).nodeId, parseRef(conn.to).nodeId);
     if (!sc) continue;
-    for (const p of sc.level) out.push(rawCommand("MIX_SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
-    for (const p of sc.pan) out.push(rawCommand("MIX_SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
-    for (const p of sc.on) out.push(rawCommand("MIX_SEND_ON", p, "bool", sc.y, 1));
-    out.push(rawCommand("MIX_SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
+    for (const p of sc.level) out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
+    for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
+    for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, 1));
+    out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
   }
 
   // Channel node parameters: ON / HPF / gain.
