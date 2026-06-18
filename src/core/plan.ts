@@ -230,3 +230,18 @@ export function ensureFixedConnections(model: DeviceModel, plan: Plan): void {
 export function removeConnection(plan: Plan, from: string, to: string): void {
   plan.connections = plan.connections.filter((c) => !(c.from === from && c.to === to));
 }
+
+// Exclusive routing selectors (source / patch / key) accept at most one incoming
+// wire into a destination; these mutators express that single-input invariant.
+export function incomingConnection(plan: Plan, to: string, kind: ConnectionKind): PlanConnection | undefined {
+  return plan.connections.find((c) => c.to === to && c.kind === kind);
+}
+
+export function clearIncoming(plan: Plan, to: string, kind: ConnectionKind): void {
+  plan.connections = plan.connections.filter((c) => !(c.to === to && c.kind === kind));
+}
+
+export function setExclusiveConnection(plan: Plan, from: string, to: string, kind: ConnectionKind): void {
+  clearIncoming(plan, to, kind);
+  plan.connections.push({ from, to, kind });
+}

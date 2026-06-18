@@ -240,6 +240,23 @@ export function vdToBool(value: number): boolean {
   return value !== 0;
 }
 
+// Routing-source port refs. The streaming-source selector stores the port with a
+// high tag bit set (0x80000000 | port); the USB-output selectors store it raw.
+// `NONE` is the uint32 sentinel used when nothing is selected.
+const PORT_REF_TAG = 0x80000000;
+const PORT_REF_NONE = 0xffffffff;
+
+/** Port id → tagged broker value (high bit set). */
+export function tagPortRef(port: number): number {
+  return (PORT_REF_TAG | port) >>> 0;
+}
+
+/** Broker value → port id, stripping the tag bit if present. null = nothing selected. */
+export function vdToPortRef(value: number): number | null {
+  if (value === PORT_REF_NONE) return null;
+  return value & PORT_REF_TAG ? value & 0x7fffffff : value;
+}
+
 /** Build a parameter address "{param_id}:{x}:{y}". x is 0 outside EQ bands. */
 export function vdAddr(paramId: number, y: number, x = 0): string {
   return `${paramId}:${x}:${y}`;

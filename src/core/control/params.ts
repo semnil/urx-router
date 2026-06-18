@@ -29,7 +29,9 @@ export type ParamEncoding =
   | "attackTime"
   | "holdTime"
   | "releaseTime"
-  | "ratio";
+  | "ratio"
+  | "portRef"
+  | "portRefTagged";
 
 export interface ParamSpec {
   /** Broker param_id (first field of the "{id}:{x}:{y}" address). */
@@ -168,6 +170,24 @@ export const PARAMS = {
   STEREO_MASTER_FADER: { id: 581, axis: "global", encoding: "level" },
   /** STEREO master ON (y = 0). */
   STEREO_MASTER_ON: { id: 582, axis: "global", encoding: "bool" },
+  /** Input source select (y = physical input slot 0..11). Raw input port ref. */
+  INPUT_SOURCE: { id: 22, axis: "input", encoding: "portRef" },
+  /** Ducker key source (y = stereo index). Raw port ref: channel slot or bus. */
+  DUCKER_SRC: { id: 259, axis: "global", encoding: "portRef" },
+  /** Monitor source select L/R (y = monitor 0..1). Raw bus port ref. */
+  MONITOR_SRC_L: { id: 719, axis: "global", encoding: "portRef" },
+  MONITOR_SRC_R: { id: 720, axis: "global", encoding: "portRef" },
+  /** Analog output patch source L/R (y = 0/1). Raw bus port ref. */
+  OUT_PATCH_MAIN: { id: 730, axis: "global", encoding: "portRef" },
+  OUT_PATCH_LINE: { id: 731, axis: "global", encoding: "portRef" },
+  /** Streaming source select L/R (y = 0). Tagged port ref (0x80000000 | port). */
+  STREAM_SRC_L: { id: 705, axis: "global", encoding: "portRefTagged" },
+  STREAM_SRC_R: { id: 706, axis: "global", encoding: "portRefTagged" },
+  /** USB output source select (y = 0). Raw port ref: one bus or channel per out. */
+  USB_OUT_SRC_A: { id: 732, axis: "global", encoding: "portRef" },
+  USB_OUT_SRC_B: { id: 733, axis: "global", encoding: "portRef" },
+  USB_OUT_SRC_C: { id: 734, axis: "global", encoding: "portRef" },
+  USB_OUT_SRC_SUB: { id: 735, axis: "global", encoding: "portRef" },
 } as const satisfies Record<string, ParamSpec>;
 
 export type ParamName = keyof typeof PARAMS;
