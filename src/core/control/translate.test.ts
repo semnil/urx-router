@@ -493,6 +493,18 @@ describe("planToCommands", () => {
     expect(m2!.request.uri).toBe("/vd/parameters/724:0:1?operation=value");
   });
 
+  it("emits monitor CUE-interrupt / MONO toggles per monitor", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.mon1"] = { cueInterrupt: false, mono: true };
+    const cmds = planToCommands(model, plan);
+    const cue = cmds.find((c) => c.name === "MONITOR_CUE_INTERRUPT" && c.y === 0);
+    const mono = cmds.find((c) => c.name === "MONITOR_MONO" && c.y === 0);
+    expect(cue!.vdValue).toBe(0);
+    expect(cue!.request.uri).toBe("/vd/parameters/721:0:0?operation=value");
+    expect(mono!.vdValue).toBe(1);
+    expect(mono!.request.uri).toBe("/vd/parameters/722:0:0?operation=value");
+  });
+
   it("emits oscillator generator params from the bus.osc node", () => {
     const plan = emptyPlan("URX44V");
     plan.nodeParams["bus.osc"] = { osc: { on: true, level: -20, mode: 0, freq: 2000 } };

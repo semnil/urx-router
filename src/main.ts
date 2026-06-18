@@ -138,6 +138,8 @@ const inspectorActions = {
       patch.gateOn !== undefined ||
       patch.compOn !== undefined ||
       patch.duckerOn !== undefined ||
+      patch.cueInterrupt !== undefined ||
+      patch.mono !== undefined ||
       eqRelayout ||
       compRelayout ||
       oscRelayout

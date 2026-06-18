@@ -263,12 +263,22 @@ export function renderInspector(
       if (oeq) host.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
     }
 
-    // Monitor bus level (MONITOR_LEVEL). Reuses nodeParams.level.
+    // Monitor bus level (MONITOR_LEVEL) plus the CUE-interrupt / MONO toggles.
     if (node.id === "bus.mon1" || node.id === "bus.mon2") {
       const np = plan.nodeParams[node.id] ?? {};
       host.append(subheading(m.inspector.parameters));
       host.append(
         monitorLevelControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
+      );
+      host.append(
+        boolToggle(m.inspector.cueInterrupt, np.cueInterrupt ?? true, (v) =>
+          actions.onUpdateNodeParams(node.id, { cueInterrupt: v }),
+        ),
+      );
+      host.append(
+        boolToggle(m.inspector.mono, np.mono ?? false, (v) =>
+          actions.onUpdateNodeParams(node.id, { mono: v }),
+        ),
       );
     }
 
