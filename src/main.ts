@@ -97,10 +97,17 @@ const inspectorActions = {
     if (patch.tap !== undefined) graph.repaintWires();
   },
   onUpdateNodeParams: (id: string, patch: NodeParams) => {
-    plan.nodeParams[id] = { ...plan.nodeParams[id], ...patch };
+    const prev = plan.nodeParams[id];
+    plan.nodeParams[id] = { ...prev, ...patch };
     dirty = true;
     // CH_ON drives the on-canvas mute dimming; repaint nodes so it shows at once.
     if (patch.on !== undefined) graph.repaintNodes();
+    // An EQ band's filter type / ON changes which controls show (Q, gain), so it
+    // needs a re-render; a freq/Q/gain slick must NOT re-render (it keeps slider
+    // focus). Detect a relayout by diffing the changed bands' type/on.
+    const eqRelayout =
+      patch.eqBands !== undefined &&
+      patch.eqBands.some((b, i) => b?.type !== prev?.eqBands?.[i]?.type || b?.on !== prev?.eqBands?.[i]?.on);
     // Toggles re-render to update the active button; sliders (gain/level) mutate
     // in place so they keep focus while dragging.
     if (
@@ -116,7 +123,8 @@ const inspectorActions = {
       patch.compEqType !== undefined ||
       patch.eqOn !== undefined ||
       patch.gateOn !== undefined ||
-      patch.compOn !== undefined
+      patch.compOn !== undefined ||
+      eqRelayout
     )
       refreshInspector();
   },

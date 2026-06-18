@@ -48,6 +48,17 @@ export const HPF_FREQ_MAX_HZ = 120;
 export const HPF_FREQ_STEP_HZ = 20;
 export const HPF_FREQ_DEFAULT_HZ = 80;
 
+// Output 4-band parametric EQ band values (verified on STEREO/MIX by live scan):
+//   freq: Hz×10 (the 0.1 Hz unit), 20 Hz … 20 kHz (broker 200 … 200000).
+//   Q:    ×100, 0.50 … 16.00 (broker 50 … 1600).
+//   gain: centi-dB, -18 … +18 dB (broker -1800 … 1800).
+export const EQ_FREQ_MIN_HZ = 20;
+export const EQ_FREQ_MAX_HZ = 20000;
+export const EQ_Q_MIN = 0.5;
+export const EQ_Q_MAX = 16;
+export const EQ_GAIN_MIN_DB = -18;
+export const EQ_GAIN_MAX_DB = 18;
+
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
@@ -114,6 +125,36 @@ export function freqToVd(hz: number): number {
 /** Broker 0.1 Hz units → plan HPF frequency (Hz). */
 export function vdToFreq(value: number): number {
   return clamp(Math.round(value / 10), HPF_FREQ_MIN_HZ, HPF_FREQ_MAX_HZ);
+}
+
+/** Plan EQ band frequency (Hz) → broker 0.1 Hz units (20 Hz … 20 kHz). */
+export function eqFreqToVd(hz: number): number {
+  return clamp(Math.round(hz * 10), EQ_FREQ_MIN_HZ * 10, EQ_FREQ_MAX_HZ * 10);
+}
+
+/** Broker 0.1 Hz units → plan EQ band frequency (Hz). */
+export function vdToEqFreq(value: number): number {
+  return clamp(Math.round(value / 10), EQ_FREQ_MIN_HZ, EQ_FREQ_MAX_HZ);
+}
+
+/** Plan EQ Q (0.50 … 16.00) → broker ×100. */
+export function qToVd(q: number): number {
+  return clamp(Math.round(q * 100), EQ_Q_MIN * 100, EQ_Q_MAX * 100);
+}
+
+/** Broker ×100 → plan EQ Q (0.50 … 16.00). */
+export function vdToQ(value: number): number {
+  return clamp(value / 100, EQ_Q_MIN, EQ_Q_MAX);
+}
+
+/** Plan EQ band gain (dB, ±18) → broker centi-dB. */
+export function eqGainToVd(db: number): number {
+  return clamp(Math.round(db * 100), EQ_GAIN_MIN_DB * 100, EQ_GAIN_MAX_DB * 100);
+}
+
+/** Broker centi-dB → plan EQ band gain (dB, ±18). */
+export function vdToEqGain(value: number): number {
+  return clamp(value / 100, EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
 }
 
 /** On/off → broker 0/1. */

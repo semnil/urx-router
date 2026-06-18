@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections } from "../plan";
+import { EQ_TYPE_PASS } from "./params";
 import { planToCommands } from "./translate";
 
 describe("planToCommands", () => {
@@ -312,6 +313,40 @@ describe("planToCommands", () => {
       "/vd/parameters/591:0:1?operation=value",
     ]);
     expect(mix.every((c) => c.vdValue === 0)).toBe(true);
+  });
+
+  it("emits output PEQ band values: STEREO single, MIX L/R-linked, encodings", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // STEREO LOW band: HPF type, 200 Hz, +6 dB. MIX1 HIGH-MID band: Q 2.0.
+    plan.nodeParams["bus.stereo"] = { eqBands: [{ type: EQ_TYPE_PASS, freq: 200, gain: 6 }] };
+    plan.nodeParams["bus.mix1"] = { eqBands: [{}, {}, { q: 2 }] };
+    const cmds = planToCommands(model, plan);
+    // STEREO band1 block base = 498 + 5 = 503; type 504, freq 506, gain 507, single y0.
+    const sType = cmds.find((c) => c.name === "EQ_BAND_TYPE" && c.paramId === 504);
+    expect(sType!.request.uri).toBe("/vd/parameters/504:0:0?operation=value");
+    expect(sType!.vdValue).toBe(EQ_TYPE_PASS);
+    expect(cmds.find((c) => c.paramId === 506)!.vdValue).toBe(2000); // 200 Hz × 10
+    expect(cmds.find((c) => c.paramId === 507)!.vdValue).toBe(600); // +6 dB centi
+    // A pass filter still writes freq/type; gain was set so it is emitted too.
+    // MIX1 band3 (HIGH-MID) Q = param 596 + 10 + 2 = 608, both L/R instances.
+    const mq = cmds.filter((c) => c.name === "EQ_BAND_Q" && c.paramId === 608);
+    expect(mq.map((c) => c.request.uri)).toEqual([
+      "/vd/parameters/608:0:0?operation=value",
+      "/vd/parameters/608:0:1?operation=value",
+    ]);
+    expect(mq.every((c) => c.vdValue === 200)).toBe(true); // Q 2.0 × 100
+  });
+
+  it("does not emit a filter type for the fixed-peaking mid bands", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // Set a type on band2 (mid, fixed peaking) — it must be dropped.
+    plan.nodeParams["bus.stereo"] = { eqBands: [{}, { type: 2, gain: 3 }] };
+    const cmds = planToCommands(model, plan);
+    expect(cmds.some((c) => c.name === "EQ_BAND_TYPE")).toBe(false);
+    // The gain on that band still emits (param 503 + 5 + 4 = 512).
+    expect(cmds.find((c) => c.paramId === 512)!.vdValue).toBe(300);
   });
 
   it("emits the STEREO master fader on its single instance", () => {

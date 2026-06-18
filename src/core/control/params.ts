@@ -14,7 +14,17 @@
 export type ParamAxis = "input" | "output" | "global";
 
 /** Value encoding, mapping to the converters in vd.ts. */
-export type ParamEncoding = "level" | "gain" | "monitor" | "pan" | "bool" | "freq" | "enum";
+export type ParamEncoding =
+  | "level"
+  | "gain"
+  | "monitor"
+  | "pan"
+  | "bool"
+  | "freq"
+  | "enum"
+  | "eqFreq"
+  | "q"
+  | "eqGain";
 
 export interface ParamSpec {
   /** Broker param_id (first field of the "{id}:{x}:{y}" address). */
@@ -94,6 +104,19 @@ export const PARAMS = {
   OUT_EQ_ON: { id: 591, axis: "output", encoding: "bool" },
   /** STEREO master EQ ON (single). */
   STEREO_EQ_ON: { id: 498, axis: "global", encoding: "bool" },
+  // Output 4-band PEQ band values. The per-band/per-bus ids are computed in
+  // translate.ts (outputEq); these anchors are the STEREO LOW band and only name
+  // the command + encoding.
+  /** Output PEQ band ON. */
+  EQ_BAND_ON: { id: 503, axis: "global", encoding: "bool" },
+  /** Output PEQ band filter type (LOW / HIGH bands only). */
+  EQ_BAND_TYPE: { id: 504, axis: "global", encoding: "enum" },
+  /** Output PEQ band Q. */
+  EQ_BAND_Q: { id: 505, axis: "global", encoding: "q" },
+  /** Output PEQ band frequency. */
+  EQ_BAND_FREQ: { id: 506, axis: "global", encoding: "eqFreq" },
+  /** Output PEQ band gain. */
+  EQ_BAND_GAIN: { id: 507, axis: "global", encoding: "eqGain" },
   /** Monitor level (y = monitor 0..3). Wider -96 dB floor than the fader. */
   MONITOR_LEVEL: { id: 724, axis: "global", encoding: "monitor" },
   /** STEREO master fader (y = 0, level down to -∞). */
@@ -161,6 +184,23 @@ export const COMP_EQ_SSMCS = 1;
 export const COMP_EQ_OPTIONS = [
   { value: COMP_EQ_COMP_FIRST, label: "COMP->EQ" },
   { value: COMP_EQ_SSMCS, label: "SSMCS" },
+];
+
+// Output 4-band PEQ filter type (LOW / HIGH bands only; the two mid bands are
+// fixed Peaking). Verified values on the LOW band: 0 = Peaking, 1 = Shelving,
+// 2 = HPF (device labels per user). The HIGH band mirrors it with LPF at 2.
+export const EQ_TYPE_PEAKING = 0;
+export const EQ_TYPE_SHELVING = 1;
+export const EQ_TYPE_PASS = 2;
+export const EQ_TYPE_LOW_OPTIONS = [
+  { value: EQ_TYPE_PEAKING, label: "Peaking" },
+  { value: EQ_TYPE_SHELVING, label: "Shelving" },
+  { value: EQ_TYPE_PASS, label: "HPF" },
+];
+export const EQ_TYPE_HIGH_OPTIONS = [
+  { value: EQ_TYPE_PEAKING, label: "Peaking" },
+  { value: EQ_TYPE_SHELVING, label: "Shelving" },
+  { value: EQ_TYPE_PASS, label: "LPF" },
 ];
 
 // Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain): each

@@ -4,13 +4,36 @@
 
 import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
-import type { ConnParams, NodeParams, Plan, PlanConnection } from "../core/plan";
+import type { ConnParams, EqBand, NodeParams, Plan, PlanConnection } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
-import { busEqOn, busFader, channelControl, channelSections, insertFxControl, isStereoChannel } from "../core/control/translate";
-import { COMP_EQ_COMP_FIRST, COMP_EQ_OPTIONS, INSERT_FX_NONE } from "../core/control/params";
+import {
+  busEqOn,
+  busFader,
+  channelControl,
+  channelSections,
+  insertFxControl,
+  isStereoChannel,
+  outputEq,
+} from "../core/control/translate";
+import {
+  COMP_EQ_COMP_FIRST,
+  COMP_EQ_OPTIONS,
+  EQ_TYPE_HIGH_OPTIONS,
+  EQ_TYPE_LOW_OPTIONS,
+  EQ_TYPE_PASS,
+  EQ_TYPE_PEAKING,
+  EQ_TYPE_SHELVING,
+  INSERT_FX_NONE,
+} from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
+  EQ_FREQ_MAX_HZ,
+  EQ_FREQ_MIN_HZ,
+  EQ_GAIN_MAX_DB,
+  EQ_GAIN_MIN_DB,
+  EQ_Q_MAX,
+  EQ_Q_MIN,
   HPF_FREQ_DEFAULT_HZ,
   HPF_FREQ_MAX_HZ,
   HPF_FREQ_MIN_HZ,
@@ -212,6 +235,9 @@ export function renderInspector(
           ),
         );
       }
+      // Output bus 4-band PEQ (STEREO 498-block single / MIX 591-block L/R-linked).
+      const oeq = outputEq(node.id);
+      if (oeq) host.append(eqBandBlock(node.id, np, plan, actions, m));
     }
 
     // Monitor bus level (MONITOR_LEVEL). Reuses nodeParams.level.
@@ -420,6 +446,93 @@ function gainControl(
 
 function formatGainDb(v: number): string {
   return `${v > 0 ? "+" : ""}${v} dB`;
+}
+
+// Per-band default frequencies (Hz) and Q shown before a fetch, matching the
+// device defaults (LOW 125 / LOW-MID 1k / HIGH-MID 4k / HIGH 10k, Q 0.71).
+const EQ_BAND_DEFAULT_FREQ = [125, 1000, 4000, 10000];
+const EQ_Q_DEFAULT = 0.71;
+
+// Output bus 4-band PEQ editor. Each band shows ON / filter type (LOW & HIGH
+// bands only) / freq / Q / gain; Q shows only for a peaking band and gain only
+// when the band is not a pass filter — matching the device's filter-type
+// behavior. Edits merge into nodeParams.eqBands via the shared update action.
+function eqBandBlock(
+  nodeId: string,
+  np: NodeParams,
+  plan: Plan,
+  actions: InspectorActions,
+  m: Messages,
+): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  const oeq = outputEq(nodeId);
+  if (!oeq) return frag;
+  const setBand = (i: number, patch: EqBand): void => {
+    const next = (plan.nodeParams[nodeId]?.eqBands ?? []).slice();
+    next[i] = { ...next[i], ...patch };
+    actions.onUpdateNodeParams(nodeId, { eqBands: next });
+  };
+  for (const band of oeq.bands) {
+    const bv = np.eqBands?.[band.index] ?? {};
+    frag.append(subheading(`EQ ${m.inspector.eqBand[band.name]}`));
+    frag.append(boolToggle(m.inspector.bandOn, bv.on ?? true, (v) => setBand(band.index, { on: v })));
+    let effType = EQ_TYPE_PEAKING;
+    if (band.type !== null) {
+      effType = bv.type ?? EQ_TYPE_SHELVING;
+      const opts = band.name === "low" ? EQ_TYPE_LOW_OPTIONS : EQ_TYPE_HIGH_OPTIONS;
+      frag.append(
+        selectControl(
+          m.inspector.filterType,
+          opts.map((o) => ({ value: String(o.value), label: o.label })),
+          String(effType),
+          (v) => setBand(band.index, { type: Number(v) }),
+        ),
+      );
+    }
+    frag.append(eqFreqControl(bv.freq ?? EQ_BAND_DEFAULT_FREQ[band.index], (v) => setBand(band.index, { freq: v })));
+    if (effType === EQ_TYPE_PEAKING) {
+      frag.append(
+        rangeSlider(m.inspector.q, EQ_Q_MIN, EQ_Q_MAX, 0.1, bv.q ?? EQ_Q_DEFAULT, (v) => v.toFixed(2), (v) =>
+          setBand(band.index, { q: v }),
+        ),
+      );
+    }
+    if (effType !== EQ_TYPE_PASS) {
+      frag.append(
+        rangeSlider(m.inspector.eqGain, EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB, 0.5, bv.gain ?? 0, formatGainDb, (v) =>
+          setBand(band.index, { gain: v }),
+        ),
+      );
+    }
+  }
+  return frag;
+}
+
+// EQ band frequency slider on a log scale (20 Hz … 20 kHz) so each octave gets
+// equal width; reports the snapped Hz value and formats as Hz / kHz.
+function eqFreqControl(cur: number, onChange: (hz: number) => void): HTMLElement {
+  const steps = 1000;
+  const ratio = Math.log(EQ_FREQ_MAX_HZ / EQ_FREQ_MIN_HZ);
+  const toPos = (hz: number): number => Math.round((steps * Math.log(hz / EQ_FREQ_MIN_HZ)) / ratio);
+  const toHz = (pos: number): number => Math.round(EQ_FREQ_MIN_HZ * Math.exp((ratio * pos) / steps));
+  const { row, value } = paramBlock(t().inspector.frequency, formatHz(cur));
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = "0";
+  slider.max = String(steps);
+  slider.step = "1";
+  slider.value = String(toPos(cur));
+  slider.addEventListener("input", () => {
+    const hz = toHz(Number(slider.value));
+    value.textContent = formatHz(hz);
+    onChange(hz);
+  });
+  row.append(slider);
+  return row;
+}
+
+function formatHz(hz: number): string {
+  return hz >= 1000 ? `${(hz / 1000).toFixed(2)} kHz` : `${Math.round(hz)} Hz`;
 }
 
 // Node-level bus output fader (STEREO master / MIX): -∞ then -60.0 … +10.0 dB,
