@@ -37,6 +37,15 @@ export interface GateParams {
   decay?: number;
 }
 
+// Ducker detail values (stereo-channel sidechain). threshold/range in dB,
+// attack/decay in ms. The ducker source is a key-source connection, not stored here.
+export interface DuckerParams {
+  threshold?: number;
+  range?: number;
+  attack?: number;
+  decay?: number;
+}
+
 // Input COMP detail values (MONO IN channels, COMP->EQ mode). threshold/gain in
 // dB, ratio as N:1, knee enum (0 Soft / 1 Medium / 2 Hard), attack/release in ms.
 // autoMakeup auto-drives gain; when oneKnob is on the device drives all of the
@@ -75,6 +84,10 @@ export interface NodeParams {
   gate?: GateParams;
   /** Input COMP detail values (MONO IN channels, COMP->EQ mode). */
   comp?: CompParams;
+  /** DUCKER_ON: sidechain ducker engaged (ducker nodes). Absent or false = off. */
+  duckerOn?: boolean;
+  /** Ducker detail values (ducker nodes). */
+  ducker?: DuckerParams;
   /** GATE_ON: noise-gate section on (MONO IN channels). Absent or false = off. */
   gateOn?: boolean;
   /** COMP_ON: compressor section on (MONO IN channels). Absent or false = off. */

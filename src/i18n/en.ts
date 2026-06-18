@@ -72,6 +72,7 @@ export const en = {
     autoMakeup: "Auto Makeup",
     oneKnob: "1-Knob",
     oneKnobLevel: "1-Knob Level",
+    duckerOn: "Ducker",
     gainAnalog: "A.Gain",
     gainDigital: "D.Gain",
     master: "Master",

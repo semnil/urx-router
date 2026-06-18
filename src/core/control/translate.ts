@@ -32,6 +32,8 @@ import {
   centiDbToVd,
   D_GAIN_MIN_DB,
   D_GAIN_MAX_DB,
+  DUCKER_DECAY_MAX_MS,
+  DUCKER_DECAY_MIN_MS,
   DYN_ATTACK_MAX_MS,
   DYN_ATTACK_MIN_MS,
   DYN_HOLD_MAX_MS,
@@ -450,6 +452,14 @@ const COMP_FIELDS: DynField[] = [
   { key: "attack", name: "COMP_ATTACK", min: DYN_ATTACK_MIN_MS, max: DYN_ATTACK_MAX_MS, step: 0.1, def: 34.58, unit: "ms" },
   { key: "release", name: "COMP_RELEASE", min: DYN_RELEASE_MIN_MS, max: DYN_RELEASE_MAX_MS, step: 1, def: 218, unit: "ms" },
 ];
+// Ducker detail (260-263, stereo channel sidechain). Same shapes as GATE but no
+// hold; decay shares the ×10 release scale with a wider range.
+export const DUCKER_FIELDS: DynField[] = [
+  { key: "threshold", name: "DUCKER_THRESHOLD", min: -60, max: 0, step: 1, def: -40, unit: "db" },
+  { key: "range", name: "DUCKER_RANGE", min: -60, max: 0, step: 1, def: -56, unit: "db" },
+  { key: "attack", name: "DUCKER_ATTACK", min: DYN_ATTACK_MIN_MS, max: DYN_ATTACK_MAX_MS, step: 0.1, def: 20.17, unit: "ms" },
+  { key: "decay", name: "DUCKER_DECAY", min: DUCKER_DECAY_MIN_MS, max: DUCKER_DECAY_MAX_MS, step: 1, def: 1000, unit: "ms" },
+];
 
 /** GATE/COMP detail controls for a channel: the slider fields and the instance index. */
 export interface ChannelDynamics {
@@ -495,6 +505,18 @@ function pushEqBandCommands(out: VdCommand[], ctrl: EqControl, bands: EqBand[]):
       if (v.gain !== undefined) out.push(rawCommand("EQ_BAND_GAIN", band.gain, "eqGain", inst, v.gain));
     }
   }
+}
+
+/**
+ * Resolve a ducker node's instance index (its parent stereo channel's stereo
+ * position, via attachTo), or null if it is not a ducker. The ducker's enable
+ * (258) and detail (260-263) all address this y. Confirmed on CH5/6 (research §12.27).
+ */
+export function duckerControl(model: DeviceModel, nodeId: string): { y: number } | null {
+  const node = model.nodes.find((n) => n.id === nodeId);
+  if (!node || node.kind !== "ducker" || !node.attachTo) return null;
+  const y = stereoIndexMap(model).get(node.attachTo);
+  return y === undefined ? null : { y };
 }
 
 /** Insert FX for a node: which param, the instance(s) it writes, and its options. */
@@ -638,6 +660,17 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const oeq = outputEq(node.id);
     const bands = plan.nodeParams[node.id]?.eqBands;
     if (oeq && bands) pushEqBandCommands(out, oeq, bands);
+  }
+
+  // Ducker on/off + detail (threshold/range/attack/decay): one per stereo channel,
+  // stored on the ducker node and addressed at its parent channel's stereo index.
+  for (const node of model.nodes) {
+    if (node.kind !== "ducker") continue;
+    const dc = duckerControl(model, node.id);
+    const np = plan.nodeParams[node.id];
+    if (!dc) continue;
+    if (np?.duckerOn !== undefined) out.push(command("DUCKER_ON", dc.y, np.duckerOn ? 1 : 0));
+    if (np?.ducker) pushDynCommands(out, DUCKER_FIELDS, dc.y, np.ducker as Record<string, number | undefined>);
   }
 
   // STEREO bus master ON/OFF (global, y = 0).

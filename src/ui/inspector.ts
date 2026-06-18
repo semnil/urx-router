@@ -14,6 +14,8 @@ import {
   channelControl,
   channelDynamics,
   channelSections,
+  DUCKER_FIELDS,
+  duckerControl,
   inputEq,
   insertFxControl,
   isStereoChannel,
@@ -221,6 +223,13 @@ export function renderInspector(
       // Input GATE / COMP detail (MONO IN channels; COMP only in COMP->EQ mode).
       const dyn = channelDynamics(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
       if (dyn) host.append(dynamicsBlock(node.id, dyn, np, plan, actions, m));
+    }
+
+    // Ducker node: on/off + detail (threshold/range/attack/decay) for the
+    // stereo-channel sidechain. Defaults off, so it is not dimmed like a muted
+    // channel (which keys off `on`).
+    if (node.kind === "ducker" && duckerControl(model, node.id)) {
+      host.append(duckerBlock(node.id, plan.nodeParams[node.id] ?? {}, plan, actions, m));
     }
 
     // Bus output fader: STEREO master (581) and MIX 1/2 (674). Reuses
@@ -524,6 +533,40 @@ function formatDyn(v: number, unit: DynField["unit"]): string {
   return v < 1 ? `${v.toFixed(3)} ms` : `${v.toFixed(1)} ms`;
 }
 
+// One GATE/COMP/ducker detail slider, labeled and formatted by its unit. The dyn
+// labels cover all slider field keys (a subset of the DynField.key union, which
+// also spans the comp toggle keys), so index them via a string view.
+function dynFieldSlider(
+  f: DynField,
+  m: Messages,
+  cur: number | undefined,
+  onSet: (key: DynField["key"], v: number) => void,
+): HTMLElement {
+  const label = (m.inspector.dyn as Record<string, string>)[f.key];
+  return rangeSlider(label, f.min, f.max, f.step, cur ?? f.def, (v) => formatDyn(v, f.unit), (v) => onSet(f.key, v));
+}
+
+// Ducker node detail editor: the on/off plus threshold/range/attack/decay sliders.
+// The ducker source is a key-source connection, edited on the canvas, not here.
+function duckerBlock(
+  nodeId: string,
+  np: NodeParams,
+  plan: Plan,
+  actions: InspectorActions,
+  m: Messages,
+): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  frag.append(subheading(m.inspector.parameters));
+  frag.append(
+    boolToggle(m.inspector.duckerOn, np.duckerOn ?? false, (v) => actions.onUpdateNodeParams(nodeId, { duckerOn: v })),
+  );
+  const setDucker = (key: DynField["key"], v: number): void =>
+    actions.onUpdateNodeParams(nodeId, { ducker: { ...(plan.nodeParams[nodeId]?.ducker ?? {}), [key]: v } });
+  const vals = (np.ducker ?? {}) as Record<string, number | undefined>;
+  for (const f of DUCKER_FIELDS) frag.append(dynFieldSlider(f, m, vals[f.key], setDucker));
+  return frag;
+}
+
 // Input GATE / COMP detail editor (MONO IN channels). Renders the GATE sliders
 // (threshold/range/attack/hold/decay) and, in COMP->EQ mode, the COMP sliders
 // (threshold/ratio/gain/attack/release) plus the knee dropdown. All sliders mutate
@@ -540,13 +583,8 @@ function dynamicsBlock(
   // Merge into the live section object so concurrent sibling edits aren't lost.
   const setSection = (section: "gate" | "comp", patch: Record<string, number | boolean>): void =>
     actions.onUpdateNodeParams(nodeId, { [section]: { ...(plan.nodeParams[nodeId]?.[section] ?? {}), ...patch } });
-  // dyn labels cover the slider field keys (a subset of the DynField.key union,
-  // which also spans the comp toggle keys); index via a string view.
-  const dynLabel = m.inspector.dyn as Record<string, string>;
   const sliderFor = (f: DynField, section: "gate" | "comp", cur: number | undefined): HTMLElement =>
-    rangeSlider(dynLabel[f.key], f.min, f.max, f.step, cur ?? f.def, (v) => formatDyn(v, f.unit), (v) =>
-      setSection(section, { [f.key]: v }),
-    );
+    dynFieldSlider(f, m, cur, (key, v) => setSection(section, { [key]: v }));
 
   frag.append(subheading(m.inspector.gateOn));
   const gate = (np.gate ?? {}) as Record<string, number | undefined>;
