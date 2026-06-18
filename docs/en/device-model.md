@@ -153,7 +153,9 @@ PRE/POST states whether the send is tapped **before (PRE) or after (POST) the ST
   main path and is likewise **fixed** — always wired, non-removable, **no PRE/POST**. It is seeded at
   **-∞ (off)** by default so an FX return is not summed into the main mix until raised. The MIX 1/2
   sends stay optional, with PRE/POST.)
-- OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`send`)
+- OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`sendSwitch`; an ON/OFF assign, not a
+  summing send — the oscillator has one global level. Stereo destinations carry
+  independent L/R in the wire (`oscL` / `oscR`); FX buses are mono)
 - MIX 1 / MIX 2 → STEREO (`sendSwitch`; the "TO ST" send inside the MIX 1–2 OUT block — ON/OFF only, no independent LEVEL/PAN)
 
 ### 4. Streaming / monitor source (`source`, one receiver)

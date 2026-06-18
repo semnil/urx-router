@@ -137,10 +137,11 @@ describe("isFixedConnection", () => {
 });
 
 describe("sendHasTap", () => {
-  it("exposes PRE/POST on editable sends (CH/FX/OSC -> MIX/FX)", () => {
+  it("exposes PRE/POST on editable sends (CH/FX -> MIX/FX)", () => {
     expect(sendHasTap(u44, ref("ch1", "out"), ref("bus.mix1", "in"))).toBe(true);
     expect(sendHasTap(u44, ref("bus.fx1", "out"), ref("bus.mix1", "in"))).toBe(true);
-    expect(sendHasTap(u44, ref("bus.osc", "out"), ref("bus.stereo", "in"))).toBe(true);
+    // OSC -> bus is an on/off assign switch (no PRE/POST), not a tapped send.
+    expect(sendHasTap(u44, ref("bus.osc", "out"), ref("bus.stereo", "in"))).toBe(false);
   });
 
   it("drops PRE/POST on the fixed STEREO / FX-return main-fader paths", () => {

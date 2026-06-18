@@ -493,6 +493,39 @@ describe("planToCommands", () => {
     expect(m2!.request.uri).toBe("/vd/parameters/724:0:1?operation=value");
   });
 
+  it("emits oscillator generator params from the bus.osc node", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.osc"] = { osc: { on: true, level: -20, mode: 0, freq: 2000 } };
+    const cmds = planToCommands(model, plan);
+    expect(cmds.find((c) => c.name === "OSC_ON")!.vdValue).toBe(1);
+    expect(cmds.find((c) => c.name === "OSC_LEVEL")!.vdValue).toBe(-2000);
+    expect(cmds.find((c) => c.name === "OSC_FREQ")!.vdValue).toBe(20000);
+    expect(cmds.find((c) => c.name === "OSC_ON")!.request.uri).toBe("/vd/parameters/710:0:0?operation=value");
+  });
+
+  it("emits OSC assign with independent L/R for stereo buses, mono for FX", () => {
+    const plan = emptyPlan("URX44V");
+    plan.connections.push({
+      from: "bus.osc:out",
+      to: "bus.stereo:in",
+      kind: "sendSwitch",
+      params: { oscL: true, oscR: false },
+    });
+    plan.connections.push({ from: "bus.osc:out", to: "bus.mix2:in", kind: "sendSwitch" });
+    plan.connections.push({ from: "bus.osc:out", to: "bus.fx1:in", kind: "sendSwitch" });
+    const cmds = planToCommands(model, plan);
+    // STEREO: L on (716:0), R off (716:1).
+    expect(cmds.find((c) => c.name === "OSC_ASSIGN_STEREO" && c.y === 0)!.vdValue).toBe(1);
+    expect(cmds.find((c) => c.name === "OSC_ASSIGN_STEREO" && c.y === 1)!.vdValue).toBe(0);
+    // MIX2 defaults both on at instances 2/3.
+    expect(cmds.find((c) => c.name === "OSC_ASSIGN_MIX" && c.y === 2)!.vdValue).toBe(1);
+    expect(cmds.find((c) => c.name === "OSC_ASSIGN_MIX" && c.y === 3)!.vdValue).toBe(1);
+    // FX1 is mono — only one instance, no R.
+    const fx = cmds.filter((c) => c.name === "OSC_ASSIGN_FX");
+    expect(fx).toHaveLength(1);
+    expect(fx[0].y).toBe(0);
+  });
+
   it("omits node-param commands when none are set", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

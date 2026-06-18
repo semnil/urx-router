@@ -14,6 +14,19 @@ export interface ConnParams {
   level?: number;
   pan?: number;
   tap?: "pre" | "post";
+  /** Oscillator → bus assign: which of the destination's L/R channels are on.
+   *  Stereo buses use both; FX buses (mono) use oscL only. Absent = on. */
+  oscL?: boolean;
+  oscR?: boolean;
+}
+
+// Oscillator generator settings (the bus.osc node). level in dB (-96..0), mode
+// enum (0 Sine / 1 Pink / 2 Burst), freq in Hz (Sine only). All optional.
+export interface OscParams {
+  on?: boolean;
+  level?: number;
+  mode?: number;
+  freq?: number;
 }
 
 // One band of an output bus 4-band PEQ. All fields optional (absent = device
@@ -107,6 +120,8 @@ export interface NodeParams {
   gain?: number;
   /** A node-level fader in dB (e.g. monitor level). Absent = device default. */
   level?: number;
+  /** Oscillator generator settings (the bus.osc node). */
+  osc?: OscParams;
 }
 
 export interface PlanConnection {

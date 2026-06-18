@@ -626,6 +626,29 @@ export const ROUTING_SELECTORS: [string, ConnectionKind, ParamName, ParamName | 
   ["out.line", "patch", "OUT_PATCH_LINE", "OUT_PATCH_LINE", 0, 1],
 ];
 
+// OSC → bus assign on/off per output channel: which param + L/R instance (FX is
+// mono, r = null). The oscillator can feed several buses, each independently.
+export interface OscAssign {
+  name: ParamName;
+  l: number;
+  r: number | null;
+}
+const OSC_ASSIGN: Record<string, OscAssign> = {
+  "bus.stereo": { name: "OSC_ASSIGN_STEREO", l: 0, r: 1 },
+  "bus.mix1": { name: "OSC_ASSIGN_MIX", l: 0, r: 1 },
+  "bus.mix2": { name: "OSC_ASSIGN_MIX", l: 2, r: 3 },
+  "bus.fx1": { name: "OSC_ASSIGN_FX", l: 0, r: null },
+  "bus.fx2": { name: "OSC_ASSIGN_FX", l: 1, r: null },
+};
+
+/** OSC assign target for a bus, or null if the bus is not an OSC destination. */
+export function oscAssign(busId: string): OscAssign | null {
+  return OSC_ASSIGN[busId] ?? null;
+}
+
+/** Bus ids the oscillator can be assigned to, in display order. */
+export const OSC_ASSIGN_BUSES = Object.keys(OSC_ASSIGN);
+
 /** Insert FX for a node: which param, the instance(s) it writes, and its options. */
 export interface InsertFxControl {
   param: number;
@@ -820,6 +843,23 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   for (const [id, y] of [["bus.mon1", 0], ["bus.mon2", 1]] as const) {
     const np = plan.nodeParams[id];
     if (np?.level !== undefined) out.push(command("MONITOR_LEVEL", y, np.level));
+  }
+
+  // Oscillator generator (bus.osc node): on / level / mode / frequency.
+  const osc = plan.nodeParams["bus.osc"]?.osc;
+  if (osc?.on !== undefined) out.push(command("OSC_ON", 0, osc.on ? 1 : 0));
+  if (osc?.level !== undefined) out.push(command("OSC_LEVEL", 0, osc.level));
+  if (osc?.mode !== undefined) out.push(command("OSC_MODE", 0, osc.mode));
+  if (osc?.freq !== undefined) out.push(command("OSC_FREQ", 0, osc.freq));
+
+  // OSC → bus assign: each outgoing wire turns the destination's L/R channels on
+  // (oscL/oscR; absent = on). FX buses are mono (R skipped).
+  for (const conn of plan.connections) {
+    if (parseRef(conn.from).nodeId !== "bus.osc") continue;
+    const a = oscAssign(parseRef(conn.to).nodeId);
+    if (!a) continue;
+    out.push(command(a.name, a.l, conn.params?.oscL === false ? 0 : 1));
+    if (a.r !== null) out.push(command(a.name, a.r, conn.params?.oscR === false ? 0 : 1));
   }
   return out;
 }

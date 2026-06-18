@@ -95,6 +95,9 @@ const inspectorActions = {
     // the canvas at once. Level/pan carry no on-canvas marker, so they keep
     // mutating in place and the slider keeps focus.
     if (patch.tap !== undefined) graph.repaintWires();
+    // OSC assign L/R are toggle buttons (not focus-holding sliders); re-render so
+    // the pressed state updates at once.
+    if (patch.oscL !== undefined || patch.oscR !== undefined) refreshInspector();
   },
   onUpdateNodeParams: (id: string, patch: NodeParams) => {
     const prev = plan.nodeParams[id];
@@ -113,6 +116,11 @@ const inspectorActions = {
     const compRelayout =
       patch.comp !== undefined &&
       (patch.comp.oneKnob !== prev?.comp?.oneKnob || patch.comp.autoMakeup !== prev?.comp?.autoMakeup);
+    // OSC on / mode toggles re-render (mode shows or hides the frequency control);
+    // the level / frequency sliders must not (they keep focus while dragging).
+    const oscRelayout =
+      patch.osc !== undefined &&
+      (patch.osc.on !== prev?.osc?.on || patch.osc.mode !== prev?.osc?.mode);
     // Toggles re-render to update the active button; sliders (gain/level) mutate
     // in place so they keep focus while dragging.
     if (
@@ -131,7 +139,8 @@ const inspectorActions = {
       patch.compOn !== undefined ||
       patch.duckerOn !== undefined ||
       eqRelayout ||
-      compRelayout
+      compRelayout ||
+      oscRelayout
     )
       refreshInspector();
   },
