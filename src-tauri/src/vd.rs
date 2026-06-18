@@ -1,7 +1,7 @@
 // Live hardware control transport: a client for the Device Center broker's
 // "vd" protocol over WebSocket (ws://127.0.0.1:51780/casket, JSON-RPC 1.0).
 // Device Center must be running with a URX connected; it bridges the broker to
-// the unit's CDC serial. See reference/.local/control-protocol-research.md §12.
+// the unit's CDC serial. See reference/.local/vd-protocol.md.
 //
 // A dedicated worker thread owns the socket so the broker's continuous meter
 // notifications are drained without blocking command latency, and so the device
@@ -165,8 +165,11 @@ mod imp {
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     // Discard queued meter notifications so the socket buffer
-                    // never backs up while idle.
-                    drain(&mut ws);
+                    // never backs up while idle, and stop if the link dropped.
+                    if let Err(e) = drain(&mut ws) {
+                        eprintln!("vd: {e}; stopping control worker");
+                        break;
+                    }
                 }
             }
         }
@@ -177,13 +180,17 @@ mod imp {
         ws.send(Message::Text(v.to_string())).map_err(|e| e.to_string())
     }
 
-    /// Read one text message, or None on read timeout. Errors only on a closed
-    /// or broken connection.
+    /// Read one text message, or None on read timeout. Errors on a closed or
+    /// broken connection, or on an unexpected binary frame, so the awaiting
+    /// command surfaces the failure to the frontend instead of hanging.
     fn read_text(ws: &mut Ws) -> Result<Option<String>, String> {
         match ws.read() {
             Ok(Message::Text(t)) => Ok(Some(t.to_string())),
-            Ok(Message::Close(_)) => Err("connection closed".into()),
-            Ok(_) => Ok(None), // ping/pong/binary — ignore
+            Ok(Message::Close(_)) => Err("Device Center closed the control connection".into()),
+            // The vd protocol is JSON text only; a binary frame means the link is
+            // out of sync, so fail the awaiting command rather than swallow it.
+            Ok(Message::Binary(_)) => Err("unexpected binary frame from broker".into()),
+            Ok(_) => Ok(None), // ping/pong — ignore
             Err(tungstenite::Error::Io(e))
                 if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) =>
             {
@@ -244,7 +251,10 @@ mod imp {
             }
             let vdp = msg.pointer("/params/vdp");
             let ruri = vdp.and_then(|v| v.get("uri")).and_then(Value::as_str).unwrap_or("");
-            if !ruri.starts_with(&base) {
+            // Match the address exactly so another instance's reply (e.g. y=12) cannot
+            // satisfy a y=1 request via a prefix match.
+            let ruri_addr = ruri.split('?').next().unwrap_or(ruri);
+            if ruri_addr != base {
                 continue;
             }
             let code = vdp
@@ -282,7 +292,10 @@ mod imp {
             }
             let vdp = msg.pointer("/params/vdp");
             let ruri = vdp.and_then(|v| v.get("uri")).and_then(Value::as_str).unwrap_or("");
-            if !ruri.starts_with(&base) {
+            // Match the address exactly so another instance's reply (e.g. y=12) cannot
+            // satisfy a y=1 request via a prefix match.
+            let ruri_addr = ruri.split('?').next().unwrap_or(ruri);
+            if ruri_addr != base {
                 continue;
             }
             return vdp
@@ -293,13 +306,41 @@ mod imp {
         Err("timed out waiting for the parameter value".into())
     }
 
+    /// Outcome of reading one frame while draining the idle socket.
+    enum Drained {
+        /// A frame was read and discarded; more may be buffered.
+        Frame,
+        /// No more frames are buffered (socket would block); draining is done.
+        Empty,
+        /// The connection is closed or broken.
+        Closed,
+    }
+
+    /// Read one frame for draining, distinguishing an empty socket (WouldBlock)
+    /// from a non-text frame so the caller can stop once the buffer is clear.
+    fn drain_one(ws: &mut Ws) -> Drained {
+        match ws.read() {
+            Ok(Message::Close(_)) => Drained::Closed,
+            Ok(_) => Drained::Frame, // text/ping/pong/binary — discard, keep going
+            Err(tungstenite::Error::Io(e))
+                if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) =>
+            {
+                Drained::Empty
+            }
+            Err(_) => Drained::Closed,
+        }
+    }
+
     /// Read and discard whatever is buffered until the socket would block.
-    fn drain(ws: &mut Ws) {
+    /// Returns Err if the connection dropped so the worker can stop.
+    fn drain(ws: &mut Ws) -> Result<(), String> {
         for _ in 0..256 {
-            match read_text(ws) {
-                Ok(Some(_)) => continue,
-                _ => break,
+            match drain_one(ws) {
+                Drained::Frame => continue,
+                Drained::Empty => return Ok(()),
+                Drained::Closed => return Err("Device Center closed the control connection".into()),
             }
         }
+        Ok(())
     }
 }
