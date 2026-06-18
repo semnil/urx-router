@@ -122,6 +122,10 @@ export interface NodeParams {
   level?: number;
   /** Oscillator generator settings (the bus.osc node). */
   osc?: OscParams;
+  /** Monitor CUE interrupt (monitor buses). Absent or true = on (device default). */
+  cueInterrupt?: boolean;
+  /** Monitor MONO downmix (monitor buses). Absent or false = off. */
+  mono?: boolean;
 }
 
 export interface PlanConnection {

@@ -81,6 +81,8 @@ export const en = {
     oscMode: "Mode",
     oscAssignL: "Assign L",
     oscAssignR: "Assign R",
+    cueInterrupt: "CUE Interrupt",
+    mono: "MONO",
     on: "ON",
     off: "OFF",
     selectionOnly: "Selection only — no send parameters.",

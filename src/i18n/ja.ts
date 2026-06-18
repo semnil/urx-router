@@ -80,6 +80,8 @@ export const ja: Messages = {
     oscMode: "モード",
     oscAssignL: "アサイン L",
     oscAssignR: "アサイン R",
+    cueInterrupt: "CUE Interrupt",
+    mono: "MONO",
     on: "ON",
     off: "OFF",
     selectionOnly: "選択のみ — Send パラメータはありません。",

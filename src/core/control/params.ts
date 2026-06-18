@@ -177,6 +177,9 @@ export const PARAMS = {
   /** Monitor source select L/R (y = monitor 0..1). Raw bus port ref. */
   MONITOR_SRC_L: { id: 719, axis: "global", encoding: "portRef" },
   MONITOR_SRC_R: { id: 720, axis: "global", encoding: "portRef" },
+  /** Monitor CUE interrupt (default on) / MONO (default off), y = monitor 0..1. */
+  MONITOR_CUE_INTERRUPT: { id: 721, axis: "global", encoding: "bool" },
+  MONITOR_MONO: { id: 722, axis: "global", encoding: "bool" },
   /** Analog output patch source L/R (y = 0/1). Raw bus port ref. */
   OUT_PATCH_MAIN: { id: 730, axis: "global", encoding: "portRef" },
   OUT_PATCH_LINE: { id: 731, axis: "global", encoding: "portRef" },

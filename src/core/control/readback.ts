@@ -237,7 +237,9 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
   for (const [id, y] of [["bus.mon1", 0], ["bus.mon2", 1]] as const) {
     try {
       const level = vdToMonitorLevel(await vdGet(PARAMS.MONITOR_LEVEL.id, 0, y));
-      plan.nodeParams[id] = { ...plan.nodeParams[id], level };
+      const cueInterrupt = vdToBool(await vdGet(PARAMS.MONITOR_CUE_INTERRUPT.id, 0, y));
+      const mono = vdToBool(await vdGet(PARAMS.MONITOR_MONO.id, 0, y));
+      plan.nodeParams[id] = { ...plan.nodeParams[id], level, cueInterrupt, mono };
     } catch (e) {
       errors.push(`${id}: ${e instanceof Error ? e.message : String(e)}`);
     }
