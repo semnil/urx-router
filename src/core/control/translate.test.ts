@@ -169,6 +169,18 @@ describe("planToCommands", () => {
     expect(mix.every((c) => c.vdValue === 1792)).toBe(true);
   });
 
+  it("emits COMP/EQ type on mono channels but not stereo", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { compEqType: 1 }; // SSMCS
+    plan.nodeParams.ch_5_6 = { compEqType: 1 };
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "COMP_EQ_TYPE");
+    // Mono CH1 = param 21 at y0, value 1 (SSMCS); stereo channels have none.
+    expect(cmds).toHaveLength(1);
+    expect(cmds[0].vdValue).toBe(1);
+    expect(cmds[0].request.uri).toBe("/vd/parameters/21:0:0?operation=value");
+  });
+
   it("emits Hi-Z only on CH3/CH4, not other channels", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

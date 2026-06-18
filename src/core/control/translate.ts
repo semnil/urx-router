@@ -356,6 +356,8 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       if (v !== undefined) out.push(rawCommand(ph.name, ph.param, "bool", ph.y, v ? 1 : 0));
     }
     if (cc.hasHiZ && np.hiZ !== undefined) out.push(command("HI_Z", cc.y, np.hiZ ? 1 : 0));
+    // COMP/EQ type (COMP->EQ vs SSMCS) is a MONO IN channel feature (= mic strip).
+    if (cc.hasMicStrip && np.compEqType !== undefined) out.push(command("COMP_EQ_TYPE", cc.y, np.compEqType));
     if (cc.gain && np.gain !== undefined) {
       // A.Gain (mono) is one instance; D.Gain (stereo) writes both linked L/R.
       for (const yi of cc.gain.instances) out.push(rawCommand("HA_GAIN", cc.gain.param, "gain", yi, np.gain));

@@ -28,6 +28,8 @@ export interface NodeParams {
   hpfFreq?: number;
   /** INSERT_FX: insert-effect enum value (MONO IN channels). Absent or -1 = No Effect. */
   insertFx?: number;
+  /** COMP_EQ_TYPE: 0 = COMP->EQ, 1 = SSMCS (MONO IN channels). Absent = COMP->EQ. */
+  compEqType?: number;
   /** PHANTOM: +48V phantom power (analog mic channels only). Absent or false = off. */
   phantom?: boolean;
   /** PHASE: polarity invert (Ø) on a mono mic channel. Absent or false = off. */
