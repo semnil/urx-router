@@ -245,7 +245,9 @@ export function vdToBool(value: number): boolean {
 // high tag bit set (0x80000000 | port); the USB-output selectors store it raw.
 // `NONE` is the uint32 sentinel used when nothing is selected.
 const PORT_REF_TAG = 0x80000000;
-const PORT_REF_NONE = 0xffffffff;
+/** uint32 sentinel a selector holds when nothing is selected. Tagging it (high
+ *  bit) leaves it unchanged, so emitting it clears either a raw or tagged selector. */
+export const PORT_REF_NONE = 0xffffffff;
 
 /** Port id → tagged broker value (high bit set). */
 export function tagPortRef(port: number): number {
