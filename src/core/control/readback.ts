@@ -56,6 +56,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
         update.clipSafe = vdToBool(await vdGet(PARAMS.CLIP_SAFE.id, 0, cc.y));
       }
       if (cc.hasHiZ) update.hiZ = vdToBool(await vdGet(PARAMS.HI_Z.id, 0, cc.y));
+      if (cc.hasMicStrip) update.compEqType = await vdGet(PARAMS.COMP_EQ_TYPE.id, 0, cc.y);
       // Polarity invert: one (mono) or two independent L/R (stereo).
       for (const ph of cc.phases) update[ph.key] = vdToBool(await vdGet(ph.param, 0, ph.y));
       conn.params = { ...conn.params, level, pan };

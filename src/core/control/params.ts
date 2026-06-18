@@ -36,6 +36,8 @@ export const PARAMS = {
   HPF_ON: { id: 25, axis: "input", encoding: "bool" },
   /** Input channel HPF cutoff frequency (40 … 120 Hz). Confirmed by live scan. */
   HPF_FREQ: { id: 26, axis: "input", encoding: "freq" },
+  /** Input channel COMP/EQ type: COMP->EQ vs SSMCS (MONO IN channels only). */
+  COMP_EQ_TYPE: { id: 21, axis: "input", encoding: "enum" },
   /** Input channel insert FX (MONO IN channels only). Enum from input_insert_fx. */
   INSERT_FX: { id: 135, axis: "input", encoding: "enum" },
   /** STEREO master insert FX (single). Enum from output_insert_fx. */
@@ -131,6 +133,15 @@ export const OUTPUT_INSERT_FX_OPTIONS: InsertFxOption[] = [
 export function normalizeInsertFx(raw: number): number {
   return raw === INSERT_FX_VD_NONE ? INSERT_FX_NONE : raw;
 }
+
+// COMP/EQ type (comp_eq_type table) for MONO IN channels: the standard COMP->EQ
+// chain, or SSMCS (Sweet Spot Morphing Channel Strip, which swaps the comp/EQ
+// order). Device labels match the table strings exactly.
+export const COMP_EQ_COMP_FIRST = 0;
+export const COMP_EQ_OPTIONS = [
+  { value: COMP_EQ_COMP_FIRST, label: "COMP->EQ" },
+  { value: 1, label: "SSMCS" },
+];
 
 // Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain): each
 // stereo channel has its own dedicated, non-sequential param, written to both

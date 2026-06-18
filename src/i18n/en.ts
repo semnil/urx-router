@@ -48,6 +48,7 @@ export const en = {
     clipSafe: "Clip Safe",
     hiZ: "Hi-Z",
     insertFx: "Insert FX",
+    compEqType: "COMP/EQ Type",
     gainAnalog: "A.Gain",
     gainDigital: "D.Gain",
     master: "Master",

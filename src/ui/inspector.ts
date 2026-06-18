@@ -8,7 +8,7 @@ import type { ConnParams, NodeParams, Plan, PlanConnection } from "../core/plan"
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
 import { busFader, channelControl, insertFxControl, isStereoChannel } from "../core/control/translate";
-import { INSERT_FX_NONE } from "../core/control/params";
+import { COMP_EQ_COMP_FIRST, COMP_EQ_OPTIONS, INSERT_FX_NONE } from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
   HPF_FREQ_DEFAULT_HZ,
@@ -145,6 +145,17 @@ export function renderInspector(
         host.append(
           boolToggle(m.inspector.hiZ, np.hiZ ?? false, (v) =>
             actions.onUpdateNodeParams(node.id, { hiZ: v }),
+          ),
+        );
+      }
+      // COMP/EQ type (COMP->EQ vs SSMCS) exists only on the MONO IN channels.
+      if (cc?.hasMicStrip) {
+        host.append(
+          selectControl(
+            m.inspector.compEqType,
+            COMP_EQ_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
+            String(np.compEqType ?? COMP_EQ_COMP_FIRST),
+            (v) => actions.onUpdateNodeParams(node.id, { compEqType: Number(v) }),
           ),
         );
       }
