@@ -10,7 +10,7 @@ import type { ConnParams, NodeParams, Plan } from "../plan";
 import { ensureFixedConnections } from "../plan";
 import { vdGet } from "../platform";
 import { normalizeInsertFx, PARAMS } from "./params";
-import { busEqOn, busFader, channelControl, insertFxControl, sendControl } from "./translate";
+import { busEqOn, busFader, channelControl, channelSections, insertFxControl, sendControl } from "./translate";
 import { vdToBool, vdToFreq, vdToGain, vdToLevel, vdToMonitorLevel, vdToPan } from "./vd";
 
 export interface ReadbackResult {
@@ -59,6 +59,11 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       if (cc.hasMicStrip) update.compEqType = await vdGet(PARAMS.COMP_EQ_TYPE.id, 0, cc.y);
       // Polarity invert: one (mono) or two independent L/R (stereo).
       for (const ph of cc.phases) update[ph.key] = vdToBool(await vdGet(ph.param, 0, ph.y));
+      // Channel-strip section ON (GATE/COMP/EQ). The active COMP/EQ bank follows
+      // the type just read; each toggle decodes against its own onValue polarity.
+      for (const sec of channelSections(model, node.id, update.compEqType ?? 0)) {
+        update[sec.key] = (await vdGet(sec.param, 0, sec.y)) === sec.onValue;
+      }
       conn.params = { ...conn.params, level, pan };
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...update };
       applied++;

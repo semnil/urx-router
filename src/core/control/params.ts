@@ -38,6 +38,23 @@ export const PARAMS = {
   HPF_FREQ: { id: 26, axis: "input", encoding: "freq" },
   /** Input channel COMP/EQ type: COMP->EQ vs SSMCS (MONO IN channels only). */
   COMP_EQ_TYPE: { id: 21, axis: "input", encoding: "enum" },
+  // Channel-strip section ON toggles. GATE is MONO IN only and type-independent;
+  // COMP/EQ are MONO IN only and SWAP param banks with the COMP/EQ type (the SSMCS
+  // bank uses different ids and inverted polarity). EQ also exists on every stereo
+  // channel. Polarity is mixed (verified by live scan), so the resolver carries
+  // each toggle's onValue. (channelSections() picks the bank from the type.)
+  /** MONO IN gate ON (1 = on; type-independent). */
+  GATE_ON: { id: 28, axis: "input", encoding: "bool" },
+  /** MONO IN compressor ON, COMP->EQ bank (1 = on). */
+  COMP_ON: { id: 34, axis: "input", encoding: "bool" },
+  /** MONO IN EQ ON, COMP->EQ bank (1 = on). */
+  EQ_ON: { id: 44, axis: "input", encoding: "bool" },
+  /** MONO IN compressor ON, SSMCS bank (0 = on, inverted). */
+  SSMCS_COMP_ON: { id: 94, axis: "input", encoding: "bool" },
+  /** MONO IN EQ ON, SSMCS bank (0 = on, inverted). */
+  SSMCS_EQ_ON: { id: 106, axis: "input", encoding: "bool" },
+  /** Stereo channel EQ ON (1 = on), indexed by stereo position. */
+  STEREO_CH_EQ_ON: { id: 213, axis: "global", encoding: "bool" },
   /** Input channel insert FX (MONO IN channels only). Enum from input_insert_fx. */
   INSERT_FX: { id: 135, axis: "input", encoding: "enum" },
   /** STEREO master insert FX (single). Enum from output_insert_fx. */
@@ -140,9 +157,10 @@ export function normalizeInsertFx(raw: number): number {
 // chain, or SSMCS (Sweet Spot Morphing Channel Strip, which swaps the comp/EQ
 // order). Device labels match the table strings exactly.
 export const COMP_EQ_COMP_FIRST = 0;
+export const COMP_EQ_SSMCS = 1;
 export const COMP_EQ_OPTIONS = [
   { value: COMP_EQ_COMP_FIRST, label: "COMP->EQ" },
-  { value: 1, label: "SSMCS" },
+  { value: COMP_EQ_SSMCS, label: "SSMCS" },
 ];
 
 // Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain): each

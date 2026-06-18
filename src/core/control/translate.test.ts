@@ -181,6 +181,41 @@ describe("planToCommands", () => {
     expect(cmds[0].request.uri).toBe("/vd/parameters/21:0:0?operation=value");
   });
 
+  it("emits channel-strip section ON, swapping COMP/EQ bank by type", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // CH1 COMP->EQ: standard bank (GATE 28, COMP 34, EQ 44, all 1 = on).
+    plan.nodeParams.ch1 = { gateOn: true, compOn: true, eqOn: false };
+    // CH2 SSMCS: morphing bank (GATE 28, COMP 94, EQ 106, inverted: 0 = on).
+    plan.nodeParams.ch2 = { compEqType: 1, compOn: true, eqOn: true };
+    const cmds = planToCommands(model, plan);
+    const at = (name: string, y: number) =>
+      cmds.find((c) => c.name === name && c.y === y);
+    // CH1 (y0): GATE on = 1, COMP on = 1, EQ off = 0 (off is the on-complement).
+    expect(at("GATE_ON", 0)!.vdValue).toBe(1);
+    expect(at("COMP_ON", 0)!.vdValue).toBe(1);
+    expect(at("EQ_ON", 0)!.request.uri).toBe("/vd/parameters/44:0:0?operation=value");
+    expect(at("EQ_ON", 0)!.vdValue).toBe(0);
+    // CH2 (y1) SSMCS: COMP/EQ use the inverted 94/106 bank, on = 0.
+    expect(at("SSMCS_COMP_ON", 1)!.request.uri).toBe("/vd/parameters/94:0:1?operation=value");
+    expect(at("SSMCS_COMP_ON", 1)!.vdValue).toBe(0);
+    expect(at("SSMCS_EQ_ON", 1)!.request.uri).toBe("/vd/parameters/106:0:1?operation=value");
+    expect(at("SSMCS_EQ_ON", 1)!.vdValue).toBe(0);
+  });
+
+  it("emits only EQ (no COMP/GATE) on a stereo channel, param 213", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch_5_6 = { eqOn: false, compOn: true, gateOn: true };
+    const cmds = planToCommands(model, plan);
+    const eq = cmds.filter((c) => c.name === "STEREO_CH_EQ_ON");
+    // Stereo EQ = 213 at stereo index 0, normal polarity: off = 0.
+    expect(eq.map((c) => c.request.uri)).toEqual(["/vd/parameters/213:0:0?operation=value"]);
+    expect(eq[0].vdValue).toBe(0);
+    // No GATE/COMP on a stereo channel even though the params were set.
+    expect(cmds.some((c) => ["GATE_ON", "COMP_ON", "SSMCS_COMP_ON"].includes(c.name))).toBe(false);
+  });
+
   it("emits Hi-Z only on CH3/CH4, not other channels", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

@@ -114,7 +114,9 @@ const inspectorActions = {
       patch.hiZ !== undefined ||
       patch.insertFx !== undefined ||
       patch.compEqType !== undefined ||
-      patch.eqOn !== undefined
+      patch.eqOn !== undefined ||
+      patch.gateOn !== undefined ||
+      patch.compOn !== undefined
     )
       refreshInspector();
   },

@@ -7,7 +7,7 @@ import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, NodeParams, Plan, PlanConnection } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
-import { busEqOn, busFader, channelControl, insertFxControl, isStereoChannel } from "../core/control/translate";
+import { busEqOn, busFader, channelControl, channelSections, insertFxControl, isStereoChannel } from "../core/control/translate";
 import { COMP_EQ_COMP_FIRST, COMP_EQ_OPTIONS, INSERT_FX_NONE } from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
@@ -145,6 +145,16 @@ export function renderInspector(
         host.append(
           boolToggle(m.inspector.hiZ, np.hiZ ?? false, (v) =>
             actions.onUpdateNodeParams(node.id, { hiZ: v }),
+          ),
+        );
+      }
+      // Channel-strip section ON (GATE / COMP / EQ). Mono channels have all three;
+      // stereo channels expose only EQ. The active COMP/EQ bank follows the type.
+      // Default before a fetch: EQ on, dynamics (GATE/COMP) off.
+      for (const sec of channelSections(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST)) {
+        host.append(
+          boolToggle(m.inspector[sec.key], np[sec.key] ?? sec.key === "eqOn", (v) =>
+            actions.onUpdateNodeParams(node.id, { [sec.key]: v }),
           ),
         );
       }

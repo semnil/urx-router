@@ -30,8 +30,12 @@ export interface NodeParams {
   insertFx?: number;
   /** COMP_EQ_TYPE: 0 = COMP->EQ, 1 = SSMCS (MONO IN channels). Absent = COMP->EQ. */
   compEqType?: number;
-  /** EQ ON for an output bus (STEREO / MIX). Absent or true = on. */
+  /** EQ ON for an input channel or an output bus (STEREO / MIX). Absent or true = on. */
   eqOn?: boolean;
+  /** GATE_ON: noise-gate section on (MONO IN channels). Absent or false = off. */
+  gateOn?: boolean;
+  /** COMP_ON: compressor section on (MONO IN channels). Absent or false = off. */
+  compOn?: boolean;
   /** PHANTOM: +48V phantom power (analog mic channels only). Absent or false = off. */
   phantom?: boolean;
   /** PHASE: polarity invert (Ø) on a mono mic channel. Absent or false = off. */

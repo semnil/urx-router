@@ -14,6 +14,8 @@ import type { Plan } from "../plan";
 import { isFixedConnection } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
+  COMP_EQ_COMP_FIRST,
+  COMP_EQ_SSMCS,
   D_GAIN_PARAM,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
@@ -126,6 +128,21 @@ export interface PhaseToggle {
   side: "" | "L" | "R";
 }
 
+/**
+ * One channel-strip section ON toggle (GATE / COMP / EQ). The broker polarity is
+ * mixed, so `onValue` is the raw value that means ON (OFF is its complement).
+ */
+export interface SectionToggle {
+  name: ParamName;
+  /** The NodeParams field this toggle reads/writes. */
+  key: "gateOn" | "compOn" | "eqOn";
+  param: number;
+  /** Instance index (the address y field). */
+  y: number;
+  /** Raw broker value that means ON (the SSMCS comp/eq bank is inverted, so 0). */
+  onValue: 0 | 1;
+}
+
 export interface ChannelControl {
   fader: number;
   on: number;
@@ -203,6 +220,30 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
     phases: [{ name: "PHASE", key: "phase", param: PARAMS.PHASE.id, y, side: "" }],
     gain: { param: PARAMS.HA_GAIN.id, instances: [y], minDb: A_GAIN_MIN_DB, maxDb: A_GAIN_MAX_DB, analog: true },
   };
+}
+
+/**
+ * Channel-strip section ON toggles (GATE / COMP / EQ) for a channel. MONO IN
+ * channels have all three; GATE is type-independent (param 28) but COMP and EQ
+ * swap param banks with the COMP/EQ type — COMP->EQ uses 34/44 (1 = on), SSMCS
+ * uses 94/106 (0 = on). Stereo channels have only EQ (213). Empty for non-channels.
+ */
+export function channelSections(model: DeviceModel, nodeId: string, compEqType: number): SectionToggle[] {
+  const cc = channelControl(model, nodeId);
+  if (!cc) return [];
+  if (isStereoChannel(nodeId)) {
+    return [{ name: "STEREO_CH_EQ_ON", key: "eqOn", param: PARAMS.STEREO_CH_EQ_ON.id, y: cc.y, onValue: 1 }];
+  }
+  const ssmcs = compEqType === COMP_EQ_SSMCS;
+  return [
+    { name: "GATE_ON", key: "gateOn", param: PARAMS.GATE_ON.id, y: cc.y, onValue: 1 },
+    ssmcs
+      ? { name: "SSMCS_COMP_ON", key: "compOn", param: PARAMS.SSMCS_COMP_ON.id, y: cc.y, onValue: 0 }
+      : { name: "COMP_ON", key: "compOn", param: PARAMS.COMP_ON.id, y: cc.y, onValue: 1 },
+    ssmcs
+      ? { name: "SSMCS_EQ_ON", key: "eqOn", param: PARAMS.SSMCS_EQ_ON.id, y: cc.y, onValue: 0 }
+      : { name: "EQ_ON", key: "eqOn", param: PARAMS.EQ_ON.id, y: cc.y, onValue: 1 },
+  ];
 }
 
 /**
@@ -367,6 +408,12 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (cc.hasHiZ && np.hiZ !== undefined) out.push(command("HI_Z", cc.y, np.hiZ ? 1 : 0));
     // COMP/EQ type (COMP->EQ vs SSMCS) is a MONO IN channel feature (= mic strip).
     if (cc.hasMicStrip && np.compEqType !== undefined) out.push(command("COMP_EQ_TYPE", cc.y, np.compEqType));
+    // Channel-strip section ON (GATE/COMP/EQ). The active COMP/EQ bank follows the
+    // type; polarity per toggle. Stereo channels expose only EQ.
+    for (const sec of channelSections(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST)) {
+      const v = np[sec.key];
+      if (v !== undefined) out.push(rawCommand(sec.name, sec.param, "bool", sec.y, v ? sec.onValue : 1 - sec.onValue));
+    }
     if (cc.gain && np.gain !== undefined) {
       // A.Gain (mono) is one instance; D.Gain (stereo) writes both linked L/R.
       for (const yi of cc.gain.instances) out.push(rawCommand("HA_GAIN", cc.gain.param, "gain", yi, np.gain));
