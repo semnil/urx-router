@@ -187,8 +187,8 @@ export const COMP_EQ_OPTIONS = [
 ];
 
 // Output 4-band PEQ filter type (LOW / HIGH bands only; the two mid bands are
-// fixed Peaking). Verified values on the LOW band: 0 = Peaking, 1 = Shelving,
-// 2 = HPF (device labels per user). The HIGH band mirrors it with LPF at 2.
+// fixed Peaking). Verified by live scan: 0 = Peaking, 1 = Shelving, 2 = HPF on
+// the LOW band and LPF on the HIGH band (device labels per user).
 export const EQ_TYPE_PEAKING = 0;
 export const EQ_TYPE_SHELVING = 1;
 export const EQ_TYPE_PASS = 2;
