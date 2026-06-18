@@ -173,9 +173,11 @@ export function buildModel(p: ModelParams): DeviceModel {
   // 3b. MIX 1 / 2 -> STEREO ("TO ST"): ON/OFF switch only, no level/pan.
   for (const mix of ["bus.mix1", "bus.mix2"]) r(ref(mix, "out"), ref("bus.stereo", "in"), "sendSwitch");
 
-  // 4. Oscillator -> mix / FX buses.
+  // 4. Oscillator -> STEREO / MIX / FX buses. The assign is on/off per output
+  //    channel (no level/pan — the OSC has one global level), so it is a switch,
+  //    not a summing send; stereo buses carry independent L/R in the wire params.
   for (const b of ["bus.stereo", "bus.mix1", "bus.mix2", "bus.fx1", "bus.fx2"])
-    r(ref("bus.osc", "out"), ref(b, "in"), "send");
+    r(ref("bus.osc", "out"), ref(b, "in"), "sendSwitch");
 
   // 5. Streaming source select.
   for (const s of ["bus.stereo", "bus.mix1", "bus.mix2"])

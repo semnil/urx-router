@@ -19,6 +19,7 @@ import {
   inputEq,
   insertFxControl,
   isStereoChannel,
+  oscAssign,
   outputEq,
 } from "../core/control/translate";
 import {
@@ -32,6 +33,8 @@ import {
   EQ_TYPE_PEAKING,
   EQ_TYPE_SHELVING,
   INSERT_FX_NONE,
+  OSC_MODE_OPTIONS,
+  OSC_MODE_SINE,
 } from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
@@ -269,6 +272,32 @@ export function renderInspector(
       );
     }
 
+    // Oscillator generator (bus.osc): on / level / mode / frequency. The frequency
+    // control shows only in Sine Wave mode (mode change relayouts, see main.ts).
+    if (node.id === "bus.osc") {
+      const osc = plan.nodeParams[node.id]?.osc ?? {};
+      const setOsc = (patch: Partial<typeof osc>): void =>
+        actions.onUpdateNodeParams(node.id, { osc: { ...osc, ...patch } });
+      host.append(subheading(m.inspector.parameters));
+      host.append(boolToggle(m.inspector.oscOn, osc.on ?? false, (v) => setOsc({ on: v })));
+      host.append(
+        rangeSlider(m.inspector.oscLevel, -96, 0, 1, osc.level ?? -20, formatDb, (v) =>
+          setOsc({ level: v }),
+        ),
+      );
+      host.append(
+        selectControl(
+          m.inspector.oscMode,
+          OSC_MODE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
+          String(osc.mode ?? OSC_MODE_SINE),
+          (v) => setOsc({ mode: Number(v) }),
+        ),
+      );
+      if ((osc.mode ?? OSC_MODE_SINE) === OSC_MODE_SINE) {
+        host.append(eqFreqControl(osc.freq ?? 1000, (hz) => setOsc({ freq: hz })));
+      }
+    }
+
     // Insert FX dropdown: MONO IN channels (input effects) and MIX/STEREO outputs
     // (output effects). An option is disabled when it exceeds the current sample
     // rate's ceiling, or when its device-wide 1-of slot is taken by another node.
@@ -325,7 +354,26 @@ export function renderInspector(
     field(m.inspector.type, connKindLabel(from, to, model)),
   );
 
-  if (conn) {
+  // OSC → bus assign wire: independent L/R on/off for stereo buses; FX buses are
+  // mono, so the wire's presence alone is the on state.
+  const oscTarget = parseRef(from).nodeId === "bus.osc" ? oscAssign(parseRef(to).nodeId) : null;
+  if (conn && oscTarget) {
+    host.append(subheading(m.inspector.parameters));
+    if (oscTarget.r !== null) {
+      host.append(
+        boolToggle(m.inspector.oscAssignL, conn.params?.oscL ?? true, (v) =>
+          actions.onUpdateParams(from, to, { oscL: v }),
+        ),
+      );
+      host.append(
+        boolToggle(m.inspector.oscAssignR, conn.params?.oscR ?? true, (v) =>
+          actions.onUpdateParams(from, to, { oscR: v }),
+        ),
+      );
+    } else {
+      host.append(hint(m.inspector.selectionOnly));
+    }
+  } else if (conn) {
     // PRE/POST is taken against the channel's STEREO main-fader level, so the
     // fixed STEREO / FX-return main paths show LEVEL / PAN but no PRE/POST.
     const fields = PARAM_FIELDS[conn.kind].filter((f) => f !== "tap" || sendHasTap(model, from, to));

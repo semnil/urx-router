@@ -146,7 +146,9 @@ PRE/POST は **その Send を STEREO 主フェーダー (= CH → STEREO のレ
 - FX 1 / FX 2 リターン → STEREO / MIX 1 / MIX 2 (`send`。**リターン → STEREO** は FX の主経路で
   同様に**固定** = 常時結線・削除不可・**PRE/POST なし**。初期レベルは **-∞ (オフ)** でシードし、上げるまで
   主ミックスに加算されない。MIX 1/2 への Send は任意で PRE/POST あり)
-- OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`send`)
+- OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`sendSwitch`、加算 Send ではなく ON/OFF
+  アサイン。オシレーターは単一のグローバルレベルを持つ。ステレオ宛先はワイヤに独立 L/R
+  (`oscL` / `oscR`) を保持し、FX バスはモノ)
 - MIX 1 / MIX 2 → STEREO (`sendSwitch`、ブロックダイアグラムの MIX 1–2 OUT 内「TO ST」。ON/OFF のみで独立した LEVEL/PAN は持たない)
 
 ### 4. ストリーミング / モニタソース (`source`, 受け口 1 本)

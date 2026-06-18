@@ -7,7 +7,7 @@
 import type { DeviceModel } from "../../models/types";
 import { ref } from "../../models/types";
 import type { ConnParams, EqBand, NodeParams, Plan } from "../plan";
-import { clearIncoming, ensureFixedConnections, setExclusiveConnection } from "../plan";
+import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
 import { vdGet } from "../platform";
 import { normalizeInsertFx, PARAMS } from "./params";
 import type { DynField, EqControl } from "./translate";
@@ -24,6 +24,8 @@ import {
   inputNodeForPort,
   insertFxControl,
   nodeForPort,
+  OSC_ASSIGN_BUSES,
+  oscAssign,
   outputEq,
   ROUTING_SELECTORS,
   sendControl,
@@ -238,6 +240,36 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       plan.nodeParams[id] = { ...plan.nodeParams[id], level };
     } catch (e) {
       errors.push(`${id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Oscillator generator (bus.osc): on / level / mode / frequency.
+  try {
+    const osc = {
+      on: vdToBool(await vdGet(PARAMS.OSC_ON.id, 0, 0)),
+      level: vdToCentiDb(await vdGet(PARAMS.OSC_LEVEL.id, 0, 0)),
+      mode: await vdGet(PARAMS.OSC_MODE.id, 0, 0),
+      freq: vdToEqFreq(await vdGet(PARAMS.OSC_FREQ.id, 0, 0)),
+    };
+    plan.nodeParams["bus.osc"] = { ...plan.nodeParams["bus.osc"], osc };
+  } catch (e) {
+    errors.push(`OSC: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // OSC → bus assign: read each bus's L/R channel toggles and reflect the wire
+  // (present with oscL/oscR when on, removed when both off).
+  for (const busId of OSC_ASSIGN_BUSES) {
+    const a = oscAssign(busId);
+    if (!a) continue;
+    try {
+      const l = vdToBool(await vdGet(PARAMS[a.name].id, 0, a.l));
+      const r = a.r !== null ? vdToBool(await vdGet(PARAMS[a.name].id, 0, a.r)) : l;
+      const from = ref("bus.osc", "out");
+      const to = ref(busId, "in");
+      removeConnection(plan, from, to);
+      if (l || r) plan.connections.push({ from, to, kind: "sendSwitch", params: { oscL: l, oscR: r } });
+    } catch (e) {
+      errors.push(`OSC→${busId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

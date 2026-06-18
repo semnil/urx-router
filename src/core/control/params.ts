@@ -188,6 +188,16 @@ export const PARAMS = {
   USB_OUT_SRC_B: { id: 733, axis: "global", encoding: "portRef" },
   USB_OUT_SRC_C: { id: 734, axis: "global", encoding: "portRef" },
   USB_OUT_SRC_SUB: { id: 735, axis: "global", encoding: "portRef" },
+  /** Oscillator generator (global). Level is centi-dB (-96..0); freq is Hz×10. */
+  OSC_ON: { id: 710, axis: "global", encoding: "bool" },
+  OSC_LEVEL: { id: 711, axis: "global", encoding: "centiDb" },
+  OSC_MODE: { id: 712, axis: "global", encoding: "enum" },
+  OSC_FREQ: { id: 713, axis: "global", encoding: "eqFreq" },
+  /** Oscillator → bus assign on/off (per output channel). STEREO 716[L0,R1],
+   *  MIX 717[MIX1 L0/R1, MIX2 L2/R3], FX 718[FX1 0, FX2 1]. */
+  OSC_ASSIGN_STEREO: { id: 716, axis: "global", encoding: "bool" },
+  OSC_ASSIGN_MIX: { id: 717, axis: "global", encoding: "bool" },
+  OSC_ASSIGN_FX: { id: 718, axis: "global", encoding: "bool" },
 } as const satisfies Record<string, ParamSpec>;
 
 export type ParamName = keyof typeof PARAMS;
@@ -275,6 +285,15 @@ export const COMP_KNEE_OPTIONS = [
   { value: 1, label: "Medium" },
   { value: 2, label: "Hard" },
 ];
+
+// Oscillator mode (param 712). Frequency control applies to Sine Wave; Burst
+// Noise adds width/interval (not yet modeled).
+export const OSC_MODE_OPTIONS = [
+  { value: 0, label: "Sine Wave" },
+  { value: 1, label: "Pink Noise" },
+  { value: 2, label: "Burst Noise" },
+];
+export const OSC_MODE_SINE = 0;
 
 // Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain): each
 // stereo channel has its own dedicated, non-sequential param, written to both

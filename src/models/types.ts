@@ -43,10 +43,11 @@ export function fullLabel(node: DeviceNode): string {
 
 // source / patch / key: single-input receiver (a selector). send: summing
 // receiver (a bus) that accepts many incoming wires, each with LEVEL / PAN /
-// PRE-POST. sendSwitch: a summing send that is ON/OFF only (no per-wire
-// parameters), e.g. the MIX 1/2 "TO ST" send in the block diagram. key is the
-// ducker sidechain-trigger select: a selector like source but without the
-// mono-pair source mirroring, so it stays its own kind.
+// PRE-POST. sendSwitch: an ON/OFF assign into a summing bus, with no LEVEL / PAN
+// — e.g. the MIX 1/2 "TO ST" send, or the OSCILLATOR assign (which carries only
+// per-channel L/R on/off in oscL / oscR). key is the ducker sidechain-trigger
+// select: a selector like source but without the mono-pair source mirroring, so
+// it stays its own kind.
 export type ConnectionKind = "source" | "patch" | "send" | "sendSwitch" | "key";
 
 export interface RoutingRule {
