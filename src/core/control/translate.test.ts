@@ -637,3 +637,53 @@ describe("planToCommands", () => {
     expect(cmds.find((c) => c.y === 1)!.vdValue).toBe(256);
   });
 });
+
+// pushDynCommands clamps each value to its DynField plan-domain min/max before
+// encoding, since the shared encoders only enforce the broker's raw int/scale
+// bounds (e.g. ratio up to 655:1) not the per-field UI limits (ratio 1..20). A
+// plan that holds an out-of-range value (loaded from an older file, or hand-edited
+// JSON) must not push a broker value outside the field's range.
+describe("pushDynCommands clamping", () => {
+  const model = getModel("URX44V");
+  const vOf = (cmds: ReturnType<typeof planToCommands>, name: string) =>
+    cmds.find((c) => c.name === name && c.y === 0)!.vdValue;
+
+  it("clamps GATE detail below min and above max to the field bounds", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // GATE_THRESHOLD range -72..0 dB; GATE_ATTACK 0.092..80 ms.
+    plan.nodeParams.ch1 = { gate: { threshold: -200, attack: 500 } };
+    const cmds = planToCommands(model, plan);
+    expect(vOf(cmds, "GATE_THRESHOLD")).toBe(-72 * 100); // clamped to -72 dB
+    expect(vOf(cmds, "GATE_ATTACK")).toBe(80 * 1000); // clamped to 80 ms (µs)
+  });
+
+  it("clamps COMP ratio and threshold to the field bounds", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // COMP_RATIO range 1..20; COMP_THRESHOLD range -54..0 dB.
+    plan.nodeParams.ch1 = { comp: { ratio: 0.1, threshold: 50 } };
+    const cmds = planToCommands(model, plan);
+    expect(vOf(cmds, "COMP_RATIO")).toBe(1 * 100); // clamped up to 1.0:1
+    expect(vOf(cmds, "COMP_THRESHOLD")).toBe(0); // clamped down to 0 dB
+  });
+
+  it("clamps DUCKER detail to the field bounds", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // DUCKER_THRESHOLD range -60..0 dB; DUCKER_DECAY range 1.3..5000 ms.
+    plan.nodeParams["out.ducker1"] = { ducker: { threshold: -120, decay: 99999 } };
+    const cmds = planToCommands(model, plan);
+    expect(vOf(cmds, "DUCKER_THRESHOLD")).toBe(-60 * 100); // clamped to -60 dB
+    expect(vOf(cmds, "DUCKER_DECAY")).toBe(5000 * 10); // clamped to 5000 ms (×10)
+  });
+
+  it("leaves in-range values untouched", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { gate: { threshold: -40 }, comp: { ratio: 4 } };
+    const cmds = planToCommands(model, plan);
+    expect(vOf(cmds, "GATE_THRESHOLD")).toBe(-4000); // -40 dB, not clamped
+    expect(vOf(cmds, "COMP_RATIO")).toBe(400); // 4:1, not clamped
+  });
+});

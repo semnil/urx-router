@@ -488,10 +488,13 @@ export function channelDynamics(model: DeviceModel, nodeId: string, compEqType: 
 }
 
 // Push the value-set commands for a GATE/COMP detail section the plan has set.
+// Each value is clamped to its DynField plan-domain range before encoding, since
+// the shared encoders (e.g. centiDbToVd / releaseToVd) only clamp to the broker's
+// raw int/scale bounds, not the per-field dB/ms limits the UI enforces.
 function pushDynCommands(out: VdCommand[], fields: DynField[], y: number, vals: Record<string, number | undefined>): void {
   for (const f of fields) {
     const v = vals[f.key];
-    if (v !== undefined) out.push(command(f.name, y, v));
+    if (v !== undefined) out.push(command(f.name, y, v < f.min ? f.min : v > f.max ? f.max : v));
   }
 }
 

@@ -5,7 +5,7 @@
 // the plan→command translation build on top of this. Language-agnostic.
 //
 // Encodings were established by reverse-engineering the broker's /vd/parameters
-// and /vd/table responses (see reference/.local/control-protocol-research.md §12):
+// and /vd/table responses (see reference/.local/vd-protocol.md):
 //   level: signed int16 centi-dB (dB×100); -32768 is the -∞ (off) sentinel; max +1000 (+10 dB).
 //   pan:   signed ±63 (L63 … C=0 … R63).
 //   bool:  0 / 1.
@@ -208,8 +208,9 @@ export function vdToHold(value: number): number {
 
 /**
  * Plan release/decay time (ms) → broker ×10. Clamped to the widest consumer of
- * this scale (the ducker decay); gate/comp enforce their own tighter plan ranges
- * via their DynField bounds (DYN_RELEASE_MIN/MAX_MS).
+ * this scale (the ducker decay); gate/comp get their tighter plan ranges
+ * (DYN_RELEASE_MIN/MAX_MS) clamped upstream in pushDynCommands via their DynField
+ * bounds before reaching this encoder.
  */
 export function releaseToVd(ms: number): number {
   return clamp(Math.round(ms * 10), DUCKER_DECAY_MIN_MS * 10, DUCKER_DECAY_MAX_MS * 10);
