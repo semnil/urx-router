@@ -24,7 +24,12 @@ export type ParamEncoding =
   | "enum"
   | "eqFreq"
   | "q"
-  | "eqGain";
+  | "eqGain"
+  | "centiDb"
+  | "attackTime"
+  | "holdTime"
+  | "releaseTime"
+  | "ratio";
 
 export interface ParamSpec {
   /** Broker param_id (first field of the "{id}:{x}:{y}" address). */
@@ -65,6 +70,30 @@ export const PARAMS = {
   SSMCS_EQ_ON: { id: 106, axis: "input", encoding: "bool" },
   /** Stereo channel EQ ON (1 = on), indexed by stereo position. */
   STEREO_CH_EQ_ON: { id: 213, axis: "global", encoding: "bool" },
+  // Input GATE / COMP detail values (MONO IN channels; COMP is the COMP->EQ bank,
+  // type-independent GATE). Verified by live scan (research §12.26).
+  /** GATE threshold (dB). */
+  GATE_THRESHOLD: { id: 29, axis: "input", encoding: "centiDb" },
+  /** GATE range / attenuation depth (dB). */
+  GATE_RANGE: { id: 30, axis: "input", encoding: "centiDb" },
+  /** GATE attack time (ms). */
+  GATE_ATTACK: { id: 31, axis: "input", encoding: "attackTime" },
+  /** GATE hold time (ms). */
+  GATE_HOLD: { id: 32, axis: "input", encoding: "holdTime" },
+  /** GATE decay time (ms). */
+  GATE_DECAY: { id: 33, axis: "input", encoding: "releaseTime" },
+  /** COMP threshold (dB). */
+  COMP_THRESHOLD: { id: 35, axis: "input", encoding: "centiDb" },
+  /** COMP ratio (N:1). */
+  COMP_RATIO: { id: 36, axis: "input", encoding: "ratio" },
+  /** COMP knee (0 = Soft / 1 = Medium / 2 = Hard). */
+  COMP_KNEE: { id: 37, axis: "input", encoding: "enum" },
+  /** COMP makeup gain (dB). */
+  COMP_GAIN: { id: 38, axis: "input", encoding: "centiDb" },
+  /** COMP attack time (ms). */
+  COMP_ATTACK: { id: 39, axis: "input", encoding: "attackTime" },
+  /** COMP release time (ms). */
+  COMP_RELEASE: { id: 40, axis: "input", encoding: "releaseTime" },
   /** Input channel insert FX (MONO IN channels only). Enum from input_insert_fx. */
   INSERT_FX: { id: 135, axis: "input", encoding: "enum" },
   /** STEREO master insert FX (single). Enum from output_insert_fx. */
@@ -201,6 +230,14 @@ export const EQ_TYPE_HIGH_OPTIONS = [
   { value: EQ_TYPE_PEAKING, label: "Peaking" },
   { value: EQ_TYPE_SHELVING, label: "Shelving" },
   { value: EQ_TYPE_PASS, label: "LPF" },
+];
+
+// COMP knee selector (device labels per user; 0 = Soft verified, default Medium).
+export const COMP_KNEE_DEFAULT = 1;
+export const COMP_KNEE_OPTIONS = [
+  { value: 0, label: "Soft" },
+  { value: 1, label: "Medium" },
+  { value: 2, label: "Hard" },
 ];
 
 // Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain): each

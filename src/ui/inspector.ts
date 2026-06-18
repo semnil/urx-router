@@ -7,11 +7,12 @@ import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, EqBand, NodeParams, Plan, PlanConnection } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
-import type { EqControl } from "../core/control/translate";
+import type { ChannelDynamics, DynField, EqControl } from "../core/control/translate";
 import {
   busEqOn,
   busFader,
   channelControl,
+  channelDynamics,
   channelSections,
   inputEq,
   insertFxControl,
@@ -21,6 +22,8 @@ import {
 import {
   COMP_EQ_COMP_FIRST,
   COMP_EQ_OPTIONS,
+  COMP_KNEE_DEFAULT,
+  COMP_KNEE_OPTIONS,
   EQ_TYPE_HIGH_OPTIONS,
   EQ_TYPE_LOW_OPTIONS,
   EQ_TYPE_PASS,
@@ -215,6 +218,9 @@ export function renderInspector(
       // Input 4-band PEQ (mono COMP->EQ mode / stereo channels; none in SSMCS).
       const ieq = inputEq(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
       if (ieq) host.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
+      // Input GATE / COMP detail (MONO IN channels; COMP only in COMP->EQ mode).
+      const dyn = channelDynamics(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
+      if (dyn) host.append(dynamicsBlock(node.id, dyn, np, plan, actions, m));
     }
 
     // Bus output fader: STEREO master (581) and MIX 1/2 (674). Reuses
@@ -508,6 +514,55 @@ function eqBandBlock(
         ),
       );
     }
+  }
+  return frag;
+}
+
+function formatDyn(v: number, unit: DynField["unit"]): string {
+  if (unit === "db") return `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
+  if (unit === "ratio") return `${v.toFixed(1)}:1`;
+  return v < 1 ? `${v.toFixed(3)} ms` : `${v.toFixed(1)} ms`;
+}
+
+// Input GATE / COMP detail editor (MONO IN channels). Renders the GATE sliders
+// (threshold/range/attack/hold/decay) and, in COMP->EQ mode, the COMP sliders
+// (threshold/ratio/gain/attack/release) plus the knee dropdown. All sliders mutate
+// in place (no value drives a layout change), so none trigger a re-render.
+function dynamicsBlock(
+  nodeId: string,
+  dyn: ChannelDynamics,
+  np: NodeParams,
+  plan: Plan,
+  actions: InspectorActions,
+  m: Messages,
+): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  const sliders = (heading: string, fields: DynField[], section: "gate" | "comp"): void => {
+    frag.append(subheading(heading));
+    const cur = (): Record<string, number | undefined> =>
+      (plan.nodeParams[nodeId]?.[section] ?? {}) as Record<string, number | undefined>;
+    const set = (key: string, v: number): void =>
+      actions.onUpdateNodeParams(nodeId, { [section]: { ...cur(), [key]: v } });
+    const vals = (np[section] ?? {}) as Record<string, number | undefined>;
+    for (const f of fields) {
+      frag.append(
+        rangeSlider(m.inspector.dyn[f.key], f.min, f.max, f.step, vals[f.key] ?? f.def, (v) => formatDyn(v, f.unit), (v) =>
+          set(f.key, v),
+        ),
+      );
+    }
+  };
+  sliders(m.inspector.gateOn, dyn.gate, "gate");
+  if (dyn.comp) {
+    sliders(m.inspector.compOn, dyn.comp, "comp");
+    frag.append(
+      selectControl(
+        m.inspector.dyn.knee,
+        COMP_KNEE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
+        String(np.comp?.knee ?? COMP_KNEE_DEFAULT),
+        (v) => actions.onUpdateNodeParams(nodeId, { comp: { ...(np.comp ?? {}), knee: Number(v) } }),
+      ),
+    );
   }
   return frag;
 }
