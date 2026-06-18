@@ -99,6 +99,41 @@ export function nativeWriteBinary(path: string, bytes: Uint8Array): Promise<void
   return invoke<void>("write_binary_file", { path, bytes: Array.from(bytes) });
 }
 
+// Live hardware control (desktop only). The Rust vd module owns the WebSocket to
+// the Device Center broker and keeps the device GUID server-side; the frontend
+// connects, sets parameters by (param_id, x, y, value), and disconnects. Every
+// call rejects in a plain browser (not running under Tauri).
+
+export interface DeviceSummary {
+  model: string;
+  label: string;
+}
+
+/** Connect to the URX via the broker; resolves with the connected device. */
+export function vdConnect(): Promise<DeviceSummary> {
+  return invoke<DeviceSummary>("vd_connect");
+}
+
+/** The currently connected device (rejects if not connected). */
+export function vdInfo(): Promise<DeviceSummary> {
+  return invoke<DeviceSummary>("vd_info");
+}
+
+/** Set one parameter instance to an absolute broker value. */
+export function vdSet(paramId: number, x: number, y: number, value: number): Promise<void> {
+  return invoke<void>("vd_set", { paramId, x, y, value });
+}
+
+/** Read one parameter instance's current absolute broker value. */
+export function vdGet(paramId: number, x: number, y: number): Promise<number> {
+  return invoke<number>("vd_get", { paramId, x, y });
+}
+
+/** Close the live connection (no-op if not connected). */
+export function vdDisconnect(): Promise<void> {
+  return invoke<void>("vd_disconnect");
+}
+
 // Auto-update (desktop only, via the updater/process plugins). These mirror the
 // official @tauri-apps/plugin-updater bindings but call invoke directly so the
 // frontend keeps zero npm runtime dependencies, like the dialog calls above.

@@ -96,6 +96,7 @@ test("round-trips a plan through save and open", async ({ page }, testInfo) => {
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
   await expect(wires(page)).toHaveCount(FIXED + 1);
 
+  await page.click("#btn-file");
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.click("#btn-save"),
@@ -109,6 +110,7 @@ test("round-trips a plan through save and open", async ({ page }, testInfo) => {
   await page.click("#btn-new");
   await expect(wires(page)).toHaveCount(FIXED);
 
+  await page.click("#btn-file");
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser"),
     page.click("#btn-open"),

@@ -3,7 +3,7 @@ import "./style.css";
 import { MODEL_IDS, getModel } from "./models";
 import type { ModelId } from "./models/types";
 import { deserialize, emptyPlan, ensureFixedConnections, PlanError, serialize } from "./core/plan";
-import type { ConnParams, Plan } from "./core/plan";
+import type { ConnParams, NodeParams, Plan } from "./core/plan";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import {
   baseName,
@@ -19,7 +19,16 @@ import type { Selection, ThemeName } from "./ui/graph";
 import { renderInspector } from "./ui/inspector";
 import { getLang, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
 import { DEMO } from "./core/env";
-import { checkUpdate, confirmDialog, installUpdate, restartApp } from "./core/platform";
+import {
+  checkUpdate,
+  confirmDialog,
+  installUpdate,
+  isTauri,
+  restartApp,
+  vdConnect,
+  vdDisconnect,
+} from "./core/platform";
+import { applyDeviceState } from "./core/control/readback";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -87,6 +96,15 @@ const inspectorActions = {
     // mutating in place and the slider keeps focus.
     if (patch.tap !== undefined) graph.repaintWires();
   },
+  onUpdateNodeParams: (id: string, patch: NodeParams) => {
+    plan.nodeParams[id] = { ...plan.nodeParams[id], ...patch };
+    dirty = true;
+    // CH_ON drives the on-canvas mute dimming; repaint nodes so it shows at once.
+    if (patch.on !== undefined) graph.repaintNodes();
+    // Toggles re-render to update the active button; sliders (gain/level) mutate
+    // in place so they keep focus while dragging.
+    if (patch.on !== undefined || patch.hpf !== undefined) refreshInspector();
+  },
   onOpenRecent: (path: string) => void openRecent(path),
   onHideNode: (id: string) => graph.hideNode(id),
 };
@@ -100,12 +118,16 @@ function applyStaticI18n(): void {
   $("lbl-model").textContent = m.toolbar.model;
   $("lbl-rate").textContent = m.toolbar.rate;
   $("btn-new").textContent = m.toolbar.new;
+  $("lbl-file").textContent = m.toolbar.file;
   $("btn-open").textContent = m.toolbar.open;
   $("btn-save").textContent = m.toolbar.save;
   $("btn-export").textContent = m.toolbar.exportPng;
   $("btn-export-pdf").textContent = m.toolbar.exportPdf;
   $("btn-auto").textContent = m.toolbar.arrange;
   $("btn-hide-unused").textContent = m.toolbar.hideUnused;
+  $("lbl-device").textContent = m.toolbar.device;
+  $("btn-fetch").textContent = m.toolbar.fetchDevice;
+  $("btn-write").textContent = m.toolbar.writeDevice;
   // Theme button shows the theme it switches to.
   themeBtn.textContent = theme === "dark" ? m.toolbar.light : m.toolbar.dark;
   themeBtn.title = m.toolbar.theme;
@@ -118,6 +140,14 @@ applyStaticI18n();
 // The GitHub Pages demo is a viewer only: hide file persistence and image export.
 if (DEMO) {
   for (const el of document.querySelectorAll<HTMLElement>("[data-demo-hide]")) {
+    el.style.display = "none";
+  }
+}
+
+// Live hardware control needs the Tauri shell (the Rust vd commands); hide its
+// controls in a plain browser and the demo, where they could only fail.
+if (!isTauri()) {
+  for (const el of document.querySelectorAll<HTMLElement>("[data-control-hide]")) {
     el.style.display = "none";
   }
 }
@@ -260,6 +290,50 @@ $("btn-hide-unused").addEventListener("click", () => {
   graph.hideUnused();
 });
 
+// Pull the connected device's current channel levels/pans into the plan. This
+// overwrites the matching plan params, so it confirms before discarding edits.
+// Desktop only: DEMO is statically true in the browser bundle, so this branch —
+// and the control imports it alone references — drops from the demo build.
+if (!DEMO) {
+  $("btn-fetch").addEventListener("click", async () => {
+    if (!(await confirmDiscard())) return;
+    setStatus(t().status.fetchConnecting);
+    try {
+      const device = await vdConnect();
+      try {
+        // The connected device may be a different model than the one selected.
+        // Offer to switch the UI to the device's model (a fresh plan) so the
+        // fetched values map onto the right channels; otherwise abort.
+        if (device.model !== modelId) {
+          if (!MODEL_IDS.includes(device.model as ModelId)) {
+            setStatus(t().status.fetchError(t().error.unknownModel(device.model)));
+            return;
+          }
+          if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) {
+            setStatus(t().status.canceled);
+            return;
+          }
+          loadPlan(emptyPlan(device.model as ModelId));
+        }
+        const result = await applyDeviceState(getModel(modelId), plan);
+        graph.setModel(getModel(modelId), plan);
+        selection = null;
+        refreshInspector();
+        dirty = true;
+        setStatus(
+          result.errors.length
+            ? t().status.fetchPartial(result.applied, result.errors.length)
+            : t().status.fetchedDevice(device.model, result.applied),
+        );
+      } finally {
+        await vdDisconnect();
+      }
+    } catch (err) {
+      setStatus(t().status.fetchError(err instanceof Error ? err.message : String(err)));
+    }
+  });
+}
+
 themeBtn.addEventListener("click", () => {
   theme = theme === "dark" ? "light" : "dark";
   document.documentElement.dataset.theme = theme;
@@ -272,6 +346,77 @@ themeBtn.addEventListener("click", () => {
 langBtn.addEventListener("click", () => {
   setLang(getLang() === "en" ? "ja" : "en");
 });
+
+// Wire the File dropdown: open/close, click-outside, and roving keyboard focus
+// across its menu items. The panel is positioned fixed (toolbar clips overflow),
+// so its coordinates are derived from the trigger each time it opens.
+setupMenu($<HTMLButtonElement>("btn-file"), $<HTMLElement>("file-menu"));
+// Device actions (desktop only; the whole menu is hidden in a plain browser).
+// "Write to device" ships disabled until live writes land.
+setupMenu($<HTMLButtonElement>("btn-device"), $<HTMLElement>("device-menu"));
+
+function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
+  const items = (): HTMLButtonElement[] =>
+    Array.from(panel.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])'));
+  let open = false;
+
+  function setOpen(next: boolean, focusFirst = false): void {
+    if (next === open) {
+      if (next && focusFirst) items()[0]?.focus();
+      return;
+    }
+    open = next;
+    trigger.setAttribute("aria-expanded", String(next));
+    panel.hidden = !next;
+    if (next) {
+      const r = trigger.getBoundingClientRect();
+      panel.style.top = `${Math.round(r.bottom + 8)}px`;
+      panel.style.right = `${Math.round(window.innerWidth - r.right)}px`;
+      if (focusFirst) items()[0]?.focus();
+      document.addEventListener("pointerdown", onOutside, true);
+      document.addEventListener("keydown", onKey, true);
+    } else {
+      document.removeEventListener("pointerdown", onOutside, true);
+      document.removeEventListener("keydown", onKey, true);
+    }
+  }
+
+  function onOutside(e: PointerEvent): void {
+    const target = e.target as Node;
+    if (!panel.contains(target) && !trigger.contains(target)) setOpen(false);
+  }
+
+  function onKey(e: KeyboardEvent): void {
+    const list = items();
+    const i = list.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "Escape") {
+      setOpen(false);
+      trigger.focus();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      list[(i + 1) % list.length]?.focus();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      list[(i - 1 + list.length) % list.length]?.focus();
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      list[0]?.focus();
+    } else if (e.key === "End") {
+      e.preventDefault();
+      list[list.length - 1]?.focus();
+    }
+  }
+
+  trigger.addEventListener("click", () => setOpen(!open, true));
+  trigger.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setOpen(true, true);
+    }
+  });
+  // Each item runs its own action listener; close the menu once one is chosen.
+  for (const item of items()) item.addEventListener("click", () => setOpen(false));
+}
 
 onLangChange(() => {
   applyStaticI18n();

@@ -16,6 +16,20 @@ export interface ConnParams {
   tap?: "pre" | "post";
 }
 
+// Per-node device parameters that are not tied to a single wire (a channel's own
+// processing/state). Each field is optional; absence means the device default
+// (channel on, HPF off). Stored keyed by node id, alongside positions / notes.
+export interface NodeParams {
+  /** CH_ON: channel on. Absent or true = on; false = muted. */
+  on?: boolean;
+  /** HPF_ON: high-pass filter engaged. Absent or false = off. */
+  hpf?: boolean;
+  /** HA_GAIN: head-amp input gain in dB (-16 … +70). Absent = device default. */
+  gain?: number;
+  /** A node-level fader in dB (e.g. monitor level). Absent = device default. */
+  level?: number;
+}
+
 export interface PlanConnection {
   from: string; // "nodeId:portId" (out)
   to: string; // "nodeId:portId" (in)
@@ -34,6 +48,8 @@ export interface Plan {
   sampleRate: number;
   positions: Record<string, NodePos>;
   connections: PlanConnection[];
+  /** Per-node device parameters (channel on / HPF), keyed by node id. */
+  nodeParams: Record<string, NodeParams>;
   /** Node ids the user collapsed off the canvas (only ever unconnected nodes). */
   hidden: string[];
   /** Free-text annotation per node id, drawn inside the node frame. */
@@ -61,6 +77,7 @@ export function emptyPlan(modelId: ModelId): Plan {
     sampleRate: DEFAULT_SAMPLE_RATE,
     positions: {},
     connections: [],
+    nodeParams: {},
     hidden: [],
     notes: {},
     noteCollapsed: [],
@@ -76,6 +93,7 @@ export function serialize(plan: Plan): string {
       sampleRate: plan.sampleRate,
       positions: plan.positions,
       connections: plan.connections,
+      nodeParams: plan.nodeParams,
       hidden: plan.hidden,
       notes: plan.notes,
       noteCollapsed: plan.noteCollapsed,
@@ -98,6 +116,9 @@ export function deserialize(text: string): Plan {
     sampleRate: typeof data.sampleRate === "number" ? data.sampleRate : DEFAULT_SAMPLE_RATE,
     positions: (data.positions as Record<string, NodePos>) ?? {},
     connections: Array.isArray(data.connections) ? (data.connections as PlanConnection[]) : [],
+    nodeParams: isStringRecord(data.nodeParams)
+      ? (data.nodeParams as unknown as Record<string, NodeParams>)
+      : {},
     hidden: Array.isArray(data.hidden) ? (data.hidden as string[]) : [],
     notes: isStringRecord(data.notes) ? data.notes : {},
     noteCollapsed: Array.isArray(data.noteCollapsed) ? (data.noteCollapsed as string[]) : [],

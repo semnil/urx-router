@@ -252,11 +252,153 @@ button {
   margin: 0 3px;
 }
 
-.tools button.primary {
-  font-weight: 600;
-  color: #14110d;
-  background: linear-gradient(180deg, #ffd36b, var(--led));
+/* File menu: a console module that drops out of the rack. The trigger is a
+   normal tool button with a caret; the panel is positioned fixed so the
+   toolbar's overflow-x scroll does not clip it. */
+.menu {
+  position: relative;
+  display: flex;
+}
+
+.menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.menu-trigger .caret {
+  width: 8px;
+  height: 8px;
+  color: var(--text-dim);
+  transition: transform 0.16s ease, color 0.16s ease;
+}
+
+.menu-trigger[aria-expanded="true"] {
+  filter: brightness(1.12);
   border-color: var(--led);
+}
+
+[data-theme="light"] .menu-trigger[aria-expanded="true"] {
+  filter: brightness(0.97);
+}
+
+.menu-trigger[aria-expanded="true"] .caret {
+  transform: rotate(180deg);
+  color: var(--led);
+}
+
+.menu-panel {
+  position: fixed;
+  z-index: 40;
+  min-width: 188px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: linear-gradient(180deg, var(--ctl-bg2), var(--ctl-bg));
+  border: 1px solid var(--ctl-border);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45), var(--ctl-shadow);
+  animation: menu-in 0.13s ease;
+}
+
+/* An author display value would otherwise beat the [hidden] UA rule. */
+.menu-panel[hidden] {
+  display: none;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+}
+
+.menu-panel .menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ctl-text);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  box-shadow: none;
+  padding: 8px 14px 8px 16px;
+}
+
+/* The signature: a channel-rail that lights along the row, echoing the graph's
+   per-node color rails. It is the active-row indicator for hover and keyboard
+   focus alike. */
+.menu-panel .menu-item::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 50%;
+  width: 2px;
+  height: 0;
+  transform: translateY(-50%);
+  border-radius: 1px;
+  background: var(--led);
+  box-shadow: 0 0 6px var(--led);
+  transition: height 0.14s ease;
+}
+
+.menu-panel .menu-item:hover,
+.menu-panel .menu-item:focus-visible {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  filter: none;
+}
+
+[data-theme="light"] .menu-panel .menu-item:hover,
+[data-theme="light"] .menu-panel .menu-item:focus-visible {
+  background: rgba(0, 0, 0, 0.045);
+}
+
+.menu-panel .menu-item:hover::before,
+.menu-panel .menu-item:focus-visible::before {
+  height: 16px;
+}
+
+.menu-panel .menu-item:focus-visible {
+  outline: none;
+}
+
+/* A not-yet-available action (e.g. device write before it ships): dimmed, no
+   rail, and inert to hover/click. */
+.menu-panel .menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.menu-panel .menu-item:disabled:hover {
+  background: transparent;
+  color: var(--ctl-text);
+}
+
+.menu-panel .menu-item:disabled:hover::before {
+  height: 0;
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-panel {
+    animation: none;
+  }
+  .menu-trigger .caret,
+  .menu-panel .menu-item::before {
+    transition: none;
+  }
 }
 
 .tools button:focus-visible,

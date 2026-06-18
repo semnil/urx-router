@@ -23,6 +23,7 @@ describe("emptyPlan", () => {
     expect(p.sampleRate).toBe(DEFAULT_SAMPLE_RATE);
     expect(p.positions).toEqual({});
     expect(p.connections).toEqual([]);
+    expect(p.nodeParams).toEqual({});
     expect(p.hidden).toEqual([]);
     expect(p.notes).toEqual({});
     expect(p.noteCollapsed).toEqual([]);
@@ -44,11 +45,22 @@ describe("serialize / deserialize round-trip", () => {
           params: { level: -3, pan: 10, tap: "post" },
         },
       ],
+      nodeParams: { ch1: { on: false, hpf: true } },
       hidden: ["in.usbsub", "out.sdrec"],
       notes: { ch1: "Lead vocal — bump +2 dB for the chorus" },
       noteCollapsed: ["ch1"],
     };
     expect(deserialize(serialize(plan))).toEqual(plan);
+  });
+
+  it("defaults nodeParams to {} for a plan saved before the field existed", () => {
+    const legacy = JSON.stringify({
+      format: PLAN_FORMAT,
+      version: PLAN_VERSION,
+      modelId: "URX44",
+      connections: [],
+    });
+    expect(deserialize(legacy).nodeParams).toEqual({});
   });
 
   it("embeds the format tag and version", () => {

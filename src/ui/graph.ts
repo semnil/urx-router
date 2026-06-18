@@ -240,6 +240,11 @@ export class Graph {
     this.render();
   }
 
+  /** Repaint nodes after a node-parameter change (e.g. a channel muted). */
+  repaintNodes(): void {
+    this.renderNodes();
+  }
+
   /** Set or clear a node's free-text note and repaint its in-frame panel. */
   setNote(id: string, text: string): void {
     this.plan.notes ??= {};
@@ -626,6 +631,26 @@ export class Graph {
       pin.style.pointerEvents = "none";
       g.append(pin);
       this.portPinEls.set(r, pin);
+    }
+
+    // A muted channel (CH_ON off) reads as inactive: dim the whole node and tag
+    // it MUTE. Distinct from the rate-disabled OFF badge above (warn-colored).
+    if (this.plan.nodeParams?.[node.id]?.on === false) {
+      g.setAttribute("opacity", "0.4");
+      const tag = svgRect(NODE_W - 40, -8, 36, 15, 3, p.nodeStroke);
+      g.append(tag);
+      const tagText = document.createElementNS(SVGNS, "text");
+      tagText.setAttribute("x", String(NODE_W - 22));
+      tagText.setAttribute("y", "0");
+      tagText.setAttribute("text-anchor", "middle");
+      tagText.setAttribute("dominant-baseline", "central");
+      tagText.setAttribute("fill", p.label);
+      tagText.setAttribute("font-family", LABEL_FONT);
+      tagText.setAttribute("font-size", "8.5");
+      tagText.setAttribute("font-weight", "700");
+      tagText.style.pointerEvents = "none";
+      tagText.textContent = "MUTE";
+      g.append(tagText);
     }
 
     if (this.disabledNodes.has(node.id)) {

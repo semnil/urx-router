@@ -36,6 +36,13 @@ Because the planning UI is pure frontend, you can verify behavior in a browser w
 even without Rust installed. Desktop builds (`pnpm tauri dev` / `pnpm tauri build`) require
 [Rust](https://rustup.rs/).
 
+## Device control (experimental, URX44V only)
+
+Desktop builds can read the connected interface's current mixer settings into the plan
+(**Device → Fetch from device**), with the Device Center software running. The parameter
+mapping is verified on hardware **only for URX44V**; **URX44** is assumed identical and
+**URX22** is inferred from it — neither is verified on hardware yet.
+
 ## Documentation
 
 English documentation lives under [docs/en/](docs/en/); the Japanese translation is under
