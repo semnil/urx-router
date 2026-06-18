@@ -75,6 +75,8 @@ export const PARAMS = {
   SEND_TAP: { id: 151, axis: "input", encoding: "bool" },
   /** Output (mix) EQ ON. */
   OUT_EQ_ON: { id: 591, axis: "output", encoding: "bool" },
+  /** STEREO master EQ ON (single). */
+  STEREO_EQ_ON: { id: 498, axis: "global", encoding: "bool" },
   /** Monitor level (y = monitor 0..3). Wider -96 dB floor than the fader. */
   MONITOR_LEVEL: { id: 724, axis: "global", encoding: "monitor" },
   /** STEREO master fader (y = 0, level down to -∞). */

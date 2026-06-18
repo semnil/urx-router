@@ -48,6 +48,7 @@ export const ja: Messages = {
     hiZ: "Hi-Z",
     insertFx: "Insert FX",
     compEqType: "COMP/EQ Type",
+    eqOn: "EQ",
     gainAnalog: "A.Gain",
     gainDigital: "D.Gain",
     master: "マスター",

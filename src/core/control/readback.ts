@@ -10,7 +10,7 @@ import type { ConnParams, NodeParams, Plan } from "../plan";
 import { ensureFixedConnections } from "../plan";
 import { vdGet } from "../platform";
 import { normalizeInsertFx, PARAMS } from "./params";
-import { busFader, channelControl, insertFxControl, sendControl } from "./translate";
+import { busEqOn, busFader, channelControl, insertFxControl, sendControl } from "./translate";
 import { vdToBool, vdToFreq, vdToGain, vdToLevel, vdToMonitorLevel, vdToPan } from "./vd";
 
 export interface ReadbackResult {
@@ -116,6 +116,21 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     try {
       const insertFx = normalizeInsertFx(await vdGet(ifx.param, 0, ifx.instances[0]));
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], insertFx };
+    } catch (e) {
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Output bus EQ ON: STEREO (498) and MIX (591); read the first instance.
+  for (const node of model.nodes) {
+    if (node.kind !== "bus") continue;
+    const eq = busEqOn(node.id);
+    if (!eq) continue;
+    try {
+      plan.nodeParams[node.id] = {
+        ...plan.nodeParams[node.id],
+        eqOn: vdToBool(await vdGet(eq.param, 0, eq.instances[0])),
+      };
     } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
