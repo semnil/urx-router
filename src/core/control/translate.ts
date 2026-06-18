@@ -12,8 +12,16 @@ import type { DeviceModel } from "../../models/types";
 import { parseRef } from "../../models/types";
 import type { Plan } from "../plan";
 import { isFixedConnection } from "../routing";
-import type { ParamName, ParamSpec } from "./params";
-import { D_GAIN_PARAM, PARAMS, STEREO_FADER, STEREO_ON, STEREO_PAN } from "./params";
+import type { InsertFxOption, ParamName, ParamSpec } from "./params";
+import {
+  D_GAIN_PARAM,
+  INSERT_FX_OPTIONS,
+  OUTPUT_INSERT_FX_OPTIONS,
+  PARAMS,
+  STEREO_FADER,
+  STEREO_ON,
+  STEREO_PAN,
+} from "./params";
 import {
   A_GAIN_MIN_DB,
   A_GAIN_MAX_DB,
@@ -57,6 +65,8 @@ function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number
       return panToVd(planValue);
     case "freq":
       return freqToVd(planValue);
+    case "enum":
+      return planValue;
     case "bool":
       return boolToVd(planValue !== 0);
   }
@@ -266,6 +276,38 @@ export function busFader(nodeId: string): BusFader | null {
   return mix ? { name: "OUT_FADER", param: PARAMS.OUT_FADER.id, instances: mix } : null;
 }
 
+/** Insert FX for a node: which param, the instance(s) it writes, and its options. */
+export interface InsertFxControl {
+  param: number;
+  instances: number[];
+  options: InsertFxOption[];
+}
+
+// MIX bus insert FX shares param 671 (output axis); each stereo MIX occupies the
+// same L/R instance pair as its fader.
+const MIX_INSERT_FX_INSTANCES: Record<string, number[]> = {
+  "bus.mix1": [0, 1],
+  "bus.mix2": [2, 3],
+};
+
+/**
+ * Insert FX for a node, or null if it has none. The MONO IN channels (mono CH1-4)
+ * carry the input effects (param 135); the STEREO master (578) and MIX buses
+ * (671, L/R-linked) carry the output effects. Stereo input channels have none.
+ */
+export function insertFxControl(model: DeviceModel, nodeId: string): InsertFxControl | null {
+  if (nodeId === "bus.stereo") {
+    return { param: PARAMS.OUTPUT_INSERT_FX_STEREO.id, instances: [0], options: OUTPUT_INSERT_FX_OPTIONS };
+  }
+  const mix = MIX_INSERT_FX_INSTANCES[nodeId];
+  if (mix) return { param: PARAMS.OUTPUT_INSERT_FX_MIX.id, instances: mix, options: OUTPUT_INSERT_FX_OPTIONS };
+  const cc = channelControl(model, nodeId);
+  if (cc && !isStereoChannel(nodeId)) {
+    return { param: PARAMS.INSERT_FX.id, instances: [cc.y], options: INSERT_FX_OPTIONS };
+  }
+  return null;
+}
+
 /**
  * Translate a plan into the list of vd value-set commands it currently implies.
  * Deterministic and side-effect free; the same plan always yields the same list,
@@ -327,6 +369,14 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const np = plan.nodeParams[node.id];
     if (!bf || np?.level === undefined) continue;
     for (const yi of bf.instances) out.push(rawCommand(bf.name, bf.param, "level", yi, np.level));
+  }
+
+  // Insert FX (enum): mono input channels (135) and output buses (578 / 671).
+  for (const node of model.nodes) {
+    const ifx = insertFxControl(model, node.id);
+    const v = plan.nodeParams[node.id]?.insertFx;
+    if (!ifx || v === undefined) continue;
+    for (const inst of ifx.instances) out.push(rawCommand("INSERT_FX", ifx.param, "enum", inst, v));
   }
 
   // STEREO bus master ON/OFF (global, y = 0).

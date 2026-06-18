@@ -26,6 +26,8 @@ export interface NodeParams {
   hpf?: boolean;
   /** HPF_FREQ: high-pass cutoff in Hz (40 … 120). Absent = device default (80). */
   hpfFreq?: number;
+  /** INSERT_FX: insert-effect enum value (MONO IN channels). Absent or -1 = No Effect. */
+  insertFx?: number;
   /** PHANTOM: +48V phantom power (analog mic channels only). Absent or false = off. */
   phantom?: boolean;
   /** PHASE: polarity invert (Ø) on a mono mic channel. Absent or false = off. */

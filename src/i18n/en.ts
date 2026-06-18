@@ -47,6 +47,7 @@ export const en = {
     phase: "Ø",
     clipSafe: "Clip Safe",
     hiZ: "Hi-Z",
+    insertFx: "Insert FX",
     gainAnalog: "A.Gain",
     gainDigital: "D.Gain",
     master: "Master",
@@ -102,7 +103,7 @@ export const en = {
   },
   warning: {
     title: "Sample-rate notes",
-    insFx: "Insert FX unavailable above 96 kHz.",
+    insFx: "Insert FX (MONO IN channels, MIX, STEREO) unavailable above 96 kHz.",
     fx2: "FX2 bus unavailable above 96 kHz.",
     hdmiEq: "HDMI EQ unavailable at 176.4 / 192 kHz.",
   },
