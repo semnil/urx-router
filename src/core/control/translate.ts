@@ -10,7 +10,7 @@
 
 import type { DeviceModel } from "../../models/types";
 import { parseRef } from "../../models/types";
-import type { Plan } from "../plan";
+import type { EqBand, Plan } from "../plan";
 import { isFixedConnection } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
@@ -335,7 +335,7 @@ export function busEqOn(nodeId: string): { name: ParamName; param: number; insta
   return mix ? { name: "OUT_EQ_ON", param: PARAMS.OUT_EQ_ON.id, instances: mix } : null;
 }
 
-/** One band of an output bus 4-band PEQ: the param ids for each of its values. */
+/** One band of a 4-band PEQ: the param ids for each of its values. */
 export interface EqBandControl {
   /** 0..3 (LOW / LOW-MID / HIGH-MID / HIGH). */
   index: number;
@@ -348,18 +348,29 @@ export interface EqBandControl {
   gain: number;
 }
 
-/** An output bus 4-band PEQ: its bands and the instances each value writes. */
-export interface OutputEqControl {
+/** A 4-band PEQ (input channel or output bus): its bands and the instances each value writes. */
+export interface EqControl {
   bands: EqBandControl[];
   instances: number[];
 }
 
 const EQ_BAND_NAMES = ["low", "lowMid", "highMid", "high"] as const;
 // Each PEQ band is a 5-param block (on / type / Q / freq / gain) and the first
-// band sits 5 params after the bus EQ-ON anchor. Only the LOW and HIGH bands
-// carry a selectable filter type; the two mid bands are fixed peaking.
+// band sits 5 params after the EQ-ON anchor. Only the LOW and HIGH bands carry a
+// selectable filter type; the two mid bands are fixed peaking.
 const EQ_BAND_BASE_OFFSET = 5;
 const EQ_BAND_STRIDE = 5;
+
+// Build the four bands from the EQ-ON anchor param (band1 sits 5 params later).
+function eqBandsFrom(eqOnParam: number, instances: number[]): EqControl {
+  const base = eqOnParam + EQ_BAND_BASE_OFFSET;
+  const bands = EQ_BAND_NAMES.map((name, i): EqBandControl => {
+    const b = base + EQ_BAND_STRIDE * i;
+    const hasType = i === 0 || i === 3;
+    return { index: i, name, on: b, type: hasType ? b + 1 : null, q: b + 2, freq: b + 3, gain: b + 4 };
+  });
+  return { bands, instances };
+}
 
 /**
  * Resolve an output bus 4-band PEQ, or null if the node has none. Reuses the
@@ -367,16 +378,42 @@ const EQ_BAND_STRIDE = 5;
  * same instances — STEREO a single slot (498→503), MIX the L/R-linked out pair
  * (591→596). Confirmed on STEREO and MIX by live scan (research §12.24).
  */
-export function outputEq(nodeId: string): OutputEqControl | null {
+export function outputEq(nodeId: string): EqControl | null {
   const eq = busEqOn(nodeId);
-  if (!eq) return null;
-  const base = eq.param + EQ_BAND_BASE_OFFSET;
-  const bands = EQ_BAND_NAMES.map((name, i): EqBandControl => {
-    const b = base + EQ_BAND_STRIDE * i;
-    const hasType = i === 0 || i === 3;
-    return { index: i, name, on: b, type: hasType ? b + 1 : null, q: b + 2, freq: b + 3, gain: b + 4 };
-  });
-  return { bands, instances: eq.instances };
+  return eq ? eqBandsFrom(eq.param, eq.instances) : null;
+}
+
+/**
+ * Resolve an input channel 4-band PEQ, or null if it has none. Shares the
+ * output structure (band block 5 params after the EQ-ON anchor): mono COMP->EQ
+ * mode anchors at EQ_ON 44 (→49), stereo channels at STEREO_CH_EQ_ON 213 (→218).
+ * SSMCS mode has no 4-band PEQ (the morphing strip replaces it), so it returns
+ * null. Confirmed on a mono channel by live scan (research §12.25).
+ */
+export function inputEq(model: DeviceModel, nodeId: string, compEqType: number): EqControl | null {
+  // A mono channel in SSMCS mode has no 4-band PEQ (the morphing strip replaces
+  // it); stereo channels always do. Take the EQ-ON anchor from channelSections.
+  if (compEqType === COMP_EQ_SSMCS && !isStereoChannel(nodeId)) return null;
+  const eqSec = channelSections(model, nodeId, compEqType).find((s) => s.key === "eqOn");
+  return eqSec ? eqBandsFrom(eqSec.param, [eqSec.y]) : null;
+}
+
+// Push the value-set commands for one node's PEQ bands (input or output). Each
+// band emits only the fields the plan set; a fixed-peaking mid band (type null)
+// never writes a filter type. A linked control (MIX) writes both L/R instances.
+function pushEqBandCommands(out: VdCommand[], ctrl: EqControl, bands: EqBand[]): void {
+  for (const band of ctrl.bands) {
+    const v = bands[band.index];
+    if (!v) continue;
+    for (const inst of ctrl.instances) {
+      if (v.on !== undefined) out.push(rawCommand("EQ_BAND_ON", band.on, "bool", inst, v.on ? 1 : 0));
+      if (v.type !== undefined && band.type !== null)
+        out.push(rawCommand("EQ_BAND_TYPE", band.type, "enum", inst, v.type));
+      if (v.q !== undefined) out.push(rawCommand("EQ_BAND_Q", band.q, "q", inst, v.q));
+      if (v.freq !== undefined) out.push(rawCommand("EQ_BAND_FREQ", band.freq, "eqFreq", inst, v.freq));
+      if (v.gain !== undefined) out.push(rawCommand("EQ_BAND_GAIN", band.gain, "eqGain", inst, v.gain));
+    }
+  }
 }
 
 /** Insert FX for a node: which param, the instance(s) it writes, and its options. */
@@ -467,6 +504,9 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       const v = np[sec.key];
       if (v !== undefined) out.push(rawCommand(sec.name, sec.param, "bool", sec.y, v ? sec.onValue : 1 - sec.onValue));
     }
+    // Input 4-band PEQ band values (mono COMP->EQ mode / stereo channels).
+    const ieq = inputEq(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
+    if (ieq && np.eqBands) pushEqBandCommands(out, ieq, np.eqBands);
     if (cc.gain && np.gain !== undefined) {
       // A.Gain (mono) is one instance; D.Gain (stereo) writes both linked L/R.
       for (const yi of cc.gain.instances) out.push(rawCommand("HA_GAIN", cc.gain.param, "gain", yi, np.gain));
@@ -500,25 +540,11 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   }
 
   // Output bus 4-band PEQ band values: STEREO (single) and MIX (L/R-linked).
-  // Each band emits only the fields the plan set; the fixed-peaking mid bands
-  // have no filter type to write.
   for (const node of model.nodes) {
     if (node.kind !== "bus") continue;
     const oeq = outputEq(node.id);
     const bands = plan.nodeParams[node.id]?.eqBands;
-    if (!oeq || !bands) continue;
-    for (const band of oeq.bands) {
-      const v = bands[band.index];
-      if (!v) continue;
-      for (const inst of oeq.instances) {
-        if (v.on !== undefined) out.push(rawCommand("EQ_BAND_ON", band.on, "bool", inst, v.on ? 1 : 0));
-        if (v.type !== undefined && band.type !== null)
-          out.push(rawCommand("EQ_BAND_TYPE", band.type, "enum", inst, v.type));
-        if (v.q !== undefined) out.push(rawCommand("EQ_BAND_Q", band.q, "q", inst, v.q));
-        if (v.freq !== undefined) out.push(rawCommand("EQ_BAND_FREQ", band.freq, "eqFreq", inst, v.freq));
-        if (v.gain !== undefined) out.push(rawCommand("EQ_BAND_GAIN", band.gain, "eqGain", inst, v.gain));
-      }
-    }
+    if (oeq && bands) pushEqBandCommands(out, oeq, bands);
   }
 
   // STEREO bus master ON/OFF (global, y = 0).

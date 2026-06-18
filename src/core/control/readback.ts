@@ -10,11 +10,13 @@ import type { ConnParams, EqBand, NodeParams, Plan } from "../plan";
 import { ensureFixedConnections } from "../plan";
 import { vdGet } from "../platform";
 import { normalizeInsertFx, PARAMS } from "./params";
+import type { EqControl } from "./translate";
 import {
   busEqOn,
   busFader,
   channelControl,
   channelSections,
+  inputEq,
   insertFxControl,
   outputEq,
   sendControl,
@@ -82,6 +84,9 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       for (const sec of channelSections(model, node.id, update.compEqType ?? 0)) {
         update[sec.key] = (await vdGet(sec.param, 0, sec.y)) === sec.onValue;
       }
+      // Input 4-band PEQ band values (mono COMP->EQ mode / stereo channels).
+      const ieq = inputEq(model, node.id, update.compEqType ?? 0);
+      if (ieq) update.eqBands = await readEqBands(ieq);
       conn.params = { ...conn.params, level, pan };
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...update };
       applied++;
@@ -159,26 +164,13 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     }
   }
 
-  // Output bus 4-band PEQ band values: read each band from the first instance
-  // (MIX L/R are linked). The fixed-peaking mid bands have no filter type.
+  // Output bus 4-band PEQ band values: STEREO (single) and MIX (L/R-linked).
   for (const node of model.nodes) {
     if (node.kind !== "bus") continue;
     const oeq = outputEq(node.id);
     if (!oeq) continue;
     try {
-      const inst = oeq.instances[0];
-      const eqBands: EqBand[] = [];
-      for (const band of oeq.bands) {
-        const v: EqBand = {
-          on: vdToBool(await vdGet(band.on, 0, inst)),
-          q: vdToQ(await vdGet(band.q, 0, inst)),
-          freq: vdToEqFreq(await vdGet(band.freq, 0, inst)),
-          gain: vdToEqGain(await vdGet(band.gain, 0, inst)),
-        };
-        if (band.type !== null) v.type = await vdGet(band.type, 0, inst);
-        eqBands[band.index] = v;
-      }
-      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], eqBands };
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], eqBands: await readEqBands(oeq) };
     } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -202,4 +194,22 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     }
   }
   return { applied, errors };
+}
+
+// Read a 4-band PEQ's band values from the device (first instance; linked L/R
+// stay in sync). A fixed-peaking mid band (type null) has no filter type to read.
+async function readEqBands(ctrl: EqControl): Promise<EqBand[]> {
+  const inst = ctrl.instances[0];
+  const eqBands: EqBand[] = [];
+  for (const band of ctrl.bands) {
+    const v: EqBand = {
+      on: vdToBool(await vdGet(band.on, 0, inst)),
+      q: vdToQ(await vdGet(band.q, 0, inst)),
+      freq: vdToEqFreq(await vdGet(band.freq, 0, inst)),
+      gain: vdToEqGain(await vdGet(band.gain, 0, inst)),
+    };
+    if (band.type !== null) v.type = await vdGet(band.type, 0, inst);
+    eqBands[band.index] = v;
+  }
+  return eqBands;
 }

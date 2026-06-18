@@ -7,11 +7,13 @@ import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, EqBand, NodeParams, Plan, PlanConnection } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
+import type { EqControl } from "../core/control/translate";
 import {
   busEqOn,
   busFader,
   channelControl,
   channelSections,
+  inputEq,
   insertFxControl,
   isStereoChannel,
   outputEq,
@@ -210,6 +212,9 @@ export function renderInspector(
           ),
         );
       }
+      // Input 4-band PEQ (mono COMP->EQ mode / stereo channels; none in SSMCS).
+      const ieq = inputEq(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
+      if (ieq) host.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
     }
 
     // Bus output fader: STEREO master (581) and MIX 1/2 (674). Reuses
@@ -237,7 +242,7 @@ export function renderInspector(
       }
       // Output bus 4-band PEQ (STEREO 498-block single / MIX 591-block L/R-linked).
       const oeq = outputEq(node.id);
-      if (oeq) host.append(eqBandBlock(node.id, np, plan, actions, m));
+      if (oeq) host.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
     }
 
     // Monitor bus level (MONITOR_LEVEL). Reuses nodeParams.level.
@@ -453,26 +458,25 @@ function formatGainDb(v: number): string {
 const EQ_BAND_DEFAULT_FREQ = [125, 1000, 4000, 10000];
 const EQ_Q_DEFAULT = 0.71;
 
-// Output bus 4-band PEQ editor. Each band shows ON / filter type (LOW & HIGH
-// bands only) / freq / Q / gain; Q shows only for a peaking band and gain only
-// when the band is not a pass filter — matching the device's filter-type
-// behavior. Edits merge into nodeParams.eqBands via the shared update action.
+// 4-band PEQ editor (input channel or output bus). Each band shows ON / filter
+// type (LOW & HIGH bands only) / freq / Q / gain; Q shows only for a peaking band
+// and gain only when the band is not a pass filter — matching the device's
+// filter-type behavior. Edits merge into nodeParams.eqBands via the update action.
 function eqBandBlock(
   nodeId: string,
+  ctrl: EqControl,
   np: NodeParams,
   plan: Plan,
   actions: InspectorActions,
   m: Messages,
 ): DocumentFragment {
   const frag = document.createDocumentFragment();
-  const oeq = outputEq(nodeId);
-  if (!oeq) return frag;
   const setBand = (i: number, patch: EqBand): void => {
     const next = (plan.nodeParams[nodeId]?.eqBands ?? []).slice();
     next[i] = { ...next[i], ...patch };
     actions.onUpdateNodeParams(nodeId, { eqBands: next });
   };
-  for (const band of oeq.bands) {
+  for (const band of ctrl.bands) {
     const bv = np.eqBands?.[band.index] ?? {};
     frag.append(subheading(`EQ ${m.inspector.eqBand[band.name]}`));
     frag.append(boolToggle(m.inspector.bandOn, bv.on ?? true, (v) => setBand(band.index, { on: v })));

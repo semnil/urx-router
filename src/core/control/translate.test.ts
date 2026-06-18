@@ -349,6 +349,32 @@ describe("planToCommands", () => {
     expect(cmds.find((c) => c.paramId === 512)!.vdValue).toBe(300);
   });
 
+  it("emits input PEQ in COMP->EQ mode (base 49) but not SSMCS", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // CH1 COMP->EQ: LOW band gain +12 dB → 49+4 = 53 at input y0.
+    plan.nodeParams.ch1 = { eqBands: [{ gain: 12 }] };
+    // CH2 SSMCS: no 4-band PEQ, so its band values are dropped.
+    plan.nodeParams.ch2 = { compEqType: 1, eqBands: [{ gain: 6 }] };
+    const cmds = planToCommands(model, plan);
+    const ch1 = cmds.find((c) => c.name === "EQ_BAND_GAIN" && c.y === 0);
+    expect(ch1!.request.uri).toBe("/vd/parameters/53:0:0?operation=value");
+    expect(ch1!.vdValue).toBe(1200);
+    // CH2 (y1) in SSMCS emits no band gain (no PEQ there).
+    expect(cmds.some((c) => c.name === "EQ_BAND_GAIN" && c.y === 1)).toBe(false);
+  });
+
+  it("emits input PEQ for a stereo channel at base 218", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // Stereo CH5/6 HIGH band gain -3 dB → 218 + 15 + 4 = 237 at stereo index 0.
+    plan.nodeParams.ch_5_6 = { eqBands: [{}, {}, {}, { gain: -3 }] };
+    const cmds = planToCommands(model, plan);
+    const eq = cmds.find((c) => c.name === "EQ_BAND_GAIN" && c.paramId === 237);
+    expect(eq!.request.uri).toBe("/vd/parameters/237:0:0?operation=value");
+    expect(eq!.vdValue).toBe(-300);
+  });
+
   it("emits the STEREO master fader on its single instance", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
