@@ -65,6 +65,7 @@ export interface InspectorActions {
   onUpdateNodeParams: (id: string, patch: NodeParams) => void;
   onOpenRecent: (path: string) => void;
   onHideNode: (id: string) => void;
+  onClose: () => void;
 }
 
 // Per-kind editable send parameters. Only summing sends carry LEVEL / PRE-POST /
@@ -103,6 +104,9 @@ export function renderInspector(
   const endpointLabel = (r: string): string => labelOf(parseRef(r).nodeId);
 
   const m = t();
+  // Mobile-only dismiss control (the bottom-sheet pull tab's close affordance);
+  // hidden on the desktop side panel via CSS.
+  host.append(closeButton(m.inspector.close, actions.onClose));
   const constraints = rateConstraints(model, plan.sampleRate);
   if (constraints.warnings.length) host.append(warningBlock(m, constraints.warnings));
 
@@ -432,6 +436,29 @@ function heading(text: string): HTMLElement {
   const h = document.createElement("h2");
   h.textContent = text;
   return h;
+}
+
+function closeButton(label: string, onClose: () => void): HTMLElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "inspector-close";
+  b.setAttribute("aria-label", label);
+  b.title = label;
+  // Decorative ✕ glyph; the accessible name comes from aria-label.
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 18 18");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", "M5 5l8 8M13 5l-8 8");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.6");
+  path.setAttribute("stroke-linecap", "round");
+  svg.append(path);
+  b.append(svg);
+  b.addEventListener("click", onClose);
+  return b;
 }
 
 function subheading(text: string): HTMLElement {

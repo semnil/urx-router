@@ -24,6 +24,7 @@ export const en = {
   },
   inspector: {
     title: "Inspector",
+    close: "Close",
     hint:
       "Drag nodes to place them, then drag from an output port (right) to an " +
       "input port (left) to connect. Connectable ports are highlighted in green " +

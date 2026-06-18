@@ -148,6 +148,7 @@ const inspectorActions = {
   },
   onOpenRecent: (path: string) => void openRecent(path),
   onHideNode: (id: string) => graph.hideNode(id),
+  onClose: () => graph.clearSelection(),
 };
 graph.setTheme(theme);
 
@@ -198,6 +199,9 @@ function setStatus(msg: string): void {
 }
 
 function refreshInspector(): void {
+  // On mobile the inspector is a bottom sheet that slides up only while something
+  // is selected; this flag drives that state (no effect on the desktop panel).
+  document.body.classList.toggle("has-selection", selection !== null);
   renderInspector(inspectorHost, getModel(modelId), plan, selection, inspectorActions, recent);
 }
 

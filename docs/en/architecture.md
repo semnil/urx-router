@@ -145,6 +145,18 @@ PNG and PDF export (`core/storage.ts`) read `--canvas-bg` to paint the backgroun
 image follows the current theme too. The PDF is a hand-built single-page document embedding one
 FlateDecode image (deflate via the platform `CompressionStream`), so no runtime dependency is added.
 
+## Responsive layout (mobile)
+
+The inspector — a fixed 300px column on desktop — becomes a bottom sheet (a rack drawer that slides up
+from the foot of the screen) on narrow viewports (≤720px). Its visibility is driven by CSS alone:
+`main.ts` toggles a single `has-selection` class on `<body>` from whether anything is selected, and
+`body.has-selection #inspector` raises the sheet with `transform: translateY(0)` (off-screen at
+`translateY(105%)` otherwise). It is dismissed by the heading's ✕ button (`onClose` →
+`graph.clearSelection()`, reusing the existing deselect path) or by tapping empty canvas. Canvas zoom
+works by mouse wheel (desktop) and two-finger pinch (touch); both share one "zoom about a fixed point"
+routine (`zoomAt` in `graph.ts`). `viewport-fit=cover` plus `env(safe-area-inset-bottom)` clears the
+notch / home indicator, and the toolbar drops its decorative VU meter + tagline below 720px.
+
 ## Hiding unconnected nodes
 
 On larger models the nodes a plan never wires up take space and clutter the diagram, so **only

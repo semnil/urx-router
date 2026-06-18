@@ -35,6 +35,10 @@ const WIRE_HIT_W = 14;
 // rather than a click. A click on an input port selects its incoming wire.
 const DRAG_THRESHOLD = 4;
 
+// Zoom bounds shared by the wheel, pinch, and fit-to-view paths.
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 2.5;
+
 const LABEL_FONT = '"SF Mono", "SFMono-Regular", "Menlo", "Cascadia Code", "Consolas", monospace';
 
 // Label geometry. The label starts at LABEL_X and must clear the header button,
@@ -203,6 +207,13 @@ export class Graph {
     | null = null;
   private tempWire: SVGPathElement | null = null;
   private panning: { startX: number; startY: number; panX: number; panY: number } | null = null;
+  // Active touch points, used to detect a two-finger pinch. While two are down a
+  // pinch zooms/pans the canvas and single-pointer gestures are suspended.
+  private pointers = new Map<number, { x: number; y: number }>();
+  // left/top cache the svg's viewport origin for the gesture: it never moves
+  // (the pinch transforms an inner <g>), so reading it once avoids a forced
+  // reflow on every move frame.
+  private pinch: { lastDist: number; lastCx: number; lastCy: number; left: number; top: number } | null = null;
   // Floating HTML textarea for editing a node's note in place on the canvas.
   private noteEditor: { id: string; el: HTMLTextAreaElement } | null = null;
   // Last node pointerdown, used to detect a double-press. A real dblclick event
@@ -360,7 +371,7 @@ export class Graph {
     const b = this.contentBounds();
     const pad = 48;
     const zoom = Math.min(vw / (b.w + pad * 2), vh / (b.h + pad * 2), 1.2);
-    this.zoom = Math.max(0.3, zoom);
+    this.zoom = Math.max(ZOOM_MIN, zoom);
     this.pan.x = (vw - b.w * this.zoom) / 2 - b.x * this.zoom;
     this.pan.y = (vh - b.h * this.zoom) / 2 - b.y * this.zoom;
     // An intentional fit (construction, model change, hide/show) becomes the new
@@ -411,7 +422,7 @@ export class Graph {
     this.svg.addEventListener("pointerdown", (e) => this.onPointerDown(e));
     this.svg.addEventListener("pointermove", (e) => this.onPointerMove(e));
     this.svg.addEventListener("pointerup", (e) => this.onPointerUp(e));
-    this.svg.addEventListener("pointercancel", () => this.cancelInteraction());
+    this.svg.addEventListener("pointercancel", (e) => this.onPointerCancel(e));
     this.svg.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
 
     // The initial fitView() in the constructor can measure a stale viewport size
@@ -1142,6 +1153,18 @@ export class Graph {
   // --- interaction ---------------------------------------------------------
 
   private onPointerDown(e: PointerEvent): void {
+    this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // A second finger turns any in-flight drag/connect/pan into a pinch.
+    if (this.pointers.size === 2) {
+      e.preventDefault();
+      this.closeNoteEditor();
+      this.cancelInteraction();
+      this.lastNodeClick = null;
+      this.beginPinch();
+      this.capturePointer(e.pointerId);
+      return;
+    }
+
     this.closeNoteEditor();
     const target = e.target as Element;
 
@@ -1227,6 +1250,11 @@ export class Graph {
   }
 
   private onPointerMove(e: PointerEvent): void {
+    if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.pinch) {
+      this.updatePinch();
+      return;
+    }
     if (this.dragNode) {
       const p = this.clientToContent(e);
       this.plan.positions[this.dragNode.id] = {
@@ -1266,6 +1294,18 @@ export class Graph {
   }
 
   private onPointerUp(e: PointerEvent): void {
+    this.pointers.delete(e.pointerId);
+    // Lifting one finger ends the pinch; the other finger is left idle (no pan
+    // resumes) until it too lifts, avoiding a jump back to single-pointer drag.
+    if (this.pinch && this.pointers.size < 2) {
+      this.pinch = null;
+      try {
+        this.svg.releasePointerCapture(e.pointerId);
+      } catch {
+        /* pointer was not captured */
+      }
+      return;
+    }
     if (this.dragNode) {
       this.dragNode = null;
       this.cb.onChange();
@@ -1308,18 +1348,63 @@ export class Graph {
     this.panning = null;
   }
 
+  private onPointerCancel(e: PointerEvent): void {
+    this.pointers.delete(e.pointerId);
+    if (this.pinch && this.pointers.size < 2) this.pinch = null;
+    this.cancelInteraction();
+  }
+
+  // Snapshot the two-finger distance and midpoint that updatePinch advances from,
+  // caching the svg origin so the move loop never re-measures it.
+  private beginPinch(): void {
+    this.autoFit = false;
+    const rect = this.svg.getBoundingClientRect();
+    const m = this.fingerSpread(rect.left, rect.top);
+    if (m) this.pinch = { ...m, left: rect.left, top: rect.top };
+  }
+
+  // Current finger spread and midpoint, the midpoint in svg-local coordinates
+  // (left/top are the cached svg origin, not re-measured per frame).
+  private fingerSpread(left: number, top: number): { lastDist: number; lastCx: number; lastCy: number } | null {
+    const pts = [...this.pointers.values()];
+    if (pts.length < 2) return null;
+    const [a, b] = pts;
+    return {
+      lastDist: Math.hypot(a.x - b.x, a.y - b.y),
+      lastCx: (a.x + b.x) / 2 - left,
+      lastCy: (a.y + b.y) / 2 - top,
+    };
+  }
+
+  // Zoom by the change in finger spread (anchored at the midpoint) and pan by the
+  // midpoint's own movement, so two fingers zoom and drag the canvas together.
+  private updatePinch(): void {
+    if (!this.pinch) return;
+    const m = this.fingerSpread(this.pinch.left, this.pinch.top);
+    if (!m || this.pinch.lastDist === 0) return;
+    this.zoomAt(m.lastCx, m.lastCy, this.zoom * (m.lastDist / this.pinch.lastDist));
+    this.pan.x += m.lastCx - this.pinch.lastCx;
+    this.pan.y += m.lastCy - this.pinch.lastCy;
+    this.pinch.lastDist = m.lastDist;
+    this.pinch.lastCx = m.lastCx;
+    this.pinch.lastCy = m.lastCy;
+    this.applyTransform();
+  }
+
+  // Zoom to `next` (clamped) while keeping the point at svg-local (cx, cy) fixed.
+  private zoomAt(cx: number, cy: number, next: number): void {
+    const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next));
+    this.pan.x = cx - ((cx - this.pan.x) / this.zoom) * z;
+    this.pan.y = cy - ((cy - this.pan.y) / this.zoom) * z;
+    this.zoom = z;
+  }
+
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
     this.autoFit = false;
     const rect = this.svg.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
     const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    const next = Math.min(2.5, Math.max(0.3, this.zoom * factor));
-    // keep the point under the cursor fixed
-    this.pan.x = cx - ((cx - this.pan.x) / this.zoom) * next;
-    this.pan.y = cy - ((cy - this.pan.y) / this.zoom) * next;
-    this.zoom = next;
+    this.zoomAt(e.clientX - rect.left, e.clientY - rect.top, this.zoom * factor);
     this.applyTransform();
   }
 

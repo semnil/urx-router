@@ -754,6 +754,12 @@ select:focus-visible,
   filter: brightness(1.1);
 }
 
+/* Dismiss control for the mobile bottom sheet; the desktop side panel never
+   shows it (revealed in the narrow-viewport block below). */
+#inspector .inspector-close {
+  display: none;
+}
+
 /* ---- statusbar ---- */
 
 #statusbar {
@@ -1035,4 +1041,102 @@ select:focus-visible,
 
 [data-theme="light"] #inspector button.subtle:hover {
   filter: brightness(0.97);
+}
+
+/* ---- narrow viewport (phones / tablet portrait) ---------------------------
+
+   The desktop side panel is too wide for a phone (300px of ~390px), so below
+   720px the inspector becomes a bottom sheet — a rack drawer that slides up from
+   the foot of the screen only while a node or connection is selected. The canvas
+   keeps the full width; the sheet is dismissed by its ✕ button or by tapping
+   empty canvas (which clears the selection). */
+@media (max-width: 720px) {
+  body {
+    /* Stop the page itself rubber-banding when a gesture starts on chrome. */
+    overscroll-behavior: none;
+  }
+
+  /* Drop the decorative VU meter + tagline so the control rack fits more of its
+     real buttons before the horizontal scroll kicks in. */
+  .brand .meta,
+  .brand .seg {
+    display: none;
+  }
+
+  /* Comfortable touch targets for the rack and the inspector controls. */
+  .tools button,
+  .menu-trigger,
+  .model-select select,
+  #inspector .toggle button,
+  #inspector .recent-row {
+    min-height: 40px;
+  }
+
+  #inspector {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 64vh;
+    z-index: 40;
+    border-left: none;
+    border-top: 1px solid var(--line);
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.45);
+    padding-top: 22px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    transform: translateY(105%);
+    transition: transform 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  /* The drawer's pull tab. */
+  #inspector::before {
+    content: "";
+    position: absolute;
+    top: 9px;
+    left: 50%;
+    width: 38px;
+    height: 4px;
+    margin-left: -19px;
+    border-radius: 2px;
+    background: var(--line);
+  }
+
+  body.has-selection #inspector {
+    transform: translateY(0);
+  }
+
+  #inspector .inspector-close {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    width: 34px;
+    height: 34px;
+    margin: -4px 0 0 auto;
+    padding: 0;
+    color: var(--text-dim);
+    background: none;
+    border: none;
+  }
+
+  #inspector .inspector-close svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  #inspector .inspector-close:hover {
+    color: var(--text);
+  }
+
+  #statusbar {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+@media (max-width: 720px) and (prefers-reduced-motion: reduce) {
+  #inspector {
+    transition: none;
+  }
 }
