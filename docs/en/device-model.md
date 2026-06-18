@@ -46,7 +46,6 @@ flowchart LR
     UDAW[USB DAW 1/2 … 11/12]
     USUB[USB SUB]
     HDMI[HDMI down-mix]
-    ALL[All Input / All USB DAW]
   end
 
   subgraph CH[Mixer channels]
@@ -118,8 +117,6 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 | USB DAW 1/2 … N | ✓ (…9/10) | ✓ (…11/12) | ✓ (…11/12) |
 | USB SUB | ✓ | ✓ | ✓ |
 | HDMI (down-mix) | — | — | ✓ |
-| All Input | ✓ | ✓ | ✓ |
-| All USB DAW | ✓ | ✓ | ✓ |
 
 > On the URX44V, every channel (CH1–4, 5/6, 7/8, 9/10, 11/12) can select USB MAIN A/B/C,
 > each USB DAW pair, and USB SUB as its input source (verified on hardware).
@@ -127,6 +124,11 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 > **Mono-channel pairing**: CH1–4 form the pairs CH1/2 and CH3/4; fixing one channel's input source
 > fixes its partner too (e.g. choosing MIC/LINE 1/2 on CH1 also sets CH2 to MIC/LINE 1/2). The tool
 > wires the same source node to both channels (L/R is implied by channel position).
+>
+> **All Input / All USB DAW are not sources**: the INPUT screen's `[All Input]` and `[All USB DAW]`
+> buttons are bulk-set actions — one tap rewrites every channel's input source from a fixed table
+> (All Input → CH1/2 = MIC/LINE 1/2, CH3/4 = MIC/LINE 3/4, CH5/6 = AUX IN; All USB DAW → CHn/n+1 =
+> USB DAW n/n+1). They are not selectable per-channel sources, so they are not source nodes.
 
 ### 2. Channel → bus send (`send`, many receivers)
 

@@ -44,7 +44,6 @@ flowchart LR
     UDAW[USB DAW 1/2 … 11/12]
     USUB[USB SUB]
     HDMI[HDMI down-mix]
-    ALL[All Input / All USB DAW]
   end
 
   subgraph CH[ミキサーチャンネル]
@@ -114,8 +113,6 @@ MIC/LINE 1 入力に内部結線され、独立したソース選択肢として
 | USB DAW 1/2 … N | ✓ (…9/10) | ✓ (…11/12) | ✓ (…11/12) |
 | USB SUB | ✓ | ✓ | ✓ |
 | HDMI (down-mix) | — | — | ✓ |
-| All Input | ✓ | ✓ | ✓ |
-| All USB DAW | ✓ | ✓ | ✓ |
 
 > URX44V では全チャンネル (CH1–4, 5/6, 7/8, 9/10, 11/12) が USB MAIN A/B/C・USB DAW 各ペア・USB SUB を
 > 入力ソースとして選択可能 (実機確認済み)。
@@ -123,6 +120,11 @@ MIC/LINE 1 入力に内部結線され、独立したソース選択肢として
 > **モノ CH のペア連動**: CH1–4 は CH1/2・CH3/4 がペアを成し、片方の入力ソースを確定するともう片方も同じ
 > ソースに確定する (例: CH1 で MIC/LINE 1/2 を選ぶと CH2 も MIC/LINE 1/2 になる)。本ツールは同一ソースノードを
 > 両 CH へ結線して表現する (L/R は CH の位置で暗黙的に決まる)。
+>
+> **All Input / All USB DAW はソースではない**: INPUT 画面の `[All Input]` / `[All USB DAW]` ボタンは
+> 一括設定アクションで、1 タップで全チャンネルの入力ソースを固定テーブルに従って書き換える
+> (All Input → CH1/2 = MIC/LINE 1/2・CH3/4 = MIC/LINE 3/4・CH5/6 = AUX IN / All USB DAW → CHn/n+1 =
+> USB DAW n/n+1)。チャンネルごとに選択するソースではないため、ソースノードとしては扱わない。
 
 ### 2. チャンネル → Bus send (`send`, 受け口 複数可)
 

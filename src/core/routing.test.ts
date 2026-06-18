@@ -64,11 +64,12 @@ describe("canConnect on URX44", () => {
     expect(canConnect(u44, plan, ref("ch1", "out"), ref("out.usbdaw", "in")).reason).toBe("noRule");
   });
 
-  it("offers All Input / All USB DAW and paired USB DAW returns as channel sources", () => {
-    expect(canConnect(u44, plan, ref("in.allinput", "out"), ref("ch1", "in")).ok).toBe(true);
-    expect(canConnect(u44, plan, ref("in.allusbdaw", "out"), ref("ch1", "in")).ok).toBe(true);
+  it("offers paired USB DAW returns as channel sources (but not the bulk-set actions)", () => {
     expect(canConnect(u44, plan, ref("in.usbdaw_1_2", "out"), ref("ch1", "in")).ok).toBe(true);
     expect(canConnect(u44, plan, ref("in.usbdaw_11_12", "out"), ref("ch_5_6", "in")).ok).toBe(true);
+    // "All Input" / "All USB DAW" are bulk-set actions, not selectable sources.
+    expect(u44.nodes.some((n) => n.id === "in.allinput")).toBe(false);
+    expect(u44.nodes.some((n) => n.id === "in.allusbdaw")).toBe(false);
   });
 
   it("enforces single-input on an output patch", () => {

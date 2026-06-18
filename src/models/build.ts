@@ -66,8 +66,9 @@ export function buildModel(p: ModelParams): DeviceModel {
   // --- Input sources -------------------------------------------------------
   // The device exposes MIC/LINE and USB DAW as fixed 2-channel pairs, so each is
   // one node here. The front mini jack is wired into the MIC/LINE 1 input path
-  // and is not a separate selectable source. "All Input" / "All USB DAW" are the
-  // device's two combined source choices.
+  // and is not a separate selectable source. "All Input" / "All USB DAW" are
+  // bulk-set actions (one tap rewrites every channel's source from a fixed
+  // table), not selectable sources, so they are not input nodes.
   const inputs: string[] = [];
   const addInput = (id: string, label: string): void => {
     add({ id, kind: "input", label, column: "input", ports: outPort() });
@@ -82,8 +83,6 @@ export function buildModel(p: ModelParams): DeviceModel {
   for (let i = 1; i <= p.usbDaw; i += 2) addInput(`in.usbdaw_${i}_${i + 1}`, `USB DAW ${i}/${i + 1}`);
   addInput("in.usbsub", "USB SUB");
   if (p.hasHDMI) addInput("in.hdmi", "HDMI (down-mix)");
-  addInput("in.allinput", "All Input");
-  addInput("in.allusbdaw", "All USB DAW");
 
   // --- Mixer channels ------------------------------------------------------
   // Mono channels are paired (CH1/2, CH3/4): selecting an input source on one

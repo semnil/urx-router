@@ -48,12 +48,13 @@ describe("model-specific topology", () => {
     expect(MODELS[id].nodes.some((n) => n.id === "in.micfront")).toBe(false);
   });
 
-  it.each(MODEL_IDS)("%s exposes paired sources plus All Input / All USB DAW", (id) => {
+  it.each(MODEL_IDS)("%s exposes paired sources but not the bulk-set actions", (id) => {
     const has = (nodeId: string): boolean => MODELS[id].nodes.some((n) => n.id === nodeId);
     expect(has("in.micline_1_2")).toBe(true);
     expect(has("in.usbdaw_1_2")).toBe(true);
-    expect(has("in.allinput")).toBe(true);
-    expect(has("in.allusbdaw")).toBe(true);
+    // "All Input" / "All USB DAW" are bulk-set actions, not source nodes.
+    expect(has("in.allinput")).toBe(false);
+    expect(has("in.allusbdaw")).toBe(false);
   });
 
   it("splits MIC/LINE and USB DAW into 2-channel pairs", () => {
