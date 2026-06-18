@@ -160,6 +160,11 @@ export const ja: Messages = {
     fetchPartial: (n: number, failed: number, unread: number): string =>
       `${n} 件取得、${failed} 件失敗` + (unread ? `、${unread} ノード未取得` : ""),
     fetchError: (message: string): string => `デバイスからの取得に失敗しました: ${message}`,
+    writeConnecting: "デバイスに接続しています…",
+    writeNoChanges: "デバイスは計画と一致しています — 書き込む変更はありません",
+    written: (n: number): string => `${n} 件の設定をデバイスに書き込みました`,
+    writePartial: (n: number, failed: number): string => `${n} 件書き込み、${failed} 件失敗`,
+    writeError: (message: string): string => `デバイスへの書き込みに失敗しました: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",
     fixedConnection: "固定接続は削除できません",
@@ -185,6 +190,8 @@ export const ja: Messages = {
     update: (version: string): string => `バージョン ${version} が利用可能です。今すぐ更新しますか?`,
     switchModel: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。${device} に切り替えて (現在の計画は破棄) 取得しますか?`,
+    write: (n: number): string =>
+      `${n} 件の変更をデバイスに書き込みますか? デバイスの現在の設定を上書きします。`,
   },
   filter: {
     plan: "URX Router 計画",
@@ -197,6 +204,8 @@ export const ja: Messages = {
     singleInput: "この入力は1系統のみです (既存の接続を外してください)",
     cannotConnect: "接続できません",
     unknownModel: (model: string): string => `未知の機種: ${model}`,
+    modelMismatch: (device: string, ui: string): string =>
+      `接続中のデバイスは ${device} ですが、${ui} を選択中です。書き込む前に一致する計画を開くか切り替えてください。`,
     notPlanFile: "URX Router の計画ファイルではありません",
     missingModel: "計画ファイルに modelId がありません",
   },

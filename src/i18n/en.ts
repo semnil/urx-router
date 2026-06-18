@@ -163,6 +163,11 @@ export const en = {
       `Fetched ${n}, ${failed} failed` +
       (unread ? `, ${unread} node${unread === 1 ? "" : "s"} not read` : ""),
     fetchError: (message: string): string => `Device fetch failed: ${message}`,
+    writeConnecting: "Connecting to the device…",
+    writeNoChanges: "Device already matches the plan — nothing to write",
+    written: (n: number): string => `Wrote ${n} setting${n === 1 ? "" : "s"} to the device`,
+    writePartial: (n: number, failed: number): string => `Wrote ${n}, ${failed} failed`,
+    writeError: (message: string): string => `Device write failed: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",
     fixedConnection: "Fixed connection — cannot be removed",
@@ -188,6 +193,8 @@ export const en = {
     update: (version: string): string => `Version ${version} is available. Update now?`,
     switchModel: (device: string, ui: string): string =>
       `The connected device is ${device}, but ${ui} is selected. Switch to ${device} (replacing the current plan) and fetch?`,
+    write: (n: number): string =>
+      `Write ${n} change${n === 1 ? "" : "s"} to the device? This overwrites the device's current settings.`,
   },
   filter: {
     plan: "URX Router plan",
@@ -200,6 +207,8 @@ export const en = {
     singleInput: "This input accepts only one source (remove the existing connection first)",
     cannotConnect: "Cannot connect",
     unknownModel: (model: string): string => `Unknown model: ${model}`,
+    modelMismatch: (device: string, ui: string): string =>
+      `The connected device is ${device}, but ${ui} is selected. Open or switch to the matching plan before writing.`,
     notPlanFile: "This is not a URX Router plan file",
     missingModel: "The plan file has no modelId",
   },

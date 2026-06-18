@@ -28,8 +28,10 @@ import {
   restartApp,
   vdConnect,
   vdDisconnect,
+  type DeviceSummary,
 } from "./core/platform";
 import { applyDeviceState } from "./core/control/readback";
+import { diffPlan, sendCommands } from "./core/control/client";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -336,6 +338,28 @@ $("btn-hide-unused").addEventListener("click", () => {
   graph.hideUnused();
 });
 
+// Connect, run an action with the connected device, then always disconnect.
+// Connection and action errors surface through the given error formatter. Shared
+// by the fetch and write device actions so the connect/disconnect/catch
+// scaffolding lives in one place.
+async function withDevice(
+  connecting: string,
+  onError: (message: string) => string,
+  action: (device: DeviceSummary) => Promise<void>,
+): Promise<void> {
+  setStatus(connecting);
+  try {
+    const device = await vdConnect();
+    try {
+      await action(device);
+    } finally {
+      await vdDisconnect();
+    }
+  } catch (err) {
+    setStatus(onError(err instanceof Error ? err.message : String(err)));
+  }
+}
+
 // Pull the connected device's current channel levels/pans into the plan. This
 // overwrites the matching plan params, so it confirms before discarding edits.
 // Desktop only: DEMO is statically true in the browser bundle, so this branch —
@@ -343,49 +367,72 @@ $("btn-hide-unused").addEventListener("click", () => {
 if (!DEMO) {
   $("btn-fetch").addEventListener("click", async () => {
     if (!(await confirmDiscard())) return;
-    setStatus(t().status.fetchConnecting);
-    try {
-      const device = await vdConnect();
-      try {
-        // The connected device may be a different model than the one selected.
-        // Offer to switch the UI to the device's model (a fresh plan) so the
-        // fetched values map onto the right channels; otherwise abort.
-        if (device.model !== modelId) {
-          if (!MODEL_IDS.includes(device.model as ModelId)) {
-            setStatus(t().status.fetchError(t().error.unknownModel(device.model)));
-            return;
-          }
-          if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) {
-            setStatus(t().status.canceled);
-            return;
-          }
-          loadPlan(emptyPlan(device.model as ModelId));
+    await withDevice(t().status.fetchConnecting, t().status.fetchError, async (device) => {
+      // The connected device may be a different model than the one selected.
+      // Offer to switch the UI to the device's model (a fresh plan) so the
+      // fetched values map onto the right channels; otherwise abort.
+      if (device.model !== modelId) {
+        if (!MODEL_IDS.includes(device.model as ModelId)) {
+          setStatus(t().status.fetchError(t().error.unknownModel(device.model)));
+          return;
         }
-        const result = await applyDeviceState(getModel(modelId), plan);
-        if (result.errors.length) console.warn("device readback issues:", result.errors);
-        // Per-node provenance: nodes whose body read failed still show their plan
-        // default, so the graph/inspector flag them as not read from the device.
-        plan.unreadNodes = result.unreadNodes;
-        graph.setModel(getModel(modelId), plan);
-        selection = null;
-        refreshInspector();
-        dirty = true;
-        // Nodes the readback tried but could not confirm (left at their plan default).
-        const unread = result.unreadNodes.size;
-        setStatus(
-          result.errors.length
-            ? t().status.fetchPartial(result.applied, result.errors.length, unread)
-            : unread
-              ? t().status.fetchedUnread(device.model, result.applied, unread)
-              : t().status.fetchedDevice(device.model, result.applied),
-        );
-      } finally {
-        await vdDisconnect();
+        if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) {
+          setStatus(t().status.canceled);
+          return;
+        }
+        loadPlan(emptyPlan(device.model as ModelId));
       }
-    } catch (err) {
-      setStatus(t().status.fetchError(err instanceof Error ? err.message : String(err)));
-    }
+      const result = await applyDeviceState(getModel(modelId), plan);
+      if (result.errors.length) console.warn("device readback issues:", result.errors);
+      // Per-node provenance: nodes whose body read failed still show their plan
+      // default, so the graph/inspector flag them as not read from the device.
+      plan.unreadNodes = result.unreadNodes;
+      graph.setModel(getModel(modelId), plan);
+      selection = null;
+      refreshInspector();
+      dirty = true;
+      // Nodes the readback tried but could not confirm (left at their plan default).
+      const unread = result.unreadNodes.size;
+      setStatus(
+        result.errors.length
+          ? t().status.fetchPartial(result.applied, result.errors.length, unread)
+          : unread
+            ? t().status.fetchedUnread(device.model, result.applied, unread)
+            : t().status.fetchedDevice(device.model, result.applied),
+      );
+    });
   });
+
+  // Write the plan to the connected device: diff the plan against the device's
+  // current values, confirm the change count, then send only what differs.
+  // Writing to a device of a different model is refused (the plan's channels
+  // would map onto the wrong hardware).
+  $("btn-write").addEventListener("click", () =>
+    withDevice(t().status.writeConnecting, t().status.writeError, async (device) => {
+      if (device.model !== modelId) {
+        setStatus(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
+        return;
+      }
+      const { diffs, errors } = await diffPlan(getModel(modelId), plan);
+      if (errors.length) console.warn("device diff issues:", errors);
+      if (diffs.length === 0) {
+        setStatus(t().status.writeNoChanges);
+        return;
+      }
+      if (!(await confirmDialog(t().confirm.write(diffs.length)))) {
+        setStatus(t().status.canceled);
+        return;
+      }
+      const outcomes = await sendCommands(diffs.map((d) => d.command));
+      const failed = outcomes.filter((o) => !o.ok);
+      if (failed.length) console.warn("device write failures:", failed);
+      setStatus(
+        failed.length
+          ? t().status.writePartial(outcomes.length - failed.length, failed.length)
+          : t().status.written(outcomes.length),
+      );
+    }),
+  );
 }
 
 themeBtn.addEventListener("click", () => {
@@ -406,7 +453,6 @@ langBtn.addEventListener("click", () => {
 // so its coordinates are derived from the trigger each time it opens.
 setupMenu($<HTMLButtonElement>("btn-file"), $<HTMLElement>("file-menu"));
 // Device actions (desktop only; the whole menu is hidden in a plain browser).
-// "Write to device" ships disabled until live writes land.
 setupMenu($<HTMLButtonElement>("btn-device"), $<HTMLElement>("device-menu"));
 
 function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
