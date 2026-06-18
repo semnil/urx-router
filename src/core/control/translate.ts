@@ -50,6 +50,7 @@ import {
   levelToVd,
   monitorLevelToVd,
   panToVd,
+  PORT_REF_NONE,
   qToVd,
   ratioToVd,
   releaseToVd,
@@ -702,16 +703,27 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     }
   }
 
-  // CH → MIX/FX bus sends. The wire's presence means the send is on; its params
-  // carry level / pan / PRE-POST tap. MIX writes both linked L/R instances; FX is
-  // a single mono send with no pan.
-  for (const conn of plan.connections) {
-    const sc = sendControl(model, parseRef(conn.from).nodeId, parseRef(conn.to).nodeId);
-    if (!sc) continue;
-    for (const p of sc.level) out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
-    for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
-    for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, 1));
-    out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
+  // CH → MIX/FX bus sends — written as absolute state over every send-capable
+  // pair. A wire means the send is on (its params carry level / pan / PRE-POST
+  // tap; MIX writes both linked L/R instances, FX is a single mono send with no
+  // pan); no wire emits SEND_ON = 0 so a write turns the device's send off,
+  // matching readback (off = no wire).
+  for (const node of model.nodes) {
+    if (node.kind !== "channel") continue;
+    for (const bus of model.nodes) {
+      if (bus.kind !== "bus") continue;
+      const sc = sendControl(model, node.id, bus.id);
+      if (!sc) continue;
+      const conn = plan.connections.find((c) => c.from === ref(node.id, "out") && c.to === ref(bus.id, "in"));
+      if (!conn) {
+        for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, 0));
+        continue;
+      }
+      for (const p of sc.level) out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
+      for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
+      for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, 1));
+      out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
+    }
   }
 
   // Channel node parameters: ON / HPF / gain.
@@ -805,37 +817,44 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (np?.duckerOn !== undefined) out.push(command("DUCKER_ON", dc.y, np.duckerOn ? 1 : 0));
     if (np?.ducker) pushDynCommands(out, DUCKER_FIELDS, dc.y, np.ducker as Record<string, number | undefined>);
     // Ducker key source (259): the incoming key wire picks a channel or bus; emit
-    // its port (a channel uses its L input slot, a bus its L port).
+    // its port (a channel uses its L input slot, a bus its L port). No key wire
+    // emits the NONE sentinel so a write clears the device's key selection.
     const key = incomingConnection(plan, ref(node.id, "in"), "key");
     if (key) {
       const p = sourcePorts(model, parseRef(key.from).nodeId);
       if (p) out.push(command("DUCKER_SRC", dc.y, p.l));
+    } else {
+      out.push(command("DUCKER_SRC", dc.y, PORT_REF_NONE));
     }
   }
 
-  // Input source select (param 22): each channel's incoming source wire picks a
-  // physical input; emit the input's port at the channel's slot(s). A mono node
-  // fills one slot (L or R by slot parity: even = L, odd = R); a stereo node fills
-  // the adjacent pair.
+  // Input source select (param 22) — absolute over every channel slot. A source
+  // wire picks a physical input (a mono node fills one slot, even = L / odd = R;
+  // a stereo node the adjacent pair); no wire emits the NONE sentinel so a write
+  // clears the device's selection, matching readback (NONE = no source wire).
   for (const node of model.nodes) {
     if (node.kind !== "channel") continue;
-    const conn = incomingConnection(plan, ref(node.id, "in"), "source");
-    if (!conn) continue;
-    const ports = inputPorts(parseRef(conn.from).nodeId);
     const slots = channelInputSlots(model, node.id);
-    if (!ports || !slots) continue;
-    for (const s of slots) out.push(command("INPUT_SOURCE", s, ports[s & 1]));
+    if (!slots) continue;
+    const conn = incomingConnection(plan, ref(node.id, "in"), "source");
+    const ports = conn ? inputPorts(parseRef(conn.from).nodeId) : null;
+    // A wire to a source not in the input namespace is left untouched.
+    if (conn && !ports) continue;
+    for (const s of slots) out.push(command("INPUT_SOURCE", s, ports ? ports[s & 1] : PORT_REF_NONE));
   }
 
-  // Streaming / USB-out / monitor / analog-patch selects: one incoming wire →
-  // source port(s). See ROUTING_SELECTORS; readback consumes the same table.
+  // Streaming / USB-out / monitor / analog-patch selects — absolute. One incoming
+  // wire → source port(s); no wire emits the NONE sentinel so a write clears the
+  // selection. Skips selectors whose destination node is absent on this model.
+  // See ROUTING_SELECTORS; readback consumes the same table.
   for (const [to, kind, pl, pr, yl, yr] of ROUTING_SELECTORS) {
+    if (!model.nodes.some((n) => n.id === to)) continue;
     const conn = incomingConnection(plan, ref(to, "in"), kind);
-    if (!conn) continue;
-    const p = sourcePorts(model, parseRef(conn.from).nodeId);
-    if (!p) continue;
-    out.push(command(pl, yl, p.l));
-    if (pr) out.push(command(pr, yr, p.r));
+    const p = conn ? sourcePorts(model, parseRef(conn.from).nodeId) : null;
+    // A wire to a source that does not resolve to a port is left untouched.
+    if (conn && !p) continue;
+    out.push(command(pl, yl, p ? p.l : PORT_REF_NONE));
+    if (pr) out.push(command(pr, yr, p ? p.r : PORT_REF_NONE));
   }
 
   // STEREO bus master ON/OFF (global, y = 0).
@@ -857,14 +876,15 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   if (osc?.mode !== undefined) out.push(command("OSC_MODE", 0, osc.mode));
   if (osc?.freq !== undefined) out.push(command("OSC_FREQ", 0, osc.freq));
 
-  // OSC → bus assign: each outgoing wire turns the destination's L/R channels on
-  // (oscL/oscR; absent = on). FX buses are mono (R skipped).
-  for (const conn of plan.connections) {
-    if (parseRef(conn.from).nodeId !== "bus.osc") continue;
-    const a = oscAssign(parseRef(conn.to).nodeId);
+  // OSC → bus assign — absolute over every OSC-assignable bus. A wire turns the
+  // destination's L/R channels on (oscL/oscR; absent = on); no wire turns both
+  // off, matching readback (both off = no wire). FX buses are mono (R skipped).
+  for (const busId of OSC_ASSIGN_BUSES) {
+    const a = oscAssign(busId);
     if (!a) continue;
-    out.push(command(a.name, a.l, conn.params?.oscL === false ? 0 : 1));
-    if (a.r !== null) out.push(command(a.name, a.r, conn.params?.oscR === false ? 0 : 1));
+    const conn = plan.connections.find((c) => c.from === ref("bus.osc", "out") && c.to === ref(busId, "in"));
+    out.push(command(a.name, a.l, conn && conn.params?.oscL !== false ? 1 : 0));
+    if (a.r !== null) out.push(command(a.name, a.r, conn && conn.params?.oscR !== false ? 1 : 0));
   }
   return out;
 }

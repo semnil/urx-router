@@ -255,7 +255,11 @@ describe("planToCommands", () => {
       "/vd/parameters/152:0:0?operation=value",
     ]);
     expect(lvl.every((c) => c.vdValue === 500)).toBe(true);
-    expect(cmds.filter((c) => c.name === "SEND_ON").every((c) => c.vdValue === 1)).toBe(true);
+    // This send's ON params (base 146 → 148 / 154 at ch1's y0) are on; the param
+    // id is the send type and y selects the channel, so scope to y0.
+    const on = cmds.filter((c) => c.name === "SEND_ON" && c.y === 0 && [148, 154].includes(c.paramId));
+    expect(on).toHaveLength(2);
+    expect(on.every((c) => c.vdValue === 1)).toBe(true);
     const tap = cmds.find((c) => c.name === "SEND_TAP");
     // PRE = 1, single param at base+5 = 151.
     expect(tap!.vdValue).toBe(1);
@@ -532,10 +536,12 @@ describe("planToCommands", () => {
     // MIX2 defaults both on at instances 2/3.
     expect(cmds.find((c) => c.name === "OSC_ASSIGN_MIX" && c.y === 2)!.vdValue).toBe(1);
     expect(cmds.find((c) => c.name === "OSC_ASSIGN_MIX" && c.y === 3)!.vdValue).toBe(1);
-    // FX1 is mono — only one instance, no R.
+    // FX is mono (one instance, no R): FX1 wired on (y0), FX2 unwired off (y1).
     const fx = cmds.filter((c) => c.name === "OSC_ASSIGN_FX");
-    expect(fx).toHaveLength(1);
-    expect(fx[0].y).toBe(0);
+    expect(fx.map((c) => [c.y, c.vdValue])).toEqual([
+      [0, 1],
+      [1, 0],
+    ]);
   });
 
   it("omits node-param commands when none are set", () => {
@@ -576,10 +582,12 @@ describe("planToCommands", () => {
     expect(r!.vdValue).toBe((0x80000000 | 289) >>> 0);
   });
 
-  it("omits streaming source when nothing feeds bus.stream", () => {
+  it("emits streaming source as the NONE sentinel when nothing feeds bus.stream", () => {
     const plan = emptyPlan("URX44V");
     const cmds = planToCommands(model, plan);
-    expect(cmds.some((c) => c.name === "STREAM_SRC_L")).toBe(false);
+    // Absolute-state write: an unfed selector is cleared, not omitted.
+    expect(cmds.find((c) => c.name === "STREAM_SRC_L")!.vdValue).toBe(0xffffffff);
+    expect(cmds.find((c) => c.name === "STREAM_SRC_R")!.vdValue).toBe(0xffffffff);
   });
 
   it("emits USB output source as a raw port ref (bus or channel)", () => {
