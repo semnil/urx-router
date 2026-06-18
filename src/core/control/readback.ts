@@ -7,7 +7,7 @@
 import type { DeviceModel } from "../../models/types";
 import { ref } from "../../models/types";
 import type { ConnParams, EqBand, NodeParams, Plan } from "../plan";
-import { ensureFixedConnections } from "../plan";
+import { clearIncoming, ensureFixedConnections, setExclusiveConnection } from "../plan";
 import { vdGet } from "../platform";
 import { normalizeInsertFx, PARAMS } from "./params";
 import type { DynField, EqControl } from "./translate";
@@ -19,9 +19,13 @@ import {
   channelSections,
   DUCKER_FIELDS,
   duckerControl,
+  channelInputSlots,
   inputEq,
+  inputNodeForPort,
   insertFxControl,
+  nodeForPort,
   outputEq,
+  ROUTING_SELECTORS,
   sendControl,
 } from "./translate";
 import type { ParamEncoding } from "./params";
@@ -37,6 +41,7 @@ import {
   vdToLevel,
   vdToMonitorLevel,
   vdToPan,
+  vdToPortRef,
   vdToQ,
   vdToRatio,
   vdToRelease,
@@ -208,6 +213,11 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       const duckerOn = vdToBool(await vdGet(PARAMS.DUCKER_ON.id, 0, dc.y));
       const ducker = await readDyn(DUCKER_FIELDS, dc.y);
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], duckerOn, ducker };
+      // Ducker key source (259): decode the port to its channel/bus node.
+      const port = vdToPortRef(await vdGet(PARAMS.DUCKER_SRC.id, 0, dc.y));
+      const src = port === null ? null : nodeForPort(model, port);
+      if (src) setExclusiveConnection(plan, ref(src, "out"), ref(node.id, "in"), "key");
+      else clearIncoming(plan, ref(node.id, "in"), "key");
     } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -228,6 +238,38 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       plan.nodeParams[id] = { ...plan.nodeParams[id], level };
     } catch (e) {
       errors.push(`${id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Input source select (param 22): per channel, decode the slot's port to its
+  // input node and reflect inputNode → channel as a source wire (NONE clears it).
+  for (const node of model.nodes) {
+    if (node.kind !== "channel") continue;
+    const slots = channelInputSlots(model, node.id);
+    if (!slots) continue;
+    try {
+      const port = vdToPortRef(await vdGet(PARAMS.INPUT_SOURCE.id, 0, slots[0]));
+      const src = port === null ? null : inputNodeForPort(port);
+      if (src) setExclusiveConnection(plan, ref(src, "out"), ref(node.id, "in"), "source");
+      else clearIncoming(plan, ref(node.id, "in"), "source");
+    } catch (e) {
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Streaming / USB-out / monitor / analog-patch selects (same ROUTING_SELECTORS
+  // table that drives emit): decode the L param's port to its source node and
+  // reflect the exclusive wire (NONE clears it). Skips selectors whose destination
+  // node is absent on this model (e.g. out.line without a line output).
+  for (const [to, kind, pl, , yl] of ROUTING_SELECTORS) {
+    if (!model.nodes.some((n) => n.id === to)) continue;
+    try {
+      const port = vdToPortRef(await vdGet(PARAMS[pl].id, 0, yl));
+      const src = port === null ? null : nodeForPort(model, port);
+      if (src) setExclusiveConnection(plan, ref(src, "out"), ref(to, "in"), kind);
+      else clearIncoming(plan, ref(to, "in"), kind);
+    } catch (e) {
+      errors.push(`${to}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   return { applied, errors };

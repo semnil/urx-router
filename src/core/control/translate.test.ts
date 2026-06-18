@@ -499,4 +499,96 @@ describe("planToCommands", () => {
     const cmds = planToCommands(model, plan);
     expect(cmds.some((c) => c.name === "CH_ON" || c.name === "HPF_ON")).toBe(false);
   });
+
+  it("emits a mono channel pair's input source as L/R ports at adjacent slots", () => {
+    const plan = emptyPlan("URX44V");
+    plan.connections.push({ from: "in.aux:out", to: "ch1:in", kind: "source" });
+    plan.connections.push({ from: "in.aux:out", to: "ch2:in", kind: "source" });
+    const cmds = planToCommands(model, plan);
+    const c1 = cmds.find((c) => c.name === "INPUT_SOURCE" && c.y === 0);
+    const c2 = cmds.find((c) => c.name === "INPUT_SOURCE" && c.y === 1);
+    expect(c1!.vdValue).toBe(256);
+    expect(c1!.request.uri).toBe("/vd/parameters/22:0:0?operation=value");
+    expect(c2!.vdValue).toBe(257);
+  });
+
+  it("emits a stereo channel's input source across both slots", () => {
+    const plan = emptyPlan("URX44V");
+    plan.connections.push({ from: "in.usbdaw_5_6:out", to: "ch_5_6:in", kind: "source" });
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "INPUT_SOURCE");
+    expect(cmds.find((c) => c.y === 4)!.vdValue).toBe(548);
+    expect(cmds.find((c) => c.y === 5)!.vdValue).toBe(549);
+  });
+
+  it("emits streaming source select as a tagged L/R port ref", () => {
+    const plan = emptyPlan("URX44V");
+    plan.connections.push({ from: "bus.mix1:out", to: "bus.stream:in", kind: "source" });
+    const cmds = planToCommands(model, plan);
+    const l = cmds.find((c) => c.name === "STREAM_SRC_L");
+    const r = cmds.find((c) => c.name === "STREAM_SRC_R");
+    expect(l!.vdValue).toBe((0x80000000 | 288) >>> 0);
+    expect(l!.request.uri).toBe("/vd/parameters/705:0:0?operation=value");
+    expect(r!.vdValue).toBe((0x80000000 | 289) >>> 0);
+  });
+
+  it("omits streaming source when nothing feeds bus.stream", () => {
+    const plan = emptyPlan("URX44V");
+    const cmds = planToCommands(model, plan);
+    expect(cmds.some((c) => c.name === "STREAM_SRC_L")).toBe(false);
+  });
+
+  it("emits USB output source as a raw port ref (bus or channel)", () => {
+    const plan = emptyPlan("URX44V");
+    plan.connections.push({ from: "bus.mix2:out", to: "out.usbmain_a:in", kind: "patch" });
+    plan.connections.push({ from: "ch1:out", to: "out.usbmain_c:in", kind: "patch" });
+    plan.connections.push({ from: "ch_5_6:out", to: "out.usbmain_b:in", kind: "patch" });
+    plan.connections.push({ from: "bus.stream:out", to: "out.usbsub:in", kind: "patch" });
+    const cmds = planToCommands(model, plan);
+    expect(cmds.find((c) => c.name === "USB_OUT_SRC_A")!.vdValue).toBe(290);
+    expect(cmds.find((c) => c.name === "USB_OUT_SRC_A")!.request.uri).toBe(
+      "/vd/parameters/732:0:0?operation=value",
+    );
+    expect(cmds.find((c) => c.name === "USB_OUT_SRC_C")!.vdValue).toBe(0);
+    expect(cmds.find((c) => c.name === "USB_OUT_SRC_B")!.vdValue).toBe(4);
+    expect(cmds.find((c) => c.name === "USB_OUT_SRC_SUB")!.vdValue).toBe(258);
+  });
+
+  it("maps a higher stereo channel source to its input slot, not its node index", () => {
+    const plan = emptyPlan("URX44V");
+    plan.connections.push({ from: "ch_9_10:out", to: "out.usbmain_a:in", kind: "patch" });
+    const cmds = planToCommands(model, plan);
+    // CH9/10 = input slots 8/9; the source uses slot 8 (node index would be 6).
+    expect(cmds.find((c) => c.name === "USB_OUT_SRC_A")!.vdValue).toBe(8);
+  });
+
+  it("emits monitor source select as an L/R bus port at the monitor's y", () => {
+    const plan = emptyPlan("URX44V");
+    plan.connections.push({ from: "bus.mix2:out", to: "bus.mon1:in", kind: "source" });
+    const cmds = planToCommands(model, plan).filter((c) => c.name.startsWith("MONITOR_SRC"));
+    expect(cmds.find((c) => c.name === "MONITOR_SRC_L" && c.y === 0)!.vdValue).toBe(290);
+    expect(cmds.find((c) => c.name === "MONITOR_SRC_R" && c.y === 0)!.vdValue).toBe(291);
+  });
+
+  it("emits analog output patch (MAIN/LINE) as an L/R bus port", () => {
+    const plan = emptyPlan("URX44V");
+    plan.connections.push({ from: "bus.stream:out", to: "out.main:in", kind: "patch" });
+    plan.connections.push({ from: "bus.mon2:out", to: "out.line:in", kind: "patch" });
+    const cmds = planToCommands(model, plan);
+    expect(cmds.find((c) => c.name === "OUT_PATCH_MAIN" && c.y === 0)!.vdValue).toBe(258);
+    expect(cmds.find((c) => c.name === "OUT_PATCH_MAIN" && c.y === 1)!.vdValue).toBe(259);
+    // Monitor 2 = bus port 338/339.
+    expect(cmds.find((c) => c.name === "OUT_PATCH_LINE" && c.y === 0)!.vdValue).toBe(338);
+    expect(cmds.find((c) => c.name === "OUT_PATCH_LINE" && c.y === 1)!.vdValue).toBe(339);
+  });
+
+  it("emits ducker key source from the key wire (channel slot or bus port)", () => {
+    const plan = emptyPlan("URX44V");
+    plan.connections.push({ from: "ch4:out", to: "out.ducker1:in", kind: "key" });
+    plan.connections.push({ from: "bus.stereo:out", to: "out.ducker2:in", kind: "key" });
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "DUCKER_SRC");
+    // Ducker 1 hangs under CH5/6 (stereo idx 0); CH4 = input slot 3.
+    expect(cmds.find((c) => c.y === 0)!.vdValue).toBe(3);
+    // Ducker 2 under CH7/8 (idx 1); STEREO = bus port 256.
+    expect(cmds.find((c) => c.y === 1)!.vdValue).toBe(256);
+  });
 });

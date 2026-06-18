@@ -8,9 +8,10 @@
 // each channel's main fader / pan (its fixed send into STEREO → CH_FADER / CH_PAN).
 // Bus sends and channel-strip processing land here as their ids are confirmed.
 
-import type { DeviceModel } from "../../models/types";
-import { parseRef } from "../../models/types";
+import type { ConnectionKind, DeviceModel } from "../../models/types";
+import { parseRef, ref } from "../../models/types";
 import type { CompParams, EqBand, GateParams, Plan } from "../plan";
+import { incomingConnection } from "../plan";
 import { isFixedConnection } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
@@ -52,6 +53,7 @@ import {
   qToVd,
   ratioToVd,
   releaseToVd,
+  tagPortRef,
   vdSet,
 } from "./vd";
 import type { VdSetRequest } from "./vd";
@@ -102,6 +104,10 @@ function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number
       return releaseToVd(planValue);
     case "ratio":
       return ratioToVd(planValue);
+    case "portRef":
+      return planValue;
+    case "portRefTagged":
+      return tagPortRef(planValue);
     case "bool":
       return boolToVd(planValue !== 0);
   }
@@ -519,6 +525,107 @@ export function duckerControl(model: DeviceModel, nodeId: string): { y: number }
   return y === undefined ? null : { y };
 }
 
+// Device routing-source port-ref namespace. Stereo buses occupy 0x100+ as an
+// L/R pair; input channels occupy their flat physical input slot (mono CH1-4 =
+// 0-3, then each stereo pair takes two — same axis as the input-source param 22).
+// The streaming-source (705/706), USB-output (732-735), monitor-source (719/720),
+// output-patch (730/731) and ducker-source (259) selectors all store one of these
+// ids. (Verified on URX44V: USB out / ducker source of CH9/10 = slot 8, not the
+// node index 6.)
+const BUS_PORTS: Record<string, { l: number; r: number }> = {
+  "bus.stereo": { l: 256, r: 257 },
+  "bus.stream": { l: 258, r: 259 },
+  "bus.mix1": { l: 288, r: 289 },
+  "bus.mix2": { l: 290, r: 291 },
+  "bus.mon1": { l: 336, r: 337 },
+  "bus.mon2": { l: 338, r: 339 },
+};
+
+/** Resolve a routing source node to its port ids (a channel uses its input slots). */
+export function sourcePorts(model: DeviceModel, nodeId: string): { l: number; r: number } | null {
+  const bus = BUS_PORTS[nodeId];
+  if (bus) return bus;
+  const slots = channelInputSlots(model, nodeId);
+  return slots ? { l: slots[0], r: slots[slots.length - 1] } : null;
+}
+
+/** Reverse: which source node owns a port id. Buses match their L/R; the rest are channel slots. */
+export function nodeForPort(model: DeviceModel, port: number): string | null {
+  for (const [id, p] of Object.entries(BUS_PORTS)) if (p.l === port || p.r === port) return id;
+  for (const n of model.nodes) {
+    if (n.kind !== "channel") continue;
+    const slots = channelInputSlots(model, n.id);
+    if (slots && slots.includes(port)) return n.id;
+  }
+  return null;
+}
+
+// Physical input port-ref namespace (distinct from the bus/output one above):
+// each selectable input source occupies an L/R mono-port pair. Analog mics are
+// 0-3; the 0x100+ blocks are stereo sources. The "All Input" / "All USB DAW"
+// menu entries are bulk-set actions, not sources, so they are not listed here.
+// (Ports verified on URX44V; URX22/44 assumed to share the scheme.)
+const INPUT_PORTS: Record<string, [number, number]> = {
+  "in.micline_1_2": [0, 1],
+  "in.micline_3_4": [2, 3],
+  "in.aux": [256, 257],
+  "in.usbmain_a": [512, 513],
+  "in.usbmain_b": [514, 515],
+  "in.usbmain_c": [516, 517],
+  "in.usbdaw_1_2": [544, 545],
+  "in.usbdaw_3_4": [546, 547],
+  "in.usbdaw_5_6": [548, 549],
+  "in.usbdaw_7_8": [550, 551],
+  "in.usbdaw_9_10": [552, 553],
+  "in.usbdaw_11_12": [554, 555],
+  "in.usbsub": [576, 577],
+  "in.sdplay": [608, 609],
+  "in.hdmi": [624, 625],
+};
+
+// Param 22's y axis is the flat physical input slot (0-11): mono CH1-4 take one
+// slot each, then each stereo pair takes two (L then R). A channel node maps to
+// its slot(s) — one for a mono node, an adjacent L/R pair for a stereo node.
+export function channelInputSlots(model: DeviceModel, nodeId: string): number[] | null {
+  let slot = 0;
+  for (const n of model.nodes) {
+    if (n.kind !== "channel") continue;
+    const span = isStereoChannel(n.id) ? 2 : 1;
+    if (n.id === nodeId) return span === 2 ? [slot, slot + 1] : [slot];
+    slot += span;
+  }
+  return null;
+}
+
+/** Input ports for a source node, or null if it is not a selectable input. */
+export function inputPorts(nodeId: string): [number, number] | null {
+  return INPUT_PORTS[nodeId] ?? null;
+}
+
+/** Reverse: which input node owns a port id (matches either its L or R). */
+export function inputNodeForPort(port: number): string | null {
+  for (const [id, [l, r]] of Object.entries(INPUT_PORTS)) if (l === port || r === port) return id;
+  return null;
+}
+
+// Exclusive routing selectors driven by one incoming wire whose source resolves
+// to a bus/channel port: [destNode, kind, paramL, paramR (null = L only), yL, yR].
+// `sourcePorts` maps the wire's source to its L/R port; the param's own encoding
+// applies the tag (streaming) or not. Drives both emit and readback so the two
+// directions cannot drift. (Input source and ducker key are bespoke — different
+// namespace / per-instance shape — and stay separate below.)
+export const ROUTING_SELECTORS: [string, ConnectionKind, ParamName, ParamName | null, number, number][] = [
+  ["bus.stream", "source", "STREAM_SRC_L", "STREAM_SRC_R", 0, 0],
+  ["out.usbmain_a", "patch", "USB_OUT_SRC_A", null, 0, 0],
+  ["out.usbmain_b", "patch", "USB_OUT_SRC_B", null, 0, 0],
+  ["out.usbmain_c", "patch", "USB_OUT_SRC_C", null, 0, 0],
+  ["out.usbsub", "patch", "USB_OUT_SRC_SUB", null, 0, 0],
+  ["bus.mon1", "source", "MONITOR_SRC_L", "MONITOR_SRC_R", 0, 0],
+  ["bus.mon2", "source", "MONITOR_SRC_L", "MONITOR_SRC_R", 1, 1],
+  ["out.main", "patch", "OUT_PATCH_MAIN", "OUT_PATCH_MAIN", 0, 1],
+  ["out.line", "patch", "OUT_PATCH_LINE", "OUT_PATCH_LINE", 0, 1],
+];
+
 /** Insert FX for a node: which param, the instance(s) it writes, and its options. */
 export interface InsertFxControl {
   param: number;
@@ -671,6 +778,38 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (!dc) continue;
     if (np?.duckerOn !== undefined) out.push(command("DUCKER_ON", dc.y, np.duckerOn ? 1 : 0));
     if (np?.ducker) pushDynCommands(out, DUCKER_FIELDS, dc.y, np.ducker as Record<string, number | undefined>);
+    // Ducker key source (259): the incoming key wire picks a channel or bus; emit
+    // its port (a channel uses its L input slot, a bus its L port).
+    const key = incomingConnection(plan, ref(node.id, "in"), "key");
+    if (key) {
+      const p = sourcePorts(model, parseRef(key.from).nodeId);
+      if (p) out.push(command("DUCKER_SRC", dc.y, p.l));
+    }
+  }
+
+  // Input source select (param 22): each channel's incoming source wire picks a
+  // physical input; emit the input's port at the channel's slot(s). A mono node
+  // fills one slot (L or R by slot parity: even = L, odd = R); a stereo node fills
+  // the adjacent pair.
+  for (const node of model.nodes) {
+    if (node.kind !== "channel") continue;
+    const conn = incomingConnection(plan, ref(node.id, "in"), "source");
+    if (!conn) continue;
+    const ports = inputPorts(parseRef(conn.from).nodeId);
+    const slots = channelInputSlots(model, node.id);
+    if (!ports || !slots) continue;
+    for (const s of slots) out.push(command("INPUT_SOURCE", s, ports[s & 1]));
+  }
+
+  // Streaming / USB-out / monitor / analog-patch selects: one incoming wire →
+  // source port(s). See ROUTING_SELECTORS; readback consumes the same table.
+  for (const [to, kind, pl, pr, yl, yr] of ROUTING_SELECTORS) {
+    const conn = incomingConnection(plan, ref(to, "in"), kind);
+    if (!conn) continue;
+    const p = sourcePorts(model, parseRef(conn.from).nodeId);
+    if (!p) continue;
+    out.push(command(pl, yl, p.l));
+    if (pr) out.push(command(pr, yr, p.r));
   }
 
   // STEREO bus master ON/OFF (global, y = 0).
