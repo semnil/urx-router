@@ -59,6 +59,22 @@ export const EQ_Q_MAX = 16;
 export const EQ_GAIN_MIN_DB = -18;
 export const EQ_GAIN_MAX_DB = 18;
 
+// Input GATE / COMP detail values (mono, COMP->EQ comp bank; verified by live
+// scan). Plan units → broker units:
+//   centi-dB  (threshold / range / makeup gain): dB×100.
+//   attack    : ms×1000 (µs), broker 92 … 80000  → 0.092 … 80 ms.
+//   hold      : ms×100,        broker 2  … 196000 → 0.02 … 1960 ms.
+//   release   : ms×10,         broker 93 … 9990   → 9.3 … 999 ms (gate decay too).
+//   ratio     : ratio×100,     broker 100 … 65535 → 1.0 … 655.35 : 1.
+export const DYN_ATTACK_MIN_MS = 0.092;
+export const DYN_ATTACK_MAX_MS = 80;
+export const DYN_HOLD_MIN_MS = 0.02;
+export const DYN_HOLD_MAX_MS = 1960;
+export const DYN_RELEASE_MIN_MS = 9.3;
+export const DYN_RELEASE_MAX_MS = 999;
+export const DYN_RATIO_MIN = 1;
+export const DYN_RATIO_MAX = 655.35;
+
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
@@ -155,6 +171,56 @@ export function eqGainToVd(db: number): number {
 /** Broker centi-dB → plan EQ band gain (dB, ±18). */
 export function vdToEqGain(value: number): number {
   return clamp(value / 100, EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
+}
+
+/** Plan dB → broker centi-dB (GATE/COMP threshold, range, makeup gain). */
+export function centiDbToVd(db: number): number {
+  return clamp(Math.round(db * 100), -32768, 32767);
+}
+
+/** Broker centi-dB → plan dB. */
+export function vdToCentiDb(value: number): number {
+  return value / 100;
+}
+
+/** Plan attack time (ms) → broker µs (×1000). */
+export function attackToVd(ms: number): number {
+  return clamp(Math.round(ms * 1000), DYN_ATTACK_MIN_MS * 1000, DYN_ATTACK_MAX_MS * 1000);
+}
+
+/** Broker µs → plan attack time (ms). */
+export function vdToAttack(value: number): number {
+  return value / 1000;
+}
+
+/** Plan hold time (ms) → broker ×100. */
+export function holdToVd(ms: number): number {
+  return clamp(Math.round(ms * 100), DYN_HOLD_MIN_MS * 100, DYN_HOLD_MAX_MS * 100);
+}
+
+/** Broker ×100 → plan hold time (ms). */
+export function vdToHold(value: number): number {
+  return value / 100;
+}
+
+/** Plan release/decay time (ms) → broker ×10. */
+export function releaseToVd(ms: number): number {
+  return clamp(Math.round(ms * 10), DYN_RELEASE_MIN_MS * 10, DYN_RELEASE_MAX_MS * 10);
+}
+
+/** Broker ×10 → plan release/decay time (ms). */
+export function vdToRelease(value: number): number {
+  return value / 10;
+}
+
+/** Plan compressor ratio (N:1) → broker ×100. */
+export function ratioToVd(ratio: number): number {
+  return clamp(Math.round(ratio * 100), DYN_RATIO_MIN * 100, DYN_RATIO_MAX * 100);
+}
+
+/** Broker ×100 → plan compressor ratio (N:1). */
+export function vdToRatio(value: number): number {
+  return value / 100;
 }
 
 /** On/off → broker 0/1. */

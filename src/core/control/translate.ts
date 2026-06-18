@@ -10,7 +10,7 @@
 
 import type { DeviceModel } from "../../models/types";
 import { parseRef } from "../../models/types";
-import type { EqBand, Plan } from "../plan";
+import type { CompParams, EqBand, GateParams, Plan } from "../plan";
 import { isFixedConnection } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
@@ -27,17 +27,29 @@ import {
 import {
   A_GAIN_MIN_DB,
   A_GAIN_MAX_DB,
+  attackToVd,
   boolToVd,
+  centiDbToVd,
   D_GAIN_MIN_DB,
   D_GAIN_MAX_DB,
+  DYN_ATTACK_MAX_MS,
+  DYN_ATTACK_MIN_MS,
+  DYN_HOLD_MAX_MS,
+  DYN_HOLD_MIN_MS,
+  DYN_RATIO_MIN,
+  DYN_RELEASE_MAX_MS,
+  DYN_RELEASE_MIN_MS,
   eqFreqToVd,
   eqGainToVd,
   freqToVd,
   gainToVd,
+  holdToVd,
   levelToVd,
   monitorLevelToVd,
   panToVd,
   qToVd,
+  ratioToVd,
+  releaseToVd,
   vdSet,
 } from "./vd";
 import type { VdSetRequest } from "./vd";
@@ -78,6 +90,16 @@ function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number
       return qToVd(planValue);
     case "eqGain":
       return eqGainToVd(planValue);
+    case "centiDb":
+      return centiDbToVd(planValue);
+    case "attackTime":
+      return attackToVd(planValue);
+    case "holdTime":
+      return holdToVd(planValue);
+    case "releaseTime":
+      return releaseToVd(planValue);
+    case "ratio":
+      return ratioToVd(planValue);
     case "bool":
       return boolToVd(planValue !== 0);
   }
@@ -398,6 +420,65 @@ export function inputEq(model: DeviceModel, nodeId: string, compEqType: number):
   return eqSec ? eqBandsFrom(eqSec.param, [eqSec.y]) : null;
 }
 
+/** One slider value of the GATE/COMP detail: its catalog name + plan-domain range. */
+export interface DynField {
+  /** The GateParams / CompParams sub-field this controls. */
+  key: keyof GateParams | keyof CompParams;
+  name: ParamName;
+  min: number;
+  max: number;
+  step: number;
+  /** Device default in plan units, shown before a fetch. */
+  def: number;
+  unit: "db" | "ms" | "ratio";
+}
+
+// GATE detail (29-33) and COMP detail (35-40, the COMP->EQ comp bank). Ranges and
+// defaults in plan units (dB / ms / N:1); the broker bounds come from the encoders.
+// The COMP knee (37) is a separate enum dropdown, not a slider, so it is not here.
+const GATE_FIELDS: DynField[] = [
+  { key: "threshold", name: "GATE_THRESHOLD", min: -72, max: 0, step: 1, def: -50, unit: "db" },
+  { key: "range", name: "GATE_RANGE", min: -72, max: 0, step: 1, def: -56, unit: "db" },
+  { key: "attack", name: "GATE_ATTACK", min: DYN_ATTACK_MIN_MS, max: DYN_ATTACK_MAX_MS, step: 0.1, def: 20.17, unit: "ms" },
+  { key: "hold", name: "GATE_HOLD", min: DYN_HOLD_MIN_MS, max: DYN_HOLD_MAX_MS, step: 1, def: 15.3, unit: "ms" },
+  { key: "decay", name: "GATE_DECAY", min: DYN_RELEASE_MIN_MS, max: DYN_RELEASE_MAX_MS, step: 1, def: 150.2, unit: "ms" },
+];
+const COMP_FIELDS: DynField[] = [
+  { key: "threshold", name: "COMP_THRESHOLD", min: -54, max: 0, step: 1, def: -18, unit: "db" },
+  { key: "ratio", name: "COMP_RATIO", min: DYN_RATIO_MIN, max: 20, step: 0.1, def: 3, unit: "ratio" },
+  { key: "gain", name: "COMP_GAIN", min: 0, max: 18, step: 0.5, def: 2, unit: "db" },
+  { key: "attack", name: "COMP_ATTACK", min: DYN_ATTACK_MIN_MS, max: DYN_ATTACK_MAX_MS, step: 0.1, def: 34.58, unit: "ms" },
+  { key: "release", name: "COMP_RELEASE", min: DYN_RELEASE_MIN_MS, max: DYN_RELEASE_MAX_MS, step: 1, def: 218, unit: "ms" },
+];
+
+/** GATE/COMP detail controls for a channel: the slider fields and the instance index. */
+export interface ChannelDynamics {
+  y: number;
+  gate: DynField[];
+  /** COMP slider fields, or null in SSMCS mode (the morphing strip replaces COMP). */
+  comp: DynField[] | null;
+}
+
+/**
+ * Resolve a channel's GATE/COMP detail controls, or null if it has none. GATE and
+ * COMP are MONO IN-channel features (user guide); COMP additionally exists only in
+ * COMP->EQ mode (SSMCS replaces it with the morphing strip). Confirmed on a mono
+ * channel by live scan (research §12.26).
+ */
+export function channelDynamics(model: DeviceModel, nodeId: string, compEqType: number): ChannelDynamics | null {
+  const cc = channelControl(model, nodeId);
+  if (!cc || !cc.hasMicStrip) return null;
+  return { y: cc.y, gate: GATE_FIELDS, comp: compEqType === COMP_EQ_SSMCS ? null : COMP_FIELDS };
+}
+
+// Push the value-set commands for a GATE/COMP detail section the plan has set.
+function pushDynCommands(out: VdCommand[], fields: DynField[], y: number, vals: Record<string, number | undefined>): void {
+  for (const f of fields) {
+    const v = vals[f.key];
+    if (v !== undefined) out.push(command(f.name, y, v));
+  }
+}
+
 // Push the value-set commands for one node's PEQ bands (input or output). Each
 // band emits only the fields the plan set; a fixed-peaking mid band (type null)
 // never writes a filter type. A linked control (MIX) writes both L/R instances.
@@ -507,6 +588,15 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     // Input 4-band PEQ band values (mono COMP->EQ mode / stereo channels).
     const ieq = inputEq(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
     if (ieq && np.eqBands) pushEqBandCommands(out, ieq, np.eqBands);
+    // Input GATE / COMP detail values (MONO IN channels; COMP only in COMP->EQ).
+    const dyn = channelDynamics(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
+    if (dyn) {
+      if (np.gate) pushDynCommands(out, dyn.gate, dyn.y, np.gate as Record<string, number | undefined>);
+      if (dyn.comp && np.comp) {
+        pushDynCommands(out, dyn.comp, dyn.y, np.comp as Record<string, number | undefined>);
+        if (np.comp.knee !== undefined) out.push(command("COMP_KNEE", dyn.y, np.comp.knee));
+      }
+    }
     if (cc.gain && np.gain !== undefined) {
       // A.Gain (mono) is one instance; D.Gain (stereo) writes both linked L/R.
       for (const yi of cc.gain.instances) out.push(rawCommand("HA_GAIN", cc.gain.param, "gain", yi, np.gain));

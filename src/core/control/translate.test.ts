@@ -375,6 +375,46 @@ describe("planToCommands", () => {
     expect(eq!.vdValue).toBe(-300);
   });
 
+  it("emits GATE/COMP detail values with the right encodings", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = {
+      gate: { threshold: -40, attack: 10.12, hold: 10.1, decay: 100.1 },
+      comp: { threshold: -30, ratio: 4, knee: 0, gain: 6, attack: 20.17, release: 200.3 },
+    };
+    const cmds = planToCommands(model, plan);
+    const v = (name: string) => cmds.find((c) => c.name === name && c.y === 0)!.vdValue;
+    // GATE: threshold centi-dB; attack µs; hold ×100; decay ×10.
+    expect(v("GATE_THRESHOLD")).toBe(-4000);
+    expect(v("GATE_ATTACK")).toBe(10120);
+    expect(v("GATE_HOLD")).toBe(1010);
+    expect(v("GATE_DECAY")).toBe(1001);
+    // COMP: threshold/gain centi-dB; ratio ×100; knee enum; attack µs; release ×10.
+    expect(v("COMP_THRESHOLD")).toBe(-3000);
+    expect(v("COMP_RATIO")).toBe(400);
+    expect(v("COMP_KNEE")).toBe(0);
+    expect(v("COMP_GAIN")).toBe(600);
+    expect(v("COMP_ATTACK")).toBe(20170);
+    expect(v("COMP_RELEASE")).toBe(2003);
+  });
+
+  it("drops COMP detail in SSMCS mode but keeps GATE", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { compEqType: 1, gate: { threshold: -40 }, comp: { threshold: -30 } };
+    const cmds = planToCommands(model, plan);
+    expect(cmds.some((c) => c.name === "GATE_THRESHOLD")).toBe(true);
+    expect(cmds.some((c) => c.name === "COMP_THRESHOLD")).toBe(false);
+  });
+
+  it("emits no GATE/COMP detail on a stereo channel", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch_5_6 = { gate: { threshold: -40 }, comp: { threshold: -30 } };
+    const cmds = planToCommands(model, plan);
+    expect(cmds.some((c) => c.name === "GATE_THRESHOLD" || c.name === "COMP_THRESHOLD")).toBe(false);
+  });
+
   it("emits the STEREO master fader on its single instance", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

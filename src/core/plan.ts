@@ -27,6 +27,27 @@ export interface EqBand {
   gain?: number;
 }
 
+// Input GATE detail values (MONO IN channels). threshold/range in dB,
+// attack/hold/decay in ms. All optional (absent = device default).
+export interface GateParams {
+  threshold?: number;
+  range?: number;
+  attack?: number;
+  hold?: number;
+  decay?: number;
+}
+
+// Input COMP detail values (MONO IN channels, COMP->EQ mode). threshold/gain in
+// dB, ratio as N:1, knee enum (0 Soft / 1 Medium / 2 Hard), attack/release in ms.
+export interface CompParams {
+  threshold?: number;
+  ratio?: number;
+  knee?: number;
+  gain?: number;
+  attack?: number;
+  release?: number;
+}
+
 // Per-node device parameters that are not tied to a single wire (a channel's own
 // processing/state). Each field is optional; absence means the device default
 // (channel on, HPF off). Stored keyed by node id, alongside positions / notes.
@@ -45,6 +66,10 @@ export interface NodeParams {
   eqOn?: boolean;
   /** Output bus 4-band PEQ band values, indexed 0..3 (LOW … HIGH). */
   eqBands?: EqBand[];
+  /** Input GATE detail values (MONO IN channels). */
+  gate?: GateParams;
+  /** Input COMP detail values (MONO IN channels, COMP->EQ mode). */
+  comp?: CompParams;
   /** GATE_ON: noise-gate section on (MONO IN channels). Absent or false = off. */
   gateOn?: boolean;
   /** COMP_ON: compressor section on (MONO IN channels). Absent or false = off. */

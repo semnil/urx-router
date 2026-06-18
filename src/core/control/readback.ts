@@ -10,27 +10,34 @@ import type { ConnParams, EqBand, NodeParams, Plan } from "../plan";
 import { ensureFixedConnections } from "../plan";
 import { vdGet } from "../platform";
 import { normalizeInsertFx, PARAMS } from "./params";
-import type { EqControl } from "./translate";
+import type { DynField, EqControl } from "./translate";
 import {
   busEqOn,
   busFader,
   channelControl,
+  channelDynamics,
   channelSections,
   inputEq,
   insertFxControl,
   outputEq,
   sendControl,
 } from "./translate";
+import type { ParamEncoding } from "./params";
 import {
+  vdToAttack,
   vdToBool,
+  vdToCentiDb,
   vdToEqFreq,
   vdToEqGain,
   vdToFreq,
   vdToGain,
+  vdToHold,
   vdToLevel,
   vdToMonitorLevel,
   vdToPan,
   vdToQ,
+  vdToRatio,
+  vdToRelease,
 } from "./vd";
 
 export interface ReadbackResult {
@@ -87,6 +94,14 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       // Input 4-band PEQ band values (mono COMP->EQ mode / stereo channels).
       const ieq = inputEq(model, node.id, update.compEqType ?? 0);
       if (ieq) update.eqBands = await readEqBands(ieq);
+      // Input GATE / COMP detail values (MONO IN channels; COMP only in COMP->EQ).
+      const dyn = channelDynamics(model, node.id, update.compEqType ?? 0);
+      if (dyn) {
+        update.gate = await readDyn(dyn.gate, dyn.y);
+        if (dyn.comp) {
+          update.comp = { ...(await readDyn(dyn.comp, dyn.y)), knee: await vdGet(PARAMS.COMP_KNEE.id, 0, dyn.y) };
+        }
+      }
       conn.params = { ...conn.params, level, pan };
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...update };
       applied++;
@@ -212,4 +227,32 @@ async function readEqBands(ctrl: EqControl): Promise<EqBand[]> {
     eqBands[band.index] = v;
   }
   return eqBands;
+}
+
+// Decode a GATE/COMP detail value from the broker to plan units by its encoding.
+function decodeDyn(encoding: ParamEncoding, raw: number): number {
+  switch (encoding) {
+    case "centiDb":
+      return vdToCentiDb(raw);
+    case "attackTime":
+      return vdToAttack(raw);
+    case "holdTime":
+      return vdToHold(raw);
+    case "releaseTime":
+      return vdToRelease(raw);
+    case "ratio":
+      return vdToRatio(raw);
+    default:
+      return raw;
+  }
+}
+
+// Read a GATE/COMP detail section's slider values from the device (mono channel).
+async function readDyn(fields: DynField[], y: number): Promise<Record<string, number>> {
+  const vals: Record<string, number> = {};
+  for (const f of fields) {
+    const spec = PARAMS[f.name];
+    vals[f.key] = decodeDyn(spec.encoding, await vdGet(spec.id, 0, y));
+  }
+  return vals;
 }
