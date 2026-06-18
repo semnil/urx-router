@@ -45,6 +45,16 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
   return fn(cmd, args ?? {}) as Promise<T>;
 }
 
+/**
+ * Whether experimental features are enabled — the desktop app was launched with
+ * --experimental. Always false in a plain browser / the demo, where the gated
+ * features (live device write) cannot run anyway.
+ */
+export function experimentalEnabled(): Promise<boolean> {
+  if (!isTauri()) return Promise.resolve(false);
+  return invoke<boolean>("experimental_enabled");
+}
+
 export interface FileFilter {
   ext: string;
   label: string;

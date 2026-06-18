@@ -24,6 +24,14 @@ fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<(), String> {
     fs::write(&path, bytes).map_err(|e| e.to_string())
 }
 
+// True when the app was launched with the --experimental flag, gating
+// not-yet-stable features (currently live device write) behind an explicit
+// opt-in. Read straight from the process args so no CLI plugin is needed.
+#[tauri::command]
+fn experimental_enabled() -> bool {
+    std::env::args().any(|a| a == "--experimental")
+}
+
 // Live control: connect to / set parameters on / disconnect from the URX via the
 // Device Center broker. The device GUID stays in Rust; the frontend addresses
 // parameters by (param_id, x, y) and an absolute integer value.
@@ -70,6 +78,7 @@ pub fn run() {
             read_text_file,
             write_text_file,
             write_binary_file,
+            experimental_enabled,
             vd_connect,
             vd_info,
             vd_set,

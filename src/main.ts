@@ -25,6 +25,7 @@ import {
   installUpdate,
   isTauri,
   restartApp,
+  experimentalEnabled,
   vdConnect,
   vdDisconnect,
   type DeviceSummary,
@@ -401,33 +402,40 @@ if (!DEMO) {
   // Write the plan to the connected device: diff the plan against the device's
   // current values, confirm the change count, then send only what differs.
   // Writing to a device of a different model is refused (the plan's channels
-  // would map onto the wrong hardware).
-  $("btn-write").addEventListener("click", () =>
-    withDevice(t().status.writeConnecting, t().status.writeError, async (device) => {
-      if (device.model !== modelId) {
-        setStatus(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
-        return;
-      }
-      const { diffs, errors } = await diffPlan(getModel(modelId), plan);
-      if (errors.length) console.warn("device diff issues:", errors);
-      if (diffs.length === 0) {
-        setStatus(t().status.writeNoChanges);
-        return;
-      }
-      if (!(await confirmDialog(t().confirm.write(diffs.length)))) {
-        setStatus(t().status.canceled);
-        return;
-      }
-      const outcomes = await sendCommands(diffs.map((d) => d.command));
-      const failed = outcomes.filter((o) => !o.ok);
-      if (failed.length) console.warn("device write failures:", failed);
-      setStatus(
-        failed.length
-          ? t().status.writePartial(outcomes.length - failed.length, failed.length)
-          : t().status.written(outcomes.length),
-      );
-    }),
-  );
+  // would map onto the wrong hardware). Live write is experimental: the menu
+  // item stays disabled (index.html) unless the app was launched with
+  // --experimental, so it is only enabled and wired on that explicit opt-in.
+  experimentalEnabled().then((enabled) => {
+    if (!enabled) return;
+    const writeBtn = $<HTMLButtonElement>("btn-write");
+    writeBtn.disabled = false;
+    writeBtn.addEventListener("click", () =>
+      withDevice(t().status.writeConnecting, t().status.writeError, async (device) => {
+        if (device.model !== modelId) {
+          setStatus(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
+          return;
+        }
+        const { diffs, errors } = await diffPlan(getModel(modelId), plan);
+        if (errors.length) console.warn("device diff issues:", errors);
+        if (diffs.length === 0) {
+          setStatus(t().status.writeNoChanges);
+          return;
+        }
+        if (!(await confirmDialog(t().confirm.write(diffs.length)))) {
+          setStatus(t().status.canceled);
+          return;
+        }
+        const outcomes = await sendCommands(diffs.map((d) => d.command));
+        const failed = outcomes.filter((o) => !o.ok);
+        if (failed.length) console.warn("device write failures:", failed);
+        setStatus(
+          failed.length
+            ? t().status.writePartial(outcomes.length - failed.length, failed.length)
+            : t().status.written(outcomes.length),
+        );
+      }),
+    );
+  });
 }
 
 themeBtn.addEventListener("click", () => {
