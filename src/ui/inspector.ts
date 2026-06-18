@@ -7,7 +7,7 @@ import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, NodeParams, Plan, PlanConnection } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
-import { busFader, channelControl, insertFxControl, isStereoChannel } from "../core/control/translate";
+import { busEqOn, busFader, channelControl, insertFxControl, isStereoChannel } from "../core/control/translate";
 import { COMP_EQ_COMP_FIRST, COMP_EQ_OPTIONS, INSERT_FX_NONE } from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
@@ -191,6 +191,14 @@ export function renderInspector(
         host.append(
           boolToggle(m.inspector.master, np.on ?? true, (v) =>
             actions.onUpdateNodeParams(node.id, { on: v }),
+          ),
+        );
+      }
+      // EQ ON/OFF (STEREO 498 / MIX 591). Defaults on.
+      if (busEqOn(node.id)) {
+        host.append(
+          boolToggle(m.inspector.eqOn, np.eqOn ?? true, (v) =>
+            actions.onUpdateNodeParams(node.id, { eqOn: v }),
           ),
         );
       }

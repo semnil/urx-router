@@ -276,6 +276,15 @@ export function busFader(nodeId: string): BusFader | null {
   return mix ? { name: "OUT_FADER", param: PARAMS.OUT_FADER.id, instances: mix } : null;
 }
 
+/** EQ-ON param/instances for an output bus: STEREO (498) or MIX (591, L/R-linked). */
+export function busEqOn(nodeId: string): { name: ParamName; param: number; instances: number[] } | null {
+  if (nodeId === "bus.stereo") {
+    return { name: "STEREO_EQ_ON", param: PARAMS.STEREO_EQ_ON.id, instances: [0] };
+  }
+  const mix = MIX_FADER_INSTANCES[nodeId];
+  return mix ? { name: "OUT_EQ_ON", param: PARAMS.OUT_EQ_ON.id, instances: mix } : null;
+}
+
 /** Insert FX for a node: which param, the instance(s) it writes, and its options. */
 export interface InsertFxControl {
   param: number;
@@ -379,6 +388,15 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const v = plan.nodeParams[node.id]?.insertFx;
     if (!ifx || v === undefined) continue;
     for (const inst of ifx.instances) out.push(rawCommand("INSERT_FX", ifx.param, "enum", inst, v));
+  }
+
+  // Output bus EQ ON: STEREO (498, single) and MIX (591, L/R-linked).
+  for (const node of model.nodes) {
+    if (node.kind !== "bus") continue;
+    const eq = busEqOn(node.id);
+    const np = plan.nodeParams[node.id];
+    if (!eq || np?.eqOn === undefined) continue;
+    for (const inst of eq.instances) out.push(rawCommand(eq.name, eq.param, "bool", inst, np.eqOn ? 1 : 0));
   }
 
   // STEREO bus master ON/OFF (global, y = 0).

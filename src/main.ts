@@ -113,7 +113,8 @@ const inspectorActions = {
       patch.clipSafe !== undefined ||
       patch.hiZ !== undefined ||
       patch.insertFx !== undefined ||
-      patch.compEqType !== undefined
+      patch.compEqType !== undefined ||
+      patch.eqOn !== undefined
     )
       refreshInspector();
   },

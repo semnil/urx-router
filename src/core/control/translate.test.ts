@@ -262,6 +262,23 @@ describe("planToCommands", () => {
     expect(cmds.some((c) => c.name === "SEND_PAN" && [195, 197].includes(c.paramId))).toBe(false);
   });
 
+  it("emits output EQ ON for STEREO (498, single) and MIX (591, L/R-linked)", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams["bus.stereo"] = { eqOn: false };
+    plan.nodeParams["bus.mix1"] = { eqOn: false };
+    const cmds = planToCommands(model, plan);
+    const stereo = cmds.filter((c) => c.name === "STEREO_EQ_ON");
+    const mix = cmds.filter((c) => c.name === "OUT_EQ_ON");
+    expect(stereo.map((c) => c.request.uri)).toEqual(["/vd/parameters/498:0:0?operation=value"]);
+    expect(stereo[0].vdValue).toBe(0);
+    expect(mix.map((c) => c.request.uri)).toEqual([
+      "/vd/parameters/591:0:0?operation=value",
+      "/vd/parameters/591:0:1?operation=value",
+    ]);
+    expect(mix.every((c) => c.vdValue === 0)).toBe(true);
+  });
+
   it("emits the STEREO master fader on its single instance", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
