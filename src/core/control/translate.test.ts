@@ -429,6 +429,32 @@ describe("planToCommands", () => {
     expect(cmds.some((c) => c.name === "GATE_THRESHOLD" || c.name === "COMP_THRESHOLD")).toBe(false);
   });
 
+  it("emits Ducker ON at its parent stereo channel's instance", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // out.ducker1 hangs under the first stereo channel (ch_5_6 = stereo index 0).
+    plan.nodeParams["out.ducker1"] = { duckerOn: true };
+    const cmds = planToCommands(model, plan);
+    const d = cmds.find((c) => c.name === "DUCKER_ON");
+    expect(d!.request.uri).toBe("/vd/parameters/258:0:0?operation=value");
+    expect(d!.vdValue).toBe(1);
+  });
+
+  it("emits Ducker detail values at the parent stereo channel's instance", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // out.ducker1 → ch_5_6 (stereo index 0). Decay shares the ×10 release scale.
+    plan.nodeParams["out.ducker1"] = { ducker: { threshold: -50, range: -20, attack: 25.63, decay: 1500 } };
+    const cmds = planToCommands(model, plan);
+    const v = (name: string) => cmds.find((c) => c.name === name && c.y === 0)!;
+    expect(v("DUCKER_THRESHOLD").vdValue).toBe(-5000);
+    expect(v("DUCKER_RANGE").vdValue).toBe(-2000);
+    expect(v("DUCKER_ATTACK").vdValue).toBe(25630);
+    // 1500 ms × 10 = 15000 (within the widened release clamp, not truncated).
+    expect(v("DUCKER_DECAY").vdValue).toBe(15000);
+    expect(v("DUCKER_DECAY").request.uri).toBe("/vd/parameters/263:0:0?operation=value");
+  });
+
   it("emits the STEREO master fader on its single instance", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

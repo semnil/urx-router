@@ -71,6 +71,7 @@ export const ja: Messages = {
     autoMakeup: "Auto Makeup",
     oneKnob: "1-Knob",
     oneKnobLevel: "1-Knob レベル",
+    duckerOn: "Ducker",
     gainAnalog: "A.Gain",
     gainDigital: "D.Gain",
     master: "マスター",

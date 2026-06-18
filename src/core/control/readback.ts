@@ -17,6 +17,8 @@ import {
   channelControl,
   channelDynamics,
   channelSections,
+  DUCKER_FIELDS,
+  duckerControl,
   inputEq,
   insertFxControl,
   outputEq,
@@ -192,6 +194,20 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     if (!oeq) continue;
     try {
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], eqBands: await readEqBands(oeq) };
+    } catch (e) {
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Ducker on/off: one per stereo channel, read onto the ducker node.
+  for (const node of model.nodes) {
+    if (node.kind !== "ducker") continue;
+    const dc = duckerControl(model, node.id);
+    if (!dc) continue;
+    try {
+      const duckerOn = vdToBool(await vdGet(PARAMS.DUCKER_ON.id, 0, dc.y));
+      const ducker = await readDyn(DUCKER_FIELDS, dc.y);
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], duckerOn, ducker };
     } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }

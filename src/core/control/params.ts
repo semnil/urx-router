@@ -100,6 +100,16 @@ export const PARAMS = {
   COMP_ONE_KNOB: { id: 42, axis: "input", encoding: "bool" },
   /** COMP 1-knob level (0 … 100, raw). */
   COMP_ONE_KNOB_LEVEL: { id: 43, axis: "input", encoding: "enum" },
+  /** Ducker ON (sidechain; one per stereo channel, indexed by stereo position). */
+  DUCKER_ON: { id: 258, axis: "global", encoding: "bool" },
+  /** Ducker threshold (dB). */
+  DUCKER_THRESHOLD: { id: 260, axis: "global", encoding: "centiDb" },
+  /** Ducker range / attenuation depth (dB). */
+  DUCKER_RANGE: { id: 261, axis: "global", encoding: "centiDb" },
+  /** Ducker attack time (ms). */
+  DUCKER_ATTACK: { id: 262, axis: "global", encoding: "attackTime" },
+  /** Ducker decay time (ms). */
+  DUCKER_DECAY: { id: 263, axis: "global", encoding: "releaseTime" },
   /** Input channel insert FX (MONO IN channels only). Enum from input_insert_fx. */
   INSERT_FX: { id: 135, axis: "input", encoding: "enum" },
   /** STEREO master insert FX (single). Enum from output_insert_fx. */

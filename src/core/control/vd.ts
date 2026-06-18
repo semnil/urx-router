@@ -74,6 +74,9 @@ export const DYN_RELEASE_MIN_MS = 9.3;
 export const DYN_RELEASE_MAX_MS = 999;
 export const DYN_RATIO_MIN = 1;
 export const DYN_RATIO_MAX = 655.35;
+// Ducker decay shares the ×10 release scale but with a wider range than gate/comp.
+export const DUCKER_DECAY_MIN_MS = 1.3;
+export const DUCKER_DECAY_MAX_MS = 5000;
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
@@ -203,9 +206,13 @@ export function vdToHold(value: number): number {
   return value / 100;
 }
 
-/** Plan release/decay time (ms) → broker ×10. */
+/**
+ * Plan release/decay time (ms) → broker ×10. Clamped to the widest consumer of
+ * this scale (the ducker decay); gate/comp enforce their own tighter plan ranges
+ * via their DynField bounds (DYN_RELEASE_MIN/MAX_MS).
+ */
 export function releaseToVd(ms: number): number {
-  return clamp(Math.round(ms * 10), DYN_RELEASE_MIN_MS * 10, DYN_RELEASE_MAX_MS * 10);
+  return clamp(Math.round(ms * 10), DUCKER_DECAY_MIN_MS * 10, DUCKER_DECAY_MAX_MS * 10);
 }
 
 /** Broker ×10 → plan release/decay time (ms). */

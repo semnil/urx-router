@@ -129,6 +129,7 @@ const inspectorActions = {
       patch.eqOn !== undefined ||
       patch.gateOn !== undefined ||
       patch.compOn !== undefined ||
+      patch.duckerOn !== undefined ||
       eqRelayout ||
       compRelayout
     )
