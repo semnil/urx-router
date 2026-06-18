@@ -16,6 +16,17 @@ export interface ConnParams {
   tap?: "pre" | "post";
 }
 
+// One band of an output bus 4-band PEQ. All fields optional (absent = device
+// default). `type` is the filter-type enum (LOW / HIGH bands only); the two mid
+// bands ignore it. freq in Hz, q 0.50..16.00, gain in dB (±18).
+export interface EqBand {
+  on?: boolean;
+  type?: number;
+  freq?: number;
+  q?: number;
+  gain?: number;
+}
+
 // Per-node device parameters that are not tied to a single wire (a channel's own
 // processing/state). Each field is optional; absence means the device default
 // (channel on, HPF off). Stored keyed by node id, alongside positions / notes.
@@ -32,6 +43,8 @@ export interface NodeParams {
   compEqType?: number;
   /** EQ ON for an input channel or an output bus (STEREO / MIX). Absent or true = on. */
   eqOn?: boolean;
+  /** Output bus 4-band PEQ band values, indexed 0..3 (LOW … HIGH). */
+  eqBands?: EqBand[];
   /** GATE_ON: noise-gate section on (MONO IN channels). Absent or false = off. */
   gateOn?: boolean;
   /** COMP_ON: compressor section on (MONO IN channels). Absent or false = off. */

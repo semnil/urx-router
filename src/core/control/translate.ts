@@ -30,11 +30,14 @@ import {
   boolToVd,
   D_GAIN_MIN_DB,
   D_GAIN_MAX_DB,
+  eqFreqToVd,
+  eqGainToVd,
   freqToVd,
   gainToVd,
   levelToVd,
   monitorLevelToVd,
   panToVd,
+  qToVd,
   vdSet,
 } from "./vd";
 import type { VdSetRequest } from "./vd";
@@ -69,6 +72,12 @@ function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number
       return freqToVd(planValue);
     case "enum":
       return planValue;
+    case "eqFreq":
+      return eqFreqToVd(planValue);
+    case "q":
+      return qToVd(planValue);
+    case "eqGain":
+      return eqGainToVd(planValue);
     case "bool":
       return boolToVd(planValue !== 0);
   }
@@ -326,6 +335,50 @@ export function busEqOn(nodeId: string): { name: ParamName; param: number; insta
   return mix ? { name: "OUT_EQ_ON", param: PARAMS.OUT_EQ_ON.id, instances: mix } : null;
 }
 
+/** One band of an output bus 4-band PEQ: the param ids for each of its values. */
+export interface EqBandControl {
+  /** 0..3 (LOW / LOW-MID / HIGH-MID / HIGH). */
+  index: number;
+  name: "low" | "lowMid" | "highMid" | "high";
+  on: number;
+  /** Filter-type param, or null for the fixed-peaking mid bands. */
+  type: number | null;
+  q: number;
+  freq: number;
+  gain: number;
+}
+
+/** An output bus 4-band PEQ: its bands and the instances each value writes. */
+export interface OutputEqControl {
+  bands: EqBandControl[];
+  instances: number[];
+}
+
+const EQ_BAND_NAMES = ["low", "lowMid", "highMid", "high"] as const;
+// Each PEQ band is a 5-param block (on / type / Q / freq / gain) and the first
+// band sits 5 params after the bus EQ-ON anchor. Only the LOW and HIGH bands
+// carry a selectable filter type; the two mid bands are fixed peaking.
+const EQ_BAND_BASE_OFFSET = 5;
+const EQ_BAND_STRIDE = 5;
+
+/**
+ * Resolve an output bus 4-band PEQ, or null if the node has none. Reuses the
+ * EQ-ON anchor (busEqOn): the band block starts 5 params later and writes the
+ * same instances — STEREO a single slot (498→503), MIX the L/R-linked out pair
+ * (591→596). Confirmed on STEREO and MIX by live scan (research §12.24).
+ */
+export function outputEq(nodeId: string): OutputEqControl | null {
+  const eq = busEqOn(nodeId);
+  if (!eq) return null;
+  const base = eq.param + EQ_BAND_BASE_OFFSET;
+  const bands = EQ_BAND_NAMES.map((name, i): EqBandControl => {
+    const b = base + EQ_BAND_STRIDE * i;
+    const hasType = i === 0 || i === 3;
+    return { index: i, name, on: b, type: hasType ? b + 1 : null, q: b + 2, freq: b + 3, gain: b + 4 };
+  });
+  return { bands, instances: eq.instances };
+}
+
 /** Insert FX for a node: which param, the instance(s) it writes, and its options. */
 export interface InsertFxControl {
   param: number;
@@ -444,6 +497,28 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const np = plan.nodeParams[node.id];
     if (!eq || np?.eqOn === undefined) continue;
     for (const inst of eq.instances) out.push(rawCommand(eq.name, eq.param, "bool", inst, np.eqOn ? 1 : 0));
+  }
+
+  // Output bus 4-band PEQ band values: STEREO (single) and MIX (L/R-linked).
+  // Each band emits only the fields the plan set; the fixed-peaking mid bands
+  // have no filter type to write.
+  for (const node of model.nodes) {
+    if (node.kind !== "bus") continue;
+    const oeq = outputEq(node.id);
+    const bands = plan.nodeParams[node.id]?.eqBands;
+    if (!oeq || !bands) continue;
+    for (const band of oeq.bands) {
+      const v = bands[band.index];
+      if (!v) continue;
+      for (const inst of oeq.instances) {
+        if (v.on !== undefined) out.push(rawCommand("EQ_BAND_ON", band.on, "bool", inst, v.on ? 1 : 0));
+        if (v.type !== undefined && band.type !== null)
+          out.push(rawCommand("EQ_BAND_TYPE", band.type, "enum", inst, v.type));
+        if (v.q !== undefined) out.push(rawCommand("EQ_BAND_Q", band.q, "q", inst, v.q));
+        if (v.freq !== undefined) out.push(rawCommand("EQ_BAND_FREQ", band.freq, "eqFreq", inst, v.freq));
+        if (v.gain !== undefined) out.push(rawCommand("EQ_BAND_GAIN", band.gain, "eqGain", inst, v.gain));
+      }
+    }
   }
 
   // STEREO bus master ON/OFF (global, y = 0).

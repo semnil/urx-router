@@ -6,12 +6,30 @@
 
 import type { DeviceModel } from "../../models/types";
 import { ref } from "../../models/types";
-import type { ConnParams, NodeParams, Plan } from "../plan";
+import type { ConnParams, EqBand, NodeParams, Plan } from "../plan";
 import { ensureFixedConnections } from "../plan";
 import { vdGet } from "../platform";
 import { normalizeInsertFx, PARAMS } from "./params";
-import { busEqOn, busFader, channelControl, channelSections, insertFxControl, sendControl } from "./translate";
-import { vdToBool, vdToFreq, vdToGain, vdToLevel, vdToMonitorLevel, vdToPan } from "./vd";
+import {
+  busEqOn,
+  busFader,
+  channelControl,
+  channelSections,
+  insertFxControl,
+  outputEq,
+  sendControl,
+} from "./translate";
+import {
+  vdToBool,
+  vdToEqFreq,
+  vdToEqGain,
+  vdToFreq,
+  vdToGain,
+  vdToLevel,
+  vdToMonitorLevel,
+  vdToPan,
+  vdToQ,
+} from "./vd";
 
 export interface ReadbackResult {
   /** Channels whose level/pan were updated from the device. */
@@ -136,6 +154,31 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
         ...plan.nodeParams[node.id],
         eqOn: vdToBool(await vdGet(eq.param, 0, eq.instances[0])),
       };
+    } catch (e) {
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Output bus 4-band PEQ band values: read each band from the first instance
+  // (MIX L/R are linked). The fixed-peaking mid bands have no filter type.
+  for (const node of model.nodes) {
+    if (node.kind !== "bus") continue;
+    const oeq = outputEq(node.id);
+    if (!oeq) continue;
+    try {
+      const inst = oeq.instances[0];
+      const eqBands: EqBand[] = [];
+      for (const band of oeq.bands) {
+        const v: EqBand = {
+          on: vdToBool(await vdGet(band.on, 0, inst)),
+          q: vdToQ(await vdGet(band.q, 0, inst)),
+          freq: vdToEqFreq(await vdGet(band.freq, 0, inst)),
+          gain: vdToEqGain(await vdGet(band.gain, 0, inst)),
+        };
+        if (band.type !== null) v.type = await vdGet(band.type, 0, inst);
+        eqBands[band.index] = v;
+      }
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], eqBands };
     } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
