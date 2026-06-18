@@ -1,6 +1,7 @@
 import "./style.css";
 
 import { MODEL_IDS, getModel } from "./models";
+import { defaultPlan } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { deserialize, emptyPlan, ensureFixedConnections, PlanError, serialize } from "./core/plan";
 import type { ConnParams, NodeParams, Plan } from "./core/plan";
@@ -47,7 +48,7 @@ function detectTheme(): ThemeName {
 }
 
 let modelId: ModelId = "URX44V";
-let plan: Plan = emptyPlan(modelId);
+let plan: Plan = defaultPlan(modelId);
 ensureFixedConnections(getModel(modelId), plan);
 let dirty = false;
 let selection: Selection = null;
@@ -268,7 +269,7 @@ picker.addEventListener("change", async () => {
     picker.value = modelId;
     return;
   }
-  loadPlan(emptyPlan(next));
+  loadPlan(defaultPlan(next));
   setStatus(t().status.switchedModel(next));
 });
 
@@ -281,7 +282,7 @@ ratePicker.addEventListener("change", () => {
 
 $("btn-new").addEventListener("click", async () => {
   if (!(await confirmDiscard())) return;
-  loadPlan(emptyPlan(modelId));
+  loadPlan(defaultPlan(modelId));
   setStatus(t().status.newPlan);
 });
 

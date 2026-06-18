@@ -29,6 +29,7 @@ flowchart TD
       types[types.ts]
       build[build.ts<br/>モデル生成]
       reg[index.ts<br/>URX22/44/44V]
+      seed[initial-state.ts<br/>新規プランの初期値]
     end
     subgraph core[core/ ロジック]
       routing[routing.ts<br/>接続制約エンジン]
@@ -65,6 +66,10 @@ flowchart TD
 - **Plan** — ユーザーが作成する可変状態。`modelId`、ノード配置 (`positions`)、結線 (`connections`)、
   各結線のパラメータ (level/pan/pre-post 等)、非表示ノード (`hidden`)、ノードごとのノート (`notes`) と
   その最小化状態 (`noteCollapsed`) を持つ。JSON にシリアライズする。
+  新規プランは `models/initial-state.ts` の `defaultPlan(modelId)` が生成する。実機の初期状態をキャプチャ済みの
+  機種 (現状 URX44V のみ) は工場初期値 (ノードパラメータ + ルーティング) をシードし、未キャプチャの機種は
+  空プラン (`core/plan.ts` の `emptyPlan`) から開始してインスペクタの既定値にフォールバックする。
+  デバイス取得時は `emptyPlan` から始め、読み戻し (`core/control/`) が実機値で埋める。
 
 制約の核 (`core/routing.ts`):
 

@@ -31,6 +31,7 @@ flowchart TD
       types[types.ts]
       build[build.ts<br/>model generation]
       reg[index.ts<br/>URX22/44/44V]
+      seed[initial-state.ts<br/>new-plan defaults]
     end
     subgraph core[core/ logic]
       routing[routing.ts<br/>connection constraint engine]
@@ -69,6 +70,11 @@ flowchart TD
   connections (`connections`), per-connection parameters (level / pan / pre-post, etc.),
   hidden nodes (`hidden`), and per-node notes (`notes`) with their minimized state
   (`noteCollapsed`). It serializes to JSON.
+  A new plan comes from `defaultPlan(modelId)` in `models/initial-state.ts`. Models whose factory
+  initial state has been captured (URX44V only so far) are seeded with those defaults (node
+  parameters + routing); models without a capture start from an empty plan (`emptyPlan` in
+  `core/plan.ts`) and fall back to the inspector's per-field defaults. A device fetch starts from
+  `emptyPlan` and lets the readback (`core/control/`) fill in the live values.
 
 The constraint core (`core/routing.ts`):
 
