@@ -357,14 +357,22 @@ if (!DEMO) {
           loadPlan(emptyPlan(device.model as ModelId));
         }
         const result = await applyDeviceState(getModel(modelId), plan);
+        if (result.errors.length) console.warn("device readback issues:", result.errors);
+        // Per-node provenance: nodes whose body read failed still show their plan
+        // default, so the graph/inspector flag them as not read from the device.
+        plan.unreadNodes = result.unreadNodes;
         graph.setModel(getModel(modelId), plan);
         selection = null;
         refreshInspector();
         dirty = true;
+        // Nodes the readback tried but could not confirm (left at their plan default).
+        const unread = result.unreadNodes.size;
         setStatus(
           result.errors.length
-            ? t().status.fetchPartial(result.applied, result.errors.length)
-            : t().status.fetchedDevice(device.model, result.applied),
+            ? t().status.fetchPartial(result.applied, result.errors.length, unread)
+            : unread
+              ? t().status.fetchedUnread(device.model, result.applied, unread)
+              : t().status.fetchedDevice(device.model, result.applied),
         );
       } finally {
         await vdDisconnect();

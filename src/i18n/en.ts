@@ -85,6 +85,7 @@ export const en = {
     mono: "MONO",
     on: "ON",
     off: "OFF",
+    notReadFromDevice: "Not read from the device — showing the plan default.",
     selectionOnly: "Selection only — no send parameters.",
     fixedConnection: "Fixed connection — always enabled, cannot be removed.",
     deleteConnection: "Delete this connection",
@@ -154,9 +155,12 @@ export const en = {
     arranged: "Arranged to the default layout",
     fetchConnecting: "Connecting to the device…",
     fetchedDevice: (model: string, n: number): string =>
-      `Fetched ${n} channel${n === 1 ? "" : "s"} from ${model}`,
-    fetchPartial: (n: number, failed: number): string =>
-      `Fetched ${n}, ${failed} failed`,
+      `Fetched ${n} setting${n === 1 ? "" : "s"} from ${model}`,
+    fetchedUnread: (model: string, n: number, unread: number): string =>
+      `Fetched ${n} from ${model}; ${unread} node${unread === 1 ? "" : "s"} not read`,
+    fetchPartial: (n: number, failed: number, unread: number): string =>
+      `Fetched ${n}, ${failed} failed` +
+      (unread ? `, ${unread} node${unread === 1 ? "" : "s"} not read` : ""),
     fetchError: (message: string): string => `Device fetch failed: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",

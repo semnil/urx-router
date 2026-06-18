@@ -68,6 +68,32 @@ describe("serialize / deserialize round-trip", () => {
     expect(doc.format).toBe(PLAN_FORMAT);
     expect(doc.version).toBe(PLAN_VERSION);
   });
+
+  it("drops the transient unreadNodes provenance — it is never persisted", () => {
+    const plan: Plan = {
+      modelId: "URX44",
+      sampleRate: 96000,
+      positions: { ch1: { x: 1, y: 2 } },
+      connections: [{ from: "ch1:out", to: "bus.stereo:in", kind: "send", params: { level: -3 } }],
+      nodeParams: { ch1: { on: false, hpf: true } },
+      hidden: [],
+      notes: {},
+      noteCollapsed: [],
+      // Provenance from a device readback: must not survive serialization.
+      unreadNodes: new Set(["ch1", "bus.stereo"]),
+    };
+
+    // The JSON document carries no unreadNodes key.
+    expect(JSON.parse(serialize(plan))).not.toHaveProperty("unreadNodes");
+
+    const restored = deserialize(serialize(plan));
+    expect(restored.unreadNodes).toBeUndefined();
+    // Every other field still round-trips unchanged.
+    expect(restored.sampleRate).toBe(96000);
+    expect(restored.positions).toEqual({ ch1: { x: 1, y: 2 } });
+    expect(restored.connections).toEqual(plan.connections);
+    expect(restored.nodeParams).toEqual({ ch1: { on: false, hpf: true } });
+  });
 });
 
 describe("deserialize errors", () => {

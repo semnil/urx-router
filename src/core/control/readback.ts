@@ -50,10 +50,22 @@ import {
 } from "./vd";
 
 export interface ReadbackResult {
-  /** Channels whose level/pan were updated from the device. */
+  /**
+   * Count of node/parameter groups successfully read and applied to the plan
+   * across every section (channels, sends, bus faders, insert FX, EQ, duckers,
+   * STEREO master, monitor, OSC, routing selectors) — not just channels.
+   */
   applied: number;
-  /** Per-channel read failures (e.g. timeout), if any. */
+  /** Per-group read failures (e.g. timeout, unknown source port), if any. */
   errors: string[];
+  /**
+   * Ids of nodes a body-parameter group attempted to read but failed on, so the
+   * UI can flag a node still showing its plan default as not read from the
+   * device. Only body groups (a node's own settings) take part: nodes that hold
+   * no body parameters (inputs, out.sdrec) are never attempted and so never
+   * appear here. Transient: not serialized into the plan.
+   */
+  unreadNodes: Set<string>;
 }
 
 /**
@@ -61,10 +73,22 @@ export interface ReadbackResult {
  * in place. The caller must have connected first (platform.vdConnect) and should
  * re-render afterwards. Read failures are collected, not thrown, so one bad
  * channel does not abort the rest.
+ *
+ * Provenance tracks body-parameter groups (a node's own settings): each marks a
+ * node `attempted` before reading and, if any of its body groups throws, the node
+ * lands in `unread`. Wire/connection groups (sends, OSC assign, source/routing
+ * selectors) carry routing, not a node's own state, so they never touch
+ * provenance — a successful send must not mask a channel whose body read failed.
+ * The returned unreadNodes set is `attempted ∩ failed`, so the UI flags exactly
+ * the nodes still showing a plan default rather than the live value.
  */
 export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<ReadbackResult> {
   ensureFixedConnections(model, plan);
   const errors: string[] = [];
+  // Body-parameter provenance: nodes whose own settings a group tried to read,
+  // and the subset whose read failed. unreadNodes = attempted ∩ failed.
+  const attempted = new Set<string>();
+  const failed = new Set<string>();
   let applied = 0;
 
   for (const node of model.nodes) {
@@ -76,6 +100,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       (c) => c.from === ref(node.id, "out") && c.to === ref("bus.stereo", "in"),
     );
     if (!conn) continue;
+    attempted.add(node.id);
     try {
       const level = vdToLevel(await vdGet(cc.fader, 0, cc.y));
       const pan = vdToPan(await vdGet(cc.pan, 0, cc.y));
@@ -121,6 +146,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...update };
       applied++;
     } catch (e) {
+      failed.add(node.id);
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
@@ -148,6 +174,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
         } else if (idx >= 0) {
           plan.connections.splice(idx, 1);
         }
+        applied++;
       } catch (e) {
         errors.push(`${node.label} → ${bus.label}: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -159,10 +186,13 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     if (node.kind !== "bus") continue;
     const bf = busFader(node.id);
     if (!bf) continue;
+    attempted.add(node.id);
     try {
       const level = vdToLevel(await vdGet(bf.param, 0, bf.instances[0]));
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], level };
+      applied++;
     } catch (e) {
+      failed.add(node.id);
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
@@ -171,10 +201,13 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
   for (const node of model.nodes) {
     const ifx = insertFxControl(model, node.id);
     if (!ifx) continue;
+    attempted.add(node.id);
     try {
       const insertFx = normalizeInsertFx(await vdGet(ifx.param, 0, ifx.instances[0]));
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], insertFx };
+      applied++;
     } catch (e) {
+      failed.add(node.id);
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
@@ -184,12 +217,15 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     if (node.kind !== "bus") continue;
     const eq = busEqOn(node.id);
     if (!eq) continue;
+    attempted.add(node.id);
     try {
       plan.nodeParams[node.id] = {
         ...plan.nodeParams[node.id],
         eqOn: vdToBool(await vdGet(eq.param, 0, eq.instances[0])),
       };
+      applied++;
     } catch (e) {
+      failed.add(node.id);
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
@@ -199,9 +235,12 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     if (node.kind !== "bus") continue;
     const oeq = outputEq(node.id);
     if (!oeq) continue;
+    attempted.add(node.id);
     try {
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], eqBands: await readEqBands(oeq) };
+      applied++;
     } catch (e) {
+      failed.add(node.id);
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
@@ -211,41 +250,54 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     if (node.kind !== "ducker") continue;
     const dc = duckerControl(model, node.id);
     if (!dc) continue;
+    attempted.add(node.id);
     try {
       const duckerOn = vdToBool(await vdGet(PARAMS.DUCKER_ON.id, 0, dc.y));
       const ducker = await readDyn(DUCKER_FIELDS, dc.y);
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], duckerOn, ducker };
-      // Ducker key source (259): decode the port to its channel/bus node.
+      applied++;
+      // Ducker key source (259): decode the port to its channel/bus node. An
+      // unknown port is left untouched (logged) so a value we cannot map does not
+      // wrongly clear the existing wire; only the none sentinel clears it.
       const port = vdToPortRef(await vdGet(PARAMS.DUCKER_SRC.id, 0, dc.y));
       const src = port === null ? null : nodeForPort(model, port);
       if (src) setExclusiveConnection(plan, ref(src, "out"), ref(node.id, "in"), "key");
-      else clearIncoming(plan, ref(node.id, "in"), "key");
+      else if (port === null) clearIncoming(plan, ref(node.id, "in"), "key");
+      else errors.push(`${node.label} key: unknown source port ${port}`);
     } catch (e) {
+      failed.add(node.id);
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   // STEREO bus master ON/OFF — a single global parameter, read once.
+  attempted.add("bus.stereo");
   try {
     const masterOn = vdToBool(await vdGet(PARAMS.STEREO_MASTER_ON.id, 0, 0));
     plan.nodeParams["bus.stereo"] = { ...plan.nodeParams["bus.stereo"], on: masterOn };
+    applied++;
   } catch (e) {
+    failed.add("bus.stereo");
     errors.push(`STEREO: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // Monitor bus levels: bus.mon1 → y0, bus.mon2 → y1.
   for (const [id, y] of [["bus.mon1", 0], ["bus.mon2", 1]] as const) {
+    attempted.add(id);
     try {
       const level = vdToMonitorLevel(await vdGet(PARAMS.MONITOR_LEVEL.id, 0, y));
       const cueInterrupt = vdToBool(await vdGet(PARAMS.MONITOR_CUE_INTERRUPT.id, 0, y));
       const mono = vdToBool(await vdGet(PARAMS.MONITOR_MONO.id, 0, y));
       plan.nodeParams[id] = { ...plan.nodeParams[id], level, cueInterrupt, mono };
+      applied++;
     } catch (e) {
+      failed.add(id);
       errors.push(`${id}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   // Oscillator generator (bus.osc): on / level / mode / frequency.
+  attempted.add("bus.osc");
   try {
     const osc = {
       on: vdToBool(await vdGet(PARAMS.OSC_ON.id, 0, 0)),
@@ -254,7 +306,9 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       freq: vdToEqFreq(await vdGet(PARAMS.OSC_FREQ.id, 0, 0)),
     };
     plan.nodeParams["bus.osc"] = { ...plan.nodeParams["bus.osc"], osc };
+    applied++;
   } catch (e) {
+    failed.add("bus.osc");
     errors.push(`OSC: ${e instanceof Error ? e.message : String(e)}`);
   }
 
@@ -270,6 +324,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       const to = ref(busId, "in");
       removeConnection(plan, from, to);
       if (l || r) plan.connections.push({ from, to, kind: "sendSwitch", params: { oscL: l, oscR: r } });
+      applied++;
     } catch (e) {
       errors.push(`OSC→${busId}: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -284,8 +339,16 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     try {
       const port = vdToPortRef(await vdGet(PARAMS.INPUT_SOURCE.id, 0, slots[0]));
       const src = port === null ? null : inputNodeForPort(port);
-      if (src) setExclusiveConnection(plan, ref(src, "out"), ref(node.id, "in"), "source");
-      else clearIncoming(plan, ref(node.id, "in"), "source");
+      if (src) {
+        setExclusiveConnection(plan, ref(src, "out"), ref(node.id, "in"), "source");
+        applied++;
+      } else if (port === null) {
+        clearIncoming(plan, ref(node.id, "in"), "source");
+        applied++;
+      } else {
+        // Unknown port: leave the existing wire untouched rather than clearing it.
+        errors.push(`${node.label}: unknown source port ${port}`);
+      }
     } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -300,13 +363,25 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     try {
       const port = vdToPortRef(await vdGet(PARAMS[pl].id, 0, yl));
       const src = port === null ? null : nodeForPort(model, port);
-      if (src) setExclusiveConnection(plan, ref(src, "out"), ref(to, "in"), kind);
-      else clearIncoming(plan, ref(to, "in"), kind);
+      if (src) {
+        setExclusiveConnection(plan, ref(src, "out"), ref(to, "in"), kind);
+        applied++;
+      } else if (port === null) {
+        clearIncoming(plan, ref(to, "in"), kind);
+        applied++;
+      } else {
+        // Unknown port: leave the existing wire untouched rather than clearing it.
+        errors.push(`${to}: unknown source port ${port}`);
+      }
     } catch (e) {
       errors.push(`${to}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  return { applied, errors };
+  // A node is unread when a body group tried it but at least one failed; nodes
+  // never attempted (inputs, out.sdrec) and fully-read nodes stay out of the set.
+  const unreadNodes = new Set<string>();
+  for (const id of attempted) if (failed.has(id)) unreadNodes.add(id);
+  return { applied, errors, unreadNodes };
 }
 
 // Read a 4-band PEQ's band values from the device (first instance; linked L/R

@@ -116,7 +116,7 @@ export interface NodeParams {
   clipSafe?: boolean;
   /** HI_Z: high-impedance instrument input (CH3/CH4 only). Absent or false = off. */
   hiZ?: boolean;
-  /** HA_GAIN: head-amp input gain in dB (-16 … +70). Absent = device default. */
+  /** HA_GAIN: head-amp input gain in dB (-8 … +70). Absent = device default. */
   gain?: number;
   /** A node-level fader in dB (e.g. monitor level). Absent = device default. */
   level?: number;
@@ -154,6 +154,14 @@ export interface Plan {
   notes: Record<string, string>;
   /** Node ids whose in-frame note panel is minimized to the header. */
   noteCollapsed: string[];
+  /**
+   * Ids of nodes whose body parameters a device readback tried but failed to
+   * read on the last fetch, so they still show their plan default. Present only
+   * after a device readback; absent on new / loaded / hand-edited plans.
+   * Transient provenance, never serialized: nodes in this set are flagged in the
+   * UI as not read from the device.
+   */
+  unreadNodes?: Set<string>;
 }
 
 export const PLAN_FORMAT = "urx-router-plan";

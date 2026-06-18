@@ -84,6 +84,7 @@ export const ja: Messages = {
     mono: "MONO",
     on: "ON",
     off: "OFF",
+    notReadFromDevice: "デバイスから読み込まれていません — 計画の初期値を表示しています。",
     selectionOnly: "選択のみ — Send パラメータはありません。",
     fixedConnection: "固定接続 — 常時有効で削除できません。",
     deleteConnection: "この接続を削除",
@@ -152,8 +153,11 @@ export const ja: Messages = {
     pdfExported: "PDF を出力しました",
     arranged: "既定レイアウトに整列しました",
     fetchConnecting: "デバイスに接続しています…",
-    fetchedDevice: (model: string, n: number): string => `${model} から ${n} チャンネルを取得しました`,
-    fetchPartial: (n: number, failed: number): string => `${n} 件取得、${failed} 件失敗`,
+    fetchedDevice: (model: string, n: number): string => `${model} から ${n} 件の設定を取得しました`,
+    fetchedUnread: (model: string, n: number, unread: number): string =>
+      `${model} から ${n} 件取得、${unread} ノード未取得`,
+    fetchPartial: (n: number, failed: number, unread: number): string =>
+      `${n} 件取得、${failed} 件失敗` + (unread ? `、${unread} ノード未取得` : ""),
     fetchError: (message: string): string => `デバイスからの取得に失敗しました: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",

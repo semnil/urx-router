@@ -170,6 +170,10 @@ export class Graph {
   private palette: Palette = PALETTES.dark;
   private themeName: ThemeName = "dark";
   private disabledNodes = new Set<string>();
+  // Nodes still showing their plan default after a device readback (a body read
+  // failed). Mirrors plan.unreadNodes; empty when the plan has no device
+  // provenance (new / loaded / hand-edited plan).
+  private unreadNodes = new Set<string>();
   // Node ids collapsed off the canvas into the bottom shelf. Kept in sync with
   // plan.hidden; a node is only actually hidden while it has no connections.
   private hidden = new Set<string>();
@@ -212,6 +216,7 @@ export class Graph {
     this.hidden = new Set(plan.hidden);
     this.collapsed = new Set(plan.noteCollapsed);
     this.cb = cb;
+    this.syncUnread();
     this.buildScaffold(host);
     this.render();
     this.fitView();
@@ -224,8 +229,16 @@ export class Graph {
     this.collapsed = new Set(plan.noteCollapsed);
     this.selection = null;
     this.selectedNodes.clear();
+    this.syncUnread();
     this.render();
     this.fitView();
+  }
+
+  // Mirror the plan's device provenance: plan.unreadNodes holds exactly the nodes
+  // whose body read failed. No provenance (a plan never fetched) means nothing is
+  // flagged.
+  private syncUnread(): void {
+    this.unreadNodes = new Set(this.plan.unreadNodes ?? []);
   }
 
   setTheme(name: ThemeName): void {
@@ -673,6 +686,30 @@ export class Graph {
       g.append(badge);
     }
 
+    // A node still showing its plan default after a device readback (not confirmed
+    // by the device): a dim node with a dashed warn frame and a top-left "?" badge.
+    // Ranks below MUTE and DISABLED, which already own the visual; the badge sits
+    // left of their top-right tags so the two never collide. Decorative only.
+    if (this.unreadNodes.has(node.id) && this.plan.nodeParams?.[node.id]?.on !== false && !this.disabledNodes.has(node.id)) {
+      g.setAttribute("opacity", "0.7");
+      rect.setAttribute("stroke", p.warn);
+      rect.setAttribute("stroke-width", "1.2");
+      rect.setAttribute("stroke-dasharray", "2 3");
+      g.append(svgRect(8, -8, 16, 15, 3, p.warn));
+      const badge = document.createElementNS(SVGNS, "text");
+      badge.setAttribute("x", "16");
+      badge.setAttribute("y", "0");
+      badge.setAttribute("text-anchor", "middle");
+      badge.setAttribute("dominant-baseline", "central");
+      badge.setAttribute("fill", "#14110d");
+      badge.setAttribute("font-family", LABEL_FONT);
+      badge.setAttribute("font-size", "9");
+      badge.setAttribute("font-weight", "700");
+      badge.style.pointerEvents = "none";
+      badge.textContent = "?";
+      g.append(badge);
+    }
+
     if (lines.length) {
       g.append(this.makeNoteToggle(node, this.collapsed.has(node.id) && !editing));
       // Draw the panel when expanded; its text is hidden while the inline editor
@@ -1051,10 +1088,14 @@ export class Graph {
       const rect = el.querySelector("rect")!;
       const on = this.selectedNodes.has(id);
       const disabled = !on && this.disabledNodes.has(id);
+      // Unread frame ranks below selected/disabled but above the plain frame, so
+      // a re-highlight restores it instead of reverting an unread node to normal.
+      const unread = !on && !disabled && this.unreadNodes.has(id) && this.plan.nodeParams?.[id]?.on !== false;
       el.classList.toggle("selected", on);
-      rect.setAttribute("stroke-width", on ? "2.5" : disabled ? "1.5" : "1");
-      rect.setAttribute("stroke", on ? this.palette.tempWire : disabled ? this.palette.warn : this.palette.nodeStroke);
+      rect.setAttribute("stroke-width", on ? "2.5" : disabled ? "1.5" : unread ? "1.2" : "1");
+      rect.setAttribute("stroke", on ? this.palette.tempWire : disabled || unread ? this.palette.warn : this.palette.nodeStroke);
       if (disabled) rect.setAttribute("stroke-dasharray", "4 3");
+      else if (unread) rect.setAttribute("stroke-dasharray", "2 3");
       else rect.removeAttribute("stroke-dasharray");
     }
     // Raise the anchor node so its note panel sits above any neighbor below it.

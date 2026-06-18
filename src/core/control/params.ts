@@ -1,7 +1,7 @@
 // Catalog of confirmed URX44V control parameters. Each entry binds a semantic
 // name to the broker's numeric param_id, the instance axis its y index runs over,
 // and the value encoding (see vd.ts). Only parameters validated against the
-// broker dump (reference/.local/control-protocol-research.md §12 / vd-derived-map.md)
+// broker dump (reference/.local/vd-params.md)
 // are listed here; inferred-but-unconfirmed ids are deliberately omitted so live
 // control never writes a guessed address to hardware.
 
@@ -132,7 +132,7 @@ export const PARAMS = {
   CLIP_SAFE: { id: 5, axis: "input", encoding: "bool" },
   /** Input channel Hi-Z (high-impedance instrument input; CH3/CH4 only). */
   HI_Z: { id: 6, axis: "input", encoding: "bool" },
-  /** Input channel head-amp (HA) gain (-16 … +70 dB). */
+  /** Input channel head-amp (HA) gain (-8 … +70 dB). */
   HA_GAIN: { id: 1, axis: "input", encoding: "gain" },
   /** Output (mix) fader level. */
   OUT_FADER: { id: 674, axis: "output", encoding: "level" },

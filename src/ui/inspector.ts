@@ -121,6 +121,13 @@ export function renderInspector(
     if (!node) return;
     host.append(heading(fullLabel(node)), field(m.inspector.type, nodeKindLabel(node.kind)));
 
+    // After a device readback, a node in plan.unreadNodes still shows its plan
+    // default (its body read failed); warn that its values are not the device's.
+    // No provenance (a plan never fetched) shows nothing.
+    if (plan.unreadNodes?.has(node.id)) {
+      host.append(notReadBadge(m.inspector.notReadFromDevice));
+    }
+
     const outgoing = plan.connections.filter((c) => parseRef(c.from).nodeId === node.id);
     const incoming = plan.connections.filter((c) => parseRef(c.to).nodeId === node.id);
     host.append(subheading(m.inspector.inputsFrom(incoming.length)));
@@ -814,6 +821,18 @@ function formatDb(v: number): string {
 function formatPan(v: number): string {
   if (v === 0) return "C";
   return v < 0 ? `L ${-v}` : `R ${v}`;
+}
+
+// Inline warning that the selected node's values were not read from the device
+// (shown after a partial readback). Reuses the warning box styling (--warn).
+function notReadBadge(text: string): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "warning";
+  const line = document.createElement("div");
+  line.className = "warning-line";
+  line.textContent = text;
+  box.append(line);
+  return box;
 }
 
 function warningBlock(m: Messages, warnings: RateWarning[]): HTMLElement {
