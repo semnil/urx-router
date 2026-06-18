@@ -139,6 +139,36 @@ describe("planToCommands", () => {
     expect(r!.request.uri).toBe("/vd/parameters/212:0:0?operation=value");
   });
 
+  it("emits Insert FX on mono channels but not stereo", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { insertFx: 257 }; // Crunch
+    plan.nodeParams.ch_5_6 = { insertFx: 257 };
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "INSERT_FX");
+    // Mono CH1 = param 135 at y0, raw enum value 257; stereo has no insert FX.
+    expect(cmds).toHaveLength(1);
+    expect(cmds[0].vdValue).toBe(257);
+    expect(cmds[0].request.uri).toBe("/vd/parameters/135:0:0?operation=value");
+  });
+
+  it("emits output insert FX on STEREO (single) and MIX (L/R-linked)", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams["bus.stereo"] = { insertFx: 1793 }; // Compander-H
+    plan.nodeParams["bus.mix1"] = { insertFx: 1792 }; // M.Band Comp
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "INSERT_FX");
+    const stereo = cmds.filter((c) => c.paramId === 578);
+    const mix = cmds.filter((c) => c.paramId === 671);
+    // STEREO = 578 single; MIX1 = 671 at y0 and y1 (linked).
+    expect(stereo.map((c) => c.request.uri)).toEqual(["/vd/parameters/578:0:0?operation=value"]);
+    expect(stereo[0].vdValue).toBe(1793);
+    expect(mix.map((c) => c.request.uri)).toEqual([
+      "/vd/parameters/671:0:0?operation=value",
+      "/vd/parameters/671:0:1?operation=value",
+    ]);
+    expect(mix.every((c) => c.vdValue === 1792)).toBe(true);
+  });
+
   it("emits Hi-Z only on CH3/CH4, not other channels", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

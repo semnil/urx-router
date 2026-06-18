@@ -7,7 +7,9 @@ import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, NodeParams, Plan, PlanConnection } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
-import { busFader, channelControl, isStereoChannel } from "../core/control/translate";
+import { busFader, channelControl, insertFxControl, isStereoChannel } from "../core/control/translate";
+import { INSERT_FX_NONE } from "../core/control/params";
+import type { InsertFxSlot } from "../core/control/params";
 import {
   HPF_FREQ_DEFAULT_HZ,
   HPF_FREQ_MAX_HZ,
@@ -189,6 +191,37 @@ export function renderInspector(
       host.append(subheading(m.inspector.parameters));
       host.append(
         monitorLevelControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
+      );
+    }
+
+    // Insert FX dropdown: MONO IN channels (input effects) and MIX/STEREO outputs
+    // (output effects). An option is disabled when it exceeds the current sample
+    // rate's ceiling, or when its device-wide 1-of slot is taken by another node.
+    // The parent channel/bus block above has already added the "Parameters" head.
+    const ifx = insertFxControl(model, node.id);
+    if (ifx) {
+      const taken = new Set<InsertFxSlot>();
+      for (const n of model.nodes) {
+        if (n.id === node.id) continue;
+        const other = insertFxControl(model, n.id);
+        const v = plan.nodeParams[n.id]?.insertFx;
+        if (!other || v === undefined) continue;
+        const slot = other.options.find((o) => o.value === v)?.slot;
+        if (slot) taken.add(slot);
+      }
+      host.append(
+        selectControl(
+          m.inspector.insertFx,
+          ifx.options.map((o) => ({
+            value: String(o.value),
+            label: o.label,
+            disabled:
+              (o.maxRate !== undefined && plan.sampleRate > o.maxRate) ||
+              (o.slot !== undefined && taken.has(o.slot)),
+          })),
+          String(plan.nodeParams[node.id]?.insertFx ?? INSERT_FX_NONE),
+          (v) => actions.onUpdateNodeParams(node.id, { insertFx: Number(v) }),
+        ),
       );
     }
 
@@ -393,6 +426,29 @@ function boolToggle(label: string, value: boolean, onChange: (v: boolean) => voi
   };
   group.append(make(true, t().inspector.on), make(false, t().inspector.off));
   row.append(group);
+  return row;
+}
+
+// A labeled dropdown for an enum node parameter (e.g. insert FX). Reports the
+// chosen option's value string on change.
+function selectControl(
+  label: string,
+  options: { value: string; label: string; disabled?: boolean }[],
+  current: string,
+  onChange: (v: string) => void,
+): HTMLElement {
+  const { row } = paramBlock(label, "");
+  const sel = document.createElement("select");
+  for (const o of options) {
+    const opt = document.createElement("option");
+    opt.value = o.value;
+    opt.textContent = o.label;
+    if (o.disabled) opt.disabled = true;
+    sel.append(opt);
+  }
+  sel.value = current;
+  sel.addEventListener("change", () => onChange(sel.value));
+  row.append(sel);
   return row;
 }
 

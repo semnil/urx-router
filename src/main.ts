@@ -111,7 +111,8 @@ const inspectorActions = {
       patch.phaseL !== undefined ||
       patch.phaseR !== undefined ||
       patch.clipSafe !== undefined ||
-      patch.hiZ !== undefined
+      patch.hiZ !== undefined ||
+      patch.insertFx !== undefined
     )
       refreshInspector();
   },

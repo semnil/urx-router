@@ -14,7 +14,7 @@
 export type ParamAxis = "input" | "output" | "global";
 
 /** Value encoding, mapping to the converters in vd.ts. */
-export type ParamEncoding = "level" | "gain" | "monitor" | "pan" | "bool" | "freq";
+export type ParamEncoding = "level" | "gain" | "monitor" | "pan" | "bool" | "freq" | "enum";
 
 export interface ParamSpec {
   /** Broker param_id (first field of the "{id}:{x}:{y}" address). */
@@ -36,6 +36,12 @@ export const PARAMS = {
   HPF_ON: { id: 25, axis: "input", encoding: "bool" },
   /** Input channel HPF cutoff frequency (40 … 120 Hz). Confirmed by live scan. */
   HPF_FREQ: { id: 26, axis: "input", encoding: "freq" },
+  /** Input channel insert FX (MONO IN channels only). Enum from input_insert_fx. */
+  INSERT_FX: { id: 135, axis: "input", encoding: "enum" },
+  /** STEREO master insert FX (single). Enum from output_insert_fx. */
+  OUTPUT_INSERT_FX_STEREO: { id: 578, axis: "global", encoding: "enum" },
+  /** MIX bus insert FX (L/R-linked). Enum from output_insert_fx. */
+  OUTPUT_INSERT_FX_MIX: { id: 671, axis: "output", encoding: "enum" },
   // Analog mic-strip toggles (CH1-4 only). Confirmed by live scan.
   /** Input channel +48V phantom power. */
   PHANTOM: { id: 0, axis: "input", encoding: "bool" },
@@ -76,6 +82,55 @@ export const PARAMS = {
 } as const satisfies Record<string, ParamSpec>;
 
 export type ParamName = keyof typeof PARAMS;
+
+// Insert FX choices for MONO IN channels (input_insert_fx table). `value` is the
+// broker enum value (not an index); -1 = No Effect (the "off" state). The broker
+// reports "none" as the uint32 sentinel, normalized back to -1 on read.
+export const INSERT_FX_NONE = -1;
+const INSERT_FX_VD_NONE = 0xffffffff;
+/**
+ * Resource slot an insert FX consumes. Each slot is device-wide 1-of: only one
+ * MONO IN channel can hold the guitar amp, Pitch Fix, or compander at a time
+ * (user guide p.180: "Number of simultaneous uses: 1 slot"). No Effect = none.
+ */
+export type InsertFxSlot = "amp" | "pitch" | "compander" | "out-dyn";
+
+export interface InsertFxOption {
+  value: number;
+  label: string;
+  /** Highest sample rate (Hz) the effect supports; absent = no limit. */
+  maxRate?: number;
+  /** The 1-of-N device slot it occupies; absent = none (No Effect). */
+  slot?: InsertFxSlot;
+}
+// Per-effect sample-rate ceilings (user guide p.180 Effect list): the guitar amps
+// and companders run up to 96 kHz, Pitch Fix only up to 48 kHz, No Effect always.
+export const INSERT_FX_OPTIONS: InsertFxOption[] = [
+  { value: INSERT_FX_NONE, label: "No Effect" },
+  { value: 256, label: "Clean", maxRate: 96000, slot: "amp" },
+  { value: 257, label: "Crunch", maxRate: 96000, slot: "amp" },
+  { value: 258, label: "Lead", maxRate: 96000, slot: "amp" },
+  { value: 259, label: "Drive", maxRate: 96000, slot: "amp" },
+  { value: 512, label: "Pitch Fix", maxRate: 48000, slot: "pitch" },
+  { value: 1793, label: "Compander-H", maxRate: 96000, slot: "compander" },
+  { value: 1794, label: "Compander-S", maxRate: 96000, slot: "compander" },
+];
+
+// Output-channel insert FX (output_insert_fx table): MULTI-BAND COMPRESSOR plus
+// the two companders, all up to 96 kHz. They share ONE device-wide "out-dyn"
+// slot across all output channels (MBC and the companders are mutually exclusive,
+// user guide p.180), so only one MIX/STEREO output can hold one at a time.
+export const OUTPUT_INSERT_FX_OPTIONS: InsertFxOption[] = [
+  { value: INSERT_FX_NONE, label: "No Effect" },
+  { value: 1792, label: "M.Band Comp", maxRate: 96000, slot: "out-dyn" },
+  { value: 1793, label: "Compander-H", maxRate: 96000, slot: "out-dyn" },
+  { value: 1794, label: "Compander-S", maxRate: 96000, slot: "out-dyn" },
+];
+
+/** Normalize a broker insert-FX value to the table's value (uint32 none → -1). */
+export function normalizeInsertFx(raw: number): number {
+  return raw === INSERT_FX_VD_NONE ? INSERT_FX_NONE : raw;
+}
 
 // Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain): each
 // stereo channel has its own dedicated, non-sequential param, written to both

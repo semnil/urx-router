@@ -9,8 +9,8 @@ import { ref } from "../../models/types";
 import type { ConnParams, NodeParams, Plan } from "../plan";
 import { ensureFixedConnections } from "../plan";
 import { vdGet } from "../platform";
-import { PARAMS } from "./params";
-import { busFader, channelControl, sendControl } from "./translate";
+import { normalizeInsertFx, PARAMS } from "./params";
+import { busFader, channelControl, insertFxControl, sendControl } from "./translate";
 import { vdToBool, vdToFreq, vdToGain, vdToLevel, vdToMonitorLevel, vdToPan } from "./vd";
 
 export interface ReadbackResult {
@@ -103,6 +103,18 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     try {
       const level = vdToLevel(await vdGet(bf.param, 0, bf.instances[0]));
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], level };
+    } catch (e) {
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Insert FX (enum): mono input channels (135) and output buses (578 / 671).
+  for (const node of model.nodes) {
+    const ifx = insertFxControl(model, node.id);
+    if (!ifx) continue;
+    try {
+      const insertFx = normalizeInsertFx(await vdGet(ifx.param, 0, ifx.instances[0]));
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], insertFx };
     } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }

@@ -46,6 +46,7 @@ export const ja: Messages = {
     phase: "Ø",
     clipSafe: "Clip Safe",
     hiZ: "Hi-Z",
+    insertFx: "Insert FX",
     gainAnalog: "A.Gain",
     gainDigital: "D.Gain",
     master: "マスター",
@@ -101,7 +102,7 @@ export const ja: Messages = {
   },
   warning: {
     title: "サンプルレート注意",
-    insFx: "96 kHz 超では INS FX を使用できません。",
+    insFx: "96 kHz 超では Insert FX (MONO IN ch・MIX・STEREO) を使用できません。",
     fx2: "96 kHz 超では FX2 Bus を使用できません。",
     hdmiEq: "176.4 / 192 kHz では HDMI EQ を使用できません。",
   },
