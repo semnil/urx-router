@@ -99,7 +99,13 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       if (dyn) {
         update.gate = await readDyn(dyn.gate, dyn.y);
         if (dyn.comp) {
-          update.comp = { ...(await readDyn(dyn.comp, dyn.y)), knee: await vdGet(PARAMS.COMP_KNEE.id, 0, dyn.y) };
+          update.comp = {
+            ...(await readDyn(dyn.comp, dyn.y)),
+            knee: await vdGet(PARAMS.COMP_KNEE.id, 0, dyn.y),
+            autoMakeup: vdToBool(await vdGet(PARAMS.COMP_AUTO_MAKEUP.id, 0, dyn.y)),
+            oneKnob: vdToBool(await vdGet(PARAMS.COMP_ONE_KNOB.id, 0, dyn.y)),
+            oneKnobLevel: await vdGet(PARAMS.COMP_ONE_KNOB_LEVEL.id, 0, dyn.y),
+          };
         }
       }
       conn.params = { ...conn.params, level, pan };

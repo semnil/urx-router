@@ -108,6 +108,11 @@ const inspectorActions = {
     const eqRelayout =
       patch.eqBands !== undefined &&
       patch.eqBands.some((b, i) => b?.type !== prev?.eqBands?.[i]?.type || b?.on !== prev?.eqBands?.[i]?.on);
+    // COMP 1-knob / Auto Makeup toggles hide or show the individual comp controls,
+    // so they need a re-render; the comp value sliders must not (they keep focus).
+    const compRelayout =
+      patch.comp !== undefined &&
+      (patch.comp.oneKnob !== prev?.comp?.oneKnob || patch.comp.autoMakeup !== prev?.comp?.autoMakeup);
     // Toggles re-render to update the active button; sliders (gain/level) mutate
     // in place so they keep focus while dragging.
     if (
@@ -124,7 +129,8 @@ const inspectorActions = {
       patch.eqOn !== undefined ||
       patch.gateOn !== undefined ||
       patch.compOn !== undefined ||
-      eqRelayout
+      eqRelayout ||
+      compRelayout
     )
       refreshInspector();
   },

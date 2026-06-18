@@ -595,6 +595,9 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       if (dyn.comp && np.comp) {
         pushDynCommands(out, dyn.comp, dyn.y, np.comp as Record<string, number | undefined>);
         if (np.comp.knee !== undefined) out.push(command("COMP_KNEE", dyn.y, np.comp.knee));
+        if (np.comp.autoMakeup !== undefined) out.push(command("COMP_AUTO_MAKEUP", dyn.y, np.comp.autoMakeup ? 1 : 0));
+        if (np.comp.oneKnob !== undefined) out.push(command("COMP_ONE_KNOB", dyn.y, np.comp.oneKnob ? 1 : 0));
+        if (np.comp.oneKnobLevel !== undefined) out.push(command("COMP_ONE_KNOB_LEVEL", dyn.y, np.comp.oneKnobLevel));
       }
     }
     if (cc.gain && np.gain !== undefined) {

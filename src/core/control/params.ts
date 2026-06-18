@@ -94,6 +94,12 @@ export const PARAMS = {
   COMP_ATTACK: { id: 39, axis: "input", encoding: "attackTime" },
   /** COMP release time (ms). */
   COMP_RELEASE: { id: 40, axis: "input", encoding: "releaseTime" },
+  /** COMP Auto Makeup ON (auto-drives the makeup gain). */
+  COMP_AUTO_MAKEUP: { id: 41, axis: "input", encoding: "bool" },
+  /** COMP 1-knob ON (drives all comp params from the 1-knob level). */
+  COMP_ONE_KNOB: { id: 42, axis: "input", encoding: "bool" },
+  /** COMP 1-knob level (0 … 100, raw). */
+  COMP_ONE_KNOB_LEVEL: { id: 43, axis: "input", encoding: "enum" },
   /** Input channel insert FX (MONO IN channels only). Enum from input_insert_fx. */
   INSERT_FX: { id: 135, axis: "input", encoding: "enum" },
   /** STEREO master insert FX (single). Enum from output_insert_fx. */

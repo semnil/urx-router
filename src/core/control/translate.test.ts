@@ -398,6 +398,20 @@ describe("planToCommands", () => {
     expect(v("COMP_RELEASE")).toBe(2003);
   });
 
+  it("emits COMP Auto Makeup / 1-knob params", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { comp: { autoMakeup: true, oneKnob: true, oneKnobLevel: 50 } };
+    const cmds = planToCommands(model, plan);
+    expect(cmds.find((c) => c.name === "COMP_AUTO_MAKEUP")!.request.uri).toBe("/vd/parameters/41:0:0?operation=value");
+    expect(cmds.find((c) => c.name === "COMP_AUTO_MAKEUP")!.vdValue).toBe(1);
+    expect(cmds.find((c) => c.name === "COMP_ONE_KNOB")!.vdValue).toBe(1);
+    // 1-knob level is a raw 0-100 value (param 43).
+    const lvl = cmds.find((c) => c.name === "COMP_ONE_KNOB_LEVEL")!;
+    expect(lvl.request.uri).toBe("/vd/parameters/43:0:0?operation=value");
+    expect(lvl.vdValue).toBe(50);
+  });
+
   it("drops COMP detail in SSMCS mode but keeps GATE", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

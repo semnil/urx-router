@@ -537,32 +537,52 @@ function dynamicsBlock(
   m: Messages,
 ): DocumentFragment {
   const frag = document.createDocumentFragment();
-  const sliders = (heading: string, fields: DynField[], section: "gate" | "comp"): void => {
-    frag.append(subheading(heading));
-    const cur = (): Record<string, number | undefined> =>
-      (plan.nodeParams[nodeId]?.[section] ?? {}) as Record<string, number | undefined>;
-    const set = (key: string, v: number): void =>
-      actions.onUpdateNodeParams(nodeId, { [section]: { ...cur(), [key]: v } });
-    const vals = (np[section] ?? {}) as Record<string, number | undefined>;
-    for (const f of fields) {
+  // Merge into the live section object so concurrent sibling edits aren't lost.
+  const setSection = (section: "gate" | "comp", patch: Record<string, number | boolean>): void =>
+    actions.onUpdateNodeParams(nodeId, { [section]: { ...(plan.nodeParams[nodeId]?.[section] ?? {}), ...patch } });
+  // dyn labels cover the slider field keys (a subset of the DynField.key union,
+  // which also spans the comp toggle keys); index via a string view.
+  const dynLabel = m.inspector.dyn as Record<string, string>;
+  const sliderFor = (f: DynField, section: "gate" | "comp", cur: number | undefined): HTMLElement =>
+    rangeSlider(dynLabel[f.key], f.min, f.max, f.step, cur ?? f.def, (v) => formatDyn(v, f.unit), (v) =>
+      setSection(section, { [f.key]: v }),
+    );
+
+  frag.append(subheading(m.inspector.gateOn));
+  const gate = (np.gate ?? {}) as Record<string, number | undefined>;
+  for (const f of dyn.gate) frag.append(sliderFor(f, "gate", gate[f.key]));
+
+  if (dyn.comp) {
+    frag.append(subheading(m.inspector.compOn));
+    const comp = np.comp ?? {};
+    const compVals = comp as Record<string, number | undefined>;
+    // 1-knob drives every comp param from a single level, so the individual
+    // controls hide while it is on (matching the device).
+    frag.append(boolToggle(m.inspector.oneKnob, comp.oneKnob ?? false, (v) => setSection("comp", { oneKnob: v })));
+    if (comp.oneKnob) {
       frag.append(
-        rangeSlider(m.inspector.dyn[f.key], f.min, f.max, f.step, vals[f.key] ?? f.def, (v) => formatDyn(v, f.unit), (v) =>
-          set(f.key, v),
+        rangeSlider(m.inspector.oneKnobLevel, 0, 100, 1, comp.oneKnobLevel ?? 0, (v) => `${v}%`, (v) =>
+          setSection("comp", { oneKnobLevel: v }),
+        ),
+      );
+    } else {
+      // Auto Makeup auto-drives the gain, so the gain slider hides while it is on.
+      frag.append(
+        boolToggle(m.inspector.autoMakeup, comp.autoMakeup ?? false, (v) => setSection("comp", { autoMakeup: v })),
+      );
+      for (const f of dyn.comp) {
+        if (f.key === "gain" && comp.autoMakeup) continue;
+        frag.append(sliderFor(f, "comp", compVals[f.key]));
+      }
+      frag.append(
+        selectControl(
+          m.inspector.dyn.knee,
+          COMP_KNEE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
+          String(comp.knee ?? COMP_KNEE_DEFAULT),
+          (v) => setSection("comp", { knee: Number(v) }),
         ),
       );
     }
-  };
-  sliders(m.inspector.gateOn, dyn.gate, "gate");
-  if (dyn.comp) {
-    sliders(m.inspector.compOn, dyn.comp, "comp");
-    frag.append(
-      selectControl(
-        m.inspector.dyn.knee,
-        COMP_KNEE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
-        String(np.comp?.knee ?? COMP_KNEE_DEFAULT),
-        (v) => actions.onUpdateNodeParams(nodeId, { comp: { ...(np.comp ?? {}), knee: Number(v) } }),
-      ),
-    );
   }
   return frag;
 }

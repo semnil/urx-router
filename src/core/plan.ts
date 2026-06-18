@@ -39,6 +39,8 @@ export interface GateParams {
 
 // Input COMP detail values (MONO IN channels, COMP->EQ mode). threshold/gain in
 // dB, ratio as N:1, knee enum (0 Soft / 1 Medium / 2 Hard), attack/release in ms.
+// autoMakeup auto-drives gain; when oneKnob is on the device drives all of the
+// above from oneKnobLevel (0-100), so the individual controls are not editable.
 export interface CompParams {
   threshold?: number;
   ratio?: number;
@@ -46,6 +48,9 @@ export interface CompParams {
   gain?: number;
   attack?: number;
   release?: number;
+  autoMakeup?: boolean;
+  oneKnob?: boolean;
+  oneKnobLevel?: number;
 }
 
 // Per-node device parameters that are not tied to a single wire (a channel's own
