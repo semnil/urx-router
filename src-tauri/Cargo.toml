@@ -1,6 +1,6 @@
 [package]
 name = "urx-router"
-version = "0.1.0"
+version = "0.2.0"
 description = "Routing planner for YAMAHA URX series audio interfaces"
 license = "MIT"
 edition = "2021"
