@@ -2,9 +2,14 @@ name: Post-merge
 
 # Heavier jobs that run only after a change lands on main, to keep PR feedback
 # fast. The frontend build/unit gate runs per-PR in ci.yml.
+# Doc-only changes don't affect E2E behaviour or the dependency license set.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'reference/**'
 
 jobs:
   e2e:

@@ -3,10 +3,20 @@ name: CI
 # Lightweight checks on every PR and on pushes to main. Heavier jobs
 # (Playwright E2E, third-party license generation) run post-merge; see
 # post-merge.yml.
+# Doc-only changes (Markdown, docs/, reference/) don't affect the build or
+# tests, so skip these checks for them.
 on:
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'reference/**'
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'reference/**'
 
 jobs:
   frontend:
