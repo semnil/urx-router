@@ -162,7 +162,7 @@ function makeSilent(model: DeviceModel, plan: Plan): void {
   }
   // Floor the level on every connection (creating params if absent), so a
   // channel fader / send carries no signal even when the captured plan did not
-  // set it explicitly. Connection kinds with no level (source/patch/key) ignore it.
+  // set it explicitly. Connection kinds with no level (source/patch/key/sendSwitch) ignore it.
   for (const c of plan.connections) c.params = { ...c.params, level: SILENCE_DB };
 }
 
