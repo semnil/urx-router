@@ -545,7 +545,13 @@ function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
     }
   });
   // Each item runs its own action listener; close the menu once one is chosen.
-  for (const item of items()) item.addEventListener("click", () => setOpen(false));
+  // Delegated to the panel so items enabled after setup (the experimental device
+  // actions, disabled at this point) are covered too. An item's async action
+  // yields at its first await, so this runs and hides the menu before any
+  // confirm dialog renders.
+  panel.addEventListener("click", (e) => {
+    if ((e.target as Element).closest('[role="menuitem"]')) setOpen(false);
+  });
 }
 
 onLangChange(() => {
