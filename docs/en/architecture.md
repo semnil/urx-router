@@ -70,11 +70,12 @@ flowchart TD
   connections (`connections`), per-connection parameters (level / pan / pre-post, etc.),
   hidden nodes (`hidden`), and per-node notes (`notes`) with their minimized state
   (`noteCollapsed`). It serializes to JSON.
-  A new plan comes from `defaultPlan(modelId)` in `models/initial-state.ts`. Models whose factory
-  initial state has been captured (URX44V only so far) are seeded with those defaults (node
-  parameters + routing); models without a capture start from an empty plan (`emptyPlan` in
-  `core/plan.ts`) and fall back to the inspector's per-field defaults. A device fetch starts from
-  `emptyPlan` and lets the readback (`core/control/`) fill in the live values.
+  A new plan comes from `defaultPlan(modelId)` in `models/initial-state.ts`, which seeds every model
+  with a factory initial state (node parameters + routing). Only URX44V is captured from real
+  hardware; URX44 reuses that capture verbatim (it differs only by URX44V's HDMI input, which no
+  default routes), and URX22 is an inferred remap of it (`models/initial-urx22.ts`, unverified until
+  a real reset is captured). A device fetch instead starts from an empty plan (`emptyPlan` in
+  `core/plan.ts`) and lets the readback (`core/control/`) fill in the live values.
 
 The constraint core (`core/routing.ts`):
 
