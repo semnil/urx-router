@@ -206,6 +206,14 @@ export const PARAMS = {
 
 export type ParamName = keyof typeof PARAMS;
 
+/** Ids of the port-ref selectors (raw or tagged), derived from the registry. An
+ *  unread selector address defaults to the broker's NONE sentinel, not 0. */
+export const PORT_REF_PARAM_IDS: ReadonlySet<number> = new Set(
+  Object.values(PARAMS)
+    .filter((p) => p.encoding === "portRef" || p.encoding === "portRefTagged")
+    .map((p) => p.id),
+);
+
 // Insert FX choices for MONO IN channels (input_insert_fx table). `value` is the
 // broker enum value (not an index); -1 = No Effect (the "off" state). The broker
 // reports "none" as the uint32 sentinel, normalized back to -1 on read.

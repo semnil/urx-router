@@ -9,10 +9,10 @@ vi.mock("../platform", () => ({ vdGet: vi.fn(), vdSet: vi.fn() }));
 import { vdGet, vdSet } from "../platform";
 import { diffPlan, dryRun, sendCommands, sendConverging, sendPlan } from "./client";
 import { planToCommands } from "./translate";
+import { PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { PORT_REF_NONE } from "./vd";
 
 const model = getModel("URX44V");
-const PORT_REF_PARAMS = new Set([22, 259, 705, 706, 719, 720, 730, 731, 732, 733, 734, 735]);
 
 function basePlan(): Plan {
   const plan = emptyPlan("URX44V");

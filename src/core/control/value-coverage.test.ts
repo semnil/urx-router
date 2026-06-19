@@ -15,11 +15,15 @@ import { vdGet } from "../platform";
 import { applyDeviceState } from "./readback";
 import { planToCommands } from "./translate";
 import type { VdCommand } from "./translate";
-import { denormalizeInsertFx, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "./params";
+import {
+  denormalizeInsertFx,
+  INSERT_FX_OPTIONS,
+  OUTPUT_INSERT_FX_OPTIONS,
+  PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
+} from "./params";
 import { PORT_REF_NONE, VD_LEVEL_MAX, VD_LEVEL_OFF, VD_PAN_MAX } from "./vd";
 
 const model = getModel("URX44V");
-const PORT_REF_PARAMS = new Set([22, 259, 705, 706, 719, 720, 730, 731, 732, 733, 734, 735]);
 
 function base(): Plan {
   const plan = emptyPlan("URX44V");

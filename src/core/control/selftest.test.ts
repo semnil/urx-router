@@ -13,12 +13,11 @@ vi.mock("../platform", () => ({
 
 import { vdConnect, vdDisconnect, vdGet, vdSet } from "../platform";
 import { planToCommands } from "./translate";
-import { INSERT_FX_OPTIONS } from "./params";
+import { INSERT_FX_OPTIONS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
 import { perturbedPlan, runSelfTest } from "./selftest";
 
 const model = getModel("URX44V");
-const PORT_REF_PARAMS = new Set([22, 259, 705, 706, 719, 720, 730, 731, 732, 733, 734, 735]);
 
 function populatedPlan(): Plan {
   const plan = emptyPlan("URX44V");
