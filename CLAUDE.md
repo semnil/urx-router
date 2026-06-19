@@ -48,7 +48,7 @@ CI は 4 ワークフロー: PR は build + unit (`ci.yml`)、E2E と third-part
 - テーマ配色は `src/style.css` の CSS 変数 (`:root` / `[data-theme="light"]`) と `src/ui/graph.ts` の `PALETTES` を一致させる
 - 装置固有値・実機 UDID・制御プロトコル実値はコード/ドキュメントに書かない (プレースホルダ + git 管理外)
 - ライブ実機制御 (`src/core/control/`) は `--experimental` 起動時のみ有効。確定パラメータ (broker dump 照合済み) のみ書込み、推測アドレスは `params.ts` に載せない
-- コミット: **メッセージは件名・本文とも全文英語** (Conventional Commits)。グローバル CLAUDE.md の「日本語本文」規約はこのプロジェクトでは適用しない。意味単位で分割。push/PR は指示があってから
+- コミット: **メッセージは件名・本文とも全文英語** (Conventional Commits)。**PR の title/body も全文英語** (リポジトリ既定言語に合わせる)。グローバル CLAUDE.md の「日本語本文」規約はこのプロジェクトでは適用しない。意味単位で分割。push/PR は指示があってから
 
 ## 一次情報
 
