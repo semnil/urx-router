@@ -27,5 +27,7 @@ src-tauri/icons/ios/
 # Local routing plans saved during development
 /plans/
 
-# Copyrighted Yamaha reference PDFs — local copies only (see reference/README.md)
-reference/*.pdf
+# Reference materials (copyrighted Yamaha PDFs, reverse-engineered protocol
+# dumps, and their READMEs) live in a separate private repository. Excluded
+# from this public repo entirely.
+/reference/
