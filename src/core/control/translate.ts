@@ -18,6 +18,7 @@ import {
   COMP_EQ_COMP_FIRST,
   COMP_EQ_SSMCS,
   D_GAIN_PARAM,
+  denormalizeInsertFx,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
   PARAMS,
@@ -109,6 +110,8 @@ function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number
       return planValue;
     case "portRefTagged":
       return tagPortRef(planValue);
+    case "insertFx":
+      return denormalizeInsertFx(planValue);
     case "bool":
       return boolToVd(planValue !== 0);
   }
@@ -295,7 +298,8 @@ export interface SendControl {
   level: number[];
   pan: number[];
   on: number[];
-  tap: number;
+  /** PRE/POST tap param, or null for FX sends (the broker rejects writing it). */
+  tap: number | null;
 }
 
 // CH → MIX sends are laid out as 12-param stereo-bus blocks (L slot + R slot, 6
@@ -328,7 +332,8 @@ export function sendControl(model: DeviceModel, channelId: string, busId: string
   const fxIndex = FX_SEND_BUS_INDEX[busId];
   if (fxIndex !== undefined) {
     const base = (stereo ? FX_SEND_BASE_STEREO : FX_SEND_BASE_MONO) + FX_SEND_STRIDE * fxIndex;
-    return { y: cc.y, level: [base + 1], pan: [], on: [base + 3], tap: base };
+    // FX sends have no settable PRE/POST tap (the broker rejects writing base+0).
+    return { y: cc.y, level: [base + 1], pan: [], on: [base + 3], tap: null };
   }
   return null;
 }
@@ -722,7 +727,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       for (const p of sc.level) out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
       for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
       for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, 1));
-      out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
+      if (sc.tap !== null) out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
     }
   }
 
@@ -787,7 +792,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const ifx = insertFxControl(model, node.id);
     const v = plan.nodeParams[node.id]?.insertFx;
     if (!ifx || v === undefined) continue;
-    for (const inst of ifx.instances) out.push(rawCommand("INSERT_FX", ifx.param, "enum", inst, v));
+    for (const inst of ifx.instances) out.push(rawCommand("INSERT_FX", ifx.param, "insertFx", inst, v));
   }
 
   // Output bus EQ ON: STEREO (498, single) and MIX (591, L/R-linked).

@@ -98,7 +98,7 @@ describe("applyDeviceState round-trip", () => {
       kind: "send",
       params: { level: -3, pan: -100, tap: "pre" },
     });
-    plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9, tap: "post" } });
+    plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9 } });
 
     // Bus faders / EQ / insert FX.
     plan.nodeParams["bus.stereo"] = { on: true, level: 2, eqOn: true, insertFx: 1793 };
@@ -331,7 +331,7 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     };
     plan.nodeParams.ch_5_6 = { gain: -12, phaseL: true, phaseR: false };
     plan.connections.push({ from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { level: -3, pan: -100, tap: "pre" } });
-    plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9, tap: "post" } });
+    plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9 } });
     plan.nodeParams["bus.stereo"] = { on: true, level: 2, eqOn: true, insertFx: 1793 };
     plan.nodeParams["bus.mix1"] = { level: -4, insertFx: 1792 };
     plan.nodeParams["out.ducker1"] = { duckerOn: true, ducker: { threshold: -50, range: -20, attack: 25, decay: 1500 } };

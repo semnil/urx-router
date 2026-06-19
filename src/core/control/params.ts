@@ -31,7 +31,8 @@ export type ParamEncoding =
   | "releaseTime"
   | "ratio"
   | "portRef"
-  | "portRefTagged";
+  | "portRefTagged"
+  | "insertFx";
 
 export interface ParamSpec {
   /** Broker param_id (first field of the "{id}:{x}:{y}" address). */
@@ -113,11 +114,11 @@ export const PARAMS = {
   /** Ducker decay time (ms). */
   DUCKER_DECAY: { id: 263, axis: "global", encoding: "releaseTime" },
   /** Input channel insert FX (MONO IN channels only). Enum from input_insert_fx. */
-  INSERT_FX: { id: 135, axis: "input", encoding: "enum" },
+  INSERT_FX: { id: 135, axis: "input", encoding: "insertFx" },
   /** STEREO master insert FX (single). Enum from output_insert_fx. */
-  OUTPUT_INSERT_FX_STEREO: { id: 578, axis: "global", encoding: "enum" },
+  OUTPUT_INSERT_FX_STEREO: { id: 578, axis: "global", encoding: "insertFx" },
   /** MIX bus insert FX (L/R-linked). Enum from output_insert_fx. */
-  OUTPUT_INSERT_FX_MIX: { id: 671, axis: "output", encoding: "enum" },
+  OUTPUT_INSERT_FX_MIX: { id: 671, axis: "output", encoding: "insertFx" },
   // Analog mic-strip toggles (CH1-4 only). Confirmed by live scan.
   /** Input channel +48V phantom power. */
   PHANTOM: { id: 0, axis: "input", encoding: "bool" },
@@ -252,6 +253,12 @@ export const OUTPUT_INSERT_FX_OPTIONS: InsertFxOption[] = [
 /** Normalize a broker insert-FX value to the table's value (uint32 none → -1). */
 export function normalizeInsertFx(raw: number): number {
   return raw === INSERT_FX_VD_NONE ? INSERT_FX_NONE : raw;
+}
+
+/** Encode a table insert-FX value for the broker (-1 → uint32 none sentinel), so
+ *  a written value reads back identically. The inverse of normalizeInsertFx. */
+export function denormalizeInsertFx(value: number): number {
+  return value === INSERT_FX_NONE ? INSERT_FX_VD_NONE : value;
 }
 
 // COMP/EQ type (comp_eq_type table) for MONO IN channels: the standard COMP->EQ

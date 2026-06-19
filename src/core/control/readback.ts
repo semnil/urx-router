@@ -168,7 +168,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
         if (on) {
           const params: ConnParams = { level: vdToLevel(await vdGet(sc.level[0], 0, sc.y)) };
           if (sc.pan.length) params.pan = vdToPan(await vdGet(sc.pan[0], 0, sc.y));
-          params.tap = vdToBool(await vdGet(sc.tap, 0, sc.y)) ? "pre" : "post";
+          if (sc.tap !== null) params.tap = vdToBool(await vdGet(sc.tap, 0, sc.y)) ? "pre" : "post";
           if (idx >= 0) plan.connections[idx].params = { ...plan.connections[idx].params, ...params };
           else plan.connections.push({ from, to, kind: "send", params });
         } else if (idx >= 0) {
