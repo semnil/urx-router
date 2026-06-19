@@ -165,11 +165,30 @@ const inspectorActions = {
       patch.duckerOn !== undefined ||
       patch.cueInterrupt !== undefined ||
       patch.mono !== undefined ||
+      patch.busType !== undefined ||
+      patch.panLink !== undefined ||
       eqRelayout ||
       compRelayout ||
       oscRelayout
     )
       refreshInspector();
+  },
+  // Rename mutates in place and repaints the node label without re-rendering the
+  // inspector, so the text input keeps focus while typing. Empty clears the override.
+  onRenameNode: (id: string, name: string) => {
+    if (name.trim()) plan.nodeNames[id] = name;
+    else delete plan.nodeNames[id];
+    dirty = true;
+    graph.repaintNodes();
+  },
+  // Recolor repaints the node cap and re-renders the inspector so the active
+  // swatch ring updates. null clears the override.
+  onRecolorNode: (id: string, color: string | null) => {
+    if (color) plan.nodeColors[id] = color;
+    else delete plan.nodeColors[id];
+    dirty = true;
+    graph.repaintNodes();
+    refreshInspector();
   },
   onOpenRecent: (path: string) => void openRecent(path),
   onHideNode: (id: string) => graph.hideNode(id),

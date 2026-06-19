@@ -548,8 +548,11 @@ export class Graph {
     return this.isHung(id) || !this.nodeHasEditableConnection(id);
   }
 
-  /** Full display name (both label tiers) for status lines and the shelf. */
+  /** Full display name (both label tiers) for status lines and the shelf. A
+   *  user name override (plan.nodeNames) wins over the model's default label. */
   private labelOf(id: string): string {
+    const custom = this.plan.nodeNames?.[id]?.trim();
+    if (custom) return custom;
     const node = this.nodeById.get(id);
     return node ? fullLabel(node) : id;
   }
@@ -590,6 +593,11 @@ export class Graph {
     const railEl = svgRect(0, 0, 6, h, 2, rail);
     g.append(railEl);
 
+    // User color override (plan.nodeColors): a thin accent cap along the top
+    // edge. Keeps the kind rail intact, so the cap is purely additional.
+    const capColor = this.plan.nodeColors?.[node.id];
+    if (capColor) g.append(svgRect(6, 0, NODE_W - 6, 3, 1.5, capColor));
+
     for (const sx of [12, NODE_W - 12]) {
       for (const sy of [9, h - 9]) {
         const screw = document.createElementNS(SVGNS, "circle");
@@ -604,17 +612,20 @@ export class Graph {
       }
     }
 
+    // A user name override (plan.nodeNames) replaces the model's primary label;
+    // the dim sublabel legend (if any) stays as secondary context.
+    const primary = this.plan.nodeNames?.[node.id]?.trim() || node.label;
     if (node.sublabel) {
       // Two-tier faceplate label: the node name, then a dim secondary legend
       // beneath it, so a long name fits the fixed header height.
-      const s1 = fitScale(node.label, LABEL_FS, 1);
-      g.append(labelText(node.label, LABEL_TIER1_Y, LABEL_FS * s1, s1, p.label, 1));
+      const s1 = fitScale(primary, LABEL_FS, 1);
+      g.append(labelText(primary, LABEL_TIER1_Y, LABEL_FS * s1, s1, p.label, 1));
       const s2 = fitScale(node.sublabel, LABEL_SUB_FS, 0.5);
       g.append(labelText(node.sublabel, LABEL_TIER2_Y, LABEL_SUB_FS * s2, 0.5 * s2, p.label, 0.6));
     } else {
       // Single line, scaled down only when it would otherwise run under the button.
-      const s = fitScale(node.label, LABEL_FS, 1);
-      g.append(labelText(node.label, NODE_H / 2 + 1, LABEL_FS * s, s, p.label, 1));
+      const s = fitScale(primary, LABEL_FS, 1);
+      g.append(labelText(primary, NODE_H / 2 + 1, LABEL_FS * s, s, p.label, 1));
     }
 
     for (const port of node.ports) {

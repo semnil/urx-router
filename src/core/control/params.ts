@@ -279,6 +279,43 @@ export const COMP_EQ_OPTIONS = [
   { value: COMP_EQ_SSMCS, label: "SSMCS" },
 ];
 
+// Rec Point: the per-channel signal-path tap fed to the channel's recording /
+// direct out (block diagram: "Rec Point" selector -> CH OUT). Labels are the
+// device CH SETTING strings (confirmed on device by user). MONO IN exposes all
+// five stages; ST IN has only EQ, so it offers the two `stereo` options. Default
+// PRE FADER on every channel. No confirmed control address, so not in the write
+// catalog above.
+export const REC_POINT_DEFAULT = 4;
+export const REC_POINT_OPTIONS = [
+  { value: 0, label: "PRE GATE", stereo: false },
+  { value: 1, label: "PRE COMP", stereo: false },
+  { value: 2, label: "PRE EQ", stereo: true },
+  { value: 3, label: "PRE INS FX", stereo: false },
+  { value: 4, label: "PRE FADER", stereo: true },
+];
+
+// BUS Type for MIX 1 / MIX 2 (CH SETTING): VARI = variable per-send level (the
+// default, what the tool models), FIXED = a fixed send level (sends carry no
+// adjustable level). Labels are the device strings. No confirmed control
+// address, so not in the write catalog above.
+export const BUS_TYPE_VARI = 0;
+export const BUS_TYPE_FIXED = 1;
+export const BUS_TYPE_OPTIONS = [
+  { value: BUS_TYPE_VARI, label: "VARI" },
+  { value: BUS_TYPE_FIXED, label: "FIXED" },
+];
+
+// Post Fader Send for FX (DAW Integration menu, V1.2+): the MIX bus whose
+// post-fader signal feeds FX 1 / FX 2. Per-FX-bus selection; "—" = not used (the
+// default outside DAW integration). MIX labels are device strings. No confirmed
+// control address, so not in the write catalog above.
+export const FX_POST_SOURCE_NONE = -1;
+export const FX_POST_SOURCE_OPTIONS = [
+  { value: FX_POST_SOURCE_NONE, label: "—" },
+  { value: 1, label: "MIX 1" },
+  { value: 2, label: "MIX 2" },
+];
+
 // Output 4-band PEQ filter type (LOW / HIGH bands only; the two mid bands are
 // fixed Peaking). Verified by live scan: 0 = Peaking, 1 = Shelving, 2 = HPF on
 // the LOW band and LPF on the HIGH band (device labels per user).
@@ -305,13 +342,15 @@ export const COMP_KNEE_OPTIONS = [
 ];
 
 // Oscillator mode (param 712). Frequency control applies to Sine Wave; Burst
-// Noise adds width/interval (not yet modeled).
+// Noise adds width/interval (modeled in the plan layer; control addresses
+// unconfirmed, so not in the write catalog above).
 export const OSC_MODE_OPTIONS = [
   { value: 0, label: "Sine Wave" },
   { value: 1, label: "Pink Noise" },
   { value: 2, label: "Burst Noise" },
 ];
 export const OSC_MODE_SINE = 0;
+export const OSC_MODE_BURST = 2;
 
 // Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain): each
 // stereo channel has its own dedicated, non-sequential param, written to both

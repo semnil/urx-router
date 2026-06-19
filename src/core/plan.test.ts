@@ -31,7 +31,7 @@ describe("emptyPlan", () => {
 });
 
 describe("serialize / deserialize round-trip", () => {
-  it("preserves sample rate, positions, connections, params, hidden nodes and notes", () => {
+  it("preserves sample rate, positions, connections, params, names, hidden nodes and notes", () => {
     const plan: Plan = {
       modelId: "URX44",
       sampleRate: 96000,
@@ -46,6 +46,8 @@ describe("serialize / deserialize round-trip", () => {
         },
       ],
       nodeParams: { ch1: { on: false, hpf: true } },
+      nodeNames: { ch1: "Lead Vox" },
+      nodeColors: { ch1: "#4a78c0" },
       hidden: ["in.usbsub", "out.sdrec"],
       notes: { ch1: "Lead vocal — bump +2 dB for the chorus" },
       noteCollapsed: ["ch1"],
@@ -53,7 +55,7 @@ describe("serialize / deserialize round-trip", () => {
     expect(deserialize(serialize(plan))).toEqual(plan);
   });
 
-  it("defaults nodeParams to {} for a plan saved before the field existed", () => {
+  it("defaults nodeParams and nodeNames to {} for a plan saved before the fields existed", () => {
     const legacy = JSON.stringify({
       format: PLAN_FORMAT,
       version: PLAN_VERSION,
@@ -61,6 +63,8 @@ describe("serialize / deserialize round-trip", () => {
       connections: [],
     });
     expect(deserialize(legacy).nodeParams).toEqual({});
+    expect(deserialize(legacy).nodeNames).toEqual({});
+    expect(deserialize(legacy).nodeColors).toEqual({});
   });
 
   it("embeds the format tag and version", () => {
@@ -76,6 +80,8 @@ describe("serialize / deserialize round-trip", () => {
       positions: { ch1: { x: 1, y: 2 } },
       connections: [{ from: "ch1:out", to: "bus.stereo:in", kind: "send", params: { level: -3 } }],
       nodeParams: { ch1: { on: false, hpf: true } },
+      nodeNames: {},
+      nodeColors: {},
       hidden: [],
       notes: {},
       noteCollapsed: [],

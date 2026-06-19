@@ -631,6 +631,53 @@ select:focus-visible,
   color: var(--text);
 }
 
+.param input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--ctl-bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+/* Scoped to #inspector to outrank the full-width `#inspector button` rule. */
+#inspector .swatch {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+#inspector .swatch.sel {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.swatch-none {
+  background: var(--ctl-bg);
+  position: relative;
+}
+
+.swatch-none::after {
+  content: "";
+  position: absolute;
+  inset: 50% 2px auto 2px;
+  border-top: 1px solid var(--text-dim);
+  transform: rotate(-45deg);
+}
+
 .param input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
