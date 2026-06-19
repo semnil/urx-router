@@ -104,17 +104,17 @@ function perturb(obj: Record<string, unknown>, pass: number): void {
   }
 }
 
-// Force the plan silent: floor every output level / gain, disable the oscillator
+// Force the plan silent: floor every output fader, disable the oscillator
 // generator, and disable phantom power. Applied last so it overrides perturb.
+// Head-amp gain and the oscillator level are NOT floored: gain is a pre-fader
+// input stage (floored faders already block all output) and the oscillator is
+// off, so neither can produce sound — and flooring them past their own device
+// range only breaks the round trip (the device re-clamps to its own minimum).
 function makeSilent(plan: Plan): void {
   for (const np of Object.values(plan.nodeParams)) {
     if (typeof np.level === "number") np.level = SILENCE_DB;
-    if (typeof np.gain === "number") np.gain = SILENCE_DB;
     if (np.phantom) np.phantom = false;
-    if (np.osc) {
-      np.osc.on = false;
-      if (typeof np.osc.level === "number") np.osc.level = SILENCE_DB;
-    }
+    if (np.osc) np.osc.on = false;
   }
   // Floor the level on every connection (creating params if absent), so a
   // channel fader / send carries no signal even when the captured plan did not
