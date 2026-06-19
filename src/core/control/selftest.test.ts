@@ -13,8 +13,9 @@ vi.mock("../platform", () => ({
 
 import { vdConnect, vdDisconnect, vdGet, vdSet } from "../platform";
 import { planToCommands } from "./translate";
-import { PORT_REF_NONE } from "./vd";
-import { runSelfTest } from "./selftest";
+import { INSERT_FX_OPTIONS } from "./params";
+import { PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
+import { perturbedPlan, runSelfTest } from "./selftest";
 
 const model = getModel("URX44V");
 const PORT_REF_PARAMS = new Set([22, 259, 705, 706, 719, 720, 730, 731, 732, 733, 734, 735]);
@@ -61,6 +62,7 @@ describe("runSelfTest", () => {
     const report = await runSelfTest(model);
     expect(report.device).toBe("URX44V");
     expect(report.phase).toBe("done");
+    expect(report.passes).toBe(INSERT_FX_OPTIONS.length);
     expect(report.residual).toEqual([]);
     expect(report.ok).toBe(true);
     expect(report.restored).toBe(true);
@@ -88,5 +90,25 @@ describe("runSelfTest", () => {
     expect(report.errors.join(" ")).toContain("URX22");
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(vi.mocked(vdDisconnect)).toHaveBeenCalled();
+  });
+
+  it("perturbed plans are silent — faders floored, oscillator and phantom off", () => {
+    // A live-sounding original: hot gain, master up, oscillator running, phantom on.
+    const original = populatedPlan();
+    original.nodeParams["ch1"] = { gain: 40, phantom: true };
+    original.nodeParams["bus.stereo"] = { on: true, level: 5 };
+    original.nodeParams["bus.osc"] = { osc: { on: true, level: -6, mode: 0, freq: 1000 } };
+
+    const plan = perturbedPlan(model, original, 0);
+    expect(plan.nodeParams["bus.osc"]?.osc?.on).toBe(false);
+    expect(Object.values(plan.nodeParams).some((np) => np.phantom)).toBe(false);
+
+    const cmds = planToCommands(model, plan);
+    // Oscillator generator off, no phantom, and every fader / send level floored.
+    expect(cmds.find((c) => c.name === "OSC_ON")!.vdValue).toBe(0);
+    expect(cmds.filter((c) => c.name === "PHANTOM").every((c) => c.vdValue === 0)).toBe(true);
+    const faders = cmds.filter((c) => /FADER|SEND_LEVEL/.test(c.name));
+    expect(faders.length).toBeGreaterThan(0);
+    expect(faders.every((c) => c.vdValue === VD_LEVEL_OFF)).toBe(true);
   });
 });

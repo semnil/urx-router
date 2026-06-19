@@ -202,7 +202,7 @@ export const en = {
     write: (n: number): string =>
       `Write ${n} change${n === 1 ? "" : "s"} to the device? This overwrites the device's current settings.`,
     selfTest:
-      "Run the device self-test? It briefly overwrites every parameter to verify writes, then restores the original state.",
+      "Run the device self-test? It briefly overwrites every parameter to verify writes, then restores the original state. Outputs stay muted throughout (faders floored, oscillator and phantom off).",
   },
   filter: {
     plan: "URX Router plan",
