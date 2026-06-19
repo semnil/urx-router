@@ -164,6 +164,7 @@ export const ja: Messages = {
     writeNoChanges: "デバイスは計画と一致しています — 書き込む変更はありません",
     written: (n: number): string => `${n} 件の設定をデバイスに書き込みました`,
     writePartial: (n: number, failed: number): string => `${n} 件書き込み、${failed} 件失敗`,
+    writeResidual: (n: number): string => `書き込みましたが ${n} 件が反映されませんでした (コンソール参照)`,
     writeError: (message: string): string => `デバイスへの書き込みに失敗しました: ${message}`,
     selfTestRunning: "デバイスのセルフテストを実行中… 切断しないでください",
     selfTestPass: (n: number): string => `セルフテスト合格: ${n} 件のパラメータを書き込み、同一に読み戻しました`,

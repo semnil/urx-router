@@ -22,7 +22,7 @@ import type { Plan } from "../plan";
 import { emptyPlan } from "../plan";
 import { vdConnect, vdDisconnect } from "../platform";
 import { INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "./params";
-import { diffPlan, sendPlan } from "./client";
+import { sendConverging } from "./client";
 import { applyDeviceState } from "./readback";
 import { insertFxControl } from "./translate";
 
@@ -159,7 +159,7 @@ export function perturbedPlan(model: DeviceModel, original: Plan, pass: number):
  * leaves `phase` at the failing step. The caller must ensure the connected
  * device matches `model`.
  */
-export async function runSelfTest(model: DeviceModel): Promise<SelfTestReport> {
+export async function runSelfTest(model: DeviceModel, settleMs = 300): Promise<SelfTestReport> {
   const report: SelfTestReport = {
     ok: false,
     device: "",
@@ -186,16 +186,17 @@ export async function runSelfTest(model: DeviceModel): Promise<SelfTestReport> {
     report.applied = r0.applied;
     report.errors.push(...r0.errors);
 
-    // 2. Sweep: each pass writes a silent perturbed plan and verifies it matches.
+    // 2. Sweep: each pass writes a silent perturbed plan (converging, so params
+    // the device resets as a side effect of a mode change are re-sent) and the
+    // residual after convergence is the pass's mismatches.
     for (let pass = 0; pass < PASSES; pass++) {
       const plan = perturbedPlan(model, original, pass);
       report.phase = "write";
-      const outcomes = await sendPlan(model, plan);
+      const { outcomes, residual } = await sendConverging(model, plan, undefined, 3, settleMs);
       report.written += outcomes.length;
       report.errors.push(...outcomes.filter((o) => !o.ok).map((o) => `p${pass} ${o.command.name}: ${o.error}`));
       report.phase = "verify";
-      const diff = await diffPlan(model, plan);
-      for (const d of diff.diffs) {
+      for (const d of residual) {
         report.residual.push({
           name: d.command.name,
           paramId: d.command.paramId,
@@ -206,16 +207,14 @@ export async function runSelfTest(model: DeviceModel): Promise<SelfTestReport> {
           pass,
         });
       }
-      report.errors.push(...diff.errors.map((e) => `p${pass} ${e}`));
     }
     report.ok = report.residual.length === 0;
 
-    // 3. Restore the original state.
+    // 3. Restore the original state (converging, for the same reset behavior).
     report.phase = "restore";
-    await sendPlan(model, original);
-    const back = await diffPlan(model, original);
-    report.restoreResidual = back.diffs.length;
-    report.restored = back.diffs.length === 0;
+    const back = await sendConverging(model, original, undefined, 3, settleMs);
+    report.restoreResidual = back.residual.length;
+    report.restored = back.residual.length === 0;
 
     report.phase = "done";
     return report;

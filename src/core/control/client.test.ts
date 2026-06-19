@@ -7,10 +7,12 @@ import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
 vi.mock("../platform", () => ({ vdGet: vi.fn(), vdSet: vi.fn() }));
 
 import { vdGet, vdSet } from "../platform";
-import { diffPlan, dryRun, sendCommands, sendPlan } from "./client";
+import { diffPlan, dryRun, sendCommands, sendConverging, sendPlan } from "./client";
 import { planToCommands } from "./translate";
+import { PORT_REF_NONE } from "./vd";
 
 const model = getModel("URX44V");
+const PORT_REF_PARAMS = new Set([22, 259, 705, 706, 719, 720, 730, 731, 732, 733, 734, 735]);
 
 function basePlan(): Plan {
   const plan = emptyPlan("URX44V");
@@ -105,5 +107,60 @@ describe("sendCommands / sendPlan", () => {
     const plan = basePlan();
     const outcomes = await sendPlan(model, plan);
     expect(outcomes).toHaveLength(planToCommands(model, plan).length);
+  });
+});
+
+describe("sendConverging", () => {
+  // A mutable device: vdSet stores, vdGet reads. An optional stubborn address
+  // ignores writes until it has been written `stickAfter` times (models a param
+  // the device resets as a side effect of another write, accepted on re-send).
+  function installDevice(opts?: { stuckKey?: string; stickAfter?: number }): Map<string, number> {
+    const table = new Map<string, number>();
+    const writes = new Map<string, number>();
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      const k = `${id}:${x}:${y}`;
+      return Promise.resolve(table.has(k) ? table.get(k)! : PORT_REF_PARAMS.has(id) ? PORT_REF_NONE : 0);
+    });
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      const k = `${id}:${x}:${y}`;
+      if (opts?.stuckKey === k) {
+        const n = (writes.get(k) ?? 0) + 1;
+        writes.set(k, n);
+        if (opts.stickAfter !== undefined && n >= opts.stickAfter) table.set(k, v);
+      } else {
+        table.set(k, v);
+      }
+      return Promise.resolve();
+    });
+    return table;
+  }
+
+  // A plan that differs from a blank device (so there is something to write).
+  function dirtyPlan(): Plan {
+    const plan = basePlan();
+    plan.nodeParams["ch1"] = { on: true, hpf: true, gain: 6 };
+    return plan;
+  }
+
+  it("converges in one round when every write sticks", async () => {
+    installDevice();
+    const r = await sendConverging(model, dirtyPlan(), undefined, 3, 0);
+    expect(r.rounds).toBe(1);
+    expect(r.residual).toEqual([]);
+  });
+
+  it("re-sends and converges a param the device drops on the first write", async () => {
+    // CH_ON (140:0:0) is accepted only on its second write.
+    installDevice({ stuckKey: "140:0:0", stickAfter: 2 });
+    const r = await sendConverging(model, dirtyPlan(), undefined, 3, 0);
+    expect(r.rounds).toBe(2);
+    expect(r.residual).toEqual([]);
+  });
+
+  it("gives up after maxRounds and reports the residual for a stuck param", async () => {
+    installDevice({ stuckKey: "140:0:0" }); // never sticks
+    const r = await sendConverging(model, dirtyPlan(), undefined, 3, 0);
+    expect(r.rounds).toBe(3);
+    expect(r.residual.some((d) => d.command.paramId === 140)).toBe(true);
   });
 });

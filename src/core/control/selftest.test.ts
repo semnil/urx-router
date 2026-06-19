@@ -59,7 +59,7 @@ beforeEach(() => {
 describe("runSelfTest", () => {
   it("passes and restores against a faithful device", async () => {
     installMockDevice(populatedPlan());
-    const report = await runSelfTest(model);
+    const report = await runSelfTest(model, 0);
     expect(report.device).toBe("URX44V");
     expect(report.phase).toBe("done");
     expect(report.passes).toBe(INSERT_FX_OPTIONS.length);
@@ -77,7 +77,7 @@ describe("runSelfTest", () => {
       if (id !== 140) table.set(`${id}:${x}:${y}`, v);
       return Promise.resolve();
     });
-    const report = await runSelfTest(model);
+    const report = await runSelfTest(model, 0);
     expect(report.ok).toBe(false);
     expect(report.residual.some((m) => m.paramId === 140)).toBe(true);
   });
@@ -85,7 +85,7 @@ describe("runSelfTest", () => {
   it("aborts on model mismatch without writing, and disconnects", async () => {
     installMockDevice(populatedPlan());
     vi.mocked(vdConnect).mockResolvedValue({ model: "URX22", label: "URX22" });
-    const report = await runSelfTest(model);
+    const report = await runSelfTest(model, 0);
     expect(report.ok).toBe(false);
     expect(report.errors.join(" ")).toContain("URX22");
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();

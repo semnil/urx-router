@@ -32,7 +32,7 @@ import {
   type DeviceSummary,
 } from "./core/platform";
 import { applyDeviceState } from "./core/control/readback";
-import { diffPlan, sendCommands } from "./core/control/client";
+import { diffPlan, sendConverging } from "./core/control/client";
 import { runSelfTest } from "./core/control/selftest";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -428,13 +428,16 @@ if (!DEMO) {
           setStatus(t().status.canceled);
           return;
         }
-        const outcomes = await sendCommands(diffs.map((d) => d.command));
+        const { outcomes, residual } = await sendConverging(getModel(modelId), plan, diffs);
         const failed = outcomes.filter((o) => !o.ok);
         if (failed.length) console.warn("device write failures:", failed);
+        if (residual.length) console.warn("device write did not converge:", residual);
         setStatus(
           failed.length
             ? t().status.writePartial(outcomes.length - failed.length, failed.length)
-            : t().status.written(outcomes.length),
+            : residual.length
+              ? t().status.writeResidual(residual.length)
+              : t().status.written(diffs.length),
         );
       }),
     );

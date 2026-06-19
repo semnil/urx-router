@@ -167,6 +167,8 @@ export const en = {
     writeNoChanges: "Device already matches the plan — nothing to write",
     written: (n: number): string => `Wrote ${n} setting${n === 1 ? "" : "s"} to the device`,
     writePartial: (n: number, failed: number): string => `Wrote ${n}, ${failed} failed`,
+    writeResidual: (n: number): string =>
+      `Wrote, but ${n} param${n === 1 ? "" : "s"} did not take (see console)`,
     writeError: (message: string): string => `Device write failed: ${message}`,
     selfTestRunning: "Running device self-test… do not disconnect",
     selfTestPass: (n: number): string => `Self-test passed: ${n} params written and read back identically`,

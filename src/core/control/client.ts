@@ -78,3 +78,46 @@ export async function sendCommands(commands: VdCommand[]): Promise<SendOutcome[]
 export function sendPlan(model: DeviceModel, plan: Plan): Promise<SendOutcome[]> {
   return sendCommands(planToCommands(model, plan));
 }
+
+export interface ConvergeResult {
+  /** Every command sent across all rounds. */
+  outcomes: SendOutcome[];
+  /** Send rounds performed (1 = converged on the first write). */
+  rounds: number;
+  /** Diffs still remaining after the last round — empty means the device matches. */
+  residual: CommandDiff[];
+}
+
+/**
+ * Write the plan to the device until it converges: send the diff, re-read, and
+ * re-send whatever still differs, up to maxRounds. A single write is not always
+ * enough — setting some params makes the device reset dependents as a side
+ * effect (e.g., changing COMP/EQ type resets the channel-strip section toggles),
+ * so a value written in the same batch is clobbered and only sticks once the
+ * reset has settled and it is re-sent. The caller must have connected first; it
+ * may pass the diff it already computed (for the confirm prompt) to skip the
+ * first re-read. Stops early when nothing differs.
+ */
+export async function sendConverging(
+  model: DeviceModel,
+  plan: Plan,
+  initialDiffs?: CommandDiff[],
+  maxRounds = 3,
+  settleMs = 300,
+): Promise<ConvergeResult> {
+  const outcomes: SendOutcome[] = [];
+  let residual = initialDiffs ?? (await diffPlan(model, plan)).diffs;
+  let rounds = 0;
+  while (residual.length > 0 && rounds < maxRounds) {
+    outcomes.push(...(await sendCommands(residual.map((d) => d.command))));
+    rounds++;
+    // A side-effect reset (e.g. from a COMP/EQ-type change) lands asynchronously,
+    // a beat after the write returns. Let it settle before re-reading, so the
+    // residual is the true post-reset state and the next round's re-send is not
+    // racing a reset still in flight. (settleMs = 0 in tests, where the mock has
+    // no async reset.)
+    if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
+    residual = (await diffPlan(model, plan)).diffs;
+  }
+  return { outcomes, rounds, residual };
+}
