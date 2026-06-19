@@ -302,8 +302,11 @@ button {
   animation: menu-in 0.13s ease;
 }
 
-/* An author display value would otherwise beat the [hidden] UA rule. */
-.menu-panel[hidden] {
+/* An author display value (the flex on the panel and on each item) would
+   otherwise beat the [hidden] UA rule, so re-assert it for both — e.g. the
+   non-experimental self-test item stays hidden. */
+.menu-panel[hidden],
+.menu-panel .menu-item[hidden] {
   display: none;
 }
 

@@ -64,7 +64,14 @@ const seedEmpty = (() => {
 })();
 const newPlan = (id: ModelId): Plan => (seedEmpty ? emptyPlan(id) : defaultPlan(id));
 
-let modelId: ModelId = "URX44V";
+// Restore the last selected model on startup, falling back to URX44V (the
+// top-of-range model with every feature) when there is no valid saved choice.
+function detectModel(): ModelId {
+  const saved = localStorage.getItem("urx-model");
+  return MODEL_IDS.includes(saved as ModelId) ? (saved as ModelId) : "URX44V";
+}
+
+let modelId: ModelId = detectModel();
 let plan: Plan = newPlan(modelId);
 ensureFixedConnections(getModel(modelId), plan);
 let dirty = false;
@@ -234,6 +241,7 @@ function applyRateConstraints(): void {
 
 function loadPlan(next: Plan): void {
   modelId = next.modelId;
+  localStorage.setItem("urx-model", modelId);
   plan = next;
   ensureFixedConnections(getModel(modelId), plan);
   picker.value = modelId;
@@ -496,7 +504,7 @@ if (!DEMO) {
     }
 
     const selfTestBtn = $<HTMLButtonElement>("btn-selftest");
-    selfTestBtn.disabled = false;
+    selfTestBtn.hidden = false;
     // Destructive-then-restored, so the menu action confirms first.
     selfTestBtn.addEventListener("click", async () => {
       if (await confirmDialog(t().confirm.selfTest)) await runDeviceSelfTest();
@@ -531,7 +539,7 @@ setupMenu($<HTMLButtonElement>("btn-device"), $<HTMLElement>("device-menu"));
 
 function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
   const items = (): HTMLButtonElement[] =>
-    Array.from(panel.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])'));
+    Array.from(panel.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled]):not([hidden])'));
   let open = false;
 
   function setOpen(next: boolean, focusFirst = false): void {
