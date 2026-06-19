@@ -133,8 +133,11 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 ### 2. Channel → bus send (`send`, many receivers)
 
 Each channel output can be sent to the following buses (the MIX / FX sends have ON/LEVEL, PRE/POST, PAN/BAL).
-PRE/POST states whether the send is tapped **before (PRE) or after (POST) the STEREO main-fader level**
-(the CH → STEREO level). The STEREO send itself — being that reference — has no PRE/POST.
+LEVEL is the shared **level_gain** scale **-∞ … +10.00 dB** (UG p155; slider bottom = -∞ off, one step up is
+-96.0 dB) — every fader, send and the monitor use it. PAN/BAL uses the device scale **L63 – C – R63** (the
+UG shows C as the nominal centre; L63/R63 are the hard-pan ends). PRE/POST states whether the send is tapped
+**before (PRE) or after (POST) the STEREO main-fader level** (the CH → STEREO level). The STEREO send itself
+— being that reference — has no PRE/POST.
 
 - STEREO (TO ST) — **fixed**: the channel's main fader path. In the block diagram it sits
   *outside* the dashed SEND blocks, so it is always wired and cannot be rerouted or removed
@@ -200,9 +203,12 @@ Source selection for the analog outputs (MAIN / LINE).
 - Because it cannot be re-routed, it is **not modeled as an editable node** (there is no `USB DAW OUT` node)
 - N = 10 (URX22) / 12 (URX44, URX44V)
 
-### 8. SD Rec Signal Assign (`patch`, one receiver; URX44 / URX44V only)
+### 8. SD Rec Signal Assign (`sendSwitch`, one receiver; URX44 / URX44V only)
 
 - microSD Rec 1/2 … 15/16 ← STEREO OUT / MIX 1–2 OUT / CH 1–N OUT (up to 16 tracks)
+- It is an **ON/OFF record-source assign**, not a summing send: the RECORDER menu (Track Count +
+  Source select + a read-only level meter) and the block diagram ("SD Rec Signal Assign") carry **no
+  per-source level / pan / PRE-POST**. The recorded tap is the channel's **Rec Point**.
 - microSD playback is 2-track (stereo); this model represents it as the single input source
   `microSD Playback`.
 
@@ -211,8 +217,8 @@ Source selection for the analog outputs (MAIN / LINE).
 > DAW recording exposes channels **1–12 individually** over USB (verified on hardware).
 
 > **v0.1 simplification**: microSD Rec is originally a per-track-slot rule, but v0.1 simplifies it
-> into a single group node that receives multiple sources (a `send`-style representation) to avoid
-> node explosion. Per-slot assignment UI is planned for Phase 2.
+> into a single group node that receives multiple sources (each an `sendSwitch` assign) to avoid node
+> explosion. Per-slot assignment UI is planned for Phase 2.
 
 ### 9. HDMI THRU (fixed passthrough, no node, URX44V only)
 
@@ -232,7 +238,15 @@ Source selection for the analog outputs (MAIN / LINE).
   The channel's **Rec Point** (recording / direct-out tap) selects a stage along this chain:
   MONO IN offers PRE GATE / PRE COMP / PRE EQ / PRE INS FX / PRE FADER; ST IN (EQ only) offers
   PRE EQ / PRE FADER. Default PRE FADER. Stored as a per-channel parameter, not a wire.
-- The mono CH and stereo CH structure is fixed (only the count varies per model).
+- The mono CH and stereo CH structure is fixed (only the count varies per model). A MONO IN pair
+  (CH1/2, CH3/4) carries a **Signal Type** (CH SETTING): STEREO links the two adjacent channels,
+  MONO × 2 keeps them independent (the default). The tool keeps both nodes and stores the flag on the
+  pair's primary (odd) channel — it does not merge them into one node — and draws a heart tie between
+  the pair when linked. STEREO adds a **PAN / BAL** mode. Switching the mode (or entering STEREO)
+  re-initializes the pan of **every bus send** (STEREO / MIX 1–2 / FX 1–2) from both pair members:
+  PAN hard-pans the odd channel left (L63 = −63) and the even one right (R63 = +63); BAL centres both
+  (C = 0) and the send pan then reads as a BALANCE (as a native stereo channel does). Broader parameter
+  mirroring is a device behavior not auto-applied (the planner records the configuration).
 - **CH n → STEREO and FX 1/2 return → STEREO are fixed sends** (the main fader / return paths):
   always wired, shown pre-connected, and non-removable. Unlike the items above they *are* drawn
   as wires (between visible nodes) since their LEVEL/PAN remain editable; only the routing is locked.

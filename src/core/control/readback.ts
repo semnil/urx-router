@@ -41,7 +41,6 @@ import {
   vdToGain,
   vdToHold,
   vdToLevel,
-  vdToMonitorLevel,
   vdToPan,
   vdToPortRef,
   vdToQ,
@@ -285,7 +284,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
   for (const [id, y] of [["bus.mon1", 0], ["bus.mon2", 1]] as const) {
     attempted.add(id);
     try {
-      const level = vdToMonitorLevel(await vdGet(PARAMS.MONITOR_LEVEL.id, 0, y));
+      const level = vdToLevel(await vdGet(PARAMS.MONITOR_LEVEL.id, 0, y));
       const cueInterrupt = vdToBool(await vdGet(PARAMS.MONITOR_CUE_INTERRUPT.id, 0, y));
       const mono = vdToBool(await vdGet(PARAMS.MONITOR_MONO.id, 0, y));
       plan.nodeParams[id] = { ...plan.nodeParams[id], level, cueInterrupt, mono };

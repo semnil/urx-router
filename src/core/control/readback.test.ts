@@ -63,7 +63,7 @@ describe("applyDeviceState round-trip", () => {
     // Channel main path level/pan on the fixed CH→STEREO send.
     const ch1Stereo = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in");
     // Use pan extremes that survive the ±63 device quantization exactly.
-    ch1Stereo!.params = { level: -6, pan: 100 };
+    ch1Stereo!.params = { level: -6, pan: 63 };
 
     // Mono channel strip (CH1): on/gain/hpf/mic-strip/phase/comp-eq + GATE/COMP/EQ.
     plan.nodeParams.ch1 = {
@@ -96,7 +96,7 @@ describe("applyDeviceState round-trip", () => {
       from: "ch1:out",
       to: "bus.mix1:in",
       kind: "send",
-      params: { level: -3, pan: -100, tap: "pre" },
+      params: { level: -3, pan: -63, tap: "pre" },
     });
     plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9 } });
 
@@ -196,7 +196,7 @@ describe("applyDeviceState round-trip", () => {
     await applyDeviceState(model, target);
 
     const conn = target.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in");
-    expect(conn!.params).toMatchObject({ level: -6, pan: 100 });
+    expect(conn!.params).toMatchObject({ level: -6, pan: 63 });
   });
 
   it("counts applied groups across every section, not just channels", async () => {
@@ -307,7 +307,7 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
     const ch1Stereo = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in");
-    ch1Stereo!.params = { level: -6, pan: 100 };
+    ch1Stereo!.params = { level: -6, pan: 63 };
     plan.nodeParams.ch1 = {
       on: false,
       gain: -8,
@@ -330,7 +330,7 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
       ],
     };
     plan.nodeParams.ch_5_6 = { gain: -12, phaseL: true, phaseR: false };
-    plan.connections.push({ from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { level: -3, pan: -100, tap: "pre" } });
+    plan.connections.push({ from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { level: -3, pan: -63, tap: "pre" } });
     plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9 } });
     plan.nodeParams["bus.stereo"] = { on: true, level: 2, eqOn: true, insertFx: 1793 };
     plan.nodeParams["bus.mix1"] = { level: -4, insertFx: 1792 };

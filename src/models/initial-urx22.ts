@@ -91,20 +91,20 @@ const mixSend = (from: string, mix: string): PlanConnection => ({
   from: `${from}:out`,
   to: `${mix}:in`,
   kind: "send",
-  params: { level: -60, pan: 0, tap: "post" },
+  params: { level: -96.5, pan: 0, tap: "post" },
 });
 
 const fxSend = (from: string, fx: string): PlanConnection => ({
   from: `${from}:out`,
   to: `${fx}:in`,
   kind: "send",
-  params: { level: -60, tap: "post" },
+  params: { level: -96.5, tap: "post" },
 });
 
 export const URX22_CONNECTIONS: PlanConnection[] = [
   ...CHANNELS.map(stereoSend),
-  { from: "bus.fx1:out", to: "bus.stereo:in", kind: "send", params: { level: -60 } },
-  { from: "bus.fx2:out", to: "bus.stereo:in", kind: "send", params: { level: -60 } },
+  { from: "bus.fx1:out", to: "bus.stereo:in", kind: "send", params: { level: -96.5 } },
+  { from: "bus.fx2:out", to: "bus.stereo:in", kind: "send", params: { level: -96.5 } },
   ...CHANNELS.flatMap((ch) => [
     mixSend(ch, "bus.mix1"),
     mixSend(ch, "bus.mix2"),

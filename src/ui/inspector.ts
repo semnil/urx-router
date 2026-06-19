@@ -5,8 +5,8 @@
 import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, EqBand, NodeParams, Plan, PlanConnection } from "../core/plan";
-import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
-import { isFixedConnection, sendHasTap } from "../core/routing";
+import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "../core/plan";
+import { isFixedConnection, pairPrimary, sendHasTap } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
   busEqOn,
@@ -43,6 +43,10 @@ import {
   BUS_TYPE_OPTIONS,
   FX_POST_SOURCE_NONE,
   FX_POST_SOURCE_OPTIONS,
+  SIGNAL_TYPE_OPTIONS,
+  PAN_BAL_PAN,
+  PAN_BAL_BAL,
+  PAN_BAL_OPTIONS,
 } from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
@@ -56,9 +60,8 @@ import {
   HPF_FREQ_MAX_HZ,
   HPF_FREQ_MIN_HZ,
   HPF_FREQ_STEP_HZ,
-  MONITOR_MAX_DB,
-  MONITOR_MIN_DB,
-  MONITOR_OFF_DB,
+  PAN_MIN,
+  PAN_MAX,
 } from "../core/control/vd";
 import { rateConstraints } from "../core/constraints";
 import type { RateWarning } from "../core/constraints";
@@ -93,6 +96,19 @@ const PARAM_FIELDS: Record<ConnectionKind, ParamField[]> = {
 };
 type ParamField = "level" | "pan" | "tap";
 
+// Whether a channel's send pan should read as a BALANCE: a native stereo channel,
+// or a STEREO-linked MONO IN pair switched to BAL mode (Signal Type, PAN/BAL).
+function isBalanceChannel(model: DeviceModel, plan: Plan, id: string): boolean {
+  if (isStereoChannel(id)) return true;
+  const primary = pairPrimary(model, id);
+  if (!primary) return false;
+  const pnp = plan.nodeParams[primary];
+  return pnp?.stereoLink === true && (pnp.panBal ?? PAN_BAL_PAN) === PAN_BAL_BAL;
+}
+
+// Slider floor is the -∞ off notch (LEVEL_OFF_DB); the lowest real value shown is
+// LEVEL_MIN_DB (-96.0). formatDb prints -∞ below LEVEL_MIN_DB.
+const LEVEL_OFF = LEVEL_OFF_DB;
 const LEVEL_MIN = LEVEL_MIN_DB;
 const LEVEL_MAX = LEVEL_MAX_DB;
 
@@ -163,6 +179,27 @@ export function renderInspector(
           actions.onUpdateNodeParams(node.id, { recPoint: v }),
         ),
       );
+    }
+
+    // Signal Type (CH SETTING): a MONO IN pair (CH1/2, CH3/4) is STEREO-linked or
+    // MONO x 2. Stored on the pair's primary (odd) channel, so either member edits
+    // the same value. STEREO additionally exposes the PAN / BAL mode.
+    const primary = pairPrimary(model, node.id);
+    if (primary) {
+      const pnp = plan.nodeParams[primary] ?? {};
+      const linked = pnp.stereoLink ?? false;
+      host.append(
+        enumSelect(m.inspector.signalType, SIGNAL_TYPE_OPTIONS, linked ? 1 : 0, (v) =>
+          actions.onUpdateNodeParams(primary, { stereoLink: v === 1 }),
+        ),
+      );
+      if (linked) {
+        host.append(
+          enumSelect(m.inspector.panBal, PAN_BAL_OPTIONS, pnp.panBal ?? PAN_BAL_PAN, (v) =>
+            actions.onUpdateNodeParams(primary, { panBal: v }),
+          ),
+        );
+      }
     }
 
     // BUS Type / Pan Link (CH SETTING): MIX 1 / MIX 2 only. FIXED makes every
@@ -355,7 +392,7 @@ export function renderInspector(
       const np = plan.nodeParams[node.id] ?? {};
       host.append(subheading(m.inspector.parameters));
       host.append(
-        monitorLevelControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
+        faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
       );
       host.append(
         boolToggle(m.inspector.cueInterrupt, np.cueInterrupt ?? true, (v) =>
@@ -514,8 +551,11 @@ export function renderInspector(
     );
     if (fields.length) {
       host.append(subheading(m.inspector.parameters));
-      // A stereo channel's "pan" is a balance; label it BALANCE to match the device.
-      const panLabel = isStereoChannel(parseRef(from).nodeId) ? m.inspector.balance : m.inspector.pan;
+      // A stereo channel's "pan" is a balance; so is a STEREO-linked MONO IN pair
+      // in BAL mode. Label it BALANCE to match the device; PAN otherwise.
+      const panLabel = isBalanceChannel(model, plan, parseRef(from).nodeId)
+        ? m.inspector.balance
+        : m.inspector.pan;
       for (const f of fields) host.append(paramControl(f, conn, actions.onUpdateParams, panLabel));
     } else {
       host.append(hint(m.inspector.selectionOnly));
@@ -613,8 +653,8 @@ function paramControl(
 ): HTMLElement {
   if (field === "tap") return tapControl(conn, onUpdate);
   return field === "level"
-    ? sliderControl(conn, onUpdate, "level", t().inspector.level, LEVEL_MIN, LEVEL_MAX, 0.5, 0, formatDb)
-    : sliderControl(conn, onUpdate, "pan", panLabel, -100, 100, 1, 0, formatPan);
+    ? sliderControl(conn, onUpdate, "level", t().inspector.level, LEVEL_OFF, LEVEL_MAX, 0.5, 0, formatDb)
+    : sliderControl(conn, onUpdate, "pan", panLabel, PAN_MIN, PAN_MAX, 1, 0, formatPan);
 }
 
 // A labeled range slider that updates its value readout and reports the numeric
@@ -880,20 +920,11 @@ function formatHz(hz: number): string {
   return hz >= 1000 ? `${(hz / 1000).toFixed(2)} kHz` : `${Math.round(hz)} Hz`;
 }
 
-// Node-level bus output fader (STEREO master / MIX): -∞ then -60.0 … +10.0 dB,
-// the same level scale as a send.
+// Node-level bus output fader (STEREO master / MIX / MONITOR): the level_gain
+// scale, -∞ then -96.0 … +10.0 dB — the same as a send. The bottom notch
+// (LEVEL_OFF) is the -∞ / off position.
 function faderControl(cur: number, onChange: (v: number) => void): HTMLElement {
-  return rangeSlider(t().inspector.level, LEVEL_MIN, LEVEL_MAX, 0.5, cur, formatDb, onChange);
-}
-
-// Monitor level slider: -∞ then -96.0 … +10.0 dB. The bottom notch
-// (MONITOR_OFF_DB, just under -96) is the off position.
-function monitorLevelControl(cur: number, onChange: (v: number) => void): HTMLElement {
-  return rangeSlider(t().inspector.level, MONITOR_OFF_DB, MONITOR_MAX_DB, 0.5, cur, formatMonitorDb, onChange);
-}
-
-function formatMonitorDb(v: number): string {
-  return v < MONITOR_MIN_DB ? "-∞ dB" : `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
+  return rangeSlider(t().inspector.level, LEVEL_OFF, LEVEL_MAX, 0.5, cur, formatDb, onChange);
 }
 
 // A two-button ON/OFF toggle for a node-level boolean (channel on, HPF), styled
@@ -1053,7 +1084,7 @@ function paramBlock(labelText: string, valueText: string): { row: HTMLElement; v
 }
 
 function formatDb(v: number): string {
-  if (v <= LEVEL_MIN) return "-∞ dB";
+  if (v < LEVEL_MIN) return "-∞ dB";
   return `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
 }
 

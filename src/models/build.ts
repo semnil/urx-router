@@ -205,11 +205,14 @@ export function buildModel(p: ModelParams): DeviceModel {
 
   // 9. DAW Rec — CH n OUT is hard-wired 1:1 to USB DAW OUT n in the block
   //    diagram with no source select, so it is not an editable node here.
-  // 10. SD Rec — source-selectable record group (STEREO / MIX / CH).
+  // 10. SD Rec — a record-source assign (block diagram: "SD Rec Signal Assign";
+  //     RECORDER menu has only Track Count + Source select + a read-only level
+  //     meter — no per-source level / pan / PRE-POST). Modeled as an ON/OFF assign
+  //     (`sendSwitch`); the recorded tap is the channel's Rec Point.
   if (p.hasSD) {
-    for (const c of channels) r(ref(c, "out"), ref("out.sdrec", "in"), "send");
+    for (const c of channels) r(ref(c, "out"), ref("out.sdrec", "in"), "sendSwitch");
     for (const s of ["bus.stereo", "bus.mix1", "bus.mix2"])
-      r(ref(s, "out"), ref("out.sdrec", "in"), "send");
+      r(ref(s, "out"), ref("out.sdrec", "in"), "sendSwitch");
   }
 
   // 11. HDMI THRU — fixed 1:1 passthrough of the HDMI input with no source

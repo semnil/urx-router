@@ -100,6 +100,8 @@ export const ja: Messages = {
     panLinked: "パンは送り元チャンネルの PAN に追従 (Pan Link)。",
     postFaderSend: "Post Fader Send",
     postFaderSendHint: "この FX へ post-fader で送る MIX バス (DAW Integration メニュー、V1.2 以降)。",
+    signalType: "Signal Type",
+    panBal: "PAN / BAL",
     deleteConnection: "この接続を削除",
     hideNode: "このノードを隠す",
     notesPlaceholder: "このノードにノートを書き込む… (キャンバスと出力画像に表示されます)",

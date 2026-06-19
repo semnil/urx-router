@@ -15,6 +15,7 @@ import {
   saveTextDocument,
 } from "./core/storage";
 import type { RecentEntry } from "./core/storage";
+import { PAN_BAL_BAL, PAN_BAL_PAN, STEREO_PAN_DEFAULT } from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { Selection, ThemeName } from "./ui/graph";
 import { renderInspector } from "./ui/inspector";
@@ -108,6 +109,24 @@ const graph = new Graph(graphHost, getModel(modelId), plan, {
   },
 });
 
+// Re-initialize every bus send's pan for a STEREO-linked pair (named by its
+// primary id): PAN mode hard-pans the odd channel left and the even one right,
+// BAL mode centres both. The pan-carrying sends are exactly the channel's
+// `send` connections (STEREO / MIX / FX); the SD Rec assign is a `sendSwitch`.
+// No-op when the pair is not linked.
+function resetStereoSendPans(primary: string): void {
+  const np = plan.nodeParams[primary];
+  if (!np?.stereoLink) return;
+  const pair = getModel(modelId).channelPairs.find(([a]) => a === primary);
+  if (!pair) return;
+  const bal = (np.panBal ?? PAN_BAL_PAN) === PAN_BAL_BAL;
+  pair.forEach((ch, idx) => {
+    const pan = bal ? 0 : idx === 0 ? -STEREO_PAN_DEFAULT : STEREO_PAN_DEFAULT;
+    for (const c of plan.connections)
+      if (c.from === `${ch}:out` && c.kind === "send") c.params = { ...c.params, pan };
+  });
+}
+
 const inspectorActions = {
   onDeleteConnection: (from: string, to: string) => graph.deleteConnection(from, to),
   // Mutate params in place without re-rendering, so the slider keeps focus while dragging.
@@ -128,8 +147,12 @@ const inspectorActions = {
     const prev = plan.nodeParams[id];
     plan.nodeParams[id] = { ...prev, ...patch };
     dirty = true;
-    // CH_ON drives the on-canvas mute dimming; repaint nodes so it shows at once.
-    if (patch.on !== undefined) graph.repaintNodes();
+    // CH_ON drives the on-canvas mute dimming; the STEREO link draws a pair
+    // connector — both show on the canvas, so repaint nodes at once.
+    if (patch.on !== undefined || patch.stereoLink !== undefined) graph.repaintNodes();
+    // Toggling PAN/BAL (or entering STEREO) re-initializes every bus send's pan
+    // for the linked pair: PAN hard-pans odd/even L/R, BAL centres them.
+    if (patch.panBal !== undefined || patch.stereoLink === true) resetStereoSendPans(id);
     // An EQ band's filter type / ON changes which controls show (Q, gain), so it
     // needs a re-render; a freq/Q/gain slick must NOT re-render (it keeps slider
     // focus). Detect a relayout by diffing the changed bands' type/on.
@@ -167,6 +190,8 @@ const inspectorActions = {
       patch.mono !== undefined ||
       patch.busType !== undefined ||
       patch.panLink !== undefined ||
+      patch.stereoLink !== undefined ||
+      patch.panBal !== undefined ||
       eqRelayout ||
       compRelayout ||
       oscRelayout

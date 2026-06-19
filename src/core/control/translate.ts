@@ -50,7 +50,6 @@ import {
   gainToVd,
   holdToVd,
   levelToVd,
-  monitorLevelToVd,
   panToVd,
   PORT_REF_NONE,
   qToVd,
@@ -83,8 +82,6 @@ function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number
       return levelToVd(planValue);
     case "gain":
       return gainToVd(planValue);
-    case "monitor":
-      return monitorLevelToVd(planValue);
     case "pan":
       return panToVd(planValue);
     case "freq":

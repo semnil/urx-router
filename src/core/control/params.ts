@@ -17,7 +17,6 @@ export type ParamAxis = "input" | "output" | "global";
 export type ParamEncoding =
   | "level"
   | "gain"
-  | "monitor"
   | "pan"
   | "bool"
   | "freq"
@@ -166,7 +165,7 @@ export const PARAMS = {
   /** Output PEQ band gain. */
   EQ_BAND_GAIN: { id: 507, axis: "global", encoding: "eqGain" },
   /** Monitor level (y = monitor 0..3). Wider -96 dB floor than the fader. */
-  MONITOR_LEVEL: { id: 724, axis: "global", encoding: "monitor" },
+  MONITOR_LEVEL: { id: 724, axis: "global", encoding: "level" },
   /** STEREO master fader (y = 0, level down to -∞). */
   STEREO_MASTER_FADER: { id: 581, axis: "global", encoding: "level" },
   /** STEREO master ON (y = 0). */
@@ -315,6 +314,27 @@ export const FX_POST_SOURCE_OPTIONS = [
   { value: 1, label: "MIX 1" },
   { value: 2, label: "MIX 2" },
 ];
+
+// Signal Type for a MONO IN pair (CH SETTING): STEREO links the two adjacent
+// channels, MONO x 2 keeps them independent (the default). Device labels.
+export const SIGNAL_TYPE_OPTIONS = [
+  { value: 0, label: "MONO x 2" },
+  { value: 1, label: "STEREO" },
+];
+
+// PAN / BAL mode shown for a STEREO-linked MONO IN pair. PAN = independent pan
+// per channel; BAL = a shared L/R balance. Device labels.
+export const PAN_BAL_PAN = 0;
+export const PAN_BAL_BAL = 1;
+export const PAN_BAL_OPTIONS = [
+  { value: PAN_BAL_PAN, label: "PAN" },
+  { value: PAN_BAL_BAL, label: "BAL" },
+];
+
+// Initial pan magnitude for a STEREO-linked pair in PAN mode: the odd channel
+// hard-left (L63 = -63), the even channel hard-right (R63 = +63). BAL mode
+// initializes to centre (0). Applied to every bus send when the mode is set.
+export const STEREO_PAN_DEFAULT = 63;
 
 // Output 4-band PEQ filter type (LOW / HIGH bands only; the two mid bands are
 // fixed Peaking). Verified by live scan: 0 = Peaking, 1 = Shelving, 2 = HPF on
