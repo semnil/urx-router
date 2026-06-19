@@ -1,16 +1,30 @@
 // In-app device self-test: an automated round-trip diagnostic against the live
-// device. It reads the current device state, writes a perturbed version of it,
-// verifies the device now matches exactly (write fidelity), then restores the
+// device. It reads the current device state, writes perturbed copies of it,
+// verifies the device matches each exactly (write fidelity), then restores the
 // original state. The live counterpart of completeness.test.ts — it exercises
 // the real broker, not a mock, so it catches device-side divergence (clamping,
 // ignored params, bulk-write drops) the unit tests cannot. Experimental.
+//
+// SAFETY: the perturbed plans are silent by construction. Every output level /
+// head-amp gain is floored, the oscillator generator is forced off, and phantom
+// power is forced off, so toggling channels / sends / routing cannot produce
+// audible (or hot, or +48V) output while the test holds a perturbed state. Write
+// fidelity for the level params is still exercised, at their (safe) minimum.
+//
+// COVERAGE: enum params are swept across passes — pass k selects option
+// (k mod optionCount) for COMP/EQ type, COMP knee, OSC mode and EQ-band type, so
+// every option is written over the run. Insert FX is swept on a single node per
+// pass (one input channel + one output bus), the rest set to none, to respect
+// the device-wide 1-of-N slot exclusivity. PASSES covers the largest enum.
 
 import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
 import { emptyPlan } from "../plan";
 import { vdConnect, vdDisconnect } from "../platform";
+import { INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "./params";
 import { diffPlan, sendPlan } from "./client";
 import { applyDeviceState } from "./readback";
+import { insertFxControl } from "./translate";
 
 export interface SelfTestMismatch {
   name: string;
@@ -21,18 +35,22 @@ export interface SelfTestMismatch {
   expected: number;
   /** Value read back from the device, or null if it could not be read. */
   actual: number | null;
+  /** Sweep pass that produced this mismatch. */
+  pass: number;
 }
 
 export interface SelfTestReport {
-  /** True when the device matched the written plan exactly (no residual diff). */
+  /** True when every pass matched its written plan exactly (no residual diff). */
   ok: boolean;
   /** Device model reported on connect. */
   device: string;
   /** Body-parameter groups read in the initial capture. */
   applied: number;
-  /** Commands sent for the perturbed plan. */
+  /** Sweep passes run (each writes + verifies a perturbed plan). */
+  passes: number;
+  /** Commands sent across all passes. */
   written: number;
-  /** Params that did not match after the write — the findings. */
+  /** Params that did not match after a write — the findings. */
   residual: SelfTestMismatch[];
   /** True when the device was returned to its original captured state. */
   restored: boolean;
@@ -44,50 +62,109 @@ export interface SelfTestReport {
   phase: "connect" | "readback" | "write" | "verify" | "restore" | "done";
 }
 
-// Enum fields are cycled within their value count so a perturbed value stays a
-// legal enum. Driver toggles (oneKnob/autoMakeup) recompute other COMP params on
-// the device, insertFx has cross-channel slot exclusivity, and compEqType is
-// structural (it switches active banks) — all excluded so the round trip stays a
-// clean fidelity check rather than testing those interactions here.
-const ENUM_CYCLE: Record<string, number> = { knee: 3, mode: 3, type: 3 };
-const SKIP = new Set(["insertFx", "autoMakeup", "oneKnob", "compEqType"]);
+// Deep-negative dB that emit clamps to each level param's own minimum (-inf for
+// faders / sends, the floor for gain / monitor), so the written state is silent.
+const SILENCE_DB = -200;
+
+// Enum params swept across passes (key → legal option values, in device order).
+// COMP/EQ type is structural (it switches active GATE/COMP/EQ banks); sweeping it
+// exercises both banks over the run. Driver toggles (oneKnob/autoMakeup) and
+// insertFx are handled separately, not by the generic perturbation.
+const ENUM_SWEEP: Record<string, number[]> = {
+  compEqType: [0, 1],
+  knee: [0, 1, 2],
+  mode: [0, 1, 2],
+  type: [0, 1, 2],
+};
+const SKIP = new Set(["insertFx", "autoMakeup", "oneKnob"]);
+
+// Passes needed to sweep every enum option at least once (the largest is the
+// input insert-FX option list).
+const PASSES = INSERT_FX_OPTIONS.length;
 
 // Perturb every scalar in an object tree in place: flip bools, nudge numbers,
-// cycle small enums, flip the PRE/POST tap. Connection sets are not touched.
-function perturb(obj: Record<string, unknown>): void {
+// cycle the PRE/POST tap, and set swept enums to this pass's option.
+function perturb(obj: Record<string, unknown>, pass: number): void {
   for (const [k, v] of Object.entries(obj)) {
     if (SKIP.has(k)) continue;
-    if (typeof v === "boolean") obj[k] = !v;
-    else if (typeof v === "number") obj[k] = k in ENUM_CYCLE ? (v + 1) % ENUM_CYCLE[k] : v + 1;
-    else if (typeof v === "string") {
+    if (k in ENUM_SWEEP && typeof v === "number") {
+      const opts = ENUM_SWEEP[k];
+      obj[k] = opts[pass % opts.length];
+    } else if (typeof v === "boolean") {
+      obj[k] = !v;
+    } else if (typeof v === "number") {
+      obj[k] = v + 1;
+    } else if (typeof v === "string") {
       if (k === "tap") obj[k] = v === "pre" ? "post" : "pre";
     } else if (Array.isArray(v)) {
-      for (const el of v) if (el && typeof el === "object") perturb(el as Record<string, unknown>);
+      for (const el of v) if (el && typeof el === "object") perturb(el as Record<string, unknown>, pass);
     } else if (v && typeof v === "object") {
-      perturb(v as Record<string, unknown>);
+      perturb(v as Record<string, unknown>, pass);
     }
   }
 }
 
-function perturbPlan(plan: Plan): Plan {
-  const p = structuredClone(plan);
-  for (const np of Object.values(p.nodeParams)) perturb(np as Record<string, unknown>);
-  for (const c of p.connections) if (c.params) perturb(c.params as Record<string, unknown>);
-  return p;
+// Force the plan silent: floor every output level / gain, disable the oscillator
+// generator, and disable phantom power. Applied last so it overrides perturb.
+function makeSilent(plan: Plan): void {
+  for (const np of Object.values(plan.nodeParams)) {
+    if (typeof np.level === "number") np.level = SILENCE_DB;
+    if (typeof np.gain === "number") np.gain = SILENCE_DB;
+    if (np.phantom) np.phantom = false;
+    if (np.osc) {
+      np.osc.on = false;
+      if (typeof np.osc.level === "number") np.osc.level = SILENCE_DB;
+    }
+  }
+  // Floor the level on every connection (creating params if absent), so a
+  // channel fader / send carries no signal even when the captured plan did not
+  // set it explicitly. Connection kinds with no level (source/patch/key) ignore it.
+  for (const c of plan.connections) c.params = { ...c.params, level: SILENCE_DB };
+}
+
+// Sweep insert FX: one input channel and one output bus get this pass's option,
+// every other insert-FX node is set to none. A single active effect per kind
+// respects the device-wide 1-of-N slot exclusivity (two channels cannot hold the
+// same slot at once), so the write is always legal.
+function sweepInsertFx(plan: Plan, pass: number, model: DeviceModel): void {
+  const inputs: string[] = [];
+  const outputs: string[] = [];
+  for (const node of model.nodes) {
+    const ifx = insertFxControl(model, node.id);
+    if (!ifx) continue;
+    (plan.nodeParams[node.id] ??= {}).insertFx = INSERT_FX_NONE;
+    (ifx.options === INSERT_FX_OPTIONS ? inputs : outputs).push(node.id);
+  }
+  if (inputs.length) plan.nodeParams[inputs[0]].insertFx = INSERT_FX_OPTIONS[pass % INSERT_FX_OPTIONS.length].value;
+  if (outputs.length) {
+    plan.nodeParams[outputs[0]].insertFx = OUTPUT_INSERT_FX_OPTIONS[pass % OUTPUT_INSERT_FX_OPTIONS.length].value;
+  }
+}
+
+/** Build the (silent) perturbed plan for a given sweep pass. Exported for tests. */
+export function perturbedPlan(model: DeviceModel, original: Plan, pass: number): Plan {
+  const plan = structuredClone(original);
+  for (const np of Object.values(plan.nodeParams)) perturb(np as Record<string, unknown>, pass);
+  for (const c of plan.connections) if (c.params) perturb(c.params as Record<string, unknown>, pass);
+  sweepInsertFx(plan, pass, model);
+  makeSilent(plan);
+  return plan;
 }
 
 /**
- * Run the device round-trip self-test. Connects, captures the device state,
- * writes a perturbed copy, verifies the device matches it, then restores the
- * original — always disconnecting. Read/send failures are collected into the
- * report rather than thrown; a thrown error leaves `phase` at the failing step.
- * The caller must ensure the connected device matches `model`.
+ * Run the device round-trip self-test. Connects, captures the device state, then
+ * for each sweep pass writes a (silent) perturbed copy and verifies the device
+ * matches it; finally restores the original — always disconnecting. Read/send
+ * failures are collected into the report rather than thrown; a thrown error
+ * leaves `phase` at the failing step. The caller must ensure the connected
+ * device matches `model`.
  */
 export async function runSelfTest(model: DeviceModel): Promise<SelfTestReport> {
   const report: SelfTestReport = {
     ok: false,
     device: "",
     applied: 0,
+    passes: PASSES,
     written: 0,
     residual: [],
     restored: false,
@@ -109,28 +186,31 @@ export async function runSelfTest(model: DeviceModel): Promise<SelfTestReport> {
     report.applied = r0.applied;
     report.errors.push(...r0.errors);
 
-    // 2. Write a perturbed copy.
-    report.phase = "write";
-    const perturbed = perturbPlan(original);
-    const outcomes = await sendPlan(model, perturbed);
-    report.written = outcomes.length;
-    report.errors.push(...outcomes.filter((o) => !o.ok).map((o) => `${o.command.name}: ${o.error}`));
-
-    // 3. Verify the device now matches the perturbed plan exactly.
-    report.phase = "verify";
-    const diff = await diffPlan(model, perturbed);
-    report.residual = diff.diffs.map((d) => ({
-      name: d.command.name,
-      paramId: d.command.paramId,
-      x: d.command.x,
-      y: d.command.y,
-      expected: d.command.vdValue,
-      actual: d.current,
-    }));
-    report.errors.push(...diff.errors);
+    // 2. Sweep: each pass writes a silent perturbed plan and verifies it matches.
+    for (let pass = 0; pass < PASSES; pass++) {
+      const plan = perturbedPlan(model, original, pass);
+      report.phase = "write";
+      const outcomes = await sendPlan(model, plan);
+      report.written += outcomes.length;
+      report.errors.push(...outcomes.filter((o) => !o.ok).map((o) => `p${pass} ${o.command.name}: ${o.error}`));
+      report.phase = "verify";
+      const diff = await diffPlan(model, plan);
+      for (const d of diff.diffs) {
+        report.residual.push({
+          name: d.command.name,
+          paramId: d.command.paramId,
+          x: d.command.x,
+          y: d.command.y,
+          expected: d.command.vdValue,
+          actual: d.current,
+          pass,
+        });
+      }
+      report.errors.push(...diff.errors.map((e) => `p${pass} ${e}`));
+    }
     report.ok = report.residual.length === 0;
 
-    // 4. Restore the original state.
+    // 3. Restore the original state.
     report.phase = "restore";
     await sendPlan(model, original);
     const back = await diffPlan(model, original);
