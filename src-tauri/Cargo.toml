@@ -1,6 +1,8 @@
 [package]
 name = "urx-router"
-version = "0.2.1"
+# App version lives in package.json (tauri.conf.json reads "../package.json");
+# this crate is never published, so its version is pinned and not bumped.
+version = "0.0.0"
 description = "Routing planner for YAMAHA URX series audio interfaces"
 license = "MIT"
 edition = "2021"
