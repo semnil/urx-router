@@ -52,8 +52,20 @@ function detectTheme(): ThemeName {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
+// E2E pins an empty starting board (just the fixed wires) via this flag so
+// routing/hide assertions are not perturbed by the factory-seed sends; the seed
+// data itself is verified by initial-state.test.ts.
+const seedEmpty = (() => {
+  try {
+    return localStorage.getItem("urx-seed") === "empty";
+  } catch {
+    return false;
+  }
+})();
+const newPlan = (id: ModelId): Plan => (seedEmpty ? emptyPlan(id) : defaultPlan(id));
+
 let modelId: ModelId = "URX44V";
-let plan: Plan = defaultPlan(modelId);
+let plan: Plan = newPlan(modelId);
 ensureFixedConnections(getModel(modelId), plan);
 let dirty = false;
 let selection: Selection = null;
@@ -279,7 +291,7 @@ picker.addEventListener("change", async () => {
     picker.value = modelId;
     return;
   }
-  loadPlan(defaultPlan(next));
+  loadPlan(newPlan(next));
   setStatus(t().status.switchedModel(next));
 });
 
@@ -292,7 +304,7 @@ ratePicker.addEventListener("change", () => {
 
 $("btn-new").addEventListener("click", async () => {
   if (!(await confirmDiscard())) return;
-  loadPlan(defaultPlan(modelId));
+  loadPlan(newPlan(modelId));
   setStatus(t().status.newPlan);
 });
 

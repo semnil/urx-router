@@ -24,6 +24,8 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("urx-lang", "en");
     localStorage.setItem("urx-theme", "dark");
+    // Pin an empty starting board so the factory-seed sends do not perturb counts.
+    localStorage.setItem("urx-seed", "empty");
   });
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
