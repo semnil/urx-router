@@ -138,6 +138,11 @@ PRE/POST は **その Send を STEREO 主フェーダー (= CH → STEREO のレ
 - MIX 1 / MIX 2 (PRE/POST あり)
 - FX 1 / FX 2 (PRE/POST あり)
 
+> **BUS Type (MIX 1 / MIX 2、CH SETTING)。** 各 MIX Bus は VARI (Send ごとに可変レベル。既定でツールが
+> モデル化する挙動) か FIXED (固定レベル — その Bus への Send は調整可能な LEVEL を持たない)。**Pan Link**
+> (VARI 時のみ) は各 Send の PAN を送り元チャンネルの PAN に追従させ、個別 PAN を編集不可にする。MIX Bus
+> ノードに保持し、接続パネルは FIXED で LEVEL、Pan Link で PAN を隠し、短い注記を表示する。
+
 > 盤面上では PRE の MIX/FX Send を **破線＋ソース直後の琥珀色「PRE」タップマーカー**で表示し、接続を選択せずに
 > 視認できる。POST (既定) は実線・無印。画像出力 (PNG/PDF) にも反映される。
 
@@ -150,6 +155,11 @@ PRE/POST は **その Send を STEREO 主フェーダー (= CH → STEREO のレ
   アサイン。オシレーターは単一のグローバルレベルを持つ。ステレオ宛先はワイヤに独立 L/R
   (`oscL` / `oscR`) を保持し、FX バスはモノ)
 - MIX 1 / MIX 2 → STEREO (`sendSwitch`、ブロックダイアグラムの MIX 1–2 OUT 内「TO ST」。ON/OFF のみで独立した LEVEL/PAN は持たない)
+
+> **Post Fader Send for FX (DAW Integration メニュー、V1.2 以降)。** 各 FX Bus は MIX Bus から
+> **post-fader** で追加供給できる (FX 1 ← MIX n、FX 2 ← MIX n)。対応 DAW ソフト接続時のみ表示される。
+> FX Bus ノードのセレクタ (— / MIX 1 / MIX 2、既定は none) としてモデル化し、描画ワイヤではなく
+> デバイスのドロップダウンを再現する。
 
 ### 4. ストリーミング / モニタソース (`source`, 受け口 1 本)
 
@@ -210,6 +220,9 @@ PRE/POST は **その Send を STEREO 主フェーダー (= CH → STEREO のレ
 ## 固定 (結線不可) の要素
 
 - チャンネルストリップの処理順 (Φ → HPF → GATE → COMP → EQ → INS FX) は固定。
+  チャンネルの **Rec Point** (録音 / ダイレクトアウトのタップ) はこのチェーン上の段を選ぶ:
+  MONO IN は PRE GATE / PRE COMP / PRE EQ / PRE INS FX / PRE FADER、ST IN (EQ のみ) は
+  PRE EQ / PRE FADER。既定は PRE FADER。配線ではなくチャンネルごとのパラメータとして保持する。
 - モノ CH とステレオ CH の構成は固定 (機種で本数のみ変化)。
 - **CH n → STEREO と FX 1/2 リターン → STEREO は固定の Send** (主フェーダー / リターンの経路)。
   常時結線され初期接続済みで表示し、削除不可。上記の要素と異なり LEVEL/PAN を編集できるため、

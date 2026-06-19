@@ -143,6 +143,12 @@ PRE/POST states whether the send is tapped **before (PRE) or after (POST) the ST
 - MIX 1 / MIX 2 (with PRE/POST)
 - FX 1 / FX 2 (with PRE/POST)
 
+> **BUS Type (MIX 1 / MIX 2, CH SETTING).** Each MIX bus is VARI (variable per-send level, the
+> default and what the tool models) or FIXED (a fixed send level — sends into the bus carry no
+> adjustable LEVEL). **Pan Link** (VARI only) ties each send's PAN to the source channel PAN, so the
+> per-send PAN is no longer independent. Stored on the MIX bus node; the connection panel hides the
+> LEVEL (FIXED) or PAN (Pan Link) accordingly and shows a short note.
+
 > On the canvas a PRE MIX/FX send is drawn **dashed with an amber "PRE" tap marker just after the
 > source**, so it is visible without selecting the connection. POST (the default) is solid and unmarked.
 > The marker is carried into image exports (PNG/PDF).
@@ -157,6 +163,11 @@ PRE/POST states whether the send is tapped **before (PRE) or after (POST) the ST
   summing send — the oscillator has one global level. Stereo destinations carry
   independent L/R in the wire (`oscL` / `oscR`); FX buses are mono)
 - MIX 1 / MIX 2 → STEREO (`sendSwitch`; the "TO ST" send inside the MIX 1–2 OUT block — ON/OFF only, no independent LEVEL/PAN)
+
+> **Post Fader Send for FX (DAW Integration menu, V1.2+).** Each FX bus can additionally be fed by a
+> MIX bus **post-fader** (FX 1 ← MIX n, FX 2 ← MIX n). This appears only when compatible DAW software
+> is connected. Modeled as a per-FX-bus selector (— / MIX 1 / MIX 2) on the FX bus node, defaulting to
+> none; it mirrors the device dropdown rather than a drawn patch.
 
 ### 4. Streaming / monitor source (`source`, one receiver)
 
@@ -218,6 +229,9 @@ Source selection for the analog outputs (MAIN / LINE).
 ## Fixed (non-wireable) elements
 
 - The channel-strip processing order (Φ → HPF → GATE → COMP → EQ → INS FX) is fixed.
+  The channel's **Rec Point** (recording / direct-out tap) selects a stage along this chain:
+  MONO IN offers PRE GATE / PRE COMP / PRE EQ / PRE INS FX / PRE FADER; ST IN (EQ only) offers
+  PRE EQ / PRE FADER. Default PRE FADER. Stored as a per-channel parameter, not a wire.
 - The mono CH and stereo CH structure is fixed (only the count varies per model).
 - **CH n → STEREO and FX 1/2 return → STEREO are fixed sends** (the main fader / return paths):
   always wired, shown pre-connected, and non-removable. Unlike the items above they *are* drawn

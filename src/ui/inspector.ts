@@ -33,8 +33,16 @@ import {
   EQ_TYPE_PEAKING,
   EQ_TYPE_SHELVING,
   INSERT_FX_NONE,
+  OSC_MODE_BURST,
   OSC_MODE_OPTIONS,
   OSC_MODE_SINE,
+  REC_POINT_DEFAULT,
+  REC_POINT_OPTIONS,
+  BUS_TYPE_FIXED,
+  BUS_TYPE_VARI,
+  BUS_TYPE_OPTIONS,
+  FX_POST_SOURCE_NONE,
+  FX_POST_SOURCE_OPTIONS,
 } from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
@@ -63,6 +71,8 @@ export interface InspectorActions {
   onDeleteConnection: (from: string, to: string) => void;
   onUpdateParams: (from: string, to: string, patch: ConnParams) => void;
   onUpdateNodeParams: (id: string, patch: NodeParams) => void;
+  onRenameNode: (id: string, name: string) => void;
+  onRecolorNode: (id: string, color: string | null) => void;
   onOpenRecent: (path: string) => void;
   onHideNode: (id: string) => void;
   onClose: () => void;
@@ -125,7 +135,55 @@ export function renderInspector(
   if (selection.type === "node") {
     const node = model.nodes.find((n) => n.id === selection.id);
     if (!node) return;
+    // The heading keeps the device identity (CH 1 …) so you always know which
+    // physical strip you are patching; the Name field below holds the override.
     host.append(heading(fullLabel(node)), field(m.inspector.type, nodeKindLabel(node.kind)));
+
+    // Channel / bus strips carry a user-editable name (the device's CH SETTING
+    // name); empty falls back to the model's default label.
+    if (node.kind === "channel" || node.kind === "bus") {
+      host.append(
+        textInput(m.inspector.name, plan.nodeNames[node.id] ?? "", fullLabel(node), (v) =>
+          actions.onRenameNode(node.id, v),
+        ),
+      );
+      host.append(
+        colorSwatches(m.inspector.color, plan.nodeColors[node.id], (c) => actions.onRecolorNode(node.id, c)),
+      );
+    }
+
+    // Rec Point (CH SETTING): the recording / direct-out tap stage. MONO IN
+    // offers all five stages; ST IN only the two `stereo` options. Channels only.
+    if (node.kind === "channel") {
+      // MONO IN exposes all five tap stages; ST IN only the `stereo` ones.
+      const isMono = channelControl(model, node.id)?.hasMicStrip;
+      const recOptions = REC_POINT_OPTIONS.filter((o) => isMono || o.stereo);
+      host.append(
+        enumSelect(m.inspector.recPoint, recOptions, plan.nodeParams[node.id]?.recPoint ?? REC_POINT_DEFAULT, (v) =>
+          actions.onUpdateNodeParams(node.id, { recPoint: v }),
+        ),
+      );
+    }
+
+    // BUS Type / Pan Link (CH SETTING): MIX 1 / MIX 2 only. FIXED makes every
+    // send into the bus a fixed level; Pan Link (VARI only) ties each send pan to
+    // the source channel PAN. Both gate the per-send controls (connection panel).
+    if (node.id === "bus.mix1" || node.id === "bus.mix2") {
+      const bnp = plan.nodeParams[node.id] ?? {};
+      const busType = bnp.busType ?? BUS_TYPE_VARI;
+      host.append(
+        enumSelect(m.inspector.busType, BUS_TYPE_OPTIONS, busType, (v) =>
+          actions.onUpdateNodeParams(node.id, { busType: v }),
+        ),
+      );
+      if (busType === BUS_TYPE_VARI) {
+        host.append(
+          boolToggle(m.inspector.panLink, bnp.panLink ?? false, (v) =>
+            actions.onUpdateNodeParams(node.id, { panLink: v }),
+          ),
+        );
+      }
+    }
 
     // After a device readback, a node in plan.unreadNodes still shows its plan
     // default (its body read failed); warn that its values are not the device's.
@@ -277,6 +335,21 @@ export function renderInspector(
       if (oeq) host.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
     }
 
+    // Post Fader Send for FX (FX 1 / FX 2): the MIX bus that feeds this FX bus
+    // post-fader (DAW Integration menu, V1.2+). A select on the FX bus node.
+    if (node.id === "bus.fx1" || node.id === "bus.fx2") {
+      host.append(subheading(m.inspector.parameters));
+      host.append(
+        enumSelect(
+          m.inspector.postFaderSend,
+          FX_POST_SOURCE_OPTIONS,
+          plan.nodeParams[node.id]?.fxPostSource ?? FX_POST_SOURCE_NONE,
+          (v) => actions.onUpdateNodeParams(node.id, { fxPostSource: v }),
+        ),
+      );
+      host.append(hint(m.inspector.postFaderSendHint));
+    }
+
     // Monitor bus level (MONITOR_LEVEL) plus the CUE-interrupt / MONO toggles.
     if (node.id === "bus.mon1" || node.id === "bus.mon2") {
       const np = plan.nodeParams[node.id] ?? {};
@@ -296,8 +369,9 @@ export function renderInspector(
       );
     }
 
-    // Oscillator generator (bus.osc): on / level / mode / frequency. The frequency
-    // control shows only in Sine Wave mode (mode change relayouts, see main.ts).
+    // Oscillator generator (bus.osc): on / level / mode / frequency. Frequency
+    // shows only in Sine Wave mode; Width / Interval only in Burst Noise mode
+    // (mode change relayouts, see main.ts).
     if (node.id === "bus.osc") {
       const osc = plan.nodeParams[node.id]?.osc ?? {};
       const setOsc = (patch: Partial<typeof osc>): void =>
@@ -314,8 +388,20 @@ export function renderInspector(
         ),
       );
       host.append(boolToggle(m.inspector.oscOn, osc.on ?? false, (v) => setOsc({ on: v })));
-      if ((osc.mode ?? OSC_MODE_SINE) === OSC_MODE_SINE) {
+      const oscMode = osc.mode ?? OSC_MODE_SINE;
+      if (oscMode === OSC_MODE_SINE) {
         host.append(eqFreqControl(osc.freq ?? 1000, (hz) => setOsc({ freq: hz })));
+      } else if (oscMode === OSC_MODE_BURST) {
+        host.append(
+          rangeSlider(m.inspector.oscWidth, 0.1, 10, 0.1, osc.width ?? 0.1, (v) => `${v.toFixed(1)} s`, (v) =>
+            setOsc({ width: v }),
+          ),
+        );
+        host.append(
+          rangeSlider(m.inspector.oscInterval, 1, 30, 1, osc.interval ?? 1, (v) => `${v} s`, (v) =>
+            setOsc({ interval: v }),
+          ),
+        );
       }
       host.append(
         rangeSlider(m.inspector.oscLevel, -96, 0, 1, osc.level ?? -20, formatDb, (v) =>
@@ -410,9 +496,22 @@ export function renderInspector(
       host.append(hint(m.inspector.selectionOnly));
     }
   } else if (conn) {
+    // A MIX 1 / MIX 2 destination governs the send controls: FIXED bus type drops
+    // the LEVEL (fixed send level); Pan Link (VARI only) drops the PAN (it follows
+    // the source channel PAN).
+    const destId = parseRef(to).nodeId;
+    const destNp = plan.nodeParams[destId];
+    const isMix = destId === "bus.mix1" || destId === "bus.mix2";
+    const busFixed = isMix && (destNp?.busType ?? BUS_TYPE_VARI) === BUS_TYPE_FIXED;
+    const panLinked = isMix && !busFixed && destNp?.panLink === true;
     // PRE/POST is taken against the channel's STEREO main-fader level, so the
     // fixed STEREO / FX-return main paths show LEVEL / PAN but no PRE/POST.
-    const fields = PARAM_FIELDS[conn.kind].filter((f) => f !== "tap" || sendHasTap(model, from, to));
+    const fields = PARAM_FIELDS[conn.kind].filter(
+      (f) =>
+        (f !== "tap" || sendHasTap(model, from, to)) &&
+        (f !== "level" || !busFixed) &&
+        (f !== "pan" || !panLinked),
+    );
     if (fields.length) {
       host.append(subheading(m.inspector.parameters));
       // A stereo channel's "pan" is a balance; label it BALANCE to match the device.
@@ -421,6 +520,8 @@ export function renderInspector(
     } else {
       host.append(hint(m.inspector.selectionOnly));
     }
+    if (busFixed) host.append(hint(m.inspector.busFixedLevel));
+    if (panLinked) host.append(hint(m.inspector.panLinked));
   }
 
   // A fixed wire (CH / FX return -> STEREO) cannot be removed; offer no delete
@@ -835,6 +936,82 @@ function selectControl(
   sel.value = current;
   sel.addEventListener("change", () => onChange(sel.value));
   row.append(sel);
+  return row;
+}
+
+// selectControl over a numeric-value option list (the {value:number,label} enum
+// shape used across params.ts), handling the string<->number coercion so call
+// sites stay free of String()/Number() boilerplate.
+function enumSelect(
+  label: string,
+  options: { value: number; label: string }[],
+  current: number,
+  onChange: (v: number) => void,
+): HTMLElement {
+  return selectControl(
+    label,
+    options.map((o) => ({ value: String(o.value), label: o.label })),
+    String(current),
+    (v) => onChange(Number(v)),
+  );
+}
+
+// Channel/bus color palette for the top-accent cap. Plan annotation colors (not
+// device-confirmed values); mid-tones that read on both dark and light themes.
+export const NODE_COLORS = [
+  "#d9534f",
+  "#e8913a",
+  "#d9b441",
+  "#5c9e64",
+  "#3fa6a0",
+  "#4a78c0",
+  "#8e6fc0",
+  "#c0628f",
+];
+
+// A row of color swatches plus a "none" clear option. The active color (or none)
+// is ringed. Selecting toggles: clicking the active color clears it.
+function colorSwatches(
+  label: string,
+  current: string | undefined,
+  onPick: (color: string | null) => void,
+): HTMLElement {
+  const { row } = paramBlock(label, "");
+  const strip = document.createElement("div");
+  strip.className = "swatches";
+  const none = document.createElement("button");
+  none.type = "button";
+  none.className = "swatch swatch-none" + (current ? "" : " sel");
+  none.title = label;
+  none.addEventListener("click", () => onPick(null));
+  strip.append(none);
+  for (const c of NODE_COLORS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "swatch" + (current === c ? " sel" : "");
+    b.style.background = c;
+    b.addEventListener("click", () => onPick(current === c ? null : c));
+    strip.append(b);
+  }
+  row.append(strip);
+  return row;
+}
+
+// A labeled single-line text field. Reports every keystroke (trimmed by the
+// caller) without re-rendering, so it keeps focus while typing.
+function textInput(
+  label: string,
+  value: string,
+  placeholder: string,
+  onInput: (v: string) => void,
+): HTMLElement {
+  const { row } = paramBlock(label, "");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = value;
+  input.placeholder = placeholder;
+  input.addEventListener("input", () => onInput(input.value));
+  row.append(input);
   return row;
 }
 

@@ -68,8 +68,9 @@ flowchart TD
   just below that channel ([below](#ducker-placement)).
 - **Plan** — the mutable state the user creates. It holds `modelId`, node positions (`positions`),
   connections (`connections`), per-connection parameters (level / pan / pre-post, etc.),
-  hidden nodes (`hidden`), and per-node notes (`notes`) with their minimized state
-  (`noteCollapsed`). It serializes to JSON.
+  node name overrides (`nodeNames`, the device's CH SETTING name), node color overrides
+  (`nodeColors`, the same CH SETTING color, drawn as a thin top accent cap), hidden nodes (`hidden`),
+  and per-node notes (`notes`) with their minimized state (`noteCollapsed`). It serializes to JSON.
   A new plan comes from `defaultPlan(modelId)` in `models/initial-state.ts`, which seeds every model
   with a factory initial state (node parameters + routing). Only URX44V is captured from real
   hardware; URX44 reuses that capture verbatim (it differs only by URX44V's HDMI input, which no
@@ -254,6 +255,8 @@ PDF exports.
     { "from": "ch1:out", "to": "bus.stereo:in", "kind": "send",
       "params": { "level": 0, "pan": 0, "tap": "post" } }
   ],
+  "nodeNames": { "ch1": "Lead Vox" },
+  "nodeColors": { "ch1": "#4a78c0" },
   "hidden": ["in.micline2", "out.sdrec"],
   "notes": { "ch1": "Lead vox — comp + chorus +2 dB" },
   "noteCollapsed": ["ch1"]
@@ -265,8 +268,8 @@ native save/open dialogs (`tauri-plugin-dialog`) plus a recent-plans list; file 
 `std::fs` app commands (`read_text_file` / `write_text_file` / `write_binary_file`). Everything is
 reached via `core/platform.ts` through `window.__TAURI_INTERNALS__.invoke`, so no Tauri npm package
 is bundled; when not running under Tauri it falls back to the browser path. The plan format is
-unchanged apart from the added `sampleRate`, `hidden`, `notes` and `noteCollapsed` fields (older files
-default them on load).
+unchanged apart from the added `sampleRate`, `nodeNames`, `nodeColors`, `hidden`, `notes` and
+`noteCollapsed` fields (older files default them on load).
 
 ## Build and distribution
 

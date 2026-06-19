@@ -21,12 +21,15 @@ export interface ConnParams {
 }
 
 // Oscillator generator settings (the bus.osc node). level in dB (-96..0), mode
-// enum (0 Sine / 1 Pink / 2 Burst), freq in Hz (Sine only). All optional.
+// enum (0 Sine / 1 Pink / 2 Burst), freq in Hz (Sine only), width/interval in
+// seconds (Burst only). All optional.
 export interface OscParams {
   on?: boolean;
   level?: number;
   mode?: number;
   freq?: number;
+  width?: number;
+  interval?: number;
 }
 
 // One band of an output bus 4-band PEQ. All fields optional (absent = device
@@ -89,6 +92,18 @@ export interface NodeParams {
   insertFx?: number;
   /** COMP_EQ_TYPE: 0 = COMP->EQ, 1 = SSMCS (MONO IN channels). Absent = COMP->EQ. */
   compEqType?: number;
+  /** Rec Point: signal-path tap for the channel's recording / direct out
+   *  (REC_POINT_OPTIONS value). Absent = PRE FADER (the device default). */
+  recPoint?: number;
+  /** BUS Type for MIX 1 / MIX 2: 0 = VARI (variable send level), 1 = FIXED
+   *  (fixed send level). Absent = VARI. */
+  busType?: number;
+  /** Pan Link (MIX 1 / MIX 2, VARI only): send pan follows the source channel
+   *  PAN. Absent or false = off. */
+  panLink?: boolean;
+  /** Post Fader Send for FX (FX 1 / FX 2): the MIX bus (1 or 2) whose post-fader
+   *  signal feeds this FX bus, per the DAW Integration menu. Absent or -1 = none. */
+  fxPostSource?: number;
   /** EQ ON for an input channel or an output bus (STEREO / MIX). Absent or true = on. */
   eqOn?: boolean;
   /** Output bus 4-band PEQ band values, indexed 0..3 (LOW … HIGH). */
@@ -148,6 +163,12 @@ export interface Plan {
   connections: PlanConnection[];
   /** Per-node device parameters (channel on / HPF), keyed by node id. */
   nodeParams: Record<string, NodeParams>;
+  /** User-chosen channel/bus name overrides, keyed by node id (mirrors the
+   *  device CH SETTING name). Absent / empty = the model's default label. */
+  nodeNames: Record<string, string>;
+  /** User-chosen channel/bus color overrides (hex), keyed by node id (mirrors
+   *  the device CH SETTING color). Drawn as a top accent cap; absent = none. */
+  nodeColors: Record<string, string>;
   /** Node ids the user collapsed off the canvas (only ever unconnected nodes). */
   hidden: string[];
   /** Free-text annotation per node id, drawn inside the node frame. */
@@ -184,6 +205,8 @@ export function emptyPlan(modelId: ModelId): Plan {
     positions: {},
     connections: [],
     nodeParams: {},
+    nodeNames: {},
+    nodeColors: {},
     hidden: [],
     notes: {},
     noteCollapsed: [],
@@ -200,6 +223,8 @@ export function serialize(plan: Plan): string {
       positions: plan.positions,
       connections: plan.connections,
       nodeParams: plan.nodeParams,
+      nodeNames: plan.nodeNames,
+      nodeColors: plan.nodeColors,
       hidden: plan.hidden,
       notes: plan.notes,
       noteCollapsed: plan.noteCollapsed,
@@ -225,6 +250,8 @@ export function deserialize(text: string): Plan {
     nodeParams: isStringRecord(data.nodeParams)
       ? (data.nodeParams as unknown as Record<string, NodeParams>)
       : {},
+    nodeNames: isStringRecord(data.nodeNames) ? (data.nodeNames as Record<string, string>) : {},
+    nodeColors: isStringRecord(data.nodeColors) ? (data.nodeColors as Record<string, string>) : {},
     hidden: Array.isArray(data.hidden) ? (data.hidden as string[]) : [],
     notes: isStringRecord(data.notes) ? data.notes : {},
     noteCollapsed: Array.isArray(data.noteCollapsed) ? (data.noteCollapsed as string[]) : [],
