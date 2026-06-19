@@ -1,12 +1,18 @@
-// A new document starts from the device's factory initial state where one was
-// captured. Today only URX44V has a capture (Standard mode); URX22 / URX44 start
-// from an empty plan and fall back to the inspector's per-field defaults.
+// A new document starts from the device's factory initial state. Only URX44V is
+// captured from real hardware (Standard mode); URX44 reuses that capture verbatim
+// (the two differ only by URX44V's HDMI input, which no default routes), and
+// URX22 is an inferred remap of it (see initial-urx22.ts).
 
 import { emptyPlan, type Plan } from "../core/plan";
+import { URX22_CONNECTIONS, URX22_NODE_PARAMS } from "./initial-urx22";
 import { URX44V_CONNECTIONS, URX44V_NODE_PARAMS } from "./initial-urx44v";
 import type { ModelId } from "./types";
 
 const INITIAL: Partial<Record<ModelId, Pick<Plan, "nodeParams" | "connections">>> = {
+  URX22: { nodeParams: URX22_NODE_PARAMS, connections: URX22_CONNECTIONS },
+  // URX44 has the same node set as URX44V minus the HDMI input source, which the
+  // factory defaults never route, so its initial state is identical.
+  URX44: { nodeParams: URX44V_NODE_PARAMS, connections: URX44V_CONNECTIONS },
   URX44V: { nodeParams: URX44V_NODE_PARAMS, connections: URX44V_CONNECTIONS },
 };
 

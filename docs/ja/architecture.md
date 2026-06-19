@@ -66,10 +66,11 @@ flowchart TD
 - **Plan** — ユーザーが作成する可変状態。`modelId`、ノード配置 (`positions`)、結線 (`connections`)、
   各結線のパラメータ (level/pan/pre-post 等)、非表示ノード (`hidden`)、ノードごとのノート (`notes`) と
   その最小化状態 (`noteCollapsed`) を持つ。JSON にシリアライズする。
-  新規プランは `models/initial-state.ts` の `defaultPlan(modelId)` が生成する。実機の初期状態をキャプチャ済みの
-  機種 (現状 URX44V のみ) は工場初期値 (ノードパラメータ + ルーティング) をシードし、未キャプチャの機種は
-  空プラン (`core/plan.ts` の `emptyPlan`) から開始してインスペクタの既定値にフォールバックする。
-  デバイス取得時は `emptyPlan` から始め、読み戻し (`core/control/`) が実機値で埋める。
+  新規プランは `models/initial-state.ts` の `defaultPlan(modelId)` が生成し、全機種に工場初期値
+  (ノードパラメータ + ルーティング) をシードする。実機からキャプチャ済みなのは URX44V のみ。URX44 は
+  そのキャプチャをそのまま流用する (差分は URX44V の HDMI 入力のみで、初期接続はこれを経路に使わない)。
+  URX22 はそれを位置対応で再マップした推測値 (`models/initial-urx22.ts`、実機リセットを採取するまで未検証)。
+  デバイス取得時のみ `emptyPlan` から始め、読み戻し (`core/control/`) が実機値で埋める。
 
 制約の核 (`core/routing.ts`):
 
