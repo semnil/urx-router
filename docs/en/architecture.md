@@ -212,6 +212,17 @@ the output column, and is drawn **hung at a fixed gap directly below** the paren
 - **Tether** — a single thin rail-colored line spans the gap to the parent, marking the two as one unit.
 - **Auto-layout** — `autoLayout` skips the ducker and reserves the child's height below its parent.
 
+## Column layout
+
+Nodes lay out in five columns following the signal flow, left to right: inputs → channels → mix buses
+(STEREO / MIX / FX) → derived buses (STREAMING / MONITOR) → outputs. The split of the bus stage into
+two columns is deliberate: STREAMING and MONITOR take only the mix buses as input, so they are
+downstream and sit in their own column rather than crowding the dense channel-to-bus convergence;
+OSCILLATOR is a generator that feeds the mix buses, so it joins the channel column. The result is that
+every wire flows strictly left to right, with no wire doubling back through the bus column. The
+per-node column index is `layoutCol` in `build.ts`, stored as `pos.col`; `autoLayout` and the default
+grid both stack each column independently.
+
 ## Node labels
 
 The label sits at a fixed left inset and must clear the header button (its visible box starts near the
