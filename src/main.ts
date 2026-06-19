@@ -34,7 +34,7 @@ import {
 } from "./core/platform";
 import { applyDeviceState } from "./core/control/readback";
 import { diffPlan, sendConverging } from "./core/control/client";
-import { runSelfTest } from "./core/control/selftest";
+import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -470,13 +470,24 @@ if (!DEMO) {
         console.warn(`[self-test] ${report.ok ? "PASS" : "FAIL"}`, JSON.stringify(report));
         if (report.errors.length) console.warn("[self-test] issues:", JSON.stringify(report.errors));
         if (report.residual.length) console.warn("[self-test] mismatches:", JSON.stringify(report.residual));
+        const verdicts = summarizeVerdicts(report.unverified);
         setStatus(
           !report.restored
             ? t().status.selfTestRestoreFail
-            : report.ok
-              ? t().status.selfTestPass(report.written)
-              : t().status.selfTestFail(report.residual.length),
+            : report.unverified.length
+              ? t().status.selfTestUnverified(verdicts.confirmed, verdicts.refuted, verdicts.untestable)
+              : report.ok
+                ? t().status.selfTestPass(report.written)
+                : t().status.selfTestFail(report.residual.length),
         );
+        // Confirmation workflow: when the model has unverified guesses (URX22/44),
+        // offer to save the human-readable report so the owner can send it back.
+        if (report.unverified.length && (await confirmDialog(t().confirm.selfTestExport))) {
+          await saveTextDocument(`${modelId}-self-test.md`, formatSelfTestReport(report), {
+            ext: "md",
+            label: t().filter.report,
+          });
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn("[self-test] ERROR", message);

@@ -317,10 +317,13 @@ export const OSC_MODE_SINE = 0;
 // stereo channel has its own dedicated, non-sequential param, written to both
 // L/R instances (y = 0 and 1) which the device keeps linked. Keyed by node id so
 // each model uses its own. Confirmed on URX44V by live scan (research §12.8);
-// ch_5_6..9_10 assumed identical on URX44/URX22, and ch_3_4 (URX22 only) is an
-// UNVERIFIED guess (extrapolated -4 from ch_5_6=9).
+// ch_5_6..9_10 assumed identical on URX44/URX22. The block is the five odd ids
+// 9/11/13/15/17; URX44V occupies {9,13,15,17}, leaving 11 the only free slot, so
+// ch_3_4 (URX22's extra stereo channel, absent on URX44V) most likely takes 11.
+// Still an UNVERIFIED guess pending a URX22 owner's self-test, but — unlike the
+// earlier guess of 5 — it no longer collides with a confirmed param (5 = CLIP_SAFE).
 export const D_GAIN_PARAM: Record<string, number> = {
-  ch_3_4: 5,
+  ch_3_4: 11,
   ch_5_6: 9,
   ch_7_8: 13,
   ch_9_10: 17,
@@ -336,3 +339,13 @@ export const D_GAIN_PARAM: Record<string, number> = {
 export const STEREO_FADER = 266;
 export const STEREO_ON = 267;
 export const STEREO_PAN = 268;
+
+/** Reverse lookup of the confirmed catalog: the param that owns a param id, if
+ *  any. The self-test's collision audit uses it to tell a guessed id apart from
+ *  an id a confirmed param already claims. */
+const ID_TO_NAME: ReadonlyMap<number, ParamName> = new Map(
+  (Object.entries(PARAMS) as [ParamName, ParamSpec][]).map(([name, spec]) => [spec.id, name]),
+);
+export function paramNameForId(id: number): ParamName | undefined {
+  return ID_TO_NAME.get(id);
+}

@@ -176,6 +176,8 @@ export const en = {
     selfTestFail: (n: number): string =>
       `Self-test FAILED: ${n} param${n === 1 ? "" : "s"} did not match after write (see console)`,
     selfTestRestoreFail: "Self-test: device may not be restored — fetch again to check",
+    selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
+      `Self-test guesses: ${confirmed} confirmed, ${refuted} refuted, ${untestable} untestable`,
     selfTestError: (message: string): string => `Self-test error: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",
@@ -206,11 +208,14 @@ export const en = {
       `Write ${n} change${n === 1 ? "" : "s"} to the device? This overwrites the device's current settings.`,
     selfTest:
       "Run the device self-test? It briefly overwrites every parameter to verify writes, then restores the original state. Outputs stay muted throughout (faders floored, oscillator and phantom off).",
+    selfTestExport:
+      "This model has unconfirmed parameter mappings. Save the self-test report so it can be sent back to confirm them?",
   },
   filter: {
     plan: "URX Router plan",
     png: "PNG image",
     pdf: "PDF document",
+    report: "Self-test report",
   },
   error: {
     noRule: "This route cannot be connected",
