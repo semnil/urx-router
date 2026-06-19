@@ -26,6 +26,7 @@ import {
   isTauri,
   restartApp,
   experimentalEnabled,
+  selfTestRequested,
   vdConnect,
   vdDisconnect,
   type DeviceSummary,
@@ -440,17 +441,15 @@ if (!DEMO) {
 
     // Device self-test (experimental): read the device, write a perturbed copy,
     // verify it matches, then restore. It owns its own connection, so it does not
-    // go through withDevice. Destructive-then-restored, so it confirms first.
-    const selfTestBtn = $<HTMLButtonElement>("btn-selftest");
-    selfTestBtn.disabled = false;
-    selfTestBtn.addEventListener("click", async () => {
-      if (!(await confirmDialog(t().confirm.selfTest))) return;
+    // go through withDevice. Reports are console.warn'd (not log) so they reach
+    // the dev-server log for a headless read.
+    async function runDeviceSelfTest(): Promise<void> {
       setStatus(t().status.selfTestRunning);
       try {
         const report = await runSelfTest(getModel(modelId));
-        console.log("[self-test] report:", report);
-        if (report.errors.length) console.warn("[self-test] issues:", report.errors);
-        if (report.residual.length) console.warn("[self-test] mismatches:", report.residual);
+        console.warn(`[self-test] ${report.ok ? "PASS" : "FAIL"}`, JSON.stringify(report));
+        if (report.errors.length) console.warn("[self-test] issues:", JSON.stringify(report.errors));
+        if (report.residual.length) console.warn("[self-test] mismatches:", JSON.stringify(report.residual));
         setStatus(
           !report.restored
             ? t().status.selfTestRestoreFail
@@ -459,8 +458,22 @@ if (!DEMO) {
               : t().status.selfTestFail(report.residual.length),
         );
       } catch (err) {
-        setStatus(t().status.selfTestError(err instanceof Error ? err.message : String(err)));
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[self-test] ERROR", message);
+        setStatus(t().status.selfTestError(message));
       }
+    }
+
+    const selfTestBtn = $<HTMLButtonElement>("btn-selftest");
+    selfTestBtn.disabled = false;
+    // Destructive-then-restored, so the menu action confirms first.
+    selfTestBtn.addEventListener("click", async () => {
+      if (await confirmDialog(t().confirm.selfTest)) await runDeviceSelfTest();
+    });
+    // Headless trigger: when launched with --self-test, run it once on startup
+    // (no dialog), so it can be driven from the command line without the UI.
+    void selfTestRequested().then((auto) => {
+      if (auto) void runDeviceSelfTest();
     });
   });
 }

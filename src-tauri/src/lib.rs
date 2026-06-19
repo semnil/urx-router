@@ -32,6 +32,13 @@ fn experimental_enabled() -> bool {
     std::env::args().any(|a| a == "--experimental")
 }
 
+// True when launched with --self-test: the frontend runs the device self-test
+// once on startup, headless, so it can be driven without the UI.
+#[tauri::command]
+fn self_test_requested() -> bool {
+    std::env::args().any(|a| a == "--self-test")
+}
+
 // Live control: connect to / set parameters on / disconnect from the URX via the
 // Device Center broker. The device GUID stays in Rust; the frontend addresses
 // parameters by (param_id, x, y) and an absolute integer value.
@@ -79,6 +86,7 @@ pub fn run() {
             write_text_file,
             write_binary_file,
             experimental_enabled,
+            self_test_requested,
             vd_connect,
             vd_info,
             vd_set,

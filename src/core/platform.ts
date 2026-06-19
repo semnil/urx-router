@@ -55,6 +55,15 @@ export function experimentalEnabled(): Promise<boolean> {
   return invoke<boolean>("experimental_enabled");
 }
 
+/**
+ * Whether the app was launched with --self-test: run the device self-test once
+ * on startup, headless (no UI interaction). Always false in a plain browser.
+ */
+export function selfTestRequested(): Promise<boolean> {
+  if (!isTauri()) return Promise.resolve(false);
+  return invoke<boolean>("self_test_requested");
+}
+
 export interface FileFilter {
   ext: string;
   label: string;
