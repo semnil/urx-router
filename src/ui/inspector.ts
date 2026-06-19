@@ -7,7 +7,7 @@ import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, EqBand, NodeParams, Plan, PlanConnection } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection, sendHasTap } from "../core/routing";
-import type { ChannelDynamics, DynField, EqControl } from "../core/control/translate";
+import type { DynField, EqControl } from "../core/control/translate";
 import {
   busEqOn,
   busFader,
@@ -71,9 +71,11 @@ export interface InspectorActions {
 // Per-kind editable send parameters. Only summing sends carry LEVEL / PRE-POST /
 // PAN per the block diagram (device-model.md §2); selectors and output patches
 // are assignments without per-connection mix parameters. PRE-POST is further
-// dropped for the fixed STEREO / FX-return main paths (see sendHasTap).
+// dropped for the fixed STEREO / FX-return main paths (see sendHasTap). Ordered
+// top-to-bottom as the device SEND TO screen reads it (ON — the wire itself — then
+// PRE, Pan, Level); the fixed main path drops tap and so shows Pan then Level.
 const PARAM_FIELDS: Record<ConnectionKind, ParamField[]> = {
-  send: ["level", "pan", "tap"],
+  send: ["tap", "pan", "level"],
   sendSwitch: [],
   source: [],
   patch: [],
@@ -145,7 +147,19 @@ export function renderInspector(
     if (node.kind === "channel") {
       const np = plan.nodeParams[node.id] ?? {};
       const cc = channelControl(model, node.id);
+      const compEqType = np.compEqType ?? COMP_EQ_COMP_FIRST;
       host.append(subheading(m.inspector.parameters));
+
+      // INPUT screen order (device top-left → bottom-right): +48V, A.Gain, HI-Z,
+      // Clip Safe, Ø, HPF, HPF Freq. The analog mic-strip controls (+48V / Clip
+      // Safe / HPF) exist only on the mono mic channels; Hi-Z only on CH3/CH4.
+      if (cc?.hasMicStrip) {
+        host.append(
+          boolToggle(m.inspector.phantom, np.phantom ?? false, (v) =>
+            actions.onUpdateNodeParams(node.id, { phantom: v }),
+          ),
+        );
+      }
       // Gain label / range come from the channel descriptor: mono = A.Gain
       // (-8..+70), stereo = D.Gain (-24..+24), matching the device's own labels.
       if (cc?.gain) {
@@ -156,19 +170,14 @@ export function renderInspector(
           ),
         );
       }
-      host.append(
-        boolToggle(m.inspector.channelOn, np.on ?? true, (v) =>
-          actions.onUpdateNodeParams(node.id, { on: v }),
-        ),
-      );
-      // The analog mic-strip toggles (+48V / Clip Safe) and HPF exist only on the
-      // mono mic channels.
-      if (cc?.hasMicStrip) {
+      if (cc?.hasHiZ) {
         host.append(
-          boolToggle(m.inspector.phantom, np.phantom ?? false, (v) =>
-            actions.onUpdateNodeParams(node.id, { phantom: v }),
+          boolToggle(m.inspector.hiZ, np.hiZ ?? false, (v) =>
+            actions.onUpdateNodeParams(node.id, { hiZ: v }),
           ),
         );
+      }
+      if (cc?.hasMicStrip) {
         host.append(
           boolToggle(m.inspector.clipSafe, np.clipSafe ?? false, (v) =>
             actions.onUpdateNodeParams(node.id, { clipSafe: v }),
@@ -181,35 +190,6 @@ export function renderInspector(
         host.append(
           boolToggle(label, np[ph.key] ?? false, (v) =>
             actions.onUpdateNodeParams(node.id, { [ph.key]: v }),
-          ),
-        );
-      }
-      // Hi-Z (instrument input) exists only on specific channels (CH3/CH4).
-      if (cc?.hasHiZ) {
-        host.append(
-          boolToggle(m.inspector.hiZ, np.hiZ ?? false, (v) =>
-            actions.onUpdateNodeParams(node.id, { hiZ: v }),
-          ),
-        );
-      }
-      // Channel-strip section ON (GATE / COMP / EQ). Mono channels have all three;
-      // stereo channels expose only EQ. The active COMP/EQ bank follows the type.
-      // Default before a fetch: EQ on, dynamics (GATE/COMP) off.
-      for (const sec of channelSections(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST)) {
-        host.append(
-          boolToggle(m.inspector[sec.key], np[sec.key] ?? sec.key === "eqOn", (v) =>
-            actions.onUpdateNodeParams(node.id, { [sec.key]: v }),
-          ),
-        );
-      }
-      // COMP/EQ type (COMP->EQ vs SSMCS) exists only on the MONO IN channels.
-      if (cc?.hasMicStrip) {
-        host.append(
-          selectControl(
-            m.inspector.compEqType,
-            COMP_EQ_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
-            String(np.compEqType ?? COMP_EQ_COMP_FIRST),
-            (v) => actions.onUpdateNodeParams(node.id, { compEqType: Number(v) }),
           ),
         );
       }
@@ -231,12 +211,35 @@ export function renderInspector(
           ),
         );
       }
-      // Input 4-band PEQ (mono COMP->EQ mode / stereo channels; none in SSMCS).
-      const ieq = inputEq(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
-      if (ieq) host.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
-      // Input GATE / COMP detail (MONO IN channels; COMP only in COMP->EQ mode).
-      const dyn = channelDynamics(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
-      if (dyn) host.append(dynamicsBlock(node.id, dyn, np, plan, actions, m));
+      // COMP/EQ type (COMP->EQ vs SSMCS) — the CH SETTING bank selector that drives
+      // which COMP/EQ controls appear below. MONO IN channels only.
+      if (cc?.hasMicStrip) {
+        host.append(
+          selectControl(
+            m.inspector.compEqType,
+            COMP_EQ_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
+            String(compEqType),
+            (v) => actions.onUpdateNodeParams(node.id, { compEqType: Number(v) }),
+          ),
+        );
+      }
+
+      // GATE / COMP / EQ sections in channel-strip order: each section's ON toggle
+      // immediately followed by its detail, matching the device's dedicated
+      // GATE / COMP / EQ screens. Mono channels have all three; stereo channels
+      // expose only EQ. Default before a fetch: EQ on, GATE/COMP off.
+      const dyn = channelDynamics(model, node.id, compEqType);
+      const ieq = inputEq(model, node.id, compEqType);
+      for (const sec of channelSections(model, node.id, compEqType)) {
+        host.append(
+          boolToggle(m.inspector[sec.key], np[sec.key] ?? sec.key === "eqOn", (v) =>
+            actions.onUpdateNodeParams(node.id, { [sec.key]: v }),
+          ),
+        );
+        if (sec.key === "gateOn" && dyn) host.append(gateDetailBlock(node.id, dyn.gate, np, plan, actions, m));
+        else if (sec.key === "compOn" && dyn?.comp) host.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
+        else if (sec.key === "eqOn" && ieq) host.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
+      }
     }
 
     // Ducker node: on/off + detail (threshold/range/attack/decay) for the
@@ -299,13 +302,9 @@ export function renderInspector(
       const osc = plan.nodeParams[node.id]?.osc ?? {};
       const setOsc = (patch: Partial<typeof osc>): void =>
         actions.onUpdateNodeParams(node.id, { osc: { ...osc, ...patch } });
+      // OSCILLATOR menu order (device top-left → bottom-right): Mode, ON, then the
+      // Frequency / Level row (Frequency shows only in Sine Wave mode).
       host.append(subheading(m.inspector.parameters));
-      host.append(boolToggle(m.inspector.oscOn, osc.on ?? false, (v) => setOsc({ on: v })));
-      host.append(
-        rangeSlider(m.inspector.oscLevel, -96, 0, 1, osc.level ?? -20, formatDb, (v) =>
-          setOsc({ level: v }),
-        ),
-      );
       host.append(
         selectControl(
           m.inspector.oscMode,
@@ -314,9 +313,15 @@ export function renderInspector(
           (v) => setOsc({ mode: Number(v) }),
         ),
       );
+      host.append(boolToggle(m.inspector.oscOn, osc.on ?? false, (v) => setOsc({ on: v })));
       if ((osc.mode ?? OSC_MODE_SINE) === OSC_MODE_SINE) {
         host.append(eqFreqControl(osc.freq ?? 1000, (hz) => setOsc({ freq: hz })));
       }
+      host.append(
+        rangeSlider(m.inspector.oscLevel, -96, 0, 1, osc.level ?? -20, formatDb, (v) =>
+          setOsc({ level: v }),
+        ),
+      );
     }
 
     // Insert FX dropdown: MONO IN channels (input effects) and MIX/STEREO outputs
@@ -346,6 +351,16 @@ export function renderInspector(
           })),
           String(plan.nodeParams[node.id]?.insertFx ?? INSERT_FX_NONE),
           (v) => actions.onUpdateNodeParams(node.id, { insertFx: Number(v) }),
+        ),
+      );
+    }
+
+    // Channel ON (mute) — the bottom-most control of the device channel strip,
+    // after the INS FX block above (channel-strip reading order).
+    if (node.kind === "channel") {
+      host.append(
+        boolToggle(m.inspector.channelOn, plan.nodeParams[node.id]?.on ?? true, (v) =>
+          actions.onUpdateNodeParams(node.id, { on: v }),
         ),
       );
     }
@@ -600,7 +615,8 @@ function eqBandBlock(
         ),
       );
     }
-    frag.append(eqFreqControl(bv.freq ?? EQ_BAND_DEFAULT_FREQ[band.index], (v) => setBand(band.index, { freq: v })));
+    // Device EQ screen reads each band's values Q, Freq, Gain (left → right); Q is
+    // shown only for a peaking band, gain only when the band is not a pass filter.
     if (effType === EQ_TYPE_PEAKING) {
       frag.append(
         rangeSlider(m.inspector.q, EQ_Q_MIN, EQ_Q_MAX, 0.1, bv.q ?? EQ_Q_DEFAULT, (v) => v.toFixed(2), (v) =>
@@ -608,6 +624,7 @@ function eqBandBlock(
         ),
       );
     }
+    frag.append(eqFreqControl(bv.freq ?? EQ_BAND_DEFAULT_FREQ[band.index], (v) => setBand(band.index, { freq: v })));
     if (effType !== EQ_TYPE_PASS) {
       frag.append(
         rangeSlider(m.inspector.eqGain, EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB, 0.5, bv.gain ?? 0, formatGainDb, (v) =>
@@ -638,6 +655,19 @@ function dynFieldSlider(
   return rangeSlider(label, f.min, f.max, f.step, cur ?? f.def, (v) => formatDyn(v, f.unit), (v) => onSet(f.key, v));
 }
 
+// Merge a patch into a node's live dynamics sub-object (gate / comp / ducker),
+// reading the latest stored value at edit time so concurrent sibling slider edits
+// aren't lost.
+function mergeSection(
+  actions: InspectorActions,
+  plan: Plan,
+  nodeId: string,
+  section: "gate" | "comp" | "ducker",
+  patch: Record<string, number | boolean>,
+): void {
+  actions.onUpdateNodeParams(nodeId, { [section]: { ...(plan.nodeParams[nodeId]?.[section] ?? {}), ...patch } });
+}
+
 // Ducker node detail editor: the on/off plus threshold/range/attack/decay sliders.
 // The ducker source is a key-source connection, edited on the canvas, not here.
 function duckerBlock(
@@ -652,68 +682,73 @@ function duckerBlock(
   frag.append(
     boolToggle(m.inspector.duckerOn, np.duckerOn ?? false, (v) => actions.onUpdateNodeParams(nodeId, { duckerOn: v })),
   );
-  const setDucker = (key: DynField["key"], v: number): void =>
-    actions.onUpdateNodeParams(nodeId, { ducker: { ...(plan.nodeParams[nodeId]?.ducker ?? {}), [key]: v } });
   const vals = (np.ducker ?? {}) as Record<string, number | undefined>;
-  for (const f of DUCKER_FIELDS) frag.append(dynFieldSlider(f, m, vals[f.key], setDucker));
+  for (const f of DUCKER_FIELDS)
+    frag.append(dynFieldSlider(f, m, vals[f.key], (key, v) => mergeSection(actions, plan, nodeId, "ducker", { [key]: v })));
   return frag;
 }
 
-// Input GATE / COMP detail editor (MONO IN channels). Renders the GATE sliders
-// (threshold/range/attack/hold/decay) and, in COMP->EQ mode, the COMP sliders
-// (threshold/ratio/gain/attack/release) plus the knee dropdown. All sliders mutate
-// in place (no value drives a layout change), so none trigger a re-render.
-function dynamicsBlock(
+// GATE detail sliders (threshold/range/attack/hold/decay) for a MONO IN channel.
+// The section's GATE ON toggle precedes this block (see renderInspector), so it
+// reads like the device's GATE screen — the GATE button heads its parameters.
+// Sliders mutate in place (no value drives a layout change), so none re-render.
+function gateDetailBlock(
   nodeId: string,
-  dyn: ChannelDynamics,
+  fields: DynField[],
   np: NodeParams,
   plan: Plan,
   actions: InspectorActions,
   m: Messages,
 ): DocumentFragment {
   const frag = document.createDocumentFragment();
-  // Merge into the live section object so concurrent sibling edits aren't lost.
-  const setSection = (section: "gate" | "comp", patch: Record<string, number | boolean>): void =>
-    actions.onUpdateNodeParams(nodeId, { [section]: { ...(plan.nodeParams[nodeId]?.[section] ?? {}), ...patch } });
-  const sliderFor = (f: DynField, section: "gate" | "comp", cur: number | undefined): HTMLElement =>
-    dynFieldSlider(f, m, cur, (key, v) => setSection(section, { [key]: v }));
-
-  frag.append(subheading(m.inspector.gateOn));
   const gate = (np.gate ?? {}) as Record<string, number | undefined>;
-  for (const f of dyn.gate) frag.append(sliderFor(f, "gate", gate[f.key]));
+  for (const f of fields)
+    frag.append(dynFieldSlider(f, m, gate[f.key], (key, v) => mergeSection(actions, plan, nodeId, "gate", { [key]: v })));
+  return frag;
+}
 
-  if (dyn.comp) {
-    frag.append(subheading(m.inspector.compOn));
-    const comp = np.comp ?? {};
-    const compVals = comp as Record<string, number | undefined>;
-    // 1-knob drives every comp param from a single level, so the individual
-    // controls hide while it is on (matching the device).
-    frag.append(boolToggle(m.inspector.oneKnob, comp.oneKnob ?? false, (v) => setSection("comp", { oneKnob: v })));
-    if (comp.oneKnob) {
-      frag.append(
-        rangeSlider(m.inspector.oneKnobLevel, 0, 100, 1, comp.oneKnobLevel ?? 0, (v) => `${v}%`, (v) =>
-          setSection("comp", { oneKnobLevel: v }),
-        ),
-      );
-    } else {
-      // Auto Makeup auto-drives the gain, so the gain slider hides while it is on.
-      frag.append(
-        boolToggle(m.inspector.autoMakeup, comp.autoMakeup ?? false, (v) => setSection("comp", { autoMakeup: v })),
-      );
-      for (const f of dyn.comp) {
-        if (f.key === "gain" && comp.autoMakeup) continue;
-        frag.append(sliderFor(f, "comp", compVals[f.key]));
-      }
-      frag.append(
-        selectControl(
-          m.inspector.dyn.knee,
-          COMP_KNEE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
-          String(comp.knee ?? COMP_KNEE_DEFAULT),
-          (v) => setSection("comp", { knee: Number(v) }),
-        ),
-      );
-    }
+// COMP detail editor (MONO IN channels, COMP->EQ mode). Follows the COMP ON toggle
+// like the device's COMP screen: Auto Makeup then 1-knob (left → right), then the
+// threshold/ratio/gain/attack/release sliders and the knee dropdown. 1-knob drives
+// every param from a single level, so the rest — Auto Makeup included — hide while
+// it is on, and Auto Makeup auto-drives the gain, so its slider hides too.
+function compDetailBlock(
+  nodeId: string,
+  fields: DynField[],
+  np: NodeParams,
+  plan: Plan,
+  actions: InspectorActions,
+  m: Messages,
+): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  const setComp = (patch: Record<string, number | boolean>): void =>
+    mergeSection(actions, plan, nodeId, "comp", patch);
+  const comp = np.comp ?? {};
+  const compVals = comp as Record<string, number | undefined>;
+  if (!comp.oneKnob) {
+    frag.append(boolToggle(m.inspector.autoMakeup, comp.autoMakeup ?? false, (v) => setComp({ autoMakeup: v })));
   }
+  frag.append(boolToggle(m.inspector.oneKnob, comp.oneKnob ?? false, (v) => setComp({ oneKnob: v })));
+  if (comp.oneKnob) {
+    frag.append(
+      rangeSlider(m.inspector.oneKnobLevel, 0, 100, 1, comp.oneKnobLevel ?? 0, (v) => `${v}%`, (v) =>
+        setComp({ oneKnobLevel: v }),
+      ),
+    );
+    return frag;
+  }
+  for (const f of fields) {
+    if (f.key === "gain" && comp.autoMakeup) continue;
+    frag.append(dynFieldSlider(f, m, compVals[f.key], (key, v) => setComp({ [key]: v })));
+  }
+  frag.append(
+    selectControl(
+      m.inspector.dyn.knee,
+      COMP_KNEE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
+      String(comp.knee ?? COMP_KNEE_DEFAULT),
+      (v) => setComp({ knee: Number(v) }),
+    ),
+  );
   return frag;
 }
 
