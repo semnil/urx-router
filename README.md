@@ -36,6 +36,14 @@ Because the planning UI is pure frontend, you can verify behavior in a browser w
 even without Rust installed. Desktop builds (`pnpm tauri dev` / `pnpm tauri build`) require
 [Rust](https://rustup.rs/).
 
+Pass `--experimental` to enable experimental features (hidden by default):
+
+```sh
+pnpm tauri dev -- -- --experimental          # dev
+open -a 'URX Router' --args --experimental    # built app (macOS)
+urx-router.exe --experimental                 # built app (Windows)
+```
+
 ## Device control (experimental, URX44V only)
 
 Desktop builds can read the connected interface's current mixer settings into the plan
