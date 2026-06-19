@@ -28,14 +28,32 @@ export interface ModelParams {
   hasLineOut: boolean;
 }
 
+// Base layout column per node kind. Buses split across two columns by signal
+// stage (see layoutCol below), so `bus` here is only the mix-bus column; outputs
+// shift right to make room for the downstream derived-bus column.
 const COL: Record<DeviceNode["column"], number> = {
   input: 0,
   channel: 1,
   bus: 2,
-  output: 3,
+  output: 4,
   // Duckers sit in the channel column (hung under their parent), never a column
   // of their own; this entry exists only to satisfy the exhaustive Record type.
   ducker: 1,
+};
+
+// Monitor / streaming buses are fed only by the mix buses, so they sit downstream
+// in their own column (3) instead of crowding the channel-to-bus convergence.
+const DERIVED_BUSES = new Set(["bus.stream", "bus.mon1", "bus.mon2"]);
+
+// Layout column index for a node. OSCILLATOR is a generator that feeds the mix
+// buses, so it joins the channel column rather than the bus stage; this keeps
+// every wire flowing strictly left-to-right.
+const layoutCol = (node: Omit<DeviceNode, "pos">): number => {
+  if (node.column === "bus") {
+    if (node.id === "bus.osc") return COL.channel;
+    return DERIVED_BUSES.has(node.id) ? 3 : COL.bus;
+  }
+  return COL[node.column];
 };
 
 const inPort = (): Port[] => [{ id: "in", label: "in", direction: "in" }];
@@ -48,16 +66,15 @@ const ioPort = (): Port[] => [
 export function buildModel(p: ModelParams): DeviceModel {
   const nodes: DeviceNode[] = [];
   const rules: RoutingRule[] = [];
-  const rowByCol: Record<DeviceNode["column"], number> = {
-    input: 0,
-    channel: 0,
-    bus: 0,
-    output: 0,
-    ducker: 0,
-  };
+  // Row counter keyed by the numeric layout column, so the two bus columns and
+  // the channel-shared OSCILLATOR each stack independently.
+  const rowByCol = new Map<number, number>();
 
   function add(node: Omit<DeviceNode, "pos">): void {
-    nodes.push({ ...node, pos: { col: COL[node.column], row: rowByCol[node.column]++ } });
+    const col = layoutCol(node);
+    const row = rowByCol.get(col) ?? 0;
+    nodes.push({ ...node, pos: { col, row } });
+    rowByCol.set(col, row + 1);
   }
   function r(from: string, to: string, kind: ConnectionKind, fixed = false): void {
     rules.push(fixed ? { from, to, kind, fixed } : { from, to, kind });
@@ -104,7 +121,7 @@ export function buildModel(p: ModelParams): DeviceModel {
     channels.push(id);
     // Each stereo channel carries one ducker hung directly below it; reserve the
     // next grid row so the default layout leaves room for that hanging node.
-    rowByCol.channel++;
+    rowByCol.set(COL.channel, (rowByCol.get(COL.channel) ?? 0) + 1);
   }
 
   // --- Buses ---------------------------------------------------------------
