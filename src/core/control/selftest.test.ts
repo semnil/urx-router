@@ -12,10 +12,10 @@ vi.mock("../platform", () => ({
 }));
 
 import { vdConnect, vdDisconnect, vdGet, vdSet } from "../platform";
-import { planToCommands } from "./translate";
-import { INSERT_FX_OPTIONS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
-import { PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
-import { perturbedPlan, runSelfTest } from "./selftest";
+import { auditUnverified, planToCommands } from "./translate";
+import { D_GAIN_PARAM, INSERT_FX_OPTIONS, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
+import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
+import { formatSelfTestReport, perturbedPlan, runSelfTest } from "./selftest";
 
 const model = getModel("URX44V");
 
@@ -109,5 +109,82 @@ describe("runSelfTest", () => {
     const faders = cmds.filter((c) => /FADER|SEND_LEVEL/.test(c.name));
     expect(faders.length).toBeGreaterThan(0);
     expect(faders.every((c) => c.vdValue === VD_LEVEL_OFF)).toBe(true);
+  });
+});
+
+describe("unverified-guess workflow (URX22)", () => {
+  const m22 = getModel("URX22");
+
+  function seed22(): Plan {
+    const plan = emptyPlan("URX22");
+    ensureFixedConnections(m22, plan);
+    return plan;
+  }
+
+  function installMock22(seed: Plan): Map<string, number> {
+    const table = new Map<string, number>();
+    for (const c of planToCommands(m22, seed)) table.set(`${c.paramId}:${c.x}:${c.y}`, c.vdValue);
+    vi.mocked(vdConnect).mockResolvedValue({ model: "URX22", label: "URX22" });
+    vi.mocked(vdDisconnect).mockResolvedValue(undefined);
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      const k = `${id}:${x}:${y}`;
+      return Promise.resolve(table.has(k) ? table.get(k)! : PORT_REF_PARAMS.has(id) ? PORT_REF_NONE : 0);
+    });
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+    return table;
+  }
+
+  it("has no static collisions after the ch_3_4 D.Gain id was moved off CLIP_SAFE", () => {
+    // The re-guess (param 11) is free; the earlier guess (5) collided with CLIP_SAFE.
+    expect(auditUnverified("URX22")).toEqual([]);
+    expect(D_GAIN_PARAM["ch_3_4"]).not.toBe(PARAMS.CLIP_SAFE.id);
+  });
+
+  it("suppressGuess drops a D.Gain write without touching the shared-id confirmed param", () => {
+    const original = seed22();
+    original.nodeParams["ch_3_4"] = { gain: 6 };
+    original.nodeParams["ch1"] = { clipSafe: true };
+    const plan = perturbedPlan(m22, original, 0, new Set(["dgain-ch_3_4"]));
+    expect(plan.nodeParams["ch_3_4"]?.gain).toBeUndefined();
+    const cmds = planToCommands(m22, plan);
+    // The D.Gain (HA_GAIN at its own id) is gone; CLIP_SAFE is still sent.
+    expect(cmds.some((c) => c.name === "HA_GAIN" && c.paramId === D_GAIN_PARAM["ch_3_4"])).toBe(false);
+    expect(cmds.some((c) => c.name === "CLIP_SAFE" && c.paramId === PARAMS.CLIP_SAFE.id)).toBe(true);
+  });
+
+  it("floors a non-colliding stereo channel's gain to its device minimum", () => {
+    const original = seed22();
+    original.nodeParams["ch_5_6"] = { gain: 12 };
+    const plan = perturbedPlan(m22, original, 0);
+    expect(plan.nodeParams["ch_5_6"]?.gain).toBe(D_GAIN_MIN_DB);
+  });
+
+  it("sweeps input source across real ports (not just the captured selection)", () => {
+    const plan = perturbedPlan(m22, seed22(), 0);
+    expect(plan.connections.some((c) => c.kind === "source")).toBe(true);
+    const cmds = planToCommands(m22, plan);
+    expect(cmds.some((c) => c.name === "INPUT_SOURCE" && c.vdValue !== PORT_REF_NONE)).toBe(true);
+  });
+
+  it("confirms every unverified guess on a faithful device (no collisions)", async () => {
+    installMock22(seed22());
+    const report = await runSelfTest(m22, 0);
+    expect(report.device).toBe("URX22");
+    expect(report.collisions).toEqual([]);
+    expect(report.unverified.map((u) => u.key).sort()).toEqual(
+      ["dgain-ch_3_4", "hiz-channel", "input-ports", "stereo-block"].sort(),
+    );
+    for (const u of report.unverified) {
+      expect(u.collision).toBe(false);
+      expect(u.confirmed).toBe(true);
+    }
+    expect(report.restored).toBe(true);
+    // The exported report leads with the per-guess verdicts.
+    const md = formatSelfTestReport(report);
+    expect(md).toContain("# URX self-test report — URX22");
+    expect(md).toContain("CONFIRMED");
   });
 });

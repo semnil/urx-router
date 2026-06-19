@@ -171,6 +171,8 @@ export const ja: Messages = {
     selfTestPass: (n: number): string => `セルフテスト合格: ${n} 件のパラメータを書き込み、同一に読み戻しました`,
     selfTestFail: (n: number): string => `セルフテスト失敗: 書き込み後に ${n} 件が一致しませんでした (コンソール参照)`,
     selfTestRestoreFail: "セルフテスト: デバイスが復元されていない可能性があります — 再度取得して確認してください",
+    selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
+      `セルフテストの推測: 確認 ${confirmed} 件・否定 ${refuted} 件・検証不能 ${untestable} 件`,
     selfTestError: (message: string): string => `セルフテストのエラー: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",
@@ -201,11 +203,14 @@ export const ja: Messages = {
       `${n} 件の変更をデバイスに書き込みますか? デバイスの現在の設定を上書きします。`,
     selfTest:
       "デバイスのセルフテストを実行しますか? 全パラメータを一時的に上書きして書き込みを検証し、元の状態に復元します。実行中は出力をミュート (フェーダー最小・発振器/ファンタム OFF) します。",
+    selfTestExport:
+      "この機種には未確認のパラメータ対応があります。確認のため送り返せるよう、セルフテストのレポートを保存しますか?",
   },
   filter: {
     plan: "URX Router 計画",
     png: "PNG 画像",
     pdf: "PDF 文書",
+    report: "セルフテストのレポート",
   },
   error: {
     noRule: "この経路は接続できません",

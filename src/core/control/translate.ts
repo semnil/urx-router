@@ -8,7 +8,7 @@
 // each channel's main fader / pan (its fixed send into STEREO → CH_FADER / CH_PAN).
 // Bus sends and channel-strip processing land here as their ids are confirmed.
 
-import type { ConnectionKind, DeviceModel } from "../../models/types";
+import type { ConnectionKind, DeviceModel, ModelId } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
 import type { CompParams, EqBand, GateParams, Plan } from "../plan";
 import { incomingConnection } from "../plan";
@@ -21,6 +21,7 @@ import {
   denormalizeInsertFx,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
+  paramNameForId,
   PARAMS,
   STEREO_FADER,
   STEREO_ON,
@@ -892,6 +893,124 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const conn = plan.connections.find((c) => c.from === ref("bus.osc", "out") && c.to === ref(busId, "in"));
     out.push(command(a.name, a.l, conn && conn.params?.oscL !== false ? 1 : 0));
     if (a.r !== null) out.push(command(a.name, a.r, conn && conn.params?.oscR !== false ? 1 : 0));
+  }
+  return out;
+}
+
+// --- Unverified-mapping registry -------------------------------------------
+// Device mappings confirmed only on URX44V (the captured unit) that remain
+// educated guesses on the other models, pending confirmation by an owner via the
+// device self-test. Each entry is self-contained: it resolves the device
+// addresses it writes on a model (so the self-test can tag a finding with the
+// guess it confirms or refutes), names the param ids it invents (so the static
+// collision audit can vet them), and — when it invents a colliding id — knows how
+// to drop its own plan field. Adding a guess is one entry here, no switch to keep
+// in sync. Lives in translate.ts because address resolution needs the model
+// helpers below (channelControl / stereoIndexMap / channelInputSlots).
+
+/** One device address a guess writes: [paramId, y] (the address x field is 0). */
+export type GuessAddress = [paramId: number, y: number];
+
+export interface UnverifiedMapping {
+  /** Stable key, also used to tag self-test findings. */
+  key: string;
+  /** Human-readable description for the self-test report. */
+  label: string;
+  /** Models on which it is still a guess (confirmed models omitted). */
+  models: ModelId[];
+  /** Device addresses this guess writes on the model (empty if absent on it). */
+  addresses(model: DeviceModel): GuessAddress[];
+  /** Param ids this guess INVENTS — subject to the collision audit. A guess that
+   *  only reuses a confirmed param's id (value/instance guess) leaves this empty. */
+  guessedIds: number[];
+  /** Strip the plan field a colliding guess would misaddress (omitted = nothing). */
+  suppress?(plan: Plan): void;
+}
+
+export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
+  {
+    key: "dgain-ch_3_4",
+    label: "URX22 ch_3_4 digital input gain (D.Gain) param id",
+    models: ["URX22"],
+    guessedIds: [D_GAIN_PARAM.ch_3_4],
+    addresses: (model) =>
+      stereoIndexMap(model).has("ch_3_4")
+        ? [[D_GAIN_PARAM.ch_3_4, 0], [D_GAIN_PARAM.ch_3_4, 1]]
+        : [],
+    suppress: (plan) => {
+      if (plan.nodeParams["ch_3_4"]) delete plan.nodeParams["ch_3_4"].gain;
+    },
+  },
+  {
+    key: "hiz-channel",
+    label: "URX22 Hi-Z (instrument) input channel",
+    models: ["URX22"],
+    guessedIds: [],
+    addresses: (model) =>
+      model.nodes.flatMap((node) => {
+        const cc = channelControl(model, node.id);
+        return cc?.hasHiZ ? [[PARAMS.HI_Z.id, cc.y] as GuessAddress] : [];
+      }),
+  },
+  {
+    key: "stereo-block",
+    label: "Stereo channel fader/on/pan block (266/267/268)",
+    models: ["URX22", "URX44"],
+    guessedIds: [STEREO_FADER, STEREO_ON, STEREO_PAN],
+    addresses: (model) => {
+      const ys = [...stereoIndexMap(model).values()];
+      return [STEREO_FADER, STEREO_ON, STEREO_PAN].flatMap((id) => ys.map((y) => [id, y] as GuessAddress));
+    },
+  },
+  {
+    key: "input-ports",
+    label: "Physical input source port map (param 22 values)",
+    models: ["URX22", "URX44"],
+    guessedIds: [],
+    addresses: (model) =>
+      model.nodes.flatMap(
+        (node) => (channelInputSlots(model, node.id) ?? []).map((s) => [PARAMS.INPUT_SOURCE.id, s] as GuessAddress),
+      ),
+  },
+];
+
+/** A guessed param id that a confirmed catalog param already owns. */
+export interface UnverifiedCollision {
+  key: string;
+  label: string;
+  paramId: number;
+  /** The confirmed param the guessed id would actually address. */
+  confirmed: ParamName;
+}
+
+/**
+ * Audit a model's unverified guesses statically (no device needed): a guessed id
+ * that a confirmed catalog param already owns is almost certainly wrong — a write
+ * meant for the guess would land on that confirmed param instead — so the
+ * self-test must not exercise it. Returns one collision per offending id.
+ */
+export function auditUnverified(model: ModelId): UnverifiedCollision[] {
+  const out: UnverifiedCollision[] = [];
+  for (const mapping of UNVERIFIED_MAPPINGS) {
+    if (!mapping.models.includes(model)) continue;
+    for (const id of mapping.guessedIds) {
+      const confirmed = paramNameForId(id);
+      if (confirmed) out.push({ key: mapping.key, label: mapping.label, paramId: id, confirmed });
+    }
+  }
+  return out;
+}
+
+/**
+ * Device addresses each still-unverified mapping writes on a model, as
+ * "paramId:y" → mapping key (x is always 0 for these). The self-test uses it to
+ * tag a residual finding with the guess it confirms or refutes.
+ */
+export function unverifiedAddresses(model: DeviceModel): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const mapping of UNVERIFIED_MAPPINGS) {
+    if (!mapping.models.includes(model.id)) continue;
+    for (const [paramId, y] of mapping.addresses(model)) out.set(`${paramId}:${y}`, mapping.key);
   }
   return out;
 }

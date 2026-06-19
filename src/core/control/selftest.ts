@@ -15,16 +15,36 @@
 // (k mod optionCount) for COMP/EQ type, COMP knee, OSC mode and EQ-band type, so
 // every option is written over the run. Insert FX is swept on a single node per
 // pass (one input channel + one output bus), the rest set to none, to respect
-// the device-wide 1-of-N slot exclusivity. PASSES covers the largest enum.
+// the device-wide 1-of-N slot exclusivity. Input source is swept across the
+// model's selectable input ports, so the (still-unverified on URX22/44) physical
+// port map is exercised, not just the captured selection. PASSES covers the
+// largest enum.
+//
+// UNVERIFIED GUESSES: some device mappings are confirmed only on URX44V and remain
+// guesses on URX22/URX44 (see UNVERIFIED_MAPPINGS). A static audit first refutes
+// any guessed id a confirmed param already owns (its writes are suppressed so the
+// test never misaddresses hardware); the rest are exercised, and each round-trip
+// result is reported per guess (confirmed / refuted / could-not-test) so an owner
+// can confirm them. This is the live counterpart of that confirmation workflow.
 
 import type { DeviceModel } from "../../models/types";
+import { parseRef, ref } from "../../models/types";
 import type { Plan } from "../plan";
 import { emptyPlan } from "../plan";
+import { canConnect, partnerChannel } from "../routing";
 import { vdConnect, vdDisconnect } from "../platform";
 import { INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "./params";
 import { sendConverging } from "./client";
 import { applyDeviceState } from "./readback";
-import { insertFxControl } from "./translate";
+import {
+  auditUnverified,
+  channelControl,
+  inputPorts,
+  insertFxControl,
+  UNVERIFIED_MAPPINGS,
+  unverifiedAddresses,
+} from "./translate";
+import type { UnverifiedCollision } from "./translate";
 
 export interface SelfTestMismatch {
   name: string;
@@ -37,6 +57,21 @@ export interface SelfTestMismatch {
   actual: number | null;
   /** Sweep pass that produced this mismatch. */
   pass: number;
+  /** Unverified-mapping key this address belongs to, if any (the guess it refutes). */
+  unverifiedKey?: string;
+}
+
+/** Per-guess outcome of the run, so an owner can confirm or refute each one. */
+export interface UnverifiedFinding {
+  key: string;
+  label: string;
+  /** A confirmed catalog param owns the guessed id — the guess is wrong and the
+   *  self-test could not exercise it (its writes were suppressed for safety). */
+  collision: boolean;
+  /** Addresses written for this guess that did not round-trip. */
+  mismatches: SelfTestMismatch[];
+  /** True when the guess was exercised and every address round-tripped (confirmed). */
+  confirmed: boolean;
 }
 
 export interface SelfTestReport {
@@ -52,6 +87,10 @@ export interface SelfTestReport {
   written: number;
   /** Params that did not match after a write — the findings. */
   residual: SelfTestMismatch[];
+  /** Guessed ids that collide with a confirmed param (static audit; the guess is wrong). */
+  collisions: UnverifiedCollision[];
+  /** Per-unverified-mapping outcome (confirmed / refuted / could-not-test). */
+  unverified: UnverifiedFinding[];
   /** True when the device was returned to its original captured state. */
   restored: boolean;
   /** Residual diff count after writing the original back (0 = fully restored). */
@@ -106,15 +145,20 @@ function perturb(obj: Record<string, unknown>, pass: number): void {
 
 // Force the plan silent: floor every output fader, disable the oscillator
 // generator, and disable phantom power. Applied last so it overrides perturb.
-// Head-amp gain and the oscillator level are NOT floored: gain is a pre-fader
-// input stage (floored faders already block all output) and the oscillator is
-// off, so neither can produce sound — and flooring them past their own device
-// range only breaks the round trip (the device re-clamps to its own minimum).
-function makeSilent(plan: Plan): void {
-  for (const np of Object.values(plan.nodeParams)) {
+// Head-amp gain is floored to each channel's own minimum (not SILENCE_DB, which
+// would be re-clamped and break the round trip): a still-unverified gain param id
+// could write to an unintended address, and the channel minimum is the safest
+// value such a write can carry while still letting a correct id round-trip. The
+// oscillator level is left alone (the generator is already off).
+function makeSilent(model: DeviceModel, plan: Plan): void {
+  for (const [nodeId, np] of Object.entries(plan.nodeParams)) {
     if (typeof np.level === "number") np.level = SILENCE_DB;
     if (np.phantom) np.phantom = false;
     if (np.osc) np.osc.on = false;
+    if (typeof np.gain === "number") {
+      const cc = channelControl(model, nodeId);
+      if (cc?.gain) np.gain = cc.gain.minDb;
+    }
   }
   // Floor the level on every connection (creating params if absent), so a
   // channel fader / send carries no signal even when the captured plan did not
@@ -141,13 +185,68 @@ function sweepInsertFx(plan: Plan, pass: number, model: DeviceModel): void {
   }
 }
 
-/** Build the (silent) perturbed plan for a given sweep pass. Exported for tests. */
-export function perturbedPlan(model: DeviceModel, original: Plan, pass: number): Plan {
+// Sweep input-source selection across the model's selectable input ports, so the
+// physical port map (INPUT_PORTS) is verified — not just whatever the captured
+// state happened to assign. Each pass points every channel group at a different
+// input node (cycling), replacing its source wire. A linked mono pair is assigned
+// together to one node (the device fixes the partner: its L port to the first
+// channel, R to its partner), and a stereo channel takes one node's L/R pair —
+// matching how planToCommands derives the per-slot port. The port value written is
+// inputPorts(node), so a mismatch on read-back pins INPUT_PORTS as wrong. Levels
+// are floored by makeSilent, so re-routing inputs stays silent.
+function sweepInputSource(plan: Plan, pass: number, model: DeviceModel): void {
+  const inputs = model.nodes.filter((n) => n.kind === "input" && inputPorts(n.id)).map((n) => n.id);
+  if (!inputs.length) return;
+  // Group channels into source-selection units: a linked mono pair, or a single
+  // channel (unpaired mono / stereo).
+  const groups: string[][] = [];
+  const seen = new Set<string>();
+  for (const node of model.nodes) {
+    if (node.kind !== "channel" || seen.has(node.id)) continue;
+    const partner = partnerChannel(model, node.id);
+    if (partner && model.nodes.some((n) => n.id === partner)) {
+      groups.push([node.id, partner]);
+      seen.add(node.id).add(partner);
+    } else {
+      groups.push([node.id]);
+      seen.add(node.id);
+    }
+  }
+  const channelIds = new Set(groups.flat());
+  // Drop existing channel source wires (other "source" wires — stream / monitor —
+  // are left alone), then assign each group one cycling input node.
+  plan.connections = plan.connections.filter(
+    (c) => c.kind !== "source" || !channelIds.has(parseRef(c.to).nodeId),
+  );
+  groups.forEach((group, gi) => {
+    const inputId = inputs[(pass + gi) % inputs.length];
+    for (const chId of group) {
+      const from = ref(inputId, "out");
+      const to = ref(chId, "in");
+      if (canConnect(model, plan, from, to).ok) plan.connections.push({ from, to, kind: "source" });
+    }
+  });
+}
+
+/**
+ * Build the (silent) perturbed plan for a given sweep pass. `suppress` holds the
+ * keys of colliding guesses to drop: each such mapping strips its own plan field
+ * (the confirmed param sharing that address is still written, so it stays
+ * covered). Exported for tests.
+ */
+export function perturbedPlan(
+  model: DeviceModel,
+  original: Plan,
+  pass: number,
+  suppress?: ReadonlySet<string>,
+): Plan {
   const plan = structuredClone(original);
   for (const np of Object.values(plan.nodeParams)) perturb(np as Record<string, unknown>, pass);
   for (const c of plan.connections) if (c.params) perturb(c.params as Record<string, unknown>, pass);
   sweepInsertFx(plan, pass, model);
-  makeSilent(plan);
+  sweepInputSource(plan, pass, model);
+  if (suppress) for (const m of UNVERIFIED_MAPPINGS) if (suppress.has(m.key)) m.suppress?.(plan);
+  makeSilent(model, plan);
   return plan;
 }
 
@@ -167,11 +266,24 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300): Promise<S
     passes: PASSES,
     written: 0,
     residual: [],
+    collisions: [],
+    unverified: [],
     restored: false,
     restoreResidual: 0,
     errors: [],
     phase: "connect",
   };
+  // Static audit (no device): guessed ids a confirmed param already owns are wrong
+  // and must not be written. Their writes are suppressed; they are reported as
+  // collisions so an owner knows the guess is refuted before any hardware round-trip.
+  report.collisions = auditUnverified(model.id);
+  const suppress = new Set(report.collisions.map((c) => c.key));
+  // Address → unverified-mapping key, so each residual can be tagged with the guess
+  // it refutes. A colliding guess shares its address with a confirmed param (whose
+  // write is kept); drop those entries so a residual there is attributed to the
+  // confirmed param, not mislabeled as the suppressed guess.
+  const addresses = unverifiedAddresses(model);
+  for (const [addr, key] of addresses) if (suppress.has(key)) addresses.delete(addr);
   const device = await vdConnect();
   report.device = device.model;
   try {
@@ -190,7 +302,7 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300): Promise<S
     // the device resets as a side effect of a mode change are re-sent) and the
     // residual after convergence is the pass's mismatches.
     for (let pass = 0; pass < PASSES; pass++) {
-      const plan = perturbedPlan(model, original, pass);
+      const plan = perturbedPlan(model, original, pass, suppress);
       report.phase = "write";
       const { outcomes, residual } = await sendConverging(model, plan, undefined, 3, settleMs);
       report.written += outcomes.length;
@@ -205,10 +317,27 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300): Promise<S
           expected: d.command.vdValue,
           actual: d.current,
           pass,
+          unverifiedKey: d.command.x === 0 ? addresses.get(`${d.command.paramId}:${d.command.y}`) : undefined,
         });
       }
     }
     report.ok = report.residual.length === 0;
+
+    // Per-guess verdict: a collision could not be tested (and is already known
+    // wrong); otherwise the guess is confirmed when it was exercised on this model
+    // and every one of its addresses round-tripped without a mismatch.
+    const exercised = new Set(addresses.values());
+    report.unverified = UNVERIFIED_MAPPINGS.filter((m) => m.models.includes(model.id)).map((m) => {
+      const collision = suppress.has(m.key);
+      const mismatches = report.residual.filter((r) => r.unverifiedKey === m.key);
+      return {
+        key: m.key,
+        label: m.label,
+        collision,
+        mismatches,
+        confirmed: !collision && exercised.has(m.key) && mismatches.length === 0,
+      };
+    });
 
     // 3. Restore the original state (converging, for the same reset behavior).
     report.phase = "restore";
@@ -221,4 +350,75 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300): Promise<S
   } finally {
     await vdDisconnect();
   }
+}
+
+/** Tally the per-guess verdicts in one pass (for the status line / report). */
+export function summarizeVerdicts(unverified: UnverifiedFinding[]): {
+  confirmed: number;
+  refuted: number;
+  untestable: number;
+} {
+  const counts = { confirmed: 0, refuted: 0, untestable: 0 };
+  for (const u of unverified) {
+    if (u.collision) counts.untestable++;
+    else if (u.confirmed) counts.confirmed++;
+    else counts.refuted++;
+  }
+  return counts;
+}
+
+/**
+ * Render a report as human-readable Markdown an owner can save and send back to
+ * confirm the unverified guesses. Leads with the per-guess verdicts (the point of
+ * the run on URX22/URX44), then the device-fidelity residual and any issues. Pure.
+ */
+export function formatSelfTestReport(report: SelfTestReport): string {
+  const lines: string[] = [];
+  lines.push(`# URX self-test report — ${report.device || "(no device)"}`);
+  lines.push("");
+  lines.push(`- Result: ${report.ok ? "PASS" : "FAIL"} (phase: ${report.phase})`);
+  lines.push(`- Captured groups: ${report.applied}; passes: ${report.passes}; commands written: ${report.written}`);
+  lines.push(`- Restored: ${report.restored ? "yes" : `NO — ${report.restoreResidual} param(s) differ`}`);
+
+  if (report.unverified.length) {
+    lines.push("");
+    lines.push("## Unverified-guess verdicts");
+    for (const u of report.unverified) {
+      const verdict = u.collision
+        ? "COULD NOT TEST — guessed id collides with a confirmed param (guess is wrong)"
+        : u.confirmed
+          ? "CONFIRMED — round-tripped on the device"
+          : `REFUTED — ${u.mismatches.length} address(es) did not round-trip`;
+      lines.push(`- **${u.label}** (${u.key}): ${verdict}`);
+      for (const m of u.mismatches) {
+        lines.push(`  - ${m.name} @ ${m.paramId}:${m.x}:${m.y} — wrote ${m.expected}, read ${m.actual ?? "unreadable"}`);
+      }
+    }
+  }
+
+  if (report.collisions.length) {
+    lines.push("");
+    lines.push("## Static collisions (refuted before any write)");
+    for (const c of report.collisions) {
+      lines.push(`- ${c.label}: param ${c.paramId} is already owned by ${c.confirmed}`);
+    }
+  }
+
+  // Device divergence not attributable to an unverified guess — genuine fidelity issues.
+  const other = report.residual.filter((r) => !r.unverifiedKey);
+  if (other.length) {
+    lines.push("");
+    lines.push("## Other device divergence (confirmed params)");
+    for (const m of other) {
+      lines.push(`- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — wrote ${m.expected}, read ${m.actual ?? "unreadable"}`);
+    }
+  }
+
+  if (report.errors.length) {
+    lines.push("");
+    lines.push("## Issues (read/send failures)");
+    for (const e of report.errors) lines.push(`- ${e}`);
+  }
+  lines.push("");
+  return lines.join("\n");
 }
