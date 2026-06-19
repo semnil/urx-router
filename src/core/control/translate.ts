@@ -465,12 +465,14 @@ const COMP_FIELDS: DynField[] = [
   { key: "release", name: "COMP_RELEASE", min: DYN_RELEASE_MIN_MS, max: DYN_RELEASE_MAX_MS, step: 1, def: 218, unit: "ms" },
 ];
 // Ducker detail (260-263, stereo channel sidechain). Same shapes as GATE but no
-// hold; decay shares the ×10 release scale with a wider range.
+// hold; decay shares the ×10 release scale with a wider range. Ordered as the
+// device DUCKER screen reads them (Range / Attack / Decay graph handles, then the
+// Threshold box); each field carries its own param name, so order is display-only.
 export const DUCKER_FIELDS: DynField[] = [
-  { key: "threshold", name: "DUCKER_THRESHOLD", min: -60, max: 0, step: 1, def: -40, unit: "db" },
   { key: "range", name: "DUCKER_RANGE", min: -60, max: 0, step: 1, def: -56, unit: "db" },
   { key: "attack", name: "DUCKER_ATTACK", min: DYN_ATTACK_MIN_MS, max: DYN_ATTACK_MAX_MS, step: 0.1, def: 20.17, unit: "ms" },
   { key: "decay", name: "DUCKER_DECAY", min: DUCKER_DECAY_MIN_MS, max: DUCKER_DECAY_MAX_MS, step: 1, def: 1000, unit: "ms" },
+  { key: "threshold", name: "DUCKER_THRESHOLD", min: -60, max: 0, step: 1, def: -40, unit: "db" },
 ];
 
 /** GATE/COMP detail controls for a channel: the slider fields and the instance index. */
