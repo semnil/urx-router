@@ -59,6 +59,14 @@ export function partnerChannel(model: DeviceModel, nodeId: string): string | und
   return undefined;
 }
 
+/** The primary (odd, first-listed) channel of the pair containing `nodeId`, or
+ *  null when it is not part of a pair. Pair-level state (Signal Type, PAN/BAL)
+ *  lives on the primary. */
+export function pairPrimary(model: DeviceModel, nodeId: string): string | null {
+  for (const [a, b] of model.channelPairs) if (a === nodeId || b === nodeId) return a;
+  return null;
+}
+
 /** Input-port refs that the given output port may currently connect to. */
 export function legalTargets(model: DeviceModel, plan: Plan, from: string): Set<string> {
   const targets = new Set<string>();

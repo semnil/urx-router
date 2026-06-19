@@ -6,9 +6,13 @@ import type { ConnectionKind, DeviceModel, ModelId } from "../models/types";
 import { parseRef } from "../models/types";
 import { DEFAULT_SAMPLE_RATE } from "./constraints";
 
-// LEVEL fader range in dB. The floor reads as -∞ (off) in the inspector.
-export const LEVEL_MIN_DB = -60;
+// LEVEL fader / send range in dB (the device level_gain table, shared by every
+// fader, send and the monitor — UG "Range: -∞ dB to +10.00 dB"). The slider's
+// bottom notch (LEVEL_OFF_DB) is -∞ / off; one step up is the lowest real value
+// LEVEL_MIN_DB (-96.0). Verified against the broker level_gain metadata.
+export const LEVEL_MIN_DB = -96;
 export const LEVEL_MAX_DB = 10;
+export const LEVEL_OFF_DB = -96.5;
 
 export interface ConnParams {
   level?: number;
@@ -95,6 +99,12 @@ export interface NodeParams {
   /** Rec Point: signal-path tap for the channel's recording / direct out
    *  (REC_POINT_OPTIONS value). Absent = PRE FADER (the device default). */
   recPoint?: number;
+  /** Signal Type stereo link for a MONO IN pair, stored on the pair's primary
+   *  (odd) channel: true = STEREO (linked), absent/false = MONO x 2. */
+  stereoLink?: boolean;
+  /** PAN / BAL mode for a STEREO-linked pair (primary channel): 0 = PAN
+   *  (independent), 1 = BAL (balance). Absent = PAN. Meaningful only when linked. */
+  panBal?: number;
   /** BUS Type for MIX 1 / MIX 2: 0 = VARI (variable send level), 1 = FIXED
    *  (fixed send level). Absent = VARI. */
   busType?: number;
@@ -276,7 +286,7 @@ export function ensureFixedConnections(model: DeviceModel, plan: Plan): void {
     // FX returns into STEREO (the only bus-sourced fixed sends) default to -∞ so a
     // return is not summed into the main mix until raised; channel main paths stay at unity.
     const fromKind = model.nodes.find((n) => n.id === parseRef(rule.from).nodeId)?.kind;
-    if (fromKind === "bus") conn.params = { level: LEVEL_MIN_DB };
+    if (fromKind === "bus") conn.params = { level: LEVEL_OFF_DB };
     plan.connections.push(conn);
   }
 }

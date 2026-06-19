@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../plan";
+import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "../plan";
 import { INSERT_FX_NONE, normalizeInsertFx } from "./params";
 import {
   A_GAIN_MAX_DB,
@@ -10,8 +10,6 @@ import {
   EQ_GAIN_MIN_DB,
   EQ_Q_MAX,
   EQ_Q_MIN,
-  MONITOR_MIN_DB,
-  MONITOR_OFF_DB,
   VD_LEVEL_MAX,
   VD_LEVEL_OFF,
   VD_PAN_MAX,
@@ -20,7 +18,6 @@ import {
   eqGainToVd,
   gainToVd,
   levelToVd,
-  monitorLevelToVd,
   panToVd,
   qToVd,
   tagPortRef,
@@ -30,16 +27,16 @@ import {
   vdToEqGain,
   vdToGain,
   vdToLevel,
-  vdToMonitorLevel,
   vdToPan,
   vdToPortRef,
   vdToQ,
 } from "./vd";
 
-describe("level encoding", () => {
-  it("maps the plan floor to the off sentinel", () => {
-    expect(levelToVd(LEVEL_MIN_DB)).toBe(VD_LEVEL_OFF);
+describe("level encoding (shared by faders, sends and the monitor)", () => {
+  it("treats below the -96 floor as the off sentinel", () => {
+    expect(levelToVd(LEVEL_OFF_DB)).toBe(VD_LEVEL_OFF); // -96.5 (-∞ notch)
     expect(levelToVd(LEVEL_MIN_DB - 10)).toBe(VD_LEVEL_OFF);
+    expect(levelToVd(LEVEL_MIN_DB)).toBe(LEVEL_MIN_DB * 100); // -96.0 is a real value (-9600)
   });
 
   it("maps dB to centi-dB", () => {
@@ -56,15 +53,15 @@ describe("level encoding", () => {
   it("round-trips through vdToLevel", () => {
     expect(vdToLevel(levelToVd(LEVEL_MIN_DB))).toBe(LEVEL_MIN_DB);
     expect(vdToLevel(0)).toBe(0);
-    expect(vdToLevel(VD_LEVEL_OFF)).toBe(LEVEL_MIN_DB);
+    expect(vdToLevel(VD_LEVEL_OFF)).toBe(LEVEL_OFF_DB); // off sentinel → -∞ notch
   });
 });
 
-describe("pan encoding", () => {
+describe("pan encoding (device L63 – C – R63, 1:1)", () => {
   it("maps center and extremes", () => {
     expect(panToVd(0)).toBe(0);
-    expect(panToVd(100)).toBe(VD_PAN_MAX);
-    expect(panToVd(-100)).toBe(-VD_PAN_MAX);
+    expect(panToVd(VD_PAN_MAX)).toBe(VD_PAN_MAX); // R63
+    expect(panToVd(-VD_PAN_MAX)).toBe(-VD_PAN_MAX); // L63
   });
 
   it("clamps out-of-range input", () => {
@@ -72,9 +69,9 @@ describe("pan encoding", () => {
     expect(panToVd(-250)).toBe(-VD_PAN_MAX);
   });
 
-  it("round-trips center", () => {
+  it("round-trips", () => {
     expect(vdToPan(panToVd(0))).toBe(0);
-    expect(vdToPan(VD_PAN_MAX)).toBe(100);
+    expect(vdToPan(VD_PAN_MAX)).toBe(VD_PAN_MAX);
   });
 });
 
@@ -94,25 +91,6 @@ describe("HA gain encoding", () => {
   it("round-trips through vdToGain", () => {
     expect(vdToGain(gainToVd(-8))).toBe(-8);
     expect(vdToGain(2400)).toBe(24);
-  });
-});
-
-describe("monitor level encoding", () => {
-  it("maps dB to centi-dB down to the -96 floor", () => {
-    expect(monitorLevelToVd(0)).toBe(0);
-    expect(monitorLevelToVd(MONITOR_MIN_DB)).toBe(MONITOR_MIN_DB * 100); // -9600
-    expect(monitorLevelToVd(10)).toBe(VD_LEVEL_MAX);
-  });
-
-  it("treats below -96 as the off sentinel", () => {
-    expect(monitorLevelToVd(MONITOR_OFF_DB)).toBe(VD_LEVEL_OFF);
-    expect(monitorLevelToVd(-200)).toBe(VD_LEVEL_OFF);
-  });
-
-  it("decodes the off sentinel to the slider floor", () => {
-    expect(vdToMonitorLevel(VD_LEVEL_OFF)).toBe(MONITOR_OFF_DB);
-    expect(vdToMonitorLevel(-9600)).toBe(MONITOR_MIN_DB);
-    expect(vdToMonitorLevel(0)).toBe(0);
   });
 });
 

@@ -6,7 +6,7 @@ import type { DeviceModel, DeviceNode, NodeKind, PortDirection } from "../models
 import { fullLabel, isSingleInput, parseRef, ref } from "../models/types";
 import type { Plan, PlanConnection } from "../core/plan";
 import { hasConnection, removeConnection } from "../core/plan";
-import { canConnect, isFixedConnection, legalSources, legalTargets, partnerChannel, ruleKind, sendHasTap } from "../core/routing";
+import { canConnect, isFixedConnection, legalSources, legalTargets, pairPrimary, partnerChannel, ruleKind, sendHasTap } from "../core/routing";
 import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
 import type { SaveResult } from "../core/storage";
 import { t } from "../i18n";
@@ -170,6 +170,9 @@ export class Graph {
   private nodeEls = new Map<string, SVGGElement>();
   private portEls = new Map<string, SVGCircleElement>();
   private portPinEls = new Map<string, SVGCircleElement>();
+  // STEREO-link tie elements, keyed by the pair's primary (odd) channel id, so a
+  // drag can redraw the tie in place as the pair moves.
+  private stereoLinkEls = new Map<string, SVGGElement>();
 
   private palette: Palette = PALETTES.dark;
   private themeName: ThemeName = "dark";
@@ -197,8 +200,15 @@ export class Graph {
   // others. Empty whenever selection is a connection or null.
   private selectedNodes = new Set<string>();
 
-  // transient interaction state
-  private dragNode: { id: string; grabDx: number; grabDy: number } | null = null;
+  // transient interaction state. `link` is a STEREO-linked, visible partner that
+  // moves with the dragged node (keeping its offset), plus the pair to redraw the
+  // tie for. Null when the dragged node has no visible linked partner.
+  private dragNode: {
+    id: string;
+    grabDx: number;
+    grabDy: number;
+    link: { partner: string; dx: number; dy: number; pair: [string, string] } | null;
+  } | null = null;
   // A port press: starts as "pending", becomes a "connecting" rubber-band once
   // dragged past the threshold, or "noop" if the dragged port has no legal
   // partner. On release a non-connecting input press selects its incoming wire.
@@ -516,6 +526,69 @@ export class Graph {
       if (this.isHidden(node.id)) continue;
       this.nodeLayer.append(this.makeNode(node));
     }
+    // STEREO-link ties: a heart connector between the two nodes of a STEREO-linked
+    // MONO IN pair (Signal Type), mirroring the device's linked-channel look.
+    this.stereoLinkEls.clear();
+    for (const [a, b] of this.model.channelPairs) {
+      if (!this.plan.nodeParams[a]?.stereoLink) continue;
+      if (this.isHidden(a) || this.isHidden(b)) continue;
+      this.redrawStereoLink(a, b);
+    }
+  }
+
+  /** The channelPairs entry [primary, partner] containing `id` when that pair is
+   *  STEREO-linked, else null. Used to drag a linked pair as one unit. */
+  private linkedPairOf(id: string): [string, string] | null {
+    const a = pairPrimary(this.model, id);
+    if (!a || !this.plan.nodeParams[a]?.stereoLink) return null;
+    return [a, partnerChannel(this.model, a)!];
+  }
+
+  // Build (or rebuild) the heart tie for a pair, keyed by its primary `a`, and put
+  // it in the node layer — replacing any existing tie. Shared by the full repaint
+  // and the live drag so the two stay in sync.
+  private redrawStereoLink(a: string, b: string): void {
+    const tie = this.makeStereoLink(a, b);
+    const old = this.stereoLinkEls.get(a);
+    if (old) old.replaceWith(tie);
+    else this.nodeLayer.append(tie);
+    this.stereoLinkEls.set(a, tie);
+  }
+
+  // A decorative heart tie drawn in the gap between a STEREO-linked pair, anchored
+  // bottom-center of the upper node to top-center of the lower one.
+  private makeStereoLink(a: string, b: string): SVGGElement {
+    const pa = this.posOf(a);
+    const pb = this.posOf(b);
+    const [up, lo] = pa.y <= pb.y ? [pa, pb] : [pb, pa];
+    const x1 = up.x + NODE_W / 2;
+    const y1 = up.y + NODE_H;
+    const x2 = lo.x + NODE_W / 2;
+    const y2 = lo.y;
+    const mx = (x1 + x2) / 2;
+    const my = (y1 + y2) / 2;
+    const accent = this.palette.rail.channel;
+    const g = document.createElementNS(SVGNS, "g");
+    g.style.pointerEvents = "none";
+    g.append(svgLine(x1, y1, x2, y2, accent, 2, 0.85));
+    const disc = document.createElementNS(SVGNS, "circle");
+    disc.setAttribute("cx", String(mx));
+    disc.setAttribute("cy", String(my));
+    disc.setAttribute("r", "8");
+    disc.setAttribute("fill", this.palette.nodeFill);
+    disc.setAttribute("stroke", accent);
+    disc.setAttribute("stroke-width", "1");
+    g.append(disc);
+    const heart = document.createElementNS(SVGNS, "text");
+    heart.setAttribute("x", String(mx));
+    heart.setAttribute("y", String(my));
+    heart.setAttribute("text-anchor", "middle");
+    heart.setAttribute("dominant-baseline", "central");
+    heart.setAttribute("font-size", "10");
+    heart.setAttribute("fill", accent);
+    heart.textContent = "♥";
+    g.append(heart);
+    return g;
   }
 
   // A node is hidden when it is shelved AND carries no editable wires — except a
@@ -1239,7 +1312,16 @@ export class Graph {
       // selection still lands on the pressed node.
       const dragId = this.parentOf(id) ?? id;
       const dragPos = this.posOf(dragId);
-      this.dragNode = { id: dragId, grabDx: p.x - dragPos.x, grabDy: p.y - dragPos.y };
+      // A STEREO-linked MONO IN pair moves as one: capture the visible partner's
+      // offset so it tracks the dragged node (like a ducker, but with its own
+      // position). Skipped when the partner is hidden (no tie to keep in step).
+      const pair = this.linkedPairOf(dragId);
+      const partner = pair ? (pair[0] === dragId ? pair[1] : pair[0]) : null;
+      const link =
+        pair && partner && !this.isHidden(partner)
+          ? { partner, dx: this.posOf(partner).x - dragPos.x, dy: this.posOf(partner).y - dragPos.y, pair }
+          : null;
+      this.dragNode = { id: dragId, grabDx: p.x - dragPos.x, grabDy: p.y - dragPos.y, link };
       this.select({ type: "node", id });
       this.capturePointer(e.pointerId);
       return;
@@ -1281,6 +1363,16 @@ export class Graph {
       if (childId && !this.isHidden(childId)) {
         const cpos = this.posOf(childId);
         this.nodeEls.get(childId)?.setAttribute("transform", `translate(${cpos.x} ${cpos.y})`);
+      }
+      // A STEREO-linked partner moves by the captured offset (its own position),
+      // and the heart tie is redrawn to track the pair.
+      const link = this.dragNode.link;
+      if (link) {
+        const fp = { x: pos.x + link.dx, y: pos.y + link.dy };
+        this.plan.positions[link.partner] = fp;
+        this.nodeEls.get(link.partner)?.setAttribute("transform", `translate(${fp.x} ${fp.y})`);
+        this.updateNodeWires(link.partner);
+        this.redrawStereoLink(link.pair[0], link.pair[1]);
       }
       this.updateNodeWires(this.dragNode.id);
       return;

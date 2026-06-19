@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   emptyPlan,
   ensureFixedConnections,
-  LEVEL_MIN_DB,
+  LEVEL_OFF_DB,
   serialize,
   deserialize,
   hasConnection,
@@ -165,7 +165,7 @@ describe("ensureFixedConnections", () => {
     ensureFixedConnections(u44, plan);
     const fx1 = plan.connections.find((c) => c.from === ref("bus.fx1", "out") && c.to === stereo);
     const ch1 = plan.connections.find((c) => c.from === ref("ch1", "out") && c.to === stereo);
-    expect(fx1?.params).toEqual({ level: LEVEL_MIN_DB });
+    expect(fx1?.params).toEqual({ level: LEVEL_OFF_DB });
     expect(ch1?.params).toBeUndefined();
   });
 

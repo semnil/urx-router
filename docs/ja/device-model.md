@@ -129,7 +129,10 @@ MIC/LINE 1 入力に内部結線され、独立したソース選択肢として
 ### 2. チャンネル → Bus send (`send`, 受け口 複数可)
 
 各チャンネル出力は以下の Bus へ Send できる (MIX / FX Send は ON/LEVEL、PRE/POST、PAN/BAL を持つ)。
-PRE/POST は **その Send を STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取るか後 (POST) で取るか**を示す。
+LEVEL は共通の **level_gain** スケール **-∞ … +10.00 dB** (UG p155・スライダー最下=-∞ off、1 ステップ上が
+-96.0 dB)。全フェーダー/Send/モニターが共有する。PAN/BAL は実機スケール **L63 – C – R63** (UG は C を
+中央=nominal と記載・L63/R63 がハードパン端)。PRE/POST は **その Send を STEREO 主フェーダー
+(= CH → STEREO のレベル) より前 (PRE) で取るか後 (POST) で取るか**を示す。
 基準である STEREO Send 自身は PRE/POST を持たない。
 
 - STEREO (TO ST) — **固定**: チャンネルの主フェーダー経路。ブロックダイアグラムでは破線の SEND ブロックの
@@ -192,9 +195,12 @@ PRE/POST は **その Send を STEREO 主フェーダー (= CH → STEREO のレ
 - ルーティングを変更できないため、**編集対象ノードとしては表現しない** (`USB DAW OUT` ノードは持たない)
 - N = 10 (URX22) / 12 (URX44, URX44V)
 
-### 8. SD Rec Signal Assign (`patch`, 受け口 1 本、URX44 / URX44V のみ)
+### 8. SD Rec Signal Assign (`sendSwitch`, 受け口 1 本、URX44 / URX44V のみ)
 
 - microSD Rec 1/2 … 15/16 ← STEREO OUT / MIX 1–2 OUT / CH 1–N OUT (最大16track)
+- **ON/OFF の録音ソース割当**であり加算 Send ではない: RECORDER メニュー (Track Count + Source 選択 +
+  読取専用のレベルメーター) もブロックダイアグラム ("SD Rec Signal Assign") も**ソース毎の
+  level / pan / PRE-POST を持たない**。録音されるタップ位置はチャンネルの **Rec Point**。
 - microSD 再生は 2track (ステレオ)。本モデルでは入力ソース `microSD Playback` 1 個として表す。
 
 > **録音トラック数の根拠**: URX44V は microSD へ **最大16トラック録音 / 2トラック再生**
@@ -202,7 +208,7 @@ PRE/POST は **その Send を STEREO 主フェーダー (= CH → STEREO のレ
 > DAW 録音は USB 経由で **1–12 が個別チャンネル**として扱える (実機確認済み)。
 
 > **v0.1 の簡略化**: microSD Rec は本来トラックスロット単位だが、v0.1 ではノード過多を避けるため
-> 1 つのグループノードとして複数ソースを受ける (`send`) 表現に簡略化している。
+> 1 つのグループノードとして複数ソースを受ける (各ソースを `sendSwitch` 割当) 表現に簡略化している。
 > スロット単位の割当 UI は Phase 2 で対応する。
 
 ### 9. HDMI THRU (固定パススルー、ノード非表示、URX44V のみ)
@@ -223,7 +229,13 @@ PRE/POST は **その Send を STEREO 主フェーダー (= CH → STEREO のレ
   チャンネルの **Rec Point** (録音 / ダイレクトアウトのタップ) はこのチェーン上の段を選ぶ:
   MONO IN は PRE GATE / PRE COMP / PRE EQ / PRE INS FX / PRE FADER、ST IN (EQ のみ) は
   PRE EQ / PRE FADER。既定は PRE FADER。配線ではなくチャンネルごとのパラメータとして保持する。
-- モノ CH とステレオ CH の構成は固定 (機種で本数のみ変化)。
+- モノ CH とステレオ CH の構成は固定 (機種で本数のみ変化)。MONO IN ペア (CH1/2, CH3/4) は
+  **Signal Type** (CH SETTING) を持つ: STEREO は隣接 2 ch をリンク、MONO × 2 は独立 (既定)。
+  ツールは 2 ノードを維持しフラグをペアの primary (奇数 ch) に保持する (1 ノードに統合しない)。
+  リンク時はペア間に ♥ タイを描く。STEREO は **PAN / BAL** モードを追加。モード切替時 (および STEREO
+  化時) に、ペア両 ch の**全 bus send** (STEREO / MIX 1–2 / FX 1–2) の pan を初期化する: PAN は奇数 ch を
+  左 (L63 = −63)・偶数 ch を右 (R63 = +63) にハードパン、BAL は両方中央 (C = 0) にし Send pan は
+  ネイティブのステレオ ch 同様 BALANCE 表示になる。これ以外の全パラメータ自動ミラーは実機挙動だが自動適用しない。
 - **CH n → STEREO と FX 1/2 リターン → STEREO は固定の Send** (主フェーダー / リターンの経路)。
   常時結線され初期接続済みで表示し、削除不可。上記の要素と異なり LEVEL/PAN を編集できるため、
   (表示ノード間の) 配線として描画する。固定なのは経路のみ。

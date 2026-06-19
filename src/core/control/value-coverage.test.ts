@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
-import { emptyPlan, ensureFixedConnections, LEVEL_MAX_DB, LEVEL_MIN_DB, type Plan } from "../plan";
+import { emptyPlan, ensureFixedConnections, LEVEL_MAX_DB, LEVEL_OFF_DB, type Plan } from "../plan";
 import { ref } from "../../models/types";
 
 vi.mock("../platform", () => ({ vdGet: vi.fn() }));
@@ -96,7 +96,7 @@ describe("enum options round-trip", () => {
 describe("continuous extremes round-trip through the device path", () => {
   it("channel fader floor (-inf) and ceiling", async () => {
     for (const [db, vd] of [
-      [LEVEL_MIN_DB, VD_LEVEL_OFF],
+      [LEVEL_OFF_DB, VD_LEVEL_OFF],
       [LEVEL_MAX_DB, VD_LEVEL_MAX],
     ] as const) {
       const plan = base();
@@ -111,8 +111,8 @@ describe("continuous extremes round-trip through the device path", () => {
 
   it("channel pan hard left and hard right", async () => {
     for (const [pan, vd] of [
-      [-100, -VD_PAN_MAX],
-      [100, VD_PAN_MAX],
+      [-VD_PAN_MAX, -VD_PAN_MAX], // L63
+      [VD_PAN_MAX, VD_PAN_MAX], // R63
     ] as const) {
       const plan = base();
       const conn = plan.connections.find((c) => c.from === ref("ch1", "out") && c.to === ref("bus.stereo", "in"));

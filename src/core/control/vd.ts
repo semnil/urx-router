@@ -12,7 +12,7 @@
 // Parameter addresses are "{param_id}:{x}:{y}" where x is 0 except for EQ bands
 // and y is the instance index (input ch 0..11, output 0..7, or a fixed slot).
 
-import { LEVEL_MAX_DB, LEVEL_MIN_DB } from "../plan";
+import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "../plan";
 
 /** The broker's -∞ / off sentinel for level (centi-dB) parameters. */
 export const VD_LEVEL_OFF = -32768;
@@ -29,16 +29,10 @@ export const A_GAIN_MAX_DB = 70;
 export const D_GAIN_MIN_DB = -24;
 export const D_GAIN_MAX_DB = 24;
 
-// Monitor level uses the level_gain table down to -96 dB (lower floor than the
-// channel fader): -∞ then -96.0 … +10.0 dB. The slider's bottom notch
-// (MONITOR_OFF_DB, just under -96) is the -∞ / off position.
-export const MONITOR_MIN_DB = -96;
-export const MONITOR_MAX_DB = 10;
-export const MONITOR_OFF_DB = -96.5;
-
-/** Plan pan range, matching the inspector slider (-100 … +100). */
-export const PAN_MIN = -100;
-export const PAN_MAX = 100;
+/** Plan pan range, matching the inspector slider and the device scale L63 – C –
+ *  R63 (1:1 with the broker ±63). */
+export const PAN_MIN = -63;
+export const PAN_MAX = 63;
 
 // HPF cutoff frequency (param 26): broker value is Hz×10 (the 0.1 Hz unit shared
 // with EQ frequency). Range 40 … 120 Hz, default 80 Hz, 20 Hz steps — i.e. the
@@ -83,30 +77,29 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 /**
- * Plan dB → broker centi-dB. The plan floor (LEVEL_MIN_DB) reads as -∞ in the UI
- * and maps to the device's off sentinel; everything else is dB×100, clamped to
- * the device ceiling.
+ * Plan dB → broker centi-dB. Below the lowest real value (LEVEL_MIN_DB, -96) the
+ * UI reads -∞ and maps to the device's off sentinel; everything else is dB×100,
+ * clamped to the device floor / ceiling.
  */
 export function levelToVd(db: number): number {
-  if (db <= LEVEL_MIN_DB) return VD_LEVEL_OFF;
-  return clamp(Math.round(db * 100), VD_LEVEL_OFF + 1, VD_LEVEL_MAX);
+  if (db < LEVEL_MIN_DB) return VD_LEVEL_OFF;
+  return clamp(Math.round(db * 100), LEVEL_MIN_DB * 100, VD_LEVEL_MAX);
 }
 
-/** Broker centi-dB → plan dB. The off sentinel maps back to the plan floor. */
+/** Broker centi-dB → plan dB. The off sentinel maps back to the -∞ slider notch. */
 export function vdToLevel(value: number): number {
-  if (value <= VD_LEVEL_OFF) return LEVEL_MIN_DB;
+  if (value <= VD_LEVEL_OFF) return LEVEL_OFF_DB;
   return clamp(value / 100, LEVEL_MIN_DB, LEVEL_MAX_DB);
 }
 
-/** Plan pan (-100 … +100) → broker ±63. */
+/** Plan pan (±63, L63 – C – R63) → broker ±63 — a 1:1 mapping, clamped. */
 export function panToVd(pan: number): number {
-  const p = clamp(pan, PAN_MIN, PAN_MAX);
-  return clamp(Math.round((p / PAN_MAX) * VD_PAN_MAX), -VD_PAN_MAX, VD_PAN_MAX);
+  return clamp(Math.round(pan), -VD_PAN_MAX, VD_PAN_MAX);
 }
 
-/** Broker ±63 → plan pan (-100 … +100). */
+/** Broker ±63 → plan pan (±63). */
 export function vdToPan(value: number): number {
-  return clamp(Math.round((value / VD_PAN_MAX) * PAN_MAX), PAN_MIN, PAN_MAX);
+  return clamp(Math.round(value), PAN_MIN, PAN_MAX);
 }
 
 // HA gain converters clamp to the union of the analog/digital ranges; the UI
@@ -122,18 +115,6 @@ export function gainToVd(db: number): number {
 /** Broker centi-dB → plan HA gain dB. */
 export function vdToGain(value: number): number {
   return clamp(Math.round(value / 100), GAIN_MIN_DB, GAIN_MAX_DB);
-}
-
-/** Plan monitor dB → broker centi-dB. Below -96 dB is the -∞ (off) sentinel. */
-export function monitorLevelToVd(db: number): number {
-  if (db < MONITOR_MIN_DB) return VD_LEVEL_OFF;
-  return clamp(Math.round(db * 100), MONITOR_MIN_DB * 100, VD_LEVEL_MAX);
-}
-
-/** Broker centi-dB → plan monitor dB. The off sentinel maps to the slider floor. */
-export function vdToMonitorLevel(value: number): number {
-  if (value <= VD_LEVEL_OFF) return MONITOR_OFF_DB;
-  return clamp(value / 100, MONITOR_MIN_DB, MONITOR_MAX_DB);
 }
 
 /** Plan HPF frequency (Hz) → broker 0.1 Hz units. */

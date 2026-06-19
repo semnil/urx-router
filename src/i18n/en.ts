@@ -101,6 +101,8 @@ export const en = {
     panLinked: "Pan follows the source channel PAN (Pan Link).",
     postFaderSend: "Post Fader Send",
     postFaderSendHint: "MIX bus fed to this FX, post-fader (DAW Integration menu, V1.2+).",
+    signalType: "Signal Type",
+    panBal: "PAN / BAL",
     deleteConnection: "Delete this connection",
     hideNode: "Hide this node",
     notesPlaceholder: "Add a note inside this node… (shown on the canvas and in exports)",

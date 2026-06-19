@@ -196,6 +196,40 @@ test("marks a PRE MIX send on the canvas without opening the inspector", async (
   await expect(preMarker).toHaveCount(0);
 });
 
+test("a microSD Rec assign carries no level / pan / PRE-POST", async ({ page }) => {
+  // SD Rec is a record-source assign (sendSwitch), not a summing send.
+  await connect(page, "ch1:out", "out.sdrec:in");
+  await expect(wires(page)).toHaveCount(FIXED + 1);
+  const box = await port(page, "out.sdrec:in").boundingBox();
+  if (!box) throw new Error("port not found");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.locator("#inspector .param")).toHaveCount(0);
+  await expect(page.locator("#inspector .hint")).toContainText("Selection only");
+});
+
+test("the send pan slider uses the device L63 – C – R63 range", async ({ page }) => {
+  await connect(page, "ch1:out", "bus.mix1:in");
+  const box = await port(page, "bus.mix1:in").boundingBox();
+  if (!box) throw new Error("port not found");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const pan = page.locator("#inspector .param", { hasText: "Pan" }).locator("input[type='range']");
+  await expect(pan).toHaveAttribute("min", "-63");
+  await expect(pan).toHaveAttribute("max", "63");
+});
+
+test("the send level slider bottoms out at -∞ (level_gain floor), not -60", async ({ page }) => {
+  await connect(page, "ch1:out", "bus.mix1:in");
+  const box = await port(page, "bus.mix1:in").boundingBox();
+  if (!box) throw new Error("port not found");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const level = page.locator("#inspector .param", { hasText: "Level" }).locator("input[type='range']");
+  await expect(level).toHaveAttribute("min", "-96.5"); // -∞ notch
+  await expect(level).toHaveAttribute("max", "10");
+  // Dragging to the bottom reads -∞ dB.
+  await level.fill("-96.5");
+  await expect(page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val")).toHaveText("-∞ dB");
+});
+
 test("tears down the rubber-band wire when the pointer is cancelled mid-drag", async ({ page }) => {
   const a = await port(page, "in.micline_1_2:out").boundingBox();
   if (!a) throw new Error("port not found");
