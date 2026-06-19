@@ -17,6 +17,7 @@ export const en = {
     device: "Device",
     fetchDevice: "Fetch from device",
     writeDevice: "Write to device",
+    selfTest: "Self-test (experimental)",
     theme: "Toggle theme",
     light: "Light",
     dark: "Dark",
@@ -168,6 +169,12 @@ export const en = {
     written: (n: number): string => `Wrote ${n} setting${n === 1 ? "" : "s"} to the device`,
     writePartial: (n: number, failed: number): string => `Wrote ${n}, ${failed} failed`,
     writeError: (message: string): string => `Device write failed: ${message}`,
+    selfTestRunning: "Running device self-test… do not disconnect",
+    selfTestPass: (n: number): string => `Self-test passed: ${n} params written and read back identically`,
+    selfTestFail: (n: number): string =>
+      `Self-test FAILED: ${n} param${n === 1 ? "" : "s"} did not match after write (see console)`,
+    selfTestRestoreFail: "Self-test: device may not be restored — fetch again to check",
+    selfTestError: (message: string): string => `Self-test error: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",
     fixedConnection: "Fixed connection — cannot be removed",
@@ -195,6 +202,8 @@ export const en = {
       `The connected device is ${device}, but ${ui} is selected. Switch to ${device} (replacing the current plan) and fetch?`,
     write: (n: number): string =>
       `Write ${n} change${n === 1 ? "" : "s"} to the device? This overwrites the device's current settings.`,
+    selfTest:
+      "Run the device self-test? It briefly overwrites every parameter to verify writes, then restores the original state.",
   },
   filter: {
     plan: "URX Router plan",

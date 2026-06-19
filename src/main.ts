@@ -33,6 +33,7 @@ import {
 } from "./core/platform";
 import { applyDeviceState } from "./core/control/readback";
 import { diffPlan, sendCommands } from "./core/control/client";
+import { runSelfTest } from "./core/control/selftest";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -174,6 +175,7 @@ function applyStaticI18n(): void {
   $("lbl-device").textContent = m.toolbar.device;
   $("btn-fetch").textContent = m.toolbar.fetchDevice;
   $("btn-write").textContent = m.toolbar.writeDevice;
+  $("btn-selftest").textContent = m.toolbar.selfTest;
   // Theme button shows the theme it switches to.
   themeBtn.textContent = theme === "dark" ? m.toolbar.light : m.toolbar.dark;
   themeBtn.title = m.toolbar.theme;
@@ -440,6 +442,31 @@ if (!DEMO) {
         );
       }),
     );
+
+    // Device self-test (experimental): read the device, write a perturbed copy,
+    // verify it matches, then restore. It owns its own connection, so it does not
+    // go through withDevice. Destructive-then-restored, so it confirms first.
+    const selfTestBtn = $<HTMLButtonElement>("btn-selftest");
+    selfTestBtn.disabled = false;
+    selfTestBtn.addEventListener("click", async () => {
+      if (!(await confirmDialog(t().confirm.selfTest))) return;
+      setStatus(t().status.selfTestRunning);
+      try {
+        const report = await runSelfTest(getModel(modelId));
+        console.log("[self-test] report:", report);
+        if (report.errors.length) console.warn("[self-test] issues:", report.errors);
+        if (report.residual.length) console.warn("[self-test] mismatches:", report.residual);
+        setStatus(
+          !report.restored
+            ? t().status.selfTestRestoreFail
+            : report.ok
+              ? t().status.selfTestPass(report.written)
+              : t().status.selfTestFail(report.residual.length),
+        );
+      } catch (err) {
+        setStatus(t().status.selfTestError(err instanceof Error ? err.message : String(err)));
+      }
+    });
   });
 }
 

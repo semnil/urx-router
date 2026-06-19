@@ -17,6 +17,7 @@ export const ja: Messages = {
     device: "デバイス",
     fetchDevice: "デバイスから取得",
     writeDevice: "デバイスへ書き込み",
+    selfTest: "セルフテスト (実験的)",
     theme: "表示モード切替",
     light: "ライト",
     dark: "ダーク",
@@ -165,6 +166,11 @@ export const ja: Messages = {
     written: (n: number): string => `${n} 件の設定をデバイスに書き込みました`,
     writePartial: (n: number, failed: number): string => `${n} 件書き込み、${failed} 件失敗`,
     writeError: (message: string): string => `デバイスへの書き込みに失敗しました: ${message}`,
+    selfTestRunning: "デバイスのセルフテストを実行中… 切断しないでください",
+    selfTestPass: (n: number): string => `セルフテスト合格: ${n} 件のパラメータを書き込み、同一に読み戻しました`,
+    selfTestFail: (n: number): string => `セルフテスト失敗: 書き込み後に ${n} 件が一致しませんでした (コンソール参照)`,
+    selfTestRestoreFail: "セルフテスト: デバイスが復元されていない可能性があります — 再度取得して確認してください",
+    selfTestError: (message: string): string => `セルフテストのエラー: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",
     fixedConnection: "固定接続は削除できません",
@@ -192,6 +198,8 @@ export const ja: Messages = {
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。${device} に切り替えて (現在の計画は破棄) 取得しますか?`,
     write: (n: number): string =>
       `${n} 件の変更をデバイスに書き込みますか? デバイスの現在の設定を上書きします。`,
+    selfTest:
+      "デバイスのセルフテストを実行しますか? 全パラメータを一時的に上書きして書き込みを検証し、元の状態に復元します。",
   },
   filter: {
     plan: "URX Router 計画",
