@@ -34,6 +34,14 @@ pnpm tauri dev      # デスクトップアプリとして起動 (Rust ツール
 計画 UI は純フロントエンドのため、Rust 未導入でも `pnpm dev` でブラウザ動作確認できる。
 デスクトップビルド (`pnpm tauri dev` / `pnpm tauri build`) には [Rust](https://rustup.rs/) が必要。
 
+実験的な機能 (既定では非表示) を有効にするには `--experimental` を付けて起動する:
+
+```sh
+pnpm tauri dev -- -- --experimental          # 開発
+open -a 'URX Router' --args --experimental    # ビルド済みアプリ (macOS)
+urx-router.exe --experimental                 # ビルド済みアプリ (Windows)
+```
+
 ## デバイス制御（試験的・URX44V のみ）
 
 デスクトップ版は Device Center 稼働下で、接続中のインターフェースの現在のミキサー設定を計画に読み込める
