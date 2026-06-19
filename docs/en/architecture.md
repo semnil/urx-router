@@ -76,6 +76,9 @@ flowchart TD
   default routes), and URX22 is an inferred remap of it (`models/initial-urx22.ts`, unverified until
   a real reset is captured). A device fetch instead starts from an empty plan (`emptyPlan` in
   `core/plan.ts`) and lets the readback (`core/control/`) fill in the live values.
+  On startup the model selection is restored from the last choice (`localStorage("urx-model")`),
+  falling back to URX44V when it is unset or invalid (the same "saved value → fallback" pattern as
+  the theme and language).
 
 The constraint core (`core/routing.ts`):
 
