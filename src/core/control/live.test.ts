@@ -1,0 +1,100 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getModel } from "../../models";
+import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
+
+// LiveSync drives the device through platform.vdSet / vdSetStr and re-reads via
+// vdGet on a converge; mock those. The point of these tests is the flush cadence
+// (how many device writes a drag produces), so vdSet's call count is the metric.
+vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn() }));
+
+import { vdSet, vdGet } from "../platform";
+import { LiveSync } from "./live";
+
+const model = getModel("URX44V");
+
+function basePlan(): Plan {
+  const plan = emptyPlan("URX44V");
+  ensureFixedConnections(model, plan);
+  return plan;
+}
+
+function liveFor(plan: Plan): LiveSync {
+  return new LiveSync({
+    getModel: () => model,
+    getPlan: () => plan,
+    onError: () => {},
+    onSent: () => {},
+  });
+}
+
+// The ch1 main fader is its fixed STEREO send level (a connection param) — the
+// exact path an inspector fader drag takes. Changing only the level diffs to the
+// single CH_FADER address.
+function setCh1Fader(plan: Plan, db: number): void {
+  const conn = plan.connections.find((c) => c.from === "ch1:out");
+  if (!conn) throw new Error("expected a ch1 STEREO send connection");
+  conn.params = { ...conn.params, level: db };
+}
+
+beforeEach(() => {
+  vi.mocked(vdSet).mockReset().mockResolvedValue(undefined);
+  vi.mocked(vdGet).mockReset().mockResolvedValue(0);
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("LiveSync flush cadence", () => {
+  it("sends one write per settled change (the baseline)", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+  });
+
+  it("coalesces a continuous drag into a single device write", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    // 30 input events ~16ms apart (a smooth ~480ms drag), each below the 120ms
+    // debounce, so the trailing timer keeps resetting and nothing is sent yet.
+    for (let i = 1; i <= 30; i++) {
+      setCh1Fader(plan, -i);
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(16);
+    }
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    // The drag ends; the debounce settles and flushes once with the final value.
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends each step when the drag pauses longer than the debounce", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    // Five steps, each settling past the debounce before the next — a deliberate
+    // "ride" rather than a smooth drag. Each settled value reaches the device.
+    for (let i = 1; i <= 5; i++) {
+      setCh1Fader(plan, -i);
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+    }
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(5);
+  });
+
+  it("does not send when sync is inactive", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    // No begin(): schedule must be inert.
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+});
