@@ -204,8 +204,8 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     duckerOn: false,
     ducker: { threshold: -40, range: -24, attack: 20.17, decay: 1000 },
   },
-  "bus.mon1": { level: 0, cueInterrupt: true, mono: false },
-  "bus.mon2": { level: 0, cueInterrupt: true, mono: false },
+  "bus.mon1": { level: 0, cueInterrupt: true, mono: false, phonesLevel: 2 },
+  "bus.mon2": { level: 0, cueInterrupt: true, mono: false, phonesLevel: 2 },
   "bus.osc": {
     osc: { on: false, level: -14, mode: 0, freq: 1000 },
   },

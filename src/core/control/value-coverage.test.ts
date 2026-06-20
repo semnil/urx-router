@@ -22,7 +22,16 @@ import {
   OUTPUT_INSERT_FX_OPTIONS,
   PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
 } from "./params";
-import { DELAY_TIME_MAX_MS, DELAY_TIME_MIN_MS, PORT_REF_NONE, VD_LEVEL_MAX, VD_LEVEL_OFF, VD_PAN_MAX } from "./vd";
+import {
+  DELAY_TIME_MAX_MS,
+  DELAY_TIME_MIN_MS,
+  PHONES_LEVEL_MAX,
+  PHONES_LEVEL_MIN,
+  PORT_REF_NONE,
+  VD_LEVEL_MAX,
+  VD_LEVEL_OFF,
+  VD_PAN_MAX,
+} from "./vd";
 
 const model = getModel("URX44V");
 
@@ -111,6 +120,17 @@ describe("STREAMING DELAY time round-trips at its extremes", () => {
       const back = await roundTrip(plan);
       expect(back.nodeParams["bus.stream"]?.delay?.time).toBe(ms);
       expect(back.nodeParams["bus.stream"]?.delay?.on).toBe(true);
+    });
+  }
+});
+
+describe("PHONES level round-trips at its extremes (PHONES 1 / 2)", () => {
+  for (const [id, level] of [["bus.mon1", PHONES_LEVEL_MIN], ["bus.mon2", PHONES_LEVEL_MAX]] as const) {
+    it(`${id} = ${level}`, async () => {
+      const plan = base();
+      plan.nodeParams[id] = { phonesLevel: level };
+      const back = await roundTrip(plan);
+      expect(back.nodeParams[id]?.phonesLevel).toBe(level);
     });
   }
 });

@@ -113,6 +113,7 @@ export const en = {
     delayTime: "Delay Time",
     cueInterrupt: "CUE Interrupt",
     mono: "MONO",
+    phonesLevel: "PHONES Level",
     on: "ON",
     off: "OFF",
     notReadFromDevice: "Not read from the device — showing the plan default.",

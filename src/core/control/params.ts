@@ -26,6 +26,7 @@ export type ParamEncoding =
   | "eqGain"
   | "centiDb"
   | "delayTime"
+  | "phonesLevel"
   | "attackTime"
   | "holdTime"
   | "releaseTime"
@@ -222,6 +223,9 @@ export const PARAMS = {
   EQ_BAND_GAIN: { id: 507, axis: "global", encoding: "eqGain" },
   /** Monitor level (y = monitor 0..3). Wider -96 dB floor than the fader. */
   MONITOR_LEVEL: { id: 724, axis: "global", encoding: "level" },
+  /** PHONES output level (y0 = PHONES 1, y1 = PHONES 2): the unit-less 0.0..10.0
+   *  scale of the Phones menu (NOT dB). Confirmed by live snapshot-diff. */
+  PHONES_LEVEL: { id: 725, axis: "global", encoding: "phonesLevel" },
   /** STEREO master fader (y = 0, level down to -∞). */
   STEREO_MASTER_FADER: { id: 581, axis: "global", encoding: "level" },
   /** STEREO master ON (y = 0). */

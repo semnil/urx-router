@@ -78,8 +78,26 @@ export const DUCKER_DECAY_MAX_MS = 5000;
 export const DELAY_TIME_MIN_MS = 1;
 export const DELAY_TIME_MAX_MS = 1000;
 
+// PHONES output level (param 725, y0 = PHONES 1, y1 = PHONES 2). The device shows
+// a unit-less 0.0 … 10.0 volume scale (NOT dB — distinct from the monitor fader);
+// broker value is that scale ×10 (raw 0 … 100), default 20 (= 2.0). Confirmed by
+// live snapshot-diff: 10.0 on the LCD reads back as 100, 0.0 as 0.
+export const PHONES_LEVEL_MIN = 0;
+export const PHONES_LEVEL_MAX = 10;
+export const PHONES_LEVEL_DEFAULT = 2;
+
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+/** Plan PHONES level (0.0 … 10.0 scale) → broker raw (×10). */
+export function phonesLevelToVd(value: number): number {
+  return clamp(Math.round(value * 10), PHONES_LEVEL_MIN * 10, PHONES_LEVEL_MAX * 10);
+}
+
+/** Broker raw (0 … 100) → plan PHONES level (0.0 … 10.0). */
+export function vdToPhonesLevel(value: number): number {
+  return clamp(value / 10, PHONES_LEVEL_MIN, PHONES_LEVEL_MAX);
 }
 
 /** Plan delay time (ms) → broker ms×100. */

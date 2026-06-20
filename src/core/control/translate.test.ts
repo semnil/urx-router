@@ -538,6 +538,19 @@ describe("planToCommands", () => {
     expect(m2!.request.uri).toBe("/vd/parameters/724:0:1?operation=value");
   });
 
+  it("emits PHONES level per monitor (PHONES 1 ↔ mon1 = y0, PHONES 2 ↔ mon2 = y1)", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.mon1"] = { phonesLevel: 10 };
+    plan.nodeParams["bus.mon2"] = { phonesLevel: 0 };
+    const cmds = planToCommands(model, plan);
+    const p1 = cmds.find((c) => c.name === "PHONES_LEVEL" && c.y === 0);
+    const p2 = cmds.find((c) => c.name === "PHONES_LEVEL" && c.y === 1);
+    expect(p1!.vdValue).toBe(100); // 10.0 = raw 100
+    expect(p1!.request.uri).toBe("/vd/parameters/725:0:0?operation=value");
+    expect(p2!.vdValue).toBe(0); // 0.0 = raw 0
+    expect(p2!.request.uri).toBe("/vd/parameters/725:0:1?operation=value");
+  });
+
   it("emits monitor CUE-interrupt / MONO toggles per monitor", () => {
     const plan = emptyPlan("URX44V");
     plan.nodeParams["bus.mon1"] = { cueInterrupt: false, mono: true };

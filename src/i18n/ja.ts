@@ -112,6 +112,7 @@ export const ja: Messages = {
     delayTime: "Delay Time",
     cueInterrupt: "CUE Interrupt",
     mono: "MONO",
+    phonesLevel: "PHONES Level",
     on: "ON",
     off: "OFF",
     notReadFromDevice: "デバイスから読み込まれていません — 計画の初期値を表示しています。",

@@ -34,6 +34,10 @@ import {
   DELAY_TIME_MAX_MS,
   delayTimeToVd,
   vdToDelayTime,
+  PHONES_LEVEL_MIN,
+  PHONES_LEVEL_MAX,
+  phonesLevelToVd,
+  vdToPhonesLevel,
 } from "./vd";
 
 describe("level encoding (shared by faders, sends and the monitor)", () => {
@@ -210,5 +214,24 @@ describe("STREAMING DELAY time encoding (param 708, ms×100)", () => {
     expect(delayTimeToVd(0)).toBe(DELAY_TIME_MIN_MS * 100); // below floor
     expect(delayTimeToVd(5000)).toBe(DELAY_TIME_MAX_MS * 100); // above ceiling
     expect(vdToDelayTime(0)).toBe(DELAY_TIME_MIN_MS); // device default reads as 1.00 ms
+  });
+});
+
+describe("PHONES level encoding (param 725, 0.0..10.0 scale ×10)", () => {
+  it("encodes the 0.0..10.0 scale to broker raw (×10)", () => {
+    expect(phonesLevelToVd(PHONES_LEVEL_MIN)).toBe(0); // 0.0 = 0
+    expect(phonesLevelToVd(2)).toBe(20); // 2.0 = 20 (factory default)
+    expect(phonesLevelToVd(PHONES_LEVEL_MAX)).toBe(100); // 10.0 = 100 (confirmed on device)
+  });
+
+  it("decodes broker raw to the 0.0..10.0 scale", () => {
+    expect(vdToPhonesLevel(0)).toBe(PHONES_LEVEL_MIN);
+    expect(vdToPhonesLevel(20)).toBe(2);
+    expect(vdToPhonesLevel(100)).toBe(PHONES_LEVEL_MAX);
+  });
+
+  it("clamps to the 0.0..10.0 range", () => {
+    expect(phonesLevelToVd(-5)).toBe(PHONES_LEVEL_MIN * 10);
+    expect(phonesLevelToVd(50)).toBe(PHONES_LEVEL_MAX * 10);
   });
 });

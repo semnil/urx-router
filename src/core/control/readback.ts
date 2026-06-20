@@ -38,6 +38,7 @@ import {
   vdToBool,
   vdToCentiDb,
   vdToDelayTime,
+  vdToPhonesLevel,
   vdToEqFreq,
   vdToEqGain,
   vdToFreq,
@@ -330,7 +331,8 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       const level = vdToLevel(await vdGet(PARAMS.MONITOR_LEVEL.id, 0, y));
       const cueInterrupt = vdToBool(await vdGet(PARAMS.MONITOR_CUE_INTERRUPT.id, 0, y));
       const mono = vdToBool(await vdGet(PARAMS.MONITOR_MONO.id, 0, y));
-      plan.nodeParams[id] = { ...plan.nodeParams[id], level, cueInterrupt, mono };
+      const phonesLevel = vdToPhonesLevel(await vdGet(PARAMS.PHONES_LEVEL.id, 0, y));
+      plan.nodeParams[id] = { ...plan.nodeParams[id], level, cueInterrupt, mono, phonesLevel };
       applied++;
     } catch (e) {
       failed.add(id);

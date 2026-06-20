@@ -267,7 +267,10 @@ Source selection for the analog outputs (MAIN / LINE).
 - **CH n → STEREO and FX 1/2 return → STEREO are fixed sends** (the main fader / return paths):
   always wired, shown pre-connected, and non-removable. Unlike the items above they *are* drawn
   as wires (between visible nodes) since their LEVEL/PAN remain editable; only the routing is locked.
-- PHONES 1/2/front are a fixed 1:1 wire to the MONITOR buses (no source select, no node).
+- PHONES 1/2/front are a fixed 1:1 wire to the MONITOR buses (no source select, no node). PHONES
+  carries the same signal as its MONITOR bus but has its own **PHONES Level** (a unit-less 0.0 …
+  10.0 scale, independent of the monitor fader), edited on the MONITOR 1 / 2 nodes — PHONES 1 ↔
+  MONITOR 1, PHONES 2 ↔ MONITOR 2.
 - The CUE bus (solo/monitor interrupt) is **not modeled**: its routing is cleared at power-off, so
   it cannot hold a persistent assignment that a saved plan would represent.
 

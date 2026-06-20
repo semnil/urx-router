@@ -95,6 +95,9 @@ import {
   SSMCS_EQ_HIGH_FREQ_RAW_MIN,
   DELAY_TIME_MIN_MS,
   DELAY_TIME_MAX_MS,
+  PHONES_LEVEL_MIN,
+  PHONES_LEVEL_MAX,
+  PHONES_LEVEL_DEFAULT,
 } from "../core/control/vd";
 import { rateConstraints } from "../core/constraints";
 import type { RateWarning } from "../core/constraints";
@@ -479,6 +482,19 @@ export function renderInspector(
       const ps = section(m.inspector.parameters, { key: "params" });
       ps.body.append(
         faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
+      );
+      // PHONES output level: a unit-less 0.0..10.0 scale, independent of the
+      // monitor fader (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2 — same signal, own level).
+      ps.body.append(
+        rangeSlider(
+          m.inspector.phonesLevel,
+          PHONES_LEVEL_MIN,
+          PHONES_LEVEL_MAX,
+          0.1,
+          np.phonesLevel ?? PHONES_LEVEL_DEFAULT,
+          (v) => v.toFixed(1),
+          (v) => actions.onUpdateNodeParams(node.id, { phonesLevel: v }),
+        ),
       );
       ps.body.append(
         boolToggle(m.inspector.cueInterrupt, np.cueInterrupt ?? true, (v) =>

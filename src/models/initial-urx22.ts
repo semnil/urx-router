@@ -75,8 +75,8 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
   "out.ducker2": ducker(),
   "out.ducker3": ducker(),
   "out.ducker4": ducker(),
-  "bus.mon1": { level: 0, cueInterrupt: true, mono: false },
-  "bus.mon2": { level: 0, cueInterrupt: true, mono: false },
+  "bus.mon1": { level: 0, cueInterrupt: true, mono: false, phonesLevel: 2 },
+  "bus.mon2": { level: 0, cueInterrupt: true, mono: false, phonesLevel: 2 },
   "bus.osc": { osc: { on: false, level: -14, mode: 0, freq: 1000 } },
   // STREAMING DELAY factory state (off, 1.00 ms, 30 fps), inferred from URX44V.
   "bus.stream": { delay: { on: false, time: 1, frameRate: 5 } },

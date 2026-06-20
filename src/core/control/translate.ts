@@ -35,6 +35,7 @@ import {
   boolToVd,
   centiDbToVd,
   delayTimeToVd,
+  phonesLevelToVd,
   D_GAIN_MIN_DB,
   D_GAIN_MAX_DB,
   DUCKER_DECAY_MAX_MS,
@@ -100,6 +101,8 @@ function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number
       return centiDbToVd(planValue);
     case "delayTime":
       return delayTimeToVd(planValue);
+    case "phonesLevel":
+      return phonesLevelToVd(planValue);
     case "attackTime":
       return attackToVd(planValue);
     case "holdTime":
@@ -998,6 +1001,8 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (np?.level !== undefined) out.push(command("MONITOR_LEVEL", y, np.level));
     if (np?.cueInterrupt !== undefined) out.push(command("MONITOR_CUE_INTERRUPT", y, np.cueInterrupt ? 1 : 0));
     if (np?.mono !== undefined) out.push(command("MONITOR_MONO", y, np.mono ? 1 : 0));
+    // PHONES level shares the monitor's y axis (PHONES 1 ↔ mon1 = y0, PHONES 2 ↔ mon2 = y1).
+    if (np?.phonesLevel !== undefined) out.push(command("PHONES_LEVEL", y, np.phonesLevel));
   }
 
   // Oscillator generator (bus.osc node): on / level / mode / frequency.

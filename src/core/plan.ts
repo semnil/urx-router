@@ -233,6 +233,9 @@ export interface NodeParams {
   cueInterrupt?: boolean;
   /** Monitor MONO downmix (monitor buses). Absent or false = off. */
   mono?: boolean;
+  /** PHONES output level (monitor buses): the device's unit-less 0.0..10.0 Phones
+   *  scale, independent of the monitor fader. PHONES 1 ↔ mon1, PHONES 2 ↔ mon2. */
+  phonesLevel?: number;
   /** STREAMING DELAY settings (the bus.stream node). */
   delay?: DelayParams;
 }
