@@ -68,12 +68,47 @@ const newPlan = (id: ModelId): Plan => (seedEmpty ? emptyPlan(id) : defaultPlan(
 // Restore the last selected model on startup, falling back to URX44V (the
 // top-of-range model with every feature) when there is no valid saved choice.
 function detectModel(): ModelId {
-  const saved = localStorage.getItem("urx-model");
-  return MODEL_IDS.includes(saved as ModelId) ? (saved as ModelId) : "URX44V";
+  try {
+    const saved = localStorage.getItem("urx-model");
+    return MODEL_IDS.includes(saved as ModelId) ? (saved as ModelId) : "URX44V";
+  } catch {
+    return "URX44V";
+  }
+}
+
+// Persisting the selection is best-effort: storage may be unavailable (private
+// mode / blocked), in which case the model simply does not carry across reloads.
+function rememberModel(id: ModelId): void {
+  try {
+    localStorage.setItem("urx-model", id);
+  } catch {
+    // ignore
+  }
+}
+
+// Restore the last selected sample rate, falling back to the new plan's rate when
+// there is no valid saved choice. Mirrors the model restore so both carry across
+// reloads in the demo and desktop builds alike.
+function detectRate(fallback: number): number {
+  try {
+    const saved = Number(localStorage.getItem("urx-rate"));
+    return SAMPLE_RATES.includes(saved) ? saved : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function rememberRate(rate: number): void {
+  try {
+    localStorage.setItem("urx-rate", String(rate));
+  } catch {
+    // ignore
+  }
 }
 
 let modelId: ModelId = detectModel();
 let plan: Plan = newPlan(modelId);
+plan.sampleRate = detectRate(plan.sampleRate);
 ensureFixedConnections(getModel(modelId), plan);
 let dirty = false;
 let selection: Selection = null;
@@ -285,8 +320,9 @@ function applyRateConstraints(): void {
 
 function loadPlan(next: Plan): void {
   modelId = next.modelId;
-  localStorage.setItem("urx-model", modelId);
+  rememberModel(modelId);
   plan = next;
+  rememberRate(plan.sampleRate);
   ensureFixedConnections(getModel(modelId), plan);
   picker.value = modelId;
   ratePicker.value = String(plan.sampleRate);
@@ -349,6 +385,7 @@ picker.addEventListener("change", async () => {
 
 ratePicker.addEventListener("change", () => {
   plan.sampleRate = Number(ratePicker.value);
+  rememberRate(plan.sampleRate);
   dirty = true;
   applyRateConstraints();
   setStatus(t().status.sampleRate(formatRate(plan.sampleRate)));
