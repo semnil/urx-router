@@ -5,9 +5,9 @@ import { ref } from "../../models/types";
 
 // readback.ts pulls live values through platform.vdGet, so mock that module: the
 // rest of platform.ts (file IO, dialogs) is untouched here.
-vi.mock("../platform", () => ({ vdGet: vi.fn() }));
+vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
-import { vdGet } from "../platform";
+import { vdGet, vdGetStr } from "../platform";
 import { COLOR_PALETTE } from "./params";
 import { applyDeviceState } from "./readback";
 import { planToCommands } from "./translate";
@@ -52,6 +52,10 @@ function wireKey(c: PlanConnection): string {
 
 beforeEach(() => {
   vi.mocked(vdGet).mockReset();
+  // Names read via the string IPC; default to empty (no custom name) so the
+  // numeric round-trip tests see clean nodeNames. Name-specific tests override.
+  vi.mocked(vdGetStr).mockReset();
+  vi.mocked(vdGetStr).mockResolvedValue("");
 });
 
 describe("applyDeviceState round-trip", () => {
@@ -268,8 +272,9 @@ describe("applyDeviceState round-trip", () => {
     const inputSource = 8;
     const selectors = 9;
     const colors = 8 + 6; // CH SETTING color: 8 channels + STEREO/MIX1/MIX2/FX1/FX2/STREAMING
+    const names = 8 + 6; // CH SETTING name: same node set as color
     const expected =
-      channels + sends + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + oscAssign + inputSource + selectors + colors;
+      channels + sends + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + oscAssign + inputSource + selectors + colors + names;
     expect(result.applied).toBe(expected);
     // Sanity: far more than the channel-only count, proving every group counts.
     expect(result.applied).toBeGreaterThan(channels);
@@ -472,6 +477,24 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     expect(target.connections.some((c) => c.from === "ch1:out" && c.to === "bus.fx1:in")).toBe(true);
     // Other channels' bodies read fine, so they are not flagged.
     expect(result.unreadNodes.has("ch2")).toBe(false);
+  });
+
+  it("reads CH SETTING names back into nodeNames; empty clears to the default label", async () => {
+    mockVdGetFrom(new Map());
+    // ch1 named "Vox", bus.stereo named "Main"; everything else empty.
+    vi.mocked(vdGetStr).mockImplementation((paramId: number, _x: number, y: number) => {
+      if (paramId === 18 && y === 0) return Promise.resolve("Vox");
+      if (paramId === 494 && y === 0) return Promise.resolve("Main");
+      return Promise.resolve("");
+    });
+    const target = emptyPlan("URX44V");
+    await applyDeviceState(model, target);
+
+    expect(target.nodeNames.ch1).toBe("Vox");
+    expect(target.nodeNames["bus.stereo"]).toBe("Main");
+    // An empty device name leaves no override (falls back to the model label).
+    expect(target.nodeNames.ch2).toBeUndefined();
+    expect(target.nodeNames["bus.mix1"]).toBeUndefined();
   });
 
   it("reads CH SETTING color back into nodeColors (palette index → swatch hex)", async () => {

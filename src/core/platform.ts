@@ -148,6 +148,16 @@ export function vdGet(paramId: number, x: number, y: number): Promise<number> {
   return invoke<number>("vd_get", { paramId, x, y });
 }
 
+/** Set one string-valued parameter instance (e.g. a CH SETTING name). */
+export function vdSetStr(paramId: number, x: number, y: number, value: string): Promise<void> {
+  return invoke<void>("vd_set_str", { paramId, x, y, value });
+}
+
+/** Read one string-valued parameter instance (empty when it holds no string). */
+export function vdGetStr(paramId: number, x: number, y: number): Promise<string> {
+  return invoke<string>("vd_get_str", { paramId, x, y });
+}
+
 /** Close the live connection (no-op if not connected). */
 export function vdDisconnect(): Promise<void> {
   return invoke<void>("vd_disconnect");

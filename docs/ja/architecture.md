@@ -64,7 +64,8 @@ flowchart TD
   = CH1/2・CH3/4) を持つ。`models/build.ts` が機種パラメータから生成する。Ducker は載っている
   ステレオチャンネルを `attachTo` で指し、UI ではその真下にぶら下げて描く ([下記](#ducker-の配置))。
 - **Plan** — ユーザーが作成する可変状態。`modelId`、ノード配置 (`positions`)、結線 (`connections`)、
-  各結線のパラメータ (level/pan/pre-post 等)、ノード名の上書き (`nodeNames`、実機 CH SETTING 名に相当)、
+  各結線のパラメータ (level/pan/pre-post 等)、ノード名の上書き (`nodeNames`、実機 CH SETTING 名。
+  色と同じノード群について文字列 IPC で読み書きする。空文字は機種の既定ラベルにフォールバック)、
   ノード色の上書き (`nodeColors`、実機 CH SETTING 色。ノード上端の細い色キャップとして描画。
   ピッカーは実機の固定パレットを提示し、選んだ色は実機と 1:1 で読み書きする — 入力 ch・MIX・STEREO・FX・STREAMING)、
   非表示ノード (`hidden`)、ノードごとのノート (`notes`) とその最小化状態 (`noteCollapsed`) を持つ。

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections } from "../plan";
 import { COLOR_OFF_INDEX, COLOR_PALETTE, EQ_TYPE_PASS, colorIndexToHex, hexToColorIndex } from "./params";
-import { planToCommands } from "./translate";
+import { nameControl, planToCommands, planToNameWrites } from "./translate";
 
 describe("planToCommands", () => {
   const model = getModel("URX44V");
@@ -804,5 +804,43 @@ describe("CH SETTING color", () => {
     plan.nodeColors.ch2 = "#abcdef"; // not a palette entry
     const cmds = planToCommands(model, plan).filter((c) => c.name === "CH_COLOR");
     expect(cmds).toHaveLength(0); // ch2 skipped (non-palette), ch1 uncolored
+  });
+});
+
+describe("CH SETTING name", () => {
+  const model = getModel("URX44V");
+
+  it("maps each node kind to its name param + instances (color param − 2)", () => {
+    expect(nameControl(model, "ch1")).toEqual({ param: 18, instances: [0] });
+    expect(nameControl(model, "ch_5_6")).toEqual({ param: 18, instances: [4, 5] });
+    expect(nameControl(model, "bus.mix1")).toEqual({ param: 584, instances: [0, 1] });
+    expect(nameControl(model, "bus.mix2")).toEqual({ param: 584, instances: [2, 3] });
+    expect(nameControl(model, "bus.stereo")).toEqual({ param: 494, instances: [0] });
+    expect(nameControl(model, "bus.fx1")).toEqual({ param: 333, instances: [0] });
+    expect(nameControl(model, "bus.fx2")).toEqual({ param: 333, instances: [1] });
+    expect(nameControl(model, "bus.stream")).toEqual({ param: 702, instances: [0, 1] });
+    // Monitor / OSC have no device name.
+    expect(nameControl(model, "bus.mon1")).toBeNull();
+    expect(nameControl(model, "bus.osc")).toBeNull();
+  });
+
+  it("emits a name write per linked instance, only for named nodes", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeNames.ch1 = "Vox";
+    plan.nodeNames["bus.stream"] = "Live";
+    const writes = planToNameWrites(model, plan);
+    expect(writes).toEqual([
+      { param: 18, y: 0, value: "Vox" },
+      { param: 702, y: 0, value: "Live" },
+      { param: 702, y: 1, value: "Live" },
+    ]);
+  });
+
+  it("does not write names for unnamed or non-nameable nodes", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeNames["bus.osc"] = "Tone"; // not nameable on the device
+    expect(planToNameWrites(model, plan)).toEqual([]);
   });
 });

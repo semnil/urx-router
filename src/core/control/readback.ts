@@ -8,7 +8,7 @@ import type { DeviceModel } from "../../models/types";
 import { ref } from "../../models/types";
 import type { ConnParams, EqBand, NodeParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
-import { vdGet } from "../platform";
+import { vdGet, vdGetStr } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, normalizeInsertFx, PARAMS } from "./params";
 import type { DynField, EqControl } from "./translate";
 import {
@@ -18,6 +18,7 @@ import {
   channelDynamics,
   channelSections,
   colorControl,
+  nameControl,
   DUCKER_FIELDS,
   duckerControl,
   channelInputSlots,
@@ -214,6 +215,23 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       const hex = colorIndexToHex(await vdGet(cc.param, 0, cc.instances[0]));
       if (hex) plan.nodeColors[node.id] = hex;
       else delete plan.nodeColors[node.id];
+      applied++;
+    } catch (e) {
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // CH SETTING name (string param via the string IPC): same node set as color.
+  // A non-empty device name becomes the node-name override; an empty one clears
+  // it so the canvas falls back to the model's default label. Like color, kept
+  // out of the body-read provenance.
+  for (const node of model.nodes) {
+    const nc = nameControl(model, node.id);
+    if (!nc) continue;
+    try {
+      const name = (await vdGetStr(nc.param, 0, nc.instances[0])).trim();
+      if (name) plan.nodeNames[node.id] = name;
+      else delete plan.nodeNames[node.id];
       applied++;
     } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);

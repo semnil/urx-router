@@ -372,29 +372,59 @@ export function busEqOn(nodeId: string): { name: ParamName; param: number; insta
   return mix ? { name: "OUT_EQ_ON", param: PARAMS.OUT_EQ_ON.id, instances: mix } : null;
 }
 
-/** CH SETTING color param/instances for a colorable node: input channels write
- *  the palette index to every input slot (param 20), MIX to the L/R pair (586),
- *  STEREO to its single slot (496), FX to its single slot (335), STREAMING to its
- *  L/R pair (704). Null for nodes without a confirmed color param (monitor / OSC
- *  buses), which therefore never get a guessed write. */
+// CH SETTING per-node identity (color + name) shares one addressing scheme: the
+// same node kinds carry it on the same instances, only the param id differs by
+// attribute. `nodeIdentity` resolves a node to its kind + instances once; color
+// and name then pick their param from that kind. Nodes the device does not give
+// a CH SETTING (monitor / OSC) resolve to null, so neither attribute is ever
+// written to a guessed address.
+type IdentityKind = "stereo" | "stream" | "fx" | "mix" | "channel";
+function nodeIdentity(model: DeviceModel, nodeId: string): { kind: IdentityKind; instances: number[] } | null {
+  if (nodeId === "bus.stereo") return { kind: "stereo", instances: [0] };
+  if (nodeId === "bus.stream") return { kind: "stream", instances: [0, 1] };
+  // FX is one instance per FX (FX1 = y0, FX2 = y1), reusing the canonical FX-bus
+  // ordering rather than a second copy of it.
+  const fx = FX_SEND_BUS_INDEX[nodeId];
+  if (fx !== undefined) return { kind: "fx", instances: [fx] };
+  const mix = MIX_FADER_INSTANCES[nodeId];
+  if (mix) return { kind: "mix", instances: mix };
+  const slots = channelInputSlots(model, nodeId);
+  return slots ? { kind: "channel", instances: slots } : null;
+}
+
+const COLOR_PARAM: Record<IdentityKind, { name: ParamName; param: number }> = {
+  stereo: { name: "STEREO_COLOR", param: PARAMS.STEREO_COLOR.id },
+  stream: { name: "STREAM_COLOR", param: PARAMS.STREAM_COLOR.id },
+  fx: { name: "FX_COLOR", param: PARAMS.FX_COLOR.id },
+  mix: { name: "MIX_COLOR", param: PARAMS.MIX_COLOR.id },
+  channel: { name: "CH_COLOR", param: PARAMS.CH_COLOR.id },
+};
+// Name param ids per kind. These are string-valued (the broker stores them as a
+// JSON string), so they live outside the numeric PARAMS catalog and are written
+// via the string IPC (vdSetStr) rather than as VdCommands.
+const NAME_PARAM: Record<IdentityKind, number> = {
+  stereo: 494,
+  stream: 702,
+  fx: 333,
+  mix: 584,
+  channel: 18,
+};
+
+/** CH SETTING color param/instances for a colorable node (input channels +
+ *  STEREO / MIX / FX / STREAMING buses), or null when the device has none. */
 export function colorControl(
   model: DeviceModel,
   nodeId: string,
 ): { name: ParamName; param: number; instances: number[] } | null {
-  if (nodeId === "bus.stereo") {
-    return { name: "STEREO_COLOR", param: PARAMS.STEREO_COLOR.id, instances: [0] };
-  }
-  if (nodeId === "bus.stream") {
-    return { name: "STREAM_COLOR", param: PARAMS.STREAM_COLOR.id, instances: [0, 1] };
-  }
-  // FX color is one instance per FX (FX1 = y0, FX2 = y1), reusing the canonical
-  // FX-bus ordering rather than a second copy of it.
-  const fx = FX_SEND_BUS_INDEX[nodeId];
-  if (fx !== undefined) return { name: "FX_COLOR", param: PARAMS.FX_COLOR.id, instances: [fx] };
-  const mix = MIX_FADER_INSTANCES[nodeId];
-  if (mix) return { name: "MIX_COLOR", param: PARAMS.MIX_COLOR.id, instances: mix };
-  const slots = channelInputSlots(model, nodeId);
-  return slots ? { name: "CH_COLOR", param: PARAMS.CH_COLOR.id, instances: slots } : null;
+  const id = nodeIdentity(model, nodeId);
+  return id ? { ...COLOR_PARAM[id.kind], instances: id.instances } : null;
+}
+
+/** CH SETTING name param/instances for a nameable node (same node set as color);
+ *  null when the device has no name for it. The value is a string (vdSetStr). */
+export function nameControl(model: DeviceModel, nodeId: string): { param: number; instances: number[] } | null {
+  const id = nodeIdentity(model, nodeId);
+  return id ? { param: NAME_PARAM[id.kind], instances: id.instances } : null;
 }
 
 /** One band of a 4-band PEQ: the param ids for each of its values. */
@@ -987,6 +1017,31 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const index = hexToColorIndex(hex);
     if (index === null) continue;
     for (const inst of cc.instances) out.push(rawCommand(cc.name, cc.param, "raw", inst, index));
+  }
+  return out;
+}
+
+/** One string write: the CH SETTING name for a node, on a single instance. */
+export interface NameWrite {
+  param: number;
+  y: number;
+  value: string;
+}
+
+/**
+ * The CH SETTING name writes a plan implies. Names are strings (outside the
+ * numeric VdCommand path), sent via the string IPC. Emitted only for nodes the
+ * plan gives an explicit name; an unnamed node is left as the device has it
+ * (mirrors how an uncolored node is not written). Each linked instance is set.
+ */
+export function planToNameWrites(model: DeviceModel, plan: Plan): NameWrite[] {
+  const out: NameWrite[] = [];
+  for (const node of model.nodes) {
+    const name = plan.nodeNames[node.id];
+    if (!name) continue;
+    const nc = nameControl(model, node.id);
+    if (!nc) continue;
+    for (const y of nc.instances) out.push({ param: nc.param, y, value: name });
   }
   return out;
 }

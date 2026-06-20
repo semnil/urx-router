@@ -36,6 +36,19 @@ pub enum Cmd {
         y: i64,
         reply: Sender<Result<i64, String>>,
     },
+    SetStr {
+        param_id: u32,
+        x: i64,
+        y: i64,
+        value: String,
+        reply: Sender<Result<(), String>>,
+    },
+    GetStr {
+        param_id: u32,
+        x: i64,
+        y: i64,
+        reply: Sender<Result<String, String>>,
+    },
     Info {
         reply: Sender<DeviceSummary>,
     },
@@ -90,6 +103,30 @@ pub fn get(state: &VdState, param_id: u32, x: i64, y: i64) -> Result<i64, String
         let guard = state.tx.lock().unwrap();
         let tx = guard.as_ref().ok_or("not connected")?;
         tx.send(Cmd::Get { param_id, x, y, reply })
+            .map_err(|_| "control worker is gone".to_string())?;
+    }
+    wait.recv().map_err(|_| "no response from control worker".to_string())?
+}
+
+/// Set one string-valued parameter instance (e.g. a CH SETTING name).
+pub fn set_str(state: &VdState, param_id: u32, x: i64, y: i64, value: String) -> Result<(), String> {
+    let (reply, wait) = mpsc::channel();
+    {
+        let guard = state.tx.lock().unwrap();
+        let tx = guard.as_ref().ok_or("not connected")?;
+        tx.send(Cmd::SetStr { param_id, x, y, value, reply })
+            .map_err(|_| "control worker is gone".to_string())?;
+    }
+    wait.recv().map_err(|_| "no response from control worker".to_string())?
+}
+
+/// Read one string-valued parameter instance's current value.
+pub fn get_str(state: &VdState, param_id: u32, x: i64, y: i64) -> Result<String, String> {
+    let (reply, wait) = mpsc::channel();
+    {
+        let guard = state.tx.lock().unwrap();
+        let tx = guard.as_ref().ok_or("not connected")?;
+        tx.send(Cmd::GetStr { param_id, x, y, reply })
             .map_err(|_| "control worker is gone".to_string())?;
     }
     wait.recv().map_err(|_| "no response from control worker".to_string())?
@@ -158,10 +195,16 @@ mod imp {
                     let _ = reply.send(summary.clone());
                 }
                 Ok(Cmd::Set { param_id, x, y, value, reply }) => {
-                    let _ = reply.send(do_set(&mut ws, &dev_uid, param_id, x, y, value));
+                    let _ = reply.send(do_set(&mut ws, &dev_uid, param_id, x, y, json!(value)));
                 }
                 Ok(Cmd::Get { param_id, x, y, reply }) => {
                     let _ = reply.send(do_get(&mut ws, &dev_uid, param_id, x, y));
+                }
+                Ok(Cmd::SetStr { param_id, x, y, value, reply }) => {
+                    let _ = reply.send(do_set(&mut ws, &dev_uid, param_id, x, y, json!(value)));
+                }
+                Ok(Cmd::GetStr { param_id, x, y, reply }) => {
+                    let _ = reply.send(do_get_str(&mut ws, &dev_uid, param_id, x, y));
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     // Discard queued meter notifications so the socket buffer
@@ -227,7 +270,7 @@ mod imp {
         Err("timed out waiting for the device list".into())
     }
 
-    fn do_set(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64, value: i64) -> Result<(), String> {
+    fn do_set(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64, value: Value) -> Result<(), String> {
         let uri = format!("/vd/parameters/{param_id}:{x}:{y}?operation=value");
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
         send_json(
@@ -270,7 +313,10 @@ mod imp {
         Err("timed out waiting for the broker to confirm the write".into())
     }
 
-    fn do_get(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
+    // Read a parameter instance's raw current_value (numeric or string). do_get /
+    // do_get_str decode it; sharing the request + address-matched await loop here
+    // keeps the two get paths from drifting.
+    fn do_get_value(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<Value, String> {
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
         send_json(
             ws,
@@ -300,10 +346,26 @@ mod imp {
             }
             return vdp
                 .and_then(|v| v.pointer("/data/current_value"))
-                .and_then(Value::as_i64)
+                .cloned()
                 .ok_or_else(|| "broker response had no current_value".to_string());
         }
         Err("timed out waiting for the parameter value".into())
+    }
+
+    fn do_get(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
+        do_get_value(ws, dev_uid, param_id, x, y)?
+            .as_i64()
+            .ok_or_else(|| "parameter value was not an integer".to_string())
+    }
+
+    // The broker returns a name as a preset index (number) until one is typed,
+    // then the literal string; a non-string value decodes to "" so callers see
+    // "no custom name".
+    fn do_get_str(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<String, String> {
+        Ok(do_get_value(ws, dev_uid, param_id, x, y)?
+            .as_str()
+            .unwrap_or("")
+            .to_string())
     }
 
     /// Outcome of reading one frame while draining the idle socket.
