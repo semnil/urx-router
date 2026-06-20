@@ -33,7 +33,7 @@ pnpm tauri dev    # デスクトップ起動 (Rust 必須。未導入なら rust
 pnpm build        # tsc --noEmit + vite build
 pnpm build:demo   # ブラウザデモビルド (VITE_DEMO=1。保存・画像出力を除外)
 pnpm test         # vitest (core: routing/constraints/plan, models)
-pnpm test:e2e     # Playwright E2E (e2e/*.spec.ts: routing/hide/notes/multiselect)。CI は post-merge で実行
+pnpm test:e2e     # Playwright E2E (e2e/*.spec.ts: routing/hide/notes/multiselect/bustype/signaltype 等)。CI は post-merge で実行
 ```
 
 このマシン (Mac) では node/pnpm は nodenv (`~/.anyenv/envs/nodenv/shims`) 経由。非対話シェルでは PATH 未ロード。
