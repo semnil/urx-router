@@ -238,6 +238,13 @@ Source selection for the analog outputs (MAIN / LINE).
   The channel's **Rec Point** (recording / direct-out tap) selects a stage along this chain:
   MONO IN offers PRE GATE / PRE COMP / PRE EQ / PRE INS FX / PRE FADER; ST IN (EQ only) offers
   PRE EQ / PRE FADER. Default PRE FADER. Stored as a per-channel parameter, not a wire.
+- MONO IN selects a **COMP/EQ Type** (CH SETTING) — COMP->EQ or **SSMCS** (Sweet Spot Morphing
+  Channel Strip), mutually exclusive. SSMCS replaces the COMP / 4-band EQ with a dedicated morphing
+  strip: pick one **Sweet Spot Data** preset (6 generic + 28 artist/use-case = 34), then shape it
+  with **Comp Drive** / **Morphing** / **Out Gain**. Its compressor carries Attack / Release /
+  Ratio / Knee plus a side-chain filter (Q / Freq / Gain), and its EQ is **3-band (Low shelf / Mid
+  peaking / High shelf)** — not the 4-band PEQ. ST IN has no SSMCS (always EQ only). The inspector
+  swaps the COMP/EQ sections for the SSMCS sections per the type.
 - The mono CH and stereo CH structure is fixed (only the count varies per model). A MONO IN pair
   (CH1/2, CH3/4) carries a **Signal Type** (CH SETTING): STEREO links the two adjacent channels,
   MONO × 2 keeps them independent (the default). The tool keeps both nodes and stores the flag on the

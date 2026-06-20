@@ -4,7 +4,7 @@
 
 import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
-import type { ConnParams, EqBand, NodeParams, Plan, PlanConnection } from "../core/plan";
+import type { ConnParams, EqBand, NodeParams, Plan, PlanConnection, SsmcsBand, SsmcsParams } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "../core/plan";
 import { isFixedConnection, pairPrimary, sendHasTap } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
@@ -47,6 +47,9 @@ import {
   PAN_BAL_PAN,
   PAN_BAL_BAL,
   PAN_BAL_OPTIONS,
+  COMP_EQ_SSMCS,
+  SWEET_SPOT_DATA_OPTIONS,
+  SWEET_SPOT_DATA_DEFAULT,
 } from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
@@ -62,6 +65,31 @@ import {
   HPF_FREQ_STEP_HZ,
   PAN_MIN,
   PAN_MAX,
+  ssmcsCompDrive,
+  ssmcsAttackMs,
+  ssmcsReleaseMs,
+  ssmcsRatio,
+  ssmcsQ,
+  ssmcsFreqHz,
+  ssmcsGainDb,
+  SSMCS_COMP_DRIVE_MIN,
+  SSMCS_COMP_DRIVE_MAX,
+  SSMCS_MORPHING_MIN,
+  SSMCS_MORPHING_MAX,
+  SSMCS_GAIN_MIN,
+  SSMCS_GAIN_MAX,
+  SSMCS_ATTACK_RAW_MIN,
+  SSMCS_ATTACK_RAW_MAX,
+  SSMCS_RELEASE_RAW_MIN,
+  SSMCS_RELEASE_RAW_MAX,
+  SSMCS_RATIO_RAW_MIN,
+  SSMCS_RATIO_RAW_MAX,
+  SSMCS_Q_RAW_MIN,
+  SSMCS_Q_RAW_MAX,
+  SSMCS_FREQ_RAW_MIN,
+  SSMCS_FREQ_RAW_MAX,
+  SSMCS_EQ_LOW_FREQ_RAW_MAX,
+  SSMCS_EQ_HIGH_FREQ_RAW_MIN,
 } from "../core/control/vd";
 import { rateConstraints } from "../core/constraints";
 import type { RateWarning } from "../core/constraints";
@@ -335,11 +363,24 @@ export function renderInspector(
       }
       host.append(inSec.el);
 
+      // SSMCS Main section (MONO IN, SSMCS mode): the [SSMCS] on/off plus Sweet
+      // Spot Data / Comp Drive / Morphing / Out Gain. Sits above the COMP/EQ
+      // sections, which the channelSections loop renders from the SSMCS bank.
+      const ssmcs = cc?.hasMicStrip && compEqType === COMP_EQ_SSMCS;
+      if (ssmcs) {
+        const son = np.ssmcs?.on ?? false;
+        const { el, body } = section(m.inspector.ssmcs.title, { open: son, on: son, key: "ssmcsOn" });
+        body.append(boolToggle(m.inspector.ssmcs.title, son, (v) => mergeSsmcs(actions, plan, node.id, { on: v })));
+        body.append(ssmcsMasterBlock(node.id, np, plan, actions, m));
+        host.append(el);
+      }
+
       // GATE / COMP / EQ sections in channel-strip order, each a collapsible
       // module matching the device's dedicated GATE / COMP / EQ screens. The
       // summary carries the section's ON led; an off section folds itself away.
-      // Mono channels have all three; stereo channels expose only EQ. Default
-      // before a fetch: EQ on, GATE/COMP off.
+      // Mono channels have all three; stereo channels expose only EQ. In SSMCS
+      // mode the COMP/EQ sections render the morphing-strip controls instead.
+      // Default before a fetch: EQ on, GATE/COMP off.
       const dyn = channelDynamics(model, node.id, compEqType);
       const ieq = inputEq(model, node.id, compEqType);
       for (const sec of channelSections(model, node.id, compEqType)) {
@@ -347,7 +388,9 @@ export function renderInspector(
         const { el, body } = section(m.inspector[sec.key], { open: on, on, key: sec.key });
         body.append(sectionToggle(node.id, sec.key, on, actions));
         if (sec.key === "gateOn" && dyn) body.append(gateDetailBlock(node.id, dyn.gate, np, plan, actions, m));
+        else if (sec.key === "compOn" && ssmcs) body.append(ssmcsCompBlock(node.id, np, plan, actions, m));
         else if (sec.key === "compOn" && dyn?.comp) body.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
+        else if (sec.key === "eqOn" && ssmcs) body.append(ssmcsEqBlock(node.id, np, plan, actions, m));
         else if (sec.key === "eqOn" && ieq) body.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
         host.append(el);
       }
@@ -999,6 +1042,123 @@ function gateDetailBlock(
 // threshold/ratio/gain/attack/release sliders and the knee dropdown. 1-knob drives
 // every param from a single level, so the rest — Auto Makeup included — hide while
 // it is on, and Auto Makeup auto-drives the gain, so its slider hides too.
+// SSMCS raw-value display formatters: ms (3-tier to match the device's variable
+// precision) and ratio (∞ at the top). Hz and dB reuse formatHz / formatDyn.
+function fmtSsmcsMs(ms: number): string {
+  return ms < 10 ? `${ms.toFixed(3)} ms` : ms < 100 ? `${ms.toFixed(2)} ms` : `${ms.toFixed(1)} ms`;
+}
+function fmtSsmcsRatio(r: number): string {
+  return r === Infinity ? "∞:1" : `${r.toFixed(2)}:1`;
+}
+const fmtSsmcsHz = (raw: number): string => formatHz(ssmcsFreqHz(raw));
+const fmtSsmcsGain = (raw: number): string => formatDyn(ssmcsGainDb(raw), "db");
+const fmtSsmcsQ = (raw: number): string => ssmcsQ(raw).toFixed(2);
+
+// Merge a patch into a node's SSMCS sub-object — at the top level, a named nested
+// sub-section (comp / sc), or a named EQ band — reading the latest stored value
+// so sibling slider edits aren't lost.
+function mergeSsmcs(actions: InspectorActions, plan: Plan, nodeId: string, patch: Partial<SsmcsParams>): void {
+  actions.onUpdateNodeParams(nodeId, { ssmcs: { ...(plan.nodeParams[nodeId]?.ssmcs ?? {}), ...patch } });
+}
+function mergeSsmcsSub(
+  actions: InspectorActions,
+  plan: Plan,
+  nodeId: string,
+  sub: "comp" | "sc",
+  patch: Record<string, number | boolean>,
+): void {
+  mergeSsmcs(actions, plan, nodeId, { [sub]: { ...(plan.nodeParams[nodeId]?.ssmcs?.[sub] ?? {}), ...patch } });
+}
+function mergeSsmcsBand(
+  actions: InspectorActions,
+  plan: Plan,
+  nodeId: string,
+  band: "low" | "mid" | "high",
+  patch: Partial<SsmcsBand>,
+): void {
+  const eq = plan.nodeParams[nodeId]?.ssmcs?.eq ?? {};
+  mergeSsmcs(actions, plan, nodeId, { eq: { ...eq, [band]: { ...(eq[band] ?? {}), ...patch } } });
+}
+
+// SSMCS Main controls (Sweet Spot Data preset + Comp Drive / Morphing / Out Gain).
+function ssmcsMasterBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  const s = np.ssmcs ?? {};
+  frag.append(
+    selectControl(
+      m.inspector.ssmcs.sweetSpotData,
+      SWEET_SPOT_DATA_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
+      String(s.sweetSpotData ?? SWEET_SPOT_DATA_DEFAULT),
+      (v) => mergeSsmcs(actions, plan, nodeId, { sweetSpotData: Number(v) }),
+    ),
+  );
+  frag.append(
+    rangeSlider(m.inspector.ssmcs.compDrive, SSMCS_COMP_DRIVE_MIN, SSMCS_COMP_DRIVE_MAX, 1, s.compDrive ?? 100, (v) => ssmcsCompDrive(v).toFixed(2), (v) => mergeSsmcs(actions, plan, nodeId, { compDrive: v })),
+  );
+  frag.append(
+    rangeSlider(m.inspector.ssmcs.morphing, SSMCS_MORPHING_MIN, SSMCS_MORPHING_MAX, 1, s.morphing ?? 0, String, (v) => mergeSsmcs(actions, plan, nodeId, { morphing: v })),
+  );
+  frag.append(
+    rangeSlider(m.inspector.ssmcs.outGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, s.outGain ?? 180, fmtSsmcsGain, (v) => mergeSsmcs(actions, plan, nodeId, { outGain: v })),
+  );
+  return frag;
+}
+
+// SSMCS COMP detail: Attack / Release / Ratio / Knee + the side-chain filter. The
+// device-internal threshold/makeup (not shown on the LCD) are left untouched.
+function ssmcsCompBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  const c = np.ssmcs?.comp ?? {};
+  const setComp = (patch: Record<string, number>): void => mergeSsmcsSub(actions, plan, nodeId, "comp", patch);
+  frag.append(
+    rangeSlider(m.inspector.dyn.attack, SSMCS_ATTACK_RAW_MIN, SSMCS_ATTACK_RAW_MAX, 1, c.attack ?? SSMCS_ATTACK_RAW_MIN, (v) => fmtSsmcsMs(ssmcsAttackMs(v)), (v) => setComp({ attack: v })),
+  );
+  frag.append(
+    rangeSlider(m.inspector.dyn.release, SSMCS_RELEASE_RAW_MIN, SSMCS_RELEASE_RAW_MAX, 1, c.release ?? SSMCS_RELEASE_RAW_MIN, (v) => fmtSsmcsMs(ssmcsReleaseMs(v)), (v) => setComp({ release: v })),
+  );
+  frag.append(
+    rangeSlider(m.inspector.dyn.ratio, SSMCS_RATIO_RAW_MIN, SSMCS_RATIO_RAW_MAX, 1, c.ratio ?? SSMCS_RATIO_RAW_MIN, (v) => fmtSsmcsRatio(ssmcsRatio(v)), (v) => setComp({ ratio: v })),
+  );
+  frag.append(
+    selectControl(
+      m.inspector.dyn.knee,
+      COMP_KNEE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
+      String(c.knee ?? COMP_KNEE_DEFAULT),
+      (v) => setComp({ knee: Number(v) }),
+    ),
+  );
+  const sc = np.ssmcs?.sc ?? {};
+  const setSc = (patch: Record<string, number | boolean>): void => mergeSsmcsSub(actions, plan, nodeId, "sc", patch);
+  frag.append(boolToggle(m.inspector.ssmcs.sideChain, sc.on ?? false, (v) => setSc({ on: v })));
+  frag.append(rangeSlider(m.inspector.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX, 1, sc.q ?? 12, fmtSsmcsQ, (v) => setSc({ q: v })));
+  frag.append(rangeSlider(m.inspector.frequency, SSMCS_FREQ_RAW_MIN, SSMCS_FREQ_RAW_MAX, 1, sc.freq ?? 30, fmtSsmcsHz, (v) => setSc({ freq: v })));
+  frag.append(rangeSlider(m.inspector.eqGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, sc.gain ?? 180, fmtSsmcsGain, (v) => setSc({ gain: v })));
+  return frag;
+}
+
+// Per-band SSMCS EQ ranges: Low/High are shelving (freq capped/floored, no Q),
+// Mid is peaking (full freq span + Q). Derived once so a band only needs its name.
+const SSMCS_EQ_BANDS = [
+  { key: "low", freqMin: SSMCS_FREQ_RAW_MIN, freqMax: SSMCS_EQ_LOW_FREQ_RAW_MAX, hasQ: false },
+  { key: "mid", freqMin: SSMCS_FREQ_RAW_MIN, freqMax: SSMCS_FREQ_RAW_MAX, hasQ: true },
+  { key: "high", freqMin: SSMCS_EQ_HIGH_FREQ_RAW_MIN, freqMax: SSMCS_FREQ_RAW_MAX, hasQ: false },
+] as const;
+
+// SSMCS 3-band EQ (Low shelf / Mid peak / High shelf). Band order Q → Freq → Gain
+// matches the device EQ screen and the COMP->EQ inspector convention.
+function ssmcsEqBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  for (const spec of SSMCS_EQ_BANDS) {
+    const b: SsmcsBand = np.ssmcs?.eq?.[spec.key] ?? {};
+    const setBand = (patch: Partial<SsmcsBand>): void => mergeSsmcsBand(actions, plan, nodeId, spec.key, patch);
+    frag.append(boolToggle(m.inspector.ssmcs.bands[spec.key], b.on ?? true, (v) => setBand({ on: v })));
+    if (spec.hasQ) frag.append(rangeSlider(m.inspector.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX, 1, b.q ?? 12, fmtSsmcsQ, (v) => setBand({ q: v })));
+    frag.append(rangeSlider(m.inspector.frequency, spec.freqMin, spec.freqMax, 1, b.freq ?? spec.freqMin, fmtSsmcsHz, (v) => setBand({ freq: v })));
+    frag.append(rangeSlider(m.inspector.eqGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, b.gain ?? 180, fmtSsmcsGain, (v) => setBand({ gain: v })));
+  }
+  return frag;
+}
+
 function compDetailBlock(
   nodeId: string,
   fields: DynField[],

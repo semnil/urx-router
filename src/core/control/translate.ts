@@ -10,7 +10,7 @@
 
 import type { ConnectionKind, DeviceModel, ModelId } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
-import type { CompParams, EqBand, GateParams, Plan } from "../plan";
+import type { CompParams, EqBand, GateParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
 import { incomingConnection } from "../plan";
 import { isFixedConnection } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
@@ -112,6 +112,8 @@ function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number
       return denormalizeInsertFx(planValue);
     case "bool":
       return boolToVd(planValue !== 0);
+    case "raw":
+      return planValue;
   }
 }
 
@@ -504,6 +506,55 @@ function pushDynCommands(out: VdCommand[], fields: DynField[], y: number, vals: 
   }
 }
 
+// Push the SSMCS detail value-set commands for one MONO IN channel. Values are
+// raw broker integers; the inspector formats them. Only fields the plan set are
+// emitted (readback populates them all, keeping emit∘readback a fixed point).
+function pushSsmcsBand(
+  out: VdCommand[],
+  y: number,
+  b: SsmcsBand | undefined,
+  onName: ParamName,
+  qName: ParamName | null,
+  freqName: ParamName,
+  gainName: ParamName,
+): void {
+  if (!b) return;
+  if (b.on !== undefined) out.push(command(onName, y, b.on ? 1 : 0));
+  if (qName && b.q !== undefined) out.push(command(qName, y, b.q));
+  if (b.freq !== undefined) out.push(command(freqName, y, b.freq));
+  if (b.gain !== undefined) out.push(command(gainName, y, b.gain));
+}
+
+function pushSsmcsCommands(out: VdCommand[], y: number, s: SsmcsParams | undefined): void {
+  if (!s) return;
+  if (s.on !== undefined) out.push(command("SSMCS_ON", y, s.on ? 1 : 0));
+  if (s.compDrive !== undefined) out.push(command("SSMCS_COMP_DRIVE", y, s.compDrive));
+  if (s.morphing !== undefined) out.push(command("SSMCS_MORPHING", y, s.morphing));
+  if (s.outGain !== undefined) out.push(command("SSMCS_OUT_GAIN", y, s.outGain));
+  const c = s.comp;
+  if (c) {
+    if (c.attack !== undefined) out.push(command("SSMCS_COMP_ATTACK", y, c.attack));
+    if (c.release !== undefined) out.push(command("SSMCS_COMP_RELEASE", y, c.release));
+    if (c.ratio !== undefined) out.push(command("SSMCS_COMP_RATIO", y, c.ratio));
+    if (c.knee !== undefined) out.push(command("SSMCS_COMP_KNEE", y, c.knee));
+    if (c.threshold !== undefined) out.push(command("SSMCS_COMP_THRESHOLD", y, c.threshold));
+    if (c.makeup !== undefined) out.push(command("SSMCS_COMP_MAKEUP", y, c.makeup));
+  }
+  const sc = s.sc;
+  if (sc) {
+    if (sc.on !== undefined) out.push(command("SSMCS_SC_ON", y, sc.on ? 1 : 0));
+    if (sc.q !== undefined) out.push(command("SSMCS_SC_Q", y, sc.q));
+    if (sc.freq !== undefined) out.push(command("SSMCS_SC_FREQ", y, sc.freq));
+    if (sc.gain !== undefined) out.push(command("SSMCS_SC_GAIN", y, sc.gain));
+  }
+  const eq = s.eq;
+  if (eq) {
+    pushSsmcsBand(out, y, eq.low, "SSMCS_EQ_LOW_ON", null, "SSMCS_EQ_LOW_FREQ", "SSMCS_EQ_LOW_GAIN");
+    pushSsmcsBand(out, y, eq.mid, "SSMCS_EQ_MID_ON", "SSMCS_EQ_MID_Q", "SSMCS_EQ_MID_FREQ", "SSMCS_EQ_MID_GAIN");
+    pushSsmcsBand(out, y, eq.high, "SSMCS_EQ_HIGH_ON", null, "SSMCS_EQ_HIGH_FREQ", "SSMCS_EQ_HIGH_GAIN");
+  }
+}
+
 // Push the value-set commands for one node's PEQ bands (input or output). Each
 // band emits only the fields the plan set; a fixed-peaking mid band (type null)
 // never writes a filter type. A linked control (MIX) writes both L/R instances.
@@ -770,6 +821,12 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
         if (np.comp.autoMakeup !== undefined) out.push(command("COMP_AUTO_MAKEUP", dyn.y, np.comp.autoMakeup ? 1 : 0));
         if (np.comp.oneKnob !== undefined) out.push(command("COMP_ONE_KNOB", dyn.y, np.comp.oneKnob ? 1 : 0));
         if (np.comp.oneKnobLevel !== undefined) out.push(command("COMP_ONE_KNOB_LEVEL", dyn.y, np.comp.oneKnobLevel));
+      }
+      // SSMCS detail (MONO IN, SSMCS mode). Comp/EQ section ON are emitted above
+      // via channelSections (compOn/eqOn). Sweet Spot Data is plan/UI-only (string
+      // param, outside the numeric catalog). All values raw.
+      if (!dyn.comp && cc.hasMicStrip && (np.compEqType ?? COMP_EQ_COMP_FIRST) === COMP_EQ_SSMCS) {
+        pushSsmcsCommands(out, dyn.y, np.ssmcs);
       }
     }
     if (cc.gain && np.gain !== undefined) {

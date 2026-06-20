@@ -204,6 +204,16 @@ const inspectorActions = {
     const oscRelayout =
       patch.osc !== undefined &&
       (patch.osc.on !== prev?.osc?.on || patch.osc.mode !== prev?.osc?.mode);
+    // SSMCS on / side-chain on / EQ band on are two-button toggles whose active
+    // state only refreshes on re-render; the morphing-strip value sliders must not
+    // re-render (they keep focus). Selects (Sweet Spot Data / Knee) self-update.
+    const ssmcsRelayout =
+      patch.ssmcs !== undefined &&
+      (patch.ssmcs.on !== prev?.ssmcs?.on ||
+        patch.ssmcs.sc?.on !== prev?.ssmcs?.sc?.on ||
+        patch.ssmcs.eq?.low?.on !== prev?.ssmcs?.eq?.low?.on ||
+        patch.ssmcs.eq?.mid?.on !== prev?.ssmcs?.eq?.mid?.on ||
+        patch.ssmcs.eq?.high?.on !== prev?.ssmcs?.eq?.high?.on);
     // Toggles re-render to update the active button; sliders (gain/level) mutate
     // in place so they keep focus while dragging.
     if (
@@ -229,7 +239,8 @@ const inspectorActions = {
       patch.panBal !== undefined ||
       eqRelayout ||
       compRelayout ||
-      oscRelayout
+      oscRelayout ||
+      ssmcsRelayout
     )
       refreshInspector();
   },

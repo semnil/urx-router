@@ -176,6 +176,48 @@ describe("applyDeviceState round-trip", () => {
     expect(target.nodeParams["bus.osc"].osc).toMatchObject({ on: true, mode: 0, freq: 1000 });
   });
 
+  it("round-trips a SSMCS-mode channel's raw detail values", async () => {
+    const source = emptyPlan("URX44V");
+    ensureFixedConnections(model, source);
+    source.nodeParams.ch1 = {
+      compEqType: 1,
+      compOn: true,
+      eqOn: true,
+      ssmcs: {
+        on: true,
+        compDrive: 100,
+        morphing: 16,
+        outGain: 243,
+        comp: { attack: 170, release: 159, ratio: 60, knee: 2, threshold: 100, makeup: 70 },
+        sc: { on: true, q: 12, freq: 30, gain: 133 },
+        eq: {
+          low: { on: true, freq: 32, gain: 180 },
+          mid: { on: true, q: 12, freq: 72, gain: 243 },
+          high: { on: true, freq: 112, gain: 180 },
+        },
+      },
+    };
+    mockVdGetFrom(deviceTableFor(source));
+
+    const target = emptyPlan("URX44V");
+    const result = await applyDeviceState(model, target);
+    expect(result.errors).toEqual([]);
+
+    const s = target.nodeParams.ch1.ssmcs!;
+    expect(target.nodeParams.ch1.compEqType).toBe(1);
+    expect(s.on).toBe(true);
+    expect(s.compDrive).toBe(100);
+    expect(s.morphing).toBe(16);
+    expect(s.outGain).toBe(243);
+    expect(s.comp).toMatchObject({ attack: 170, release: 159, ratio: 60, knee: 2, threshold: 100, makeup: 70 });
+    expect(s.sc).toMatchObject({ on: true, q: 12, freq: 30, gain: 133 });
+    expect(s.eq?.mid).toMatchObject({ on: true, q: 12, freq: 72, gain: 243 });
+    expect(s.eq?.low?.q).toBeUndefined();
+    expect(s.eq?.high?.q).toBeUndefined();
+    // The 4-band PEQ is not present in SSMCS mode.
+    expect(target.nodeParams.ch1.eqBands).toBeUndefined();
+  });
+
   it("reconstructs the same wire set (sends, OSC assign, routing) as the source plan", async () => {
     const source = richPlan();
     mockVdGetFrom(deviceTableFor(source));

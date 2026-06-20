@@ -426,6 +426,46 @@ describe("planToCommands", () => {
     expect(cmds.some((c) => c.name === "COMP_THRESHOLD")).toBe(false);
   });
 
+  it("emits SSMCS detail (raw) only in SSMCS mode on mono channels", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = {
+      compEqType: 1,
+      ssmcs: {
+        on: true,
+        compDrive: 100,
+        morphing: 16,
+        outGain: 180,
+        comp: { attack: 170, release: 159, ratio: 60, knee: 1, threshold: 100, makeup: 70 },
+        sc: { on: true, q: 12, freq: 30, gain: 133 },
+        eq: { low: { on: true, freq: 32, gain: 180 }, mid: { on: true, q: 12, freq: 72, gain: 243 }, high: { on: true, freq: 112, gain: 180 } },
+      },
+    };
+    const cmds = planToCommands(model, plan);
+    const at = (name: string) => cmds.find((c) => c.name === name && c.y === 0);
+    // Master ON (89), Comp Drive (95), Morphing (93), Out Gain (117) — raw, y0.
+    expect(at("SSMCS_ON")!.request.uri).toBe("/vd/parameters/89:0:0?operation=value");
+    expect(at("SSMCS_COMP_DRIVE")!.vdValue).toBe(100);
+    expect(at("SSMCS_MORPHING")!.request.uri).toBe("/vd/parameters/93:0:0?operation=value");
+    expect(at("SSMCS_OUT_GAIN")!.vdValue).toBe(180);
+    // Comp detail raw, Mid Q (111), High freq (115).
+    expect(at("SSMCS_COMP_RATIO")!.vdValue).toBe(60);
+    expect(at("SSMCS_COMP_THRESHOLD")!.vdValue).toBe(100);
+    expect(at("SSMCS_SC_FREQ")!.vdValue).toBe(30);
+    expect(at("SSMCS_EQ_MID_Q")!.request.uri).toBe("/vd/parameters/111:0:0?operation=value");
+    expect(at("SSMCS_EQ_HIGH_FREQ")!.vdValue).toBe(112);
+    // Low/High bands carry no Q.
+    expect(cmds.some((c) => c.name === "SSMCS_EQ_LOW_Q" as never)).toBe(false);
+  });
+
+  it("emits no SSMCS detail in COMP->EQ mode", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { compEqType: 0, ssmcs: { compDrive: 100 } };
+    const cmds = planToCommands(model, plan);
+    expect(cmds.some((c) => c.name.startsWith("SSMCS_"))).toBe(false);
+  });
+
   it("emits no GATE/COMP detail on a stereo channel", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

@@ -31,7 +31,8 @@ export type ParamEncoding =
   | "ratio"
   | "portRef"
   | "portRefTagged"
-  | "insertFx";
+  | "insertFx"
+  | "raw";
 
 export interface ParamSpec {
   /** Broker param_id (first field of the "{id}:{x}:{y}" address). */
@@ -72,6 +73,54 @@ export const PARAMS = {
   SSMCS_EQ_ON: { id: 106, axis: "input", encoding: "bool" },
   /** Stereo channel EQ ON (1 = on), indexed by stereo position. */
   STEREO_CH_EQ_ON: { id: 213, axis: "global", encoding: "bool" },
+  // SSMCS (Sweet Spot Morphing Channel Strip) bank, MONO IN only — active when
+  // COMP_EQ_TYPE = SSMCS. Confirmed + calibrated by live LCD readback. The comp/EQ
+  // section ON toggles reuse SSMCS_COMP_ON (94, inverted) / SSMCS_EQ_ON (106,
+  // inverted) above. All continuous values are RAW broker integers (the device
+  // curves are non-linear; vd.ts holds the display formatters). Sweet Spot Data
+  // (param 91) is a string preset index the numeric IPC cannot carry, so it is
+  // modeled in the plan/UI but deliberately NOT in this write catalog.
+  /** SSMCS section ON (1 = on). */
+  SSMCS_ON: { id: 89, axis: "input", encoding: "bool" },
+  /** SSMCS Comp Drive (raw 0..200; display = raw/20). */
+  SSMCS_COMP_DRIVE: { id: 95, axis: "input", encoding: "raw" },
+  /** SSMCS Morphing position (raw 0..120). */
+  SSMCS_MORPHING: { id: 93, axis: "input", encoding: "raw" },
+  /** SSMCS Out Gain (raw 0..360; 180 = 0 dB). */
+  SSMCS_OUT_GAIN: { id: 117, axis: "input", encoding: "raw" },
+  /** SSMCS comp attack (raw 57..283; logarithmic 0.092..80 ms). */
+  SSMCS_COMP_ATTACK: { id: 96, axis: "input", encoding: "raw" },
+  /** SSMCS comp release (raw 24..300; logarithmic 9.3..999 ms). */
+  SSMCS_COMP_RELEASE: { id: 97, axis: "input", encoding: "raw" },
+  /** SSMCS comp ratio (raw 0..120; non-linear 1.0..∞:1). */
+  SSMCS_COMP_RATIO: { id: 98, axis: "input", encoding: "raw" },
+  /** SSMCS comp knee (0 = Soft / 1 = Medium / 2 = Hard). */
+  SSMCS_COMP_KNEE: { id: 99, axis: "input", encoding: "enum" },
+  /** SSMCS comp threshold (raw 0..200; device-internal, not on the LCD). */
+  SSMCS_COMP_THRESHOLD: { id: 100, axis: "input", encoding: "raw" },
+  /** SSMCS comp makeup (raw 0..200; device-internal, not on the LCD). */
+  SSMCS_COMP_MAKEUP: { id: 101, axis: "input", encoding: "raw" },
+  /** SSMCS comp side-chain ON (1 = on). */
+  SSMCS_SC_ON: { id: 102, axis: "input", encoding: "bool" },
+  /** SSMCS comp side-chain Q (raw 0..60). */
+  SSMCS_SC_Q: { id: 103, axis: "input", encoding: "raw" },
+  /** SSMCS comp side-chain frequency (raw 4..124). */
+  SSMCS_SC_FREQ: { id: 104, axis: "input", encoding: "raw" },
+  /** SSMCS comp side-chain gain (raw 0..360; 180 = 0 dB). */
+  SSMCS_SC_GAIN: { id: 105, axis: "input", encoding: "raw" },
+  /** SSMCS EQ Low band: ON / freq / gain (Low is shelving, no Q). */
+  SSMCS_EQ_LOW_ON: { id: 107, axis: "input", encoding: "bool" },
+  SSMCS_EQ_LOW_FREQ: { id: 108, axis: "input", encoding: "raw" },
+  SSMCS_EQ_LOW_GAIN: { id: 109, axis: "input", encoding: "raw" },
+  /** SSMCS EQ Mid band: ON / Q / freq / gain (Mid is peaking). */
+  SSMCS_EQ_MID_ON: { id: 110, axis: "input", encoding: "bool" },
+  SSMCS_EQ_MID_Q: { id: 111, axis: "input", encoding: "raw" },
+  SSMCS_EQ_MID_FREQ: { id: 112, axis: "input", encoding: "raw" },
+  SSMCS_EQ_MID_GAIN: { id: 113, axis: "input", encoding: "raw" },
+  /** SSMCS EQ High band: ON / freq / gain (High is shelving, no Q). */
+  SSMCS_EQ_HIGH_ON: { id: 114, axis: "input", encoding: "bool" },
+  SSMCS_EQ_HIGH_FREQ: { id: 115, axis: "input", encoding: "raw" },
+  SSMCS_EQ_HIGH_GAIN: { id: 116, axis: "input", encoding: "raw" },
   // Input GATE / COMP detail values (MONO IN channels; COMP is the COMP->EQ bank,
   // type-independent GATE). Verified by live scan (research §12.26).
   /** GATE threshold (dB). */
@@ -277,6 +326,55 @@ export const COMP_EQ_OPTIONS = [
   { value: COMP_EQ_COMP_FIRST, label: "COMP->EQ" },
   { value: COMP_EQ_SSMCS, label: "SSMCS" },
 ];
+
+// SSMCS Sweet Spot Data presets (param 91 index 1..34 → .ssd name). Enumerated
+// from the device: 6 generic 1-knob morph types + 28 artist / use-case presets.
+// Labels are the device strings (the ".ssd" suffix the first two carry is dropped
+// for display). Default is preset 1 (Basic). The index is written to the device
+// as the zero-padded string "0001".."0034" — outside the numeric write catalog
+// (see PARAMS), so this drives the plan/UI only.
+export const SWEET_SPOT_DATA_DEFAULT = 1;
+export const SWEET_SPOT_DATA_OPTIONS = [
+  { value: 1, label: "01 Basic" },
+  { value: 2, label: "02 Color" },
+  { value: 3, label: "03 Tone" },
+  { value: 4, label: "04 Sweep - Boost" },
+  { value: 5, label: "05 Sweep - Cut" },
+  { value: 6, label: "06 Lo Cut" },
+  { value: 7, label: "01 AK Bass" },
+  { value: 8, label: "02 AK Drums" },
+  { value: 9, label: "03 AK Master" },
+  { value: 10, label: "04 MZ A.Guitar" },
+  { value: 11, label: "05 MZ Kick" },
+  { value: 12, label: "06 MZ Snare" },
+  { value: 13, label: "07 MZ Master" },
+  { value: 14, label: "08 MR Vocal" },
+  { value: 15, label: "09 MR Drums" },
+  { value: 16, label: "10 MR Master" },
+  { value: 17, label: "11 SH Piano" },
+  { value: 18, label: "12 SH Drums" },
+  { value: 19, label: "13 SH Master" },
+  { value: 20, label: "14 OK Master - Vocal" },
+  { value: 21, label: "15 OK Master - Bass" },
+  { value: 22, label: "16 OK Master - Vigour" },
+  { value: 23, label: "17 OK Master - TV" },
+  { value: 24, label: "18 IO Vocal" },
+  { value: 25, label: "19 IO A.Guitar" },
+  { value: 26, label: "20 IO Drums" },
+  { value: 27, label: "21 TK Notch - Resonation" },
+  { value: 28, label: "22 TK Programmed Kick" },
+  { value: 29, label: "23 TK Pumping" },
+  { value: 30, label: "24 ZK Vocal" },
+  { value: 31, label: "25 ZK Bass" },
+  { value: 32, label: "26 ZK Drums" },
+  { value: 33, label: "27 ZK Master" },
+  { value: 34, label: "28 ZK Filter" },
+];
+
+/** Format the Sweet Spot Data index as the device's zero-padded string ("0001"). */
+export function sweetSpotDataAddr(index: number): string {
+  return String(index).padStart(4, "0");
+}
 
 // Rec Point: the per-channel signal-path tap fed to the channel's recording /
 // direct out (block diagram: "Rec Point" selector -> CH OUT). Labels are the

@@ -6,10 +6,10 @@
 
 import type { DeviceModel } from "../../models/types";
 import { ref } from "../../models/types";
-import type { ConnParams, EqBand, NodeParams, Plan } from "../plan";
+import type { ConnParams, EqBand, NodeParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
 import { vdGet } from "../platform";
-import { normalizeInsertFx, PARAMS } from "./params";
+import { COMP_EQ_SSMCS, normalizeInsertFx, PARAMS } from "./params";
 import type { DynField, EqControl } from "./translate";
 import {
   busEqOn,
@@ -139,6 +139,11 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
             oneKnob: vdToBool(await vdGet(PARAMS.COMP_ONE_KNOB.id, 0, dyn.y)),
             oneKnobLevel: await vdGet(PARAMS.COMP_ONE_KNOB_LEVEL.id, 0, dyn.y),
           };
+        } else if ((update.compEqType ?? 0) === COMP_EQ_SSMCS) {
+          // SSMCS mode: read the morphing strip's raw values (mirrors emission).
+          // Comp/EQ section ON were read above via channelSections (compOn/eqOn).
+          // Sweet Spot Data is plan/UI-only (string param), so not read here.
+          update.ssmcs = await readSsmcs(dyn.y);
         }
       }
       conn.params = { ...conn.params, level, pan };
@@ -427,4 +432,45 @@ async function readDyn(fields: DynField[], y: number): Promise<Record<string, nu
     vals[f.key] = decodeDyn(spec.encoding, await vdGet(spec.id, 0, y));
   }
   return vals;
+}
+
+// Read one SSMCS EQ band's raw values (Low/High have no Q → q omitted).
+async function readSsmcsBand(onId: number, qId: number | null, freqId: number, gainId: number, y: number): Promise<SsmcsBand> {
+  const b: SsmcsBand = {
+    on: vdToBool(await vdGet(onId, 0, y)),
+    freq: await vdGet(freqId, 0, y),
+    gain: await vdGet(gainId, 0, y),
+  };
+  if (qId !== null) b.q = await vdGet(qId, 0, y);
+  return b;
+}
+
+// Read the SSMCS morphing-strip raw values for a MONO IN channel (mirrors
+// pushSsmcsCommands). Sweet Spot Data (string param 91) is plan/UI-only.
+async function readSsmcs(y: number): Promise<SsmcsParams> {
+  return {
+    on: vdToBool(await vdGet(PARAMS.SSMCS_ON.id, 0, y)),
+    compDrive: await vdGet(PARAMS.SSMCS_COMP_DRIVE.id, 0, y),
+    morphing: await vdGet(PARAMS.SSMCS_MORPHING.id, 0, y),
+    outGain: await vdGet(PARAMS.SSMCS_OUT_GAIN.id, 0, y),
+    comp: {
+      attack: await vdGet(PARAMS.SSMCS_COMP_ATTACK.id, 0, y),
+      release: await vdGet(PARAMS.SSMCS_COMP_RELEASE.id, 0, y),
+      ratio: await vdGet(PARAMS.SSMCS_COMP_RATIO.id, 0, y),
+      knee: await vdGet(PARAMS.SSMCS_COMP_KNEE.id, 0, y),
+      threshold: await vdGet(PARAMS.SSMCS_COMP_THRESHOLD.id, 0, y),
+      makeup: await vdGet(PARAMS.SSMCS_COMP_MAKEUP.id, 0, y),
+    },
+    sc: {
+      on: vdToBool(await vdGet(PARAMS.SSMCS_SC_ON.id, 0, y)),
+      q: await vdGet(PARAMS.SSMCS_SC_Q.id, 0, y),
+      freq: await vdGet(PARAMS.SSMCS_SC_FREQ.id, 0, y),
+      gain: await vdGet(PARAMS.SSMCS_SC_GAIN.id, 0, y),
+    },
+    eq: {
+      low: await readSsmcsBand(PARAMS.SSMCS_EQ_LOW_ON.id, null, PARAMS.SSMCS_EQ_LOW_FREQ.id, PARAMS.SSMCS_EQ_LOW_GAIN.id, y),
+      mid: await readSsmcsBand(PARAMS.SSMCS_EQ_MID_ON.id, PARAMS.SSMCS_EQ_MID_Q.id, PARAMS.SSMCS_EQ_MID_FREQ.id, PARAMS.SSMCS_EQ_MID_GAIN.id, y),
+      high: await readSsmcsBand(PARAMS.SSMCS_EQ_HIGH_ON.id, null, PARAMS.SSMCS_EQ_HIGH_FREQ.id, PARAMS.SSMCS_EQ_HIGH_GAIN.id, y),
+    },
+  };
 }

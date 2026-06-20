@@ -76,6 +76,87 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
+// SSMCS (Sweet Spot Morphing Channel Strip) RAW broker ranges and display curves.
+// Values are stored raw in the plan; these turn a raw integer into the human unit
+// the device LCD shows. Curves were established by live LCD calibration (anchor
+// points in reference/.local/ssmcs-spec.md). The shared EQ/SC curves:
+//   freq: 20 × 10^((raw-4)/40)  (= 20 × 2^((raw-4)/12), 1/12-oct, 4=20 Hz..124=20 kHz)
+//   Q:    0.5 × 32^(raw/60)     (0=0.50 .. 60=16.0, logarithmic)
+//   gain: (raw-180)/10 dB       (0..360, 180 = 0 dB, ±18 dB)
+export const SSMCS_COMP_DRIVE_MIN = 0;
+export const SSMCS_COMP_DRIVE_MAX = 200;
+export const SSMCS_MORPHING_MIN = 0;
+export const SSMCS_MORPHING_MAX = 120;
+export const SSMCS_GAIN_MIN = 0; // raw; 180 = 0 dB
+export const SSMCS_GAIN_MAX = 360;
+export const SSMCS_ATTACK_RAW_MIN = 57;
+export const SSMCS_ATTACK_RAW_MAX = 283;
+export const SSMCS_RELEASE_RAW_MIN = 24;
+export const SSMCS_RELEASE_RAW_MAX = 300;
+export const SSMCS_RATIO_RAW_MIN = 0;
+export const SSMCS_RATIO_RAW_MAX = 120;
+export const SSMCS_Q_RAW_MIN = 0;
+export const SSMCS_Q_RAW_MAX = 60;
+export const SSMCS_FREQ_RAW_MIN = 4;
+export const SSMCS_FREQ_RAW_MAX = 124;
+// Comp threshold/makeup are device-internal raw values (not shown on the LCD).
+export const SSMCS_COMP_INTERNAL_MIN = 0;
+export const SSMCS_COMP_INTERNAL_MAX = 200;
+// Per-band frequency sub-ranges (Low caps low, High floors high; Mid spans all).
+export const SSMCS_EQ_LOW_FREQ_RAW_MAX = 72;
+export const SSMCS_EQ_HIGH_FREQ_RAW_MIN = 60;
+
+/** SSMCS Comp Drive raw → display (0.00 … 10.00). */
+export function ssmcsCompDrive(raw: number): number {
+  return raw / 20;
+}
+/** SSMCS comp attack raw → ms (logarithmic 0.092 … 80 ms). */
+export function ssmcsAttackMs(raw: number): number {
+  return 0.092 * Math.pow(80 / 0.092, (raw - SSMCS_ATTACK_RAW_MIN) / 226);
+}
+/** SSMCS comp release raw → ms (logarithmic 9.3 … 999 ms). */
+export function ssmcsReleaseMs(raw: number): number {
+  return 9.3 * Math.pow(999 / 9.3, (raw - SSMCS_RELEASE_RAW_MIN) / 276);
+}
+/** SSMCS EQ/SC Q raw → value (logarithmic 0.50 … 16.0). */
+export function ssmcsQ(raw: number): number {
+  return 0.5 * Math.pow(32, raw / 60);
+}
+/** SSMCS EQ/SC frequency raw → Hz (1/12-oct, 20 Hz … 20 kHz). */
+export function ssmcsFreqHz(raw: number): number {
+  return 20 * Math.pow(10, (raw - SSMCS_FREQ_RAW_MIN) / 40);
+}
+/** SSMCS EQ/SC/Out gain raw → dB (±18, 180 = 0 dB). */
+export function ssmcsGainDb(raw: number): number {
+  return (raw - 180) / 10;
+}
+// Ratio is a non-linear table (no closed form). Linear-interpolate between the
+// calibrated anchors; the top detent is ∞:1.
+const SSMCS_RATIO_ANCHORS: [number, number][] = [
+  [0, 1.0],
+  [30, 2.5],
+  [60, 4.0],
+  [75, 6.0],
+  [90, 14.0],
+  [105, 38.0],
+];
+/** SSMCS comp ratio raw → N:1 (Infinity at the top of the range). */
+export function ssmcsRatio(raw: number): number {
+  if (raw >= SSMCS_RATIO_RAW_MAX) return Infinity;
+  let lo = SSMCS_RATIO_ANCHORS[0];
+  let hi = SSMCS_RATIO_ANCHORS[SSMCS_RATIO_ANCHORS.length - 1];
+  for (let i = 0; i < SSMCS_RATIO_ANCHORS.length - 1; i++) {
+    if (raw >= SSMCS_RATIO_ANCHORS[i][0] && raw <= SSMCS_RATIO_ANCHORS[i + 1][0]) {
+      lo = SSMCS_RATIO_ANCHORS[i];
+      hi = SSMCS_RATIO_ANCHORS[i + 1];
+      break;
+    }
+  }
+  if (raw > hi[0]) return hi[1]; // between last anchor (105) and 120
+  const span = hi[0] - lo[0];
+  return span === 0 ? lo[1] : lo[1] + ((raw - lo[0]) * (hi[1] - lo[1])) / span;
+}
+
 /**
  * Plan dB → broker centi-dB. Below the lowest real value (LEVEL_MIN_DB, -96) the
  * UI reads -∞ and maps to the device's off sentinel; everything else is dB×100,

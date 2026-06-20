@@ -82,6 +82,55 @@ export interface CompParams {
   oneKnobLevel?: number;
 }
 
+// SSMCS (Sweet Spot Morphing Channel Strip) detail values (MONO IN channels,
+// SSMCS mode — the alternative to COMP->EQ). Every continuous field holds the RAW
+// broker integer, not a display unit: the device curves are non-linear (ratio is
+// a table, attack/release/Q are logarithmic) and two comp values are internal,
+// so storing raw keeps live write/readback a near-identity round-trip. The
+// inspector formats raw → ms / N:1 / Hz / Q / dB via the curves in vd.ts.
+
+// SSMCS 3-band EQ band (Low / High are shelving and carry no Q; Mid is peaking).
+export interface SsmcsBand {
+  on?: boolean;
+  q?: number; // raw 0..60 (Mid band only)
+  freq?: number; // raw 4..124
+  gain?: number; // raw 0..360 (180 = 0 dB)
+}
+
+// SSMCS compressor detail. attack/release/ratio raw; knee enum (0/1/2). threshold
+// and makeup are device-internal (driven by Comp Drive, not shown on the LCD) and
+// kept as opaque raw so a captured plan round-trips exactly.
+export interface SsmcsCompParams {
+  attack?: number; // raw 57..283
+  release?: number; // raw 24..300
+  ratio?: number; // raw 0..120 (120 = ∞:1)
+  knee?: number; // enum 0 Soft / 1 Medium / 2 Hard
+  threshold?: number; // raw 0..200 (internal)
+  makeup?: number; // raw 0..200 (internal)
+}
+
+// SSMCS compressor side-chain filter (Q / Freq / Gain raw).
+export interface SsmcsScParams {
+  on?: boolean;
+  q?: number; // raw 0..60
+  freq?: number; // raw 4..124
+  gain?: number; // raw 0..360
+}
+
+export interface SsmcsParams {
+  on?: boolean; // SSMCS section ON (the [SSMCS] button)
+  // Preset index 1..34 (6 generic + 28 artist). UI/plan only — the device param
+  // is a string ("0001".") the numeric IPC cannot carry, so it is not in the
+  // write catalog and does not round-trip through readback.
+  sweetSpotData?: number;
+  compDrive?: number; // raw 0..200 (display = raw/20, 0.00..10.00)
+  morphing?: number; // raw 0..120
+  outGain?: number; // raw 0..360 (180 = 0 dB)
+  comp?: SsmcsCompParams;
+  sc?: SsmcsScParams;
+  eq?: { low?: SsmcsBand; mid?: SsmcsBand; high?: SsmcsBand };
+}
+
 // Per-node device parameters that are not tied to a single wire (a channel's own
 // processing/state). Each field is optional; absence means the device default
 // (channel on, HPF off). Stored keyed by node id, alongside positions / notes.
@@ -122,6 +171,9 @@ export interface NodeParams {
   gate?: GateParams;
   /** Input COMP detail values (MONO IN channels, COMP->EQ mode). */
   comp?: CompParams;
+  /** SSMCS detail values (MONO IN channels, SSMCS mode). Replaces comp/eq when
+   *  compEqType = SSMCS; absent = device defaults. */
+  ssmcs?: SsmcsParams;
   /** DUCKER_ON: sidechain ducker engaged (ducker nodes). Absent or false = off. */
   duckerOn?: boolean;
   /** Ducker detail values (ducker nodes). */
