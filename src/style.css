@@ -252,6 +252,43 @@ button {
   margin: 0 3px;
 }
 
+/* Demo-only call to action that points visitors at the desktop app. Styled
+   like a tool button but tinted with the accent LED so it reads as a CTA. */
+.desktop-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  text-decoration: none;
+  color: var(--led);
+  padding: 7px 12px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, var(--ctl-bg2), var(--ctl-bg));
+  border: 1px solid var(--led);
+  box-shadow: var(--ctl-shadow);
+}
+
+.desktop-link:hover {
+  filter: brightness(1.12);
+}
+
+[data-theme="light"] .desktop-link:hover {
+  filter: brightness(0.97);
+}
+
+.desktop-link svg {
+  flex-shrink: 0;
+}
+
+/* The class display above outranks the `hidden` attribute's UA style, so keep
+   the link out of non-demo builds explicitly. */
+.desktop-link[hidden] {
+  display: none;
+}
+
 /* File menu: a console module that drops out of the rack. The trigger is a
    normal tool button with a caret; the panel is positioned fixed so the
    toolbar's overflow-x scroll does not clip it. */

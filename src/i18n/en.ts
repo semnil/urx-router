@@ -22,6 +22,8 @@ export const en = {
     light: "Light",
     dark: "Dark",
     language: "Language",
+    desktopApp: "Desktop app",
+    desktopAppHint: "Get the desktop app — save/load plans, export images, and control the device live",
   },
   inspector: {
     title: "Inspector",
