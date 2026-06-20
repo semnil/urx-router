@@ -67,6 +67,9 @@ const NOTE_MAX_LINES = 6;
 const NOTE_FONT_SIZE = 11;
 
 export type ThemeName = "dark" | "light";
+/** Which name the canvas shows on each node: the planner's fixed label
+ *  ("CH 1") or the device CH SETTING name ("ch 1"). */
+export type LabelSource = "model" | "device";
 
 interface Palette {
   /** Single brushed-metal node fill; the kind is shown by the rail color. */
@@ -176,6 +179,10 @@ export class Graph {
 
   private palette: Palette = PALETTES.dark;
   private themeName: ThemeName = "dark";
+  // Which name the canvas shows: the planner's fixed label ("CH 1") or the
+  // device CH SETTING name held in plan.nodeNames ("ch 1"). Default is the
+  // planner label, so the device names a fetch/seed brings in are opt-in.
+  private labelSource: LabelSource = "model";
   private disabledNodes = new Set<string>();
   // Nodes still showing their plan default after a device readback (a body read
   // failed). Mirrors plan.unreadNodes; empty when the plan has no device
@@ -268,6 +275,12 @@ export class Graph {
   setTheme(name: ThemeName): void {
     this.palette = PALETTES[name];
     this.themeName = name;
+    this.render();
+  }
+
+  /** Choose whether the canvas shows planner labels or device names. */
+  setLabelSource(source: LabelSource): void {
+    this.labelSource = source;
     this.render();
   }
 
@@ -624,10 +637,18 @@ export class Graph {
     return this.isHung(id) || !this.nodeHasEditableConnection(id);
   }
 
-  /** Full display name (both label tiers) for status lines and the shelf. A
-   *  user name override (plan.nodeNames) wins over the model's default label. */
+  /** The device CH SETTING name (plan.nodeNames) to show for a node, or undefined
+   *  in model-label mode or when no name is set — the single source both the
+   *  faceplate and labelOf use to decide a name override. */
+  private deviceName(id: string): string | undefined {
+    return this.labelSource === "device" ? this.plan.nodeNames?.[id]?.trim() || undefined : undefined;
+  }
+
+  /** Full display name (both label tiers) for status lines and the shelf. In
+   *  device mode the CH SETTING name wins over the model's label; in model mode
+   *  the planner label always shows. */
   private labelOf(id: string): string {
-    const custom = this.plan.nodeNames?.[id]?.trim();
+    const custom = this.deviceName(id);
     if (custom) return custom;
     const node = this.nodeById.get(id);
     return node ? fullLabel(node) : id;
@@ -688,9 +709,10 @@ export class Graph {
       }
     }
 
-    // A user name override (plan.nodeNames) replaces the model's primary label;
-    // the dim sublabel legend (if any) stays as secondary context.
-    const primary = this.plan.nodeNames?.[node.id]?.trim() || node.label;
+    // Device mode shows the CH SETTING name (plan.nodeNames) in place of the
+    // model's primary label; model mode keeps the planner label. The dim
+    // sublabel legend (if any) stays as secondary context either way.
+    const primary = this.deviceName(node.id) ?? node.label;
     if (node.sublabel) {
       // Two-tier faceplate label: the node name, then a dim secondary legend
       // beneath it, so a long name fits the fixed header height.

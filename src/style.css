@@ -245,6 +245,16 @@ button {
   filter: brightness(0.9);
 }
 
+/* A toggle button reads as an engaged switch when on: the raised gradient flips
+   to a recessed one and the accent LED tints the face, so the state shows at a
+   glance without a separate indicator. */
+.tools button[aria-pressed="true"] {
+  color: var(--led);
+  border-color: color-mix(in srgb, var(--led) 60%, var(--ctl-border));
+  background: linear-gradient(180deg, var(--ctl-bg), var(--ctl-bg2));
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
 .tool-sep {
   width: 1px;
   height: 20px;

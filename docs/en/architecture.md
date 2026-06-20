@@ -69,14 +69,16 @@ flowchart TD
 - **Plan** — the mutable state the user creates. It holds `modelId`, node positions (`positions`),
   connections (`connections`), per-connection parameters (level / pan / pre-post, etc.),
   node name overrides (`nodeNames`, the device's CH SETTING name — read and written over the string
-  IPC for the same nodes that carry a color; an empty name falls back to the model's default label),
+  IPC for the same nodes that carry a color; an empty name falls back to the model's default label).
+  The toolbar's labels toggle chooses whether the canvas shows the planner's fixed labels ("CH 1",
+  the default) or these device names ("ch 1"); model mode ignores `nodeNames` entirely),
   node color overrides
   (`nodeColors`, the device CH SETTING color, drawn as a thin top accent cap; the picker offers the
   device's fixed palette so a chosen color is read and written 1:1 to hardware — input channels,
   MIX, STEREO, FX and STREAMING), hidden nodes (`hidden`),
   and per-node notes (`notes`) with their minimized state (`noteCollapsed`). It serializes to JSON.
   A new plan comes from `defaultPlan(modelId)` in `models/initial-state.ts`, which seeds every model
-  with a factory initial state (node parameters + routing + CH SETTING colors). Only URX44V is captured from real
+  with a factory initial state (node parameters + routing + CH SETTING colors and names). Only URX44V is captured from real
   hardware; URX44 reuses that capture verbatim (it differs only by URX44V's HDMI input, which no
   default routes), and URX22 is an inferred remap of it (`models/initial-urx22.ts`, unverified until
   a real reset is captured). A device fetch instead starts from an empty plan (`emptyPlan` in

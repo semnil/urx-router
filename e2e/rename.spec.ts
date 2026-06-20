@@ -14,15 +14,36 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 });
 
-test("the inspector name field overrides the channel label on the canvas", async ({ page }) => {
+test("the name field sets the device name; the canvas shows it only in device-name mode", async ({ page }) => {
   await node(page, "ch1").click();
   await expect(nameInput(page)).toHaveCount(1);
 
   await nameInput(page).fill("VocalMic");
+  // Default (model) mode keeps the planner label, even with a device name set.
+  await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
+
+  // Switching the labels toggle to device names reveals the entered name.
+  await page.locator("#btn-labels").click();
   await expect(node(page, "ch1").locator("text").first()).toHaveText("VocalMic");
 
-  // Clearing the override restores the model's default label.
+  // Clearing the name falls back to the model's default label in either mode.
   await nameInput(page).fill("");
+  await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
+});
+
+test("the labels toggle defaults to model labels and flips both ways", async ({ page }) => {
+  await node(page, "ch1").click();
+  await nameInput(page).fill("VocalMic");
+  const labels = page.locator("#btn-labels");
+  await expect(labels).toHaveAttribute("aria-pressed", "false");
+  await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
+
+  await labels.click();
+  await expect(labels).toHaveAttribute("aria-pressed", "true");
+  await expect(node(page, "ch1").locator("text").first()).toHaveText("VocalMic");
+
+  await labels.click();
+  await expect(labels).toHaveAttribute("aria-pressed", "false");
   await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
 });
 
@@ -49,6 +70,8 @@ test("a color swatch adds a top accent cap; re-clicking it clears the cap", asyn
 });
 
 test("name and color round-trip through save and open", async ({ page }, testInfo) => {
+  // Show device names on the canvas so the saved/restored name is visible there.
+  await page.locator("#btn-labels").click();
   await node(page, "ch1").click();
   await nameInput(page).fill("VocalMic");
   await page.locator("#inspector .swatch").nth(1).click();

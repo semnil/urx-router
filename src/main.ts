@@ -17,7 +17,7 @@ import {
 import type { RecentEntry } from "./core/storage";
 import { PAN_BAL_BAL, PAN_BAL_PAN, STEREO_PAN_DEFAULT } from "./core/control/params";
 import { Graph } from "./ui/graph";
-import type { Selection, ThemeName } from "./ui/graph";
+import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { renderInspector } from "./ui/inspector";
 import { getLang, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
 import { DEMO } from "./core/env";
@@ -115,6 +115,17 @@ let selection: Selection = null;
 let recent: RecentEntry[] = loadRecent();
 let theme: ThemeName = detectTheme();
 document.documentElement.dataset.theme = theme;
+
+// Canvas label source: the planner's fixed labels (default) or the device CH
+// SETTING names. Best-effort persisted (guarded like the model / rate choices).
+function detectLabelSource(): LabelSource {
+  try {
+    return localStorage.getItem("urx-labels") === "device" ? "device" : "model";
+  } catch {
+    return "model";
+  }
+}
+let labelSource: LabelSource = detectLabelSource();
 
 for (const id of MODEL_IDS) {
   const opt = document.createElement("option");
@@ -266,9 +277,11 @@ const inspectorActions = {
   onClose: () => graph.clearSelection(),
 };
 graph.setTheme(theme);
+graph.setLabelSource(labelSource);
 
 const themeBtn = $("btn-theme");
 const langBtn = $("btn-lang");
+const labelsBtn = $("btn-labels");
 
 function applyStaticI18n(): void {
   const m = t();
@@ -292,6 +305,10 @@ function applyStaticI18n(): void {
   // Language button shows the language it switches to.
   langBtn.textContent = getLang() === "en" ? LANG_NAMES.ja : LANG_NAMES.en;
   langBtn.title = m.toolbar.language;
+  // Labels toggle shows the source the canvas is currently using.
+  labelsBtn.textContent = labelSource === "device" ? m.toolbar.labelsDevice : m.toolbar.labelsModel;
+  labelsBtn.title = m.toolbar.labelsHint;
+  labelsBtn.setAttribute("aria-pressed", String(labelSource === "device"));
   // Demo-only desktop-app link (present in the DOM, shown only in the demo build).
   const desktopLbl = document.getElementById("lbl-desktop");
   const desktopLink = document.getElementById("btn-desktop");
@@ -636,6 +653,18 @@ themeBtn.addEventListener("click", () => {
 
 langBtn.addEventListener("click", () => {
   setLang(getLang() === "en" ? "ja" : "en");
+});
+
+labelsBtn.addEventListener("click", () => {
+  labelSource = labelSource === "device" ? "model" : "device";
+  try {
+    localStorage.setItem("urx-labels", labelSource);
+  } catch {
+    // ignore (storage may be unavailable)
+  }
+  graph.setLabelSource(labelSource);
+  applyStaticI18n();
+  setStatus(labelSource === "device" ? t().toolbar.labelsDevice : t().toolbar.labelsModel);
 });
 
 // Wire the File dropdown: open/close, click-outside, and roving keyboard focus
