@@ -42,38 +42,81 @@ fn self_test_requested() -> bool {
 // Live control: connect to / set parameters on / disconnect from the URX via the
 // Device Center broker. The device GUID stays in Rust; the frontend addresses
 // parameters by (param_id, x, y) and an absolute integer value.
+//
+// Every call blocks on a broker round-trip, so the commands are async and run
+// the blocking work on a worker thread (spawn_blocking). A synchronous command
+// would run on the main thread and freeze the webview for each round-trip — with
+// live sync mirroring every edit, that stalls the UI continuously.
 #[tauri::command]
-fn vd_connect(state: State<vd::VdState>) -> Result<vd::DeviceSummary, String> {
-    vd::connect(&state)
+async fn vd_connect(state: State<'_, vd::VdState>) -> Result<vd::DeviceSummary, String> {
+    let (tx, summary) = tauri::async_runtime::spawn_blocking(vd::open)
+        .await
+        .map_err(|e| e.to_string())??;
+    state.install(tx);
+    Ok(summary)
 }
 
 #[tauri::command]
-fn vd_info(state: State<vd::VdState>) -> Result<vd::DeviceSummary, String> {
-    vd::info(&state)
+async fn vd_info(state: State<'_, vd::VdState>) -> Result<vd::DeviceSummary, String> {
+    let tx = vd::sender(&state)?;
+    tauri::async_runtime::spawn_blocking(move || vd::info(tx))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn vd_set(state: State<vd::VdState>, param_id: u32, x: i64, y: i64, value: i64) -> Result<(), String> {
-    vd::set(&state, param_id, x, y, value)
+async fn vd_set(
+    state: State<'_, vd::VdState>,
+    param_id: u32,
+    x: i64,
+    y: i64,
+    value: i64,
+) -> Result<(), String> {
+    let tx = vd::sender(&state)?;
+    tauri::async_runtime::spawn_blocking(move || vd::set(tx, param_id, x, y, value))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn vd_get(state: State<vd::VdState>, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
-    vd::get(&state, param_id, x, y)
+async fn vd_get(state: State<'_, vd::VdState>, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
+    let tx = vd::sender(&state)?;
+    tauri::async_runtime::spawn_blocking(move || vd::get(tx, param_id, x, y))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // String-valued parameters (e.g. CH SETTING names) the numeric vd_set/vd_get
 // cannot carry: the broker stores their current_value as a JSON string.
 #[tauri::command]
-fn vd_set_str(state: State<vd::VdState>, param_id: u32, x: i64, y: i64, value: String) -> Result<(), String> {
-    vd::set_str(&state, param_id, x, y, value)
+async fn vd_set_str(
+    state: State<'_, vd::VdState>,
+    param_id: u32,
+    x: i64,
+    y: i64,
+    value: String,
+) -> Result<(), String> {
+    let tx = vd::sender(&state)?;
+    tauri::async_runtime::spawn_blocking(move || vd::set_str(tx, param_id, x, y, value))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn vd_get_str(state: State<vd::VdState>, param_id: u32, x: i64, y: i64) -> Result<String, String> {
-    vd::get_str(&state, param_id, x, y)
+async fn vd_get_str(
+    state: State<'_, vd::VdState>,
+    param_id: u32,
+    x: i64,
+    y: i64,
+) -> Result<String, String> {
+    let tx = vd::sender(&state)?;
+    tauri::async_runtime::spawn_blocking(move || vd::get_str(tx, param_id, x, y))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
+// Disconnect only signals the worker to shut down (no reply wait), so it stays
+// synchronous.
 #[tauri::command]
 fn vd_disconnect(state: State<vd::VdState>) {
     vd::disconnect(&state);
