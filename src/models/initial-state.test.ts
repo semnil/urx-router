@@ -3,7 +3,7 @@ import { colorControl } from "../core/control/translate";
 import { MODELS } from "./index";
 import { defaultPlan } from "./initial-state";
 import { URX22_CONNECTIONS, URX22_NODE_PARAMS } from "./initial-urx22";
-import { URX44V_CONNECTIONS, URX44V_NODE_PARAMS } from "./initial-urx44v";
+import { URX44V_CONNECTIONS, URX44V_NODE_NAMES, URX44V_NODE_PARAMS } from "./initial-urx44v";
 import { parseRef } from "./types";
 
 describe("defaultPlan", () => {
@@ -12,6 +12,7 @@ describe("defaultPlan", () => {
     expect(plan.modelId).toBe("URX44V");
     expect(plan.nodeParams).toEqual(URX44V_NODE_PARAMS);
     expect(plan.connections).toEqual(URX44V_CONNECTIONS);
+    expect(plan.nodeNames).toEqual(URX44V_NODE_NAMES);
   });
 
   it("reuses the URX44V capture for URX44 (identical node set bar the HDMI input)", () => {
@@ -44,8 +45,13 @@ describe("defaultPlan", () => {
       const node = model.nodes.find((n) => n.id === nodeId);
       return !!node && node.ports.some((p) => p.id === portId);
     };
-    for (const id of Object.keys(plan.nodeParams)) {
-      expect(model.nodes.some((n) => n.id === id), `${id}`).toBe(true);
+    const real = (nodeId: string): boolean => model.nodes.some((n) => n.id === nodeId);
+    for (const key of [
+      ...Object.keys(plan.nodeParams),
+      ...Object.keys(plan.nodeColors),
+      ...Object.keys(plan.nodeNames),
+    ]) {
+      expect(real(key), `${id}: ${key}`).toBe(true);
     }
     for (const c of plan.connections) {
       expect(port(c.from), `${id}: ${c.from}`).toBe(true);

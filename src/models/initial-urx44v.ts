@@ -232,6 +232,27 @@ export const URX44V_NODE_COLORS: Record<string, string> = {
   "bus.stereo": "#d9534f",
 };
 
+// Factory CH SETTING names, read from the device (mono channels from param 18,
+// stereo channels from param 206, buses from their own params), trimmed to match
+// readback. Mono ship "ch 1".."ch 4", stereo the pair label "5/ 6"…, buses their
+// short labels.
+export const URX44V_NODE_NAMES: Record<string, string> = {
+  ch1: "ch 1",
+  ch2: "ch 2",
+  ch3: "ch 3",
+  ch4: "ch 4",
+  ch_5_6: "5/ 6",
+  ch_7_8: "7/ 8",
+  ch_9_10: "9/10",
+  ch_11_12: "11/12",
+  "bus.fx1": "FX 1",
+  "bus.fx2": "FX 2",
+  "bus.mix1": "MIX1",
+  "bus.mix2": "MIX2",
+  "bus.stream": "Strm",
+  "bus.stereo": "ST",
+};
+
 export const URX44V_CONNECTIONS: PlanConnection[] = [
   {
     from: "ch1:out",

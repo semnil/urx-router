@@ -758,13 +758,14 @@ describe("CH SETTING color", () => {
     expect(cmds[0]).toMatchObject({ paramId: 20, y: 0, vdValue: 1 });
   });
 
-  it("writes a stereo channel's color to both input slots", () => {
+  it("writes a stereo channel's color to the stereo-index param (208), not the input slot", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
     plan.nodeColors.ch_5_6 = COLOR_PALETTE[2].hex; // Yellow = index 2
-    const cmds = planToCommands(model, plan).filter((c) => c.name === "CH_COLOR");
-    expect(cmds.map((c) => c.y)).toEqual([4, 5]);
-    expect(cmds.every((c) => c.vdValue === 2)).toBe(true);
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "STEREO_CH_COLOR");
+    expect(cmds).toEqual([expect.objectContaining({ paramId: 208, y: 0, vdValue: 2 })]);
+    // The mono-channel color param (20) is not used for a stereo channel.
+    expect(planToCommands(model, plan).some((c) => c.name === "CH_COLOR")).toBe(false);
   });
 
   it("emits MIX color on both L/R instances (586) and STEREO on a single slot (496)", () => {
@@ -812,7 +813,9 @@ describe("CH SETTING name", () => {
 
   it("maps each node kind to its name param + instances (color param − 2)", () => {
     expect(nameControl(model, "ch1")).toEqual({ param: 18, instances: [0] });
-    expect(nameControl(model, "ch_5_6")).toEqual({ param: 18, instances: [4, 5] });
+    // Stereo channels use the stereo-index param (206), not the input slot (18).
+    expect(nameControl(model, "ch_5_6")).toEqual({ param: 206, instances: [0] });
+    expect(nameControl(model, "ch_7_8")).toEqual({ param: 206, instances: [1] });
     expect(nameControl(model, "bus.mix1")).toEqual({ param: 584, instances: [0, 1] });
     expect(nameControl(model, "bus.mix2")).toEqual({ param: 584, instances: [2, 3] });
     expect(nameControl(model, "bus.stereo")).toEqual({ param: 494, instances: [0] });

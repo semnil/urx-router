@@ -95,6 +95,24 @@ export const URX22_NODE_COLORS: Record<string, string> = {
   "bus.stereo": "#d9534f",
 };
 
+// CH SETTING names, mirroring the URX44V capture by analogy: mono channels ship
+// "ch 1"/"ch 2", stereo channels their pair label "3/ 4"…, buses their short
+// labels.
+export const URX22_NODE_NAMES: Record<string, string> = {
+  ch1: "ch 1",
+  ch2: "ch 2",
+  ch_3_4: "3/ 4",
+  ch_5_6: "5/ 6",
+  ch_7_8: "7/ 8",
+  ch_9_10: "9/10",
+  "bus.fx1": "FX 1",
+  "bus.fx2": "FX 2",
+  "bus.mix1": "MIX1",
+  "bus.mix2": "MIX2",
+  "bus.stream": "Strm",
+  "bus.stereo": "ST",
+};
+
 const stereoSend = (from: string): PlanConnection => ({
   from: `${from}:out`,
   to: "bus.stereo:in",
