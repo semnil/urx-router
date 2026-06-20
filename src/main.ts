@@ -292,6 +292,11 @@ function applyStaticI18n(): void {
   // Language button shows the language it switches to.
   langBtn.textContent = getLang() === "en" ? LANG_NAMES.ja : LANG_NAMES.en;
   langBtn.title = m.toolbar.language;
+  // Demo-only desktop-app link (present in the DOM, shown only in the demo build).
+  const desktopLbl = document.getElementById("lbl-desktop");
+  const desktopLink = document.getElementById("btn-desktop");
+  if (desktopLbl) desktopLbl.textContent = m.toolbar.desktopApp;
+  if (desktopLink) desktopLink.title = m.toolbar.desktopAppHint;
 }
 applyStaticI18n();
 
@@ -299,6 +304,11 @@ applyStaticI18n();
 if (DEMO) {
   for (const el of document.querySelectorAll<HTMLElement>("[data-demo-hide]")) {
     el.style.display = "none";
+  }
+  // The demo is a viewer; surface a link to the desktop app (full file IO,
+  // image export, and live device control) so visitors can find it.
+  for (const el of document.querySelectorAll<HTMLElement>("[data-demo-only]")) {
+    el.hidden = false;
   }
 }
 

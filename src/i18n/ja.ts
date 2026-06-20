@@ -22,6 +22,8 @@ export const ja: Messages = {
     light: "ライト",
     dark: "ダーク",
     language: "言語",
+    desktopApp: "デスクトップ版",
+    desktopAppHint: "デスクトップ版を入手 — 計画の保存・読込、画像出力、実機のライブ制御に対応",
   },
   inspector: {
     title: "インスペクタ",
