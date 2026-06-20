@@ -159,7 +159,12 @@ FlateDecode image (deflate via the platform `CompressionStream`), so no runtime 
 ## Responsive layout (mobile)
 
 The inspector — a fixed 300px column on desktop — becomes a bottom sheet (a rack drawer that slides up
-from the foot of the screen) on narrow viewports (≤720px). Its visibility is driven by CSS alone:
+from the foot of the screen) on narrow viewports (≤720px). For nodes whose inspector runs long
+(channels, etc.) the selected node's identity (heading / name / color) stays pinned as a sticky header
+while the parameters group into collapsible rack-module sections (ROUTING / INPUT / GATE / COMP / EQ /
+Parameters) built on `<details>` (`section()` in `inspector.ts`). GATE / COMP / EQ / Ducker light their
+header led from each section's ON state and an off section folds itself away at render time (open/closed
+state is not yet persisted); ROUTING defaults collapsed. Its visibility is driven by CSS alone:
 `main.ts` toggles a single `has-selection` class on `<body>` from whether anything is selected, and
 `body.has-selection #inspector` raises the sheet with `transform: translateY(0)` (off-screen at
 `translateY(105%)` otherwise). It is dismissed by the heading's ✕ button (`onClose` →

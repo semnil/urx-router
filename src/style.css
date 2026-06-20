@@ -474,8 +474,16 @@ select:focus-visible,
   border-left: 1px solid var(--line);
 }
 
+/* The strip identity stays pinned while a long parameter list scrolls beneath
+   it, so you never lose track of which channel you are editing. */
 #inspector h2 {
-  margin: 0 0 14px;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  margin: 0 0 12px;
+  padding: 2px 0 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
   font: 600 15px var(--mono);
   letter-spacing: 0.04em;
   color: var(--text);
@@ -495,6 +503,87 @@ select:focus-visible,
   font-size: 13px;
   line-height: 1.7;
   color: var(--text-dim);
+}
+
+/* Collapsible rack-module section. The summary reuses the h3 idiom (mono,
+   uppercase, tracked) and carries a disclosure chevron plus an optional ON led
+   that mirrors the section's GATE/COMP/EQ toggle. */
+.insp-section {
+  border-bottom: 1px solid var(--line);
+}
+
+.insp-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 0 11px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.insp-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.insp-section > summary:hover {
+  color: var(--text);
+}
+
+.insp-section > summary:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: 2px;
+}
+
+/* Chevron at the trailing edge; points down when open. */
+.insp-section > summary::after {
+  content: "";
+  margin-left: auto;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--text-dim);
+  border-bottom: 1.5px solid var(--text-dim);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+
+.insp-section[open] > summary::after {
+  transform: rotate(45deg);
+}
+
+.sec-led {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.sec-led.on {
+  background: var(--led);
+  box-shadow: 0 0 5px var(--led);
+}
+
+/* The section body holds .param rows; its last row's border doubles with the
+   section border, so drop it. */
+.sec-body {
+  padding-bottom: 6px;
+}
+
+.sec-body > .param:last-child {
+  border-bottom: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .insp-section > summary::after {
+    transition: none;
+  }
 }
 
 .field {
@@ -1118,8 +1207,13 @@ select:focus-visible,
   .menu-trigger,
   .model-select select,
   #inspector .toggle button,
-  #inspector .recent-row {
+  #inspector .recent-row,
+  .insp-section > summary {
     min-height: 40px;
+  }
+
+  .insp-section > summary {
+    box-sizing: border-box;
   }
 
   #inspector {

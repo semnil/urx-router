@@ -139,7 +139,11 @@ PDF は単一の FlateDecode 画像を埋め込んだ 1 ページ文書を手書
 ## レスポンシブ対応 (モバイル)
 
 デスクトップでは右側 300px の固定カラムのインスペクタは、狭い画面 (≤720px) では画面下部からせり上がる
-ボトムシート (ラックの引き出し) に切り替わる。表示状態は CSS のみで完結する: `main.ts` が選択の有無に
+ボトムシート (ラックの引き出し) に切り替わる。インスペクタが縦に伸びるノード (チャンネル等) では、選択ノードの
+同一性 (見出し・名前・色) を sticky ヘッダとして固定したまま、パラメータを `<details>` ベースの折りたたみ可能な
+ラック調モジュール (ROUTING / INPUT / GATE / COMP / EQ / Parameters) にグルーピングする (`inspector.ts` の
+`section()`)。GATE / COMP / EQ / Ducker は各セクションの ON 状態でヘッダの LED を点灯させ、OFF のセクションは
+描画時に自動で畳む (開閉状態の永続化は未対応)。ROUTING は既定で畳む。表示状態は CSS のみで完結する: `main.ts` が選択の有無に
 応じて `<body>` へ `has-selection` クラスを単一トグルし、`body.has-selection #inspector` が
 `transform: translateY(0)` でシートを上げる (未選択時は画面外 `translateY(105%)`)。閉じる導線は見出しの
 ✕ ボタン (`onClose` → `graph.clearSelection()` で既存の選択解除経路を再利用) と空キャンバスのタップ。
