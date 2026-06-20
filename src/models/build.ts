@@ -122,6 +122,8 @@ export function buildModel(p: ModelParams): DeviceModel {
     channels.push(id);
     // Each stereo channel carries one ducker hung directly below it; reserve the
     // next grid row so the default layout leaves room for that hanging node.
+    // Graph.autoLayout reserves the same whole row (snap-to-ROW_GAP) so Arrange
+    // on a fresh board moves nothing — keep the two in step.
     rowByCol.set(COL.channel, (rowByCol.get(COL.channel) ?? 0) + 1);
   }
 

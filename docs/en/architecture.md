@@ -236,7 +236,10 @@ downstream and sit in their own column rather than crowding the dense channel-to
 OSCILLATOR is a generator that feeds the mix buses, so it joins the channel column. The result is that
 every wire flows strictly left to right, with no wire doubling back through the bus column. The
 per-node column index is `layoutCol` in `build.ts`, stored as `pos.col`; `autoLayout` and the default
-grid both stack each column independently.
+grid both stack each column independently. Both also share one vertical grid: a default row is
+`pos.row * ROW_GAP` (with `build.ts` reserving an extra row under each stereo channel for its hung
+ducker), and `autoLayout` snaps each node's advance to whole `ROW_GAP` rows — so running Arrange on a
+fresh board moves nothing, while an expanded note simply claims more rows.
 
 A node's `kind` (which drives its rail color and the channel-only name field) can differ from its
 layout column: OSCILLATOR is `kind: "input"` (a signal source) and the MONITORs are `kind: "output"`
