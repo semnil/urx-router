@@ -208,6 +208,9 @@ export class Graph {
     grabDx: number;
     grabDy: number;
     link: { partner: string; dx: number; dy: number; pair: [string, string] } | null;
+    // True once the pointer actually moved the node, so a plain select-click (no
+    // movement) does not mark the plan dirty.
+    moved: boolean;
   } | null = null;
   // A port press: starts as "pending", becomes a "connecting" rubber-band once
   // dragged past the threshold, or "noop" if the dragged port has no legal
@@ -1321,7 +1324,7 @@ export class Graph {
         pair && partner && !this.isHidden(partner)
           ? { partner, dx: this.posOf(partner).x - dragPos.x, dy: this.posOf(partner).y - dragPos.y, pair }
           : null;
-      this.dragNode = { id: dragId, grabDx: p.x - dragPos.x, grabDy: p.y - dragPos.y, link };
+      this.dragNode = { id: dragId, grabDx: p.x - dragPos.x, grabDy: p.y - dragPos.y, link, moved: false };
       this.select({ type: "node", id });
       this.capturePointer(e.pointerId);
       return;
@@ -1349,6 +1352,7 @@ export class Graph {
       return;
     }
     if (this.dragNode) {
+      this.dragNode.moved = true;
       const p = this.clientToContent(e);
       this.plan.positions[this.dragNode.id] = {
         x: p.x - this.dragNode.grabDx,
@@ -1410,8 +1414,11 @@ export class Graph {
       return;
     }
     if (this.dragNode) {
+      const moved = this.dragNode.moved;
       this.dragNode = null;
-      this.cb.onChange();
+      // A plain select-click leaves the node where it was; only a real drag
+      // persists a new position, so only that marks the plan dirty.
+      if (moved) this.cb.onChange();
     }
     if (this.connect) {
       const c = this.connect;
