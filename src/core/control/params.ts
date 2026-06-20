@@ -255,8 +255,11 @@ export const PARAMS = {
   // (confirmed by live snapshot-diff). Input channels use param 20 at the input
   // slot index; the MIX/STEREO buses their own params at the fixed instances in
   // translate.ts (colorControl). raw = pass the palette index straight through.
-  /** Input channel color (palette index), y = physical input slot 0..11. */
+  /** Mono input channel color (palette index), y = physical input slot 0..3. */
   CH_COLOR: { id: 20, axis: "input", encoding: "raw" },
+  /** Stereo input channel color (palette index), y = stereo index 0..3. Stereo
+   *  channels carry their CH SETTING on the stereo block, not the input slot. */
+  STEREO_CH_COLOR: { id: 208, axis: "global", encoding: "raw" },
   /** MIX bus color (palette index), y = L/R-linked out instances. */
   MIX_COLOR: { id: 586, axis: "output", encoding: "raw" },
   /** STEREO master color (palette index), y = 0. */

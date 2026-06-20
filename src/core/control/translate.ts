@@ -378,7 +378,11 @@ export function busEqOn(nodeId: string): { name: ParamName; param: number; insta
 // and name then pick their param from that kind. Nodes the device does not give
 // a CH SETTING (monitor / OSC) resolve to null, so neither attribute is ever
 // written to a guessed address.
-type IdentityKind = "stereo" | "stream" | "fx" | "mix" | "channel";
+// Mono and stereo input channels carry their CH SETTING on different blocks: a
+// mono channel on the input slot (params 18/20), a stereo channel on the stereo
+// index (params 206/208) — the same split the fader/pan block uses (139.. vs
+// 266..). So they resolve to distinct identity kinds with different instances.
+type IdentityKind = "stereo" | "stream" | "fx" | "mix" | "monoChannel" | "stereoChannel";
 function nodeIdentity(model: DeviceModel, nodeId: string): { kind: IdentityKind; instances: number[] } | null {
   if (nodeId === "bus.stereo") return { kind: "stereo", instances: [0] };
   if (nodeId === "bus.stream") return { kind: "stream", instances: [0, 1] };
@@ -388,8 +392,12 @@ function nodeIdentity(model: DeviceModel, nodeId: string): { kind: IdentityKind;
   if (fx !== undefined) return { kind: "fx", instances: [fx] };
   const mix = MIX_FADER_INSTANCES[nodeId];
   if (mix) return { kind: "mix", instances: mix };
+  if (isStereoChannel(nodeId)) {
+    const si = stereoIndexMap(model).get(nodeId);
+    return si === undefined ? null : { kind: "stereoChannel", instances: [si] };
+  }
   const slots = channelInputSlots(model, nodeId);
-  return slots ? { kind: "channel", instances: slots } : null;
+  return slots ? { kind: "monoChannel", instances: slots } : null;
 }
 
 const COLOR_PARAM: Record<IdentityKind, { name: ParamName; param: number }> = {
@@ -397,7 +405,8 @@ const COLOR_PARAM: Record<IdentityKind, { name: ParamName; param: number }> = {
   stream: { name: "STREAM_COLOR", param: PARAMS.STREAM_COLOR.id },
   fx: { name: "FX_COLOR", param: PARAMS.FX_COLOR.id },
   mix: { name: "MIX_COLOR", param: PARAMS.MIX_COLOR.id },
-  channel: { name: "CH_COLOR", param: PARAMS.CH_COLOR.id },
+  monoChannel: { name: "CH_COLOR", param: PARAMS.CH_COLOR.id },
+  stereoChannel: { name: "STEREO_CH_COLOR", param: PARAMS.STEREO_CH_COLOR.id },
 };
 // Name param ids per kind. These are string-valued (the broker stores them as a
 // JSON string), so they live outside the numeric PARAMS catalog and are written
@@ -407,7 +416,8 @@ const NAME_PARAM: Record<IdentityKind, number> = {
   stream: 702,
   fx: 333,
   mix: 584,
-  channel: 18,
+  monoChannel: 18,
+  stereoChannel: 206,
 };
 
 /** CH SETTING color param/instances for a colorable node (input channels +
