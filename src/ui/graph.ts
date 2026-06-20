@@ -1835,9 +1835,12 @@ export class Graph {
   // --- layout / export -----------------------------------------------------
 
   autoLayout(): void {
-    // Stack each column top-to-bottom by the nodes' actual heights so an
-    // expanded note never overlaps the node below it. The gap matches the
-    // default grid, so a board with no expanded notes lays out as before.
+    // Stack each column top-to-bottom, but snap every node onto the ROW_GAP grid
+    // so the result is identical to a fresh plan's default positions (which are
+    // pure row * ROW_GAP) — running Arrange on an untouched board moves nothing.
+    // A node spanning more than one row (an expanded note, or a hung ducker that
+    // the default grid reserves a whole row for) advances by enough whole rows to
+    // clear it, so expanded notes still never overlap the node below.
     const vgap = ROW_GAP - NODE_H;
     const colY = new Map<number, number>();
     this.plan.positions = {};
@@ -1848,11 +1851,12 @@ export class Graph {
       const col = node.pos.col;
       const y = colY.get(col) ?? MARGIN;
       this.plan.positions[node.id] = { x: MARGIN + col * COL_GAP, y };
-      let advance = this.nodeHeight(node.id) + vgap;
-      // Reserve room below for a hung child so the next node clears it.
+      // The vertical footprint of this node plus any hung child it must clear.
+      let span = this.nodeHeight(node.id);
       const childId = this.attachedChild(node.id);
-      if (childId && !this.isHidden(childId)) advance += DUCKER_GAP + this.nodeHeight(childId);
-      colY.set(col, y + advance);
+      if (childId && !this.isHidden(childId)) span += DUCKER_GAP + this.nodeHeight(childId);
+      const rows = Math.max(1, Math.ceil((span + vgap) / ROW_GAP));
+      colY.set(col, y + rows * ROW_GAP);
     }
     this.render();
     this.fitView();
