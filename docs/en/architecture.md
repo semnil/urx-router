@@ -69,10 +69,12 @@ flowchart TD
 - **Plan** — the mutable state the user creates. It holds `modelId`, node positions (`positions`),
   connections (`connections`), per-connection parameters (level / pan / pre-post, etc.),
   node name overrides (`nodeNames`, the device's CH SETTING name), node color overrides
-  (`nodeColors`, the same CH SETTING color, drawn as a thin top accent cap), hidden nodes (`hidden`),
+  (`nodeColors`, the device CH SETTING color, drawn as a thin top accent cap; the picker offers the
+  device's fixed palette so a chosen color is read and written 1:1 to hardware — input channels,
+  MIX, STEREO, FX and STREAMING), hidden nodes (`hidden`),
   and per-node notes (`notes`) with their minimized state (`noteCollapsed`). It serializes to JSON.
   A new plan comes from `defaultPlan(modelId)` in `models/initial-state.ts`, which seeds every model
-  with a factory initial state (node parameters + routing). Only URX44V is captured from real
+  with a factory initial state (node parameters + routing + CH SETTING colors). Only URX44V is captured from real
   hardware; URX44 reuses that capture verbatim (it differs only by URX44V's HDMI input, which no
   default routes), and URX22 is an inferred remap of it (`models/initial-urx22.ts`, unverified until
   a real reset is captured). A device fetch instead starts from an empty plan (`emptyPlan` in
@@ -231,6 +233,12 @@ OSCILLATOR is a generator that feeds the mix buses, so it joins the channel colu
 every wire flows strictly left to right, with no wire doubling back through the bus column. The
 per-node column index is `layoutCol` in `build.ts`, stored as `pos.col`; `autoLayout` and the default
 grid both stack each column independently.
+
+A node's `kind` (which drives its rail color and the channel-only name field) can differ from its
+layout column: OSCILLATOR is `kind: "input"` (a signal source) and the MONITORs are `kind: "output"`
+(sinks), so their rail color reflects their signal role even though they sit in the bus/channel
+columns. The device does not color these in CH SETTING, so — unlike the STEREO / MIX / FX / STREAMING
+buses — they carry no color picker.
 
 ## Node labels
 

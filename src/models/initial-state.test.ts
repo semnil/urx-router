@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { colorControl } from "../core/control/translate";
 import { MODELS } from "./index";
 import { defaultPlan } from "./initial-state";
 import { URX22_CONNECTIONS, URX22_NODE_PARAMS } from "./initial-urx22";
@@ -50,5 +51,15 @@ describe("defaultPlan", () => {
       expect(port(c.from), `${id}: ${c.from}`).toBe(true);
       expect(port(c.to), `${id}: ${c.to}`).toBe(true);
     }
+  });
+
+  // The color picker shows exactly for device-colorable nodes, so every such node
+  // must seed an initial color and no other node may carry one — otherwise a node
+  // would offer a settable color with no factory value (or vice versa).
+  it.each(["URX22", "URX44", "URX44V"] as const)("%s seeds a color for exactly the colorable nodes", (id) => {
+    const model = MODELS[id];
+    const colorable = model.nodes.filter((n) => colorControl(model, n.id)).map((n) => n.id).sort();
+    const seeded = Object.keys(defaultPlan(id).nodeColors).sort();
+    expect(seeded).toEqual(colorable);
   });
 });

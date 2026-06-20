@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections } from "../plan";
-import { EQ_TYPE_PASS } from "./params";
+import { COLOR_OFF_INDEX, COLOR_PALETTE, EQ_TYPE_PASS, colorIndexToHex, hexToColorIndex } from "./params";
 import { planToCommands } from "./translate";
 
 describe("planToCommands", () => {
@@ -734,5 +734,75 @@ describe("pushDynCommands clamping", () => {
     const cmds = planToCommands(model, plan);
     expect(vOf(cmds, "GATE_THRESHOLD")).toBe(-4000); // -40 dB, not clamped
     expect(vOf(cmds, "COMP_RATIO")).toBe(400); // 4:1, not clamped
+  });
+});
+
+describe("CH SETTING color", () => {
+  const model = getModel("URX44V");
+
+  it("round-trips palette hex ↔ index", () => {
+    COLOR_PALETTE.forEach((c, i) => {
+      expect(hexToColorIndex(c.hex)).toBe(i);
+      expect(colorIndexToHex(i)).toBe(c.hex);
+    });
+    expect(colorIndexToHex(COLOR_OFF_INDEX)).toBeNull(); // Off → no cap
+    expect(hexToColorIndex("#123456")).toBeNull(); // outside the palette
+  });
+
+  it("emits the palette index for an input channel at its input slot (param 20)", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeColors.ch1 = COLOR_PALETTE[1].hex; // Orange = index 1
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "CH_COLOR");
+    expect(cmds).toHaveLength(1);
+    expect(cmds[0]).toMatchObject({ paramId: 20, y: 0, vdValue: 1 });
+  });
+
+  it("writes a stereo channel's color to both input slots", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeColors.ch_5_6 = COLOR_PALETTE[2].hex; // Yellow = index 2
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "CH_COLOR");
+    expect(cmds.map((c) => c.y)).toEqual([4, 5]);
+    expect(cmds.every((c) => c.vdValue === 2)).toBe(true);
+  });
+
+  it("emits MIX color on both L/R instances (586) and STEREO on a single slot (496)", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeColors["bus.mix1"] = COLOR_PALETTE[4].hex; // Cyan = 4
+    plan.nodeColors["bus.stereo"] = COLOR_PALETTE[6].hex; // Red = 6
+    const cmds = planToCommands(model, plan);
+    const mix = cmds.filter((c) => c.name === "MIX_COLOR");
+    expect(mix.map((c) => c.y)).toEqual([0, 1]);
+    expect(mix.every((c) => c.paramId === 586 && c.vdValue === 4)).toBe(true);
+    const stereo = cmds.filter((c) => c.name === "STEREO_COLOR");
+    expect(stereo).toHaveLength(1);
+    expect(stereo[0]).toMatchObject({ paramId: 496, y: 0, vdValue: 6 });
+  });
+
+  it("emits FX color on a single slot (335) and STREAMING on its L/R pair (704)", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeColors["bus.fx1"] = COLOR_PALETTE[2].hex; // Yellow = 2
+    plan.nodeColors["bus.fx2"] = COLOR_PALETTE[3].hex; // Purple = 3
+    plan.nodeColors["bus.stream"] = COLOR_PALETTE[1].hex; // Orange = 1
+    const cmds = planToCommands(model, plan);
+    const fx = cmds.filter((c) => c.name === "FX_COLOR");
+    expect(fx).toEqual([
+      expect.objectContaining({ paramId: 335, y: 0, vdValue: 2 }),
+      expect.objectContaining({ paramId: 335, y: 1, vdValue: 3 }),
+    ]);
+    const stream = cmds.filter((c) => c.name === "STREAM_COLOR");
+    expect(stream.map((c) => c.y)).toEqual([0, 1]);
+    expect(stream.every((c) => c.paramId === 704 && c.vdValue === 1)).toBe(true);
+  });
+
+  it("skips uncolored nodes and non-palette hex (never guesses a write)", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeColors.ch2 = "#abcdef"; // not a palette entry
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "CH_COLOR");
+    expect(cmds).toHaveLength(0); // ch2 skipped (non-palette), ch1 uncolored
   });
 });

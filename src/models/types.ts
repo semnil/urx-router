@@ -23,7 +23,9 @@ export interface DeviceNode {
   label: string;
   /** Optional dim second-line legend on the node (e.g. a ducker's channel). */
   sublabel?: string;
-  /** Layout column key (inputs | channels | buses | outputs). */
+  /** Layout column key (inputs | channels | buses | outputs). May differ from
+   *  `kind`: the OSCILLATOR (kind "input") and MONITORs (kind "output") sit in
+   *  the bus column but are kinded by their signal role for rail color. */
   column: NodeKind;
   ports: Port[];
   /** Default grid position; the plan may override and persist it. */

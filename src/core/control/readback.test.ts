@@ -8,6 +8,7 @@ import { ref } from "../../models/types";
 vi.mock("../platform", () => ({ vdGet: vi.fn() }));
 
 import { vdGet } from "../platform";
+import { COLOR_PALETTE } from "./params";
 import { applyDeviceState } from "./readback";
 import { planToCommands } from "./translate";
 
@@ -266,8 +267,9 @@ describe("applyDeviceState round-trip", () => {
     const oscAssign = 5;
     const inputSource = 8;
     const selectors = 9;
+    const colors = 8 + 6; // CH SETTING color: 8 channels + STEREO/MIX1/MIX2/FX1/FX2/STREAMING
     const expected =
-      channels + sends + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + oscAssign + inputSource + selectors;
+      channels + sends + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + oscAssign + inputSource + selectors + colors;
     expect(result.applied).toBe(expected);
     // Sanity: far more than the channel-only count, proving every group counts.
     expect(result.applied).toBeGreaterThan(channels);
@@ -403,15 +405,18 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     expect(result.unreadNodes.size).toBe(0);
   });
 
-  it("never flags input nodes or out.sdrec — they hold no body parameters", async () => {
+  it("never flags physical input source nodes or out.sdrec — they hold no body parameters", async () => {
     // Force every body group to throw (reject all reads): only attempted body
     // nodes may appear, so the never-attempted input/sdrec nodes must stay out.
+    // bus.osc is kind "input" but is the oscillator generator, which does carry
+    // body params (on/level/mode/freq), so it is legitimately attemptable —
+    // exclude it; this asserts the physical mic/line/USB source nodes only.
     vi.mocked(vdGet).mockImplementation(() => Promise.reject(new Error("read timeout")));
     const target = emptyPlan("URX44V");
     const result = await applyDeviceState(model, target);
 
     for (const node of model.nodes) {
-      if (node.kind === "input" || node.id === "out.sdrec") {
+      if ((node.kind === "input" && node.id !== "bus.osc") || node.id === "out.sdrec") {
         expect(result.unreadNodes.has(node.id)).toBe(false);
       }
     }
@@ -467,5 +472,21 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     expect(target.connections.some((c) => c.from === "ch1:out" && c.to === "bus.fx1:in")).toBe(true);
     // Other channels' bodies read fine, so they are not flagged.
     expect(result.unreadNodes.has("ch2")).toBe(false);
+  });
+
+  it("reads CH SETTING color back into nodeColors (palette index → swatch hex)", async () => {
+    const source = emptyPlan("URX44V");
+    ensureFixedConnections(model, source);
+    source.nodeColors.ch1 = COLOR_PALETTE[1].hex; // Orange
+    source.nodeColors["bus.stereo"] = COLOR_PALETTE[6].hex; // Red
+    mockVdGetFrom(deviceTableFor(source));
+
+    const target = emptyPlan("URX44V");
+    await applyDeviceState(model, target);
+
+    expect(target.nodeColors.ch1).toBe(COLOR_PALETTE[1].hex);
+    expect(target.nodeColors["bus.stereo"]).toBe(COLOR_PALETTE[6].hex);
+    // An unset colorable node reads the device default index 0 = Blue.
+    expect(target.nodeColors.ch2).toBe(COLOR_PALETTE[0].hex);
   });
 });

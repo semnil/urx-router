@@ -9,7 +9,7 @@ import { ref } from "../../models/types";
 import type { ConnParams, EqBand, NodeParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
 import { vdGet } from "../platform";
-import { COMP_EQ_SSMCS, normalizeInsertFx, PARAMS } from "./params";
+import { colorIndexToHex, COMP_EQ_SSMCS, normalizeInsertFx, PARAMS } from "./params";
 import type { DynField, EqControl } from "./translate";
 import {
   busEqOn,
@@ -17,6 +17,7 @@ import {
   channelControl,
   channelDynamics,
   channelSections,
+  colorControl,
   DUCKER_FIELDS,
   duckerControl,
   channelInputSlots,
@@ -197,6 +198,24 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       applied++;
     } catch (e) {
       failed.add(node.id);
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // CH SETTING color (palette index → swatch hex): input channels (20) and the
+  // MIX/STEREO buses (586 / 496). Off / an unknown index clears the override.
+  // Kept out of the body-read provenance (attempted/failed) — a color is an
+  // annotation, not a node's settings, so a color read failure must not flag the
+  // node's body as unread.
+  for (const node of model.nodes) {
+    const cc = colorControl(model, node.id);
+    if (!cc) continue;
+    try {
+      const hex = colorIndexToHex(await vdGet(cc.param, 0, cc.instances[0]));
+      if (hex) plan.nodeColors[node.id] = hex;
+      else delete plan.nodeColors[node.id];
+      applied++;
+    } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
