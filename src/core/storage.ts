@@ -243,6 +243,28 @@ function triggerDownload(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+// --- localStorage JSON helpers ---------------------------------------------
+
+/** Read a JSON value from localStorage, returning `fallback` on a miss or any
+ *  parse / storage error (private mode, disabled storage). */
+export function loadJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Write a JSON value to localStorage, ignoring quota / disabled-storage errors. */
+export function saveJson(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore quota / disabled storage
+  }
+}
+
 // --- recent plans (Tauri only: needs real file paths) ----------------------
 
 export interface RecentEntry {

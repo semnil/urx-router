@@ -65,6 +65,7 @@ import {
 } from "../core/control/vd";
 import { rateConstraints } from "../core/constraints";
 import type { RateWarning } from "../core/constraints";
+import { loadJson, saveJson } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
 import { t } from "../i18n";
@@ -344,13 +345,7 @@ export function renderInspector(
       for (const sec of channelSections(model, node.id, compEqType)) {
         const on = np[sec.key] ?? sec.key === "eqOn";
         const { el, body } = section(m.inspector[sec.key], { open: on, on, key: sec.key });
-        body.append(
-          // Toggling the section value reverts the fold to follow the new on-state.
-          boolToggle("", on, (v) => {
-            clearSectionOverride(sec.key);
-            actions.onUpdateNodeParams(node.id, { [sec.key]: v });
-          }),
-        );
+        body.append(sectionToggle(node.id, sec.key, on, actions));
         if (sec.key === "gateOn" && dyn) body.append(gateDetailBlock(node.id, dyn.gate, np, plan, actions, m));
         else if (sec.key === "compOn" && dyn?.comp) body.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
         else if (sec.key === "eqOn" && ieq) body.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
@@ -389,18 +384,9 @@ export function renderInspector(
       const oeq = outputEq(node.id);
       if (oeq) {
         const on = np.eqOn ?? true;
-        const { el, body } = section(
-          m.inspector.eqOn,
-          busEqOn(node.id) ? { open: on, on, key: "eqOn" } : { key: "eqOn" },
-        );
-        if (busEqOn(node.id)) {
-          body.append(
-            boolToggle("", on, (v) => {
-              clearSectionOverride("eqOn");
-              actions.onUpdateNodeParams(node.id, { eqOn: v });
-            }),
-          );
-        }
+        const hasEqToggle = busEqOn(node.id);
+        const { el, body } = section(m.inspector.eqOn, hasEqToggle ? { open: on, on, key: "eqOn" } : { key: "eqOn" });
+        if (hasEqToggle) body.append(sectionToggle(node.id, "eqOn", on, actions));
         body.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
         host.append(el);
       }
@@ -672,23 +658,14 @@ let sectionState: SectionState | null = null;
 
 function sectionOverrides(): SectionState {
   if (sectionState === null) {
-    try {
-      const raw = localStorage.getItem(SECTION_STATE_KEY);
-      const v = raw ? (JSON.parse(raw) as unknown) : null;
-      sectionState = v && typeof v === "object" ? (v as SectionState) : {};
-    } catch {
-      sectionState = {};
-    }
+    const v = loadJson<unknown>(SECTION_STATE_KEY, null);
+    sectionState = v && typeof v === "object" ? (v as SectionState) : {};
   }
   return sectionState;
 }
 
 function persistSectionState(): void {
-  try {
-    localStorage.setItem(SECTION_STATE_KEY, JSON.stringify(sectionOverrides()));
-  } catch {
-    // ignore quota / disabled storage
-  }
+  saveJson(SECTION_STATE_KEY, sectionOverrides());
 }
 
 function clearSectionOverride(key: string): void {
@@ -696,6 +673,21 @@ function clearSectionOverride(key: string): void {
   if (!(key in s)) return;
   delete s[key];
   persistSectionState();
+}
+
+// The bare ON/OFF control for an on-state section (GATE / COMP / EQ / Ducker):
+// its name is the section header, so the label is empty. Toggling the value
+// drops any manual fold so the section reverts to following the new on-state.
+function sectionToggle(
+  nodeId: string,
+  key: string,
+  on: boolean,
+  actions: InspectorActions,
+): HTMLElement {
+  return boolToggle("", on, (v) => {
+    clearSectionOverride(key);
+    actions.onUpdateNodeParams(nodeId, { [key]: v });
+  });
 }
 
 // A collapsible inspector section (rack-module style): a summary header in the
@@ -712,7 +704,8 @@ function section(
   el.className = "insp-section";
   const def = opts.open ?? true;
   const key = opts.key;
-  const initial = key !== undefined && key in sectionOverrides() ? sectionOverrides()[key] : def;
+  const overrides = sectionOverrides();
+  const initial = key !== undefined && key in overrides ? overrides[key] : def;
   el.open = initial;
   if (key !== undefined) {
     // The property set above can queue one echo toggle event; skip it by only
@@ -721,7 +714,7 @@ function section(
     el.addEventListener("toggle", () => {
       if (el.open === expected) return;
       expected = el.open;
-      sectionOverrides()[key] = el.open;
+      overrides[key] = el.open;
       persistSectionState();
     });
   }
@@ -975,12 +968,7 @@ function duckerBlock(
 ): HTMLElement {
   const on = np.duckerOn ?? false;
   const { el, body } = section(m.inspector.duckerOn, { open: on, on, key: "duckerOn" });
-  body.append(
-    boolToggle("", on, (v) => {
-      clearSectionOverride("duckerOn");
-      actions.onUpdateNodeParams(nodeId, { duckerOn: v });
-    }),
-  );
+  body.append(sectionToggle(nodeId, "duckerOn", on, actions));
   const vals = (np.ducker ?? {}) as Record<string, number | undefined>;
   for (const f of DUCKER_FIELDS)
     body.append(dynFieldSlider(f, m, vals[f.key], (key, v) => mergeSection(actions, plan, nodeId, "ducker", { [key]: v })));
