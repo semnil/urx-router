@@ -580,6 +580,67 @@ select:focus-visible,
   border-bottom: none;
 }
 
+/* Two-column flow for a section's short toggles (INPUT). Sliders, selects and
+   text inputs keep the full width; only the ON/OFF toggle rows pack two-up. */
+.insp-section[data-cols] > .sec-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 14px;
+}
+
+.insp-section[data-cols] > .sec-body > * {
+  grid-column: 1 / -1;
+}
+
+.insp-section[data-cols] > .sec-body > .param:has(.toggle) {
+  grid-column: span 1;
+}
+
+/* EQ band tabs: one row of equal-width band selectors above the active band's
+   controls. The active tab is ringed in led; a bypassed band reads dimmed. */
+.eq-tabs {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 4px;
+  margin: 10px 0 6px;
+}
+
+#inspector .eq-tab {
+  margin: 0;
+  width: 100%;
+  padding: 6px 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  color: var(--text-dim);
+  background: var(--ctl-bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+#inspector .eq-tab:hover {
+  color: var(--text);
+}
+
+#inspector .eq-tab.active {
+  color: var(--text);
+  border-color: var(--led);
+  background: linear-gradient(180deg, var(--ctl-bg2), var(--ctl-bg));
+}
+
+#inspector .eq-tab.off {
+  opacity: 0.5;
+}
+
+#inspector .eq-tab:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .insp-section > summary::after {
     transition: none;

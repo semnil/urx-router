@@ -145,7 +145,9 @@ PDF は単一の FlateDecode 画像を埋め込んだ 1 ページ文書を手書
 `section()`)。GATE / COMP / EQ / Ducker は各セクションの ON 状態でヘッダの LED を点灯させ、OFF のセクションは
 自動で畳む。ROUTING は既定で畳む。手動で開閉したセクションはセクション種別ごとに `localStorage`
 (`urx-inspector-sections`) へ永続化し、再描画・リロードをまたいで保持する。セクションの ON 値をトグルすると
-その上書きは解除され、開閉は ON 状態に追従する状態へ戻る。表示状態は CSS のみで完結する: `main.ts` が選択の有無に
+その上書きは解除され、開閉は ON 状態に追従する状態へ戻る。セクション内では、EQ バンド編集は 4 タブ
+(LOW / LOW MID / HIGH MID / HIGH) で 1 バンドずつ表示し (選択バンドは再描画をまたいで保持)、INPUT の
+トグルは 2 カラムで並べる。表示状態は CSS のみで完結する: `main.ts` が選択の有無に
 応じて `<body>` へ `has-selection` クラスを単一トグルし、`body.has-selection #inspector` が
 `transform: translateY(0)` でシートを上げる (未選択時は画面外 `translateY(105%)`)。閉じる導線は見出しの
 ✕ ボタン (`onClose` → `graph.clearSelection()` で既存の選択解除経路を再利用) と空キャンバスのタップ。

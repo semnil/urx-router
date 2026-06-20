@@ -254,6 +254,9 @@ export function renderInspector(
       const cc = channelControl(model, node.id);
       const compEqType = np.compEqType ?? COMP_EQ_COMP_FIRST;
       const inSec = section(m.inspector.inputSection, { key: "input" });
+      // Flow the short INPUT toggles (+48V / Hi-Z / Clip Safe / Ø / HPF) into two
+      // columns; sliders and the select span full width (style.css :has rule).
+      inSec.el.dataset.cols = "2";
       const input = inSec.body;
 
       // INPUT screen order (device top-left → bottom-right): +48V, A.Gain, HI-Z,
@@ -837,10 +840,16 @@ function formatGainDb(v: number): string {
 const EQ_BAND_DEFAULT_FREQ = [125, 1000, 4000, 10000];
 const EQ_Q_DEFAULT = 0.71;
 
-// 4-band PEQ editor (input channel or output bus). Each band shows ON / filter
-// type (LOW & HIGH bands only) / freq / Q / gain; Q shows only for a peaking band
-// and gain only when the band is not a pass filter — matching the device's
-// filter-type behavior. Edits merge into nodeParams.eqBands via the update action.
+// The EQ band tab last viewed per node, so a re-render (a band type / on change)
+// keeps the same band open instead of snapping back to LOW. Ephemeral view state
+// (like the selection), not persisted.
+const eqActiveBand = new Map<string, number>();
+
+// 4-band PEQ editor (input channel or output bus). The four bands are tabs; only
+// the selected band's controls show, since stacking all four ran ~20 rows long.
+// Each band shows ON / filter type (LOW & HIGH bands only) / freq / Q / gain; Q
+// shows only for a peaking band and gain only when the band is not a pass filter
+// — matching the device's filter-type behavior. Edits merge into nodeParams.eqBands.
 function eqBandBlock(
   nodeId: string,
   ctrl: EqControl,
@@ -855,16 +864,42 @@ function eqBandBlock(
     next[i] = { ...next[i], ...patch };
     actions.onUpdateNodeParams(nodeId, { eqBands: next });
   };
+  const tabs = document.createElement("div");
+  tabs.className = "eq-tabs";
+  const panels = document.createElement("div");
+
+  const indexes = ctrl.bands.map((b) => b.index);
+  let active = eqActiveBand.get(nodeId) ?? ctrl.bands[0].index;
+  if (!indexes.includes(active)) active = ctrl.bands[0].index;
+
+  const tabEls = new Map<number, HTMLElement>();
+  const panelEls = new Map<number, HTMLElement>();
+  // Switching tabs is pure DOM (no re-render), so a dragged slider keeps focus.
+  const show = (i: number): void => {
+    eqActiveBand.set(nodeId, i);
+    for (const [j, p] of panelEls) p.hidden = j !== i;
+    for (const [j, t] of tabEls) t.classList.toggle("active", j === i);
+  };
+
   for (const band of ctrl.bands) {
     const bv = np.eqBands?.[band.index] ?? {};
-    // Band name only — the enclosing EQ section header already says EQ.
-    frag.append(subheading(m.inspector.eqBand[band.name]));
-    frag.append(boolToggle(m.inspector.bandOn, bv.on ?? true, (v) => setBand(band.index, { on: v })));
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "eq-tab" + (band.index === active ? " active" : "") + ((bv.on ?? true) ? "" : " off");
+    tab.textContent = m.inspector.eqBand[band.name];
+    tab.addEventListener("click", () => show(band.index));
+    tabs.append(tab);
+    tabEls.set(band.index, tab);
+
+    const panel = document.createElement("div");
+    panel.className = "eq-panel";
+    panel.hidden = band.index !== active;
+    panel.append(boolToggle(m.inspector.bandOn, bv.on ?? true, (v) => setBand(band.index, { on: v })));
     let effType = EQ_TYPE_PEAKING;
     if (band.type !== null) {
       effType = bv.type ?? EQ_TYPE_SHELVING;
       const opts = band.name === "low" ? EQ_TYPE_LOW_OPTIONS : EQ_TYPE_HIGH_OPTIONS;
-      frag.append(
+      panel.append(
         selectControl(
           m.inspector.filterType,
           opts.map((o) => ({ value: String(o.value), label: o.label })),
@@ -876,21 +911,24 @@ function eqBandBlock(
     // Device EQ screen reads each band's values Q, Freq, Gain (left → right); Q is
     // shown only for a peaking band, gain only when the band is not a pass filter.
     if (effType === EQ_TYPE_PEAKING) {
-      frag.append(
+      panel.append(
         rangeSlider(m.inspector.q, EQ_Q_MIN, EQ_Q_MAX, 0.1, bv.q ?? EQ_Q_DEFAULT, (v) => v.toFixed(2), (v) =>
           setBand(band.index, { q: v }),
         ),
       );
     }
-    frag.append(eqFreqControl(bv.freq ?? EQ_BAND_DEFAULT_FREQ[band.index], (v) => setBand(band.index, { freq: v })));
+    panel.append(eqFreqControl(bv.freq ?? EQ_BAND_DEFAULT_FREQ[band.index], (v) => setBand(band.index, { freq: v })));
     if (effType !== EQ_TYPE_PASS) {
-      frag.append(
+      panel.append(
         rangeSlider(m.inspector.eqGain, EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB, 0.5, bv.gain ?? 0, formatGainDb, (v) =>
           setBand(band.index, { gain: v }),
         ),
       );
     }
+    panels.append(panel);
+    panelEls.set(band.index, panel);
   }
+  frag.append(tabs, panels);
   return frag;
 }
 
