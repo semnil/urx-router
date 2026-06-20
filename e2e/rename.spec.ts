@@ -63,6 +63,7 @@ test("name and color round-trip through save and open", async ({ page }, testInf
   const saved = testInfo.outputPath("URX44V-plan.json");
   await download.saveAs(saved);
 
+  await page.click("#btn-file");
   await page.click("#btn-new");
   await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
   await expect(node(page, "ch1").locator('rect[height="3"]')).toHaveCount(0);

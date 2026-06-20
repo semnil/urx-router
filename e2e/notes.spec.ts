@@ -99,6 +99,7 @@ test("notes and collapse state round-trip through save and open", async ({ page 
   await download.saveAs(saved);
 
   // Saving clears the dirty flag, so New resets without prompting.
+  await page.click("#btn-file");
   await page.click("#btn-new");
   await expect(node(page, "ch1").locator(".note-toggle")).toHaveCount(0);
   await expect(node(page, "ch1").locator(".note-add")).toHaveCount(1);

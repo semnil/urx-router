@@ -104,6 +104,7 @@ test("hidden state round-trips through save and open", async ({ page }, testInfo
   const saved = testInfo.outputPath("URX44V-plan.json");
   await download.saveAs(saved);
 
+  await page.click("#btn-file");
   await page.click("#btn-new");
   await expect(page.locator(".hidden-shelf")).toBeHidden();
 

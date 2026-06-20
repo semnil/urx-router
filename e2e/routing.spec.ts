@@ -109,6 +109,7 @@ test("round-trips a plan through save and open", async ({ page }, testInfo) => {
 
   // Saving clears the dirty flag, so New does not prompt; the board resets to
   // just the fixed wires.
+  await page.click("#btn-file");
   await page.click("#btn-new");
   await expect(wires(page)).toHaveCount(FIXED);
 

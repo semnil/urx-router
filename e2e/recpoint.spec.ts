@@ -39,6 +39,7 @@ test("rec point round-trips through save and open", async ({ page }, testInfo) =
   const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
   const saved = testInfo.outputPath("plan.json");
   await download.saveAs(saved);
+  await page.click("#btn-file");
   await page.click("#btn-new");
   await node(page, "ch1").click();
   await expect(recSelect(page)).toHaveValue("4");

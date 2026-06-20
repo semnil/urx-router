@@ -27,6 +27,7 @@ test("post-fader source round-trips through save and open", async ({ page }, tes
   const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
   const saved = testInfo.outputPath("plan.json");
   await download.saveAs(saved);
+  await page.click("#btn-file");
   await page.click("#btn-new");
   await page.click("#btn-file");
   const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
