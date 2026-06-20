@@ -61,85 +61,87 @@ pub struct VdState {
     tx: Mutex<Option<Sender<Cmd>>>,
 }
 
-/// Open a connection (spawns the worker, performs the broker handshake) and
-/// return the connected device. Replaces any prior connection.
-pub fn connect(state: &VdState) -> Result<DeviceSummary, String> {
+/// Spawn the worker and perform the broker handshake (blocking). Returns the
+/// command channel plus the connected device; the caller installs the channel
+/// into VdState. Kept free of VdState so a Tauri command can run it on a
+/// blocking task — the handshake waits up to seconds and must not stall the UI.
+pub fn open() -> Result<(Sender<Cmd>, DeviceSummary), String> {
     #[cfg(not(desktop))]
     {
-        let _ = state;
         Err("hardware control is available on desktop only".into())
     }
     #[cfg(desktop)]
     {
-        disconnect(state);
         let (tx, rx) = mpsc::channel::<Cmd>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<DeviceSummary, String>>();
         std::thread::spawn(move || imp::worker(rx, ready_tx));
         let summary = ready_rx
             .recv()
             .map_err(|_| "control worker exited before handshake".to_string())??;
-        *state.tx.lock().unwrap() = Some(tx);
-        Ok(summary)
+        Ok((tx, summary))
     }
 }
 
-/// Set one parameter instance to an absolute value. Errors if not connected or
-/// the broker rejects the write.
-pub fn set(state: &VdState, param_id: u32, x: i64, y: i64, value: i64) -> Result<(), String> {
-    let (reply, wait) = mpsc::channel();
-    {
-        let guard = state.tx.lock().unwrap();
-        let tx = guard.as_ref().ok_or("not connected")?;
-        tx.send(Cmd::Set { param_id, x, y, value, reply })
-            .map_err(|_| "control worker is gone".to_string())?;
+impl VdState {
+    /// Install a freshly opened connection, shutting down any prior worker.
+    pub fn install(&self, tx: Sender<Cmd>) {
+        if let Some(old) = self.tx.lock().unwrap().replace(tx) {
+            let _ = old.send(Cmd::Shutdown);
+        }
     }
+}
+
+/// Clone the live worker's command channel, or error if not connected. The
+/// clone lets the blocking send/reply-wait run on a separate thread, so the
+/// Tauri command never stalls the event loop while the broker round-trips.
+pub fn sender(state: &VdState) -> Result<Sender<Cmd>, String> {
+    state
+        .tx
+        .lock()
+        .unwrap()
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "not connected".to_string())
+}
+
+/// Set one parameter instance to an absolute value. Blocks on the reply, so
+/// callers run it off the UI thread. Errors if the worker is gone or the broker
+/// rejects the write.
+pub fn set(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64, value: i64) -> Result<(), String> {
+    let (reply, wait) = mpsc::channel();
+    tx.send(Cmd::Set { param_id, x, y, value, reply })
+        .map_err(|_| "control worker is gone".to_string())?;
     wait.recv().map_err(|_| "no response from control worker".to_string())?
 }
 
-/// Read one parameter instance's current absolute value. Errors if not connected.
-pub fn get(state: &VdState, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
+/// Read one parameter instance's current absolute value.
+pub fn get(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
     let (reply, wait) = mpsc::channel();
-    {
-        let guard = state.tx.lock().unwrap();
-        let tx = guard.as_ref().ok_or("not connected")?;
-        tx.send(Cmd::Get { param_id, x, y, reply })
-            .map_err(|_| "control worker is gone".to_string())?;
-    }
+    tx.send(Cmd::Get { param_id, x, y, reply })
+        .map_err(|_| "control worker is gone".to_string())?;
     wait.recv().map_err(|_| "no response from control worker".to_string())?
 }
 
 /// Set one string-valued parameter instance (e.g. a CH SETTING name).
-pub fn set_str(state: &VdState, param_id: u32, x: i64, y: i64, value: String) -> Result<(), String> {
+pub fn set_str(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64, value: String) -> Result<(), String> {
     let (reply, wait) = mpsc::channel();
-    {
-        let guard = state.tx.lock().unwrap();
-        let tx = guard.as_ref().ok_or("not connected")?;
-        tx.send(Cmd::SetStr { param_id, x, y, value, reply })
-            .map_err(|_| "control worker is gone".to_string())?;
-    }
+    tx.send(Cmd::SetStr { param_id, x, y, value, reply })
+        .map_err(|_| "control worker is gone".to_string())?;
     wait.recv().map_err(|_| "no response from control worker".to_string())?
 }
 
 /// Read one string-valued parameter instance's current value.
-pub fn get_str(state: &VdState, param_id: u32, x: i64, y: i64) -> Result<String, String> {
+pub fn get_str(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64) -> Result<String, String> {
     let (reply, wait) = mpsc::channel();
-    {
-        let guard = state.tx.lock().unwrap();
-        let tx = guard.as_ref().ok_or("not connected")?;
-        tx.send(Cmd::GetStr { param_id, x, y, reply })
-            .map_err(|_| "control worker is gone".to_string())?;
-    }
+    tx.send(Cmd::GetStr { param_id, x, y, reply })
+        .map_err(|_| "control worker is gone".to_string())?;
     wait.recv().map_err(|_| "no response from control worker".to_string())?
 }
 
 /// The currently connected device, or an error if not connected.
-pub fn info(state: &VdState) -> Result<DeviceSummary, String> {
+pub fn info(tx: Sender<Cmd>) -> Result<DeviceSummary, String> {
     let (reply, wait) = mpsc::channel();
-    {
-        let guard = state.tx.lock().unwrap();
-        let tx = guard.as_ref().ok_or("not connected")?;
-        tx.send(Cmd::Info { reply }).map_err(|_| "control worker is gone".to_string())?;
-    }
+    tx.send(Cmd::Info { reply }).map_err(|_| "control worker is gone".to_string())?;
     wait.recv().map_err(|_| "no response from control worker".to_string())
 }
 
