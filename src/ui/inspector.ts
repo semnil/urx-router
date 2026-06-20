@@ -231,10 +231,20 @@ export function renderInspector(
 
     const outgoing = plan.connections.filter((c) => parseRef(c.from).nodeId === node.id);
     const incoming = plan.connections.filter((c) => parseRef(c.to).nodeId === node.id);
-    host.append(subheading(m.inspector.inputsFrom(incoming.length)));
-    for (const c of incoming) host.append(connRow(`${endpointLabel(c.from)} →`, c.kind));
-    host.append(subheading(m.inspector.outputsTo(outgoing.length)));
-    for (const c of outgoing) host.append(connRow(`→ ${endpointLabel(c.to)}`, c.kind));
+    // Routing lists default collapsed — wiring is done on the canvas, so the
+    // inspector keeps this folded away behind a count summary.
+    {
+      const { el, body } = section(m.inspector.routing, { open: false });
+      body.append(subheading(m.inspector.inputsFrom(incoming.length)));
+      for (const c of incoming) body.append(connRow(`${endpointLabel(c.from)} →`, c.kind));
+      body.append(subheading(m.inspector.outputsTo(outgoing.length)));
+      for (const c of outgoing) body.append(connRow(`→ ${endpointLabel(c.to)}`, c.kind));
+      host.append(el);
+    }
+
+    // Insert FX and the trailing channel/bus controls group into this body when a
+    // node provides one (the bus Parameters section); otherwise they stay loose.
+    let tailBody: HTMLElement | null = null;
 
     // Channel node device parameters: ON (mute) and HPF. Stored per node id, so
     // they edit plan.nodeParams rather than a wire. Defaults match the device
@@ -243,13 +253,14 @@ export function renderInspector(
       const np = plan.nodeParams[node.id] ?? {};
       const cc = channelControl(model, node.id);
       const compEqType = np.compEqType ?? COMP_EQ_COMP_FIRST;
-      host.append(subheading(m.inspector.parameters));
+      const inSec = section(m.inspector.inputSection);
+      const input = inSec.body;
 
       // INPUT screen order (device top-left → bottom-right): +48V, A.Gain, HI-Z,
       // Clip Safe, Ø, HPF, HPF Freq. The analog mic-strip controls (+48V / Clip
       // Safe / HPF) exist only on the mono mic channels; Hi-Z only on CH3/CH4.
       if (cc?.hasMicStrip) {
-        host.append(
+        input.append(
           boolToggle(m.inspector.phantom, np.phantom ?? false, (v) =>
             actions.onUpdateNodeParams(node.id, { phantom: v }),
           ),
@@ -259,21 +270,21 @@ export function renderInspector(
       // (-8..+70), stereo = D.Gain (-24..+24), matching the device's own labels.
       if (cc?.gain) {
         const gainLabel = cc.gain.analog ? m.inspector.gainAnalog : m.inspector.gainDigital;
-        host.append(
+        input.append(
           gainControl(gainLabel, cc.gain.minDb, cc.gain.maxDb, np.gain ?? HA_GAIN_DEFAULT_DB, (v) =>
             actions.onUpdateNodeParams(node.id, { gain: v }),
           ),
         );
       }
       if (cc?.hasHiZ) {
-        host.append(
+        input.append(
           boolToggle(m.inspector.hiZ, np.hiZ ?? false, (v) =>
             actions.onUpdateNodeParams(node.id, { hiZ: v }),
           ),
         );
       }
       if (cc?.hasMicStrip) {
-        host.append(
+        input.append(
           boolToggle(m.inspector.clipSafe, np.clipSafe ?? false, (v) =>
             actions.onUpdateNodeParams(node.id, { clipSafe: v }),
           ),
@@ -282,19 +293,19 @@ export function renderInspector(
       // Polarity invert (Ø): one toggle on mono, two (L/R) on stereo channels.
       for (const ph of cc?.phases ?? []) {
         const label = ph.side ? `${m.inspector.phase} ${ph.side}` : m.inspector.phase;
-        host.append(
+        input.append(
           boolToggle(label, np[ph.key] ?? false, (v) =>
             actions.onUpdateNodeParams(node.id, { [ph.key]: v }),
           ),
         );
       }
       if (cc?.hasHpf) {
-        host.append(
+        input.append(
           boolToggle(m.inspector.hpf, np.hpf ?? false, (v) =>
             actions.onUpdateNodeParams(node.id, { hpf: v }),
           ),
         );
-        host.append(
+        input.append(
           rangeSlider(
             m.inspector.hpfFreq,
             HPF_FREQ_MIN_HZ,
@@ -309,7 +320,7 @@ export function renderInspector(
       // COMP/EQ type (COMP->EQ vs SSMCS) — the CH SETTING bank selector that drives
       // which COMP/EQ controls appear below. MONO IN channels only.
       if (cc?.hasMicStrip) {
-        host.append(
+        input.append(
           selectControl(
             m.inspector.compEqType,
             COMP_EQ_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
@@ -318,22 +329,25 @@ export function renderInspector(
           ),
         );
       }
+      host.append(inSec.el);
 
-      // GATE / COMP / EQ sections in channel-strip order: each section's ON toggle
-      // immediately followed by its detail, matching the device's dedicated
-      // GATE / COMP / EQ screens. Mono channels have all three; stereo channels
-      // expose only EQ. Default before a fetch: EQ on, GATE/COMP off.
+      // GATE / COMP / EQ sections in channel-strip order, each a collapsible
+      // module matching the device's dedicated GATE / COMP / EQ screens. The
+      // summary carries the section's ON led; an off section folds itself away.
+      // Mono channels have all three; stereo channels expose only EQ. Default
+      // before a fetch: EQ on, GATE/COMP off.
       const dyn = channelDynamics(model, node.id, compEqType);
       const ieq = inputEq(model, node.id, compEqType);
       for (const sec of channelSections(model, node.id, compEqType)) {
-        host.append(
-          boolToggle(m.inspector[sec.key], np[sec.key] ?? sec.key === "eqOn", (v) =>
-            actions.onUpdateNodeParams(node.id, { [sec.key]: v }),
-          ),
+        const on = np[sec.key] ?? sec.key === "eqOn";
+        const { el, body } = section(m.inspector[sec.key], { open: on, on });
+        body.append(
+          boolToggle("", on, (v) => actions.onUpdateNodeParams(node.id, { [sec.key]: v })),
         );
-        if (sec.key === "gateOn" && dyn) host.append(gateDetailBlock(node.id, dyn.gate, np, plan, actions, m));
-        else if (sec.key === "compOn" && dyn?.comp) host.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
-        else if (sec.key === "eqOn" && ieq) host.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
+        if (sec.key === "gateOn" && dyn) body.append(gateDetailBlock(node.id, dyn.gate, np, plan, actions, m));
+        else if (sec.key === "compOn" && dyn?.comp) body.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
+        else if (sec.key === "eqOn" && ieq) body.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
+        host.append(el);
       }
     }
 
@@ -348,35 +362,42 @@ export function renderInspector(
     // nodeParams.level. STEREO additionally has a master ON/OFF (STEREO_MASTER_ON).
     if (busFader(node.id)) {
       const np = plan.nodeParams[node.id] ?? {};
-      host.append(subheading(m.inspector.parameters));
-      host.append(
+      const ps = section(m.inspector.parameters);
+      ps.body.append(
         faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
       );
       if (node.id === "bus.stereo") {
-        host.append(
+        ps.body.append(
           boolToggle(m.inspector.master, np.on ?? true, (v) =>
             actions.onUpdateNodeParams(node.id, { on: v }),
           ),
         );
       }
-      // EQ ON/OFF (STEREO 498 / MIX 591). Defaults on.
-      if (busEqOn(node.id)) {
-        host.append(
-          boolToggle(m.inspector.eqOn, np.eqOn ?? true, (v) =>
-            actions.onUpdateNodeParams(node.id, { eqOn: v }),
-          ),
-        );
-      }
-      // Output bus 4-band PEQ (STEREO 498-block single / MIX 591-block L/R-linked).
+      host.append(ps.el);
+      // Insert FX (STEREO / MIX outputs) groups into the Parameters section.
+      tailBody = ps.body;
+      // Output bus 4-band PEQ (STEREO 498-block single / MIX 591-block L/R-linked)
+      // as a collapsible EQ module — its ON led (STEREO 498 / MIX 591, default on)
+      // drives the fold, matching the channel EQ section.
       const oeq = outputEq(node.id);
-      if (oeq) host.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
+      if (oeq) {
+        const on = np.eqOn ?? true;
+        const { el, body } = section(m.inspector.eqOn, busEqOn(node.id) ? { open: on, on } : {});
+        if (busEqOn(node.id)) {
+          body.append(
+            boolToggle("", on, (v) => actions.onUpdateNodeParams(node.id, { eqOn: v })),
+          );
+        }
+        body.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
+        host.append(el);
+      }
     }
 
     // Post Fader Send for FX (FX 1 / FX 2): the MIX bus that feeds this FX bus
     // post-fader (DAW Integration menu, V1.2+). A select on the FX bus node.
     if (node.id === "bus.fx1" || node.id === "bus.fx2") {
-      host.append(subheading(m.inspector.parameters));
-      host.append(
+      const ps = section(m.inspector.parameters);
+      ps.body.append(
         enumSelect(
           m.inspector.postFaderSend,
           FX_POST_SOURCE_OPTIONS,
@@ -384,26 +405,28 @@ export function renderInspector(
           (v) => actions.onUpdateNodeParams(node.id, { fxPostSource: v }),
         ),
       );
-      host.append(hint(m.inspector.postFaderSendHint));
+      ps.body.append(hint(m.inspector.postFaderSendHint));
+      host.append(ps.el);
     }
 
     // Monitor bus level (MONITOR_LEVEL) plus the CUE-interrupt / MONO toggles.
     if (node.id === "bus.mon1" || node.id === "bus.mon2") {
       const np = plan.nodeParams[node.id] ?? {};
-      host.append(subheading(m.inspector.parameters));
-      host.append(
+      const ps = section(m.inspector.parameters);
+      ps.body.append(
         faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
       );
-      host.append(
+      ps.body.append(
         boolToggle(m.inspector.cueInterrupt, np.cueInterrupt ?? true, (v) =>
           actions.onUpdateNodeParams(node.id, { cueInterrupt: v }),
         ),
       );
-      host.append(
+      ps.body.append(
         boolToggle(m.inspector.mono, np.mono ?? false, (v) =>
           actions.onUpdateNodeParams(node.id, { mono: v }),
         ),
       );
+      host.append(ps.el);
     }
 
     // Oscillator generator (bus.osc): on / level / mode / frequency. Frequency
@@ -415,8 +438,8 @@ export function renderInspector(
         actions.onUpdateNodeParams(node.id, { osc: { ...osc, ...patch } });
       // OSCILLATOR menu order (device top-left → bottom-right): Mode, ON, then the
       // Frequency / Level row (Frequency shows only in Sine Wave mode).
-      host.append(subheading(m.inspector.parameters));
-      host.append(
+      const ps = section(m.inspector.parameters);
+      ps.body.append(
         selectControl(
           m.inspector.oscMode,
           OSC_MODE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
@@ -424,33 +447,35 @@ export function renderInspector(
           (v) => setOsc({ mode: Number(v) }),
         ),
       );
-      host.append(boolToggle(m.inspector.oscOn, osc.on ?? false, (v) => setOsc({ on: v })));
+      ps.body.append(boolToggle(m.inspector.oscOn, osc.on ?? false, (v) => setOsc({ on: v })));
       const oscMode = osc.mode ?? OSC_MODE_SINE;
       if (oscMode === OSC_MODE_SINE) {
-        host.append(eqFreqControl(osc.freq ?? 1000, (hz) => setOsc({ freq: hz })));
+        ps.body.append(eqFreqControl(osc.freq ?? 1000, (hz) => setOsc({ freq: hz })));
       } else if (oscMode === OSC_MODE_BURST) {
-        host.append(
+        ps.body.append(
           rangeSlider(m.inspector.oscWidth, 0.1, 10, 0.1, osc.width ?? 0.1, (v) => `${v.toFixed(1)} s`, (v) =>
             setOsc({ width: v }),
           ),
         );
-        host.append(
+        ps.body.append(
           rangeSlider(m.inspector.oscInterval, 1, 30, 1, osc.interval ?? 1, (v) => `${v} s`, (v) =>
             setOsc({ interval: v }),
           ),
         );
       }
-      host.append(
+      ps.body.append(
         rangeSlider(m.inspector.oscLevel, -96, 0, 1, osc.level ?? -20, formatDb, (v) =>
           setOsc({ level: v }),
         ),
       );
+      host.append(ps.el);
     }
 
     // Insert FX dropdown: MONO IN channels (input effects) and MIX/STEREO outputs
     // (output effects). An option is disabled when it exceeds the current sample
     // rate's ceiling, or when its device-wide 1-of slot is taken by another node.
-    // The parent channel/bus block above has already added the "Parameters" head.
+    // Buses group it into their Parameters section (tailBody); channels show it
+    // loose below the EQ module.
     const ifx = insertFxControl(model, node.id);
     if (ifx) {
       const taken = new Set<InsertFxSlot>();
@@ -462,7 +487,7 @@ export function renderInspector(
         const slot = other.options.find((o) => o.value === v)?.slot;
         if (slot) taken.add(slot);
       }
-      host.append(
+      (tailBody ?? host).append(
         selectControl(
           m.inspector.insertFx,
           ifx.options.map((o) => ({
@@ -623,6 +648,36 @@ function subheading(text: string): HTMLElement {
   return h;
 }
 
+// A collapsible inspector section (rack-module style): a summary header in the
+// h3 mono-uppercase idiom, optionally carrying an ON led that mirrors a section
+// toggle (GATE / COMP / EQ), and a body the caller fills. Built on <details> so
+// it gets native keyboard toggling and respects reduced motion. `open` is the
+// initial disclosure state, recomputed each render (no persistence yet), so an
+// off section (on === false) collapses on its own.
+function section(
+  title: string,
+  opts: { open?: boolean; on?: boolean } = {},
+): { el: HTMLDetailsElement; body: HTMLElement } {
+  const el = document.createElement("details");
+  el.className = "insp-section";
+  el.open = opts.open ?? true;
+  const sum = document.createElement("summary");
+  if (opts.on !== undefined) {
+    const led = document.createElement("span");
+    led.className = "sec-led" + (opts.on ? " on" : "");
+    sum.append(led);
+  }
+  const label = document.createElement("span");
+  label.className = "sec-title";
+  label.textContent = title;
+  sum.append(label);
+  el.append(sum);
+  const body = document.createElement("div");
+  body.className = "sec-body";
+  el.append(body);
+  return { el, body };
+}
+
 function hint(text: string): HTMLElement {
   const p = document.createElement("p");
   p.className = "hint";
@@ -741,7 +796,8 @@ function eqBandBlock(
   };
   for (const band of ctrl.bands) {
     const bv = np.eqBands?.[band.index] ?? {};
-    frag.append(subheading(`EQ ${m.inspector.eqBand[band.name]}`));
+    // Band name only — the enclosing EQ section header already says EQ.
+    frag.append(subheading(m.inspector.eqBand[band.name]));
     frag.append(boolToggle(m.inspector.bandOn, bv.on ?? true, (v) => setBand(band.index, { on: v })));
     let effType = EQ_TYPE_PEAKING;
     if (band.type !== null) {
@@ -817,16 +873,14 @@ function duckerBlock(
   plan: Plan,
   actions: InspectorActions,
   m: Messages,
-): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  frag.append(subheading(m.inspector.parameters));
-  frag.append(
-    boolToggle(m.inspector.duckerOn, np.duckerOn ?? false, (v) => actions.onUpdateNodeParams(nodeId, { duckerOn: v })),
-  );
+): HTMLElement {
+  const on = np.duckerOn ?? false;
+  const { el, body } = section(m.inspector.duckerOn, { open: on, on });
+  body.append(boolToggle("", on, (v) => actions.onUpdateNodeParams(nodeId, { duckerOn: v })));
   const vals = (np.ducker ?? {}) as Record<string, number | undefined>;
   for (const f of DUCKER_FIELDS)
-    frag.append(dynFieldSlider(f, m, vals[f.key], (key, v) => mergeSection(actions, plan, nodeId, "ducker", { [key]: v })));
-  return frag;
+    body.append(dynFieldSlider(f, m, vals[f.key], (key, v) => mergeSection(actions, plan, nodeId, "ducker", { [key]: v })));
+  return el;
 }
 
 // GATE detail sliders (threshold/range/attack/hold/decay) for a MONO IN channel.
@@ -1071,15 +1125,19 @@ function tapControl(conn: PlanConnection, onUpdate: UpdateParams): HTMLElement {
 function paramBlock(labelText: string, valueText: string): { row: HTMLElement; value: HTMLElement } {
   const row = document.createElement("div");
   row.className = "param";
-  const head = document.createElement("div");
-  head.className = "param-label";
-  const label = document.createElement("span");
-  label.textContent = labelText;
   const value = document.createElement("span");
   value.className = "param-val";
   value.textContent = valueText;
-  head.append(label, value);
-  row.append(head);
+  // An empty label + value (a bare section ON/OFF toggle whose name is in the
+  // section header) skips the label row so the toggle sits flush.
+  if (labelText !== "" || valueText !== "") {
+    const head = document.createElement("div");
+    head.className = "param-label";
+    const label = document.createElement("span");
+    label.textContent = labelText;
+    head.append(label, value);
+    row.append(head);
+  }
   return { row, value };
 }
 
