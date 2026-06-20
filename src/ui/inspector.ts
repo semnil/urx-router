@@ -363,23 +363,24 @@ export function renderInspector(
       host.append(inSec.el);
 
       // SSMCS Main section (MONO IN, SSMCS mode): the [SSMCS] on/off plus Sweet
-      // Spot Data / Comp Drive / Morphing / Out Gain. Sits above the COMP/EQ
-      // sections, which the channelSections loop renders from the SSMCS bank.
+      // Spot Data / Comp Drive / Morphing / Out Gain. Built here but inserted
+      // between the GATE and COMP sections in the loop below.
       const ssmcs = cc?.hasMicStrip && compEqType === COMP_EQ_SSMCS;
+      let ssmcsMasterEl: HTMLElement | null = null;
       if (ssmcs) {
         const son = np.ssmcs?.on ?? SSMCS_INITIAL.on;
         const { el, body } = section(m.inspector.ssmcs.title, { open: son, on: son, key: "ssmcsOn" });
         body.append(boolToggle(m.inspector.ssmcs.title, son, (v) => mergeSsmcs(actions, plan, node.id, { on: v })));
         body.append(ssmcsMasterBlock(node.id, np, plan, actions, m));
-        host.append(el);
+        ssmcsMasterEl = el;
       }
 
       // GATE / COMP / EQ sections in channel-strip order, each a collapsible
       // module matching the device's dedicated GATE / COMP / EQ screens. The
       // summary carries the section's ON led; an off section folds itself away.
       // Mono channels have all three; stereo channels expose only EQ. In SSMCS
-      // mode the COMP/EQ sections render the morphing-strip controls instead.
-      // Default before a fetch: EQ on, GATE/COMP off.
+      // mode the SSMCS Main section sits between GATE and COMP, and the COMP/EQ
+      // sections render the morphing-strip controls. Default: EQ on, GATE/COMP off.
       const dyn = channelDynamics(model, node.id, compEqType);
       const ieq = inputEq(model, node.id, compEqType);
       for (const sec of channelSections(model, node.id, compEqType)) {
@@ -392,6 +393,8 @@ export function renderInspector(
         else if (sec.key === "eqOn" && ssmcs) body.append(ssmcsEqBlock(node.id, np, plan, actions, m));
         else if (sec.key === "eqOn" && ieq) body.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
         host.append(el);
+        // Insert the SSMCS Main section right after GATE (before COMP).
+        if (sec.key === "gateOn" && ssmcsMasterEl) host.append(ssmcsMasterEl);
       }
     }
 
