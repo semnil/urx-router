@@ -9,9 +9,10 @@ vi.mock("../platform", () => ({
   vdDisconnect: vi.fn(),
   vdGet: vi.fn(),
   vdSet: vi.fn(),
+  vdGetStr: vi.fn(),
 }));
 
-import { vdConnect, vdDisconnect, vdGet, vdSet } from "../platform";
+import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
 import { auditUnverified, planToCommands } from "./translate";
 import { D_GAIN_PARAM, INSERT_FX_OPTIONS, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
@@ -48,11 +49,14 @@ function installMockDevice(seed: Plan): Map<string, number> {
     table.set(`${id}:${x}:${y}`, v);
     return Promise.resolve();
   });
+  // Names are read via the string IPC but not part of the self-test round-trip;
+  // a faithful device reports no custom name (empty).
+  vi.mocked(vdGetStr).mockResolvedValue("");
   return table;
 }
 
 beforeEach(() => {
-  for (const m of [vdConnect, vdDisconnect, vdGet, vdSet]) vi.mocked(m).mockReset();
+  for (const m of [vdConnect, vdDisconnect, vdGet, vdSet, vdGetStr]) vi.mocked(m).mockReset();
 });
 
 describe("runSelfTest", () => {
