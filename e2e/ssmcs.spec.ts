@@ -40,6 +40,13 @@ test("switching a mono channel to SSMCS swaps in the morphing-strip controls", a
   expect(gate).toBeLessThan(ssmcs);
   expect(ssmcs).toBeLessThan(comp);
 
+  // Switching to SSMCS turns the COMP/EQ sections ON, so they open (their ON
+  // state seeds true from the device).
+  const compSection = page.locator("#inspector details").filter({ has: page.locator("summary", { hasText: "COMP" }) });
+  const eqSection = page.locator("#inspector details").filter({ has: page.locator("summary", { hasText: "EQ" }) });
+  await expect(compSection).toHaveAttribute("open", "");
+  await expect(eqSection).toHaveAttribute("open", "");
+
   // Sweet Spot Data lists all 34 presets and defaults to the first. The SSMCS
   // section opens by default (its ON state seeds true from the device).
   const ssd = param(page, "Sweet Spot Data").locator("select");
