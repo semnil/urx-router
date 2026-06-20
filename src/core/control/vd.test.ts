@@ -30,6 +30,10 @@ import {
   vdToPan,
   vdToPortRef,
   vdToQ,
+  DELAY_TIME_MIN_MS,
+  DELAY_TIME_MAX_MS,
+  delayTimeToVd,
+  vdToDelayTime,
 } from "./vd";
 
 describe("level encoding (shared by faders, sends and the monitor)", () => {
@@ -186,5 +190,25 @@ describe("insert-FX normalization", () => {
   it("leaves a real effect value unchanged", () => {
     expect(normalizeInsertFx(257)).toBe(257); // Crunch
     expect(normalizeInsertFx(1792)).toBe(1792); // M.Band Comp
+  });
+});
+
+describe("STREAMING DELAY time encoding (param 708, ms×100)", () => {
+  it("encodes ms to broker centi-ms", () => {
+    expect(delayTimeToVd(DELAY_TIME_MIN_MS)).toBe(100); // 1.00 ms = 100
+    expect(delayTimeToVd(100)).toBe(10000); // 100.00 ms = 10000 (confirmed on device)
+    expect(delayTimeToVd(DELAY_TIME_MAX_MS)).toBe(100000); // 1000.00 ms = 100000
+  });
+
+  it("decodes broker centi-ms to ms", () => {
+    expect(vdToDelayTime(100)).toBe(DELAY_TIME_MIN_MS);
+    expect(vdToDelayTime(10000)).toBe(100);
+    expect(vdToDelayTime(100000)).toBe(DELAY_TIME_MAX_MS);
+  });
+
+  it("clamps to the 1.00 … 1000.00 ms range", () => {
+    expect(delayTimeToVd(0)).toBe(DELAY_TIME_MIN_MS * 100); // below floor
+    expect(delayTimeToVd(5000)).toBe(DELAY_TIME_MAX_MS * 100); // above ceiling
+    expect(vdToDelayTime(0)).toBe(DELAY_TIME_MIN_MS); // device default reads as 1.00 ms
   });
 });

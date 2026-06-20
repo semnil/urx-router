@@ -51,6 +51,8 @@ import {
   COMP_EQ_SSMCS,
   SWEET_SPOT_DATA_OPTIONS,
   COLOR_PALETTE,
+  DELAY_FRAME_RATE_OPTIONS,
+  DELAY_FRAME_RATE_DEFAULT,
 } from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
@@ -91,6 +93,8 @@ import {
   SSMCS_FREQ_RAW_MAX,
   SSMCS_EQ_LOW_FREQ_RAW_MAX,
   SSMCS_EQ_HIGH_FREQ_RAW_MIN,
+  DELAY_TIME_MIN_MS,
+  DELAY_TIME_MAX_MS,
 } from "../core/control/vd";
 import { rateConstraints } from "../core/constraints";
 import type { RateWarning } from "../core/constraints";
@@ -526,6 +530,35 @@ export function renderInspector(
       ps.body.append(
         rangeSlider(m.inspector.oscLevel, -96, 0, 1, osc.level ?? -20, formatDb, (v) =>
           setOsc({ level: v }),
+        ),
+      );
+      host.append(ps.el);
+    }
+
+    // STREAMING DELAY (bus.stream): on / time / frame rate. DELAY screen order
+    // (device top-left → bottom-right): Frame rate, ON, then the Delay Time knob.
+    if (node.id === "bus.stream") {
+      const delay = plan.nodeParams[node.id]?.delay ?? {};
+      // Read the latest stored delay at edit time so a second field edit (the
+      // inspector is not re-rendered between edits) does not clobber the first.
+      const setDelay = (patch: Partial<typeof delay>): void =>
+        actions.onUpdateNodeParams(node.id, { delay: { ...(plan.nodeParams[node.id]?.delay ?? {}), ...patch } });
+      const ps = section(m.inspector.delayTitle, { key: "delay" });
+      ps.body.append(
+        enumSelect(m.inspector.delayFrameRate, DELAY_FRAME_RATE_OPTIONS, delay.frameRate ?? DELAY_FRAME_RATE_DEFAULT, (v) =>
+          setDelay({ frameRate: v }),
+        ),
+      );
+      ps.body.append(boolToggle(m.inspector.delayOn, delay.on ?? false, (v) => setDelay({ on: v })));
+      ps.body.append(
+        rangeSlider(
+          m.inspector.delayTime,
+          DELAY_TIME_MIN_MS,
+          DELAY_TIME_MAX_MS,
+          0.01,
+          delay.time ?? DELAY_TIME_MIN_MS,
+          (v) => `${v.toFixed(2)} ms`,
+          (v) => setDelay({ time: v }),
         ),
       );
       host.append(ps.el);

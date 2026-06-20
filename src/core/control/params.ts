@@ -25,6 +25,7 @@ export type ParamEncoding =
   | "q"
   | "eqGain"
   | "centiDb"
+  | "delayTime"
   | "attackTime"
   | "holdTime"
   | "releaseTime"
@@ -268,6 +269,11 @@ export const PARAMS = {
   FX_COLOR: { id: 335, axis: "global", encoding: "raw" },
   /** STREAMING bus color (palette index), y = L/R-mirrored slots 0/1. */
   STREAM_COLOR: { id: 704, axis: "global", encoding: "raw" },
+  /** STREAMING DELAY (the bus.stream node, y = 0): on/off, time (ms×100,
+   *  1.00..1000.00 ms), frame rate (enum 0..7). Confirmed by live snapshot-diff. */
+  STREAM_DELAY_ON: { id: 707, axis: "global", encoding: "bool" },
+  STREAM_DELAY_TIME: { id: 708, axis: "global", encoding: "delayTime" },
+  STREAM_DELAY_FRAME_RATE: { id: 830, axis: "global", encoding: "enum" },
 } as const satisfies Record<string, ParamSpec>;
 
 export type ParamName = keyof typeof PARAMS;
@@ -520,6 +526,22 @@ export const OSC_MODE_OPTIONS = [
 ];
 export const OSC_MODE_SINE = 0;
 export const OSC_MODE_BURST = 2;
+
+// STREAMING DELAY frame rate (param 830). The value is an index into this list,
+// in the device's dropdown order (confirmed by live snapshot-diff: 30 = index 5,
+// 120 = index 7). Labels are the literal LCD strings (D = drop frame). The frame
+// rate only changes how the delay time is shown in frames; the delay is in ms.
+export const DELAY_FRAME_RATE_OPTIONS = [
+  { value: 0, label: "24" },
+  { value: 1, label: "25" },
+  { value: 2, label: "29.97D" },
+  { value: 3, label: "29.97" },
+  { value: 4, label: "30D" },
+  { value: 5, label: "30" },
+  { value: 6, label: "60" },
+  { value: 7, label: "120" },
+];
+export const DELAY_FRAME_RATE_DEFAULT = 5;
 
 // Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain): each
 // stereo channel has its own dedicated, non-sequential param, written to both

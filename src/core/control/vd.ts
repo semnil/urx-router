@@ -72,8 +72,24 @@ export const DYN_RATIO_MAX = 655.35;
 export const DUCKER_DECAY_MIN_MS = 1.3;
 export const DUCKER_DECAY_MAX_MS = 5000;
 
+// STREAMING DELAY time (param 708): broker value is ms×100 (centi-ms). Range
+// 100 … 100000 = 1.00 … 1000.00 ms, default 100 (= 1.00 ms), 0.01 ms resolution
+// (confirmed by live snapshot-diff: ms 100.0 on the LCD reads back as 10000).
+export const DELAY_TIME_MIN_MS = 1;
+export const DELAY_TIME_MAX_MS = 1000;
+
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+/** Plan delay time (ms) → broker ms×100. */
+export function delayTimeToVd(ms: number): number {
+  return clamp(Math.round(ms * 100), DELAY_TIME_MIN_MS * 100, DELAY_TIME_MAX_MS * 100);
+}
+
+/** Broker ms×100 → plan delay time (ms). */
+export function vdToDelayTime(value: number): number {
+  return clamp(value / 100, DELAY_TIME_MIN_MS, DELAY_TIME_MAX_MS);
 }
 
 // SSMCS (Sweet Spot Morphing Channel Strip) RAW broker ranges and display curves.

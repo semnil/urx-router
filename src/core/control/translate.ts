@@ -34,6 +34,7 @@ import {
   attackToVd,
   boolToVd,
   centiDbToVd,
+  delayTimeToVd,
   D_GAIN_MIN_DB,
   D_GAIN_MAX_DB,
   DUCKER_DECAY_MAX_MS,
@@ -97,6 +98,8 @@ function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number
       return eqGainToVd(planValue);
     case "centiDb":
       return centiDbToVd(planValue);
+    case "delayTime":
+      return delayTimeToVd(planValue);
     case "attackTime":
       return attackToVd(planValue);
     case "holdTime":
@@ -1003,6 +1006,14 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   if (osc?.level !== undefined) out.push(command("OSC_LEVEL", 0, osc.level));
   if (osc?.mode !== undefined) out.push(command("OSC_MODE", 0, osc.mode));
   if (osc?.freq !== undefined) out.push(command("OSC_FREQ", 0, osc.freq));
+
+  // STREAMING DELAY (bus.stream node, global y = 0): on / time / frame rate.
+  // Emitted only when the plan carries delay settings, leaving the device's
+  // delay untouched otherwise (like the oscillator generator above).
+  const delay = plan.nodeParams["bus.stream"]?.delay;
+  if (delay?.on !== undefined) out.push(command("STREAM_DELAY_ON", 0, delay.on ? 1 : 0));
+  if (delay?.time !== undefined) out.push(command("STREAM_DELAY_TIME", 0, delay.time));
+  if (delay?.frameRate !== undefined) out.push(command("STREAM_DELAY_FRAME_RATE", 0, delay.frameRate));
 
   // OSC → bus assign — absolute over every OSC-assignable bus. A wire turns the
   // destination's L/R channels on (oscL/oscR; absent = on); no wire turns both

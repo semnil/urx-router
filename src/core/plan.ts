@@ -36,6 +36,17 @@ export interface OscParams {
   interval?: number;
 }
 
+// STREAMING DELAY (the bus.stream node, UG "DELAY screen" — STREAMING channel
+// only). A single delay applied to the streaming output: on/off, time in ms
+// (1.00 … 1000.00, 0.01 ms resolution), and a frame-rate enum that affects only
+// how the time is shown in frames on the device (the delay itself is in ms).
+// All optional (absent = device default: off / 1.00 ms / 30 fps).
+export interface DelayParams {
+  on?: boolean;
+  time?: number; // ms, 1.00 … 1000.00
+  frameRate?: number; // enum 0..7 (see DELAY_FRAME_RATE_OPTIONS)
+}
+
 // One band of an output bus 4-band PEQ. All fields optional (absent = device
 // default). `type` is the filter-type enum (LOW / HIGH bands only); the two mid
 // bands ignore it. freq in Hz, q 0.50..16.00, gain in dB (±18).
@@ -222,6 +233,8 @@ export interface NodeParams {
   cueInterrupt?: boolean;
   /** Monitor MONO downmix (monitor buses). Absent or false = off. */
   mono?: boolean;
+  /** STREAMING DELAY settings (the bus.stream node). */
+  delay?: DelayParams;
 }
 
 export interface PlanConnection {

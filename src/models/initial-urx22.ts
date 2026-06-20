@@ -78,6 +78,8 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
   "bus.mon1": { level: 0, cueInterrupt: true, mono: false },
   "bus.mon2": { level: 0, cueInterrupt: true, mono: false },
   "bus.osc": { osc: { on: false, level: -14, mode: 0, freq: 1000 } },
+  // STREAMING DELAY factory state (off, 1.00 ms, 30 fps), inferred from URX44V.
+  "bus.stream": { delay: { on: false, time: 1, frameRate: 5 } },
 };
 
 const CHANNELS = ["ch1", "ch2", "ch_3_4", "ch_5_6", "ch_7_8", "ch_9_10"];

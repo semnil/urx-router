@@ -209,6 +209,10 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   "bus.osc": {
     osc: { on: false, level: -14, mode: 0, freq: 1000 },
   },
+  // STREAMING DELAY factory state, read from the device: off, 1.00 ms, 30 fps.
+  // Seeded so writing a fresh plan restores the device's delay (the absolute
+  // write only auto-clears wires, not scalar node params — see bus.osc/monitor).
+  "bus.stream": { delay: { on: false, time: 1, frameRate: 5 } },
 };
 
 // Factory CH SETTING colors, read from the device: input channels and the FX

@@ -17,11 +17,12 @@ import { planToCommands } from "./translate";
 import type { VdCommand } from "./translate";
 import {
   denormalizeInsertFx,
+  DELAY_FRAME_RATE_OPTIONS,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
   PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
 } from "./params";
-import { PORT_REF_NONE, VD_LEVEL_MAX, VD_LEVEL_OFF, VD_PAN_MAX } from "./vd";
+import { DELAY_TIME_MAX_MS, DELAY_TIME_MIN_MS, PORT_REF_NONE, VD_LEVEL_MAX, VD_LEVEL_OFF, VD_PAN_MAX } from "./vd";
 
 const model = getModel("URX44V");
 
@@ -91,6 +92,27 @@ describe("enum options round-trip", () => {
       expect(back.nodeParams["bus.osc"]?.osc?.mode).toBe(mode);
     }
   });
+
+  it("STREAMING DELAY frame rate — every option round-trips", async () => {
+    for (const opt of DELAY_FRAME_RATE_OPTIONS) {
+      const plan = base();
+      plan.nodeParams["bus.stream"] = { delay: { frameRate: opt.value } };
+      const back = await roundTrip(plan);
+      expect(back.nodeParams["bus.stream"]?.delay?.frameRate).toBe(opt.value);
+    }
+  });
+});
+
+describe("STREAMING DELAY time round-trips at its extremes", () => {
+  for (const ms of [DELAY_TIME_MIN_MS, 100, DELAY_TIME_MAX_MS]) {
+    it(`${ms} ms`, async () => {
+      const plan = base();
+      plan.nodeParams["bus.stream"] = { delay: { on: true, time: ms } };
+      const back = await roundTrip(plan);
+      expect(back.nodeParams["bus.stream"]?.delay?.time).toBe(ms);
+      expect(back.nodeParams["bus.stream"]?.delay?.on).toBe(true);
+    });
+  }
 });
 
 describe("continuous extremes round-trip through the device path", () => {

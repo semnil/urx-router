@@ -37,6 +37,7 @@ import {
   vdToAttack,
   vdToBool,
   vdToCentiDb,
+  vdToDelayTime,
   vdToEqFreq,
   vdToEqGain,
   vdToFreq,
@@ -351,6 +352,21 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
   } catch (e) {
     failed.add("bus.osc");
     errors.push(`OSC: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // STREAMING DELAY (bus.stream): on / time / frame rate.
+  attempted.add("bus.stream");
+  try {
+    const delay = {
+      on: vdToBool(await vdGet(PARAMS.STREAM_DELAY_ON.id, 0, 0)),
+      time: vdToDelayTime(await vdGet(PARAMS.STREAM_DELAY_TIME.id, 0, 0)),
+      frameRate: await vdGet(PARAMS.STREAM_DELAY_FRAME_RATE.id, 0, 0),
+    };
+    plan.nodeParams["bus.stream"] = { ...plan.nodeParams["bus.stream"], delay };
+    applied++;
+  } catch (e) {
+    failed.add("bus.stream");
+    errors.push(`STREAMING DELAY: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // OSC → bus assign: read each bus's L/R channel toggles and reflect the wire

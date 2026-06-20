@@ -560,6 +560,30 @@ describe("planToCommands", () => {
     expect(cmds.find((c) => c.name === "OSC_ON")!.request.uri).toBe("/vd/parameters/710:0:0?operation=value");
   });
 
+  it("emits STREAMING DELAY params from the bus.stream node", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.stream"] = { delay: { on: true, time: 100, frameRate: 7 } };
+    const cmds = planToCommands(model, plan);
+    expect(cmds.find((c) => c.name === "STREAM_DELAY_ON")!.vdValue).toBe(1);
+    expect(cmds.find((c) => c.name === "STREAM_DELAY_TIME")!.vdValue).toBe(10000); // 100.00 ms = ms×100
+    expect(cmds.find((c) => c.name === "STREAM_DELAY_FRAME_RATE")!.vdValue).toBe(7); // 120 fps index
+    expect(cmds.find((c) => c.name === "STREAM_DELAY_ON")!.request.uri).toBe(
+      "/vd/parameters/707:0:0?operation=value",
+    );
+    expect(cmds.find((c) => c.name === "STREAM_DELAY_TIME")!.request.uri).toBe(
+      "/vd/parameters/708:0:0?operation=value",
+    );
+    expect(cmds.find((c) => c.name === "STREAM_DELAY_FRAME_RATE")!.request.uri).toBe(
+      "/vd/parameters/830:0:0?operation=value",
+    );
+  });
+
+  it("omits STREAMING DELAY commands when the bus.stream node has no delay", () => {
+    const plan = emptyPlan("URX44V");
+    const cmds = planToCommands(model, plan);
+    expect(cmds.some((c) => c.name.startsWith("STREAM_DELAY_"))).toBe(false);
+  });
+
   it("emits OSC assign with independent L/R for stereo buses, mono for FX", () => {
     const plan = emptyPlan("URX44V");
     plan.connections.push({
