@@ -8,6 +8,7 @@ import type {
   DeviceModel,
   DeviceNode,
   ModelId,
+  NodeKind,
   Port,
   RoutingRule,
 } from "./types";
@@ -125,8 +126,13 @@ export function buildModel(p: ModelParams): DeviceModel {
   }
 
   // --- Buses ---------------------------------------------------------------
-  const addBus = (id: string, label: string, ports: Port[] = ioPort()): void =>
-    add({ id, kind: "bus", label, column: "bus", ports });
+  // `kind` defaults to "bus" but can differ from the "bus" layout column: the
+  // OSCILLATOR is a signal source (kind "input") and the MONITORs are output
+  // destinations (kind "output"), neither of which the device colors in CH
+  // SETTING. Their kind drives the canvas rail color and hides the channel-only
+  // name field, while column "bus" keeps their existing position.
+  const addBus = (id: string, label: string, ports: Port[] = ioPort(), kind: NodeKind = "bus"): void =>
+    add({ id, kind, label, column: "bus", ports });
   addBus("bus.stereo", "STEREO (MAIN)");
   addBus("bus.mix1", "MIX 1");
   addBus("bus.mix2", "MIX 2");
@@ -135,9 +141,9 @@ export function buildModel(p: ModelParams): DeviceModel {
   // CUE is a temporary solo/monitor bus: its routing is wiped at power-off and
   // cannot hold a persistent assignment, so it is omitted as an editable node.
   addBus("bus.stream", "STREAMING");
-  addBus("bus.mon1", "MONITOR 1");
-  addBus("bus.mon2", "MONITOR 2");
-  addBus("bus.osc", "OSCILLATOR", outPort()); // tone generator: output only
+  addBus("bus.mon1", "MONITOR 1", ioPort(), "output");
+  addBus("bus.mon2", "MONITOR 2", ioPort(), "output");
+  addBus("bus.osc", "OSCILLATOR", outPort(), "input"); // tone generator: output-only source
 
   // --- Outputs -------------------------------------------------------------
   const addOut = (id: string, label: string, sublabel?: string): void =>

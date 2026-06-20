@@ -250,9 +250,57 @@ export const PARAMS = {
   OSC_ASSIGN_STEREO: { id: 716, axis: "global", encoding: "bool" },
   OSC_ASSIGN_MIX: { id: 717, axis: "global", encoding: "bool" },
   OSC_ASSIGN_FX: { id: 718, axis: "global", encoding: "bool" },
+  // CH SETTING color (the node's top accent cap). The broker stores a palette
+  // index (see COLOR_PALETTE), mirrored across separate params per node kind
+  // (confirmed by live snapshot-diff). Input channels use param 20 at the input
+  // slot index; the MIX/STEREO buses their own params at the fixed instances in
+  // translate.ts (colorControl). raw = pass the palette index straight through.
+  /** Input channel color (palette index), y = physical input slot 0..11. */
+  CH_COLOR: { id: 20, axis: "input", encoding: "raw" },
+  /** MIX bus color (palette index), y = L/R-linked out instances. */
+  MIX_COLOR: { id: 586, axis: "output", encoding: "raw" },
+  /** STEREO master color (palette index), y = 0. */
+  STEREO_COLOR: { id: 496, axis: "global", encoding: "raw" },
+  /** FX bus color (palette index): FX1 = y0, FX2 = y1 (mono, no L/R mirror). */
+  FX_COLOR: { id: 335, axis: "global", encoding: "raw" },
+  /** STREAMING bus color (palette index), y = L/R-mirrored slots 0/1. */
+  STREAM_COLOR: { id: 704, axis: "global", encoding: "raw" },
 } as const satisfies Record<string, ParamSpec>;
 
 export type ParamName = keyof typeof PARAMS;
+
+// Device CH SETTING color palette (input_ch / pad_color step list), in the
+// broker's index order — the array position IS the palette index. The broker
+// stores that index; urx-router keeps the matching hex in plan.nodeColors so a
+// written color reads back to the same swatch. The hex are representative values
+// that read on both themes (the device exposes only the name, not an RGB), tuned
+// to the node-cap palette. Index 10 = Off = no cap (one past the array).
+export const COLOR_PALETTE: { name: string; hex: string }[] = [
+  { name: "Blue", hex: "#4a78c0" },
+  { name: "Orange", hex: "#e8913a" },
+  { name: "Yellow", hex: "#d9b441" },
+  { name: "Purple", hex: "#8e6fc0" },
+  { name: "Cyan", hex: "#3fa6a0" },
+  { name: "Magenta", hex: "#c0628f" },
+  { name: "Red", hex: "#d9534f" },
+  { name: "Green", hex: "#5c9e64" },
+  { name: "Light Green", hex: "#8ec46a" },
+  { name: "White", hex: "#d8dce0" },
+];
+/** Broker palette index for the device "Off" (no color) state. */
+export const COLOR_OFF_INDEX = 10;
+
+/** Palette index → swatch hex, or null for Off / an unknown index (no cap). */
+export function colorIndexToHex(index: number): string | null {
+  return COLOR_PALETTE[index]?.hex ?? null;
+}
+
+/** Swatch hex → palette index, or null when the hex is not a palette entry. */
+export function hexToColorIndex(hex: string): number | null {
+  const lower = hex.toLowerCase();
+  const i = COLOR_PALETTE.findIndex((c) => c.hex.toLowerCase() === lower);
+  return i === -1 ? null : i;
+}
 
 /** Ids of the port-ref selectors (raw or tagged), derived from the registry. An
  *  unread selector address defaults to the broker's NONE sentinel, not 0. */

@@ -14,6 +14,7 @@ import {
   channelControl,
   channelDynamics,
   channelSections,
+  colorControl,
   DUCKER_FIELDS,
   duckerControl,
   inputEq,
@@ -49,6 +50,7 @@ import {
   PAN_BAL_OPTIONS,
   COMP_EQ_SSMCS,
   SWEET_SPOT_DATA_OPTIONS,
+  COLOR_PALETTE,
 } from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
@@ -191,6 +193,11 @@ export function renderInspector(
           actions.onRenameNode(node.id, v),
         ),
       );
+    }
+    // Color swatches only for nodes the device actually colors (input channels +
+    // STEREO / MIX / FX / STREAMING buses). Monitor and OSC buses have no device
+    // color param, so they get no picker.
+    if (colorControl(model, node.id)) {
       host.append(
         colorSwatches(m.inspector.color, plan.nodeColors[node.id], (c) => actions.onRecolorNode(node.id, c)),
       );
@@ -1307,18 +1314,11 @@ function enumSelect(
   );
 }
 
-// Channel/bus color palette for the top-accent cap. Plan annotation colors (not
-// device-confirmed values); mid-tones that read on both dark and light themes.
-export const NODE_COLORS = [
-  "#d9534f",
-  "#e8913a",
-  "#d9b441",
-  "#5c9e64",
-  "#3fa6a0",
-  "#4a78c0",
-  "#8e6fc0",
-  "#c0628f",
-];
+// Channel/bus color palette for the top-accent cap — the device CH SETTING
+// palette so a chosen color maps 1:1 to the on-device color (and reads back to
+// the same swatch). Order follows the device step list (COLOR_PALETTE); the
+// "none" swatch is the device "Off" state (no cap).
+export const NODE_COLORS = COLOR_PALETTE.map((c) => c.hex);
 
 // A row of color swatches plus a "none" clear option. The active color (or none)
 // is ringed. Selecting toggles: clicking the active color clears it.

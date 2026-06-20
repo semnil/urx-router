@@ -82,6 +82,19 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
 
 const CHANNELS = ["ch1", "ch2", "ch_3_4", "ch_5_6", "ch_7_8", "ch_9_10"];
 
+// CH SETTING colors, mirroring the URX44V capture by analogy (URX22 has no real
+// capture): channels and FX buses Blue, MIX and STREAMING buses Orange, STEREO
+// master Red. Hex are the COLOR_PALETTE entries (Blue 0 / Orange 1 / Red 6).
+export const URX22_NODE_COLORS: Record<string, string> = {
+  ...Object.fromEntries(CHANNELS.map((id) => [id, "#4a78c0"])),
+  "bus.fx1": "#4a78c0",
+  "bus.fx2": "#4a78c0",
+  "bus.mix1": "#e8913a",
+  "bus.mix2": "#e8913a",
+  "bus.stream": "#e8913a",
+  "bus.stereo": "#d9534f",
+};
+
 const stereoSend = (from: string): PlanConnection => ({
   from: `${from}:out`,
   to: "bus.stereo:in",

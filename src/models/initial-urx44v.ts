@@ -211,6 +211,27 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   },
 };
 
+// Factory CH SETTING colors, read from the device: input channels and the FX
+// buses ship Blue, the MIX and STREAMING buses Orange, the STEREO master Red. Hex
+// are the COLOR_PALETTE entries (Blue = index 0, Orange = 1, Red = 6); kept as
+// literals so this data file does not depend on the control layer.
+export const URX44V_NODE_COLORS: Record<string, string> = {
+  ch1: "#4a78c0",
+  ch2: "#4a78c0",
+  ch3: "#4a78c0",
+  ch4: "#4a78c0",
+  ch_5_6: "#4a78c0",
+  ch_7_8: "#4a78c0",
+  ch_9_10: "#4a78c0",
+  ch_11_12: "#4a78c0",
+  "bus.fx1": "#4a78c0",
+  "bus.fx2": "#4a78c0",
+  "bus.mix1": "#e8913a",
+  "bus.mix2": "#e8913a",
+  "bus.stream": "#e8913a",
+  "bus.stereo": "#d9534f",
+};
+
 export const URX44V_CONNECTIONS: PlanConnection[] = [
   {
     from: "ch1:out",

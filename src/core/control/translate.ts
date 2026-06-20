@@ -19,6 +19,7 @@ import {
   COMP_EQ_SSMCS,
   D_GAIN_PARAM,
   denormalizeInsertFx,
+  hexToColorIndex,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
   paramNameForId,
@@ -369,6 +370,31 @@ export function busEqOn(nodeId: string): { name: ParamName; param: number; insta
   }
   const mix = MIX_FADER_INSTANCES[nodeId];
   return mix ? { name: "OUT_EQ_ON", param: PARAMS.OUT_EQ_ON.id, instances: mix } : null;
+}
+
+/** CH SETTING color param/instances for a colorable node: input channels write
+ *  the palette index to every input slot (param 20), MIX to the L/R pair (586),
+ *  STEREO to its single slot (496), FX to its single slot (335), STREAMING to its
+ *  L/R pair (704). Null for nodes without a confirmed color param (monitor / OSC
+ *  buses), which therefore never get a guessed write. */
+export function colorControl(
+  model: DeviceModel,
+  nodeId: string,
+): { name: ParamName; param: number; instances: number[] } | null {
+  if (nodeId === "bus.stereo") {
+    return { name: "STEREO_COLOR", param: PARAMS.STEREO_COLOR.id, instances: [0] };
+  }
+  if (nodeId === "bus.stream") {
+    return { name: "STREAM_COLOR", param: PARAMS.STREAM_COLOR.id, instances: [0, 1] };
+  }
+  // FX color is one instance per FX (FX1 = y0, FX2 = y1), reusing the canonical
+  // FX-bus ordering rather than a second copy of it.
+  const fx = FX_SEND_BUS_INDEX[nodeId];
+  if (fx !== undefined) return { name: "FX_COLOR", param: PARAMS.FX_COLOR.id, instances: [fx] };
+  const mix = MIX_FADER_INSTANCES[nodeId];
+  if (mix) return { name: "MIX_COLOR", param: PARAMS.MIX_COLOR.id, instances: mix };
+  const slots = channelInputSlots(model, nodeId);
+  return slots ? { name: "CH_COLOR", param: PARAMS.CH_COLOR.id, instances: slots } : null;
 }
 
 /** One band of a 4-band PEQ: the param ids for each of its values. */
@@ -947,6 +973,20 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const conn = plan.connections.find((c) => c.from === ref("bus.osc", "out") && c.to === ref(busId, "in"));
     out.push(command(a.name, a.l, conn && conn.params?.oscL !== false ? 1 : 0));
     if (a.r !== null) out.push(command(a.name, a.r, conn && conn.params?.oscR !== false ? 1 : 0));
+  }
+
+  // CH SETTING color (palette index): input channels (20) and MIX/STEREO buses
+  // (586 / 496), written to every linked instance. Emitted only when the node
+  // carries a color, so an uncolored node leaves the device's color untouched; a
+  // hex outside the device palette is skipped rather than guessed.
+  for (const node of model.nodes) {
+    const hex = plan.nodeColors[node.id];
+    if (!hex) continue;
+    const cc = colorControl(model, node.id);
+    if (!cc) continue;
+    const index = hexToColorIndex(hex);
+    if (index === null) continue;
+    for (const inst of cc.instances) out.push(rawCommand(cc.name, cc.param, "raw", inst, index));
   }
   return out;
 }
