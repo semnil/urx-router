@@ -21,6 +21,9 @@ export const en = {
     fetchDevice: "Fetch from device",
     writeDevice: "Write to device",
     selfTest: "Self-test (experimental)",
+    liveSync: "Live sync",
+    liveSyncHint: "Mirror every edit to the connected device in real time",
+    liveTag: "LIVE",
     theme: "Toggle theme",
     light: "Light",
     dark: "Dark",
@@ -212,6 +215,12 @@ export const en = {
     selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
       `Self-test guesses: ${confirmed} confirmed, ${refuted} refuted, ${untestable} untestable`,
     selfTestError: (message: string): string => `Self-test error: ${message}`,
+    liveConnecting: "Connecting for live sync…",
+    liveOn: (model: string, n: number): string =>
+      `Live sync on · ${model} · ${n} setting${n === 1 ? "" : "s"} read`,
+    liveOff: "Live sync off",
+    liveSynced: (n: number): string => `→ device (${n})`,
+    liveError: (message: string): string => `Live sync stopped: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",
     fixedConnection: "Fixed connection — cannot be removed",

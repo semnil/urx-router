@@ -35,6 +35,7 @@ import {
 } from "./core/platform";
 import { applyDeviceState } from "./core/control/readback";
 import { diffNames, diffPlan, sendConverging, sendNames } from "./core/control/client";
+import { LiveSync } from "./core/control/live";
 import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -143,6 +144,23 @@ for (const rate of SAMPLE_RATES) {
 }
 ratePicker.value = String(plan.sampleRate);
 
+// Live sync (experimental): mirror each edit to the connected device. The model
+// and plan are read through getters because loadPlan reassigns `plan`. A write
+// failure stops sync and drops the connection (deactivateLive). The device label
+// shown on the on-air tally is captured when sync turns on. Declared before the
+// graph because the graph's onChange callback schedules a live flush. Null in the
+// demo build (DEMO folds the ternary to null), so the control layer tree-shakes
+// out exactly as the other device features do.
+let liveDeviceLabel = "";
+const live = DEMO
+  ? null
+  : new LiveSync({
+      getModel: () => getModel(modelId),
+      getPlan: () => plan,
+      onError: (message) => deactivateLive(t().status.liveError(message)),
+      onSent: (n) => setStatus(t().status.liveSynced(n)),
+    });
+
 const graph = new Graph(graphHost, getModel(modelId), plan, {
   onSelect: (sel) => {
     selection = sel;
@@ -150,10 +168,45 @@ const graph = new Graph(graphHost, getModel(modelId), plan, {
   },
   onStatus: (msg) => setStatus(msg),
   onChange: () => {
-    dirty = true;
+    markChanged();
     refreshInspector();
   },
 });
+
+// Reflect the live-sync state across the toggle, the on-air tally, and the other
+// device actions (which conflict with the held connection while sync is on).
+// Only ever called in the experimental build path, so re-enabling on `off` is safe.
+function setLiveUi(on: boolean): void {
+  const liveBtn = document.getElementById("btn-live");
+  if (liveBtn) liveBtn.setAttribute("aria-pressed", String(on));
+  for (const el of document.querySelectorAll<HTMLElement>("[data-live-only]")) el.hidden = !on;
+  const tally = document.getElementById("live-tally");
+  if (tally) {
+    tally.hidden = !on;
+    if (on) tally.textContent = `${t().toolbar.liveTag} · ${liveDeviceLabel}`;
+  }
+  for (const id of ["btn-fetch", "btn-write", "btn-selftest"]) {
+    const el = document.getElementById(id) as HTMLButtonElement | null;
+    if (el) el.disabled = on;
+  }
+}
+
+// Turn live sync off and release the connection. Used by the toggle, by a write
+// failure, and whenever the plan is replaced wholesale (loadPlan).
+function deactivateLive(status?: string): void {
+  if (!live?.isActive()) return;
+  live.end();
+  void vdDisconnect();
+  setLiveUi(false);
+  if (status) setStatus(status);
+}
+
+// An edit changed the plan: flag it unsaved and (when live) mirror it to the
+// device. Every edit funnel routes through here so neither concern is forgotten.
+function markChanged(): void {
+  dirty = true;
+  live?.schedule();
+}
 
 // Re-initialize every bus send's pan for a STEREO-linked pair (named by its
 // primary id): PAN mode hard-pans the odd channel left and the even one right,
@@ -180,7 +233,7 @@ const inspectorActions = {
     const conn = plan.connections.find((c) => c.from === from && c.to === to);
     if (!conn) return;
     conn.params = { ...conn.params, ...patch };
-    dirty = true;
+    markChanged();
     // A PRE/POST change flips the wire's pre-fader marker; repaint so it shows on
     // the canvas at once. Level/pan carry no on-canvas marker, so they keep
     // mutating in place and the slider keeps focus.
@@ -192,7 +245,7 @@ const inspectorActions = {
   onUpdateNodeParams: (id: string, patch: NodeParams) => {
     const prev = plan.nodeParams[id];
     plan.nodeParams[id] = { ...prev, ...patch };
-    dirty = true;
+    markChanged();
     // CH_ON drives the on-canvas mute dimming; the STEREO link draws a pair
     // connector — both show on the canvas, so repaint nodes at once.
     if (patch.on !== undefined || patch.stereoLink !== undefined) graph.repaintNodes();
@@ -260,7 +313,7 @@ const inspectorActions = {
   onRenameNode: (id: string, name: string) => {
     if (name.trim()) plan.nodeNames[id] = name;
     else delete plan.nodeNames[id];
-    dirty = true;
+    markChanged();
     graph.repaintNodes();
   },
   // Recolor repaints the node cap and re-renders the inspector so the active
@@ -268,7 +321,7 @@ const inspectorActions = {
   onRecolorNode: (id: string, color: string | null) => {
     if (color) plan.nodeColors[id] = color;
     else delete plan.nodeColors[id];
-    dirty = true;
+    markChanged();
     graph.repaintNodes();
     refreshInspector();
   },
@@ -299,6 +352,16 @@ function applyStaticI18n(): void {
   $("btn-fetch").textContent = m.toolbar.fetchDevice;
   $("btn-write").textContent = m.toolbar.writeDevice;
   $("btn-selftest").textContent = m.toolbar.selfTest;
+  // Live-sync toggle keeps a static label; aria-pressed and the on-air tally
+  // carry the on/off state. Refresh the tally text too (the device label is set
+  // when sync turns on; only the "LIVE" tag is localized).
+  const liveBtn = document.getElementById("btn-live");
+  if (liveBtn) {
+    liveBtn.textContent = m.toolbar.liveSync;
+    liveBtn.title = m.toolbar.liveSyncHint;
+  }
+  const liveTally = document.getElementById("live-tally");
+  if (liveTally && live?.isActive()) liveTally.textContent = `${m.toolbar.liveTag} · ${liveDeviceLabel}`;
   // Theme button shows the theme it switches to.
   themeBtn.textContent = theme === "dark" ? m.toolbar.light : m.toolbar.dark;
   themeBtn.title = m.toolbar.theme;
@@ -357,6 +420,9 @@ function applyRateConstraints(): void {
 }
 
 function loadPlan(next: Plan): void {
+  // Replacing the whole plan invalidates the live snapshot; leave sync first.
+  // (Live's own enable path calls loadPlan before begin(), so this is a no-op there.)
+  deactivateLive();
   modelId = next.modelId;
   rememberModel(modelId);
   plan = next;
@@ -638,6 +704,61 @@ if (!DEMO) {
     // (no dialog), so it can be driven from the command line without the UI.
     void selfTestRequested().then((auto) => {
       if (auto) void runDeviceSelfTest();
+    });
+
+    // Live sync (experimental): connect, read the whole device once (overwriting
+    // edits, hence the discard confirm), then mirror each later edit as it
+    // happens. The connection is held open for the session and released when the
+    // toggle, a write failure, or a plan replacement turns sync off.
+    async function activateLive(): Promise<void> {
+      if (!live) return;
+      if (!(await confirmDiscard())) return;
+      setStatus(t().status.liveConnecting);
+      let device: DeviceSummary;
+      try {
+        device = await vdConnect();
+      } catch (err) {
+        setStatus(t().status.liveError(err instanceof Error ? err.message : String(err)));
+        return;
+      }
+      // Past the connect: any exit must release the held connection first.
+      const abort = async (status: string): Promise<void> => {
+        await vdDisconnect();
+        setStatus(status);
+      };
+      try {
+        // A device of a different model maps onto the wrong channels; offer to
+        // switch the UI to a fresh plan of the device's model (mirrors fetch).
+        if (device.model !== modelId) {
+          if (!MODEL_IDS.includes(device.model as ModelId)) {
+            return await abort(t().status.liveError(t().error.unknownModel(device.model)));
+          }
+          if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) {
+            return await abort(t().status.canceled);
+          }
+          loadPlan(emptyPlan(device.model as ModelId));
+        }
+        const result = await applyDeviceState(getModel(modelId), plan);
+        if (result.errors.length) console.warn("live readback issues:", result.errors);
+        plan.unreadNodes = result.unreadNodes;
+        graph.setModel(getModel(modelId), plan);
+        selection = null;
+        refreshInspector();
+        dirty = false;
+        liveDeviceLabel = device.model;
+        live.begin();
+        setLiveUi(true);
+        setStatus(t().status.liveOn(device.model, result.applied));
+      } catch (err) {
+        await abort(t().status.liveError(err instanceof Error ? err.message : String(err)));
+      }
+    }
+
+    const liveBtn = $<HTMLButtonElement>("btn-live");
+    liveBtn.hidden = false;
+    liveBtn.addEventListener("click", () => {
+      if (live?.isActive()) deactivateLive(t().status.liveOff);
+      else void activateLive();
     });
   });
 }

@@ -42,6 +42,9 @@
   --warn: #e2794e;
   --warn-bg: #2a1a11;
 
+  --tally: #ff4d4d;
+  --tally-bg: #2a1212;
+
   --seg: linear-gradient(180deg, #ffd36b, #c9882a);
   --grain-blend: overlay;
   --grain-op: 0.05;
@@ -88,6 +91,9 @@
 
   --warn: #c2531f;
   --warn-bg: #f9ece3;
+
+  --tally: #d32f2f;
+  --tally-bg: #fbe9e9;
 
   --seg: linear-gradient(180deg, #f0a93a, #c87a14);
   --grain-blend: multiply;
@@ -208,6 +214,53 @@ select#model-picker {
 
 .spacer {
   flex: 1;
+}
+
+/* On-air tally: while live sync holds the device, a console-style red lamp says
+   "edits are going to the hardware right now". Re-assert display over the [hidden]
+   UA rule (like the menu panel) so the author flex does not beat it. */
+.live-tally {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--tally);
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--tally-bg);
+  border: 1px solid color-mix(in srgb, var(--tally) 45%, var(--ctl-border));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--tally) 28%, transparent);
+}
+
+.live-tally[hidden] {
+  display: none;
+}
+
+.live-tally::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tally);
+  box-shadow: 0 0 8px var(--tally), 0 0 2px var(--tally);
+  animation: tally-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes tally-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-tally::before {
+    animation: none;
+  }
 }
 
 .tools {
@@ -353,7 +406,8 @@ button {
    otherwise beat the [hidden] UA rule, so re-assert it for both — e.g. the
    non-experimental self-test item stays hidden. */
 .menu-panel[hidden],
-.menu-panel .menu-item[hidden] {
+.menu-panel .menu-item[hidden],
+.menu-panel .menu-sep[hidden] {
   display: none;
 }
 
@@ -411,8 +465,15 @@ button {
 }
 
 .menu-panel .menu-item:hover::before,
-.menu-panel .menu-item:focus-visible::before {
+.menu-panel .menu-item:focus-visible::before,
+.menu-panel .menu-item[aria-pressed="true"]::before {
   height: 16px;
+}
+
+/* A toggled-on menu item (live sync) keeps its rail lit and the label in the
+   accent color, so the active state reads without opening the menu's tally. */
+.menu-panel .menu-item[aria-pressed="true"] {
+  color: var(--led);
 }
 
 .menu-panel .menu-item:focus-visible {

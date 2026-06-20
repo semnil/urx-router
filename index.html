@@ -56,6 +56,7 @@
           <select id="rate-picker"></select>
         </label>
         <span class="spacer"></span>
+        <span id="live-tally" class="live-tally" role="status" aria-live="polite" hidden></span>
         <div class="tools">
           <div class="menu" data-demo-hide>
             <button
@@ -111,6 +112,10 @@
               </svg>
             </button>
             <div id="device-menu" class="menu-panel" role="menu" aria-labelledby="btn-device" hidden>
+              <button id="btn-live" class="menu-item" type="button" role="menuitem" aria-pressed="false" hidden>
+                Live sync
+              </button>
+              <span class="menu-sep" role="separator" data-live-only hidden></span>
               <button id="btn-fetch" class="menu-item" type="button" role="menuitem">Fetch from device</button>
               <button id="btn-write" class="menu-item" type="button" role="menuitem" disabled>Write to device</button>
               <button id="btn-selftest" class="menu-item" type="button" role="menuitem" hidden>Self-test (experimental)</button>

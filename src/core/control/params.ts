@@ -40,6 +40,12 @@ export interface ParamSpec {
   id: number;
   axis: ParamAxis;
   encoding: ParamEncoding;
+  /**
+   * Writing this param makes the device reset dependent params as a side effect
+   * (e.g. changing the COMP/EQ type clears the channel-strip section toggles).
+   * A single write does not stick; callers must converge or re-read afterwards.
+   */
+  sideEffect?: true;
 }
 
 // Confirmed anchors. Validated: their ids match both the original sniff and the
@@ -56,7 +62,7 @@ export const PARAMS = {
   /** Input channel HPF cutoff frequency (40 … 120 Hz). Confirmed by live scan. */
   HPF_FREQ: { id: 26, axis: "input", encoding: "freq" },
   /** Input channel COMP/EQ type: COMP->EQ vs SSMCS (MONO IN channels only). */
-  COMP_EQ_TYPE: { id: 21, axis: "input", encoding: "enum" },
+  COMP_EQ_TYPE: { id: 21, axis: "input", encoding: "enum", sideEffect: true },
   // Channel-strip section ON toggles. GATE is MONO IN only and type-independent;
   // COMP/EQ are MONO IN only and SWAP param banks with the COMP/EQ type (the SSMCS
   // bank uses different ids and inverted polarity). EQ also exists on every stereo
@@ -207,7 +213,7 @@ export const PARAMS = {
   /** Output PEQ band ON. */
   EQ_BAND_ON: { id: 503, axis: "global", encoding: "bool" },
   /** Output PEQ band filter type (LOW / HIGH bands only). */
-  EQ_BAND_TYPE: { id: 504, axis: "global", encoding: "enum" },
+  EQ_BAND_TYPE: { id: 504, axis: "global", encoding: "enum", sideEffect: true },
   /** Output PEQ band Q. */
   EQ_BAND_Q: { id: 505, axis: "global", encoding: "q" },
   /** Output PEQ band frequency. */
