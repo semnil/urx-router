@@ -5,6 +5,7 @@
 // capture yet and start from an empty plan.
 
 import type { NodeParams, PlanConnection } from "../core/plan";
+import { SSMCS_INITIAL } from "../core/plan";
 
 export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   ch1: {
@@ -27,6 +28,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     ],
     gate: { threshold: -50, range: -56, attack: 20.17, hold: 15.3, decay: 150.2 },
     comp: { threshold: -18, ratio: 3, gain: 2, attack: 34.58, release: 218, knee: 1, autoMakeup: false, oneKnob: false, oneKnobLevel: 0 },
+    ssmcs: SSMCS_INITIAL,
     insertFx: -1,
   },
   ch2: {
@@ -49,6 +51,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     ],
     gate: { threshold: -50, range: -56, attack: 20.17, hold: 15.3, decay: 150.2 },
     comp: { threshold: -18, ratio: 3, gain: 2, attack: 34.58, release: 218, knee: 1, autoMakeup: false, oneKnob: false, oneKnobLevel: 0 },
+    ssmcs: SSMCS_INITIAL,
     insertFx: -1,
   },
   ch3: {
@@ -72,6 +75,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     ],
     gate: { threshold: -50, range: -56, attack: 20.17, hold: 15.3, decay: 150.2 },
     comp: { threshold: -18, ratio: 3, gain: 2, attack: 34.58, release: 218, knee: 1, autoMakeup: false, oneKnob: false, oneKnobLevel: 0 },
+    ssmcs: SSMCS_INITIAL,
     insertFx: -1,
   },
   ch4: {
@@ -95,6 +99,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     ],
     gate: { threshold: -50, range: -56, attack: 20.17, hold: 15.3, decay: 150.2 },
     comp: { threshold: -18, ratio: 3, gain: 2, attack: 34.58, release: 218, knee: 1, autoMakeup: false, oneKnob: false, oneKnobLevel: 0 },
+    ssmcs: SSMCS_INITIAL,
     insertFx: -1,
   },
   ch_5_6: {

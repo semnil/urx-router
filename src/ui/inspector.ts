@@ -5,7 +5,7 @@
 import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, EqBand, NodeParams, Plan, PlanConnection, SsmcsBand, SsmcsParams } from "../core/plan";
-import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "../core/plan";
+import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, SSMCS_INITIAL } from "../core/plan";
 import { isFixedConnection, pairPrimary, sendHasTap } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
@@ -49,7 +49,6 @@ import {
   PAN_BAL_OPTIONS,
   COMP_EQ_SSMCS,
   SWEET_SPOT_DATA_OPTIONS,
-  SWEET_SPOT_DATA_DEFAULT,
 } from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
@@ -368,7 +367,7 @@ export function renderInspector(
       // sections, which the channelSections loop renders from the SSMCS bank.
       const ssmcs = cc?.hasMicStrip && compEqType === COMP_EQ_SSMCS;
       if (ssmcs) {
-        const son = np.ssmcs?.on ?? false;
+        const son = np.ssmcs?.on ?? SSMCS_INITIAL.on;
         const { el, body } = section(m.inspector.ssmcs.title, { open: son, on: son, key: "ssmcsOn" });
         body.append(boolToggle(m.inspector.ssmcs.title, son, (v) => mergeSsmcs(actions, plan, node.id, { on: v })));
         body.append(ssmcsMasterBlock(node.id, np, plan, actions, m));
@@ -1083,23 +1082,23 @@ function mergeSsmcsBand(
 // SSMCS Main controls (Sweet Spot Data preset + Comp Drive / Morphing / Out Gain).
 function ssmcsMasterBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): DocumentFragment {
   const frag = document.createDocumentFragment();
-  const s = np.ssmcs ?? {};
+  const s = np.ssmcs ?? SSMCS_INITIAL;
   frag.append(
     selectControl(
       m.inspector.ssmcs.sweetSpotData,
       SWEET_SPOT_DATA_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
-      String(s.sweetSpotData ?? SWEET_SPOT_DATA_DEFAULT),
+      String(s.sweetSpotData ?? SSMCS_INITIAL.sweetSpotData),
       (v) => mergeSsmcs(actions, plan, nodeId, { sweetSpotData: Number(v) }),
     ),
   );
   frag.append(
-    rangeSlider(m.inspector.ssmcs.compDrive, SSMCS_COMP_DRIVE_MIN, SSMCS_COMP_DRIVE_MAX, 1, s.compDrive ?? 100, (v) => ssmcsCompDrive(v).toFixed(2), (v) => mergeSsmcs(actions, plan, nodeId, { compDrive: v })),
+    rangeSlider(m.inspector.ssmcs.compDrive, SSMCS_COMP_DRIVE_MIN, SSMCS_COMP_DRIVE_MAX, 1, s.compDrive ?? SSMCS_INITIAL.compDrive, (v) => ssmcsCompDrive(v).toFixed(2), (v) => mergeSsmcs(actions, plan, nodeId, { compDrive: v })),
   );
   frag.append(
-    rangeSlider(m.inspector.ssmcs.morphing, SSMCS_MORPHING_MIN, SSMCS_MORPHING_MAX, 1, s.morphing ?? 0, String, (v) => mergeSsmcs(actions, plan, nodeId, { morphing: v })),
+    rangeSlider(m.inspector.ssmcs.morphing, SSMCS_MORPHING_MIN, SSMCS_MORPHING_MAX, 1, s.morphing ?? SSMCS_INITIAL.morphing, String, (v) => mergeSsmcs(actions, plan, nodeId, { morphing: v })),
   );
   frag.append(
-    rangeSlider(m.inspector.ssmcs.outGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, s.outGain ?? 180, fmtSsmcsGain, (v) => mergeSsmcs(actions, plan, nodeId, { outGain: v })),
+    rangeSlider(m.inspector.ssmcs.outGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, s.outGain ?? SSMCS_INITIAL.outGain, fmtSsmcsGain, (v) => mergeSsmcs(actions, plan, nodeId, { outGain: v })),
   );
   return frag;
 }
@@ -1108,31 +1107,33 @@ function ssmcsMasterBlock(nodeId: string, np: NodeParams, plan: Plan, actions: I
 // device-internal threshold/makeup (not shown on the LCD) are left untouched.
 function ssmcsCompBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): DocumentFragment {
   const frag = document.createDocumentFragment();
-  const c = np.ssmcs?.comp ?? {};
+  const ci = SSMCS_INITIAL.comp;
+  const c = np.ssmcs?.comp ?? ci;
   const setComp = (patch: Record<string, number>): void => mergeSsmcsSub(actions, plan, nodeId, "comp", patch);
   frag.append(
-    rangeSlider(m.inspector.dyn.attack, SSMCS_ATTACK_RAW_MIN, SSMCS_ATTACK_RAW_MAX, 1, c.attack ?? SSMCS_ATTACK_RAW_MIN, (v) => fmtSsmcsMs(ssmcsAttackMs(v)), (v) => setComp({ attack: v })),
+    rangeSlider(m.inspector.dyn.attack, SSMCS_ATTACK_RAW_MIN, SSMCS_ATTACK_RAW_MAX, 1, c.attack ?? ci.attack, (v) => fmtSsmcsMs(ssmcsAttackMs(v)), (v) => setComp({ attack: v })),
   );
   frag.append(
-    rangeSlider(m.inspector.dyn.release, SSMCS_RELEASE_RAW_MIN, SSMCS_RELEASE_RAW_MAX, 1, c.release ?? SSMCS_RELEASE_RAW_MIN, (v) => fmtSsmcsMs(ssmcsReleaseMs(v)), (v) => setComp({ release: v })),
+    rangeSlider(m.inspector.dyn.release, SSMCS_RELEASE_RAW_MIN, SSMCS_RELEASE_RAW_MAX, 1, c.release ?? ci.release, (v) => fmtSsmcsMs(ssmcsReleaseMs(v)), (v) => setComp({ release: v })),
   );
   frag.append(
-    rangeSlider(m.inspector.dyn.ratio, SSMCS_RATIO_RAW_MIN, SSMCS_RATIO_RAW_MAX, 1, c.ratio ?? SSMCS_RATIO_RAW_MIN, (v) => fmtSsmcsRatio(ssmcsRatio(v)), (v) => setComp({ ratio: v })),
+    rangeSlider(m.inspector.dyn.ratio, SSMCS_RATIO_RAW_MIN, SSMCS_RATIO_RAW_MAX, 1, c.ratio ?? ci.ratio, (v) => fmtSsmcsRatio(ssmcsRatio(v)), (v) => setComp({ ratio: v })),
   );
   frag.append(
     selectControl(
       m.inspector.dyn.knee,
       COMP_KNEE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
-      String(c.knee ?? COMP_KNEE_DEFAULT),
+      String(c.knee ?? ci.knee),
       (v) => setComp({ knee: Number(v) }),
     ),
   );
-  const sc = np.ssmcs?.sc ?? {};
+  const si = SSMCS_INITIAL.sc;
+  const sc = np.ssmcs?.sc ?? si;
   const setSc = (patch: Record<string, number | boolean>): void => mergeSsmcsSub(actions, plan, nodeId, "sc", patch);
-  frag.append(boolToggle(m.inspector.ssmcs.sideChain, sc.on ?? false, (v) => setSc({ on: v })));
-  frag.append(rangeSlider(m.inspector.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX, 1, sc.q ?? 12, fmtSsmcsQ, (v) => setSc({ q: v })));
-  frag.append(rangeSlider(m.inspector.frequency, SSMCS_FREQ_RAW_MIN, SSMCS_FREQ_RAW_MAX, 1, sc.freq ?? 30, fmtSsmcsHz, (v) => setSc({ freq: v })));
-  frag.append(rangeSlider(m.inspector.eqGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, sc.gain ?? 180, fmtSsmcsGain, (v) => setSc({ gain: v })));
+  frag.append(boolToggle(m.inspector.ssmcs.sideChain, sc.on ?? si.on, (v) => setSc({ on: v })));
+  frag.append(rangeSlider(m.inspector.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX, 1, sc.q ?? si.q, fmtSsmcsQ, (v) => setSc({ q: v })));
+  frag.append(rangeSlider(m.inspector.frequency, SSMCS_FREQ_RAW_MIN, SSMCS_FREQ_RAW_MAX, 1, sc.freq ?? si.freq, fmtSsmcsHz, (v) => setSc({ freq: v })));
+  frag.append(rangeSlider(m.inspector.eqGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, sc.gain ?? si.gain, fmtSsmcsGain, (v) => setSc({ gain: v })));
   return frag;
 }
 
@@ -1149,12 +1150,13 @@ const SSMCS_EQ_BANDS = [
 function ssmcsEqBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): DocumentFragment {
   const frag = document.createDocumentFragment();
   for (const spec of SSMCS_EQ_BANDS) {
-    const b: SsmcsBand = np.ssmcs?.eq?.[spec.key] ?? {};
+    const bi = SSMCS_INITIAL.eq[spec.key];
+    const b: SsmcsBand = np.ssmcs?.eq?.[spec.key] ?? bi;
     const setBand = (patch: Partial<SsmcsBand>): void => mergeSsmcsBand(actions, plan, nodeId, spec.key, patch);
-    frag.append(boolToggle(m.inspector.ssmcs.bands[spec.key], b.on ?? true, (v) => setBand({ on: v })));
-    if (spec.hasQ) frag.append(rangeSlider(m.inspector.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX, 1, b.q ?? 12, fmtSsmcsQ, (v) => setBand({ q: v })));
-    frag.append(rangeSlider(m.inspector.frequency, spec.freqMin, spec.freqMax, 1, b.freq ?? spec.freqMin, fmtSsmcsHz, (v) => setBand({ freq: v })));
-    frag.append(rangeSlider(m.inspector.eqGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, b.gain ?? 180, fmtSsmcsGain, (v) => setBand({ gain: v })));
+    frag.append(boolToggle(m.inspector.ssmcs.bands[spec.key], b.on ?? bi.on, (v) => setBand({ on: v })));
+    if (spec.hasQ) frag.append(rangeSlider(m.inspector.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX, 1, b.q ?? SSMCS_INITIAL.eq.mid.q, fmtSsmcsQ, (v) => setBand({ q: v })));
+    frag.append(rangeSlider(m.inspector.frequency, spec.freqMin, spec.freqMax, 1, b.freq ?? bi.freq, fmtSsmcsHz, (v) => setBand({ freq: v })));
+    frag.append(rangeSlider(m.inspector.eqGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, b.gain ?? bi.gain, fmtSsmcsGain, (v) => setBand({ gain: v })));
   }
   return frag;
 }

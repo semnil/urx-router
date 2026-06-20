@@ -11,6 +11,7 @@
 // whole file as an unverified estimate until a real URX22 reset can be captured.
 
 import type { NodeParams, PlanConnection } from "../core/plan";
+import { SSMCS_INITIAL } from "../core/plan";
 
 const EQ_FLAT = (): NodeParams["eqBands"] => [
   { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
@@ -35,6 +36,7 @@ const monoChannel = (hiZ?: boolean): NodeParams => ({
   eqBands: EQ_FLAT(),
   gate: { threshold: -50, range: -56, attack: 20.17, hold: 15.3, decay: 150.2 },
   comp: { threshold: -18, ratio: 3, gain: 2, attack: 34.58, release: 218, knee: 1, autoMakeup: false, oneKnob: false, oneKnobLevel: 0 },
+  ssmcs: SSMCS_INITIAL,
   insertFx: -1,
 });
 

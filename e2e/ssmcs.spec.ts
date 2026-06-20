@@ -31,9 +31,8 @@ test("switching a mono channel to SSMCS swaps in the morphing-strip controls", a
   // The SSMCS comp section carries a Side Chain filter (unique to SSMCS mode).
   await expect(param(page, "Side Chain")).toHaveCount(1);
 
-  // Sweet Spot Data lists all 34 presets and defaults to the first. Expand the
-  // (default-collapsed) SSMCS section before interacting with its select.
-  await page.locator("#inspector summary", { hasText: "SSMCS" }).click();
+  // Sweet Spot Data lists all 34 presets and defaults to the first. The SSMCS
+  // section opens by default (its ON state seeds true from the device).
   const ssd = param(page, "Sweet Spot Data").locator("select");
   await expect(ssd.locator("option")).toHaveCount(34);
   await expect(ssd).toHaveValue("1");

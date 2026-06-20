@@ -131,6 +131,25 @@ export interface SsmcsParams {
   eq?: { low?: SsmcsBand; mid?: SsmcsBand; high?: SsmcsBand };
 }
 
+// SSMCS factory-initial values, captured from a real URX44V MONO IN channel with
+// the default "01 Basic" Sweet Spot Data loaded (raw broker units). Shared by all
+// models' seeds and used as the inspector's absent-value fallback, so a new SSMCS
+// channel matches the device out of the box.
+export const SSMCS_INITIAL = {
+  on: true,
+  sweetSpotData: 1,
+  compDrive: 100,
+  morphing: 0,
+  outGain: 180,
+  comp: { attack: 184, release: 159, ratio: 30, knee: 1, threshold: 100, makeup: 70 },
+  sc: { on: true, q: 12, freq: 30, gain: 133 },
+  eq: {
+    low: { on: true, freq: 32, gain: 180 },
+    mid: { on: true, q: 12, freq: 72, gain: 180 },
+    high: { on: true, freq: 112, gain: 180 },
+  },
+} satisfies SsmcsParams;
+
 // Per-node device parameters that are not tied to a single wire (a channel's own
 // processing/state). Each field is optional; absence means the device default
 // (channel on, HPF off). Stored keyed by node id, alongside positions / notes.
