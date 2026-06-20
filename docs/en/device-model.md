@@ -244,7 +244,11 @@ Source selection for the analog outputs (MAIN / LINE).
   with **Comp Drive** / **Morphing** / **Out Gain**. Its compressor carries Attack / Release /
   Ratio / Knee plus a side-chain filter (Q / Freq / Gain), and its EQ is **3-band (Low shelf / Mid
   peaking / High shelf)** — not the 4-band PEQ. ST IN has no SSMCS (always EQ only). The inspector
-  swaps the COMP/EQ sections for the SSMCS sections per the type.
+  swaps the COMP/EQ sections for the SSMCS sections per the type, with the SSMCS Main section between
+  GATE and COMP. SSMCS and COMP->EQ are separate banks on the device, so switching the type seeds the
+  target bank's factory section state: SSMCS turns COMP/EQ on and resets every value to the device
+  initial; COMP->EQ resets to COMP off / EQ on (keeping the COMP->EQ values). The initial values are
+  read from a real MONO IN SSMCS bank with the default "01 Basic" preset loaded.
 - The mono CH and stereo CH structure is fixed (only the count varies per model). A MONO IN pair
   (CH1/2, CH3/4) carries a **Signal Type** (CH SETTING): STEREO links the two adjacent channels,
   MONO × 2 keeps them independent (the default). The tool keeps both nodes and stores the flag on the
