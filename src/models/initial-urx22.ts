@@ -75,9 +75,9 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
   "out.ducker2": ducker(),
   "out.ducker3": ducker(),
   "out.ducker4": ducker(),
-  "bus.mon1": { level: -96.5, cueInterrupt: false, mono: true },
+  "bus.mon1": { level: 0, cueInterrupt: true, mono: false },
   "bus.mon2": { level: 0, cueInterrupt: true, mono: false },
-  "bus.osc": { osc: { on: false, level: -20, mode: 0, freq: 2000 } },
+  "bus.osc": { osc: { on: false, level: -14, mode: 0, freq: 1000 } },
 };
 
 const CHANNELS = ["ch1", "ch2", "ch_3_4", "ch_5_6", "ch_7_8", "ch_9_10"];
@@ -152,11 +152,11 @@ export const URX22_CONNECTIONS: PlanConnection[] = [
   { from: "in.micline_1_2:out", to: "ch1:in", kind: "source" },
   { from: "in.micline_1_2:out", to: "ch2:in", kind: "source" },
   { from: "bus.stereo:out", to: "bus.stream:in", kind: "source" },
-  { from: "ch_9_10:out", to: "out.usbmain_a:in", kind: "patch" },
-  { from: "ch_3_4:out", to: "out.usbmain_b:in", kind: "patch" },
-  { from: "ch1:out", to: "out.usbmain_c:in", kind: "patch" },
-  { from: "bus.stream:out", to: "out.usbsub:in", kind: "patch" },
+  { from: "bus.stereo:out", to: "out.usbmain_a:in", kind: "patch" },
+  { from: "bus.stereo:out", to: "out.usbmain_b:in", kind: "patch" },
+  { from: "bus.stereo:out", to: "out.usbmain_c:in", kind: "patch" },
+  { from: "bus.stereo:out", to: "out.usbsub:in", kind: "patch" },
   { from: "bus.stereo:out", to: "bus.mon1:in", kind: "source" },
-  { from: "bus.mix2:out", to: "bus.mon2:in", kind: "source" },
-  { from: "bus.stream:out", to: "out.main:in", kind: "patch" },
+  { from: "bus.stereo:out", to: "bus.mon2:in", kind: "source" },
+  { from: "bus.stereo:out", to: "out.main:in", kind: "patch" },
 ];
