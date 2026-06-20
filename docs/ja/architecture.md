@@ -143,7 +143,9 @@ PDF は単一の FlateDecode 画像を埋め込んだ 1 ページ文書を手書
 同一性 (見出し・名前・色) を sticky ヘッダとして固定したまま、パラメータを `<details>` ベースの折りたたみ可能な
 ラック調モジュール (ROUTING / INPUT / GATE / COMP / EQ / Parameters) にグルーピングする (`inspector.ts` の
 `section()`)。GATE / COMP / EQ / Ducker は各セクションの ON 状態でヘッダの LED を点灯させ、OFF のセクションは
-描画時に自動で畳む (開閉状態の永続化は未対応)。ROUTING は既定で畳む。表示状態は CSS のみで完結する: `main.ts` が選択の有無に
+自動で畳む。ROUTING は既定で畳む。手動で開閉したセクションはセクション種別ごとに `localStorage`
+(`urx-inspector-sections`) へ永続化し、再描画・リロードをまたいで保持する。セクションの ON 値をトグルすると
+その上書きは解除され、開閉は ON 状態に追従する状態へ戻る。表示状態は CSS のみで完結する: `main.ts` が選択の有無に
 応じて `<body>` へ `has-selection` クラスを単一トグルし、`body.has-selection #inspector` が
 `transform: translateY(0)` でシートを上げる (未選択時は画面外 `translateY(105%)`)。閉じる導線は見出しの
 ✕ ボタン (`onClose` → `graph.clearSelection()` で既存の選択解除経路を再利用) と空キャンバスのタップ。

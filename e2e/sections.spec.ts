@@ -1,0 +1,55 @@
+import { test, expect, type Page } from "@playwright/test";
+
+const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
+
+// A collapsible inspector section located by its summary title.
+const section = (page: Page, title: RegExp) =>
+  page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: title }) });
+
+// The section's own ON/OFF toggle is the first .param row of its body.
+const sectionOnOff = (page: Page, title: RegExp) =>
+  section(page, title).locator(".sec-body > .param").first();
+
+test.beforeEach(async ({ page }) => {
+  await page.goto("/");
+  await page.locator("#model-picker").waitFor();
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+});
+
+test("a folded section survives a re-render and a reload", async ({ page }) => {
+  await node(page, "ch1").click();
+
+  const input = section(page, /^Input$/);
+  await expect(input).toHaveJSProperty("open", true); // default open
+
+  // Fold INPUT, then toggle EQ off — which re-renders the whole inspector.
+  await input.locator("summary").click();
+  await expect(input).toHaveJSProperty("open", false);
+  await sectionOnOff(page, /^EQ$/).locator("button", { hasText: "OFF" }).click();
+
+  // INPUT must stay folded across the re-render (the reported regression).
+  await expect(section(page, /^Input$/)).toHaveJSProperty("open", false);
+
+  // …and across a reload (localStorage persistence).
+  await page.reload();
+  await page.locator("#model-picker").waitFor();
+  await node(page, "ch1").click();
+  await expect(section(page, /^Input$/)).toHaveJSProperty("open", false);
+});
+
+test("toggling a section value reverts its fold to follow the on-state", async ({ page }) => {
+  await node(page, "ch1").click();
+
+  // GATE defaults off → folded. Open it by hand; the fold persists.
+  const gate = section(page, /^GATE$/);
+  await expect(gate).toHaveJSProperty("open", false);
+  await gate.locator("summary").click();
+  await expect(gate).toHaveJSProperty("open", true);
+
+  // Turning GATE on then off must drop the manual override, so an off GATE folds
+  // again rather than staying open from the earlier hand-open.
+  await sectionOnOff(page, /^GATE$/).locator("button", { hasText: "ON" }).click();
+  await expect(section(page, /^GATE$/)).toHaveJSProperty("open", true);
+  await sectionOnOff(page, /^GATE$/).locator("button", { hasText: "OFF" }).click();
+  await expect(section(page, /^GATE$/)).toHaveJSProperty("open", false);
+});

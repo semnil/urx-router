@@ -163,8 +163,10 @@ from the foot of the screen) on narrow viewports (≤720px). For nodes whose ins
 (channels, etc.) the selected node's identity (heading / name / color) stays pinned as a sticky header
 while the parameters group into collapsible rack-module sections (ROUTING / INPUT / GATE / COMP / EQ /
 Parameters) built on `<details>` (`section()` in `inspector.ts`). GATE / COMP / EQ / Ducker light their
-header led from each section's ON state and an off section folds itself away at render time (open/closed
-state is not yet persisted); ROUTING defaults collapsed. Its visibility is driven by CSS alone:
+header led from each section's ON state and an off section folds itself away; ROUTING defaults collapsed.
+A hand-folded section persists its open/closed state per section kind to `localStorage`
+(`urx-inspector-sections`), so it survives re-renders and reloads; toggling a section's ON value clears
+that override so the fold reverts to following the on-state. Its visibility is driven by CSS alone:
 `main.ts` toggles a single `has-selection` class on `<body>` from whether anything is selected, and
 `body.has-selection #inspector` raises the sheet with `transform: translateY(0)` (off-screen at
 `translateY(105%)` otherwise). It is dismissed by the heading's ✕ button (`onClose` →

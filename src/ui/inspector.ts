@@ -234,7 +234,7 @@ export function renderInspector(
     // Routing lists default collapsed — wiring is done on the canvas, so the
     // inspector keeps this folded away behind a count summary.
     {
-      const { el, body } = section(m.inspector.routing, { open: false });
+      const { el, body } = section(m.inspector.routing, { open: false, key: "routing" });
       body.append(subheading(m.inspector.inputsFrom(incoming.length)));
       for (const c of incoming) body.append(connRow(`${endpointLabel(c.from)} →`, c.kind));
       body.append(subheading(m.inspector.outputsTo(outgoing.length)));
@@ -253,7 +253,7 @@ export function renderInspector(
       const np = plan.nodeParams[node.id] ?? {};
       const cc = channelControl(model, node.id);
       const compEqType = np.compEqType ?? COMP_EQ_COMP_FIRST;
-      const inSec = section(m.inspector.inputSection);
+      const inSec = section(m.inspector.inputSection, { key: "input" });
       const input = inSec.body;
 
       // INPUT screen order (device top-left → bottom-right): +48V, A.Gain, HI-Z,
@@ -340,9 +340,13 @@ export function renderInspector(
       const ieq = inputEq(model, node.id, compEqType);
       for (const sec of channelSections(model, node.id, compEqType)) {
         const on = np[sec.key] ?? sec.key === "eqOn";
-        const { el, body } = section(m.inspector[sec.key], { open: on, on });
+        const { el, body } = section(m.inspector[sec.key], { open: on, on, key: sec.key });
         body.append(
-          boolToggle("", on, (v) => actions.onUpdateNodeParams(node.id, { [sec.key]: v })),
+          // Toggling the section value reverts the fold to follow the new on-state.
+          boolToggle("", on, (v) => {
+            clearSectionOverride(sec.key);
+            actions.onUpdateNodeParams(node.id, { [sec.key]: v });
+          }),
         );
         if (sec.key === "gateOn" && dyn) body.append(gateDetailBlock(node.id, dyn.gate, np, plan, actions, m));
         else if (sec.key === "compOn" && dyn?.comp) body.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
@@ -362,7 +366,7 @@ export function renderInspector(
     // nodeParams.level. STEREO additionally has a master ON/OFF (STEREO_MASTER_ON).
     if (busFader(node.id)) {
       const np = plan.nodeParams[node.id] ?? {};
-      const ps = section(m.inspector.parameters);
+      const ps = section(m.inspector.parameters, { key: "params" });
       ps.body.append(
         faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
       );
@@ -382,10 +386,16 @@ export function renderInspector(
       const oeq = outputEq(node.id);
       if (oeq) {
         const on = np.eqOn ?? true;
-        const { el, body } = section(m.inspector.eqOn, busEqOn(node.id) ? { open: on, on } : {});
+        const { el, body } = section(
+          m.inspector.eqOn,
+          busEqOn(node.id) ? { open: on, on, key: "eqOn" } : { key: "eqOn" },
+        );
         if (busEqOn(node.id)) {
           body.append(
-            boolToggle("", on, (v) => actions.onUpdateNodeParams(node.id, { eqOn: v })),
+            boolToggle("", on, (v) => {
+              clearSectionOverride("eqOn");
+              actions.onUpdateNodeParams(node.id, { eqOn: v });
+            }),
           );
         }
         body.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
@@ -396,7 +406,7 @@ export function renderInspector(
     // Post Fader Send for FX (FX 1 / FX 2): the MIX bus that feeds this FX bus
     // post-fader (DAW Integration menu, V1.2+). A select on the FX bus node.
     if (node.id === "bus.fx1" || node.id === "bus.fx2") {
-      const ps = section(m.inspector.parameters);
+      const ps = section(m.inspector.parameters, { key: "params" });
       ps.body.append(
         enumSelect(
           m.inspector.postFaderSend,
@@ -412,7 +422,7 @@ export function renderInspector(
     // Monitor bus level (MONITOR_LEVEL) plus the CUE-interrupt / MONO toggles.
     if (node.id === "bus.mon1" || node.id === "bus.mon2") {
       const np = plan.nodeParams[node.id] ?? {};
-      const ps = section(m.inspector.parameters);
+      const ps = section(m.inspector.parameters, { key: "params" });
       ps.body.append(
         faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
       );
@@ -438,7 +448,7 @@ export function renderInspector(
         actions.onUpdateNodeParams(node.id, { osc: { ...osc, ...patch } });
       // OSCILLATOR menu order (device top-left → bottom-right): Mode, ON, then the
       // Frequency / Level row (Frequency shows only in Sine Wave mode).
-      const ps = section(m.inspector.parameters);
+      const ps = section(m.inspector.parameters, { key: "params" });
       ps.body.append(
         selectControl(
           m.inspector.oscMode,
@@ -648,19 +658,70 @@ function subheading(text: string): HTMLElement {
   return h;
 }
 
+// Persisted section open/closed overrides, keyed by section kind (not per node)
+// so a fold preference is consistent across nodes and survives both re-renders
+// and reloads. A section with an ON-state default (gate / comp / eq / ducker)
+// clears its override when the value is toggled, so it reverts to following the
+// on-state (auto-collapse when off); a user fold of the disclosure persists.
+const SECTION_STATE_KEY = "urx-inspector-sections";
+type SectionState = Record<string, boolean>;
+let sectionState: SectionState | null = null;
+
+function sectionOverrides(): SectionState {
+  if (sectionState === null) {
+    try {
+      const raw = localStorage.getItem(SECTION_STATE_KEY);
+      const v = raw ? (JSON.parse(raw) as unknown) : null;
+      sectionState = v && typeof v === "object" ? (v as SectionState) : {};
+    } catch {
+      sectionState = {};
+    }
+  }
+  return sectionState;
+}
+
+function persistSectionState(): void {
+  try {
+    localStorage.setItem(SECTION_STATE_KEY, JSON.stringify(sectionOverrides()));
+  } catch {
+    // ignore quota / disabled storage
+  }
+}
+
+function clearSectionOverride(key: string): void {
+  const s = sectionOverrides();
+  if (!(key in s)) return;
+  delete s[key];
+  persistSectionState();
+}
+
 // A collapsible inspector section (rack-module style): a summary header in the
 // h3 mono-uppercase idiom, optionally carrying an ON led that mirrors a section
 // toggle (GATE / COMP / EQ), and a body the caller fills. Built on <details> so
 // it gets native keyboard toggling and respects reduced motion. `open` is the
-// initial disclosure state, recomputed each render (no persistence yet), so an
-// off section (on === false) collapses on its own.
+// default disclosure state; a persisted `key` override wins over it, so an off
+// section (on === false) collapses on its own until the user folds it by hand.
 function section(
   title: string,
-  opts: { open?: boolean; on?: boolean } = {},
+  opts: { open?: boolean; on?: boolean; key?: string } = {},
 ): { el: HTMLDetailsElement; body: HTMLElement } {
   const el = document.createElement("details");
   el.className = "insp-section";
-  el.open = opts.open ?? true;
+  const def = opts.open ?? true;
+  const key = opts.key;
+  const initial = key !== undefined && key in sectionOverrides() ? sectionOverrides()[key] : def;
+  el.open = initial;
+  if (key !== undefined) {
+    // The property set above can queue one echo toggle event; skip it by only
+    // persisting when the disclosure actually leaves the value we last applied.
+    let expected = initial;
+    el.addEventListener("toggle", () => {
+      if (el.open === expected) return;
+      expected = el.open;
+      sectionOverrides()[key] = el.open;
+      persistSectionState();
+    });
+  }
   const sum = document.createElement("summary");
   if (opts.on !== undefined) {
     const led = document.createElement("span");
@@ -875,8 +936,13 @@ function duckerBlock(
   m: Messages,
 ): HTMLElement {
   const on = np.duckerOn ?? false;
-  const { el, body } = section(m.inspector.duckerOn, { open: on, on });
-  body.append(boolToggle("", on, (v) => actions.onUpdateNodeParams(nodeId, { duckerOn: v })));
+  const { el, body } = section(m.inspector.duckerOn, { open: on, on, key: "duckerOn" });
+  body.append(
+    boolToggle("", on, (v) => {
+      clearSectionOverride("duckerOn");
+      actions.onUpdateNodeParams(nodeId, { duckerOn: v });
+    }),
+  );
   const vals = (np.ducker ?? {}) as Record<string, number | undefined>;
   for (const f of DUCKER_FIELDS)
     body.append(dynFieldSlider(f, m, vals[f.key], (key, v) => mergeSection(actions, plan, nodeId, "ducker", { [key]: v })));
