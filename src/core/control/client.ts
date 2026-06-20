@@ -5,9 +5,9 @@
 
 import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
-import { vdGet, vdSet } from "../platform";
-import { planToCommands } from "./translate";
-import type { VdCommand } from "./translate";
+import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
+import { planToCommands, planToNameWrites } from "./translate";
+import type { NameWrite, VdCommand } from "./translate";
 
 /** The vd commands a plan currently implies — the confirm-before-send preview. */
 export function dryRun(model: DeviceModel, plan: Plan): VdCommand[] {
@@ -77,6 +77,53 @@ export async function sendCommands(commands: VdCommand[]): Promise<SendOutcome[]
 /** Send every command a plan implies (no diff) — the full-write path. */
 export function sendPlan(model: DeviceModel, plan: Plan): Promise<SendOutcome[]> {
   return sendCommands(planToCommands(model, plan));
+}
+
+export interface NameOutcome {
+  write: NameWrite;
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * The CH SETTING name writes whose value differs from the device — the string
+ * analogue of diffPlan, so a name-only edit is counted and a matching name is
+ * not re-sent. A read failure keeps the write (it is sent rather than skipped).
+ */
+export async function diffNames(
+  model: DeviceModel,
+  plan: Plan,
+): Promise<{ writes: NameWrite[]; errors: string[] }> {
+  const writes: NameWrite[] = [];
+  const errors: string[] = [];
+  for (const write of planToNameWrites(model, plan)) {
+    try {
+      const current = (await vdGetStr(write.param, 0, write.y)).trim();
+      if (current !== write.value) writes.push(write);
+    } catch (e) {
+      errors.push(`name ${write.param}:${write.y}: ${e instanceof Error ? e.message : String(e)}`);
+      writes.push(write);
+    }
+  }
+  return { writes, errors };
+}
+
+/**
+ * Send CH SETTING name writes (string params, via the string IPC). Separate from
+ * sendCommands because names are strings outside the numeric VdCommand path;
+ * idempotent, so no converge loop is needed. The caller must have connected.
+ */
+export async function sendNames(writes: NameWrite[]): Promise<NameOutcome[]> {
+  const outcomes: NameOutcome[] = [];
+  for (const write of writes) {
+    try {
+      await vdSetStr(write.param, 0, write.y, write.value);
+      outcomes.push({ write, ok: true });
+    } catch (e) {
+      outcomes.push({ write, ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return outcomes;
 }
 
 export interface ConvergeResult {

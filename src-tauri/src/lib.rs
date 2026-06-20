@@ -62,6 +62,18 @@ fn vd_get(state: State<vd::VdState>, param_id: u32, x: i64, y: i64) -> Result<i6
     vd::get(&state, param_id, x, y)
 }
 
+// String-valued parameters (e.g. CH SETTING names) the numeric vd_set/vd_get
+// cannot carry: the broker stores their current_value as a JSON string.
+#[tauri::command]
+fn vd_set_str(state: State<vd::VdState>, param_id: u32, x: i64, y: i64, value: String) -> Result<(), String> {
+    vd::set_str(&state, param_id, x, y, value)
+}
+
+#[tauri::command]
+fn vd_get_str(state: State<vd::VdState>, param_id: u32, x: i64, y: i64) -> Result<String, String> {
+    vd::get_str(&state, param_id, x, y)
+}
+
 #[tauri::command]
 fn vd_disconnect(state: State<vd::VdState>) {
     vd::disconnect(&state);
@@ -91,6 +103,8 @@ pub fn run() {
             vd_info,
             vd_set,
             vd_get,
+            vd_set_str,
+            vd_get_str,
             vd_disconnect
         ])
         .run(tauri::generate_context!())

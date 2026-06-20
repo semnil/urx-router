@@ -34,7 +34,7 @@ import {
   type DeviceSummary,
 } from "./core/platform";
 import { applyDeviceState } from "./core/control/readback";
-import { diffPlan, sendConverging } from "./core/control/client";
+import { diffNames, diffPlan, sendConverging, sendNames } from "./core/control/client";
 import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -547,24 +547,30 @@ if (!DEMO) {
         }
         const { diffs, errors } = await diffPlan(getModel(modelId), plan);
         if (errors.length) console.warn("device diff issues:", errors);
-        if (diffs.length === 0) {
+        // CH SETTING names are string params outside the numeric diff; diff them
+        // separately so a name-only change still counts and writes.
+        const { writes: nameWrites, errors: nameErrors } = await diffNames(getModel(modelId), plan);
+        if (nameErrors.length) console.warn("device name diff issues:", nameErrors);
+        const total = diffs.length + nameWrites.length;
+        if (total === 0) {
           setStatus(t().status.writeNoChanges);
           return;
         }
-        if (!(await confirmDialog(t().confirm.write(diffs.length)))) {
+        if (!(await confirmDialog(t().confirm.write(total)))) {
           setStatus(t().status.canceled);
           return;
         }
         const { outcomes, residual } = await sendConverging(getModel(modelId), plan, diffs);
-        const failed = outcomes.filter((o) => !o.ok);
+        const nameOutcomes = await sendNames(nameWrites);
+        const failed = [...outcomes, ...nameOutcomes].filter((o) => !o.ok);
         if (failed.length) console.warn("device write failures:", failed);
         if (residual.length) console.warn("device write did not converge:", residual);
         setStatus(
           failed.length
-            ? t().status.writePartial(outcomes.length - failed.length, failed.length)
+            ? t().status.writePartial(total - failed.length, failed.length)
             : residual.length
               ? t().status.writeResidual(residual.length)
-              : t().status.written(diffs.length),
+              : t().status.written(total),
         );
       }),
     );

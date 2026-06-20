@@ -68,7 +68,9 @@ flowchart TD
   just below that channel ([below](#ducker-placement)).
 - **Plan** — the mutable state the user creates. It holds `modelId`, node positions (`positions`),
   connections (`connections`), per-connection parameters (level / pan / pre-post, etc.),
-  node name overrides (`nodeNames`, the device's CH SETTING name), node color overrides
+  node name overrides (`nodeNames`, the device's CH SETTING name — read and written over the string
+  IPC for the same nodes that carry a color; an empty name falls back to the model's default label),
+  node color overrides
   (`nodeColors`, the device CH SETTING color, drawn as a thin top accent cap; the picker offers the
   device's fixed palette so a chosen color is read and written 1:1 to hardware — input channels,
   MIX, STEREO, FX and STREAMING), hidden nodes (`hidden`),
