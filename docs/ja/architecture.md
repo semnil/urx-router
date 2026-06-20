@@ -281,7 +281,7 @@ macOS の署名・公証は任意で、署名 secret (`MACOS_SIGNING_CERT` / `MA
 
 デスクトップ版とは別に、ブラウザだけで試せるデモを GitHub Pages で配信する。`vite build --mode demo`
 (`pnpm build:demo`。`.env.demo` が `VITE_DEMO=1` を与える) でビルドし、`.github/workflows/pages.yml`
-が `main` への push ごとに `dist` を Pages へ公開する。デモはビューア用途のため、ファイルの保存 / 読込と
+が `vX.Y.Z` リリースタグの push 時に `dist` を Pages へ公開する (デモはリリース版に追従する)。デモはビューア用途のため、ファイルの保存 / 読込と
 PNG / PDF 出力をツールバーから隠す (`src/core/env.ts` の `DEMO` フラグが `[data-demo-hide]` 要素を
 非表示にする)。通常 (デスクトップ) ビルドではこの分岐がデッドコードとして除去され全機能が出るため、
 配布バイナリには影響しない。`vite.config.ts` の `base: "./"` (相対) によりサブパス配信でもアセットが解決する。

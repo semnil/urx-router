@@ -1,14 +1,13 @@
 name: Deploy demo to GitHub Pages
 
 # Builds the browser demo (file persistence and image export hidden via
-# VITE_DEMO) and publishes it to GitHub Pages on every push to main.
-# Doc-only changes don't alter the built demo, so skip the deploy for them.
+# VITE_DEMO) and publishes it to GitHub Pages when a vX.Y.Z release tag is
+# pushed, so the demo tracks released versions rather than every main commit.
 on:
   push:
-    branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
   workflow_dispatch:
 
 permissions:

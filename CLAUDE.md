@@ -38,7 +38,7 @@ pnpm test:e2e     # Playwright E2E (e2e/*.spec.ts: routing/hide/notes/multiselec
 
 このマシン (Mac) では node/pnpm は nodenv (`~/.anyenv/envs/nodenv/shims`) 経由。非対話シェルでは PATH 未ロード。
 
-CI は 4 ワークフロー: PR は build + unit (`ci.yml`)、E2E と third-party ライセンス生成は post-merge (`post-merge.yml`)、ブラウザデモは main への push で GitHub Pages へ自動デプロイ (`pages.yml`)、デスクトップインストーラーは tag push (`release.yml`)。
+CI は 4 ワークフロー: PR は build + unit (`ci.yml`)、E2E と third-party ライセンス生成は post-merge (`post-merge.yml`)、ブラウザデモは `vX.Y.Z` リリースタグ push で GitHub Pages へ自動デプロイ (`pages.yml`)、デスクトップインストーラーも tag push (`release.yml`)。
 
 ## 規約
 

@@ -318,7 +318,7 @@ The Windows console window is already suppressed in release builds by
 
 Separate from the desktop app, a browser-only demo is published to GitHub Pages. `vite build --mode demo`
 (`pnpm build:demo`, with `.env.demo` setting `VITE_DEMO=1`) builds it, and `.github/workflows/pages.yml`
-publishes `dist` to Pages on every push to `main`. The demo is a viewer, so file save / load and PNG / PDF
+publishes `dist` to Pages when a `vX.Y.Z` release tag is pushed, so the demo tracks released versions. The demo is a viewer, so file save / load and PNG / PDF
 export are hidden from the toolbar (`src/core/env.ts`'s `DEMO` flag hides `[data-demo-hide]` elements). A
 normal (desktop) build eliminates that branch as dead code and keeps every feature, so distributed binaries
 are unaffected. `vite.config.ts`'s relative `base: "./"` lets assets resolve under a sub-path.
