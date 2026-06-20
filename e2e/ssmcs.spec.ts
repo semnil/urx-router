@@ -55,10 +55,12 @@ test("switching a mono channel to SSMCS swaps in the morphing-strip controls", a
   await ssd.selectOption("14"); // 08 MR Vocal
   await expect(ssd).toHaveValue("14");
 
-  // Back to COMP->EQ removes the SSMCS controls.
+  // Back to COMP->EQ removes the SSMCS controls and resets to COMP off / EQ on.
   await sel.selectOption("0");
   await expect(param(page, "Sweet Spot Data")).toHaveCount(0);
   await expect(param(page, "Comp Drive")).toHaveCount(0);
+  await expect(compSection).not.toHaveAttribute("open", ""); // COMP off → folded
+  await expect(eqSection).toHaveAttribute("open", ""); // EQ on → open
 });
 
 test("SSMCS is a MONO IN feature — stereo channels have no COMP/EQ Type", async ({ page }) => {

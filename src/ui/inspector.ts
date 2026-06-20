@@ -349,10 +349,10 @@ export function renderInspector(
         );
       }
       // COMP/EQ type (COMP->EQ vs SSMCS) — the CH SETTING bank selector that drives
-      // which COMP/EQ controls appear below. MONO IN channels only. Switching to
-      // SSMCS seeds the morphing strip to its device-initial state: COMP/EQ on and
-      // every value reset to SSMCS_INITIAL (the SSMCS bank is a separate device
-      // bank, so it starts fresh rather than inheriting the COMP->EQ section state).
+      // which COMP/EQ controls appear below. MONO IN channels only. Each type's
+      // bank is separate on the device, so switching seeds the target bank's
+      // initial section state: SSMCS = COMP/EQ on + every value reset to
+      // SSMCS_INITIAL; COMP->EQ = COMP off / EQ on (the device factory default).
       if (cc?.hasMicStrip) {
         input.append(
           selectControl(
@@ -364,7 +364,7 @@ export function renderInspector(
                 node.id,
                 Number(v) === COMP_EQ_SSMCS
                   ? { compEqType: COMP_EQ_SSMCS, compOn: true, eqOn: true, ssmcs: structuredClone(SSMCS_INITIAL) }
-                  : { compEqType: Number(v) },
+                  : { compEqType: COMP_EQ_COMP_FIRST, compOn: false, eqOn: true },
               ),
           ),
         );
