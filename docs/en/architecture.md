@@ -166,7 +166,9 @@ Parameters) built on `<details>` (`section()` in `inspector.ts`). GATE / COMP / 
 header led from each section's ON state and an off section folds itself away; ROUTING defaults collapsed.
 A hand-folded section persists its open/closed state per section kind to `localStorage`
 (`urx-inspector-sections`), so it survives re-renders and reloads; toggling a section's ON value clears
-that override so the fold reverts to following the on-state. Its visibility is driven by CSS alone:
+that override so the fold reverts to following the on-state. Within a section, the EQ band editor is a
+four-tab strip (LOW / LOW MID / HIGH MID / HIGH) showing one band at a time (the active band is kept
+across re-renders), and the INPUT toggles flow two-up. Its visibility is driven by CSS alone:
 `main.ts` toggles a single `has-selection` class on `<body>` from whether anything is selected, and
 `body.has-selection #inspector` raises the sheet with `transform: translateY(0)` (off-screen at
 `translateY(105%)` otherwise). It is dismissed by the heading's ✕ button (`onClose` →

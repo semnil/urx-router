@@ -37,6 +37,26 @@ test("a folded section survives a re-render and a reload", async ({ page }) => {
   await expect(section(page, /^Input$/)).toHaveJSProperty("open", false);
 });
 
+test("EQ bands are tabs; the active band shows alone and survives a relayout", async ({ page }) => {
+  await node(page, "ch1").click();
+
+  // EQ is on (open) by default; four band tabs, one band's controls visible.
+  const eq = section(page, /^EQ$/);
+  await expect(eq.locator(".eq-tab")).toHaveCount(4);
+  await expect(eq.locator(".eq-panel:not([hidden])")).toHaveCount(1);
+
+  await eq.locator(".eq-tab", { hasText: "HIGH MID" }).click();
+  await expect(eq.locator(".eq-tab.active")).toHaveText("HIGH MID");
+
+  // Toggling the band off re-renders the inspector; the tab must stay on HIGH MID.
+  await eq
+    .locator(".eq-panel:not([hidden]) .param", { hasText: "Band" })
+    .locator("button", { hasText: "OFF" })
+    .click();
+  await expect(section(page, /^EQ$/).locator(".eq-tab.active")).toHaveText("HIGH MID");
+  await expect(section(page, /^EQ$/).locator(".eq-panel:not([hidden])")).toHaveCount(1);
+});
+
 test("toggling a section value reverts its fold to follow the on-state", async ({ page }) => {
   await node(page, "ch1").click();
 
