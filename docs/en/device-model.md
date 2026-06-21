@@ -162,6 +162,9 @@ UG shows C as the nominal centre; L63/R63 are the hard-pan ends). PRE/POST state
   main path and is likewise **fixed** — always wired, non-removable, **no PRE/POST**. It is seeded at
   **-∞ (off)** by default so an FX return is not summed into the main mix until raised. The MIX 1/2
   sends stay optional, with PRE/POST.)
+  - Each FX return has its own **channel ON/OFF** (mute), handled like the input-channel and STEREO-master
+    ON. **Both FX 1 and FX 2 ship ON at the factory**, and a `new` plan seeds them ON (turning one off dims
+    the node on the canvas and tags it MUTE).
 - OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`sendSwitch`; an ON/OFF assign, not a
   summing send — the oscillator has one global level. Stereo destinations carry
   independent L/R in the wire (`oscL` / `oscR`); FX buses are mono)

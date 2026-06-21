@@ -199,6 +199,11 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
       { on: true, q: 0.71, freq: 10000, gain: 0, type: 1 },
     ],
   },
+  // FX return channels ship ON at the factory (param 338, def 1). Seeded so a
+  // fresh plan restores them (the absolute write only auto-clears wires, not
+  // scalar node params — see bus.stereo/osc/monitor).
+  "bus.fx1": { on: true },
+  "bus.fx2": { on: true },
   "out.ducker1": {
     duckerOn: false,
     ducker: { threshold: -40, range: -24, attack: 20.17, decay: 1000 },

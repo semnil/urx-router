@@ -74,6 +74,9 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
   "bus.stereo": { ...outputBus(), on: true },
   "bus.mix1": outputBus(),
   "bus.mix2": outputBus(),
+  // FX return channels ship ON at the factory (param 338, def 1), like URX44V.
+  "bus.fx1": { on: true },
+  "bus.fx2": { on: true },
   "out.ducker1": ducker(),
   "out.ducker2": ducker(),
   "out.ducker3": ducker(),

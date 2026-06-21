@@ -471,6 +471,13 @@ export function renderInspector(
     // post-fader (DAW Integration menu, V1.2+). A select on the FX bus node.
     if (node.id === "bus.fx1" || node.id === "bus.fx2") {
       const ps = section(m.inspector.parameters, { key: "params" });
+      // FX return channel ON (param 338, per FX) — the FX return's own mute,
+      // distinct from the per-channel FX sends feeding it.
+      ps.body.append(
+        boolToggle(m.inspector.channelOn, plan.nodeParams[node.id]?.on ?? true, (v) =>
+          actions.onUpdateNodeParams(node.id, { on: v }),
+        ),
+      );
       ps.body.append(
         enumSelect(
           m.inspector.postFaderSend,

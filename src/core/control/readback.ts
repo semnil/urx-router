@@ -14,6 +14,7 @@ import type { DynField, EqControl, EqOneKnobControl } from "./translate";
 import {
   busEqOn,
   busFader,
+  busMasterOn,
   channelControl,
   channelDynamics,
   channelSections,
@@ -322,15 +323,21 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     }
   }
 
-  // STEREO bus master ON/OFF — a single global parameter, read once.
-  attempted.add("bus.stereo");
-  try {
-    const masterOn = vdToBool(await vdGet(PARAMS.STEREO_MASTER_ON.id, 0, 0));
-    plan.nodeParams["bus.stereo"] = { ...plan.nodeParams["bus.stereo"], on: masterOn };
-    applied++;
-  } catch (e) {
-    failed.add("bus.stereo");
-    errors.push(`STEREO: ${e instanceof Error ? e.message : String(e)}`);
+  // Bus master ON/OFF: STEREO master (582) and the FX return channels (338, per
+  // FX). MIX buses have no ON toggle (busMasterOn → null), so they are skipped.
+  for (const node of model.nodes) {
+    if (node.kind !== "bus") continue;
+    const bm = busMasterOn(node.id);
+    if (!bm) continue;
+    attempted.add(node.id);
+    try {
+      const on = vdToBool(await vdGet(bm.param, 0, bm.instances[0]));
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], on };
+      applied++;
+    } catch (e) {
+      failed.add(node.id);
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // Monitor bus levels: bus.mon1 → y0, bus.mon2 → y1.

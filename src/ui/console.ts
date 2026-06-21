@@ -242,7 +242,7 @@ export class Console {
       isMono: /^ch\d+$/.test(id), // mono channels are ch1..ch4 (the only gain/gate/comp/φ-bearing strips)
       fadersOnly: !(isChannel || this.isFxReturn(id)),
       isOsc,
-      hasMute: isChannel || isMaster,
+      hasMute: isChannel || isMaster || this.isFxReturn(id),
       hasEq: isChannel || isMix || isMaster,
       hasPhones: id === "bus.mon1" || id === "bus.mon2",
       range: isOsc ? OSC_RANGE : NORMAL_RANGE,

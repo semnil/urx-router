@@ -177,8 +177,9 @@ signal ladder (green→red; signal only while Live sync streams); the OVER box l
 its top/bottom to the fader travel, so a tick at the cap's height marks that level (a functional scale,
 10/0/-10/-20/-40/-60/-80/-∞). Each tick centres its digits with the minus sign hanging left, so `10` and
 `-10` line up vertically. Above the zone the scribble shows two lines — **node name + device CH SETTING
-name**. Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE, then +48 / φ / HPF on mono
-MIC channels (Hi-Z on CH3/4) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
+name**. Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE (on channels, FX returns and
+the master; an FX return's is the device FX-channel ON, the master's is the STEREO master ON), then +48 / φ /
+HPF on mono MIC channels (Hi-Z on CH3/4) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
 chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
 node hung under them). An odd group gets an invisible spacer so its last chip never stretches to
 full width. At the bottom (knobs bottom-aligned) are rotary knobs (`addKnob`/`wireKnob`, drag / arrow keys)
