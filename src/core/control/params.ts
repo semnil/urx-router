@@ -193,6 +193,10 @@ export const PARAMS = {
   HA_GAIN: { id: 1, axis: "input", encoding: "gain" },
   /** Output (mix) fader level. */
   OUT_FADER: { id: 674, axis: "output", encoding: "level" },
+  /** MIX bus master ON (675, fader+1, parallel to STEREO_MASTER_ON 582). L/R-linked
+   *  per stereo MIX (MIX1 [0,1] / MIX2 [2,3]); default 1. Independent of the MIX →
+   *  STEREO "TO ST" send. Confirmed by live readback (device-side MIX2 OFF → 675). */
+  OUT_MASTER_ON: { id: 675, axis: "output", encoding: "bool" },
   // CH → MIX/FX bus send. The actual ids are computed per channel/bus in
   // translate.ts; these anchors are the MIX1 mono slot and only name the command
   // + encoding.

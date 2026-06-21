@@ -125,7 +125,6 @@ export const en = {
     duckerOn: "Ducker",
     gainAnalog: "A.Gain",
     gainDigital: "D.Gain",
-    master: "Master",
     oscOn: "Oscillator",
     oscLevel: "Level",
     oscMode: "Mode",

@@ -397,13 +397,15 @@ export function busFader(nodeId: string): BusFader | null {
   return mix ? { name: "OUT_FADER", param: PARAMS.OUT_FADER.id, instances: mix } : null;
 }
 
-/** Master ON param/instances for a bus channel: STEREO master (582) or an FX
- *  return (FX_CHANNEL_ON, one instance per FX; the canonical FX-bus ordering),
- *  or null for buses with no ON toggle (MIX). */
+/** Master ON param/instances for a bus channel: STEREO master (582), a MIX bus
+ *  (OUT_MASTER_ON 675, L/R-linked per MIX), or an FX return (FX_CHANNEL_ON, one
+ *  instance per FX; the canonical FX-bus ordering), or null for buses with none. */
 export function busMasterOn(nodeId: string): { name: ParamName; param: number; instances: number[] } | null {
   if (nodeId === "bus.stereo") {
     return { name: "STEREO_MASTER_ON", param: PARAMS.STEREO_MASTER_ON.id, instances: [0] };
   }
+  const mix = MIX_FADER_INSTANCES[nodeId];
+  if (mix) return { name: "OUT_MASTER_ON", param: PARAMS.OUT_MASTER_ON.id, instances: mix };
   const fx = FX_SEND_BUS_INDEX[nodeId];
   return fx === undefined ? null : { name: "FX_CHANNEL_ON", param: PARAMS.FX_CHANNEL_ON.id, instances: [fx] };
 }
@@ -1097,8 +1099,8 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (pr) out.push(command(pr, yr, p ? p.r : PORT_REF_NONE));
   }
 
-  // Bus master ON/OFF: STEREO master (582, y = 0) and the FX channels
-  // (338, one instance per FX). MIX buses have no ON toggle (busMasterOn → null).
+  // Bus master ON/OFF: STEREO master (582, y = 0), MIX buses (675, L/R-linked per
+  // MIX) and the FX channels (338, one instance per FX).
   for (const node of model.nodes) {
     if (node.kind !== "bus") continue;
     const bm = busMasterOn(node.id);

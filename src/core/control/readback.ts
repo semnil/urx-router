@@ -341,8 +341,8 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     }
   }
 
-  // Bus master ON/OFF: STEREO master (582) and the FX channels (338, per
-  // FX). MIX buses have no ON toggle (busMasterOn → null), so they are skipped.
+  // Bus master ON/OFF: STEREO master (582), MIX buses (675, L/R-linked — the L
+  // instance is read) and the FX channels (338, per FX).
   for (const node of model.nodes) {
     if (node.kind !== "bus") continue;
     const bm = busMasterOn(node.id);

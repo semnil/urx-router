@@ -11,6 +11,7 @@ import type { DynField, EqControl } from "../core/control/translate";
 import {
   busEqOn,
   busFader,
+  busMasterOn,
   channelControl,
   channelDynamics,
   channelSections,
@@ -436,20 +437,22 @@ export function renderInspector(
     }
 
     // Bus output fader: STEREO master (581) and MIX 1/2 (674). Reuses
-    // nodeParams.level. STEREO additionally has a master ON/OFF (STEREO_MASTER_ON).
+    // nodeParams.level. Both also carry an ON/OFF (STEREO_MASTER_ON 582 / MIX
+    // OUT_MASTER_ON 675), edited here only — the CONSOLE shows it read-only. The
+    // toggle leads the section as a "Channel" ON (like an FX channel).
     if (busFader(node.id)) {
       const np = plan.nodeParams[node.id] ?? {};
       const ps = section(m.inspector.parameters, { key: "params" });
-      ps.body.append(
-        faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
-      );
-      if (node.id === "bus.stereo") {
+      if (busMasterOn(node.id)) {
         ps.body.append(
-          boolToggle(m.inspector.master, np.on ?? true, (v) =>
+          boolToggle(m.inspector.channelOn, np.on ?? true, (v) =>
             actions.onUpdateNodeParams(node.id, { on: v }),
           ),
         );
       }
+      ps.body.append(
+        faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
+      );
       host.append(ps.el);
       // Insert FX (STEREO / MIX outputs) groups into the Parameters section.
       tailBody = ps.body;
