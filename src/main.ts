@@ -278,6 +278,10 @@ const inspectorActions = {
         patch.ssmcs.eq?.low?.on !== prev?.ssmcs?.eq?.low?.on ||
         patch.ssmcs.eq?.mid?.on !== prev?.ssmcs?.eq?.mid?.on ||
         patch.ssmcs.eq?.high?.on !== prev?.ssmcs?.eq?.high?.on);
+    // EQ 1-knob ON toggles between the 1-knob controls and the band tabs, so it
+    // re-renders; the type select self-updates and the level slider keeps focus.
+    const eqOneKnobRelayout =
+      patch.eqOneKnob !== undefined && patch.eqOneKnob.on !== prev?.eqOneKnob?.on;
     // Toggles re-render to update the active button; sliders (gain/level) mutate
     // in place so they keep focus while dragging.
     if (
@@ -304,7 +308,8 @@ const inspectorActions = {
       eqRelayout ||
       compRelayout ||
       oscRelayout ||
-      ssmcsRelayout
+      ssmcsRelayout ||
+      eqOneKnobRelayout
     )
       refreshInspector();
   },

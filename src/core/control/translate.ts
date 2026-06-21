@@ -10,7 +10,7 @@
 
 import type { ConnectionKind, DeviceModel, ModelId } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
-import type { CompParams, EqBand, GateParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
+import type { CompParams, EqBand, EqOneKnobParams, GateParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
 import { incomingConnection } from "../plan";
 import { isFixedConnection } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
@@ -506,6 +506,30 @@ export function inputEq(model: DeviceModel, nodeId: string, compEqType: number):
   return eqSec ? eqBandsFrom(eqSec.param, [eqSec.y]) : null;
 }
 
+/** EQ 1-knob params for an EQ (input channel or output bus): ON / TYPE / LEVEL sit
+ *  2 / 3 / 4 params after the EQ-ON anchor. */
+export interface EqOneKnobControl {
+  on: number;
+  type: number;
+  level: number;
+  instances: number[];
+}
+
+function eqOneKnobFrom(eqOnParam: number, instances: number[]): EqOneKnobControl {
+  const b = eqOnParam + 2;
+  return { on: b, type: b + 1, level: b + 2, instances };
+}
+
+/** Resolve the EQ 1-knob for a node, or null if it has no EQ (e.g. a mono channel
+ *  in SSMCS mode). Reuses the same EQ-ON anchor as inputEq/outputEq. */
+export function eqOneKnob(model: DeviceModel, nodeId: string, compEqType: number): EqOneKnobControl | null {
+  const out = busEqOn(nodeId);
+  if (out) return eqOneKnobFrom(out.param, out.instances);
+  if (compEqType === COMP_EQ_SSMCS && !isStereoChannel(nodeId)) return null;
+  const eqSec = channelSections(model, nodeId, compEqType).find((s) => s.key === "eqOn");
+  return eqSec ? eqOneKnobFrom(eqSec.param, [eqSec.y]) : null;
+}
+
 /** One slider value of the GATE/COMP detail: its catalog name + plan-domain range. */
 export interface DynField {
   /** The GateParams / CompParams sub-field this controls. */
@@ -642,6 +666,17 @@ function pushEqBandCommands(out: VdCommand[], ctrl: EqControl, bands: EqBand[]):
       if (v.freq !== undefined) out.push(rawCommand("EQ_BAND_FREQ", band.freq, "eqFreq", inst, v.freq));
       if (v.gain !== undefined) out.push(rawCommand("EQ_BAND_GAIN", band.gain, "eqGain", inst, v.gain));
     }
+  }
+}
+
+// Push the EQ 1-knob commands (ON / TYPE / LEVEL) for one node's EQ, on every
+// linked instance. When 1-knob is on the device drives the 4-band PEQ, so the
+// caller skips the band commands — the bands are device-driven, not authored.
+function pushEqOneKnobCommands(out: VdCommand[], ctrl: EqOneKnobControl, ok: EqOneKnobParams): void {
+  for (const inst of ctrl.instances) {
+    if (ok.on !== undefined) out.push(rawCommand("EQ_ONE_KNOB_ON", ctrl.on, "bool", inst, ok.on ? 1 : 0));
+    if (ok.type !== undefined) out.push(rawCommand("EQ_ONE_KNOB_TYPE", ctrl.type, "enum", inst, ok.type));
+    if (ok.level !== undefined) out.push(rawCommand("EQ_ONE_KNOB_LEVEL", ctrl.level, "raw", inst, ok.level));
   }
 }
 
@@ -880,9 +915,13 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       const v = np[sec.key];
       if (v !== undefined) out.push(rawCommand(sec.name, sec.param, "bool", sec.y, v ? sec.onValue : 1 - sec.onValue));
     }
+    // Input EQ 1-knob (mono COMP->EQ / stereo channels). When on, the device
+    // drives the bands, so the band commands below are skipped.
+    const iok = eqOneKnob(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
+    if (iok && np.eqOneKnob) pushEqOneKnobCommands(out, iok, np.eqOneKnob);
     // Input 4-band PEQ band values (mono COMP->EQ mode / stereo channels).
     const ieq = inputEq(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
-    if (ieq && np.eqBands) pushEqBandCommands(out, ieq, np.eqBands);
+    if (ieq && np.eqBands && !np.eqOneKnob?.on) pushEqBandCommands(out, ieq, np.eqBands);
     // Input GATE / COMP detail values (MONO IN channels; COMP only in COMP->EQ).
     const dyn = channelDynamics(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
     if (dyn) {
@@ -933,12 +972,21 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     for (const inst of eq.instances) out.push(rawCommand(eq.name, eq.param, "bool", inst, np.eqOn ? 1 : 0));
   }
 
-  // Output bus 4-band PEQ band values: STEREO (single) and MIX (L/R-linked).
+  // Output bus EQ 1-knob (STEREO / MIX). When on, the device drives the bands.
   for (const node of model.nodes) {
     if (node.kind !== "bus") continue;
+    const ok = plan.nodeParams[node.id]?.eqOneKnob;
+    const ctrl = eqOneKnob(model, node.id, COMP_EQ_COMP_FIRST);
+    if (ctrl && ok) pushEqOneKnobCommands(out, ctrl, ok);
+  }
+
+  // Output bus 4-band PEQ band values: STEREO (single) and MIX (L/R-linked).
+  // Skipped when 1-knob is on (the device computes the bands).
+  for (const node of model.nodes) {
+    if (node.kind !== "bus") continue;
+    const np = plan.nodeParams[node.id];
     const oeq = outputEq(node.id);
-    const bands = plan.nodeParams[node.id]?.eqBands;
-    if (oeq && bands) pushEqBandCommands(out, oeq, bands);
+    if (oeq && np?.eqBands && !np.eqOneKnob?.on) pushEqBandCommands(out, oeq, np.eqBands);
   }
 
   // Ducker on/off + detail (threshold/range/attack/decay): one per stereo channel,

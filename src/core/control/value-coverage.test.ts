@@ -102,6 +102,17 @@ describe("enum options round-trip", () => {
     }
   });
 
+  it("EQ 1-knob type — mono (Intensity/Vocal) and output (Intensity/Loudness) round-trip", async () => {
+    for (const [id, type] of [["ch1", 0], ["ch1", 1], ["bus.stereo", 0], ["bus.stereo", 2]] as const) {
+      const plan = base();
+      plan.nodeParams[id] = { eqOneKnob: { on: true, type, level: 80 } };
+      const back = await roundTrip(plan);
+      expect(back.nodeParams[id]?.eqOneKnob?.type).toBe(type);
+      expect(back.nodeParams[id]?.eqOneKnob?.level).toBe(80);
+      expect(back.nodeParams[id]?.eqOneKnob?.on).toBe(true);
+    }
+  });
+
   it("STREAMING DELAY frame rate — every option round-trips", async () => {
     for (const opt of DELAY_FRAME_RATE_OPTIONS) {
       const plan = base();

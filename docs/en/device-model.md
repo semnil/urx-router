@@ -255,6 +255,12 @@ Source selection for the analog outputs (MAIN / LINE).
   target bank's factory section state: SSMCS turns COMP/EQ on and resets every value to the device
   initial; COMP->EQ resets to COMP off / EQ on (keeping the COMP->EQ values). The initial values are
   read from a real MONO IN SSMCS bank with the default "01 Basic" preset loaded.
+- Every EQ (input channels and output STEREO / MIX buses) has a **1-knob** mode where one knob drives
+  the whole 4-band PEQ: an **on/off**, a preset **type**, and a **level** (effect depth 0–100 %). The
+  type is a shared preset whose dropdown shows only the applicable subset — **Intensity / Vocal** on
+  MONO IN channels, **Intensity / Loudness** on stereo channels and output buses. When 1-knob is on
+  the device recomputes the 4-band PEQ from the knob, so the tool does **not** author the band values
+  (they are device-driven); the inspector hides the band tabs and the write skips the band commands.
 - The mono CH and stereo CH structure is fixed (only the count varies per model). A MONO IN pair
   (CH1/2, CH3/4) carries a **Signal Type** (CH SETTING): STEREO links the two adjacent channels,
   MONO × 2 keeps them independent (the default). The tool keeps both nodes and stores the flag on the

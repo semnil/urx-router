@@ -53,6 +53,9 @@ import {
   COLOR_PALETTE,
   DELAY_FRAME_RATE_OPTIONS,
   DELAY_FRAME_RATE_DEFAULT,
+  EQ_ONE_KNOB_TYPE_MONO_OPTIONS,
+  EQ_ONE_KNOB_TYPE_WIDE_OPTIONS,
+  EQ_ONE_KNOB_TYPE_DEFAULT,
 } from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
@@ -414,7 +417,10 @@ export function renderInspector(
         else if (sec.key === "compOn" && ssmcs) body.append(ssmcsCompBlock(node.id, np, plan, actions, m));
         else if (sec.key === "compOn" && dyn?.comp) body.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
         else if (sec.key === "eqOn" && ssmcs) body.append(ssmcsEqBlock(node.id, np, plan, actions, m));
-        else if (sec.key === "eqOn" && ieq) body.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
+        else if (sec.key === "eqOn" && ieq) {
+          body.append(eqOneKnobBlock(node.id, !isStereoChannel(node.id), np, plan, actions, m));
+          if (!np.eqOneKnob?.on) body.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
+        }
         host.append(el);
         // Insert the SSMCS Main section right after GATE (before COMP).
         if (sec.key === "gateOn" && ssmcsMasterEl) host.append(ssmcsMasterEl);
@@ -455,7 +461,8 @@ export function renderInspector(
         const hasEqToggle = busEqOn(node.id);
         const { el, body } = section(m.inspector.eqOn, hasEqToggle ? { open: on, on, key: "eqOn" } : { key: "eqOn" });
         if (hasEqToggle) body.append(sectionToggle(node.id, "eqOn", on, actions));
-        body.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
+        body.append(eqOneKnobBlock(node.id, false, np, plan, actions, m));
+        if (!np.eqOneKnob?.on) body.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
         host.append(el);
       }
     }
@@ -953,6 +960,35 @@ const eqActiveBand = new Map<string, number>();
 // Each band shows ON / filter type (LOW & HIGH bands only) / freq / Q / gain; Q
 // shows only for a peaking band and gain only when the band is not a pass filter
 // — matching the device's filter-type behavior. Edits merge into nodeParams.eqBands.
+// EQ 1-knob controls: the ON toggle plus (when on) the preset type and the
+// 0..100 % effect-depth slider. When on, the caller hides the 4-band tabs — the
+// device drives the bands from the 1-knob, so they are not editable. `mono` picks
+// the type dropdown subset (mono input = Intensity/Vocal, else Intensity/Loudness).
+function eqOneKnobBlock(
+  nodeId: string,
+  mono: boolean,
+  np: NodeParams,
+  plan: Plan,
+  actions: InspectorActions,
+  m: Messages,
+): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  const ok = np.eqOneKnob ?? {};
+  const setOk = (patch: Partial<typeof ok>): void =>
+    actions.onUpdateNodeParams(nodeId, { eqOneKnob: { ...(plan.nodeParams[nodeId]?.eqOneKnob ?? {}), ...patch } });
+  frag.append(boolToggle(m.inspector.eqOneKnob, ok.on ?? false, (v) => setOk({ on: v })));
+  if (ok.on) {
+    const opts = mono ? EQ_ONE_KNOB_TYPE_MONO_OPTIONS : EQ_ONE_KNOB_TYPE_WIDE_OPTIONS;
+    frag.append(enumSelect(m.inspector.eqOneKnobType, opts, ok.type ?? EQ_ONE_KNOB_TYPE_DEFAULT, (v) => setOk({ type: v })));
+    frag.append(
+      rangeSlider(m.inspector.eqOneKnobLevel, 0, 100, 1, ok.level ?? 0, (v) => `${v}%`, (v) =>
+        setOk({ level: v }),
+      ),
+    );
+  }
+  return frag;
+}
+
 function eqBandBlock(
   nodeId: string,
   ctrl: EqControl,

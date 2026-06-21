@@ -20,6 +20,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     gateOn: false,
     compOn: false,
     eqOn: true,
+    eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
       { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
       { on: true, q: 0.71, freq: 1000, gain: 0 },
@@ -43,6 +44,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     gateOn: false,
     compOn: false,
     eqOn: true,
+    eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
       { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
       { on: true, q: 0.71, freq: 1000, gain: 0 },
@@ -67,6 +69,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     gateOn: false,
     compOn: false,
     eqOn: true,
+    eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
       { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
       { on: true, q: 0.71, freq: 1000, gain: 0 },
@@ -91,6 +94,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     gateOn: false,
     compOn: false,
     eqOn: true,
+    eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
       { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
       { on: true, q: 0.71, freq: 1000, gain: 0 },
@@ -108,6 +112,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     phaseL: false,
     phaseR: false,
     eqOn: true,
+    eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
       { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
       { on: true, q: 0.71, freq: 1000, gain: 0 },
@@ -121,6 +126,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     phaseL: false,
     phaseR: false,
     eqOn: true,
+    eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
       { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
       { on: true, q: 0.71, freq: 1000, gain: 0 },
@@ -134,6 +140,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     phaseL: false,
     phaseR: false,
     eqOn: true,
+    eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
       { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
       { on: true, q: 0.71, freq: 1000, gain: 0 },
@@ -147,6 +154,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     phaseL: false,
     phaseR: false,
     eqOn: true,
+    eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
       { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
       { on: true, q: 0.71, freq: 1000, gain: 0 },
@@ -158,6 +166,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     level: 0,
     insertFx: -1,
     eqOn: true,
+    eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
       { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
       { on: true, q: 0.71, freq: 1000, gain: 0 },
@@ -170,6 +179,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     level: 0,
     insertFx: -1,
     eqOn: true,
+    eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
       { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
       { on: true, q: 0.71, freq: 1000, gain: 0 },
@@ -181,6 +191,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     level: 0,
     insertFx: -1,
     eqOn: true,
+    eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
       { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
       { on: true, q: 0.71, freq: 1000, gain: 0 },

@@ -47,6 +47,19 @@ export interface DelayParams {
   frameRate?: number; // enum 0..7 (see DELAY_FRAME_RATE_OPTIONS)
 }
 
+// EQ 1-knob (UG "1-knob EQ"): a simplified mode on every EQ (input channels and
+// output buses) where one knob drives the whole 4-band PEQ. `type` is a shared
+// preset enum (0 Intensity / 1 Vocal / 2 Loudness) whose dropdown shows only the
+// subset that applies — Intensity/Vocal on mono input channels, Intensity/Loudness
+// on stereo channels and output buses. `level` is the effect depth 0..100 %. When
+// on, the device recomputes the 4-band PEQ, so the tool does not author the band
+// values (they are device-driven). All optional (absent = device default: off).
+export interface EqOneKnobParams {
+  on?: boolean;
+  type?: number; // 0 Intensity / 1 Vocal / 2 Loudness
+  level?: number; // 0 … 100 %
+}
+
 // One band of an output bus 4-band PEQ. All fields optional (absent = device
 // default). `type` is the filter-type enum (LOW / HIGH bands only); the two mid
 // bands ignore it. freq in Hz, q 0.50..16.00, gain in dB (±18).
@@ -195,6 +208,9 @@ export interface NodeParams {
   fxPostSource?: number;
   /** EQ ON for an input channel or an output bus (STEREO / MIX). Absent or true = on. */
   eqOn?: boolean;
+  /** EQ 1-knob mode (input channels + output buses). When on, the device drives
+   *  the 4-band PEQ, so eqBands are not authored. */
+  eqOneKnob?: EqOneKnobParams;
   /** Output bus 4-band PEQ band values, indexed 0..3 (LOW … HIGH). */
   eqBands?: EqBand[];
   /** Input GATE detail values (MONO IN channels). */

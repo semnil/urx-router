@@ -6,11 +6,11 @@
 
 import type { DeviceModel } from "../../models/types";
 import { ref } from "../../models/types";
-import type { ConnParams, EqBand, NodeParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
+import type { ConnParams, EqBand, EqOneKnobParams, NodeParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
 import { vdGet, vdGetStr } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, normalizeInsertFx, PARAMS } from "./params";
-import type { DynField, EqControl } from "./translate";
+import type { DynField, EqControl, EqOneKnobControl } from "./translate";
 import {
   busEqOn,
   busFader,
@@ -22,6 +22,7 @@ import {
   DUCKER_FIELDS,
   duckerControl,
   channelInputSlots,
+  eqOneKnob,
   inputEq,
   inputNodeForPort,
   insertFxControl,
@@ -131,6 +132,9 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       // Input 4-band PEQ band values (mono COMP->EQ mode / stereo channels).
       const ieq = inputEq(model, node.id, update.compEqType ?? 0);
       if (ieq) update.eqBands = await readEqBands(ieq);
+      // Input EQ 1-knob (ON / TYPE / LEVEL).
+      const iok = eqOneKnob(model, node.id, update.compEqType ?? 0);
+      if (iok) update.eqOneKnob = await readEqOneKnob(iok);
       // Input GATE / COMP detail values (MONO IN channels; COMP only in COMP->EQ).
       const dyn = channelDynamics(model, node.id, update.compEqType ?? 0);
       if (dyn) {
@@ -280,7 +284,10 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     if (!oeq) continue;
     attempted.add(node.id);
     try {
-      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], eqBands: await readEqBands(oeq) };
+      const np = { ...plan.nodeParams[node.id], eqBands: await readEqBands(oeq) };
+      const ok = eqOneKnob(model, node.id, 0);
+      if (ok) np.eqOneKnob = await readEqOneKnob(ok);
+      plan.nodeParams[node.id] = np;
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -459,6 +466,17 @@ async function readEqBands(ctrl: EqControl): Promise<EqBand[]> {
     eqBands[band.index] = v;
   }
   return eqBands;
+}
+
+// Read an EQ 1-knob's ON / TYPE / LEVEL from the device (first instance; linked
+// L/R stay in sync). Level is raw 0..100 %, type the shared preset enum.
+async function readEqOneKnob(ctrl: EqOneKnobControl): Promise<EqOneKnobParams> {
+  const inst = ctrl.instances[0];
+  return {
+    on: vdToBool(await vdGet(ctrl.on, 0, inst)),
+    type: await vdGet(ctrl.type, 0, inst),
+    level: await vdGet(ctrl.level, 0, inst),
+  };
 }
 
 // Decode a GATE/COMP detail value from the broker to plan units by its encoding.

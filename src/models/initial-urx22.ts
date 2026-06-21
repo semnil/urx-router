@@ -33,6 +33,7 @@ const monoChannel = (hiZ?: boolean): NodeParams => ({
   gateOn: false,
   compOn: false,
   eqOn: true,
+  eqOneKnob: { on: false, type: 0, level: 0 },
   eqBands: EQ_FLAT(),
   gate: { threshold: -50, range: -56, attack: 20.17, hold: 15.3, decay: 150.2 },
   comp: { threshold: -18, ratio: 3, gain: 2, attack: 34.58, release: 218, knee: 1, autoMakeup: false, oneKnob: false, oneKnobLevel: 0 },
@@ -46,6 +47,7 @@ const stereoChannel = (gain: number): NodeParams => ({
   phaseL: false,
   phaseR: false,
   eqOn: true,
+  eqOneKnob: { on: false, type: 0, level: 0 },
   eqBands: EQ_FLAT(),
 });
 
@@ -53,6 +55,7 @@ const outputBus = (): NodeParams => ({
   level: 0,
   insertFx: -1,
   eqOn: true,
+  eqOneKnob: { on: false, type: 0, level: 0 },
   eqBands: EQ_FLAT(),
 });
 

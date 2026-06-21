@@ -380,6 +380,42 @@ describe("planToCommands", () => {
     expect(eq!.vdValue).toBe(-300);
   });
 
+  it("emits EQ 1-knob ON/TYPE/LEVEL at the EQ-ON+2/3/4 ids (mono input 46/47/48)", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { eqOneKnob: { on: true, type: 1, level: 80 } };
+    const cmds = planToCommands(model, plan);
+    expect(cmds.find((c) => c.name === "EQ_ONE_KNOB_ON" && c.paramId === 46)!.vdValue).toBe(1);
+    expect(cmds.find((c) => c.name === "EQ_ONE_KNOB_TYPE" && c.paramId === 47)!.vdValue).toBe(1); // Vocal
+    expect(cmds.find((c) => c.name === "EQ_ONE_KNOB_LEVEL" && c.paramId === 48)!.vdValue).toBe(80);
+    expect(cmds.find((c) => c.name === "EQ_ONE_KNOB_LEVEL")!.request.uri).toBe("/vd/parameters/48:0:0?operation=value");
+  });
+
+  it("skips the 4-band PEQ commands when 1-knob is on (device drives the bands)", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { eqOneKnob: { on: true }, eqBands: [{ gain: 12 }] };
+    const cmds = planToCommands(model, plan);
+    expect(cmds.some((c) => c.name === "EQ_BAND_GAIN" && c.y === 0)).toBe(false);
+    // With 1-knob off, the bands emit as usual.
+    plan.nodeParams.ch1 = { eqOneKnob: { on: false }, eqBands: [{ gain: 12 }] };
+    expect(planToCommands(model, plan).some((c) => c.name === "EQ_BAND_GAIN" && c.y === 0)).toBe(true);
+  });
+
+  it("emits EQ 1-knob for output STEREO (500/501/502) and MIX (593-595, L/R linked)", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams["bus.stereo"] = { eqOneKnob: { on: true, type: 2, level: 60 } }; // Loudness
+    plan.nodeParams["bus.mix1"] = { eqOneKnob: { on: true, type: 2, level: 50 } };
+    const cmds = planToCommands(model, plan);
+    expect(cmds.find((c) => c.name === "EQ_ONE_KNOB_TYPE" && c.paramId === 501)!.vdValue).toBe(2);
+    expect(cmds.find((c) => c.name === "EQ_ONE_KNOB_LEVEL" && c.paramId === 502)!.vdValue).toBe(60);
+    // MIX 1 writes both linked L/R instances (y0, y1).
+    const mixLevel = cmds.filter((c) => c.name === "EQ_ONE_KNOB_LEVEL" && c.paramId === 595);
+    expect(mixLevel.map((c) => c.y).sort()).toEqual([0, 1]);
+    expect(mixLevel.every((c) => c.vdValue === 50)).toBe(true);
+  });
+
   it("emits GATE/COMP detail values with the right encodings", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

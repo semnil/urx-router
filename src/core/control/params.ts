@@ -221,6 +221,18 @@ export const PARAMS = {
   EQ_BAND_FREQ: { id: 506, axis: "global", encoding: "eqFreq" },
   /** Output PEQ band gain. */
   EQ_BAND_GAIN: { id: 507, axis: "global", encoding: "eqGain" },
+  // EQ 1-knob: ON / TYPE / LEVEL sit 2 / 3 / 4 params after each EQ-ON anchor
+  // (mono 44, stereo 213, output STEREO 498, output MIX 591); the per-instance ids
+  // are computed in translate.ts (eqOneKnob). These mono anchors only name the
+  // command + encoding. Confirmed by live snapshot-diff.
+  // All three recompute the 4-band PEQ on the device, so each is a sideEffect
+  // (the live sync re-reads the snapshot after sending one).
+  /** EQ 1-knob ON (1 = on). */
+  EQ_ONE_KNOB_ON: { id: 46, axis: "input", encoding: "bool", sideEffect: true },
+  /** EQ 1-knob preset type (0 Intensity / 1 Vocal / 2 Loudness). */
+  EQ_ONE_KNOB_TYPE: { id: 47, axis: "input", encoding: "enum", sideEffect: true },
+  /** EQ 1-knob effect depth (0 … 100 %, raw). */
+  EQ_ONE_KNOB_LEVEL: { id: 48, axis: "input", encoding: "raw", sideEffect: true },
   /** Monitor level (y = monitor 0..3). Wider -96 dB floor than the fader. */
   MONITOR_LEVEL: { id: 724, axis: "global", encoding: "level" },
   /** PHONES output level (y0 = PHONES 1, y1 = PHONES 2): the unit-less 0.0..10.0
@@ -516,6 +528,21 @@ export const EQ_TYPE_HIGH_OPTIONS = [
   { value: EQ_TYPE_PEAKING, label: "Peaking" },
   { value: EQ_TYPE_SHELVING, label: "Shelving" },
   { value: EQ_TYPE_PASS, label: "LPF" },
+];
+
+// EQ 1-knob preset type (param at EQ-ON+3). The value is a shared enum across all
+// EQ instances (0 = Intensity, 1 = Vocal, 2 = Loudness, confirmed by live
+// snapshot-diff), but each screen exposes only the applicable subset: mono input
+// channels offer Intensity / Vocal, stereo channels and output buses offer
+// Intensity / Loudness. Default Intensity (0).
+export const EQ_ONE_KNOB_TYPE_DEFAULT = 0;
+export const EQ_ONE_KNOB_TYPE_MONO_OPTIONS = [
+  { value: 0, label: "Intensity" },
+  { value: 1, label: "Vocal" },
+];
+export const EQ_ONE_KNOB_TYPE_WIDE_OPTIONS = [
+  { value: 0, label: "Intensity" },
+  { value: 2, label: "Loudness" },
 ];
 
 // COMP knee selector (device labels per user; 0 = Soft verified, default Medium).
