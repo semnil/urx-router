@@ -149,8 +149,6 @@ export const en = {
     panLink: "Pan Link",
     busFixedLevel: "Send level is fixed (BUS Type: FIXED).",
     panLinked: "Pan follows the source channel PAN (Pan Link).",
-    postFaderSend: "Post Fader Send",
-    postFaderSendHint: "MIX bus fed to this FX, post-fader (DAW Integration menu, V1.2+).",
     signalType: "Signal Type",
     panBal: "PAN / BAL",
     deleteConnection: "Delete this connection",

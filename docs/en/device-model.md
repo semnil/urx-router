@@ -197,8 +197,8 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
 
 > **Post Fader Send for FX (DAW Integration menu, V1.2+).** Each FX bus can additionally be fed by a
 > MIX bus **post-fader** (FX 1 ← MIX n, FX 2 ← MIX n). This appears only when compatible DAW software
-> is connected. Modeled as a per-FX-bus selector (— / MIX 1 / MIX 2) on the FX bus node, defaulting to
-> none; it mirrors the device dropdown rather than a drawn patch.
+> is connected — a DAW-Integration-only feature with no standalone device control address, so the tool
+> does **not** model it.
 
 ### 4. Streaming / monitor source (`source`, one receiver)
 

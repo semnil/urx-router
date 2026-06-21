@@ -16,6 +16,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     phantom: false,
     clipSafe: false,
     compEqType: 0,
+    recPoint: 4,
     phase: false,
     gateOn: false,
     compOn: false,
@@ -40,6 +41,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     phantom: false,
     clipSafe: false,
     compEqType: 0,
+    recPoint: 4,
     phase: false,
     gateOn: false,
     compOn: false,
@@ -65,6 +67,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     clipSafe: false,
     hiZ: false,
     compEqType: 0,
+    recPoint: 4,
     phase: false,
     gateOn: false,
     compOn: false,
@@ -90,6 +93,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     clipSafe: false,
     hiZ: false,
     compEqType: 0,
+    recPoint: 4,
     phase: false,
     gateOn: false,
     compOn: false,
@@ -177,6 +181,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   },
   "bus.mix1": {
     level: 0,
+    busType: 0,
     insertFx: -1,
     eqOn: true,
     eqOneKnob: { on: false, type: 0, level: 0 },
@@ -189,6 +194,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   },
   "bus.mix2": {
     level: 0,
+    busType: 0,
     insertFx: -1,
     eqOn: true,
     eqOneKnob: { on: false, type: 0, level: 0 },
@@ -223,7 +229,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   "bus.mon1": { level: 0, cueInterrupt: true, mono: false, phonesLevel: 2 },
   "bus.mon2": { level: 0, cueInterrupt: true, mono: false, phonesLevel: 2 },
   "bus.osc": {
-    osc: { on: false, level: -14, mode: 0, freq: 1000 },
+    osc: { on: false, level: -14, mode: 0, freq: 1000, width: 0.1, interval: 1 },
   },
   // STREAMING DELAY factory state, read from the device: off, 1.00 ms, 30 fps.
   // Seeded so writing a fresh plan restores the device's delay (the absolute

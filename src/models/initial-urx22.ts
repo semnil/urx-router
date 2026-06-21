@@ -29,6 +29,7 @@ const monoChannel = (hiZ?: boolean): NodeParams => ({
   clipSafe: false,
   ...(hiZ === undefined ? {} : { hiZ }),
   compEqType: 0,
+  recPoint: 4,
   phase: false,
   gateOn: false,
   compOn: false,
@@ -72,8 +73,8 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
   ch_7_8: stereoChannel(0),
   ch_9_10: stereoChannel(-14),
   "bus.stereo": { ...outputBus(), on: true },
-  "bus.mix1": outputBus(),
-  "bus.mix2": outputBus(),
+  "bus.mix1": { ...outputBus(), busType: 0 },
+  "bus.mix2": { ...outputBus(), busType: 0 },
   // FX channels ship ON at the factory (param 338, def 1), like URX44V.
   "bus.fx1": { on: true },
   "bus.fx2": { on: true },
@@ -83,7 +84,7 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
   "out.ducker4": ducker(),
   "bus.mon1": { level: 0, cueInterrupt: true, mono: false, phonesLevel: 2 },
   "bus.mon2": { level: 0, cueInterrupt: true, mono: false, phonesLevel: 2 },
-  "bus.osc": { osc: { on: false, level: -14, mode: 0, freq: 1000 } },
+  "bus.osc": { osc: { on: false, level: -14, mode: 0, freq: 1000, width: 0.1, interval: 1 } },
   // STREAMING DELAY factory state (off, 1.00 ms, 30 fps), inferred from URX44V.
   "bus.stream": { delay: { on: false, time: 1, frameRate: 5 } },
 };

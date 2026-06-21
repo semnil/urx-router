@@ -29,6 +29,7 @@ import {
   inputNodeForPort,
   insertFxControl,
   isStereoChannel,
+  MIX_FADER_INSTANCES,
   nodeForPort,
   OSC_ASSIGN_BUSES,
   oscAssign,
@@ -41,6 +42,7 @@ import type { ParamEncoding } from "./params";
 import {
   vdToAttack,
   vdToBool,
+  vdToBurstWidth,
   vdToCentiDb,
   vdToDelayTime,
   vdToPhonesLevel,
@@ -126,6 +128,8 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       }
       if (cc.hasHiZ) update.hiZ = vdToBool(await vdGet(PARAMS.HI_Z.id, 0, cc.y));
       if (cc.hasMicStrip) update.compEqType = await vdGet(PARAMS.COMP_EQ_TYPE.id, 0, cc.y);
+      // Rec Point: per-channel record / direct-out tap (MONO IN only, param 137).
+      if (cc.hasMicStrip) update.recPoint = await vdGet(PARAMS.REC_POINT.id, 0, cc.y);
       // Polarity invert: one (mono) or two independent L/R (stereo).
       for (const ph of cc.phases) update[ph.key] = vdToBool(await vdGet(ph.param, 0, ph.y));
       // Channel-strip section ON (GATE/COMP/EQ). The active COMP/EQ bank follows
@@ -350,7 +354,16 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     attempted.add(node.id);
     try {
       const on = vdToBool(await vdGet(bm.param, 0, bm.instances[0]));
-      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], on };
+      // BUS Type (VARI/FIXED) is a MIX-only attribute (587, L instance read).
+      // MIX buses are identified by the same map the emit side uses, so the two
+      // directions cannot drift (mirror of the BUS_TYPE loop in translate.ts).
+      const mix = MIX_FADER_INSTANCES[node.id];
+      const busType = mix ? await vdGet(PARAMS.BUS_TYPE.id, 0, mix[0]) : undefined;
+      plan.nodeParams[node.id] = {
+        ...plan.nodeParams[node.id],
+        on,
+        ...(busType !== undefined ? { busType } : {}),
+      };
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -375,7 +388,8 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     }
   }
 
-  // Oscillator generator (bus.osc): on / level / mode / frequency.
+  // Oscillator generator (bus.osc): on / level / mode / frequency / burst width /
+  // burst interval.
   attempted.add("bus.osc");
   try {
     const osc = {
@@ -383,6 +397,8 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       level: vdToCentiDb(await vdGet(PARAMS.OSC_LEVEL.id, 0, 0)),
       mode: await vdGet(PARAMS.OSC_MODE.id, 0, 0),
       freq: vdToEqFreq(await vdGet(PARAMS.OSC_FREQ.id, 0, 0)),
+      width: vdToBurstWidth(await vdGet(PARAMS.OSC_BURST_WIDTH.id, 0, 0)),
+      interval: await vdGet(PARAMS.OSC_BURST_INTERVAL.id, 0, 0),
     };
     plan.nodeParams["bus.osc"] = { ...plan.nodeParams["bus.osc"], osc };
     applied++;

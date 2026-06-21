@@ -148,8 +148,6 @@ export const ja: Messages = {
     panLink: "Pan Link",
     busFixedLevel: "Send レベルは固定 (BUS Type: FIXED)。",
     panLinked: "パンは Send 元チャンネルの PAN に追従 (Pan Link)。",
-    postFaderSend: "Post Fader Send",
-    postFaderSendHint: "この FX へ post-fader で Send する MIX バス (DAW Integration メニュー、V1.2 以降)。",
     signalType: "Signal Type",
     panBal: "PAN / BAL",
     deleteConnection: "この接続を削除",

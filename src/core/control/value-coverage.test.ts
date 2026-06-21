@@ -16,11 +16,13 @@ import { applyDeviceState } from "./readback";
 import { planToCommands } from "./translate";
 import type { VdCommand } from "./translate";
 import {
+  BUS_TYPE_OPTIONS,
   denormalizeInsertFx,
   DELAY_FRAME_RATE_OPTIONS,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
   PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
+  REC_POINT_OPTIONS,
 } from "./params";
 import {
   DELAY_TIME_MAX_MS,
@@ -174,6 +176,48 @@ describe("continuous extremes round-trip through the device path", () => {
       const back = await roundTrip(plan);
       const rt = back.connections.find((c) => c.from === ref("ch1", "out") && c.to === ref("bus.stereo", "in"));
       expect(rt!.params?.pan).toBe(pan);
+    }
+  });
+});
+
+// Addresses confirmed by live snapshot-diff on URX44V (Rec Point 137, BUS Type
+// 587, OSC Burst width 714 / interval 715).
+describe("Rec Point / BUS Type / OSC Burst round-trip", () => {
+  it("Rec Point — every MONO IN option encodes raw and round-trips (param 137)", async () => {
+    for (const opt of REC_POINT_OPTIONS) {
+      const plan = base();
+      plan.nodeParams["ch1"] = { recPoint: opt.value };
+      expect(cmd(plan, "REC_POINT", 0)!.vdValue).toBe(opt.value);
+      const back = await roundTrip(plan);
+      expect(back.nodeParams["ch1"]?.recPoint).toBe(opt.value);
+    }
+  });
+
+  it("BUS Type — VARI / FIXED write both MIX L/R instances and round-trip (param 587)", async () => {
+    for (const opt of BUS_TYPE_OPTIONS) {
+      const plan = base();
+      plan.nodeParams["bus.mix1"] = { busType: opt.value };
+      const cmds = planToCommands(model, plan).filter((c) => c.name === "BUS_TYPE");
+      expect(cmds.map((c) => c.y).sort()).toEqual([0, 1]);
+      expect(cmds.every((c) => c.vdValue === opt.value)).toBe(true);
+      const back = await roundTrip(plan);
+      expect(back.nodeParams["bus.mix1"]?.busType).toBe(opt.value);
+    }
+  });
+
+  it("OSC Burst width (seconds → raw ms ×1000) and interval (raw) round-trip", async () => {
+    for (const [width, interval, wRaw] of [
+      [0.1, 1, 100],
+      [0.2, 2, 200],
+      [10, 30, 10000],
+    ] as const) {
+      const plan = base();
+      plan.nodeParams["bus.osc"] = { osc: { mode: 2, width, interval } };
+      expect(cmd(plan, "OSC_BURST_WIDTH", 0)!.vdValue).toBe(wRaw);
+      expect(cmd(plan, "OSC_BURST_INTERVAL", 0)!.vdValue).toBe(interval);
+      const back = await roundTrip(plan);
+      expect(back.nodeParams["bus.osc"]?.osc?.width).toBeCloseTo(width, 5);
+      expect(back.nodeParams["bus.osc"]?.osc?.interval).toBe(interval);
     }
   });
 });

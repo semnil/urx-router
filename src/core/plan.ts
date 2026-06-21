@@ -209,9 +209,6 @@ export interface NodeParams {
   /** Pan Link (MIX 1 / MIX 2, VARI only): send pan follows the source channel
    *  PAN. Absent or false = off. */
   panLink?: boolean;
-  /** Post Fader Send for FX (FX 1 / FX 2): the MIX bus (1 or 2) whose post-fader
-   *  signal feeds this FX bus, per the DAW Integration menu. Absent or -1 = none. */
-  fxPostSource?: number;
   /** EQ ON for an input channel or an output bus (STEREO / MIX). Absent or true = on. */
   eqOn?: boolean;
   /** EQ 1-knob mode (input channels + output buses). When on, the device drives

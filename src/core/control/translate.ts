@@ -33,6 +33,7 @@ import {
   A_GAIN_MAX_DB,
   attackToVd,
   boolToVd,
+  burstWidthToVd,
   centiDbToVd,
   delayTimeToVd,
   phonesLevelToVd,
@@ -103,6 +104,8 @@ function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number
       return delayTimeToVd(planValue);
     case "phonesLevel":
       return phonesLevelToVd(planValue);
+    case "burstWidth":
+      return burstWidthToVd(planValue);
     case "attackTime":
       return attackToVd(planValue);
     case "holdTime":
@@ -383,7 +386,7 @@ export interface BusFader {
 // MIX bus output faders share param 674 (level_gain, out axis); each stereo MIX
 // occupies an L/R instance pair the device keeps linked. STEREO has its own
 // single master fader (581).
-const MIX_FADER_INSTANCES: Record<string, number[]> = {
+export const MIX_FADER_INSTANCES: Record<string, number[]> = {
   "bus.mix1": [0, 1],
   "bus.mix2": [2, 3],
 };
@@ -959,6 +962,9 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (cc.hasHiZ && np.hiZ !== undefined) out.push(command("HI_Z", cc.y, np.hiZ ? 1 : 0));
     // COMP/EQ type (COMP->EQ vs SSMCS) is a MONO IN channel feature (= mic strip).
     if (cc.hasMicStrip && np.compEqType !== undefined) out.push(command("COMP_EQ_TYPE", cc.y, np.compEqType));
+    // Rec Point: per-channel record / direct-out tap (param 137 on the input slot
+    // y). MONO IN only — stereo channels' Rec Point address is unconfirmed.
+    if (cc.hasMicStrip && np.recPoint !== undefined) out.push(command("REC_POINT", cc.y, np.recPoint));
     // Channel-strip section ON (GATE/COMP/EQ). The active COMP/EQ bank follows the
     // type; polarity per toggle. Stereo channels expose only EQ.
     for (const sec of channelSections(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST)) {
@@ -1109,6 +1115,16 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     for (const inst of bm.instances) out.push(rawCommand(bm.name, bm.param, "bool", inst, np.on ? 1 : 0));
   }
 
+  // BUS Type for MIX buses (587, L/R-linked): VARI / FIXED. A MIX-only attribute,
+  // written to both out instances.
+  for (const node of model.nodes) {
+    if (node.kind !== "bus") continue;
+    const mix = MIX_FADER_INSTANCES[node.id];
+    const bt = plan.nodeParams[node.id]?.busType;
+    if (!mix || bt === undefined) continue;
+    for (const inst of mix) out.push(command("BUS_TYPE", inst, bt));
+  }
+
   // Monitor bus ON / level / CUE interrupt / MONO: bus.mon1 → y0, bus.mon2 → y1.
   for (const [id, y] of [["bus.mon1", 0], ["bus.mon2", 1]] as const) {
     const np = plan.nodeParams[id];
@@ -1126,6 +1142,10 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   if (osc?.level !== undefined) out.push(command("OSC_LEVEL", 0, osc.level));
   if (osc?.mode !== undefined) out.push(command("OSC_MODE", 0, osc.mode));
   if (osc?.freq !== undefined) out.push(command("OSC_FREQ", 0, osc.freq));
+  // Burst Noise width (seconds → ms ×1000) / interval (seconds, raw). Burst mode
+  // only on the device, but emitted whenever present (like freq for Sine).
+  if (osc?.width !== undefined) out.push(command("OSC_BURST_WIDTH", 0, osc.width));
+  if (osc?.interval !== undefined) out.push(command("OSC_BURST_INTERVAL", 0, osc.interval));
 
   // STREAMING DELAY (bus.stream node, global y = 0): on / time / frame rate.
   // Emitted only when the plan carries delay settings, leaving the device's

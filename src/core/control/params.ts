@@ -27,6 +27,7 @@ export type ParamEncoding =
   | "centiDb"
   | "delayTime"
   | "phonesLevel"
+  | "burstWidth"
   | "attackTime"
   | "holdTime"
   | "releaseTime"
@@ -171,6 +172,11 @@ export const PARAMS = {
   DUCKER_DECAY: { id: 263, axis: "global", encoding: "releaseTime" },
   /** Input channel insert FX (MONO IN channels only). Enum from input_insert_fx. */
   INSERT_FX: { id: 135, axis: "input", encoding: "insertFx" },
+  /** Input channel Rec Point: the signal-path tap fed to the recording / direct
+   *  out (enum 0..4, PRE GATE..PRE FADER). Confirmed by live snapshot-diff
+   *  (MONO CH1 4 → 0). MONO IN only — stereo channels' Rec Point address is
+   *  unconfirmed (translate.ts writes it for mono channels only). */
+  REC_POINT: { id: 137, axis: "input", encoding: "enum" },
   /** STEREO master insert FX (single). Enum from output_insert_fx. */
   OUTPUT_INSERT_FX_STEREO: { id: 578, axis: "global", encoding: "insertFx" },
   /** MIX bus insert FX (L/R-linked). Enum from output_insert_fx. */
@@ -193,6 +199,9 @@ export const PARAMS = {
   HA_GAIN: { id: 1, axis: "input", encoding: "gain" },
   /** Output (mix) fader level. */
   OUT_FADER: { id: 674, axis: "output", encoding: "level" },
+  /** MIX bus BUS Type: 0 = VARI (variable per-send level) / 1 = FIXED. L/R-linked
+   *  (written to both out instances). Confirmed by live snapshot-diff (MIX1 0 → 1). */
+  BUS_TYPE: { id: 587, axis: "output", encoding: "enum" },
   /** MIX bus master ON (675, fader+1, parallel to STEREO_MASTER_ON 582). L/R-linked
    *  per stereo MIX (MIX1 [0,1] / MIX2 [2,3]); default 1. Independent of the MIX →
    *  STEREO "TO ST" send. Confirmed by live readback (device-side MIX2 OFF → 675). */
@@ -292,6 +301,13 @@ export const PARAMS = {
   OSC_LEVEL: { id: 711, axis: "global", encoding: "centiDb" },
   OSC_MODE: { id: 712, axis: "global", encoding: "enum" },
   OSC_FREQ: { id: 713, axis: "global", encoding: "eqFreq" },
+  /** Oscillator Burst Noise width (length of noise; Burst mode only). Plan holds
+   *  seconds 0.1..10, broker raw is ms (= seconds ×1000, 100..10000). Confirmed by
+   *  live snapshot-diff (0.1 s → 0.2 s = 100 → 200). */
+  OSC_BURST_WIDTH: { id: 714, axis: "global", encoding: "burstWidth" },
+  /** Oscillator Burst Noise interval (noise cycle, seconds; Burst mode only). Raw
+   *  1..30, no scaling. Confirmed by live snapshot-diff (1 → 2). */
+  OSC_BURST_INTERVAL: { id: 715, axis: "global", encoding: "raw" },
   /** Oscillator → bus assign on/off (per output channel). STEREO 716[L0,R1],
    *  MIX 717[MIX1 L0/R1, MIX2 L2/R3], FX 718[FX1 0, FX2 1]. */
   OSC_ASSIGN_STEREO: { id: 716, axis: "global", encoding: "bool" },
@@ -483,8 +499,9 @@ export function sweetSpotDataAddr(index: number): string {
 // direct out (block diagram: "Rec Point" selector -> CH OUT). Labels are the
 // device CH SETTING strings (confirmed on device by user). MONO IN exposes all
 // five stages; ST IN has only EQ, so it offers the two `stereo` options. Default
-// PRE FADER on every channel. No confirmed control address, so not in the write
-// catalog above.
+// PRE FADER on every channel. Control address = param 137 (in axis), confirmed by
+// live snapshot-diff for MONO IN; stereo channels' Rec Point address is
+// unconfirmed, so only MONO IN channels are written (see REC_POINT in PARAMS).
 export const REC_POINT_DEFAULT = 4;
 export const REC_POINT_OPTIONS = [
   { value: 0, label: "PRE GATE", stereo: false },
@@ -496,24 +513,13 @@ export const REC_POINT_OPTIONS = [
 
 // BUS Type for MIX 1 / MIX 2 (CH SETTING): VARI = variable per-send level (the
 // default, what the tool models), FIXED = a fixed send level (sends carry no
-// adjustable level). Labels are the device strings. No confirmed control
-// address, so not in the write catalog above.
+// adjustable level). Labels are the device strings. Control address = param 587
+// (out axis, L/R-linked), confirmed by live snapshot-diff (see BUS_TYPE in PARAMS).
 export const BUS_TYPE_VARI = 0;
 export const BUS_TYPE_FIXED = 1;
 export const BUS_TYPE_OPTIONS = [
   { value: BUS_TYPE_VARI, label: "VARI" },
   { value: BUS_TYPE_FIXED, label: "FIXED" },
-];
-
-// Post Fader Send for FX (DAW Integration menu, V1.2+): the MIX bus whose
-// post-fader signal feeds FX 1 / FX 2. Per-FX-bus selection; "—" = not used (the
-// default outside DAW integration). MIX labels are device strings. No confirmed
-// control address, so not in the write catalog above.
-export const FX_POST_SOURCE_NONE = -1;
-export const FX_POST_SOURCE_OPTIONS = [
-  { value: FX_POST_SOURCE_NONE, label: "—" },
-  { value: 1, label: "MIX 1" },
-  { value: 2, label: "MIX 2" },
 ];
 
 // Signal Type for a MONO IN pair (CH SETTING): STEREO links the two adjacent
@@ -578,8 +584,8 @@ export const COMP_KNEE_OPTIONS = [
 ];
 
 // Oscillator mode (param 712). Frequency control applies to Sine Wave; Burst
-// Noise adds width/interval (modeled in the plan layer; control addresses
-// unconfirmed, so not in the write catalog above).
+// Noise adds width (param 714) / interval (param 715), both confirmed by live
+// snapshot-diff and in the write catalog above.
 export const OSC_MODE_OPTIONS = [
   { value: 0, label: "Sine Wave" },
   { value: 1, label: "Pink Noise" },

@@ -44,8 +44,6 @@ import {
   BUS_TYPE_FIXED,
   BUS_TYPE_VARI,
   BUS_TYPE_OPTIONS,
-  FX_POST_SOURCE_NONE,
-  FX_POST_SOURCE_OPTIONS,
   SIGNAL_TYPE_OPTIONS,
   PAN_BAL_PAN,
   PAN_BAL_BAL,
@@ -471,26 +469,17 @@ export function renderInspector(
       }
     }
 
-    // Post Fader Send for FX (FX 1 / FX 2): the MIX bus that feeds this FX bus
-    // post-fader (DAW Integration menu, V1.2+). A select on the FX bus node.
+    // FX bus (FX 1 / FX 2): the FX channel's own ON / mute (param 338, per FX),
+    // distinct from the per-channel FX sends feeding it. (Post Fader Send for FX
+    // is a DAW-Integration-only feature with no device control address, so it is
+    // not modeled here.)
     if (node.id === "bus.fx1" || node.id === "bus.fx2") {
       const ps = section(m.inspector.parameters, { key: "params" });
-      // FX channel ON (param 338, per FX) — the FX channel's own mute,
-      // distinct from the per-channel FX sends feeding it.
       ps.body.append(
         boolToggle(m.inspector.channelOn, plan.nodeParams[node.id]?.on ?? true, (v) =>
           actions.onUpdateNodeParams(node.id, { on: v }),
         ),
       );
-      ps.body.append(
-        enumSelect(
-          m.inspector.postFaderSend,
-          FX_POST_SOURCE_OPTIONS,
-          plan.nodeParams[node.id]?.fxPostSource ?? FX_POST_SOURCE_NONE,
-          (v) => actions.onUpdateNodeParams(node.id, { fxPostSource: v }),
-        ),
-      );
-      ps.body.append(hint(m.inspector.postFaderSendHint));
       host.append(ps.el);
     }
 

@@ -100,6 +100,16 @@ export function vdToPhonesLevel(value: number): number {
   return clamp(value / 10, PHONES_LEVEL_MIN, PHONES_LEVEL_MAX);
 }
 
+/** Plan OSC Burst width (seconds 0.1 … 10) → broker raw ms (= seconds ×1000). */
+export function burstWidthToVd(sec: number): number {
+  return clamp(Math.round(sec * 1000), 100, 10000);
+}
+
+/** Broker raw ms (100 … 10000) → plan OSC Burst width (seconds 0.1 … 10). */
+export function vdToBurstWidth(raw: number): number {
+  return clamp(raw / 1000, 0.1, 10);
+}
+
 /** Plan delay time (ms) → broker ms×100. */
 export function delayTimeToVd(ms: number): number {
   return clamp(Math.round(ms * 100), DELAY_TIME_MIN_MS * 100, DELAY_TIME_MAX_MS * 100);
