@@ -248,6 +248,13 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
   (`MetersSubscribe`/`MetersUnsubscribe`) by registering each address with the broker, and forwards meter
   `notify` frames to the frontend over a Tauri Channel during the idle socket drain (`pump` → `forward_meter`).
   Like the rest of live control, it is only active under the `--experimental` launch flag.
+- **Device follow** — the reverse of live sync. The same drain path also carries device-side parameter
+  changes: `ParamsSubscribe`/`forward_param` (sharing the `notify_frame` envelope parse with the meter path)
+  register every writable address and forward each `notify`. While Live sync is on, `core/control/follow.ts`
+  `DeviceFollow` debounces those notifies and reconciles by re-reading the device (`applyDeviceState`) into the
+  plan, then re-renders — so a fader moved on the unit itself follows on screen after it settles. Echoes of the
+  app's own writes are filtered against the live snapshot, and the address set is re-registered only when a
+  structural edit changed it.
 
 ## Responsive layout (mobile)
 

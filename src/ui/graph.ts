@@ -274,6 +274,14 @@ export class Graph {
     this.fitView();
   }
 
+  /** Re-render the current (same-reference) plan after it was mutated in place —
+   *  e.g. a device-follow readback. Unlike setModel this keeps the selection and
+   *  viewport, so reflecting a device-side change does not disturb the user. */
+  refresh(): void {
+    this.syncUnread();
+    this.render();
+  }
+
   // Mirror the plan's device provenance: plan.unreadNodes holds exactly the nodes
   // whose body read failed. No provenance (a plan never fetched) means nothing is
   // flagged.

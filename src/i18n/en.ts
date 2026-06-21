@@ -243,6 +243,8 @@ export const en = {
       `Live sync on · ${model} · ${n} setting${n === 1 ? "" : "s"} read`,
     liveOff: "Live sync off",
     liveSynced: (n: number): string => `→ device (${n})`,
+    liveFollowing: "← device…",
+    liveFollowed: (n: number): string => `← device (${n})`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",

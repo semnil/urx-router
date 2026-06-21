@@ -188,6 +188,41 @@ export function vdMetersSubscribe(
   return () => void invoke<void>("vd_meters_unsubscribe").catch(() => {});
 }
 
+/** One device-originated parameter change: a `notify` on a registered address.
+ * `value` is the same raw broker integer vdGet returns, decoded by control/vd.ts. */
+export interface ParamUpdate {
+  paramId: number;
+  x: number;
+  y: number;
+  value: number;
+}
+
+// The Rust side streams ParamUpdate with snake_case fields (serde default).
+interface RawParamUpdate {
+  param_id: number;
+  x: number;
+  y: number;
+  value: number;
+}
+
+/**
+ * Subscribe to device-side parameter changes; notifies stream through onUpdate
+ * as the device's own controls (LCD / physical) are moved. `addrs` is a list of
+ * [paramId, x, y] triples. Replaces any prior subscription. Returns an
+ * unsubscribe function. No-op (returns a noop) outside Tauri.
+ */
+export function vdParamsSubscribe(
+  addrs: Array<[number, number, number]>,
+  onUpdate: (p: ParamUpdate) => void,
+): () => void {
+  if (!isTauri()) return () => {};
+  const channel = newChannel<RawParamUpdate>((d) =>
+    onUpdate({ paramId: d.param_id, x: d.x, y: d.y, value: d.value }),
+  );
+  void invoke<void>("vd_params_subscribe", { addrs, channel });
+  return () => void invoke<void>("vd_params_unsubscribe").catch(() => {});
+}
+
 /** Close the live connection (no-op if not connected). */
 export function vdDisconnect(): Promise<void> {
   return invoke<void>("vd_disconnect");

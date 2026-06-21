@@ -237,6 +237,8 @@ export const ja: Messages = {
     liveOn: (model: string, n: number): string => `ライブ同期 オン · ${model} · ${n} 件読込`,
     liveOff: "ライブ同期 オフ",
     liveSynced: (n: number): string => `→ デバイス (${n})`,
+    liveFollowing: "← デバイス…",
+    liveFollowed: (n: number): string => `← デバイス (${n})`,
     liveError: (message: string): string => `ライブ同期を停止: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",
