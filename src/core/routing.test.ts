@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
-import { canConnect, isFixedConnection, legalSources, legalTargets, partnerChannel, ruleKind, sendHasTap } from "./routing";
+import { canConnect, isFixedConnection, legalSources, legalTargets, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap } from "./routing";
 import { emptyPlan, type Plan } from "./plan";
 
 const u44 = MODELS.URX44;
@@ -108,6 +108,24 @@ describe("legalSources on URX44", () => {
     expect(sources.has(ref("ch2", "out"))).toBe(true);
     // The already-wired sender is excluded as a duplicate.
     expect(sources.has(ref("ch1", "out"))).toBe(false);
+  });
+});
+
+describe("possibleTargets / possibleSources keep occupied partners", () => {
+  it("includes an occupied single-input target that legalTargets omits", () => {
+    const plan = emptyPlan("URX44");
+    plan.connections.push({ from: ref("bus.stereo", "out"), to: ref("out.main", "in"), kind: "patch" });
+    const from = ref("bus.mix1", "out");
+    expect(legalTargets(u44, plan, from).has(ref("out.main", "in"))).toBe(false);
+    expect(possibleTargets(u44, from).has(ref("out.main", "in"))).toBe(true);
+  });
+
+  it("includes every source of a full single-input receiver that legalSources drops", () => {
+    const plan = emptyPlan("URX44");
+    const ch1In = ref("ch1", "in");
+    plan.connections.push({ from: ref("in.micline_1_2", "out"), to: ch1In, kind: "source" });
+    expect(legalSources(u44, plan, ch1In).size).toBe(0);
+    expect(possibleSources(u44, ch1In).has(ref("in.aux", "out"))).toBe(true);
   });
 });
 

@@ -97,3 +97,21 @@ export function legalSources(model: DeviceModel, plan: Plan, to: string): Set<st
   }
   return sources;
 }
+
+/** Input-port refs the given output has a routing rule to, occupied ones
+ *  included. A superset of legalTargets: it ignores the current plan, so a
+ *  single-input target that is already full still appears. Used to show where a
+ *  port *could* route even when the destination is taken. */
+export function possibleTargets(model: DeviceModel, from: string): Set<string> {
+  const targets = new Set<string>();
+  for (const rule of model.rules) if (rule.from === from) targets.add(rule.to);
+  return targets;
+}
+
+/** Output-port refs that have a routing rule into the given input, occupied ones
+ *  included. The input-side counterpart of possibleTargets. */
+export function possibleSources(model: DeviceModel, to: string): Set<string> {
+  const sources = new Set<string>();
+  for (const rule of model.rules) if (rule.to === to) sources.add(rule.from);
+  return sources;
+}

@@ -86,10 +86,11 @@ flowchart TD
 
 - `legalTargets(model, plan, fromRef)` — ある出力ポートから結線可能な入力ポート集合を返す。
 - `legalSources(model, plan, toRef)` — 逆方向。ある入力ポートへ結線可能な出力ポート集合を返す。入力側からのドラッグ結線に使う。
+- `possibleTargets(model, fromRef)` / `possibleSources(model, toRef)` — plan を考慮せず規則のみで接続先/元を返す `legalTargets`/`legalSources` の superset。占有済みの single-input ポートも含むため、「規則はあるが既に埋まっている」結線先を示せる。
 - `canConnect(model, plan, fromRef, toRef)` — 規則の有無と受け口多重度 (`source`/`patch`/`key` は1本、`send` は複数) を判定。
 - `partnerChannel(model, nodeId)` — ペアとなる相方のモノ CH を返す。`source` 結線時に同一ソースを相方へミラーし、削除時も連動させる (UI: `graph.ts`)。Ducker のキーソースは `source` ではなく `key` 種別なのでこのミラーリングを通らない (モノペア非所属という偶然ではなく型で保証)。
 
-UI (`graph.ts`) はこれらを使い、出力・入力どちらのポートからもドラッグで結線できる (反対側の接続可能ポートを `legalTargets` / `legalSources` でハイライト)。既にソースを持つ single-input ポートのクリックは、その結線を選択する (配線クリックと同等)。
+UI (`graph.ts`) はこれらを使い、出力・入力どちらのポートからもドラッグで結線できる。反対側のポートは2層でハイライトする (結線可能 = 塗り、規則はあるが占有済み = 輪郭のみ)。出力からのドラッグは possible があれば開始し、入力からは legal があるときのみ開始する。既にソースを持つ single-input ポートのクリックは、その結線を選択する (配線クリックと同等)。
 
 詳細なルーティング規則は [device-model.md](device-model.md) を参照 (公式ブロックダイアグラム由来)。
 
