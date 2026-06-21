@@ -40,7 +40,7 @@ function mockVdGetFrom(table: Map<string, number>): void {
 }
 
 // Compare the wires that survive a round trip, ignoring iteration order. Fixed
-// bus→STEREO FX returns carry a -∞ default emit/readback do not touch, so compare
+// bus→STEREO FX channels carry a -∞ default emit/readback do not touch, so compare
 // on (from,to,kind) plus the params the readback actually reconstructs.
 function wireKey(c: PlanConnection): string {
   const p = c.params ?? {};
@@ -96,14 +96,14 @@ describe("applyDeviceState round-trip", () => {
     // Stereo channel (CH5/6): D.Gain + independent L/R phase.
     plan.nodeParams.ch_5_6 = { gain: -12, phaseL: true, phaseR: false };
 
-    // CH1 → MIX1 send (level/pan/PRE tap) and CH1 → FX1 send (level only).
+    // CH1 → MIX1 send (level/pan/PRE tap) and CH1 → FX1 send (level + PRE tap).
     plan.connections.push({
       from: "ch1:out",
       to: "bus.mix1:in",
       kind: "send",
       params: { level: -3, pan: -63, tap: "pre" },
     });
-    plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9 } });
+    plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9, tap: "pre" } });
 
     // Bus faders / EQ / insert FX.
     plan.nodeParams["bus.stereo"] = { on: true, level: 2, eqOn: true, insertFx: 1793 };
@@ -259,7 +259,8 @@ describe("applyDeviceState round-trip", () => {
     // Sum of every unconditionally-read group on URX44V. Each constant below
     // names its group so a count change is traceable to a specific readback pass.
     const channels = 8;
-    const sends = 8 * 4;
+    const sends = 8 * 4 + 2 * 2; // 8 channels × (MIX1/2 + FX1/2) + 2 FX channels × MIX1/2
+    const fxMainPath = 2; // FX1 + FX2 → STEREO main fader / balance
     const busFaders = 3; // STEREO + MIX1 + MIX2
     const insertFx = 3 + 4; // STEREO + 2 MIX outputs + 4 mono channels
     const busEqOn = 3; // STEREO + MIX1 + MIX2
@@ -275,7 +276,7 @@ describe("applyDeviceState round-trip", () => {
     const colors = 8 + 6; // CH SETTING color: 8 channels + STEREO/MIX1/MIX2/FX1/FX2/STREAMING
     const names = 8 + 6; // CH SETTING name: same node set as color
     const expected =
-      channels + sends + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + delay + oscAssign + inputSource + selectors + colors + names;
+      channels + sends + fxMainPath + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + delay + oscAssign + inputSource + selectors + colors + names;
     expect(result.applied).toBe(expected);
     // Sanity: far more than the channel-only count, proving every group counts.
     expect(result.applied).toBeGreaterThan(channels);
@@ -381,7 +382,7 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     };
     plan.nodeParams.ch_5_6 = { gain: -12, phaseL: true, phaseR: false };
     plan.connections.push({ from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { level: -3, pan: -63, tap: "pre" } });
-    plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9 } });
+    plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9, tap: "pre" } });
     plan.nodeParams["bus.stereo"] = { on: true, level: 2, eqOn: true, insertFx: 1793 };
     plan.nodeParams["bus.mix1"] = { level: -4, insertFx: 1792 };
     plan.nodeParams["out.ducker1"] = { duckerOn: true, ducker: { threshold: -50, range: -20, attack: 25, decay: 1500 } };

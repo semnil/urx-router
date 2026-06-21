@@ -199,7 +199,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
       { on: true, q: 0.71, freq: 10000, gain: 0, type: 1 },
     ],
   },
-  // FX return channels ship ON at the factory (param 338, def 1). Seeded so a
+  // FX channels ship ON at the factory (param 338, def 1). Seeded so a
   // fresh plan restores them (the absolute write only auto-clears wires, not
   // scalar node params — see bus.stereo/osc/monitor).
   "bus.fx1": { on: true },
@@ -333,6 +333,32 @@ export const URX44V_CONNECTIONS: PlanConnection[] = [
     to: "bus.stereo:in",
     kind: "send",
     params: { level: -96.5 },
+  },
+  // FX channel → MIX sends ship ON at the factory (SEND_ON = 1) but at -∞, so they
+  // are seeded as connections (a wire = on) carrying the -∞ off-level / center BAL.
+  {
+    from: "bus.fx1:out",
+    to: "bus.mix1:in",
+    kind: "send",
+    params: { level: -96.5, pan: 0, tap: "post" },
+  },
+  {
+    from: "bus.fx1:out",
+    to: "bus.mix2:in",
+    kind: "send",
+    params: { level: -96.5, pan: 0, tap: "post" },
+  },
+  {
+    from: "bus.fx2:out",
+    to: "bus.mix1:in",
+    kind: "send",
+    params: { level: -96.5, pan: 0, tap: "post" },
+  },
+  {
+    from: "bus.fx2:out",
+    to: "bus.mix2:in",
+    kind: "send",
+    params: { level: -96.5, pan: 0, tap: "post" },
   },
   {
     from: "ch1:out",

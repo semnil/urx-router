@@ -17,6 +17,7 @@ import {
   colorControl,
   DUCKER_FIELDS,
   duckerControl,
+  fxChannelIndex,
   inputEq,
   insertFxControl,
   isStereoChannel,
@@ -124,7 +125,7 @@ export interface InspectorActions {
 // Per-kind editable send parameters. Only summing sends carry LEVEL / PRE-POST /
 // PAN per the block diagram (device-model.md §2); selectors and output patches
 // are assignments without per-connection mix parameters. PRE-POST is further
-// dropped for the fixed STEREO / FX-return main paths (see sendHasTap). Ordered
+// dropped for the fixed STEREO / FX-channel main paths (see sendHasTap). Ordered
 // top-to-bottom as the device SEND TO screen reads it (ON — the wire itself — then
 // PRE, Pan, Level); the fixed main path drops tap and so shows Pan then Level.
 const PARAM_FIELDS: Record<ConnectionKind, ParamField[]> = {
@@ -139,7 +140,7 @@ type ParamField = "level" | "pan" | "tap";
 // Whether a channel's send pan should read as a BALANCE: a native stereo channel,
 // or a STEREO-linked MONO IN pair switched to BAL mode (Signal Type, PAN/BAL).
 function isBalanceChannel(model: DeviceModel, plan: Plan, id: string): boolean {
-  if (isStereoChannel(id)) return true;
+  if (isStereoChannel(id) || fxChannelIndex(id) !== null) return true;
   const primary = pairPrimary(model, id);
   if (!primary) return false;
   const pnp = plan.nodeParams[primary];
@@ -471,7 +472,7 @@ export function renderInspector(
     // post-fader (DAW Integration menu, V1.2+). A select on the FX bus node.
     if (node.id === "bus.fx1" || node.id === "bus.fx2") {
       const ps = section(m.inspector.parameters, { key: "params" });
-      // FX return channel ON (param 338, per FX) — the FX return's own mute,
+      // FX channel ON (param 338, per FX) — the FX channel's own mute,
       // distinct from the per-channel FX sends feeding it.
       ps.body.append(
         boolToggle(m.inspector.channelOn, plan.nodeParams[node.id]?.on ?? true, (v) =>
@@ -685,7 +686,7 @@ export function renderInspector(
     const busFixed = isMix && (destNp?.busType ?? BUS_TYPE_VARI) === BUS_TYPE_FIXED;
     const panLinked = isMix && !busFixed && destNp?.panLink === true;
     // PRE/POST is taken against the channel's STEREO main-fader level, so the
-    // fixed STEREO / FX-return main paths show LEVEL / PAN but no PRE/POST.
+    // fixed STEREO / FX-channel main paths show LEVEL / PAN but no PRE/POST.
     const fields = PARAM_FIELDS[conn.kind].filter(
       (f) =>
         (f !== "tap" || sendHasTap(model, from, to)) &&
@@ -707,7 +708,7 @@ export function renderInspector(
     if (panLinked) host.append(hint(m.inspector.panLinked));
   }
 
-  // A fixed wire (CH / FX return -> STEREO) cannot be removed; offer no delete
+  // A fixed wire (CH / FX channel -> STEREO) cannot be removed; offer no delete
   // button, only a note that it is structural. Its level/pan above stay editable.
   if (isFixedConnection(model, from, to)) {
     host.append(hint(m.inspector.fixedConnection));

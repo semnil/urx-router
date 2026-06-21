@@ -59,7 +59,7 @@ export interface RoutingRule {
   to: string;
   kind: ConnectionKind;
   /**
-   * Structural wire that always exists and cannot be rerouted: the CH and FX-return
+   * Structural wire that always exists and cannot be rerouted: the CH and FX-channel
    * main fader paths into the STEREO bus (block diagram: these sit outside the dashed
    * SEND blocks). Seeded into every plan so it shows pre-connected, and the UI blocks
    * its removal. Level/pan stay editable; only the routing is locked.

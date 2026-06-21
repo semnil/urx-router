@@ -611,7 +611,7 @@ export class Graph {
     return this.hidden.has(id);
   }
 
-  // Whether a node carries any non-fixed wire. Fixed wires (CH / FX return ->
+  // Whether a node carries any non-fixed wire. Fixed wires (CH / FX channel ->
   // STEREO) are structural, so hideUnused ignores them: a channel with only its
   // fixed STEREO wire still counts as unused.
   private nodeHasEditableConnection(id: string): boolean {

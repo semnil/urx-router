@@ -386,7 +386,7 @@ export function ensureFixedConnections(model: DeviceModel, plan: Plan): void {
   for (const rule of model.rules) {
     if (!rule.fixed || hasConnection(plan, rule.from, rule.to)) continue;
     const conn: PlanConnection = { from: rule.from, to: rule.to, kind: rule.kind };
-    // FX returns into STEREO (the only bus-sourced fixed sends) default to -∞ so a
+    // FX channels into STEREO (the only bus-sourced fixed sends) default to -∞ so a
     // return is not summed into the main mix until raised; channel main paths stay at unity.
     const fromKind = model.nodes.find((n) => n.id === parseRef(rule.from).nodeId)?.kind;
     if (fromKind === "bus") conn.params = { level: LEVEL_OFF_DB };

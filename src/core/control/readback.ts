@@ -24,6 +24,7 @@ import {
   duckerControl,
   channelInputSlots,
   eqOneKnob,
+  fxChannelIndex,
   inputEq,
   inputNodeForPort,
   insertFxControl,
@@ -166,11 +167,11 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     }
   }
 
-  // CH → MIX/FX sends: reflect each send's device state as a wire. An ON send
-  // becomes (or updates) a connection carrying its level (+ pan / tap where the
-  // bus has them); an OFF send removes any existing wire.
+  // CH / FX-channel → MIX/FX sends: reflect each send's device state as a wire. An
+  // ON send becomes (or updates) a connection carrying its level (+ pan / tap
+  // where the bus has them); an OFF send removes any existing wire.
   for (const node of model.nodes) {
-    if (node.kind !== "channel") continue;
+    if (node.kind !== "channel" && fxChannelIndex(node.id) === null) continue;
     for (const bus of model.nodes) {
       if (bus.kind !== "bus") continue;
       const sc = sendControl(model, node.id, bus.id);
@@ -183,7 +184,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
         if (on) {
           const params: ConnParams = { level: vdToLevel(await vdGet(sc.level[0], 0, sc.y)) };
           if (sc.pan.length) params.pan = vdToPan(await vdGet(sc.pan[0], 0, sc.y));
-          if (sc.tap !== null) params.tap = vdToBool(await vdGet(sc.tap, 0, sc.y)) ? "pre" : "post";
+          params.tap = vdToBool(await vdGet(sc.tap, 0, sc.y)) ? "pre" : "post";
           if (idx >= 0) plan.connections[idx].params = { ...plan.connections[idx].params, ...params };
           else plan.connections.push({ from, to, kind: "send", params });
         } else if (idx >= 0) {
@@ -193,6 +194,26 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       } catch (e) {
         errors.push(`${node.label} → ${bus.label}: ${e instanceof Error ? e.message : String(e)}`);
       }
+    }
+  }
+
+  // FX channel → STEREO main path: the FX channel master fader (337) / balance
+  // (339) carry the fixed FX-channel → STEREO send's level / pan (mirrors the
+  // channel main path above; the FX channel ON toggle is read via busMasterOn).
+  for (const node of model.nodes) {
+    const fxY = fxChannelIndex(node.id);
+    if (fxY === null) continue;
+    const conn = plan.connections.find(
+      (c) => c.from === ref(node.id, "out") && c.to === ref("bus.stereo", "in"),
+    );
+    if (!conn) continue;
+    try {
+      const level = vdToLevel(await vdGet(PARAMS.FX_CHANNEL_FADER.id, 0, fxY));
+      const pan = vdToPan(await vdGet(PARAMS.FX_CHANNEL_BAL.id, 0, fxY));
+      conn.params = { ...conn.params, level, pan };
+      applied++;
+    } catch (e) {
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -323,7 +344,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     }
   }
 
-  // Bus master ON/OFF: STEREO master (582) and the FX return channels (338, per
+  // Bus master ON/OFF: STEREO master (582) and the FX channels (338, per
   // FX). MIX buses have no ON toggle (busMasterOn → null), so they are skipped.
   for (const node of model.nodes) {
     if (node.kind !== "bus") continue;
