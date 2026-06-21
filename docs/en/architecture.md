@@ -39,10 +39,12 @@ flowchart TD
       plan[plan.ts<br/>plan state + JSON]
       storage[storage.ts<br/>save/load/PNG/PDF]
       platform[platform.ts<br/>Tauri bridge / fallbacks]
+      meters[meters.ts<br/>live meters<br/>map/decode/store]
     end
     subgraph ui[ui/ presentation]
       graphts[graph.ts<br/>SVG node graph<br/>theme-aware palette]
       inspector[inspector.ts<br/>selected-element editing]
+      console[console.ts<br/>mixer-style level overview]
     end
     subgraph i18n[i18n/ localization]
       cat[en.ts / ja.ts<br/>message catalogs]
@@ -161,6 +163,61 @@ The connection and node colors live in both layers: wire colors as `--w-*` (CSS)
 PNG and PDF export (`core/storage.ts`) read `--canvas-bg` to paint the background, so the exported
 image follows the current theme too. The PDF is a hand-built single-page document embedding one
 FlateDecode image (deflate via the platform `CompressionStream`), so no runtime dependency is added.
+
+## CONSOLE view (mixer-style level overview)
+
+Alongside the node graph (GRAPH), a second view surveys the same plan as mixer-style vertical strips.
+The GRAPH / CONSOLE toolbar tabs switch between them; while CONSOLE is shown the graph and inspector are
+hidden (`setView` in `main.ts`). `src/ui/console.ts` lays strips out in INPUTS / BUS · FX / MONITOR /
+MASTER groups, scrolling horizontally (there is no shared left ruler). The fader zone is three columns —
+a **fader** (a real-console thin slot + cap; the cap position is the value), a **dB scale**, and a **level
+meter**. The meter has a separate **OVER box** on top (clipping ≠ the level ceiling, ≠ the scale) over the
+signal ladder (green→red; signal only while Live sync streams); the OVER box lights red on a device clip
+(raw 32767) via the `sig.over` latch and decays over ~1 s. The scale follows each strip's range and aligns
+its top/bottom to the fader travel, so a tick at the cap's height marks that level (a functional scale,
+10/0/-10/-20/-40/-60/-80/-∞). Each tick centres its digits with the minus sign hanging left, so `10` and
+`-10` line up vertically. Above the zone the scribble shows two lines — **node name + device CH SETTING
+name**. Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE, then +48 / φ / HPF on mono
+MIC channels (Hi-Z on CH3/4) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
+chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
+node hung under them). An odd group gets an invisible spacer so its last chip never stretches to
+full width. At the bottom (knobs bottom-aligned) are rotary knobs (`addKnob`/`wireKnob`, drag / arrow keys)
+— channel **Gain and PAN/BAL** (the CH→STEREO send's pan, L63–C–R63), or the **PHONES level** (a 0–10 non-dB
+scale) on the monitor buses (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2, independent of the monitor fader, so no extra
+tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.angle`, left = -90° / right =
++90°): PHONES 2.0/8.0, A.Gain +8/+55, D.Gain -14/+15. Double-clicking a fader cap or a knob resets it to the
+**factory value** (from `defaultPlan`).
+
+- **Shared edit path** — fader / chip / gain edits mutate the plan directly and flow through the same change
+  funnel as the graph and inspector (`markChanged` → `live.schedule()`), so live device sync mirrors a
+  CONSOLE edit through the same snapshot diff. CONSOLE re-renders only the edited strip itself, avoiding a
+  full rebuild mid-drag; returning to GRAPH reflects the edits via `graph.repaint*`.
+- **Levels only (no routing)** — CONSOLE adjusts the levels of existing sends / paths; it never adds or
+  removes connections (routing stays in the graph). `setSend` only updates an existing wire's level, so
+  lowering a send to -∞ keeps the wire (the strip stays). INS FX has no separate on/off (No Effect is off),
+  so toggling on restores the last chosen effect (or the first real option).
+- **Send-on-fader** — a fixed “Output” label and the mode bar (MAIN / FX 1 / FX 2 / MIX 1 / MIX 2). A send
+  mode flips the input-channel and FX-return faders to the send level into the chosen MIX/FX bus and shows
+  **only that bus's sources** — non-send nodes (monitors, master, the buses themselves) and wire-less strips
+  drop out. FX returns only follow sends to MIX buses. MAIN shows every strip at its own level.
+- **Scribble colour** — the scribble uses each node's **CH SETTING colour** (`plan.nodeColors`, a device
+  parameter) rather than the node-kind rail, picking black/white text from the colour's brightness
+  (`textOn`); nodes with no assigned colour fall back to the rail colour.
+- **Layout / scroll** — `#console-host` uses `min-width:0; overflow:hidden` to stay within `#stage`, keeping
+  horizontal scroll inside the strip grid (`.con-strips`, its bar above the status bar). It does not scroll
+  vertically except on very short windows (then within the strip grid). The master (STEREO) is no longer
+  pinned to the right; it scrolls with the rest.
+- **Live meters** — the meter column is always shown; signal only flows while Live sync is on
+  (`console.setLive`; at rest it sits at the floor). `core/meters.ts` maps node ids to broker meter addresses
+  (`meterId:x`), decodes the raw value (deci-dBFS, 32767 = OVER) to dBFS, and holds the latest reading in a
+  `MeterStore`. The UI samples the ~10 Hz notifications on `requestAnimationFrame` and renders with fast
+  attack / slow release, peak hold, and an OVER latch (the top OVER box), writing only the lanes that changed
+  (compared at integer-percent). Subscriptions are scoped to the on-screen strips that have a meter in the
+  current model (`metersForNodes`). Meter ids were confirmed on a real URX44V; models without a mapping show no meter.
+- **Streaming path** — the Rust side (`src-tauri/src/vd.rs`) handles a meter subscription
+  (`MetersSubscribe`/`MetersUnsubscribe`) by registering each address with the broker, and forwards meter
+  `notify` frames to the frontend over a Tauri Channel during the idle socket drain (`pump` → `forward_meter`).
+  Like the rest of live control, it is only active under the `--experimental` launch flag.
 
 ## Responsive layout (mobile)
 

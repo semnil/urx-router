@@ -55,6 +55,10 @@
           <span id="lbl-rate">Rate</span>
           <select id="rate-picker"></select>
         </label>
+        <div class="view-tabs" id="view-tabs" role="group" aria-label="View">
+          <button id="btn-view-graph" type="button" aria-pressed="true">Graph</button>
+          <button id="btn-view-console" type="button" aria-pressed="false">Console</button>
+        </div>
         <span class="spacer"></span>
         <span id="live-tally" class="live-tally" role="status" aria-live="polite" hidden></span>
         <div class="tools">
@@ -150,6 +154,7 @@
       <main id="stage">
         <div id="graph-host"></div>
         <aside id="inspector"></aside>
+        <section id="console-host" hidden></section>
       </main>
       <footer id="statusbar"></footer>
     </div>

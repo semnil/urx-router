@@ -19,6 +19,7 @@ import { PAN_BAL_BAL, PAN_BAL_PAN, STEREO_PAN_DEFAULT } from "./core/control/par
 import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { renderInspector } from "./ui/inspector";
+import { Console } from "./ui/console";
 import { getLang, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
 import { DEMO } from "./core/env";
 import {
@@ -44,6 +45,7 @@ const picker = $<HTMLSelectElement>("model-picker");
 const ratePicker = $<HTMLSelectElement>("rate-picker");
 const graphHost = $<HTMLElement>("graph-host");
 const inspectorHost = $<HTMLElement>("inspector");
+const consoleHost = $<HTMLElement>("console-host");
 const statusbar = $<HTMLElement>("statusbar");
 
 // Initial theme follows a saved choice first, then the OS color scheme, falling
@@ -173,6 +175,36 @@ const graph = new Graph(graphHost, getModel(modelId), plan, {
   },
 });
 
+// Mixer-style CONSOLE view: an alternate view of the same plan. Its edits go
+// through the same change funnel (markChanged) so Live sync mirrors them. The
+// live signal meters stream only while Live sync is on (consoleView.setLive).
+const consoleView = new Console(consoleHost, {
+  getModel: () => getModel(modelId),
+  getPlan: () => plan,
+  // A console edit changed the plan: flag dirty + schedule live sync. The console
+  // re-renders the edited strip itself, so don't rebuild it here (that would
+  // disrupt an in-progress fader drag).
+  onChange: () => markChanged(),
+});
+
+type ViewName = "graph" | "console";
+
+function setView(next: ViewName): void {
+  const isConsole = next === "console";
+  graphHost.hidden = isConsole;
+  inspectorHost.hidden = isConsole;
+  $("btn-view-graph").setAttribute("aria-pressed", String(!isConsole));
+  $("btn-view-console").setAttribute("aria-pressed", String(isConsole));
+  if (isConsole) {
+    consoleView.show();
+  } else {
+    consoleView.hide();
+    // Reflect any console edits back onto the graph.
+    graph.repaintNodes();
+    graph.repaintWires();
+  }
+}
+
 // Reflect the live-sync state across the toggle, the on-air tally, and the other
 // device actions (which conflict with the held connection while sync is on).
 // Only ever called in the experimental build path, so re-enabling on `off` is safe.
@@ -198,6 +230,7 @@ function deactivateLive(status?: string): void {
   live.end();
   void vdDisconnect();
   setLiveUi(false);
+  consoleView.setLive(false);
   if (status) setStatus(status);
 }
 
@@ -351,6 +384,12 @@ function applyStaticI18n(): void {
   $("btn-save").textContent = m.toolbar.save;
   $("btn-export").textContent = m.toolbar.exportPng;
   $("btn-export-pdf").textContent = m.toolbar.exportPdf;
+  const viewGraphBtn = $("btn-view-graph");
+  viewGraphBtn.textContent = m.toolbar.viewGraph;
+  viewGraphBtn.title = m.toolbar.viewGraphHint;
+  const viewConsoleBtn = $("btn-view-console");
+  viewConsoleBtn.textContent = m.toolbar.viewConsole;
+  viewConsoleBtn.title = m.toolbar.viewConsoleHint;
   $("btn-auto").textContent = m.toolbar.arrange;
   $("btn-hide-unused").textContent = m.toolbar.hideUnused;
   $("lbl-device").textContent = m.toolbar.device;
@@ -439,6 +478,7 @@ function loadPlan(next: Plan): void {
   graph.setModel(getModel(modelId), plan);
   dirty = false;
   applyRateConstraints();
+  consoleView.refresh();
 }
 
 // Parse text into a plan, load it, and (when it came from a real path) record it
@@ -753,6 +793,7 @@ if (!DEMO) {
         liveDeviceLabel = device.model;
         live.begin();
         setLiveUi(true);
+        consoleView.setLive(true);
         setStatus(t().status.liveOn(device.model, result.applied));
       } catch (err) {
         await abort(t().status.liveError(err instanceof Error ? err.message : String(err)));
@@ -767,6 +808,9 @@ if (!DEMO) {
     });
   });
 }
+
+$("btn-view-graph").addEventListener("click", () => setView("graph"));
+$("btn-view-console").addEventListener("click", () => setView("console"));
 
 themeBtn.addEventListener("click", () => {
   theme = theme === "dark" ? "light" : "dark";
@@ -872,6 +916,7 @@ function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
 onLangChange(() => {
   applyStaticI18n();
   refreshInspector();
+  consoleView.refresh();
   setStatus(t().status.language(LANG_NAMES[getLang()]));
 });
 
