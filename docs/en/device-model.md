@@ -138,19 +138,25 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 
 ### 2. Channel → bus send (`send`, many receivers)
 
-Each channel output can be sent to the following buses (the MIX / FX sends have ON/LEVEL, PRE/POST, PAN/BAL).
-LEVEL is the shared **level_gain** scale **-∞ … +10.00 dB** (UG p155; slider bottom = -∞ off, one step up is
--96.0 dB) — every fader, send and the monitor use it. PAN/BAL uses the device scale **L63 – C – R63** (the
-UG shows C as the nominal centre; L63/R63 are the hard-pan ends). PRE/POST states whether the send is tapped
-**before (PRE) or after (POST) the STEREO main-fader level** (the CH → STEREO level). The STEREO send itself
-— being that reference — has no PRE/POST.
+Each channel output is sent to the following buses. **All are fixed (`fixed`) — always wired,
+non-removable**: the device has no "remove this routing", only a per-send ON switch (SEND_ON) and
+level, so the model matches that (the old "wire presence = SEND_ON" is gone; on/off is held in the
+connection param `params.on`, default ON). LEVEL is the shared **level_gain** scale **-∞ … +10.00 dB**
+(UG p155; slider bottom = -∞ off, one step up is -96.0 dB) — every fader, send and the monitor use it.
+PAN/BAL uses the device scale **L63 – C – R63** (the UG shows C as the nominal centre; L63/R63 are the
+hard-pan ends). PRE/POST states whether the send is tapped **before (PRE) or after (POST) the STEREO
+main-fader level** (the CH → STEREO level). The STEREO send itself — being that reference — has no PRE/POST.
 
-- STEREO (TO ST) — **fixed**: the channel's main fader path. In the block diagram it sits
-  *outside* the dashed SEND blocks, so it is always wired and cannot be rerouted or removed
-  (`fixed` send). The tool seeds it into every plan pre-connected; only LEVEL/PAN stay editable
-  (**no PRE/POST** — this path is the PRE/POST reference point).
-- MIX 1 / MIX 2 (with PRE/POST)
-- FX 1 / FX 2 (with PRE/POST)
+- STEREO (TO ST) — the channel's main fader path. In the block diagram it sits *outside* the dashed
+  SEND blocks; only LEVEL/PAN stay editable (**no PRE/POST and no per-send ON** — this path is the
+  PRE/POST reference point). Seeded at **unity (0 dB)**.
+- MIX 1 / MIX 2 — LEVEL/PAN/**PRE/POST** + **ON/OFF (SEND_ON)**. Seeded **ON at -∞ (off)**.
+- FX 1 / FX 2 — LEVEL/**PRE/POST** + **ON/OFF (SEND_ON)** (FX-bus sends are mono and carry **no PAN**). Seeded **ON at -∞ (off)**.
+
+Because every send is now always wired (≈ 48 on URX44V: 8 CH × 4 + 2 FX × 3 + 8 CH→STEREO + 2 MIX→STEREO),
+deletion can no longer thin the board. Instead **off (`params.on=false`) / -∞ sends are dimmed with a fine
+dotted line** so the live routing stands out, and a toolbar **"Hide off sends"** toggle can drop them entirely
+(shown by default). The MIX → STEREO TO ST switch (§3) is dimmed the same way when off.
 
 > **BUS Type (MIX 1 / MIX 2, CH SETTING).** Each MIX bus is VARI (variable per-send level, the
 > default and what the tool models) or FIXED (a fixed send level — sends into the bus carry no
@@ -166,7 +172,7 @@ UG shows C as the nominal centre; L63/R63 are the hard-pan ends). PRE/POST state
 
 - FX 1 / FX 2 channel → STEREO / MIX 1 / MIX 2 (`send`; **all fixed** — always wired, non-removable.
   The device has no "remove this routing", only a per-send ON switch (SEND_ON) and level, so the model
-  matches that (input-channel sends stay selective — a cross-cutting unification is left to a later PR).
+  matches that (same fixed + `params.on` model as the §2 input-channel → bus sends — every send unified).
   - The **channel → STEREO** leg is the FX main path: **no PRE/POST** (LEVEL/BAL only — the main path is the
     PRE/POST reference point).
   - The **MIX 1/2 sends** carry LEVEL/BAL/**PRE/POST** plus an **ON/OFF (SEND_ON)** held as a connection
@@ -179,7 +185,10 @@ UG shows C as the nominal centre; L63/R63 are the hard-pan ends). PRE/POST state
 - OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`sendSwitch`; an ON/OFF assign, not a
   summing send — the oscillator has one global level. Stereo destinations carry
   independent L/R in the wire (`oscL` / `oscR`); FX buses are mono)
-- MIX 1 / MIX 2 → STEREO (`sendSwitch`; the "TO ST" send inside the MIX 1–2 OUT block — ON/OFF only, no independent LEVEL/PAN)
+- MIX 1 / MIX 2 → STEREO (`sendSwitch`; the "TO ST" send inside the MIX 1–2 OUT block — **fixed**, always
+  wired and non-removable. ON/OFF only, no independent LEVEL/PAN; the on/off is the TO ST switch held in
+  `params.on` (**off at the factory**), and off is dimmed on the canvas. The device's TO ST has no confirmed
+  param, so it is not written to the device)
 
 > **Post Fader Send for FX (DAW Integration menu, V1.2+).** Each FX bus can additionally be fed by a
 > MIX bus **post-fader** (FX 1 ← MIX n, FX 2 ← MIX n). This appears only when compatible DAW software
@@ -284,9 +293,10 @@ Source selection for the analog outputs (MAIN / LINE).
   PAN hard-pans the odd channel left (L63 = −63) and the even one right (R63 = +63); BAL centres both
   (C = 0) and the send pan then reads as a BALANCE (as a native stereo channel does). Broader parameter
   mirroring is a device behavior not auto-applied (the planner records the configuration).
-- **CH n → STEREO and FX 1/2 return → STEREO are fixed sends** (the main fader / return paths):
-  always wired, shown pre-connected, and non-removable. Unlike the items above they *are* drawn
-  as wires (between visible nodes) since their LEVEL/PAN remain editable; only the routing is locked.
+- **Every channel / FX-channel send is fixed** (the STEREO main path plus every MIX 1–2 / FX 1–2 send), as is
+  **MIX 1/2 → STEREO (TO ST)**: always wired, shown pre-connected, and non-removable. Unlike the items above
+  they *are* drawn as wires (between visible nodes) since their LEVEL/PAN/PRE-POST/ON (SEND_ON; TO ST is ON/OFF
+  only) remain editable; only the routing is locked, and an off (ON=OFF) / -∞ send is dimmed on the canvas (§2).
 - PHONES 1/2/front are a fixed 1:1 wire to the MONITOR buses (no source select, no node). PHONES
   carries the same signal as its MONITOR bus but has its own **PHONES Level** (a unit-less 0.0 …
   10.0 scale, independent of the monitor fader), edited on the MONITOR 1 / 2 nodes — PHONES 1 ↔

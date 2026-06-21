@@ -6,7 +6,7 @@ import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, EqBand, NodeParams, Plan, PlanConnection, SsmcsBand, SsmcsParams } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, SSMCS_INITIAL } from "../core/plan";
-import { isFixedConnection, pairPrimary, sendHasTap } from "../core/routing";
+import { isFixedConnection, pairPrimary, sendHasOn, sendHasTap } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
   busEqOn,
@@ -693,16 +693,19 @@ export function renderInspector(
         (f !== "level" || !busFixed) &&
         (f !== "pan" || !panLinked),
     );
-    // A fixed send that still carries a tap (the FX channel → MIX sends) keeps its
-    // routing wired and stores ON/OFF in params.on, so expose an ON toggle. The
-    // STEREO main paths are fixed too but have no tap and no per-send ON.
-    const hasSendOn = isFixedConnection(model, from, to) && sendHasTap(model, from, to);
+    // Expose a per-send ON toggle where the route carries one (sendHasOn): the
+    // CH/FX → MIX/FX sends and the fixed MIX → STEREO "TO ST". The STEREO main paths
+    // do not. `isFixedToSt` only drives the toggle's label / default-off presentation.
+    const isFixedToSt = isFixedConnection(model, from, to) && conn.kind === "sendSwitch";
+    const hasSendOn = sendHasOn(model, from, to);
     if (fields.length || hasSendOn) {
       host.append(subheading(m.inspector.parameters));
       // ON first to match the device SEND TO screen order (ON, PRE, Pan, Level).
+      // The CH/FX sends ship ON (default true); the TO ST switch ships off.
       if (hasSendOn) {
+        const onLabel = isFixedToSt ? m.inspector.toSt : m.inspector.sendOn;
         host.append(
-          boolToggle(m.inspector.sendOn, conn.params?.on ?? true, (v) => actions.onUpdateParams(from, to, { on: v })),
+          boolToggle(onLabel, conn.params?.on ?? !isFixedToSt, (v) => actions.onUpdateParams(from, to, { on: v })),
         );
       }
       // A stereo channel's "pan" is a balance; so is a STEREO-linked MONO IN pair

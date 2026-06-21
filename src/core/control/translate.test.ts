@@ -241,14 +241,13 @@ describe("planToCommands", () => {
   it("emits a mono CH → MIX send on both L/R instances with tap", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
-    plan.connections.push({
-      from: "ch1:out",
-      to: "bus.mix1:in",
-      kind: "send",
-      params: { level: 5, pan: 100, tap: "pre" },
-    });
+    // CH → MIX is a fixed (always-wired) send; set its params on the seeded wire.
+    const conn = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in")!;
+    conn.params = { level: 5, pan: 100, tap: "pre" };
     const cmds = planToCommands(model, plan);
-    const lvl = cmds.filter((c) => c.name === "SEND_LEVEL" && [146, 152].includes(c.paramId));
+    // The send param ids are shared across channels (y selects ch1 = y0), so scope
+    // to y0 to isolate ch1 from the other channels' also-seeded MIX1 sends.
+    const lvl = cmds.filter((c) => c.name === "SEND_LEVEL" && c.y === 0 && [146, 152].includes(c.paramId));
     // MIX1 mono = base 146: level at 146 and 152 (L/R), both 5 dB = 500.
     expect(lvl.map((c) => c.request.uri)).toEqual([
       "/vd/parameters/146:0:0?operation=value",
@@ -269,8 +268,13 @@ describe("planToCommands", () => {
   it("emits a stereo CH → MIX send from the 273-based block", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
-    plan.connections.push({ from: "ch_5_6:out", to: "bus.mix2:in", kind: "send", params: { level: 0 } });
-    const cmds = planToCommands(model, plan).filter((c) => c.name === "SEND_LEVEL" && [285, 291].includes(c.paramId));
+    const conn = plan.connections.find((c) => c.from === "ch_5_6:out" && c.to === "bus.mix2:in")!;
+    conn.params = { level: 0 };
+    // Scope to ch_5_6 (stereo index y0) to isolate it from the other stereo
+    // channels' also-seeded MIX2 sends (param ids shared, y selects the channel).
+    const cmds = planToCommands(model, plan).filter(
+      (c) => c.name === "SEND_LEVEL" && c.y === 0 && [285, 291].includes(c.paramId),
+    );
     // Stereo MIX2 = base 273 + 12 = 285: level at 285 and 291, stereo index y0.
     expect(cmds.map((c) => c.request.uri)).toEqual([
       "/vd/parameters/285:0:0?operation=value",
@@ -281,23 +285,22 @@ describe("planToCommands", () => {
   it("emits a CH → FX send as a single mono level/on/tap, no pan", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
-    plan.connections.push({
-      from: "ch1:out",
-      to: "bus.fx1:in",
-      kind: "send",
-      params: { level: 7.2, pan: 50, tap: "pre" },
-    });
-    plan.connections.push({ from: "ch_5_6:out", to: "bus.fx2:in", kind: "send", params: { level: 0 } });
+    // CH → FX sends are fixed (always wired); set params on the seeded wires.
+    const fx1 = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.fx1:in")!;
+    fx1.params = { level: 7.2, pan: 50, tap: "pre" };
+    const fx2 = plan.connections.find((c) => c.from === "ch_5_6:out" && c.to === "bus.fx2:in")!;
+    fx2.params = { level: 0 };
     const cmds = planToCommands(model, plan);
-    // Mono FX1 block base 193: tap 193, level 194, on 196 (single, no pan).
-    const monoLvl = cmds.filter((c) => c.name === "SEND_LEVEL" && c.paramId === 194);
+    // Mono FX1 block base 193: tap 193, level 194, on 196 (single, no pan). Scope
+    // to ch1 (y0) — the param ids are shared across channels.
+    const monoLvl = cmds.filter((c) => c.name === "SEND_LEVEL" && c.paramId === 194 && c.y === 0);
     expect(monoLvl).toHaveLength(1);
     expect(monoLvl[0].vdValue).toBe(720);
-    expect(cmds.find((c) => c.name === "SEND_ON" && c.paramId === 196)!.vdValue).toBe(1);
+    expect(cmds.find((c) => c.name === "SEND_ON" && c.paramId === 196 && c.y === 0)!.vdValue).toBe(1);
     // PRE/POST tap at base 193 is live-confirmed writable, so it is emitted.
-    expect(cmds.find((c) => c.name === "SEND_TAP" && c.paramId === 193)!.vdValue).toBe(1);
-    // Stereo FX2 = base 320+4 = 324: level 325.
-    expect(cmds.some((c) => c.name === "SEND_LEVEL" && c.paramId === 325)).toBe(true);
+    expect(cmds.find((c) => c.name === "SEND_TAP" && c.paramId === 193 && c.y === 0)!.vdValue).toBe(1);
+    // Stereo FX2 = base 320+4 = 324: level 325 (ch_5_6 = stereo index y0).
+    expect(cmds.some((c) => c.name === "SEND_LEVEL" && c.paramId === 325 && c.y === 0)).toBe(true);
     // FX sends carry no pan.
     expect(cmds.some((c) => c.name === "SEND_PAN" && [195, 197].includes(c.paramId))).toBe(false);
   });

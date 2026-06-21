@@ -2,22 +2,10 @@ import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
-const port = (page: Page, ref: string) => page.locator(`[data-ref="${ref}"]`);
-const wires = (page: Page) => page.locator("#graph-host .wire-hit");
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
 const sigSelect = (page: Page) => param(page, "Signal Type").locator("select");
 const panBalSelect = (page: Page) => param(page, "PAN / BAL").locator("select");
 const link = (page: Page) => page.locator("#graph-host text", { hasText: "♥" });
-
-async function connect(page: Page, fromRef: string, toRef: string): Promise<void> {
-  const a = await port(page, fromRef).boundingBox();
-  const b = await port(page, toRef).boundingBox();
-  if (!a || !b) throw new Error(`port not found: ${fromRef} -> ${toRef}`);
-  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 });
-  await page.mouse.up();
-}
 
 // Save the plan and return the pan of a from->to connection.
 async function panOf(
@@ -62,12 +50,13 @@ test("mono pair gets a Signal Type select; STEREO reveals PAN/BAL and a heart li
 });
 
 test("BAL mode labels a send from the linked channel as BALANCE", async ({ page }) => {
-  await connect(page, "ch1:out", "bus.mix1:in");
   await node(page, "ch1").click();
   await sigSelect(page).selectOption("1"); // STEREO
   await param(page, "PAN / BAL").locator("select").selectOption("1"); // BAL
 
-  await wires(page).last().click(); // the ch1 -> MIX 1 send
+  // The ch1 -> MIX 1 send is a fixed (always-wired) send; select it by endpoint.
+  // dispatchEvent bypasses the overlapping wire-hit bands' pointer interception.
+  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
   await expect(page.locator("#inspector .param", { hasText: "Balance" })).toHaveCount(1);
   await expect(page.locator("#inspector .param-label span", { hasText: /^Pan$/ })).toHaveCount(0);
 });
@@ -131,11 +120,9 @@ test("a MONO x 2 pair does not drag together", async ({ page }) => {
 });
 
 test("PAN/BAL re-inits the pan of the STEREO and MIX sends for both pair members", async ({ page }, testInfo) => {
-  await connect(page, "ch1:out", "bus.mix1:in");
-  await connect(page, "ch2:out", "bus.mix1:in");
-
+  // CH1/CH2 → MIX1 are fixed (always-wired) sends seeded on the board.
   // Enter STEREO -> PAN mode: odd hard-left (-63), even hard-right (+63), on the
-  // fixed CH->STEREO send and the user MIX 1 sends alike.
+  // fixed CH->STEREO send and the fixed MIX 1 sends alike.
   await node(page, "ch1").click();
   await sigSelect(page).selectOption("1");
   expect(await panOf(page, testInfo, "ch1:out", "bus.stereo:in")).toBe(-63);
@@ -158,8 +145,7 @@ test("PAN/BAL re-inits the pan of the STEREO and MIX sends for both pair members
 });
 
 test("MONO x 2 (unlinked) leaves send pans untouched", async ({ page }, testInfo) => {
-  await connect(page, "ch1:out", "bus.mix1:in");
-  // No Signal Type change: a fresh send keeps its default pan (unset), never the
-  // STEREO hard-pan, confirming the re-init does not run while unlinked.
+  // No Signal Type change: the seeded CH1 → MIX1 send keeps its default pan (unset),
+  // never the STEREO hard-pan, confirming the re-init does not run while unlinked.
   expect(await panOf(page, testInfo, "ch1:out", "bus.mix1:in")).toBeUndefined();
 });

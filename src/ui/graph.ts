@@ -5,7 +5,7 @@
 import type { DeviceModel, DeviceNode, NodeKind, PortDirection } from "../models/types";
 import { fullLabel, isSingleInput, parseRef, ref } from "../models/types";
 import type { Plan, PlanConnection } from "../core/plan";
-import { hasConnection, removeConnection } from "../core/plan";
+import { hasConnection, LEVEL_MIN_DB, removeConnection } from "../core/plan";
 import { canConnect, isFixedConnection, legalSources, legalTargets, pairPrimary, partnerChannel, ruleKind, sendHasTap } from "../core/routing";
 import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
 import type { SaveResult } from "../core/storage";
@@ -183,6 +183,10 @@ export class Graph {
   // device CH SETTING name held in plan.nodeNames ("ch 1"). Default is the
   // planner label, so the device names a fetch/seed brings in are opt-in.
   private labelSource: LabelSource = "model";
+  // Hide the off / -∞ sends (params.on === false or level at -∞) from the canvas.
+  // Off by default so every fixed send shows (dimmed); the toolbar toggle declutters
+  // a board where most of the always-wired CH → MIX/FX sends sit at -∞.
+  private hideOffSends = false;
   private disabledNodes = new Set<string>();
   // Nodes still showing their plan default after a device readback (a body read
   // failed). Mirrors plan.unreadNodes; empty when the plan has no device
@@ -282,6 +286,17 @@ export class Graph {
   setLabelSource(source: LabelSource): void {
     this.labelSource = source;
     this.render();
+  }
+
+  /** Whether the canvas hides off / -∞ sends (toolbar declutter toggle). */
+  isHideOffSends(): boolean {
+    return this.hideOffSends;
+  }
+
+  /** Show or hide the off / -∞ sends; repaints the wires. */
+  setHideOffSends(hide: boolean): void {
+    this.hideOffSends = hide;
+    this.redrawWires();
   }
 
   /** Mark nodes unavailable at the current sample rate (dimmed + dashed outline). */
@@ -620,6 +635,18 @@ export class Graph {
         (parseRef(c.from).nodeId === id || parseRef(c.to).nodeId === id) &&
         !isFixedConnection(this.model, c.from, c.to),
     );
+  }
+
+  // Whether a connection is an inaudible send: switched off (params.on === false —
+  // a CH/FX send or the MIX → STEREO "TO ST") or a `send` whose level sits at -∞
+  // (≤ LEVEL_MIN_DB). Every CH/FX send and the TO ST are fixed now, so this — not
+  // wire presence — is what marks one silent. The main fader paths (CH/FX → STEREO)
+  // carry no `on` and default to unity, so they only read off when pulled to -∞.
+  // (OSC → bus carries oscL/oscR, not `on`, so it is never dimmed by this.)
+  private isOffSend(conn: PlanConnection): boolean {
+    if (conn.params?.on === false) return true;
+    if (conn.kind !== "send") return false;
+    return (conn.params?.level ?? 0) <= LEVEL_MIN_DB;
   }
 
   /** The device CH SETTING name (plan.nodeNames) to show for a node, or undefined
@@ -1027,12 +1054,24 @@ export class Graph {
 
   private redrawWires(): void {
     this.wireLayer.replaceChildren();
+    // Partition the visible wires into off / on in one pass. Off / -∞ sends paint
+    // first (behind) and the live (on) wires last (on top), so in the dense always-
+    // wired mesh the on wires — and their click bands — sit in front and are easier
+    // to pick. Each list keeps plan order, so the last on wire stays the most recent.
+    const off: PlanConnection[] = [];
+    const on: PlanConnection[] = [];
     for (const conn of this.plan.connections) {
       // A wire to a shelved endpoint would dangle into empty space; skip any wire
       // whose node is hidden, so a shelved node takes its wires off-canvas with it.
       if (this.isHidden(parseRef(conn.from).nodeId) || this.isHidden(parseRef(conn.to).nodeId)) continue;
-      this.wireLayer.append(this.makeWire(conn));
+      const isOff = this.isOffSend(conn);
+      // Declutter toggle: drop the off / -∞ sends entirely (they are non-removable
+      // fixed wires, so hiding is the only way to thin the always-wired send mesh).
+      if (this.hideOffSends && isOff) continue;
+      (isOff ? off : on).push(conn);
     }
+    for (const conn of off) this.wireLayer.append(this.makeWire(conn));
+    for (const conn of on) this.wireLayer.append(this.makeWire(conn));
   }
 
   private makeWire(conn: PlanConnection): SVGGElement {
@@ -1075,6 +1114,10 @@ export class Graph {
     // A pre-fader send is dashed and tagged so it reads at a glance without
     // opening the inspector; POST (the default) stays solid and unmarked.
     const isPre = sendHasTap(this.model, conn.from, conn.to) && conn.params?.tap === "pre";
+    // An off / -∞ send recedes: faint and finely dotted, so a board of always-wired
+    // sends reads as "these few are live, the rest are parked at -∞". A lit/selected
+    // wire ignores it so the user can still see and edit the one they picked.
+    const off = this.isOffSend(conn);
 
     // Soft underlay halo marks a lit/selected wire. Done with a wide, low-
     // opacity stroke rather than an SVG blur filter: a perfectly horizontal
@@ -1097,10 +1140,15 @@ export class Graph {
     path.setAttribute("d", d);
     path.setAttribute("fill", "none");
     path.setAttribute("stroke", color);
-    path.setAttribute("stroke-width", selected ? "3.5" : incident ? "3" : "2");
+    path.setAttribute("stroke-width", selected ? "3.5" : incident ? "3" : off && !lit ? "1.4" : "2");
     path.setAttribute("stroke-linecap", "round");
-    path.setAttribute("opacity", faded ? "0.16" : lit ? "1" : "0.85");
+    // Off sends sit well below the normal 0.85 so they recede behind live routing,
+    // but a selected/incident one snaps to full so it stays editable.
+    path.setAttribute("opacity", faded ? (off ? "0.08" : "0.16") : lit ? "1" : off ? "0.3" : "0.85");
+    // A fine dotted line marks an off send; PRE (a longer dash) wins when both, since
+    // the amber PRE glyph already carries the off-ness for a pre-tapped silent send.
     if (isPre) path.setAttribute("stroke-dasharray", "7 5");
+    else if (off) path.setAttribute("stroke-dasharray", "1.5 4");
     path.style.pointerEvents = "none";
     g.append(path);
 

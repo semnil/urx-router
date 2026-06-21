@@ -182,12 +182,15 @@ export function buildModel(p: ModelParams): DeviceModel {
   for (const ch of channels)
     for (const inp of inputs) r(ref(inp, "out"), ref(ch, "in"), "source");
 
-  // 2. Channel -> bus sends (summing, with level/pan). The send to STEREO is the
-  //    channel's main fader path (outside the SEND blocks in the diagram): it is
-  //    always wired and cannot be removed, so it is marked fixed.
+  // 2. Channel -> bus sends (summing, with level/pan). Every send is fixed (always
+  //    wired, non-removable): the device has no "remove this routing", only a
+  //    per-send ON switch (SEND_ON = conn.params.on) and level. The send to STEREO
+  //    is the channel's main fader path (outside the SEND blocks in the diagram, no
+  //    PRE/POST); the MIX 1/2 and FX 1/2 sends carry LEVEL/PAN(BAL)/PRE-POST plus
+  //    the ON toggle. So "wire present = SEND_ON" is gone — on/off lives in params.
   const sendBuses = ["bus.stereo", "bus.mix1", "bus.mix2", "bus.fx1", "bus.fx2"];
   for (const ch of channels)
-    for (const b of sendBuses) r(ref(ch, "out"), ref(b, "in"), "send", b === "bus.stereo");
+    for (const b of sendBuses) r(ref(ch, "out"), ref(b, "in"), "send", true);
 
   // 3. FX channels -> STEREO / MIX buses. All are fixed (always wired): the device
   //    has no "remove this routing", only a per-send ON switch (SEND_ON) and level.
@@ -196,8 +199,10 @@ export function buildModel(p: ModelParams): DeviceModel {
   for (const fx of ["bus.fx1", "bus.fx2"])
     for (const b of ["bus.stereo", "bus.mix1", "bus.mix2"]) r(ref(fx, "out"), ref(b, "in"), "send", true);
 
-  // 3b. MIX 1 / 2 -> STEREO ("TO ST"): ON/OFF switch only, no level/pan.
-  for (const mix of ["bus.mix1", "bus.mix2"]) r(ref(mix, "out"), ref("bus.stereo", "in"), "sendSwitch");
+  // 3b. MIX 1 / 2 -> STEREO ("TO ST"): ON/OFF switch only, no level/pan. The block
+  //     diagram routes it as a fixed path, so it is non-removable like the sends;
+  //     its on/off is the TO ST switch, carried in conn.params.on (off at factory).
+  for (const mix of ["bus.mix1", "bus.mix2"]) r(ref(mix, "out"), ref("bus.stereo", "in"), "sendSwitch", true);
 
   // 4. Oscillator -> STEREO / MIX / FX buses. The assign is on/off per output
   //    channel (no level/pan — the OSC has one global level), so it is a switch,

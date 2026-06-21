@@ -7,11 +7,12 @@ const wires = (page: Page) => page.locator("#graph-host .wire-hit");
 const port = (page: Page, ref: string) => page.locator(`[data-ref="${ref}"]`);
 
 // Fixed wires are seeded on every plan and shown pre-connected; the diagram never
-// starts empty. These are the CH / FX-channel -> STEREO main paths plus the always
-// -wired FX-channel -> MIX sends. User wires are appended after them, so the last
-// .wire-hit is the most recent user connection.
-const FIXED = 14; // URX44V startup: 8 CH→STEREO + 2 FX→STEREO + 4 FX→MIX
-const FIXED_URX22 = 12; // URX22: 6 CH→STEREO + 2 FX→STEREO + 4 FX→MIX
+// starts empty. Every CH / FX-channel send is fixed now (always wired, on/off in a
+// param), so the STEREO main paths and every CH/FX → MIX/FX send count here. User
+// wires (source / patch / etc.) are appended after them, so the last .wire-hit is
+// the most recent user connection.
+const FIXED = 48; // URX44V: 8 CH→STEREO + 2 FX→STEREO + 4 FX→MIX + 8 CH × (MIX1/2 + FX1/2) + 2 MIX→STEREO
+const FIXED_URX22 = 38; // URX22: 6 CH→STEREO + 2 FX→STEREO + 4 FX→MIX + 6 CH × (MIX1/2 + FX1/2) + 2 MIX→STEREO
 
 // A connection is a pointer drag between an output port (.port-out) and an input
 // port (.port-in), in either direction; Playwright's mouse generates the
@@ -168,24 +169,21 @@ test("mirrors a paired channel's source onto its partner (CH1/CH2)", async ({ pa
 });
 
 test("drops PRE/POST from the fixed CH -> STEREO send", async ({ page }) => {
-  // The first seeded wire is CH1 -> STEREO, the fixed main-fader path. It exposes
-  // LEVEL and PAN but no PRE/POST toggle — it is itself the PRE/POST reference.
-  await wires(page).first().dispatchEvent("pointerdown");
+  // CH1 -> STEREO is the fixed main-fader path. It exposes LEVEL and PAN but no
+  // PRE/POST toggle — it is itself the PRE/POST reference. Select it by endpoint
+  // (off sends paint behind, so it is no longer simply the first wire).
+  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]').dispatchEvent("pointerdown");
   await expect(page.locator("#inspector .param")).toHaveCount(2);
   await expect(page.locator("#inspector .toggle")).toHaveCount(0);
   await expect(page.locator("#inspector")).toContainText("Fixed connection");
 });
 
 test("marks a PRE MIX send on the canvas without opening the inspector", async ({ page }) => {
-  await connect(page, "ch1:out", "bus.mix1:in");
-  await expect(wires(page)).toHaveCount(FIXED + 1);
-
-  // Select the new send (the last .wire-hit is the user's ch1 → MIX1; MIX now also
-  // receives the fixed FX → MIX sends, so clicking the shared port is ambiguous).
-  // The MIX send exposes LEVEL / PAN / PRE-POST.
-  await wires(page).last().dispatchEvent("pointerdown");
-  await expect(page.locator("#inspector .toggle")).toHaveCount(1);
-  await expect(page.locator("#inspector .param")).toHaveCount(3);
+  // CH1 → MIX1 is a fixed (always-wired) send now; select it directly by endpoint.
+  // The MIX send exposes a Send ON toggle plus LEVEL / PAN / PRE-POST.
+  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
+  await expect(page.locator("#inspector .toggle")).toHaveCount(2); // Send ON + PRE/POST
+  await expect(page.locator("#inspector .param")).toHaveCount(4); // Send ON + PRE/POST + Pan + Level
 
   // POST (the default) leaves the wire unmarked; PRE adds the amber tap marker
   // live, without reselecting; flipping back to POST removes it.
@@ -211,6 +209,21 @@ test("a fixed FX channel → MIX send exposes a Send ON toggle and no delete", a
   await expect(wires(page)).toHaveCount(FIXED);
 });
 
+test("a fixed MIX → STEREO (TO ST) switch exposes a TO ST toggle and no delete", async ({ page }) => {
+  // MIX 1 → STEREO is fixed (block diagram); its inspector shows a TO ST ON/OFF
+  // toggle (off at the factory) and no delete, and no level/pan (a sendSwitch).
+  await page.locator('.wire-hit[data-from="bus.mix1:out"][data-to="bus.stereo:in"]').dispatchEvent("pointerdown");
+  const toStRow = page.locator("#inspector .param", { hasText: "TO ST" });
+  await expect(toStRow).toHaveCount(1);
+  await expect(page.locator("#inspector .toggle")).toHaveCount(1); // only the TO ST switch
+  await expect(page.locator("#inspector .param", { hasText: "Level" })).toHaveCount(0);
+  await expect(page.locator("#inspector button.danger")).toHaveCount(0); // structural — no delete
+
+  // Turning TO ST ON keeps the (fixed) wire — it is never added/removed.
+  await toStRow.locator(".toggle button").filter({ hasText: /^ON$/ }).click();
+  await expect(wires(page)).toHaveCount(FIXED);
+});
+
 test("a microSD Rec assign carries no level / pan / PRE-POST", async ({ page }) => {
   // SD Rec is a record-source assign (sendSwitch), not a summing send.
   await connect(page, "ch1:out", "out.sdrec:in");
@@ -223,16 +236,14 @@ test("a microSD Rec assign carries no level / pan / PRE-POST", async ({ page }) 
 });
 
 test("the send pan slider uses the device L63 – C – R63 range", async ({ page }) => {
-  await connect(page, "ch1:out", "bus.mix1:in");
-  await wires(page).last().dispatchEvent("pointerdown");
+  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
   const pan = page.locator("#inspector .param", { hasText: "Pan" }).locator("input[type='range']");
   await expect(pan).toHaveAttribute("min", "-63");
   await expect(pan).toHaveAttribute("max", "63");
 });
 
 test("the send level slider bottoms out at -∞ (level_gain floor), not -60", async ({ page }) => {
-  await connect(page, "ch1:out", "bus.mix1:in");
-  await wires(page).last().dispatchEvent("pointerdown");
+  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
   const level = page.locator("#inspector .param", { hasText: "Level" }).locator("input[type='range']");
   await expect(level).toHaveAttribute("min", "-96.5"); // -∞ notch
   await expect(level).toHaveAttribute("max", "10");

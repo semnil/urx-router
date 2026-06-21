@@ -8,7 +8,6 @@ import type { DeviceModel } from "../../models/types";
 import { ref } from "../../models/types";
 import type { ConnParams, EqBand, EqOneKnobParams, NodeParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
-import { isFixedConnection } from "../routing";
 import { vdGet, vdGetStr } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, normalizeInsertFx, PARAMS } from "./params";
 import type { DynField, EqControl, EqOneKnobControl } from "./translate";
@@ -168,10 +167,10 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     }
   }
 
-  // CH / FX-channel → MIX/FX sends. A non-fixed send reflects its device state as
-  // a wire: ON adds/updates a connection (level + pan / tap where present), OFF
-  // removes it. A fixed send (FX channel → MIX, always wired) keeps its wire and
-  // stores the ON/OFF in params.on instead, alongside level / pan / tap.
+  // CH / FX-channel → MIX/FX sends. Every send is fixed (always wired), so its wire
+  // is kept and the device's ON/OFF is stored in params.on alongside level / pan /
+  // tap; readback never adds or removes a send wire. ensureFixedConnections (above)
+  // has already materialized any missing fixed wire, so an entry exists here.
   for (const node of model.nodes) {
     if (node.kind !== "channel" && fxChannelIndex(node.id) === null) continue;
     for (const bus of model.nodes) {
@@ -183,22 +182,11 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
       try {
         const on = vdToBool(await vdGet(sc.on[0], 0, sc.y));
         const idx = plan.connections.findIndex((c) => c.from === from && c.to === to);
-        if (isFixedConnection(model, from, to)) {
-          // Always wired; read level/pan/tap and carry on/off as a param.
-          const params: ConnParams = { level: vdToLevel(await vdGet(sc.level[0], 0, sc.y)), on };
-          if (sc.pan.length) params.pan = vdToPan(await vdGet(sc.pan[0], 0, sc.y));
-          params.tap = vdToBool(await vdGet(sc.tap, 0, sc.y)) ? "pre" : "post";
-          if (idx >= 0) plan.connections[idx].params = { ...plan.connections[idx].params, ...params };
-          else plan.connections.push({ from, to, kind: "send", params });
-        } else if (on) {
-          const params: ConnParams = { level: vdToLevel(await vdGet(sc.level[0], 0, sc.y)) };
-          if (sc.pan.length) params.pan = vdToPan(await vdGet(sc.pan[0], 0, sc.y));
-          params.tap = vdToBool(await vdGet(sc.tap, 0, sc.y)) ? "pre" : "post";
-          if (idx >= 0) plan.connections[idx].params = { ...plan.connections[idx].params, ...params };
-          else plan.connections.push({ from, to, kind: "send", params });
-        } else if (idx >= 0) {
-          plan.connections.splice(idx, 1);
-        }
+        const params: ConnParams = { level: vdToLevel(await vdGet(sc.level[0], 0, sc.y)), on };
+        if (sc.pan.length) params.pan = vdToPan(await vdGet(sc.pan[0], 0, sc.y));
+        params.tap = vdToBool(await vdGet(sc.tap, 0, sc.y)) ? "pre" : "post";
+        if (idx >= 0) plan.connections[idx].params = { ...plan.connections[idx].params, ...params };
+        else plan.connections.push({ from, to, kind: "send", params });
         applied++;
       } catch (e) {
         errors.push(`${node.label} → ${bus.label}: ${e instanceof Error ? e.message : String(e)}`);

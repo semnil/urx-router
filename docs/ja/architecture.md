@@ -155,7 +155,7 @@ PDF は単一の FlateDecode 画像を埋め込んだ 1 ページ文書を手書
 合わせ、上端・下端をフェーダーの可動域に揃えるので、つまみと同じ高さの目盛がそのレベルを指す (機能的な
 目盛、10/0/-10/-20/-40/-60/-80/-∞)。目盛の数字は符号を分離して中央寄せ (「−」を左へハングさせ `10` と
 `-10` の桁を縦に揃える)。上部のスクリブルは **ノード名 + 実機 CH SETTING 名** の 2 行。その下にトグルチップを
-2 列グリッドで 2 グループ置く: ①チャンネル/入力 (HA) — MUTE (チャンネル・FX チャンネル・マスターが持つ。FX チャンネルは実機の FX チャンネル ON、マスターは STEREO master ON)、モノ MIC CH は +48 / φ / HPF (CH3/4 は Hi-Z)、
+2 列グリッドで 2 グループ置く: ①チャンネル/入力 (HA) — MUTE (チャンネル・FX チャンネル・マスター・MIX・MONITOR バスが持つ。FX チャンネルは実機の FX チャンネル ON、マスターは STEREO master ON、**MIX バスは MIX → STEREO の TO ST スイッチ** (`params.on`、muted = TO ST OFF)、**MONITOR バスは plan 専用ミュート** (`np.on`、確定 param が無いため device 非書込み))。**OSCILLATOR は通常 OFF なので MUTE ではなく ON ボタン** (極性が逆・点灯 = 発振中・`osc.on`)。モノ MIC CH は +48 / φ / HPF (CH3/4 は Hi-Z)、
 ステレオ CH は φL / φR (`channelControl` の `phases`/フラグで判定) ②処理チェーン — GATE → COMP → EQ →
 INS FX、ステレオ CH は EQ + DUCKER (直下に吊るした ducker ノードの `duckerOn` をトグル)。チップが奇数の
 グループは不可視スペーサで最後のチップが全幅化しないようにする。最下段に回転つまみ
@@ -177,14 +177,17 @@ A.Gain +8/+55・D.Gain -14/+15 を左右の水平に。
   入力チャンネルと FX チャンネルのフェーダーを「選択した MIX/FX バスへの Send レベル」へ切り替え、**その Send 元
   だけを表示**する (対象バスへ Send できないモニター/マスター/バス自身や、Send ワイヤを持たないストリップは非表示)。
   FX チャンネルは MIX バスへの Send のみ追従。MAIN モードでは全ストリップが自身のレベルを表示する。
-  MIX 1/2 モードの **FX チャンネルには `PRE` チップ**が出て、その FX→MIX Send の PRE/POST タップを切り替える
-  (グラフ/インスペクタの tap と同じ値)。同モードでは **FX チャンネルの MUTE はその Send の ON/OFF (SEND_ON)**
-  を指す (FX チャンネル本体のミュートは MAIN タブ/インスペクタ)。**FX チャンネルの BAL つまみ**はタブ依存で、
-  MAIN=FX→STEREO の BALANCE、MIX 1/2=その FX→MIX Send の BAL を制御する (fader と同じ接続)。これにより
-  FX strip の各コントロールはタブ毎に独立 (MAIN 出力のコントロールが他タブに混入しない)。
-  MIX タブで **FX チャンネル本体が master mute (チャンネル ON=OFF) の場合**、Send に関わらず全体が無音になるため、
-  strip を減光し scribble に赤「CH MUTE」バッジを出す (グラフのノード mute と同じ視覚言語)。Send MUTE/PRE/BAL は
-  操作可能のまま (実機は Send ON/OFF と channel ON が独立パラメーターのため・親切なゲートアウト表示は実機に無い)。
+  全 Send が固定 (常時結線) になったため、入力チャンネルと FX チャンネルは Send モードで同じ扱い:
+  - Send モードの **ストリップには `PRE` チップ**が出て、その Send の PRE/POST タップを切り替える
+    (グラフ/インスペクタの tap と同じ値。CH/FX → MIX/FX Send はいずれも tap を持つ)。
+  - 同モードでは **MUTE はその Send の ON/OFF (SEND_ON)** を指す (チャンネル本体のミュートは MAIN タブ/インスペクタ)。
+  - **PAN/BAL つまみ**はタブ依存で、MAIN= → STEREO 主経路の PAN/BAL、Send モード=その Send の pan を制御する
+    (fader と同じ接続)。FX バスへの Send はモノで pan を持たないため、**FX タブではつまみを省く**。
+  これにより strip の各コントロールはタブ毎に独立 (MAIN 出力のコントロールが他タブに混入しない)。
+  Send モードで **チャンネル/FX チャンネル本体が master mute (チャンネル ON=OFF) の場合**、Send に関わらず全体が
+  無音になるため、strip を減光し scribble に赤「CH MUTE」バッジを出す (グラフのノード mute と同じ視覚言語)。
+  Send MUTE/PRE/BAL は操作可能のまま (実機は Send ON/OFF と channel ON が独立パラメーターのため・親切なゲートアウト
+  表示は実機に無い)。
 - **スクリブル色** — 種別レール色ではなく、各ノードの **CH SETTING 色** (`plan.nodeColors`、実機パラメーター)
   を背景に使う。文字色は黒/白のうち実際のコントラスト比 (WCAG 相対輝度) が高い方を選び (`inkOn`)、
   あわせて反対トーンの淡いハロー (`text-shadow`) を載せて中間色の上でも小さなデバイス名が潰れないようにする。

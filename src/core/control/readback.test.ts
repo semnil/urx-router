@@ -97,14 +97,12 @@ describe("applyDeviceState round-trip", () => {
     // Stereo channel (CH5/6): D.Gain + independent L/R phase.
     plan.nodeParams.ch_5_6 = { gain: -12, phaseL: true, phaseR: false };
 
-    // CH1 → MIX1 send (level/pan/PRE tap) and CH1 → FX1 send (level + PRE tap).
-    plan.connections.push({
-      from: "ch1:out",
-      to: "bus.mix1:in",
-      kind: "send",
-      params: { level: -3, pan: -63, tap: "pre" },
-    });
-    plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9, tap: "pre" } });
+    // CH1 → MIX1 send (level/pan/PRE tap) and CH1 → FX1 send (level + PRE tap). Both
+    // are fixed (always-wired) sends seeded above, so set their params in place.
+    const ch1Mix1 = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in");
+    ch1Mix1!.params = { level: -3, pan: -63, tap: "pre" };
+    const ch1Fx1 = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.fx1:in");
+    ch1Fx1!.params = { level: -9, tap: "pre" };
 
     // Bus faders / EQ / insert FX.
     plan.nodeParams["bus.stereo"] = { on: true, level: 2, eqOn: true, insertFx: 1793 };
@@ -323,18 +321,22 @@ describe("applyDeviceState round-trip", () => {
     expect(result.errors.filter((e) => e.includes("unknown source port")).length).toBeGreaterThanOrEqual(2);
   });
 
-  it("removes an existing send wire when the device reports the send OFF", async () => {
+  it("marks a fixed send OFF (params.on=false) but keeps its wire when the device reports OFF", async () => {
     const target = emptyPlan("URX44V");
     ensureFixedConnections(model, target);
-    // Pre-existing CH1 → MIX1 send the device now reports as off (all reads 0,
-    // so SEND_ON decodes false → the readback splices the wire out).
-    target.connections.push({ from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { level: -3 } });
+    // The CH1 → MIX1 send is fixed (always wired); the device now reports it off
+    // (all reads 0, so SEND_ON decodes false). Readback keeps the wire and flips
+    // params.on to false rather than removing the routing.
+    const seeded = target.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in")!;
+    seeded.params = { ...seeded.params, on: true };
 
     mockVdGetFrom(new Map());
     const result = await applyDeviceState(model, target);
 
     expect(result.errors).toEqual([]);
-    expect(target.connections.some((c) => c.from === "ch1:out" && c.to === "bus.mix1:in")).toBe(false);
+    const wire = target.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in");
+    expect(wire).toBeDefined();
+    expect(wire!.params?.on).toBe(false);
   });
 
   it("clears a routing-selector wire when the device reports NONE", async () => {

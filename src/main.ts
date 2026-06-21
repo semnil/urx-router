@@ -369,10 +369,16 @@ const inspectorActions = {
 };
 graph.setTheme(theme);
 graph.setLabelSource(labelSource);
+try {
+  if (localStorage.getItem("urx-hide-off") === "1") graph.setHideOffSends(true);
+} catch {
+  // ignore (storage may be unavailable)
+}
 
 const themeBtn = $("btn-theme");
 const langBtn = $("btn-lang");
 const labelsBtn = $("btn-labels");
+const hideOffBtn = $("btn-hide-off");
 
 function applyStaticI18n(): void {
   const m = t();
@@ -416,6 +422,11 @@ function applyStaticI18n(): void {
   labelsBtn.textContent = labelSource === "device" ? m.toolbar.labelsDevice : m.toolbar.labelsModel;
   labelsBtn.title = m.toolbar.labelsHint;
   labelsBtn.setAttribute("aria-pressed", String(labelSource === "device"));
+  // Off-sends toggle: the label names the action it will perform next.
+  const hideOff = graph.isHideOffSends();
+  hideOffBtn.textContent = hideOff ? m.toolbar.showOffSends : m.toolbar.hideOffSends;
+  hideOffBtn.title = m.toolbar.hideOffSendsHint;
+  hideOffBtn.setAttribute("aria-pressed", String(hideOff));
   // Demo-only desktop-app link (present in the DOM, shown only in the demo build).
   const desktopLbl = document.getElementById("lbl-desktop");
   const desktopLink = document.getElementById("btn-desktop");
@@ -835,6 +846,18 @@ labelsBtn.addEventListener("click", () => {
   graph.setLabelSource(labelSource);
   applyStaticI18n();
   setStatus(labelSource === "device" ? t().toolbar.labelsDevice : t().toolbar.labelsModel);
+});
+
+hideOffBtn.addEventListener("click", () => {
+  const next = !graph.isHideOffSends();
+  graph.setHideOffSends(next);
+  try {
+    localStorage.setItem("urx-hide-off", next ? "1" : "0");
+  } catch {
+    // ignore (storage may be unavailable)
+  }
+  applyStaticI18n();
+  setStatus(next ? t().toolbar.hideOffSends : t().toolbar.showOffSends);
 });
 
 // Wire the File dropdown: open/close, click-outside, and roving keyboard focus

@@ -236,7 +236,8 @@ export class Console {
     const isChannel = node.kind === "channel";
     const isMaster = id === MAIN_BUS;
     const isOsc = id === "bus.osc";
-    const isMix = id === "bus.mix1" || id === "bus.mix2";
+    const isMix = this.isMixBus(id);
+    const isMon = id === "bus.mon1" || id === "bus.mon2";
     return {
       id,
       label: node.label,
@@ -246,7 +247,10 @@ export class Console {
       isMono: /^ch\d+$/.test(id), // mono channels are ch1..ch4 (the only gain/gate/comp/φ-bearing strips)
       fadersOnly: !(isChannel || this.isFxChannel(id)),
       isOsc,
-      hasMute: isChannel || isMaster || this.isFxChannel(id),
+      // MIX strips carry a MUTE (the MIX → STEREO "TO ST" switch), and the MONITOR
+      // strips carry a plan-only MUTE (np.on) — neither bus has a device master mute
+      // of its own. Both flow through the generic master-mute branch below.
+      hasMute: isChannel || isMaster || this.isFxChannel(id) || isMix || isMon,
       hasEq: isChannel || isMix || isMaster,
       hasPhones: id === "bus.mon1" || id === "bus.mon2",
       range: isOsc ? OSC_RANGE : NORMAL_RANGE,
@@ -295,12 +299,13 @@ export class Console {
     const level = usesSend ? this.getSend(m.id, this.mode as SendTarget) : this.getMain(m);
     const np = plan.nodeParams[m.id] ?? {};
 
-    // In a MIX send mode the FX channel's MUTE chip controls that send's ON/OFF,
-    // not the channel master ON; when the master is muted the whole channel (and
-    // thus every send) is silenced regardless. Surface that override at the strip
-    // level (dim + a CH MUTE badge) so the per-send controls stay operable while
-    // the user still sees the channel is muted. (MAIN shows the master via MUTE.)
-    const masterMuted = this.isFxChannel(m.id) && usesSend && np.on === false;
+    // In a send mode the strip's MUTE chip controls that send's ON/OFF, not the
+    // channel master ON; when the master is muted the whole channel (and thus every
+    // send) is silenced regardless. Surface that override at the strip level (dim +
+    // a CH MUTE badge) so the per-send controls stay operable while the user still
+    // sees the channel is muted. Applies to input channels and FX channels alike;
+    // the MAIN tab shows the master directly via the MUTE chip instead.
+    const masterMuted = usesSend && np.on === false;
 
     const strip = el("div", "con-strip" + (isMaster ? " master" : "") + (masterMuted ? " master-muted" : ""));
     strip.style.setProperty("--rail", m.rail);
@@ -377,12 +382,15 @@ export class Console {
     // channel + input (HA) group
     const top = el("div", "con-chips");
     if (m.hasMute) {
-      if (this.isFxChannel(m.id) && usesSend) {
-        // FX channel in a MIX send mode: MUTE toggles this FX → MIX send's ON/OFF
-        // (SEND_ON), not the FX channel master ON — the MAIN tab and the inspector
-        // control that. The send is always wired (fixed), so on/off is a param.
-        const conn = this.fxSendConn(m.id, usesSend);
-        const sendOn = (): boolean => conn()?.params?.on ?? true;
+      if (this.isMixBus(m.id) || usesSend) {
+        // The MUTE drives a connection's ON/OFF (never its wire presence): a CH/FX →
+        // MIX/FX send (ships ON), or — on a MIX strip in MAIN — the MIX → STEREO "TO
+        // ST" (ships off). The fixed wire is never added/removed, only params.on flips.
+        const mix = this.isMixBus(m.id);
+        const conn = mix
+          ? () => this.sendConn(this.hooks.getPlan(), m.id, MAIN_BUS)
+          : this.sendStripConn(m.id, usesSend);
+        const sendOn = (): boolean => conn()?.params?.on ?? !mix; // sends default ON, TO ST off
         makeChip(top, t().console.mute, true, !sendOn(), () => {
           const c = conn();
           const nextOn = !sendOn();
@@ -390,12 +398,27 @@ export class Console {
           return !nextOn; // chip "on" (highlighted) = muted
         });
       } else {
+        // Master ON/OFF on the node's own `on` flag: a channel (CH_ON) / the STEREO
+        // master (STEREO_MASTER_ON) write to the device; a MONITOR bus is plan-only
+        // (no confirmed monitor-ON param), so its mute lives in the plan alone.
         makeChip(top, t().console.mute, true, np.on === false, () => {
           const muted = planOf().on === false;
           this.nodeParamsOf(m.id).on = muted; // toggle: was muted → on, was on → muted
           return !muted;
         });
       }
+    }
+    // OSCILLATOR is a test-tone generator that is normally OFF, so it gets an ON
+    // button (the inverse of the MUTE chips: highlighted = generating) bound to
+    // osc.on rather than a MUTE that would read as pressed by default.
+    if (m.isOsc) {
+      const oscOn = (): boolean => planOf().osc?.on ?? false;
+      makeChip(top, t().console.on, false, oscOn(), () => {
+        const next = !oscOn();
+        const op = this.nodeParamsOf(m.id);
+        op.osc = { ...op.osc, on: next };
+        return next;
+      });
     }
     if (cc?.hasMicStrip) boolChip(top, "+48", "phantom", false);
     // Polarity: one φ on a mono channel, independent φL / φR on a stereo one. Keep
@@ -440,12 +463,12 @@ export class Console {
       if (group.childElementCount) head.append(group);
     }
 
-    // FX channel → MIX send PRE/POST tap: a chip mirroring the send connection's
-    // `tap` (the device SEND TO screen's PRE button). Only the FX channels' MIX
-    // sends carry a settable tap, so it shows only in a MIX send mode (the STEREO
-    // main path has none — see device-model.md §3); on = PRE, off = POST.
-    if (this.isFxChannel(m.id) && usesSend) {
-      const conn = this.fxSendConn(m.id, usesSend);
+    // Send PRE/POST tap: a chip mirroring the send connection's `tap` (the device
+    // SEND TO screen's PRE button). Every CH/FX → MIX/FX send carries a settable
+    // tap, so it shows in any send mode (the STEREO main path has none — see
+    // device-model.md §3); on = PRE, off = POST.
+    if (usesSend) {
+      const conn = this.sendStripConn(m.id, usesSend);
       const preGroup = el("div", "con-chips");
       const isPre = (): boolean => conn()?.params?.tap === "pre";
       makeChip(preGroup, t().console.pre, false, isPre(), () => {
@@ -475,11 +498,16 @@ export class Console {
         angle: (v) => -90 + ((v - hl) / (hr - hl)) * 180,
       });
     }
-    // PAN (mono) / BALANCE (stereo) = the source's send pan, L63 – C – R63. A
-    // channel edits its CH → STEREO main path; an FX channel follows the tab (MAIN
-    // = FX → STEREO, a MIX mode = that FX → MIX send — same connection as the fader).
-    if (m.isChannel) this.addSendPanKnob(head, m.id, MAIN_BUS, m.isMono ? "PAN" : "BAL");
-    if (this.isFxChannel(m.id)) this.addSendPanKnob(head, m.id, usesSend ? (this.mode as SendTarget) : MAIN_BUS, "BAL");
+    // PAN (mono) / BALANCE (stereo) = the source's send pan, L63 – C – R63. Both
+    // channels and FX channels follow the tab: MAIN edits the → STEREO main path, a
+    // send mode edits that send (same connection as the fader). The FX-bus sends are
+    // mono and carry no pan on the device, so the knob is dropped in an FX mode.
+    if (m.isChannel || this.isFxChannel(m.id)) {
+      const target = usesSend ? (this.mode as SendTarget) : MAIN_BUS;
+      if (target !== "bus.fx1" && target !== "bus.fx2") {
+        this.addSendPanKnob(head, m.id, target, m.isMono ? "PAN" : "BAL");
+      }
+    }
     if (m.hasPhones) {
       // PHONES output level: a 0.0..10.0 scale (not dB) on the monitor bus,
       // independent of the monitor fader (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2).
@@ -686,6 +714,9 @@ export class Console {
   private isMixMode(): boolean {
     return this.mode === "bus.mix1" || this.mode === "bus.mix2";
   }
+  private isMixBus(id: string): boolean {
+    return id === "bus.mix1" || id === "bus.mix2";
+  }
 
   // Channels and FX channels follow send-on-fader in a send mode; FX channels only
   // to MIX buses. Everything else always shows its own main level.
@@ -702,9 +733,10 @@ export class Console {
     return this.sendConn(this.hooks.getPlan(), id, target) !== undefined;
   }
 
-  /** Live getter for the connection a tab-scoped FX-strip control edits: the
-   *  FX → MIX send in a MIX mode, or the FX → STEREO main path in MAIN. */
-  private fxSendConn(id: string, usesSend: boolean): () => PlanConnection | undefined {
+  /** Live getter for the connection a tab-scoped strip control (MUTE / PRE) edits:
+   *  the → MIX/FX send in a send mode, or the → STEREO main path in MAIN. Used by
+   *  both input-channel and FX-channel strips. */
+  private sendStripConn(id: string, usesSend: boolean): () => PlanConnection | undefined {
     const target = usesSend ? (this.mode as SendTarget) : MAIN_BUS;
     return () => this.sendConn(this.hooks.getPlan(), id, target);
   }

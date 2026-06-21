@@ -121,16 +121,22 @@ describe("ruleKind", () => {
 });
 
 describe("isFixedConnection", () => {
-  it("marks the CH and FX-channel main paths into STEREO as fixed", () => {
+  it("marks every CH / FX-channel send (STEREO main + MIX/FX) as fixed", () => {
+    // Main fader paths into STEREO.
     expect(isFixedConnection(u44, ref("ch1", "out"), ref("bus.stereo", "in"))).toBe(true);
     expect(isFixedConnection(u44, ref("ch_5_6", "out"), ref("bus.stereo", "in"))).toBe(true);
     expect(isFixedConnection(u44, ref("bus.fx1", "out"), ref("bus.stereo", "in"))).toBe(true);
     expect(isFixedConnection(u44, ref("bus.fx2", "out"), ref("bus.stereo", "in"))).toBe(true);
+    // CH → MIX / FX sends are fixed too: always wired, on/off carried in params.on.
+    expect(isFixedConnection(u44, ref("ch1", "out"), ref("bus.mix1", "in"))).toBe(true);
+    expect(isFixedConnection(u44, ref("ch_5_6", "out"), ref("bus.fx2", "in"))).toBe(true);
+    expect(isFixedConnection(u44, ref("bus.fx1", "out"), ref("bus.mix1", "in"))).toBe(true);
+    // MIX 1/2 → STEREO ("TO ST") is fixed too (block diagram); on/off in params.on.
+    expect(isFixedConnection(u44, ref("bus.mix1", "out"), ref("bus.stereo", "in"))).toBe(true);
+    expect(isFixedConnection(u44, ref("bus.mix2", "out"), ref("bus.stereo", "in"))).toBe(true);
   });
 
-  it("leaves optional sends and the OSC/MIX feeds into STEREO removable", () => {
-    expect(isFixedConnection(u44, ref("ch1", "out"), ref("bus.mix1", "in"))).toBe(false);
-    expect(isFixedConnection(u44, ref("bus.mix1", "out"), ref("bus.stereo", "in"))).toBe(false);
+  it("leaves the OSC feeds and output patches into STEREO removable", () => {
     expect(isFixedConnection(u44, ref("bus.osc", "out"), ref("bus.stereo", "in"))).toBe(false);
     expect(isFixedConnection(u44, ref("in.micline_1_2", "out"), ref("out.main", "in"))).toBe(false);
   });

@@ -127,6 +127,74 @@ test("a master-muted FX channel dims its MIX strip with a CH MUTE badge, keeping
   await expect(pre).toHaveAttribute("aria-pressed", "true");
 });
 
+test("an input channel in a MIX mode has a PRE chip, a PAN knob, and a send-ON MUTE", async ({ page }) => {
+  await page.locator(".con-modepick").getByRole("button", { name: "MIX 1", exact: true }).click();
+  const ch = strip(page, "CH 1");
+  await expect(ch).toBeVisible(); // CH 1 -> MIX 1 is a (fixed, factory-on) send
+  // The PAN knob edits this CH -> MIX1 send's pan (per-tab, like the fader).
+  await expect(ch.locator(".con-knob[aria-label='PAN']")).toBeVisible();
+  // PRE toggles this CH -> MIX1 send's PRE/POST tap.
+  const pre = ch.getByRole("button", { name: "PRE", exact: true });
+  await expect(pre).toHaveAttribute("aria-pressed", "false"); // POST by default
+  await pre.click();
+  await expect(pre).toHaveAttribute("aria-pressed", "true");
+  // MUTE toggles this send's ON/OFF (SEND_ON), not the channel master ON.
+  const mute = ch.getByRole("button", { name: "MUTE" });
+  await expect(mute).toHaveAttribute("aria-pressed", "false"); // send on at the factory
+  await mute.click();
+  await expect(mute).toHaveAttribute("aria-pressed", "true"); // send muted
+});
+
+test("an input channel in an FX mode has a PRE chip and send-ON MUTE but no PAN knob", async ({ page }) => {
+  await page.locator(".con-modepick").getByRole("button", { name: "FX 1", exact: true }).click();
+  const ch = strip(page, "CH 1");
+  await expect(ch).toBeVisible(); // CH 1 -> FX 1 is a (fixed, factory-on) send
+  // FX-bus sends are mono and carry no pan, so the knob is dropped in an FX mode.
+  await expect(ch.locator(".con-knob[aria-label='PAN']")).toHaveCount(0);
+  await expect(ch.getByRole("button", { name: "PRE", exact: true })).toBeVisible();
+  await expect(ch.getByRole("button", { name: "MUTE" })).toBeVisible();
+});
+
+test("a master-muted input channel dims its MIX strip with a CH MUTE badge", async ({ page }) => {
+  // Mute the CH 1 master from the MAIN tab (here MUTE = the channel ON).
+  await strip(page, "CH 1").getByRole("button", { name: "MUTE" }).click();
+  await page.locator(".con-modepick").getByRole("button", { name: "MIX 1", exact: true }).click();
+  const ch = strip(page, "CH 1");
+  // The strip dims and shows the CH MUTE badge (the whole channel is muted)...
+  await expect(ch).toHaveClass(/master-muted/);
+  await expect(ch.locator(".ch-mute")).toHaveText("CH MUTE");
+  // ...but the per-send PRE chip stays operable (the send's own state is editable).
+  const pre = ch.getByRole("button", { name: "PRE", exact: true });
+  await pre.click();
+  await expect(pre).toHaveAttribute("aria-pressed", "true");
+});
+
+test("a MIX strip's MUTE drives the MIX → STEREO TO ST switch", async ({ page }) => {
+  // MAIN tab. The MIX → STEREO "TO ST" ships off, so the MIX strip's MUTE starts
+  // pressed (muted = not summed into the main mix). Clicking it turns TO ST on.
+  const mute = strip(page, "MIX 1").getByRole("button", { name: "MUTE" });
+  await expect(mute).toHaveAttribute("aria-pressed", "true"); // TO ST off = muted
+  await mute.click();
+  await expect(mute).toHaveAttribute("aria-pressed", "false"); // TO ST on
+});
+
+test("a MONITOR strip has a MUTE (on by default, plan-only)", async ({ page }) => {
+  // The monitor bus is on at the factory, so its MUTE starts unpressed; clicking mutes it.
+  const mute = strip(page, "MONITOR 1").getByRole("button", { name: "MUTE" });
+  await expect(mute).toHaveAttribute("aria-pressed", "false");
+  await mute.click();
+  await expect(mute).toHaveAttribute("aria-pressed", "true");
+});
+
+test("the OSCILLATOR strip has an ON button (off by default), not a MUTE", async ({ page }) => {
+  const osc = strip(page, "OSCILLATOR");
+  await expect(osc.getByRole("button", { name: "MUTE" })).toHaveCount(0); // ON, not MUTE
+  const on = osc.getByRole("button", { name: "ON", exact: true });
+  await expect(on).toHaveAttribute("aria-pressed", "false"); // OSC off at the factory
+  await on.click();
+  await expect(on).toHaveAttribute("aria-pressed", "true"); // generating
+});
+
 test("the dB scale includes the -60 and -80 ticks", async ({ page }) => {
   const scale = strip(page, "CH 1").locator(".con-scale");
   await expect(scale).toContainText("60");

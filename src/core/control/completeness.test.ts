@@ -65,13 +65,11 @@ describe("planToCommands absolute-state completeness", () => {
     const cmds = planToCommands(model, plan);
     const named = (n: string) => cmds.filter((c) => c.name === n);
 
-    // Sends: every send-capable pair emits SEND_ON, never omitted. The deletable
-    // CH sends are off (no wire); the fixed FX channel → MIX sends are on (always
-    // wired, seeded by ensureFixedConnections at -∞), so they read SEND_ON = 1.
-    const fxMixOn = [345, 350, 355, 360];
+    // Sends: every send-capable pair emits SEND_ON, never omitted. Every send is
+    // now fixed (always wired) and seeded ON at -∞ by ensureFixedConnections
+    // (params.on absent = on), so they all read SEND_ON = 1.
     expect(named("SEND_ON").length).toBeGreaterThan(0);
-    expect(named("SEND_ON").filter((c) => !fxMixOn.includes(c.paramId)).every((c) => c.vdValue === 0)).toBe(true);
-    expect(named("SEND_ON").filter((c) => fxMixOn.includes(c.paramId)).every((c) => c.vdValue === 1)).toBe(true);
+    expect(named("SEND_ON").every((c) => c.vdValue === 1)).toBe(true);
 
     // Input source + routing-source + ducker key selectors: all the NONE sentinel.
     for (const n of [

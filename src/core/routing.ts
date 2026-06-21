@@ -38,6 +38,16 @@ export function sendHasTap(model: DeviceModel, from: string, to: string): boolea
   return ruleKind(model, from, to) === "send" && parseRef(to).nodeId !== "bus.stereo";
 }
 
+// Whether a route carries a per-send ON switch (the SEND_ON of a CH/FX -> MIX/FX
+// send, or the MIX -> STEREO "TO ST"). Every tapped send has one; so does the fixed
+// MIX -> STEREO sendSwitch. The fixed CH/FX -> STEREO main-fader paths do not (they
+// are the channel/return fader itself). Lets the UI ask the topology rather than
+// re-deriving it from tap + kind proxies.
+export function sendHasOn(model: DeviceModel, from: string, to: string): boolean {
+  if (sendHasTap(model, from, to)) return true;
+  return isFixedConnection(model, from, to) && ruleKind(model, from, to) === "sendSwitch";
+}
+
 export function canConnect(model: DeviceModel, plan: Plan, from: string, to: string): ConnectResult {
   const rule = findRule(model, from, to);
   if (!rule) return { ok: false, reason: "noRule" };

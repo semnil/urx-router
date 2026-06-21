@@ -177,8 +177,12 @@ signal ladder (green→red; signal only while Live sync streams); the OVER box l
 its top/bottom to the fader travel, so a tick at the cap's height marks that level (a functional scale,
 10/0/-10/-20/-40/-60/-80/-∞). Each tick centres its digits with the minus sign hanging left, so `10` and
 `-10` line up vertically. Above the zone the scribble shows two lines — **node name + device CH SETTING
-name**. Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE (on channels, FX channels and
-the master; an FX channel's is the device FX-channel ON, the master's is the STEREO master ON), then +48 / φ /
+name**. Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE (on channels, FX channels, the
+master, the MIX buses and the MONITOR buses; an FX channel's is the device FX-channel ON, the master's is the
+STEREO master ON, a **MIX bus's drives the MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off), and a
+**MONITOR bus's is a plan-only mute** (`np.on`, no confirmed device param so it is not written)). The
+**OSCILLATOR is normally OFF, so it gets an ON button instead of a MUTE** (inverse polarity — lit = generating,
+bound to `osc.on`). Then +48 / φ /
 HPF on mono MIC channels (Hi-Z on CH3/4) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
 chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
 node hung under them). An odd group gets an invisible spacer so its last chip never stretches to
@@ -200,15 +204,17 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
 - **Send-on-fader** — a fixed “Output” label and the mode bar (MAIN / FX 1 / FX 2 / MIX 1 / MIX 2). A send
   mode flips the input-channel and FX-channel faders to the send level into the chosen MIX/FX bus and shows
   **only that bus's sources** — non-send nodes (monitors, master, the buses themselves) and wire-less strips
-  drop out. FX channels only follow sends to MIX buses. MAIN shows every strip at its own level. In a MIX 1/2
-  mode an **FX channel also gets a `PRE` chip** that toggles its FX → MIX send's PRE/POST tap (the same value
-  as the graph/inspector tap), and the **FX channel's MUTE toggles that send's ON/OFF (SEND_ON)** — the FX
-  channel's own mute lives on the MAIN tab and in the inspector. The **FX channel's BAL knob is tab-scoped**
-  too: MAIN edits the FX → STEREO balance, a MIX mode edits that FX → MIX send's BAL (the same connection the
-  fader controls). So every FX-strip control is per-tab independent — no MAIN-output control leaks into the
-  MIX tabs. When an **FX channel's own master is muted** (channel ON = off), a MIX-mode strip dims and shows a
-  red "CH MUTE" badge on its scribble (the muted-graph-node visual language), since the whole channel — every
-  send — is then silenced; the per-send MUTE/PRE/BAL stay operable (send ON/OFF and channel ON are independent
+  drop out. FX channels only follow sends to MIX buses. MAIN shows every strip at its own level. Since every
+  send is now fixed (always wired), input channels and FX channels behave the same in a send mode:
+  - A send-mode strip gets a **`PRE` chip** that toggles that send's PRE/POST tap (the same value as the
+    graph/inspector tap; every CH/FX → MIX/FX send carries a tap).
+  - Its **MUTE toggles that send's ON/OFF (SEND_ON)** — the channel's own mute lives on the MAIN tab and in the inspector.
+  - Its **PAN/BAL knob is tab-scoped**: MAIN edits the → STEREO main-path PAN/BAL, a send mode edits that send's
+    pan (the same connection the fader controls). FX-bus sends are mono and carry no pan, so the **knob is dropped in an FX mode**.
+  So every strip control is per-tab independent — no MAIN-output control leaks into the send tabs. When a
+  **channel's / FX channel's own master is muted** (channel ON = off), a send-mode strip dims and shows a red
+  "CH MUTE" badge on its scribble (the muted-graph-node visual language), since the whole channel — every send
+  — is then silenced; the per-send MUTE/PRE/BAL stay operable (send ON/OFF and channel ON are independent
   device params, and the device offers no gate-out display of its own).
 - **Scribble colour** — the scribble uses each node's **CH SETTING colour** (`plan.nodeColors`, a device
   parameter) rather than the node-kind rail. The text colour is whichever of black/white has the higher

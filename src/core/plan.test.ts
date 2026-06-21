@@ -155,9 +155,11 @@ describe("ensureFixedConnections", () => {
     expect(hasConnection(plan, ref("ch_11_12", "out"), stereo)).toBe(true);
     expect(hasConnection(plan, ref("bus.fx1", "out"), stereo)).toBe(true);
     expect(hasConnection(plan, ref("bus.fx2", "out"), stereo)).toBe(true);
-    // Optional feeds (OSC, MIX TO ST) are not auto-wired.
+    // MIX 1/2 → STEREO ("TO ST") is fixed too, so it is auto-wired (off by default).
+    expect(hasConnection(plan, ref("bus.mix1", "out"), stereo)).toBe(true);
+    expect(hasConnection(plan, ref("bus.mix2", "out"), stereo)).toBe(true);
+    // The OSC feed is an optional assign (not fixed), so it is not auto-wired.
     expect(hasConnection(plan, ref("bus.osc", "out"), stereo)).toBe(false);
-    expect(hasConnection(plan, ref("bus.mix1", "out"), stereo)).toBe(false);
   });
 
   it("seeds FX channels at -∞ and leaves channel main paths at unity", () => {
@@ -167,6 +169,14 @@ describe("ensureFixedConnections", () => {
     const ch1 = plan.connections.find((c) => c.from === ref("ch1", "out") && c.to === stereo);
     expect(fx1?.params).toEqual({ level: LEVEL_OFF_DB });
     expect(ch1?.params).toBeUndefined();
+  });
+
+  it("seeds the fixed MIX → STEREO (TO ST) switch off, with no level", () => {
+    const plan = emptyPlan("URX44");
+    ensureFixedConnections(u44, plan);
+    const toSt = plan.connections.find((c) => c.from === ref("bus.mix1", "out") && c.to === stereo);
+    expect(toSt?.kind).toBe("sendSwitch");
+    expect(toSt?.params).toEqual({ on: false });
   });
 
   it("is idempotent and never duplicates a seeded wire", () => {

@@ -182,7 +182,10 @@ export const SSMCS_INITIAL = {
 // processing/state). Each field is optional; absence means the device default
 // (channel on, HPF off). Stored keyed by node id, alongside positions / notes.
 export interface NodeParams {
-  /** CH_ON: channel on. Absent or true = on; false = muted. */
+  /** ON / mute for a node with its own master switch: a channel (CH_ON), the STEREO
+   *  master (STEREO_MASTER_ON), an FX channel (FX_CHANNEL_ON) — all device-written —
+   *  or a MONITOR bus (plan-only, no confirmed device param). Absent or true = on;
+   *  false = muted. */
   on?: boolean;
   /** HPF_ON: high-pass filter engaged. Absent or false = off. */
   hpf?: boolean;
@@ -390,10 +393,18 @@ export function ensureFixedConnections(model: DeviceModel, plan: Plan): void {
   for (const rule of model.rules) {
     if (!rule.fixed || hasConnection(plan, rule.from, rule.to)) continue;
     const conn: PlanConnection = { from: rule.from, to: rule.to, kind: rule.kind };
-    // FX channels into STEREO (the only bus-sourced fixed sends) default to -∞ so a
-    // return is not summed into the main mix until raised; channel main paths stay at unity.
-    const fromKind = model.nodes.find((n) => n.id === parseRef(rule.from).nodeId)?.kind;
-    if (fromKind === "bus") conn.params = { level: LEVEL_OFF_DB };
+    if (rule.kind === "sendSwitch") {
+      // MIX 1/2 → STEREO "TO ST": a fixed ON/OFF switch with no level/pan, off at the
+      // factory (carried in params.on so the fixed wire can still be turned off).
+      conn.params = { on: false };
+    } else {
+      // The channel's main fader path into STEREO seeds at unity; every other fixed
+      // send (CH → MIX/FX sends, FX returns into STEREO/MIX) seeds at -∞ so it is not
+      // summed in until raised. Each ships ON (params.on absent = on, SEND_ON = 1).
+      const fromKind = model.nodes.find((n) => n.id === parseRef(rule.from).nodeId)?.kind;
+      const toStereo = parseRef(rule.to).nodeId === "bus.stereo";
+      if (!(fromKind === "channel" && toStereo)) conn.params = { level: LEVEL_OFF_DB };
+    }
     plan.connections.push(conn);
   }
 }
