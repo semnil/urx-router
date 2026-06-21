@@ -249,9 +249,9 @@ export class Console {
       isMono: /^ch\d+$/.test(id), // mono channels are ch1..ch4 (the only gain/gate/comp/φ-bearing strips)
       fadersOnly: !(isChannel || this.isFxChannel(id)),
       isOsc,
-      // MIX strips carry a MUTE (the MIX → STEREO "TO ST" switch), and the MONITOR
-      // strips carry a MUTE (np.on → MONITOR_ON, the device [ON] button). Both flow
-      // through the generic master-mute branch below.
+      // MIX strips carry a MUTE (the MIX → STEREO "TO ST" switch; the MIX master ON
+      // 675 shows read-only — see masterMuted in buildStrip), and the MONITOR strips
+      // carry a MUTE (np.on → MONITOR_ON, the device [ON] button).
       hasMute: isChannel || isMaster || this.isFxChannel(id) || isMix || isMon,
       hasEq: isChannel || isMix || isMaster,
       hasPhones: id === "bus.mon1" || id === "bus.mon2",
@@ -306,8 +306,11 @@ export class Console {
     // send) is silenced regardless. Surface that override at the strip level (dim +
     // a CH MUTE badge) so the per-send controls stay operable while the user still
     // sees the channel is muted. Applies to input channels and FX channels alike;
-    // the MAIN tab shows the master directly via the MUTE chip instead.
-    const masterMuted = usesSend && np.on === false;
+    // the MAIN tab shows the master directly via the MUTE chip instead. A MIX strip
+    // reuses the same indicator: its MUTE chip is the MIX → STEREO "TO ST" send, so
+    // the MIX master ON (675, edited in the graph inspector only) shows read-only as
+    // the dim + CH MUTE badge here too.
+    const masterMuted = (usesSend || this.isMixBus(m.id)) && np.on === false;
 
     const strip = el("div", "con-strip" + (isMaster ? " master" : "") + (masterMuted ? " master-muted" : ""));
     strip.style.setProperty("--rail", m.rail);

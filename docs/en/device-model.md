@@ -182,6 +182,11 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
   - Each FX channel also has its own **channel ON/OFF** (mute), handled like the input-channel and
     STEREO-master ON. **Both FX 1 and FX 2 ship ON at the factory**; the console controls it via the **MAIN tab
     MUTE** and the inspector (the MIX tab MUTE means the send ON/OFF above). Off dims the node and tags it MUTE.
+  - MIX 1 / MIX 2 buses also have their own **master ON/OFF** (a bus-master switch like the STEREO master;
+    ships ON), independent of the MIX → STEREO TO ST switch. It is **edited only in the graph inspector**; the
+    console shows it read-only — when the master is off the MIX strip dims and gets a CH MUTE tag (the same
+    indicator a send tab uses for a channel whose master is off). The STEREO / MIX inspector toggles sit at the
+    top of the Parameters section under the same "Channel" label as an FX channel.
 - OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`sendSwitch`; an ON/OFF assign, not a
   summing send — the oscillator has one global level. Stereo destinations carry
   independent L/R in the wire (`oscL` / `oscR`); FX buses are mono)

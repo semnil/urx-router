@@ -124,7 +124,6 @@ export const ja: Messages = {
     duckerOn: "Ducker",
     gainAnalog: "A.Gain",
     gainDigital: "D.Gain",
-    master: "マスター",
     oscOn: "オシレーター",
     oscLevel: "レベル",
     oscMode: "モード",
