@@ -558,7 +558,7 @@ export function renderInspector(
         );
       }
       ps.body.append(
-        rangeSlider(m.inspector.oscLevel, -96, 0, 1, osc.level ?? -20, formatDb, (v) =>
+        rangeSlider(m.inspector.oscLevel, -96, 0, 1, osc.level ?? -14, formatDb, (v) =>
           setOsc({ level: v }),
         ),
       );
