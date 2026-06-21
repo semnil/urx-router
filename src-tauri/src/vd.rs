@@ -13,12 +13,22 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
 
 use serde::Serialize;
+use tauri::ipc::Channel;
 
 /// Device identity exposed to the frontend (no dev_uid / serial).
 #[derive(Clone, Serialize)]
 pub struct DeviceSummary {
     pub model: String,
     pub label: String,
+}
+
+/// One live level-meter reading pushed to the frontend. `value` is the broker's
+/// raw meter value (deci-dBFS; 32767 = OVER), decoded on the JS side.
+#[derive(Clone, Serialize)]
+pub struct MeterUpdate {
+    pub meter_id: u32,
+    pub x: i64,
+    pub value: i64,
 }
 
 /// A request handed to the worker thread, each carrying a one-shot reply channel.
@@ -52,6 +62,15 @@ pub enum Cmd {
     Info {
         reply: Sender<DeviceSummary>,
     },
+    /// Subscribe to a set of level meters (meter_id, x) and stream their readings
+    /// through `channel`. Replaces any prior meter subscription. Fire-and-forget:
+    /// the worker registers each address with the broker and forwards notifies.
+    MetersSubscribe {
+        addrs: Vec<(u32, i64)>,
+        channel: Channel<MeterUpdate>,
+    },
+    /// Drop the current meter subscription (unregisters each address).
+    MetersUnsubscribe,
     Shutdown,
 }
 
@@ -145,6 +164,22 @@ pub fn info(tx: Sender<Cmd>) -> Result<DeviceSummary, String> {
     wait.recv().map_err(|_| "no response from control worker".to_string())
 }
 
+/// Subscribe to live level meters; readings stream through `channel`. Replaces
+/// any prior subscription. Fire-and-forget (no broker round-trip awaited here).
+pub fn meters_subscribe(
+    tx: Sender<Cmd>,
+    addrs: Vec<(u32, i64)>,
+    channel: Channel<MeterUpdate>,
+) -> Result<(), String> {
+    tx.send(Cmd::MetersSubscribe { addrs, channel })
+        .map_err(|_| "control worker is gone".to_string())
+}
+
+/// Drop the current meter subscription.
+pub fn meters_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
+    tx.send(Cmd::MetersUnsubscribe).map_err(|_| "control worker is gone".to_string())
+}
+
 /// Close any live connection. Safe to call when not connected.
 pub fn disconnect(state: &VdState) {
     if let Some(tx) = state.tx.lock().unwrap().take() {
@@ -154,12 +189,13 @@ pub fn disconnect(state: &VdState) {
 
 #[cfg(desktop)]
 mod imp {
-    use super::{Cmd, DeviceSummary};
+    use super::{Cmd, DeviceSummary, MeterUpdate};
     use std::net::TcpStream;
     use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
     use std::time::{Duration, Instant};
 
     use serde_json::{json, Value};
+    use tauri::ipc::Channel;
     use tungstenite::stream::MaybeTlsStream;
     use tungstenite::{connect, Message, WebSocket};
 
@@ -190,6 +226,11 @@ mod imp {
             return; // caller gave up
         }
 
+        // Active meter subscription, if any: the channel to stream readings on and
+        // the addresses registered with the broker (so we can unregister on change).
+        let mut meter_ch: Option<Channel<MeterUpdate>> = None;
+        let mut meter_addrs: Vec<(u32, i64)> = Vec::new();
+
         loop {
             match rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(Cmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
@@ -208,10 +249,32 @@ mod imp {
                 Ok(Cmd::GetStr { param_id, x, y, reply }) => {
                     let _ = reply.send(do_get_str(&mut ws, &dev_uid, param_id, x, y));
                 }
+                Ok(Cmd::MetersSubscribe { addrs, channel }) => {
+                    // Replace any prior subscription: unregister the old set, then
+                    // register the new one address by address (never a bulk post on
+                    // /vd/meters — that has been seen to crash Device Center).
+                    for &(id, x) in &meter_addrs {
+                        let _ = reg_meter(&mut ws, &dev_uid, id, x, "unregist");
+                    }
+                    for &(id, x) in &addrs {
+                        let _ = reg_meter(&mut ws, &dev_uid, id, x, "regist");
+                    }
+                    meter_addrs = addrs;
+                    meter_ch = Some(channel);
+                }
+                Ok(Cmd::MetersUnsubscribe) => {
+                    for &(id, x) in &meter_addrs {
+                        let _ = reg_meter(&mut ws, &dev_uid, id, x, "unregist");
+                    }
+                    meter_addrs.clear();
+                    meter_ch = None;
+                }
                 Err(RecvTimeoutError::Timeout) => {
-                    // Discard queued meter notifications so the socket buffer
-                    // never backs up while idle, and stop if the link dropped.
-                    if let Err(e) = drain(&mut ws) {
+                    // Drain the idle socket so its buffer never backs up. When a
+                    // meter subscription is active, forward meter notifications to
+                    // the frontend instead of discarding them; stop if the link
+                    // dropped.
+                    if let Err(e) = pump(&mut ws, meter_ch.as_ref()) {
                         eprintln!("vd: {e}; stopping control worker");
                         break;
                     }
@@ -370,39 +433,60 @@ mod imp {
             .to_string())
     }
 
-    /// Outcome of reading one frame while draining the idle socket.
-    enum Drained {
-        /// A frame was read and discarded; more may be buffered.
-        Frame,
-        /// No more frames are buffered (socket would block); draining is done.
-        Empty,
-        /// The connection is closed or broken.
-        Closed,
+    /// Register or unregister one meter address with the broker. Fire-and-forget:
+    /// the response_code reply is drained by `pump` like any other frame.
+    fn reg_meter(ws: &mut Ws, dev_uid: &str, meter_id: u32, x: i64, op: &str) -> Result<(), String> {
+        send_json(
+            ws,
+            json!({
+                "jsonrpc": "1.0",
+                "method": "requestVD",
+                "params": {
+                    "dev_uid": dev_uid,
+                    "vdp": { "method": "post", "uri": format!("/vd/meters/{meter_id}:{x}?operation={op}") }
+                }
+            }),
+        )
     }
 
-    /// Read one frame for draining, distinguishing an empty socket (WouldBlock)
-    /// from a non-text frame so the caller can stop once the buffer is clear.
-    fn drain_one(ws: &mut Ws) -> Drained {
-        match ws.read() {
-            Ok(Message::Close(_)) => Drained::Closed,
-            Ok(_) => Drained::Frame, // text/ping/pong/binary — discard, keep going
-            Err(tungstenite::Error::Io(e))
-                if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) =>
-            {
-                Drained::Empty
-            }
-            Err(_) => Drained::Closed,
+    /// Parse a meter `notify` frame and stream it to the frontend. Ignores any
+    /// other frame shape (command replies, parameter notifies, etc.).
+    fn forward_meter(text: &str, ch: &Channel<MeterUpdate>) {
+        let Ok(msg) = serde_json::from_str::<Value>(text) else { return };
+        let vdp = msg.pointer("/params/vdp").or_else(|| msg.pointer("/vdp"));
+        let Some(vdp) = vdp else { return };
+        if vdp.get("method").and_then(Value::as_str) != Some("notify") {
+            return;
         }
+        let uri = vdp.get("uri").and_then(Value::as_str).unwrap_or("");
+        let Some(rest) = uri.strip_prefix("/vd/meters/") else { return };
+        let addr = rest.split('?').next().unwrap_or(rest);
+        let mut parts = addr.split(':');
+        let (Some(id), Some(xs)) = (parts.next(), parts.next()) else { return };
+        let (Ok(meter_id), Ok(x)) = (id.parse::<u32>(), xs.parse::<i64>()) else { return };
+        let value = vdp.pointer("/data/current_value").and_then(Value::as_i64).unwrap_or(0);
+        let _ = ch.send(MeterUpdate { meter_id, x, value });
     }
 
-    /// Read and discard whatever is buffered until the socket would block.
+    /// Read whatever is buffered until the socket would block, forwarding meter
+    /// notifications to `ch` (when subscribed) and discarding everything else.
     /// Returns Err if the connection dropped so the worker can stop.
-    fn drain(ws: &mut Ws) -> Result<(), String> {
-        for _ in 0..256 {
-            match drain_one(ws) {
-                Drained::Frame => continue,
-                Drained::Empty => return Ok(()),
-                Drained::Closed => return Err("Device Center closed the control connection".into()),
+    fn pump(ws: &mut Ws, ch: Option<&Channel<MeterUpdate>>) -> Result<(), String> {
+        for _ in 0..512 {
+            match ws.read() {
+                Ok(Message::Text(t)) => {
+                    if let Some(ch) = ch {
+                        forward_meter(&t, ch);
+                    }
+                }
+                Ok(Message::Close(_)) => return Err("Device Center closed the control connection".into()),
+                Ok(_) => {} // ping/pong/binary — discard, keep going
+                Err(tungstenite::Error::Io(e))
+                    if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) =>
+                {
+                    return Ok(());
+                }
+                Err(_) => return Err("Device Center closed the control connection".into()),
             }
         }
         Ok(())
