@@ -98,7 +98,9 @@ The constraint core (`core/routing.ts`):
   `legalTargets` / `legalSources` that ignore the plan and return rule-defined partners only,
   occupied single-input ports included, so a "rule exists but already full" target can still be shown.
 - `canConnect(model, plan, fromRef, toRef)` — checks rule existence and receiver multiplicity
-  (`source` / `patch` / `key` accept one wire; `send` accepts many).
+  (`source` / `patch` / `key` accept one wire; `send` accepts many). A single-input port's occupancy
+  counts any existing wire into it regardless of kind, so a hand-edited file carrying a malformed /
+  mismatched kind cannot slip a second input past the guard.
 - `partnerChannel(model, nodeId)` — returns the paired mono channel. A `source` wire is mirrored onto
   the partner (and removed together with it) so a channel pair always shares one input source (UI: `graph.ts`).
   A ducker key source is the `key` kind, not `source`, so it never enters this mirroring — guaranteed by the
@@ -390,7 +392,11 @@ native save/open dialogs (`tauri-plugin-dialog`) plus a recent-plans list; file 
 reached via `core/platform.ts` through `window.__TAURI_INTERNALS__.invoke`, so no Tauri npm package
 is bundled; when not running under Tauri it falls back to the browser path. The plan format is
 unchanged apart from the added `sampleRate`, `nodeNames`, `nodeColors`, `hidden`, `notes` and
-`noteCollapsed` fields (older files default them on load).
+`noteCollapsed` fields (older files default them on load). Loading (`deserialize`) is tolerant of
+corrupt input: every collection passes a type guard that drops a non-conforming value to its empty
+default (`positions` included, symmetrically), and `connections` is validated element-by-element so
+malformed wires (null, wrong-typed, unknown `kind`) are discarded — keeping garbled values from a
+hand edit or an older build out of the plan where they could break routing invariants.
 
 ## Build and distribution
 

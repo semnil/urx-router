@@ -87,7 +87,7 @@ flowchart TD
 - `legalTargets(model, plan, fromRef)` — ある出力ポートから結線可能な入力ポート集合を返す。
 - `legalSources(model, plan, toRef)` — 逆方向。ある入力ポートへ結線可能な出力ポート集合を返す。入力側からのドラッグ結線に使う。
 - `possibleTargets(model, fromRef)` / `possibleSources(model, toRef)` — plan を考慮せず規則のみで接続先/元を返す `legalTargets`/`legalSources` の superset。占有済みの single-input ポートも含むため、「規則はあるが既に埋まっている」結線先を示せる。
-- `canConnect(model, plan, fromRef, toRef)` — 規則の有無と受け口多重度 (`source`/`patch`/`key` は1本、`send` は複数) を判定。
+- `canConnect(model, plan, fromRef, toRef)` — 規則の有無と受け口多重度 (`source`/`patch`/`key` は1本、`send` は複数) を判定。single-input ポートの占有は既存結線の種別を問わず数えるため、壊れた/異種 kind を持つ手編集ファイルでも単一入力の不変条件をすり抜けられない。
 - `partnerChannel(model, nodeId)` — ペアとなる相方のモノ CH を返す。`source` 結線時に同一ソースを相方へミラーし、削除時も連動させる (UI: `graph.ts`)。Ducker のキーソースは `source` ではなく `key` 種別なのでこのミラーリングを通らない (モノペア非所属という偶然ではなく型で保証)。
 
 UI (`graph.ts`) はこれらを使い、出力・入力どちらのポートからもドラッグで結線できる。反対側のポートは2層でハイライトする (結線可能 = 塗り、規則はあるが占有済み = 輪郭のみ)。出力からのドラッグは possible があれば開始し、入力からは legal があるときのみ開始する。既にソースを持つ single-input ポートのクリックは、その結線を選択する (配線クリックと同等)。
@@ -340,6 +340,7 @@ Phase 2 ではネイティブの保存/読込ダイアログ (`tauri-plugin-dial
 いずれも `core/platform.ts` から `window.__TAURI_INTERNALS__.invoke` 経由で呼ぶため Tauri の npm パッケージは同梱しない。
 Tauri 外で動作する場合はブラウザ標準にフォールバックする。
 計画フォーマットは `sampleRate` / `nodeNames` / `nodeColors` / `hidden` / `notes` / `noteCollapsed` フィールドが追加された以外は不変 (古いファイルは読込時に既定値 — 空配列・空オブジェクト等 — を補う)。
+読込 (`deserialize`) は壊れた入力に寛容で、各コレクションは型ガードを通して非対応型を空既定へ落とし (`positions` も含め対称)、`connections` は要素単位で検証して不正な結線 (null・型違い・未知の `kind`) を除去する。これにより手編集や旧バージョン由来の壊れた値が plan へ流入してルーティング不変条件を崩すことを防ぐ。
 
 ## ビルドと配布
 

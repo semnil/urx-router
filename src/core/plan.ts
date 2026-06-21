@@ -361,8 +361,8 @@ export function deserialize(text: string): Plan {
   return {
     modelId: data.modelId as ModelId,
     sampleRate: typeof data.sampleRate === "number" ? data.sampleRate : DEFAULT_SAMPLE_RATE,
-    positions: (data.positions as Record<string, NodePos>) ?? {},
-    connections: Array.isArray(data.connections) ? (data.connections as PlanConnection[]) : [],
+    positions: isStringRecord(data.positions) ? (data.positions as unknown as Record<string, NodePos>) : {},
+    connections: Array.isArray(data.connections) ? data.connections.filter(isPlanConnection) : [],
     nodeParams: isStringRecord(data.nodeParams)
       ? (data.nodeParams as unknown as Record<string, NodeParams>)
       : {},
@@ -376,6 +376,22 @@ export function deserialize(text: string): Plan {
 
 function isStringRecord(v: unknown): v is Record<string, string> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+const CONNECTION_KINDS: ReadonlySet<string> = new Set<ConnectionKind>([
+  "source",
+  "patch",
+  "send",
+  "sendSwitch",
+  "key",
+]);
+
+// A loaded connections element is trusted only when it carries string from/to and
+// a known ConnectionKind; null / partial / mistyped elements are dropped on read
+// so an undefined kind can never slip past routing's single-input guard.
+function isPlanConnection(v: unknown): v is PlanConnection {
+  if (!isStringRecord(v)) return false;
+  return typeof v.from === "string" && typeof v.to === "string" && CONNECTION_KINDS.has(v.kind as string);
 }
 
 export function hasConnection(plan: Plan, from: string, to: string): boolean {

@@ -52,10 +52,11 @@ export function canConnect(model: DeviceModel, plan: Plan, from: string, to: str
   const rule = findRule(model, from, to);
   if (!rule) return { ok: false, reason: "noRule" };
   if (hasConnection(plan, from, to)) return { ok: false, reason: "duplicate" };
-  // A single-input receiver rejects a second single-input (source/patch) wire.
-  // Summing / switch sends to the same port are ignored here, so a bus keeps
-  // accepting them.
-  if (isSingleInput(rule.kind) && plan.connections.some((c) => c.to === to && isSingleInput(c.kind))) {
+  // A single-input receiver rejects a second incoming wire, counting any existing
+  // wire into the port regardless of its stored kind (a malformed/garbled plan
+  // could carry a wrong-kind wire into the slot). Summing receivers have a
+  // non-single-input rule.kind, so their fan-in stays unrestricted.
+  if (isSingleInput(rule.kind) && plan.connections.some((c) => c.to === to)) {
     return { ok: false, reason: "singleInput" };
   }
   return { ok: true };
