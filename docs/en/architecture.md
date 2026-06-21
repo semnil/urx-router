@@ -451,6 +451,7 @@ cd src-tauri && cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
 ```
 
 `src-tauri/about.toml` lists the accepted SPDX ids, `src-tauri/about.hbs` is the output template, and
-the generated `THIRD_PARTY_LICENSES.html` is git-ignored — regenerated for distribution, bundled as a
-Tauri resource (an in-app credits view) in Phase 2, then wired into CI so a dependency change can't
-silently drop a notice.
+the generated `THIRD_PARTY_LICENSES.html` is git-ignored — regenerated for distribution. It is already
+wired into CI (the post-merge `licenses` job runs `cargo about generate` and fails if a dependency
+carries a license outside `about.toml`), so a dependency change can't silently drop a notice. Bundling
+it as a Tauri resource (an in-app credits view) is still a future step.

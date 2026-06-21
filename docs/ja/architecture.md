@@ -401,5 +401,7 @@ cd src-tauri && cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
 ```
 
 `src-tauri/about.toml` が受容する SPDX id を列挙し、`src-tauri/about.hbs` が出力テンプレート。
-生成物 `THIRD_PARTY_LICENSES.html` は git 管理外で、配布時に再生成し、Phase 2 で Tauri リソース
-(アプリ内クレジット画面) として同梱、さらに CI に組み込んで依存変更で通知が欠落しないようにする。
+生成物 `THIRD_PARTY_LICENSES.html` は git 管理外で、配布時に再生成する。CI には組み込み済みで
+(post-merge の `licenses` ジョブが `cargo about generate` を実行し、依存変更で受容外ライセンスが
+混入すると失敗する)、依存変更で通知が欠落しない。Tauri リソース (アプリ内クレジット画面) としての
+同梱は将来対応。
