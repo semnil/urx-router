@@ -94,6 +94,9 @@ The constraint core (`core/routing.ts`):
 - `legalTargets(model, plan, fromRef)` — returns the set of input ports an output port can connect to.
 - `legalSources(model, plan, toRef)` — the reverse: the output ports that can connect into an input
   port, so a wire can be dragged from the input side as well.
+- `possibleTargets(model, fromRef)` / `possibleSources(model, toRef)` — supersets of
+  `legalTargets` / `legalSources` that ignore the plan and return rule-defined partners only,
+  occupied single-input ports included, so a "rule exists but already full" target can still be shown.
 - `canConnect(model, plan, fromRef, toRef)` — checks rule existence and receiver multiplicity
   (`source` / `patch` / `key` accept one wire; `send` accepts many).
 - `partnerChannel(model, nodeId)` — returns the paired mono channel. A `source` wire is mirrored onto
@@ -102,8 +105,10 @@ The constraint core (`core/routing.ts`):
   kind rather than by the incidental fact that duckers are not in `channelPairs`.
 
 The UI (`graph.ts`) uses these to let a wire be dragged from either an output or an input port,
-highlighting the legal ports on the opposite side via `legalTargets` / `legalSources`. Clicking a
-single-input port that already holds a source selects that wire, the same as clicking the wire itself.
+highlighting the opposite-side ports in two layers: legal targets filled, rule-defined-but-occupied
+ones outline-only. A drag from an output opens on any possible route; a drag from an input opens only
+when a legal source exists. Clicking a single-input port that already holds a source selects that
+wire, the same as clicking the wire itself.
 
 For the detailed routing rules, see [device-model.md](device-model.md) (derived from the official
 block diagram).

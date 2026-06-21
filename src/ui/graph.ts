@@ -6,7 +6,7 @@ import type { DeviceModel, DeviceNode, NodeKind, PortDirection } from "../models
 import { fullLabel, isSingleInput, parseRef, ref } from "../models/types";
 import type { Plan, PlanConnection } from "../core/plan";
 import { hasConnection, LEVEL_MIN_DB, removeConnection } from "../core/plan";
-import { canConnect, isFixedConnection, legalSources, legalTargets, pairPrimary, partnerChannel, ruleKind, sendHasTap } from "../core/routing";
+import { canConnect, isFixedConnection, legalSources, legalTargets, pairPrimary, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap } from "../core/routing";
 import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
 import type { SaveResult } from "../core/storage";
 import { t } from "../i18n";
@@ -88,6 +88,9 @@ interface Palette {
   /** Legal-target highlight shown on input ports while connecting. */
   legalFill: string;
   legalStroke: string;
+  /** "Could route, but occupied" highlight: outline only, no fill, so a full
+   *  target reads as a possibility without looking connectable. */
+  possibleStroke: string;
   /** Outline for nodes unavailable at the current sample rate. */
   warn: string;
   /** Accent for the PRE (pre-fader) send marker; the brand LED amber. */
@@ -112,6 +115,7 @@ const PALETTES: Record<ThemeName, Palette> = {
     tempWire: "#caa86a",
     legalFill: "#1d3b2a",
     legalStroke: "#7fd0a0",
+    possibleStroke: "#5a7d6a",
     warn: "#e2794e",
     pre: "#ffc24d",
     noteWell: "rgba(0,0,0,0.24)",
@@ -131,6 +135,7 @@ const PALETTES: Record<ThemeName, Palette> = {
     tempWire: "#9a8d70",
     legalFill: "#cde7d6",
     legalStroke: "#2f8f63",
+    possibleStroke: "#8fb6a0",
     warn: "#c2531f",
     pre: "#e8920f",
     noteWell: "rgba(95,78,42,0.10)",
@@ -1579,21 +1584,34 @@ export class Graph {
 
   // Enter connect mode from `ref`, highlighting the legal ports on the opposite
   // side and starting a rubber-band wire. Returns false (doing nothing) when the
-  // port has no legal partner, so the press can fall back to a click.
+  // press should fall back to a click: an output with no possible route at all,
+  // or an input with no legal source — the latter keeps a press on a full input
+  // selecting its incoming wire instead of opening a dead rubber-band.
   private beginConnect(from: string, dir: PortDirection): boolean {
-    const targets =
+    const legal =
       dir === "out"
         ? legalTargets(this.model, this.plan, from)
         : legalSources(this.model, this.plan, from);
-    if (!targets.size) return false;
-    // Reset every port to its default look, then light only the legal partners.
+    // Possible partners include occupied ones, shown outline-only so the user can
+    // see where a port could route even when the destination is taken.
+    const possible =
+      dir === "out" ? possibleTargets(this.model, from) : possibleSources(this.model, from);
+    // Gate: outputs open on any possible route (occupied targets still highlight);
+    // inputs open only on a legal source, so a full input falls back to wire-select.
+    if (dir === "out" ? !possible.size : !legal.size) return false;
+    // Reset every port to its default look, then light the partners: legal ones
+    // filled, occupied-but-possible ones outline-only.
     this.clearPortHighlights();
     const opposite = dir === "out" ? "in" : "out";
     for (const [r, el] of this.portEls) {
-      if (el.dataset.dir !== opposite || !targets.has(r)) continue;
-      el.setAttribute("fill", this.palette.legalFill);
+      if (el.dataset.dir !== opposite || !possible.has(r)) continue;
       el.setAttribute("r", "8");
-      el.setAttribute("stroke", this.palette.legalStroke);
+      if (legal.has(r)) {
+        el.setAttribute("fill", this.palette.legalFill);
+        el.setAttribute("stroke", this.palette.legalStroke);
+      } else {
+        el.setAttribute("stroke", this.palette.possibleStroke);
+      }
     }
     this.tempWire = document.createElementNS(SVGNS, "path");
     this.tempWire.classList.add("overlay-temp");
