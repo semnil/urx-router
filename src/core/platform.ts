@@ -158,6 +158,36 @@ export function vdGetStr(paramId: number, x: number, y: number): Promise<string>
   return invoke<string>("vd_get_str", { paramId, x, y });
 }
 
+/** One live level-meter reading from the device. `value` is the broker's raw
+ * meter value (deci-dBFS; 32767 = OVER), decoded by core/meters.ts. */
+export interface MeterUpdate {
+  meterId: number;
+  x: number;
+  value: number;
+}
+
+// The Rust side streams MeterUpdate with snake_case fields (serde default).
+interface RawMeterUpdate {
+  meter_id: number;
+  x: number;
+  value: number;
+}
+
+/**
+ * Subscribe to live level meters; readings stream through onUpdate at ~10 Hz.
+ * `addrs` is a list of [meterId, x] pairs. Replaces any prior subscription.
+ * Returns an unsubscribe function. No-op (returns a noop) outside Tauri.
+ */
+export function vdMetersSubscribe(
+  addrs: Array<[number, number]>,
+  onUpdate: (m: MeterUpdate) => void,
+): () => void {
+  if (!isTauri()) return () => {};
+  const channel = newChannel<RawMeterUpdate>((d) => onUpdate({ meterId: d.meter_id, x: d.x, value: d.value }));
+  void invoke<void>("vd_meters_subscribe", { addrs, channel });
+  return () => void invoke<void>("vd_meters_unsubscribe").catch(() => {});
+}
+
 /** Close the live connection (no-op if not connected). */
 export function vdDisconnect(): Promise<void> {
   return invoke<void>("vd_disconnect");

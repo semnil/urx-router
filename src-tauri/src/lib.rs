@@ -115,6 +115,25 @@ async fn vd_get_str(
         .map_err(|e| e.to_string())?
 }
 
+// Subscribe to live level meters: the worker registers each (meter_id, x) with
+// the broker and streams readings through the channel. Replaces any prior
+// subscription. Fire-and-forget, so no blocking round-trip / spawn_blocking.
+#[tauri::command]
+fn vd_meters_subscribe(
+    state: State<vd::VdState>,
+    addrs: Vec<(u32, i64)>,
+    channel: tauri::ipc::Channel<vd::MeterUpdate>,
+) -> Result<(), String> {
+    let tx = vd::sender(&state)?;
+    vd::meters_subscribe(tx, addrs, channel)
+}
+
+#[tauri::command]
+fn vd_meters_unsubscribe(state: State<vd::VdState>) -> Result<(), String> {
+    let tx = vd::sender(&state)?;
+    vd::meters_unsubscribe(tx)
+}
+
 // Disconnect only signals the worker to shut down (no reply wait), so it stays
 // synchronous.
 #[tauri::command]
@@ -148,6 +167,8 @@ pub fn run() {
             vd_get,
             vd_set_str,
             vd_get_str,
+            vd_meters_subscribe,
+            vd_meters_unsubscribe,
             vd_disconnect
         ])
         .run(tauri::generate_context!())
