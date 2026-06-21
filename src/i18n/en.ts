@@ -137,6 +137,7 @@ export const en = {
     delayOn: "DELAY",
     delayFrameRate: "Frame rate",
     delayTime: "Delay Time",
+    monitorOn: "Monitor",
     cueInterrupt: "CUE Interrupt",
     mono: "MONO",
     phonesLevel: "PHONES Level",
