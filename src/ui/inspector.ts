@@ -491,10 +491,16 @@ export function renderInspector(
       host.append(ps.el);
     }
 
-    // Monitor bus level (MONITOR_LEVEL) plus the CUE-interrupt / MONO toggles.
+    // Monitor bus ON (MONITOR_ON) + level (MONITOR_LEVEL) plus the CUE-interrupt /
+    // MONO toggles. ON precedes the fader to match the device MONITOR screen order.
     if (node.id === "bus.mon1" || node.id === "bus.mon2") {
       const np = plan.nodeParams[node.id] ?? {};
       const ps = section(m.inspector.parameters, { key: "params" });
+      ps.body.append(
+        boolToggle(m.inspector.monitorOn, np.on ?? true, (v) =>
+          actions.onUpdateNodeParams(node.id, { on: v }),
+        ),
+      );
       ps.body.append(
         faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
       );

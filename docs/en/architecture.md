@@ -177,10 +177,11 @@ signal ladder (green→red; signal only while Live sync streams); the OVER box l
 its top/bottom to the fader travel, so a tick at the cap's height marks that level (a functional scale,
 10/0/-10/-20/-40/-60/-80/-∞). Each tick centres its digits with the minus sign hanging left, so `10` and
 `-10` line up vertically. Above the zone the scribble shows two lines — **node name + device CH SETTING
-name**. Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE (on channels, FX channels, the
+name** (the monitor buses carry no CH SETTING name, so their second line names the linked PHONES output instead —
+`Phone 1` / `Phone 2`). Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE (on channels, FX channels, the
 master, the MIX buses and the MONITOR buses; an FX channel's is the device FX-channel ON, the master's is the
 STEREO master ON, a **MIX bus's drives the MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off), and a
-**MONITOR bus's is a plan-only mute** (`np.on`, no confirmed device param so it is not written)). The
+**MONITOR bus's is the device MONITOR ON** (`np.on` → `MONITOR_ON`, the MONITOR-screen [ON] button)). The
 **OSCILLATOR is normally OFF, so it gets an ON button instead of a MUTE** (inverse polarity — lit = generating,
 bound to `osc.on`). Then +48 / φ /
 HPF on mono MIC channels (Hi-Z on CH3/4) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing

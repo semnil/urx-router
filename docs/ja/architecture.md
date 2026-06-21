@@ -154,8 +154,8 @@ PDF は単一の FlateDecode 画像を埋め込んだ 1 ページ文書を手書
 クリップ (生値 32767) のラッチ (`sig.over`) で赤く点灯し約 1 秒で減衰する。スケールは各ストリップのレンジに
 合わせ、上端・下端をフェーダーの可動域に揃えるので、つまみと同じ高さの目盛がそのレベルを指す (機能的な
 目盛、10/0/-10/-20/-40/-60/-80/-∞)。目盛の数字は符号を分離して中央寄せ (「−」を左へハングさせ `10` と
-`-10` の桁を縦に揃える)。上部のスクリブルは **ノード名 + 実機 CH SETTING 名** の 2 行。その下にトグルチップを
-2 列グリッドで 2 グループ置く: ①チャンネル/入力 (HA) — MUTE (チャンネル・FX チャンネル・マスター・MIX・MONITOR バスが持つ。FX チャンネルは実機の FX チャンネル ON、マスターは STEREO master ON、**MIX バスは MIX → STEREO の TO ST スイッチ** (`params.on`、muted = TO ST OFF)、**MONITOR バスは plan 専用ミュート** (`np.on`、確定 param が無いため device 非書込み))。**OSCILLATOR は通常 OFF なので MUTE ではなく ON ボタン** (極性が逆・点灯 = 発振中・`osc.on`)。モノ MIC CH は +48 / φ / HPF (CH3/4 は Hi-Z)、
+`-10` の桁を縦に揃える)。上部のスクリブルは **ノード名 + 実機 CH SETTING 名** の 2 行 (MONITOR バスは CH SETTING 名を持たないため、2 行目はリンク先の PHONES 出力名 `Phone 1` / `Phone 2` を表示する)。その下にトグルチップを
+2 列グリッドで 2 グループ置く: ①チャンネル/入力 (HA) — MUTE (チャンネル・FX チャンネル・マスター・MIX・MONITOR バスが持つ。FX チャンネルは実機の FX チャンネル ON、マスターは STEREO master ON、**MIX バスは MIX → STEREO の TO ST スイッチ** (`params.on`、muted = TO ST OFF)、**MONITOR バスは実機の MONITOR ON** (`np.on` → `MONITOR_ON`、MONITOR 画面の [ON] ボタン))。**OSCILLATOR は通常 OFF なので MUTE ではなく ON ボタン** (極性が逆・点灯 = 発振中・`osc.on`)。モノ MIC CH は +48 / φ / HPF (CH3/4 は Hi-Z)、
 ステレオ CH は φL / φR (`channelControl` の `phases`/フラグで判定) ②処理チェーン — GATE → COMP → EQ →
 INS FX、ステレオ CH は EQ + DUCKER (直下に吊るした ducker ノードの `duckerOn` をトグル)。チップが奇数の
 グループは不可視スペーサで最後のチップが全幅化しないようにする。最下段に回転つまみ

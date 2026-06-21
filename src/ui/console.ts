@@ -241,15 +241,17 @@ export class Console {
     return {
       id,
       label: node.label,
-      deviceName: this.hooks.getPlan().nodeNames[id] || "",
+      // Monitors carry no device CH SETTING name; their second row instead names
+      // the linked PHONES output (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2).
+      deviceName: isMon ? `Phone ${id.slice(-1)}` : this.hooks.getPlan().nodeNames[id] || "",
       rail: `var(--rail-${node.kind})`,
       isChannel,
       isMono: /^ch\d+$/.test(id), // mono channels are ch1..ch4 (the only gain/gate/comp/φ-bearing strips)
       fadersOnly: !(isChannel || this.isFxChannel(id)),
       isOsc,
       // MIX strips carry a MUTE (the MIX → STEREO "TO ST" switch), and the MONITOR
-      // strips carry a plan-only MUTE (np.on) — neither bus has a device master mute
-      // of its own. Both flow through the generic master-mute branch below.
+      // strips carry a MUTE (np.on → MONITOR_ON, the device [ON] button). Both flow
+      // through the generic master-mute branch below.
       hasMute: isChannel || isMaster || this.isFxChannel(id) || isMix || isMon,
       hasEq: isChannel || isMix || isMaster,
       hasPhones: id === "bus.mon1" || id === "bus.mon2",

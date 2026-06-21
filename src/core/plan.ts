@@ -183,9 +183,8 @@ export const SSMCS_INITIAL = {
 // (channel on, HPF off). Stored keyed by node id, alongside positions / notes.
 export interface NodeParams {
   /** ON / mute for a node with its own master switch: a channel (CH_ON), the STEREO
-   *  master (STEREO_MASTER_ON), an FX channel (FX_CHANNEL_ON) — all device-written —
-   *  or a MONITOR bus (plan-only, no confirmed device param). Absent or true = on;
-   *  false = muted. */
+   *  master (STEREO_MASTER_ON), an FX channel (FX_CHANNEL_ON) or a MONITOR bus
+   *  (MONITOR_ON) — all device-written. Absent or true = on; false = muted. */
   on?: boolean;
   /** HPF_ON: high-pass filter engaged. Absent or false = off. */
   hpf?: boolean;

@@ -1107,9 +1107,10 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     for (const inst of bm.instances) out.push(rawCommand(bm.name, bm.param, "bool", inst, np.on ? 1 : 0));
   }
 
-  // Monitor bus level / CUE interrupt / MONO: bus.mon1 → y0, bus.mon2 → y1.
+  // Monitor bus ON / level / CUE interrupt / MONO: bus.mon1 → y0, bus.mon2 → y1.
   for (const [id, y] of [["bus.mon1", 0], ["bus.mon2", 1]] as const) {
     const np = plan.nodeParams[id];
+    if (np?.on !== undefined) out.push(command("MONITOR_ON", y, np.on ? 1 : 0));
     if (np?.level !== undefined) out.push(command("MONITOR_LEVEL", y, np.level));
     if (np?.cueInterrupt !== undefined) out.push(command("MONITOR_CUE_INTERRUPT", y, np.cueInterrupt ? 1 : 0));
     if (np?.mono !== undefined) out.push(command("MONITOR_MONO", y, np.mono ? 1 : 0));

@@ -136,6 +136,7 @@ export const ja: Messages = {
     delayOn: "DELAY",
     delayFrameRate: "Frame rate",
     delayTime: "Delay Time",
+    monitorOn: "モニター",
     cueInterrupt: "CUE Interrupt",
     mono: "MONO",
     phonesLevel: "PHONES Level",

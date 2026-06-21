@@ -297,6 +297,8 @@ Source selection for the analog outputs (MAIN / LINE).
   **MIX 1/2 → STEREO (TO ST)**: always wired, shown pre-connected, and non-removable. Unlike the items above
   they *are* drawn as wires (between visible nodes) since their LEVEL/PAN/PRE-POST/ON (SEND_ON; TO ST is ON/OFF
   only) remain editable; only the routing is locked, and an off (ON=OFF) / -∞ send is dimmed on the canvas (§2).
+- MONITOR 1 / 2 have an output **ON/OFF** (the MONITOR-screen [ON] button, factory ON), toggled on the
+  MONITOR node and via the MUTE on the console MONITOR strip.
 - PHONES 1/2/front are a fixed 1:1 wire to the MONITOR buses (no source select, no node). PHONES
   carries the same signal as its MONITOR bus but has its own **PHONES Level** (a unit-less 0.0 …
   10.0 scale, independent of the monitor fader), edited on the MONITOR 1 / 2 nodes — PHONES 1 ↔

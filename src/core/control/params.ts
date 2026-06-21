@@ -233,6 +233,9 @@ export const PARAMS = {
   EQ_ONE_KNOB_TYPE: { id: 47, axis: "input", encoding: "enum", sideEffect: true },
   /** EQ 1-knob effect depth (0 … 100 %, raw). */
   EQ_ONE_KNOB_LEVEL: { id: 48, axis: "input", encoding: "raw", sideEffect: true },
+  /** Monitor output ON (y = monitor 0..3). Confirmed by live snapshot-diff: the
+   *  MONITOR screen [ON] button toggles 723 on the touched monitor's slot only. */
+  MONITOR_ON: { id: 723, axis: "global", encoding: "bool" },
   /** Monitor level (y = monitor 0..3). Wider -96 dB floor than the fader. */
   MONITOR_LEVEL: { id: 724, axis: "global", encoding: "level" },
   /** PHONES output level (y0 = PHONES 1, y1 = PHONES 2): the unit-less 0.0..10.0
