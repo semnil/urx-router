@@ -341,7 +341,9 @@ export class Console {
     }
     head.append(scrib);
 
-    const cc = channelControl(model, m.id);
+    // Channel-domain controls (HA toggles, gain knob) are hidden in a send tab, so
+    // their capability lookup is skipped there too.
+    const cc = usesSend ? undefined : channelControl(model, m.id);
 
     // Toggle chips in two 2-column groups: channel + input (HA) toggles, then the
     // processing chain GATE → COMP → EQ → INS FX. Each chip flips a plan flag (the
@@ -425,42 +427,49 @@ export class Console {
         return next;
       });
     }
-    if (cc?.hasMicStrip) boolChip(top, "+48", "phantom", false);
-    // Polarity: one φ on a mono channel, independent φL / φR on a stereo one. Keep
-    // the stereo pair on a single row by padding to an even count before them.
-    if ((cc?.phases.length ?? 0) === 2 && top.childElementCount % 2 === 1) {
-      top.append(el("div", "con-chip spacer"));
+    // HA input toggles (+48 / polarity / HPF / Hi-Z) are channel-domain, not send
+    // controls, so a send tab (which edits the → MIX/FX send) hides them.
+    if (!usesSend) {
+      if (cc?.hasMicStrip) boolChip(top, "+48", "phantom", false);
+      // Polarity: one φ on a mono channel, independent φL / φR on a stereo one. Keep
+      // the stereo pair on a single row by padding to an even count before them.
+      if ((cc?.phases.length ?? 0) === 2 && top.childElementCount % 2 === 1) {
+        top.append(el("div", "con-chip spacer"));
+      }
+      for (const ph of cc?.phases ?? []) {
+        boolChip(top, ph.key === "phase" ? "φ" : ph.key === "phaseL" ? "φL" : "φR", ph.key, false);
+      }
+      if (cc?.hasHpf) boolChip(top, "HPF", "hpf", false);
+      if (cc?.hasHiZ) boolChip(top, "Hi-Z", "hiZ", false);
     }
-    for (const ph of cc?.phases ?? []) {
-      boolChip(top, ph.key === "phase" ? "φ" : ph.key === "phaseL" ? "φL" : "φR", ph.key, false);
-    }
-    if (cc?.hasHpf) boolChip(top, "HPF", "hpf", false);
-    if (cc?.hasHiZ) boolChip(top, "Hi-Z", "hiZ", false);
 
-    // processing group (GATE / COMP are mono-channel features)
+    // processing group (GATE / COMP / EQ / INS FX / DUCKER) — channel-domain
+    // processing, not send controls, so a send tab hides the whole group.
     const proc = el("div", "con-chips");
-    if (m.isMono) boolChip(proc, "GATE", "gateOn", false);
-    if (m.isMono) boolChip(proc, "COMP", "compOn", false);
-    if (m.hasEq) boolChip(proc, t().console.eq, "eqOn", true);
-    const ifx = insertFxControl(model, m.id);
-    if (ifx) {
-      const insOn = (): boolean => {
-        const v = planOf().insertFx;
-        return v != null && v !== INSERT_FX_NONE;
-      };
-      makeChip(proc, "INS FX", false, insOn(), () => this.toggleInsFx(m.id, ifx.options));
-    }
-    // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
-    // A shelved ducker drops its chip even while the parent strip stays.
-    const hidden = this.hooks.getPlan().hidden;
-    const duckerId = model.nodes.find((n) => n.kind === "ducker" && n.attachTo === m.id && !hidden.includes(n.id))?.id;
-    if (duckerId) {
-      const duckOn = (): boolean => this.hooks.getPlan().nodeParams[duckerId]?.duckerOn === true;
-      makeChip(proc, "DUCKER", false, duckOn(), () => {
-        const next = !duckOn();
-        this.nodeParamsOf(duckerId).duckerOn = next;
-        return next;
-      });
+    if (!usesSend) {
+      if (m.isMono) boolChip(proc, "GATE", "gateOn", false);
+      if (m.isMono) boolChip(proc, "COMP", "compOn", false);
+      if (m.hasEq) boolChip(proc, t().console.eq, "eqOn", true);
+      const ifx = insertFxControl(model, m.id);
+      if (ifx) {
+        const insOn = (): boolean => {
+          const v = planOf().insertFx;
+          return v != null && v !== INSERT_FX_NONE;
+        };
+        makeChip(proc, "INS FX", false, insOn(), () => this.toggleInsFx(m.id, ifx.options));
+      }
+      // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
+      // A shelved ducker drops its chip even while the parent strip stays.
+      const hidden = this.hooks.getPlan().hidden;
+      const duckerId = model.nodes.find((n) => n.kind === "ducker" && n.attachTo === m.id && !hidden.includes(n.id))?.id;
+      if (duckerId) {
+        const duckOn = (): boolean => this.hooks.getPlan().nodeParams[duckerId]?.duckerOn === true;
+        makeChip(proc, "DUCKER", false, duckOn(), () => {
+          const next = !duckOn();
+          this.nodeParamsOf(duckerId).duckerOn = next;
+          return next;
+        });
+      }
     }
 
     for (const group of [top, proc]) {
@@ -486,7 +495,9 @@ export class Console {
       head.append(preGroup);
     }
 
-    if (m.isChannel) {
+    // A.GAIN / D.GAIN is the channel head-amp / digital gain, not a send control,
+    // so it is hidden in a send tab.
+    if (m.isChannel && !usesSend) {
       const min = cc?.gain?.minDb ?? (m.isMono ? -8 : -24);
       const max = cc?.gain?.maxDb ?? (m.isMono ? 70 : 24);
       const factory = this.factoryPlan().nodeParams[m.id]?.gain ?? (m.isMono ? -8 : 0);

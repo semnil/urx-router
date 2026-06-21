@@ -212,6 +212,10 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
   - Its **MUTE toggles that send's ON/OFF (SEND_ON)** — the channel's own mute lives on the MAIN tab and in the inspector.
   - Its **PAN/BAL knob is tab-scoped**: MAIN edits the → STEREO main-path PAN/BAL, a send mode edits that send's
     pan (the same connection the fader controls). FX-bus sends are mono and carry no pan, so the **knob is dropped in an FX mode**.
+  - **Channel-domain controls are MAIN-only** — the HA toggles (+48 / φ / HPF / Hi-Z), the processing chain
+    (GATE / COMP / EQ / INS FX / DUCKER) and the Gain knob have no send equivalent, so a send tab hides them
+    (gated by `!usesSend`; their `channelControl` capability lookup is skipped there too). A send tab keeps only
+    the fader (send level), MUTE, PRE and PAN/BAL.
   So every strip control is per-tab independent — no MAIN-output control leaks into the send tabs. When a
   **channel's / FX channel's own master is muted** (channel ON = off), a send-mode strip dims and shows a red
   "CH MUTE" badge on its scribble (the muted-graph-node visual language), since the whole channel — every send

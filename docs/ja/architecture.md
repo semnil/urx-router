@@ -183,6 +183,10 @@ A.Gain +8/+55・D.Gain -14/+15 を左右の水平に。
   - 同モードでは **MUTE はその Send の ON/OFF (SEND_ON)** を指す (チャンネル本体のミュートは MAIN タブ/インスペクタ)。
   - **PAN/BAL つまみ**はタブ依存で、MAIN= → STEREO 主経路の PAN/BAL、Send モード=その Send の pan を制御する
     (fader と同じ接続)。FX バスへの Send はモノで pan を持たないため、**FX タブではつまみを省く**。
+  - **チャンネル本体のコントロールは MAIN タブのみ** — HA トグル (+48 / φ / HPF / Hi-Z)・処理チェーン
+    (GATE / COMP / EQ / INS FX / DUCKER)・Gain つまみは Send 制御を持たないため、Send タブでは非表示にする
+    (`!usesSend` でガード。`channelControl` の能力判定も Send モードでは省く)。Send タブに残るのはフェーダー
+    (Send レベル)・MUTE・PRE・PAN/BAL のみ。
   これにより strip の各コントロールはタブ毎に独立 (MAIN 出力のコントロールが他タブに混入しない)。
   Send モードで **チャンネル/FX チャンネル本体が master mute (チャンネル ON=OFF) の場合**、Send に関わらず全体が
   無音になるため、strip を減光し scribble に赤「CH MUTE」バッジを出す (グラフのノード mute と同じ視覚言語)。
