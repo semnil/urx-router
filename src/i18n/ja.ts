@@ -38,9 +38,11 @@ export const ja: Messages = {
   console: {
     outputLabel: "出力",
     toMain: "→ MAIN",
-    toSend: (bus: string): string => `→ ${bus} 送り`,
+    toSend: (bus: string): string => `→ ${bus} SEND`,
     mute: "MUTE",
     eq: "EQ",
+    pre: "PRE",
+    chMute: "CH MUTE",
     master: "マスター",
     groupInputs: "入力",
     groupBus: "BUS / FX",
@@ -70,6 +72,7 @@ export const ja: Messages = {
     balance: "バランス",
     prePost: "PRE/POST",
     channelOn: "チャンネル",
+    sendOn: "Send",
     hpf: "HPF",
     hpfFreq: "HPF 周波数",
     phantom: "+48V",
@@ -138,10 +141,10 @@ export const ja: Messages = {
     fixedConnection: "固定接続 — 常時有効で削除できません。",
     busType: "BUS Type",
     panLink: "Pan Link",
-    busFixedLevel: "送りレベルは固定 (BUS Type: FIXED)。",
-    panLinked: "パンは送り元チャンネルの PAN に追従 (Pan Link)。",
+    busFixedLevel: "Send レベルは固定 (BUS Type: FIXED)。",
+    panLinked: "パンは Send 元チャンネルの PAN に追従 (Pan Link)。",
     postFaderSend: "Post Fader Send",
-    postFaderSendHint: "この FX へ post-fader で送る MIX バス (DAW Integration メニュー、V1.2 以降)。",
+    postFaderSendHint: "この FX へ post-fader で Send する MIX バス (DAW Integration メニュー、V1.2 以降)。",
     signalType: "Signal Type",
     panBal: "PAN / BAL",
     deleteConnection: "この接続を削除",
@@ -259,7 +262,7 @@ export const ja: Messages = {
     selfTest:
       "デバイスのセルフテストを実行しますか? 全パラメータを一時的に上書きして書き込みを検証し、元の状態に復元します。実行中は出力をミュート (フェーダー最小・発振器/ファンタム OFF) します。",
     selfTestExport:
-      "この機種には未確認のパラメータ対応があります。確認のため送り返せるよう、セルフテストのレポートを保存しますか?",
+      "この機種には未確認のパラメータ対応があります。確認のため返送できるよう、セルフテストのレポートを保存しますか?",
   },
   filter: {
     plan: "URX Router 計画",

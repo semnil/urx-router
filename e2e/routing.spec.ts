@@ -6,11 +6,12 @@ import { test, expect, type Page } from "@playwright/test";
 const wires = (page: Page) => page.locator("#graph-host .wire-hit");
 const port = (page: Page, ref: string) => page.locator(`[data-ref="${ref}"]`);
 
-// Fixed CH / FX-return -> STEREO main-path wires are seeded on every plan and
-// shown pre-connected; the diagram never starts empty. User wires are appended
-// after them, so the last .wire-hit is the most recent user connection.
-const FIXED = 10; // URX44V (the startup model)
-const FIXED_URX22 = 8;
+// Fixed wires are seeded on every plan and shown pre-connected; the diagram never
+// starts empty. These are the CH / FX-channel -> STEREO main paths plus the always
+// -wired FX-channel -> MIX sends. User wires are appended after them, so the last
+// .wire-hit is the most recent user connection.
+const FIXED = 14; // URX44V startup: 8 CH→STEREO + 2 FX→STEREO + 4 FX→MIX
+const FIXED_URX22 = 12; // URX22: 6 CH→STEREO + 2 FX→STEREO + 4 FX→MIX
 
 // A connection is a pointer drag between an output port (.port-out) and an input
 // port (.port-in), in either direction; Playwright's mouse generates the
@@ -179,11 +180,10 @@ test("marks a PRE MIX send on the canvas without opening the inspector", async (
   await connect(page, "ch1:out", "bus.mix1:in");
   await expect(wires(page)).toHaveCount(FIXED + 1);
 
-  // Select the new send by clicking its sole receiving port; the MIX send exposes
-  // LEVEL / PAN / PRE-POST.
-  const box = await port(page, "bus.mix1:in").boundingBox();
-  if (!box) throw new Error("port not found");
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  // Select the new send (the last .wire-hit is the user's ch1 → MIX1; MIX now also
+  // receives the fixed FX → MIX sends, so clicking the shared port is ambiguous).
+  // The MIX send exposes LEVEL / PAN / PRE-POST.
+  await wires(page).last().dispatchEvent("pointerdown");
   await expect(page.locator("#inspector .toggle")).toHaveCount(1);
   await expect(page.locator("#inspector .param")).toHaveCount(3);
 
@@ -195,6 +195,20 @@ test("marks a PRE MIX send on the canvas without opening the inspector", async (
   await expect(preMarker).toHaveCount(1);
   await page.locator("#inspector .toggle button").filter({ hasText: /^POST$/ }).click();
   await expect(preMarker).toHaveCount(0);
+});
+
+test("a fixed FX channel → MIX send exposes a Send ON toggle and no delete", async ({ page }) => {
+  // FX 1 → MIX 1 is fixed (always wired); its inspector shows a Send ON toggle
+  // (SEND_ON) plus PRE / Pan / Level, and offers no delete (it is structural).
+  await page.locator('.wire-hit[data-from="bus.fx1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
+  const sendRow = page.locator("#inspector .param", { hasText: "Send" });
+  await expect(sendRow).toHaveCount(1);
+  await expect(page.locator("#inspector .toggle")).toHaveCount(2); // Send ON + PRE/POST
+  await expect(page.locator("#inspector button.danger")).toHaveCount(0); // structural — no delete
+
+  // Turning the send OFF keeps the (fixed) wire — it is not removed like a CH send.
+  await sendRow.locator(".toggle button").filter({ hasText: /^OFF$/ }).click();
+  await expect(wires(page)).toHaveCount(FIXED);
 });
 
 test("a microSD Rec assign carries no level / pan / PRE-POST", async ({ page }) => {
@@ -210,9 +224,7 @@ test("a microSD Rec assign carries no level / pan / PRE-POST", async ({ page }) 
 
 test("the send pan slider uses the device L63 – C – R63 range", async ({ page }) => {
   await connect(page, "ch1:out", "bus.mix1:in");
-  const box = await port(page, "bus.mix1:in").boundingBox();
-  if (!box) throw new Error("port not found");
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await wires(page).last().dispatchEvent("pointerdown");
   const pan = page.locator("#inspector .param", { hasText: "Pan" }).locator("input[type='range']");
   await expect(pan).toHaveAttribute("min", "-63");
   await expect(pan).toHaveAttribute("max", "63");
@@ -220,9 +232,7 @@ test("the send pan slider uses the device L63 – C – R63 range", async ({ pag
 
 test("the send level slider bottoms out at -∞ (level_gain floor), not -60", async ({ page }) => {
   await connect(page, "ch1:out", "bus.mix1:in");
-  const box = await port(page, "bus.mix1:in").boundingBox();
-  if (!box) throw new Error("port not found");
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await wires(page).last().dispatchEvent("pointerdown");
   const level = page.locator("#inspector .param", { hasText: "Level" }).locator("input[type='range']");
   await expect(level).toHaveAttribute("min", "-96.5"); // -∞ notch
   await expect(level).toHaveAttribute("max", "10");

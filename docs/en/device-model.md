@@ -164,14 +164,18 @@ UG shows C as the nominal centre; L63/R63 are the hard-pan ends). PRE/POST state
 
 ### 3. Bus-to-bus (`send` / `sendSwitch`)
 
-- FX 1 / FX 2 channel → STEREO / MIX 1 / MIX 2 (`send`; the **channel → STEREO** leg is the FX
-  main path and is likewise **fixed** — always wired, non-removable, **no PRE/POST** (LEVEL/BAL only). It is
-  seeded at **-∞ (off)** by default so an FX channel is not summed into the main mix until raised. The MIX 1/2
-  sends carry LEVEL/BAL/**PRE/POST** and **ship ON at the factory but at -∞** (like the main path); optional to
-  turn off.)
-  - Each FX channel has its own **channel ON/OFF** (mute), handled like the input-channel and STEREO-master
-    ON. **Both FX 1 and FX 2 ship ON at the factory**, and a `new` plan seeds them ON (turning one off dims
-    the node on the canvas and tags it MUTE).
+- FX 1 / FX 2 channel → STEREO / MIX 1 / MIX 2 (`send`; **all fixed** — always wired, non-removable.
+  The device has no "remove this routing", only a per-send ON switch (SEND_ON) and level, so the model
+  matches that (input-channel sends stay selective — a cross-cutting unification is left to a later PR).
+  - The **channel → STEREO** leg is the FX main path: **no PRE/POST** (LEVEL/BAL only — the main path is the
+    PRE/POST reference point).
+  - The **MIX 1/2 sends** carry LEVEL/BAL/**PRE/POST** plus an **ON/OFF (SEND_ON)** held as a connection
+    param (`params.on`, default ON) and toggled by the console's **MIX 1/2 tab MUTE button**.
+  - Each leg is seeded at **-∞ (off)** by default so nothing sums until raised. **All ship ON at the factory**
+    (SEND_ON = 1 at -∞) and a `new` plan seeds them ON.
+  - Each FX channel also has its own **channel ON/OFF** (mute), handled like the input-channel and
+    STEREO-master ON. **Both FX 1 and FX 2 ship ON at the factory**; the console controls it via the **MAIN tab
+    MUTE** and the inspector (the MIX tab MUTE means the send ON/OFF above). Off dims the node and tags it MUTE.
 - OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`sendSwitch`; an ON/OFF assign, not a
   summing send — the oscillator has one global level. Stereo destinations carry
   independent L/R in the wire (`oscL` / `oscR`); FX buses are mono)

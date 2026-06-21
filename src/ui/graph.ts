@@ -1056,6 +1056,8 @@ export class Graph {
     // transparent stroke is inline so the PNG/PDF export stays invisible.
     const hit = document.createElementNS(SVGNS, "path");
     hit.classList.add("wire-hit");
+    hit.setAttribute("data-from", conn.from);
+    hit.setAttribute("data-to", conn.to);
     hit.setAttribute("d", d);
     hit.setAttribute("fill", "none");
     hit.setAttribute("stroke", "transparent");

@@ -248,7 +248,7 @@ describe("planToCommands", () => {
       params: { level: 5, pan: 100, tap: "pre" },
     });
     const cmds = planToCommands(model, plan);
-    const lvl = cmds.filter((c) => c.name === "SEND_LEVEL");
+    const lvl = cmds.filter((c) => c.name === "SEND_LEVEL" && [146, 152].includes(c.paramId));
     // MIX1 mono = base 146: level at 146 and 152 (L/R), both 5 dB = 500.
     expect(lvl.map((c) => c.request.uri)).toEqual([
       "/vd/parameters/146:0:0?operation=value",
@@ -270,7 +270,7 @@ describe("planToCommands", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
     plan.connections.push({ from: "ch_5_6:out", to: "bus.mix2:in", kind: "send", params: { level: 0 } });
-    const cmds = planToCommands(model, plan).filter((c) => c.name === "SEND_LEVEL");
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "SEND_LEVEL" && [285, 291].includes(c.paramId));
     // Stereo MIX2 = base 273 + 12 = 285: level at 285 and 291, stereo index y0.
     expect(cmds.map((c) => c.request.uri)).toEqual([
       "/vd/parameters/285:0:0?operation=value",
@@ -305,29 +305,39 @@ describe("planToCommands", () => {
   it("emits an FX channel → MIX send on both linked L/R slots with a single tap", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
-    // FX1 → MIX1: L slot base 342 (tap 342 / level 343 / BAL 344 / on 345),
-    // R slot base 347. y = FX channel index (FX1 = 0).
-    plan.connections.push({
-      from: "bus.fx1:out",
-      to: "bus.mix1:in",
-      kind: "send",
-      params: { level: -22.4, pan: -11, tap: "pre" },
-    });
+    // FX1 → MIX1 is a fixed (always-wired) send; set its params on the seeded wire.
+    // L slot base 342 (tap 342 / level 343 / BAL 344 / on 345), R slot base 347.
+    // The param ids are shared across FX channels (y selects FX1=0 / FX2=1), so
+    // scope to y0 to isolate FX1 from the also-seeded FX2 → MIX1 send.
+    const conn = plan.connections.find((c) => c.from === "bus.fx1:out" && c.to === "bus.mix1:in")!;
+    conn.params = { level: -22.4, pan: -11, tap: "pre", on: true };
     const cmds = planToCommands(model, plan);
-    const lvl = cmds.filter((c) => c.name === "SEND_LEVEL" && [343, 348].includes(c.paramId));
+    const lvl = cmds.filter((c) => c.name === "SEND_LEVEL" && c.y === 0 && [343, 348].includes(c.paramId));
     expect(lvl).toHaveLength(2);
-    expect(lvl.every((c) => c.vdValue === -2240 && c.y === 0)).toBe(true);
-    const bal = cmds.filter((c) => c.name === "SEND_PAN" && [344, 349].includes(c.paramId));
+    expect(lvl.every((c) => c.vdValue === -2240)).toBe(true);
+    const bal = cmds.filter((c) => c.name === "SEND_PAN" && c.y === 0 && [344, 349].includes(c.paramId));
     expect(bal).toHaveLength(2);
     expect(bal.every((c) => c.vdValue === -11)).toBe(true);
-    expect(cmds.filter((c) => c.name === "SEND_ON" && [345, 350].includes(c.paramId) && c.vdValue === 1)).toHaveLength(
-      2,
-    );
+    expect(
+      cmds.filter((c) => c.name === "SEND_ON" && c.y === 0 && [345, 350].includes(c.paramId) && c.vdValue === 1),
+    ).toHaveLength(2);
     // Tap is written once on the L slot (342); the device links the R slot.
-    const tap = cmds.filter((c) => c.name === "SEND_TAP" && [342, 347].includes(c.paramId));
+    const tap = cmds.filter((c) => c.name === "SEND_TAP" && c.y === 0 && [342, 347].includes(c.paramId));
     expect(tap).toHaveLength(1);
     expect(tap[0].paramId).toBe(342);
     expect(tap[0].vdValue).toBe(1);
+  });
+
+  it("emits SEND_ON = 0 for a fixed FX channel → MIX send turned off (params.on)", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    const conn = plan.connections.find((c) => c.from === "bus.fx1:out" && c.to === "bus.mix1:in")!;
+    conn.params = { ...conn.params, on: false };
+    const cmds = planToCommands(model, plan);
+    // FX1 → MIX1 ON params 345 / 350 at y0 are off; the wire stays (fixed).
+    const on = cmds.filter((c) => c.name === "SEND_ON" && c.y === 0 && [345, 350].includes(c.paramId));
+    expect(on).toHaveLength(2);
+    expect(on.every((c) => c.vdValue === 0)).toBe(true);
   });
 
   it("emits the FX channel → STEREO main path as FX_CHANNEL_FADER / BAL", () => {

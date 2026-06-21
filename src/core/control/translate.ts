@@ -912,11 +912,11 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     }
   }
 
-  // CH → MIX/FX bus sends — written as absolute state over every send-capable
-  // pair. A wire means the send is on (its params carry level / pan / PRE-POST
-  // tap; MIX writes both linked L/R instances, FX is a single mono send with no
-  // pan); no wire emits SEND_ON = 0 so a write turns the device's send off,
-  // matching readback (off = no wire).
+  // CH / FX-channel → MIX/FX bus sends — written as absolute state over every
+  // send-capable pair. For a non-fixed send a present wire means on and no wire
+  // emits SEND_ON = 0 (so a write turns the device's send off, matching readback);
+  // a fixed send (FX channel → MIX, always wired) carries on/off in params.on.
+  // Params: level / pan(BAL) / PRE-POST tap; MIX writes both linked L/R instances.
   for (const node of model.nodes) {
     if (node.kind !== "channel" && fxChannelIndex(node.id) === null) continue;
     for (const bus of model.nodes) {
@@ -928,9 +928,12 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
         for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, 0));
         continue;
       }
+      // SEND_ON: for a non-fixed send a present wire means on; a fixed send (FX
+      // channel → MIX, always wired) carries its on/off in conn.params.on instead.
+      const on = (conn.params?.on ?? true) ? 1 : 0;
       for (const p of sc.level) out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
       for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
-      for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, 1));
+      for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, on));
       out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
     }
   }
