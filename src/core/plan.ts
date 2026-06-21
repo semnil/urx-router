@@ -18,6 +18,10 @@ export interface ConnParams {
   level?: number;
   pan?: number;
   tap?: "pre" | "post";
+  /** Send ON/OFF (SEND_ON) for a fixed send whose routing is always wired (the
+   *  FX channel → MIX sends). Absent = on. Non-fixed sends represent on/off by
+   *  wire existence instead, so this stays unset for them. */
+  on?: boolean;
   /** Oscillator → bus assign: which of the destination's L/R channels are on.
    *  Stereo buses use both; FX buses (mono) use oscL only. Absent = on. */
   oscL?: boolean;

@@ -693,8 +693,18 @@ export function renderInspector(
         (f !== "level" || !busFixed) &&
         (f !== "pan" || !panLinked),
     );
-    if (fields.length) {
+    // A fixed send that still carries a tap (the FX channel → MIX sends) keeps its
+    // routing wired and stores ON/OFF in params.on, so expose an ON toggle. The
+    // STEREO main paths are fixed too but have no tap and no per-send ON.
+    const hasSendOn = isFixedConnection(model, from, to) && sendHasTap(model, from, to);
+    if (fields.length || hasSendOn) {
       host.append(subheading(m.inspector.parameters));
+      // ON first to match the device SEND TO screen order (ON, PRE, Pan, Level).
+      if (hasSendOn) {
+        host.append(
+          boolToggle(m.inspector.sendOn, conn.params?.on ?? true, (v) => actions.onUpdateParams(from, to, { on: v })),
+        );
+      }
       // A stereo channel's "pan" is a balance; so is a STEREO-linked MONO IN pair
       // in BAL mode. Label it BALANCE to match the device; PAN otherwise.
       const panLabel = isBalanceChannel(model, plan, parseRef(from).nodeId)

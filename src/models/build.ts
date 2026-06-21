@@ -189,11 +189,12 @@ export function buildModel(p: ModelParams): DeviceModel {
   for (const ch of channels)
     for (const b of sendBuses) r(ref(ch, "out"), ref(b, "in"), "send", b === "bus.stereo");
 
-  // 3. FX channels -> mix buses. The return to STEREO is the FX main path and is
-  //    likewise always wired (fixed); the MIX 1/2 sends remain optional.
+  // 3. FX channels -> STEREO / MIX buses. All are fixed (always wired): the device
+  //    has no "remove this routing", only a per-send ON switch (SEND_ON) and level.
+  //    The STEREO send is the FX main path (no PRE/POST); the MIX 1/2 sends carry
+  //    LEVEL/BAL/PRE-POST plus an ON toggle (conn.params.on).
   for (const fx of ["bus.fx1", "bus.fx2"])
-    for (const b of ["bus.stereo", "bus.mix1", "bus.mix2"])
-      r(ref(fx, "out"), ref(b, "in"), "send", b === "bus.stereo");
+    for (const b of ["bus.stereo", "bus.mix1", "bus.mix2"]) r(ref(fx, "out"), ref(b, "in"), "send", true);
 
   // 3b. MIX 1 / 2 -> STEREO ("TO ST"): ON/OFF switch only, no level/pan.
   for (const mix of ["bus.mix1", "bus.mix2"]) r(ref(mix, "out"), ref("bus.stereo", "in"), "sendSwitch");

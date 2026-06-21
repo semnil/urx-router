@@ -2,10 +2,11 @@ import { test, expect, type Page } from "@playwright/test";
 
 // One .wire-hit band exists per committed connection (the painted path is a sibling).
 const wires = (page: Page) => page.locator("#graph-host .wire-hit");
-// Fixed CH / FX-return -> STEREO wires are seeded on every plan (URX44V startup).
-// They are skipped when an endpoint is shelved, so hiding unused nodes leaves
-// only the user wires whose endpoints stay on the canvas.
-const FIXED = 10;
+// Fixed wires are seeded on every plan (URX44V startup): CH / FX-channel -> STEREO
+// main paths plus the always-wired FX-channel -> MIX sends. They are skipped when
+// an endpoint is shelved, so hiding unused nodes leaves only the user wires whose
+// endpoints stay on the canvas.
+const FIXED = 14;
 const nodes = (page: Page) => page.locator("#graph-host g.node");
 const chips = (page: Page) => page.locator(".hidden-shelf .chip");
 const port = (page: Page, ref: string) => page.locator(`[data-ref="${ref}"]`);

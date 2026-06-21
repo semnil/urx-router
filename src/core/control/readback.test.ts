@@ -44,10 +44,11 @@ function mockVdGetFrom(table: Map<string, number>): void {
 // on (from,to,kind) plus the params the readback actually reconstructs.
 function wireKey(c: PlanConnection): string {
   const p = c.params ?? {};
-  // An unedited fader/pan (undefined) means unity/center; readback always
-  // materializes those as 0/0 off the device, so coalesce for an apples-to-apples
-  // comparison rather than flagging a representation difference as drift.
-  return [c.from, c.to, c.kind, p.level ?? 0, p.pan ?? 0, p.tap, p.oscL, p.oscR].join("|");
+  // An unedited fader/pan/tap (undefined) means unity/center/POST; readback always
+  // materializes those as 0/0/"post" off the device, so coalesce for an
+  // apples-to-apples comparison rather than flagging a representation difference as
+  // drift. (The fixed FX channel → MIX sends seed level only; readback adds tap.)
+  return [c.from, c.to, c.kind, p.level ?? 0, p.pan ?? 0, p.tap ?? "post", p.oscL, p.oscR].join("|");
 }
 
 beforeEach(() => {

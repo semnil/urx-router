@@ -2,7 +2,7 @@
 // declares a matching rule, and single-input receivers (selectors / patches)
 // reject a second wire.
 
-import { isSingleInput } from "../models/types";
+import { isSingleInput, parseRef } from "../models/types";
 import type { DeviceModel, RoutingRule } from "../models/types";
 import type { Plan } from "./plan";
 import { hasConnection } from "./plan";
@@ -30,11 +30,12 @@ export function isFixedConnection(model: DeviceModel, from: string, to: string):
 }
 
 // Whether a send carries a PRE/POST tap: a send's PRE/POST is taken relative to
-// the channel's STEREO main-fader level, so the fixed STEREO / FX-channel main
-// paths (which ARE that reference) carry no tap of their own. Only editable
-// sends (CH/FX/OSC -> MIX/FX, SD rec) expose it.
+// the STEREO main-fader level, so only the STEREO main-fader paths (CH / FX
+// channel → STEREO, which ARE that reference) carry no tap. Every other send
+// (-> MIX / FX) does. This is independent of `fixed`: the FX channel → MIX sends
+// are fixed (non-removable routing) yet still expose a PRE/POST tap.
 export function sendHasTap(model: DeviceModel, from: string, to: string): boolean {
-  return ruleKind(model, from, to) === "send" && !isFixedConnection(model, from, to);
+  return ruleKind(model, from, to) === "send" && parseRef(to).nodeId !== "bus.stereo";
 }
 
 export function canConnect(model: DeviceModel, plan: Plan, from: string, to: string): ConnectResult {
