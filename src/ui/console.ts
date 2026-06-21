@@ -295,7 +295,14 @@ export class Console {
     const level = usesSend ? this.getSend(m.id, this.mode as SendTarget) : this.getMain(m);
     const np = plan.nodeParams[m.id] ?? {};
 
-    const strip = el("div", "con-strip" + (isMaster ? " master" : ""));
+    // In a MIX send mode the FX channel's MUTE chip controls that send's ON/OFF,
+    // not the channel master ON; when the master is muted the whole channel (and
+    // thus every send) is silenced regardless. Surface that override at the strip
+    // level (dim + a CH MUTE badge) so the per-send controls stay operable while
+    // the user still sees the channel is muted. (MAIN shows the master via MUTE.)
+    const masterMuted = this.isFxChannel(m.id) && usesSend && np.on === false;
+
+    const strip = el("div", "con-strip" + (isMaster ? " master" : "") + (masterMuted ? " master-muted" : ""));
     strip.style.setProperty("--rail", m.rail);
 
     // head: scribble + chips + gain
@@ -317,6 +324,11 @@ export class Console {
     dev.textContent = m.deviceName || "—"; // device CH SETTING name (— when unset)
     if (!m.deviceName) dev.classList.add("empty");
     scrib.append(name, dev);
+    if (masterMuted) {
+      const badge = el("div", "ch-mute");
+      badge.textContent = t().console.chMute;
+      scrib.append(badge);
+    }
     head.append(scrib);
 
     const cc = channelControl(model, m.id);
@@ -365,11 +377,25 @@ export class Console {
     // channel + input (HA) group
     const top = el("div", "con-chips");
     if (m.hasMute) {
-      makeChip(top, t().console.mute, true, np.on === false, () => {
-        const muted = planOf().on === false;
-        this.nodeParamsOf(m.id).on = muted; // toggle: was muted → on, was on → muted
-        return !muted;
-      });
+      if (this.isFxChannel(m.id) && usesSend) {
+        // FX channel in a MIX send mode: MUTE toggles this FX → MIX send's ON/OFF
+        // (SEND_ON), not the FX channel master ON — the MAIN tab and the inspector
+        // control that. The send is always wired (fixed), so on/off is a param.
+        const conn = this.fxSendConn(m.id, usesSend);
+        const sendOn = (): boolean => conn()?.params?.on ?? true;
+        makeChip(top, t().console.mute, true, !sendOn(), () => {
+          const c = conn();
+          const nextOn = !sendOn();
+          if (c) c.params = { ...c.params, on: nextOn };
+          return !nextOn; // chip "on" (highlighted) = muted
+        });
+      } else {
+        makeChip(top, t().console.mute, true, np.on === false, () => {
+          const muted = planOf().on === false;
+          this.nodeParamsOf(m.id).on = muted; // toggle: was muted → on, was on → muted
+          return !muted;
+        });
+      }
     }
     if (cc?.hasMicStrip) boolChip(top, "+48", "phantom", false);
     // Polarity: one φ on a mono channel, independent φL / φR on a stereo one. Keep
@@ -414,6 +440,24 @@ export class Console {
       if (group.childElementCount) head.append(group);
     }
 
+    // FX channel → MIX send PRE/POST tap: a chip mirroring the send connection's
+    // `tap` (the device SEND TO screen's PRE button). Only the FX channels' MIX
+    // sends carry a settable tap, so it shows only in a MIX send mode (the STEREO
+    // main path has none — see device-model.md §3); on = PRE, off = POST.
+    if (this.isFxChannel(m.id) && usesSend) {
+      const conn = this.fxSendConn(m.id, usesSend);
+      const preGroup = el("div", "con-chips");
+      const isPre = (): boolean => conn()?.params?.tap === "pre";
+      makeChip(preGroup, t().console.pre, false, isPre(), () => {
+        const next = !isPre();
+        const c = conn();
+        if (c) c.params = { ...c.params, tap: next ? "pre" : "post" };
+        return next;
+      });
+      preGroup.append(el("div", "con-chip spacer"));
+      head.append(preGroup);
+    }
+
     if (m.isChannel) {
       const min = cc?.gain?.minDb ?? (m.isMono ? -8 : -24);
       const max = cc?.gain?.maxDb ?? (m.isMono ? 70 : 24);
@@ -431,23 +475,11 @@ export class Console {
         angle: (v) => -90 + ((v - hl) / (hr - hl)) * 180,
       });
     }
-    if (m.isChannel) {
-      // PAN (mono) / BALANCE (stereo): the CH → STEREO send's pan, L63 – C – R63.
-      const conn = (): PlanConnection | undefined => this.sendConn(this.hooks.getPlan(), m.id, MAIN_BUS);
-      const factory = this.sendConn(this.factoryPlan(), m.id, MAIN_BUS)?.params?.pan ?? 0;
-      this.addKnob(head, m.isMono ? "PAN" : "BAL", {
-        get: () => conn()?.params?.pan ?? 0,
-        set: (v) => {
-          const c = conn();
-          if (c) c.params = { ...c.params, pan: v };
-        },
-        min: PAN_MIN,
-        max: PAN_MAX,
-        step: 1,
-        format: (v) => (v === 0 ? "C" : v < 0 ? "L" + -v : "R" + v),
-        reset: factory,
-      });
-    }
+    // PAN (mono) / BALANCE (stereo) = the source's send pan, L63 – C – R63. A
+    // channel edits its CH → STEREO main path; an FX channel follows the tab (MAIN
+    // = FX → STEREO, a MIX mode = that FX → MIX send — same connection as the fader).
+    if (m.isChannel) this.addSendPanKnob(head, m.id, MAIN_BUS, m.isMono ? "PAN" : "BAL");
+    if (this.isFxChannel(m.id)) this.addSendPanKnob(head, m.id, usesSend ? (this.mode as SendTarget) : MAIN_BUS, "BAL");
     if (m.hasPhones) {
       // PHONES output level: a 0.0..10.0 scale (not dB) on the monitor bus,
       // independent of the monitor fader (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2).
@@ -668,6 +700,32 @@ export class Console {
 
   private hasSend(id: string, target: SendTarget): boolean {
     return this.sendConn(this.hooks.getPlan(), id, target) !== undefined;
+  }
+
+  /** Live getter for the connection a tab-scoped FX-strip control edits: the
+   *  FX → MIX send in a MIX mode, or the FX → STEREO main path in MAIN. */
+  private fxSendConn(id: string, usesSend: boolean): () => PlanConnection | undefined {
+    const target = usesSend ? (this.mode as SendTarget) : MAIN_BUS;
+    return () => this.sendConn(this.hooks.getPlan(), id, target);
+  }
+
+  /** Add a PAN/BALANCE knob bound to a send connection's `pan` (L63 – C – R63),
+   *  resetting to the factory plan's value on double-click. */
+  private addSendPanKnob(head: HTMLElement, id: string, target: string, label: string): void {
+    const conn = (): PlanConnection | undefined => this.sendConn(this.hooks.getPlan(), id, target);
+    const factory = this.sendConn(this.factoryPlan(), id, target)?.params?.pan ?? 0;
+    this.addKnob(head, label, {
+      get: () => conn()?.params?.pan ?? 0,
+      set: (v) => {
+        const c = conn();
+        if (c) c.params = { ...c.params, pan: v };
+      },
+      min: PAN_MIN,
+      max: PAN_MAX,
+      step: 1,
+      format: (v) => (v === 0 ? "C" : v < 0 ? "L" + -v : "R" + v),
+      reset: factory,
+    });
   }
 
   private nodeParamsOf(id: string): NodeParams {
