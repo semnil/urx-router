@@ -121,7 +121,7 @@ describe("ruleKind", () => {
 });
 
 describe("isFixedConnection", () => {
-  it("marks the CH and FX-return main paths into STEREO as fixed", () => {
+  it("marks the CH and FX-channel main paths into STEREO as fixed", () => {
     expect(isFixedConnection(u44, ref("ch1", "out"), ref("bus.stereo", "in"))).toBe(true);
     expect(isFixedConnection(u44, ref("ch_5_6", "out"), ref("bus.stereo", "in"))).toBe(true);
     expect(isFixedConnection(u44, ref("bus.fx1", "out"), ref("bus.stereo", "in"))).toBe(true);
@@ -144,7 +144,7 @@ describe("sendHasTap", () => {
     expect(sendHasTap(u44, ref("bus.osc", "out"), ref("bus.stereo", "in"))).toBe(false);
   });
 
-  it("drops PRE/POST on the fixed STEREO / FX-return main-fader paths", () => {
+  it("drops PRE/POST on the fixed STEREO / FX-channel main-fader paths", () => {
     expect(sendHasTap(u44, ref("ch1", "out"), ref("bus.stereo", "in"))).toBe(false);
     expect(sendHasTap(u44, ref("ch_5_6", "out"), ref("bus.stereo", "in"))).toBe(false);
     expect(sendHasTap(u44, ref("bus.fx1", "out"), ref("bus.stereo", "in"))).toBe(false);

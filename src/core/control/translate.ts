@@ -305,8 +305,8 @@ export interface SendControl {
   level: number[];
   pan: number[];
   on: number[];
-  /** PRE/POST tap param, or null for FX sends (the broker rejects writing it). */
-  tap: number | null;
+  /** PRE/POST tap param (single L slot; the device links R). Every send has one. */
+  tap: number;
 }
 
 // CH → MIX sends are laid out as 12-param stereo-bus blocks (L slot + R slot, 6
@@ -326,8 +326,36 @@ const FX_SEND_BASE_STEREO = 320;
 const FX_SEND_STRIDE = 4;
 const FX_SEND_BUS_INDEX: Record<string, number> = { "bus.fx1": 0, "bus.fx2": 1 };
 
-/** Send params for a CH → MIX/FX-bus pair, or null if it is not such a send. */
+// FX channel → MIX sends. Each MIX is a 10-param block (L slot + R slot, 5 params
+// each: PRE/POST tap / level / BAL / on at offsets 0/1/2/3, +4 unused). y = FX
+// channel index (the FX bus index, fx1 = 0 / fx2 = 1). L/R are device-linked
+// (writing the L slot propagates to R), so the tap is written once on the L slot;
+// level/BAL/on write both for parity with CH → MIX. Live snapshot-diff confirmed.
+const FXCH_MIX_SEND_BASE = 342;
+const FXCH_MIX_SEND_STRIDE = 10; // per MIX bus
+const FXCH_MIX_SLOT_STRIDE = 5; // L slot → R slot
+
+/** FX channel instance index (y) for its master fader / BAL / MIX sends, or null
+ *  if the node is not an FX channel. FX channels are send sources whose MIX sends
+ *  and STEREO main path live outside channelControl (they are buses, not channels);
+ *  their instance index is the FX bus index. */
+export function fxChannelIndex(nodeId: string): number | null {
+  const y = FX_SEND_BUS_INDEX[nodeId];
+  return y === undefined ? null : y;
+}
+
+/** Send params for a CH/FX-channel → MIX/FX-bus pair, or null if not such a send. */
 export function sendControl(model: DeviceModel, channelId: string, busId: string): SendControl | null {
+  // FX channel → MIX sends (the FX channels are buses, not channels). The send
+  // to STEREO is the fixed main path (FX_CHANNEL_FADER), handled separately.
+  const fxY = fxChannelIndex(channelId);
+  if (fxY !== null) {
+    const mixIndex = MIX_SEND_BUS_INDEX[busId];
+    if (mixIndex === undefined) return null;
+    const l = FXCH_MIX_SEND_BASE + FXCH_MIX_SEND_STRIDE * mixIndex;
+    const r = l + FXCH_MIX_SLOT_STRIDE;
+    return { y: fxY, level: [l + 1, r + 1], pan: [l + 2, r + 2], on: [l + 3, r + 3], tap: l };
+  }
   const cc = channelControl(model, channelId);
   if (!cc) return null;
   const stereo = isStereoChannel(channelId);
@@ -339,8 +367,8 @@ export function sendControl(model: DeviceModel, channelId: string, busId: string
   const fxIndex = FX_SEND_BUS_INDEX[busId];
   if (fxIndex !== undefined) {
     const base = (stereo ? FX_SEND_BASE_STEREO : FX_SEND_BASE_MONO) + FX_SEND_STRIDE * fxIndex;
-    // FX sends have no settable PRE/POST tap (the broker rejects writing base+0).
-    return { y: cc.y, level: [base + 1], pan: [], on: [base + 3], tap: null };
+    // PRE/POST tap at base+0 (single mono send, no pan). Live-confirmed writable.
+    return { y: cc.y, level: [base + 1], pan: [], on: [base + 3], tap: base };
   }
   return null;
 }
@@ -867,13 +895,20 @@ export function insertFxControl(model: DeviceModel, nodeId: string): InsertFxCon
 export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   const out: VdCommand[] = [];
   for (const conn of plan.connections) {
-    // Channel main fader / pan: the fixed CH → STEREO send carries the channel's
-    // level and pan, which are the CH_FADER / CH_PAN device parameters.
-    if (parseRef(conn.to).nodeId === "bus.stereo" && isFixedConnection(model, conn.from, conn.to)) {
-      const cc = channelControl(model, parseRef(conn.from).nodeId);
-      if (!cc) continue;
+    // Fixed main path into STEREO: the channel's CH_FADER / CH_PAN, or the FX
+    // channel's FX_CHANNEL_FADER / FX_CHANNEL_BAL — the source's main level / pan.
+    if (parseRef(conn.to).nodeId !== "bus.stereo" || !isFixedConnection(model, conn.from, conn.to)) continue;
+    const fromId = parseRef(conn.from).nodeId;
+    const cc = channelControl(model, fromId);
+    if (cc) {
       out.push(rawCommand("CH_FADER", cc.fader, "level", cc.y, conn.params?.level ?? 0));
       out.push(rawCommand("CH_PAN", cc.pan, "pan", cc.y, conn.params?.pan ?? 0));
+      continue;
+    }
+    const fxY = fxChannelIndex(fromId);
+    if (fxY !== null) {
+      out.push(rawCommand("FX_CHANNEL_FADER", PARAMS.FX_CHANNEL_FADER.id, "level", fxY, conn.params?.level ?? 0));
+      out.push(rawCommand("FX_CHANNEL_BAL", PARAMS.FX_CHANNEL_BAL.id, "pan", fxY, conn.params?.pan ?? 0));
     }
   }
 
@@ -883,7 +918,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   // pan); no wire emits SEND_ON = 0 so a write turns the device's send off,
   // matching readback (off = no wire).
   for (const node of model.nodes) {
-    if (node.kind !== "channel") continue;
+    if (node.kind !== "channel" && fxChannelIndex(node.id) === null) continue;
     for (const bus of model.nodes) {
       if (bus.kind !== "bus") continue;
       const sc = sendControl(model, node.id, bus.id);
@@ -896,7 +931,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       for (const p of sc.level) out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
       for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
       for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, 1));
-      if (sc.tap !== null) out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
+      out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
     }
   }
 
@@ -1060,7 +1095,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (pr) out.push(command(pr, yr, p ? p.r : PORT_REF_NONE));
   }
 
-  // Bus master ON/OFF: STEREO master (582, y = 0) and the FX return channels
+  // Bus master ON/OFF: STEREO master (582, y = 0) and the FX channels
   // (338, one instance per FX). MIX buses have no ON toggle (busMasterOn → null).
   for (const node of model.nodes) {
     if (node.kind !== "bus") continue;

@@ -189,7 +189,7 @@ export function buildModel(p: ModelParams): DeviceModel {
   for (const ch of channels)
     for (const b of sendBuses) r(ref(ch, "out"), ref(b, "in"), "send", b === "bus.stereo");
 
-  // 3. FX returns -> mix buses. The return to STEREO is the FX main path and is
+  // 3. FX channels -> mix buses. The return to STEREO is the FX main path and is
   //    likewise always wired (fixed); the MIX 1/2 sends remain optional.
   for (const fx of ["bus.fx1", "bus.fx2"])
     for (const b of ["bus.stereo", "bus.mix1", "bus.mix2"])

@@ -278,7 +278,7 @@ describe("planToCommands", () => {
     ]);
   });
 
-  it("emits a CH → FX send as a single mono level/on, no pan, no tap", () => {
+  it("emits a CH → FX send as a single mono level/on/tap, no pan", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
     plan.connections.push({
@@ -289,18 +289,57 @@ describe("planToCommands", () => {
     });
     plan.connections.push({ from: "ch_5_6:out", to: "bus.fx2:in", kind: "send", params: { level: 0 } });
     const cmds = planToCommands(model, plan);
-    // Mono FX1 block base 193: level 194, on 196 (single, no pan). FX sends have
-    // no settable PRE/POST tap — the broker rejects writing base 193, so it is
-    // never emitted (even though the wire carries a tap).
+    // Mono FX1 block base 193: tap 193, level 194, on 196 (single, no pan).
     const monoLvl = cmds.filter((c) => c.name === "SEND_LEVEL" && c.paramId === 194);
     expect(monoLvl).toHaveLength(1);
     expect(monoLvl[0].vdValue).toBe(720);
     expect(cmds.find((c) => c.name === "SEND_ON" && c.paramId === 196)!.vdValue).toBe(1);
-    expect(cmds.some((c) => c.name === "SEND_TAP" && c.paramId === 193)).toBe(false);
+    // PRE/POST tap at base 193 is live-confirmed writable, so it is emitted.
+    expect(cmds.find((c) => c.name === "SEND_TAP" && c.paramId === 193)!.vdValue).toBe(1);
     // Stereo FX2 = base 320+4 = 324: level 325.
     expect(cmds.some((c) => c.name === "SEND_LEVEL" && c.paramId === 325)).toBe(true);
     // FX sends carry no pan.
     expect(cmds.some((c) => c.name === "SEND_PAN" && [195, 197].includes(c.paramId))).toBe(false);
+  });
+
+  it("emits an FX channel → MIX send on both linked L/R slots with a single tap", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // FX1 → MIX1: L slot base 342 (tap 342 / level 343 / BAL 344 / on 345),
+    // R slot base 347. y = FX channel index (FX1 = 0).
+    plan.connections.push({
+      from: "bus.fx1:out",
+      to: "bus.mix1:in",
+      kind: "send",
+      params: { level: -22.4, pan: -11, tap: "pre" },
+    });
+    const cmds = planToCommands(model, plan);
+    const lvl = cmds.filter((c) => c.name === "SEND_LEVEL" && [343, 348].includes(c.paramId));
+    expect(lvl).toHaveLength(2);
+    expect(lvl.every((c) => c.vdValue === -2240 && c.y === 0)).toBe(true);
+    const bal = cmds.filter((c) => c.name === "SEND_PAN" && [344, 349].includes(c.paramId));
+    expect(bal).toHaveLength(2);
+    expect(bal.every((c) => c.vdValue === -11)).toBe(true);
+    expect(cmds.filter((c) => c.name === "SEND_ON" && [345, 350].includes(c.paramId) && c.vdValue === 1)).toHaveLength(
+      2,
+    );
+    // Tap is written once on the L slot (342); the device links the R slot.
+    const tap = cmds.filter((c) => c.name === "SEND_TAP" && [342, 347].includes(c.paramId));
+    expect(tap).toHaveLength(1);
+    expect(tap[0].paramId).toBe(342);
+    expect(tap[0].vdValue).toBe(1);
+  });
+
+  it("emits the FX channel → STEREO main path as FX_CHANNEL_FADER / BAL", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // The fixed FX channel → STEREO send already exists; set its level / pan.
+    const conn = plan.connections.find((c) => c.from === "bus.fx2:out" && c.to === "bus.stereo:in")!;
+    conn.params = { level: -6, pan: 20 };
+    const cmds = planToCommands(model, plan);
+    // FX2 = y 1. Master fader 337, balance 339.
+    expect(cmds.find((c) => c.name === "FX_CHANNEL_FADER" && c.paramId === 337 && c.y === 1)!.vdValue).toBe(-600);
+    expect(cmds.find((c) => c.name === "FX_CHANNEL_BAL" && c.paramId === 339 && c.y === 1)!.vdValue).toBe(20);
   });
 
   it("emits output EQ ON for STEREO (498, single) and MIX (591, L/R-linked)", () => {

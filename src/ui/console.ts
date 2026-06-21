@@ -26,7 +26,7 @@ const SEND_LABEL: Record<SendTarget, string> = {
   "bus.fx2": "FX 2",
 };
 
-// The STEREO master / main-sum node: every channel's & FX return's fixed main send.
+// The STEREO master / main-sum node: every channel's & FX channel's fixed main send.
 const MAIN_BUS = "bus.stereo";
 
 // Fader-position curve: 0 dB sits high like a real fader (exponent < 1 lifts the
@@ -244,9 +244,9 @@ export class Console {
       rail: `var(--rail-${node.kind})`,
       isChannel,
       isMono: /^ch\d+$/.test(id), // mono channels are ch1..ch4 (the only gain/gate/comp/φ-bearing strips)
-      fadersOnly: !(isChannel || this.isFxReturn(id)),
+      fadersOnly: !(isChannel || this.isFxChannel(id)),
       isOsc,
-      hasMute: isChannel || isMaster || this.isFxReturn(id),
+      hasMute: isChannel || isMaster || this.isFxChannel(id),
       hasEq: isChannel || isMix || isMaster,
       hasPhones: id === "bus.mon1" || id === "bus.mon2",
       range: isOsc ? OSC_RANGE : NORMAL_RANGE,
@@ -648,17 +648,17 @@ export class Console {
 
   // ---- level get/set on the plan ----
 
-  private isFxReturn(id: string): boolean {
+  private isFxChannel(id: string): boolean {
     return id === "bus.fx1" || id === "bus.fx2";
   }
   private isMixMode(): boolean {
     return this.mode === "bus.mix1" || this.mode === "bus.mix2";
   }
 
-  // Channels and FX returns follow send-on-fader in a send mode; FX returns only
+  // Channels and FX channels follow send-on-fader in a send mode; FX channels only
   // to MIX buses. Everything else always shows its own main level.
   private usesSend(m: StripModel): boolean {
-    return this.mode !== "main" && (m.isChannel || (this.isFxReturn(m.id) && this.isMixMode()));
+    return this.mode !== "main" && (m.isChannel || (this.isFxChannel(m.id) && this.isMixMode()));
   }
 
   /** The wire from `fromId`'s out to `toId`'s in, if any. */
@@ -685,7 +685,7 @@ export class Console {
   private mainLevelOf(plan: Plan, m: StripModel): number {
     if (m.isOsc) return plan.nodeParams[m.id]?.osc?.level ?? -14;
     if (m.fadersOnly) return plan.nodeParams[m.id]?.level ?? 0;
-    // channel / FX return main path = the fixed send into STEREO
+    // channel / FX channel main path = the fixed send into STEREO
     return this.sendConn(plan, m.id, MAIN_BUS)?.params?.level ?? 0;
   }
 

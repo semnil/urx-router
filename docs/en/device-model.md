@@ -95,7 +95,7 @@ Connection kinds (`kind`):
 - `key` — the receiver accepts **only one wire** (ducker sidechain-trigger select). A selector like
   `source`, but it never carries the mono-pair source mirroring, so it is its own kind (see §10).
 - `send` — the receiver accepts **many** (a bus is a summing mix), with level/pan/PRE-POST. Sends from channels / FX to buses.
-  The fixed main-fader paths (CH / FX return → STEREO) are LEVEL/PAN only and carry **no PRE/POST** (see §2).
+  The fixed main-fader paths (CH / FX channel → STEREO) are LEVEL/PAN only and carry **no PRE/POST** (see §2).
 - `sendSwitch` — the receiver accepts **many** but the send is **ON/OFF only** (no per-wire level/pan). Used for the MIX→STEREO "TO ST" send.
 
 > A `source` / `patch` / `key` receiver rejects a second selector wire (only one source can feed it).
@@ -164,11 +164,12 @@ UG shows C as the nominal centre; L63/R63 are the hard-pan ends). PRE/POST state
 
 ### 3. Bus-to-bus (`send` / `sendSwitch`)
 
-- FX 1 / FX 2 return → STEREO / MIX 1 / MIX 2 (`send`; the **return → STEREO** leg is the FX
-  main path and is likewise **fixed** — always wired, non-removable, **no PRE/POST**. It is seeded at
-  **-∞ (off)** by default so an FX return is not summed into the main mix until raised. The MIX 1/2
-  sends stay optional, with PRE/POST.)
-  - Each FX return has its own **channel ON/OFF** (mute), handled like the input-channel and STEREO-master
+- FX 1 / FX 2 channel → STEREO / MIX 1 / MIX 2 (`send`; the **channel → STEREO** leg is the FX
+  main path and is likewise **fixed** — always wired, non-removable, **no PRE/POST** (LEVEL/BAL only). It is
+  seeded at **-∞ (off)** by default so an FX channel is not summed into the main mix until raised. The MIX 1/2
+  sends carry LEVEL/BAL/**PRE/POST** and **ship ON at the factory but at -∞** (like the main path); optional to
+  turn off.)
+  - Each FX channel has its own **channel ON/OFF** (mute), handled like the input-channel and STEREO-master
     ON. **Both FX 1 and FX 2 ship ON at the factory**, and a `new` plan seeds them ON (turning one off dims
     the node on the canvas and tags it MUTE).
 - OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`sendSwitch`; an ON/OFF assign, not a

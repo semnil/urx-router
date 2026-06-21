@@ -74,7 +74,7 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
   "bus.stereo": { ...outputBus(), on: true },
   "bus.mix1": outputBus(),
   "bus.mix2": outputBus(),
-  // FX return channels ship ON at the factory (param 338, def 1), like URX44V.
+  // FX channels ship ON at the factory (param 338, def 1), like URX44V.
   "bus.fx1": { on: true },
   "bus.fx2": { on: true },
   "out.ducker1": ducker(),
@@ -146,6 +146,11 @@ export const URX22_CONNECTIONS: PlanConnection[] = [
   ...CHANNELS.map(stereoSend),
   { from: "bus.fx1:out", to: "bus.stereo:in", kind: "send", params: { level: -96.5 } },
   { from: "bus.fx2:out", to: "bus.stereo:in", kind: "send", params: { level: -96.5 } },
+  // FX channel → MIX sends ship ON at the factory (at -∞), like URX44V. Inferred.
+  { from: "bus.fx1:out", to: "bus.mix1:in", kind: "send", params: { level: -96.5, pan: 0, tap: "post" } },
+  { from: "bus.fx1:out", to: "bus.mix2:in", kind: "send", params: { level: -96.5, pan: 0, tap: "post" } },
+  { from: "bus.fx2:out", to: "bus.mix1:in", kind: "send", params: { level: -96.5, pan: 0, tap: "post" } },
+  { from: "bus.fx2:out", to: "bus.mix2:in", kind: "send", params: { level: -96.5, pan: 0, tap: "post" } },
   ...CHANNELS.flatMap((ch) => [
     mixSend(ch, "bus.mix1"),
     mixSend(ch, "bus.mix2"),

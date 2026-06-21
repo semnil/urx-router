@@ -30,7 +30,7 @@ export function isFixedConnection(model: DeviceModel, from: string, to: string):
 }
 
 // Whether a send carries a PRE/POST tap: a send's PRE/POST is taken relative to
-// the channel's STEREO main-fader level, so the fixed STEREO / FX-return main
+// the channel's STEREO main-fader level, so the fixed STEREO / FX-channel main
 // paths (which ARE that reference) carry no tap of their own. Only editable
 // sends (CH/FX/OSC -> MIX/FX, SD rec) expose it.
 export function sendHasTap(model: DeviceModel, from: string, to: string): boolean {

@@ -177,8 +177,8 @@ signal ladder (green→red; signal only while Live sync streams); the OVER box l
 its top/bottom to the fader travel, so a tick at the cap's height marks that level (a functional scale,
 10/0/-10/-20/-40/-60/-80/-∞). Each tick centres its digits with the minus sign hanging left, so `10` and
 `-10` line up vertically. Above the zone the scribble shows two lines — **node name + device CH SETTING
-name**. Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE (on channels, FX returns and
-the master; an FX return's is the device FX-channel ON, the master's is the STEREO master ON), then +48 / φ /
+name**. Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE (on channels, FX channels and
+the master; an FX channel's is the device FX-channel ON, the master's is the STEREO master ON), then +48 / φ /
 HPF on mono MIC channels (Hi-Z on CH3/4) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
 chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
 node hung under them). An odd group gets an invisible spacer so its last chip never stretches to
@@ -198,9 +198,9 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
   lowering a send to -∞ keeps the wire (the strip stays). INS FX has no separate on/off (No Effect is off),
   so toggling on restores the last chosen effect (or the first real option).
 - **Send-on-fader** — a fixed “Output” label and the mode bar (MAIN / FX 1 / FX 2 / MIX 1 / MIX 2). A send
-  mode flips the input-channel and FX-return faders to the send level into the chosen MIX/FX bus and shows
+  mode flips the input-channel and FX-channel faders to the send level into the chosen MIX/FX bus and shows
   **only that bus's sources** — non-send nodes (monitors, master, the buses themselves) and wire-less strips
-  drop out. FX returns only follow sends to MIX buses. MAIN shows every strip at its own level.
+  drop out. FX channels only follow sends to MIX buses. MAIN shows every strip at its own level.
 - **Scribble colour** — the scribble uses each node's **CH SETTING colour** (`plan.nodeColors`, a device
   parameter) rather than the node-kind rail. The text colour is whichever of black/white has the higher
   actual contrast ratio (WCAG relative luminance, `inkOn`), paired with a faint opposite-tone halo

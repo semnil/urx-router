@@ -242,10 +242,15 @@ export const PARAMS = {
   STEREO_MASTER_FADER: { id: 581, axis: "global", encoding: "level" },
   /** STEREO master ON (y = 0). */
   STEREO_MASTER_ON: { id: 582, axis: "global", encoding: "bool" },
-  /** FX return channel ON (y = FX1 0 / FX2 1). The FX return reuses the input
+  /** FX channel ON (y = FX1 0 / FX2 1). The FX channel reuses the input
    *  channel-strip layout one block earlier (139 fader / 140 ON / 141 pan ↔
    *  337 / 338 / 339); confirmed by live read (FX1/FX2 hold independent states). */
   FX_CHANNEL_ON: { id: 338, axis: "global", encoding: "bool" },
+  /** FX channel master fader = the fixed FX channel → STEREO send level (the FX
+   *  channel's main path, mirroring CH_FADER for channels). y = FX1 0 / FX2 1. */
+  FX_CHANNEL_FADER: { id: 337, axis: "global", encoding: "level" },
+  /** FX channel balance = the fixed FX channel → STEREO send pan. y = FX1 0 / FX2 1. */
+  FX_CHANNEL_BAL: { id: 339, axis: "global", encoding: "pan" },
   /** Input source select for MONO CH1-4 (y = physical input slot 0..3). Raw input
    *  port ref. Param 22 only covers the mono slots; the device returns NONE for
    *  slots 4..11, so stereo channels use the separate 209/210 pair below. */

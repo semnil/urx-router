@@ -148,7 +148,7 @@ describe("ensureFixedConnections", () => {
   const u44 = MODELS.URX44;
   const stereo = ref("bus.stereo", "in");
 
-  it("seeds every CH and FX-return main path into STEREO", () => {
+  it("seeds every CH and FX-channel main path into STEREO", () => {
     const plan = emptyPlan("URX44");
     ensureFixedConnections(u44, plan);
     expect(hasConnection(plan, ref("ch1", "out"), stereo)).toBe(true);
@@ -160,7 +160,7 @@ describe("ensureFixedConnections", () => {
     expect(hasConnection(plan, ref("bus.mix1", "out"), stereo)).toBe(false);
   });
 
-  it("seeds FX returns at -∞ and leaves channel main paths at unity", () => {
+  it("seeds FX channels at -∞ and leaves channel main paths at unity", () => {
     const plan = emptyPlan("URX44");
     ensureFixedConnections(u44, plan);
     const fx1 = plan.connections.find((c) => c.from === ref("bus.fx1", "out") && c.to === stereo);
