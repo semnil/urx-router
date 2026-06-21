@@ -26,12 +26,14 @@ import {
   inputEq,
   inputNodeForPort,
   insertFxControl,
+  isStereoChannel,
   nodeForPort,
   OSC_ASSIGN_BUSES,
   oscAssign,
   outputEq,
   ROUTING_SELECTORS,
   sendControl,
+  stereoIndexMap,
 } from "./translate";
 import type { ParamEncoding } from "./params";
 import {
@@ -396,14 +398,27 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
     }
   }
 
-  // Input source select (param 22): per channel, decode the slot's port to its
-  // input node and reflect inputNode → channel as a source wire (NONE clears it).
+  // Input source select: decode the channel's source port to its input node and
+  // reflect inputNode → channel as a source wire (NONE clears it). MONO CH1-4 read
+  // param 22 at the physical slot; stereo channels read param 209 (L) at the stereo
+  // pair index — param 22 only covers the mono slots (confirmed on URX44V).
+  const srcStereoIdx = stereoIndexMap(model);
   for (const node of model.nodes) {
     if (node.kind !== "channel") continue;
-    const slots = channelInputSlots(model, node.id);
-    if (!slots) continue;
+    let srcParam: number, srcY: number;
+    if (isStereoChannel(node.id)) {
+      const si = srcStereoIdx.get(node.id);
+      if (si === undefined) continue;
+      srcParam = PARAMS.STEREO_INPUT_SOURCE_L.id;
+      srcY = si;
+    } else {
+      const slots = channelInputSlots(model, node.id);
+      if (!slots) continue;
+      srcParam = PARAMS.INPUT_SOURCE.id;
+      srcY = slots[0];
+    }
     try {
-      const port = vdToPortRef(await vdGet(PARAMS.INPUT_SOURCE.id, 0, slots[0]));
+      const port = vdToPortRef(await vdGet(srcParam, 0, srcY));
       const src = port === null ? null : inputNodeForPort(port);
       if (src) {
         setExclusiveConnection(plan, ref(src, "out"), ref(node.id, "in"), "source");

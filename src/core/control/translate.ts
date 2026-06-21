@@ -211,7 +211,7 @@ export interface ChannelControl {
 // Stereo channels are indexed by their position among the model's stereo
 // channels (which shifts with the mono count). The map is built once per model.
 const stereoIndexCache = new WeakMap<DeviceModel, Map<string, number>>();
-function stereoIndexMap(model: DeviceModel): Map<string, number> {
+export function stereoIndexMap(model: DeviceModel): Map<string, number> {
   let map = stereoIndexCache.get(model);
   if (!map) {
     map = new Map();
@@ -1010,19 +1010,29 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     }
   }
 
-  // Input source select (param 22) — absolute over every channel slot. A source
-  // wire picks a physical input (a mono node fills one slot, even = L / odd = R;
-  // a stereo node the adjacent pair); no wire emits the NONE sentinel so a write
-  // clears the device's selection, matching readback (NONE = no source wire).
+  // Input source select — absolute. A source wire picks a physical input, encoded
+  // as a raw port ref; no wire emits the NONE sentinel so a write clears the
+  // device's selection, matching readback (NONE = no source wire). MONO CH1-4 use
+  // param 22 indexed by physical input slot (a mono node fills one slot, even = L /
+  // odd = R). Stereo channels use the separate 209/210 (L/R) pair indexed by stereo
+  // pair index — param 22 only covers the mono slots (confirmed on URX44V).
+  const srcStereoIdx = stereoIndexMap(model);
   for (const node of model.nodes) {
     if (node.kind !== "channel") continue;
-    const slots = channelInputSlots(model, node.id);
-    if (!slots) continue;
     const conn = incomingConnection(plan, ref(node.id, "in"), "source");
     const ports = conn ? inputPorts(parseRef(conn.from).nodeId) : null;
     // A wire to a source not in the input namespace is left untouched.
     if (conn && !ports) continue;
-    for (const s of slots) out.push(command("INPUT_SOURCE", s, ports ? ports[s & 1] : PORT_REF_NONE));
+    if (isStereoChannel(node.id)) {
+      const si = srcStereoIdx.get(node.id);
+      if (si === undefined) continue;
+      out.push(command("STEREO_INPUT_SOURCE_L", si, ports ? ports[0] : PORT_REF_NONE));
+      out.push(command("STEREO_INPUT_SOURCE_R", si, ports ? ports[1] : PORT_REF_NONE));
+    } else {
+      const slots = channelInputSlots(model, node.id);
+      if (!slots) continue;
+      for (const s of slots) out.push(command("INPUT_SOURCE", s, ports ? ports[s & 1] : PORT_REF_NONE));
+    }
   }
 
   // Streaming / USB-out / monitor / analog-patch selects — absolute. One incoming

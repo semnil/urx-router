@@ -242,8 +242,16 @@ export const PARAMS = {
   STEREO_MASTER_FADER: { id: 581, axis: "global", encoding: "level" },
   /** STEREO master ON (y = 0). */
   STEREO_MASTER_ON: { id: 582, axis: "global", encoding: "bool" },
-  /** Input source select (y = physical input slot 0..11). Raw input port ref. */
+  /** Input source select for MONO CH1-4 (y = physical input slot 0..3). Raw input
+   *  port ref. Param 22 only covers the mono slots; the device returns NONE for
+   *  slots 4..11, so stereo channels use the separate 209/210 pair below. */
   INPUT_SOURCE: { id: 22, axis: "input", encoding: "portRef" },
+  /** Stereo channel input source L / R (y = stereo pair index 0..3). Raw input
+   *  port ref in the same physical-input namespace as param 22. Confirmed on
+   *  URX44V by live snapshot (CH5/6 = AUX 256/257, CH7/8 = USB MAIN A 512/513,
+   *  CH9/10 = USB MAIN B 514/515, CH11/12 = USB MAIN C 516/517). */
+  STEREO_INPUT_SOURCE_L: { id: 209, axis: "global", encoding: "portRef" },
+  STEREO_INPUT_SOURCE_R: { id: 210, axis: "global", encoding: "portRef" },
   /** Ducker key source (y = stereo index). Raw port ref: channel slot or bus. */
   DUCKER_SRC: { id: 259, axis: "global", encoding: "portRef" },
   /** Monitor source select L/R (y = monitor 0..1). Raw bus port ref. */

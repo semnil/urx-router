@@ -677,12 +677,20 @@ describe("planToCommands", () => {
     expect(c2!.vdValue).toBe(257);
   });
 
-  it("emits a stereo channel's input source across both slots", () => {
+  it("emits a stereo channel's input source via 209/210 at the stereo index", () => {
     const plan = emptyPlan("URX44V");
     plan.connections.push({ from: "in.usbdaw_5_6:out", to: "ch_5_6:in", kind: "source" });
-    const cmds = planToCommands(model, plan).filter((c) => c.name === "INPUT_SOURCE");
-    expect(cmds.find((c) => c.y === 4)!.vdValue).toBe(548);
-    expect(cmds.find((c) => c.y === 5)!.vdValue).toBe(549);
+    const cmds = planToCommands(model, plan);
+    // ch_5_6 is stereo index 0: L port -> 209:0:0, R port -> 210:0:0 (not param 22,
+    // which the device only honors for the mono slots 0-3).
+    const l = cmds.find((c) => c.name === "STEREO_INPUT_SOURCE_L");
+    const r = cmds.find((c) => c.name === "STEREO_INPUT_SOURCE_R");
+    expect(l!.vdValue).toBe(548);
+    expect(l!.request.uri).toBe("/vd/parameters/209:0:0?operation=value");
+    expect(r!.vdValue).toBe(549);
+    expect(r!.request.uri).toBe("/vd/parameters/210:0:0?operation=value");
+    // No param 22 write touches a stereo slot.
+    expect(cmds.some((c) => c.name === "INPUT_SOURCE" && c.y >= 4)).toBe(false);
   });
 
   it("emits streaming source select as a tagged L/R port ref", () => {
