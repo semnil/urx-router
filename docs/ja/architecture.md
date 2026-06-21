@@ -210,6 +210,12 @@ A.Gain +8/+55・D.Gain -14/+15 を左右の水平に。
 - **配信経路** — Rust 側 (`src-tauri/src/vd.rs`) はメーター購読 (`MetersSubscribe`/`MetersUnsubscribe`) を
   受けると各アドレスを broker に登録し、アイドル時のソケット排出 (`pump`) でメーター `notify` フレームを
   Tauri Channel 経由でフロントへ転送する (`forward_meter`)。実機制御と同じく `--experimental` 起動時のみ有効。
+- **実機側操作の追従 (device follow)** — ライブ同期の逆方向。同じ排出経路で**実機側のパラメーター変更**も
+  購読でき (`ParamsSubscribe`/`forward_param`・メーターと共有の `notify_frame` でエンベロープ解析を共通化)、
+  全 writable アドレスを登録して各 `notify` を転送する。Live sync 中は `core/control/follow.ts` の
+  `DeviceFollow` がその通知を debounce し、実機を読み戻して (`applyDeviceState`) plan へ反映・再描画する
+  ため、実機本体で動かしたフェーダーが落ち着いた後に盤面へ追従する。アプリ自身の書込みの戻りは snapshot
+  一致で無視し、登録アドレス集合は構造変更時のみ再登録する。
 
 ## レスポンシブ対応 (モバイル)
 

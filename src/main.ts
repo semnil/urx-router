@@ -37,6 +37,7 @@ import {
 import { applyDeviceState } from "./core/control/readback";
 import { diffNames, diffPlan, sendConverging, sendNames } from "./core/control/client";
 import { LiveSync } from "./core/control/live";
+import { DeviceFollow } from "./core/control/follow";
 import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -187,6 +188,36 @@ const consoleView = new Console(consoleHost, {
   onChange: () => markChanged(),
 });
 
+// Device follow (experimental): the reverse of live sync. While live, parameter
+// changes made on the device itself (LCD / physical controls) are pulled back
+// into the plan via a debounced readback that reuses applyDeviceState, then
+// re-rendered. Echoes of our own writes are filtered by the live snapshot. Null
+// in the demo / when live is absent, so it tree-shakes out with the rest of the
+// control layer.
+const follow =
+  DEMO || !live
+    ? null
+    : new DeviceFollow({
+        addrs: () => live?.writableAddrs() ?? [],
+        isEcho: (p) => live?.isEcho(p.paramId, p.x, p.y, p.value) ?? false,
+        // A settled device-side change: pull the whole device into the plan,
+        // reflect it without disturbing selection/viewport, and re-base the live
+        // snapshot so our own next diff (and the echoes of this read) measure from
+        // the device truth.
+        reconcile: async () => {
+          const result = await applyDeviceState(getModel(modelId), plan);
+          if (result.errors.length) console.warn("device-follow readback issues:", result.errors);
+          plan.unreadNodes = result.unreadNodes;
+          graph.refresh();
+          consoleView.refresh();
+          refreshInspector();
+          live?.resync();
+          setStatus(t().status.liveFollowed(result.applied));
+        },
+        onFollow: () => setStatus(t().status.liveFollowing),
+        onError: (message) => deactivateLive(t().status.liveError(message)),
+      });
+
 type ViewName = "graph" | "console";
 
 function setView(next: ViewName): void {
@@ -227,6 +258,7 @@ function setLiveUi(on: boolean): void {
 // failure, and whenever the plan is replaced wholesale (loadPlan).
 function deactivateLive(status?: string): void {
   if (!live?.isActive()) return;
+  follow?.end();
   live.end();
   void vdDisconnect();
   setLiveUi(false);
@@ -803,6 +835,7 @@ if (!DEMO) {
         dirty = false;
         liveDeviceLabel = device.model;
         live.begin();
+        follow?.begin();
         setLiveUi(true);
         consoleView.setLive(true);
         setStatus(t().status.liveOn(device.model, result.applied));

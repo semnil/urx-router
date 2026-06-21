@@ -31,6 +31,18 @@ pub struct MeterUpdate {
     pub value: i64,
 }
 
+/// One device-originated parameter change pushed to the frontend: a `notify` on
+/// a registered `/vd/parameters/{id}:{x}:{y}` address. `value` is the same raw
+/// broker integer vd_get returns, decoded on the JS side. Lets the UI follow
+/// edits made on the device itself (LCD / physical controls).
+#[derive(Clone, Serialize)]
+pub struct ParamUpdate {
+    pub param_id: u32,
+    pub x: i64,
+    pub y: i64,
+    pub value: i64,
+}
+
 /// A request handed to the worker thread, each carrying a one-shot reply channel.
 pub enum Cmd {
     Set {
@@ -71,6 +83,16 @@ pub enum Cmd {
     },
     /// Drop the current meter subscription (unregisters each address).
     MetersUnsubscribe,
+    /// Subscribe to a set of parameter addresses (param_id, x, y) and stream their
+    /// `notify` frames through `channel`. Replaces any prior parameter subscription.
+    /// Fire-and-forget: the worker registers each address with the broker and
+    /// forwards notifies, so device-side edits reach the frontend.
+    ParamsSubscribe {
+        addrs: Vec<(u32, i64, i64)>,
+        channel: Channel<ParamUpdate>,
+    },
+    /// Drop the current parameter subscription (unregisters each address).
+    ParamsUnsubscribe,
     Shutdown,
 }
 
@@ -180,6 +202,22 @@ pub fn meters_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
     tx.send(Cmd::MetersUnsubscribe).map_err(|_| "control worker is gone".to_string())
 }
 
+/// Subscribe to device-side parameter changes; notifies stream through `channel`.
+/// Replaces any prior subscription. Fire-and-forget (no broker round-trip awaited).
+pub fn params_subscribe(
+    tx: Sender<Cmd>,
+    addrs: Vec<(u32, i64, i64)>,
+    channel: Channel<ParamUpdate>,
+) -> Result<(), String> {
+    tx.send(Cmd::ParamsSubscribe { addrs, channel })
+        .map_err(|_| "control worker is gone".to_string())
+}
+
+/// Drop the current parameter subscription.
+pub fn params_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
+    tx.send(Cmd::ParamsUnsubscribe).map_err(|_| "control worker is gone".to_string())
+}
+
 /// Close any live connection. Safe to call when not connected.
 pub fn disconnect(state: &VdState) {
     if let Some(tx) = state.tx.lock().unwrap().take() {
@@ -189,7 +227,7 @@ pub fn disconnect(state: &VdState) {
 
 #[cfg(desktop)]
 mod imp {
-    use super::{Cmd, DeviceSummary, MeterUpdate};
+    use super::{Cmd, DeviceSummary, MeterUpdate, ParamUpdate};
     use std::net::TcpStream;
     use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
     use std::time::{Duration, Instant};
@@ -230,6 +268,10 @@ mod imp {
         // the addresses registered with the broker (so we can unregister on change).
         let mut meter_ch: Option<Channel<MeterUpdate>> = None;
         let mut meter_addrs: Vec<(u32, i64)> = Vec::new();
+        // Active parameter subscription, if any: the channel for device-side param
+        // notifies and the registered addresses (unregistered on change / drop).
+        let mut param_ch: Option<Channel<ParamUpdate>> = None;
+        let mut param_addrs: Vec<(u32, i64, i64)> = Vec::new();
 
         loop {
             match rx.recv_timeout(Duration::from_millis(50)) {
@@ -269,12 +311,32 @@ mod imp {
                     meter_addrs.clear();
                     meter_ch = None;
                 }
+                Ok(Cmd::ParamsSubscribe { addrs, channel }) => {
+                    // Replace any prior subscription: unregister the old set, then
+                    // register the new one address by address (per-address regist
+                    // only, mirroring meters — a bulk post has crashed Device Center).
+                    for &(id, x, y) in &param_addrs {
+                        let _ = reg_param(&mut ws, &dev_uid, id, x, y, "unregist");
+                    }
+                    for &(id, x, y) in &addrs {
+                        let _ = reg_param(&mut ws, &dev_uid, id, x, y, "regist");
+                    }
+                    param_addrs = addrs;
+                    param_ch = Some(channel);
+                }
+                Ok(Cmd::ParamsUnsubscribe) => {
+                    for &(id, x, y) in &param_addrs {
+                        let _ = reg_param(&mut ws, &dev_uid, id, x, y, "unregist");
+                    }
+                    param_addrs.clear();
+                    param_ch = None;
+                }
                 Err(RecvTimeoutError::Timeout) => {
-                    // Drain the idle socket so its buffer never backs up. When a
-                    // meter subscription is active, forward meter notifications to
-                    // the frontend instead of discarding them; stop if the link
-                    // dropped.
-                    if let Err(e) = pump(&mut ws, meter_ch.as_ref()) {
+                    // Drain the idle socket so its buffer never backs up. While a
+                    // meter / parameter subscription is active, forward those
+                    // notifications to the frontend instead of discarding them; stop
+                    // if the link dropped.
+                    if let Err(e) = pump(&mut ws, meter_ch.as_ref(), param_ch.as_ref()) {
                         eprintln!("vd: {e}; stopping control worker");
                         break;
                     }
@@ -449,18 +511,41 @@ mod imp {
         )
     }
 
-    /// Parse a meter `notify` frame and stream it to the frontend. Ignores any
-    /// other frame shape (command replies, parameter notifies, etc.).
+    /// Register or unregister one parameter address with the broker for change
+    /// notifies. Fire-and-forget, like reg_meter: the reply is drained by `pump`.
+    fn reg_param(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64, op: &str) -> Result<(), String> {
+        send_json(
+            ws,
+            json!({
+                "jsonrpc": "1.0",
+                "method": "requestVD",
+                "params": {
+                    "dev_uid": dev_uid,
+                    "vdp": { "method": "post", "uri": format!("/vd/parameters/{param_id}:{x}:{y}?operation={op}") }
+                }
+            }),
+        )
+    }
+
+    /// Validate a broker `notify` frame and return its `vdp` object plus the
+    /// address segment after `prefix` (query stripped), or None for any other
+    /// frame shape (command replies, notifies on a different uri, etc.). Shared
+    /// by the meter and parameter forwarders, which only differ in the prefix,
+    /// the address arity, and how strictly they read current_value.
+    fn notify_frame<'a>(msg: &'a Value, prefix: &str) -> Option<(&'a Value, &'a str)> {
+        let vdp = msg.pointer("/params/vdp").or_else(|| msg.pointer("/vdp"))?;
+        if vdp.get("method").and_then(Value::as_str) != Some("notify") {
+            return None;
+        }
+        let uri = vdp.get("uri").and_then(Value::as_str)?;
+        let rest = uri.strip_prefix(prefix)?;
+        Some((vdp, rest.split('?').next().unwrap_or(rest)))
+    }
+
+    /// Parse a meter `notify` frame and stream it to the frontend.
     fn forward_meter(text: &str, ch: &Channel<MeterUpdate>) {
         let Ok(msg) = serde_json::from_str::<Value>(text) else { return };
-        let vdp = msg.pointer("/params/vdp").or_else(|| msg.pointer("/vdp"));
-        let Some(vdp) = vdp else { return };
-        if vdp.get("method").and_then(Value::as_str) != Some("notify") {
-            return;
-        }
-        let uri = vdp.get("uri").and_then(Value::as_str).unwrap_or("");
-        let Some(rest) = uri.strip_prefix("/vd/meters/") else { return };
-        let addr = rest.split('?').next().unwrap_or(rest);
+        let Some((vdp, addr)) = notify_frame(&msg, "/vd/meters/") else { return };
         let mut parts = addr.split(':');
         let (Some(id), Some(xs)) = (parts.next(), parts.next()) else { return };
         let (Ok(meter_id), Ok(x)) = (id.parse::<u32>(), xs.parse::<i64>()) else { return };
@@ -468,15 +553,36 @@ mod imp {
         let _ = ch.send(MeterUpdate { meter_id, x, value });
     }
 
+    /// Parse a parameter `notify` frame (a device-side change on a registered
+    /// address) and stream it to the frontend. A non-integer current_value (e.g.
+    /// a name string) is skipped — numeric follow only, matching the JS reconcile.
+    fn forward_param(text: &str, ch: &Channel<ParamUpdate>) {
+        let Ok(msg) = serde_json::from_str::<Value>(text) else { return };
+        let Some((vdp, addr)) = notify_frame(&msg, "/vd/parameters/") else { return };
+        let mut parts = addr.split(':');
+        let (Some(ids), Some(xs), Some(ys)) = (parts.next(), parts.next(), parts.next()) else { return };
+        let (Ok(param_id), Ok(x), Ok(y)) = (ids.parse::<u32>(), xs.parse::<i64>(), ys.parse::<i64>()) else { return };
+        let Some(value) = vdp.pointer("/data/current_value").and_then(Value::as_i64) else { return };
+        let _ = ch.send(ParamUpdate { param_id, x, y, value });
+    }
+
     /// Read whatever is buffered until the socket would block, forwarding meter
-    /// notifications to `ch` (when subscribed) and discarding everything else.
-    /// Returns Err if the connection dropped so the worker can stop.
-    fn pump(ws: &mut Ws, ch: Option<&Channel<MeterUpdate>>) -> Result<(), String> {
+    /// and parameter notifications to their channels (when subscribed) and
+    /// discarding everything else. Returns Err if the connection dropped so the
+    /// worker can stop.
+    fn pump(
+        ws: &mut Ws,
+        meter_ch: Option<&Channel<MeterUpdate>>,
+        param_ch: Option<&Channel<ParamUpdate>>,
+    ) -> Result<(), String> {
         for _ in 0..512 {
             match ws.read() {
                 Ok(Message::Text(t)) => {
-                    if let Some(ch) = ch {
+                    if let Some(ch) = meter_ch {
                         forward_meter(&t, ch);
+                    }
+                    if let Some(ch) = param_ch {
+                        forward_param(&t, ch);
                     }
                 }
                 Ok(Message::Close(_)) => return Err("Device Center closed the control connection".into()),

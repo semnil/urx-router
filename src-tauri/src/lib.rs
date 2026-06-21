@@ -134,6 +134,26 @@ fn vd_meters_unsubscribe(state: State<vd::VdState>) -> Result<(), String> {
     vd::meters_unsubscribe(tx)
 }
 
+// Subscribe to device-side parameter changes: the worker registers each
+// (param_id, x, y) with the broker and streams `notify` frames through the
+// channel, so edits made on the device follow into the UI. Replaces any prior
+// subscription. Fire-and-forget, like the meter subscription.
+#[tauri::command]
+fn vd_params_subscribe(
+    state: State<vd::VdState>,
+    addrs: Vec<(u32, i64, i64)>,
+    channel: tauri::ipc::Channel<vd::ParamUpdate>,
+) -> Result<(), String> {
+    let tx = vd::sender(&state)?;
+    vd::params_subscribe(tx, addrs, channel)
+}
+
+#[tauri::command]
+fn vd_params_unsubscribe(state: State<vd::VdState>) -> Result<(), String> {
+    let tx = vd::sender(&state)?;
+    vd::params_unsubscribe(tx)
+}
+
 // Disconnect only signals the worker to shut down (no reply wait), so it stays
 // synchronous.
 #[tauri::command]
@@ -169,6 +189,8 @@ pub fn run() {
             vd_get_str,
             vd_meters_subscribe,
             vd_meters_unsubscribe,
+            vd_params_subscribe,
+            vd_params_unsubscribe,
             vd_disconnect
         ])
         .run(tauri::generate_context!())

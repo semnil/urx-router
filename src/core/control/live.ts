@@ -46,6 +46,9 @@ export class LiveSync {
   private active = false;
   private readonly snapshot = new Map<string, number>();
   private readonly nameSnapshot = new Map<string, string>();
+  // The snapshot's writable addresses as numeric [paramId, x, y] triples, built
+  // alongside the snapshot so device-follow registration needs no key re-parse.
+  private writableAddrList: Array<[number, number, number]> = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
   private pending = false;
@@ -60,6 +63,29 @@ export class LiveSync {
   begin(): void {
     this.captureSnapshot();
     this.active = true;
+  }
+
+  /** Re-capture the device-truth snapshot from the plan's current implied state.
+   *  Call after a device-follow readback has pulled the plan into agreement with
+   *  the device, so the next outgoing diff measures from the device truth (and so
+   *  device-side notifies for the just-read values register as echoes). */
+  resync(): void {
+    this.captureSnapshot();
+  }
+
+  /** Every writable parameter address the current plan maps to, as [paramId, x, y]
+   *  triples — the set to register for device-side change notifies. Captured with
+   *  the snapshot, so it must be called after begin()/resync(). Read-only. */
+  writableAddrs(): Array<[number, number, number]> {
+    return this.writableAddrList;
+  }
+
+  /** Whether an incoming device notify equals the snapshotted device truth — i.e.
+   *  it is the echo of a value we just wrote (or already knew), not a fresh
+   *  device-side change. An address we do not track returns false (treat as a
+   *  change worth reconciling). */
+  isEcho(paramId: number, x: number, y: number, value: number): boolean {
+    return this.snapshot.get(`${paramId}:${x}:${y}`) === value;
   }
 
   /** Stop syncing and cancel any pending flush. Does not touch the connection. */
@@ -89,7 +115,12 @@ export class LiveSync {
     this.nameSnapshot.clear();
     const model = this.hooks.getModel();
     const plan = this.hooks.getPlan();
-    for (const c of planToCommands(model, plan)) this.snapshot.set(cmdKey(c), c.vdValue);
+    const addrs: Array<[number, number, number]> = [];
+    for (const c of planToCommands(model, plan)) {
+      this.snapshot.set(cmdKey(c), c.vdValue);
+      addrs.push([c.paramId, c.x, c.y]);
+    }
+    this.writableAddrList = addrs;
     for (const w of planToNameWrites(model, plan)) this.nameSnapshot.set(nameKey(w), w.value);
   }
 
