@@ -636,18 +636,13 @@ export function renderInspector(
       );
     }
 
-    // Shelving is offered for a node with no editable wires; fixed STEREO wires
-    // are hidden along with the node, so they do not block it (see graph.ts). A
-    // ducker may always be shelved — its key-source wire is hidden with it.
-    const editable = (c: PlanConnection): boolean => !isFixedConnection(model, c.from, c.to);
-    if (node.kind === "ducker" || (!incoming.some(editable) && !outgoing.some(editable))) {
-      const hide = document.createElement("button");
-      hide.type = "button";
-      hide.className = "subtle";
-      hide.textContent = m.inspector.hideNode;
-      hide.addEventListener("click", () => actions.onHideNode(node.id));
-      host.append(hide);
-    }
+    // Any node may be shelved; its wires are hidden along with it (see graph.ts).
+    const hide = document.createElement("button");
+    hide.type = "button";
+    hide.className = "subtle";
+    hide.textContent = m.inspector.hideNode;
+    hide.addEventListener("click", () => actions.onHideNode(node.id));
+    host.append(hide);
     return;
   }
 

@@ -182,8 +182,6 @@ export const en = {
   selbar: {
     title: " selected",
     hide: (n: number): string => `Hide ${n}`,
-    allConnected: "All connected",
-    partialTip: "Connected nodes stay — only unconnected ones hide.",
     clear: "Clear",
   },
   tooltip: {
@@ -248,10 +246,7 @@ export const en = {
     hidUnused: (n: number): string => `Hid ${n} unused node${n === 1 ? "" : "s"}`,
     noneToHide: "No unused nodes to hide",
     hidNode: (label: string): string => `Hid ${label}`,
-    hidSelected: (n: number, skipped: number): string => {
-      const base = `Hid ${n} node${n === 1 ? "" : "s"}`;
-      return skipped ? `${base} · ${skipped} still connected` : base;
-    },
+    hidSelected: (n: number): string => `Hid ${n} node${n === 1 ? "" : "s"}`,
     shownNode: (label: string): string => `Showing ${label}`,
     shownAll: "Showing all nodes",
     themeDark: "Switched to dark mode",

@@ -241,29 +241,30 @@ works by mouse wheel (desktop) and two-finger pinch (touch); both share one "zoo
 routine (`zoomAt` in `graph.ts`). `viewport-fit=cover` plus `env(safe-area-inset-bottom)` clears the
 notch / home indicator, and the toolbar drops its decorative VU meter + tagline below 720px.
 
-## Hiding unconnected nodes
+## Hiding nodes
 
-On larger models the nodes a plan never wires up take space and clutter the diagram, so **only
-nodes with no connections** can be collapsed off the canvas. Hidden nodes collect on a **shelf**
+On larger models the nodes a plan does not need take space and clutter the diagram, so **any node**
+can be collapsed off the canvas — connected or not. Hidden nodes collect on a **shelf**
 docked along the bottom (an HTML overlay `graph.ts` builds — kept out of the SVG, so it never shows in
 an export) as rail-colored chips; clicking a chip restores that one, and "Show all" restores them all.
 
-- The toolbar "Hide unused" shelves every node with no *editable* connections. The inspector adds a
-  "Hide this node" button when the selected node has none.
+- The toolbar "Hide unused" shelves every node with no *editable* connections (a convenience for
+  clearing the never-wired nodes in one click). The inspector adds a "Hide this node" button for any
+  selected node.
 - **Multi-select**: Ctrl/Cmd-clicking nodes toggles them into a selection without dragging. With two or
-  more selected, a floating action bar (an HTML overlay, like the shelf) offers a batch "Hide" — it
-  shelves only the shelvable nodes in the selection (the same invariant) and reports any connected ones
-  it kept. "Clear" and `Escape` drop the selection. The selection set is transient view state, not
-  persisted.
-- **Invariant**: only a node with no editable connection can be hidden. Fixed CH/FX → STEREO wires do
-  not count (a channel carrying just its fixed STEREO wire is still shelvable), and such a wire is
-  skipped while either endpoint is hidden — so rendering never leaves a wire dangling. Assigning a real
-  source/send un-shelves the node (it is hidden only while in `hidden` *and* free of editable wires).
-- **Ducker exception**: a ducker can be shelved on its own even while it carries a key-source wire
-  (that wire is skipped while the ducker is hidden, so the source-side port also stops reading as in
-  use). Hiding a parent channel hides its ducker too, and restoring the ducker restores the parent —
-  a ducker is never shown without its channel. On the shelf, a parent and its hidden ducker collapse
-  into one chip (the child chip is suppressed); restoring the parent chip brings the whole unit back.
+  more selected, a floating action bar (an HTML overlay, like the shelf) offers a batch "Hide" that
+  shelves the whole selection. "Clear" and `Escape` drop the selection. The selection set is transient
+  view state, not persisted.
+- **Wires of a hidden node**: any wire (fixed or editable) is skipped while either endpoint is hidden,
+  so a shelved node takes its wires off-canvas with it and rendering never leaves a wire dangling. The
+  connections themselves stay in `plan.connections` — hiding is purely visual — and reappear when the
+  node is restored.
+- **Ducker**: hiding a parent channel hides its ducker too, and restoring the ducker restores the
+  parent — a ducker is never shown without its channel. On the shelf, a parent and its hidden ducker
+  collapse into one chip (the child chip is suppressed); restoring the parent chip brings the whole
+  unit back.
+- A hidden node also drops from the **CONSOLE view** (`console.ts` filters `plan.hidden` out of its
+  strip list, and a shelved ducker drops its chip from the parent strip).
 - The hidden set persists as `plan.hidden` (an array of node ids) and is restored on load. Like
   `positions`, it is pure view state and does not affect routing rules (future hardware reflection may
   ignore it).

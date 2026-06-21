@@ -181,8 +181,6 @@ export const ja: Messages = {
   selbar: {
     title: " 件選択中",
     hide: (n: number): string => `${n} 件を非表示`,
-    allConnected: "全て接続中",
-    partialTip: "接続中のノードは残り、未接続のみ非表示になります。",
     clear: "選択解除",
   },
   tooltip: {
@@ -242,10 +240,7 @@ export const ja: Messages = {
     hidUnused: (n: number): string => `未接続の ${n} ノードを非表示にしました`,
     noneToHide: "非表示にできる未接続ノードはありません",
     hidNode: (label: string): string => `${label} を非表示にしました`,
-    hidSelected: (n: number, skipped: number): string => {
-      const base = `${n} 件を非表示にしました`;
-      return skipped ? `${base} (${skipped} 件は接続中のため保持)` : base;
-    },
+    hidSelected: (n: number): string => `${n} 件を非表示にしました`,
     shownNode: (label: string): string => `${label} を表示しました`,
     shownAll: "全ノードを表示しました",
     themeDark: "ダークモードに切り替えました",

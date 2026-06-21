@@ -215,8 +215,12 @@ export class Console {
 
   private stripModels(): { groups: { label: string; ids: string[] }[]; master: string | null } {
     const model = this.hooks.getModel();
-    const ids = new Set(model.nodes.map((n) => n.id));
-    const channels = model.nodes.filter((n) => n.kind === "channel").map((n) => n.id);
+    // A node shelved out of the graph drops from the console too.
+    const hidden = new Set(this.hooks.getPlan().hidden);
+    const ids = new Set(model.nodes.map((n) => n.id).filter((i) => !hidden.has(i)));
+    const channels = model.nodes
+      .filter((n) => n.kind === "channel" && !hidden.has(n.id))
+      .map((n) => n.id);
     const busFx = ["bus.fx1", "bus.fx2", "bus.mix1", "bus.mix2"].filter((i) => ids.has(i));
     const mon = ["bus.mon1", "bus.mon2", "bus.osc"].filter((i) => ids.has(i));
     const groups = [
@@ -391,7 +395,9 @@ export class Console {
       makeChip(proc, "INS FX", false, insOn(), () => this.toggleInsFx(m.id, ifx.options));
     }
     // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
-    const duckerId = model.nodes.find((n) => n.kind === "ducker" && n.attachTo === m.id)?.id;
+    // A shelved ducker drops its chip even while the parent strip stays.
+    const hidden = this.hooks.getPlan().hidden;
+    const duckerId = model.nodes.find((n) => n.kind === "ducker" && n.attachTo === m.id && !hidden.includes(n.id))?.id;
     if (duckerId) {
       const duckOn = (): boolean => this.hooks.getPlan().nodeParams[duckerId]?.duckerOn === true;
       makeChip(proc, "DUCKER", false, duckOn(), () => {

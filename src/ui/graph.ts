@@ -479,11 +479,6 @@ export class Graph {
     return this.defaultPos(this.nodeById.get(nodeId)!);
   }
 
-  /** A node hung under a parent (ducker): position derived, drags/hides with it. */
-  private isHung(id: string): boolean {
-    return this.nodeById.get(id)?.attachTo != null;
-  }
-
   private parentOf(id: string): string | undefined {
     return this.nodeById.get(id)?.attachTo;
   }
@@ -607,34 +602,24 @@ export class Graph {
     return g;
   }
 
-  // A node is hidden when it is shelved AND carries no editable wires — except a
-  // ducker, which may be shelved with its key-source wire. A hung child is also
-  // hidden whenever its parent is, so a ducker is never shown without its channel.
+  // A node is hidden whenever it is shelved; its wires — fixed or editable — are
+  // hidden along with it (see redrawWires). A hung child is also hidden whenever
+  // its parent is, so a ducker is never shown without its channel.
   private isHidden(id: string): boolean {
     const parent = this.parentOf(id);
     if (parent && this.isHidden(parent)) return true;
-    if (!this.hidden.has(id)) return false;
-    if (this.isHung(id)) return true;
-    return !this.nodeHasEditableConnection(id);
+    return this.hidden.has(id);
   }
 
-  // Fixed wires (CH / FX return -> STEREO) are structural and do not count as
-  // "in use": a channel with only its fixed STEREO wire is still shelvable, and
-  // its fixed wire is hidden along with it (see redrawWires). Assigning a real
-  // source/send then un-shelves it through isHidden.
+  // Whether a node carries any non-fixed wire. Fixed wires (CH / FX return ->
+  // STEREO) are structural, so hideUnused ignores them: a channel with only its
+  // fixed STEREO wire still counts as unused.
   private nodeHasEditableConnection(id: string): boolean {
     return this.plan.connections.some(
       (c) =>
         (parseRef(c.from).nodeId === id || parseRef(c.to).nodeId === id) &&
         !isFixedConnection(this.model, c.from, c.to),
     );
-  }
-
-  /** A node may be shelved when it carries no editable wires, or is a ducker
-   *  (whose key-source wire is hidden along with it). A wired node cannot hide:
-   *  its wires would dangle off the canvas. */
-  private canShelve(id: string): boolean {
-    return this.isHung(id) || !this.nodeHasEditableConnection(id);
   }
 
   /** The device CH SETTING name (plan.nodeNames) to show for a node, or undefined
@@ -1043,8 +1028,8 @@ export class Graph {
   private redrawWires(): void {
     this.wireLayer.replaceChildren();
     for (const conn of this.plan.connections) {
-      // A fixed wire to a shelved endpoint would dangle into empty space; skip
-      // any wire whose node is hidden (only fixed-only nodes can be hidden).
+      // A wire to a shelved endpoint would dangle into empty space; skip any wire
+      // whose node is hidden, so a shelved node takes its wires off-canvas with it.
       if (this.isHidden(parseRef(conn.from).nodeId) || this.isHidden(parseRef(conn.to).nodeId)) continue;
       this.wireLayer.append(this.makeWire(conn));
     }
@@ -1654,9 +1639,8 @@ export class Graph {
     this.cb.onStatus(added.length ? t().status.hidUnused(added.length) : t().status.noneToHide);
   }
 
-  /** Shelve one node (unconnected nodes, or any ducker even while wired). */
+  /** Shelve one node. Its wires (if any) are hidden along with it. */
   hideNode(id: string): void {
-    if (!this.canShelve(id)) return;
     this.hidden.add(id);
     this.commitHidden();
     this.dropSelectionIfHidden();
@@ -1665,18 +1649,11 @@ export class Graph {
     this.cb.onStatus(t().status.hidNode(this.labelOf(id)));
   }
 
-  /** Shelve the shelvable nodes among the multi-selection. Connected nodes are
-   *  kept (only their wires would dangle) and reported, so the count is never
-   *  silently wrong. */
+  /** Shelve every node in the multi-selection; their wires are hidden with them. */
   hideSelected(): void {
     const ids = [...this.selectedNodes];
     if (!ids.length) return;
-    const shelvable: string[] = [];
-    let skipped = 0;
-    for (const id of ids) {
-      if (!this.canShelve(id)) skipped++;
-      else if (!this.hidden.has(id)) shelvable.push(id);
-    }
+    const shelvable = ids.filter((id) => !this.hidden.has(id));
     for (const id of shelvable) this.hidden.add(id);
     this.selection = null;
     this.selectedNodes.clear();
@@ -1684,7 +1661,7 @@ export class Graph {
     this.cb.onSelect(null);
     this.render();
     if (shelvable.length) this.cb.onChange();
-    this.cb.onStatus(t().status.hidSelected(shelvable.length, skipped));
+    this.cb.onStatus(t().status.hidSelected(shelvable.length));
   }
 
   /** Bring one node back, placed under the viewport so it is easy to find.
@@ -1795,7 +1772,7 @@ export class Graph {
 
   /** Repaint the floating multi-select action bar. Shown only with two or more
    *  nodes selected (a single selection keeps using the inspector). The hide
-   *  button shelves the shelvable subset; connected nodes stay put. */
+   *  button shelves every selected node. */
   private renderSelBar(): void {
     // Only count nodes still on the canvas — a stale shelved id never inflates it.
     const ids = [...this.selectedNodes].filter((id) => this.nodeEls.has(id));
@@ -1805,7 +1782,6 @@ export class Graph {
       return;
     }
     const m = t();
-    const hidable = ids.filter((id) => this.canShelve(id)).length;
 
     const label = document.createElement("div");
     label.className = "selbar-label";
@@ -1817,9 +1793,7 @@ export class Graph {
     const hide = document.createElement("button");
     hide.type = "button";
     hide.className = "selbar-hide";
-    hide.disabled = hidable === 0;
-    hide.textContent = hidable === 0 ? m.selbar.allConnected : m.selbar.hide(hidable);
-    if (hidable > 0 && hidable < ids.length) hide.title = m.selbar.partialTip;
+    hide.textContent = m.selbar.hide(ids.length);
     hide.addEventListener("click", () => this.hideSelected());
 
     const clear = document.createElement("button");

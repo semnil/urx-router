@@ -91,6 +91,19 @@ test("the dB scale includes the -60 and -80 ticks", async ({ page }) => {
   await expect(scale).toContainText("80");
 });
 
+test("a node hidden in the graph drops from the console", async ({ page }) => {
+  await expect(strip(page, "CH 1")).toBeVisible();
+
+  // Shelve CH 1 from the graph via its inspector, then return to the console.
+  await page.click("#btn-view-graph");
+  await page.locator('g.node[data-id="ch1"]').click();
+  await page.click("#inspector button.subtle");
+  await page.click("#btn-view-console");
+
+  await expect(strip(page, "CH 1")).toHaveCount(0);
+  await expect(strip(page, "CH 2")).toBeVisible();
+});
+
 test("scrolling stays inside the strip grid (no window scroll)", async ({ page }) => {
   const m = await page.evaluate(() => {
     const app = document.documentElement;

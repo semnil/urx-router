@@ -59,21 +59,22 @@ test("hide selected shelves the whole selection", async ({ page }) => {
   await expect(page.locator("#statusbar")).toHaveText("Hid 2 nodes");
 });
 
-test("a connected node in the selection is kept and reported", async ({ page }) => {
-  // micline_1_2 now carries an editable wire, so it cannot be shelved.
+test("a connected node in the selection shelves with its wire", async ({ page }) => {
+  // micline_1_2 carries an editable wire; shelving it takes the wire off-canvas.
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
   const total = await nodes(page).count();
 
   await ctrlClick(page, "in.micline_1_2");
   await ctrlClick(page, "in.aux");
   await expect(page.locator(".selbar-count")).toHaveText("2");
-  // Only the one unconnected node is hidable.
-  await expect(page.locator(".selbar-hide")).toHaveText("Hide 1");
+  // Every selected node is hidable now.
+  await expect(page.locator(".selbar-hide")).toHaveText("Hide 2");
 
   await page.click(".selbar-hide");
 
-  await expect(nodes(page)).toHaveCount(total - 1);
-  await expect(page.locator("#statusbar")).toContainText("still connected");
+  await expect(nodes(page)).toHaveCount(total - 2);
+  await expect(chips(page)).toHaveCount(2);
+  await expect(page.locator("#statusbar")).toHaveText("Hid 2 nodes");
 });
 
 test("ctrl-clicking a selected node drops it from the selection", async ({ page }) => {
