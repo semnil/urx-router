@@ -200,7 +200,16 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
 - **Send-on-fader** — a fixed “Output” label and the mode bar (MAIN / FX 1 / FX 2 / MIX 1 / MIX 2). A send
   mode flips the input-channel and FX-channel faders to the send level into the chosen MIX/FX bus and shows
   **only that bus's sources** — non-send nodes (monitors, master, the buses themselves) and wire-less strips
-  drop out. FX channels only follow sends to MIX buses. MAIN shows every strip at its own level.
+  drop out. FX channels only follow sends to MIX buses. MAIN shows every strip at its own level. In a MIX 1/2
+  mode an **FX channel also gets a `PRE` chip** that toggles its FX → MIX send's PRE/POST tap (the same value
+  as the graph/inspector tap), and the **FX channel's MUTE toggles that send's ON/OFF (SEND_ON)** — the FX
+  channel's own mute lives on the MAIN tab and in the inspector. The **FX channel's BAL knob is tab-scoped**
+  too: MAIN edits the FX → STEREO balance, a MIX mode edits that FX → MIX send's BAL (the same connection the
+  fader controls). So every FX-strip control is per-tab independent — no MAIN-output control leaks into the
+  MIX tabs. When an **FX channel's own master is muted** (channel ON = off), a MIX-mode strip dims and shows a
+  red "CH MUTE" badge on its scribble (the muted-graph-node visual language), since the whole channel — every
+  send — is then silenced; the per-send MUTE/PRE/BAL stay operable (send ON/OFF and channel ON are independent
+  device params, and the device offers no gate-out display of its own).
 - **Scribble colour** — the scribble uses each node's **CH SETTING colour** (`plan.nodeColors`, a device
   parameter) rather than the node-kind rail. The text colour is whichever of black/white has the higher
   actual contrast ratio (WCAG relative luminance, `inkOn`), paired with a faint opposite-tone halo

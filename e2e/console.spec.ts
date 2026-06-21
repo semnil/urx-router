@@ -85,6 +85,48 @@ test("a send mode shows only the sources of the selected bus", async ({ page }) 
   await expect(strip(page, "MONITOR 1")).toHaveCount(0); // monitors are not sources
 });
 
+test("an FX channel in a MIX mode has a PRE chip and a send-ON MUTE", async ({ page }) => {
+  await page.locator(".con-modepick").getByRole("button", { name: "MIX 1", exact: true }).click();
+  const fx = strip(page, "FX 1");
+  await expect(fx).toBeVisible(); // FX 1 -> MIX 1 is a (fixed, factory-on) send
+  // The BAL knob edits this FX -> MIX1 send's balance (per-tab, like the fader).
+  await expect(fx.locator(".con-knob[aria-label='BAL']")).toBeVisible();
+  // PRE toggles this FX -> MIX1 send's PRE/POST tap.
+  const pre = fx.getByRole("button", { name: "PRE", exact: true });
+  await expect(pre).toHaveAttribute("aria-pressed", "false"); // POST by default
+  await pre.click();
+  await expect(pre).toHaveAttribute("aria-pressed", "true");
+  // MUTE toggles this send's ON/OFF (SEND_ON), not the FX channel master ON.
+  const mute = fx.getByRole("button", { name: "MUTE" });
+  await expect(mute).toHaveAttribute("aria-pressed", "false"); // send on at the factory
+  await mute.click();
+  await expect(mute).toHaveAttribute("aria-pressed", "true"); // send muted
+});
+
+test("the MAIN tab has no PRE chip on FX channels (STEREO main path has no tap)", async ({ page }) => {
+  // MAIN shows the FX channel at its FX -> STEREO main level, which carries no
+  // PRE/POST; the PRE chip is exclusive to the MIX send modes.
+  const fx = strip(page, "FX 1");
+  await expect(fx).toBeVisible();
+  await expect(fx.getByRole("button", { name: "PRE", exact: true })).toHaveCount(0);
+  // MAIN still shows a BAL knob, but for the FX -> STEREO main path (not a send).
+  await expect(fx.locator(".con-knob[aria-label='BAL']")).toBeVisible();
+});
+
+test("a master-muted FX channel dims its MIX strip with a CH MUTE badge, keeping sends operable", async ({ page }) => {
+  // Mute the FX 1 channel master from the MAIN tab (here MUTE = the channel ON).
+  await strip(page, "FX 1").getByRole("button", { name: "MUTE" }).click();
+  await page.locator(".con-modepick").getByRole("button", { name: "MIX 1", exact: true }).click();
+  const fx = strip(page, "FX 1");
+  // The strip dims and shows the CH MUTE badge (the whole channel is muted)...
+  await expect(fx).toHaveClass(/master-muted/);
+  await expect(fx.locator(".ch-mute")).toHaveText("CH MUTE");
+  // ...but the per-send PRE chip stays operable (the send's own state is editable).
+  const pre = fx.getByRole("button", { name: "PRE", exact: true });
+  await pre.click();
+  await expect(pre).toHaveAttribute("aria-pressed", "true");
+});
+
 test("the dB scale includes the -60 and -80 ticks", async ({ page }) => {
   const scale = strip(page, "CH 1").locator(".con-scale");
   await expect(scale).toContainText("60");

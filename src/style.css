@@ -1571,6 +1571,11 @@ select:focus-visible,
 .con-strip.master {
   width: 116px;
 }
+/* FX channel whose master ON is muted, shown in a MIX send mode: dim the whole
+   strip (like a muted graph node) while its send controls stay operable. */
+.con-strip.master-muted {
+  opacity: 0.5;
+}
 
 .con-head {
   height: var(--head-h);
@@ -1582,6 +1587,7 @@ select:focus-visible,
   border-bottom: 1px solid var(--line);
 }
 .con-scribble {
+  position: relative;
   border-radius: 4px;
   padding: 4px 6px 5px;
   background: var(--rail);
@@ -1613,6 +1619,19 @@ select:focus-visible,
 }
 .con-scribble .id.empty {
   opacity: 0.6;
+}
+/* Master-mute badge: a small red pill in the scribble's top-right corner, marking
+   that the FX channel itself is muted (distinct from the per-send MUTE chip). */
+.con-scribble .ch-mute {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  font: 700 7.5px var(--mono);
+  letter-spacing: 0.5px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--mute-on);
+  color: #fff;
 }
 .con-chips {
   display: flex;
