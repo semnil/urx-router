@@ -688,6 +688,28 @@ export class Console {
     }
     this.subSig = "";
     this.store.clear();
+    this.resetMeters();
+  }
+
+  // Drop every signal meter to its floor so disconnecting doesn't leave the bars
+  // frozen at their last live reading.
+  private resetMeters(): void {
+    for (const r of this.refs.values()) {
+      const s = r.sig;
+      s.v = s.pk = s.over = 0;
+      if (s.lv !== 0) {
+        r.sigFill.style.setProperty("--lvl", "0%");
+        s.lv = 0;
+      }
+      if (s.lpk !== 0) {
+        r.sigPeak.style.setProperty("--pk", "0%");
+        s.lpk = 0;
+      }
+      if (s.lov !== 0) {
+        r.sigClip.style.setProperty("--clip", "0");
+        s.lov = 0;
+      }
+    }
   }
 
   private paintMeters(): void {
