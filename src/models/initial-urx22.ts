@@ -159,6 +159,12 @@ export const URX22_CONNECTIONS: PlanConnection[] = [
   { from: "bus.osc:out", to: "bus.stereo:in", kind: "sendSwitch", params: { oscL: true, oscR: true } },
   { from: "in.micline_1_2:out", to: "ch1:in", kind: "source" },
   { from: "in.micline_1_2:out", to: "ch2:in", kind: "source" },
+  // Stereo sources, copied by position from URX44V (see header): CH3/4=AUX,
+  // CH5/6=USB MAIN A, CH7/8=USB MAIN B, CH9/10=USB MAIN C.
+  { from: "in.aux:out", to: "ch_3_4:in", kind: "source" },
+  { from: "in.usbmain_a:out", to: "ch_5_6:in", kind: "source" },
+  { from: "in.usbmain_b:out", to: "ch_7_8:in", kind: "source" },
+  { from: "in.usbmain_c:out", to: "ch_9_10:in", kind: "source" },
   { from: "bus.stereo:out", to: "bus.stream:in", kind: "source" },
   { from: "bus.stereo:out", to: "out.usbmain_a:in", kind: "patch" },
   { from: "bus.stereo:out", to: "out.usbmain_b:in", kind: "patch" },

@@ -540,6 +540,13 @@ export const URX44V_CONNECTIONS: PlanConnection[] = [
   { from: "in.micline_1_2:out", to: "ch2:in", kind: "source" },
   { from: "in.micline_3_4:out", to: "ch3:in", kind: "source" },
   { from: "in.micline_3_4:out", to: "ch4:in", kind: "source" },
+  // Stereo channels carry their source on param 209/210 (not param 22), so the
+  // factory defaults read back as CH5/6=AUX, CH7/8=USB MAIN A, CH9/10=USB MAIN B,
+  // CH11/12=USB MAIN C (confirmed on URX44V).
+  { from: "in.aux:out", to: "ch_5_6:in", kind: "source" },
+  { from: "in.usbmain_a:out", to: "ch_7_8:in", kind: "source" },
+  { from: "in.usbmain_b:out", to: "ch_9_10:in", kind: "source" },
+  { from: "in.usbmain_c:out", to: "ch_11_12:in", kind: "source" },
   { from: "bus.stereo:out", to: "bus.stream:in", kind: "source" },
   { from: "bus.stereo:out", to: "out.usbmain_a:in", kind: "patch" },
   { from: "bus.stereo:out", to: "out.usbmain_b:in", kind: "patch" },

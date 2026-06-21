@@ -129,6 +129,12 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 > buttons are bulk-set actions — one tap rewrites every channel's input source from a fixed table
 > (All Input → CH1/2 = MIC/LINE 1/2, CH3/4 = MIC/LINE 3/4, CH5/6 = AUX IN; All USB DAW → CHn/n+1 =
 > USB DAW n/n+1). They are not selectable per-channel sources, so they are not source nodes.
+>
+> **New-plan factory sources**: a `new` plan seeds each channel's captured factory source — mono channels
+> from MIC/LINE (CH1/2 ← MIC/LINE 1/2, CH3/4 ← MIC/LINE 3/4), stereo channels CH5/6 = AUX, CH7/8 = USB MAIN A,
+> CH9/10 = USB MAIN B, CH11/12 = USB MAIN C (stereo sources read from param 209/210, confirmed on URX44V;
+> URX44 identical; URX22 is the same set shifted down one stereo pair — CH3/4 = AUX, CH5/6 = USB MAIN A,
+> CH7/8 = USB MAIN B, CH9/10 = USB MAIN C — inferred, not yet captured).
 
 ### 2. Channel → bus send (`send`, many receivers)
 

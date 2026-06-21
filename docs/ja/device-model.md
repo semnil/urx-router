@@ -125,6 +125,12 @@ MIC/LINE 1 入力に内部結線され、独立したソース選択肢として
 > 一括設定アクションで、1 タップで全チャンネルの入力ソースを固定テーブルに従って書き換える
 > (All Input → CH1/2 = MIC/LINE 1/2・CH3/4 = MIC/LINE 3/4・CH5/6 = AUX IN / All USB DAW → CHn/n+1 =
 > USB DAW n/n+1)。チャンネルごとに選択するソースではないため、ソースノードとしては扱わない。
+>
+> **新規プランの工場初期ソース**: `新規` 計画は各チャンネルにキャプチャ済みの工場ソースを結線する。
+> モノ CH は MIC/LINE (CH1/2 ← MIC/LINE 1/2・CH3/4 ← MIC/LINE 3/4)、ステレオ CH は CH5/6 = AUX・
+> CH7/8 = USB MAIN A・CH9/10 = USB MAIN B・CH11/12 = USB MAIN C (ステレオソースは param 209/210 から読み取り・
+> URX44V 実機確認・URX44 同一)。URX22 はステレオ位置で 1 ペア下げた CH3/4 = AUX・CH5/6 = USB MAIN A・
+> CH7/8 = USB MAIN B・CH9/10 = USB MAIN C の推定 (実機キャプチャ未取得)。
 
 ### 2. チャンネル → Bus send (`send`, 受け口 複数可)
 
