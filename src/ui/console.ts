@@ -307,7 +307,9 @@ export class Console {
     const color = plan.nodeColors?.[m.id];
     if (color) {
       scrib.style.background = color;
-      scrib.style.color = textOn(color);
+      const ink = inkOn(color);
+      scrib.style.color = ink.color;
+      scrib.style.setProperty("--scrib-shadow", ink.shadow);
     }
     const name = el("div", "name");
     name.textContent = m.label; // node name
@@ -804,11 +806,28 @@ function el(tag: string, cls: string): HTMLElement {
   return e;
 }
 
-/** Black or white label text for a given background colour, by its brightness. */
-function textOn(hex: string): string {
+// WCAG relative luminance of a #rrggbb colour (0..1).
+function relLum(n: number): number {
+  const ch = (c: number): number => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * ch((n >> 16) & 255) + 0.7152 * ch((n >> 8) & 255) + 0.0722 * ch(n & 255);
+}
+function contrast(a: number, b: number): number {
+  const la = relLum(a) + 0.05;
+  const lb = relLum(b) + 0.05;
+  return la > lb ? la / lb : lb / la;
+}
+
+// Scribble label ink for a device CH SETTING colour: pick black or white by which
+// gives the higher contrast (a brightness threshold mis-picks on mid-tone reds/
+// purples), and pair it with a faint opposite-tone halo so the small device name
+// stays crisp even over a mid-tone colour neither ink clears cleanly.
+function inkOn(hex: string): { color: string; shadow: string } {
+  const light = { color: "#fff", shadow: "0 1px 1px rgba(0, 0, 0, 0.55)" };
+  const dark = { color: "#0e0c08", shadow: "0 1px 1px rgba(255, 255, 255, 0.5)" };
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return "#fff";
-  const n = parseInt(m[1], 16);
-  const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
-  return lum > 0.6 ? "#0e0c08" : "#fff";
+  const bg = m ? parseInt(m[1], 16) : 0; // unparseable → black bg → white ink
+  return contrast(0xffffff, bg) >= contrast(0x0e0c08, bg) ? light : dark;
 }

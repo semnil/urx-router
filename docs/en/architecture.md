@@ -202,8 +202,10 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
   **only that bus's sources** — non-send nodes (monitors, master, the buses themselves) and wire-less strips
   drop out. FX returns only follow sends to MIX buses. MAIN shows every strip at its own level.
 - **Scribble colour** — the scribble uses each node's **CH SETTING colour** (`plan.nodeColors`, a device
-  parameter) rather than the node-kind rail, picking black/white text from the colour's brightness
-  (`textOn`); nodes with no assigned colour fall back to the rail colour.
+  parameter) rather than the node-kind rail. The text colour is whichever of black/white has the higher
+  actual contrast ratio (WCAG relative luminance, `inkOn`), paired with a faint opposite-tone halo
+  (`text-shadow`) so the small device name stays legible over a mid-tone colour; nodes with no assigned
+  colour fall back to the rail colour.
 - **Layout / scroll** — `#console-host` uses `min-width:0; overflow:hidden` to stay within `#stage`, keeping
   horizontal scroll inside the strip grid (`.con-strips`, its bar above the status bar). It does not scroll
   vertically except on very short windows (then within the strip grid). The master (STEREO) is no longer
