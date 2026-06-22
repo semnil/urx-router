@@ -611,19 +611,20 @@ export const DELAY_FRAME_RATE_OPTIONS = [
 export const DELAY_FRAME_RATE_DEFAULT = 5;
 
 // Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain): each
-// stereo channel has its own dedicated, non-sequential param, written to both
-// L/R instances (y = 0 and 1) which the device keeps linked. Keyed by node id so
-// each model uses its own. Confirmed on URX44V by live scan (research §12.8);
-// ch_5_6..9_10 assumed identical on URX44/URX22. The block is the five odd ids
-// 9/11/13/15/17; URX44V occupies {9,13,15,17}, leaving 11 the only free slot, so
-// ch_3_4 (URX22's extra stereo channel, absent on URX44V) most likely takes 11.
-// Still an UNVERIFIED guess pending a URX22 owner's self-test, but — unlike the
-// earlier guess of 5 — it no longer collides with a confirmed param (5 = CLIP_SAFE).
+// stereo channel has its own dedicated param, written to both L/R instances
+// (y = 0 and 1) which the device keeps linked. Keyed by node id so each model
+// uses its own. The block is the consecutive ids 9..17 (all ±2400 centi-dB =
+// ±24 dB range); URX44V occupies {9,13,14,15}, confirmed by a live broker probe
+// (per-id sentinel write → on-device D.Gain readout: CH5/6=9, CH7/8=13,
+// CH9/10=14, CH11/12=15). The remaining ids (10/11/12/16/17) are firmware
+// overcount slots with no URX44V UI. ch_3_4 (URX22's extra stereo channel,
+// absent on URX44V) is an UNVERIFIED guess pending a URX22 owner's self-test; 11
+// is one of the free slots and does not collide with any confirmed param.
 export const D_GAIN_PARAM: Record<string, number> = {
   ch_3_4: 11,
   ch_5_6: 9,
   ch_7_8: 13,
-  ch_9_10: 17,
+  ch_9_10: 14,
   ch_11_12: 15,
 };
 

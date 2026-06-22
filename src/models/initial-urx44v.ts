@@ -140,7 +140,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   },
   ch_9_10: {
     on: true,
-    gain: 0,
+    gain: -14,
     phaseL: false,
     phaseR: false,
     eqOn: true,
