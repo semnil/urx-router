@@ -40,8 +40,6 @@ export const en = {
   },
   console: {
     outputLabel: "Output",
-    toMain: "→ MAIN",
-    toSend: (bus: string): string => `→ ${bus} SEND`,
     mute: "MUTE",
     on: "ON",
     eq: "EQ",
