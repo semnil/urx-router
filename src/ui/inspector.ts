@@ -106,6 +106,7 @@ import type { RateWarning } from "../core/constraints";
 import { loadJson, saveJson } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
+import { setLevelText } from "./glyph";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 
@@ -916,7 +917,7 @@ function rangeSlider(
   slider.value = String(cur);
   slider.addEventListener("input", () => {
     const v = Number(slider.value);
-    value.textContent = fmt(v);
+    setLevelText(value, fmt(v));
     onInput(v);
   });
   row.append(slider);
@@ -1487,7 +1488,7 @@ function paramBlock(labelText: string, valueText: string): { row: HTMLElement; v
   row.className = "param";
   const value = document.createElement("span");
   value.className = "param-val";
-  value.textContent = valueText;
+  setLevelText(value, valueText);
   // An empty label + value (a bare section ON/OFF toggle whose name is in the
   // section header) skips the label row so the toggle sits flush.
   if (labelText !== "" || valueText !== "") {

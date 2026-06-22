@@ -900,6 +900,15 @@ select:focus-visible,
   color: var(--text);
 }
 
+/* The mono font draws ∞ at x-height; scale it up (with line-height: 0 so it never
+   grows the line box) so a "-∞" readout reads at the same height as the digits it
+   replaces. Set by ui/glyph.ts wherever an infinity glyph appears. */
+.glyph-inf {
+  font-size: 1.5em;
+  line-height: 0;
+  vertical-align: -0.08em;
+}
+
 .param input[type="text"] {
   width: 100%;
   box-sizing: border-box;
@@ -1892,11 +1901,6 @@ select:focus-visible,
   font: 700 12px var(--mono);
 }
 .con-readout .db.off {
-  color: var(--text-dim);
-}
-.con-readout .send {
-  font: 600 7.5px var(--mono);
-  letter-spacing: 1px;
   color: var(--text-dim);
 }
 

@@ -80,9 +80,45 @@ test("DUCKER and φL/φR appear on stereo channels only", async ({ page }) => {
 test("a send mode shows only the sources of the selected bus", async ({ page }) => {
   await page.locator(".con-modepick").getByRole("button", { name: "MIX 1", exact: true }).click();
   await expect(strip(page, "CH 1")).toBeVisible(); // a MIX source
-  await expect(strip(page, "CH 1").locator(".con-readout .send")).toHaveText("→ MIX 1 SEND");
   await expect(strip(page, "STEREO (MAIN)")).toHaveCount(0); // master is not a MIX source
   await expect(strip(page, "MONITOR 1")).toHaveCount(0); // monitors are not sources
+});
+
+test("the readout shows the set level only, with no send-destination line", async ({ page }) => {
+  const readout = strip(page, "CH 1").locator(".con-readout");
+  await expect(readout.locator(".db")).toHaveText("0.0");
+  await expect(readout.locator(".send")).toHaveCount(0);
+});
+
+test("hiding a MIX bus in the graph drops its send tab from the console", async ({ page }) => {
+  const pick = page.locator(".con-modepick");
+  await expect(pick.getByRole("button", { name: "MIX 2", exact: true })).toBeVisible();
+
+  // Shelve MIX 2 from the graph via its inspector, then return to the console.
+  await page.click("#btn-view-graph");
+  await page.locator('g.node[data-id="bus.mix2"]').click();
+  await page.click("#inspector button.subtle");
+  await page.click("#btn-view-console");
+
+  await expect(pick.getByRole("button", { name: "MIX 2", exact: true })).toHaveCount(0);
+  await expect(pick.getByRole("button", { name: "MIX 1", exact: true })).toBeVisible();
+});
+
+test("an active send tab falls back to MAIN when its bus is hidden", async ({ page }) => {
+  await page.locator(".con-modepick").getByRole("button", { name: "MIX 2", exact: true }).click();
+  await expect(strip(page, "STEREO (MAIN)")).toHaveCount(0); // confirm we're in a send tab
+
+  await page.click("#btn-view-graph");
+  await page.locator('g.node[data-id="bus.mix2"]').click();
+  await page.click("#inspector button.subtle");
+  await page.click("#btn-view-console");
+
+  // The gone tab falls back to MAIN, which shows the master again.
+  await expect(page.locator(".con-modepick").getByRole("button", { name: "MAIN", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(strip(page, "STEREO (MAIN)")).toBeVisible();
 });
 
 test("an FX channel in a MIX mode has a PRE chip and a send-ON MUTE", async ({ page }) => {

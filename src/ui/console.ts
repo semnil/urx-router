@@ -14,6 +14,7 @@ import { channelControl, insertFxControl } from "../core/control/translate";
 import { isBalLinkedPair, mirrorBalPair, partnerChannel } from "../core/routing";
 import { INSERT_FX_NONE, type InsertFxOption } from "../core/control/params";
 import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../core/control/vd";
+import { setLevelText } from "./glyph";
 import { t } from "../i18n";
 
 type SendTarget = "bus.mix1" | "bus.mix2" | "bus.fx1" | "bus.fx2";
@@ -85,7 +86,6 @@ interface StripRef {
   sigClip: HTMLElement;
   fader: HTMLElement;
   readDb: HTMLElement;
-  readSend: HTMLElement;
   // v/pk/over: live ballistics; lv/lpk/lov: last value written to the DOM (-1 =
   // none yet) so paintMeters can skip unchanged writes.
   sig: { v: number; pk: number; over: number; lv: number; lpk: number; lov: number };
@@ -116,6 +116,7 @@ export class Console {
   private refs = new Map<string, StripRef>();
   private lastInsFx = new Map<string, number>(); // last non-none INS FX per node
   private factory: { id: string; plan: Plan } | null = null; // cached factory plan
+  private headH = { key: "", px: 0 }; // cached MAIN-tab head height (key: model + hidden)
   private store = new MeterStore();
   private unsub: (() => void) | null = null;
   private subSig = ""; // signature of the currently subscribed address set
@@ -124,6 +125,7 @@ export class Console {
   private visible = false;
   private bar!: HTMLElement;
   private outLabel!: HTMLElement;
+  private modePick!: HTMLElement;
   private stripsHost!: HTMLElement;
 
   constructor(
@@ -167,24 +169,9 @@ export class Console {
     this.bar = el("div", "con-bar");
     this.outLabel = el("span", "con-modelabel");
     this.outLabel.textContent = t().console.outputLabel;
-    const pick = el("div", "con-modepick");
-    pick.setAttribute("role", "group");
-    const model = this.hooks.getModel();
-    const ids = new Set(model.nodes.map((n) => n.id));
-    const modes: Mode[] = ["main", ...SEND_TARGETS.filter((m) => ids.has(m))];
-    for (const m of modes) {
-      const b = el("button", "") as HTMLButtonElement;
-      b.type = "button";
-      b.textContent = m === "main" ? "MAIN" : SEND_LABEL[m as SendTarget];
-      b.setAttribute("aria-pressed", String(m === this.mode));
-      b.addEventListener("click", () => {
-        this.mode = m;
-        for (const x of pick.querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));
-        this.render();
-      });
-      pick.append(b);
-    }
-    this.bar.append(this.outLabel, pick);
+    this.modePick = el("div", "con-modepick");
+    this.modePick.setAttribute("role", "group");
+    this.bar.append(this.outLabel, this.modePick);
 
     this.stripsHost = el("div", "con-strips");
     const wrap = el("div", "con-wrap");
@@ -208,21 +195,31 @@ export class Console {
         sign.textContent = "−";
         num.append(sign);
       }
-      num.append(document.createTextNode(db === -96 ? "∞" : String(Math.abs(db))));
+      if (db === -96) {
+        const inf = el("span", "glyph-inf");
+        inf.textContent = "∞";
+        num.append(inf);
+      } else {
+        num.append(document.createTextNode(String(Math.abs(db))));
+      }
       tick.append(num);
       scale.append(tick);
     }
     return scale;
   }
 
+  // The node ids on screen: every model node minus the ones shelved out of the
+  // graph (a shelved node drops from the console too). Shared by the strip groups,
+  // the send-mode tabs and the head-height probe so "visible" is defined once.
+  private visibleIds(): Set<string> {
+    const hidden = new Set(this.hooks.getPlan().hidden);
+    return new Set(this.hooks.getModel().nodes.map((n) => n.id).filter((i) => !hidden.has(i)));
+  }
+
   private stripModels(): { groups: { label: string; ids: string[] }[]; master: string | null } {
     const model = this.hooks.getModel();
-    // A node shelved out of the graph drops from the console too.
-    const hidden = new Set(this.hooks.getPlan().hidden);
-    const ids = new Set(model.nodes.map((n) => n.id).filter((i) => !hidden.has(i)));
-    const channels = model.nodes
-      .filter((n) => n.kind === "channel" && !hidden.has(n.id))
-      .map((n) => n.id);
+    const ids = this.visibleIds();
+    const channels = model.nodes.filter((n) => n.kind === "channel" && ids.has(n.id)).map((n) => n.id);
     const busFx = ["bus.fx1", "bus.fx2", "bus.mix1", "bus.mix2"].filter((i) => ids.has(i));
     const mon = ["bus.mon1", "bus.mon2", "bus.osc"].filter((i) => ids.has(i));
     const groups = [
@@ -265,8 +262,30 @@ export class Console {
     };
   }
 
+  // Rebuild the send-mode tabs from the visible buses (a FX/MIX node shelved out
+  // of the graph drops its tab too). If the active tab's bus is now hidden, fall
+  // back to MAIN so the strips never render against a gone bus.
+  private renderModes(): void {
+    const ids = this.visibleIds();
+    const modes: Mode[] = ["main", ...SEND_TARGETS.filter((m) => ids.has(m))];
+    if (!modes.includes(this.mode)) this.mode = "main";
+    this.modePick.replaceChildren();
+    for (const m of modes) {
+      const b = el("button", "") as HTMLButtonElement;
+      b.type = "button";
+      b.textContent = m === "main" ? "MAIN" : SEND_LABEL[m as SendTarget];
+      b.setAttribute("aria-pressed", String(m === this.mode));
+      b.addEventListener("click", () => {
+        this.mode = m;
+        this.render();
+      });
+      this.modePick.append(b);
+    }
+  }
+
   private render(): void {
     this.outLabel.textContent = t().console.outputLabel;
+    this.renderModes();
     this.refs.clear();
     const send = this.mode !== "main";
     const { groups, master } = this.stripModels();
@@ -297,7 +316,43 @@ export class Console {
       group.append(lbl, this.buildStrip(this.toStripModel(master), true));
       this.stripsHost.append(group);
     }
+    // Lock every head (name / chips / knobs) to the MAIN tab's tallest strip, so the
+    // head area is uniform across all channels and all tabs; the fader/meter zone
+    // (flex: 1) takes the rest of the window height.
+    this.host.style.setProperty("--head-h", this.mainHeadHeight() + "px");
     this.startMeters(); // rescope the meter subscription to the rebuilt strips
+  }
+
+  // The MAIN tab's tallest head (a mono channel carries the most chips + two knobs)
+  // sets the fixed head height for every tab. Measure it by laying out the MAIN
+  // strips off-screen with auto-height heads, then cache by model + hidden set
+  // (the only inputs that change which strips exist). A send tab thus reserves the
+  // same head area even though it shows fewer controls.
+  private mainHeadHeight(): number {
+    const key = this.hooks.getModel().id + "|" + [...this.hooks.getPlan().hidden].sort().join(",");
+    if (this.headH.key === key) return this.headH.px;
+    const savedRefs = this.refs;
+    const savedMode = this.mode;
+    this.refs = new Map(); // buildStrip registers refs/listeners; keep them off the live map
+    this.mode = "main";
+    const probe = el("div", "con-strips");
+    probe.style.cssText = "position:absolute;visibility:hidden;height:auto;";
+    const { groups, master } = this.stripModels();
+    for (const g of groups) for (const id of g.ids) probe.append(this.buildStrip(this.toStripModel(id), false));
+    if (master) probe.append(this.buildStrip(this.toStripModel(master), true));
+    this.host.append(probe);
+    // Free every head from the inherited --head-h clamp first, then read them all,
+    // so the heights collapse to content in one reflow instead of one write→read
+    // thrash per head.
+    const heads = [...probe.querySelectorAll<HTMLElement>(".con-head")];
+    for (const h of heads) h.style.height = "auto";
+    let max = 0;
+    for (const h of heads) max = Math.max(max, h.offsetHeight);
+    probe.remove();
+    this.refs = savedRefs;
+    this.mode = savedMode;
+    this.headH = { key, px: max };
+    return max;
   }
 
   private buildStrip(m: StripModel, isMaster: boolean): HTMLElement {
@@ -579,17 +634,13 @@ export class Console {
     zone.append(fader, this.buildScale(m.range), meter);
     strip.append(zone);
 
-    // readout
+    // readout (set-level dB only; the send destination is shown by the active tab)
     const readout = el("div", "con-readout");
     const dbEl = el("div", "db");
     const f = fmtDb(level, m.range);
-    dbEl.textContent = f.text;
+    setLevelText(dbEl, f.text);
     if (f.off) dbEl.classList.add("off");
-    const sendEl = el("div", "send");
-    sendEl.textContent = usesSend
-      ? t().console.toSend(SEND_LABEL[this.mode as SendTarget])
-      : t().console.toMain;
-    readout.append(dbEl, sendEl);
+    readout.append(dbEl);
     strip.append(readout);
 
     const refObj: StripRef = {
@@ -600,7 +651,6 @@ export class Console {
       sigClip,
       fader,
       readDb: dbEl,
-      readSend: sendEl,
       sig: { v: 0, pk: 0, over: 0, lv: -1, lpk: -1, lov: -1 },
     };
     this.refs.set(m.id, refObj);
@@ -658,7 +708,7 @@ export class Console {
     const frac = dbToFrac(db, r.m.range);
     r.cap.style.setProperty("--pos", (1 - frac) * 100 + "%");
     const f = fmtDb(db, r.m.range);
-    r.readDb.textContent = f.text;
+    setLevelText(r.readDb, f.text);
     r.readDb.classList.toggle("off", f.off);
     r.fader.setAttribute("aria-valuenow", String(Math.round(db)));
   }

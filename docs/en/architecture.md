@@ -215,7 +215,9 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
   removes connections (routing stays in the graph). `setSend` only updates an existing wire's level, so
   lowering a send to -∞ keeps the wire (the strip stays). INS FX has no separate on/off (No Effect is off),
   so toggling on restores the last chosen effect (or the first real option).
-- **Send-on-fader** — a fixed “Output” label and the mode bar (MAIN / FX 1 / FX 2 / MIX 1 / MIX 2). A send
+- **Send-on-fader** — a fixed “Output” label and the mode bar (MAIN / FX 1 / FX 2 / MIX 1 / MIX 2). The mode-bar
+  tabs are rebuilt from the visible buses each render (`renderModes`): hiding a FX/MIX bus in the graph drops its
+  tab, and if the active tab's bus is gone the view falls back to MAIN. A send
   mode flips the input-channel and FX-channel faders to the send level into the chosen MIX/FX bus and shows
   **only that bus's sources** — non-send nodes (monitors, master, the buses themselves) and wire-less strips
   drop out. FX channels only follow sends to MIX buses. MAIN shows every strip at its own level. Since every
@@ -242,7 +244,15 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
 - **Layout / scroll** — `#console-host` uses `min-width:0; overflow:hidden` to stay within `#stage`, keeping
   horizontal scroll inside the strip grid (`.con-strips`, its bar above the status bar). It does not scroll
   vertically except on very short windows (then within the strip grid). The master (STEREO) is no longer
-  pinned to the right; it scrolls with the rest.
+  pinned to the right; it scrolls with the rest. **The head area (name / chips / knobs) is locked to the MAIN
+  tab's tallest strip** across every tab and channel (measured by laying the MAIN strips out off-screen in
+  `mainHeadHeight`, cached by model + hidden set); the fader / level-meter zone (`flex: 1`) takes the rest of the
+  window height. So the fader and meter heights fit the open window, and a send tab keeps the same head height
+  and fader start as MAIN.
+- **Readout** — each strip's bottom readout shows the set level (dB) only; the send destination is conveyed by
+  the active tab, so the old “→ MAIN / → MIX SEND” line is gone. The mono font draws `∞` at x-height, smaller
+  than the digits, so a `-∞` readout scales the `∞` up to digit height (`setLevelText` wraps each `∞` in a
+  `.glyph-inf` span; shared `src/ui/glyph.ts` covers the CONSOLE readout, the dB scale, and the inspector values).
 - **Live meters** — the meter column is always shown; signal only flows while Live sync is on
   (`console.setLive`; at rest it sits at the floor). `core/meters.ts` maps node ids to broker meter addresses
   (`meterId:x`), decodes the raw value (deci-dBFS, 32767 = OVER) to dBFS, and holds the latest reading in a
