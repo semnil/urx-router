@@ -6,10 +6,18 @@
 
 import type { DeviceModel } from "../../models/types";
 import { ref } from "../../models/types";
-import type { ConnParams, EqBand, EqOneKnobParams, NodeParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
+import type { ConnParams, EqBand, EqOneKnobParams, FxEffectParams, NodeParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
 import { vdGet, vdGetStr } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, normalizeInsertFx, PARAMS } from "./params";
+import {
+  FX_EFFECT_ARRAY_PARAM,
+  FX_EFFECT_TYPE_PARAM,
+  FX_SLOT_LEVEL,
+  FX_SLOT_ON,
+  fxFamilyOf,
+  fxParams,
+} from "./fx-effect";
 import type { DynField, EqControl, EqOneKnobControl } from "./translate";
 import {
   busEqOn,
@@ -204,6 +212,17 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
   for (const node of model.nodes) {
     const fxY = fxChannelIndex(node.id);
     if (fxY === null) continue;
+    // FX-channel effect (EFFECT TYPE + parameter array): a node-level attribute,
+    // read whether or not the FX → STEREO main path is wired.
+    attempted.add(node.id);
+    try {
+      const fxEffect = await readFxEffect(fxY);
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], fxEffect };
+      applied++;
+    } catch (e) {
+      failed.add(node.id);
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
     const conn = plan.connections.find(
       (c) => c.from === ref(node.id, "out") && c.to === ref("bus.stereo", "in"),
     );
@@ -573,6 +592,23 @@ async function readSsmcsBand(onId: number, qId: number | null, freqId: number, g
   };
   if (qId !== null) b.q = await vdGet(qId, 0, y);
   return b;
+}
+
+// Read an FX channel's EFFECT TYPE + parameter array (mirrors pushFxEffectCommands).
+// The type picks the family, then each family slot is read raw. fxIndex 0 / 1.
+async function readFxEffect(fxIndex: number): Promise<FxEffectParams> {
+  const arrId = FX_EFFECT_ARRAY_PARAM[fxIndex];
+  const type = await vdGet(FX_EFFECT_TYPE_PARAM[fxIndex], 0, 0);
+  const params: Record<string, number> = {};
+  for (const desc of fxParams(fxFamilyOf(type))) {
+    params[desc.key] = await vdGet(arrId, 0, desc.slot);
+  }
+  return {
+    type,
+    on: vdToBool(await vdGet(arrId, 0, FX_SLOT_ON)),
+    level: await vdGet(arrId, 0, FX_SLOT_LEVEL),
+    params,
+  };
 }
 
 // Read the SSMCS morphing-strip raw values for a MONO IN channel (mirrors

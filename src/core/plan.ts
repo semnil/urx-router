@@ -178,6 +178,18 @@ export const SSMCS_INITIAL = {
   },
 } satisfies SsmcsParams;
 
+// FX-channel effect (reverb / delay) settings. `type` is the EFFECT TYPE enum
+// (the broker selector value) and picks the parameter layout; per-effect parameter
+// RAW broker values are kept under `params`, keyed by the fx-effect descriptor key
+// (see control/fx-effect.ts), mirroring the device array so a captured plan
+// round-trips exactly. Absent fields fall back to the device defaults.
+export interface FxEffectParams {
+  type?: number; // EFFECT TYPE enum (679 / 683 value); absent = FX default
+  on?: boolean; // effect ON (array slot 1); absent or true = on
+  level?: number; // effect level / mix 0..100 (array slot 2); absent = 100
+  params?: Record<string, number>; // raw per-parameter values keyed by descriptor key
+}
+
 // Per-node device parameters that are not tied to a single wire (a channel's own
 // processing/state). Each field is optional; absence means the device default
 // (channel on, HPF off). Stored keyed by node id, alongside positions / notes.
@@ -257,6 +269,9 @@ export interface NodeParams {
   phonesLevel?: number;
   /** STREAMING DELAY settings (the bus.stream node). */
   delay?: DelayParams;
+  /** FX-channel effect (reverb / delay) type + parameters (the bus.fx1 / bus.fx2
+   *  nodes). Absent = device default (FX1 Rev-X Hall, FX2 Mono Delay). */
+  fxEffect?: FxEffectParams;
 }
 
 export interface PlanConnection {

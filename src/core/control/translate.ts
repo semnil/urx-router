@@ -10,8 +10,17 @@
 
 import type { ConnectionKind, DeviceModel, ModelId } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
-import type { CompParams, EqBand, EqOneKnobParams, GateParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
+import type { CompParams, EqBand, EqOneKnobParams, FxEffectParams, GateParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
 import { incomingConnection } from "../plan";
+import {
+  FX_EFFECT_ARRAY_PARAM,
+  FX_EFFECT_TYPE_DEFAULT,
+  FX_EFFECT_TYPE_PARAM,
+  FX_SLOT_LEVEL,
+  FX_SLOT_ON,
+  fxFamilyOf,
+  fxParams,
+} from "./fx-effect";
 import { isFixedConnection, sendTapWritable } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
@@ -665,6 +674,23 @@ function pushSsmcsBand(
   if (b.gain !== undefined) out.push(command(gainName, y, b.gain));
 }
 
+// FX-channel effect: the EFFECT TYPE selector (679/683 at y0) plus the effect
+// parameter array (681/685, addressed by slot). Emitted as absolute state for the
+// effect's family; raw values pass straight through (the plan stores raw). The
+// type is a sideEffect (writing it repopulates the array on the device), so live
+// converges + re-reads. fxIndex = 0 (FX1) / 1 (FX2).
+function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectParams): void {
+  const typeId = FX_EFFECT_TYPE_PARAM[fxIndex];
+  const arrId = FX_EFFECT_ARRAY_PARAM[fxIndex];
+  const type = fx.type ?? FX_EFFECT_TYPE_DEFAULT[fxIndex];
+  out.push(rawCommand("FX_EFFECT_TYPE", typeId, "enum", 0, type));
+  out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_ON, (fx.on ?? true) ? 1 : 0));
+  out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_LEVEL, fx.level ?? 100));
+  for (const desc of fxParams(fxFamilyOf(type))) {
+    out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", desc.slot, fx.params?.[desc.key] ?? desc.def));
+  }
+}
+
 function pushSsmcsCommands(out: VdCommand[], y: number, s: SsmcsParams | undefined): void {
   if (!s) return;
   if (s.on !== undefined) out.push(command("SSMCS_ON", y, s.on ? 1 : 0));
@@ -1012,6 +1038,15 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const np = plan.nodeParams[node.id];
     if (!bf || np?.level === undefined) continue;
     for (const yi of bf.instances) out.push(rawCommand(bf.name, bf.param, "level", yi, np.level));
+  }
+
+  // FX-channel effects: EFFECT TYPE + parameter array for each FX channel present
+  // in the plan (emitted as absolute state once the plan carries an fxEffect).
+  for (const node of model.nodes) {
+    const fxY = fxChannelIndex(node.id);
+    if (fxY === null) continue;
+    const fx = plan.nodeParams[node.id]?.fxEffect;
+    if (fx) pushFxEffectCommands(out, fxY, fx);
   }
 
   // Insert FX (enum): mono input channels (135) and output buses (578 / 671).

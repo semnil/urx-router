@@ -4,8 +4,15 @@
 
 import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
-import type { ConnParams, EqBand, NodeParams, Plan, PlanConnection, SsmcsBand, SsmcsParams } from "../core/plan";
+import type { ConnParams, EqBand, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsBand, SsmcsParams } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, SSMCS_INITIAL } from "../core/plan";
+import {
+  formatHz,
+  FX_EFFECT_TYPE_DEFAULT,
+  fxEffectTypes,
+  fxFamilyOf,
+  fxParams,
+} from "../core/control/fx-effect";
 import { isBalLinkedPair, isFixedConnection, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
@@ -473,7 +480,8 @@ export function renderInspector(
     // distinct from the per-channel FX sends feeding it. (Post Fader Send for FX
     // is a DAW-Integration-only feature with no device control address, so it is
     // not modeled here.)
-    if (node.id === "bus.fx1" || node.id === "bus.fx2") {
+    const fxY = fxChannelIndex(node.id);
+    if (fxY !== null) {
       const ps = section(m.inspector.parameters, { key: "params" });
       ps.body.append(
         boolToggle(m.inspector.channelOn, plan.nodeParams[node.id]?.on ?? true, (v) =>
@@ -481,6 +489,7 @@ export function renderInspector(
         ),
       );
       host.append(ps.el);
+      host.append(fxEffectSection(node.id, fxY, plan, actions, m));
     }
 
     // Monitor bus ON (MONITOR_ON) + level (MONITOR_LEVEL) plus the CUE-interrupt /
@@ -1110,6 +1119,73 @@ function dynFieldSlider(
   return rangeSlider(label, f.min, f.max, f.step, cur ?? f.def, (v) => formatDyn(v, f.unit), (v) => onSet(f.key, v));
 }
 
+// Merge a patch into a node's FX effect object / its raw params map, reading the
+// latest stored value at edit time so concurrent sibling edits aren't lost.
+function mergeFxEffect(actions: InspectorActions, plan: Plan, nodeId: string, patch: Partial<FxEffectParams>): void {
+  actions.onUpdateNodeParams(nodeId, { fxEffect: { ...(plan.nodeParams[nodeId]?.fxEffect ?? {}), ...patch } });
+}
+function mergeFxParam(actions: InspectorActions, plan: Plan, nodeId: string, key: string, raw: number): void {
+  const params = plan.nodeParams[nodeId]?.fxEffect?.params ?? {};
+  mergeFxEffect(actions, plan, nodeId, { params: { ...params, [key]: raw } });
+}
+
+// FX-channel EFFECT section: the EFFECT TYPE selector, the effect ON / Mix, then
+// the type-specific parameter controls (raw sliders with a display formatter,
+// toggles, selects) from the fx-effect descriptors. fxIndex = 0 (FX1) / 1 (FX2).
+function fxEffectSection(
+  nodeId: string,
+  fxIndex: number,
+  plan: Plan,
+  actions: InspectorActions,
+  m: Messages,
+): HTMLElement {
+  const t = m.inspector.fxEffect;
+  const fx = plan.nodeParams[nodeId]?.fxEffect ?? {};
+  const type = fx.type ?? FX_EFFECT_TYPE_DEFAULT[fxIndex];
+  const family = fxFamilyOf(type);
+  const descs = fxParams(family);
+  const { el, body } = section(t.title, { key: "fxEffect" });
+
+  body.append(
+    selectControl(
+      t.effectType,
+      fxEffectTypes(fxIndex).map((o) => ({ value: String(o.value), label: o.label })),
+      String(type),
+      (v) => mergeFxEffect(actions, plan, nodeId, { type: Number(v) }),
+    ),
+  );
+  body.append(boolToggle(t.effectOn, fx.on ?? true, (v) => mergeFxEffect(actions, plan, nodeId, { on: v })));
+  body.append(rangeSlider(t.level, 0, 100, 1, fx.level ?? 100, (r) => String(r), (v) => mergeFxEffect(actions, plan, nodeId, { level: v })));
+
+  // Sibling raw values, so the REV-X Reverb Time readout can fold in Room Size.
+  const ctx: Record<string, number> = {};
+  for (const d of descs) ctx[d.key] = fx.params?.[d.key] ?? d.def;
+
+  for (const d of descs) {
+    const cur = fx.params?.[d.key] ?? d.def;
+    const label = t.params[d.label as keyof typeof t.params] ?? d.label;
+    if (d.control === "toggle") {
+      body.append(boolToggle(label, cur !== 0, (v) => mergeFxParam(actions, plan, nodeId, d.key, v ? 1 : 0)));
+    } else if (d.control === "select") {
+      body.append(
+        selectControl(
+          label,
+          (d.options ?? []).map((o) => ({ value: String(o.value), label: o.label })),
+          String(cur),
+          (v) => mergeFxParam(actions, plan, nodeId, d.key, Number(v)),
+        ),
+      );
+    } else {
+      body.append(
+        rangeSlider(label, d.rawMin ?? 0, d.rawMax ?? 0, d.rawStep ?? 1, cur, (r) => (d.format ? d.format(r, ctx) : String(r)), (v) =>
+          mergeFxParam(actions, plan, nodeId, d.key, v),
+        ),
+      );
+    }
+  }
+  return el;
+}
+
 // Merge a patch into a node's live dynamics sub-object (gate / comp / ducker),
 // reading the latest stored value at edit time so concurrent sibling slider edits
 // aren't lost.
@@ -1348,9 +1424,6 @@ function eqFreqControl(cur: number, onChange: (hz: number) => void): HTMLElement
   return row;
 }
 
-function formatHz(hz: number): string {
-  return hz >= 1000 ? `${(hz / 1000).toFixed(2)} kHz` : `${Math.round(hz)} Hz`;
-}
 
 // Node-level bus output fader (STEREO master / MIX / MONITOR): the level_gain
 // scale, -∞ then -96.0 … +10.0 dB — the same as a send. The bottom notch
