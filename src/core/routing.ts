@@ -49,6 +49,20 @@ export function sendHasOn(model: DeviceModel, from: string, to: string): boolean
   return isFixedConnection(model, from, to) && ruleKind(model, from, to) === "sendSwitch";
 }
 
+// Whether a send's PRE/POST tap can be written to the device from software — the
+// single source of truth for that capability (translate suppresses the write,
+// inspector turns the tap read-only while live; see callers). CH -> FX taps are
+// not writable: the broker reports max_value=0 for them (193/197/320/324, every
+// instance), so a software write of PRE (1) is rejected with response_code 400 —
+// only the device's own LCD can set them. Reading them is fine (0/1 both come
+// back), so readback still reflects the true device tap. CH -> MIX and
+// FX-channel -> MIX taps (max_value=1) are writable. This concerns the *device*
+// only: the plan's tap field stays freely editable in the planner regardless.
+// Confirmed by a live broker probe (2026-06-22).
+export function sendTapWritable(model: DeviceModel, from: string, to: string): boolean {
+  return sendHasTap(model, from, to) && !parseRef(to).nodeId.startsWith("bus.fx");
+}
+
 export function canConnect(model: DeviceModel, plan: Plan, from: string, to: string): ConnectResult {
   const rule = findRule(model, from, to);
   if (!rule) return { ok: false, reason: "noRule" };

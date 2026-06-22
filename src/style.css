@@ -1023,6 +1023,14 @@ select:focus-visible,
   border-color: var(--led);
 }
 
+/* Read-only toggle (e.g. CH -> FX Pre/Post, which the device rejects from
+   software): shows the current state but cannot be changed. */
+#inspector .toggle button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 #inspector .recent-row {
   display: flex;
   align-items: center;

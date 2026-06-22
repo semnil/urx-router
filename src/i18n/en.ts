@@ -74,6 +74,7 @@ export const en = {
     pan: "Pan",
     balance: "Balance",
     prePost: "Pre/Post",
+    prePostLcdOnly: "CH → FX send Pre/Post is set on the device only (not writable from software).",
     channelOn: "Channel",
     sendOn: "Send",
     toSt: "TO ST",

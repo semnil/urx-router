@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
-import { canConnect, isBalLinkedPair, isFixedConnection, legalSources, legalTargets, mirrorBalPair, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap } from "./routing";
+import { canConnect, isBalLinkedPair, isFixedConnection, legalSources, legalTargets, mirrorBalPair, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, sendTapWritable } from "./routing";
 import { emptyPlan, type Plan, type PlanConnection } from "./plan";
 import { defaultPlan } from "../models/initial-state";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
@@ -180,6 +180,23 @@ describe("sendHasTap", () => {
     expect(sendHasTap(u44, ref("in.micline_1_2", "out"), ref("ch1", "in"))).toBe(false);
     expect(sendHasTap(u44, ref("bus.stereo", "out"), ref("out.main", "in"))).toBe(false);
     expect(sendHasTap(u44, ref("bus.mix1", "out"), ref("bus.stereo", "in"))).toBe(false);
+  });
+});
+
+describe("sendTapWritable", () => {
+  it("is true for CH -> MIX and FX-channel -> MIX taps (broker max_value=1)", () => {
+    expect(sendTapWritable(u44, ref("ch1", "out"), ref("bus.mix1", "in"))).toBe(true);
+    expect(sendTapWritable(u44, ref("bus.fx1", "out"), ref("bus.mix1", "in"))).toBe(true);
+  });
+
+  it("is false for CH -> FX taps (read-only: broker max_value=0 rejects a PRE write)", () => {
+    expect(sendTapWritable(u44, ref("ch1", "out"), ref("bus.fx1", "in"))).toBe(false);
+    expect(sendTapWritable(u44, ref("ch_5_6", "out"), ref("bus.fx2", "in"))).toBe(false);
+  });
+
+  it("is false where there is no tap at all (STEREO main path, non-send)", () => {
+    expect(sendTapWritable(u44, ref("ch1", "out"), ref("bus.stereo", "in"))).toBe(false);
+    expect(sendTapWritable(u44, ref("in.micline_1_2", "out"), ref("ch1", "in"))).toBe(false);
   });
 });
 

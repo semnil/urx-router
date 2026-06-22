@@ -6,7 +6,7 @@ import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, EqBand, NodeParams, Plan, PlanConnection, SsmcsBand, SsmcsParams } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, SSMCS_INITIAL } from "../core/plan";
-import { isBalLinkedPair, isFixedConnection, pairPrimary, sendHasOn, sendHasTap } from "../core/routing";
+import { isBalLinkedPair, isFixedConnection, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
   busEqOn,
@@ -159,6 +159,10 @@ export function renderInspector(
   selection: Selection,
   actions: InspectorActions,
   recent: RecentEntry[] = [],
+  // While live-connected, params the device cannot accept from software (CH → FX
+  // tap) are shown read-only. Off (the default) in the pure planner, where the
+  // plan is intent and every param stays editable.
+  liveActive = false,
 ): void {
   host.replaceChildren();
   const labelOf = (nodeId: string): string => {
@@ -707,7 +711,12 @@ export function renderInspector(
       const panLabel = isBalanceChannel(model, plan, parseRef(from).nodeId)
         ? m.inspector.balance
         : m.inspector.pan;
-      for (const f of fields) host.append(paramControl(f, conn, actions.onUpdateParams, panLabel));
+      // The tap is always editable in the planner (the plan records intent). It is
+      // turned read-only only while live-connected and the device cannot accept the
+      // write — CH → FX taps (the device rejects a software PRE write); shown
+      // disabled with an explanatory tooltip so the value is visible but unchangeable.
+      const tapEditable = !liveActive || sendTapWritable(model, from, to);
+      for (const f of fields) host.append(paramControl(f, conn, actions.onUpdateParams, panLabel, tapEditable));
     } else {
       host.append(hint(m.inspector.selectionOnly));
     }
@@ -889,8 +898,9 @@ function paramControl(
   conn: PlanConnection,
   onUpdate: UpdateParams,
   panLabel: string,
+  tapEditable = true,
 ): HTMLElement {
-  if (field === "tap") return tapControl(conn, onUpdate);
+  if (field === "tap") return tapControl(conn, onUpdate, tapEditable);
   return field === "level"
     ? sliderControl(conn, onUpdate, "level", t().inspector.level, LEVEL_OFF, LEVEL_MAX, 0.5, 0, formatDb)
     : sliderControl(conn, onUpdate, "pan", panLabel, PAN_MIN, PAN_MAX, 1, 0, formatPan);
@@ -1461,16 +1471,23 @@ function textInput(
   return row;
 }
 
-function tapControl(conn: PlanConnection, onUpdate: UpdateParams): HTMLElement {
+function tapControl(conn: PlanConnection, onUpdate: UpdateParams, editable = true): HTMLElement {
   const cur = conn.params?.tap ?? "post";
   const { row } = paramBlock(t().inspector.prePost, "");
   const group = document.createElement("div");
   group.className = "toggle";
+  // CH → FX taps are read-only: the device rejects software writes, so the device
+  // (LCD) value is shown but the buttons are disabled, with an explanatory tooltip.
+  if (!editable) row.title = t().inspector.prePostLcdOnly;
   const make = (tap: "pre" | "post", text: string): HTMLButtonElement => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = text;
     b.classList.toggle("on", cur === tap);
+    if (!editable) {
+      b.disabled = true;
+      return b;
+    }
     b.addEventListener("click", () => {
       group.querySelectorAll("button").forEach((x) => x.classList.remove("on"));
       b.classList.add("on");
