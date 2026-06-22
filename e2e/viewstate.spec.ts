@@ -36,8 +36,10 @@ test("the console send-mode tab survives a GRAPH round-trip", async ({ page }) =
     "aria-pressed",
     "true",
   );
-  // The strips still read out the MIX 1 send (not the main fader).
-  await expect(strip(page, "CH 1").locator(".con-readout .send")).toHaveText("→ MIX 1 SEND");
+  // The strips re-rendered into the MIX 1 send view, not MAIN: a send mode shows
+  // only the bus's sources, so the master strip is gone while CH 1 stays.
+  await expect(strip(page, "CH 1")).toBeVisible();
+  await expect(strip(page, "STEREO (MAIN)")).toHaveCount(0);
 });
 
 test("a console fader edit is read back on the graph's CH -> STEREO wire", async ({ page }) => {
