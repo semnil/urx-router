@@ -1362,6 +1362,15 @@ function faderControl(cur: number, onChange: (v: number) => void): HTMLElement {
 // A two-button ON/OFF toggle for a node-level boolean (channel on, HPF), styled
 // like the PRE/POST control. Highlights the active state and reports the chosen
 // value on click.
+// Mark `button` as the pressed one in a two-button toggle group (clears the
+// others). Lets a toggle reflect a click at once: callers that mutate in place
+// (e.g. a plain send ON/OFF) do not re-render the inspector, so without this the
+// button would stay visually stale until the next selection.
+function selectToggle(group: HTMLElement, button: HTMLButtonElement): void {
+  group.querySelectorAll("button").forEach((x) => x.classList.remove("on"));
+  button.classList.add("on");
+}
+
 function boolToggle(label: string, value: boolean, onChange: (v: boolean) => void): HTMLElement {
   const { row } = paramBlock(label, "");
   const group = document.createElement("div");
@@ -1371,7 +1380,10 @@ function boolToggle(label: string, value: boolean, onChange: (v: boolean) => voi
     b.type = "button";
     b.textContent = text;
     b.classList.toggle("on", value === on);
-    b.addEventListener("click", () => onChange(on));
+    b.addEventListener("click", () => {
+      selectToggle(group, b);
+      onChange(on);
+    });
     return b;
   };
   group.append(make(true, t().inspector.on), make(false, t().inspector.off));
@@ -1484,15 +1496,12 @@ function tapControl(conn: PlanConnection, onUpdate: UpdateParams, editable = tru
     b.type = "button";
     b.textContent = text;
     b.classList.toggle("on", cur === tap);
-    if (!editable) {
-      b.disabled = true;
-      return b;
-    }
-    b.addEventListener("click", () => {
-      group.querySelectorAll("button").forEach((x) => x.classList.remove("on"));
-      b.classList.add("on");
-      onUpdate(conn.from, conn.to, { tap });
-    });
+    b.disabled = !editable;
+    if (editable)
+      b.addEventListener("click", () => {
+        selectToggle(group, b);
+        onUpdate(conn.from, conn.to, { tap });
+      });
     return b;
   };
   group.append(make("pre", "PRE"), make("post", "POST"));
