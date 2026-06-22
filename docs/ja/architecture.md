@@ -89,6 +89,7 @@ flowchart TD
 - `possibleTargets(model, fromRef)` / `possibleSources(model, toRef)` — plan を考慮せず規則のみで接続先/元を返す `legalTargets`/`legalSources` の superset。占有済みの single-input ポートも含むため、「規則はあるが既に埋まっている」結線先を示せる。
 - `canConnect(model, plan, fromRef, toRef)` — 規則の有無と受け口多重度 (`source`/`patch`/`key` は1本、`send` は複数) を判定。single-input ポートの占有は既存結線の種別を問わず数えるため、壊れた/異種 kind を持つ手編集ファイルでも単一入力の不変条件をすり抜けられない。
 - `partnerChannel(model, nodeId)` — ペアとなる相方のモノ CH を返す。`source` 結線時に同一ソースを相方へミラーし、削除時も連動させる (UI: `graph.ts`)。Ducker のキーソースは `source` ではなく `key` 種別なのでこのミラーリングを通らない (モノペア非所属という偶然ではなく型で保証)。
+- `isBalLinkedPair(model, plan, id)` / `mirrorBalPair(model, plan, id)` — STEREO リンク済み MONO IN ペアが BAL モードのとき、片 ch の編集を相方へミラーする (ノードパラメーター全般 + 各 Send の LEVEL/PRE-POST/ON/pan。pan は BAL の共有バランス 1 値。Signal Type/PAN-BAL フラグは primary のみ保持)。各編集 funnel から呼ぶ: グラフ/インスペクタは `main.ts` の `onUpdateParams`/`onUpdateNodeParams`、CONSOLE は `console.ts` の `commit`。GRAPH/CONSOLE で同一関数を共有し挙動を一致させる。PAN モードでは非ミラー。詳細は [device-model.md](device-model.md)。
 
 UI (`graph.ts`) はこれらを使い、出力・入力どちらのポートからもドラッグで結線できる。反対側のポートは2層でハイライトする (結線可能 = 塗り、規則はあるが占有済み = 輪郭のみ)。出力からのドラッグは possible があれば開始し、入力からは legal があるときのみ開始する。既にソースを持つ single-input ポートのクリックは、その結線を選択する (配線クリックと同等)。
 

@@ -11,6 +11,7 @@ import { defaultPlan } from "../models/initial-state";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, type NodeParams, type Plan, type PlanConnection } from "../core/plan";
 import { hasMeter, METER_FLOOR_DB, METER_TOP_DB, metersForNodes, MeterStore, subscribeMeters } from "../core/meters";
 import { channelControl, insertFxControl } from "../core/control/translate";
+import { isBalLinkedPair, mirrorBalPair, partnerChannel } from "../core/routing";
 import { INSERT_FX_NONE, type InsertFxOption } from "../core/control/params";
 import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../core/control/vd";
 import { t } from "../i18n";
@@ -67,6 +68,7 @@ interface StripModel {
   deviceName: string; // device CH SETTING name (plan.nodeNames), or ""
   isChannel: boolean;
   isMono: boolean;
+  isBalance: boolean; // pan reads as a BALANCE (stereo / FX channel, or a BAL-linked pair)
   fadersOnly: boolean; // bus/mon/osc/master: always show their own level
   isOsc: boolean;
   hasMute: boolean; // channels + master
@@ -238,6 +240,7 @@ export class Console {
     const isOsc = id === "bus.osc";
     const isMix = this.isMixBus(id);
     const isMon = id === "bus.mon1" || id === "bus.mon2";
+    const isMono = /^ch\d+$/.test(id); // mono channels are ch1..ch4 (the only gain/gate/comp/φ-bearing strips)
     return {
       id,
       label: node.label,
@@ -246,7 +249,10 @@ export class Console {
       deviceName: isMon ? `Phone ${id.slice(-1)}` : this.hooks.getPlan().nodeNames[id] || "",
       rail: `var(--rail-${node.kind})`,
       isChannel,
-      isMono: /^ch\d+$/.test(id), // mono channels are ch1..ch4 (the only gain/gate/comp/φ-bearing strips)
+      isMono,
+      // Mono channels read PAN unless STEREO-linked in BAL mode; native stereo / FX
+      // channels always read BALANCE — matching the inspector (isBalanceChannel).
+      isBalance: !isMono || isBalLinkedPair(this.hooks.getModel(), this.hooks.getPlan(), id),
       fadersOnly: !(isChannel || this.isFxChannel(id)),
       isOsc,
       // MIX strips carry a MUTE (the MIX → STEREO "TO ST" switch; the MIX master ON
@@ -352,6 +358,7 @@ export class Console {
     type BoolKey = "gateOn" | "compOn" | "eqOn" | "phantom" | "phase" | "phaseL" | "phaseR" | "hpf" | "hiZ";
     const planOf = (): NodeParams => this.hooks.getPlan().nodeParams[m.id] ?? {};
     const makeChip = (
+      id: string,
       parent: HTMLElement,
       label: string,
       mute: boolean,
@@ -367,7 +374,7 @@ export class Console {
         const next = toggle();
         chip.classList.toggle("on", next);
         chip.setAttribute("aria-pressed", String(next));
-        this.hooks.onChange();
+        if (this.commit(id)) this.render();
       };
       chip.addEventListener("click", run);
       chip.addEventListener("keydown", (e) => {
@@ -379,7 +386,7 @@ export class Console {
       parent.append(chip);
     };
     const boolChip = (parent: HTMLElement, label: string, key: BoolKey, def: boolean): void => {
-      makeChip(parent, label, false, planOf()[key] ?? def, () => {
+      makeChip(m.id, parent, label, false, planOf()[key] ?? def, () => {
         const next = !(planOf()[key] ?? def);
         this.nodeParamsOf(m.id)[key] = next;
         return next;
@@ -398,7 +405,7 @@ export class Console {
           ? () => this.sendConn(this.hooks.getPlan(), m.id, MAIN_BUS)
           : this.sendStripConn(m.id, usesSend);
         const sendOn = (): boolean => conn()?.params?.on ?? !mix; // sends default ON, TO ST off
-        makeChip(top, t().console.mute, true, !sendOn(), () => {
+        makeChip(m.id, top, t().console.mute, true, !sendOn(), () => {
           const c = conn();
           const nextOn = !sendOn();
           if (c) c.params = { ...c.params, on: nextOn };
@@ -408,7 +415,7 @@ export class Console {
         // Master ON/OFF on the node's own `on` flag: a channel (CH_ON) / the STEREO
         // master (STEREO_MASTER_ON) write to the device; a MONITOR bus is plan-only
         // (no confirmed monitor-ON param), so its mute lives in the plan alone.
-        makeChip(top, t().console.mute, true, np.on === false, () => {
+        makeChip(m.id, top, t().console.mute, true, np.on === false, () => {
           const muted = planOf().on === false;
           this.nodeParamsOf(m.id).on = muted; // toggle: was muted → on, was on → muted
           return !muted;
@@ -420,7 +427,7 @@ export class Console {
     // osc.on rather than a MUTE that would read as pressed by default.
     if (m.isOsc) {
       const oscOn = (): boolean => planOf().osc?.on ?? false;
-      makeChip(top, t().console.on, false, oscOn(), () => {
+      makeChip(m.id, top, t().console.on, false, oscOn(), () => {
         const next = !oscOn();
         const op = this.nodeParamsOf(m.id);
         op.osc = { ...op.osc, on: next };
@@ -456,7 +463,7 @@ export class Console {
           const v = planOf().insertFx;
           return v != null && v !== INSERT_FX_NONE;
         };
-        makeChip(proc, "INS FX", false, insOn(), () => this.toggleInsFx(m.id, ifx.options));
+        makeChip(m.id, proc, "INS FX", false, insOn(), () => this.toggleInsFx(m.id, ifx.options));
       }
       // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
       // A shelved ducker drops its chip even while the parent strip stays.
@@ -464,7 +471,7 @@ export class Console {
       const duckerId = model.nodes.find((n) => n.kind === "ducker" && n.attachTo === m.id && !hidden.includes(n.id))?.id;
       if (duckerId) {
         const duckOn = (): boolean => this.hooks.getPlan().nodeParams[duckerId]?.duckerOn === true;
-        makeChip(proc, "DUCKER", false, duckOn(), () => {
+        makeChip(duckerId, proc, "DUCKER", false, duckOn(), () => {
           const next = !duckOn();
           this.nodeParamsOf(duckerId).duckerOn = next;
           return next;
@@ -485,7 +492,7 @@ export class Console {
       const conn = this.sendStripConn(m.id, usesSend);
       const preGroup = el("div", "con-chips");
       const isPre = (): boolean => conn()?.params?.tap === "pre";
-      makeChip(preGroup, t().console.pre, false, isPre(), () => {
+      makeChip(m.id, preGroup, t().console.pre, false, isPre(), () => {
         const next = !isPre();
         const c = conn();
         if (c) c.params = { ...c.params, tap: next ? "pre" : "post" };
@@ -512,7 +519,7 @@ export class Console {
         format: (v) => (v > 0 ? "+" : "") + v,
         reset: factory,
         angle: (v) => -90 + ((v - hl) / (hr - hl)) * 180,
-      });
+      }, m.id);
     }
     // PAN (mono) / BALANCE (stereo) = the source's send pan, L63 – C – R63. Both
     // channels and FX channels follow the tab: MAIN edits the → STEREO main path, a
@@ -521,7 +528,7 @@ export class Console {
     if (m.isChannel || this.isFxChannel(m.id)) {
       const target = usesSend ? (this.mode as SendTarget) : MAIN_BUS;
       if (target !== "bus.fx1" && target !== "bus.fx2") {
-        this.addSendPanKnob(head, m.id, target, m.isMono ? "PAN" : "BAL");
+        this.addSendPanKnob(head, m.id, target, m.isBalance ? "BAL" : "PAN");
       }
     }
     if (m.hasPhones) {
@@ -538,7 +545,7 @@ export class Console {
         reset: factory,
         // 2.0 at the left horizontal, 8.0 at the right (the device's markings).
         angle: (v) => -90 + ((v - 2) / (8 - 2)) * 180,
-      });
+      }, m.id);
     }
     strip.append(head);
 
@@ -607,7 +614,8 @@ export class Console {
       if (usesSend) this.setSend(r.m.id, this.mode as SendTarget, db);
       else this.setMain(r.m, db);
       this.updateStripLevel(r, db);
-      this.hooks.onChange();
+      this.commit(r.m.id);
+      this.mirrorPartnerLevel(r.m.id); // a BAL-linked partner tracks the fader live
     };
     r.fader.addEventListener("pointerdown", (e) => {
       e.preventDefault();
@@ -795,12 +803,39 @@ export class Console {
       step: 1,
       format: (v) => (v === 0 ? "C" : v < 0 ? "L" + -v : "R" + v),
       reset: factory,
-    });
+    }, id);
   }
 
   private nodeParamsOf(id: string): NodeParams {
     const plan = this.hooks.getPlan();
     return (plan.nodeParams[id] ??= {});
+  }
+
+  /** Apply a console edit to `id`: mirror it onto the linked partner when the pair
+   *  is in BAL mode, then run the shared change funnel. Returns whether it mirrored
+   *  (the caller rebuilds so the partner strip catches up). */
+  private commit(id: string): boolean {
+    const mirrored = mirrorBalPair(this.hooks.getModel(), this.hooks.getPlan(), id);
+    this.hooks.onChange();
+    return mirrored;
+  }
+
+  /** Rebuild once after editing a BAL-linked strip so the mirrored partner strip
+   *  catches up — a live drag/keypress updates only the dragged strip. Used by the
+   *  chips / knobs, where the partner's whole head may change. */
+  private syncPartnerStrip(id: string): void {
+    if (isBalLinkedPair(this.hooks.getModel(), this.hooks.getPlan(), id)) this.render();
+  }
+
+  /** Push a BAL-linked strip's mirrored fader level onto the partner strip's level
+   *  DOM in place, so a linked fader tracks live without a rebuild (keeps focus). */
+  private mirrorPartnerLevel(id: string): void {
+    if (!isBalLinkedPair(this.hooks.getModel(), this.hooks.getPlan(), id)) return;
+    const partner = partnerChannel(this.hooks.getModel(), id);
+    const pr = partner ? this.refs.get(partner) : undefined;
+    if (!pr) return;
+    const db = this.usesSend(pr.m) ? this.getSend(partner!, this.mode as SendTarget) : this.getMain(pr.m);
+    this.updateStripLevel(pr, db);
   }
 
   // The factory plan (cached): the source for double-click "reset to default".
@@ -870,7 +905,7 @@ export class Console {
 
   // Build a labelled rotary knob (label / value / knob) in the strip head and
   // wire it. Shared by the channel gain and the monitor PHONES level.
-  private addKnob(head: HTMLElement, label: string, k: KnobSpec): void {
+  private addKnob(head: HTMLElement, label: string, k: KnobSpec, id: string): void {
     const box = el("div", "con-gain");
     const info = el("div", "info");
     const lbl = el("span", "lbl");
@@ -884,13 +919,13 @@ export class Console {
     knob.append(el("i", "ind"));
     box.append(info, knob);
     head.append(box);
-    this.wireKnob(knob, val, k);
+    this.wireKnob(knob, val, k, id);
   }
 
   // Rotary knob: vertical drag (≈ full range over 150px) and arrow keys edit the
   // value (snapped to `step`); the indicator rotates over a 270° sweep; a
   // double-click resets to `reset`. Reads/writes via the spec's get/set.
-  private wireKnob(knob: HTMLElement, val: HTMLElement, k: KnobSpec): void {
+  private wireKnob(knob: HTMLElement, val: HTMLElement, k: KnobSpec, id: string): void {
     const angle = k.angle ?? ((v: number): number => -135 + ((v - k.min) / (k.max - k.min)) * 270);
     const show = (v: number): void => {
       val.textContent = k.format(v);
@@ -902,7 +937,7 @@ export class Console {
       const v = Math.max(k.min, Math.min(k.max, snapped));
       k.set(v);
       show(v);
-      this.hooks.onChange();
+      this.commit(id);
     };
     show(Math.max(k.min, Math.min(k.max, k.get()))); // initial display, not dirty
     knob.addEventListener("pointerdown", (e) => {
@@ -914,6 +949,7 @@ export class Console {
       const up = (): void => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
+        this.syncPartnerStrip(id);
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
@@ -923,8 +959,12 @@ export class Console {
       else if (e.key === "ArrowDown" || e.key === "ArrowLeft") apply(k.get() - k.step);
       else return;
       e.preventDefault();
+      this.syncPartnerStrip(id);
     });
-    knob.addEventListener("dblclick", () => apply(k.reset)); // reset to factory value
+    knob.addEventListener("dblclick", () => {
+      apply(k.reset); // reset to factory value
+      this.syncPartnerStrip(id);
+    });
   }
 }
 
