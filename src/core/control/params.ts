@@ -267,6 +267,16 @@ export const PARAMS = {
   FX_CHANNEL_FADER: { id: 337, axis: "global", encoding: "level" },
   /** FX channel balance = the fixed FX channel → STEREO send pan. y = FX1 0 / FX2 1. */
   FX_CHANNEL_BAL: { id: 339, axis: "global", encoding: "pan" },
+  /** FX channel EFFECT TYPE selector (anchor = FX1 679; FX2 683). Writing it makes
+   *  the device repopulate the effect parameter array with that effect's defaults,
+   *  so it is a sideEffect (live converges + re-reads). Per-FX id resolved in
+   *  translate.ts; values are the fx1_insert_fx / fx2_insert_fx enums. */
+  FX_EFFECT_TYPE: { id: 679, axis: "global", encoding: "enum", sideEffect: true },
+  /** FX channel effect parameter array (anchor = FX1 681; FX2 685). Addressed by
+   *  SLOT on the y axis (not an instance); slot meaning depends on the effect type.
+   *  Raw broker integers (see control/fx-effect.ts). Per-FX id + slot resolved in
+   *  translate.ts. */
+  FX_EFFECT_PARAM: { id: 681, axis: "global", encoding: "raw" },
   /** Input source select for MONO CH1-4 (y = physical input slot 0..3). Raw input
    *  port ref. Param 22 only covers the mono slots; the device returns NONE for
    *  slots 4..11, so stereo channels use the separate 209/210 pair below. */

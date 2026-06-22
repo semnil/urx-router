@@ -129,7 +129,12 @@ const ENUM_SWEEP: Record<string, number[]> = {
   busType: BUS_TYPE_OPTIONS.map((o) => o.value),
   recPoint: REC_POINT_OPTIONS.map((o) => o.value),
 };
-const SKIP = new Set(["insertFx", "autoMakeup", "oneKnob"]);
+// fxEffect is skipped wholesale: its `type` enum is per-FX (FX1 0..2/1024..1025,
+// FX2 768..770/1024..1025) so the shared [0,1,2] "type" sweep would write values
+// FX2 rejects, and writing the type repopulates the parameter array (sideEffect).
+// It is written back unchanged (verifying idempotency); round-trip coverage lives
+// in the completeness / translate unit tests.
+const SKIP = new Set(["insertFx", "autoMakeup", "oneKnob", "fxEffect"]);
 
 // Passes needed to sweep every enum option at least once (the largest is the
 // input insert-FX option list).

@@ -260,6 +260,7 @@ describe("applyDeviceState round-trip", () => {
     // names its group so a count change is traceable to a specific readback pass.
     const channels = 8;
     const sends = 8 * 4 + 2 * 2; // 8 channels × (MIX1/2 + FX1/2) + 2 FX channels × MIX1/2
+    const fxEffect = 2; // FX1 + FX2 effect type + parameter array
     const fxMainPath = 2; // FX1 + FX2 → STEREO main fader / balance
     const busFaders = 3; // STEREO + MIX1 + MIX2
     const insertFx = 3 + 4; // STEREO + 2 MIX outputs + 4 mono channels
@@ -276,7 +277,7 @@ describe("applyDeviceState round-trip", () => {
     const colors = 8 + 6; // CH SETTING color: 8 channels + STEREO/MIX1/MIX2/FX1/FX2/STREAMING
     const names = 8 + 6; // CH SETTING name: same node set as color
     const expected =
-      channels + sends + fxMainPath + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + delay + oscAssign + inputSource + selectors + colors + names;
+      channels + sends + fxEffect + fxMainPath + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + delay + oscAssign + inputSource + selectors + colors + names;
     expect(result.applied).toBe(expected);
     // Sanity: far more than the channel-only count, proving every group counts.
     expect(result.applied).toBeGreaterThan(channels);
