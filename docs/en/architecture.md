@@ -111,6 +111,11 @@ The constraint core (`core/routing.ts`):
   stay on the primary). Called from each edit funnel: `main.ts` `onUpdateParams` / `onUpdateNodeParams` for the
   graph / inspector, and `console.ts` `commit` for CONSOLE — both views share the one function so they behave
   identically. No mirroring in PAN mode. See [device-model.md](device-model.md).
+- A STEREO-linked pair is tied on canvas by a heart connector and drags as one unit. Linking
+  (`alignStereoPair`, called from `onUpdateNodeParams` when `stereoLink` turns on) first snaps the partner back
+  beside the kept node — the selected member stays put, the other moves to its default-layout relative offset —
+  so the tie is never stretched across a gap an earlier manual move opened. The pair keeps independent saved
+  positions afterwards (unlike a ducker's parent-derived position), so it stays freely draggable.
 
 The UI (`graph.ts`) uses these to let a wire be dragged from either an output or an input port,
 highlighting the opposite-side ports in two layers: legal targets filled, rule-defined-but-occupied

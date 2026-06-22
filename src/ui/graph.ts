@@ -575,6 +575,21 @@ export class Graph {
     }
   }
 
+  /** Snap a pair's partner next to the kept node when STEREO-linking, so the heart
+   *  tie isn't stretched across a gap left by an earlier manual move. The selected
+   *  member stays put; the other moves to its canonical relative offset. */
+  alignStereoPair(primary: string): void {
+    const partner = partnerChannel(this.model, primary);
+    if (!partner) return;
+    const keepPartner = this.selection?.type === "node" && this.selection.id === partner;
+    const kept = keepPartner ? partner : primary;
+    const other = keepPartner ? primary : partner;
+    const dk = this.defaultPos(this.nodeById.get(kept)!);
+    const dother = this.defaultPos(this.nodeById.get(other)!);
+    const kp = this.posOf(kept);
+    this.plan.positions[other] = { x: kp.x + (dother.x - dk.x), y: kp.y + (dother.y - dk.y) };
+  }
+
   /** The channelPairs entry [primary, partner] containing `id` when that pair is
    *  STEREO-linked, else null. Used to drag a linked pair as one unit. */
   private linkedPairOf(id: string): [string, string] | null {
