@@ -97,12 +97,13 @@ describe("applyDeviceState round-trip", () => {
     // Stereo channel (CH5/6): D.Gain + independent L/R phase.
     plan.nodeParams.ch_5_6 = { gain: -12, phaseL: true, phaseR: false };
 
-    // CH1 → MIX1 send (level/pan/PRE tap) and CH1 → FX1 send (level + PRE tap). Both
+    // CH1 → MIX1 send (level/pan/PRE tap) and CH1 → FX1 send (level only — CH → FX
+    // taps are read-only, so a tap cannot round-trip through a software write). Both
     // are fixed (always-wired) sends seeded above, so set their params in place.
     const ch1Mix1 = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in");
     ch1Mix1!.params = { level: -3, pan: -63, tap: "pre" };
     const ch1Fx1 = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.fx1:in");
-    ch1Fx1!.params = { level: -9, tap: "pre" };
+    ch1Fx1!.params = { level: -9 };
 
     // Bus faders / EQ / insert FX.
     plan.nodeParams["bus.stereo"] = { on: true, level: 2, eqOn: true, insertFx: 1793 };
@@ -385,7 +386,7 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     };
     plan.nodeParams.ch_5_6 = { gain: -12, phaseL: true, phaseR: false };
     plan.connections.push({ from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { level: -3, pan: -63, tap: "pre" } });
-    plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9, tap: "pre" } });
+    plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9 } });
     plan.nodeParams["bus.stereo"] = { on: true, level: 2, eqOn: true, insertFx: 1793 };
     plan.nodeParams["bus.mix1"] = { level: -4, insertFx: 1792 };
     plan.nodeParams["out.ducker1"] = { duckerOn: true, ducker: { threshold: -50, range: -20, attack: 25, decay: 1500 } };

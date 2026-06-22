@@ -282,7 +282,7 @@ describe("planToCommands", () => {
     ]);
   });
 
-  it("emits a CH → FX send as a single mono level/on/tap, no pan", () => {
+  it("emits a CH → FX send as a single mono level/on, no pan, and no tap (read-only)", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
     // CH → FX sends are fixed (always wired); set params on the seeded wires.
@@ -291,14 +291,15 @@ describe("planToCommands", () => {
     const fx2 = plan.connections.find((c) => c.from === "ch_5_6:out" && c.to === "bus.fx2:in")!;
     fx2.params = { level: 0 };
     const cmds = planToCommands(model, plan);
-    // Mono FX1 block base 193: tap 193, level 194, on 196 (single, no pan). Scope
-    // to ch1 (y0) — the param ids are shared across channels.
+    // Mono FX1 block base 193: level 194, on 196 (single, no pan). Scope to ch1
+    // (y0) — the param ids are shared across channels.
     const monoLvl = cmds.filter((c) => c.name === "SEND_LEVEL" && c.paramId === 194 && c.y === 0);
     expect(monoLvl).toHaveLength(1);
     expect(monoLvl[0].vdValue).toBe(720);
     expect(cmds.find((c) => c.name === "SEND_ON" && c.paramId === 196 && c.y === 0)!.vdValue).toBe(1);
-    // PRE/POST tap at base 193 is live-confirmed writable, so it is emitted.
-    expect(cmds.find((c) => c.name === "SEND_TAP" && c.paramId === 193 && c.y === 0)!.vdValue).toBe(1);
+    // CH → FX taps are read-only (broker max_value=0 rejects a PRE write), so even a
+    // tap="pre" wire emits no SEND_TAP for the FX block (193/197/320/324).
+    expect(cmds.some((c) => c.name === "SEND_TAP" && [193, 197, 320, 324].includes(c.paramId))).toBe(false);
     // Stereo FX2 = base 320+4 = 324: level 325 (ch_5_6 = stereo index y0).
     expect(cmds.some((c) => c.name === "SEND_LEVEL" && c.paramId === 325 && c.y === 0)).toBe(true);
     // FX sends carry no pan.

@@ -12,7 +12,7 @@ import type { ConnectionKind, DeviceModel, ModelId } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
 import type { CompParams, EqBand, EqOneKnobParams, GateParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
 import { incomingConnection } from "../plan";
-import { isFixedConnection } from "../routing";
+import { isFixedConnection, sendTapWritable } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
   COMP_EQ_COMP_FIRST,
@@ -938,7 +938,10 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       for (const p of sc.level) out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
       for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
       for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, on));
-      out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
+      // CH -> FX taps are read-only (broker max_value=0 rejects a PRE write); they
+      // are read back but never written. Other taps are settable. See sendTapWritable.
+      if (sendTapWritable(model, conn.from, conn.to))
+        out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
     }
   }
 

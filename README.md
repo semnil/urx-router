@@ -58,6 +58,7 @@ English documentation lives under [docs/en/](docs/en/); the Japanese translation
 
 - [docs/en/architecture.md](docs/en/architecture.md) — application structure and design decisions
 - [docs/en/device-model.md](docs/en/device-model.md) — the device routing model and connection constraints
+- [docs/en/known-issues.md](docs/en/known-issues.md) — current limitations
 
 ## License
 

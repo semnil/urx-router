@@ -73,6 +73,7 @@ export const ja: Messages = {
     pan: "パン",
     balance: "バランス",
     prePost: "PRE/POST",
+    prePostLcdOnly: "CH → FX send の PRE/POST は本体でのみ設定可 (software から変更不可)。",
     channelOn: "チャンネル",
     sendOn: "Send",
     toSt: "TO ST",

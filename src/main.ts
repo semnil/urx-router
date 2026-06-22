@@ -265,6 +265,8 @@ function deactivateLive(status?: string): void {
   void vdDisconnect();
   setLiveUi(false);
   consoleView.setLive(false);
+  // A CH → FX tap shown read-only while live becomes editable again off-line.
+  refreshInspector();
   if (status) setStatus(status);
 }
 
@@ -510,7 +512,7 @@ function refreshInspector(): void {
   // On mobile the inspector is a bottom sheet that slides up only while something
   // is selected; this flag drives that state (no effect on the desktop panel).
   document.body.classList.toggle("has-selection", selection !== null);
-  renderInspector(inspectorHost, getModel(modelId), plan, selection, inspectorActions, recent);
+  renderInspector(inspectorHost, getModel(modelId), plan, selection, inspectorActions, recent, live?.isActive() ?? false);
 }
 
 // Recompute the sample-rate constraints and reflect them in the graph badges and

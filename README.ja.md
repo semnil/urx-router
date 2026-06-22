@@ -54,6 +54,7 @@ urx-router.exe --experimental                 # ビルド済みアプリ (Window
 
 - [docs/ja/architecture.md](docs/ja/architecture.md) — アプリ構成と設計判断
 - [docs/ja/device-model.md](docs/ja/device-model.md) — 装置のルーティングモデルと接続制約
+- [docs/ja/known-issues.md](docs/ja/known-issues.md) — 現時点の制限事項
 
 ## ライセンス
 
