@@ -11,7 +11,7 @@ import { defaultPlan } from "../models/initial-state";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, type NodeParams, type Plan, type PlanConnection } from "../core/plan";
 import { hasMeter, METER_FLOOR_DB, METER_TOP_DB, metersForNodes, MeterStore, subscribeMeters } from "../core/meters";
 import { channelControl, insertFxControl } from "../core/control/translate";
-import { isBalLinkedPair, mirrorBalPair, partnerChannel } from "../core/routing";
+import { isBalLinkedPair, mirrorBalPair, partnerChannel, sendTapWritable } from "../core/routing";
 import { INSERT_FX_NONE, type InsertFxOption } from "../core/control/params";
 import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../core/control/vd";
 import { setLevelText } from "./glyph";
@@ -153,8 +153,11 @@ export class Console {
   setLive(active: boolean): void {
     this.live = active;
     this.host.classList.toggle("live", active);
-    if (active && this.visible) this.startMeters();
-    else this.stopMeters();
+    // Meters stream only while live AND visible; tear them down otherwise.
+    if (!active || !this.visible) this.stopMeters();
+    // Rebuild so the CH → FX send Pre/Post chip flips read-only with live state;
+    // render() (re)starts/re-scopes the meter stream at its tail when live.
+    if (this.visible) this.render();
   }
 
   /** Re-read set levels after an external edit (inspector / graph / readback). */
@@ -419,12 +422,22 @@ export class Console {
       mute: boolean,
       on: boolean,
       toggle: () => boolean,
+      // Read-only when set: shows the value but rejects edits (the device cannot
+      // accept the write while live). The string is the explanatory tooltip; a
+      // read-only chip drops its listeners and keyboard focus.
+      readonlyTitle?: string,
     ): void => {
-      const chip = el("div", "con-chip" + (mute ? " mute" : "") + (on ? " on" : ""));
+      const chip = el("div", "con-chip" + (mute ? " mute" : "") + (on ? " on" : "") + (readonlyTitle ? " readonly" : ""));
       chip.textContent = label;
-      chip.tabIndex = 0;
       chip.setAttribute("role", "button");
       chip.setAttribute("aria-pressed", String(on));
+      if (readonlyTitle) {
+        chip.setAttribute("aria-disabled", "true");
+        chip.title = readonlyTitle;
+        parent.append(chip);
+        return;
+      }
+      chip.tabIndex = 0;
       const run = (): void => {
         const next = toggle();
         chip.classList.toggle("on", next);
@@ -547,12 +560,17 @@ export class Console {
       const conn = this.sendStripConn(m.id, usesSend);
       const preGroup = el("div", "con-chips");
       const isPre = (): boolean => conn()?.params?.tap === "pre";
+      // The tap stays freely editable in the planner, but a CH → FX send tap
+      // (FX 1 / 2 tabs) cannot be written to the device, so it is shown read-only
+      // while live-connected — matching the graph CH node's PRE/POST. MIX taps
+      // stay editable. See sendTapWritable / inspector.
+      const tapReadonly = this.live && !sendTapWritable(model, m.id, this.mode as SendTarget);
       makeChip(m.id, preGroup, t().console.pre, false, isPre(), () => {
         const next = !isPre();
         const c = conn();
         if (c) c.params = { ...c.params, tap: next ? "pre" : "post" };
         return next;
-      });
+      }, tapReadonly ? t().inspector.prePostLcdOnly : undefined);
       preGroup.append(el("div", "con-chip spacer"));
       head.append(preGroup);
     }

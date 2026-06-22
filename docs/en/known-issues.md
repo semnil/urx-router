@@ -8,9 +8,10 @@ routing rules in detail.
 The Pre/Post of a channel's send to **FX 1 / FX 2** can be set freely in the
 planner — the plan records the intended value — but it cannot be written to the
 URX from software: the device only accepts this setting from its own front panel
-(LCD). While live sync is connected the toggle is therefore shown read-only
+(LCD). While live sync is connected the control is therefore shown read-only
 (disabled, with an explanatory tooltip) and reflects the device value, which
-readback keeps current. Offline (the pure planner) the toggle stays editable.
+readback keeps current — this applies to both the inspector's Pre/Post toggle and
+the CONSOLE view's PRE button. Offline (the pure planner) it stays editable.
 
 The Pre/Post of **CH → MIX** and **FX-channel → MIX** sends can be written to the
 device as usual.

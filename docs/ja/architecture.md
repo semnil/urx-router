@@ -184,7 +184,9 @@ A.Gain +8/+55・D.Gain -14/+15 を左右の水平に。
   FX チャンネルは MIX バスへの Send のみ追従。MAIN モードでは全ストリップが自身のレベルを表示する。
   全 Send が固定 (常時結線) になったため、入力チャンネルと FX チャンネルは Send モードで同じ扱い:
   - Send モードの **ストリップには `PRE` チップ**が出て、その Send の PRE/POST タップを切り替える
-    (グラフ/インスペクタの tap と同じ値。CH/FX → MIX/FX Send はいずれも tap を持つ)。
+    (グラフ/インスペクタの tap と同じ値。CH/FX → MIX/FX Send はいずれも tap を持つ)。**FX 1 / FX 2** タブの
+    tap は CH → FX Send で実機へ書き込めないため、Live sync 接続中はチップが読み取り専用になる
+    (インスペクタと同じ挙動・[known-issues.md](known-issues.md) 参照)。MIX タブの tap は常時編集可。
   - 同モードでは **MUTE はその Send の ON/OFF (SEND_ON)** を指す (チャンネル本体のミュートは MAIN タブ/インスペクタ)。
   - **PAN/BAL つまみ**はタブ依存で、MAIN= → STEREO 主経路の PAN/BAL、Send モード=その Send の pan を制御する
     (fader と同じ接続)。FX バスへの Send はモノで pan を持たないため、**FX タブではつまみを省く**。
