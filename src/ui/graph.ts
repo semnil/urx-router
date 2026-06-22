@@ -662,6 +662,15 @@ export class Graph {
     return (conn.params?.level ?? 0) <= LEVEL_MIN_DB;
   }
 
+  // Whether a node reads as inactive and should be dimmed: a muted channel
+  // (params.on === false) or a bypassed ducker (its on/off lives in duckerOn,
+  // not on, so it needs its own predicate to dim like a muted node).
+  private isNodeInactive(node: DeviceNode): boolean {
+    const np = this.plan.nodeParams?.[node.id];
+    if (node.kind === "ducker") return np?.duckerOn !== true;
+    return np?.on === false;
+  }
+
   /** The device CH SETTING name (plan.nodeNames) to show for a node, or undefined
    *  in model-label mode or when no name is set — the single source both the
    *  faceplate and labelOf use to decide a name override. */
@@ -791,9 +800,10 @@ export class Graph {
       this.portPinEls.set(r, pin);
     }
 
-    // A muted channel (CH_ON off) reads as inactive: dim the whole node and tag
-    // it MUTE. Distinct from the rate-disabled OFF badge above (warn-colored).
-    if (this.plan.nodeParams?.[node.id]?.on === false) {
+    // A muted channel (CH_ON off) or a bypassed ducker (duckerOn off) reads as
+    // inactive: dim the whole node and tag it MUTE / OFF. Distinct from the
+    // rate-disabled OFF badge above (warn-colored).
+    if (this.isNodeInactive(node)) {
       g.setAttribute("opacity", "0.4");
       const tag = svgRect(NODE_W - 40, -8, 36, 15, 3, p.nodeStroke);
       g.append(tag);
@@ -807,7 +817,7 @@ export class Graph {
       tagText.setAttribute("font-size", "8.5");
       tagText.setAttribute("font-weight", "700");
       tagText.style.pointerEvents = "none";
-      tagText.textContent = "MUTE";
+      tagText.textContent = node.kind === "ducker" ? "OFF" : "MUTE";
       g.append(tagText);
     }
 
@@ -835,7 +845,7 @@ export class Graph {
     // by the device): a dim node with a dashed warn frame and a top-left "?" badge.
     // Ranks below MUTE and DISABLED, which already own the visual; the badge sits
     // left of their top-right tags so the two never collide. Decorative only.
-    if (this.unreadNodes.has(node.id) && this.plan.nodeParams?.[node.id]?.on !== false && !this.disabledNodes.has(node.id)) {
+    if (this.unreadNodes.has(node.id) && !this.isNodeInactive(node) && !this.disabledNodes.has(node.id)) {
       g.setAttribute("opacity", "0.7");
       rect.setAttribute("stroke", p.warn);
       rect.setAttribute("stroke-width", "1.2");
@@ -1258,7 +1268,8 @@ export class Graph {
       const disabled = !on && this.disabledNodes.has(id);
       // Unread frame ranks below selected/disabled but above the plain frame, so
       // a re-highlight restores it instead of reverting an unread node to normal.
-      const unread = !on && !disabled && this.unreadNodes.has(id) && this.plan.nodeParams?.[id]?.on !== false;
+      const node = this.nodeById.get(id)!;
+      const unread = !on && !disabled && this.unreadNodes.has(id) && !this.isNodeInactive(node);
       el.classList.toggle("selected", on);
       rect.setAttribute("stroke-width", on ? "2.5" : disabled ? "1.5" : unread ? "1.2" : "1");
       rect.setAttribute("stroke", on ? this.palette.tempWire : disabled || unread ? this.palette.warn : this.palette.nodeStroke);
