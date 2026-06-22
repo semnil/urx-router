@@ -1673,6 +1673,12 @@ select:focus-visible,
   visibility: hidden;
   pointer-events: none;
 }
+/* Read-only chip (e.g. CH → FX send Pre/Post while live): value shown, edits off.
+   Matches the inspector toggle's disabled look (#inspector .toggle button:disabled). */
+.con-chip.readonly {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
 .con-chip:focus-visible {
   outline: 2px solid var(--led);
   outline-offset: -2px;

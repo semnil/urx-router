@@ -228,7 +228,9 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
   drop out. FX channels only follow sends to MIX buses. MAIN shows every strip at its own level. Since every
   send is now fixed (always wired), input channels and FX channels behave the same in a send mode:
   - A send-mode strip gets a **`PRE` chip** that toggles that send's PRE/POST tap (the same value as the
-    graph/inspector tap; every CH/FX → MIX/FX send carries a tap).
+    graph/inspector tap; every CH/FX → MIX/FX send carries a tap). On the **FX 1 / FX 2** tabs the tap is a
+    CH → FX send, which the device cannot accept from software, so while live sync is connected the chip is shown
+    read-only — matching the inspector (see [known-issues.md](known-issues.md)). MIX-tab taps stay editable.
   - Its **MUTE toggles that send's ON/OFF (SEND_ON)** — the channel's own mute lives on the MAIN tab and in the inspector.
   - Its **PAN/BAL knob is tab-scoped**: MAIN edits the → STEREO main-path PAN/BAL, a send mode edits that send's
     pan (the same connection the fader controls). FX-bus sends are mono and carry no pan, so the **knob is dropped in an FX mode**.
