@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
-import { canConnect, isFixedConnection, legalSources, legalTargets, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap } from "./routing";
-import { emptyPlan, type Plan } from "./plan";
+import { canConnect, isBalLinkedPair, isFixedConnection, legalSources, legalTargets, mirrorBalPair, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap } from "./routing";
+import { emptyPlan, type Plan, type PlanConnection } from "./plan";
+import { defaultPlan } from "../models/initial-state";
+import { PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
 
 const u44 = MODELS.URX44;
 
@@ -187,5 +189,65 @@ describe("partnerChannel", () => {
     expect(partnerChannel(u44, "ch2")).toBe("ch1");
     expect(partnerChannel(u44, "ch3")).toBe("ch4");
     expect(partnerChannel(u44, "ch_5_6")).toBeUndefined();
+  });
+});
+
+describe("isBalLinkedPair / mirrorBalPair", () => {
+  let plan: Plan;
+  const stereoSend = (id: string): PlanConnection | undefined =>
+    plan.connections.find((c) => c.from === ref(id, "out") && c.to === ref("bus.stereo", "in") && c.kind === "send");
+
+  beforeEach(() => {
+    plan = defaultPlan("URX44");
+  });
+
+  it("is true only when the pair is STEREO-linked in BAL mode", () => {
+    expect(isBalLinkedPair(u44, plan, "ch1")).toBe(false); // unlinked
+    plan.nodeParams.ch1 = { stereoLink: true, panBal: PAN_BAL_PAN };
+    expect(isBalLinkedPair(u44, plan, "ch1")).toBe(false); // PAN mode
+    plan.nodeParams.ch1 = { stereoLink: true, panBal: PAN_BAL_BAL };
+    expect(isBalLinkedPair(u44, plan, "ch1")).toBe(true); // BAL mode
+    expect(isBalLinkedPair(u44, plan, "ch2")).toBe(true); // partner sees the primary's flag
+    expect(isBalLinkedPair(u44, plan, "ch3")).toBe(false); // other pair untouched
+  });
+
+  it("does not mirror in PAN mode or when unlinked", () => {
+    const before = plan.nodeParams.ch2?.gain;
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_PAN, gain: 12 };
+    expect(mirrorBalPair(u44, plan, "ch1")).toBe(false);
+    expect(plan.nodeParams.ch2?.gain).toBe(before); // partner untouched
+  });
+
+  it("mirrors node params to the partner, dropping the pair-level fields", () => {
+    plan.nodeParams.ch1 = { stereoLink: true, panBal: PAN_BAL_BAL, gain: 12, on: false, eqOn: false };
+    expect(mirrorBalPair(u44, plan, "ch1")).toBe(true);
+    expect(plan.nodeParams.ch2?.gain).toBe(12);
+    expect(plan.nodeParams.ch2?.on).toBe(false);
+    expect(plan.nodeParams.ch2?.eqOn).toBe(false);
+    // The pair-level flags stay on the primary only.
+    expect(plan.nodeParams.ch2?.stereoLink).toBeUndefined();
+    expect(plan.nodeParams.ch2?.panBal).toBeUndefined();
+  });
+
+  it("preserves the primary's pair flags when mirroring from the secondary", () => {
+    plan.nodeParams.ch1 = { stereoLink: true, panBal: PAN_BAL_BAL };
+    plan.nodeParams.ch2 = { gain: 5 };
+    expect(mirrorBalPair(u44, plan, "ch2")).toBe(true);
+    expect(plan.nodeParams.ch1?.gain).toBe(5);
+    expect(plan.nodeParams.ch1?.stereoLink).toBe(true);
+    expect(plan.nodeParams.ch1?.panBal).toBe(PAN_BAL_BAL);
+  });
+
+  it("mirrors a send's level / PRE-POST / ON and the shared BAL pan", () => {
+    plan.nodeParams.ch1 = { stereoLink: true, panBal: PAN_BAL_BAL };
+    const a = stereoSend("ch1")!;
+    const b = stereoSend("ch2")!;
+    a.params = { ...a.params, level: -6, tap: "pre", on: false, pan: -40 };
+    b.params = { ...b.params, pan: 40 };
+    expect(mirrorBalPair(u44, plan, "ch1")).toBe(true);
+    expect(stereoSend("ch2")?.params?.level).toBe(-6);
+    expect(stereoSend("ch2")?.params?.tap).toBe("pre");
+    expect(stereoSend("ch2")?.params?.on).toBe(false);
+    expect(stereoSend("ch2")?.params?.pan).toBe(-40); // the BAL pan is one shared value
   });
 });

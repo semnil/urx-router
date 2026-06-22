@@ -3,6 +3,8 @@ import "./style.css";
 import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { ModelId } from "./models/types";
+import { parseRef } from "./models/types";
+import { mirrorBalPair } from "./core/routing";
 import { deserialize, emptyPlan, ensureFixedConnections, PlanError, serialize } from "./core/plan";
 import type { ConnParams, NodeParams, Plan } from "./core/plan";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
@@ -298,11 +300,16 @@ const inspectorActions = {
     const conn = plan.connections.find((c) => c.from === from && c.to === to);
     if (!conn) return;
     conn.params = { ...conn.params, ...patch };
+    // A STEREO-linked pair in BAL mode moves as one: copy the same send change to
+    // the partner channel (pan stays per-channel — see mirrorBalPair).
+    const mirrored = mirrorBalPair(getModel(modelId), plan, parseRef(from).nodeId);
     markChanged();
-    // A PRE/POST change flips the wire's pre-fader marker; repaint so it shows on
-    // the canvas at once. Level/pan carry no on-canvas marker, so they keep
-    // mutating in place and the slider keeps focus.
-    if (patch.tap !== undefined) graph.repaintWires();
+    // A PRE/POST change flips the wire's pre-fader marker; a mirrored ON change
+    // alters the partner wire's dimming. Repaint when either is in play. Level/pan
+    // carry no on-canvas marker, so they keep mutating in place (slider keeps focus).
+    if (patch.tap !== undefined || (mirrored && patch.on !== undefined)) graph.repaintWires();
+    // Refresh the console so a mirrored partner keeps up (a no-op while hidden).
+    if (mirrored) consoleView.refresh();
     // OSC assign L/R are toggle buttons (not focus-holding sliders); re-render so
     // the pressed state updates at once.
     if (patch.oscL !== undefined || patch.oscR !== undefined) refreshInspector();
@@ -310,10 +317,15 @@ const inspectorActions = {
   onUpdateNodeParams: (id: string, patch: NodeParams) => {
     const prev = plan.nodeParams[id];
     plan.nodeParams[id] = { ...prev, ...patch };
+    // A STEREO-linked pair in BAL mode moves as one: copy this channel's params to
+    // the partner (the pair-level Signal Type / PAN-BAL fields stay on the primary).
+    const mirrored = mirrorBalPair(getModel(modelId), plan, id);
     markChanged();
     // CH_ON drives the on-canvas mute dimming; the STEREO link draws a pair
-    // connector — both show on the canvas, so repaint nodes at once.
+    // connector — both show on the canvas, so repaint nodes at once. A mirrored ON
+    // change repaints every node, so the partner's dimming follows for free.
     if (patch.on !== undefined || patch.stereoLink !== undefined) graph.repaintNodes();
+    if (mirrored) consoleView.refresh();
     // Toggling PAN/BAL (or entering STEREO) re-initializes every bus send's pan
     // for the linked pair: PAN hard-pans odd/even L/R, BAL centres them.
     if (patch.panBal !== undefined || patch.stereoLink === true) resetStereoSendPans(id);

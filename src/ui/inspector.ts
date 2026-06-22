@@ -6,7 +6,7 @@ import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, EqBand, NodeParams, Plan, PlanConnection, SsmcsBand, SsmcsParams } from "../core/plan";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, SSMCS_INITIAL } from "../core/plan";
-import { isFixedConnection, pairPrimary, sendHasOn, sendHasTap } from "../core/routing";
+import { isBalLinkedPair, isFixedConnection, pairPrimary, sendHasOn, sendHasTap } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
   busEqOn,
@@ -46,7 +46,6 @@ import {
   BUS_TYPE_OPTIONS,
   SIGNAL_TYPE_OPTIONS,
   PAN_BAL_PAN,
-  PAN_BAL_BAL,
   PAN_BAL_OPTIONS,
   COMP_EQ_SSMCS,
   SWEET_SPOT_DATA_OPTIONS,
@@ -139,11 +138,7 @@ type ParamField = "level" | "pan" | "tap";
 // Whether a channel's send pan should read as a BALANCE: a native stereo channel,
 // or a STEREO-linked MONO IN pair switched to BAL mode (Signal Type, PAN/BAL).
 function isBalanceChannel(model: DeviceModel, plan: Plan, id: string): boolean {
-  if (isStereoChannel(id) || fxChannelIndex(id) !== null) return true;
-  const primary = pairPrimary(model, id);
-  if (!primary) return false;
-  const pnp = plan.nodeParams[primary];
-  return pnp?.stereoLink === true && (pnp.panBal ?? PAN_BAL_PAN) === PAN_BAL_BAL;
+  return isStereoChannel(id) || fxChannelIndex(id) !== null || isBalLinkedPair(model, plan, id);
 }
 
 // Slider floor is the -∞ off notch (LEVEL_OFF_DB); the lowest real value shown is

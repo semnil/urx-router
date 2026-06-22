@@ -296,8 +296,12 @@ Source selection for the analog outputs (MAIN / LINE).
   the pair when linked. STEREO adds a **PAN / BAL** mode. Switching the mode (or entering STEREO)
   re-initializes the pan of **every bus send** (STEREO / MIX 1–2 / FX 1–2) from both pair members:
   PAN hard-pans the odd channel left (L63 = −63) and the even one right (R63 = +63); BAL centres both
-  (C = 0) and the send pan then reads as a BALANCE (as a native stereo channel does). Broader parameter
-  mirroring is a device behavior not auto-applied (the planner records the configuration).
+  (C = 0) and the send pan then reads as a BALANCE (as a native stereo channel does — shown identically in
+  both GRAPH and CONSOLE). **In BAL mode only**, the pair behaves as one stereo channel: an edit to either
+  channel is auto-mirrored to the other (node params in general plus each send's LEVEL / PRE-POST / ON and
+  the pan). In BAL mode the pan is the pair's single shared balance, so both channels read the same value
+  (the re-init above seeds it centred); the Signal Type / PAN-BAL flags live on the primary alone. In PAN
+  mode the two channels stay independent (pan included — no mirroring).
 - **Every channel / FX-channel send is fixed** (the STEREO main path plus every MIX 1–2 / FX 1–2 send), as is
   **MIX 1/2 → STEREO (TO ST)**: always wired, shown pre-connected, and non-removable. Unlike the items above
   they *are* drawn as wires (between visible nodes) since their LEVEL/PAN/PRE-POST/ON (SEND_ON; TO ST is ON/OFF

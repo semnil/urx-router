@@ -2,10 +2,11 @@
 // declares a matching rule, and single-input receivers (selectors / patches)
 // reject a second wire.
 
-import { isSingleInput, parseRef } from "../models/types";
+import { isSingleInput, parseRef, ref } from "../models/types";
 import type { DeviceModel, RoutingRule } from "../models/types";
 import type { Plan } from "./plan";
 import { hasConnection } from "./plan";
+import { PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
 
 // Language-agnostic failure codes. The UI maps these to localized messages so
 // core stays free of any i18n dependency.
@@ -77,6 +78,44 @@ export function partnerChannel(model: DeviceModel, nodeId: string): string | und
 export function pairPrimary(model: DeviceModel, nodeId: string): string | null {
   for (const [a, b] of model.channelPairs) if (a === nodeId || b === nodeId) return a;
   return null;
+}
+
+/** True when `id` belongs to a STEREO-linked MONO IN pair currently in BAL mode.
+ *  Such a pair acts as one stereo channel, so its mixer parameters mirror across
+ *  both channels; PAN mode instead keeps the two channels independent. */
+export function isBalLinkedPair(model: DeviceModel, plan: Plan, id: string): boolean {
+  const primary = pairPrimary(model, id);
+  if (!primary) return false;
+  const np = plan.nodeParams[primary];
+  return np?.stereoLink === true && (np.panBal ?? PAN_BAL_PAN) === PAN_BAL_BAL;
+}
+
+/** Mirror `id`'s mixer state onto its linked partner when the pair is in BAL mode,
+ *  so an edit to either channel moves both. Copies the node params (except the
+ *  pair-level Signal Type / PAN-BAL fields, which live on the primary alone) and
+ *  each send's full mix params — level / PRE-POST / ON and the pan, which in BAL
+ *  mode is the pair's one shared balance, so both channels read the same value.
+ *  Returns false — a no-op — unless the pair is STEREO-linked in BAL mode. */
+export function mirrorBalPair(model: DeviceModel, plan: Plan, id: string): boolean {
+  if (!isBalLinkedPair(model, plan, id)) return false;
+  const partner = partnerChannel(model, id);
+  if (!partner) return false;
+  // Replace the partner's node params with the source's, but keep the partner's
+  // own pair-level fields (only the primary carries stereoLink / panBal).
+  const src = plan.nodeParams[id] ?? {};
+  const { stereoLink, panBal } = plan.nodeParams[partner] ?? {};
+  plan.nodeParams[partner] = { ...src, stereoLink, panBal };
+  // Copy each send's mix params (level / PRE-POST / ON / pan) to the partner's send
+  // into the same destination — the BAL pan is shared across the pair.
+  for (const c of plan.connections) {
+    if (c.kind !== "send" || c.from !== ref(id, "out")) continue;
+    const pc = plan.connections.find(
+      (p) => p.kind === "send" && p.from === ref(partner, "out") && p.to === c.to,
+    );
+    if (!pc) continue;
+    pc.params = { ...pc.params, ...c.params };
+  }
+  return true;
 }
 
 /** Input-port refs that the given output port may currently connect to. */

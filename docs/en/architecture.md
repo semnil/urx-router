@@ -105,6 +105,12 @@ The constraint core (`core/routing.ts`):
   the partner (and removed together with it) so a channel pair always shares one input source (UI: `graph.ts`).
   A ducker key source is the `key` kind, not `source`, so it never enters this mirroring — guaranteed by the
   kind rather than by the incidental fact that duckers are not in `channelPairs`.
+- `isBalLinkedPair(model, plan, id)` / `mirrorBalPair(model, plan, id)` — when a STEREO-linked MONO IN pair is in
+  BAL mode, an edit to one channel is mirrored onto the partner (node params in general plus each send's
+  LEVEL / PRE-POST / ON / pan — in BAL the pan is the pair's one shared balance; the Signal Type / PAN-BAL flags
+  stay on the primary). Called from each edit funnel: `main.ts` `onUpdateParams` / `onUpdateNodeParams` for the
+  graph / inspector, and `console.ts` `commit` for CONSOLE — both views share the one function so they behave
+  identically. No mirroring in PAN mode. See [device-model.md](device-model.md).
 
 The UI (`graph.ts`) uses these to let a wire be dragged from either an output or an input port,
 highlighting the opposite-side ports in two layers: legal targets filled, rule-defined-but-occupied

@@ -149,3 +149,101 @@ test("MONO x 2 (unlinked) leaves send pans untouched", async ({ page }, testInfo
   // never the STEREO hard-pan, confirming the re-init does not run while unlinked.
   expect(await panOf(page, testInfo, "ch1:out", "bus.mix1:in")).toBeUndefined();
 });
+
+// A console strip located by its scribble's node name (exact).
+const cstrip = (page: Page, name: string) =>
+  page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
+
+test("CONSOLE reads a BAL-linked mono channel's pan as BAL, matching the inspector", async ({ page }) => {
+  await page.click("#btn-view-console");
+  await expect(cstrip(page, "CH 1").locator(".con-knob[aria-label='PAN']")).toBeVisible();
+
+  await page.click("#btn-view-graph");
+  await node(page, "ch1").click();
+  await sigSelect(page).selectOption("1"); // STEREO
+  await panBalSelect(page).selectOption("1"); // BAL
+
+  await page.click("#btn-view-console");
+  await expect(cstrip(page, "CH 1").locator(".con-knob[aria-label='BAL']")).toBeVisible();
+  await expect(cstrip(page, "CH 2").locator(".con-knob[aria-label='BAL']")).toBeVisible();
+  await expect(cstrip(page, "CH 1").locator(".con-knob[aria-label='PAN']")).toHaveCount(0);
+});
+
+test("BAL mode links a fader edit across both channels in the CONSOLE", async ({ page }) => {
+  await node(page, "ch1").click();
+  await sigSelect(page).selectOption("1"); // STEREO
+  await panBalSelect(page).selectOption("1"); // BAL
+
+  await page.click("#btn-view-console");
+  const ch1 = cstrip(page, "CH 1").locator(".con-readout .db");
+  const ch2 = cstrip(page, "CH 2").locator(".con-readout .db");
+  await expect(ch1).toHaveText("0.0");
+  await expect(ch2).toHaveText("0.0");
+
+  await cstrip(page, "CH 1").locator(".con-fader").focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(ch1).toHaveText("+1.0");
+  await expect(ch2).toHaveText("+1.0"); // the partner follows in BAL
+});
+
+test("BAL mode links a MUTE toggle across both channels in the CONSOLE", async ({ page }) => {
+  await node(page, "ch1").click();
+  await sigSelect(page).selectOption("1"); // STEREO
+  await panBalSelect(page).selectOption("1"); // BAL
+
+  await page.click("#btn-view-console");
+  const m1 = cstrip(page, "CH 1").getByRole("button", { name: "MUTE" });
+  const m2 = cstrip(page, "CH 2").getByRole("button", { name: "MUTE" });
+  await expect(m1).toHaveAttribute("aria-pressed", "false");
+  await expect(m2).toHaveAttribute("aria-pressed", "false");
+  await m1.click();
+  await expect(m1).toHaveAttribute("aria-pressed", "true");
+  await expect(m2).toHaveAttribute("aria-pressed", "true"); // partner follows in BAL
+});
+
+test("BAL mode links a gain edit across both channels in the CONSOLE", async ({ page }) => {
+  await node(page, "ch1").click();
+  await sigSelect(page).selectOption("1"); // STEREO
+  await panBalSelect(page).selectOption("1"); // BAL
+
+  await page.click("#btn-view-console");
+  const g1 = cstrip(page, "CH 1").locator(".con-gain", { has: page.locator(".con-knob[aria-label='A.GAIN']") }).locator(".val");
+  const g2 = cstrip(page, "CH 2").locator(".con-gain", { has: page.locator(".con-knob[aria-label='A.GAIN']") }).locator(".val");
+  await expect(g1).toHaveText("-8");
+  await expect(g2).toHaveText("-8");
+  await cstrip(page, "CH 1").locator(".con-knob[aria-label='A.GAIN']").focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(g1).toHaveText("-7");
+  await expect(g2).toHaveText("-7"); // partner follows in BAL
+});
+
+test("BAL mode shares one balance across both channels in the CONSOLE", async ({ page }) => {
+  await node(page, "ch1").click();
+  await sigSelect(page).selectOption("1"); // STEREO
+  await panBalSelect(page).selectOption("1"); // BAL — both centre (C)
+
+  await page.click("#btn-view-console");
+  const bal = (name: string) =>
+    cstrip(page, name).locator(".con-gain", { has: page.locator(".con-knob[aria-label='BAL']") }).locator(".val");
+  await expect(bal("CH 1")).toHaveText("C");
+  await expect(bal("CH 2")).toHaveText("C");
+
+  // Nudge CH1's balance; CH2 reads the same shared value.
+  await cstrip(page, "CH 1").locator(".con-knob[aria-label='BAL']").focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(bal("CH 1")).toHaveText("R1");
+  await expect(bal("CH 2")).toHaveText("R1");
+});
+
+test("PAN mode keeps the two channels' faders independent in the CONSOLE", async ({ page }) => {
+  await node(page, "ch1").click();
+  await sigSelect(page).selectOption("1"); // STEREO, default PAN mode
+
+  await page.click("#btn-view-console");
+  const ch1 = cstrip(page, "CH 1").locator(".con-readout .db");
+  const ch2 = cstrip(page, "CH 2").locator(".con-readout .db");
+  await cstrip(page, "CH 1").locator(".con-fader").focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(ch1).toHaveText("+1.0");
+  await expect(ch2).toHaveText("0.0"); // no mirroring in PAN mode
+});
