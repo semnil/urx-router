@@ -103,6 +103,63 @@ test("a STEREO pair drags as one unit; the heart tie follows", async ({ page }) 
   await expect(link(page)).toHaveCount(1); // tie still drawn after the move
 });
 
+test("STEREO-linking snaps a partner moved away back beside the kept primary", async ({ page }) => {
+  const c1 = await node(page, "ch1").boundingBox();
+  const start2 = await node(page, "ch2").boundingBox();
+  if (!c1 || !start2) throw new Error("nodes not found");
+
+  // Drag CH2 far away while still MONO x 2 (it moves alone), opening a gap.
+  const gx = start2.x + start2.width * 0.35;
+  const gy = start2.y + 12;
+  await page.mouse.move(gx, gy);
+  await page.mouse.down();
+  await page.mouse.move(gx + 220, gy + 160, { steps: 10 });
+  await page.mouse.up();
+  const moved2 = await node(page, "ch2").boundingBox();
+  if (!moved2) throw new Error("ch2 gone");
+
+  // STEREO-link from CH1 (the kept node): CH2 snaps back into CH1's column,
+  // directly below it, so the heart tie is short rather than stretched.
+  await node(page, "ch1").click();
+  await sigSelect(page).selectOption("1");
+  const after1 = await node(page, "ch1").boundingBox();
+  const after2 = await node(page, "ch2").boundingBox();
+  if (!after1 || !after2) throw new Error("nodes gone");
+  expect(Math.abs(after1.x - c1.x)).toBeLessThan(2); // kept node stays put
+  expect(Math.abs(after2.x - after1.x)).toBeLessThan(2); // same column
+  expect(after2.y).toBeGreaterThan(after1.y); // below it
+  expect(Math.hypot(after2.x - moved2.x, after2.y - moved2.y)).toBeGreaterThan(20); // it really moved back
+  await expect(link(page)).toHaveCount(1);
+});
+
+test("STEREO-linking from the partner keeps the partner and realigns the primary above it", async ({ page }) => {
+  const c2 = await node(page, "ch2").boundingBox();
+  const start1 = await node(page, "ch1").boundingBox();
+  if (!c2 || !start1) throw new Error("nodes not found");
+
+  // Drag CH1 (the primary) far away while still MONO x 2.
+  const gx = start1.x + start1.width * 0.35;
+  const gy = start1.y + 12;
+  await page.mouse.move(gx, gy);
+  await page.mouse.down();
+  await page.mouse.move(gx + 200, gy - 150, { steps: 10 });
+  await page.mouse.up();
+  const moved1 = await node(page, "ch1").boundingBox();
+  if (!moved1) throw new Error("ch1 gone");
+
+  // Link from CH2: CH2 is the kept node, so CH1 snaps back above it.
+  await node(page, "ch2").click();
+  await sigSelect(page).selectOption("1");
+  const after1 = await node(page, "ch1").boundingBox();
+  const after2 = await node(page, "ch2").boundingBox();
+  if (!after1 || !after2) throw new Error("nodes gone");
+  expect(Math.abs(after2.x - c2.x)).toBeLessThan(2); // kept node stays put
+  expect(Math.abs(after1.x - after2.x)).toBeLessThan(2); // same column
+  expect(after1.y).toBeLessThan(after2.y); // above it
+  expect(Math.hypot(after1.x - moved1.x, after1.y - moved1.y)).toBeGreaterThan(20);
+  await expect(link(page)).toHaveCount(1);
+});
+
 test("a MONO x 2 pair does not drag together", async ({ page }) => {
   const before2 = await node(page, "ch2").boundingBox();
   const box1 = await node(page, "ch1").boundingBox();

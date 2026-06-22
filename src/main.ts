@@ -324,6 +324,9 @@ const inspectorActions = {
     // CH_ON drives the on-canvas mute dimming; the STEREO link draws a pair
     // connector — both show on the canvas, so repaint nodes at once. A mirrored ON
     // change repaints every node, so the partner's dimming follows for free.
+    // Linking a pair snaps its partner next to the kept node so the tie isn't drawn
+    // across a gap an earlier manual move may have opened.
+    if (patch.stereoLink === true) graph.alignStereoPair(id);
     if (patch.on !== undefined || patch.stereoLink !== undefined) graph.repaintNodes();
     if (mirrored) consoleView.refresh();
     // Toggling PAN/BAL (or entering STEREO) re-initializes every bus send's pan
