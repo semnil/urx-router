@@ -300,7 +300,7 @@ export interface Plan {
   /** User-chosen channel/bus color overrides (hex), keyed by node id (mirrors
    *  the device CH SETTING color). Drawn as a top accent cap; absent = none. */
   nodeColors: Record<string, string>;
-  /** Node ids the user collapsed off the canvas (only ever unconnected nodes). */
+  /** Node ids the user collapsed off the canvas (shelved by hand or via "hide unused"). */
   hidden: string[];
   /** Free-text annotation per node id, drawn inside the node frame. */
   notes: Record<string, string>;
