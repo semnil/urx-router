@@ -307,6 +307,8 @@ export const ja: Messages = {
     duplicate: "すでに接続済みです",
     singleInput: "この入力は1系統のみです (既存の接続を外してください)",
     cannotConnect: "接続できません",
+    brokerUnreachable: "Device Center が起動していません。起動して URX を接続してから再度お試しください。",
+    noDevice: "Device Center は起動していますが、URX が接続されていません。本体を接続してから再度お試しください。",
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。書き込む前に一致する計画を開くか切り替えてください。`,

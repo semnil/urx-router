@@ -244,7 +244,10 @@ mod imp {
         let mut ws = match connect(URL) {
             Ok((ws, _)) => ws,
             Err(e) => {
-                let _ = ready.send(Err(format!("cannot reach Device Center broker: {e}")));
+                // Device Center isn't running (or the broker port is closed). Return
+                // a stable code the frontend localizes; keep the raw cause for logs.
+                eprintln!("vd: cannot reach Device Center broker: {e}");
+                let _ = ready.send(Err("broker-unreachable".into()));
                 return;
             }
         };
@@ -382,7 +385,9 @@ mod imp {
             let list = msg.pointer("/params/list").and_then(Value::as_array);
             let first = list.and_then(|l| l.first());
             let Some(dev) = first else {
-                return Err("no URX device is connected to Device Center".into());
+                // Broker is up but its device list is empty: Device Center is running
+                // with no URX attached. Stable code; the frontend localizes it.
+                return Err("no-device".into());
             };
             let dev_uid = dev.get("dev_uid").and_then(Value::as_str).unwrap_or_default().to_string();
             let summary = DeviceSummary {
@@ -392,9 +397,59 @@ mod imp {
             if dev_uid.is_empty() {
                 return Err("device list entry had no identifier".into());
             }
+            // The list entry persists after the unit is unplugged, so confirm the
+            // live link before claiming a device: "online" means a URX is actually
+            // attached. Anything else (e.g. "lost") is Device Center up with no
+            // unit → the same no-device state as an empty list.
+            let status = sync_status(ws, &dev_uid)?;
+            if status != "online" {
+                eprintln!("vd: URX listed but sync_status = {status}; treating as no-device");
+                return Err("no-device".into());
+            }
             return Ok((dev_uid, summary));
         }
-        Err("timed out waiting for the device list".into())
+        // No device list within the deadline. The broker answered the WebSocket
+        // handshake but never listed a unit, so treat it as no URX attached
+        // (same remedy for the user); the empty-list path above is the other shape.
+        eprintln!("vd: timed out waiting for the device list");
+        Err("no-device".into())
+    }
+
+    /// Query the unit's live link state via /vd/synchronize: "online" means a URX
+    /// is actually attached. Device Center keeps the getDeviceList entry after the
+    /// unit is unplugged but reports a non-"online" status here, so this is what
+    /// separates a present device from a stale list entry.
+    fn sync_status(ws: &mut Ws, dev_uid: &str) -> Result<String, String> {
+        send_json(
+            ws,
+            json!({
+                "jsonrpc": "1.0",
+                "method": "requestVD",
+                "params": {
+                    "dev_uid": dev_uid,
+                    "vdp": { "method": "get", "uri": "/vd/synchronize" }
+                }
+            }),
+        )?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            let Some(text) = read_text(ws)? else { continue };
+            let Ok(msg) = serde_json::from_str::<Value>(&text) else { continue };
+            if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
+                continue;
+            }
+            let vdp = msg.pointer("/params/vdp");
+            let ruri = vdp.and_then(|v| v.get("uri")).and_then(Value::as_str).unwrap_or("");
+            if ruri.split('?').next().unwrap_or(ruri) != "/vd/synchronize" {
+                continue;
+            }
+            return vdp
+                .and_then(|v| v.pointer("/data/sync_status"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| "synchronize response had no sync_status".to_string());
+        }
+        Err("timed out waiting for sync status".into())
     }
 
     fn do_set(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64, value: Value) -> Result<(), String> {

@@ -283,6 +283,23 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
   app's own writes are filtered against the live snapshot, and the address set is re-registered only when a
   structural edit changed it.
 
+## Live control connection
+
+Every device action (fetch, write, live sync, self-test) opens a connection through `vdConnect`, which runs
+the Rust worker's `handshake`: it asks the broker `getDeviceList` for the unit's `dev_uid`, then confirms the
+unit is physically attached by reading `/vd/synchronize` — `sync_status` is `"online"` only while a URX is
+connected. Device Center keeps the `getDeviceList` entry after the unit is unplugged (and answers cached
+parameter reads), so the list alone cannot tell a present device from a stale entry; the `sync_status` check
+is what distinguishes them.
+
+A failed connect returns a stable, machine-readable code rather than a raw English string: `broker-unreachable`
+(Device Center not running) or `no-device` (running, but no URX attached — the empty-list, `sync_status != online`,
+and list-timeout shapes all collapse to this single code, since the user's remedy is the same). The frontend's
+`connectFailureStatus` maps those two codes to localized messages (`error.brokerUnreachable` / `error.noDevice`);
+any other connect-stage fault falls back to the action's own error formatter. Because the connect doubles as a
+pre-check, fetch and live sync connect *before* prompting to discard edits, so a no-device state is reported
+plainly without first disturbing the plan.
+
 ## Responsive layout (mobile)
 
 The inspector — a fixed 300px column on desktop — becomes a bottom sheet (a rack drawer that slides up

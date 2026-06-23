@@ -652,10 +652,23 @@ $("btn-hide-unused").addEventListener("click", () => {
   graph.hideUnused();
 });
 
-// Connect, run an action with the connected device, then always disconnect.
-// Connection and action errors surface through the given error formatter. Shared
-// by the fetch and write device actions so the connect/disconnect/catch
-// scaffolding lives in one place.
+// Turn a connect-time failure into a clear, localized status. The Rust vd worker
+// (vd.rs) returns stable codes for the two states the user can act on — Device
+// Center not running, or running with no URX attached — so they get a plain
+// message instead of the raw error wrapped in "<action> failed: …". Anything else
+// (an action failure mid-flow, an unexpected error) falls back to onError.
+function connectFailureStatus(err: unknown, onError: (message: string) => string): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message === "broker-unreachable") return t().error.brokerUnreachable;
+  if (message === "no-device") return t().error.noDevice;
+  return onError(message);
+}
+
+// Connect, run an action with the connected device, then always disconnect. The
+// connect doubles as a pre-check: callers that would discard work put their
+// confirm inside `action`, so a no-device state surfaces a clear message without
+// first prompting. Connection and action errors surface through connectFailureStatus
+// (clear text for the actionable connect states, else the given formatter).
 async function withDevice(
   connecting: string,
   onError: (message: string) => string,
@@ -670,18 +683,23 @@ async function withDevice(
       await vdDisconnect();
     }
   } catch (err) {
-    setStatus(onError(err instanceof Error ? err.message : String(err)));
+    setStatus(connectFailureStatus(err, onError));
   }
 }
 
 // Pull the connected device's current channel levels/pans into the plan. This
-// overwrites the matching plan params, so it confirms before discarding edits.
-// Desktop only: DEMO is statically true in the browser bundle, so this branch —
-// and the control imports it alone references — drops from the demo build.
+// overwrites the matching plan params, so it confirms before discarding edits —
+// but only after connecting, so a no-device state is reported without first
+// prompting to discard. Desktop only: DEMO is statically true in the browser
+// bundle, so this branch — and the control imports it alone references — drops
+// from the demo build.
 if (!DEMO) {
-  $("btn-fetch").addEventListener("click", async () => {
-    if (!(await confirmDiscard())) return;
-    await withDevice(t().status.fetchConnecting, t().status.fetchError, async (device) => {
+  $("btn-fetch").addEventListener("click", () =>
+    withDevice(t().status.fetchConnecting, t().status.fetchError, async (device) => {
+      if (!(await confirmDiscard())) {
+        setStatus(t().status.canceled);
+        return;
+      }
       // The connected device may be a different model than the one selected.
       // Offer to switch the UI to the device's model (a fresh plan) so the
       // fetched values map onto the right channels; otherwise abort.
@@ -714,8 +732,8 @@ if (!DEMO) {
             ? t().status.fetchedUnread(device.model, result.applied, unread)
             : t().status.fetchedDevice(device.model, result.applied),
       );
-    });
-  });
+    }),
+  );
 
   // Write the plan to the connected device: diff the plan against the device's
   // current values, confirm the change count, then send only what differs.
@@ -795,7 +813,7 @@ if (!DEMO) {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn("[self-test] ERROR", message);
-        setStatus(t().status.selfTestError(message));
+        setStatus(connectFailureStatus(err, t().status.selfTestError));
       }
     }
 
@@ -817,13 +835,15 @@ if (!DEMO) {
     // toggle, a write failure, or a plan replacement turns sync off.
     async function activateLive(): Promise<void> {
       if (!live) return;
-      if (!(await confirmDiscard())) return;
+      // Connect first (the pre-check): a no-device state is reported plainly,
+      // without discarding the user's edits. Only on a live device do we confirm
+      // the discard, since live sync overwrites the plan with the device state.
       setStatus(t().status.liveConnecting);
       let device: DeviceSummary;
       try {
         device = await vdConnect();
       } catch (err) {
-        setStatus(t().status.liveError(err instanceof Error ? err.message : String(err)));
+        setStatus(connectFailureStatus(err, t().status.liveError));
         return;
       }
       // Past the connect: any exit must release the held connection first.
@@ -831,6 +851,7 @@ if (!DEMO) {
         await vdDisconnect();
         setStatus(status);
       };
+      if (!(await confirmDiscard())) return await abort(t().status.canceled);
       try {
         // A device of a different model maps onto the wrong channels; offer to
         // switch the UI to a fresh plan of the device's model (mirrors fetch).

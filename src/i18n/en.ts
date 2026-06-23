@@ -313,6 +313,9 @@ export const en = {
     duplicate: "Already connected",
     singleInput: "This input accepts only one source (remove the existing connection first)",
     cannotConnect: "Cannot connect",
+    // Connect-time failure codes from the Rust vd worker (vd.rs), localized here.
+    brokerUnreachable: "Device Center isn't running. Start it, connect the URX, then try again.",
+    noDevice: "Device Center is running, but no URX is connected. Connect the unit, then try again.",
     unknownModel: (model: string): string => `Unknown model: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `The connected device is ${device}, but ${ui} is selected. Open or switch to the matching plan before writing.`,
