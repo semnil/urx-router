@@ -328,9 +328,9 @@ can be collapsed off the canvas — connected or not. Hidden nodes collect on a 
 docked along the bottom (an HTML overlay `graph.ts` builds — kept out of the SVG, so it never shows in
 an export) as rail-colored chips; clicking a chip restores that one, and "Show all" restores them all.
 
-- The toolbar "Hide unused" shelves every node with no *editable* connections (a convenience for
-  clearing the never-wired nodes in one click). The inspector adds a "Hide this node" button for any
-  selected node.
+- The toolbar "Hide unused" shelves only nodes with *no wires at all* (fixed sends count as wires, so a
+  channel sitting on just its factory sends is left in place — collapse unused channels by hand). The
+  inspector adds a "Hide this node" button for any selected node.
 - **Multi-select**: Ctrl/Cmd-clicking nodes toggles them into a selection without dragging. With two or
   more selected, a floating action bar (an HTML overlay, like the shelf) offers a batch "Hide" that
   shelves the whole selection. "Clear" and `Escape` drop the selection. The selection set is transient

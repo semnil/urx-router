@@ -654,14 +654,10 @@ export class Graph {
     return this.hidden.has(id);
   }
 
-  // Whether a node carries any non-fixed wire. Fixed wires (CH / FX channel ->
-  // STEREO) are structural, so hideUnused ignores them: a channel with only its
-  // fixed STEREO wire still counts as unused.
-  private nodeHasEditableConnection(id: string): boolean {
+  // Whether a node is an endpoint of any wire (fixed sends included).
+  private nodeHasWire(id: string): boolean {
     return this.plan.connections.some(
-      (c) =>
-        (parseRef(c.from).nodeId === id || parseRef(c.to).nodeId === id) &&
-        !isFixedConnection(this.model, c.from, c.to),
+      (c) => parseRef(c.from).nodeId === id || parseRef(c.to).nodeId === id,
     );
   }
 
@@ -1728,11 +1724,13 @@ export class Graph {
 
   // --- hide / show ---------------------------------------------------------
 
-  /** Shelve every node that currently has no connections. */
+  /** Shelve every node that has no wires at all. Fixed sends count as wires, so a
+   *  channel on just its factory sends is left in place — collapse it by hand
+   *  (inspector / multi-select hide) instead. */
   hideUnused(): void {
-    const unconnected = this.model.nodes.filter((n) => !this.nodeHasEditableConnection(n.id));
-    const added = unconnected.filter((n) => !this.hidden.has(n.id));
-    for (const n of unconnected) this.hidden.add(n.id);
+    const unwired = this.model.nodes.filter((n) => !this.nodeHasWire(n.id));
+    const added = unwired.filter((n) => !this.hidden.has(n.id));
+    for (const n of unwired) this.hidden.add(n.id);
     this.commitHidden();
     this.dropSelectionIfHidden();
     this.render();

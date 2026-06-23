@@ -7,6 +7,10 @@ const wires = (page: Page) => page.locator("#graph-host .wire-hit");
 // when an endpoint is shelved, so hiding unused nodes leaves only the user wires
 // whose endpoints stay on the canvas.
 const FIXED = 48;
+// "Hide unused" now shelves only zero-wire nodes, and every channel/bus carries a
+// fixed send. So on an empty URX44V board all 8 channels + 5 buses (STEREO, MIX 1/2,
+// FX 1/2) stay wired; adding one user wire keeps its source node too — 14 in all.
+const WIRED = 14;
 const nodes = (page: Page) => page.locator("#graph-host g.node");
 const chips = (page: Page) => page.locator(".hidden-shelf .chip");
 const port = (page: Page, ref: string) => page.locator(`[data-ref="${ref}"]`);
@@ -32,8 +36,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 });
 
-test("Hide unused shelves every unconnected node, keeping wired ones", async ({ page }) => {
-  const total = await nodes(page).count();
+test("Hide unused shelves only zero-wire nodes, keeping every wired node", async ({ page }) => {
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
   await expect(wires(page)).toHaveCount(FIXED + 1);
   await expect(page.locator(".hidden-shelf")).toBeHidden();
@@ -41,18 +44,12 @@ test("Hide unused shelves every unconnected node, keeping wired ones", async ({ 
   await page.click("#btn-hide-unused");
 
   await expect(page.locator(".hidden-shelf")).toBeVisible();
-  // Only the two wired endpoints stay on the canvas; channels carrying just a
-  // fixed STEREO wire count as unused and are shelved with their fixed wire.
-  await expect(nodes(page)).toHaveCount(2);
-  // A ducker hidden under an also-hidden channel folds into that channel's chip,
-  // so the 3 shelved stereo channels (CH 7/8, 9/10, 11/12) hide their duckers'
-  // chips; the CH 5/6 ducker keeps its own chip (its CH 5/6 stays on the canvas).
-  const folded = 3;
-  await expect(chips(page)).toHaveCount(total - 2 - folded);
-  await expect(page.locator(".shelf-count")).toHaveText(String(total - 2 - folded));
+  // Every channel and bus carries fixed sends, so they all stay; only nodes with no
+  // wires at all (spare inputs/outputs, OSC, streaming/monitor, duckers) are shelved.
+  await expect(nodes(page)).toHaveCount(WIRED);
   await expect(page.locator("#statusbar")).toContainText("unused node");
-  // Only the user wire survives; fixed wires to shelved endpoints are hidden too.
-  await expect(wires(page)).toHaveCount(1);
+  // No fixed-wire endpoint was hidden, so every fixed wire and the user wire survive.
+  await expect(wires(page)).toHaveCount(FIXED + 1);
 });
 
 test("a shelf chip restores its node and selects it", async ({ page }) => {
@@ -62,7 +59,7 @@ test("a shelf chip restores its node and selects it", async ({ page }) => {
 
   await chips(page).first().click();
 
-  await expect(nodes(page)).toHaveCount(3);
+  await expect(nodes(page)).toHaveCount(WIRED + 1);
   await expect(chips(page)).toHaveCount(hiddenBefore - 1);
   await expect(page.locator("#statusbar")).toContainText("Showing");
   // Restored node is unconnected, so the inspector offers to hide it again.
@@ -73,7 +70,7 @@ test("Show all empties the shelf and brings every node back", async ({ page }) =
   const total = await nodes(page).count();
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
   await page.click("#btn-hide-unused");
-  await expect(nodes(page)).toHaveCount(2);
+  await expect(nodes(page)).toHaveCount(WIRED);
 
   await page.click(".shelf-showall");
 
@@ -115,5 +112,5 @@ test("hidden state round-trips through save and open", async ({ page }, testInfo
 
   await expect(page.locator(".hidden-shelf")).toBeVisible();
   await expect(chips(page)).toHaveCount(hiddenCount);
-  await expect(nodes(page)).toHaveCount(2);
+  await expect(nodes(page)).toHaveCount(WIRED);
 });
