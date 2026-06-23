@@ -100,7 +100,11 @@ export interface ReadbackResult {
  * The returned unreadNodes set is `attempted ∩ failed`, so the UI flags exactly
  * the nodes still showing a plan default rather than the live value.
  */
-export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<ReadbackResult> {
+export async function applyDeviceState(
+  model: DeviceModel,
+  plan: Plan,
+  signal?: AbortSignal,
+): Promise<ReadbackResult> {
   ensureFixedConnections(model, plan);
   const errors: string[] = [];
   // Body-parameter provenance: nodes whose own settings a group tried to read,
@@ -110,6 +114,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
   let applied = 0;
 
   for (const node of model.nodes) {
+    signal?.throwIfAborted();
     if (node.kind !== "channel") continue;
     // Mono → 139/140/141 at input index; stereo → 266/267/268 at stereo index.
     const cc = channelControl(model, node.id);
@@ -184,6 +189,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
   // tap; readback never adds or removes a send wire. ensureFixedConnections (above)
   // has already materialized any missing fixed wire, so an entry exists here.
   for (const node of model.nodes) {
+    signal?.throwIfAborted();
     if (node.kind !== "channel" && fxChannelIndex(node.id) === null) continue;
     for (const bus of model.nodes) {
       if (bus.kind !== "bus") continue;
@@ -210,6 +216,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
   // (339) carry the fixed FX-channel → STEREO send's level / pan (mirrors the
   // channel main path above; the FX channel ON toggle is read via busMasterOn).
   for (const node of model.nodes) {
+    signal?.throwIfAborted();
     const fxY = fxChannelIndex(node.id);
     if (fxY === null) continue;
     // FX-channel effect (EFFECT TYPE + parameter array): a node-level attribute,
@@ -239,6 +246,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
 
   // Bus output faders: STEREO master (581) and MIX (674); read the first instance.
   for (const node of model.nodes) {
+    signal?.throwIfAborted();
     if (node.kind !== "bus") continue;
     const bf = busFader(node.id);
     if (!bf) continue;
@@ -259,6 +267,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
   // annotation, not a node's settings, so a color read failure must not flag the
   // node's body as unread.
   for (const node of model.nodes) {
+    signal?.throwIfAborted();
     const cc = colorControl(model, node.id);
     if (!cc) continue;
     try {
@@ -276,6 +285,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
   // it so the canvas falls back to the model's default label. Like color, kept
   // out of the body-read provenance.
   for (const node of model.nodes) {
+    signal?.throwIfAborted();
     const nc = nameControl(model, node.id);
     if (!nc) continue;
     try {
@@ -290,6 +300,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
 
   // Insert FX (enum): mono input channels (135) and output buses (578 / 671).
   for (const node of model.nodes) {
+    signal?.throwIfAborted();
     const ifx = insertFxControl(model, node.id);
     if (!ifx) continue;
     attempted.add(node.id);
@@ -305,6 +316,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
 
   // Output bus EQ ON: STEREO (498) and MIX (591); read the first instance.
   for (const node of model.nodes) {
+    signal?.throwIfAborted();
     if (node.kind !== "bus") continue;
     const eq = busEqOn(node.id);
     if (!eq) continue;
@@ -323,6 +335,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
 
   // Output bus 4-band PEQ band values: STEREO (single) and MIX (L/R-linked).
   for (const node of model.nodes) {
+    signal?.throwIfAborted();
     if (node.kind !== "bus") continue;
     const oeq = outputEq(node.id);
     if (!oeq) continue;
@@ -341,6 +354,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
 
   // Ducker on/off: one per stereo channel, read onto the ducker node.
   for (const node of model.nodes) {
+    signal?.throwIfAborted();
     if (node.kind !== "ducker") continue;
     const dc = duckerControl(model, node.id);
     if (!dc) continue;
@@ -367,6 +381,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
   // Bus master ON/OFF: STEREO master (582), MIX buses (675, L/R-linked — the L
   // instance is read) and the FX channels (338, per FX).
   for (const node of model.nodes) {
+    signal?.throwIfAborted();
     if (node.kind !== "bus") continue;
     const bm = busMasterOn(node.id);
     if (!bm) continue;
@@ -465,6 +480,7 @@ export async function applyDeviceState(model: DeviceModel, plan: Plan): Promise<
   // pair index — param 22 only covers the mono slots (confirmed on URX44V).
   const srcStereoIdx = stereoIndexMap(model);
   for (const node of model.nodes) {
+    signal?.throwIfAborted();
     if (node.kind !== "channel") continue;
     let srcParam: number, srcY: number;
     if (isStereoChannel(node.id)) {

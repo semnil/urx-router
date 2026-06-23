@@ -28,6 +28,7 @@ export const en = {
     fetchDevice: "Fetch from device",
     writeDevice: "Write to device",
     selfTest: "Self-test (experimental)",
+    selfTestCancel: "Cancel self-test",
     liveSync: "Live sync",
     liveSyncHint: "Mirror every edit to the connected device in real time",
     liveTag: "LIVE",
@@ -257,7 +258,8 @@ export const en = {
     writeResidual: (n: number): string =>
       `Wrote, but ${n} param${n === 1 ? "" : "s"} did not take (see console)`,
     writeError: (message: string): string => `Device write failed: ${message}`,
-    selfTestRunning: "Running device self-test… do not disconnect",
+    selfTestRunning: "Running device self-test… do not disconnect (use the menu again to cancel)",
+    selfTestCancelled: "Self-test cancelled — device left silent; fetch again to restore your state",
     selfTestPass: (n: number): string => `Self-test passed: ${n} params written and read back identically`,
     selfTestFail: (n: number): string =>
       `Self-test FAILED: ${n} param${n === 1 ? "" : "s"} did not match after write (see console)`,

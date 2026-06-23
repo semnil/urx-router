@@ -100,6 +100,9 @@ export interface SelfTestReport {
   collisions: UnverifiedCollision[];
   /** Per-unverified-mapping outcome (confirmed / refuted / could-not-test). */
   unverified: UnverifiedFinding[];
+  /** True when the user cancelled the run before it finished (remaining passes and
+   *  the restore are skipped; the device is left in its last silent perturbed state). */
+  aborted: boolean;
   /** True when the device was returned to its original captured state. */
   restored: boolean;
   /** Residual diff count after writing the original back (0 = fully restored). */
@@ -296,7 +299,11 @@ export function perturbedPlan(
  * leaves `phase` at the failing step. The caller must ensure the connected
  * device matches `model`.
  */
-export async function runSelfTest(model: DeviceModel, settleMs = 300): Promise<SelfTestReport> {
+export async function runSelfTest(
+  model: DeviceModel,
+  settleMs = 300,
+  signal?: AbortSignal,
+): Promise<SelfTestReport> {
   const report: SelfTestReport = {
     ok: false,
     device: "",
@@ -306,10 +313,26 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300): Promise<S
     residual: [],
     collisions: [],
     unverified: [],
+    aborted: false,
     restored: false,
     restoreResidual: 0,
     errors: [],
     phase: "connect",
+  };
+  // Run one phase's round-trips, returning its result — or undefined if the user
+  // cancelled (the inner loops throw via signal.throwIfAborted). A cancel is
+  // recorded on the report and swallowed so the caller can bail; anything else
+  // rethrows. Centralizes the "stop on our abort, propagate real errors" contract.
+  const phaseStep = async <T>(work: Promise<T>): Promise<T | undefined> => {
+    try {
+      return await work;
+    } catch (e) {
+      if (signal?.aborted) {
+        report.aborted = true;
+        return undefined;
+      }
+      throw e;
+    }
   };
   // Static audit (no device): guessed ids a confirmed param already owns are wrong
   // and must not be written. Their writes are suppressed; they are reported as
@@ -332,17 +355,22 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300): Promise<S
     // 1. Capture the current device state.
     report.phase = "readback";
     const original = emptyPlan(model.id);
-    const r0 = await applyDeviceState(model, original);
+    const r0 = await phaseStep(applyDeviceState(model, original, signal));
+    if (!r0) return report;
     report.applied = r0.applied;
     report.errors.push(...r0.errors);
 
     // 2. Sweep: each pass writes a silent perturbed plan (converging, so params
     // the device resets as a side effect of a mode change are re-sent) and the
-    // residual after convergence is the pass's mismatches.
+    // residual after convergence is the pass's mismatches. Cancellation stops
+    // issuing round-trips between commands; the in-flight one finishes (so the
+    // device is left consistent), then sendConverging throws and phaseStep bails.
     for (let pass = 0; pass < PASSES; pass++) {
       const plan = perturbedPlan(model, original, pass, suppress);
       report.phase = "write";
-      const { outcomes, residual } = await sendConverging(model, plan, undefined, 3, settleMs);
+      const result = await phaseStep(sendConverging(model, plan, undefined, 3, settleMs, signal));
+      if (!result) break;
+      const { outcomes, residual } = result;
       report.written += outcomes.length;
       report.errors.push(...outcomes.filter((o) => !o.ok).map((o) => `p${pass} ${o.command.name}: ${o.error}`));
       report.phase = "verify";
@@ -359,7 +387,7 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300): Promise<S
         });
       }
     }
-    report.ok = report.residual.length === 0;
+    report.ok = !report.aborted && report.residual.length === 0;
 
     // Per-guess verdict: a collision could not be tested (and is already known
     // wrong); otherwise the guess is confirmed when it was exercised on this model
@@ -378,12 +406,17 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300): Promise<S
     });
 
     // 3. Restore the original state (converging, for the same reset behavior).
-    report.phase = "restore";
-    const back = await sendConverging(model, original, undefined, 3, settleMs);
-    report.restoreResidual = back.residual.length;
-    report.restored = back.residual.length === 0;
-
-    report.phase = "done";
+    // Skipped on cancel: the device is left silent (safe by makeSilent), and a
+    // restore would only re-run the round-trips the user just cancelled.
+    if (!report.aborted) {
+      report.phase = "restore";
+      const back = await phaseStep(sendConverging(model, original, undefined, 3, settleMs, signal));
+      if (back) {
+        report.restoreResidual = back.residual.length;
+        report.restored = back.residual.length === 0;
+        report.phase = "done";
+      }
+    }
     return report;
   } finally {
     await vdDisconnect();

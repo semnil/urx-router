@@ -85,6 +85,32 @@ describe("runSelfTest", () => {
     expect(report.residual.some((m) => m.paramId === 140)).toBe(true);
   });
 
+  it("cancels mid-run via an abort signal: skips remaining passes and restore, still disconnects", async () => {
+    installMockDevice(populatedPlan());
+    const controller = new AbortController();
+    // Abort once the device has been written to, so the run is cancelled in flight.
+    vi.mocked(vdSet).mockImplementationOnce(() => {
+      controller.abort();
+      return Promise.resolve();
+    });
+    const report = await runSelfTest(model, 0, controller.signal);
+    expect(report.aborted).toBe(true);
+    expect(report.ok).toBe(false);
+    expect(report.restored).toBe(false);
+    // A cancelled run does not sweep all passes.
+    expect(report.phase).not.toBe("done");
+    expect(vi.mocked(vdDisconnect)).toHaveBeenCalled();
+  });
+
+  it("does not start any pass when the signal is already aborted", async () => {
+    installMockDevice(populatedPlan());
+    const report = await runSelfTest(model, 0, AbortSignal.abort());
+    expect(report.aborted).toBe(true);
+    expect(report.written).toBe(0);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect(vi.mocked(vdDisconnect)).toHaveBeenCalled();
+  });
+
   it("aborts on model mismatch without writing, and disconnects", async () => {
     installMockDevice(populatedPlan());
     vi.mocked(vdConnect).mockResolvedValue({ model: "URX22", label: "URX22" });

@@ -157,6 +157,10 @@ ratePicker.value = String(plan.sampleRate);
 // demo build (DEMO folds the ternary to null), so the control layer tree-shakes
 // out exactly as the other device features do.
 let liveDeviceLabel = "";
+// Holds the running self-test's controller (experimental); null when idle. Module
+// scope so applyStaticI18n keeps the button's "Cancel" label across a language
+// switch mid-run, instead of reverting it to "Self-test" while a run is in flight.
+let selfTestAbort: AbortController | null = null;
 const live = DEMO
   ? null
   : new LiveSync({
@@ -453,7 +457,7 @@ function applyStaticI18n(): void {
   $("lbl-device").textContent = m.toolbar.device;
   $("btn-fetch").textContent = m.toolbar.fetchDevice;
   $("btn-write").textContent = m.toolbar.writeDevice;
-  $("btn-selftest").textContent = m.toolbar.selfTest;
+  $("btn-selftest").textContent = selfTestAbort ? m.toolbar.selfTestCancel : m.toolbar.selfTest;
   // Live-sync toggle keeps a static label; aria-pressed and the on-air tally
   // carry the on/off state. Refresh the tally text too (the device label is set
   // when sync turns on; only the "LIVE" tag is localized).
@@ -788,26 +792,37 @@ if (!DEMO) {
     // verify it matches, then restore. It owns its own connection, so it does not
     // go through withDevice. Reports are console.warn'd (not log) so they reach
     // the dev-server log for a headless read.
+    const selfTestBtn = $<HTMLButtonElement>("btn-selftest");
+    selfTestBtn.hidden = false;
+    // selfTestAbort (module scope) holds the in-flight run's controller, so a second
+    // menu click cancels instead of starting another run (the run can take minutes
+    // of serial round-trips, and stalls entirely if the device link drops mid-test).
+
     async function runDeviceSelfTest(): Promise<void> {
+      const controller = new AbortController();
+      selfTestAbort = controller;
+      selfTestBtn.textContent = t().toolbar.selfTestCancel;
       setStatus(t().status.selfTestRunning);
       try {
-        const report = await runSelfTest(getModel(modelId));
-        console.warn(`[self-test] ${report.ok ? "PASS" : "FAIL"}`, JSON.stringify(report));
+        const report = await runSelfTest(getModel(modelId), 300, controller.signal);
+        console.warn(`[self-test] ${report.aborted ? "CANCELLED" : report.ok ? "PASS" : "FAIL"}`, JSON.stringify(report));
         if (report.errors.length) console.warn("[self-test] issues:", JSON.stringify(report.errors));
         if (report.residual.length) console.warn("[self-test] mismatches:", JSON.stringify(report.residual));
         const verdicts = summarizeVerdicts(report.unverified);
         setStatus(
-          !report.restored
-            ? t().status.selfTestRestoreFail
-            : report.unverified.length
-              ? t().status.selfTestUnverified(verdicts.confirmed, verdicts.refuted, verdicts.untestable)
-              : report.ok
-                ? t().status.selfTestPass(report.written)
-                : t().status.selfTestFail(report.residual.length),
+          report.aborted
+            ? t().status.selfTestCancelled
+            : !report.restored
+              ? t().status.selfTestRestoreFail
+              : report.unverified.length
+                ? t().status.selfTestUnverified(verdicts.confirmed, verdicts.refuted, verdicts.untestable)
+                : report.ok
+                  ? t().status.selfTestPass(report.written)
+                  : t().status.selfTestFail(report.residual.length),
         );
         // Confirmation workflow: when the model has unverified guesses (URX22/44),
         // offer to save the human-readable report so the owner can send it back.
-        if (report.unverified.length && (await confirmDialog(t().confirm.selfTestExport))) {
+        if (!report.aborted && report.unverified.length && (await confirmDialog(t().confirm.selfTestExport))) {
           await saveTextDocument(`${modelId}-self-test.md`, formatSelfTestReport(report), {
             ext: "md",
             label: t().filter.report,
@@ -817,13 +832,19 @@ if (!DEMO) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn("[self-test] ERROR", message);
         setStatus(connectFailureStatus(err, t().status.selfTestError));
+      } finally {
+        selfTestAbort = null;
+        selfTestBtn.textContent = t().toolbar.selfTest;
       }
     }
 
-    const selfTestBtn = $<HTMLButtonElement>("btn-selftest");
-    selfTestBtn.hidden = false;
-    // Destructive-then-restored, so the menu action confirms first.
+    // A click cancels an in-flight run; otherwise it confirms first (the run is
+    // destructive-then-restored) and starts one.
     selfTestBtn.addEventListener("click", async () => {
+      if (selfTestAbort) {
+        selfTestAbort.abort();
+        return;
+      }
       if (await confirmDialog(t().confirm.selfTest)) await runDeviceSelfTest();
     });
     // Headless trigger: when launched with --self-test, run it once on startup
