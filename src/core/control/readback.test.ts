@@ -9,7 +9,7 @@ vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdGet, vdGetStr } from "../platform";
 import { COLOR_PALETTE } from "./params";
-import { applyDeviceState } from "./readback";
+import { applyDeviceState, formatReadbackReport } from "./readback";
 import { planToCommands } from "./translate";
 
 const model = getModel("URX44V");
@@ -518,5 +518,24 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     expect(target.nodeColors["bus.stereo"]).toBe(COLOR_PALETTE[6].hex);
     // An unset colorable node reads the device default index 0 = Blue.
     expect(target.nodeColors.ch2).toBe(COLOR_PALETTE[0].hex);
+  });
+});
+
+describe("formatReadbackReport", () => {
+  it("lists read failures and unconfirmed nodes", () => {
+    const md = formatReadbackReport("URX44V", {
+      applied: 40,
+      errors: ["CH1 GATE: timed out", "CH2 COMP: no response"],
+      unreadNodes: new Set(["ch1", "ch2"]),
+    });
+    expect(md).toContain("Groups read: 40; read failures: 2; nodes unconfirmed: 2");
+    expect(md).toContain("- CH1 GATE: timed out");
+    expect(md).toContain("- ch1");
+  });
+
+  it("omits the failure sections when nothing failed", () => {
+    const md = formatReadbackReport("URX44V", { applied: 40, errors: [], unreadNodes: new Set() });
+    expect(md).not.toContain("## Read failures");
+    expect(md).not.toContain("## Nodes left at plan default");
   });
 });

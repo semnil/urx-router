@@ -26,7 +26,9 @@ export const en = {
     labelsHint: "Canvas labels: the planner's channel names (CH 1) or the names set on the device (ch 1)",
     device: "Device",
     fetchDevice: "Fetch from device",
+    fetchCancel: "Cancel fetch",
     writeDevice: "Write to device",
+    writeCancel: "Cancel write",
     selfTest: "Self-test (experimental)",
     selfTestCancel: "Cancel self-test",
     liveSync: "Live sync",
@@ -303,12 +305,15 @@ export const en = {
       "Run the device self-test? It briefly overwrites every parameter to verify writes, then restores the original state. Outputs stay muted throughout (faders floored, oscillator and phantom off).",
     selfTestExport:
       "This model has unconfirmed parameter mappings. Save the self-test report so it can be sent back to confirm them?",
+    deviceErrorExport:
+      "Some parameters could not be read or written. Save a report listing each failure?",
   },
   filter: {
     plan: "URX Router plan",
     png: "PNG image",
     pdf: "PDF document",
     report: "Self-test report",
+    errorReport: "Device error report",
   },
   error: {
     noRule: "This route cannot be connected",
@@ -318,6 +323,7 @@ export const en = {
     // Connect-time failure codes from the Rust vd worker (vd.rs), localized here.
     brokerUnreachable: "Device Center isn't running. Start it, connect the URX, then try again.",
     noDevice: "Device Center is running, but no URX is connected. Connect the unit, then try again.",
+    linkLost: "the device link dropped (USB unplugged or Device Center quit)",
     unknownModel: (model: string): string => `Unknown model: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `The connected device is ${device}, but ${ui} is selected. Open or switch to the matching plan before writing.`,

@@ -154,6 +154,19 @@ fn vd_params_unsubscribe(state: State<vd::VdState>) -> Result<(), String> {
     vd::params_unsubscribe(tx)
 }
 
+// Watch the held-open live connection: the worker pushes a single LinkEvent
+// through the channel if the broker link drops while idle, so the UI can drop a
+// live session instead of silently freezing. Fire-and-forget, like the
+// subscriptions; the channel dies with the worker on disconnect.
+#[tauri::command]
+fn vd_watch_link(
+    state: State<vd::VdState>,
+    channel: tauri::ipc::Channel<vd::LinkEvent>,
+) -> Result<(), String> {
+    let tx = vd::sender(&state)?;
+    vd::watch_link(tx, channel)
+}
+
 // Disconnect only signals the worker to shut down (no reply wait), so it stays
 // synchronous.
 #[tauri::command]
@@ -191,6 +204,7 @@ pub fn run() {
             vd_meters_unsubscribe,
             vd_params_subscribe,
             vd_params_unsubscribe,
+            vd_watch_link,
             vd_disconnect
         ])
         .run(tauri::generate_context!())

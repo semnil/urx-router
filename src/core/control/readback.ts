@@ -656,3 +656,27 @@ async function readSsmcs(y: number): Promise<SsmcsParams> {
     },
   };
 }
+
+/**
+ * Render a fetch's read failures as human-readable Markdown the user can save,
+ * so the per-group reasons (otherwise console-only) are visible off the status
+ * bar. Lists each read failure and every node left at its plan default. Pure.
+ */
+export function formatReadbackReport(model: string, result: ReadbackResult): string {
+  const lines: string[] = [];
+  lines.push(`# URX fetch report — ${model}`);
+  lines.push("");
+  lines.push(`- Groups read: ${result.applied}; read failures: ${result.errors.length}; nodes unconfirmed: ${result.unreadNodes.size}`);
+  if (result.errors.length) {
+    lines.push("");
+    lines.push("## Read failures");
+    for (const e of result.errors) lines.push(`- ${e}`);
+  }
+  if (result.unreadNodes.size) {
+    lines.push("");
+    lines.push("## Nodes left at plan default (not confirmed from the device)");
+    for (const id of result.unreadNodes) lines.push(`- ${id}`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}

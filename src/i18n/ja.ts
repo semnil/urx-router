@@ -26,7 +26,9 @@ export const ja: Messages = {
     labelsHint: "キャンバスのラベル: ツール標準のチャンネル名 (CH 1) かデバイスで設定した名前 (ch 1)",
     device: "デバイス",
     fetchDevice: "デバイスから取得",
+    fetchCancel: "取得を中止",
     writeDevice: "デバイスへ書き込み",
+    writeCancel: "書き込みを中止",
     selfTest: "セルフテスト (実験的)",
     selfTestCancel: "セルフテストを中止",
     liveSync: "実機ライブ同期",
@@ -297,12 +299,15 @@ export const ja: Messages = {
       "デバイスのセルフテストを実行しますか? 全パラメータを一時的に上書きして書き込みを検証し、元の状態に復元します。実行中は出力をミュート (フェーダー最小・発振器/ファンタム OFF) します。",
     selfTestExport:
       "この機種には未確認のパラメータ対応があります。確認のため返送できるよう、セルフテストのレポートを保存しますか?",
+    deviceErrorExport:
+      "一部のパラメータを読み取り/書き込みできませんでした。各失敗を記載したレポートを保存しますか?",
   },
   filter: {
     plan: "URX Router 計画",
     png: "PNG 画像",
     pdf: "PDF 文書",
     report: "セルフテストのレポート",
+    errorReport: "デバイスエラーレポート",
   },
   error: {
     noRule: "この経路は接続できません",
@@ -311,6 +316,7 @@ export const ja: Messages = {
     cannotConnect: "接続できません",
     brokerUnreachable: "Device Center が起動していません。起動して URX を接続してから再度お試しください。",
     noDevice: "Device Center は起動していますが、URX が接続されていません。本体を接続してから再度お試しください。",
+    linkLost: "デバイスとの接続が切断されました (USB 抜去または Device Center 終了)",
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。書き込む前に一致する計画を開くか切り替えてください。`,

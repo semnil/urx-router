@@ -179,3 +179,35 @@ export async function sendConverging(
   }
   return { outcomes, rounds, residual };
 }
+
+/**
+ * Render a write's failures as human-readable Markdown the user can save, so the
+ * per-command reasons (otherwise console-only) are visible off the status bar.
+ * `failed` is the failed send/name outcomes (normalized to name + error);
+ * `residual` is the diff that never converged (the device still differs). Pure.
+ */
+export function formatWriteReport(
+  model: string,
+  failed: Array<{ name: string; error?: string }>,
+  residual: CommandDiff[],
+): string {
+  const lines: string[] = [];
+  lines.push(`# URX write report — ${model}`);
+  lines.push("");
+  lines.push(`- Write failures: ${failed.length}; parameters that did not converge: ${residual.length}`);
+  if (failed.length) {
+    lines.push("");
+    lines.push("## Write failures");
+    for (const f of failed) lines.push(`- ${f.name} — ${f.error ?? "unknown error"}`);
+  }
+  if (residual.length) {
+    lines.push("");
+    lines.push("## Did not converge (device value still differs)");
+    for (const d of residual) {
+      const c = d.command;
+      lines.push(`- ${c.name} @ ${c.paramId}:${c.x}:${c.y} — wrote ${c.vdValue}, device has ${d.current ?? "unreadable"}`);
+    }
+  }
+  lines.push("");
+  return lines.join("\n");
+}
