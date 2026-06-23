@@ -19,3 +19,11 @@ device as usual.
 > Background: only the device's front panel can set the CH → FX send Pre/Post (the
 > broker rejects a software write). The app reads it back, so while live it always
 > shows the true device value.
+
+## The CH SETTING Icon is not modeled
+
+The device's CH SETTING offers an **Icon** alongside its name and color, but the
+planner intentionally does not model it. The mono channels (CH1–4) do not expose
+the icon over the broker, so it would only work on stereo channels and buses — an
+asymmetric feature. The name (`nodeNames`) and color (`nodeColors`) are supported
+because they can be read and written for every node.
