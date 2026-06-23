@@ -27,3 +27,17 @@ planner intentionally does not model it. The mono channels (CH1–4) do not expo
 the icon over the broker, so it would only work on stereo channels and buses — an
 asymmetric feature. The name (`nodeNames`) and color (`nodeColors`) are supported
 because they can be read and written for every node.
+
+## CUE (solo/monitor interrupt) assignment cannot be controlled
+
+Each device channel has a **CUE** button that interrupts the monitor with that
+channel's signal over the CUE bus. The planner does **not model the CUE bus
+assignment (which channels are cued) and does not push it to the device**: CUE
+routing is a temporary bus that the device clears at power-off, so it cannot hold
+a persistent assignment that a saved plan would represent (see
+[device-model.md](device-model.md)).
+
+The MONITOR bus **CUE Int** toggle (enable/disable the cue interrupt,
+`MONITOR_CUE_INTERRUPT`) is a confirmed parameter, so it is read, written and
+live-synced from the CONSOLE MONITOR strip and the inspector. What cannot be
+controlled is the per-channel CUE on/off (the assignment).
