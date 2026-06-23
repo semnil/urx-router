@@ -413,7 +413,7 @@ export class Console {
     // processing chain GATE → COMP → EQ → INS FX. Each chip flips a plan flag (the
     // device mirrors it via the shared change funnel). An odd group gets an unused
     // spacer chip so the last real chip never stretches to full width.
-    type BoolKey = "gateOn" | "compOn" | "eqOn" | "phantom" | "phase" | "phaseL" | "phaseR" | "hpf" | "hiZ";
+    type BoolKey = "gateOn" | "compOn" | "eqOn" | "phantom" | "phase" | "phaseL" | "phaseR" | "hpf" | "hiZ" | "cueInterrupt" | "mono";
     const planOf = (): NodeParams => this.hooks.getPlan().nodeParams[m.id] ?? {};
     const makeChip = (
       id: string,
@@ -516,6 +516,13 @@ export class Console {
       }
       if (cc?.hasHpf) boolChip(top, "HPF", "hpf", false);
       if (cc?.hasHiZ) boolChip(top, "Hi-Z", "hiZ", false);
+    }
+    // MONITOR strips carry the device [CUE] (cue interrupt) and [MONO] buttons.
+    // Both are confirmed device params (MONITOR_CUE_INTERRUPT / MONITOR_MONO), so
+    // they sync live like the channel toggles. CUE Interrupt ships ON, MONO OFF.
+    if (m.hasPhones) {
+      boolChip(top, t().console.cue, "cueInterrupt", true);
+      boolChip(top, t().console.mono, "mono", false);
     }
 
     // processing group (GATE / COMP / EQ / INS FX / DUCKER) — channel-domain

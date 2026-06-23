@@ -222,6 +222,18 @@ test("a MONITOR strip has a MUTE (on by default, plan-only)", async ({ page }) =
   await expect(mute).toHaveAttribute("aria-pressed", "true");
 });
 
+test("a MONITOR strip has C.INT (on by default) and MONO (off) chips", async ({ page }) => {
+  const mon = strip(page, "MONITOR 1");
+  const cue = mon.getByRole("button", { name: "C.INT" });
+  await expect(cue).toHaveAttribute("aria-pressed", "true"); // CUE Interrupt defaults on
+  await cue.click();
+  await expect(cue).toHaveAttribute("aria-pressed", "false");
+  const mono = mon.getByRole("button", { name: "MONO" });
+  await expect(mono).toHaveAttribute("aria-pressed", "false"); // MONO defaults off
+  await mono.click();
+  await expect(mono).toHaveAttribute("aria-pressed", "true");
+});
+
 test("the OSCILLATOR strip has an ON button (off by default), not a MUTE", async ({ page }) => {
   const osc = strip(page, "OSCILLATOR");
   await expect(osc.getByRole("button", { name: "MUTE" })).toHaveCount(0); // ON, not MUTE

@@ -44,6 +44,8 @@ export const en = {
     on: "ON",
     eq: "EQ",
     pre: "PRE",
+    cue: "C.INT",
+    mono: "MONO",
     chMute: "CH MUTE",
     master: "MASTER",
     groupInputs: "INPUTS",

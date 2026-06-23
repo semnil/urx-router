@@ -199,7 +199,9 @@ name** (the monitor buses carry no CH SETTING name, so their second line names t
 `Phone 1` / `Phone 2`). Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE (on channels, FX channels, the
 master, the MIX buses and the MONITOR buses; an FX channel's is the device FX-channel ON, the master's is the
 STEREO master ON, a **MIX bus's drives the MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off), and a
-**MONITOR bus's is the device MONITOR ON** (`np.on` → `MONITOR_ON`, the MONITOR-screen [ON] button)). The
+**MONITOR bus's is the device MONITOR ON** (`np.on` → `MONITOR_ON`, the MONITOR-screen [ON] button)). A MONITOR
+bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
+`MONITOR_MONO`, ships OFF) chips. The
 **OSCILLATOR is normally OFF, so it gets an ON button instead of a MUTE** (inverse polarity — lit = generating,
 bound to `osc.on`). Then +48 / φ /
 HPF on mono MIC channels (Hi-Z on CH3/4) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing

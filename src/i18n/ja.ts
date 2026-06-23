@@ -44,6 +44,8 @@ export const ja: Messages = {
     on: "ON",
     eq: "EQ",
     pre: "PRE",
+    cue: "C.INT",
+    mono: "MONO",
     chMute: "CH MUTE",
     master: "マスター",
     groupInputs: "入力",
