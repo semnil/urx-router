@@ -347,7 +347,7 @@ mod imp {
     }
 
     fn send_json(ws: &mut Ws, v: Value) -> Result<(), String> {
-        ws.send(Message::Text(v.to_string())).map_err(|e| e.to_string())
+        ws.send(Message::Text(v.to_string().into())).map_err(|e| e.to_string())
     }
 
     /// Read one text message, or None on read timeout. Errors on a closed or
