@@ -329,7 +329,10 @@ const inspectorActions = {
     // Linking a pair snaps its partner next to the kept node so the tie isn't drawn
     // across a gap an earlier manual move may have opened.
     if (patch.stereoLink === true) graph.alignStereoPair(id);
-    if (patch.on !== undefined || patch.stereoLink !== undefined) graph.repaintNodes();
+    if (patch.on !== undefined || patch.stereoLink !== undefined || patch.duckerOn !== undefined)
+      graph.repaintNodes();
+    // A ducker's bypass also dims its key wire (isOffSend), so repaint wires too.
+    if (patch.duckerOn !== undefined) graph.repaintWires();
     if (mirrored) consoleView.refresh();
     // Toggling PAN/BAL (or entering STEREO) re-initializes every bus send's pan
     // for the linked pair: PAN hard-pans odd/even L/R, BAL centres them.

@@ -667,8 +667,14 @@ export class Graph {
   // wire presence — is what marks one silent. The main fader paths (CH/FX → STEREO)
   // carry no `on` and default to unity, so they only read off when pulled to -∞.
   // (OSC → bus carries oscL/oscR, not `on`, so it is never dimmed by this.)
+  // A ducker's key wire is fixed too, so it recedes when the ducker is bypassed
+  // (its on/off lives in duckerOn on the destination node, not on the connection).
   private isOffSend(conn: PlanConnection): boolean {
     if (conn.params?.on === false) return true;
+    if (conn.kind === "key") {
+      const dst = this.nodeById.get(parseRef(conn.to).nodeId);
+      return dst ? this.isNodeInactive(dst) : false;
+    }
     if (conn.kind !== "send") return false;
     return (conn.params?.level ?? 0) <= LEVEL_MIN_DB;
   }
