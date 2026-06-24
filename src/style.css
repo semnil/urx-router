@@ -326,6 +326,24 @@ button {
   margin: 0 3px;
 }
 
+/* Theme/language prefs are square icon buttons so they stay narrow at the end of
+   the rack; the glyph (☀/☾/◐ or "EN"/"JA") centers in the box. */
+.tools button.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  padding: 7px 0;
+  font-size: 13px;
+}
+
+/* The theme glyphs (U+2600/263E/25D0) render as thin line-art in the rack's mono
+   font; the language button keeps "EN"/"JA" in mono. Override only the theme glyph
+   to the system UI font so its filled sun/moon/half-disc match the analyze tools. */
+.tools button#btn-theme {
+  font-family: -apple-system, "Segoe UI", "Meiryo", system-ui, sans-serif;
+}
+
 /* Demo-only call to action that points visitors at the desktop app. Styled
    like a tool button but tinted with the accent LED so it reads as a CTA. */
 .desktop-link {
@@ -529,11 +547,6 @@ select:focus-visible,
 .recent-row:focus-visible {
   outline: 2px solid var(--led);
   outline-offset: 2px;
-}
-
-#btn-theme {
-  min-width: 54px;
-  text-align: center;
 }
 
 /* ---- stage ---- */

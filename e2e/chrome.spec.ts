@@ -28,27 +28,55 @@ test.describe("theme", () => {
     });
   });
 
-  test("toggling theme flips data-theme, the button label, and persists across reload", async ({ page }) => {
+  test("the theme glyph cycles light → dark → auto and persists the chosen mode", async ({ page }) => {
+    // Pin a dark OS so auto resolves predictably to dark.
+    await page.emulateMedia({ colorScheme: "dark" });
     await page.goto("/");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 
     const html = page.locator("html");
     const btn = page.locator("#btn-theme");
-    const start = await html.getAttribute("data-theme");
-    const other = start === "dark" ? "light" : "dark";
 
-    // The button names the theme it will switch to, i.e. the opposite of current.
-    await expect(btn).toHaveText(other === "light" ? "Light" : "Dark");
+    // No saved choice → auto, which under a dark OS resolves to dark.
+    await expect(btn).toHaveText("◐");
+    await expect(html).toHaveAttribute("data-theme", "dark");
+
+    // auto → light
     await btn.click();
-    await expect(html).toHaveAttribute("data-theme", other);
-    await expect(btn).toHaveText(other === "light" ? "Dark" : "Light"); // now names the way back
-    await expect(page.locator("#statusbar")).toHaveText(`Switched to ${other} mode`);
+    await expect(btn).toHaveText("☀");
+    await expect(html).toHaveAttribute("data-theme", "light");
+    await expect(page.locator("#statusbar")).toHaveText("Switched to light mode");
 
-    // The chosen theme survives a reload (localStorage), without snapping back to
-    // the OS preference.
+    // light → dark
+    await btn.click();
+    await expect(btn).toHaveText("☾");
+    await expect(html).toHaveAttribute("data-theme", "dark");
+
+    // dark → auto (follows the OS again = dark here)
+    await btn.click();
+    await expect(btn).toHaveText("◐");
+    await expect(html).toHaveAttribute("data-theme", "dark");
+    await expect(page.locator("#statusbar")).toHaveText("Following the system theme");
+
+    // The chosen mode survives a reload: step to light, reload, expect light + sun.
+    await btn.click();
     await page.reload();
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
-    await expect(html).toHaveAttribute("data-theme", other);
+    await expect(html).toHaveAttribute("data-theme", "light");
+    await expect(page.locator("#btn-theme")).toHaveText("☀");
+  });
+
+  test("auto mode follows a live OS color-scheme change", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto("/");
+    const html = page.locator("html");
+    // Default (no saved choice) is auto; a light OS resolves to light.
+    await expect(page.locator("#btn-theme")).toHaveText("◐");
+    await expect(html).toHaveAttribute("data-theme", "light");
+
+    // Flipping the OS preference repaints without a click while in auto.
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(html).toHaveAttribute("data-theme", "dark");
   });
 
   test("toggling theme inside the console view keeps the console rendered", async ({ page }) => {
@@ -83,15 +111,15 @@ test.describe("language", () => {
     await page.click("#btn-view-console");
     await expect(page.locator(".con-modelabel")).toHaveText("Output");
 
-    // The button shows the language it switches to; clicking it re-localizes both
+    // The button shows the current language code; clicking it re-localizes both
     // the toolbar (static i18n) and the already-rendered console (refresh()).
-    await expect(page.locator("#btn-lang")).toHaveText("日本語");
+    await expect(page.locator("#btn-lang")).toHaveText("EN");
     await page.click("#btn-lang");
 
     await expect(page.locator("#btn-view-graph")).toHaveText("グラフ");
     await expect(page.locator("#btn-hide-unused")).toHaveText("未接続を隠す");
     await expect(page.locator(".con-modelabel")).toHaveText("出力");
-    await expect(page.locator("#btn-lang")).toHaveText("English"); // now names the way back
+    await expect(page.locator("#btn-lang")).toHaveText("JA"); // now the current language
   });
 
   test("an open selection survives a language switch with the inspector intact", async ({ page }) => {

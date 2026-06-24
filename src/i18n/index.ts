@@ -15,6 +15,10 @@ export const LANGS: Lang[] = ["en", "ja"];
 // translated messages.
 export const LANG_NAMES: Record<Lang, string> = { en: "English", ja: "日本語" };
 
+// Short codes shown on the compact language button — also language-invariant, so
+// they live here alongside the names rather than copied into each catalog.
+export const LANG_CODES: Record<Lang, string> = { en: "EN", ja: "JA" };
+
 const CATALOGS: Record<Lang, Messages> = { en, ja };
 
 const STORAGE_KEY = "urx-lang";

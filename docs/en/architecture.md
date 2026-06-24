@@ -146,8 +146,9 @@ in-house module `src/i18n/`:
 > UI maps them to text (`t().error[code]`). This keeps `core/` and `models/` free of i18n, so the
 > Node smoke test runs without browser APIs.
 
-The language button at the right end of the toolbar switches languages; `setLang()` notifies
-listeners, which re-render the static labels and the inspector.
+The language button in the toolbar's right-hand cluster switches languages (its face shows the
+current code, `EN` / `JA`); `setLang()` notifies listeners, which re-render the static labels and the
+inspector.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
 > `Ducker`, `Bus send`, `Send (ON/OFF)`, `Pre-fader send`. The visible canvas element is a **node**;
@@ -156,11 +157,12 @@ listeners, which re-render the static labels and the inspector.
 
 ## Display themes
 
-The UI has a studio-rack aesthetic modeled on pro-audio gear, with two themes: dark and light. The
-initial theme uses a saved choice (`localStorage("urx-theme")`) if present, otherwise it follows the
-OS color scheme (`prefers-color-scheme`), falling back to dark when the OS does not prefer light (the
-same "saved → system → fallback" order as the initial language). The button at the right end of the
-toolbar toggles it, persisting to `localStorage("urx-theme")`.
+The UI has a studio-rack aesthetic modeled on pro-audio gear, with two palettes (dark and light)
+selected by a three-way theme **mode**: `light`, `dark`, or `auto`. The mode persists to
+`localStorage("urx-theme")`; a fresh install defaults to `auto`, which resolves to a palette from the
+OS color scheme (`prefers-color-scheme`) and re-resolves live when the OS scheme changes. The glyph
+button at the right end of the toolbar cycles `light → dark → auto` (icons ☀ / ☾ / ◐ show the current
+mode); `resolveTheme()` maps the mode to the applied palette and `applyThemeButton()` refreshes the face.
 
 The palette is split into two layers, kept in correspondence per theme:
 
@@ -293,9 +295,11 @@ parameter reads), so the list alone cannot tell a present device from a stale en
 is what distinguishes them.
 
 A failed connect returns a stable, machine-readable code rather than a raw English string: `broker-unreachable`
-(Device Center not running) or `no-device` (running, but no URX attached — the empty-list, `sync_status != online`,
-and list-timeout shapes all collapse to this single code, since the user's remedy is the same). The frontend's
-`connectFailureStatus` maps those two codes to localized messages (`error.brokerUnreachable` / `error.noDevice`);
+(Device Center not running), `no-device` (running, but no URX attached — the empty-list, `sync_status != online`,
+and list-timeout shapes all collapse to this single code, since the user's remedy is the same), or
+`control-worker-gone` (the Rust worker thread died or stopped responding — the handshake, command send, and
+reply-wait failures all collapse to this code). The frontend's `connectFailureStatus` maps those codes to
+localized messages (`error.brokerUnreachable` / `error.noDevice` / `error.controlWorkerGone`);
 any other connect-stage fault falls back to the action's own error formatter. Because the connect doubles as a
 pre-check, fetch and live sync connect *before* prompting to discard edits, so a no-device state is reported
 plainly without first disturbing the plan.
