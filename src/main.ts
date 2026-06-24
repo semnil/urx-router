@@ -34,10 +34,11 @@ import {
   selfTestRequested,
   vdConnect,
   vdDisconnect,
+  vdWatchLink,
   type DeviceSummary,
 } from "./core/platform";
-import { applyDeviceState } from "./core/control/readback";
-import { diffNames, diffPlan, sendConverging, sendNames } from "./core/control/client";
+import { applyDeviceState, formatReadbackReport } from "./core/control/readback";
+import { diffNames, diffPlan, formatWriteReport, sendConverging, sendNames } from "./core/control/client";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
 import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
@@ -157,6 +158,15 @@ ratePicker.value = String(plan.sampleRate);
 // demo build (DEMO folds the ternary to null), so the control layer tree-shakes
 // out exactly as the other device features do.
 let liveDeviceLabel = "";
+// Holds the running self-test's controller (experimental); null when idle. Module
+// scope so applyStaticI18n keeps the button's "Cancel" label across a language
+// switch mid-run, instead of reverting it to "Self-test" while a run is in flight.
+let selfTestAbort: AbortController | null = null;
+// Same for the fetch / write device actions: each holds its in-flight controller
+// (a long read/write of the whole device can stall when the link drops), so a
+// second menu click cancels and applyStaticI18n keeps the "Cancel" label.
+let fetchAbort: AbortController | null = null;
+let writeAbort: AbortController | null = null;
 const live = DEMO
   ? null
   : new LiveSync({
@@ -451,9 +461,9 @@ function applyStaticI18n(): void {
   $("btn-auto").textContent = m.toolbar.arrange;
   $("btn-hide-unused").textContent = m.toolbar.hideUnused;
   $("lbl-device").textContent = m.toolbar.device;
-  $("btn-fetch").textContent = m.toolbar.fetchDevice;
-  $("btn-write").textContent = m.toolbar.writeDevice;
-  $("btn-selftest").textContent = m.toolbar.selfTest;
+  $("btn-fetch").textContent = fetchAbort ? m.toolbar.fetchCancel : m.toolbar.fetchDevice;
+  $("btn-write").textContent = writeAbort ? m.toolbar.writeCancel : m.toolbar.writeDevice;
+  $("btn-selftest").textContent = selfTestAbort ? m.toolbar.selfTestCancel : m.toolbar.selfTest;
   // Live-sync toggle keeps a static label; aria-pressed and the on-air tally
   // carry the on/off state. Refresh the tally text too (the device label is set
   // when sync turns on; only the "LIVE" tag is localized).
@@ -686,7 +696,24 @@ async function withDevice(
       await vdDisconnect();
     }
   } catch (err) {
-    setStatus(connectFailureStatus(err, onError));
+    // A cancel (throwIfAborted) surfaces as an AbortError DOMException; show the
+    // neutral "canceled" status rather than wrapping it as an action failure.
+    if (err instanceof DOMException && err.name === "AbortError") setStatus(t().status.canceled);
+    else setStatus(connectFailureStatus(err, onError));
+  }
+}
+
+// A failure report a device action produced (built while connected) but offers to
+// save after the connection is released — so the user's confirm + native save
+// dialog do not hold the broker connection open. Null when nothing failed.
+type ErrorReport = { filename: string; markdown: string } | null;
+
+// Offer to save a device action's failure report. Called after withDevice has
+// disconnected, so the per-command reasons are visible without the dev console
+// and the connection is not held across the (indefinite) dialogs.
+async function offerErrorReport(report: ErrorReport): Promise<void> {
+  if (report && (await confirmDialog(t().confirm.deviceErrorExport))) {
+    await saveTextDocument(report.filename, report.markdown, { ext: "md", label: t().filter.errorReport });
   }
 }
 
@@ -697,46 +724,69 @@ async function withDevice(
 // bundle, so this branch — and the control imports it alone references — drops
 // from the demo build.
 if (!DEMO) {
-  $("btn-fetch").addEventListener("click", () =>
-    withDevice(t().status.fetchConnecting, t().status.fetchError, async (device) => {
-      if (!(await confirmDiscard())) {
-        setStatus(t().status.canceled);
-        return;
-      }
-      // The connected device may be a different model than the one selected.
-      // Offer to switch the UI to the device's model (a fresh plan) so the
-      // fetched values map onto the right channels; otherwise abort.
-      if (device.model !== modelId) {
-        if (!MODEL_IDS.includes(device.model as ModelId)) {
-          setStatus(t().status.fetchError(t().error.unknownModel(device.model)));
-          return;
-        }
-        if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) {
+  const fetchBtn = $<HTMLButtonElement>("btn-fetch");
+  // A click cancels an in-flight fetch; otherwise it starts one. The whole-device
+  // read is serial and stalls when the link drops, so it threads the controller's
+  // signal into applyDeviceState (which checks throwIfAborted between reads).
+  fetchBtn.addEventListener("click", async () => {
+    if (fetchAbort) {
+      fetchAbort.abort();
+      return;
+    }
+    const controller = new AbortController();
+    fetchAbort = controller;
+    fetchBtn.textContent = t().toolbar.fetchCancel;
+    let report: ErrorReport = null;
+    try {
+      await withDevice(t().status.fetchConnecting, t().status.fetchError, async (device) => {
+        if (!(await confirmDiscard())) {
           setStatus(t().status.canceled);
           return;
         }
-        loadPlan(emptyPlan(device.model as ModelId));
-      }
-      const result = await applyDeviceState(getModel(modelId), plan);
-      if (result.errors.length) console.warn("device readback issues:", result.errors);
-      // Per-node provenance: nodes whose body read failed still show their plan
-      // default, so the graph/inspector flag them as not read from the device.
-      plan.unreadNodes = result.unreadNodes;
-      graph.setModel(getModel(modelId), plan);
-      selection = null;
-      refreshInspector();
-      dirty = true;
-      // Nodes the readback tried but could not confirm (left at their plan default).
-      const unread = result.unreadNodes.size;
-      setStatus(
-        result.errors.length
-          ? t().status.fetchPartial(result.applied, result.errors.length, unread)
-          : unread
-            ? t().status.fetchedUnread(device.model, result.applied, unread)
-            : t().status.fetchedDevice(device.model, result.applied),
-      );
-    }),
-  );
+        // The connected device may be a different model than the one selected.
+        // Offer to switch the UI to the device's model (a fresh plan) so the
+        // fetched values map onto the right channels; otherwise abort.
+        if (device.model !== modelId) {
+          if (!MODEL_IDS.includes(device.model as ModelId)) {
+            setStatus(t().status.fetchError(t().error.unknownModel(device.model)));
+            return;
+          }
+          if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) {
+            setStatus(t().status.canceled);
+            return;
+          }
+          loadPlan(emptyPlan(device.model as ModelId));
+        }
+        const result = await applyDeviceState(getModel(modelId), plan, controller.signal);
+        if (result.errors.length) console.warn("device readback issues:", result.errors);
+        // Per-node provenance: nodes whose body read failed still show their plan
+        // default, so the graph/inspector flag them as not read from the device.
+        plan.unreadNodes = result.unreadNodes;
+        graph.setModel(getModel(modelId), plan);
+        selection = null;
+        refreshInspector();
+        dirty = true;
+        // Nodes the readback tried but could not confirm (left at their plan default).
+        const unread = result.unreadNodes.size;
+        setStatus(
+          result.errors.length
+            ? t().status.fetchPartial(result.applied, result.errors.length, unread)
+            : unread
+              ? t().status.fetchedUnread(device.model, result.applied, unread)
+              : t().status.fetchedDevice(device.model, result.applied),
+        );
+        // Read failures are otherwise console-only: capture a report to offer after
+        // disconnect (below), so the per-group reasons are visible without the console.
+        if (result.errors.length) {
+          report = { filename: `${modelId}-fetch-errors.md`, markdown: formatReadbackReport(device.model, result) };
+        }
+      });
+    } finally {
+      fetchAbort = null;
+      fetchBtn.textContent = t().toolbar.fetchDevice;
+    }
+    await offerErrorReport(report);
+  });
 
   // Write the plan to the connected device: diff the plan against the device's
   // current values, confirm the change count, then send only what differs.
@@ -748,66 +798,111 @@ if (!DEMO) {
     if (!enabled) return;
     const writeBtn = $<HTMLButtonElement>("btn-write");
     writeBtn.disabled = false;
-    writeBtn.addEventListener("click", () =>
-      withDevice(t().status.writeConnecting, t().status.writeError, async (device) => {
-        if (device.model !== modelId) {
-          setStatus(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
-          return;
-        }
-        const { diffs, errors } = await diffPlan(getModel(modelId), plan);
-        if (errors.length) console.warn("device diff issues:", errors);
-        // CH SETTING names are string params outside the numeric diff; diff them
-        // separately so a name-only change still counts and writes.
-        const { writes: nameWrites, errors: nameErrors } = await diffNames(getModel(modelId), plan);
-        if (nameErrors.length) console.warn("device name diff issues:", nameErrors);
-        const total = diffs.length + nameWrites.length;
-        if (total === 0) {
-          setStatus(t().status.writeNoChanges);
-          return;
-        }
-        if (!(await confirmDialog(t().confirm.write(total)))) {
-          setStatus(t().status.canceled);
-          return;
-        }
-        const { outcomes, residual } = await sendConverging(getModel(modelId), plan, diffs);
-        const nameOutcomes = await sendNames(nameWrites);
-        const failed = [...outcomes, ...nameOutcomes].filter((o) => !o.ok);
-        if (failed.length) console.warn("device write failures:", failed);
-        if (residual.length) console.warn("device write did not converge:", residual);
-        setStatus(
-          failed.length
-            ? t().status.writePartial(total - failed.length, failed.length)
-            : residual.length
-              ? t().status.writeResidual(residual.length)
-              : t().status.written(total),
-        );
-      }),
-    );
+    // Like fetch: a click cancels an in-flight write, else starts one. The diff +
+    // converging send is serial and stalls on a dropped link, so the controller's
+    // signal threads into diffPlan and sendConverging (both check throwIfAborted
+    // between round-trips); the string name diff/send are bracketed by explicit
+    // abort checks since they take no signal.
+    writeBtn.addEventListener("click", async () => {
+      if (writeAbort) {
+        writeAbort.abort();
+        return;
+      }
+      const controller = new AbortController();
+      const { signal } = controller;
+      writeAbort = controller;
+      writeBtn.textContent = t().toolbar.writeCancel;
+      let report: ErrorReport = null;
+      try {
+        await withDevice(t().status.writeConnecting, t().status.writeError, async (device) => {
+          if (device.model !== modelId) {
+            setStatus(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
+            return;
+          }
+          const { diffs, errors } = await diffPlan(getModel(modelId), plan, signal);
+          if (errors.length) console.warn("device diff issues:", errors);
+          // CH SETTING names are string params outside the numeric diff; diff them
+          // separately so a name-only change still counts and writes.
+          signal.throwIfAborted();
+          const { writes: nameWrites, errors: nameErrors } = await diffNames(getModel(modelId), plan);
+          if (nameErrors.length) console.warn("device name diff issues:", nameErrors);
+          const total = diffs.length + nameWrites.length;
+          if (total === 0) {
+            setStatus(t().status.writeNoChanges);
+            return;
+          }
+          if (!(await confirmDialog(t().confirm.write(total)))) {
+            setStatus(t().status.canceled);
+            return;
+          }
+          const { outcomes, residual } = await sendConverging(getModel(modelId), plan, diffs, 3, 300, signal);
+          signal.throwIfAborted();
+          const nameOutcomes = await sendNames(nameWrites);
+          // Normalize the two outcome shapes (numeric command vs string name write)
+          // to {name, error} so the count and the saved report share one list.
+          const failed = [
+            ...outcomes.filter((o) => !o.ok).map((o) => ({ name: o.command.name, error: o.error })),
+            ...nameOutcomes
+              .filter((o) => !o.ok)
+              .map((o) => ({ name: `name ${o.write.param}:${o.write.y}`, error: o.error })),
+          ];
+          if (failed.length) console.warn("device write failures:", failed);
+          if (residual.length) console.warn("device write did not converge:", residual);
+          setStatus(
+            failed.length
+              ? t().status.writePartial(total - failed.length, failed.length)
+              : residual.length
+                ? t().status.writeResidual(residual.length)
+                : t().status.written(total),
+          );
+          // Failures/non-convergence are otherwise console-only: capture a report to
+          // offer after disconnect (below), so the reasons are visible without the console.
+          if (failed.length || residual.length) {
+            report = { filename: `${modelId}-write-errors.md`, markdown: formatWriteReport(device.model, failed, residual) };
+          }
+        });
+      } finally {
+        writeAbort = null;
+        writeBtn.textContent = t().toolbar.writeDevice;
+      }
+      await offerErrorReport(report);
+    });
 
     // Device self-test (experimental): read the device, write a perturbed copy,
     // verify it matches, then restore. It owns its own connection, so it does not
     // go through withDevice. Reports are console.warn'd (not log) so they reach
     // the dev-server log for a headless read.
+    const selfTestBtn = $<HTMLButtonElement>("btn-selftest");
+    selfTestBtn.hidden = false;
+    // selfTestAbort (module scope) holds the in-flight run's controller, so a second
+    // menu click cancels instead of starting another run (the run can take minutes
+    // of serial round-trips, and stalls entirely if the device link drops mid-test).
+
     async function runDeviceSelfTest(): Promise<void> {
+      const controller = new AbortController();
+      selfTestAbort = controller;
+      selfTestBtn.textContent = t().toolbar.selfTestCancel;
       setStatus(t().status.selfTestRunning);
       try {
-        const report = await runSelfTest(getModel(modelId));
-        console.warn(`[self-test] ${report.ok ? "PASS" : "FAIL"}`, JSON.stringify(report));
+        const report = await runSelfTest(getModel(modelId), 300, controller.signal);
+        console.warn(`[self-test] ${report.aborted ? "CANCELLED" : report.ok ? "PASS" : "FAIL"}`, JSON.stringify(report));
         if (report.errors.length) console.warn("[self-test] issues:", JSON.stringify(report.errors));
         if (report.residual.length) console.warn("[self-test] mismatches:", JSON.stringify(report.residual));
         const verdicts = summarizeVerdicts(report.unverified);
         setStatus(
-          !report.restored
-            ? t().status.selfTestRestoreFail
-            : report.unverified.length
-              ? t().status.selfTestUnverified(verdicts.confirmed, verdicts.refuted, verdicts.untestable)
-              : report.ok
-                ? t().status.selfTestPass(report.written)
-                : t().status.selfTestFail(report.residual.length),
+          report.aborted
+            ? t().status.selfTestCancelled
+            : !report.restored
+              ? t().status.selfTestRestoreFail
+              : report.unverified.length
+                ? t().status.selfTestUnverified(verdicts.confirmed, verdicts.refuted, verdicts.untestable)
+                : report.ok
+                  ? t().status.selfTestPass(report.written)
+                  : t().status.selfTestFail(report.residual.length),
         );
         // Confirmation workflow: when the model has unverified guesses (URX22/44),
         // offer to save the human-readable report so the owner can send it back.
-        if (report.unverified.length && (await confirmDialog(t().confirm.selfTestExport))) {
+        if (!report.aborted && report.unverified.length && (await confirmDialog(t().confirm.selfTestExport))) {
           await saveTextDocument(`${modelId}-self-test.md`, formatSelfTestReport(report), {
             ext: "md",
             label: t().filter.report,
@@ -817,13 +912,19 @@ if (!DEMO) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn("[self-test] ERROR", message);
         setStatus(connectFailureStatus(err, t().status.selfTestError));
+      } finally {
+        selfTestAbort = null;
+        selfTestBtn.textContent = t().toolbar.selfTest;
       }
     }
 
-    const selfTestBtn = $<HTMLButtonElement>("btn-selftest");
-    selfTestBtn.hidden = false;
-    // Destructive-then-restored, so the menu action confirms first.
+    // A click cancels an in-flight run; otherwise it confirms first (the run is
+    // destructive-then-restored) and starts one.
     selfTestBtn.addEventListener("click", async () => {
+      if (selfTestAbort) {
+        selfTestAbort.abort();
+        return;
+      }
       if (await confirmDialog(t().confirm.selfTest)) await runDeviceSelfTest();
     });
     // Headless trigger: when launched with --self-test, run it once on startup
@@ -877,6 +978,10 @@ if (!DEMO) {
         liveDeviceLabel = device.model;
         live.begin();
         follow?.begin();
+        // Watch the held-open link: if it drops while idle (no edit in flight to
+        // surface "worker is gone"), drop the session instead of freezing. The
+        // callback is idempotent — deactivateLive no-ops once sync is already off.
+        vdWatchLink(() => deactivateLive(t().status.liveError(t().error.linkLost)));
         setLiveUi(true);
         consoleView.setLive(true);
         setStatus(t().status.liveOn(device.model, result.applied));

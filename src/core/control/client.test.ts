@@ -7,8 +7,8 @@ import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
 vi.mock("../platform", () => ({ vdGet: vi.fn(), vdSet: vi.fn() }));
 
 import { vdGet, vdSet } from "../platform";
-import { diffPlan, dryRun, sendCommands, sendConverging, sendPlan } from "./client";
-import { planToCommands } from "./translate";
+import { diffPlan, dryRun, formatWriteReport, sendCommands, sendConverging, sendPlan } from "./client";
+import { planToCommands, type VdCommand } from "./translate";
 import { PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { PORT_REF_NONE } from "./vd";
 
@@ -162,5 +162,34 @@ describe("sendConverging", () => {
     const r = await sendConverging(model, dirtyPlan(), undefined, 3, 0);
     expect(r.rounds).toBe(3);
     expect(r.residual.some((d) => d.command.paramId === 140)).toBe(true);
+  });
+});
+
+describe("formatWriteReport", () => {
+  // The report reads only name/paramId/x/y/vdValue, so stub a minimal command
+  // (the full VdCommand carries planValue/request, irrelevant to formatting).
+  const cmd = (name: string, paramId: number, vdValue: number) =>
+    ({ name, paramId, x: 0, y: 1, vdValue }) as unknown as VdCommand;
+
+  it("lists write failures with their error", () => {
+    const md = formatWriteReport("URX44V", [{ name: "CH1 GATE", error: "timed out" }], []);
+    expect(md).toContain("Write failures: 1");
+    expect(md).toContain("- CH1 GATE — timed out");
+  });
+
+  it("lists non-converged params with wrote vs device value", () => {
+    const md = formatWriteReport("URX44V", [], [{ command: cmd("CH1 ON", 140, 1), current: 0 }]);
+    expect(md).toContain("did not converge: 1");
+    expect(md).toContain("CH1 ON @ 140:0:1 — wrote 1, device has 0");
+  });
+
+  it("renders an unreadable device value rather than crashing", () => {
+    const md = formatWriteReport("URX44V", [], [{ command: cmd("CH1 ON", 140, 1), current: null }]);
+    expect(md).toContain("device has unreadable");
+  });
+
+  it("falls back to a generic reason when an outcome has no error string", () => {
+    const md = formatWriteReport("URX44V", [{ name: "CH2 EQ" }], []);
+    expect(md).toContain("- CH2 EQ — unknown error");
   });
 });

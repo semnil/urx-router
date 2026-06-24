@@ -300,6 +300,23 @@ any other connect-stage fault falls back to the action's own error formatter. Be
 pre-check, fetch and live sync connect *before* prompting to discard edits, so a no-device state is reported
 plainly without first disturbing the plan.
 
+### Cancelling a long operation
+
+Fetch, write, and self-test each round-trip the whole device serially over one connection, so a stalled link can
+take minutes. Each therefore holds an `AbortController` and toggles its menu item to a "Cancel" label while
+running (a second click calls `abort()`). The signal is checked between round-trips in the readback
+(`applyDeviceState`) and the diff/send (`diffPlan` / `sendConverging`); the in-flight round-trip is allowed to
+finish (leaving the device consistent) before bailing. A cancel surfaces through `withDevice` as `status.canceled`.
+
+### Reporting a drop or partial failure
+
+A link that drops *during* a command surfaces on the next operation as a broker error, but a held-open connection
+sitting **idle** (live sync with no edits) would go unnoticed. To close that gap the Rust worker pushes a single
+`LinkEvent` to the frontend the moment `pump` detects the drop (`vdWatchLink`), and the frontend tears the live
+session down. When fetch or write fails on individual reads/writes, the count is shown in the status and the user
+is offered a Markdown report of each failure (`formatReadbackReport` / `formatWriteReport`); the save dialog is
+presented after the connection is released.
+
 ## Responsive layout (mobile)
 
 The inspector — a fixed 300px column on desktop — becomes a bottom sheet (a rack drawer that slides up

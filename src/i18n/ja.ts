@@ -26,8 +26,11 @@ export const ja: Messages = {
     labelsHint: "キャンバスのラベル: ツール標準のチャンネル名 (CH 1) かデバイスで設定した名前 (ch 1)",
     device: "デバイス",
     fetchDevice: "デバイスから取得",
+    fetchCancel: "取得を中止",
     writeDevice: "デバイスへ書き込み",
+    writeCancel: "書き込みを中止",
     selfTest: "セルフテスト (実験的)",
+    selfTestCancel: "セルフテストを中止",
     liveSync: "実機ライブ同期",
     liveSyncHint: "編集を接続中のデバイスへ即時反映する",
     liveTag: "LIVE",
@@ -253,7 +256,8 @@ export const ja: Messages = {
     writePartial: (n: number, failed: number): string => `${n} 件書き込み、${failed} 件失敗`,
     writeResidual: (n: number): string => `書き込みましたが ${n} 件が反映されませんでした (コンソール参照)`,
     writeError: (message: string): string => `デバイスへの書き込みに失敗しました: ${message}`,
-    selfTestRunning: "デバイスのセルフテストを実行中… 切断しないでください",
+    selfTestRunning: "デバイスのセルフテストを実行中… 切断しないでください (メニューから中止できます)",
+    selfTestCancelled: "セルフテストを中止しました — デバイスは無音状態です。元に戻すには再度取得してください",
     selfTestPass: (n: number): string => `セルフテスト合格: ${n} 件のパラメータを書き込み、同一に読み戻しました`,
     selfTestFail: (n: number): string => `セルフテスト失敗: 書き込み後に ${n} 件が一致しませんでした (コンソール参照)`,
     selfTestRestoreFail: "セルフテスト: デバイスが復元されていない可能性があります — 再度取得して確認してください",
@@ -295,12 +299,15 @@ export const ja: Messages = {
       "デバイスのセルフテストを実行しますか? 全パラメータを一時的に上書きして書き込みを検証し、元の状態に復元します。実行中は出力をミュート (フェーダー最小・発振器/ファンタム OFF) します。",
     selfTestExport:
       "この機種には未確認のパラメータ対応があります。確認のため返送できるよう、セルフテストのレポートを保存しますか?",
+    deviceErrorExport:
+      "一部のパラメータを読み取り/書き込みできませんでした。各失敗を記載したレポートを保存しますか?",
   },
   filter: {
     plan: "URX Router 計画",
     png: "PNG 画像",
     pdf: "PDF 文書",
     report: "セルフテストのレポート",
+    errorReport: "デバイスエラーレポート",
   },
   error: {
     noRule: "この経路は接続できません",
@@ -309,6 +316,7 @@ export const ja: Messages = {
     cannotConnect: "接続できません",
     brokerUnreachable: "Device Center が起動していません。起動して URX を接続してから再度お試しください。",
     noDevice: "Device Center は起動していますが、URX が接続されていません。本体を接続してから再度お試しください。",
+    linkLost: "デバイスとの接続が切断されました (USB 抜去または Device Center 終了)",
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。書き込む前に一致する計画を開くか切り替えてください。`,

@@ -35,10 +35,15 @@ export interface DiffResult {
  * parameter is written rather than silently skipped). The caller must have
  * connected first (platform.vdConnect).
  */
-export async function diffPlan(model: DeviceModel, plan: Plan): Promise<DiffResult> {
+export async function diffPlan(
+  model: DeviceModel,
+  plan: Plan,
+  signal?: AbortSignal,
+): Promise<DiffResult> {
   const diffs: CommandDiff[] = [];
   const errors: string[] = [];
   for (const command of planToCommands(model, plan)) {
+    signal?.throwIfAborted();
     try {
       const current = await vdGet(command.paramId, command.x, command.y);
       if (current !== command.vdValue) diffs.push({ command, current });
@@ -61,9 +66,13 @@ export interface SendOutcome {
  * outcome is reported so a partial failure stays visible. The caller must have
  * connected first (platform.vdConnect).
  */
-export async function sendCommands(commands: VdCommand[]): Promise<SendOutcome[]> {
+export async function sendCommands(
+  commands: VdCommand[],
+  signal?: AbortSignal,
+): Promise<SendOutcome[]> {
   const outcomes: SendOutcome[] = [];
   for (const command of commands) {
+    signal?.throwIfAborted();
     try {
       await vdSet(command.paramId, command.x, command.y, command.vdValue);
       outcomes.push({ command, ok: true });
@@ -151,12 +160,14 @@ export async function sendConverging(
   initialDiffs?: CommandDiff[],
   maxRounds = 3,
   settleMs = 300,
+  signal?: AbortSignal,
 ): Promise<ConvergeResult> {
   const outcomes: SendOutcome[] = [];
-  let residual = initialDiffs ?? (await diffPlan(model, plan)).diffs;
+  let residual = initialDiffs ?? (await diffPlan(model, plan, signal)).diffs;
   let rounds = 0;
   while (residual.length > 0 && rounds < maxRounds) {
-    outcomes.push(...(await sendCommands(residual.map((d) => d.command))));
+    signal?.throwIfAborted();
+    outcomes.push(...(await sendCommands(residual.map((d) => d.command), signal)));
     rounds++;
     // A side-effect reset (e.g. from a COMP/EQ-type change) lands asynchronously,
     // a beat after the write returns. Let it settle before re-reading, so the
@@ -164,7 +175,39 @@ export async function sendConverging(
     // racing a reset still in flight. (settleMs = 0 in tests, where the mock has
     // no async reset.)
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
-    residual = (await diffPlan(model, plan)).diffs;
+    residual = (await diffPlan(model, plan, signal)).diffs;
   }
   return { outcomes, rounds, residual };
+}
+
+/**
+ * Render a write's failures as human-readable Markdown the user can save, so the
+ * per-command reasons (otherwise console-only) are visible off the status bar.
+ * `failed` is the failed send/name outcomes (normalized to name + error);
+ * `residual` is the diff that never converged (the device still differs). Pure.
+ */
+export function formatWriteReport(
+  model: string,
+  failed: Array<{ name: string; error?: string }>,
+  residual: CommandDiff[],
+): string {
+  const lines: string[] = [];
+  lines.push(`# URX write report — ${model}`);
+  lines.push("");
+  lines.push(`- Write failures: ${failed.length}; parameters that did not converge: ${residual.length}`);
+  if (failed.length) {
+    lines.push("");
+    lines.push("## Write failures");
+    for (const f of failed) lines.push(`- ${f.name} — ${f.error ?? "unknown error"}`);
+  }
+  if (residual.length) {
+    lines.push("");
+    lines.push("## Did not converge (device value still differs)");
+    for (const d of residual) {
+      const c = d.command;
+      lines.push(`- ${c.name} @ ${c.paramId}:${c.x}:${c.y} — wrote ${c.vdValue}, device has ${d.current ?? "unreadable"}`);
+    }
+  }
+  lines.push("");
+  return lines.join("\n");
 }

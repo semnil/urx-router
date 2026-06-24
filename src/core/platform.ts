@@ -223,6 +223,23 @@ export function vdParamsSubscribe(
   return () => void invoke<void>("vd_params_unsubscribe").catch(() => {});
 }
 
+// The Rust side streams LinkEvent with snake_case fields (serde default).
+interface RawLinkEvent {
+  reason: string;
+}
+
+/**
+ * Watch the held-open live connection for an idle drop: `onDrop` fires once if
+ * the worker loses the broker link while no command is in flight, so a live
+ * session does not silently freeze. The channel dies with the worker on
+ * disconnect, so no explicit unwatch is needed. No-op outside Tauri.
+ */
+export function vdWatchLink(onDrop: (reason: string) => void): void {
+  if (!isTauri()) return;
+  const channel = newChannel<RawLinkEvent>((d) => onDrop(d.reason));
+  void invoke<void>("vd_watch_link", { channel });
+}
+
 /** Close the live connection (no-op if not connected). */
 export function vdDisconnect(): Promise<void> {
   return invoke<void>("vd_disconnect");

@@ -31,6 +31,14 @@ pub struct MeterUpdate {
     pub value: i64,
 }
 
+/// A link-lifecycle event pushed to the frontend. Currently only emitted when the
+/// worker loses the broker connection while idle (no command in flight), so a
+/// held-open live session can be dropped instead of silently freezing.
+#[derive(Clone, Serialize)]
+pub struct LinkEvent {
+    pub reason: String,
+}
+
 /// One device-originated parameter change pushed to the frontend: a `notify` on
 /// a registered `/vd/parameters/{id}:{x}:{y}` address. `value` is the same raw
 /// broker integer vd_get returns, decoded on the JS side. Lets the UI follow
@@ -93,6 +101,12 @@ pub enum Cmd {
     },
     /// Drop the current parameter subscription (unregisters each address).
     ParamsUnsubscribe,
+    /// Register a channel to receive the link-lost event (see LinkEvent). Replaces
+    /// any prior watch. Fire-and-forget; the worker pushes one event if the broker
+    /// link drops while idle, then exits.
+    WatchLink {
+        channel: Channel<LinkEvent>,
+    },
     Shutdown,
 }
 
@@ -218,6 +232,11 @@ pub fn params_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
     tx.send(Cmd::ParamsUnsubscribe).map_err(|_| "control worker is gone".to_string())
 }
 
+/// Register a channel to receive the link-lost event. Replaces any prior watch.
+pub fn watch_link(tx: Sender<Cmd>, channel: Channel<LinkEvent>) -> Result<(), String> {
+    tx.send(Cmd::WatchLink { channel }).map_err(|_| "control worker is gone".to_string())
+}
+
 /// Close any live connection. Safe to call when not connected.
 pub fn disconnect(state: &VdState) {
     if let Some(tx) = state.tx.lock().unwrap().take() {
@@ -227,7 +246,7 @@ pub fn disconnect(state: &VdState) {
 
 #[cfg(desktop)]
 mod imp {
-    use super::{Cmd, DeviceSummary, MeterUpdate, ParamUpdate};
+    use super::{Cmd, DeviceSummary, LinkEvent, MeterUpdate, ParamUpdate};
     use std::net::TcpStream;
     use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
     use std::time::{Duration, Instant};
@@ -275,6 +294,10 @@ mod imp {
         // notifies and the registered addresses (unregistered on change / drop).
         let mut param_ch: Option<Channel<ParamUpdate>> = None;
         let mut param_addrs: Vec<(u32, i64, i64)> = Vec::new();
+        // Channel to push the one-shot link-lost event on, if the frontend is
+        // watching: a held-open live session is dropped instead of freezing when
+        // the broker link goes away while idle.
+        let mut link_ch: Option<Channel<LinkEvent>> = None;
 
         loop {
             match rx.recv_timeout(Duration::from_millis(50)) {
@@ -334,13 +357,20 @@ mod imp {
                     param_addrs.clear();
                     param_ch = None;
                 }
+                Ok(Cmd::WatchLink { channel }) => {
+                    link_ch = Some(channel);
+                }
                 Err(RecvTimeoutError::Timeout) => {
                     // Drain the idle socket so its buffer never backs up. While a
                     // meter / parameter subscription is active, forward those
                     // notifications to the frontend instead of discarding them; stop
-                    // if the link dropped.
+                    // if the link dropped, pushing the link-lost event first so a
+                    // held-open live session is dropped instead of freezing silently.
                     if let Err(e) = pump(&mut ws, meter_ch.as_ref(), param_ch.as_ref()) {
                         eprintln!("vd: {e}; stopping control worker");
+                        if let Some(ch) = &link_ch {
+                            let _ = ch.send(LinkEvent { reason: e });
+                        }
                         break;
                     }
                 }
