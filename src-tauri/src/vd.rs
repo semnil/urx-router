@@ -132,7 +132,7 @@ pub fn open() -> Result<(Sender<Cmd>, DeviceSummary), String> {
         std::thread::spawn(move || imp::worker(rx, ready_tx));
         let summary = ready_rx
             .recv()
-            .map_err(|_| "control worker exited before handshake".to_string())??;
+            .map_err(|_| "control-worker-gone".to_string())??;
         Ok((tx, summary))
     }
 }
@@ -165,39 +165,39 @@ pub fn sender(state: &VdState) -> Result<Sender<Cmd>, String> {
 pub fn set(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64, value: i64) -> Result<(), String> {
     let (reply, wait) = mpsc::channel();
     tx.send(Cmd::Set { param_id, x, y, value, reply })
-        .map_err(|_| "control worker is gone".to_string())?;
-    wait.recv().map_err(|_| "no response from control worker".to_string())?
+        .map_err(|_| "control-worker-gone".to_string())?;
+    wait.recv().map_err(|_| "control-worker-gone".to_string())?
 }
 
 /// Read one parameter instance's current absolute value.
 pub fn get(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
     let (reply, wait) = mpsc::channel();
     tx.send(Cmd::Get { param_id, x, y, reply })
-        .map_err(|_| "control worker is gone".to_string())?;
-    wait.recv().map_err(|_| "no response from control worker".to_string())?
+        .map_err(|_| "control-worker-gone".to_string())?;
+    wait.recv().map_err(|_| "control-worker-gone".to_string())?
 }
 
 /// Set one string-valued parameter instance (e.g. a CH SETTING name).
 pub fn set_str(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64, value: String) -> Result<(), String> {
     let (reply, wait) = mpsc::channel();
     tx.send(Cmd::SetStr { param_id, x, y, value, reply })
-        .map_err(|_| "control worker is gone".to_string())?;
-    wait.recv().map_err(|_| "no response from control worker".to_string())?
+        .map_err(|_| "control-worker-gone".to_string())?;
+    wait.recv().map_err(|_| "control-worker-gone".to_string())?
 }
 
 /// Read one string-valued parameter instance's current value.
 pub fn get_str(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64) -> Result<String, String> {
     let (reply, wait) = mpsc::channel();
     tx.send(Cmd::GetStr { param_id, x, y, reply })
-        .map_err(|_| "control worker is gone".to_string())?;
-    wait.recv().map_err(|_| "no response from control worker".to_string())?
+        .map_err(|_| "control-worker-gone".to_string())?;
+    wait.recv().map_err(|_| "control-worker-gone".to_string())?
 }
 
 /// The currently connected device, or an error if not connected.
 pub fn info(tx: Sender<Cmd>) -> Result<DeviceSummary, String> {
     let (reply, wait) = mpsc::channel();
-    tx.send(Cmd::Info { reply }).map_err(|_| "control worker is gone".to_string())?;
-    wait.recv().map_err(|_| "no response from control worker".to_string())
+    tx.send(Cmd::Info { reply }).map_err(|_| "control-worker-gone".to_string())?;
+    wait.recv().map_err(|_| "control-worker-gone".to_string())
 }
 
 /// Subscribe to live level meters; readings stream through `channel`. Replaces
@@ -208,12 +208,12 @@ pub fn meters_subscribe(
     channel: Channel<MeterUpdate>,
 ) -> Result<(), String> {
     tx.send(Cmd::MetersSubscribe { addrs, channel })
-        .map_err(|_| "control worker is gone".to_string())
+        .map_err(|_| "control-worker-gone".to_string())
 }
 
 /// Drop the current meter subscription.
 pub fn meters_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
-    tx.send(Cmd::MetersUnsubscribe).map_err(|_| "control worker is gone".to_string())
+    tx.send(Cmd::MetersUnsubscribe).map_err(|_| "control-worker-gone".to_string())
 }
 
 /// Subscribe to device-side parameter changes; notifies stream through `channel`.
@@ -224,17 +224,17 @@ pub fn params_subscribe(
     channel: Channel<ParamUpdate>,
 ) -> Result<(), String> {
     tx.send(Cmd::ParamsSubscribe { addrs, channel })
-        .map_err(|_| "control worker is gone".to_string())
+        .map_err(|_| "control-worker-gone".to_string())
 }
 
 /// Drop the current parameter subscription.
 pub fn params_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
-    tx.send(Cmd::ParamsUnsubscribe).map_err(|_| "control worker is gone".to_string())
+    tx.send(Cmd::ParamsUnsubscribe).map_err(|_| "control-worker-gone".to_string())
 }
 
 /// Register a channel to receive the link-lost event. Replaces any prior watch.
 pub fn watch_link(tx: Sender<Cmd>, channel: Channel<LinkEvent>) -> Result<(), String> {
-    tx.send(Cmd::WatchLink { channel }).map_err(|_| "control worker is gone".to_string())
+    tx.send(Cmd::WatchLink { channel }).map_err(|_| "control-worker-gone".to_string())
 }
 
 /// Close any live connection. Safe to call when not connected.

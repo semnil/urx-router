@@ -41,6 +41,7 @@ test("Hide unused shelves only zero-wire nodes, keeping every wired node", async
   await expect(wires(page)).toHaveCount(FIXED + 1);
   await expect(page.locator(".hidden-shelf")).toBeHidden();
 
+  await page.click("#btn-view");
   await page.click("#btn-hide-unused");
 
   await expect(page.locator(".hidden-shelf")).toBeVisible();
@@ -54,6 +55,7 @@ test("Hide unused shelves only zero-wire nodes, keeping every wired node", async
 
 test("a shelf chip restores its node and selects it", async ({ page }) => {
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
+  await page.click("#btn-view");
   await page.click("#btn-hide-unused");
   const hiddenBefore = await chips(page).count();
 
@@ -69,6 +71,7 @@ test("a shelf chip restores its node and selects it", async ({ page }) => {
 test("Show all empties the shelf and brings every node back", async ({ page }) => {
   const total = await nodes(page).count();
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
+  await page.click("#btn-view");
   await page.click("#btn-hide-unused");
   await expect(nodes(page)).toHaveCount(WIRED);
 
@@ -94,6 +97,7 @@ test("inspector hides a selected unconnected node", async ({ page }) => {
 
 test("hidden state round-trips through save and open", async ({ page }, testInfo) => {
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
+  await page.click("#btn-view");
   await page.click("#btn-hide-unused");
   const hiddenCount = await chips(page).count();
 

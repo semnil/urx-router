@@ -76,6 +76,7 @@ test("the inspector shows no note field for a selected node", async ({ page }) =
 test("Arrange spaces a column by the expanded note's height (no overlap)", async ({ page }) => {
   // ch2 sits directly below ch1 in the channel column.
   await addNote(page, "ch1", "line one\nline two\nline three");
+  await page.click("#btn-view");
   await page.click("#btn-auto");
   await page.waitForTimeout(150);
   const a = await node(page, "ch1").boundingBox();

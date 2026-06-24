@@ -23,6 +23,7 @@ test("the name field sets the device name; the canvas shows it only in device-na
   await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
 
   // Switching the labels toggle to device names reveals the entered name.
+  await page.click("#btn-view");
   await page.locator("#btn-labels").click();
   await expect(node(page, "ch1").locator("text").first()).toHaveText("VocalMic");
 
@@ -38,10 +39,12 @@ test("the labels toggle defaults to model labels and flips both ways", async ({ 
   await expect(labels).toHaveAttribute("aria-pressed", "false");
   await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
 
+  await page.click("#btn-view");
   await labels.click();
   await expect(labels).toHaveAttribute("aria-pressed", "true");
   await expect(node(page, "ch1").locator("text").first()).toHaveText("VocalMic");
 
+  await page.click("#btn-view");
   await labels.click();
   await expect(labels).toHaveAttribute("aria-pressed", "false");
   await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
@@ -71,6 +74,7 @@ test("a color swatch adds a top accent cap; re-clicking it clears the cap", asyn
 
 test("name and color round-trip through save and open", async ({ page }, testInfo) => {
   // Show device names on the canvas so the saved/restored name is visible there.
+  await page.click("#btn-view");
   await page.locator("#btn-labels").click();
   await node(page, "ch1").click();
   await nameInput(page).fill("VocalMic");

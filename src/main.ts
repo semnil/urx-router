@@ -22,7 +22,7 @@ import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { renderInspector } from "./ui/inspector";
 import { Console } from "./ui/console";
-import { getLang, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
+import { getLang, LANG_CODES, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
 import { DEMO } from "./core/env";
 import {
   checkUpdate,
@@ -52,12 +52,22 @@ const inspectorHost = $<HTMLElement>("inspector");
 const consoleHost = $<HTMLElement>("console-host");
 const statusbar = $<HTMLElement>("statusbar");
 
-// Initial theme follows a saved choice first, then the OS color scheme, falling
-// back to the studio-rack dark default when the OS does not prefer light.
-function detectTheme(): ThemeName {
+// Theme mode mirrors the analyze tools: "light" | "dark" | "auto", where auto
+// follows the OS color scheme. A fresh install defaults to auto; an explicit
+// light/dark choice (including ones saved before auto existed) is honored.
+type ThemeMode = "light" | "dark" | "auto";
+
+function systemDark(): boolean {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+function detectThemeMode(): ThemeMode {
   const saved = localStorage.getItem("urx-theme");
-  if (saved === "light" || saved === "dark") return saved;
-  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  return saved === "light" || saved === "dark" || saved === "auto" ? saved : "auto";
+}
+
+function resolveTheme(mode: ThemeMode): ThemeName {
+  return mode === "auto" ? (systemDark() ? "dark" : "light") : mode;
 }
 
 // E2E pins an empty starting board (just the fixed wires) via this flag so
@@ -120,7 +130,8 @@ ensureFixedConnections(getModel(modelId), plan);
 let dirty = false;
 let selection: Selection = null;
 let recent: RecentEntry[] = loadRecent();
-let theme: ThemeName = detectTheme();
+let themeMode: ThemeMode = detectThemeMode();
+let theme: ThemeName = resolveTheme(themeMode);
 document.documentElement.dataset.theme = theme;
 
 // Canvas label source: the planner's fixed labels (default) or the device CH
@@ -442,6 +453,10 @@ const langBtn = $("btn-lang");
 const labelsBtn = $("btn-labels");
 const hideOffBtn = $("btn-hide-off");
 
+// Theme glyphs match the analyze tools: the icon shows the CURRENT mode
+// (sun = light, moon = dark, half-disc = auto), cycled on each click.
+const THEME_ICONS: Record<ThemeMode, string> = { light: "☀", dark: "☾", auto: "◐" };
+
 function applyStaticI18n(): void {
   const m = t();
   $("lbl-model").textContent = m.toolbar.model;
@@ -474,12 +489,15 @@ function applyStaticI18n(): void {
   }
   const liveTally = document.getElementById("live-tally");
   if (liveTally && live?.isActive()) liveTally.textContent = `${m.toolbar.liveTag} · ${liveDeviceLabel}`;
-  // Theme button shows the theme it switches to.
-  themeBtn.textContent = theme === "dark" ? m.toolbar.light : m.toolbar.dark;
-  themeBtn.title = m.toolbar.theme;
-  // Language button shows the language it switches to.
-  langBtn.textContent = getLang() === "en" ? LANG_NAMES.ja : LANG_NAMES.en;
-  langBtn.title = m.toolbar.language;
+  // View menu trigger.
+  $("lbl-view").textContent = m.toolbar.view;
+  $("btn-view").title = m.toolbar.viewHint;
+  applyThemeButton();
+  // Language button: the current language code; the title names the switch target.
+  const cur = getLang();
+  langBtn.textContent = LANG_CODES[cur];
+  langBtn.title = m.toolbar.langTitle[cur];
+  langBtn.setAttribute("aria-label", m.toolbar.language);
   // Labels toggle shows the source the canvas is currently using.
   labelsBtn.textContent = labelSource === "device" ? m.toolbar.labelsDevice : m.toolbar.labelsModel;
   labelsBtn.title = m.toolbar.labelsHint;
@@ -666,14 +684,16 @@ $("btn-hide-unused").addEventListener("click", () => {
 });
 
 // Turn a connect-time failure into a clear, localized status. The Rust vd worker
-// (vd.rs) returns stable codes for the two states the user can act on — Device
-// Center not running, or running with no URX attached — so they get a plain
-// message instead of the raw error wrapped in "<action> failed: …". Anything else
-// (an action failure mid-flow, an unexpected error) falls back to onError.
+// (vd.rs) returns stable kebab-case codes for the states worth a plain message —
+// Device Center not running, running with no URX attached, or the control worker
+// dying / going unresponsive — instead of the raw error wrapped in "<action>
+// failed: …". Anything else (a broker-side action failure, an unexpected error)
+// falls back to onError.
 function connectFailureStatus(err: unknown, onError: (message: string) => string): string {
   const message = err instanceof Error ? err.message : String(err);
   if (message === "broker-unreachable") return t().error.brokerUnreachable;
   if (message === "no-device") return t().error.noDevice;
+  if (message === "control-worker-gone") return t().error.controlWorkerGone;
   return onError(message);
 }
 
@@ -1002,13 +1022,44 @@ if (!DEMO) {
 $("btn-view-graph").addEventListener("click", () => setView("graph"));
 $("btn-view-console").addEventListener("click", () => setView("console"));
 
-themeBtn.addEventListener("click", () => {
-  theme = theme === "dark" ? "light" : "dark";
+// Theme button face: a glyph for the current mode (light/dark/auto); the title
+// and aria-label name the mode and what a click switches to. Shared by the full
+// re-localize and the theme-only repaint so the latter need not redo the whole bar.
+function applyThemeButton(): void {
+  const m = t().toolbar;
+  themeBtn.textContent = THEME_ICONS[themeMode];
+  themeBtn.title = m.themeTitle[themeMode];
+  themeBtn.setAttribute("aria-label", m.themeAria[themeMode]);
+}
+
+// Re-resolve the active theme from the current mode and repaint what reads it: the
+// SVG graph and the theme button (the console is CSS-variable themed and follows
+// along). Only the theme button's text is locale-dependent, so it updates directly
+// rather than re-running the whole toolbar re-localization.
+function applyResolvedTheme(): void {
+  theme = resolveTheme(themeMode);
   document.documentElement.dataset.theme = theme;
-  localStorage.setItem("urx-theme", theme);
   graph.setTheme(theme);
-  applyStaticI18n();
-  setStatus(theme === "dark" ? t().status.themeDark : t().status.themeLight);
+  applyThemeButton();
+}
+
+function setThemeMode(mode: ThemeMode): void {
+  themeMode = mode;
+  localStorage.setItem("urx-theme", mode);
+  applyResolvedTheme();
+  const m = t().status;
+  setStatus(mode === "auto" ? m.themeAuto : theme === "dark" ? m.themeDark : m.themeLight);
+}
+
+// Cycle light -> dark -> auto -> light, matching the analyze tools.
+themeBtn.addEventListener("click", () => {
+  const next: Record<ThemeMode, ThemeMode> = { light: "dark", dark: "auto", auto: "light" };
+  setThemeMode(next[themeMode]);
+});
+
+// Follow the OS color scheme live while in auto mode.
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (themeMode === "auto") applyResolvedTheme();
 });
 
 langBtn.addEventListener("click", () => {
@@ -1045,6 +1096,8 @@ hideOffBtn.addEventListener("click", () => {
 setupMenu($<HTMLButtonElement>("btn-file"), $<HTMLElement>("file-menu"));
 // Device actions (desktop only; the whole menu is hidden in a plain browser).
 setupMenu($<HTMLButtonElement>("btn-device"), $<HTMLElement>("device-menu"));
+// View menu: layout (Arrange) and display toggles (Hide unused / off-sends / labels).
+setupMenu($<HTMLButtonElement>("btn-view"), $<HTMLElement>("view-menu"));
 
 function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
   const items = (): HTMLButtonElement[] =>

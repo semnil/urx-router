@@ -32,6 +32,7 @@ test("Arrange leaves a fresh plan's nodes exactly where they are", async ({ page
   const before: Record<string, string | null> = {};
   for (const id of ids) before[id] = await node(page, id).getAttribute("transform");
 
+  await page.click("#btn-view");
   await page.click("#btn-auto");
 
   for (const id of ids) {

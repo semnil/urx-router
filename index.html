@@ -17,12 +17,18 @@
     <link rel="canonical" href="https://urx-router.semnil.com/" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://urx-router.semnil.com/" />
+    <meta property="og:site_name" content="URX Router" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="ja_JP" />
     <meta property="og:title" content="URX Router — YAMAHA URX22 / URX44 / URX44V routing planner" />
     <meta
       property="og:description"
       content="Plan and visualize routing for the YAMAHA URX22 / URX44 / URX44V in the browser. Desktop app adds save/load, image export, and live device control."
     />
     <meta property="og:image" content="https://raw.githubusercontent.com/semnil/urx-router/main/docs/assets/screenshot-en.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="675" />
+    <meta property="og:image:alt" content="URX Router showing a URX44V routing plan in the dark studio-rack theme" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="URX Router — YAMAHA URX22 / URX44 / URX44V routing planner" />
     <meta
@@ -126,13 +132,38 @@
             </div>
           </div>
           <span class="tool-sep"></span>
-          <button id="btn-auto" type="button">Arrange</button>
-          <button id="btn-hide-unused" type="button">Hide unused</button>
-          <button id="btn-hide-off" type="button" aria-pressed="false"></button>
-          <button id="btn-labels" type="button" aria-pressed="false"></button>
+          <div class="menu">
+            <button
+              id="btn-view"
+              class="menu-trigger"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="view-menu"
+            >
+              <span id="lbl-view">View</span>
+              <svg class="caret" viewBox="0 0 10 6" aria-hidden="true">
+                <path
+                  d="M1 1l4 4 4-4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <div id="view-menu" class="menu-panel" role="menu" aria-labelledby="btn-view" hidden>
+              <button id="btn-auto" class="menu-item" type="button" role="menuitem">Arrange</button>
+              <button id="btn-hide-unused" class="menu-item" type="button" role="menuitem">Hide unused</button>
+              <span class="menu-sep" role="separator"></span>
+              <button id="btn-hide-off" class="menu-item" type="button" role="menuitem" aria-pressed="false"></button>
+              <button id="btn-labels" class="menu-item" type="button" role="menuitem" aria-pressed="false"></button>
+            </div>
+          </div>
           <span class="tool-sep"></span>
-          <button id="btn-theme" type="button"></button>
-          <button id="btn-lang" type="button"></button>
+          <button id="btn-lang" class="icon-btn" type="button"></button>
+          <button id="btn-theme" class="icon-btn" type="button"></button>
           <a
             id="btn-desktop"
             class="desktop-link"
