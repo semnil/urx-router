@@ -27,6 +27,7 @@ import { DEMO } from "./core/env";
 import {
   checkUpdate,
   confirmDialog,
+  errorDialog,
   installUpdate,
   isTauri,
   restartApp,
@@ -169,6 +170,11 @@ ratePicker.value = String(plan.sampleRate);
 // demo build (DEMO folds the ternary to null), so the control layer tree-shakes
 // out exactly as the other device features do.
 let liveDeviceLabel = "";
+// Tracks whether a live session's resources (held connection, follow, live UI)
+// are up — independent of the LiveSync.active flag, which a flush clears the
+// instant it errors. deactivateLive guards on this so an error-path teardown
+// (where active is already false) still drops the connection and resets the UI.
+let liveSessionUp = false;
 // Holds the running self-test's controller (experimental); null when idle. Module
 // scope so applyStaticI18n keeps the button's "Cancel" label across a language
 // switch mid-run, instead of reverting it to "Self-test" while a run is in flight.
@@ -183,7 +189,7 @@ const live = DEMO
   : new LiveSync({
       getModel: () => getModel(modelId),
       getPlan: () => plan,
-      onError: (message) => deactivateLive(t().status.liveError(message)),
+      onError: (message) => stopLiveOnError(message),
       onSent: (n) => setStatus(t().status.liveSynced(n)),
     });
 
@@ -238,7 +244,7 @@ const follow =
           setStatus(t().status.liveFollowed(result.applied));
         },
         onFollow: () => setStatus(t().status.liveFollowing),
-        onError: (message) => deactivateLive(t().status.liveError(message)),
+        onError: (message) => stopLiveOnError(message),
       });
 
 type ViewName = "graph" | "console";
@@ -280,15 +286,26 @@ function setLiveUi(on: boolean): void {
 // Turn live sync off and release the connection. Used by the toggle, by a write
 // failure, and whenever the plan is replaced wholesale (loadPlan).
 function deactivateLive(status?: string): void {
-  if (!live?.isActive()) return;
+  if (!liveSessionUp) return;
+  liveSessionUp = false;
   follow?.end();
-  live.end();
+  live?.end();
   void vdDisconnect();
   setLiveUi(false);
   consoleView.setLive(false);
   // A CH → FX tap shown read-only while live becomes editable again off-line.
   refreshInspector();
   if (status) setStatus(status);
+}
+
+// A live/follow runtime error: stop sync, drop the connection, and surface the
+// cause as a dialog (a mirror that did not complete). Several errors can arrive in
+// one teardown (live + follow); deactivateLive clears liveSessionUp synchronously,
+// so the second and later calls return here before re-showing the dialog.
+function stopLiveOnError(message: string): void {
+  if (!liveSessionUp) return;
+  deactivateLive();
+  showError(t().status.liveError(message));
 }
 
 // An edit changed the plan: flag it unsaved and (when live) mirror it to the
@@ -539,6 +556,14 @@ function setStatus(msg: string): void {
   statusbar.textContent = msg;
 }
 
+// Surface an operation that did not complete as a modal, so it is not missed the
+// way a transient status line can be. Clears the status line first so a stale
+// progress message (e.g. "Connecting…") does not linger behind the dialog.
+function showError(message: string): void {
+  setStatus("");
+  void errorDialog(message);
+}
+
 function refreshInspector(): void {
   // On mobile the inspector is a bottom sheet that slides up only while something
   // is selected; this flag drives that state (no effect on the desktop panel).
@@ -578,7 +603,7 @@ function loadFromText(text: string, path?: string): boolean {
   try {
     const next = deserialize(text);
     if (!MODEL_IDS.includes(next.modelId)) {
-      setStatus(t().status.loadError(t().error.unknownModel(next.modelId)));
+      showError(t().status.loadError(t().error.unknownModel(next.modelId)));
       return false;
     }
     loadPlan(next);
@@ -592,7 +617,7 @@ function loadFromText(text: string, path?: string): boolean {
     return true;
   } catch (err) {
     const message = err instanceof PlanError ? t().error[err.code] : String(err);
-    setStatus(t().status.loadError(message));
+    showError(t().status.loadError(message));
     return false;
   }
 }
@@ -603,7 +628,7 @@ async function openRecent(path: string): Promise<void> {
     const text = await readTextByPath(path);
     loadFromText(text, path);
   } catch (err) {
-    setStatus(t().status.loadError(String(err)));
+    showError(t().status.loadError(String(err)));
   }
 }
 
@@ -644,7 +669,7 @@ $("btn-open").addEventListener("click", async () => {
     if (!doc) return;
     loadFromText(doc.text, doc.path);
   } catch (err) {
-    setStatus(t().status.loadError(String(err)));
+    showError(t().status.loadError(String(err)));
   }
 });
 
@@ -719,7 +744,7 @@ async function withDevice(
     // A cancel (throwIfAborted) surfaces as an AbortError DOMException; show the
     // neutral "canceled" status rather than wrapping it as an action failure.
     if (err instanceof DOMException && err.name === "AbortError") setStatus(t().status.canceled);
-    else setStatus(connectFailureStatus(err, onError));
+    else showError(connectFailureStatus(err, onError));
   }
 }
 
@@ -768,7 +793,7 @@ if (!DEMO) {
         // fetched values map onto the right channels; otherwise abort.
         if (device.model !== modelId) {
           if (!MODEL_IDS.includes(device.model as ModelId)) {
-            setStatus(t().status.fetchError(t().error.unknownModel(device.model)));
+            showError(t().status.fetchError(t().error.unknownModel(device.model)));
             return;
           }
           if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) {
@@ -836,7 +861,7 @@ if (!DEMO) {
       try {
         await withDevice(t().status.writeConnecting, t().status.writeError, async (device) => {
           if (device.model !== modelId) {
-            setStatus(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
+            showError(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
             return;
           }
           const { diffs, errors } = await diffPlan(getModel(modelId), plan, signal);
@@ -931,7 +956,7 @@ if (!DEMO) {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn("[self-test] ERROR", message);
-        setStatus(connectFailureStatus(err, t().status.selfTestError));
+        showError(connectFailureStatus(err, t().status.selfTestError));
       } finally {
         selfTestAbort = null;
         selfTestBtn.textContent = t().toolbar.selfTest;
@@ -967,13 +992,19 @@ if (!DEMO) {
       try {
         device = await vdConnect();
       } catch (err) {
-        setStatus(connectFailureStatus(err, t().status.liveError));
+        showError(connectFailureStatus(err, t().status.liveError));
         return;
       }
-      // Past the connect: any exit must release the held connection first.
+      // Past the connect: any exit must release the held connection first. A
+      // user-neutral exit (canceled) goes to the status line; a failure (failLive)
+      // surfaces as a dialog — both drop the connection first.
       const abort = async (status: string): Promise<void> => {
         await vdDisconnect();
         setStatus(status);
+      };
+      const failLive = async (message: string): Promise<void> => {
+        await vdDisconnect();
+        showError(message);
       };
       if (!(await confirmDiscard())) return await abort(t().status.canceled);
       try {
@@ -981,7 +1012,7 @@ if (!DEMO) {
         // switch the UI to a fresh plan of the device's model (mirrors fetch).
         if (device.model !== modelId) {
           if (!MODEL_IDS.includes(device.model as ModelId)) {
-            return await abort(t().status.liveError(t().error.unknownModel(device.model)));
+            return await failLive(t().status.liveError(t().error.unknownModel(device.model)));
           }
           if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) {
             return await abort(t().status.canceled);
@@ -998,15 +1029,16 @@ if (!DEMO) {
         liveDeviceLabel = device.model;
         live.begin();
         follow?.begin();
+        liveSessionUp = true;
         // Watch the held-open link: if it drops while idle (no edit in flight to
-        // surface "worker is gone"), drop the session instead of freezing. The
-        // callback is idempotent — deactivateLive no-ops once sync is already off.
-        vdWatchLink(() => deactivateLive(t().status.liveError(t().error.linkLost)));
+        // surface "worker is gone"), stop the session instead of freezing. Routed
+        // through the one-shot error path, so it surfaces once as a dialog.
+        vdWatchLink(() => stopLiveOnError(t().error.linkLost));
         setLiveUi(true);
         consoleView.setLive(true);
         setStatus(t().status.liveOn(device.model, result.applied));
       } catch (err) {
-        await abort(t().status.liveError(err instanceof Error ? err.message : String(err)));
+        await failLive(t().status.liveError(err instanceof Error ? err.message : String(err)));
       }
     }
 
