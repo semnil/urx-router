@@ -33,7 +33,7 @@ export const ja: Messages = {
     writeCancel: "書き込みを中止",
     selfTest: "セルフテスト (実験的)",
     selfTestCancel: "セルフテストを中止",
-    liveSync: "実機ライブ同期",
+    liveSync: "ライブ同期",
     liveSyncHint: "編集を接続中のデバイスへ即時反映する",
     liveTag: "LIVE",
     theme: "配色テーマを切り替え",
@@ -53,7 +53,7 @@ export const ja: Messages = {
     language: "言語を切り替え",
     langTitle: { en: "言語: 英語 (クリックで日本語)", ja: "言語: 日本語 (クリックで English)" },
     desktopApp: "デスクトップ版",
-    desktopAppHint: "デスクトップ版を入手 — 計画の保存・読込、画像出力、実機のライブ制御に対応",
+    desktopAppHint: "デスクトップ版を入手 — 計画の保存・読込、画像出力、デバイスのライブ制御に対応",
   },
   console: {
     outputLabel: "出力",
@@ -333,7 +333,7 @@ export const ja: Messages = {
     cannotConnect: "接続できません",
     brokerUnreachable: "Device Center が起動していません。起動して URX を接続してから再度お試しください。",
     noDevice: "Device Center は起動していますが、URX が接続されていません。本体を接続してから再度お試しください。",
-    controlWorkerGone: "実機制御の接続が中断されました。再接続してください。繰り返す場合はアプリを再起動してください。",
+    controlWorkerGone: "デバイス制御の接続が中断されました。再接続してください。繰り返す場合はアプリを再起動してください。",
     linkLost: "デバイスとの接続が切断されました (USB 抜去または Device Center 終了)",
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
