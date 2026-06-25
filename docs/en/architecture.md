@@ -125,6 +125,16 @@ ones outline-only. A drag from an output opens on any possible route; a drag fro
 when a legal source exists. Clicking a single-input port that already holds a source selects that
 wire, the same as clicking the wire itself.
 
+**Uniform OFF display**: every state that silences a node — a muted channel / master / FX / MONITOR
+(`params.on`), a bypassed ducker (`duckerOn`), the oscillator off (`osc.on`) — funnels through the
+`isNodeInactive` predicate, dimming the node and tagging it (MUTE, or OFF for a ducker / the
+oscillator). A node can be in several states at once, so only the highest-ranked one shows —
+**rate-disabled > muted > unread** — to keep the badges from colliding. A fixed send bound to a
+silenced node recedes through the `isOffSend` predicate (dimmed and finely dotted, behind the live
+wires; an OSC → bus wire also when both its L/R assigns are off), and its jacks stop glowing (port
+lighting follows the wires' off-state). A multi-selection lights every wire incident to the whole
+selection, matching the node highlighting.
+
 For the detailed routing rules, see [device-model.md](device-model.md) (derived from the official
 block diagram).
 
@@ -342,6 +352,8 @@ from the foot of the screen) on narrow viewports (≤720px). For nodes whose ins
 while the parameters group into collapsible rack-module sections (ROUTING / INPUT / GATE / COMP / EQ /
 Parameters) built on `<details>` (`section()` in `inspector.ts`). GATE / COMP / EQ / Ducker light their
 header led from each section's ON state and an off section folds itself away; ROUTING defaults collapsed.
+A node's ON/OFF (channel ON, each master, FX, MONITOR, Ducker, OSC) always leads its parameters, mirroring
+the canvas OFF display.
 A hand-folded section persists its open/closed state per section kind to `localStorage`
 (`urx-inspector-sections`), so it survives re-renders and reloads; toggling a section's ON value clears
 that override so the fold reverts to following the on-state. Within a section, the EQ band editor is a
