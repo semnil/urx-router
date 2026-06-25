@@ -1193,6 +1193,11 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   if (delay?.time !== undefined) out.push(command("STREAM_DELAY_TIME", 0, delay.time));
   if (delay?.frameRate !== undefined) out.push(command("STREAM_DELAY_FRAME_RATE", 0, delay.frameRate));
 
+  // Sample rate (global y0, raw Hz). A top-level plan scalar (always set), so it
+  // is emitted unconditionally as absolute state. Writing it re-clocks the
+  // hardware; only 766 is sent (843 auto-follows). See params.ts SAMPLE_RATE.
+  out.push(command("SAMPLE_RATE", 0, plan.sampleRate));
+
   // OSC → bus assign — absolute over every OSC-assignable bus. A wire turns the
   // destination's L/R channels on (oscL/oscR; absent = on); no wire turns both
   // off, matching readback (both off = no wire). FX buses are mono (R skipped).

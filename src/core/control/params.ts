@@ -346,6 +346,14 @@ export const PARAMS = {
   STREAM_DELAY_ON: { id: 707, axis: "global", encoding: "bool" },
   STREAM_DELAY_TIME: { id: 708, axis: "global", encoding: "delayTime" },
   STREAM_DELAY_FRAME_RATE: { id: 830, axis: "global", encoding: "enum" },
+  /** Mixer DSP / USB streaming sample rate (global, y0): raw Hz. Writing it
+   *  re-clocks the hardware (confirmed by live write + host coreaudio + LCD).
+   *  843 mirrors it read-only and auto-follows, so only 766 is written. Not in
+   *  /vd/synchronize|device|setup — a /vd/parameters value. Re-clocking
+   *  re-negotiates the USB audio stream (audio glitches), so this is an explicit
+   *  edit, never perturbed by self-test (plan.sampleRate is a top-level scalar,
+   *  outside the perturb walk over nodeParams/connections). */
+  SAMPLE_RATE: { id: 766, axis: "global", encoding: "raw" },
 } as const satisfies Record<string, ParamSpec>;
 
 export type ParamName = keyof typeof PARAMS;
