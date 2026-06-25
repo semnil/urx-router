@@ -302,6 +302,9 @@ export const en = {
     hidSelected: (n: number): string => `Hid ${n} node${n === 1 ? "" : "s"}`,
     shownNode: (label: string): string => `Showing ${label}`,
     shownAll: "Showing all nodes",
+    pathTraced: (label: string, n: number): string =>
+      `Tracing the signal path into ${label} — ${n} node${n === 1 ? "" : "s"}`,
+    pathNone: (label: string): string => `No live signal path feeds ${label}`,
     themeDark: "Switched to dark mode",
     themeLight: "Switched to light mode",
     themeAuto: "Following the system theme",

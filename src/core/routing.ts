@@ -4,7 +4,7 @@
 
 import { isSingleInput, parseRef, ref } from "../models/types";
 import type { DeviceModel, RoutingRule } from "../models/types";
-import type { Plan } from "./plan";
+import type { Plan, PlanConnection } from "./plan";
 import { hasConnection } from "./plan";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
 
@@ -168,4 +168,30 @@ export function possibleSources(model: DeviceModel, to: string): Set<string> {
   const sources = new Set<string>();
   for (const rule of model.rules) if (rule.to === to) sources.add(rule.from);
   return sources;
+}
+
+/** Node ids in the upstream signal closure feeding `nodeId` (inclusive): every
+ *  node that reaches it by walking connections backwards. `live` filters which
+ *  connections to follow — pass a predicate that rejects silent (off / -∞) sends,
+ *  otherwise the always-wired send mesh traces every node back to all inputs and
+ *  the closure becomes the whole board. Cycle-safe via the visited closure. */
+export function upstreamNodes(
+  plan: Plan,
+  nodeId: string,
+  live: (conn: PlanConnection) => boolean,
+): Set<string> {
+  const closure = new Set<string>([nodeId]);
+  const stack = [nodeId];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    for (const conn of plan.connections) {
+      if (parseRef(conn.to).nodeId !== cur || !live(conn)) continue;
+      const src = parseRef(conn.from).nodeId;
+      if (!closure.has(src)) {
+        closure.add(src);
+        stack.push(src);
+      }
+    }
+  }
+  return closure;
 }

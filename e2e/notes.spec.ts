@@ -25,6 +25,16 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 });
 
+test("double-clicking a node opens its note editor", async ({ page }) => {
+  // A quick double-press is the note-edit shortcut; a sustained long-press traces
+  // the signal path instead, so the two stay distinct.
+  await node(page, "ch1").dblclick();
+  await expect(overlay(page)).toBeVisible();
+  await overlay(page).fill("Quick note");
+  await page.keyboard.press("Escape");
+  await expect(node(page, "ch1").locator(".note-panel")).toHaveCount(1);
+});
+
 test("the pen adds a note shown inside the node frame", async ({ page }) => {
   // A note-less node offers the pen and no collapse toggle.
   await expect(node(page, "ch1").locator(".note-add")).toHaveCount(1);

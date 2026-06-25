@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
-import { canConnect, isBalLinkedPair, isFixedConnection, legalSources, legalTargets, mirrorBalPair, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, sendTapWritable } from "./routing";
+import { canConnect, isBalLinkedPair, isFixedConnection, legalSources, legalTargets, mirrorBalPair, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, sendTapWritable, upstreamNodes } from "./routing";
 import { emptyPlan, type Plan, type PlanConnection } from "./plan";
 import { defaultPlan } from "../models/initial-state";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
@@ -266,5 +266,44 @@ describe("isBalLinkedPair / mirrorBalPair", () => {
     expect(stereoSend("ch2")?.params?.tap).toBe("pre");
     expect(stereoSend("ch2")?.params?.on).toBe(false);
     expect(stereoSend("ch2")?.params?.pan).toBe(-40); // the BAL pan is one shared value
+  });
+});
+
+describe("upstreamNodes", () => {
+  // A small explicit chain: two inputs feed a channel each, both channels feed a
+  // bus, the bus feeds an output. Ids are arbitrary — the walk only reads
+  // connections, not the model.
+  const chain: PlanConnection[] = [
+    { from: ref("inA", "out"), to: ref("ch1", "in"), kind: "source" },
+    { from: ref("inB", "out"), to: ref("ch2", "in"), kind: "source" },
+    { from: ref("ch1", "out"), to: ref("bus", "in"), kind: "send" },
+    { from: ref("ch2", "out"), to: ref("bus", "in"), kind: "send" },
+    { from: ref("bus", "out"), to: ref("out", "in"), kind: "patch" },
+  ];
+  const planOf = (connections: PlanConnection[]): Plan => ({ ...emptyPlan("URX44"), connections });
+  const all = () => true;
+
+  it("collects the whole upstream closure of an output, inclusive", () => {
+    const got = upstreamNodes(planOf(chain), "out", all);
+    expect([...got].sort()).toEqual(["bus", "ch1", "ch2", "inA", "inB", "out"]);
+  });
+
+  it("returns only the node itself for a leaf input", () => {
+    expect([...upstreamNodes(planOf(chain), "inA", all)]).toEqual(["inA"]);
+  });
+
+  it("does not follow connections rejected by the live predicate", () => {
+    // Treat ch2's send into the bus as silent: ch2 and its input drop out.
+    const live = (c: PlanConnection) => c.from !== ref("ch2", "out");
+    const got = upstreamNodes(planOf(chain), "out", live);
+    expect([...got].sort()).toEqual(["bus", "ch1", "inA", "out"]);
+  });
+
+  it("terminates on a cycle without revisiting", () => {
+    const cyclic: PlanConnection[] = [
+      { from: ref("a", "out"), to: ref("b", "in"), kind: "send" },
+      { from: ref("b", "out"), to: ref("a", "in"), kind: "send" },
+    ];
+    expect([...upstreamNodes(planOf(cyclic), "a", all)].sort()).toEqual(["a", "b"]);
   });
 });

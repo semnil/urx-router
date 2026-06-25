@@ -125,6 +125,19 @@ ones outline-only. A drag from an output opens on any possible route; a drag fro
 when a legal source exists. Clicking a single-input port that already holds a source selects that
 wire, the same as clicking the wire itself.
 
+**Path trace**: long-pressing a node (`LONG_PRESS_MS`, ~450ms, held without moving past
+`LONG_PRESS_TOLERANCE`) highlights the signal path feeding it. `routing.ts`
+`upstreamNodes` walks connections backwards through live wiring only (`isOffSend` false) to gather
+the node's upstream closure (its inputs, channels, and buses) — OFF / -∞ sends are skipped, or the
+always-wired send mesh would trace every node back to all inputs and the closure would be the whole
+board. Nodes in the closure wear an accent frame; live wires with both endpoints in it light up. Both
+wires and nodes off the path fade (the same lit / faded split a multi-selection uses); a node fades
+by a factor of its resting opacity, derived from node state by `restingOpacity` (the same precedence
+`makeNode` dims it: rate-disabled > inactive > unread > plain), so a muted / unread node keeps its own
+dim instead of having it clobbered. The trace is a state (`pathNodes`)
+independent of the selection, cleared by any selection change, Escape, or an empty-canvas click. A
+node with no upstream (an input) just reports it on the status bar and lights nothing.
+
 **Uniform OFF display**: every state that silences a node — a muted channel / master / FX / MONITOR
 (`params.on`), a bypassed ducker (`duckerOn`), the oscillator off (`osc.on`) — funnels through the
 `isNodeInactive` predicate, dimming the node and tagging it (MUTE, or OFF for a ducker / the
@@ -450,7 +463,8 @@ PDF exports.
 
 - **Add** — a note-less node shows a faint pen button at the header right (`graph.ts` `makeNoteAdd`).
   Clicking it (or double-clicking the node) opens an in-place editor: a floating HTML `<textarea>`
-  positioned over the panel, kept out of the export.
+  positioned over the panel, kept out of the export. (A sustained long-press traces the signal path
+  instead, so a quick double-press and a held press are distinct gestures.)
 - **Edit** — once a node is selected, clicking its open note area edits it; the header (outside the
   note) still drags the node, and an unselected node drags from anywhere. Editing is canvas-only —
   the inspector has no note field.

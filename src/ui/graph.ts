@@ -6,7 +6,7 @@ import type { DeviceModel, DeviceNode, NodeKind, PortDirection } from "../models
 import { fullLabel, isSingleInput, parseRef, ref } from "../models/types";
 import type { Plan, PlanConnection } from "../core/plan";
 import { hasConnection, LEVEL_MIN_DB, removeConnection } from "../core/plan";
-import { canConnect, isFixedConnection, legalSources, legalTargets, pairPrimary, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap } from "../core/routing";
+import { canConnect, isFixedConnection, legalSources, legalTargets, pairPrimary, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, upstreamNodes } from "../core/routing";
 import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
 import type { SaveResult } from "../core/storage";
 import { oscAssign } from "../core/control/translate";
@@ -35,6 +35,12 @@ const WIRE_HIT_W = 14;
 // Pointer travel (screen px) past which a port press becomes a connect drag
 // rather than a click. A click on an input port selects its incoming wire.
 const DRAG_THRESHOLD = 4;
+
+// A node press held this long (ms) without moving past LONG_PRESS_TOLERANCE (px)
+// traces the node's signal path instead of selecting / dragging it. The tolerance
+// lets the press survive a little jitter before it commits to a drag.
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_TOLERANCE = 6;
 
 // Zoom bounds shared by the wheel, pinch, and fit-to-view paths.
 const ZOOM_MIN = 0.3;
@@ -216,6 +222,11 @@ export class Graph {
   // anchor (shown in the inspector) is selection.id; this set holds it plus any
   // others. Empty whenever selection is a connection or null.
   private selectedNodes = new Set<string>();
+  // Path-trace highlight: the upstream signal closure of a double-clicked node
+  // (the node plus every input/channel/bus that feeds it through live wiring).
+  // Empty when no trace is active. Independent of the selection; cleared by any
+  // selection change so it never lingers behind a fresh focus.
+  private pathNodes = new Set<string>();
 
   // transient interaction state. `link` is a STEREO-linked, visible partner that
   // moves with the dragged node (keeping its offset), plus the pair to redraw the
@@ -246,9 +257,13 @@ export class Graph {
   private pinch: { lastDist: number; lastCx: number; lastCy: number; left: number; top: number } | null = null;
   // Floating HTML textarea for editing a node's note in place on the canvas.
   private noteEditor: { id: string; el: HTMLTextAreaElement } | null = null;
-  // Last node pointerdown, used to detect a double-press. A real dblclick event
-  // is unreliable here: onPointerDown calls preventDefault(), which suppresses
-  // the browser's compatibility mouse events.
+  // In-flight long-press on a node: a timer that traces the node's signal path if
+  // the pointer holds still for LONG_PRESS_MS. Cleared the moment the pointer moves
+  // past the tolerance (the press became a drag) or lifts (it was a plain click).
+  private longPress: { id: string; timer: ReturnType<typeof setTimeout>; x: number; y: number } | null = null;
+  // Last node pointerdown, used to detect a double-press that opens the note editor.
+  // A real dblclick event is unreliable here: onPointerDown calls preventDefault(),
+  // which suppresses the browser's compatibility mouse events.
   private lastNodeClick: { id: string; time: number } | null = null;
 
   constructor(host: HTMLElement, model: DeviceModel, plan: Plan, cb: GraphCallbacks) {
@@ -705,6 +720,16 @@ export class Graph {
     return np?.on === false;
   }
 
+  // Resting opacity of a node's faceplate, by the same precedence makeNode dims it
+  // (rate-disabled > inactive > unread > plain). A path trace fades the off-path
+  // nodes to a fraction of this, so the dim stays derived from state, not stored.
+  private restingOpacity(node: DeviceNode): number {
+    if (this.disabledNodes.has(node.id)) return 0.62;
+    if (this.isNodeInactive(node)) return 0.4;
+    if (this.unreadNodes.has(node.id)) return 0.7;
+    return 1;
+  }
+
   /** The device CH SETTING name (plan.nodeNames) to show for a node, or undefined
    *  in model-label mode or when no name is set — the single source both the
    *  faceplate and labelOf use to decide a name override. */
@@ -910,8 +935,8 @@ export class Graph {
       // stands in its place (the well + seam stay so the frame reads as a panel).
       if (showPanel) g.append(this.makeNotePanel(node, lines, h, !editing));
     } else {
-      // No note yet: offer a visible "add note" affordance instead of relying on
-      // the double-click shortcut alone.
+      // No note yet: the pen button is the way in (double-click now traces the
+      // signal path instead of opening the note editor).
       g.append(this.makeNoteAdd(node));
     }
 
@@ -1149,15 +1174,24 @@ export class Graph {
       this.selection?.type === "conn" &&
       this.selection.from === conn.from &&
       this.selection.to === conn.to;
+    const fromId = parseRef(conn.from).nodeId;
+    const toId = parseRef(conn.to).nodeId;
+    // An off / -∞ send recedes: faint and finely dotted, so a board of always-wired
+    // sends reads as "these few are live, the rest are parked at -∞". A lit/selected
+    // wire ignores it so the user can still see and edit the one they picked.
+    const off = this.isOffSend(conn);
     // When node(s) are selected, light wires incident to any of them and fade the
     // rest so the selection's routing stands out in a dense diagram. Uses the whole
     // multi-selection, not just the anchor, so it matches the node highlighting.
     const hasNodeSel = this.selectedNodes.size > 0;
-    const incident =
-      hasNodeSel &&
-      (this.selectedNodes.has(parseRef(conn.from).nodeId) || this.selectedNodes.has(parseRef(conn.to).nodeId));
-    const faded = hasNodeSel && !incident;
-    const lit = selected || incident;
+    const incident = hasNodeSel && (this.selectedNodes.has(fromId) || this.selectedNodes.has(toId));
+    // A traced signal path lights its wires the same way: both endpoints in the
+    // upstream closure and the wire itself live (an off send between two closure
+    // nodes is a parallel silent route, not part of the flow being traced).
+    const pathActive = this.pathNodes.size > 0;
+    const inPath = pathActive && !off && this.pathNodes.has(fromId) && this.pathNodes.has(toId);
+    const lit = selected || incident || inPath;
+    const faded = (hasNodeSel || pathActive) && !lit;
 
     // Invisible wide band along the wire so the thin curve is easy to click; it
     // carries the pointer handler while the painted wire below stays thin. The
@@ -1183,10 +1217,6 @@ export class Graph {
     // A pre-fader send is dashed and tagged so it reads at a glance without
     // opening the inspector; POST (the default) stays solid and unmarked.
     const isPre = sendHasTap(this.model, conn.from, conn.to) && conn.params?.tap === "pre";
-    // An off / -∞ send recedes: faint and finely dotted, so a board of always-wired
-    // sends reads as "these few are live, the rest are parked at -∞". A lit/selected
-    // wire ignores it so the user can still see and edit the one they picked.
-    const off = this.isOffSend(conn);
 
     // Soft underlay halo marks a lit/selected wire. Done with a wide, low-
     // opacity stroke rather than an SVG blur filter: a perfectly horizontal
@@ -1273,6 +1303,7 @@ export class Graph {
   private select(sel: Selection): void {
     this.selection = sel;
     this.selectedNodes.clear();
+    this.pathNodes.clear();
     if (sel?.type === "node") this.selectedNodes.add(sel.id);
     this.redrawWires();
     this.highlightSelectedNode();
@@ -1284,6 +1315,7 @@ export class Graph {
    *  it, so several nodes can be shelved at once. The anchor (shown in the
    *  inspector) follows the most recently touched node. */
   private toggleNodeSelection(id: string): void {
+    this.pathNodes.clear();
     if (this.selectedNodes.has(id)) {
       this.selectedNodes.delete(id);
       if (this.selection?.type === "node" && this.selection.id === id) {
@@ -1300,6 +1332,23 @@ export class Graph {
     this.cb.onSelect(this.selection);
   }
 
+  /** Trace and highlight the live signal path feeding a node: the node plus every
+   *  upstream input / channel / bus that reaches it through live wiring (off / -∞
+   *  sends are not followed, or the always-wired mesh would light the whole board).
+   *  The node stays selected; a leaf with no upstream just reports it. */
+  private highlightPath(id: string): void {
+    const closure = upstreamNodes(this.plan, id, (c) => !this.isOffSend(c));
+    // A leaf (an input) has only itself: nothing upstream to light.
+    const hasPath = closure.size > 1;
+    if (hasPath) this.pathNodes = closure;
+    else this.pathNodes.clear();
+    this.redrawWires();
+    this.highlightSelectedNode();
+    this.cb.onStatus(
+      hasPath ? t().status.pathTraced(this.labelOf(id), closure.size) : t().status.pathNone(this.labelOf(id)),
+    );
+  }
+
   /** Clear any selection (used by the canvas, the action bar, and Escape). */
   clearSelection(): void {
     if (!this.selection && !this.selectedNodes.size) return;
@@ -1308,17 +1357,28 @@ export class Graph {
 
   private highlightSelectedNode(): void {
     const anchor = this.selection?.type === "node" ? this.selection.id : null;
+    // While a path trace is active, fade the off-path nodes so the lit chain stands
+    // out in the node layer too — the same lit / faded split the wires already use.
+    const pathActive = this.pathNodes.size > 0;
     for (const [id, el] of this.nodeEls) {
       const rect = el.querySelector("rect")!;
-      const on = this.selectedNodes.has(id);
-      const disabled = !on && this.disabledNodes.has(id);
-      // Unread frame ranks below selected/disabled but above the plain frame, so
-      // a re-highlight restores it instead of reverting an unread node to normal.
       const node = this.nodeById.get(id)!;
-      const unread = !on && !disabled && this.unreadNodes.has(id) && !this.isNodeInactive(node);
+      const on = this.selectedNodes.has(id);
+      // A traced-path node (not itself selected) wears the accent frame too, so the
+      // upstream chain reads as one highlighted group with the double-clicked node.
+      const onPath = !on && this.pathNodes.has(id);
+      // Fade off-path nodes to a fraction of their resting opacity (so a muted /
+      // unread node keeps its own dim), and restore the rest to that base.
+      const base = this.restingOpacity(node);
+      const fadeOff = pathActive && !this.pathNodes.has(id);
+      el.setAttribute("opacity", String(fadeOff ? +(base * 0.3).toFixed(3) : base));
+      const disabled = !on && !onPath && this.disabledNodes.has(id);
+      // Unread frame ranks below selected/path/disabled but above the plain frame, so
+      // a re-highlight restores it instead of reverting an unread node to normal.
+      const unread = !on && !onPath && !disabled && this.unreadNodes.has(id) && !this.isNodeInactive(node);
       el.classList.toggle("selected", on);
-      rect.setAttribute("stroke-width", on ? "2.5" : disabled ? "1.5" : unread ? "1.2" : "1");
-      rect.setAttribute("stroke", on ? this.palette.tempWire : disabled || unread ? this.palette.warn : this.palette.nodeStroke);
+      rect.setAttribute("stroke-width", on ? "2.5" : onPath ? "2" : disabled ? "1.5" : unread ? "1.2" : "1");
+      rect.setAttribute("stroke", on || onPath ? this.palette.tempWire : disabled || unread ? this.palette.warn : this.palette.nodeStroke);
       if (disabled) rect.setAttribute("stroke-dasharray", "4 3");
       else if (unread) rect.setAttribute("stroke-dasharray", "2 3");
       else rect.removeAttribute("stroke-dasharray");
@@ -1430,7 +1490,9 @@ export class Graph {
         this.openNoteEditor(id);
         return;
       }
-      // A second press on the same node within the threshold also opens its editor.
+      // A second press on the same node within the threshold opens its note editor;
+      // a single sustained press (handled below by the long-press timer) traces the
+      // signal path instead, so the two gestures don't collide.
       const now = performance.now();
       if (this.lastNodeClick?.id === id && now - this.lastNodeClick.time < 350) {
         this.lastNodeClick = null;
@@ -1454,6 +1516,8 @@ export class Graph {
       this.dragNode = { id: dragId, grabDx: p.x - dragPos.x, grabDy: p.y - dragPos.y, link, moved: false };
       this.select({ type: "node", id });
       this.capturePointer(e.pointerId);
+      // Holding the press still (no drag) traces the pressed node's signal path.
+      this.startLongPress(id, e.clientX, e.clientY);
       return;
     }
 
@@ -1472,11 +1536,38 @@ export class Graph {
     }
   }
 
+  // Arm the path-trace timer for a node press. If it fires (the pointer stayed put
+  // for LONG_PRESS_MS) it cancels the pending drag and traces the node's path.
+  private startLongPress(id: string, x: number, y: number): void {
+    this.cancelLongPress();
+    const timer = setTimeout(() => {
+      this.longPress = null;
+      // The hold won: drop the pending drag so a later move can't reposition the
+      // node, then trace its signal path.
+      this.dragNode = null;
+      this.highlightPath(id);
+    }, LONG_PRESS_MS);
+    this.longPress = { id, timer, x, y };
+  }
+
+  private cancelLongPress(): void {
+    if (!this.longPress) return;
+    clearTimeout(this.longPress.timer);
+    this.longPress = null;
+  }
+
   private onPointerMove(e: PointerEvent): void {
     if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (this.pinch) {
       this.updatePinch();
       return;
+    }
+    // While a long-press is pending, swallow small jitter so the node stays put and
+    // the hold can complete; once the pointer travels past the tolerance the press
+    // is a drag, so cancel the trace timer and fall through to move the node.
+    if (this.longPress) {
+      if (Math.hypot(e.clientX - this.longPress.x, e.clientY - this.longPress.y) < LONG_PRESS_TOLERANCE) return;
+      this.cancelLongPress();
     }
     if (this.dragNode) {
       this.dragNode.moved = true;
@@ -1529,6 +1620,8 @@ export class Graph {
 
   private onPointerUp(e: PointerEvent): void {
     this.pointers.delete(e.pointerId);
+    // A release before the timer fires means it was a click / drag, not a hold.
+    this.cancelLongPress();
     // Lifting one finger ends the pinch; the other finger is left idle (no pan
     // resumes) until it too lifts, avoiding a jump back to single-pointer drag.
     if (this.pinch && this.pointers.size < 2) {
@@ -1583,6 +1676,7 @@ export class Graph {
     this.connect = null;
     this.dragNode = null;
     this.panning = null;
+    this.cancelLongPress();
   }
 
   private onPointerCancel(e: PointerEvent): void {

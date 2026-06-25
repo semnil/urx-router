@@ -296,6 +296,8 @@ export const ja: Messages = {
     hidSelected: (n: number): string => `${n} 件を非表示にしました`,
     shownNode: (label: string): string => `${label} を表示しました`,
     shownAll: "全ノードを表示しました",
+    pathTraced: (label: string, n: number): string => `${label} への信号経路を表示中 — ${n} ノード`,
+    pathNone: (label: string): string => `${label} に流れる信号経路はありません`,
     themeDark: "ダークモードに切り替えました",
     themeLight: "ライトモードに切り替えました",
     themeAuto: "システム設定に追従します",
