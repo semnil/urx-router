@@ -271,13 +271,14 @@ describe("applyDeviceState round-trip", () => {
     const monitors = 2;
     const osc = 1;
     const delay = 1; // STREAMING DELAY (bus.stream)
+    const sampleRate = 1; // global sample rate (plan.sampleRate)
     const oscAssign = 5;
     const inputSource = 8;
     const selectors = 9;
     const colors = 8 + 6; // CH SETTING color: 8 channels + STEREO/MIX1/MIX2/FX1/FX2/STREAMING
     const names = 8 + 6; // CH SETTING name: same node set as color
     const expected =
-      channels + sends + fxEffect + fxMainPath + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + delay + oscAssign + inputSource + selectors + colors + names;
+      channels + sends + fxEffect + fxMainPath + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + delay + sampleRate + oscAssign + inputSource + selectors + colors + names;
     expect(result.applied).toBe(expected);
     // Sanity: far more than the channel-only count, proving every group counts.
     expect(result.applied).toBeGreaterThan(channels);

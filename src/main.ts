@@ -239,7 +239,7 @@ const follow =
           plan.unreadNodes = result.unreadNodes;
           graph.refresh();
           consoleView.refresh();
-          refreshInspector();
+          syncRateUi();
           live?.resync();
           setStatus(t().status.liveFollowed(result.applied));
         },
@@ -586,6 +586,13 @@ function applyRateConstraints(): void {
   refreshInspector();
 }
 
+// After a device readback, mirror the device's sample rate into the picker and
+// re-apply the rate-dependent constraints (which also refreshes the inspector).
+function syncRateUi(): void {
+  ratePicker.value = String(plan.sampleRate);
+  applyRateConstraints();
+}
+
 function loadPlan(next: Plan): void {
   // Replacing the whole plan invalidates the live snapshot; leave sync first.
   // (Live's own enable path calls loadPlan before begin(), so this is a no-op there.)
@@ -658,7 +665,10 @@ picker.addEventListener("change", async () => {
 ratePicker.addEventListener("change", () => {
   plan.sampleRate = Number(ratePicker.value);
   rememberRate(plan.sampleRate);
-  dirty = true;
+  // Same change funnel as every other edit: dirty + (in Live sync) push the new
+  // rate to the device. Re-clocking glitches audio, but that is inherent to a
+  // deliberate rate change and keeps Live sync from deferring it onto a later edit.
+  markChanged();
   applyRateConstraints();
   setStatus(t().status.sampleRate(formatRate(plan.sampleRate)));
 });
@@ -816,7 +826,7 @@ if (!DEMO) {
         plan.unreadNodes = result.unreadNodes;
         graph.setModel(getModel(modelId), plan);
         selection = null;
-        refreshInspector();
+        syncRateUi();
         dirty = true;
         // Nodes the readback tried but could not confirm (left at their plan default).
         const unread = result.unreadNodes.size;
@@ -1031,7 +1041,7 @@ if (!DEMO) {
         plan.unreadNodes = result.unreadNodes;
         graph.setModel(getModel(modelId), plan);
         selection = null;
-        refreshInspector();
+        syncRateUi();
         dirty = false;
         liveDeviceLabel = device.model;
         live.begin();

@@ -456,6 +456,16 @@ export async function applyDeviceState(
     errors.push(`STREAMING DELAY: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // Sample rate (global, raw Hz) onto the plan-level scalar. Not a node setting,
+  // so it stays out of the body-read provenance (attempted/failed). 766 is the
+  // control; 843 mirrors it. A read failure leaves the plan's rate untouched.
+  try {
+    plan.sampleRate = await vdGet(PARAMS.SAMPLE_RATE.id, 0, 0);
+    applied++;
+  } catch (e) {
+    errors.push(`sample rate: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   // OSC → bus assign: read each bus's L/R channel toggles and reflect the wire
   // (present with oscL/oscR when on, removed when both off).
   for (const busId of OSC_ASSIGN_BUSES) {
