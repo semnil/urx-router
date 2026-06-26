@@ -63,6 +63,42 @@ test("long-pressing a node lights its path and fades the rest", async ({ page })
   await expect(node(page, "in.aux")).toHaveAttribute("opacity", "0.3");
 });
 
+test("a multi-hop chain reaches the input two hops behind the traced bus", async ({ page }) => {
+  // input -> ch1 -> (fixed, unity) bus.stereo. Tracing the downstream STEREO bus
+  // must reach back two hops to the input, not stop at the immediate channel.
+  // (Other channels also feed STEREO at unity, so assert the chain is lit rather
+  // than an exact node count.)
+  await connect(page, "in.micline_1_2:out", "ch1:in");
+
+  await longPress(page, "bus.stereo");
+
+  await expect(node(page, "bus.stereo")).toHaveAttribute("opacity", "1");
+  await expect(node(page, "ch1")).toHaveAttribute("opacity", "1");
+  await expect(node(page, "in.micline_1_2")).toHaveAttribute("opacity", "1");
+  // The fixed CH -> STEREO leg of the chain stays full.
+  await expect(wire(page, "ch1:out", "bus.stereo:in")).toHaveAttribute("opacity", "1");
+});
+
+test("an off send breaks the trace upstream of the muted node", async ({ page }) => {
+  // Muting ch1 turns its fixed STEREO send off, so tracing bus.stereo must not
+  // walk through ch1's now-silent leg: ch1 and its input drop off the path while
+  // the bus itself stays lit.
+  await connect(page, "in.micline_1_2:out", "ch1:in");
+  await node(page, "ch1").click();
+  await page.locator("#inspector .param").filter({ has: page.locator(".toggle") }).filter({ hasText: "Channel" })
+    .getByRole("button", { name: "OFF", exact: true }).click();
+  await page.keyboard.press("Escape");
+
+  await longPress(page, "bus.stereo");
+
+  await expect(node(page, "bus.stereo")).toHaveAttribute("opacity", "1");
+  // The muted channel sits off the traced path: its STEREO send is now an
+  // off-send, so the walk stops there. ch1 is both muted (its own 0.4 dim) and
+  // off-path (×0.3 fade), compounding to 0.12 — proof the trace did not follow
+  // its silenced leg back to the input.
+  await expect(node(page, "ch1")).toHaveAttribute("opacity", "0.12");
+});
+
 test("a path trace clears when the selection is dropped", async ({ page }) => {
   await connect(page, "in.micline_1_2:out", "ch1:in");
   await connect(page, "in.aux:out", "ch_5_6:in");
