@@ -106,10 +106,13 @@ test("hidden state round-trips through save and open", async ({ page }, testInfo
   const saved = testInfo.outputPath("URX44V-plan.json");
   await download.saveAs(saved);
 
-  await page.click("#btn-file");
-  await page.click("#btn-new");
+  // Clear the shelf (New now restores the persisted hidden layout, so use Show all
+  // to get an empty board) and prove opening the file overrides the current state.
+  await page.click(".shelf-showall");
   await expect(page.locator(".hidden-shelf")).toBeHidden();
 
+  // Show all leaves the plan dirty, so Open prompts to discard first; accept it.
+  page.once("dialog", (d) => void d.accept());
   await page.click("#btn-file");
   const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
   await chooser.setFiles(saved);
@@ -117,4 +120,20 @@ test("hidden state round-trips through save and open", async ({ page }, testInfo
   await expect(page.locator(".hidden-shelf")).toBeVisible();
   await expect(chips(page)).toHaveCount(hiddenCount);
   await expect(nodes(page)).toHaveCount(WIRED);
+});
+
+test("hidden state survives a reload via localStorage", async ({ page }) => {
+  await connect(page, "in.micline_1_2:out", "ch_5_6:in");
+  await page.click("#btn-view");
+  await page.click("#btn-hide-unused");
+  const hiddenCount = await chips(page).count();
+  expect(hiddenCount).toBeGreaterThan(0);
+
+  // No save/open: a plain reload must restore the shelf from localStorage so the
+  // live device-control workflow keeps its canvas layout across an app restart.
+  await page.reload();
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+
+  await expect(page.locator(".hidden-shelf")).toBeVisible();
+  await expect(chips(page)).toHaveCount(hiddenCount);
 });

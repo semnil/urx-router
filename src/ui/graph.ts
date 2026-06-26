@@ -160,6 +160,8 @@ export interface GraphCallbacks {
   onSelect: (sel: Selection) => void;
   onStatus: (message: string) => void;
   onChange: () => void;
+  // Fired whenever the shelved-node set changes, so the host can persist it.
+  onHiddenChange: (hidden: string[]) => void;
 }
 
 interface Pt {
@@ -1971,6 +1973,7 @@ export class Graph {
 
   private commitHidden(): void {
     this.plan.hidden = [...this.hidden];
+    this.cb.onHiddenChange(this.plan.hidden);
   }
 
   private dropSelectionIfHidden(): void {

@@ -410,6 +410,11 @@ an export) as rail-colored chips; clicking a chip restores that one, and "Show a
 - The hidden set persists as `plan.hidden` (an array of node ids) and is restored on load. Like
   `positions`, it is pure view state and does not affect routing rules (future hardware reflection may
   ignore it).
+- The hidden set is also mirrored per model in `localStorage("urx-hidden")` (a model-id → node-id-array
+  map); `newPlan` restores that model's entry on startup, model switch and new plan, so the layout
+  survives an app restart for the live device-control workflow. A loaded file's `hidden` still wins
+  (overriding the current state as before), and `loadPlan` re-records it into `urx-hidden` so the current
+  state and localStorage stay in sync.
 - The bulk "hide" and "show all" re-fit the diagram to reclaim space; while the shelf is open `fitView`
   frames the content above it, and a single restored node is parked at the viewport center.
 

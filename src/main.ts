@@ -10,10 +10,12 @@ import type { ConnParams, NodeParams, Plan } from "./core/plan";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import {
   baseName,
+  loadJson,
   loadRecent,
   openTextDocument,
   readTextByPath,
   rememberRecent,
+  saveJson,
   saveTextDocument,
 } from "./core/storage";
 import type { RecentEntry } from "./core/storage";
@@ -83,7 +85,31 @@ const seedEmpty = (() => {
     return false;
   }
 })();
-const newPlan = (id: ModelId): Plan => (seedEmpty ? emptyPlan(id) : defaultPlan(id));
+// Shelved (hidden) nodes are persisted globally per model so the canvas/console
+// layout survives an app restart, independent of any saved plan file. The id set
+// is model-specific, so store a per-model map under one key. Best-effort: storage
+// may be unavailable, in which case hidden state simply does not carry across.
+const HIDDEN_KEY = "urx-hidden";
+type HiddenMap = Partial<Record<ModelId, string[]>>;
+
+function loadHidden(id: ModelId): string[] {
+  const list = loadJson<HiddenMap>(HIDDEN_KEY, {})[id];
+  return Array.isArray(list) ? list : [];
+}
+
+function rememberHidden(id: ModelId, hidden: string[]): void {
+  const map = loadJson<HiddenMap>(HIDDEN_KEY, {});
+  map[id] = hidden;
+  saveJson(HIDDEN_KEY, map);
+}
+
+// Fresh plans (startup / new / model switch) restore the last hidden layout for
+// that model; a loaded file overrides it via loadPlan (which then re-records it).
+const newPlan = (id: ModelId): Plan => {
+  const p = seedEmpty ? emptyPlan(id) : defaultPlan(id);
+  p.hidden = loadHidden(id);
+  return p;
+};
 
 // Restore the last selected model on startup, falling back to URX44V (the
 // top-of-range model with every feature) when there is no valid saved choice.
@@ -224,6 +250,7 @@ const graph = new Graph(graphHost, getModel(modelId), plan, {
     markChanged();
     refreshInspector();
   },
+  onHiddenChange: (hidden) => rememberHidden(modelId, hidden),
 });
 
 // Mixer-style CONSOLE view: an alternate view of the same plan. Its edits go
@@ -626,6 +653,10 @@ function loadPlan(next: Plan): void {
   rememberModel(modelId);
   plan = next;
   rememberRate(plan.sampleRate);
+  // Keep the persisted hidden layout in step with the plan now on screen, whether
+  // it came from a file (its hidden wins) or a fresh new/switch plan (already
+  // seeded from the same store, so this is a no-op).
+  rememberHidden(modelId, plan.hidden);
   ensureFixedConnections(getModel(modelId), plan);
   picker.value = modelId;
   ratePicker.value = String(plan.sampleRate);
