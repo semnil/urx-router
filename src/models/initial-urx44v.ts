@@ -205,11 +205,29 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
       { on: true, q: 0.71, freq: 10000, gain: 0, type: 1 },
     ],
   },
-  // FX channels ship ON at the factory (param 338, def 1). Seeded so a
-  // fresh plan restores them (the absolute write only auto-clears wires, not
-  // scalar node params — see bus.stereo/osc/monitor).
-  "bus.fx1": { on: true },
-  "bus.fx2": { on: true },
+  // FX channels ship ON at the factory (param 338, def 1) with their factory
+  // effect program loaded — FX1 = Rev-X Hall (type 0), FX2 = Mono Delay (type
+  // 1024) — captured from the device. Seeded so a fresh plan restores both the ON
+  // state and the effect (the absolute write only auto-clears wires, not scalar
+  // node params — see bus.stereo/osc/monitor).
+  "bus.fx1": {
+    on: true,
+    fxEffect: {
+      type: 0,
+      on: true,
+      level: 100,
+      params: { reverbTime: 23, initialDelay: 2, decay: 27, roomSize: 29, diffusion: 10, hpf: 4, lpf: 50, hiRatio: 8, lowRatio: 12, lowFreq: 32 },
+    },
+  },
+  "bus.fx2": {
+    on: true,
+    fxEffect: {
+      type: 1024,
+      on: true,
+      level: 100,
+      params: { delay: 5000, feedback: 20, hiRatio: 7, hpf: 40, lpf: 110, sync: 0, bpm: 120, note: 9 },
+    },
+  },
   "out.ducker1": {
     duckerOn: false,
     ducker: { threshold: -40, range: -24, attack: 20.17, decay: 1000 },
@@ -235,9 +253,10 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   // Seeded so writing a fresh plan restores the device's delay (the absolute
   // write only auto-clears wires, not scalar node params — see bus.osc/monitor).
   "bus.stream": { delay: { on: false, time: 1, frameRate: 5 } },
-  // microSD Rec Track Count factory state: 8 tracks (read-only on the device, so
-  // never written — this drives how many track-pair slots the canvas shows).
-  "out.sdrec": { sdRecTrackCount: 8 },
+  // microSD Rec Track Count factory state: 16 tracks (read-only on the device, so
+  // never written — this drives how many track-pair slots the canvas shows; at 16
+  // all 8 pair slots are active, so the seeded STEREO assign on track 15/16 shows).
+  "out.sdrec": { sdRecTrackCount: 16 },
 };
 
 // Factory CH SETTING colors, read from the device: input channels and the FX
@@ -593,7 +612,7 @@ export const URX44V_CONNECTIONS: PlanConnection[] = [
   { from: "bus.mix1:out", to: "out.line:in", kind: "patch" },
   // microSD Rec factory track assign (param 736, confirmed on URX44V): tracks 1-12
   // = CH1-12 (each pair from its primary channel node), tracks 13/14 = none (no
-  // wire), tracks 15/16 = STEREO. Track Count 8 (out.sdrec.sdRecTrackCount).
+  // wire), tracks 15/16 = STEREO. Track Count 16 (out.sdrec.sdRecTrackCount).
   { from: "ch1:out", to: "out.sdrec.t1:in", kind: "record" },
   { from: "ch3:out", to: "out.sdrec.t2:in", kind: "record" },
   { from: "ch_5_6:out", to: "out.sdrec.t3:in", kind: "record" },
