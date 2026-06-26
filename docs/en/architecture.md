@@ -302,7 +302,7 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
 - **Streaming path** — the Rust side (`src-tauri/src/vd.rs`) handles a meter subscription
   (`MetersSubscribe`/`MetersUnsubscribe`) by registering each address with the broker, and forwards meter
   `notify` frames to the frontend over a Tauri Channel during the idle socket drain (`pump` → `forward_meter`).
-  Like the rest of live control, it is only active under the `--experimental` launch flag.
+  Meters stream only while Live sync is on (subscription starts in `console.setLive`).
 - **Device follow** — the reverse of live sync. The same drain path also carries device-side parameter
   changes: `ParamsSubscribe`/`forward_param` (sharing the `notify_frame` envelope parse with the meter path)
   register every writable address and forward each `notify`. While Live sync is on, `core/control/follow.ts`
@@ -591,6 +591,18 @@ gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 - Keep the **private key** and its password out of git and register them as the secrets above (`release.yml`
   forwards them to `tauri-action`). Without the secrets the bundles are unsigned and no `latest.json` is
   produced, so auto-update will not work.
+
+### Use consent (license display and disclaimer)
+
+Because the desktop app can write settings to a connected URX — overwriting its current state — consent to
+that risk is collected in two places. The **installer** shows a license-agreement page from
+`bundle.licenseFile` in `tauri.conf.json` (`src-tauri/LICENSE.txt`, which folds the device-control safety
+notice, the trademark statement, and the full MIT text into one file); on Windows the WiX installer renders
+the plain text as RTF and the user must accept it to proceed. The macOS `.dmg` is a drag-install with no
+agreement page, so a **first-run consent gate** covers it: `src/ui/consent.ts` shows the same disclaimer in
+a full-screen modal and, once accepted, records it in `localStorage` (`urx-disclaimer-accepted`) so it is
+never shown again (no re-consent after an auto-update). Declining quits the app (`plugin:process|exit`). The
+gate runs only on the desktop (`isTauri()`); the browser/demo never sees it.
 
 ## Third-party licenses
 

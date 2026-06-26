@@ -295,3 +295,8 @@ export function installUpdate(rid: number, onProgress?: (e: DownloadEvent) => vo
 export function restartApp(): Promise<never> {
   return invoke<never>("plugin:process|restart");
 }
+
+/** Quit the app (process plugin). Used when the first-run consent is declined. */
+export function exitApp(code = 0): Promise<never> {
+  return invoke<never>("plugin:process|exit", { code });
+}

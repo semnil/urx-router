@@ -36,7 +36,7 @@ Because the planning UI is pure frontend, you can verify behavior in a browser w
 even without Rust installed. Desktop builds (`pnpm tauri dev` / `pnpm tauri build`) require
 [Rust](https://rustup.rs/).
 
-Pass `--experimental` to enable experimental features (hidden by default):
+Pass `--experimental` to enable the on-device self-test diagnostic (hidden by default):
 
 ```sh
 pnpm tauri dev -- -- --experimental          # dev
@@ -44,12 +44,29 @@ open -a 'URX Router' --args --experimental    # built app (macOS)
 urx-router.exe --experimental                 # built app (Windows)
 ```
 
-## Device control (experimental, URX44V only)
+## Device control (URX44V only)
 
-Desktop builds can read the connected interface's current mixer settings into the plan
-(**Device → Fetch from device**), with the Device Center software running. The parameter
-mapping is verified on hardware **only for URX44V**; **URX44** is assumed identical and
-**URX22** is inferred from it — neither is verified on hardware yet.
+With the Device Center software running, desktop builds can **read** the connected
+interface's current mixer settings into the plan (**Device → Fetch from device**) and
+**write** a plan back to it (**Device → Write to device** / **Live sync**, which mirrors
+each edit as you make it). The parameter mapping is verified on hardware **only for
+URX44V**; **URX44** is assumed identical and **URX22** is inferred from it — neither is
+verified on hardware yet. Writing overwrites the device's current settings; see the
+[Disclaimer](#disclaimer). The `--experimental` flag adds a destructive-then-restored
+self-test diagnostic on top.
+
+## Disclaimer
+
+URX Router talks to the hardware using a control protocol determined by independent
+analysis, not from official documentation. Every parameter the tool writes has been checked
+against a connected device, but sending data to hardware always carries some risk. **Writing
+a plan to the device overwrites its current mixer settings** — back up anything you want to
+keep (using the manufacturer's own software) first.
+
+By using URX Router you accept this risk. The software is provided "as is", without warranty
+of any kind, and the authors are not liable for any damage to hardware, loss of settings, or
+other loss arising from its use. The desktop installer shows this notice together with the
+[license](LICENSE) and asks you to accept it before installing.
 
 ## Documentation
 

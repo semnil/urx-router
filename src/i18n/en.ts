@@ -329,6 +329,17 @@ export const en = {
     deviceErrorExport:
       "Some parameters could not be read or written. Save a report listing each failure?",
   },
+  consent: {
+    title: "Before you start",
+    body: [
+      "URX Router can write settings to a connected YAMAHA URX-series interface, overwriting its current mixer settings. The control protocol was determined by independent analysis, not official documentation, so sending data to hardware always carries some risk.",
+      "Parameter mappings are verified on hardware only for the URX44V; URX44 and URX22 are not verified yet.",
+      "The software is provided “as is”, without warranty of any kind, and the authors are not liable for any damage to hardware, loss of settings, or other loss arising from its use.",
+    ],
+    accept: "By continuing, you accept this risk.",
+    agree: "Agree and continue",
+    quit: "Quit",
+  },
   filter: {
     plan: "URX Router plan",
     png: "PNG image",
