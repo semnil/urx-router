@@ -81,6 +81,20 @@ export async function confirmDialog(message: string): Promise<boolean> {
   return result === "Ok";
 }
 
+/**
+ * Error alert that works in both environments — the modal surface for an action
+ * that did not complete (routine/info messages go to the in-app status line
+ * instead). In a Tauri webview, drive the dialog plugin's message command (a
+ * single OK button, error kind); a plain browser / demo uses window.alert.
+ */
+export async function errorDialog(message: string): Promise<void> {
+  if (!isTauri()) {
+    window.alert(message);
+    return;
+  }
+  await invoke("plugin:dialog|message", { message, kind: "error", buttons: "Ok" });
+}
+
 /** Native save dialog (dialog plugin) → chosen path, or null if canceled / not in Tauri. */
 export async function nativeSavePath(defaultName: string, filter: FileFilter): Promise<string | null> {
   if (!isTauri()) return null;

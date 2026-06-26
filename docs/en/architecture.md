@@ -315,11 +315,24 @@ finish (leaving the device consistent) before bailing. A cancel surfaces through
 ### Reporting a drop or partial failure
 
 A link that drops *during* a command surfaces on the next operation as a broker error, but a held-open connection
-sitting **idle** (live sync with no edits) would go unnoticed. To close that gap the Rust worker pushes a single
-`LinkEvent` to the frontend the moment `pump` detects the drop (`vdWatchLink`), and the frontend tears the live
+sitting **idle** (live sync with no edits) would go unnoticed. Unplugging *only the URX* is also invisible to a
+socket check: the broker socket stays up and keeps ACKing writes (a success reply with no unit attached), so neither
+a socket drop nor a write error reveals it. To close both gaps the Rust worker watches, in `pump` (the idle socket
+drain) and in the read/write round-trip loops (`do_set` / `do_get_value`), for (a) a socket drop and (b) the
+`/vd/synchronize` frame Device Center spontaneously sends at the moment of disconnect (`sync_status` flipping away
+from `online` — distinct from the handshake / sync_status reads that fetch it on purpose). On either, it pushes a
+single `LinkEvent` to the frontend (`vdWatchLink`), or fails the in-flight command, and the frontend tears the live
 session down. When fetch or write fails on individual reads/writes, the count is shown in the status and the user
 is offered a Markdown report of each failure (`formatReadbackReport` / `formatWriteReport`); the save dialog is
 presented after the connection is released.
+
+Errors are surfaced by meaning. An **operation that did not complete** (a failed load, fetch, write, self-test,
+connect, or live-sync start, plus a link drop during live sync) is shown as a **modal** so it cannot be missed
+(`errorDialog` → `showError`, which clears the status line first so a stale "Connecting…" does not linger behind
+it). **Routine progress, info, cancellation, and partial successes** stay on the status line at the bottom. A live
+runtime error can arrive from several sources at once (live / follow / link watch), so they funnel through
+`stopLiveOnError`, which uses the `liveSessionUp` flag to drop the connection and show the dialog exactly once — the
+second and later calls return early because `deactivateLive` clears that flag synchronously.
 
 ## Responsive layout (mobile)
 

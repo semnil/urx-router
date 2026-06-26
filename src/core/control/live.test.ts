@@ -98,3 +98,27 @@ describe("LiveSync flush cadence", () => {
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
   });
 });
+
+describe("LiveSync flush error", () => {
+  it("clears active before onError fires (the handler sees a stopped sync)", async () => {
+    const plan = basePlan();
+    let activeAtError: boolean | null = null;
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      // The flush sets active = false before calling onError, so a handler that
+      // guards on isActive() (deactivateLive) must not gate its teardown on it.
+      onError: () => {
+        activeAtError = live.isActive();
+      },
+      onSent: () => {},
+    });
+    vi.mocked(vdSet).mockRejectedValueOnce(new Error("device gone"));
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(activeAtError).toBe(false);
+    expect(live.isActive()).toBe(false);
+  });
+});

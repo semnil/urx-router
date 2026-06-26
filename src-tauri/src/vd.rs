@@ -501,6 +501,11 @@ mod imp {
         while Instant::now() < deadline {
             let Some(text) = read_text(ws)? else { continue };
             let Ok(msg) = serde_json::from_str::<Value>(&text) else { continue };
+            // A device-lost push can land mid-write (the broker still ACKs the
+            // write itself); fail the command so the session tears down.
+            if let Some(err) = synchronize_lost(&msg) {
+                return Err(err);
+            }
             if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
                 continue;
             }
@@ -545,6 +550,11 @@ mod imp {
         while Instant::now() < deadline {
             let Some(text) = read_text(ws)? else { continue };
             let Ok(msg) = serde_json::from_str::<Value>(&text) else { continue };
+            // A device-lost push can land mid-read; fail the command so the caller
+            // (readback / converge / live) surfaces the drop instead of timing out.
+            if let Some(err) = synchronize_lost(&msg) {
+                return Err(err);
+            }
             if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
                 continue;
             }
@@ -628,9 +638,8 @@ mod imp {
     }
 
     /// Parse a meter `notify` frame and stream it to the frontend.
-    fn forward_meter(text: &str, ch: &Channel<MeterUpdate>) {
-        let Ok(msg) = serde_json::from_str::<Value>(text) else { return };
-        let Some((vdp, addr)) = notify_frame(&msg, "/vd/meters/") else { return };
+    fn forward_meter(msg: &Value, ch: &Channel<MeterUpdate>) {
+        let Some((vdp, addr)) = notify_frame(msg, "/vd/meters/") else { return };
         let mut parts = addr.split(':');
         let (Some(id), Some(xs)) = (parts.next(), parts.next()) else { return };
         let (Ok(meter_id), Ok(x)) = (id.parse::<u32>(), xs.parse::<i64>()) else { return };
@@ -641,9 +650,8 @@ mod imp {
     /// Parse a parameter `notify` frame (a device-side change on a registered
     /// address) and stream it to the frontend. A non-integer current_value (e.g.
     /// a name string) is skipped — numeric follow only, matching the JS reconcile.
-    fn forward_param(text: &str, ch: &Channel<ParamUpdate>) {
-        let Ok(msg) = serde_json::from_str::<Value>(text) else { return };
-        let Some((vdp, addr)) = notify_frame(&msg, "/vd/parameters/") else { return };
+    fn forward_param(msg: &Value, ch: &Channel<ParamUpdate>) {
+        let Some((vdp, addr)) = notify_frame(msg, "/vd/parameters/") else { return };
         let mut parts = addr.split(':');
         let (Some(ids), Some(xs), Some(ys)) = (parts.next(), parts.next(), parts.next()) else { return };
         let (Ok(param_id), Ok(x), Ok(y)) = (ids.parse::<u32>(), xs.parse::<i64>(), ys.parse::<i64>()) else { return };
@@ -651,10 +659,31 @@ mod imp {
         let _ = ch.send(ParamUpdate { param_id, x, y, value });
     }
 
+    /// Detect a device-lost push: Device Center spontaneously sends a
+    /// `/vd/synchronize` frame with `sync_status` flipping to "offline"/"lost" the
+    /// moment the URX is physically unplugged (confirmed by capture). It arrives on
+    /// `/vd/synchronize`, not `/vd/parameters`, so the notify forwarders miss it;
+    /// the broker also keeps ACKing writes (response_code 200) with no unit
+    /// attached, so a write error cannot reveal the drop. Returns the ready-to-use
+    /// error message when seen, so each read loop just `return Err(..)`s on it.
+    /// Not used by handshake / sync_status, which read `/vd/synchronize` on purpose.
+    fn synchronize_lost(msg: &Value) -> Option<String> {
+        let vdp = msg.pointer("/params/vdp").or_else(|| msg.pointer("/vdp"))?;
+        let uri = vdp.get("uri").and_then(Value::as_str)?;
+        if uri.split('?').next().unwrap_or(uri) != "/vd/synchronize" {
+            return None;
+        }
+        let status = vdp.pointer("/data/sync_status").and_then(Value::as_str)?;
+        if status == "online" {
+            return None;
+        }
+        Some(format!("device disconnected (sync_status {status})"))
+    }
+
     /// Read whatever is buffered until the socket would block, forwarding meter
     /// and parameter notifications to their channels (when subscribed) and
-    /// discarding everything else. Returns Err if the connection dropped so the
-    /// worker can stop.
+    /// discarding everything else. Returns Err if the connection dropped, or if a
+    /// device-lost synchronize push arrived, so the worker can stop.
     fn pump(
         ws: &mut Ws,
         meter_ch: Option<&Channel<MeterUpdate>>,
@@ -663,11 +692,18 @@ mod imp {
         for _ in 0..512 {
             match ws.read() {
                 Ok(Message::Text(t)) => {
+                    // Parse the frame once and share it: synchronize_lost and both
+                    // forwarders all read the same envelope, and this drains the
+                    // ~250/s meter stream (avoid re-parsing per consumer).
+                    let Ok(msg) = serde_json::from_str::<Value>(&t) else { continue };
+                    if let Some(err) = synchronize_lost(&msg) {
+                        return Err(err);
+                    }
                     if let Some(ch) = meter_ch {
-                        forward_meter(&t, ch);
+                        forward_meter(&msg, ch);
                     }
                     if let Some(ch) = param_ch {
-                        forward_param(&t, ch);
+                        forward_param(&msg, ch);
                     }
                 }
                 Ok(Message::Close(_)) => return Err("Device Center closed the control connection".into()),

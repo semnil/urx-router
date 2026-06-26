@@ -257,10 +257,22 @@ A.Gain +8/+55・D.Gain -14/+15 を左右の水平に。
 ### 切断・部分失敗の通知
 
 リンクがコマンド実行中に切れた場合は次の操作が broker エラーを返して surface するが、保持接続の**アイドル時**
-(Live sync 中で編集がない間) は無通知になる。これを埋めるため Rust ワーカーは `pump` でリンク断を検知した瞬間に
-`LinkEvent` を 1 度フロントへ push し (`vdWatchLink`)、フロントは Live セッションを解除する。取得・書込みが個別の
-読み書きに失敗した場合は件数をステータスに出すほか、各失敗の理由を Markdown レポートに保存するか確認する
-(`formatReadbackReport` / `formatWriteReport`)。保存ダイアログは接続を解放した後に提示する。
+(Live sync 中で編集がない間) は無通知になる。さらに **URX だけを物理切断**した場合は broker ソケットは生きたままで、
+書き込みも broker が受理し続ける (実機不在でも成功応答を返す) ため、ソケット断や書き込みエラーでは検知できない。
+これらを埋めるため Rust ワーカーは `pump` (アイドル時のソケット排出) と読み書きの往復ループ (`do_set` / `do_get_value`) で、
+(a) ソケット断と、(b) Device Center が切断の瞬間に自発送出する `/vd/synchronize` フレーム (`sync_status` が `online` 以外へ
+遷移するもの。handshake / sync_status が意図的に読む経路とは区別する) の両方を検知する。いずれかを見た瞬間に
+`LinkEvent` を 1 度フロントへ push し (`vdWatchLink`)、または往復中なら当該コマンドをエラーにして、フロントは Live
+セッションを解除する。取得・書込みが個別の読み書きに失敗した場合は件数をステータスに出すほか、各失敗の理由を
+Markdown レポートに保存するか確認する (`formatReadbackReport` / `formatWriteReport`)。保存ダイアログは接続を解放した
+後に提示する。
+
+エラーの提示先は意味で分ける: **予定した操作が完了しなかったもの** (読込・取得・書込・self-test・接続・Live sync
+起動の失敗、および Live sync 中のリンク断) は見落とされにくいよう**モーダル**で出す (`errorDialog` → `showError`。
+status 行は事前にクリアして「接続中…」が背後に残らないようにする)。**通常の進捗・情報・キャンセル・部分成功**は
+従来どおり画面下部の status 行に出す。Live sync 中のランタイムエラーは複数ソース (live / follow / リンク監視) から
+ほぼ同時に届きうるため `stopLiveOnError` に集約し、`liveSessionUp` フラグで初回だけ切断 + ダイアログ表示する
+(2 件目以降は `deactivateLive` が同フラグを同期的に下ろすため早期 return しダイアログを重ねない)。
 
 ## レスポンシブ対応 (モバイル)
 
