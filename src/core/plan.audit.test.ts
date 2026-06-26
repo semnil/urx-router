@@ -19,6 +19,7 @@ import {
   PLAN_VERSION,
   LEVEL_OFF_DB,
 } from "./plan";
+import { DEFAULT_SAMPLE_RATE } from "./constraints";
 import { MODELS, MODEL_IDS } from "../models/index";
 import { defaultPlan } from "../models/initial-state";
 import { ref } from "../models/types";
@@ -46,12 +47,12 @@ describe("serialize / deserialize round-trip identity", () => {
     expect(restored.connections).toEqual(plan.connections);
   });
 
-  it("preserves a non-standard / out-of-table sample rate verbatim (no clamping)", () => {
-    // AUDIT: deserialize does not validate sampleRate against SAMPLE_RATES; any
-    // finite number round-trips. Documents that the table is a UI concern only.
+  it("replaces an out-of-table sample rate with the default on load", () => {
+    // AUDIT: deserialize validates sampleRate against SAMPLE_RATES so an opened
+    // plan can never carry a rate the picker has no <option> for.
     const plan = emptyPlan("URX44");
     plan.sampleRate = 1234;
-    expect(deserialize(serialize(plan)).sampleRate).toBe(1234);
+    expect(deserialize(serialize(plan)).sampleRate).toBe(DEFAULT_SAMPLE_RATE);
   });
 });
 

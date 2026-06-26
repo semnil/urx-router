@@ -12,7 +12,7 @@ import {
   PLAN_VERSION,
   type Plan,
 } from "./plan";
-import { DEFAULT_SAMPLE_RATE } from "./constraints";
+import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES } from "./constraints";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
 
@@ -141,6 +141,43 @@ describe("deserialize errors", () => {
   it("does not currently validate that modelId is a real model", () => {
     const doc = JSON.stringify({ format: PLAN_FORMAT, version: PLAN_VERSION, modelId: "NOPE" });
     expect(deserialize(doc).modelId).toBe("NOPE");
+  });
+
+  // A numeric but OFF-TABLE sampleRate (one the picker has no <option> for) is
+  // rejected and replaced with the default, so an opened plan can never carry a
+  // rate that desyncs the picker.
+  it("rejects a sampleRate that is not in the selectable table", () => {
+    const offTable = 22050;
+    expect(SAMPLE_RATES).not.toContain(offTable);
+    const doc = JSON.stringify({
+      format: PLAN_FORMAT,
+      version: PLAN_VERSION,
+      modelId: "URX44",
+      sampleRate: offTable,
+    });
+    expect(deserialize(doc).sampleRate).toBe(DEFAULT_SAMPLE_RATE);
+  });
+
+  it("accepts every rate in the selectable table verbatim", () => {
+    for (const rate of SAMPLE_RATES) {
+      const doc = JSON.stringify({
+        format: PLAN_FORMAT,
+        version: PLAN_VERSION,
+        modelId: "URX44",
+        sampleRate: rate,
+      });
+      expect(deserialize(doc).sampleRate).toBe(rate);
+    }
+  });
+
+  it("falls back to the default rate when sampleRate is non-numeric", () => {
+    const doc = JSON.stringify({
+      format: PLAN_FORMAT,
+      version: PLAN_VERSION,
+      modelId: "URX44",
+      sampleRate: "48000",
+    });
+    expect(deserialize(doc).sampleRate).toBe(DEFAULT_SAMPLE_RATE);
   });
 });
 

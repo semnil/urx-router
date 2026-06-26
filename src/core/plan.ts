@@ -4,7 +4,7 @@
 
 import type { ConnectionKind, DeviceModel, ModelId } from "../models/types";
 import { parseRef } from "../models/types";
-import { DEFAULT_SAMPLE_RATE } from "./constraints";
+import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES } from "./constraints";
 
 // LEVEL fader / send range in dB (the device level_gain table, shared by every
 // fader, send and the monitor — UG "Range: -∞ dB to +10.00 dB"). The slider's
@@ -375,7 +375,9 @@ export function deserialize(text: string): Plan {
   }
   return {
     modelId: data.modelId as ModelId,
-    sampleRate: typeof data.sampleRate === "number" ? data.sampleRate : DEFAULT_SAMPLE_RATE,
+    sampleRate: SAMPLE_RATES.includes(data.sampleRate as number)
+      ? (data.sampleRate as number)
+      : DEFAULT_SAMPLE_RATE,
     positions: isStringRecord(data.positions) ? (data.positions as unknown as Record<string, NodePos>) : {},
     connections: Array.isArray(data.connections) ? data.connections.filter(isPlanConnection) : [],
     nodeParams: isStringRecord(data.nodeParams)
