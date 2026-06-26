@@ -79,24 +79,48 @@ test("a multi-hop chain reaches the input two hops behind the traced bus", async
   await expect(wire(page, "ch1:out", "bus.stereo:in")).toHaveAttribute("opacity", "1");
 });
 
-test("an off send breaks the trace upstream of the muted node", async ({ page }) => {
-  // Muting ch1 turns its fixed STEREO send off, so tracing bus.stereo must not
-  // walk through ch1's now-silent leg: ch1 and its input drop off the path while
-  // the bus itself stays lit.
-  await connect(page, "in.micline_1_2:out", "ch1:in");
-  await node(page, "ch1").click();
+// Mute a channel via the inspector's Channel ON/OFF toggle, then drop the
+// selection so it does not interfere with a later trace.
+async function muteChannel(page: Page, id: string): Promise<void> {
+  await node(page, id).click();
   await page.locator("#inspector .param").filter({ has: page.locator(".toggle") }).filter({ hasText: "Channel" })
     .getByRole("button", { name: "OFF", exact: true }).click();
   await page.keyboard.press("Escape");
+}
+
+test("an off send breaks the trace at the muted node but its live pair partner keeps the input lit", async ({ page }) => {
+  // A stereo input feeds a channel pair: connecting in.micline_1_2 to ch1 mirrors
+  // the source onto ch2. Muting only ch1 silences its fixed STEREO send, so the
+  // trace must not walk ch1's leg back — yet ch2 still carries the same input to
+  // STEREO at unity, so the input stays on the path through the live partner.
+  await connect(page, "in.micline_1_2:out", "ch1:in");
+  await muteChannel(page, "ch1");
 
   await longPress(page, "bus.stereo");
 
   await expect(node(page, "bus.stereo")).toHaveAttribute("opacity", "1");
-  // The muted channel sits off the traced path: its STEREO send is now an
-  // off-send, so the walk stops there. ch1 is both muted (its own 0.4 dim) and
-  // off-path (×0.3 fade), compounding to 0.12 — proof the trace did not follow
-  // its silenced leg back to the input.
+  // ch1 is both muted (its own 0.4 dim) and off-path (×0.3 fade), compounding to
+  // 0.12 — proof the trace did not follow its silenced leg.
   await expect(node(page, "ch1")).toHaveAttribute("opacity", "0.12");
+  // The shared input still reaches STEREO via the un-muted partner ch2, so it is
+  // genuinely on-path and stays fully lit (route-accurate, not a fade leak).
+  await expect(node(page, "ch2")).toHaveAttribute("opacity", "1");
+  await expect(node(page, "in.micline_1_2")).toHaveAttribute("opacity", "1");
+});
+
+test("muting both paired channels drops their shared input off the traced path", async ({ page }) => {
+  // With both halves of the pair muted, every leg from in.micline_1_2 to STEREO
+  // is now an off-send, so the input finally drops off the path and fades.
+  await connect(page, "in.micline_1_2:out", "ch1:in");
+  await muteChannel(page, "ch1");
+  await muteChannel(page, "ch2");
+
+  await longPress(page, "bus.stereo");
+
+  await expect(node(page, "bus.stereo")).toHaveAttribute("opacity", "1");
+  await expect(node(page, "ch1")).toHaveAttribute("opacity", "0.12");
+  // Off-path and not muted itself: the input fades to its plain off-path opacity.
+  await expect(node(page, "in.micline_1_2")).toHaveAttribute("opacity", "0.3");
 });
 
 test("a path trace clears when the selection is dropped", async ({ page }) => {

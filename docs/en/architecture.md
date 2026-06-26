@@ -136,7 +136,10 @@ by a factor of its resting opacity, derived from node state by `restingOpacity` 
 `makeNode` dims it: rate-disabled > inactive > unread > plain), so a muted / unread node keeps its own
 dim instead of having it clobbered. The trace is a state (`pathNodes`)
 independent of the selection, cleared by any selection change, Escape, or an empty-canvas click. A
-node with no upstream (an input) just reports it on the status bar and lights nothing.
+node with no upstream (an input) just reports it on the status bar and lights nothing. The closure is
+route-accurate, not per-node: a stereo input mirrors its source onto a channel pair, so muting one
+half of the pair leaves the muted channel off the path while its shared input stays lit through the
+still-live partner channel — the input is genuinely on the path until both halves are silenced.
 
 **Uniform OFF display**: every state that silences a node — a muted channel / master / FX / MONITOR
 (`params.on`), a bypassed ducker (`duckerOn`), the oscillator off (`osc.on`) — funnels through the
