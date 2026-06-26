@@ -41,3 +41,36 @@ The MONITOR bus **CUE Int** toggle (enable/disable the cue interrupt,
 `MONITOR_CUE_INTERRUPT`) is a confirmed parameter, so it is read, written and
 live-synced from the CONSOLE MONITOR strip and the inspector. What cannot be
 controlled is the per-channel CUE on/off (the assignment).
+
+## Live control is hardware-verified on the URX44V only
+
+Live device control was developed and verified against a real **URX44V**. The
+**URX44** reuses the URX44V control map verbatim (the only hardware difference
+is the HDMI input, which is not routed by default), so it is expected to match
+but has not been verified on hardware. The **URX22** control map and
+factory-initial plan are a conjectured mirror of the URX44V — there is no URX22
+hardware to verify against — so its values may not match the device exactly.
+Offline planning, the plan JSON and image export are unaffected; this concerns
+only live sync on those two models.
+
+## The AUTO (auto gain) trigger is not modeled
+
+The device's input screens offer an **AUTO** button that runs a one-shot
+automatic input-gain measurement. The planner does not model it: it is a live
+action, not a stored setting, so there is nothing for a saved plan or a
+snapshot diff to represent. Input gain itself is planned and synced as usual;
+only the auto-measure trigger is out of scope.
+
+## SD Rec Track Count is read-only
+
+The microSD recorder's per-track source assignment is fully editable and
+live-synced (each stereo track pair selects a source — a channel pair, STEREO or
+a MIX bus — over param 736; see [device-model.md](device-model.md)).
+
+The recorder's **Track Count** (2 … 16), however, is **read-only**: like the
+CH → FX send Pre/Post, the device accepts a software write but ignores it and
+only its own front panel changes it (param 839). The planner reads it back and
+uses it to gate how many track-pair slots are shown, but cannot push it — so a
+saved plan's Track Count is not written to the device.
+
+This applies to the URX44 / URX44V only (the URX22 has no microSD recording).

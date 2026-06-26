@@ -193,6 +193,8 @@ export const en = {
     panLink: "Pan Link",
     busFixedLevel: "Send level is fixed (BUS Type: FIXED).",
     panLinked: "Pan follows the source channel PAN (Pan Link).",
+    sdRecTrackCount: "Track Count",
+    sdRecTrackCountLive: "Track Count is set on the device only (not writable from software).",
     signalType: "Signal Type",
     panBal: "PAN / BAL",
     deleteConnection: "Delete this connection",
@@ -206,6 +208,7 @@ export const en = {
       key: "Ducker key source (single)",
       send: "Bus send (summing)",
       sendSwitch: "Bus send (ON/OFF switch)",
+      record: "SD Rec source select (single)",
     },
     nodeKind: {
       input: "Input source",

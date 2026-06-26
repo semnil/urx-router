@@ -797,6 +797,31 @@ export function nodeForPort(model: DeviceModel, port: number): string | null {
   return null;
 }
 
+/** microSD Rec track-pair slot nodes (out.sdrec.t1 …) in track order, with the
+ *  two device track indices (y on param 736) each pair fills. Empty on models
+ *  without a recorder. */
+export function recordSlots(model: DeviceModel): { id: string; trackL: number; trackR: number }[] {
+  const out: { id: string; trackL: number; trackR: number }[] = [];
+  for (const n of model.nodes) {
+    const m = /^out\.sdrec\.t(\d+)$/.exec(n.id);
+    if (!m) continue;
+    const k = Number(m[1]) - 1;
+    out.push({ id: n.id, trackL: 2 * k, trackR: 2 * k + 1 });
+  }
+  return out;
+}
+
+/** Record-source port refs (L/R) for a node feeding an SD Rec track pair: a
+ *  STEREO/MIX bus, a stereo channel (its two input slots), or a mono channel pair
+ *  (its primary's slot L, the partner's slot R = L+1). Null if not a record source. */
+export function recordSourcePorts(model: DeviceModel, nodeId: string): { l: number; r: number } | null {
+  const bus = BUS_PORTS[nodeId];
+  if (bus) return bus;
+  const slots = channelInputSlots(model, nodeId);
+  if (!slots) return null;
+  return slots.length === 2 ? { l: slots[0], r: slots[1] } : { l: slots[0], r: slots[0] + 1 };
+}
+
 // Physical input port-ref namespace (distinct from the bus/output one above):
 // each selectable input source occupies an L/R mono-port pair. Analog mics are
 // 0-3; the 0x100+ blocks are stereo sources. The "All Input" / "All USB DAW"
@@ -1141,6 +1166,20 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (conn && !p) continue;
     out.push(command(pl, yl, p ? p.l : PORT_REF_NONE));
     if (pr) out.push(command(pr, yr, p ? p.r : PORT_REF_NONE));
+  }
+
+  // microSD Rec per-track source assign (param 736) — absolute over every track-pair
+  // slot. A record wire picks one source (channel pair / STEREO / MIX); its L/R port
+  // refs go to the pair's two tracks. No wire writes the NONE sentinel to both,
+  // matching readback (NONE = no record wire). Track Count (839) is read-only, never
+  // emitted. Absent on models without a recorder (recordSlots is then empty).
+  for (const slot of recordSlots(model)) {
+    const conn = incomingConnection(plan, ref(slot.id, "in"), "record");
+    const p = conn ? recordSourcePorts(model, parseRef(conn.from).nodeId) : null;
+    // A wire to a source that does not resolve to a port is left untouched.
+    if (conn && !p) continue;
+    out.push(command("SD_REC_SOURCE", slot.trackL, p ? p.l : PORT_REF_NONE));
+    out.push(command("SD_REC_SOURCE", slot.trackR, p ? p.r : PORT_REF_NONE));
   }
 
   // Bus master ON/OFF: STEREO master (582, y = 0), MIX buses (675, L/R-linked per

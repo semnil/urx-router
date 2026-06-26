@@ -3,13 +3,14 @@
 // Visual attributes are inline so the PNG export matches.
 
 import type { DeviceModel, DeviceNode, NodeKind, PortDirection } from "../models/types";
-import { fullLabel, isSingleInput, parseRef, ref } from "../models/types";
+import { fullLabel, hangsUnderHeader, isSingleInput, parseRef, ref } from "../models/types";
 import type { Plan, PlanConnection } from "../core/plan";
 import { hasConnection, LEVEL_MIN_DB, removeConnection } from "../core/plan";
 import { canConnect, isFixedConnection, legalSources, legalTargets, pairPrimary, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, upstreamNodes } from "../core/routing";
 import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
 import type { SaveResult } from "../core/storage";
 import { oscAssign } from "../core/control/translate";
+import { SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
 import { t } from "../i18n";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -118,7 +119,7 @@ const PALETTES: Record<ThemeName, Palette> = {
     label: "#f1e8d6",
     portOuter: "#0c0a07",
     portPinOff: "#241d12",
-    wire: { source: "#59b2ff", send: "#76d690", sendSwitch: "#4fc8b0", patch: "#ffb347", key: "#59b2ff" },
+    wire: { source: "#59b2ff", send: "#76d690", sendSwitch: "#4fc8b0", patch: "#ffb347", key: "#59b2ff", record: "#b58fe0" },
     tempWire: "#caa86a",
     legalFill: "#1d3b2a",
     legalStroke: "#7fd0a0",
@@ -138,7 +139,7 @@ const PALETTES: Record<ThemeName, Palette> = {
     label: "#2a2418",
     portOuter: "#d9d0bd",
     portPinOff: "#cabd9f",
-    wire: { source: "#1f6fc8", send: "#1f8a52", sendSwitch: "#13836f", patch: "#b8700a", key: "#1f6fc8" },
+    wire: { source: "#1f6fc8", send: "#1f8a52", sendSwitch: "#13836f", patch: "#b8700a", key: "#1f6fc8", record: "#7a52c0" },
     tempWire: "#9a8d70",
     legalFill: "#cde7d6",
     legalStroke: "#2f8f63",
@@ -515,12 +516,20 @@ export class Graph {
   }
 
   private posOf(nodeId: string): Pt {
-    // A hung node (ducker) always derives its position from its parent — just
-    // below it — so the two move as one and any saved position is ignored.
+    // A hung node always derives its position from its parent — just below it — so
+    // it moves as a unit and any saved position is ignored. Several nodes can hang
+    // on one parent (the SD Rec track slots under their header): each stacks after
+    // the earlier visible siblings, so a shelved/inactive slot collapses the rest
+    // up. A ducker is its channel's only child, so this adds nothing for it.
     const node = this.nodeById.get(nodeId);
     if (node?.attachTo) {
       const base = this.posOf(node.attachTo);
-      return { x: base.x, y: base.y + this.nodeHeight(node.attachTo) + DUCKER_GAP };
+      let y = base.y + this.nodeHeight(node.attachTo) + DUCKER_GAP;
+      for (const sib of this.model.nodes) {
+        if (sib.id === nodeId) break;
+        if (sib.attachTo === node.attachTo && !this.isHidden(sib.id)) y += this.nodeHeight(sib.id) + DUCKER_GAP;
+      }
+      return { x: base.x, y };
     }
     const saved = this.plan.positions[nodeId];
     if (saved) return saved;
@@ -531,9 +540,10 @@ export class Graph {
     return this.nodeById.get(id)?.attachTo;
   }
 
-  /** The hung child (ducker) of a parent node, if any. */
-  private attachedChild(parentId: string): string | undefined {
-    return this.model.nodes.find((n) => n.attachTo === parentId)?.id;
+  /** All hung children of a node — a single ducker, or every SD Rec track slot
+   *  under the recorder header. They move with the parent as a unit. */
+  private attachedDescendants(parentId: string): string[] {
+    return this.model.nodes.filter((n) => n.attachTo === parentId).map((n) => n.id);
   }
 
   private portPoint(r: string): Pt {
@@ -671,7 +681,26 @@ export class Graph {
   private isHidden(id: string): boolean {
     const parent = this.parentOf(id);
     if (parent && this.isHidden(parent)) return true;
+    if (this.sdRecSlotInactive(id)) return true;
     return this.hidden.has(id);
+  }
+
+  /** A structural child slot (hung under a header — a microSD Rec track slot). It
+   *  belongs to the recorder, so "hide unused" leaves it for the header to manage
+   *  rather than shelving it loose; the user may still shelve one by hand (it gets
+   *  a chip like a ducker). */
+  private isStructuralSlot(id: string): boolean {
+    return hangsUnderHeader(this.model, id);
+  }
+
+  // A microSD Rec track-pair slot beyond the current Track Count is inactive — the
+  // device records only Track Count tracks — so it is not drawn. The count is
+  // read-only on the device; the planner edits it on the SD Rec header node.
+  private sdRecSlotInactive(id: string): boolean {
+    const m = /^out\.sdrec\.t(\d+)$/.exec(id);
+    if (!m) return false;
+    const count = this.plan.nodeParams["out.sdrec"]?.sdRecTrackCount ?? SD_REC_TRACK_COUNT_DEFAULT;
+    return Number(m[1]) > Math.floor(count / 2);
   }
 
   // Whether a node is an endpoint of any wire (fixed sends included).
@@ -819,7 +848,9 @@ export class Graph {
       g.append(labelText(primary, NODE_H / 2 + 1, LABEL_FS * s, s, p.label, 1));
     }
 
-    for (const port of node.ports) {
+    // A header node (microSD Rec) takes no direct wire — its I/O lives on the
+    // child slots — so its port connector is not drawn.
+    for (const port of node.header ? [] : node.ports) {
       const cx = port.direction === "in" ? 0 : NODE_W;
       const r = ref(node.id, port.id);
 
@@ -1579,12 +1610,14 @@ export class Graph {
       const el = this.nodeEls.get(this.dragNode.id)!;
       const pos = this.plan.positions[this.dragNode.id];
       el.setAttribute("transform", `translate(${pos.x} ${pos.y})`);
-      // A hung child (ducker) follows: its position derives from the parent, so
-      // just move its element — updateNodeWires redraws both nodes' wires.
-      const childId = this.attachedChild(this.dragNode.id);
-      if (childId && !this.isHidden(childId)) {
-        const cpos = this.posOf(childId);
-        this.nodeEls.get(childId)?.setAttribute("transform", `translate(${cpos.x} ${cpos.y})`);
+      // Hung descendants follow: their positions derive from the parent (a single
+      // ducker, or the SD Rec track-slot chain), so move each element and redraw
+      // its wires.
+      for (const descId of this.attachedDescendants(this.dragNode.id)) {
+        if (this.isHidden(descId)) continue;
+        const cpos = this.posOf(descId);
+        this.nodeEls.get(descId)?.setAttribute("transform", `translate(${cpos.x} ${cpos.y})`);
+        this.updateNodeWires(descId);
       }
       // A STEREO-linked partner moves by the captured offset (its own position),
       // and the heart tie is redrawn to track the pair.
@@ -1857,7 +1890,13 @@ export class Graph {
    *  channel on just its factory sends is left in place — collapse it by hand
    *  (inspector / multi-select hide) instead. */
   hideUnused(): void {
-    const unwired = this.model.nodes.filter((n) => !this.nodeHasWire(n.id));
+    // SD Rec track slots follow their header in a chain, so they are never shelved
+    // on their own (shelving the header collapses them via isHidden). The header
+    // counts as wired when any of its slots is assigned, so an in-use recorder
+    // stays, and an empty one collapses with its slots.
+    const wired = (id: string): boolean =>
+      this.nodeHasWire(id) || this.attachedDescendants(id).some((d) => this.nodeHasWire(d));
+    const unwired = this.model.nodes.filter((n) => !this.isStructuralSlot(n.id) && !wired(n.id));
     const added = unwired.filter((n) => !this.hidden.has(n.id));
     for (const n of unwired) this.hidden.add(n.id);
     this.commitHidden();
@@ -1899,7 +1938,6 @@ export class Graph {
    * parent is placed — the child's position derives from it. */
   showNode(id: string): void {
     const parent = this.parentOf(id);
-    const child = this.attachedChild(id);
     let changed = this.hidden.delete(id);
     if (parent) {
       if (this.hidden.delete(parent)) {
@@ -1908,7 +1946,9 @@ export class Graph {
       }
     } else {
       if (changed) this.placeInView(id);
-      if (child && this.hidden.delete(child)) changed = true;
+      // Restore the whole unit: any hung children (a ducker, the SD Rec slots) that
+      // were shelved come back with their parent.
+      for (const child of this.attachedDescendants(id)) if (this.hidden.delete(child)) changed = true;
     }
     if (!changed) return;
     this.commitHidden();
@@ -1953,7 +1993,10 @@ export class Graph {
    * parent's chip restores the whole unit. */
   private renderShelf(): void {
     const ids = this.model.nodes
-      .filter((n) => this.isHidden(n.id) && !(n.attachTo && this.isHidden(n.attachTo)))
+      // Chip every USER-shelved node (not merely hidden — a Track-Count-inactive
+      // slot is hidden but gated, not shelved, so it gets no chip). A node whose
+      // parent is itself shelved is covered by the parent's chip, so skip it.
+      .filter((n) => this.hidden.has(n.id) && !(n.attachTo && this.hidden.has(n.attachTo)))
       .map((n) => n.id);
     if (!ids.length) {
       this.shelf.style.display = "none";
@@ -2054,10 +2097,11 @@ export class Graph {
       const col = node.pos.col;
       const y = colY.get(col) ?? MARGIN;
       this.plan.positions[node.id] = { x: MARGIN + col * COL_GAP, y };
-      // The vertical footprint of this node plus any hung child it must clear.
+      // The vertical footprint of this node plus any hung children it must clear
+      // (a ducker, or the stacked SD Rec track slots).
       let span = this.nodeHeight(node.id);
-      const childId = this.attachedChild(node.id);
-      if (childId && !this.isHidden(childId)) span += DUCKER_GAP + this.nodeHeight(childId);
+      for (const childId of this.attachedDescendants(node.id))
+        if (!this.isHidden(childId)) span += DUCKER_GAP + this.nodeHeight(childId);
       const rows = Math.max(1, Math.ceil((span + vgap) / ROW_GAP));
       colY.set(col, y + rows * ROW_GAP);
     }

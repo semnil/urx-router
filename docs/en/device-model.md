@@ -237,22 +237,28 @@ Source selection for the analog outputs (MAIN / LINE).
 - Because it cannot be re-routed, it is **not modeled as an editable node** (there is no `USB DAW OUT` node)
 - N = 10 (URX22) / 12 (URX44, URX44V)
 
-### 8. SD Rec Signal Assign (`sendSwitch`, one receiver; URX44 / URX44V only)
+### 8. SD Rec Signal Assign (`record`, one source per track pair; URX44 / URX44V only)
 
-- microSD Rec 1/2 … 15/16 ← STEREO OUT / MIX 1–2 OUT / CH 1–N OUT (up to 16 tracks)
-- It is an **ON/OFF record-source assign**, not a summing send: the RECORDER menu (Track Count +
-  Source select + a read-only level meter) and the block diagram ("SD Rec Signal Assign") carry **no
-  per-source level / pan / PRE-POST**. The recorded tap is the channel's **Rec Point**.
-- microSD playback is 2-track (stereo); this model represents it as the single input source
-  `microSD Playback`.
+- microSD Rec records up to **16 tracks** as **8 stereo track pairs** (1/2, 3/4, … 15/16). Each pair
+  selects **one** record source — a **channel pair** (CH 1/2 … CH 11/12), **STEREO**, or a **MIX**
+  bus (block diagram: "SD Rec Signal Assign"; RECORDER menu = Track Count + per-pair Source select +
+  a read-only level meter).
+- It is a **single source select** (`record`), not a summing send: there is **no per-source level /
+  pan / PRE-POST**. The recorded tap is the channel's **Rec Point**.
+- The SD Rec node (`out.sdrec`) is a header; the 8 track-pair slots (`out.sdrec.t1` … `t8`) hang
+  stacked below it and are wired from their source. **Track Count** gates how many pairs are active
+  (slots beyond it are hidden). microSD playback is 2-track (stereo), represented as the single input
+  source `microSD Playback`.
+
+> **Live control**: the per-track source assign is read and written over vd (param 736, one port ref
+> per track). **Track Count is read-only** — the device accepts a software write but ignores it
+> (param 839; only the front panel changes it), so live sync reads it back but cannot push it (see
+> [known-issues.md](known-issues.md)). The factory assignment is tracks 1-12 = CH 1-12, tracks 13/14
+> = none, tracks 15/16 = STEREO, Track Count 8.
 
 > **Source of the track count**: the URX44V records **up to 16 tracks** to microSD and plays back
 > **2 tracks** (official Yamaha URX44V product spec). The URX44 also supports microSD recording.
 > DAW recording exposes channels **1–12 individually** over USB (verified on hardware).
-
-> **v0.1 simplification**: microSD Rec is originally a per-track-slot rule, but v0.1 simplifies it
-> into a single group node that receives multiple sources (each an `sendSwitch` assign) to avoid node
-> explosion. Per-slot assignment UI is planned for Phase 2.
 
 ### 9. HDMI THRU (fixed passthrough, no node, URX44V only)
 

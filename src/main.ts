@@ -378,6 +378,9 @@ const inspectorActions = {
     // STEREO link also draws a pair connector, so it repaints nodes (but no wires).
     if (muteChanged || patch.stereoLink !== undefined) graph.repaintNodes();
     if (muteChanged) graph.repaintWires();
+    // Track Count gates how many SD Rec track-pair slots are drawn, so a full
+    // re-render adds / removes the slot nodes (and their wires) on the canvas.
+    if (patch.sdRecTrackCount !== undefined) graph.render();
     if (mirrored) consoleView.refresh();
     // Toggling PAN/BAL (or entering STEREO) re-initializes every bus send's pan
     // for the linked pair: PAN hard-pans odd/even L/R, BAL centres them.

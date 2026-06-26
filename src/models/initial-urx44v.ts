@@ -235,6 +235,9 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   // Seeded so writing a fresh plan restores the device's delay (the absolute
   // write only auto-clears wires, not scalar node params — see bus.osc/monitor).
   "bus.stream": { delay: { on: false, time: 1, frameRate: 5 } },
+  // microSD Rec Track Count factory state: 8 tracks (read-only on the device, so
+  // never written — this drives how many track-pair slots the canvas shows).
+  "out.sdrec": { sdRecTrackCount: 8 },
 };
 
 // Factory CH SETTING colors, read from the device: input channels and the FX
@@ -588,4 +591,14 @@ export const URX44V_CONNECTIONS: PlanConnection[] = [
   { from: "bus.stereo:out", to: "bus.mon2:in", kind: "source" },
   { from: "bus.stereo:out", to: "out.main:in", kind: "patch" },
   { from: "bus.mix1:out", to: "out.line:in", kind: "patch" },
+  // microSD Rec factory track assign (param 736, confirmed on URX44V): tracks 1-12
+  // = CH1-12 (each pair from its primary channel node), tracks 13/14 = none (no
+  // wire), tracks 15/16 = STEREO. Track Count 8 (out.sdrec.sdRecTrackCount).
+  { from: "ch1:out", to: "out.sdrec.t1:in", kind: "record" },
+  { from: "ch3:out", to: "out.sdrec.t2:in", kind: "record" },
+  { from: "ch_5_6:out", to: "out.sdrec.t3:in", kind: "record" },
+  { from: "ch_7_8:out", to: "out.sdrec.t4:in", kind: "record" },
+  { from: "ch_9_10:out", to: "out.sdrec.t5:in", kind: "record" },
+  { from: "ch_11_12:out", to: "out.sdrec.t6:in", kind: "record" },
+  { from: "bus.stereo:out", to: "out.sdrec.t8:in", kind: "record" },
 ];

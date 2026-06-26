@@ -221,3 +221,48 @@ describe("Rec Point / BUS Type / OSC Burst round-trip", () => {
     }
   });
 });
+
+// microSD Rec per-track source assign (param 736, confirmed on URX44V): each
+// source writes its L/R port ref to the track pair's two tracks, and Track Count
+// (839) is read-only — read back (raw × 2) but never emitted.
+describe("microSD Rec source assign round-trips (param 736)", () => {
+  // source node id → the L/R port refs written to track-pair slot t1 (tracks 0/1)
+  const cases: [string, number, number][] = [
+    ["ch1", 0, 1], // CH1/2 pair (mono primary + partner)
+    ["ch3", 2, 3], // CH3/4 pair
+    ["ch_5_6", 4, 5], // stereo channel (its two input slots)
+    ["bus.stereo", 256, 257],
+    ["bus.mix1", 288, 289],
+    ["bus.mix2", 290, 291],
+  ];
+  for (const [src, l, r] of cases) {
+    it(`${src} → slot t1 writes ${l}/${r} and round-trips`, async () => {
+      const plan = base();
+      plan.connections.push({ from: ref(src, "out"), to: ref("out.sdrec.t1", "in"), kind: "record" });
+      const cmds = planToCommands(model, plan).filter((c) => c.name === "SD_REC_SOURCE" && c.y <= 1);
+      expect(cmds.find((c) => c.y === 0)!.vdValue).toBe(l);
+      expect(cmds.find((c) => c.y === 1)!.vdValue).toBe(r);
+      const back = await roundTrip(plan);
+      const conn = back.connections.find((c) => c.to === ref("out.sdrec.t1", "in") && c.kind === "record");
+      expect(conn?.from).toBe(ref(src, "out"));
+    });
+  }
+
+  it("an unassigned track pair writes NONE to both tracks and reads back unwired", async () => {
+    const plan = base(); // no record wire on slot t2 (tracks 2/3)
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "SD_REC_SOURCE" && (c.y === 2 || c.y === 3));
+    expect(cmds.length).toBe(2);
+    expect(cmds.every((c) => c.vdValue === PORT_REF_NONE)).toBe(true);
+    const back = await roundTrip(plan);
+    expect(back.connections.some((c) => c.to === ref("out.sdrec.t2", "in"))).toBe(false);
+  });
+
+  it("Track Count is read-only: never emitted, read back as raw × 2", async () => {
+    const plan = base();
+    plan.nodeParams["out.sdrec"] = { sdRecTrackCount: 16 };
+    expect(planToCommands(model, plan).some((c) => c.name === "SD_REC_TRACK_COUNT")).toBe(false);
+    // The echo table returns 0 for unmocked params, so readback decodes 0 × 2 = 0.
+    const back = await roundTrip(plan);
+    expect(back.nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(0);
+  });
+});

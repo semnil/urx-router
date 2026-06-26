@@ -51,6 +51,8 @@ import {
   BUS_TYPE_FIXED,
   BUS_TYPE_VARI,
   BUS_TYPE_OPTIONS,
+  SD_REC_TRACK_COUNT_DEFAULT,
+  SD_REC_TRACK_COUNT_OPTIONS,
   SIGNAL_TYPE_OPTIONS,
   PAN_BAL_PAN,
   PAN_BAL_OPTIONS,
@@ -140,6 +142,7 @@ const PARAM_FIELDS: Record<ConnectionKind, ParamField[]> = {
   source: [],
   patch: [],
   key: [],
+  record: [],
 };
 type ParamField = "level" | "pan" | "tap";
 
@@ -274,6 +277,20 @@ export function renderInspector(
       }
     }
 
+    // microSD Rec header (out.sdrec): the Track Count gates how many track-pair
+    // slots show. Read-only on the device (front panel only), so it is editable in
+    // the planner but disabled with a note while live-connected (mirrors the
+    // CH → FX tap pattern); the per-track source assign is done by canvas wires.
+    if (node.id === "out.sdrec") {
+      const count = plan.nodeParams[node.id]?.sdRecTrackCount ?? SD_REC_TRACK_COUNT_DEFAULT;
+      host.append(
+        enumSelect(m.inspector.sdRecTrackCount, SD_REC_TRACK_COUNT_OPTIONS, count, (v) =>
+          actions.onUpdateNodeParams(node.id, { sdRecTrackCount: v }), liveActive,
+        ),
+      );
+      if (liveActive) host.append(hint(m.inspector.sdRecTrackCountLive));
+    }
+
     // After a device readback, a node in plan.unreadNodes still shows its plan
     // default (its body read failed); warn that its values are not the device's.
     // No provenance (a plan never fetched) shows nothing.
@@ -284,8 +301,9 @@ export function renderInspector(
     const outgoing = plan.connections.filter((c) => parseRef(c.from).nodeId === node.id);
     const incoming = plan.connections.filter((c) => parseRef(c.to).nodeId === node.id);
     // Routing lists default collapsed — wiring is done on the canvas, so the
-    // inspector keeps this folded away behind a count summary.
-    {
+    // inspector keeps this folded away behind a count summary. A header node
+    // (microSD Rec) takes no direct wire of its own, so it shows no routing list.
+    if (!node.header) {
       const { el, body } = section(m.inspector.routing, { open: false, key: "routing" });
       body.append(subheading(m.inspector.inputsFrom(incoming.length)));
       for (const c of incoming) body.append(connRow(`${endpointLabel(c.from)} →`, c.kind));
@@ -1468,6 +1486,7 @@ function selectControl(
   options: { value: string; label: string; disabled?: boolean }[],
   current: string,
   onChange: (v: string) => void,
+  disabled = false,
 ): HTMLElement {
   const { row } = paramBlock(label, "");
   const sel = document.createElement("select");
@@ -1479,6 +1498,7 @@ function selectControl(
     sel.append(opt);
   }
   sel.value = current;
+  sel.disabled = disabled;
   sel.addEventListener("change", () => onChange(sel.value));
   row.append(sel);
   return row;
@@ -1492,12 +1512,14 @@ function enumSelect(
   options: { value: number; label: string }[],
   current: number,
   onChange: (v: number) => void,
+  disabled = false,
 ): HTMLElement {
   return selectControl(
     label,
     options.map((o) => ({ value: String(o.value), label: o.label })),
     String(current),
     (v) => onChange(Number(v)),
+    disabled,
   );
 }
 

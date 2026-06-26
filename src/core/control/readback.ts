@@ -42,6 +42,7 @@ import {
   OSC_ASSIGN_BUSES,
   oscAssign,
   outputEq,
+  recordSlots,
   ROUTING_SELECTORS,
   sendControl,
   stereoIndexMap,
@@ -80,8 +81,8 @@ export interface ReadbackResult {
    * Ids of nodes a body-parameter group attempted to read but failed on, so the
    * UI can flag a node still showing its plan default as not read from the
    * device. Only body groups (a node's own settings) take part: nodes that hold
-   * no body parameters (inputs, out.sdrec) are never attempted and so never
-   * appear here. Transient: not serialized into the plan.
+   * no body parameters (inputs, record-track slots) are never attempted and so
+   * never appear here. Transient: not serialized into the plan.
    */
   unreadNodes: Set<string>;
 }
@@ -545,8 +546,42 @@ export async function applyDeviceState(
       errors.push(`${to}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
+
+  // microSD Rec per-track source assign: decode each track-pair slot's L track
+  // (param 736) to its source node (channel pair / STEREO / MIX) and reflect the
+  // exclusive record wire (NONE clears it). Empty on models without a recorder.
+  for (const slot of recordSlots(model)) {
+    signal?.throwIfAborted();
+    try {
+      const port = vdToPortRef(await vdGet(PARAMS.SD_REC_SOURCE.id, 0, slot.trackL));
+      const src = port === null ? null : nodeForPort(model, port);
+      if (src) {
+        setExclusiveConnection(plan, ref(src, "out"), ref(slot.id, "in"), "record");
+        applied++;
+      } else if (port === null) {
+        clearIncoming(plan, ref(slot.id, "in"), "record");
+        applied++;
+      } else {
+        // Unknown port: leave the existing wire untouched rather than clearing it.
+        errors.push(`${slot.id}: unknown record source port ${port}`);
+      }
+    } catch (e) {
+      errors.push(`${slot.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  // microSD Rec Track Count (839, read-only): tracks = raw × 2, onto the SD Rec
+  // header. Like sample rate, a standalone read kept out of body provenance.
+  if (model.nodes.some((n) => n.id === "out.sdrec")) {
+    try {
+      const sdRecTrackCount = (await vdGet(PARAMS.SD_REC_TRACK_COUNT.id, 0, 0)) * 2;
+      plan.nodeParams["out.sdrec"] = { ...plan.nodeParams["out.sdrec"], sdRecTrackCount };
+      applied++;
+    } catch (e) {
+      errors.push(`SD Rec track count: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
   // A node is unread when a body group tried it but at least one failed; nodes
-  // never attempted (inputs, out.sdrec) and fully-read nodes stay out of the set.
+  // never attempted (inputs, record-track slots) and fully-read nodes stay out.
   const unreadNodes = new Set<string>();
   for (const id of attempted) if (failed.has(id)) unreadNodes.add(id);
   return { applied, errors, unreadNodes };

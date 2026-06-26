@@ -36,6 +36,13 @@ export interface DeviceNode {
    * it), drags the two as one unit, and hides/shows them together.
    */
   attachTo?: string;
+  /**
+   * A header that groups child slots (attachTo) and has no direct routing of its
+   * own — the microSD Rec node owns the record-track slots this way. Its port is
+   * not drawn and the inspector hides its (always empty) routing list, since the
+   * real I/O lives on the child slots.
+   */
+  header?: boolean;
 }
 
 /** Full single-line name for lists/inspector: the node's two label tiers joined. */
@@ -43,14 +50,16 @@ export function fullLabel(node: DeviceNode): string {
   return node.sublabel ? `${node.label} ${node.sublabel}` : node.label;
 }
 
-// source / patch / key: single-input receiver (a selector). send: summing
+// source / patch / key / record: single-input receiver (a selector). send: summing
 // receiver (a bus) that accepts many incoming wires, each with LEVEL / PAN /
 // PRE-POST. sendSwitch: an ON/OFF assign into a summing bus, with no LEVEL / PAN
 // — e.g. the MIX 1/2 "TO ST" send, or the OSCILLATOR assign (which carries only
 // per-channel L/R on/off in oscL / oscR). key is the ducker sidechain-trigger
 // select: a selector like source but without the mono-pair source mirroring, so
-// it stays its own kind.
-export type ConnectionKind = "source" | "patch" | "send" | "sendSwitch" | "key";
+// it stays its own kind. record is the microSD recorder's per-track-pair source
+// select: a single source (a channel pair, STEREO or a MIX bus) feeds one stereo
+// record-track slot — its own kind so the SD-Rec value encoding stays separate.
+export type ConnectionKind = "source" | "patch" | "send" | "sendSwitch" | "key" | "record";
 
 export interface RoutingRule {
   /** "nodeId:portId" of an output port. */
@@ -87,5 +96,20 @@ export function parseRef(r: string): { nodeId: string; portId: string } {
 
 /** Receivers of these kinds accept at most one incoming wire. */
 export function isSingleInput(kind: ConnectionKind): boolean {
-  return kind === "source" || kind === "patch" || kind === "key";
+  return kind === "source" || kind === "patch" || kind === "key" || kind === "record";
+}
+
+/**
+ * Whether `id` hangs (transitively via attachTo) under a header node — i.e. it is
+ * a structural child slot (a microSD Rec track slot). Such a node is gated only by
+ * its header's controls (Track Count), never individually shelved: it has no shelf
+ * chip, so shelving it would leave it unrecoverable. A ducker (hung under a regular
+ * channel, not a header) is not structural and stays freely shelvable.
+ */
+export function hangsUnderHeader(model: DeviceModel, id: string): boolean {
+  const byId = new Map(model.nodes.map((n) => [n.id, n]));
+  for (let cur = byId.get(id)?.attachTo; cur; cur = byId.get(cur)?.attachTo) {
+    if (byId.get(cur)?.header) return true;
+  }
+  return false;
 }

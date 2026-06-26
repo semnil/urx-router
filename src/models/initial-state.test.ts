@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { colorControl } from "../core/control/translate";
+import { colorControl, planToCommands } from "../core/control/translate";
+import { PORT_REF_NONE } from "../core/control/vd";
 import { MODELS } from "./index";
 import { defaultPlan } from "./initial-state";
 import { URX22_CONNECTIONS, URX22_NODE_PARAMS } from "./initial-urx22";
@@ -57,6 +58,19 @@ describe("defaultPlan", () => {
       expect(port(c.from), `${id}: ${c.from}`).toBe(true);
       expect(port(c.to), `${id}: ${c.to}`).toBe(true);
     }
+  });
+
+  // The microSD Rec seed must reproduce the device's factory track assignment, so a
+  // fresh plan written to a factory-reset URX44V is a no-op: tracks 1-12 = CH1-12
+  // (port refs 0..11), tracks 13/14 = none, tracks 15/16 = STEREO (256/257).
+  it("URX44V SD Rec seed emits the confirmed factory track assignment (param 736)", () => {
+    const cmds = planToCommands(MODELS.URX44V, defaultPlan("URX44V")).filter((c) => c.name === "SD_REC_SOURCE");
+    const byTrack = new Map(cmds.map((c) => [c.y, c.vdValue]));
+    const factory = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, PORT_REF_NONE, PORT_REF_NONE, 256, 257];
+    expect(cmds).toHaveLength(16);
+    factory.forEach((v, y) => expect(byTrack.get(y), `track ${y}`).toBe(v));
+    // Track Count is read-only, so it is seeded for the UI but never emitted.
+    expect(defaultPlan("URX44V").nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(8);
   });
 
   // The color picker shows exactly for device-colorable nodes, so every such node

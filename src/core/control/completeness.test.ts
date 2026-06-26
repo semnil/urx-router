@@ -27,7 +27,7 @@ const model = getModel("URX44V");
 // param_ids whose value is a port-ref: an address never written reads back as the
 // broker's "nothing selected" sentinel, so the default device value for them is
 // NONE rather than 0 (matches the device and readback.ts decoding).
-const PORT_REF_PARAMS = new Set([22, 259, 705, 706, 719, 720, 730, 731, 732, 733, 734, 735]);
+const PORT_REF_PARAMS = new Set([22, 259, 705, 706, 719, 720, 730, 731, 732, 733, 734, 735, 736]);
 
 function mockDevice(table: Map<string, number>): void {
   vi.mocked(vdGet).mockImplementation((id, x, y) => {

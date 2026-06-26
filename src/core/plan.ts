@@ -272,6 +272,11 @@ export interface NodeParams {
   /** FX-channel effect (reverb / delay) type + parameters (the bus.fx1 / bus.fx2
    *  nodes). Absent = device default (FX1 Rev-X Hall, FX2 Mono Delay). */
   fxEffect?: FxEffectParams;
+  /** microSD Rec Track Count (the SD Rec header node, out.sdrec): how many record
+   *  tracks are active, an even 2..16. Read-only on the device (the front panel
+   *  sets it; a software write is ignored), so live sync reads it back but never
+   *  pushes it. Gates how many track-pair slots the UI shows. Absent = 8. */
+  sdRecTrackCount?: number;
 }
 
 export interface PlanConnection {
@@ -401,6 +406,7 @@ const CONNECTION_KINDS: ReadonlySet<string> = new Set<ConnectionKind>([
   "send",
   "sendSwitch",
   "key",
+  "record",
 ]);
 
 // A loaded connections element is trusted only when it carries string from/to and

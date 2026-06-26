@@ -46,6 +46,10 @@ const COL: Record<DeviceNode["column"], number> = {
 // in their own column (3) instead of crowding the channel-to-bus convergence.
 const DERIVED_BUSES = new Set(["bus.stream", "bus.mon1", "bus.mon2"]);
 
+// microSD recorder track-pair slots: 16 tracks = 8 stereo pairs (1/2 … 15/16).
+// Track Count (read-only, device-only) gates how many of these the UI shows.
+const SD_REC_PAIRS = 8;
+
 // Layout column index for a node. OSCILLATOR is a generator that feeds the mix
 // buses, so it joins the channel column rather than the bus stage; this keeps
 // every wire flowing strictly left-to-right.
@@ -148,8 +152,8 @@ export function buildModel(p: ModelParams): DeviceModel {
   addBus("bus.osc", "OSCILLATOR", outPort(), "input"); // tone generator: output-only source
 
   // --- Outputs -------------------------------------------------------------
-  const addOut = (id: string, label: string, sublabel?: string): void =>
-    add({ id, kind: "output", label, sublabel, column: "output", ports: inPort() });
+  const addOut = (id: string, label: string, sublabel?: string, header = false): void =>
+    add({ id, kind: "output", label, sublabel, column: "output", ports: inPort(), ...(header ? { header: true } : {}) });
   addOut("out.main", "MAIN OUT");
   if (p.hasLineOut) addOut("out.line", "LINE OUT");
   // PHONES 1/2/front and HDMI THRU are fixed 1:1 passthroughs (no source
@@ -158,7 +162,9 @@ export function buildModel(p: ModelParams): DeviceModel {
   addOut("out.usbmain_b", "USB MAIN OUT B");
   addOut("out.usbmain_c", "USB MAIN OUT C");
   addOut("out.usbsub", "USB SUB OUT");
-  if (p.hasSD) addOut("out.sdrec", "microSD Rec");
+  // The SD Rec node is a header: it owns the record-track slots (below) and takes
+  // no direct wire, so its port is hidden and its routing list is suppressed.
+  if (p.hasSD) addOut("out.sdrec", "microSD Rec", undefined, true);
   // Ducker key-source selectors (sidechain trigger): one per stereo channel. The
   // host stereo pair (shown in the sublabel and by the hung position) is the
   // node's identity, so the label needs no ordinal (see device-model.md).
@@ -175,6 +181,22 @@ export function buildModel(p: ModelParams): DeviceModel {
       ports: inPort(),
       attachTo: `ch_${a}_${a + 1}`,
     });
+  }
+  // microSD Rec track-pair slots: each stereo track pair (1/2 … 15/16) is a
+  // single-source record destination, hung under the SD Rec header (all siblings
+  // of the header, stacked in order like one ducker per channel) so each slot
+  // shelves independently while Track Count gates how many show. URX44 / URX44V only.
+  if (p.hasSD) {
+    for (let t = 1; t <= SD_REC_PAIRS; t++) {
+      add({
+        id: `out.sdrec.t${t}`,
+        kind: "output",
+        label: `Track ${2 * t - 1}/${2 * t}`,
+        column: "output",
+        ports: inPort(),
+        attachTo: "out.sdrec",
+      });
+    }
   }
 
   // --- Routing rules -------------------------------------------------------
@@ -236,14 +258,22 @@ export function buildModel(p: ModelParams): DeviceModel {
 
   // 9. DAW Rec — CH n OUT is hard-wired 1:1 to USB DAW OUT n in the block
   //    diagram with no source select, so it is not an editable node here.
-  // 10. SD Rec — a record-source assign (block diagram: "SD Rec Signal Assign";
-  //     RECORDER menu has only Track Count + Source select + a read-only level
-  //     meter — no per-source level / pan / PRE-POST). Modeled as an ON/OFF assign
-  //     (`sendSwitch`); the recorded tap is the channel's Rec Point.
+  // 10. SD Rec — each stereo track pair (1/2 … 15/16) selects one record source
+  //     (block diagram: "SD Rec Signal Assign"; RECORDER menu has only Track Count
+  //     + per-pair Source select + a read-only level meter — no per-source level /
+  //     pan / PRE-POST). A source is a channel pair (its primary node), STEREO, or
+  //     a MIX bus; single-input (`record`). The recorded tap is the channel's Rec
+  //     Point; Track Count (read-only) gates how many pairs are active.
   if (p.hasSD) {
-    for (const c of channels) r(ref(c, "out"), ref("out.sdrec", "in"), "sendSwitch");
-    for (const s of ["bus.stereo", "bus.mix1", "bus.mix2"])
-      r(ref(s, "out"), ref("out.sdrec", "in"), "sendSwitch");
+    const recSources = [
+      ...channelPairs.map(([a]) => a),
+      ...channels.filter((c) => c.startsWith("ch_")),
+      "bus.stereo",
+      "bus.mix1",
+      "bus.mix2",
+    ];
+    for (let t = 1; t <= SD_REC_PAIRS; t++)
+      for (const s of recSources) r(ref(s, "out"), ref(`out.sdrec.t${t}`, "in"), "record");
   }
 
   // 11. HDMI THRU — fixed 1:1 passthrough of the HDMI input with no source

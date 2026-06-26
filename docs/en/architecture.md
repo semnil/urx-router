@@ -66,8 +66,8 @@ flowchart TD
 - **DeviceModel** — an immutable per-model device definition. It holds `nodes` (inputs / channels /
   buses / outputs / duckers), `rules` (legal paths = `RoutingRule[]`), and `channelPairs` (the mono
   channels that share one input source — CH1/2, CH3/4). `models/build.ts` generates it from per-model
-  parameters. A ducker points at the stereo channel it rides on via `attachTo`; the UI draws it hung
-  just below that channel ([below](#ducker-placement)).
+  parameters. A node may *ride on* a parent via `attachTo` (a ducker on its channel, the microSD Rec
+  slots on their header), drawn hung just below it ([below](#hung-nodes-ducker-microsd-rec-slots)).
 - **Plan** — the mutable state the user creates. It holds `modelId`, node positions (`positions`),
   connections (`connections`), per-connection parameters (level / pan / pre-post, etc.),
   node name overrides (`nodeNames`, the device's CH SETTING name — read and written over the string
@@ -410,20 +410,30 @@ an export) as rail-colored chips; clicking a chip restores that one, and "Show a
 - The bulk "hide" and "show all" re-fit the diagram to reclaim space; while the shelf is open `fitView`
   frames the content above it, and a single restored node is parked at the viewport center.
 
-## Ducker placement
+## Hung nodes (ducker, microSD Rec slots)
 
-A ducker is a sidechain key-source selector that *rides on* its stereo channel rather than being a
-standalone output. It therefore carries its own `"ducker"` kind (a dedicated rail color), stays out of
-the output column, and is drawn **hung at a fixed gap directly below** the parent channel it names via
-`attachTo`.
+Some nodes *ride on* a parent rather than being laid out on their own; they name the parent via
+`attachTo` and are drawn **hung at a fixed gap below** it. Two kinds use this:
 
-- **Derived position** — a ducker's coordinates are never stored in `plan.positions`; they are always
-  derived from the parent (`posOf` follows `attachTo` and offsets by the parent's height + gap), so it
-  tracks the parent even when the parent's note expands.
-- **Moves as one** — dragging the parent moves the child by the same delta; grabbing the child (ducker)
-  redirects the drag to the parent, so either grab moves the unit. The child cannot be moved on its own.
-- **Tether** — a single thin rail-colored line spans the gap to the parent, marking the two as one unit.
-- **Auto-layout** — `autoLayout` skips the ducker and reserves the child's height below its parent.
+- A **ducker** (sidechain key-source selector) hangs under its stereo channel — its own `"ducker"`
+  kind (a dedicated rail color), one child per channel.
+- The **microSD Rec slots** (`out.sdrec.t1` … `t8`) hang under the SD Rec header node (`header: true`).
+  A header takes no direct wire — its port is not drawn and the inspector shows no routing list — and
+  owns **several** hung children stacked in order.
+
+Shared mechanics:
+
+- **Derived position** — a hung node's coordinates are never stored in `plan.positions`; `posOf`
+  follows `attachTo` and offsets by the parent's height + gap, plus the heights of any earlier visible
+  siblings (so SD Rec slots stack and a hidden one collapses the rest up). It tracks the parent even
+  when the parent's note expands.
+- **Moves as one** — dragging the parent moves every hung child by the same delta (`attachedDescendants`);
+  grabbing a child redirects the drag to the parent, so either grab moves the unit.
+- **Tether** — a single thin rail-colored line spans the gap to the parent, marking the unit.
+- **Auto-layout** — `autoLayout` skips the hung children and reserves their summed height below the parent.
+- **Shelving** — a hung node shelves like any node (its own chip restores it); shelving the parent
+  collapses the whole unit behind one chip. SD Rec slots beyond the Track Count are *gated* (hidden
+  without a chip — restored by raising Track Count), distinct from being user-shelved.
 
 ## Column layout
 

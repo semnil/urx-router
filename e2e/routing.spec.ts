@@ -225,12 +225,11 @@ test("a fixed MIX → STEREO (TO ST) switch exposes a TO ST toggle and no delete
 });
 
 test("a microSD Rec assign carries no level / pan / PRE-POST", async ({ page }) => {
-  // SD Rec is a record-source assign (sendSwitch), not a summing send.
-  await connect(page, "ch1:out", "out.sdrec:in");
+  // SD Rec is a per-track-pair source select (record), not a summing send: a
+  // channel pair / STEREO / MIX feeds one track-pair slot, with no mix params.
+  await connect(page, "ch1:out", "out.sdrec.t1:in");
   await expect(wires(page)).toHaveCount(FIXED + 1);
-  const box = await port(page, "out.sdrec:in").boundingBox();
-  if (!box) throw new Error("port not found");
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.sdrec.t1:in"]').dispatchEvent("pointerdown");
   await expect(page.locator("#inspector .param")).toHaveCount(0);
   await expect(page.locator("#inspector .hint")).toContainText("Selection only");
 });

@@ -192,6 +192,8 @@ export const ja: Messages = {
     panLink: "Pan Link",
     busFixedLevel: "Send レベルは固定 (BUS Type: FIXED)。",
     panLinked: "パンは Send 元チャンネルの PAN に追従 (Pan Link)。",
+    sdRecTrackCount: "Track Count",
+    sdRecTrackCountLive: "Track Count はデバイス側でのみ設定できます (software から書き込み不可)。",
     signalType: "Signal Type",
     panBal: "PAN / BAL",
     deleteConnection: "この接続を削除",
@@ -205,6 +207,7 @@ export const ja: Messages = {
       key: "Ducker キーソース (1系統)",
       send: "Bus send (加算)",
       sendSwitch: "Bus send (ON/OFF スイッチ)",
+      record: "SD Rec ソース選択 (単一)",
     },
     nodeKind: {
       input: "入力ソース",

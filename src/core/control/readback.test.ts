@@ -277,8 +277,9 @@ describe("applyDeviceState round-trip", () => {
     const selectors = 9;
     const colors = 8 + 6; // CH SETTING color: 8 channels + STEREO/MIX1/MIX2/FX1/FX2/STREAMING
     const names = 8 + 6; // CH SETTING name: same node set as color
+    const sdRec = 8 + 1; // microSD Rec: 8 track-pair source slots + Track Count
     const expected =
-      channels + sends + fxEffect + fxMainPath + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + delay + sampleRate + oscAssign + inputSource + selectors + colors + names;
+      channels + sends + fxEffect + fxMainPath + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + delay + sampleRate + oscAssign + inputSource + selectors + colors + names + sdRec;
     expect(result.applied).toBe(expected);
     // Sanity: far more than the channel-only count, proving every group counts.
     expect(result.applied).toBeGreaterThan(channels);

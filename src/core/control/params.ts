@@ -354,6 +354,18 @@ export const PARAMS = {
    *  edit, never perturbed by self-test (plan.sampleRate is a top-level scalar,
    *  outside the perturb walk over nodeParams/connections). */
   SAMPLE_RATE: { id: 766, axis: "global", encoding: "raw" },
+  /** microSD Rec per-track record-source assign (y = track 0..15). Raw port ref in
+   *  the bus/channel namespace (CH n = its input slot, STEREO = 256/257, MIX1 =
+   *  288/289, MIX2 = 290/291, none = the uint32 sentinel). Writable + readable.
+   *  Each stereo pair fills two adjacent tracks (L then R). Confirmed by live
+   *  snapshot-diff on URX44V. */
+  SD_REC_SOURCE: { id: 736, axis: "global", encoding: "portRef" },
+  /** microSD Rec Track Count (y = 0): how many tracks record, raw = tracks / 2
+   *  (raw 1..8 = 2..16). READ-ONLY — the broker accepts a software write
+   *  (response 200) but ignores it; only the device front panel changes it, so
+   *  live sync reads it back but never emits it. The dump mislabels it onoff /
+   *  max 1; the live value (e.g. 5 = 10 tracks) is authoritative. */
+  SD_REC_TRACK_COUNT: { id: 839, axis: "global", encoding: "raw" },
 } as const satisfies Record<string, ParamSpec>;
 
 export type ParamName = keyof typeof PARAMS;
@@ -645,6 +657,13 @@ export const D_GAIN_PARAM: Record<string, number> = {
   ch_9_10: 14,
   ch_11_12: 15,
 };
+
+// microSD Rec Track Count (RECORDER menu): how many tracks record, an even 2..16.
+// The plan stores the actual count (readback = device raw × 2). Read-only on the
+// device — the front panel sets it; a software write is ignored (see
+// SD_REC_TRACK_COUNT). Default 8 (the factory value).
+export const SD_REC_TRACK_COUNT_DEFAULT = 8;
+export const SD_REC_TRACK_COUNT_OPTIONS = [2, 4, 6, 8, 10, 12, 14, 16].map((n) => ({ value: n, label: String(n) }));
 
 // Stereo channels use a SEPARATE device block from mono channels: a single
 // fader / ON / pan param indexed by stereo-channel position (0..N), not the mono
