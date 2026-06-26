@@ -22,12 +22,14 @@ import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { renderInspector } from "./ui/inspector";
 import { Console } from "./ui/console";
+import { showConsent } from "./ui/consent";
 import { getLang, LANG_CODES, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
 import { DEMO } from "./core/env";
 import {
   checkUpdate,
   confirmDialog,
   errorDialog,
+  exitApp,
   installUpdate,
   isTauri,
   restartApp,
@@ -856,11 +858,9 @@ if (!DEMO) {
   // Write the plan to the connected device: diff the plan against the device's
   // current values, confirm the change count, then send only what differs.
   // Writing to a device of a different model is refused (the plan's channels
-  // would map onto the wrong hardware). Live write is experimental: the menu
-  // item stays disabled (index.html) unless the app was launched with
-  // --experimental, so it is only enabled and wired on that explicit opt-in.
-  experimentalEnabled().then((enabled) => {
-    if (!enabled) return;
+  // would map onto the wrong hardware). Write and live sync are available on any
+  // desktop build (the self-test below stays behind --experimental).
+  {
     const writeBtn = $<HTMLButtonElement>("btn-write");
     writeBtn.disabled = false;
     // Like fetch: a click cancels an in-flight write, else starts one. The diff +
@@ -933,72 +933,7 @@ if (!DEMO) {
       await offerErrorReport(report);
     });
 
-    // Device self-test (experimental): read the device, write a perturbed copy,
-    // verify it matches, then restore. It owns its own connection, so it does not
-    // go through withDevice. Reports are console.warn'd (not log) so they reach
-    // the dev-server log for a headless read.
-    const selfTestBtn = $<HTMLButtonElement>("btn-selftest");
-    selfTestBtn.hidden = false;
-    // selfTestAbort (module scope) holds the in-flight run's controller, so a second
-    // menu click cancels instead of starting another run (the run can take minutes
-    // of serial round-trips, and stalls entirely if the device link drops mid-test).
-
-    async function runDeviceSelfTest(): Promise<void> {
-      const controller = new AbortController();
-      selfTestAbort = controller;
-      selfTestBtn.textContent = t().toolbar.selfTestCancel;
-      setStatus(t().status.selfTestRunning);
-      try {
-        const report = await runSelfTest(getModel(modelId), 300, controller.signal);
-        console.warn(`[self-test] ${report.aborted ? "CANCELLED" : report.ok ? "PASS" : "FAIL"}`, JSON.stringify(report));
-        if (report.errors.length) console.warn("[self-test] issues:", JSON.stringify(report.errors));
-        if (report.residual.length) console.warn("[self-test] mismatches:", JSON.stringify(report.residual));
-        const verdicts = summarizeVerdicts(report.unverified);
-        setStatus(
-          report.aborted
-            ? t().status.selfTestCancelled
-            : !report.restored
-              ? t().status.selfTestRestoreFail
-              : report.unverified.length
-                ? t().status.selfTestUnverified(verdicts.confirmed, verdicts.refuted, verdicts.untestable)
-                : report.ok
-                  ? t().status.selfTestPass(report.written)
-                  : t().status.selfTestFail(report.residual.length),
-        );
-        // Confirmation workflow: when the model has unverified guesses (URX22/44),
-        // offer to save the human-readable report so the owner can send it back.
-        if (!report.aborted && report.unverified.length && (await confirmDialog(t().confirm.selfTestExport))) {
-          await saveTextDocument(`${modelId}-self-test.md`, formatSelfTestReport(report), {
-            ext: "md",
-            label: t().filter.report,
-          });
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn("[self-test] ERROR", message);
-        showError(connectFailureStatus(err, t().status.selfTestError));
-      } finally {
-        selfTestAbort = null;
-        selfTestBtn.textContent = t().toolbar.selfTest;
-      }
-    }
-
-    // A click cancels an in-flight run; otherwise it confirms first (the run is
-    // destructive-then-restored) and starts one.
-    selfTestBtn.addEventListener("click", async () => {
-      if (selfTestAbort) {
-        selfTestAbort.abort();
-        return;
-      }
-      if (await confirmDialog(t().confirm.selfTest)) await runDeviceSelfTest();
-    });
-    // Headless trigger: when launched with --self-test, run it once on startup
-    // (no dialog), so it can be driven from the command line without the UI.
-    void selfTestRequested().then((auto) => {
-      if (auto) void runDeviceSelfTest();
-    });
-
-    // Live sync (experimental): connect, read the whole device once (overwriting
+    // Live sync: connect, read the whole device once (overwriting
     // edits, hence the discard confirm), then mirror each later edit as it
     // happens. The connection is held open for the session and released when the
     // toggle, a write failure, or a plan replacement turns sync off.
@@ -1067,6 +1002,77 @@ if (!DEMO) {
     liveBtn.addEventListener("click", () => {
       if (live?.isActive()) deactivateLive(t().status.liveOff);
       else void activateLive();
+    });
+  }
+
+  // Self-test: an experimental-only diagnostic that briefly overwrites every
+  // parameter, so it stays behind --experimental even though write/live do not.
+  experimentalEnabled().then((enabled) => {
+    if (!enabled) return;
+
+    // Device self-test (experimental): read the device, write a perturbed copy,
+    // verify it matches, then restore. It owns its own connection, so it does not
+    // go through withDevice. Reports are console.warn'd (not log) so they reach
+    // the dev-server log for a headless read.
+    const selfTestBtn = $<HTMLButtonElement>("btn-selftest");
+    selfTestBtn.hidden = false;
+    // selfTestAbort (module scope) holds the in-flight run's controller, so a second
+    // menu click cancels instead of starting another run (the run can take minutes
+    // of serial round-trips, and stalls entirely if the device link drops mid-test).
+
+    async function runDeviceSelfTest(): Promise<void> {
+      const controller = new AbortController();
+      selfTestAbort = controller;
+      selfTestBtn.textContent = t().toolbar.selfTestCancel;
+      setStatus(t().status.selfTestRunning);
+      try {
+        const report = await runSelfTest(getModel(modelId), 300, controller.signal);
+        console.warn(`[self-test] ${report.aborted ? "CANCELLED" : report.ok ? "PASS" : "FAIL"}`, JSON.stringify(report));
+        if (report.errors.length) console.warn("[self-test] issues:", JSON.stringify(report.errors));
+        if (report.residual.length) console.warn("[self-test] mismatches:", JSON.stringify(report.residual));
+        const verdicts = summarizeVerdicts(report.unverified);
+        setStatus(
+          report.aborted
+            ? t().status.selfTestCancelled
+            : !report.restored
+              ? t().status.selfTestRestoreFail
+              : report.unverified.length
+                ? t().status.selfTestUnverified(verdicts.confirmed, verdicts.refuted, verdicts.untestable)
+                : report.ok
+                  ? t().status.selfTestPass(report.written)
+                  : t().status.selfTestFail(report.residual.length),
+        );
+        // Confirmation workflow: when the model has unverified guesses (URX22/44),
+        // offer to save the human-readable report so the owner can send it back.
+        if (!report.aborted && report.unverified.length && (await confirmDialog(t().confirm.selfTestExport))) {
+          await saveTextDocument(`${modelId}-self-test.md`, formatSelfTestReport(report), {
+            ext: "md",
+            label: t().filter.report,
+          });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[self-test] ERROR", message);
+        showError(connectFailureStatus(err, t().status.selfTestError));
+      } finally {
+        selfTestAbort = null;
+        selfTestBtn.textContent = t().toolbar.selfTest;
+      }
+    }
+
+    // A click cancels an in-flight run; otherwise it confirms first (the run is
+    // destructive-then-restored) and starts one.
+    selfTestBtn.addEventListener("click", async () => {
+      if (selfTestAbort) {
+        selfTestAbort.abort();
+        return;
+      }
+      if (await confirmDialog(t().confirm.selfTest)) await runDeviceSelfTest();
+    });
+    // Headless trigger: when launched with --self-test, run it once on startup
+    // (no dialog), so it can be driven from the command line without the UI.
+    void selfTestRequested().then((auto) => {
+      if (auto) void runDeviceSelfTest();
     });
   });
 }
@@ -1241,11 +1247,43 @@ window.addEventListener("keydown", (e) => {
 applyRateConstraints();
 setStatus(t().status.loaded(modelId));
 
-// Desktop only: quietly check for a newer release at startup and offer to install
-// it. DEMO is statically false in the desktop build, so the browser demo bundle
-// drops this branch (and the updater imports) entirely.
-if (!DEMO) {
-  void checkForUpdates();
+// Desktop boot: gate on first-run consent, then check for updates. DEMO is
+// statically false in the desktop build, so the browser demo bundle drops the
+// update branch (and the updater imports) entirely; the consent gate is skipped
+// at runtime there since it has no device control. The call is at the end of the
+// module so CONSENT_KEY (a const requireConsent reads) is already initialized.
+async function boot(): Promise<void> {
+  await requireConsent();
+  if (!DEMO) {
+    await checkForUpdates();
+  }
+}
+
+const CONSENT_KEY = "urx-disclaimer-accepted";
+
+// First-run consent: the Windows installer shows the same notice, but the macOS
+// drag-install and auto-updates bypass it, so gate the desktop app once. Stored
+// acceptance survives updates, so an updated user is not asked again.
+async function requireConsent(): Promise<void> {
+  if (!isTauri()) return;
+  let accepted = false;
+  try {
+    accepted = localStorage.getItem(CONSENT_KEY) === "1";
+  } catch {
+    // Storage unavailable: treat as not yet accepted and ask again, rather than
+    // letting a throw reject boot() and leave the app running un-gated.
+  }
+  if (accepted) return;
+  if (await showConsent()) {
+    try {
+      localStorage.setItem(CONSENT_KEY, "1");
+    } catch {
+      // ignore (storage may be unavailable; consent will be asked again next launch)
+    }
+    return;
+  }
+  // Declined: the app must not start without consent.
+  await exitApp();
 }
 
 async function checkForUpdates(): Promise<void> {
@@ -1261,3 +1299,5 @@ async function checkForUpdates(): Promise<void> {
     // Best-effort: stay silent when offline or no release is published yet.
   }
 }
+
+void boot();

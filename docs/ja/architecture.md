@@ -228,7 +228,7 @@ A.Gain +8/+55・D.Gain -14/+15 を左右の水平に。
   メーターだけに絞る (`metersForNodes`)。メーター id は実機 URX44V で確認した値で、写像の無い機種は表示しない。
 - **配信経路** — Rust 側 (`src-tauri/src/vd.rs`) はメーター購読 (`MetersSubscribe`/`MetersUnsubscribe`) を
   受けると各アドレスを broker に登録し、アイドル時のソケット排出 (`pump`) でメーター `notify` フレームを
-  Tauri Channel 経由でフロントへ転送する (`forward_meter`)。実機制御と同じく `--experimental` 起動時のみ有効。
+  Tauri Channel 経由でフロントへ転送する (`forward_meter`)。メーターが流れるのは Live sync 中だけである (`console.setLive` で購読を開始する)。
 - **実機側操作の追従 (device follow)** — ライブ同期の逆方向。同じ排出経路で**実機側のパラメーター変更**も
   購読でき (`ParamsSubscribe`/`forward_param`・メーターと共有の `notify_frame` でエンベロープ解析を共通化)、
   全 writable アドレスを登録して各 `notify` を転送する。Live sync 中は `core/control/follow.ts` の
@@ -485,6 +485,17 @@ gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 - **秘密鍵** とパスワードは git 管理外に置き、上記 secret として登録する (`release.yml` が
   `tauri-action` に渡す)。secret 未設定だと署名されず `latest.json` も生成されないため、自動
   アップデートは機能しない。
+
+### 利用上の同意 (ライセンス表示と免責)
+
+デスクトップ版は接続中の URX に設定を書き込めるため、書き込みが実機の現在の設定を上書きするリスクへの
+同意導線を 2 段で持つ。**インストーラー**は `tauri.conf.json` の `bundle.licenseFile`
+(`src-tauri/LICENSE.txt` — デバイス制御の注意書き・商標表記・MIT 全文を 1 ファイルに統合) を
+ライセンス同意ページに表示する (Windows の WiX。プレーンテキストを RTF として表示し、同意しないと進めない)。
+macOS の `.dmg` はドラッグインストールで同意ページを持たないため、**初回起動時の同意ゲート**で補う:
+`src/ui/consent.ts` が全画面モーダルで同じ免責文を表示し、同意すると `localStorage`
+(`urx-disclaimer-accepted`) に記録して以後は表示しない (自動更新後も再同意は不要)。拒否するとアプリを
+終了する (`plugin:process|exit`)。ゲートはデスクトップ (`isTauri()`) 時のみ動き、ブラウザ / デモには出ない。
 
 ## サードパーティライセンス
 

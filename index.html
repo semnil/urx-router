@@ -191,6 +191,17 @@
       <footer id="statusbar"></footer>
     </div>
     <input id="file-input" type="file" accept="application/json,.json" hidden />
+    <div id="consent" class="consent-scrim" role="dialog" aria-modal="true" aria-labelledby="consent-title" hidden>
+      <div class="consent-box">
+        <h2 id="consent-title"></h2>
+        <div id="consent-body" class="consent-body"></div>
+        <p id="consent-accept" class="consent-accept"></p>
+        <div class="consent-actions">
+          <button id="consent-quit" type="button" class="consent-btn-secondary"></button>
+          <button id="consent-agree" type="button" class="consent-btn-primary"></button>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
