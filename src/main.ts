@@ -126,6 +126,25 @@ function rememberRate(rate: number): void {
   }
 }
 
+// Restore the last selected GRAPH/CONSOLE view, falling back to the graph (the
+// HTML default) when there is no valid saved choice. Guarded like the model /
+// rate restore so both views carry across reloads.
+function detectView(): ViewName {
+  try {
+    return localStorage.getItem("urx-view") === "console" ? "console" : "graph";
+  } catch {
+    return "graph";
+  }
+}
+
+function rememberView(view: ViewName): void {
+  try {
+    localStorage.setItem("urx-view", view);
+  } catch {
+    // ignore
+  }
+}
+
 let modelId: ModelId = detectModel();
 let plan: Plan = newPlan(modelId);
 plan.sampleRate = detectRate(plan.sampleRate);
@@ -253,6 +272,7 @@ type ViewName = "graph" | "console";
 
 function setView(next: ViewName): void {
   const isConsole = next === "console";
+  rememberView(next);
   graphHost.hidden = isConsole;
   inspectorHost.hidden = isConsole;
   $("btn-view-graph").setAttribute("aria-pressed", String(!isConsole));
@@ -1079,6 +1099,8 @@ if (!DEMO) {
 
 $("btn-view-graph").addEventListener("click", () => setView("graph"));
 $("btn-view-console").addEventListener("click", () => setView("console"));
+// Restore the last selected view now that the console is wired up.
+setView(detectView());
 
 // Theme button face: a glyph for the current mode (light/dark/auto); the title
 // and aria-label name the mode and what a click switches to. Shared by the full
