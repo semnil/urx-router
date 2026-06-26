@@ -1,4 +1,4 @@
-URX Router — License and Important Notice
+URX Router - License and Important Notice
 
 Please read this notice before installing. By installing and using URX Router
 you accept the terms below.
