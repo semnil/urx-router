@@ -75,9 +75,27 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
   "bus.stereo": { ...outputBus(), on: true },
   "bus.mix1": { ...outputBus(), busType: 0 },
   "bus.mix2": { ...outputBus(), busType: 0 },
-  // FX channels ship ON at the factory (param 338, def 1), like URX44V.
-  "bus.fx1": { on: true },
-  "bus.fx2": { on: true },
+  // FX channels ship ON at the factory (param 338, def 1) with their factory
+  // effect program (FX1 = Rev-X Hall, FX2 = Mono Delay), inferred from the URX44V
+  // capture — the FX channels are identical across models.
+  "bus.fx1": {
+    on: true,
+    fxEffect: {
+      type: 0,
+      on: true,
+      level: 100,
+      params: { reverbTime: 23, initialDelay: 2, decay: 27, roomSize: 29, diffusion: 10, hpf: 4, lpf: 50, hiRatio: 8, lowRatio: 12, lowFreq: 32 },
+    },
+  },
+  "bus.fx2": {
+    on: true,
+    fxEffect: {
+      type: 1024,
+      on: true,
+      level: 100,
+      params: { delay: 5000, feedback: 20, hiRatio: 7, hpf: 40, lpf: 110, sync: 0, bpm: 120, note: 9 },
+    },
+  },
   "out.ducker1": ducker(),
   "out.ducker2": ducker(),
   "out.ducker3": ducker(),

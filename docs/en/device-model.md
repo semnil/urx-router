@@ -254,7 +254,7 @@ Source selection for the analog outputs (MAIN / LINE).
 > per track). **Track Count is read-only** — the device accepts a software write but ignores it
 > (param 839; only the front panel changes it), so live sync reads it back but cannot push it (see
 > [known-issues.md](known-issues.md)). The factory assignment is tracks 1-12 = CH 1-12, tracks 13/14
-> = none, tracks 15/16 = STEREO, Track Count 8.
+> = none, tracks 15/16 = STEREO, Track Count 16.
 
 > **Source of the track count**: the URX44V records **up to 16 tracks** to microSD and plays back
 > **2 tracks** (official Yamaha URX44V product spec). The URX44 also supports microSD recording.

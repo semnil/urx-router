@@ -70,7 +70,7 @@ describe("defaultPlan", () => {
     expect(cmds).toHaveLength(16);
     factory.forEach((v, y) => expect(byTrack.get(y), `track ${y}`).toBe(v));
     // Track Count is read-only, so it is seeded for the UI but never emitted.
-    expect(defaultPlan("URX44V").nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(8);
+    expect(defaultPlan("URX44V").nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(16);
   });
 
   // The color picker shows exactly for device-colorable nodes, so every such node

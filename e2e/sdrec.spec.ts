@@ -17,16 +17,16 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("Track Count gates how many SD Rec track-pair slots are shown", async ({ page }) => {
-  // Factory Track Count 8 → 4 pairs (t1..t4) shown, t5..t8 hidden.
-  await expect(node(page, "out.sdrec.t4")).toBeVisible();
-  await expect(node(page, "out.sdrec.t5")).toHaveCount(0);
+  // Factory Track Count 16 → all 8 pairs (t1..t8) shown.
+  await expect(node(page, "out.sdrec.t8")).toBeVisible();
 
   await node(page, "out.sdrec").click();
-  await expect(trackCount(page)).toHaveValue("8");
+  await expect(trackCount(page)).toHaveValue("16");
   await expect(trackCount(page).locator("option")).toHaveText(["2", "4", "6", "8", "10", "12", "14", "16"]);
 
-  await trackCount(page).selectOption("16");
-  await expect(node(page, "out.sdrec.t8")).toBeVisible();
+  await trackCount(page).selectOption("8");
+  await expect(node(page, "out.sdrec.t4")).toBeVisible();
+  await expect(node(page, "out.sdrec.t5")).toHaveCount(0);
 
   await trackCount(page).selectOption("4");
   await expect(node(page, "out.sdrec.t2")).toBeVisible();
