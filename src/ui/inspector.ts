@@ -303,6 +303,13 @@ export function renderInspector(
     // (channel on, HPF off) until a fetch or edit sets them explicitly.
     if (node.kind === "channel") {
       const np = plan.nodeParams[node.id] ?? {};
+      // Channel ON (mute) leads the parameters, matching the bus / FX / MONITOR
+      // inspectors — every node now puts its on/off at the top of the group.
+      host.append(
+        boolToggle(m.inspector.channelOn, np.on ?? true, (v) =>
+          actions.onUpdateNodeParams(node.id, { on: v }),
+        ),
+      );
       const cc = channelControl(model, node.id);
       const compEqType = np.compEqType ?? COMP_EQ_COMP_FIRST;
       const inSec = section(m.inspector.inputSection, { key: "input" });
@@ -630,16 +637,6 @@ export function renderInspector(
           })),
           String(plan.nodeParams[node.id]?.insertFx ?? INSERT_FX_NONE),
           (v) => actions.onUpdateNodeParams(node.id, { insertFx: Number(v) }),
-        ),
-      );
-    }
-
-    // Channel ON (mute) — the bottom-most control of the device channel strip,
-    // after the INS FX block above (channel-strip reading order).
-    if (node.kind === "channel") {
-      host.append(
-        boolToggle(m.inspector.channelOn, plan.nodeParams[node.id]?.on ?? true, (v) =>
-          actions.onUpdateNodeParams(node.id, { on: v }),
         ),
       );
     }

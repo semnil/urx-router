@@ -9,6 +9,7 @@ import { hasConnection, LEVEL_MIN_DB, removeConnection } from "../core/plan";
 import { canConnect, isFixedConnection, legalSources, legalTargets, pairPrimary, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap } from "../core/routing";
 import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
 import type { SaveResult } from "../core/storage";
+import { oscAssign } from "../core/control/translate";
 import { t } from "../i18n";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -321,6 +322,10 @@ export class Graph {
   /** Repaint nodes after a node-parameter change (e.g. a channel muted). */
   repaintNodes(): void {
     this.renderNodes();
+    // renderNodes rebuilds every node with its jacks reset to off; restore the lit
+    // ports and the selection frame, as render() and the note repaints do.
+    this.refreshPortStates();
+    this.highlightSelectedNode();
   }
 
   /** Set or clear a node's free-text note and repaint its in-frame panel. */
@@ -662,29 +667,41 @@ export class Graph {
   }
 
   // Whether a connection is an inaudible send: switched off (params.on === false —
-  // a CH/FX send or the MIX → STEREO "TO ST") or a `send` whose level sits at -∞
+  // a CH/FX send or the MIX → STEREO "TO ST"), bound to an inactive node (either
+  // endpoint muted / bypassed — a muted channel, a bus/FX/MONITOR master OFF, or a
+  // bypassed ducker on its key wire), or a `send` whose level sits at -∞
   // (≤ LEVEL_MIN_DB). Every CH/FX send and the TO ST are fixed now, so this — not
   // wire presence — is what marks one silent. The main fader paths (CH/FX → STEREO)
   // carry no `on` and default to unity, so they only read off when pulled to -∞.
-  // (OSC → bus carries oscL/oscR, not `on`, so it is never dimmed by this.)
-  // A ducker's key wire is fixed too, so it recedes when the ducker is bypassed
-  // (its on/off lives in duckerOn on the destination node, not on the connection).
+  // OSC → bus carries oscL/oscR (per-bus assign), so its wire also reads off when
+  // both its L and R assigns are off — and a muted endpoint (incl. the oscillator
+  // off, via isNodeInactive) recedes it too, the same uniform rule every node follows.
   private isOffSend(conn: PlanConnection): boolean {
     if (conn.params?.on === false) return true;
-    if (conn.kind === "key") {
-      const dst = this.nodeById.get(parseRef(conn.to).nodeId);
-      return dst ? this.isNodeInactive(dst) : false;
+    const fromId = parseRef(conn.from).nodeId;
+    const toId = parseRef(conn.to).nodeId;
+    const src = this.nodeById.get(fromId);
+    const dst = this.nodeById.get(toId);
+    if ((src && this.isNodeInactive(src)) || (dst && this.isNodeInactive(dst))) return true;
+    // OSC → bus assign: silent when its L (and R, on a stereo bus) are off, even
+    // while the oscillator runs. A mono FX bus uses L only (r === null).
+    if (fromId === "bus.osc") {
+      const a = oscAssign(toId);
+      const rOff = !a || a.r === null || conn.params?.oscR === false;
+      return conn.params?.oscL === false && rOff;
     }
     if (conn.kind !== "send") return false;
     return (conn.params?.level ?? 0) <= LEVEL_MIN_DB;
   }
 
-  // Whether a node reads as inactive and should be dimmed: a muted channel
-  // (params.on === false) or a bypassed ducker (its on/off lives in duckerOn,
-  // not on, so it needs its own predicate to dim like a muted node).
+  // Whether a node reads as inactive and should be dimmed: a muted node (CH_ON, a
+  // bus/FX/MONITOR master ON — all on params.on), a bypassed ducker (on/off lives
+  // in duckerOn) or the oscillator when not generating (osc.on) — each off-state
+  // lives on a different param, so each kind needs its own predicate to dim alike.
   private isNodeInactive(node: DeviceNode): boolean {
     const np = this.plan.nodeParams?.[node.id];
     if (node.kind === "ducker") return np?.duckerOn !== true;
+    if (node.id === "bus.osc") return np?.osc?.on !== true;
     return np?.on === false;
   }
 
@@ -808,6 +825,8 @@ export class Graph {
       this.portEls.set(r, c);
 
       const pin = document.createElementNS(SVGNS, "circle");
+      pin.classList.add("port-pin");
+      pin.dataset.pin = r;
       pin.setAttribute("cx", String(cx));
       pin.setAttribute("cy", String(NODE_H / 2));
       pin.setAttribute("r", "2.4");
@@ -817,27 +836,11 @@ export class Graph {
       this.portPinEls.set(r, pin);
     }
 
-    // A muted channel (CH_ON off) or a bypassed ducker (duckerOn off) reads as
-    // inactive: dim the whole node and tag it MUTE / OFF. Distinct from the
-    // rate-disabled OFF badge above (warn-colored).
-    if (this.isNodeInactive(node)) {
-      g.setAttribute("opacity", "0.4");
-      const tag = svgRect(NODE_W - 40, -8, 36, 15, 3, p.nodeStroke);
-      g.append(tag);
-      const tagText = document.createElementNS(SVGNS, "text");
-      tagText.setAttribute("x", String(NODE_W - 22));
-      tagText.setAttribute("y", "0");
-      tagText.setAttribute("text-anchor", "middle");
-      tagText.setAttribute("dominant-baseline", "central");
-      tagText.setAttribute("fill", p.label);
-      tagText.setAttribute("font-family", LABEL_FONT);
-      tagText.setAttribute("font-size", "8.5");
-      tagText.setAttribute("font-weight", "700");
-      tagText.style.pointerEvents = "none";
-      tagText.textContent = node.kind === "ducker" ? "OFF" : "MUTE";
-      g.append(tagText);
-    }
-
+    // A node may read as inactive (muted / bypassed / osc-off), rate-disabled or
+    // unread-from-device at once; show only the highest-ranked state so the badges
+    // and frames never collide. Precedence: rate-disabled > inactive > unread —
+    // a feature unusable at this rate dominates a user mute, which dominates a
+    // mere provenance warning.
     if (this.disabledNodes.has(node.id)) {
       g.setAttribute("opacity", "0.62");
       rect.setAttribute("stroke", p.warn);
@@ -856,13 +859,32 @@ export class Graph {
       badge.style.pointerEvents = "none";
       badge.textContent = "OFF";
       g.append(badge);
+    } else if (this.isNodeInactive(node)) {
+      // A muted node (CH_ON off) / bypassed ducker (duckerOn off) / oscillator off
+      // (osc.on): dim the whole node and tag it MUTE (a mute) or OFF (a ducker /
+      // the oscillator, whose resting state is off, not muted).
+      g.setAttribute("opacity", "0.4");
+      const tag = svgRect(NODE_W - 40, -8, 36, 15, 3, p.nodeStroke);
+      g.append(tag);
+      const tagText = document.createElementNS(SVGNS, "text");
+      tagText.setAttribute("x", String(NODE_W - 22));
+      tagText.setAttribute("y", "0");
+      tagText.setAttribute("text-anchor", "middle");
+      tagText.setAttribute("dominant-baseline", "central");
+      tagText.setAttribute("fill", p.label);
+      tagText.setAttribute("font-family", LABEL_FONT);
+      tagText.setAttribute("font-size", "8.5");
+      tagText.setAttribute("font-weight", "700");
+      tagText.style.pointerEvents = "none";
+      tagText.textContent = node.kind === "ducker" || node.id === "bus.osc" ? "OFF" : "MUTE";
+      g.append(tagText);
     }
 
     // A node still showing its plan default after a device readback (not confirmed
     // by the device): a dim node with a dashed warn frame and a top-left "?" badge.
-    // Ranks below MUTE and DISABLED, which already own the visual; the badge sits
-    // left of their top-right tags so the two never collide. Decorative only.
-    if (this.unreadNodes.has(node.id) && !this.isNodeInactive(node) && !this.disabledNodes.has(node.id)) {
+    // Ranks below MUTE and DISABLED (the else-if keeps it from stacking), so the
+    // badge sits alone in the top-left, never colliding with their top-right tags.
+    else if (this.unreadNodes.has(node.id)) {
       g.setAttribute("opacity", "0.7");
       rect.setAttribute("stroke", p.warn);
       rect.setAttribute("stroke-width", "1.2");
@@ -1056,6 +1078,9 @@ export class Graph {
       // A wire to a hidden endpoint is not drawn, so its ports must not read as
       // in use (e.g. a hidden ducker's key source on the still-visible source).
       if (this.isHidden(parseRef(c.from).nodeId) || this.isHidden(parseRef(c.to).nodeId)) continue;
+      // An off / muted wire recedes, so its jacks must not glow as live either — a
+      // port lights only when it carries at least one audible (non-off) connection.
+      if (this.isOffSend(c)) continue;
       wired.add(c.from);
       wired.add(c.to);
     }
@@ -1112,6 +1137,9 @@ export class Graph {
     }
     for (const conn of off) this.wireLayer.append(this.makeWire(conn));
     for (const conn of on) this.wireLayer.append(this.makeWire(conn));
+    // Jacks share the wires' off-state, so refresh them in lockstep: a wire-only
+    // repaint (a send on/off, a node mute) must re-evaluate which ports stay lit.
+    this.refreshPortStates();
   }
 
   private makeWire(conn: PlanConnection): SVGGElement {
@@ -1121,13 +1149,14 @@ export class Graph {
       this.selection?.type === "conn" &&
       this.selection.from === conn.from &&
       this.selection.to === conn.to;
-    // When a node is selected, light its incident wires and fade the rest so a
-    // single node's routing stands out in a dense diagram.
-    const nodeSel = this.selection?.type === "node" ? this.selection.id : null;
+    // When node(s) are selected, light wires incident to any of them and fade the
+    // rest so the selection's routing stands out in a dense diagram. Uses the whole
+    // multi-selection, not just the anchor, so it matches the node highlighting.
+    const hasNodeSel = this.selectedNodes.size > 0;
     const incident =
-      nodeSel != null &&
-      (parseRef(conn.from).nodeId === nodeSel || parseRef(conn.to).nodeId === nodeSel);
-    const faded = nodeSel != null && !incident;
+      hasNodeSel &&
+      (this.selectedNodes.has(parseRef(conn.from).nodeId) || this.selectedNodes.has(parseRef(conn.to).nodeId));
+    const faded = hasNodeSel && !incident;
     const lit = selected || incident;
 
     // Invisible wide band along the wire so the thin curve is easy to click; it

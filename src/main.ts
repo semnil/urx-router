@@ -344,10 +344,12 @@ const inspectorActions = {
     // the partner channel (pan stays per-channel — see mirrorBalPair).
     const mirrored = mirrorBalPair(getModel(modelId), plan, parseRef(from).nodeId);
     markChanged();
-    // A PRE/POST change flips the wire's pre-fader marker; a mirrored ON change
-    // alters the partner wire's dimming. Repaint when either is in play. Level/pan
-    // carry no on-canvas marker, so they keep mutating in place (slider keeps focus).
-    if (patch.tap !== undefined || (mirrored && patch.on !== undefined)) graph.repaintWires();
+    // A PRE/POST change flips the wire's pre-fader marker; a send ON/OFF or an OSC
+    // L/R assign change flips the wire's (and its jacks') off-state dimming. Repaint
+    // when any is in play. Level/pan carry no on-canvas marker, so they keep mutating
+    // in place (slider keeps focus).
+    if (patch.tap !== undefined || patch.on !== undefined || patch.oscL !== undefined || patch.oscR !== undefined)
+      graph.repaintWires();
     // Refresh the console so a mirrored partner keeps up (a no-op while hidden).
     if (mirrored) consoleView.refresh();
     // OSC assign L/R are toggle buttons (not focus-holding sliders); re-render so
@@ -367,10 +369,15 @@ const inspectorActions = {
     // Linking a pair snaps its partner next to the kept node so the tie isn't drawn
     // across a gap an earlier manual move may have opened.
     if (patch.stereoLink === true) graph.alignStereoPair(id);
-    if (patch.on !== undefined || patch.stereoLink !== undefined || patch.duckerOn !== undefined)
-      graph.repaintNodes();
-    // A ducker's bypass also dims its key wire (isOffSend), so repaint wires too.
-    if (patch.duckerOn !== undefined) graph.repaintWires();
+    // CH_ON / a bus, FX or MONITOR master / duckerOn / the oscillator all mute a
+    // node: it dims and its connections recede (isOffSend), so repaint both. The
+    // oscillator's on lives under an osc patch that also carries level/mode, so
+    // detect its actual flip rather than the whole patch.
+    const oscOnChanged = patch.osc !== undefined && patch.osc.on !== prev?.osc?.on;
+    const muteChanged = patch.on !== undefined || patch.duckerOn !== undefined || oscOnChanged;
+    // STEREO link also draws a pair connector, so it repaints nodes (but no wires).
+    if (muteChanged || patch.stereoLink !== undefined) graph.repaintNodes();
+    if (muteChanged) graph.repaintWires();
     if (mirrored) consoleView.refresh();
     // Toggling PAN/BAL (or entering STEREO) re-initializes every bus send's pan
     // for the linked pair: PAN hard-pans odd/even L/R, BAL centres them.
