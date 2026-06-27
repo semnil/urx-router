@@ -244,11 +244,23 @@ test("the send pan slider uses the device L63 – C – R63 range", async ({ pag
 test("the send level slider bottoms out at -∞ (level_gain floor), not -60", async ({ page }) => {
   await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
   const level = page.locator("#inspector .param", { hasText: "Level" }).locator("input[type='range']");
-  await expect(level).toHaveAttribute("min", "-96.5"); // -∞ notch
-  await expect(level).toHaveAttribute("max", "10");
-  // Dragging to the bottom reads -∞ dB.
-  await level.fill("-96.5");
+  // The slider walks the device's discrete level_gain grid by index: 0 = -∞ notch.
+  await expect(level).toHaveAttribute("min", "0");
+  await expect(level).toHaveAttribute("step", "1");
+  // Dragging to the bottom reads -∞ dB; one step up is the lowest real value.
+  await level.fill("0");
   await expect(page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val")).toHaveText("-∞ dB");
+});
+
+test("the send level slider only offers detents the device can store", async ({ page }) => {
+  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
+  const level = page.locator("#inspector .param", { hasText: "Level" }).locator("input[type='range']");
+  const readout = page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val");
+  // -15.0 dB does not exist on the grid; adjacent detents jump -16 -> -14.
+  await level.fill("17");
+  await expect(readout).toHaveText("-16.0 dB");
+  await level.fill("18");
+  await expect(readout).toHaveText("-14.0 dB");
 });
 
 test("tears down the rubber-band wire when the pointer is cancelled mid-drag", async ({ page }) => {

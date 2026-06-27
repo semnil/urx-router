@@ -47,17 +47,18 @@ test("a console fader edit is read back on the graph's CH -> STEREO wire", async
   const readout = strip(page, "CH 1").locator(".con-readout .db");
   await expect(readout).toHaveText("0.0");
   await strip(page, "CH 1").locator(".con-fader").focus();
+  // Two detents up the level_gain grid: 0.0 -> +0.4 -> +1.2 dB.
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
-  await expect(readout).toHaveText("+2.0");
+  await expect(readout).toHaveText("+1.2");
 
   // The CH 1 main fader IS the CH1 -> STEREO send level; selecting that wire on
-  // the graph must show the same +2.0 dB the console just set.
+  // the graph must show the same +1.2 dB the console just set.
   await page.click("#btn-view-graph");
   await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]').dispatchEvent("pointerdown");
   await expect(
     page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val"),
-  ).toHaveText("+2.0 dB");
+  ).toHaveText("+1.2 dB");
 });
 
 test("a graph-side mute is reflected on the console strip", async ({ page }) => {

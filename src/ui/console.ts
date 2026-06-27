@@ -9,6 +9,7 @@ import type { DeviceModel } from "../models/types";
 import { ref } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, type NodeParams, type Plan, type PlanConnection } from "../core/plan";
+import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
 import { hasMeter, METER_FLOOR_DB, METER_TOP_DB, metersForNodes, MeterStore, subscribeMeters } from "../core/meters";
 import { channelControl, insertFxControl } from "../core/control/translate";
 import { isBalLinkedPair, mirrorBalPair, partnerChannel, sendTapWritable } from "../core/routing";
@@ -31,28 +32,53 @@ const SEND_LABEL: Record<SendTarget, string> = {
 // The STEREO master / main-sum node: every channel's & FX channel's fixed main send.
 const MAIN_BUS = "bus.stereo";
 
-// Fader-position curve: 0 dB sits high like a real fader (exponent < 1 lifts the
-// top of the travel). Shared by the set ladder, the cap, and the dB ruler.
+// Oscillator fader-position curve: 0 dB sits high like a real fader (exponent < 1
+// lifts the top of the travel). Only the OSC range uses it — the level_gain range
+// spaces its detents evenly instead so the dense steps near 0 dB get equal travel.
 const CURVE = 0.78;
 
+// A fader scale. Each range owns how a dB maps to/from travel (toFrac/fromFrac),
+// how the keyboard steps it (step), and its ruler ticks — so the "which scale am
+// I" branch lives once, here, instead of being re-tested at every call site.
 interface LevelRange {
   min: number;
   max: number;
   off: number;
+  toFrac: (db: number) => number;
+  fromFrac: (frac: number) => number;
+  step: (base: number, delta: number) => number;
+  ticks: number[];
 }
-const NORMAL_RANGE: LevelRange = { min: LEVEL_MIN_DB, max: LEVEL_MAX_DB, off: LEVEL_OFF_DB };
-const OSC_RANGE: LevelRange = { min: -96, max: 0, off: -96 };
+
+// The level_gain range: detents spaced evenly by grid index (not by dB), keyboard
+// walks one detent per press, ticks are all real detents.
+const NORMAL_RANGE: LevelRange = {
+  min: LEVEL_MIN_DB,
+  max: LEVEL_MAX_DB,
+  off: LEVEL_OFF_DB,
+  toFrac: (db) => levelToPos(db) / LEVEL_POS_MAX,
+  fromFrac: (f) => posToLevel(Math.round(f * LEVEL_POS_MAX)),
+  step: (base, delta) => stepLevel(base, delta),
+  ticks: [10, 5, 0, -5, -10, -20, -40, -96],
+};
+
+// The oscillator range (-96 … 0 dB): a continuous power-curve scale rounded to
+// 0.5 dB; the keyboard steps by whole dB (a step down off the floor lands on -∞).
+const OSC_RANGE: LevelRange = {
+  min: -96,
+  max: 0,
+  off: -96,
+  toFrac: (db) => (db <= -96 ? 0 : Math.pow((Math.min(db, 0) + 96) / 96, CURVE)),
+  fromFrac: (f) => (f <= 0.005 ? -96 : Math.round((-96 + Math.pow(f, 1 / CURVE) * 96) * 2) / 2),
+  step: (base, delta) => Math.max(-96, Math.min(0, base + delta)),
+  ticks: [0, -10, -20, -40, -60, -80, -96],
+};
 
 function dbToFrac(db: number, r: LevelRange): number {
-  if (db <= r.min) return 0;
-  const t01 = (Math.min(db, r.max) - r.min) / (r.max - r.min);
-  return Math.pow(t01, CURVE);
+  return r.toFrac(db);
 }
 function fracToDb(frac: number, r: LevelRange): number {
-  const f = Math.max(0, Math.min(1, frac));
-  if (f <= 0.005) return r.off;
-  const db = r.min + Math.pow(f, 1 / CURVE) * (r.max - r.min);
-  return Math.round(db * 2) / 2;
+  return r.fromFrac(Math.max(0, Math.min(1, frac)));
 }
 function meterFrac(dbfs: number): number {
   return Math.max(0, Math.min(1, (dbfs - METER_FLOOR_DB) / (METER_TOP_DB - METER_FLOOR_DB)));
@@ -186,8 +212,7 @@ export class Console {
   // and meter). Top/bottom align with the fader travel, so it reads the level.
   private buildScale(range: LevelRange): HTMLElement {
     const scale = el("div", "con-scale");
-    const dbs = range === OSC_RANGE ? [0, -10, -20, -40, -60, -80, -96] : [10, 0, -10, -20, -40, -60, -80, -96];
-    for (const db of dbs) {
+    for (const db of range.ticks) {
       const tick = el("div", "t");
       tick.style.bottom = dbToFrac(db, range) * 100 + "%";
       // The number is centred; a minus sign hangs to its left so the digits of
@@ -710,12 +735,14 @@ export class Console {
     });
     r.fader.addEventListener("keydown", (e) => {
       const cur = usesSend ? this.getSend(r.m.id, this.mode as SendTarget) : this.getMain(r.m);
+      // Each range defines its own detent step (OSC: whole dB; level_gain: one grid
+      // detent, a step down off the floor landing on -∞).
       const base = cur < range.min ? range.min : cur;
       let next: number | null = null;
-      if (e.key === "ArrowUp") next = Math.min(range.max, base + 1);
-      else if (e.key === "ArrowDown") next = base - 1 < range.min ? range.off : base - 1;
-      else if (e.key === "PageUp") next = Math.min(range.max, base + 6);
-      else if (e.key === "PageDown") next = Math.max(range.min, base - 6);
+      if (e.key === "ArrowUp") next = range.step(base, 1);
+      else if (e.key === "ArrowDown") next = range.step(base, -1);
+      else if (e.key === "PageUp") next = range.step(base, 6);
+      else if (e.key === "PageDown") next = range.step(base, -6);
       else if (e.key === "Home") next = range.max;
       else if (e.key === "End") next = range.off;
       if (next === null) return;

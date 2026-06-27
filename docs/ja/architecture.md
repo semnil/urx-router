@@ -35,6 +35,7 @@ flowchart TD
       routing[routing.ts<br/>接続制約エンジン]
       constraints[constraints.ts<br/>サンプルレート制約]
       plan[plan.ts<br/>計画状態 + JSON]
+      levels[levels.ts<br/>level_gain グリッド<br/>snap/step/位置]
       storage[storage.ts<br/>保存/読込/PNG/PDF]
       platform[platform.ts<br/>Tauri ブリッジ / フォールバック]
       meters[meters.ts<br/>ライブメーター<br/>map/decode/store]
