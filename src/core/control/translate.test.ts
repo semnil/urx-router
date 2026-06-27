@@ -772,13 +772,20 @@ describe("planToCommands", () => {
     plan.connections.push({ from: "ch_5_6:out", to: "out.usbmain_b:in", kind: "patch" });
     plan.connections.push({ from: "bus.stream:out", to: "out.usbsub:in", kind: "patch" });
     const cmds = planToCommands(model, plan);
-    expect(cmds.find((c) => c.name === "USB_OUT_SRC_A")!.vdValue).toBe(290);
-    expect(cmds.find((c) => c.name === "USB_OUT_SRC_A")!.request.uri).toBe(
+    // USB out is a stereo slot pair: L at y=0, R at y=1 (same param). Writing only
+    // L leaves R on its stale source (a CONSOLE-observed regression: B=MIX1 emitted
+    // L=MIX1 but R stayed on STEREO until the device panel rewrote both slots).
+    const usbOut = (name: string) => [0, 1].map((y) => cmds.find((c) => c.name === name && c.y === y)!);
+    expect(usbOut("USB_OUT_SRC_A").map((c) => c.vdValue)).toEqual([290, 291]);
+    expect(usbOut("USB_OUT_SRC_A").map((c) => c.request.uri)).toEqual([
       "/vd/parameters/732:0:0?operation=value",
-    );
-    expect(cmds.find((c) => c.name === "USB_OUT_SRC_C")!.vdValue).toBe(0);
-    expect(cmds.find((c) => c.name === "USB_OUT_SRC_B")!.vdValue).toBe(4);
-    expect(cmds.find((c) => c.name === "USB_OUT_SRC_SUB")!.vdValue).toBe(258);
+      "/vd/parameters/732:0:1?operation=value",
+    ]);
+    // CH1 is mono: both slots take its single input port.
+    expect(usbOut("USB_OUT_SRC_C").map((c) => c.vdValue)).toEqual([0, 0]);
+    // CH5/6 is stereo (input slots 4/5): L=4, R=5.
+    expect(usbOut("USB_OUT_SRC_B").map((c) => c.vdValue)).toEqual([4, 5]);
+    expect(usbOut("USB_OUT_SRC_SUB").map((c) => c.vdValue)).toEqual([258, 259]);
   });
 
   it("maps a higher stereo channel source to its input slot, not its node index", () => {

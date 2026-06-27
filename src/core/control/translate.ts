@@ -910,10 +910,10 @@ export function inputNodeForPort(port: number): string | null {
 // namespace / per-instance shape — and stay separate below.)
 export const ROUTING_SELECTORS: [string, ConnectionKind, ParamName, ParamName | null, number, number][] = [
   ["bus.stream", "source", "STREAM_SRC_L", "STREAM_SRC_R", 0, 0],
-  ["out.usbmain_a", "patch", "USB_OUT_SRC_A", null, 0, 0],
-  ["out.usbmain_b", "patch", "USB_OUT_SRC_B", null, 0, 0],
-  ["out.usbmain_c", "patch", "USB_OUT_SRC_C", null, 0, 0],
-  ["out.usbsub", "patch", "USB_OUT_SRC_SUB", null, 0, 0],
+  ["out.usbmain_a", "patch", "USB_OUT_SRC_A", "USB_OUT_SRC_A", 0, 1],
+  ["out.usbmain_b", "patch", "USB_OUT_SRC_B", "USB_OUT_SRC_B", 0, 1],
+  ["out.usbmain_c", "patch", "USB_OUT_SRC_C", "USB_OUT_SRC_C", 0, 1],
+  ["out.usbsub", "patch", "USB_OUT_SRC_SUB", "USB_OUT_SRC_SUB", 0, 1],
   ["bus.mon1", "source", "MONITOR_SRC_L", "MONITOR_SRC_R", 0, 0],
   ["bus.mon2", "source", "MONITOR_SRC_L", "MONITOR_SRC_R", 1, 1],
   ["out.main", "patch", "OUT_PATCH_MAIN", "OUT_PATCH_MAIN", 0, 1],
