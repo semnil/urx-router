@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "preview": "vite preview --port 4173 --strictPort",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "clean": "rm -rf node_modules/.vite dist && cargo clean --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

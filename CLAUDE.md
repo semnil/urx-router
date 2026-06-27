@@ -34,9 +34,12 @@ pnpm build        # tsc --noEmit + vite build
 pnpm build:demo   # ブラウザデモビルド (VITE_DEMO=1。保存・画像出力を除外)
 pnpm test         # vitest (core: routing/constraints/plan, models)
 pnpm test:e2e     # Playwright E2E (e2e/*.spec.ts: routing/hide/notes/multiselect/bustype/signaltype 等)。CI は post-merge で実行
+pnpm clean        # Vite キャッシュ (node_modules/.vite) + dist + Cargo target を削除
 ```
 
 このマシン (Mac) では node/pnpm は nodenv (`~/.anyenv/envs/nodenv/shims`) 経由。非対話シェルでは PATH 未ロード。
+
+`pnpm tauri dev` でバージョン表示や UI が古いまま固着する場合は `pnpm clean` でビルドキャッシュを破棄して再起動する (version は `tauri.conf.json`→`../package.json` をビルド時に埋め込むため Vite キャッシュに固着しやすい)。webview の永続データ (`localStorage` の同意ゲート等) はアプリ外なので `pnpm clean` の対象外で、macOS では `~/Library/WebKit/<productName または identifier>/` を手動削除する。
 
 CI は 4 ワークフロー: PR は build + unit (`ci.yml`)、E2E と third-party ライセンス生成は post-merge (`post-merge.yml`)、ブラウザデモは `vX.Y.Z` リリースタグ push で GitHub Pages へ自動デプロイ (`pages.yml`)、デスクトップインストーラーも tag push (`release.yml`)。
 
