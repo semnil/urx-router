@@ -232,10 +232,16 @@ A.Gain +8/+55・D.Gain -14/+15 を左右の水平に。
   Tauri Channel 経由でフロントへ転送する (`forward_meter`)。メーターが流れるのは Live sync 中だけである (`console.setLive` で購読を開始する)。
 - **実機側操作の追従 (device follow)** — ライブ同期の逆方向。同じ排出経路で**実機側のパラメーター変更**も
   購読でき (`ParamsSubscribe`/`forward_param`・メーターと共有の `notify_frame` でエンベロープ解析を共通化)、
-  全 writable アドレスを登録して各 `notify` を転送する。Live sync 中は `core/control/follow.ts` の
-  `DeviceFollow` がその通知を debounce し、実機を読み戻して (`applyDeviceState`) plan へ反映・再描画する
-  ため、実機本体で動かしたフェーダーが落ち着いた後に盤面へ追従する。アプリ自身の書込みの戻りは snapshot
-  一致で無視し、登録アドレス集合は構造変更時のみ再登録する。
+  全 writable アドレスを登録して各 `notify` を転送する。`notify` は変更アドレス**と新しい値**を運ぶため検出は
+  即時かつ正確。Live sync 中は `core/control/follow.ts` の `DeviceFollow` が各通知を live snapshot のアドレス
+  →ノード索引 (`live.lookup`) で分類する: ノードローカルなスカラ (フェーダー/PAN/ON/レベル。カタログで
+  `follow: "direct"`) は読み戻しなしで値を直接 plan へ適用し (`applyDirect`・再描画は次フレームにまとめる)、
+  それ以外は所有ノードを burst 確定後に読み戻す (`applyNodeState`・`applyDeviceState` と同一の逆写像を対象
+  ノードだけにゲートするので乖離しない)。未知アドレスや一度に**3 つを超える**コントロール変更 (両手 + 1 を
+  超える = シーン/プリセット呼び出し) は全体読み戻しへ昇格する。実機が静かになった後は取りこぼし保険として
+  全体読み戻しを 1 回だけ走らせる。これにより実機本体で動かしたフェーダーは往復ゼロで、深い編集はそのノード
+  だけを読み戻して盤面へ追従する。アプリ自身の書込みの戻りは snapshot 一致で無視し、登録アドレス集合は構造
+  変更時のみ再登録する。
 
 ## 実機制御の接続
 

@@ -87,6 +87,13 @@ export interface VdCommand {
   /** Encoded broker value. */
   vdValue: number;
   request: VdSetRequest;
+  /**
+   * Owner node id this command's address belongs to (the node a scoped readback
+   * would re-read, or whose plan slot a direct-apply writes). Stamped by
+   * planToCommands; used to build the device-follow address→node index. Undefined
+   * for global, non-node addresses (e.g. sample rate).
+   */
+  node?: string;
 }
 
 function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number {
@@ -950,6 +957,17 @@ export function insertFxControl(model: DeviceModel, nodeId: string): InsertFxCon
  */
 export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   const out: VdCommand[] = [];
+  // Owner-node stamping for the device-follow index: own(id) attributes every
+  // command pushed since the last own() call to `id`. `mark` auto-advances, so a
+  // single own(id) at the end of each per-node block (or iteration) covers that
+  // node's commands — including those pushed by the push* helpers. Any block that
+  // can push then `continue` must call own(id) before the continue so its commands
+  // are not mis-attributed to the next iteration's node.
+  let mark = 0;
+  const own = (id: string | undefined): void => {
+    for (let i = mark; i < out.length; i++) if (out[i].node === undefined) out[i].node = id;
+    mark = out.length;
+  };
   for (const conn of plan.connections) {
     // Fixed main path into STEREO: the channel's CH_FADER / CH_PAN, or the FX
     // channel's FX_CHANNEL_FADER / FX_CHANNEL_BAL — the source's main level / pan.
@@ -959,13 +977,14 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (cc) {
       out.push(rawCommand("CH_FADER", cc.fader, "level", cc.y, conn.params?.level ?? 0));
       out.push(rawCommand("CH_PAN", cc.pan, "pan", cc.y, conn.params?.pan ?? 0));
-      continue;
+    } else {
+      const fxY = fxChannelIndex(fromId);
+      if (fxY !== null) {
+        out.push(rawCommand("FX_CHANNEL_FADER", PARAMS.FX_CHANNEL_FADER.id, "level", fxY, conn.params?.level ?? 0));
+        out.push(rawCommand("FX_CHANNEL_BAL", PARAMS.FX_CHANNEL_BAL.id, "pan", fxY, conn.params?.pan ?? 0));
+      }
     }
-    const fxY = fxChannelIndex(fromId);
-    if (fxY !== null) {
-      out.push(rawCommand("FX_CHANNEL_FADER", PARAMS.FX_CHANNEL_FADER.id, "level", fxY, conn.params?.level ?? 0));
-      out.push(rawCommand("FX_CHANNEL_BAL", PARAMS.FX_CHANNEL_BAL.id, "pan", fxY, conn.params?.pan ?? 0));
-    }
+    own(fromId);
   }
 
   // CH / FX-channel → MIX/FX bus sends — written as absolute state over every
@@ -994,6 +1013,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       if (sendTapWritable(model, conn.from, conn.to))
         out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
     }
+    own(node.id);
   }
 
   // Channel node parameters: ON / HPF / gain.
@@ -1054,6 +1074,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       // A.Gain (mono) is one instance; D.Gain (stereo) writes both linked L/R.
       for (const yi of cc.gain.instances) out.push(rawCommand("HA_GAIN", cc.gain.param, "gain", yi, np.gain));
     }
+    own(node.id);
   }
 
   // Bus output faders: STEREO master (581, single) and MIX (674, L/R-linked).
@@ -1063,6 +1084,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const np = plan.nodeParams[node.id];
     if (!bf || np?.level === undefined) continue;
     for (const yi of bf.instances) out.push(rawCommand(bf.name, bf.param, "level", yi, np.level));
+    own(node.id);
   }
 
   // FX-channel effects: EFFECT TYPE + parameter array for each FX channel present
@@ -1072,6 +1094,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (fxY === null) continue;
     const fx = plan.nodeParams[node.id]?.fxEffect;
     if (fx) pushFxEffectCommands(out, fxY, fx);
+    own(node.id);
   }
 
   // Insert FX (enum): mono input channels (135) and output buses (578 / 671).
@@ -1080,6 +1103,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const v = plan.nodeParams[node.id]?.insertFx;
     if (!ifx || v === undefined) continue;
     for (const inst of ifx.instances) out.push(rawCommand("INSERT_FX", ifx.param, "insertFx", inst, v));
+    own(node.id);
   }
 
   // Output bus EQ ON: STEREO (498, single) and MIX (591, L/R-linked).
@@ -1089,6 +1113,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const np = plan.nodeParams[node.id];
     if (!eq || np?.eqOn === undefined) continue;
     for (const inst of eq.instances) out.push(rawCommand(eq.name, eq.param, "bool", inst, np.eqOn ? 1 : 0));
+    own(node.id);
   }
 
   // Output bus EQ 1-knob (STEREO / MIX). When on, the device drives the bands.
@@ -1097,6 +1122,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const ok = plan.nodeParams[node.id]?.eqOneKnob;
     const ctrl = eqOneKnob(model, node.id, COMP_EQ_COMP_FIRST);
     if (ctrl && ok) pushEqOneKnobCommands(out, ctrl, ok);
+    own(node.id);
   }
 
   // Output bus 4-band PEQ band values: STEREO (single) and MIX (L/R-linked).
@@ -1106,6 +1132,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const np = plan.nodeParams[node.id];
     const oeq = outputEq(node.id);
     if (oeq && np?.eqBands && !np.eqOneKnob?.on) pushEqBandCommands(out, oeq, np.eqBands);
+    own(node.id);
   }
 
   // Ducker on/off + detail (threshold/range/attack/decay): one per stereo channel,
@@ -1127,6 +1154,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     } else {
       out.push(command("DUCKER_SRC", dc.y, PORT_REF_NONE));
     }
+    own(node.id);
   }
 
   // Input source select — absolute. A source wire picks a physical input, encoded
@@ -1152,6 +1180,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       if (!slots) continue;
       for (const s of slots) out.push(command("INPUT_SOURCE", s, ports ? ports[s & 1] : PORT_REF_NONE));
     }
+    own(node.id);
   }
 
   // Streaming / USB-out / monitor / analog-patch selects — absolute. One incoming
@@ -1166,6 +1195,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (conn && !p) continue;
     out.push(command(pl, yl, p ? p.l : PORT_REF_NONE));
     if (pr) out.push(command(pr, yr, p ? p.r : PORT_REF_NONE));
+    own(to);
   }
 
   // microSD Rec per-track source assign (param 736) — absolute over every track-pair
@@ -1180,6 +1210,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (conn && !p) continue;
     out.push(command("SD_REC_SOURCE", slot.trackL, p ? p.l : PORT_REF_NONE));
     out.push(command("SD_REC_SOURCE", slot.trackR, p ? p.r : PORT_REF_NONE));
+    own(slot.id);
   }
 
   // Bus master ON/OFF: STEREO master (582, y = 0), MIX buses (675, L/R-linked per
@@ -1190,6 +1221,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const np = plan.nodeParams[node.id];
     if (!bm || np?.on === undefined) continue;
     for (const inst of bm.instances) out.push(rawCommand(bm.name, bm.param, "bool", inst, np.on ? 1 : 0));
+    own(node.id);
   }
 
   // BUS Type for MIX buses (587, L/R-linked): VARI / FIXED. A MIX-only attribute,
@@ -1200,6 +1232,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const bt = plan.nodeParams[node.id]?.busType;
     if (!mix || bt === undefined) continue;
     for (const inst of mix) out.push(command("BUS_TYPE", inst, bt));
+    own(node.id);
   }
 
   // Monitor bus ON / level / CUE interrupt / MONO: bus.mon1 → y0, bus.mon2 → y1.
@@ -1211,6 +1244,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (np?.mono !== undefined) out.push(command("MONITOR_MONO", y, np.mono ? 1 : 0));
     // PHONES level shares the monitor's y axis (PHONES 1 ↔ mon1 = y0, PHONES 2 ↔ mon2 = y1).
     if (np?.phonesLevel !== undefined) out.push(command("PHONES_LEVEL", y, np.phonesLevel));
+    own(id);
   }
 
   // Oscillator generator (bus.osc node): on / level / mode / frequency.
@@ -1223,6 +1257,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   // only on the device, but emitted whenever present (like freq for Sine).
   if (osc?.width !== undefined) out.push(command("OSC_BURST_WIDTH", 0, osc.width));
   if (osc?.interval !== undefined) out.push(command("OSC_BURST_INTERVAL", 0, osc.interval));
+  own("bus.osc");
 
   // STREAMING DELAY (bus.stream node, global y = 0): on / time / frame rate.
   // Emitted only when the plan carries delay settings, leaving the device's
@@ -1231,11 +1266,13 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   if (delay?.on !== undefined) out.push(command("STREAM_DELAY_ON", 0, delay.on ? 1 : 0));
   if (delay?.time !== undefined) out.push(command("STREAM_DELAY_TIME", 0, delay.time));
   if (delay?.frameRate !== undefined) out.push(command("STREAM_DELAY_FRAME_RATE", 0, delay.frameRate));
+  own("bus.stream");
 
   // Sample rate (global y0, raw Hz). A top-level plan scalar (always set), so it
   // is emitted unconditionally as absolute state. Writing it re-clocks the
   // hardware; only 766 is sent (843 auto-follows). See params.ts SAMPLE_RATE.
   out.push(command("SAMPLE_RATE", 0, plan.sampleRate));
+  own(undefined);
 
   // OSC → bus assign — absolute over every OSC-assignable bus. A wire turns the
   // destination's L/R channels on (oscL/oscR; absent = on); no wire turns both
@@ -1246,6 +1283,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const conn = plan.connections.find((c) => c.from === ref("bus.osc", "out") && c.to === ref(busId, "in"));
     out.push(command(a.name, a.l, conn && conn.params?.oscL !== false ? 1 : 0));
     if (a.r !== null) out.push(command(a.name, a.r, conn && conn.params?.oscR !== false ? 1 : 0));
+    own(busId);
   }
 
   // CH SETTING color (palette index): input channels (20) and MIX/STEREO buses
@@ -1260,6 +1298,7 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const index = hexToColorIndex(hex);
     if (index === null) continue;
     for (const inst of cc.instances) out.push(rawCommand(cc.name, cc.param, "raw", inst, index));
+    own(node.id);
   }
   return out;
 }

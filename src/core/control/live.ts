@@ -11,7 +11,7 @@ import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
 import { vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
-import type { ParamSpec } from "./params";
+import type { ParamName, ParamSpec } from "./params";
 import { planToCommands, planToNameWrites } from "./translate";
 import type { VdCommand, NameWrite } from "./translate";
 import { sendConverging } from "./client";
@@ -30,8 +30,20 @@ const SIDE_EFFECT = new Set(
     .map(([name]) => name),
 );
 
-const cmdKey = (c: VdCommand): string => `${c.paramId}:${c.x}:${c.y}`;
+const addrKey = (paramId: number, x: number, y: number): string => `${paramId}:${x}:${y}`;
+const cmdKey = (c: VdCommand): string => addrKey(c.paramId, c.x, c.y);
 const nameKey = (w: NameWrite): string => `${w.param}:${w.y}`;
+
+/** What a writable address resolves to, for device-follow routing of a notify. */
+export interface FollowAddr {
+  /** Catalog parameter name (its follow strategy comes from PARAMS[name]). */
+  name: ParamName;
+  /** Owner node id the address belongs to (undefined for a global address). */
+  node?: string;
+  /** True when the param is flagged follow: "direct" — apply the notify value
+   *  straight into the plan with no read-back; false → re-read the owner node. */
+  direct: boolean;
+}
 
 export interface LiveSyncHooks {
   getModel: () => DeviceModel;
@@ -49,6 +61,10 @@ export class LiveSync {
   // The snapshot's writable addresses as numeric [paramId, x, y] triples, built
   // alongside the snapshot so device-follow registration needs no key re-parse.
   private writableAddrList: Array<[number, number, number]> = [];
+  // Address → {name, owner node, direct?} for the writable parameter set, built
+  // with the snapshot from the same planToCommands pass. Lets device-follow route
+  // an incoming notify to a direct apply or a scoped readback with no key re-parse.
+  private readonly index = new Map<string, FollowAddr>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
   private pending = false;
@@ -113,15 +129,26 @@ export class LiveSync {
   private captureSnapshot(): void {
     this.snapshot.clear();
     this.nameSnapshot.clear();
+    this.index.clear();
     const model = this.hooks.getModel();
     const plan = this.hooks.getPlan();
     const addrs: Array<[number, number, number]> = [];
     for (const c of planToCommands(model, plan)) {
-      this.snapshot.set(cmdKey(c), c.vdValue);
+      const k = cmdKey(c);
+      this.snapshot.set(k, c.vdValue);
       addrs.push([c.paramId, c.x, c.y]);
+      const direct = (PARAMS as Record<string, ParamSpec>)[c.name].follow === "direct";
+      this.index.set(k, { name: c.name, node: c.node, direct });
     }
     this.writableAddrList = addrs;
     for (const w of planToNameWrites(model, plan)) this.nameSnapshot.set(nameKey(w), w.value);
+  }
+
+  /** Resolve an incoming device notify address to its catalog name, owner node,
+   *  and follow strategy — or undefined when the address is not in the writable
+   *  set (the caller treats that as an unknown change worth a full reconcile). */
+  lookup(paramId: number, x: number, y: number): FollowAddr | undefined {
+    return this.index.get(addrKey(paramId, x, y));
   }
 
   private async flush(): Promise<void> {

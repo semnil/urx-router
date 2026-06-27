@@ -306,11 +306,18 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
   Meters stream only while Live sync is on (subscription starts in `console.setLive`).
 - **Device follow** — the reverse of live sync. The same drain path also carries device-side parameter
   changes: `ParamsSubscribe`/`forward_param` (sharing the `notify_frame` envelope parse with the meter path)
-  register every writable address and forward each `notify`. While Live sync is on, `core/control/follow.ts`
-  `DeviceFollow` debounces those notifies and reconciles by re-reading the device (`applyDeviceState`) into the
-  plan, then re-renders — so a fader moved on the unit itself follows on screen after it settles. Echoes of the
-  app's own writes are filtered against the live snapshot, and the address set is re-registered only when a
-  structural edit changed it.
+  register every writable address and forward each `notify`. A notify carries the changed address **and its
+  new value**, so detection is free and exact. While Live sync is on, `core/control/follow.ts` `DeviceFollow`
+  classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
+  scalar (fader / pan / on / level, flagged `follow: "direct"` in the catalog) is decoded straight into the plan
+  with no read-back (`applyDirect`, render coalesced on the next frame); anything else is **scoped** — the owner
+  node is re-read once the burst settles (`applyNodeState`, the same device→plan inverse as `applyDeviceState`
+  but gated to just the touched node(s), so it can never drift); an unknown address or **more than three** distinct
+  controls at once (more than two hands plus one — a scene / preset recall) escalates to a full read. After the
+  device goes quiet a single full read runs as a missed-notify safety net. So a fader moved on the unit itself
+  follows on screen with no round-trip, while a deeper edit re-reads only its node. Echoes of the app's own
+  writes are filtered against the live snapshot, and the address set is re-registered only when a structural edit
+  changed it.
 
 ## Live control connection
 

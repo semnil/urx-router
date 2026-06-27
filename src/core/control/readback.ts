@@ -6,10 +6,11 @@
 
 import type { DeviceModel } from "../../models/types";
 import { ref } from "../../models/types";
-import type { ConnParams, EqBand, EqOneKnobParams, FxEffectParams, NodeParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
+import type { ConnParams, EqBand, EqOneKnobParams, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsBand, SsmcsParams } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
 import { vdGet, vdGetStr } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, normalizeInsertFx, PARAMS } from "./params";
+import type { ParamName } from "./params";
 import {
   FX_EFFECT_ARRAY_PARAM,
   FX_EFFECT_TYPE_PARAM,
@@ -101,12 +102,28 @@ export interface ReadbackResult {
  * The returned unreadNodes set is `attempted ∩ failed`, so the UI flags exactly
  * the nodes still showing a plan default rather than the live value.
  */
+/** A node's fixed main path into STEREO — the send connection carrying its
+ *  CH_FADER / CH_PAN (or FX channel fader / balance). The canonical lookup shared
+ *  by the channel and FX readback groups and the direct-apply fader/pan placement. */
+function mainSendConn(plan: Plan, nodeId: string): PlanConnection | undefined {
+  return plan.connections.find((c) => c.from === ref(nodeId, "out") && c.to === ref("bus.stereo", "in"));
+}
+
 export async function applyDeviceState(
   model: DeviceModel,
   plan: Plan,
   signal?: AbortSignal,
+  only?: ReadonlySet<string>,
 ): Promise<ReadbackResult> {
   ensureFixedConnections(model, plan);
+  // Scoped readback: when `only` is given, every per-node group whose owner id is
+  // not in the set is skipped, so a settled device-side change re-reads just the
+  // touched node(s) rather than the whole device. want() gates each group by the
+  // same owner id that planToCommands stamps onto VdCommand.node (see follow.ts).
+  // Global, non-node groups (sample rate, SD Rec track count) run on a full read
+  // only. The decode logic is shared with the full read verbatim — no second
+  // inverse — so a scoped read can never drift from applyDeviceState.
+  const want = (id: string): boolean => only === undefined || only.has(id);
   const errors: string[] = [];
   // Body-parameter provenance: nodes whose own settings a group tried to read,
   // and the subset whose read failed. unreadNodes = attempted ∩ failed.
@@ -117,12 +134,11 @@ export async function applyDeviceState(
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     if (node.kind !== "channel") continue;
+    if (!want(node.id)) continue;
     // Mono → 139/140/141 at input index; stereo → 266/267/268 at stereo index.
     const cc = channelControl(model, node.id);
     if (!cc) continue;
-    const conn = plan.connections.find(
-      (c) => c.from === ref(node.id, "out") && c.to === ref("bus.stereo", "in"),
-    );
+    const conn = mainSendConn(plan, node.id);
     if (!conn) continue;
     attempted.add(node.id);
     try {
@@ -192,6 +208,7 @@ export async function applyDeviceState(
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     if (node.kind !== "channel" && fxChannelIndex(node.id) === null) continue;
+    if (!want(node.id)) continue;
     for (const bus of model.nodes) {
       if (bus.kind !== "bus") continue;
       const sc = sendControl(model, node.id, bus.id);
@@ -220,6 +237,7 @@ export async function applyDeviceState(
     signal?.throwIfAborted();
     const fxY = fxChannelIndex(node.id);
     if (fxY === null) continue;
+    if (!want(node.id)) continue;
     // FX-channel effect (EFFECT TYPE + parameter array): a node-level attribute,
     // read whether or not the FX → STEREO main path is wired.
     attempted.add(node.id);
@@ -231,9 +249,7 @@ export async function applyDeviceState(
       failed.add(node.id);
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
-    const conn = plan.connections.find(
-      (c) => c.from === ref(node.id, "out") && c.to === ref("bus.stereo", "in"),
-    );
+    const conn = mainSendConn(plan, node.id);
     if (!conn) continue;
     try {
       const level = vdToLevel(await vdGet(PARAMS.FX_CHANNEL_FADER.id, 0, fxY));
@@ -249,6 +265,7 @@ export async function applyDeviceState(
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     if (node.kind !== "bus") continue;
+    if (!want(node.id)) continue;
     const bf = busFader(node.id);
     if (!bf) continue;
     attempted.add(node.id);
@@ -269,6 +286,7 @@ export async function applyDeviceState(
   // node's body as unread.
   for (const node of model.nodes) {
     signal?.throwIfAborted();
+    if (!want(node.id)) continue;
     const cc = colorControl(model, node.id);
     if (!cc) continue;
     try {
@@ -287,6 +305,7 @@ export async function applyDeviceState(
   // out of the body-read provenance.
   for (const node of model.nodes) {
     signal?.throwIfAborted();
+    if (!want(node.id)) continue;
     const nc = nameControl(model, node.id);
     if (!nc) continue;
     try {
@@ -302,6 +321,7 @@ export async function applyDeviceState(
   // Insert FX (enum): mono input channels (135) and output buses (578 / 671).
   for (const node of model.nodes) {
     signal?.throwIfAborted();
+    if (!want(node.id)) continue;
     const ifx = insertFxControl(model, node.id);
     if (!ifx) continue;
     attempted.add(node.id);
@@ -319,6 +339,7 @@ export async function applyDeviceState(
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     if (node.kind !== "bus") continue;
+    if (!want(node.id)) continue;
     const eq = busEqOn(node.id);
     if (!eq) continue;
     attempted.add(node.id);
@@ -338,6 +359,7 @@ export async function applyDeviceState(
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     if (node.kind !== "bus") continue;
+    if (!want(node.id)) continue;
     const oeq = outputEq(node.id);
     if (!oeq) continue;
     attempted.add(node.id);
@@ -357,6 +379,7 @@ export async function applyDeviceState(
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     if (node.kind !== "ducker") continue;
+    if (!want(node.id)) continue;
     const dc = duckerControl(model, node.id);
     if (!dc) continue;
     attempted.add(node.id);
@@ -384,6 +407,7 @@ export async function applyDeviceState(
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     if (node.kind !== "bus") continue;
+    if (!want(node.id)) continue;
     const bm = busMasterOn(node.id);
     if (!bm) continue;
     attempted.add(node.id);
@@ -408,6 +432,7 @@ export async function applyDeviceState(
 
   // Monitor bus levels: bus.mon1 → y0, bus.mon2 → y1.
   for (const [id, y] of [["bus.mon1", 0], ["bus.mon2", 1]] as const) {
+    if (!want(id)) continue;
     attempted.add(id);
     try {
       const on = vdToBool(await vdGet(PARAMS.MONITOR_ON.id, 0, y));
@@ -425,51 +450,60 @@ export async function applyDeviceState(
 
   // Oscillator generator (bus.osc): on / level / mode / frequency / burst width /
   // burst interval.
-  attempted.add("bus.osc");
-  try {
-    const osc = {
-      on: vdToBool(await vdGet(PARAMS.OSC_ON.id, 0, 0)),
-      level: vdToCentiDb(await vdGet(PARAMS.OSC_LEVEL.id, 0, 0)),
-      mode: await vdGet(PARAMS.OSC_MODE.id, 0, 0),
-      freq: vdToEqFreq(await vdGet(PARAMS.OSC_FREQ.id, 0, 0)),
-      width: vdToBurstWidth(await vdGet(PARAMS.OSC_BURST_WIDTH.id, 0, 0)),
-      interval: await vdGet(PARAMS.OSC_BURST_INTERVAL.id, 0, 0),
-    };
-    plan.nodeParams["bus.osc"] = { ...plan.nodeParams["bus.osc"], osc };
-    applied++;
-  } catch (e) {
-    failed.add("bus.osc");
-    errors.push(`OSC: ${e instanceof Error ? e.message : String(e)}`);
+  if (want("bus.osc")) {
+    attempted.add("bus.osc");
+    try {
+      const osc = {
+        on: vdToBool(await vdGet(PARAMS.OSC_ON.id, 0, 0)),
+        level: vdToCentiDb(await vdGet(PARAMS.OSC_LEVEL.id, 0, 0)),
+        mode: await vdGet(PARAMS.OSC_MODE.id, 0, 0),
+        freq: vdToEqFreq(await vdGet(PARAMS.OSC_FREQ.id, 0, 0)),
+        width: vdToBurstWidth(await vdGet(PARAMS.OSC_BURST_WIDTH.id, 0, 0)),
+        interval: await vdGet(PARAMS.OSC_BURST_INTERVAL.id, 0, 0),
+      };
+      plan.nodeParams["bus.osc"] = { ...plan.nodeParams["bus.osc"], osc };
+      applied++;
+    } catch (e) {
+      failed.add("bus.osc");
+      errors.push(`OSC: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // STREAMING DELAY (bus.stream): on / time / frame rate.
-  attempted.add("bus.stream");
-  try {
-    const delay = {
-      on: vdToBool(await vdGet(PARAMS.STREAM_DELAY_ON.id, 0, 0)),
-      time: vdToDelayTime(await vdGet(PARAMS.STREAM_DELAY_TIME.id, 0, 0)),
-      frameRate: await vdGet(PARAMS.STREAM_DELAY_FRAME_RATE.id, 0, 0),
-    };
-    plan.nodeParams["bus.stream"] = { ...plan.nodeParams["bus.stream"], delay };
-    applied++;
-  } catch (e) {
-    failed.add("bus.stream");
-    errors.push(`STREAMING DELAY: ${e instanceof Error ? e.message : String(e)}`);
+  if (want("bus.stream")) {
+    attempted.add("bus.stream");
+    try {
+      const delay = {
+        on: vdToBool(await vdGet(PARAMS.STREAM_DELAY_ON.id, 0, 0)),
+        time: vdToDelayTime(await vdGet(PARAMS.STREAM_DELAY_TIME.id, 0, 0)),
+        frameRate: await vdGet(PARAMS.STREAM_DELAY_FRAME_RATE.id, 0, 0),
+      };
+      plan.nodeParams["bus.stream"] = { ...plan.nodeParams["bus.stream"], delay };
+      applied++;
+    } catch (e) {
+      failed.add("bus.stream");
+      errors.push(`STREAMING DELAY: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // Sample rate (global, raw Hz) onto the plan-level scalar. Not a node setting,
   // so it stays out of the body-read provenance (attempted/failed). 766 is the
   // control; 843 mirrors it. A read failure leaves the plan's rate untouched.
-  try {
-    plan.sampleRate = await vdGet(PARAMS.SAMPLE_RATE.id, 0, 0);
-    applied++;
-  } catch (e) {
-    errors.push(`sample rate: ${e instanceof Error ? e.message : String(e)}`);
+  // Global (no owner node), so it runs on a full read only — a scoped read never
+  // touches it (a sample-rate change escalates to a full read in follow.ts).
+  if (only === undefined) {
+    try {
+      plan.sampleRate = await vdGet(PARAMS.SAMPLE_RATE.id, 0, 0);
+      applied++;
+    } catch (e) {
+      errors.push(`sample rate: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // OSC → bus assign: read each bus's L/R channel toggles and reflect the wire
   // (present with oscL/oscR when on, removed when both off).
   for (const busId of OSC_ASSIGN_BUSES) {
+    if (!want(busId)) continue;
     const a = oscAssign(busId);
     if (!a) continue;
     try {
@@ -493,6 +527,7 @@ export async function applyDeviceState(
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     if (node.kind !== "channel") continue;
+    if (!want(node.id)) continue;
     let srcParam: number, srcY: number;
     if (isStereoChannel(node.id)) {
       const si = srcStereoIdx.get(node.id);
@@ -529,6 +564,7 @@ export async function applyDeviceState(
   // node is absent on this model (e.g. out.line without a line output).
   for (const [to, kind, pl, , yl] of ROUTING_SELECTORS) {
     if (!model.nodes.some((n) => n.id === to)) continue;
+    if (!want(to)) continue;
     try {
       const port = vdToPortRef(await vdGet(PARAMS[pl].id, 0, yl));
       const src = port === null ? null : nodeForPort(model, port);
@@ -552,6 +588,7 @@ export async function applyDeviceState(
   // exclusive record wire (NONE clears it). Empty on models without a recorder.
   for (const slot of recordSlots(model)) {
     signal?.throwIfAborted();
+    if (!want(slot.id)) continue;
     try {
       const port = vdToPortRef(await vdGet(PARAMS.SD_REC_SOURCE.id, 0, slot.trackL));
       const src = port === null ? null : nodeForPort(model, port);
@@ -570,8 +607,9 @@ export async function applyDeviceState(
     }
   }
   // microSD Rec Track Count (839, read-only): tracks = raw × 2, onto the SD Rec
-  // header. Like sample rate, a standalone read kept out of body provenance.
-  if (model.nodes.some((n) => n.id === "out.sdrec")) {
+  // header. Like sample rate, a standalone read kept out of body provenance and
+  // run on a full read only (read-only on the device, never a followed change).
+  if (only === undefined && model.nodes.some((n) => n.id === "out.sdrec")) {
     try {
       const sdRecTrackCount = (await vdGet(PARAMS.SD_REC_TRACK_COUNT.id, 0, 0)) * 2;
       plan.nodeParams["out.sdrec"] = { ...plan.nodeParams["out.sdrec"], sdRecTrackCount };
@@ -585,6 +623,80 @@ export async function applyDeviceState(
   const unreadNodes = new Set<string>();
   for (const id of attempted) if (failed.has(id)) unreadNodes.add(id);
   return { applied, errors, unreadNodes };
+}
+
+/**
+ * Scoped device readback: re-read only the groups owned by `nodeIds` and apply
+ * them to the plan. The decode path is shared verbatim with applyDeviceState (it
+ * is the same function, gated by the owner-id set), so a scoped read can never
+ * drift from a full one. Used by device-follow to reconcile just the node(s) a
+ * settled device-side change touched, instead of re-reading the whole device.
+ * `nodeIds` are the VdCommand.node owners resolved from the changed addresses.
+ */
+export async function applyNodeState(
+  model: DeviceModel,
+  plan: Plan,
+  nodeIds: ReadonlySet<string>,
+  signal?: AbortSignal,
+): Promise<ReadbackResult> {
+  return applyDeviceState(model, plan, signal, nodeIds);
+}
+
+/**
+ * Apply a single device-side parameter change straight into the plan, with no
+ * read-back. Only the node-local scalar params flagged follow: "direct" in the
+ * catalog are handled here (fixed placement, no mode coupling, no dependent
+ * reset); their incoming raw value is decoded and written to the owner node's
+ * plan slot. Returns true when applied; false for any param not in the direct
+ * set, so the caller falls back to a scoped readback. `node` is the address's
+ * owner (VdCommand.node), `name` its catalog ParamName.
+ */
+export function applyDirect(plan: Plan, node: string, name: ParamName, raw: number): boolean {
+  const setNp = (patch: Partial<NodeParams>): void => {
+    plan.nodeParams[node] = { ...plan.nodeParams[node], ...patch };
+  };
+  // Fader / pan land on the node's fixed main path into STEREO (a send connection),
+  // mirroring how applyDeviceState reflects CH_FADER / CH_PAN.
+  const setMain = (patch: { level?: number; pan?: number }): void => {
+    const conn = mainSendConn(plan, node);
+    if (conn) conn.params = { ...conn.params, ...patch };
+  };
+  switch (name) {
+    case "CH_FADER":
+    case "FX_CHANNEL_FADER":
+      setMain({ level: vdToLevel(raw) });
+      return true;
+    case "CH_PAN":
+    case "FX_CHANNEL_BAL":
+      setMain({ pan: vdToPan(raw) });
+      return true;
+    case "CH_ON":
+    case "OUT_MASTER_ON":
+    case "STEREO_MASTER_ON":
+    case "FX_CHANNEL_ON":
+    case "MONITOR_ON":
+      setNp({ on: vdToBool(raw) });
+      return true;
+    case "HA_GAIN":
+      setNp({ gain: vdToGain(raw) });
+      return true;
+    case "OUT_FADER":
+    case "STEREO_MASTER_FADER":
+    case "MONITOR_LEVEL":
+      setNp({ level: vdToLevel(raw) });
+      return true;
+    case "PHONES_LEVEL":
+      setNp({ phonesLevel: vdToPhonesLevel(raw) });
+      return true;
+    case "OSC_ON":
+      setNp({ osc: { ...plan.nodeParams[node]?.osc, on: vdToBool(raw) } });
+      return true;
+    case "OSC_LEVEL":
+      setNp({ osc: { ...plan.nodeParams[node]?.osc, level: vdToCentiDb(raw) } });
+      return true;
+    default:
+      return false;
+  }
 }
 
 // Read a 4-band PEQ's band values from the device (first instance; linked L/R

@@ -42,7 +42,7 @@ import {
   vdWatchLink,
   type DeviceSummary,
 } from "./core/platform";
-import { applyDeviceState, formatReadbackReport } from "./core/control/readback";
+import { applyDeviceState, applyDirect, applyNodeState, formatReadbackReport } from "./core/control/readback";
 import { diffNames, diffPlan, formatWriteReport, sendConverging, sendNames } from "./core/control/client";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
@@ -271,24 +271,51 @@ const consoleView = new Console(consoleHost, {
 // re-rendered. Echoes of our own writes are filtered by the live snapshot. Null
 // in the demo / when live is absent, so it tree-shakes out with the rest of the
 // control layer.
+// Reflect a device-follow change back onto the plan's two views and re-base the
+// live snapshot so our own next diff (and the echoes of this read/apply) measure
+// from the device truth. Selection/viewport are untouched (refresh, not rebuild).
+function reflectFollow(): void {
+  graph.refresh();
+  consoleView.refresh();
+  syncRateUi();
+  live?.resync();
+}
+// Coalesce direct-apply reflects onto one animation frame: a device knob sweep
+// fires ~10 notifies/s, each applied straight into the plan, but the heavier
+// render + snapshot re-base runs at most once per frame.
+let reflectRaf = 0;
+function requestReflect(): void {
+  if (reflectRaf) return;
+  reflectRaf = requestAnimationFrame(() => {
+    reflectRaf = 0;
+    reflectFollow();
+  });
+}
 const follow =
   DEMO || !live
     ? null
     : new DeviceFollow({
         addrs: () => live?.writableAddrs() ?? [],
         isEcho: (p) => live?.isEcho(p.paramId, p.x, p.y, p.value) ?? false,
-        // A settled device-side change: pull the whole device into the plan,
-        // reflect it without disturbing selection/viewport, and re-base the live
-        // snapshot so our own next diff (and the echoes of this read) measure from
-        // the device truth.
-        reconcile: async () => {
+        lookup: (paramId, x, y) => live?.lookup(paramId, x, y),
+        // A direct (node-local scalar) change: decode the notify value straight
+        // into the plan, no read-back. Render + snapshot re-base are coalesced in
+        // flushDirect once the burst of direct notifies settles.
+        applyDirect: (node, name, value) => applyDirect(plan, node, name, value),
+        flushDirect: () => requestReflect(),
+        // A settled scoped change: re-read just the touched owner nodes and reflect.
+        reconcileNodes: async (nodeIds) => {
+          const result = await applyNodeState(getModel(modelId), plan, nodeIds);
+          if (result.errors.length) console.warn("device-follow scoped readback issues:", result.errors);
+          reflectFollow();
+          setStatus(t().status.liveFollowed(result.applied));
+        },
+        // Escalation / idle safety net: pull the whole device into the plan.
+        reconcileAll: async () => {
           const result = await applyDeviceState(getModel(modelId), plan);
           if (result.errors.length) console.warn("device-follow readback issues:", result.errors);
           plan.unreadNodes = result.unreadNodes;
-          graph.refresh();
-          consoleView.refresh();
-          syncRateUi();
-          live?.resync();
+          reflectFollow();
           setStatus(t().status.liveFollowed(result.applied));
         },
         onFollow: () => setStatus(t().status.liveFollowing),

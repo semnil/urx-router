@@ -48,17 +48,25 @@ export interface ParamSpec {
    * A single write does not stick; callers must converge or re-read afterwards.
    */
   sideEffect?: true;
+  /**
+   * Device-follow application strategy. "direct" marks a node-local scalar whose
+   * incoming notify value can be decoded and written straight into the plan with
+   * no read-back (fixed placement, no mode coupling, no dependent reset). Absent =
+   * the safe default: a settled change re-reads the owner node (scoped readback),
+   * so mode-gated, structural, and sideEffect params stay correct. See follow.ts.
+   */
+  follow?: "direct";
 }
 
 // Confirmed anchors. Validated: their ids match both the original sniff and the
 // /vd/parameters descriptor (table_id + min/max/default).
 export const PARAMS = {
   /** Input channel main fader → STEREO (level_gain, default 0 dB). */
-  CH_FADER: { id: 139, axis: "input", encoding: "level" },
+  CH_FADER: { id: 139, axis: "input", encoding: "level", follow: "direct" },
   /** Input channel ON / mute (default ON). */
-  CH_ON: { id: 140, axis: "input", encoding: "bool" },
+  CH_ON: { id: 140, axis: "input", encoding: "bool", follow: "direct" },
   /** Input channel PAN/BAL (±63). */
-  CH_PAN: { id: 141, axis: "input", encoding: "pan" },
+  CH_PAN: { id: 141, axis: "input", encoding: "pan", follow: "direct" },
   /** Input channel HPF ON. */
   HPF_ON: { id: 25, axis: "input", encoding: "bool" },
   /** Input channel HPF cutoff frequency (40 … 120 Hz). Confirmed by live scan. */
@@ -196,16 +204,16 @@ export const PARAMS = {
   /** Input channel Hi-Z (high-impedance instrument input; CH3/CH4 only). */
   HI_Z: { id: 6, axis: "input", encoding: "bool" },
   /** Input channel head-amp (HA) gain (-8 … +70 dB). */
-  HA_GAIN: { id: 1, axis: "input", encoding: "gain" },
+  HA_GAIN: { id: 1, axis: "input", encoding: "gain", follow: "direct" },
   /** Output (mix) fader level. */
-  OUT_FADER: { id: 674, axis: "output", encoding: "level" },
+  OUT_FADER: { id: 674, axis: "output", encoding: "level", follow: "direct" },
   /** MIX bus BUS Type: 0 = VARI (variable per-send level) / 1 = FIXED. L/R-linked
    *  (written to both out instances). Confirmed by live snapshot-diff (MIX1 0 → 1). */
   BUS_TYPE: { id: 587, axis: "output", encoding: "enum" },
   /** MIX bus master ON (675, fader+1, parallel to STEREO_MASTER_ON 582). L/R-linked
    *  per stereo MIX (MIX1 [0,1] / MIX2 [2,3]); default 1. Independent of the MIX →
    *  STEREO "TO ST" send. Confirmed by live readback (device-side MIX2 OFF → 675). */
-  OUT_MASTER_ON: { id: 675, axis: "output", encoding: "bool" },
+  OUT_MASTER_ON: { id: 675, axis: "output", encoding: "bool", follow: "direct" },
   // CH → MIX/FX bus send. The actual ids are computed per channel/bus in
   // translate.ts; these anchors are the MIX1 mono slot and only name the command
   // + encoding.
@@ -248,25 +256,25 @@ export const PARAMS = {
   EQ_ONE_KNOB_LEVEL: { id: 48, axis: "input", encoding: "raw", sideEffect: true },
   /** Monitor output ON (y = monitor 0..3). Confirmed by live snapshot-diff: the
    *  MONITOR screen [ON] button toggles 723 on the touched monitor's slot only. */
-  MONITOR_ON: { id: 723, axis: "global", encoding: "bool" },
+  MONITOR_ON: { id: 723, axis: "global", encoding: "bool", follow: "direct" },
   /** Monitor level (y = monitor 0..3). Wider -96 dB floor than the fader. */
-  MONITOR_LEVEL: { id: 724, axis: "global", encoding: "level" },
+  MONITOR_LEVEL: { id: 724, axis: "global", encoding: "level", follow: "direct" },
   /** PHONES output level (y0 = PHONES 1, y1 = PHONES 2): the unit-less 0.0..10.0
    *  scale of the Phones menu (NOT dB). Confirmed by live snapshot-diff. */
-  PHONES_LEVEL: { id: 725, axis: "global", encoding: "phonesLevel" },
+  PHONES_LEVEL: { id: 725, axis: "global", encoding: "phonesLevel", follow: "direct" },
   /** STEREO master fader (y = 0, level down to -∞). */
-  STEREO_MASTER_FADER: { id: 581, axis: "global", encoding: "level" },
+  STEREO_MASTER_FADER: { id: 581, axis: "global", encoding: "level", follow: "direct" },
   /** STEREO master ON (y = 0). */
-  STEREO_MASTER_ON: { id: 582, axis: "global", encoding: "bool" },
+  STEREO_MASTER_ON: { id: 582, axis: "global", encoding: "bool", follow: "direct" },
   /** FX channel ON (y = FX1 0 / FX2 1). The FX channel reuses the input
    *  channel-strip layout one block earlier (139 fader / 140 ON / 141 pan ↔
    *  337 / 338 / 339); confirmed by live read (FX1/FX2 hold independent states). */
-  FX_CHANNEL_ON: { id: 338, axis: "global", encoding: "bool" },
+  FX_CHANNEL_ON: { id: 338, axis: "global", encoding: "bool", follow: "direct" },
   /** FX channel master fader = the fixed FX channel → STEREO send level (the FX
    *  channel's main path, mirroring CH_FADER for channels). y = FX1 0 / FX2 1. */
-  FX_CHANNEL_FADER: { id: 337, axis: "global", encoding: "level" },
+  FX_CHANNEL_FADER: { id: 337, axis: "global", encoding: "level", follow: "direct" },
   /** FX channel balance = the fixed FX channel → STEREO send pan. y = FX1 0 / FX2 1. */
-  FX_CHANNEL_BAL: { id: 339, axis: "global", encoding: "pan" },
+  FX_CHANNEL_BAL: { id: 339, axis: "global", encoding: "pan", follow: "direct" },
   /** FX channel EFFECT TYPE selector (anchor = FX1 679; FX2 683). Writing it makes
    *  the device repopulate the effect parameter array with that effect's defaults,
    *  so it is a sideEffect (live converges + re-reads). Per-FX id resolved in
@@ -307,8 +315,8 @@ export const PARAMS = {
   USB_OUT_SRC_C: { id: 734, axis: "global", encoding: "portRef" },
   USB_OUT_SRC_SUB: { id: 735, axis: "global", encoding: "portRef" },
   /** Oscillator generator (global). Level is centi-dB (-96..0); freq is Hz×10. */
-  OSC_ON: { id: 710, axis: "global", encoding: "bool" },
-  OSC_LEVEL: { id: 711, axis: "global", encoding: "centiDb" },
+  OSC_ON: { id: 710, axis: "global", encoding: "bool", follow: "direct" },
+  OSC_LEVEL: { id: 711, axis: "global", encoding: "centiDb", follow: "direct" },
   OSC_MODE: { id: 712, axis: "global", encoding: "enum" },
   OSC_FREQ: { id: 713, axis: "global", encoding: "eqFreq" },
   /** Oscillator Burst Noise width (length of noise; Burst mode only). Plan holds
