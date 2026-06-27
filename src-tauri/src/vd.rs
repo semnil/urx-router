@@ -524,10 +524,10 @@ mod imp {
             return if code == 200 {
                 Ok(())
             } else {
-                Err(format!("broker rejected the write (response_code {code})"))
+                Err(format!("broker rejected the write at {param_id}:{x}:{y} (response_code {code})"))
             };
         }
-        Err("timed out waiting for the broker to confirm the write".into())
+        Err(format!("timed out waiting for the broker to confirm the write at {param_id}:{x}:{y}"))
     }
 
     // Read a parameter instance's raw current_value (numeric or string). do_get /
@@ -569,9 +569,9 @@ mod imp {
             return vdp
                 .and_then(|v| v.pointer("/data/current_value"))
                 .cloned()
-                .ok_or_else(|| "broker response had no current_value".to_string());
+                .ok_or_else(|| format!("broker response had no current_value at {param_id}:{x}:{y}"));
         }
-        Err("timed out waiting for the parameter value".into())
+        Err(format!("timed out waiting for the parameter value at {param_id}:{x}:{y}"))
     }
 
     fn do_get(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
