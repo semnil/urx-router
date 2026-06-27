@@ -37,6 +37,7 @@ flowchart TD
       routing[routing.ts<br/>connection constraint engine]
       constraints[constraints.ts<br/>sample-rate limits]
       plan[plan.ts<br/>plan state + JSON]
+      levels[levels.ts<br/>level_gain grid<br/>snap/step/position]
       storage[storage.ts<br/>save/load/PNG/PDF]
       platform[platform.ts<br/>Tauri bridge / fallbacks]
       meters[meters.ts<br/>live meters<br/>map/decode/store]

@@ -5,7 +5,8 @@
 import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, EqBand, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsBand, SsmcsParams } from "../core/plan";
-import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, SSMCS_INITIAL } from "../core/plan";
+import { LEVEL_MIN_DB, SSMCS_INITIAL } from "../core/plan";
+import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
 import {
   formatHz,
   FX_EFFECT_TYPE_DEFAULT,
@@ -152,11 +153,8 @@ function isBalanceChannel(model: DeviceModel, plan: Plan, id: string): boolean {
   return isStereoChannel(id) || fxChannelIndex(id) !== null || isBalLinkedPair(model, plan, id);
 }
 
-// Slider floor is the -∞ off notch (LEVEL_OFF_DB); the lowest real value shown is
-// LEVEL_MIN_DB (-96.0). formatDb prints -∞ below LEVEL_MIN_DB.
-const LEVEL_OFF = LEVEL_OFF_DB;
+// The lowest real value shown is LEVEL_MIN_DB (-96.0); formatDb prints -∞ below it.
 const LEVEL_MIN = LEVEL_MIN_DB;
-const LEVEL_MAX = LEVEL_MAX_DB;
 
 // HA gain slider position shown for a channel whose gain has not been fetched or
 // set yet; matches the device's default head-amp gain.
@@ -926,7 +924,7 @@ function paramControl(
 ): HTMLElement {
   if (field === "tap") return tapControl(conn, onUpdate, tapEditable);
   return field === "level"
-    ? sliderControl(conn, onUpdate, "level", t().inspector.level, LEVEL_OFF, LEVEL_MAX, 0.5, 0, formatDb)
+    ? levelSlider(t().inspector.level, conn.params?.level ?? 0, (v) => onUpdate(conn.from, conn.to, { level: v }))
     : sliderControl(conn, onUpdate, "pan", panLabel, PAN_MIN, PAN_MAX, 1, 0, formatPan);
 }
 
@@ -1416,6 +1414,34 @@ function compDetailBlock(
   return frag;
 }
 
+// A range slider over discrete integer positions: the slider walks [0, posMax] by
+// 1, and toPos/fromPos map a domain value (dB, Hz, …) to and from a position. Used
+// where the domain is non-linear or a fixed grid, so every stop is a real value.
+function snappedSlider(
+  label: string,
+  cur: number,
+  posMax: number,
+  toPos: (v: number) => number,
+  fromPos: (pos: number) => number,
+  fmt: (v: number) => string,
+  onChange: (v: number) => void,
+): HTMLElement {
+  const { row, value } = paramBlock(label, fmt(cur));
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = "0";
+  slider.max = String(posMax);
+  slider.step = "1";
+  slider.value = String(toPos(cur));
+  slider.addEventListener("input", () => {
+    const v = fromPos(Number(slider.value));
+    setLevelText(value, fmt(v));
+    onChange(v);
+  });
+  row.append(slider);
+  return row;
+}
+
 // EQ band frequency slider on a log scale (20 Hz … 20 kHz) so each octave gets
 // equal width; reports the snapped Hz value and formats as Hz / kHz.
 function eqFreqControl(cur: number, onChange: (hz: number) => void): HTMLElement {
@@ -1423,28 +1449,22 @@ function eqFreqControl(cur: number, onChange: (hz: number) => void): HTMLElement
   const ratio = Math.log(EQ_FREQ_MAX_HZ / EQ_FREQ_MIN_HZ);
   const toPos = (hz: number): number => Math.round((steps * Math.log(hz / EQ_FREQ_MIN_HZ)) / ratio);
   const toHz = (pos: number): number => Math.round(EQ_FREQ_MIN_HZ * Math.exp((ratio * pos) / steps));
-  const { row, value } = paramBlock(t().inspector.frequency, formatHz(cur));
-  const slider = document.createElement("input");
-  slider.type = "range";
-  slider.min = "0";
-  slider.max = String(steps);
-  slider.step = "1";
-  slider.value = String(toPos(cur));
-  slider.addEventListener("input", () => {
-    const hz = toHz(Number(slider.value));
-    value.textContent = formatHz(hz);
-    onChange(hz);
-  });
-  row.append(slider);
-  return row;
+  return snappedSlider(t().inspector.frequency, cur, steps, toPos, toHz, formatHz, onChange);
 }
 
+// A level / send / fader slider that snaps to the device's discrete level_gain
+// grid (LEVEL_STEPS_DB) instead of a uniform dB step — the hardware only stores
+// those detents, so a 0.5 dB step would offer unsettable values (e.g. -15.0).
+// The slider index maps to a grid position: 0 = -∞ (off), 1..N = LEVEL_STEPS_DB.
+function levelSlider(label: string, cur: number, onChange: (v: number) => void): HTMLElement {
+  return snappedSlider(label, cur, LEVEL_POS_MAX, levelToPos, posToLevel, formatDb, onChange);
+}
 
 // Node-level bus output fader (STEREO master / MIX / MONITOR): the level_gain
 // scale, -∞ then -96.0 … +10.0 dB — the same as a send. The bottom notch
-// (LEVEL_OFF) is the -∞ / off position.
+// is the -∞ / off position.
 function faderControl(cur: number, onChange: (v: number) => void): HTMLElement {
-  return rangeSlider(t().inspector.level, LEVEL_OFF, LEVEL_MAX, 0.5, cur, formatDb, onChange);
+  return levelSlider(t().inspector.level, cur, onChange);
 }
 
 // A two-button ON/OFF toggle for a node-level boolean (channel on, HPF), styled

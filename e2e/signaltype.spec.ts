@@ -238,9 +238,9 @@ test("BAL mode links a fader edit across both channels in the CONSOLE", async ({
   await expect(ch2).toHaveText("0.0");
 
   await cstrip(page, "CH 1").locator(".con-fader").focus();
-  await page.keyboard.press("ArrowUp");
-  await expect(ch1).toHaveText("+1.0");
-  await expect(ch2).toHaveText("+1.0"); // the partner follows in BAL
+  await page.keyboard.press("ArrowUp"); // one detent up the level_gain grid: +0.4 dB
+  await expect(ch1).toHaveText("+0.4");
+  await expect(ch2).toHaveText("+0.4"); // the partner follows in BAL
 });
 
 test("BAL mode links a MUTE toggle across both channels in the CONSOLE", async ({ page }) => {
@@ -300,7 +300,7 @@ test("PAN mode keeps the two channels' faders independent in the CONSOLE", async
   const ch1 = cstrip(page, "CH 1").locator(".con-readout .db");
   const ch2 = cstrip(page, "CH 2").locator(".con-readout .db");
   await cstrip(page, "CH 1").locator(".con-fader").focus();
-  await page.keyboard.press("ArrowUp");
-  await expect(ch1).toHaveText("+1.0");
+  await page.keyboard.press("ArrowUp"); // one detent up the level_gain grid: +0.4 dB
+  await expect(ch1).toHaveText("+0.4");
   await expect(ch2).toHaveText("0.0"); // no mirroring in PAN mode
 });

@@ -37,8 +37,9 @@ test("a fader edits its level via the keyboard", async ({ page }) => {
   const readout = s.locator(".con-readout .db");
   await expect(readout).toHaveText("0.0");
   await s.locator(".con-fader").focus();
+  // ArrowUp walks one detent of the device's level_gain grid (0.0 -> +0.4 dB).
   await page.keyboard.press("ArrowUp");
-  await expect(readout).toHaveText("+1.0");
+  await expect(readout).toHaveText("+0.4");
 });
 
 test("MUTE and EQ chips toggle their pressed state", async ({ page }) => {
@@ -243,10 +244,10 @@ test("the OSCILLATOR strip has an ON button (off by default), not a MUTE", async
   await expect(on).toHaveAttribute("aria-pressed", "true"); // generating
 });
 
-test("the dB scale includes the -60 and -80 ticks", async ({ page }) => {
+test("the dB scale ticks sit on real level_gain detents", async ({ page }) => {
   const scale = strip(page, "CH 1").locator(".con-scale");
-  await expect(scale).toContainText("60");
-  await expect(scale).toContainText("80");
+  await expect(scale).toContainText("20");
+  await expect(scale).toContainText("40");
 });
 
 test("a node hidden in the graph drops from the console", async ({ page }) => {

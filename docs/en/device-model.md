@@ -143,6 +143,10 @@ non-removable**: the device has no "remove this routing", only a per-send ON swi
 level, so the model matches that (the old "wire presence = SEND_ON" is gone; on/off is held in the
 connection param `params.on`, default ON). LEVEL is the shared **level_gain** scale **-∞ … +10.00 dB**
 (UG p155; slider bottom = -∞ off, one step up is -96.0 dB) — every fader, send and the monitor use it.
+The scale is a **discrete, non-uniform grid** (wide steps in the tail, finer toward 0 dB), not a continuous
+dB value: the hardware snaps to fixed detents, so e.g. -15.0 dB is not settable (adjacent detents jump
+-16 / -14). The sliders walk this grid **by index**, giving each detent equal travel so the dense steps near
+0 dB are not cramped (`core/levels.ts`).
 PAN/BAL uses the device scale **L63 – C – R63** (the UG shows C as the nominal centre; L63/R63 are the
 hard-pan ends). PRE/POST states whether the send is tapped **before (PRE) or after (POST) the STEREO
 main-fader level** (the CH → STEREO level). The STEREO send itself — being that reference — has no PRE/POST.
