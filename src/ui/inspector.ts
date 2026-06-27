@@ -14,6 +14,29 @@ import {
   fxFamilyOf,
   fxParams,
 } from "../core/control/fx-effect";
+import {
+  insertFxFamilyOf,
+  insertFxParams,
+  MBC_BANDS,
+  MBC_BAND_PARAM,
+  MBC_GLOBAL,
+  mbcXoverLabel,
+  mbcOutGainLabel,
+  MBC_XOVER_LM_RANGE,
+  MBC_XOVER_MH_RANGE,
+  MBC_RELEASE_MS,
+  SEMITONE_NAMES,
+  PITCH_NOTE_SLOTS,
+  PITCH_SCALE_SLOT,
+  PITCH_SCALE_CHROMATIC,
+  PITCH_SCALE_MAJOR,
+  PITCH_SCALE_CUSTOM,
+  PITCH_MIDI_ENABLE_SLOT,
+  PITCH_MIDI_REALTIME_SLOT,
+  type InsertFxFamily,
+  type InsertFxParamDesc,
+  type MbcBandKey,
+} from "../core/control/insert-fx-effect";
 import { isBalLinkedPair, isFixedConnection, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
@@ -655,6 +678,13 @@ export function renderInspector(
           (v) => actions.onUpdateNodeParams(node.id, { insertFx: Number(v) }),
         ),
       );
+      // Editable parameters for the selected effect (guitar amp / pitch fix /
+      // compander / multi-band comp), below the selector.
+      const ifxSel = plan.nodeParams[node.id]?.insertFx;
+      if (ifxSel !== undefined) {
+        const fxSec = insertFxEffectSection(node.id, ifxSel, plan, actions, m);
+        if (fxSec) (tailBody ?? host).append(fxSec);
+      }
     }
 
     // Any node may be shelved; its wires are hidden along with it (see graph.ts).
@@ -1197,6 +1227,173 @@ function fxEffectSection(
     }
   }
   return el;
+}
+
+// ---- Insert-FX effect editor (guitar amp / pitch fix / compander / MBC) ----
+
+function insertFxVal(plan: Plan, nodeId: string, slot: number, def: number): number {
+  return plan.nodeParams[nodeId]?.insertFxParams?.[String(slot)] ?? def;
+}
+function mergeInsertFxParams(actions: InspectorActions, plan: Plan, nodeId: string, patch: Record<number, number>): void {
+  const params = plan.nodeParams[nodeId]?.insertFxParams ?? {};
+  const next = { ...params };
+  for (const [slot, raw] of Object.entries(patch)) next[slot] = raw;
+  actions.onUpdateNodeParams(nodeId, { insertFxParams: next });
+}
+
+// Render one flat descriptor (compander / guitar / pitch scalar) into `body`.
+function appendInsertFxDesc(
+  body: HTMLElement,
+  desc: InsertFxParamDesc,
+  nodeId: string,
+  plan: Plan,
+  actions: InspectorActions,
+  t: Messages["inspector"]["insertFxEffect"],
+): void {
+  const label = t.params[desc.label as keyof typeof t.params] ?? desc.label;
+  const cur = insertFxVal(plan, nodeId, desc.slot, desc.def);
+  const set = (raw: number) => {
+    const patch: Record<number, number> = { [desc.slot]: raw };
+    if (desc.mirror !== undefined) patch[desc.mirror] = raw;
+    mergeInsertFxParams(actions, plan, nodeId, patch);
+  };
+  if (desc.control === "toggle") {
+    body.append(boolToggle(label, cur !== 0, (v) => set(v ? 1 : 0)));
+  } else if (desc.control === "select") {
+    body.append(
+      selectControl(label, (desc.options ?? []).map((o) => ({ value: String(o.value), label: o.label })), String(cur), (v) => set(Number(v))),
+    );
+  } else {
+    body.append(rangeSlider(label, desc.rawMin ?? 0, desc.rawMax ?? 0, desc.rawStep ?? 1, cur, (r) => (desc.format ? desc.format(r) : String(r)), set));
+  }
+}
+
+// Standard C-major scale (semitone offsets on = major; the rest off). Used by the
+// Pitch Fix scale preset buttons; calibration confirmed Major clears slots
+// 23/25/28/30/32 (the non-major semitones).
+const PITCH_MAJOR_ON = new Set([0, 2, 4, 5, 7, 9, 11]);
+
+// INSERT-FX effect section, shown below the insert-FX selector when the chosen
+// effect has editable parameters. Layout per family: compander/guitar = flat
+// descriptors; MBC = 1-knob + three bands + global; pitch = scalars + scale
+// keyboard + MIDI control.
+function insertFxEffectSection(
+  nodeId: string,
+  selectorValue: number,
+  plan: Plan,
+  actions: InspectorActions,
+  m: Messages,
+): HTMLElement | null {
+  const fam = insertFxFamilyOf(selectorValue);
+  if (!fam) return null;
+  const t = m.inspector.insertFxEffect;
+  const { el, body } = section(t.title, { key: "insertFxEffect" });
+
+  if (fam.family === "mbc") {
+    renderMbc(body, nodeId, plan, actions, t);
+  } else if (fam.family === "pitch") {
+    for (const d of insertFxParams("pitch")) appendInsertFxDesc(body, d, nodeId, plan, actions, t);
+    renderPitchScale(body, nodeId, plan, actions, t);
+    renderPitchMidi(body, nodeId, plan, actions, t);
+  } else {
+    for (const d of insertFxParams(fam.family as InsertFxFamily)) appendInsertFxDesc(body, d, nodeId, plan, actions, t);
+  }
+  return el;
+}
+
+function renderMbc(
+  body: HTMLElement,
+  nodeId: string,
+  plan: Plan,
+  actions: InspectorActions,
+  t: Messages["inspector"]["insertFxEffect"],
+): void {
+  const set = (slot: number, raw: number) => mergeInsertFxParams(actions, plan, nodeId, { [slot]: raw });
+  // 1-knob
+  body.append(boolToggle(t.params.oneKnobOn, insertFxVal(plan, nodeId, MBC_GLOBAL.oneKnobOn, 0) !== 0, (v) => set(MBC_GLOBAL.oneKnobOn, v ? 1 : 0)));
+  body.append(rangeSlider(t.params.oneKnobLevel, 0, 48, 1, insertFxVal(plan, nodeId, MBC_GLOBAL.oneKnobLevel, 0), (r) => String(r), (v) => set(MBC_GLOBAL.oneKnobLevel, v)));
+  // Per-band: Threshold / Ratio / Attack / Gain, each from MBC_BAND_PARAM.
+  const bandLabel = { low: t.bandLow, mid: t.bandMid, high: t.bandHigh };
+  const bandKeys: MbcBandKey[] = ["threshold", "ratio", "attack", "gain"];
+  for (const b of MBC_BANDS) {
+    for (const k of bandKeys) {
+      const p = MBC_BAND_PARAM[k];
+      body.append(rangeSlider(`${bandLabel[b.band]} ${t.params[k]}`, p.rawMin, p.rawMax, 1, insertFxVal(plan, nodeId, b[k], p.def), p.format, (v) => set(b[k], v)));
+    }
+  }
+  // Global
+  body.append(boolToggle(t.params.bypass, insertFxVal(plan, nodeId, MBC_GLOBAL.bypass, 0) !== 0, (v) => set(MBC_GLOBAL.bypass, v ? 1 : 0)));
+  body.append(rangeSlider(t.params.xoverLowMid, MBC_XOVER_LM_RANGE.min, MBC_XOVER_LM_RANGE.max, 1, insertFxVal(plan, nodeId, MBC_GLOBAL.xoverLowMid, 37), mbcXoverLabel, (v) => set(MBC_GLOBAL.xoverLowMid, v)));
+  body.append(rangeSlider(t.params.xoverMidHigh, MBC_XOVER_MH_RANGE.min, MBC_XOVER_MH_RANGE.max, 1, insertFxVal(plan, nodeId, MBC_GLOBAL.xoverMidHigh, 94), mbcXoverLabel, (v) => set(MBC_GLOBAL.xoverMidHigh, v)));
+  body.append(rangeSlider(t.params.release, 0, MBC_RELEASE_MS.length - 1, 1, insertFxVal(plan, nodeId, MBC_GLOBAL.release, 7), (r) => { const ms = MBC_RELEASE_MS[r] ?? 0; return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`; }, (v) => set(MBC_GLOBAL.release, v)));
+  body.append(rangeSlider(t.params.outGain, 52, 76, 1, insertFxVal(plan, nodeId, MBC_GLOBAL.outGain, 68), mbcOutGainLabel, (v) => set(MBC_GLOBAL.outGain, v)));
+}
+
+function renderPitchScale(
+  body: HTMLElement,
+  nodeId: string,
+  plan: Plan,
+  actions: InspectorActions,
+  t: Messages["inspector"]["insertFxEffect"],
+): void {
+  const scale = insertFxVal(plan, nodeId, PITCH_SCALE_SLOT, PITCH_SCALE_CHROMATIC);
+  body.append(
+    selectControl(
+      t.scale,
+      [
+        { value: String(PITCH_SCALE_CHROMATIC), label: t.scaleChromatic },
+        { value: String(PITCH_SCALE_MAJOR), label: t.scaleMajor },
+        { value: String(PITCH_SCALE_CUSTOM), label: t.scaleCustom, disabled: scale !== PITCH_SCALE_CUSTOM },
+      ],
+      String(scale === PITCH_SCALE_CHROMATIC || scale === PITCH_SCALE_MAJOR ? scale : PITCH_SCALE_CUSTOM),
+      (v) => {
+        const sel = Number(v);
+        const patch: Record<number, number> = { [PITCH_SCALE_SLOT]: sel };
+        if (sel === PITCH_SCALE_CHROMATIC) PITCH_NOTE_SLOTS.forEach((s) => (patch[s] = 1));
+        else if (sel === PITCH_SCALE_MAJOR) PITCH_NOTE_SLOTS.forEach((s, i) => (patch[s] = PITCH_MAJOR_ON.has(i) ? 1 : 0));
+        mergeInsertFxParams(actions, plan, nodeId, patch);
+      },
+    ),
+  );
+  // 12 note toggles (a semitone row from the Key root). Editing any sets Custom.
+  for (let i = 0; i < PITCH_NOTE_SLOTS.length; i++) {
+    const slot = PITCH_NOTE_SLOTS[i];
+    body.append(
+      boolToggle(SEMITONE_NAMES[i], insertFxVal(plan, nodeId, slot, 1) !== 0, (on) =>
+        mergeInsertFxParams(actions, plan, nodeId, { [slot]: on ? 1 : 0, [PITCH_SCALE_SLOT]: PITCH_SCALE_CUSTOM }),
+      ),
+    );
+  }
+}
+
+function renderPitchMidi(
+  body: HTMLElement,
+  nodeId: string,
+  plan: Plan,
+  actions: InspectorActions,
+  t: Messages["inspector"]["insertFxEffect"],
+): void {
+  const enable = insertFxVal(plan, nodeId, PITCH_MIDI_ENABLE_SLOT, 0);
+  const realtime = insertFxVal(plan, nodeId, PITCH_MIDI_REALTIME_SLOT, 0);
+  const cur = enable === 0 ? 0 : realtime === 0 ? 1 : 2;
+  body.append(
+    selectControl(
+      t.params.midiControl,
+      [
+        { value: "0", label: "Off" },
+        { value: "1", label: "Setting" },
+        { value: "2", label: "Real Time" },
+      ],
+      String(cur),
+      (v) => {
+        const mode = Number(v);
+        mergeInsertFxParams(actions, plan, nodeId, {
+          [PITCH_MIDI_ENABLE_SLOT]: mode === 0 ? 0 : 1,
+          [PITCH_MIDI_REALTIME_SLOT]: mode === 2 ? 1 : 0,
+        });
+      },
+    ),
+  );
 }
 
 // Merge a patch into a node's live dynamics sub-object (gate / comp / ducker),

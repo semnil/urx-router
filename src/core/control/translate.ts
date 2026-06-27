@@ -21,6 +21,7 @@ import {
   fxFamilyOf,
   fxParams,
 } from "./fx-effect";
+import { insertFxEngine, insertFxFamilyOf, insertFxWritableSlots } from "./insert-fx-effect";
 import { isFixedConnection, sendTapWritable } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
@@ -698,6 +699,30 @@ function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectPar
   }
 }
 
+// Insert-FX effect: the engine parameter array for the selected effect family
+// (guitar 697 / pitch 701 / compander 689 / output 693). Slots + defaults from
+// the calibrated catalog; mirror slots (Pitch Coarse/Fine/Formant) get the same
+// raw. The selector (emitted by the caller) binds the engine first.
+// Only slots the plan explicitly carries are written; absent slots are left to
+// the device's per-type defaults populated by the selector (guitar-amp common
+// params differ per type, so a single catalog default would clobber them). A
+// plan read back from the device carries every slot, so it still round-trips in
+// full.
+function pushInsertFxEffectCommands(
+  out: VdCommand[],
+  engine: number,
+  family: import("./insert-fx-effect").InsertFxFamily,
+  params: Record<string, number> | undefined,
+): void {
+  if (!params) return;
+  for (const s of insertFxWritableSlots(family)) {
+    const raw = params[String(s.slot)];
+    if (raw === undefined) continue;
+    out.push(rawCommand("INSERT_FX_EFFECT", engine, "raw", s.slot, raw));
+    if (s.mirror !== undefined) out.push(rawCommand("INSERT_FX_EFFECT", engine, "raw", s.mirror, raw));
+  }
+}
+
 function pushSsmcsCommands(out: VdCommand[], y: number, s: SsmcsParams | undefined): void {
   if (!s) return;
   if (s.on !== undefined) out.push(command("SSMCS_ON", y, s.on ? 1 : 0));
@@ -1098,11 +1123,20 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   }
 
   // Insert FX (enum): mono input channels (135) and output buses (578 / 671).
+  // When the selected effect has editable parameters (guitar amp / pitch fix /
+  // compander / multi-band comp), also emit its engine parameter array. The
+  // selector binds + populates the engine; the array writes override with the
+  // plan's values (absolute state, like the FX-channel effects).
   for (const node of model.nodes) {
     const ifx = insertFxControl(model, node.id);
     const v = plan.nodeParams[node.id]?.insertFx;
     if (!ifx || v === undefined) continue;
     for (const inst of ifx.instances) out.push(rawCommand("INSERT_FX", ifx.param, "insertFx", inst, v));
+    const fam = insertFxFamilyOf(v);
+    if (fam) {
+      const isOutput = ifx.param !== PARAMS.INSERT_FX.id;
+      pushInsertFxEffectCommands(out, insertFxEngine(fam.family, isOutput), fam.family, plan.nodeParams[node.id]?.insertFxParams);
+    }
     own(node.id);
   }
 

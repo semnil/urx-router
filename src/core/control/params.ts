@@ -178,17 +178,21 @@ export const PARAMS = {
   DUCKER_ATTACK: { id: 262, axis: "global", encoding: "attackTime" },
   /** Ducker decay time (ms). */
   DUCKER_DECAY: { id: 263, axis: "global", encoding: "releaseTime" },
-  /** Input channel insert FX (MONO IN channels only). Enum from input_insert_fx. */
-  INSERT_FX: { id: 135, axis: "input", encoding: "insertFx" },
+  /** Input channel insert FX (MONO IN channels only). Enum from input_insert_fx.
+   *  sideEffect: selecting an effect (re)binds + repopulates its engine parameter
+   *  array on the device, so live must converge (re-read then re-apply the plan's
+   *  effect params). See control/insert-fx-effect.ts. */
+  INSERT_FX: { id: 135, axis: "input", encoding: "insertFx", sideEffect: true },
   /** Input channel Rec Point: the signal-path tap fed to the recording / direct
    *  out (enum 0..4, PRE GATE..PRE FADER). Confirmed by live snapshot-diff
    *  (MONO CH1 4 → 0). MONO IN only — stereo channels' Rec Point address is
    *  unconfirmed (translate.ts writes it for mono channels only). */
   REC_POINT: { id: 137, axis: "input", encoding: "enum" },
-  /** STEREO master insert FX (single). Enum from output_insert_fx. */
-  OUTPUT_INSERT_FX_STEREO: { id: 578, axis: "global", encoding: "insertFx" },
-  /** MIX bus insert FX (L/R-linked). Enum from output_insert_fx. */
-  OUTPUT_INSERT_FX_MIX: { id: 671, axis: "output", encoding: "insertFx" },
+  /** STEREO master insert FX (single). Enum from output_insert_fx. sideEffect:
+   *  rebinds + repopulates the output engine array (see INSERT_FX). */
+  OUTPUT_INSERT_FX_STEREO: { id: 578, axis: "global", encoding: "insertFx", sideEffect: true },
+  /** MIX bus insert FX (L/R-linked). Enum from output_insert_fx. sideEffect: as above. */
+  OUTPUT_INSERT_FX_MIX: { id: 671, axis: "output", encoding: "insertFx", sideEffect: true },
   // Analog mic-strip toggles (CH1-4 only). Confirmed by live scan.
   /** Input channel +48V phantom power. */
   PHANTOM: { id: 0, axis: "input", encoding: "bool" },
@@ -285,6 +289,11 @@ export const PARAMS = {
    *  Raw broker integers (see control/fx-effect.ts). Per-FX id + slot resolved in
    *  translate.ts. */
   FX_EFFECT_PARAM: { id: 681, axis: "global", encoding: "raw" },
+  /** Insert-FX effect parameter array (anchor = Guitar engine 697; the actual
+   *  engine 689/693/697/701 is resolved per effect family in translate.ts).
+   *  Addressed by SLOT on the y axis; raw broker integers (see
+   *  control/insert-fx-effect.ts). Calibrated on a factory URX44V. */
+  INSERT_FX_EFFECT: { id: 697, axis: "global", encoding: "raw" },
   /** Input source select for MONO CH1-4 (y = physical input slot 0..3). Raw input
    *  port ref. Param 22 only covers the mono slots; the device returns NONE for
    *  slots 4..11, so stereo channels use the separate 209/210 pair below. */

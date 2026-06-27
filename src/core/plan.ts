@@ -202,8 +202,13 @@ export interface NodeParams {
   hpf?: boolean;
   /** HPF_FREQ: high-pass cutoff in Hz (40 … 120). Absent = device default (80). */
   hpfFreq?: number;
-  /** INSERT_FX: insert-effect enum value (MONO IN channels). Absent or -1 = No Effect. */
+  /** INSERT_FX: insert-effect enum value (MONO IN channels / output buses). Absent or -1 = No Effect. */
   insertFx?: number;
+  /** Insert-FX effect parameters: RAW broker values keyed by the engine array SLOT
+   *  (see control/insert-fx-effect.ts), mirroring the device so a captured plan
+   *  round-trips. The selected `insertFx` value picks the slot layout. Absent slots
+   *  fall back to the family's factory defaults. */
+  insertFxParams?: Record<string, number>;
   /** COMP_EQ_TYPE: 0 = COMP->EQ, 1 = SSMCS (MONO IN channels). Absent = COMP->EQ. */
   compEqType?: number;
   /** Rec Point: signal-path tap for the channel's recording / direct out

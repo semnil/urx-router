@@ -19,6 +19,7 @@ import {
   fxFamilyOf,
   fxParams,
 } from "./fx-effect";
+import { insertFxEngine, insertFxFamilyOf, insertFxWritableSlots } from "./insert-fx-effect";
 import type { DynField, EqControl, EqOneKnobControl } from "./translate";
 import {
   busEqOn,
@@ -327,7 +328,17 @@ export async function applyDeviceState(
     attempted.add(node.id);
     try {
       const insertFx = normalizeInsertFx(await vdGet(ifx.param, 0, ifx.instances[0]));
-      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], insertFx };
+      const fam = insertFxFamilyOf(insertFx);
+      let insertFxParams: Record<string, number> | undefined;
+      if (fam) {
+        const isOutput = ifx.param !== PARAMS.INSERT_FX.id;
+        const engine = insertFxEngine(fam.family, isOutput);
+        insertFxParams = {};
+        for (const s of insertFxWritableSlots(fam.family)) {
+          insertFxParams[String(s.slot)] = await vdGet(engine, 0, s.slot);
+        }
+      }
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], insertFx, insertFxParams };
       applied++;
     } catch (e) {
       failed.add(node.id);
