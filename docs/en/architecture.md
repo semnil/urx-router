@@ -245,6 +245,18 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
 +90°): PHONES 2.0/8.0, A.Gain +8/+55, D.Gain -14/+15. Double-clicking a fader cap or a knob resets it to the
 **factory value** (from `defaultPlan`).
 
+- **Meter point (per-strip tap)** — a node exposes several observable meter tap points along its signal
+  chain, and each strip picks which one its meter (and the live readout) shows. An amber badge above the
+  meter opens a vertical signal-chain popover (`con-tappop`, listed in flow order, active tap highlighted);
+  it is position-fixed so it escapes the strip scroll container. Tap → `meter_id` was confirmed on the
+  device against the block diagram (`core/meters.ts` `NODE_TAPS`): mono channels INPUT → PRE GATE → PRE COMP →
+  PRE EQ → PRE INS FX → PRE FADER → POST; stereo channels INPUT → PRE FADER → PRE DUCKER → POST (no
+  HPF/GATE/COMP/INS FX, and the LEVEL sits before the DUCKER); output buses PRE EQ (sum) → PRE FADER →
+  PRE INS FX → POST; FX channels PRE FADER → POST; monitors and the oscillator are single-meter and have
+  no selector. STREAMING has device meters but no level fader, so it is a **meter-only strip**
+  (`buildMeterOnlyStrip`: a live meter with no fader, no set-level readout, and no tap selector). The choice
+  persists per model in `localStorage` (`urx-metertap`). The readout has two cells: the fader set level
+  (white) and the selected tap's live value (amber); default tap = the most downstream point.
 - **Shared edit path** — fader / chip / gain edits mutate the plan directly and flow through the same change
   funnel as the graph and inspector (`markChanged` → `live.schedule()`), so live device sync mirrors a
   CONSOLE edit through the same snapshot diff. CONSOLE re-renders only the edited strip itself, avoiding a

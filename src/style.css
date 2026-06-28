@@ -1767,11 +1767,163 @@ select:focus-visible,
 .con-faderzone {
   flex: 1;
   display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* Meter-point header row above the fader/meter. Fixed height (reserved even when a
+   single-meter strip has no badge) so fader tops align across all strips. The
+   bottom padding sets the gap between the badge and the scale/fader/meter below. */
+.con-taphead {
+  height: 30px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 2px 8px 4px;
+}
+.con-zrow {
+  flex: 1;
+  display: flex;
   gap: 6px;
-  padding: 24px 0 20px;
+  padding: 2px 0 18px;
   min-height: 0;
   justify-content: center;
   align-items: stretch;
+}
+/* Meter-point selector badge (popover trigger), sized to match the MUTE/EQ chips. */
+.con-tap {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--led);
+  background: color-mix(in srgb, var(--led) 16%, var(--ctl-bg));
+  color: var(--led);
+  font: 700 9.5px var(--mono);
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+[data-theme="light"] .con-tap {
+  color: #7a5a08;
+}
+.con-tap .pt {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--led);
+  box-shadow: 0 0 4px var(--led);
+}
+[data-theme="light"] .con-tap .pt {
+  box-shadow: none;
+}
+.con-tap .cv {
+  font-size: 8px;
+  opacity: 0.8;
+}
+.con-tap:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: 1px;
+}
+/* Meter-point popover: a vertical signal-chain probe (position:fixed so it escapes
+   the strip scroll container). Order top→bottom = signal flow; the active tap rides
+   the chain spine with an amber probe clip. */
+.con-tappop {
+  position: fixed;
+  z-index: 60;
+  width: 134px;
+  background: var(--panel);
+  border: 1px solid var(--ctl-border);
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+.con-tappop[hidden] {
+  display: none;
+}
+.con-tappop .ph {
+  font: 700 8.5px var(--mono);
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  padding: 7px 10px 5px;
+  border-bottom: 1px solid var(--line);
+}
+.con-tappop .chain {
+  position: relative;
+  padding: 5px 0 6px;
+}
+.con-tappop .chain::before {
+  content: "";
+  position: absolute;
+  left: 16px;
+  top: 12px;
+  bottom: 13px;
+  width: 2px;
+  background: linear-gradient(180deg, #5a4d31, #3a3220);
+  border-radius: 1px;
+}
+[data-theme="light"] .con-tappop .chain::before {
+  background: linear-gradient(180deg, #cabd9f, #b3a684);
+}
+.con-tappop .crow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.con-tappop .crow .node {
+  position: relative;
+  z-index: 1;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ctl-bg2);
+  border: 1.5px solid #5a4d31;
+  flex-shrink: 0;
+  margin-left: 1px;
+}
+.con-tappop .crow .nm {
+  font: 600 10px var(--mono);
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+.con-tappop .crow:hover {
+  background: color-mix(in srgb, var(--led) 8%, transparent);
+}
+.con-tappop .crow:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
+}
+.con-tappop .crow.active .node {
+  background: var(--led);
+  border-color: var(--led);
+  box-shadow: 0 0 7px var(--led);
+}
+.con-tappop .crow.active .nm {
+  color: var(--text);
+}
+.con-tappop .crow.active::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  border: 1.5px solid var(--led);
+  border-radius: 50%;
+  opacity: 0.45;
+}
+.con-tappop .foot {
+  font: 500 8px var(--mono);
+  color: var(--text-dim);
+  padding: 5px 10px 8px;
+  border-top: 1px solid var(--line);
+  line-height: 1.4;
 }
 /* Per-channel dB scale between the fader and meter. Same vertical extent as the
    fader, so a tick lines up with the cap at that level (a real reference). */
@@ -1918,17 +2070,36 @@ select:focus-visible,
   border-radius: 3px;
 }
 
+/* Two-cell readout: fader set level (white) + live meter value of the selected tap
+   (amber). Single cell when the node has no meter. */
 .con-readout {
   flex-shrink: 0;
-  text-align: center;
-  padding: 4px 2px 9px;
+  display: flex;
   border-top: 1px solid var(--line);
 }
-.con-readout .db {
+.con-readout .rd {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  padding: 4px 1px 9px;
+}
+.con-readout .rd + .rd {
+  border-left: 1px solid var(--line);
+}
+.con-readout .rv {
   font: 700 12px var(--mono);
 }
-.con-readout .db.off {
+.con-readout .rv.off {
   color: var(--text-dim);
+}
+.con-readout .mtr .rv {
+  color: var(--led);
+}
+.con-readout .mtr .rv.off {
+  color: var(--text-dim);
+}
+[data-theme="light"] .con-readout .mtr .rv {
+  color: #a06a08;
 }
 
 /* mode picker (send-on-fader) lives in the ruler cap row via the toolbar; the

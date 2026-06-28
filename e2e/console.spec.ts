@@ -34,7 +34,7 @@ test("MAIN lays out the input channels and the master", async ({ page }) => {
 
 test("a fader edits its level via the keyboard", async ({ page }) => {
   const s = strip(page, "CH 1");
-  const readout = s.locator(".con-readout .db");
+  const readout = s.locator(".con-readout .rd:not(.mtr) .rv");
   await expect(readout).toHaveText("0.0");
   await s.locator(".con-fader").focus();
   // ArrowUp walks one detent of the device's level_gain grid (0.0 -> +0.4 dB).
@@ -87,7 +87,7 @@ test("a send mode shows only the sources of the selected bus", async ({ page }) 
 
 test("the readout shows the set level only, with no send-destination line", async ({ page }) => {
   const readout = strip(page, "CH 1").locator(".con-readout");
-  await expect(readout.locator(".db")).toHaveText("0.0");
+  await expect(readout.locator(".rd:not(.mtr) .rv")).toHaveText("0.0");
   await expect(readout.locator(".send")).toHaveCount(0);
 });
 

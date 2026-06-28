@@ -65,6 +65,8 @@ export const ja: Messages = {
     mono: "MONO",
     chMute: "CH MUTE",
     master: "マスター",
+    meterPoint: "METER POINT",
+    meterPointHint: "実機がメーターを出すタップ点のみ表示。",
     groupInputs: "入力",
     groupBus: "BUS / FX",
     groupMon: "モニター",

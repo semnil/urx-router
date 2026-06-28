@@ -44,7 +44,7 @@ test("the console send-mode tab survives a GRAPH round-trip", async ({ page }) =
 
 test("a console fader edit is read back on the graph's CH -> STEREO wire", async ({ page }) => {
   await page.click("#btn-view-console");
-  const readout = strip(page, "CH 1").locator(".con-readout .db");
+  const readout = strip(page, "CH 1").locator(".con-readout .rd:not(.mtr) .rv");
   await expect(readout).toHaveText("0.0");
   await strip(page, "CH 1").locator(".con-fader").focus();
   // Two detents up the level_gain grid: 0.0 -> +0.4 -> +1.2 dB.

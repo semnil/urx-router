@@ -65,6 +65,8 @@ export const en = {
     mono: "MONO",
     chMute: "CH MUTE",
     master: "MASTER",
+    meterPoint: "METER POINT",
+    meterPointHint: "Only taps the device meters are listed.",
     groupInputs: "INPUTS",
     groupBus: "BUS / FX",
     groupMon: "MONITOR",
