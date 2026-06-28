@@ -176,6 +176,17 @@ L63–C–R63)、モニターバスは **PHONES レベル** (0–10 の非 dB、
 A.Gain +8/+55・D.Gain -14/+15 を左右の水平に。
 フェーダーつまみ・各つまみはダブルクリックで**工場初期値** (`defaultPlan` から取得) にリセットする。
 
+- **メーターポイント (ストリップ毎のタップ)** — ノードは信号経路上に複数の観測可能なメータータップ点を持ち、
+  各ストリップはメーター (とライブ読み値) にどのタップを表示するか選べる。メーター上端の琥珀バッジを押すと
+  縦の信号チェーン popover (`con-tappop`・信号順・選択中をハイライト) が開く。ストリップのスクロールに
+  クリップされないよう `position: fixed` で配置する。タップ → `meter_id` は実機で確定 (`core/meters.ts` の
+  ブロックダイアグラムと照合・`NODE_TAPS`): mono チャンネルは INPUT → PRE GATE → PRE COMP → PRE EQ →
+  PRE INS FX → PRE FADER → POST、stereo チャンネルは INPUT → PRE FADER → PRE DUCKER → POST
+  (HPF/GATE/COMP/INS FX 無し・LEVEL が DUCKER の前)、出力バスは PRE EQ (sum) → PRE FADER → PRE INS FX → POST、
+  FX チャンネルは PRE FADER → POST。モニターと OSC は単一メーターでセレクタ無し。STREAMING は実機メーターを
+  持つが level フェーダーが無いため、**メーターのみの strip** (`buildMeterOnlyStrip`: フェーダー・設定値・タップ
+  セレクタ無しでライブメーターのみ) として表示する。選択は機種別に `localStorage` (`urx-metertap`) へ
+  永続化。読み値は 2 セル: フェーダー設定値 (白) と選択タップのライブ値 (琥珀)。既定タップは最下流点。
 - **編集経路の共有** — フェーダー・チップ・Gain の編集は plan を直接更新し、グラフ/インスペクタと同じ
   変更ファネル (`markChanged` → `live.schedule()`) を通る。よって実機ライブ同期は CONSOLE の編集も
   同じ snapshot 差分で実機へ反映する。CONSOLE は編集したストリップだけを自前で再描画し、ドラッグ中の

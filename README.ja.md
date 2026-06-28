@@ -42,6 +42,14 @@ open -a 'URX Router' --args --experimental    # ビルド済みアプリ (macOS)
 urx-router.exe --experimental                 # ビルド済みアプリ (Windows)
 ```
 
+アプリの永続 UI 状態 (テーマ・機種・メーターポイント・同意ゲート・最近のファイル・インスペクタ開閉) を
+クリアするには、ブラウザ版はリセット URL を開くか、デスクトップ版は起動フラグを付ける:
+
+```sh
+pnpm reset:storage                            # ブラウザ: http://localhost:5173/?reset を開く
+pnpm tauri dev -- -- --reset-storage          # デスクトップ: webview の localStorage をクリア
+```
+
 ## デバイス制御（URX44V のみ）
 
 デスクトップ版は Device Center 稼働下で、接続中のインターフェースの現在のミキサー設定を計画に**読み込み**

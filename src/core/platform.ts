@@ -64,6 +64,16 @@ export function selfTestRequested(): Promise<boolean> {
   return invoke<boolean>("self_test_requested");
 }
 
+/**
+ * Whether the desktop app was launched with --reset-storage. The browser dev app
+ * has no process args, so there it is always false — use the ?reset URL instead
+ * (see resetStorageIfRequested in main.ts).
+ */
+export function resetStorageRequested(): Promise<boolean> {
+  if (!isTauri()) return Promise.resolve(false);
+  return invoke<boolean>("reset_storage_requested");
+}
+
 export interface FileFilter {
   ext: string;
   label: string;

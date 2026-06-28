@@ -44,6 +44,14 @@ open -a 'URX Router' --args --experimental    # built app (macOS)
 urx-router.exe --experimental                 # built app (Windows)
 ```
 
+To clear the app's persisted UI state (theme, model, meter points, the consent gate,
+recent files, inspector sections), open the browser app's reset URL or pass a launch flag:
+
+```sh
+pnpm reset:storage                            # browser: opens http://localhost:5173/?reset
+pnpm tauri dev -- -- --reset-storage          # desktop: clears the webview's localStorage
+```
+
 ## Device control (URX44V only)
 
 With the Device Center software running, desktop builds can **read** the connected

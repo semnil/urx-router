@@ -10,7 +10,8 @@ import { ref } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, type NodeParams, type Plan, type PlanConnection } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
-import { hasMeter, METER_FLOOR_DB, METER_TOP_DB, metersForNodes, MeterStore, subscribeMeters } from "../core/meters";
+import { defaultTapKey, hasMeter, METER_FLOOR_DB, METER_TOP_DB, MeterStore, subscribeMeters, tapAddrs, tapFor, tapsFor, type MeterTap } from "../core/meters";
+import { loadJson, saveJson } from "../core/storage";
 import { channelControl, insertFxControl } from "../core/control/translate";
 import { isBalLinkedPair, mirrorBalPair, partnerChannel, sendTapWritable } from "../core/routing";
 import { INSERT_FX_NONE, type InsertFxOption } from "../core/control/params";
@@ -101,20 +102,25 @@ interface StripModel {
   hasMute: boolean; // channels + master
   hasEq: boolean; // channels + mix + stereo
   hasPhones: boolean; // monitor buses (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2)
+  meterOnly: boolean; // STREAMING: only a live meter, no fader / set-level readout
   range: LevelRange;
 }
 
 interface StripRef {
   m: StripModel;
-  cap: HTMLElement;
+  // Fader controls — absent on a meter-only strip (STREAMING), which has no fader.
+  cap?: HTMLElement;
+  fader?: HTMLElement;
+  readDb?: HTMLElement;
   sigFill: HTMLElement;
   sigPeak: HTMLElement;
   sigClip: HTMLElement;
-  fader: HTMLElement;
-  readDb: HTMLElement;
+  readMtr: HTMLElement; // live meter value cell (the selected tap's dBFS)
+  tap: MeterTap | null; // the resolved tap this strip's meter shows (fixed per render)
   // v/pk/over: live ballistics; lv/lpk/lov: last value written to the DOM (-1 =
-  // none yet) so paintMeters can skip unchanged writes.
-  sig: { v: number; pk: number; over: number; lv: number; lpk: number; lov: number };
+  // none yet) so paintMeters can skip unchanged writes. lmtr = last meter readout
+  // (deci-dB; 1 = sentinel "none written").
+  sig: { v: number; pk: number; over: number; lv: number; lpk: number; lov: number; lmtr: number };
 }
 
 interface KnobSpec {
@@ -149,9 +155,14 @@ export class Console {
   private raf = 0;
   private live = false;
   private visible = false;
+  private meterTap = new Map<string, string>(); // node id → chosen tap key (override)
+  private tapModel = ""; // model id the meterTap map was loaded for
+  private tapOpenFor: string | null = null; // node whose tap popover is open
+  private readonly TAP_STORE = "urx-metertap";
   private bar!: HTMLElement;
   private outLabel!: HTMLElement;
   private modePick!: HTMLElement;
+  private tapPop!: HTMLElement;
   private stripsHost!: HTMLElement;
 
   constructor(
@@ -206,6 +217,19 @@ export class Console {
     const wrap = el("div", "con-wrap");
     wrap.append(this.bar, this.stripsHost);
     this.host.append(wrap);
+
+    // Floating meter-point popover (positioned fixed so it escapes the strip
+    // scroll container). One element reused for whichever strip opened it.
+    this.tapPop = el("div", "con-tappop");
+    this.tapPop.hidden = true;
+    this.host.append(this.tapPop);
+    // Close on any outside interaction (a tap badge manages its own toggle).
+    document.addEventListener("pointerdown", (e) => {
+      if (!this.tapOpenFor) return;
+      const tgt = e.target as HTMLElement;
+      if (this.tapPop.contains(tgt) || tgt.closest(".con-tap")) return;
+      this.closeTapPop();
+    });
   }
 
   // dB tick labels for a strip's fader range (per-channel scale between the fader
@@ -248,7 +272,7 @@ export class Console {
     const model = this.hooks.getModel();
     const ids = this.visibleIds();
     const channels = model.nodes.filter((n) => n.kind === "channel" && ids.has(n.id)).map((n) => n.id);
-    const busFx = ["bus.fx1", "bus.fx2", "bus.mix1", "bus.mix2"].filter((i) => ids.has(i));
+    const busFx = ["bus.fx1", "bus.fx2", "bus.mix1", "bus.mix2", "bus.stream"].filter((i) => ids.has(i));
     const mon = ["bus.mon1", "bus.mon2", "bus.osc"].filter((i) => ids.has(i));
     const groups = [
       { label: t().console.groupInputs, ids: channels },
@@ -286,6 +310,7 @@ export class Console {
       hasMute: isChannel || isMaster || this.isFxChannel(id) || isMix || isMon,
       hasEq: isChannel || isMix || isMaster,
       hasPhones: id === "bus.mon1" || id === "bus.mon2",
+      meterOnly: id === "bus.stream", // STREAMING has no level fader, only a meter
       range: isOsc ? OSC_RANGE : NORMAL_RANGE,
     };
   }
@@ -311,7 +336,217 @@ export class Console {
     }
   }
 
+  // ---- meter point (per-strip tap selection) ----
+
+  /** The tap key a strip's meter shows: the per-strip override or the default. */
+  private tapKeyOf(id: string): string {
+    return this.meterTap.get(id) ?? defaultTapKey(id);
+  }
+
+  // Persist the per-strip tap choices per model in localStorage (shape:
+  // { [modelId]: { [nodeId]: tapKey } }), reusing the shared JSON storage helpers.
+  private allTaps(): Record<string, Record<string, string>> {
+    return loadJson<Record<string, Record<string, string>>>(this.TAP_STORE, {});
+  }
+
+  private loadTaps(): void {
+    this.meterTap.clear();
+    const m = this.allTaps()[this.hooks.getModel().id];
+    if (m && typeof m === "object") for (const [k, v] of Object.entries(m)) if (typeof v === "string") this.meterTap.set(k, v);
+  }
+
+  private saveTaps(): void {
+    const all = this.allTaps();
+    all[this.hooks.getModel().id] = Object.fromEntries(this.meterTap);
+    saveJson(this.TAP_STORE, all);
+  }
+
+  /** Apply a per-strip tap choice, persist it, and rebuild (re-scopes the stream). */
+  private setTap(id: string, key: string): void {
+    this.meterTap.set(id, key);
+    this.saveTaps();
+    this.closeTapPop();
+    this.render();
+  }
+
+  // Build a strip's meter-point badge (the popover trigger). Shown only when the
+  // node has more than one tap; single-meter nodes get no selector.
+  private buildTapBadge(id: string): HTMLElement {
+    const tap = tapFor(id, this.tapKeyOf(id));
+    const badge = el("div", "con-tap");
+    badge.setAttribute("role", "button");
+    badge.setAttribute("aria-haspopup", "menu");
+    badge.tabIndex = 0;
+    const dot = el("span", "pt");
+    const name = document.createTextNode(tap?.label ?? "");
+    const cv = el("span", "cv");
+    cv.textContent = "▾";
+    badge.append(dot, name, cv);
+    const toggle = (): void => {
+      if (this.tapOpenFor === id) this.closeTapPop();
+      else this.openTapPop(id, badge);
+    };
+    badge.addEventListener("click", toggle);
+    badge.addEventListener("keydown", (e) => {
+      if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        toggle();
+      } else if (e.key === "Escape") {
+        this.closeTapPop();
+      }
+    });
+    return badge;
+  }
+
+  // Open the floating meter-point popover for a node, anchored to its badge. The
+  // chain lists the node's taps in signal order with the active one highlighted.
+  private openTapPop(id: string, anchor: HTMLElement): void {
+    const cur = this.tapKeyOf(id);
+    this.tapPop.replaceChildren();
+    const ph = el("div", "ph");
+    ph.textContent = t().console.meterPoint;
+    const chain = el("div", "chain");
+    for (const tp of tapsFor(id)) {
+      const row = el("div", "crow" + (tp.key === cur ? " active" : ""));
+      row.setAttribute("role", "menuitemradio");
+      row.setAttribute("aria-checked", String(tp.key === cur));
+      row.tabIndex = 0;
+      const node = el("span", "node");
+      const nm = el("span", "nm");
+      nm.textContent = tp.label;
+      row.append(node, nm);
+      const pick = (): void => this.setTap(id, tp.key);
+      row.addEventListener("click", pick);
+      row.addEventListener("keydown", (e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          pick();
+        }
+      });
+      chain.append(row);
+    }
+    const foot = el("div", "foot");
+    foot.textContent = t().console.meterPointHint;
+    this.tapPop.append(ph, chain, foot);
+    this.tapPop.hidden = false;
+    this.tapOpenFor = id;
+    // Position fixed near the badge, clamped to the viewport (top-right aligned).
+    const r = anchor.getBoundingClientRect();
+    const pw = this.tapPop.offsetWidth;
+    const phh = this.tapPop.offsetHeight;
+    let left = Math.min(r.right - pw, window.innerWidth - pw - 6);
+    left = Math.max(6, left);
+    let top = r.bottom + 2;
+    if (top + phh > window.innerHeight - 6) top = Math.max(6, r.top - phh - 2);
+    this.tapPop.style.left = left + "px";
+    this.tapPop.style.top = top + "px";
+  }
+
+  private closeTapPop(): void {
+    if (!this.tapOpenFor) return;
+    this.tapOpenFor = null;
+    this.tapPop.hidden = true;
+    this.tapPop.replaceChildren();
+  }
+
+  // A meter-dB scale aligned to the meter ladder (METER_FLOOR..METER_TOP), for the
+  // meter-only strip that has no fader (and thus no fader scale).
+  private buildMeterScale(): HTMLElement {
+    const scale = el("div", "con-scale");
+    for (const db of [0, -6, -12, -20, -40, -60]) {
+      const tick = el("div", "t");
+      tick.style.bottom = ((db - METER_FLOOR_DB) / (METER_TOP_DB - METER_FLOOR_DB)) * 100 + "%";
+      const num = el("span", "num");
+      if (db < 0) {
+        const sign = el("span", "sign");
+        sign.textContent = "−";
+        num.append(sign);
+      }
+      num.append(document.createTextNode(String(Math.abs(db))));
+      tick.append(num);
+      scale.append(tick);
+    }
+    return scale;
+  }
+
+  // Paint a scribble with the node's device CH SETTING colour (contrast-picked ink),
+  // or leave the rail fallback when unset. Shared by both strip builders.
+  private paintScribble(scrib: HTMLElement, id: string): void {
+    const color = this.hooks.getPlan().nodeColors?.[id];
+    if (!color) return;
+    scrib.style.background = color;
+    const ink = inkOn(color);
+    scrib.style.color = ink.color;
+    scrib.style.setProperty("--scrib-shadow", ink.shadow);
+  }
+
+  // Build the meter column (OVER clip box + green→red signal ladder). Shared by
+  // every strip; returns the live elements paintMeters drives.
+  private buildMeterColumn(): { meter: HTMLElement; sigFill: HTMLElement; sigPeak: HTMLElement; sigClip: HTMLElement } {
+    const meter = el("div", "con-meter");
+    const over = el("div", "con-over");
+    const sigClip = el("div", "lit");
+    over.append(sigClip);
+    const sigLadder = el("div", "con-ladder sig");
+    const sigFill = el("div", "fill");
+    const sigPeak = el("div", "peak");
+    sigLadder.append(sigFill, sigPeak);
+    meter.append(over, sigLadder);
+    return { meter, sigFill, sigPeak, sigClip };
+  }
+
+  // STREAMING strip: a live meter only — no fader, no set-level readout, no chips
+  // (the device offers no level/EQ here, just a source select + delay). One meter
+  // point (pre/post-DELAY read the same level), so no tap selector either.
+  private buildMeterOnlyStrip(m: StripModel): HTMLElement {
+    const strip = el("div", "con-strip meter-only");
+    strip.style.setProperty("--rail", m.rail);
+
+    const head = el("div", "con-head");
+    const scrib = el("div", "con-scribble");
+    this.paintScribble(scrib, m.id);
+    const name = el("div", "name");
+    name.textContent = m.label;
+    scrib.append(name);
+    head.append(scrib);
+    strip.append(head);
+
+    const zone = el("div", "con-faderzone");
+    zone.append(el("div", "con-taphead")); // empty: keeps fader/meter tops aligned
+    const zrow = el("div", "con-zrow");
+    const { meter, sigFill, sigPeak, sigClip } = this.buildMeterColumn();
+    zrow.append(this.buildMeterScale(), meter);
+    zone.append(zrow);
+    strip.append(zone);
+
+    // readout: live meter value only (no fader set-level cell).
+    const readout = el("div", "con-readout");
+    const mtrCell = el("div", "rd mtr");
+    const mtrEl = el("div", "rv");
+    mtrEl.textContent = "—";
+    mtrCell.append(mtrEl);
+    readout.append(mtrCell);
+    strip.append(readout);
+
+    this.refs.set(m.id, {
+      m,
+      sigFill,
+      sigPeak,
+      sigClip,
+      readMtr: mtrEl,
+      tap: tapFor(m.id, this.tapKeyOf(m.id)) ?? null,
+      sig: { v: 0, pk: 0, over: 0, lv: -1, lpk: -1, lov: -1, lmtr: 1 },
+    });
+    return strip;
+  }
+
   private render(): void {
+    const model = this.hooks.getModel();
+    if (this.tapModel !== model.id) {
+      this.loadTaps();
+      this.tapModel = model.id;
+    }
+    this.closeTapPop();
     this.outLabel.textContent = t().console.outputLabel;
     this.renderModes();
     this.refs.clear();
@@ -384,6 +619,7 @@ export class Console {
   }
 
   private buildStrip(m: StripModel, isMaster: boolean): HTMLElement {
+    if (m.meterOnly) return this.buildMeterOnlyStrip(m);
     const plan = this.hooks.getPlan();
     const model = this.hooks.getModel();
     const usesSend = this.usesSend(m);
@@ -407,16 +643,9 @@ export class Console {
     // head: scribble + chips + gain
     const head = el("div", "con-head");
     const scrib = el("div", "con-scribble");
-    // Scribble colour = the channel's CH SETTING colour (device parameter), not
-    // the node-kind rail. Pick black/white text from the colour's brightness.
-    // Falls back to the rail colour (via CSS) when no colour is assigned.
-    const color = plan.nodeColors?.[m.id];
-    if (color) {
-      scrib.style.background = color;
-      const ink = inkOn(color);
-      scrib.style.color = ink.color;
-      scrib.style.setProperty("--scrib-shadow", ink.shadow);
-    }
+    // Scribble colour = the channel's CH SETTING colour (device parameter), not the
+    // node-kind rail (falls back to the rail via CSS when unset).
+    this.paintScribble(scrib, m.id);
     const name = el("div", "name");
     name.textContent = m.label; // node name
     const dev = el("div", "id");
@@ -654,8 +883,14 @@ export class Console {
     }
     strip.append(head);
 
-    // fader zone: the fader (thin slot + cap; position = setting) + level meter
+    // fader zone: a meter-point header row, then the fader (thin slot + cap;
+    // position = setting) beside the dB scale and the live level meter.
     const zone = el("div", "con-faderzone");
+    const tapKey = this.tapKeyOf(m.id);
+    const tapHead = el("div", "con-taphead");
+    if (tapsFor(m.id).length > 1) tapHead.append(this.buildTapBadge(m.id));
+    zone.append(tapHead);
+    const zrow = el("div", "con-zrow");
 
     const fader = el("div", "con-fader");
     fader.tabIndex = 0;
@@ -671,26 +906,30 @@ export class Console {
 
     // Meter column: a separate OVER box on top (clip ≠ the level ceiling, and ≠
     // the dB scale), then the signal ladder below it.
-    const meter = el("div", "con-meter");
-    const over = el("div", "con-over");
-    const sigClip = el("div", "lit");
-    over.append(sigClip);
-    const sigLadder = el("div", "con-ladder sig");
-    const sigFill = el("div", "fill");
-    const sigPeak = el("div", "peak");
-    sigLadder.append(sigFill, sigPeak);
-    meter.append(over, sigLadder);
+    const { meter, sigFill, sigPeak, sigClip } = this.buildMeterColumn();
 
-    zone.append(fader, this.buildScale(m.range), meter);
+    zrow.append(fader, this.buildScale(m.range), meter);
+    zone.append(zrow);
     strip.append(zone);
 
-    // readout (set-level dB only; the send destination is shown by the active tab)
+    // readout: fader set-level dB (white) and, for metered strips, the live meter
+    // value of the selected tap (amber). No captions — the meter cell updates live
+    // while the fader cell is static, and the colour distinguishes them.
     const readout = el("div", "con-readout");
-    const dbEl = el("div", "db");
+    const faderCell = el("div", "rd");
+    const dbEl = el("div", "rv");
     const f = fmtDb(level, m.range);
     setLevelText(dbEl, f.text);
     if (f.off) dbEl.classList.add("off");
-    readout.append(dbEl);
+    faderCell.append(dbEl);
+    readout.append(faderCell);
+    const mtrEl = el("div", "rv");
+    if (hasMeter(m.id)) {
+      const mtrCell = el("div", "rd mtr");
+      mtrEl.textContent = "—";
+      mtrCell.append(mtrEl);
+      readout.append(mtrCell);
+    }
     strip.append(readout);
 
     const refObj: StripRef = {
@@ -701,7 +940,9 @@ export class Console {
       sigClip,
       fader,
       readDb: dbEl,
-      sig: { v: 0, pk: 0, over: 0, lv: -1, lpk: -1, lov: -1 },
+      readMtr: mtrEl,
+      tap: hasMeter(m.id) ? tapFor(m.id, tapKey) ?? null : null,
+      sig: { v: 0, pk: 0, over: 0, lv: -1, lpk: -1, lov: -1, lmtr: 1 },
     };
     this.refs.set(m.id, refObj);
     this.wireFader(refObj, usesSend);
@@ -709,6 +950,8 @@ export class Console {
   }
 
   private wireFader(r: StripRef, usesSend: boolean): void {
+    const fader = r.fader;
+    if (!fader) return; // meter-only strips have no fader to wire
     const range = r.m.range;
     const setLevel = (db: number): void => {
       if (usesSend) this.setSend(r.m.id, this.mode as SendTarget, db);
@@ -717,10 +960,10 @@ export class Console {
       this.commit(r.m.id);
       this.mirrorPartnerLevel(r.m.id); // a BAL-linked partner tracks the fader live
     };
-    r.fader.addEventListener("pointerdown", (e) => {
+    fader.addEventListener("pointerdown", (e) => {
       e.preventDefault();
-      r.fader.setPointerCapture(e.pointerId);
-      const rect = r.fader.getBoundingClientRect();
+      fader.setPointerCapture(e.pointerId);
+      const rect = fader.getBoundingClientRect();
       const move = (ev: PointerEvent): void => {
         const frac = 1 - (ev.clientY - rect.top - 6) / (rect.height - 12);
         setLevel(fracToDb(frac, range));
@@ -733,7 +976,7 @@ export class Console {
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
     });
-    r.fader.addEventListener("keydown", (e) => {
+    fader.addEventListener("keydown", (e) => {
       const cur = usesSend ? this.getSend(r.m.id, this.mode as SendTarget) : this.getMain(r.m);
       // Each range defines its own detent step (OSC: whole dB; level_gain: one grid
       // detent, a step down off the floor landing on -∞).
@@ -750,13 +993,14 @@ export class Console {
       setLevel(next);
     });
     // Double-click resets the fader to its factory value.
-    r.fader.addEventListener("dblclick", () => {
+    fader.addEventListener("dblclick", () => {
       const fp = this.factoryPlan();
       setLevel(usesSend ? this.sendLevelOf(fp, r.m.id, this.mode as SendTarget) : this.mainLevelOf(fp, r.m));
     });
   }
 
   private updateStripLevel(r: StripRef, db: number): void {
+    if (!r.cap || !r.readDb || !r.fader) return; // meter-only strip has no fader
     const frac = dbToFrac(db, r.m.range);
     r.cap.style.setProperty("--pos", (1 - frac) * 100 + "%");
     const f = fmtDb(db, r.m.range);
@@ -773,7 +1017,9 @@ export class Console {
   // re-renders don't churn the broker registration.
   private startMeters(): void {
     if (!this.live || !this.visible) return;
-    const addrs = metersForNodes([...this.refs.keys()].filter((id) => hasMeter(id)));
+    const taps: MeterTap[] = [];
+    for (const r of this.refs.values()) if (r.tap) taps.push(r.tap);
+    const addrs = tapAddrs(taps);
     const sig = addrs.map((a) => a.join(":")).join(",");
     if (!this.unsub || sig !== this.subSig) {
       this.unsub?.();
@@ -819,15 +1065,28 @@ export class Console {
         r.sigClip.style.setProperty("--clip", "0");
         s.lov = 0;
       }
+      if (s.lmtr !== 1) {
+        r.readMtr.textContent = "—";
+        r.readMtr.classList.remove("off");
+        s.lmtr = 1;
+      }
     }
   }
 
   private paintMeters(): void {
     for (const r of this.refs.values()) {
-      if (!hasMeter(r.m.id)) continue;
-      const reading = this.store.reading(r.m.id);
+      if (!r.tap) continue;
+      const reading = this.store.readingTap(r.tap);
       if (!reading) continue;
       const s = r.sig;
+      // Numeric meter readout (selected tap, peak of L/R), -∞ below the floor.
+      const peakDb = Math.max(reading.l, reading.r);
+      const mtr = peakDb <= METER_FLOOR_DB ? -999 : Math.round(peakDb * 10);
+      if (mtr !== s.lmtr) {
+        setLevelText(r.readMtr, mtr === -999 ? "-∞" : (mtr / 10).toFixed(1));
+        r.readMtr.classList.toggle("off", mtr === -999);
+        s.lmtr = mtr;
+      }
       const target = meterFrac(Math.max(reading.l, reading.r));
       // Fast attack, slow release for a meter-like response; peak hold decays slowly.
       s.v = target > s.v ? target : s.v + (target - s.v) * 0.3;
