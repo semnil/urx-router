@@ -37,6 +37,7 @@ import {
   restartApp,
   experimentalEnabled,
   selfTestRequested,
+  resetStorageRequested,
   vdConnect,
   vdDisconnect,
   vdWatchLink,
@@ -47,6 +48,23 @@ import { diffNames, diffPlan, formatWriteReport, sendConverging, sendNames } fro
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
 import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
+
+// Clear persisted UI state (theme / model / meter points / consent gate / recent
+// files / inspector sections) when the browser dev app is opened with ?reset (or
+// #reset) — done synchronously here, before anything below reads localStorage, and
+// the flag is stripped so a later manual reload doesn't clear again. The desktop
+// app uses the --reset-storage launch flag instead (handled async in boot()).
+(function resetStorageFromUrl(): void {
+  try {
+    const url = new URL(location.href);
+    if (url.searchParams.has("reset") || url.hash === "#reset") {
+      localStorage.clear();
+      history.replaceState(null, "", url.pathname);
+    }
+  } catch {
+    // storage / history unavailable — nothing to reset
+  }
+})();
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -1333,11 +1351,36 @@ setStatus(t().status.loaded(modelId));
 // at runtime there since it has no device control. The call is at the end of the
 // module so CONSENT_KEY (a const requireConsent reads) is already initialized.
 async function boot(): Promise<void> {
+  await resetStorageIfRequested();
   await requireConsent();
   if (!DEMO) {
     await checkForUpdates();
   }
 }
+
+// Desktop --reset-storage: the flag arrives async (after the synchronous init above
+// already read localStorage), so clear it and reload once to re-init clean. A
+// sessionStorage guard stops the still-present flag from looping the reload.
+async function resetStorageIfRequested(): Promise<void> {
+  let requested = false;
+  try {
+    requested = await resetStorageRequested();
+  } catch {
+    return; // flag query failed (e.g. command unavailable) — nothing to reset
+  }
+  if (!requested) return;
+  try {
+    if (sessionStorage.getItem(RESET_DONE_KEY) === "1") return; // already cleared this launch
+    localStorage.clear();
+    sessionStorage.setItem(RESET_DONE_KEY, "1");
+  } catch {
+    return; // storage unavailable — skip the reload to avoid a loop
+  }
+  location.reload();
+  await new Promise(() => {}); // hold boot() until the reload takes over
+}
+
+const RESET_DONE_KEY = "urx-reset-done";
 
 const CONSENT_KEY = "urx-disclaimer-accepted";
 

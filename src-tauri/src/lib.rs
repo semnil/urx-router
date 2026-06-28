@@ -39,6 +39,14 @@ fn self_test_requested() -> bool {
     std::env::args().any(|a| a == "--self-test")
 }
 
+// True when launched with --reset-storage: the frontend clears its localStorage
+// (theme / model / meter points / consent gate / …) once on startup before reading
+// any of it, then boots clean. The browser dev app uses the ?reset URL instead.
+#[tauri::command]
+fn reset_storage_requested() -> bool {
+    std::env::args().any(|a| a == "--reset-storage")
+}
+
 // Live control: connect to / set parameters on / disconnect from the URX via the
 // Device Center broker. The device GUID stays in Rust; the frontend addresses
 // parameters by (param_id, x, y) and an absolute integer value.
@@ -194,6 +202,7 @@ pub fn run() {
             write_binary_file,
             experimental_enabled,
             self_test_requested,
+            reset_storage_requested,
             vd_connect,
             vd_info,
             vd_set,
