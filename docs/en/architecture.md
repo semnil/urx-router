@@ -220,11 +220,14 @@ The GRAPH / CONSOLE toolbar tabs switch between them; while CONSOLE is shown the
 hidden (`setView` in `main.ts`). `src/ui/console.ts` lays strips out in INPUTS / BUS · FX / MONITOR /
 MASTER groups, scrolling horizontally (there is no shared left ruler). The fader zone is three columns —
 a **fader** (a real-console thin slot + cap; the cap position is the value), a **dB scale**, and a **level
-meter**. The meter has a separate **OVER box** on top (clipping ≠ the level ceiling, ≠ the scale) over the
-signal ladder (green→red; signal only while Live sync streams); the OVER box lights red on a device clip
-(raw 32767) via the `sig.over` latch and decays over ~1 s. The scale follows each strip's range and aligns
-its top/bottom to the fader travel, so a tick at the cap's height marks that level (a functional scale,
-10/0/-10/-20/-40/-60/-80/-∞). Each tick centres its digits with the minus sign hanging left, so `10` and
+meter** — the meter shares that one scale: the signal ladder (green→red, signal only while Live sync streams)
+maps each dBFS reading onto the same travel as the matching dB tick, its **top at the 0 dB mark** and its
+bottom at the lowest tick (−∞). A separate **OVER box** sits just above the 0 dB top (clipping ≠ the level
+ceiling); it lights red on a device clip (raw 32767) via the `sig.over` latch and decays over ~1 s. The scale
+follows each strip's range and aligns its top/bottom to the fader travel, so one ruler reads both the fader
+and the meter (a functional scale, 10/5/0/-5/-10/-20/-40/-∞); the 0 dB line crosses the fader cap centre.
+Strips whose fader/meter top out at 0 dB (the meter-only STREAMING and OSCILLATOR strips) drop the
+unreachable +5/+10 ticks. Each tick centres its digits with the minus sign hanging left, so `10` and
 `-10` line up vertically. Above the zone the scribble shows two lines — **node name + device CH SETTING
 name** (the monitor buses carry no CH SETTING name, so their second line names the linked PHONES output instead —
 `Phone 1` / `Phone 2`). Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE (on channels, FX channels, the
@@ -232,9 +235,7 @@ master, the MIX buses and the MONITOR buses; an FX channel's is the device FX-ch
 STEREO master ON, a **MIX bus's drives the MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off), and a
 **MONITOR bus's is the device MONITOR ON** (`np.on` → `MONITOR_ON`, the MONITOR-screen [ON] button)). A MONITOR
 bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
-`MONITOR_MONO`, ships OFF) chips. The
-**OSCILLATOR is normally OFF, so it gets an ON button instead of a MUTE** (inverse polarity — lit = generating,
-bound to `osc.on`). Then +48 / φ /
+`MONITOR_MONO`, ships OFF) chips. Then +48 / φ /
 HPF on mono MIC channels (Hi-Z on CH3/4) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
 chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
 node hung under them). An odd group gets an invisible spacer so its last chip never stretches to
@@ -242,8 +243,8 @@ full width. At the bottom (knobs bottom-aligned) are rotary knobs (`addKnob`/`wi
 — channel **Gain and PAN/BAL** (the CH→STEREO send's pan, L63–C–R63), or the **PHONES level** (a 0–10 non-dB
 scale) on the monitor buses (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2, independent of the monitor fader, so no extra
 tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.angle`, left = -90° / right =
-+90°): PHONES 2.0/8.0, A.Gain +8/+55, D.Gain -14/+15. Double-clicking a fader cap or a knob resets it to the
-**factory value** (from `defaultPlan`).
++90°): PHONES 2.0/8.0, A.Gain +8/+55, D.Gain -14/+15, OSCILLATOR LEVEL -50/-8. Double-clicking a fader cap or
+a knob resets it to the **factory value** (from `defaultPlan`).
 
 - **Meter point (per-strip tap)** — a node exposes several observable meter tap points along its signal
   chain, and each strip picks which one its meter (and the live readout) shows. An amber badge above the
@@ -253,9 +254,11 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
   PRE EQ → PRE INS FX → PRE FADER → POST; stereo channels INPUT → PRE FADER → PRE DUCKER → POST (no
   HPF/GATE/COMP/INS FX, and the LEVEL sits before the DUCKER); output buses PRE EQ (sum) → PRE FADER →
   PRE INS FX → POST; FX channels PRE FADER → POST; monitors and the oscillator are single-meter and have
-  no selector. STREAMING has device meters but no level fader, so it is a **meter-only strip**
-  (`buildMeterOnlyStrip`: a live meter with no fader, no set-level readout, and no tap selector). The choice
-  persists per model in `localStorage` (`urx-metertap`). The readout has two cells: the fader set level
+  no selector. STREAMING and the OSCILLATOR have device meters but no level fader, so they are **meter-only
+  strips** (`buildMeterOnlyStrip`: a live meter with no fader, no set-level readout, and no tap selector). The
+  **OSCILLATOR** additionally carries an **ON button** (normally OFF, lit = generating, `osc.on`) and a **LEVEL
+  rotary knob** (−96…0 dB, the shared device level; its indicator's horizontal marks read -50 left / -8 right)
+  in place of a fader. The choice persists per model in `localStorage` (`urx-metertap`). The readout has two cells: the fader set level
   (white) and the selected tap's live value (amber); default tap = the most downstream point.
 - **Shared edit path** — fader / chip / gain edits mutate the plan directly and flow through the same change
   funnel as the graph and inspector (`markChanged` → `live.schedule()`), so live device sync mirrors a

@@ -10,7 +10,7 @@ import { ref } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, type NodeParams, type Plan, type PlanConnection } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
-import { defaultTapKey, hasMeter, METER_FLOOR_DB, METER_TOP_DB, MeterStore, subscribeMeters, tapAddrs, tapFor, tapsFor, type MeterTap } from "../core/meters";
+import { defaultTapKey, hasMeter, METER_FLOOR_DB, MeterStore, subscribeMeters, tapAddrs, tapFor, tapsFor, type MeterTap } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
 import { channelControl, insertFxControl } from "../core/control/translate";
 import { isBalLinkedPair, mirrorBalPair, partnerChannel, sendTapWritable } from "../core/routing";
@@ -32,11 +32,6 @@ const SEND_LABEL: Record<SendTarget, string> = {
 
 // The STEREO master / main-sum node: every channel's & FX channel's fixed main send.
 const MAIN_BUS = "bus.stereo";
-
-// Oscillator fader-position curve: 0 dB sits high like a real fader (exponent < 1
-// lifts the top of the travel). Only the OSC range uses it — the level_gain range
-// spaces its detents evenly instead so the dense steps near 0 dB get equal travel.
-const CURVE = 0.78;
 
 // A fader scale. Each range owns how a dB maps to/from travel (toFrac/fromFrac),
 // how the keyboard steps it (step), and its ruler ticks — so the "which scale am
@@ -63,17 +58,6 @@ const NORMAL_RANGE: LevelRange = {
   ticks: [10, 5, 0, -5, -10, -20, -40, -96],
 };
 
-// The oscillator range (-96 … 0 dB): a continuous power-curve scale rounded to
-// 0.5 dB; the keyboard steps by whole dB (a step down off the floor lands on -∞).
-const OSC_RANGE: LevelRange = {
-  min: -96,
-  max: 0,
-  off: -96,
-  toFrac: (db) => (db <= -96 ? 0 : Math.pow((Math.min(db, 0) + 96) / 96, CURVE)),
-  fromFrac: (f) => (f <= 0.005 ? -96 : Math.round((-96 + Math.pow(f, 1 / CURVE) * 96) * 2) / 2),
-  step: (base, delta) => Math.max(-96, Math.min(0, base + delta)),
-  ticks: [0, -10, -20, -40, -60, -80, -96],
-};
 
 function dbToFrac(db: number, r: LevelRange): number {
   return r.toFrac(db);
@@ -81,8 +65,13 @@ function dbToFrac(db: number, r: LevelRange): number {
 function fracToDb(frac: number, r: LevelRange): number {
   return r.fromFrac(Math.max(0, Math.min(1, frac)));
 }
-function meterFrac(dbfs: number): number {
-  return Math.max(0, Math.min(1, (dbfs - METER_FLOOR_DB) / (METER_TOP_DB - METER_FLOOR_DB)));
+function meterFrac(dbfs: number, r: LevelRange): number {
+  // The meter shares the strip's fader ruler: a dBFS reading lights to the same
+  // travel as the matching dB tick. Normalised to the ladder's span — bottom at the
+  // scale's lowest tick, top at the 0 dB mark — so the fill and the ticks line up.
+  const floor = r.toFrac(r.ticks[r.ticks.length - 1]);
+  const span = r.toFrac(0) - floor;
+  return span <= 0 ? 0 : Math.max(0, Math.min(1, (r.toFrac(Math.min(dbfs, 0)) - floor) / span));
 }
 function fmtDb(db: number, r: LevelRange): { text: string; off: boolean } {
   if (db < r.min) return { text: "-∞", off: true };
@@ -233,10 +222,13 @@ export class Console {
   }
 
   // dB tick labels for a strip's fader range (per-channel scale between the fader
-  // and meter). Top/bottom align with the fader travel, so it reads the level.
-  private buildScale(range: LevelRange): HTMLElement {
+  // and meter). Top/bottom align with the fader travel, so it reads the level. Ticks
+  // above `ceilingDb` are dropped — strips whose fader/meter top out at 0 dB (OSC,
+  // the meter-only STREAMING strip) don't label the unreachable +5/+10 marks.
+  private buildScale(range: LevelRange, ceilingDb = range.max): HTMLElement {
     const scale = el("div", "con-scale");
     for (const db of range.ticks) {
+      if (db > ceilingDb) continue;
       const tick = el("div", "t");
       tick.style.bottom = dbToFrac(db, range) * 100 + "%";
       // The number is centred; a minus sign hangs to its left so the digits of
@@ -310,8 +302,10 @@ export class Console {
       hasMute: isChannel || isMaster || this.isFxChannel(id) || isMix || isMon,
       hasEq: isChannel || isMix || isMaster,
       hasPhones: id === "bus.mon1" || id === "bus.mon2",
-      meterOnly: id === "bus.stream", // STREAMING has no level fader, only a meter
-      range: isOsc ? OSC_RANGE : NORMAL_RANGE,
+      meterOnly: id === "bus.stream" || isOsc, // STREAMING + OSC: no fader (OSC uses a level knob)
+      // OSC drives its level via the LEVEL knob, so its meter/scale use the shared
+      // level_gain ruler like every other strip (and the meter-only STREAMING strip).
+      range: NORMAL_RANGE,
     };
   }
 
@@ -449,26 +443,6 @@ export class Console {
     this.tapPop.replaceChildren();
   }
 
-  // A meter-dB scale aligned to the meter ladder (METER_FLOOR..METER_TOP), for the
-  // meter-only strip that has no fader (and thus no fader scale).
-  private buildMeterScale(): HTMLElement {
-    const scale = el("div", "con-scale");
-    for (const db of [0, -6, -12, -20, -40, -60]) {
-      const tick = el("div", "t");
-      tick.style.bottom = ((db - METER_FLOOR_DB) / (METER_TOP_DB - METER_FLOOR_DB)) * 100 + "%";
-      const num = el("span", "num");
-      if (db < 0) {
-        const sign = el("span", "sign");
-        sign.textContent = "−";
-        num.append(sign);
-      }
-      num.append(document.createTextNode(String(Math.abs(db))));
-      tick.append(num);
-      scale.append(tick);
-    }
-    return scale;
-  }
-
   // Paint a scribble with the node's device CH SETTING colour (contrast-picked ink),
   // or leave the rail fallback when unset. Shared by both strip builders.
   private paintScribble(scrib: HTMLElement, id: string): void {
@@ -480,10 +454,61 @@ export class Console {
     scrib.style.setProperty("--scrib-shadow", ink.shadow);
   }
 
+  // The scribble strip: the CH SETTING colour + the node name and the device CH
+  // SETTING name row ("—" when unset, so every strip is the same height). Shared by
+  // both strip builders; the master-only CH MUTE badge is appended by the caller.
+  private scribble(m: StripModel): HTMLElement {
+    const scrib = el("div", "con-scribble");
+    this.paintScribble(scrib, m.id);
+    const name = el("div", "name");
+    name.textContent = m.label;
+    const dev = el("div", "id");
+    dev.textContent = m.deviceName || "—";
+    if (!m.deviceName) dev.classList.add("empty");
+    scrib.append(name, dev);
+    return scrib;
+  }
+
+  // A toggle chip ("MUTE"/"EQ"/"ON"/…): role=button, aria-pressed, keyboard-activated;
+  // `toggle` flips the underlying plan flag and returns the new state, then the chip
+  // commits (and re-renders when commit asks). A readonlyTitle renders it inert with a
+  // tooltip. Shared across both strip builders (channel chips + the OSC ON button).
+  private makeChip(id: string, parent: HTMLElement, label: string, mute: boolean, on: boolean, toggle: () => boolean, readonlyTitle?: string): void {
+    const chip = el("div", "con-chip" + (mute ? " mute" : "") + (on ? " on" : "") + (readonlyTitle ? " readonly" : ""));
+    chip.textContent = label;
+    chip.setAttribute("role", "button");
+    chip.setAttribute("aria-pressed", String(on));
+    if (readonlyTitle) {
+      chip.setAttribute("aria-disabled", "true");
+      chip.title = readonlyTitle;
+      parent.append(chip);
+      return;
+    }
+    chip.tabIndex = 0;
+    const run = (): void => {
+      const next = toggle();
+      chip.classList.toggle("on", next);
+      chip.setAttribute("aria-pressed", String(next));
+      if (this.commit(id)) this.render();
+    };
+    chip.addEventListener("click", run);
+    chip.addEventListener("keydown", (e) => {
+      if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        run();
+      }
+    });
+    parent.append(chip);
+  }
+
   // Build the meter column (OVER clip box + green→red signal ladder). Shared by
   // every strip; returns the live elements paintMeters drives.
-  private buildMeterColumn(): { meter: HTMLElement; sigFill: HTMLElement; sigPeak: HTMLElement; sigClip: HTMLElement } {
+  private buildMeterColumn(range: LevelRange): { meter: HTMLElement; sigFill: HTMLElement; sigPeak: HTMLElement; sigClip: HTMLElement } {
     const meter = el("div", "con-meter");
+    // The ladder spans from the scale's lowest tick (--mfloor) to the 0 dB mark
+    // (--mzero); the OVER window sits above. Both share the strip's fader ruler.
+    meter.style.setProperty("--mzero", dbToFrac(0, range) * 100 + "%");
+    meter.style.setProperty("--mfloor", dbToFrac(range.ticks[range.ticks.length - 1], range) * 100 + "%");
     const over = el("div", "con-over");
     const sigClip = el("div", "lit");
     over.append(sigClip);
@@ -503,19 +528,42 @@ export class Console {
     strip.style.setProperty("--rail", m.rail);
 
     const head = el("div", "con-head");
-    const scrib = el("div", "con-scribble");
-    this.paintScribble(scrib, m.id);
-    const name = el("div", "name");
-    name.textContent = m.label;
-    scrib.append(name);
-    head.append(scrib);
+    head.append(this.scribble(m));
+    // OSCILLATOR: an ON button (off by default; highlighted = generating) and a LEVEL
+    // knob that replaces the fader. Both edit the plan and sync live via commit().
+    if (m.isOsc) {
+      const chips = el("div", "con-chips");
+      const oscOn = (): boolean => this.hooks.getPlan().nodeParams[m.id]?.osc?.on ?? false;
+      this.makeChip(m.id, chips, t().console.on, false, oscOn(), () => {
+        const np = this.nodeParamsOf(m.id);
+        const next = !oscOn();
+        np.osc = { ...np.osc, on: next };
+        return next;
+      });
+      chips.append(el("div", "con-chip spacer"));
+      head.append(chips);
+      // LEVEL knob: full OSC range (-96…0 dB). The indicator's horizontal marks read
+      // -50 (left) / -8 (right); the extremes (down-left / down-right) reach -96 / 0.
+      const factory = this.factoryPlan().nodeParams[m.id]?.osc?.level ?? -14;
+      this.addKnob(head, "LEVEL", {
+        get: () => this.getMain(m),
+        set: (v) => this.setMain(m, v),
+        min: -96,
+        max: 0,
+        step: 1,
+        format: (v) => v.toFixed(1),
+        reset: factory,
+        angle: (v) => (v <= -50 ? -135 + ((v + 96) / 46) * 45 : v >= -8 ? 90 + ((v + 8) / 8) * 45 : -90 + ((v + 50) / 42) * 180),
+      }, m.id);
+    }
     strip.append(head);
 
     const zone = el("div", "con-faderzone");
     zone.append(el("div", "con-taphead")); // empty: keeps fader/meter tops aligned
     const zrow = el("div", "con-zrow");
-    const { meter, sigFill, sigPeak, sigClip } = this.buildMeterColumn();
-    zrow.append(this.buildMeterScale(), meter);
+    const { meter, sigFill, sigPeak, sigClip } = this.buildMeterColumn(m.range);
+    // Meter tops out at 0 dBFS and there is no fader, so the scale stops at 0.
+    zrow.append(this.buildScale(m.range, 0), meter);
     zone.append(zrow);
     strip.append(zone);
 
@@ -642,16 +690,7 @@ export class Console {
 
     // head: scribble + chips + gain
     const head = el("div", "con-head");
-    const scrib = el("div", "con-scribble");
-    // Scribble colour = the channel's CH SETTING colour (device parameter), not the
-    // node-kind rail (falls back to the rail via CSS when unset).
-    this.paintScribble(scrib, m.id);
-    const name = el("div", "name");
-    name.textContent = m.label; // node name
-    const dev = el("div", "id");
-    dev.textContent = m.deviceName || "—"; // device CH SETTING name (— when unset)
-    if (!m.deviceName) dev.classList.add("empty");
-    scrib.append(name, dev);
+    const scrib = this.scribble(m);
     if (masterMuted) {
       const badge = el("div", "ch-mute");
       badge.textContent = t().console.chMute;
@@ -669,46 +708,8 @@ export class Console {
     // spacer chip so the last real chip never stretches to full width.
     type BoolKey = "gateOn" | "compOn" | "eqOn" | "phantom" | "phase" | "phaseL" | "phaseR" | "hpf" | "hiZ" | "cueInterrupt" | "mono";
     const planOf = (): NodeParams => this.hooks.getPlan().nodeParams[m.id] ?? {};
-    const makeChip = (
-      id: string,
-      parent: HTMLElement,
-      label: string,
-      mute: boolean,
-      on: boolean,
-      toggle: () => boolean,
-      // Read-only when set: shows the value but rejects edits (the device cannot
-      // accept the write while live). The string is the explanatory tooltip; a
-      // read-only chip drops its listeners and keyboard focus.
-      readonlyTitle?: string,
-    ): void => {
-      const chip = el("div", "con-chip" + (mute ? " mute" : "") + (on ? " on" : "") + (readonlyTitle ? " readonly" : ""));
-      chip.textContent = label;
-      chip.setAttribute("role", "button");
-      chip.setAttribute("aria-pressed", String(on));
-      if (readonlyTitle) {
-        chip.setAttribute("aria-disabled", "true");
-        chip.title = readonlyTitle;
-        parent.append(chip);
-        return;
-      }
-      chip.tabIndex = 0;
-      const run = (): void => {
-        const next = toggle();
-        chip.classList.toggle("on", next);
-        chip.setAttribute("aria-pressed", String(next));
-        if (this.commit(id)) this.render();
-      };
-      chip.addEventListener("click", run);
-      chip.addEventListener("keydown", (e) => {
-        if (e.key === " " || e.key === "Enter") {
-          e.preventDefault();
-          run();
-        }
-      });
-      parent.append(chip);
-    };
     const boolChip = (parent: HTMLElement, label: string, key: BoolKey, def: boolean): void => {
-      makeChip(m.id, parent, label, false, planOf()[key] ?? def, () => {
+      this.makeChip(m.id, parent, label, false, planOf()[key] ?? def, () => {
         const next = !(planOf()[key] ?? def);
         this.nodeParamsOf(m.id)[key] = next;
         return next;
@@ -727,7 +728,7 @@ export class Console {
           ? () => this.sendConn(this.hooks.getPlan(), m.id, MAIN_BUS)
           : this.sendStripConn(m.id, usesSend);
         const sendOn = (): boolean => conn()?.params?.on ?? !mix; // sends default ON, TO ST off
-        makeChip(m.id, top, t().console.mute, true, !sendOn(), () => {
+        this.makeChip(m.id, top, t().console.mute, true, !sendOn(), () => {
           const c = conn();
           const nextOn = !sendOn();
           if (c) c.params = { ...c.params, on: nextOn };
@@ -737,24 +738,12 @@ export class Console {
         // Master ON/OFF on the node's own `on` flag: a channel (CH_ON) / the STEREO
         // master (STEREO_MASTER_ON) write to the device; a MONITOR bus is plan-only
         // (no confirmed monitor-ON param), so its mute lives in the plan alone.
-        makeChip(m.id, top, t().console.mute, true, np.on === false, () => {
+        this.makeChip(m.id, top, t().console.mute, true, np.on === false, () => {
           const muted = planOf().on === false;
           this.nodeParamsOf(m.id).on = muted; // toggle: was muted → on, was on → muted
           return !muted;
         });
       }
-    }
-    // OSCILLATOR is a test-tone generator that is normally OFF, so it gets an ON
-    // button (the inverse of the MUTE chips: highlighted = generating) bound to
-    // osc.on rather than a MUTE that would read as pressed by default.
-    if (m.isOsc) {
-      const oscOn = (): boolean => planOf().osc?.on ?? false;
-      makeChip(m.id, top, t().console.on, false, oscOn(), () => {
-        const next = !oscOn();
-        const op = this.nodeParamsOf(m.id);
-        op.osc = { ...op.osc, on: next };
-        return next;
-      });
     }
     // HA input toggles (+48 / polarity / HPF / Hi-Z) are channel-domain, not send
     // controls, so a send tab (which edits the → MIX/FX send) hides them.
@@ -792,7 +781,7 @@ export class Console {
           const v = planOf().insertFx;
           return v != null && v !== INSERT_FX_NONE;
         };
-        makeChip(m.id, proc, "INS FX", false, insOn(), () => this.toggleInsFx(m.id, ifx.options));
+        this.makeChip(m.id, proc, "INS FX", false, insOn(), () => this.toggleInsFx(m.id, ifx.options));
       }
       // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
       // A shelved ducker drops its chip even while the parent strip stays.
@@ -800,7 +789,7 @@ export class Console {
       const duckerId = model.nodes.find((n) => n.kind === "ducker" && n.attachTo === m.id && !hidden.includes(n.id))?.id;
       if (duckerId) {
         const duckOn = (): boolean => this.hooks.getPlan().nodeParams[duckerId]?.duckerOn === true;
-        makeChip(duckerId, proc, "DUCKER", false, duckOn(), () => {
+        this.makeChip(duckerId, proc, "DUCKER", false, duckOn(), () => {
           const next = !duckOn();
           this.nodeParamsOf(duckerId).duckerOn = next;
           return next;
@@ -826,7 +815,7 @@ export class Console {
       // while live-connected — matching the graph CH node's PRE/POST. MIX taps
       // stay editable. See sendTapWritable / inspector.
       const tapReadonly = this.live && !sendTapWritable(model, m.id, this.mode as SendTarget);
-      makeChip(m.id, preGroup, t().console.pre, false, isPre(), () => {
+      this.makeChip(m.id, preGroup, t().console.pre, false, isPre(), () => {
         const next = !isPre();
         const c = conn();
         if (c) c.params = { ...c.params, tap: next ? "pre" : "post" };
@@ -897,16 +886,17 @@ export class Console {
     fader.setAttribute("role", "slider");
     fader.setAttribute("aria-label", m.label);
     const track = el("div", "track");
+    // The 0 dB line rides the fader (not the inset track) so it shares the cap's
+    // coordinate space and passes through the cap centre when the fader sits at 0 dB.
     const zero = el("div", "zero");
     zero.style.setProperty("--zero", (1 - dbToFrac(0, m.range)) * 100 + "%");
-    track.append(zero);
     const cap = el("div", "cap");
     cap.style.setProperty("--pos", (1 - dbToFrac(level, m.range)) * 100 + "%");
-    fader.append(track, cap);
+    fader.append(track, zero, cap);
 
-    // Meter column: a separate OVER box on top (clip ≠ the level ceiling, and ≠
-    // the dB scale), then the signal ladder below it.
-    const { meter, sigFill, sigPeak, sigClip } = this.buildMeterColumn();
+    // Meter column: the ladder shares the fader ruler, topping out at the 0 dB mark
+    // with the OVER clip window above it.
+    const { meter, sigFill, sigPeak, sigClip } = this.buildMeterColumn(m.range);
 
     zrow.append(fader, this.buildScale(m.range), meter);
     zone.append(zrow);
@@ -1087,7 +1077,7 @@ export class Console {
         r.readMtr.classList.toggle("off", mtr === -999);
         s.lmtr = mtr;
       }
-      const target = meterFrac(Math.max(reading.l, reading.r));
+      const target = meterFrac(Math.max(reading.l, reading.r), r.m.range);
       // Fast attack, slow release for a meter-like response; peak hold decays slowly.
       s.v = target > s.v ? target : s.v + (target - s.v) * 0.3;
       s.pk = Math.max(s.pk * 0.985, s.v);

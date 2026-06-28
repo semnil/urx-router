@@ -159,13 +159,15 @@ PDF は単一の FlateDecode 画像を埋め込んだ 1 ページ文書を手書
 (`main.ts` の `setView`)。`src/ui/console.ts` が入力 (INPUTS) / バス・FX (BUS / FX) /
 モニター (MONITOR) / マスター (MASTER) のグループにストリップを並べる。各ストリップは横スクロールで
 並ぶ (左端の共有ルーラーは持たない)。フェーダーゾーンは **フェーダー** (実機調の細い溝＋つまみ。位置=設定値) /
-**dB スケール** / **レベルメーター** の 3 列。メーターは上端に独立した **OVER 枠**を持ち (クリップ表示。
-レベル天井や目盛とは別物なので分離)、その下に信号ラダー (緑→赤・信号は Live sync 中のみ)。OVER 枠は実機
-クリップ (生値 32767) のラッチ (`sig.over`) で赤く点灯し約 1 秒で減衰する。スケールは各ストリップのレンジに
-合わせ、上端・下端をフェーダーの可動域に揃えるので、つまみと同じ高さの目盛がそのレベルを指す (機能的な
-目盛、10/0/-10/-20/-40/-60/-80/-∞)。目盛の数字は符号を分離して中央寄せ (「−」を左へハングさせ `10` と
+**dB スケール** / **レベルメーター** の 3 列。メーターはこの 1 つの目盛を共有する: 信号ラダー (緑→赤・信号は
+Live sync 中のみ) が各 dBFS 読み値を対応する dB 目盛と同じ位置に描き、**上端は 0 dB**・下端は最下段目盛 (−∞)。
+独立した **OVER 枠**は 0 dB の上端のすぐ上に置かれ (クリップ表示。レベル天井とは別物)、実機クリップ (生値 32767)
+のラッチ (`sig.over`) で赤く点灯し約 1 秒で減衰する。スケールは各ストリップのレンジに合わせ上端・下端をフェーダーの
+可動域に揃えるので、1 本の目盛でフェーダーとメーターの両方を読める (機能的な目盛、10/5/0/-5/-10/-20/-40/-∞)。
+0 dB の横線はフェーダーつまみの中心を貫く。フェーダー/メーターが 0 dB で頭打ちになるストリップ
+(メーターのみの STREAMING と OSCILLATOR) は届かない +5/+10 目盛を表示しない。目盛の数字は符号を分離して中央寄せ (「−」を左へハングさせ `10` と
 `-10` の桁を縦に揃える)。上部のスクリブルは **ノード名 + 実機 CH SETTING 名** の 2 行 (MONITOR バスは CH SETTING 名を持たないため、2 行目はリンク先の PHONES 出力名 `Phone 1` / `Phone 2` を表示する)。その下にトグルチップを
-2 列グリッドで 2 グループ置く: ①チャンネル/入力 (HA) — MUTE (チャンネル・FX チャンネル・マスター・MIX・MONITOR バスが持つ。FX チャンネルは実機の FX チャンネル ON、マスターは STEREO master ON、**MIX バスは MIX → STEREO の TO ST スイッチ** (`params.on`、muted = TO ST OFF)、**MONITOR バスは実機の MONITOR ON** (`np.on` → `MONITOR_ON`、MONITOR 画面の [ON] ボタン))。MONITOR バスはさらに **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`、工場 ON) と **MONO** (`mono` → `MONITOR_MONO`、工場 OFF) のチップを持つ。**OSCILLATOR は通常 OFF なので MUTE ではなく ON ボタン** (極性が逆・点灯 = 発振中・`osc.on`)。モノ MIC CH は +48 / φ / HPF (CH3/4 は Hi-Z)、
+2 列グリッドで 2 グループ置く: ①チャンネル/入力 (HA) — MUTE (チャンネル・FX チャンネル・マスター・MIX・MONITOR バスが持つ。FX チャンネルは実機の FX チャンネル ON、マスターは STEREO master ON、**MIX バスは MIX → STEREO の TO ST スイッチ** (`params.on`、muted = TO ST OFF)、**MONITOR バスは実機の MONITOR ON** (`np.on` → `MONITOR_ON`、MONITOR 画面の [ON] ボタン))。MONITOR バスはさらに **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`、工場 ON) と **MONO** (`mono` → `MONITOR_MONO`、工場 OFF) のチップを持つ。モノ MIC CH は +48 / φ / HPF (CH3/4 は Hi-Z)、
 ステレオ CH は φL / φR (`channelControl` の `phases`/フラグで判定) ②処理チェーン — GATE → COMP → EQ →
 INS FX、ステレオ CH は EQ + DUCKER (直下に吊るした ducker ノードの `duckerOn` をトグル)。チップが奇数の
 グループは不可視スペーサで最後のチップが全幅化しないようにする。最下段に回転つまみ
@@ -173,7 +175,7 @@ INS FX、ステレオ CH は EQ + DUCKER (直下に吊るした ducker ノード
 L63–C–R63)、モニターバスは **PHONES レベル** (0–10 の非 dB、PHONES 1 ↔ mon1 / PHONES 2 ↔ mon2。
 モニターフェーダーとは独立で新タブは設けない)。
 つまみの指針は値ごとに水平アンカーを置ける (`KnobSpec.angle`、左=-90°/右=+90°): PHONES 2.0/8.0・
-A.Gain +8/+55・D.Gain -14/+15 を左右の水平に。
+A.Gain +8/+55・D.Gain -14/+15・OSCILLATOR LEVEL -50/-8 を左右の水平に。
 フェーダーつまみ・各つまみはダブルクリックで**工場初期値** (`defaultPlan` から取得) にリセットする。
 
 - **メーターポイント (ストリップ毎のタップ)** — ノードは信号経路上に複数の観測可能なメータータップ点を持ち、
@@ -183,10 +185,12 @@ A.Gain +8/+55・D.Gain -14/+15 を左右の水平に。
   ブロックダイアグラムと照合・`NODE_TAPS`): mono チャンネルは INPUT → PRE GATE → PRE COMP → PRE EQ →
   PRE INS FX → PRE FADER → POST、stereo チャンネルは INPUT → PRE FADER → PRE DUCKER → POST
   (HPF/GATE/COMP/INS FX 無し・LEVEL が DUCKER の前)、出力バスは PRE EQ (sum) → PRE FADER → PRE INS FX → POST、
-  FX チャンネルは PRE FADER → POST。モニターと OSC は単一メーターでセレクタ無し。STREAMING は実機メーターを
-  持つが level フェーダーが無いため、**メーターのみの strip** (`buildMeterOnlyStrip`: フェーダー・設定値・タップ
-  セレクタ無しでライブメーターのみ) として表示する。選択は機種別に `localStorage` (`urx-metertap`) へ
-  永続化。読み値は 2 セル: フェーダー設定値 (白) と選択タップのライブ値 (琥珀)。既定タップは最下流点。
+  FX チャンネルは PRE FADER → POST。モニターと OSC は単一メーターでセレクタ無し。STREAMING と OSCILLATOR は
+  実機メーターを持つが level フェーダーが無いため、**メーターのみの strip** (`buildMeterOnlyStrip`: フェーダー・
+  設定値・タップセレクタ無しでライブメーターのみ) として表示する。**OSCILLATOR** はさらにフェーダーの代わりに
+  **ON ボタン** (通常 OFF・点灯 = 発振中・`osc.on`) と **LEVEL 回転つまみ** (−96…0 dB の共有レベル・指針の水平
+  マークは左 -50 / 右 -8) を持つ。選択は機種別に `localStorage` (`urx-metertap`) へ永続化。読み値は 2 セル:
+  フェーダー設定値 (白) と選択タップのライブ値 (琥珀)。既定タップは最下流点。
 - **編集経路の共有** — フェーダー・チップ・Gain の編集は plan を直接更新し、グラフ/インスペクタと同じ
   変更ファネル (`markChanged` → `live.schedule()`) を通る。よって実機ライブ同期は CONSOLE の編集も
   同じ snapshot 差分で実機へ反映する。CONSOLE は編集したストリップだけを自前で再描画し、ドラッグ中の

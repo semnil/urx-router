@@ -1983,27 +1983,32 @@ select:focus-visible,
 [data-theme="light"] .con-ladder.sig .peak {
   background: #2a2418;
 }
-/* Meter column: a separate OVER box on top, then the signal ladder fills below. */
+/* Meter column: the ladder rises to the 0 dB scale mark (--mzero, shared with the
+   fader ruler) and the OVER clip window sits just above it. */
 .con-meter {
   width: 16px;
   flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
+  position: relative;
 }
 .con-meter .con-ladder.sig {
-  flex: 1;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--mfloor, 0%);
+  height: calc(var(--mzero, 100%) - var(--mfloor, 0%));
   width: auto;
 }
-/* OVER box — a framed clip indicator above the meter (distinct from the level
-   ceiling and the dB scale); its red lights up on the over latch. */
+/* OVER box — a framed clip indicator above the meter's 0 dB top (distinct from the
+   ladder and the dB scale); its red lights up on the over latch. */
 .con-over {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--mzero, 100%) + 3px);
   height: 8px;
-  flex-shrink: 0;
-  margin-bottom: 3px;
   border-radius: 2px;
   border: 1px solid var(--meter-frame);
   background: var(--groove);
-  position: relative;
   overflow: hidden;
 }
 .con-over .lit {
@@ -2032,14 +2037,17 @@ select:focus-visible,
   background: var(--groove);
   box-shadow: inset 0 0 2px rgba(0, 0, 0, 0.7);
 }
+/* 0 dB reference line on the fader, extended wider than the cap (24px) so it stays
+   visible to either side instead of hiding under it. Shares the cap's coordinate
+   space so it crosses the cap centre at 0 dB. */
 .con-fader .zero {
   position: absolute;
-  left: -6px;
-  right: -6px;
+  left: -4px;
+  right: -4px;
   height: 1px;
   background: var(--text-dim);
-  opacity: 0.5;
-  top: var(--zero, 24%);
+  opacity: 0.6;
+  top: calc(var(--zero, 24%) - 1px);
 }
 .con-fader .cap {
   position: absolute;
