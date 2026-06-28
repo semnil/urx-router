@@ -77,6 +77,40 @@ export function canConnect(model: DeviceModel, plan: Plan, from: string, to: str
   return { ok: true };
 }
 
+// One illegal wire found by validatePlan: its endpoints and why it is rejected.
+export interface PlanProblem {
+  from: string;
+  to: string;
+  reason: ConnectError;
+}
+
+// Validate a complete plan's connections against the model's routing rules,
+// returning every illegal wire. Unlike canConnect (which vets one new wire
+// against the live plan), this checks an already-built plan: a wire is a problem
+// when no rule matches (noRule), a single-input receiver carries more than one
+// incoming wire (singleInput — reported for each wire into that port so every
+// offender is listed), or the same from->to pair appears twice (duplicate).
+// deserialize already drops structurally malformed elements, so only
+// routing-legality issues remain to report here.
+export function validatePlan(model: DeviceModel, plan: Plan): PlanProblem[] {
+  const incoming = new Map<string, number>();
+  for (const c of plan.connections) incoming.set(c.to, (incoming.get(c.to) ?? 0) + 1);
+  const problems: PlanProblem[] = [];
+  const seen = new Set<string>();
+  for (const c of plan.connections) {
+    const kind = ruleKind(model, c.from, c.to);
+    if (kind === undefined) {
+      problems.push({ from: c.from, to: c.to, reason: "noRule" });
+    } else if (isSingleInput(kind) && (incoming.get(c.to) ?? 0) > 1) {
+      problems.push({ from: c.from, to: c.to, reason: "singleInput" });
+    }
+    const key = `${c.from} ${c.to}`;
+    if (seen.has(key)) problems.push({ from: c.from, to: c.to, reason: "duplicate" });
+    seen.add(key);
+  }
+  return problems;
+}
+
 /** The mono channel that shares its input source with `nodeId`, if any. */
 export function partnerChannel(model: DeviceModel, nodeId: string): string | undefined {
   for (const [a, b] of model.channelPairs) {

@@ -4,8 +4,12 @@ dist/
 .DS_Store
 *.log
 
-# Local editor / preview tooling
-.claude/
+# Local editor / preview tooling (keep contents out of git, but track published
+# skills under .claude/skills/<name>/; their eval workspaces stay ignored).
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/urx-routing-planner/
 
 # Tauri build artifacts
 src-tauri/target/

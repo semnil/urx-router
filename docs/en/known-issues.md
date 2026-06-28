@@ -53,6 +53,16 @@ hardware to verify against — so its values may not match the device exactly.
 Offline planning, the plan JSON and image export are unaffected; this concerns
 only live sync on those two models.
 
+**Verified environment.** Live control was confirmed against the following
+combination. Future firmware or Device Center updates may change the control
+protocol, so newer versions are not guaranteed to behave identically.
+
+| Component | Verified version |
+| --- | --- |
+| Device | URX44V |
+| Firmware | V1.2.0.2 |
+| Device Center | 2.1.0 (2.1.0.1) |
+
 ## The AUTO (auto gain) trigger is not modeled
 
 The device's input screens offer an **AUTO** button that runs a one-shot

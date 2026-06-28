@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
-import { canConnect, isBalLinkedPair, isFixedConnection, legalSources, legalTargets, mirrorBalPair, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, sendTapWritable, upstreamNodes } from "./routing";
+import { canConnect, isBalLinkedPair, isFixedConnection, legalSources, legalTargets, mirrorBalPair, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, sendTapWritable, upstreamNodes, validatePlan } from "./routing";
 import { emptyPlan, type Plan, type PlanConnection } from "./plan";
 import { defaultPlan } from "../models/initial-state";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
@@ -305,5 +305,36 @@ describe("upstreamNodes", () => {
       { from: ref("b", "out"), to: ref("a", "in"), kind: "send" },
     ];
     expect([...upstreamNodes(planOf(cyclic), "a", all)].sort()).toEqual(["a", "b"]);
+  });
+});
+
+describe("validatePlan on URX44", () => {
+  it("passes a freshly seeded factory plan with no problems", () => {
+    const plan = defaultPlan("URX44");
+    expect(validatePlan(u44, plan)).toEqual([]);
+  });
+
+  it("flags a connection with no matching rule as noRule", () => {
+    const plan = emptyPlan("URX44");
+    const from = ref("in.micline_1_2", "out");
+    const to = ref("out.main", "in"); // no such route
+    plan.connections.push({ from, to, kind: "source" });
+    expect(validatePlan(u44, plan)).toEqual([{ from, to, reason: "noRule" }]);
+  });
+
+  it("flags every wire into an over-subscribed single-input receiver as singleInput", () => {
+    const plan = emptyPlan("URX44");
+    const to = ref("ch1", "in");
+    plan.connections.push({ from: ref("in.micline_1_2", "out"), to, kind: "source" });
+    plan.connections.push({ from: ref("in.aux", "out"), to, kind: "source" });
+    const problems = validatePlan(u44, plan);
+    expect(problems.filter((p) => p.reason === "singleInput")).toHaveLength(2);
+  });
+
+  it("flags a repeated from->to pair as duplicate", () => {
+    const plan = emptyPlan("URX44");
+    const conn: PlanConnection = { from: ref("ch1", "out"), to: ref("bus.stereo", "in"), kind: "send" };
+    plan.connections.push({ ...conn }, { ...conn });
+    expect(validatePlan(u44, plan).some((p) => p.reason === "duplicate")).toBe(true);
   });
 });

@@ -1,0 +1,44 @@
+{
+  "skill_name": "urx-routing-planner",
+  "evals": [
+    {
+      "id": 0,
+      "name": "urx44v-vocal-fx-monitor",
+      "prompt": "I've got a URX44V. Plug a vocal mic into mic input 1, name that channel 'Lead Vox', switch on its high-pass filter, and set the head amp gain around +24 dB. Send it to the main stereo mix at about -3 dB and also feed FX1 for reverb at roughly -6 dB. Can you set that up for me?",
+      "expected_output": "A valid URX44V plan JSON wiring in.micline_1_2->ch1 (source), ch1->bus.stereo (send ~-3dB) and ch1->bus.fx1 (send ~-6dB), with ch1 nodeParams on/hpf/gain~24 and name 'Lead Vox'. Plus a ?plan= URL and apply steps. Plan must pass validation.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "urx22-stream-mix",
+      "prompt": "On my URX22 I want a separate streaming mix on MIX 1: send channels 1 and 2 into MIX 1, and patch the MIX 1 output to USB MAIN OUT A so OBS can grab it. Channels 1 and 2 should still go to the main mix as well.",
+      "expected_output": "A valid URX22 plan JSON: ch1 and ch2 sends into bus.mix1 (raised levels), bus.mix1->out.usbmain_a (patch), and the channels still feeding bus.stereo (fixed). A ?plan= URL and apply steps. Must pass validation and use correct URX22 node ids.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "urx44-monitor-and-illegal-chain",
+      "prompt": "URX44 please: set up a monitor mix on MONITOR 1 fed from the main stereo bus, and also wire channel 3 straight into channel 4 so they're chained together.",
+      "expected_output": "A valid URX44 plan with bus.stereo->bus.mon1 (source). The 'channel 3 into channel 4' request is not a supported route on the URX; a good answer flags it as impossible/unsupported rather than inventing an illegal wire, and the delivered plan still passes validation.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "feasibility-stream-to-usb-keep-main",
+      "prompt": "Quick one before I dive in \u2014 on a URX44V, is it possible to send a separate streaming mix out of its own USB output while my main speakers still get the normal main mix? Just tell me if it's doable, no need to build anything yet.",
+      "expected_output": "A grounded YES: possible. A dedicated mix bus (MIX 1/2 or STREAMING) carries the stream submix and is patched to a USB output (bus.mix1:out -> out.usbmain_a:in, a patch), while the main speakers stay on the STEREO/main mix independently. Should answer the feasibility question (cite the route) rather than dumping a full plan; may offer to build it."
+    },
+    {
+      "id": 4,
+      "name": "feasibility-impossible-aux-to-monitor",
+      "prompt": "On my URX22, can I route the AUX input directly to the monitor output on its own, without taking up one of the mixer channels?",
+      "expected_output": "NOT directly possible. Inputs (AUX) can only feed a channel; monitors are fed from the STEREO/MIX buses. So AUX must pass through a channel and a bus to reach a monitor \u2014 there is no direct input->monitor route. A good answer says so and offers the legal alternative (AUX -> a channel -> a bus -> monitor) instead of inventing a wire."
+    },
+    {
+      "id": 5,
+      "name": "ambiguous-stream-and-monitor",
+      "prompt": "I want to stream my setup and also hear myself while I do it. Can you set that up?",
+      "expected_output": "The request is underspecified (no model; no inputs/mic; which output feeds the streaming software; headphones vs monitors). A good answer clarifies the requirements first \u2014 asks which URX model and what sources/outputs \u2014 or explicitly states the assumptions it is making (model, inputs) before building, rather than silently fabricating a plan."
+    }
+  ]
+}

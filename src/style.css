@@ -2234,3 +2234,24 @@ select:focus-visible,
 [data-theme="light"] .consent-btn-primary {
   color: #fff;
 }
+.load-report-intro {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+.load-report-body {
+  margin: 0;
+  max-height: 40vh;
+  overflow: auto;
+  padding: 12px 14px;
+  background: var(--ctl-bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  user-select: text;
+  color: var(--text);
+}
