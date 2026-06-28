@@ -388,6 +388,14 @@ export const ja: Messages = {
     agree: "同意して続行",
     quit: "終了",
   },
+  loadReport: {
+    title: "計画を読み込めませんでした",
+    intro:
+      "このリンクの計画に問題があり、読み込みを中止しました。下のレポートをコピーし、計画を生成したツールに渡して修正してから、再度読み込んでください。",
+    copy: "コピー",
+    copied: "コピーしました",
+    close: "閉じる",
+  },
   filter: {
     plan: "URX Router 計画",
     png: "PNG 画像",
@@ -409,5 +417,6 @@ export const ja: Messages = {
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。書き込む前に一致する計画を開くか切り替えてください。`,
     notPlanFile: "URX Router の計画ファイルではありません",
     missingModel: "計画ファイルに modelId がありません",
+    badPlanUrl: "計画リンクが不正です (デコードできません)",
   },
 };

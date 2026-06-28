@@ -395,6 +395,14 @@ export const en = {
     agree: "Agree and continue",
     quit: "Quit",
   },
+  loadReport: {
+    title: "Plan could not be loaded",
+    intro:
+      "The plan in this link has problems and was not loaded. Copy the report below and give it back to the tool that generated the plan so it can be fixed, then reload.",
+    copy: "Copy",
+    copied: "Copied",
+    close: "Close",
+  },
   filter: {
     plan: "URX Router plan",
     png: "PNG image",
@@ -417,6 +425,7 @@ export const en = {
       `The connected device is ${device}, but ${ui} is selected. Open or switch to the matching plan before writing.`,
     notPlanFile: "This is not a URX Router plan file",
     missingModel: "The plan file has no modelId",
+    badPlanUrl: "The plan link is malformed (could not be decoded)",
   },
 };
 

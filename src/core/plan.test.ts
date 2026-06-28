@@ -5,6 +5,8 @@ import {
   LEVEL_OFF_DB,
   serialize,
   deserialize,
+  decodePlanParam,
+  encodePlanParam,
   hasConnection,
   removeConnection,
   PlanError,
@@ -12,6 +14,7 @@ import {
   PLAN_VERSION,
   type Plan,
 } from "./plan";
+import { defaultPlan } from "../models/initial-state";
 import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES } from "./constraints";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
@@ -246,5 +249,19 @@ describe("hasConnection / removeConnection", () => {
     expect(hasConnection(plan, "a:out", "b:in")).toBe(true);
     removeConnection(plan, "a:out", "b:in");
     expect(hasConnection(plan, "a:out", "b:in")).toBe(false);
+  });
+});
+
+describe("encodePlanParam / decodePlanParam", () => {
+  it("round-trips a plan through the URL-safe base64 used by the ?plan= link", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeNames["ch1"] = "ボーカル"; // multi-byte to exercise UTF-8
+    const encoded = encodePlanParam(plan);
+    expect(encoded).not.toMatch(/[+/=]/); // URL-safe, unpadded
+    expect(deserialize(decodePlanParam(encoded))).toEqual(plan);
+  });
+
+  it("throws on a malformed encoded parameter", () => {
+    expect(() => decodePlanParam("not base64 !!!")).toThrow();
   });
 });

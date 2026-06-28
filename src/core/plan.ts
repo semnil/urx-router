@@ -401,6 +401,26 @@ export function deserialize(text: string): Plan {
   };
 }
 
+// Encode a plan as a URL-safe base64 of its UTF-8 JSON, for the `?plan=` deep
+// link: a generated plan becomes a shareable URL the viewer opens. Inverse of
+// decodePlanParam.
+export function encodePlanParam(plan: Plan): string {
+  const bytes = new TextEncoder().encode(serialize(plan));
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// Decode a `?plan=` parameter (URL-safe base64 of UTF-8 JSON) back to plan JSON
+// text. Throws on malformed base64 / UTF-8; the caller treats that as a load
+// failure, and deserialize then validates the JSON shape.
+export function decodePlanParam(encoded: string): string {
+  const b64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(b64);
+  const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 function isStringRecord(v: unknown): v is Record<string, string> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }

@@ -4,8 +4,9 @@ import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
-import { mirrorBalPair } from "./core/routing";
-import { deserialize, emptyPlan, ensureFixedConnections, PlanError, serialize } from "./core/plan";
+import { mirrorBalPair, validatePlan } from "./core/routing";
+import type { PlanProblem } from "./core/routing";
+import { decodePlanParam, deserialize, emptyPlan, ensureFixedConnections, PlanError, serialize } from "./core/plan";
 import type { ConnParams, NodeParams, Plan } from "./core/plan";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import {
@@ -25,6 +26,7 @@ import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { renderInspector } from "./ui/inspector";
 import { Console } from "./ui/console";
 import { showConsent } from "./ui/consent";
+import { showLoadReport } from "./ui/load-report";
 import { getLang, LANG_CODES, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
 import { DEMO } from "./core/env";
 import {
@@ -712,6 +714,20 @@ function loadPlan(next: Plan): void {
   consoleView.refresh();
 }
 
+// Build a copyable, language-stable report of a plan's routing violations, so it
+// can be pasted back to the tool that generated the plan. One line per problem:
+// "[reason] from -> to", using the routing ConnectError codes and the plan's
+// "nodeId:portId" refs.
+function buildPlanReport(model: string, problems: PlanProblem[]): string {
+  return [
+    "URX Router plan validation failed",
+    `model: ${model}`,
+    `problems: ${problems.length}`,
+    "",
+    ...problems.map((p) => `[${p.reason}] ${p.from} -> ${p.to}`),
+  ].join("\n");
+}
+
 // Parse text into a plan, load it, and (when it came from a real path) record it
 // as a recent plan. Returns true on success; on failure sets the error status.
 function loadFromText(text: string, path?: string): boolean {
@@ -719,6 +735,13 @@ function loadFromText(text: string, path?: string): boolean {
     const next = deserialize(text);
     if (!MODEL_IDS.includes(next.modelId)) {
       showError(t().status.loadError(t().error.unknownModel(next.modelId)));
+      return false;
+    }
+    // Reject a plan with illegal routing (e.g. a tool-generated plan): surface a
+    // copyable report of every violation and leave the current plan untouched.
+    const problems = validatePlan(getModel(next.modelId), next);
+    if (problems.length > 0) {
+      showLoadReport(buildPlanReport(next.modelId, problems));
       return false;
     }
     loadPlan(next);
@@ -1344,6 +1367,29 @@ window.addEventListener("keydown", (e) => {
 
 applyRateConstraints();
 setStatus(t().status.loaded(modelId));
+
+// Deep-link entry: a `?plan=<base64url-json>` parameter loads a plan straight
+// into the viewer (a generator emits a shareable URL). A decode failure or a
+// routing violation surfaces the copyable report instead of loading, leaving the
+// default plan on screen. Runs after the initial render so a failure is visible.
+function loadPlanFromUrl(): void {
+  let encoded: string | null;
+  try {
+    encoded = new URL(location.href).searchParams.get("plan");
+  } catch {
+    return; // URL / searchParams unavailable
+  }
+  if (!encoded) return;
+  let text: string;
+  try {
+    text = decodePlanParam(encoded);
+  } catch {
+    showLoadReport(t().error.badPlanUrl);
+    return;
+  }
+  loadFromText(text);
+}
+loadPlanFromUrl();
 
 // Desktop boot: gate on first-run consent, then check for updates. DEMO is
 // statically false in the desktop build, so the browser demo bundle drops the
