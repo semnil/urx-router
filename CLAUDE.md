@@ -59,7 +59,7 @@ CI は 4 ワークフロー: PR は build + unit (`ci.yml`)、E2E と third-part
 - ドキュメントは日本語、図は Mermaid 記法
 - **ルーティング規則を変える際は `docs/{en,ja}/device-model.md` と `src/models/` を必ず一致させる** (公式ブロックダイアグラムが一次情報)
 - テーマ配色は `src/style.css` の CSS 変数 (`:root` / `[data-theme="light"]`) と `src/ui/graph.ts` の `PALETTES` を一致させる
-- 装置固有値・実機 UDID・制御プロトコル実値はコード/ドキュメントに書かない (プレースホルダ + git 管理外)
+- 装置固有値・実機 UDID・制御プロトコル実値はコード/ドキュメントに書かない (プレースホルダ + git 管理外)。ただしアプリケーションの動作要件に関わる値 (機種パラメータ・ルーティング規則・level_gain グリッド・確定済み broker param のアドレス/エンコード等、アプリが正しく動くために本文・コードに必要な値) はこの規約の対象外で、`docs/` や `src/` に記述してよい
 - 実機への書込み・Live sync (`src/core/control/`) はデスクトップ版で常時有効 (破壊リスクの同意は `src/ui/consent.ts` の初回起動ゲートとインストーラーライセンスで担保)。self-test 往復診断のみ `--experimental` 起動時。確定パラメータ (broker dump 照合済み) のみ書込み、推測アドレスは `params.ts` に載せない
 - **機能追加・UI 変更時は `e2e/*.spec.ts` に E2E を追加し、PR 作成前にローカルで `pnpm test:e2e` を通すこと** (CI の post-merge 実行は通過済みコードのリグレッション網であり、追加・事前確認を免除しない)
 - コミット: **メッセージは件名・本文とも全文英語** (Conventional Commits)。**PR の title/body も全文英語** (リポジトリ既定言語に合わせる)。グローバル CLAUDE.md の「日本語本文」規約はこのプロジェクトでは適用しない。意味単位で分割。push/PR は指示があってから
