@@ -319,6 +319,10 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   (`MetersSubscribe`/`MetersUnsubscribe`) by registering each address with the broker, and forwards meter
   `notify` frames to the frontend over a Tauri Channel during the idle socket drain (`pump` → `forward_meter`).
   Meters stream only while Live sync is on (subscription starts in `console.setLive`).
+  The subscription is bound to Live sync, not to view visibility: a GRAPH ↔ CONSOLE tab switch only stops the
+  paint loop (`requestAnimationFrame` → `stopPaint`) and keeps the broker subscription warm. Re-registering every
+  address on each toggle would stall the meters for ~1 s, so the full teardown (`stopMeters`) runs only when Live
+  sync ends, and re-showing resumes from the warm stream at once.
 - **Device follow** — the reverse of live sync. The same drain path also carries device-side parameter
   changes: `ParamsSubscribe`/`forward_param` (sharing the `notify_frame` envelope parse with the meter path)
   register every writable address and forward each `notify`. A notify carries the changed address **and its

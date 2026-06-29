@@ -174,14 +174,20 @@ export class Console {
   hide(): void {
     this.visible = false;
     this.host.hidden = true;
-    this.stopMeters();
+    // Keep the broker meter subscription alive across a view switch: re-registering
+    // every meter address on each toggle stalls the readings for ~1 s. Just stop the
+    // paint loop and leave the stream warm — it is torn down only when Live sync ends
+    // (setLive(false) / stopMeters), so re-showing resumes from fresh data at once.
+    this.stopPaint();
   }
 
   /** Live sync turned on/off: gate the signal meter lanes and their stream. */
   setLive(active: boolean): void {
     this.live = active;
     this.host.classList.toggle("live", active);
-    // Meters stream only while live AND visible; tear them down otherwise.
+    // The stream is bound to Live sync, not visibility (a view toggle only pauses
+    // painting — see hide()); fully tear it down when live ends, or when it turns on
+    // while hidden (nothing to stream until the first show re-subscribes).
     if (!active || !this.visible) this.stopMeters();
     // Rebuild so the CH → FX send Pre/Post chip flips read-only with live state;
     // render() (re)starts/re-scopes the meter stream at its tail when live.
@@ -1027,9 +1033,15 @@ export class Console {
     }
   }
 
-  private stopMeters(): void {
+  // Stop the paint loop without touching the broker subscription. Used when hiding
+  // the view across a graph/console toggle so the warm stream survives (see hide()).
+  private stopPaint(): void {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
+  }
+
+  private stopMeters(): void {
+    this.stopPaint();
     if (this.unsub) {
       this.unsub();
       this.unsub = null;

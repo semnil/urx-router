@@ -958,6 +958,7 @@ if (!DEMO) {
         // default, so the graph/inspector flag them as not read from the device.
         plan.unreadNodes = result.unreadNodes;
         graph.setModel(getModel(modelId), plan);
+        consoleView.refresh(); // re-render the CONSOLE strips if it is the open view
         selection = null;
         syncRateUi();
         dirty = true;
