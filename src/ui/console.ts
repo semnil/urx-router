@@ -74,7 +74,9 @@ function meterFrac(dbfs: number, r: LevelRange): number {
   return span <= 0 ? 0 : Math.max(0, Math.min(1, (r.toFrac(Math.min(dbfs, 0)) - floor) / span));
 }
 function fmtDb(db: number, r: LevelRange): { text: string; off: boolean } {
-  if (db < r.min) return { text: "-∞", off: true };
+  // A non-finite level (corrupt plan that slipped past validation) reads as off
+  // rather than throwing on .toFixed below.
+  if (!Number.isFinite(db) || db < r.min) return { text: "-∞", off: true };
   return { text: (db > 0 ? "+" : "") + db.toFixed(1), off: false };
 }
 
