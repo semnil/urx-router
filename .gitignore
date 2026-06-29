@@ -11,6 +11,10 @@ dist/
 .claude/skills/*
 !.claude/skills/urx-routing-planner/
 
+# Python bytecode cache from running the skill's plan_tool.py
+__pycache__/
+*.pyc
+
 # Tauri build artifacts
 src-tauri/target/
 src-tauri/gen/
