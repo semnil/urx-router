@@ -10,7 +10,7 @@ import { ref } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, type NodeParams, type Plan, type PlanConnection } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
-import { defaultTapKey, hasMeter, METER_FLOOR_DB, MeterStore, subscribeMeters, tapAddrs, tapFor, tapsFor, type MeterTap } from "../core/meters";
+import { defaultTapKey, hasMeter, METER_FLOOR_DB, METER_GREEN_TOP_DB, METER_YELLOW_TOP_DB, MeterStore, subscribeMeters, tapAddrs, tapFor, tapsFor, type MeterTap } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
 import { channelControl, insertFxControl } from "../core/control/translate";
 import { isBalLinkedPair, mirrorBalPair, partnerChannel, sendTapWritable } from "../core/routing";
@@ -103,7 +103,7 @@ interface StripRef {
   cap?: HTMLElement;
   fader?: HTMLElement;
   readDb?: HTMLElement;
-  sigFill: HTMLElement;
+  sigShade: HTMLElement;
   sigPeak: HTMLElement;
   sigClip: HTMLElement;
   readMtr: HTMLElement; // live meter value cell (the selected tap's dBFS)
@@ -511,7 +511,7 @@ export class Console {
 
   // Build the meter column (OVER clip box + green→red signal ladder). Shared by
   // every strip; returns the live elements paintMeters drives.
-  private buildMeterColumn(range: LevelRange): { meter: HTMLElement; sigFill: HTMLElement; sigPeak: HTMLElement; sigClip: HTMLElement } {
+  private buildMeterColumn(range: LevelRange): { meter: HTMLElement; sigShade: HTMLElement; sigPeak: HTMLElement; sigClip: HTMLElement } {
     const meter = el("div", "con-meter");
     // The ladder spans from the scale's lowest tick (--mfloor) to the 0 dB mark
     // (--mzero); the OVER window sits above. Both share the strip's fader ruler.
@@ -521,11 +521,17 @@ export class Console {
     const sigClip = el("div", "lit");
     over.append(sigClip);
     const sigLadder = el("div", "con-ladder sig");
-    const sigFill = el("div", "fill");
+    // Color-zone boundaries as a fraction of the ladder, at the same travel as the dB
+    // ticks of the matching value — so green/yellow/red map to absolute dBFS, not to
+    // the lit height.
+    sigLadder.style.setProperty("--zy", meterFrac(METER_GREEN_TOP_DB, range) * 100 + "%");
+    sigLadder.style.setProperty("--zr", meterFrac(METER_YELLOW_TOP_DB, range) * 100 + "%");
+    const sigBar = el("div", "bar");
+    const sigShade = el("div", "shade");
     const sigPeak = el("div", "peak");
-    sigLadder.append(sigFill, sigPeak);
+    sigLadder.append(sigBar, sigShade, sigPeak);
     meter.append(over, sigLadder);
-    return { meter, sigFill, sigPeak, sigClip };
+    return { meter, sigShade, sigPeak, sigClip };
   }
 
   // STREAMING strip: a live meter only — no fader, no set-level readout, no chips
@@ -569,7 +575,7 @@ export class Console {
     const zone = el("div", "con-faderzone");
     zone.append(el("div", "con-taphead")); // empty: keeps fader/meter tops aligned
     const zrow = el("div", "con-zrow");
-    const { meter, sigFill, sigPeak, sigClip } = this.buildMeterColumn(m.range);
+    const { meter, sigShade, sigPeak, sigClip } = this.buildMeterColumn(m.range);
     // Meter tops out at 0 dBFS and there is no fader, so the scale stops at 0.
     zrow.append(this.buildScale(m.range, 0), meter);
     zone.append(zrow);
@@ -586,7 +592,7 @@ export class Console {
 
     this.refs.set(m.id, {
       m,
-      sigFill,
+      sigShade,
       sigPeak,
       sigClip,
       readMtr: mtrEl,
@@ -904,7 +910,7 @@ export class Console {
 
     // Meter column: the ladder shares the fader ruler, topping out at the 0 dB mark
     // with the OVER clip window above it.
-    const { meter, sigFill, sigPeak, sigClip } = this.buildMeterColumn(m.range);
+    const { meter, sigShade, sigPeak, sigClip } = this.buildMeterColumn(m.range);
 
     zrow.append(fader, this.buildScale(m.range), meter);
     zone.append(zrow);
@@ -933,7 +939,7 @@ export class Console {
     const refObj: StripRef = {
       m,
       cap,
-      sigFill,
+      sigShade,
       sigPeak,
       sigClip,
       fader,
@@ -1058,7 +1064,7 @@ export class Console {
       const s = r.sig;
       s.v = s.pk = s.over = 0;
       if (s.lv !== 0) {
-        r.sigFill.style.setProperty("--lvl", "0%");
+        r.sigShade.style.setProperty("--lvl", "0%");
         s.lv = 0;
       }
       if (s.lpk !== 0) {
@@ -1103,7 +1109,7 @@ export class Console {
       const pk = Math.round(s.pk * 100);
       const over = s.over > 0.02 ? Math.round(s.over * 100) : 0;
       if (v !== s.lv) {
-        r.sigFill.style.setProperty("--lvl", v + "%");
+        r.sigShade.style.setProperty("--lvl", v + "%");
         s.lv = v;
       }
       if (pk !== s.lpk) {

@@ -52,8 +52,10 @@
   --meter-frame: #6b5d3c;
 
   --seg: linear-gradient(180deg, #ffd36b, #c9882a);
-  /* Console level meter (green→red), bottom-to-top. */
-  --meter: linear-gradient(0deg, #4fb96a 0%, #4fb96a 55%, #ffd36b 72%, #f0a93a 86%, #ff4d4d 100%);
+  /* Console level-meter color zones (green / yellow / red), keyed to absolute dBFS. */
+  --m-green: #4fb96a;
+  --m-yellow: #ffd36b;
+  --m-red: #ff4d4d;
   --grain-blend: overlay;
   --grain-op: 0.05;
   --vignette: rgba(0, 0, 0, 0.7);
@@ -106,7 +108,9 @@
   --meter-frame: #9a8a63;
 
   --seg: linear-gradient(180deg, #f0a93a, #c87a14);
-  --meter: linear-gradient(0deg, #3f9e57 0%, #3f9e57 55%, #d99a2a 72%, #c87a14 86%, #d32f2f 100%);
+  --m-green: #3f9e57;
+  --m-yellow: #d99a2a;
+  --m-red: #d32f2f;
   --grain-blend: multiply;
   --grain-op: 0.045;
   --vignette: rgba(90, 75, 40, 0.22);
@@ -1959,17 +1963,31 @@ select:focus-visible,
   border: 1px solid var(--meter-frame);
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.55);
 }
-/* The level meter (green→red), an LED-segment fill. Always shown beside the
-   fader; it only carries signal while live sync streams (at rest it's empty). */
-.con-ladder .fill {
+/* The level meter, an LED-segment bar with three color zones keyed to absolute dBFS:
+   green up to --zy, yellow up to --zr, red above. The bar spans the whole ladder and
+   the shade below hides the unlit part, so a zone's color stays put as the level moves. */
+.con-ladder.sig .bar {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    0deg,
+    var(--m-green) 0 var(--zy, 55%),
+    var(--m-yellow) var(--zy, 55%) var(--zr, 85%),
+    var(--m-red) var(--zr, 85%) 100%
+  );
+  -webkit-mask-image: repeating-linear-gradient(0deg, #000 0 4px, transparent 4px 6px);
+  mask-image: repeating-linear-gradient(0deg, #000 0 4px, transparent 4px 6px);
+}
+/* Opaque cover over the unlit portion above the current level (--lvl); the lit bar is
+   what remains visible below it. Always shown beside the fader; at rest it covers the
+   whole ladder (empty meter) and only retreats while live sync streams. */
+.con-ladder.sig .shade {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
-  height: var(--lvl, 0%);
-  background: var(--meter);
-  -webkit-mask-image: repeating-linear-gradient(0deg, #000 0 4px, transparent 4px 6px);
-  mask-image: repeating-linear-gradient(0deg, #000 0 4px, transparent 4px 6px);
+  top: 0;
+  height: calc(100% - var(--lvl, 0%));
+  background: var(--groove);
 }
 .con-ladder.sig .peak {
   position: absolute;
