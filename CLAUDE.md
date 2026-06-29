@@ -39,7 +39,7 @@ pnpm dev          # ブラウザ http://localhost:5173 (Rust 不要)
 pnpm tauri dev    # デスクトップ起動 (Rust 必須。未導入なら rustup)
 pnpm build        # tsc --noEmit + vite build
 pnpm build:demo   # ブラウザデモビルド (VITE_DEMO=1。保存・画像出力を除外)
-pnpm test         # vitest (core: routing/constraints/plan, models)
+pnpm test         # vitest (core: routing/constraints/plan/levels/meters, control: vd/translate/readback/live/follow/fx, models)
 pnpm test:e2e     # Playwright E2E (e2e/*.spec.ts: routing/hide/notes/multiselect/bustype/signaltype/insertfx 等)。CI は post-merge で実行
 pnpm clean        # Vite キャッシュ (node_modules/.vite) + dist + Cargo target を削除
 pnpm reset:storage # dev アプリ (ブラウザ) の localStorage をクリア = ?reset URL を開く
