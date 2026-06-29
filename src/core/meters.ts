@@ -15,6 +15,12 @@ export const METER_FLOOR_DB = -60; // ladder bottom (table index 0)
 export const METER_OVER_RAW = 32767; // broker OVER / clip sentinel
 const METER_SILENCE_RAW = -1280; // resting value with no signal (below the table floor)
 
+// Color-zone boundaries (dBFS), grounded in EBU R68-2000: green up to the alignment
+// level (-18 dBFS), red from the permitted maximum level (-9 dBFS = alignment + 9 dB),
+// yellow between. The OVER sentinel flags the true clip at 0 dBFS.
+export const METER_GREEN_TOP_DB = -18;
+export const METER_YELLOW_TOP_DB = -9;
+
 /** A meter tap point on a node's signal chain. `key` is the stable id used by the
  *  selector; `label` is the device-vocabulary name (INPUT / PRE GATE / … / POST).
  *  `l` (and `r` for stereo) is the broker meter address [meterId, x]. The taps of a
