@@ -1,0 +1,18 @@
+{
+  "name": "urx-router",
+  "owner": { "name": "semnil" },
+  "description": "Plugins from the URX Router project — routing tools for the YAMAHA URX22 / URX44 / URX44V.",
+  "plugins": [
+    {
+      "name": "urx-routing-planner",
+      "source": "./.claude/skills/urx-routing-planner",
+      "description": "Feasibility answers and validated routing plans for the YAMAHA URX22 / URX44 / URX44V from plain-language requests.",
+      "version": "1.0.0",
+      "author": { "name": "semnil" },
+      "homepage": "https://github.com/semnil/urx-router",
+      "repository": "https://github.com/semnil/urx-router",
+      "license": "MIT",
+      "keywords": ["yamaha", "urx", "audio", "routing", "mixer"]
+    }
+  ]
+}

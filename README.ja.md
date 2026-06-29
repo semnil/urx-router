@@ -14,6 +14,23 @@ YAMAHA URX22 / URX44 / URX44V USB オーディオインターフェース用の 
 
 ![URX44V のルーティング計画をダークのスタジオラック調テーマで表示した URX Router](docs/assets/screenshot-ja.png)
 
+## Claude Code スキル
+
+本リポジトリは [Claude Code](https://claude.com/claude-code) 用スキル
+**urx-routing-planner** も公開しています。「マイク 1 を配信ミックスと FX1 のリバーブに送りたい」
+のような自然言語の依頼を、検証済みの URX Router プラン JSON とデモへの `?plan=` ディープリンクに
+変換します。実現可否は同梱の機種別ルート表から回答し、制御プロトコルの詳細は一切不要です。
+
+このリポジトリのマーケットプレイスからプラグインとして導入できます:
+
+```text
+/plugin marketplace add semnil/urx-router
+/plugin install urx-routing-planner@urx-router
+```
+
+スキルのルーティングデータはアプリと同じ機種定義（`src/models/`）から生成されるため、アプリと常に
+一致します（`UPDATE_SKILL` の項目は [CLAUDE.md](CLAUDE.md) を参照）。
+
 ## 技術スタック
 
 - **Tauri 2** (デスクトップシェル / Windows 11・Apple silicon macOS)

@@ -1,0 +1,10 @@
+{
+  "name": "urx-routing-planner",
+  "version": "1.0.0",
+  "description": "Feasibility answers and validated routing plans for the YAMAHA URX22 / URX44 / URX44V from plain-language requests.",
+  "author": { "name": "semnil" },
+  "homepage": "https://github.com/semnil/urx-router",
+  "repository": "https://github.com/semnil/urx-router",
+  "license": "MIT",
+  "keywords": ["yamaha", "urx", "urx22", "urx44", "urx44v", "audio", "routing", "mixer"]
+}

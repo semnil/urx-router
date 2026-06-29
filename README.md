@@ -15,6 +15,25 @@ Runs entirely in your browser — no install required: **<https://urx-router.sem
 
 ![URX Router showing a URX44V routing plan in the dark studio-rack theme](docs/assets/screenshot-en.png)
 
+## Claude Code skill
+
+This repo also publishes a [Claude Code](https://claude.com/claude-code) skill,
+**urx-routing-planner**, that turns a plain-language request ("send mic 1 to the
+stream mix and FX1 for reverb") into a validated URX Router plan plus a `?plan=`
+deep link into the demo. It answers feasibility questions from a bundled per-model
+route table and never needs any control-protocol detail.
+
+Install it as a plugin from this repo's marketplace:
+
+```text
+/plugin marketplace add semnil/urx-router
+/plugin install urx-routing-planner@urx-router
+```
+
+The skill's routing data is generated from the same device model the app uses
+(`src/models/`), so it stays in lock-step with the app — see `UPDATE_SKILL` in
+[CLAUDE.md](CLAUDE.md).
+
 ## Tech stack
 
 - **Tauri 2** (desktop shell / Windows 11 and Apple silicon macOS)
