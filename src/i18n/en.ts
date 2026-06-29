@@ -348,6 +348,7 @@ export const en = {
     liveSynced: (n: number): string => `→ device (${n})`,
     liveFollowing: "← device…",
     liveFollowed: (n: number): string => `← device (${n})`,
+    liveFollowedPartial: (n: number, failed: number): string => `← device (${n}, ${failed} unread)`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",

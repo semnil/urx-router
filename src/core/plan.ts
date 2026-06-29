@@ -434,12 +434,32 @@ const CONNECTION_KINDS: ReadonlySet<string> = new Set<ConnectionKind>([
   "record",
 ]);
 
-// A loaded connections element is trusted only when it carries string from/to and
-// a known ConnectionKind; null / partial / mistyped elements are dropped on read
-// so an undefined kind can never slip past routing's single-input guard.
+// A loaded connections element is trusted only when it carries string from/to, a
+// known ConnectionKind, and (if present) a well-typed params: null / partial /
+// mistyped elements are dropped on read so an undefined kind can never slip past
+// routing's single-input guard, and a non-numeric level/pan can never reach the
+// console's number formatting (where it would throw on .toFixed).
+function isValidConnParams(p: unknown): boolean {
+  if (p === undefined) return true;
+  if (!isStringRecord(p)) return false;
+  const q = p as Record<string, unknown>;
+  if ("level" in q && !Number.isFinite(q.level)) return false;
+  if ("pan" in q && !Number.isFinite(q.pan)) return false;
+  if ("tap" in q && q.tap !== "pre" && q.tap !== "post") return false;
+  for (const key of ["on", "oscL", "oscR"]) {
+    if (key in q && typeof q[key] !== "boolean") return false;
+  }
+  return true;
+}
+
 function isPlanConnection(v: unknown): v is PlanConnection {
   if (!isStringRecord(v)) return false;
-  return typeof v.from === "string" && typeof v.to === "string" && CONNECTION_KINDS.has(v.kind as string);
+  return (
+    typeof v.from === "string" &&
+    typeof v.to === "string" &&
+    CONNECTION_KINDS.has(v.kind as string) &&
+    isValidConnParams((v as Record<string, unknown>).params)
+  );
 }
 
 export function hasConnection(plan: Plan, from: string, to: string): boolean {

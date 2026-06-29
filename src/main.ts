@@ -46,6 +46,7 @@ import {
   type DeviceSummary,
 } from "./core/platform";
 import { applyDeviceState, applyDirect, applyNodeState, formatReadbackReport } from "./core/control/readback";
+import type { ReadbackResult } from "./core/control/readback";
 import { diffNames, diffPlan, formatWriteReport, sendConverging, sendNames } from "./core/control/client";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
@@ -300,6 +301,14 @@ function reflectFollow(): void {
   syncRateUi();
   live?.resync();
 }
+// Device-follow read-back status: surface the partial-failure count rather than
+// hiding read failures behind a console.warn (fetch/write make failures visible;
+// follow must too). A background read uses the status line, not a modal.
+function followStatus(result: ReadbackResult): string {
+  return result.errors.length
+    ? t().status.liveFollowedPartial(result.applied, result.errors.length)
+    : t().status.liveFollowed(result.applied);
+}
 // Coalesce direct-apply reflects onto one animation frame: a device knob sweep
 // fires ~10 notifies/s, each applied straight into the plan, but the heavier
 // render + snapshot re-base runs at most once per frame.
@@ -328,7 +337,7 @@ const follow =
           const result = await applyNodeState(getModel(modelId), plan, nodeIds);
           if (result.errors.length) console.warn("device-follow scoped readback issues:", result.errors);
           reflectFollow();
-          setStatus(t().status.liveFollowed(result.applied));
+          setStatus(followStatus(result));
         },
         // Escalation / idle safety net: pull the whole device into the plan.
         reconcileAll: async () => {
@@ -336,7 +345,7 @@ const follow =
           if (result.errors.length) console.warn("device-follow readback issues:", result.errors);
           plan.unreadNodes = result.unreadNodes;
           reflectFollow();
-          setStatus(t().status.liveFollowed(result.applied));
+          setStatus(followStatus(result));
         },
         onFollow: () => setStatus(t().status.liveFollowing),
         onError: (message) => stopLiveOnError(message),

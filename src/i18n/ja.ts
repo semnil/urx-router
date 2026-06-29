@@ -342,6 +342,7 @@ export const ja: Messages = {
     liveSynced: (n: number): string => `→ デバイス (${n})`,
     liveFollowing: "← デバイス…",
     liveFollowed: (n: number): string => `← デバイス (${n})`,
+    liveFollowedPartial: (n: number, failed: number): string => `← デバイス (${n}・${failed} 件未読)`,
     liveError: (message: string): string => `ライブ同期を停止: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",

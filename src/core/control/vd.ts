@@ -237,7 +237,12 @@ export function gainToVd(db: number): number {
   return clamp(Math.round(db * 100), GAIN_MIN_DB * 100, GAIN_MAX_DB * 100);
 }
 
-/** Broker centi-dB → plan HA gain dB. */
+// Broker centi-dB → plan HA gain dB. The round is a no-op for every value the
+// device actually produces: a hardware readback (A.Gain / D.Gain across all
+// channels) returned only whole-dB raws (multiples of 100), so the device's
+// native gain resolution is whole dB and the round-trip is already a fixed point.
+// It stays as defensive clamping of the broker's finer centi-dB unit to the plan
+// grain, never observed to discard a real device value.
 export function vdToGain(value: number): number {
   return clamp(Math.round(value / 100), GAIN_MIN_DB, GAIN_MAX_DB);
 }
@@ -247,7 +252,10 @@ export function freqToVd(hz: number): number {
   return clamp(Math.round(hz * 10), HPF_FREQ_MIN_HZ * 10, HPF_FREQ_MAX_HZ * 10);
 }
 
-/** Broker 0.1 Hz units → plan HPF frequency (Hz). */
+// Broker 0.1 Hz units → plan HPF frequency (Hz). Like vdToGain/vdToEqFreq, the
+// round is a no-op for real device values: hardware readback returned only
+// whole-Hz raws (multiples of 10), so the device's native frequency resolution is
+// whole Hz despite the broker's 0.1 Hz unit. Defensive, never observed to lose a value.
 export function vdToFreq(value: number): number {
   return clamp(Math.round(value / 10), HPF_FREQ_MIN_HZ, HPF_FREQ_MAX_HZ);
 }
@@ -257,7 +265,12 @@ export function eqFreqToVd(hz: number): number {
   return clamp(Math.round(hz * 10), EQ_FREQ_MIN_HZ * 10, EQ_FREQ_MAX_HZ * 10);
 }
 
-/** Broker 0.1 Hz units → plan EQ band frequency (Hz). */
+// Broker 0.1 Hz units → plan EQ band frequency (Hz). The round is a no-op for
+// real device values: a hardware readback of every EQ band (including fine grid
+// points like 112 / 1180 / 2360 Hz) returned only whole-Hz raws (multiples of
+// 10), so the device's native EQ-frequency resolution is whole Hz and the
+// round-trip is already a fixed point. Defensive clamping of the broker's finer
+// 0.1 Hz unit, never observed to discard a real device value.
 export function vdToEqFreq(value: number): number {
   return clamp(Math.round(value / 10), EQ_FREQ_MIN_HZ, EQ_FREQ_MAX_HZ);
 }

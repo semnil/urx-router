@@ -126,12 +126,14 @@ export class LiveSync {
 
   // Rebuild the snapshot to the plan's current implied state — the device truth
   // right after a readback, or after a converge round has matched the device.
-  private captureSnapshot(): void {
+  // `source` overrides the plan to snapshot (the frozen copy a sideEffect converge
+  // measured against); it defaults to the live plan for begin()/resync().
+  private captureSnapshot(source?: Plan): void {
     this.snapshot.clear();
     this.nameSnapshot.clear();
     this.index.clear();
     const model = this.hooks.getModel();
-    const plan = this.hooks.getPlan();
+    const plan = source ?? this.hooks.getPlan();
     const addrs: Array<[number, number, number]> = [];
     for (const c of planToCommands(model, plan)) {
       const k = cmdKey(c);
@@ -181,8 +183,13 @@ export class LiveSync {
       if (sideEffect) {
         // The device reset dependents; converge against its post-reset state and
         // rebuild the snapshot so the next diff measures from the device truth.
-        await sendConverging(model, plan);
-        this.captureSnapshot();
+        // Converge against a frozen copy, not the live plan: an edit that arrives
+        // during the (awaited) converge must stay a diff for the trailing flush,
+        // not get baked into the snapshot here as if already on the device (which
+        // would silently drop it).
+        const converged = structuredClone(plan);
+        await sendConverging(model, converged);
+        this.captureSnapshot(converged);
       }
       if (sent) this.hooks.onSent(sent);
     } catch (e) {

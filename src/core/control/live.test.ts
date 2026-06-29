@@ -8,6 +8,7 @@ import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
 vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn() }));
 
 import { vdSet, vdGet } from "../platform";
+import { planToCommands } from "./translate";
 import { LiveSync } from "./live";
 
 const model = getModel("URX44V");
@@ -96,6 +97,46 @@ describe("LiveSync flush cadence", () => {
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+});
+
+// Setting a mono channel's COMP/EQ type is a sideEffect param: its flush converges
+// (re-reads + re-sends) against the device. An edit that lands during that awaited
+// converge must not be lost.
+function setCh1CompEqType(plan: Plan, type: number): void {
+  plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: type };
+}
+
+describe("LiveSync sideEffect converge", () => {
+  it("does not drop an edit that arrives during a sideEffect converge", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    // The device mirrors the plan as it stands when the converge starts, so the
+    // converge's initial diff is empty and it exits after one read pass (the exact
+    // window where a late edit is at risk of being baked into the snapshot).
+    const mirror = new Map(
+      planToCommands(model, plan).map((c) => [`${c.paramId}:${c.x}:${c.y}`, c.vdValue]),
+    );
+    // On the converge's first device read — after its command list was already
+    // built, so this edit is NOT in the read pass — simulate a user moving the ch1
+    // fader (-6 dB → encoded -600). With the frozen-copy converge it stays a diff
+    // for the trailing flush; baking the live plan here would silently drop it.
+    let injected = false;
+    vi.mocked(vdGet).mockImplementation(async (paramId: number, x: number, y: number) => {
+      if (!injected) {
+        injected = true;
+        setCh1Fader(plan, -6);
+        live.schedule();
+      }
+      return mirror.get(`${paramId}:${x}:${y}`) ?? 0;
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120); // fire the flush; the converge runs + exits
+    await vi.advanceTimersByTimeAsync(2000); // drain the trailing flush
+    // The fader value (-600) must have reached the device despite landing mid-converge.
+    expect(vi.mocked(vdSet).mock.calls.some((c) => c[3] === -600)).toBe(true);
   });
 });
 

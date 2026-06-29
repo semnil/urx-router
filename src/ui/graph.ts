@@ -1609,9 +1609,11 @@ export class Graph {
         x: p.x - this.dragNode.grabDx,
         y: p.y - this.dragNode.grabDy,
       };
-      const el = this.nodeEls.get(this.dragNode.id)!;
       const pos = this.plan.positions[this.dragNode.id];
-      el.setAttribute("transform", `translate(${pos.x} ${pos.y})`);
+      // Guard the element like the descendant/partner moves below: a re-render
+      // racing pointermove can drop it momentarily, and an unguarded ! would
+      // crash the drag with an uncaught TypeError.
+      this.nodeEls.get(this.dragNode.id)?.setAttribute("transform", `translate(${pos.x} ${pos.y})`);
       // Hung descendants follow: their positions derive from the parent (a single
       // ducker, or the SD Rec track-slot chain), so move each element and redraw
       // its wires.

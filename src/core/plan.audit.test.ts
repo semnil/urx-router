@@ -117,6 +117,38 @@ describe("deserialize tolerance to malformed documents", () => {
     expect(plan.connections).toEqual([{ from: "ch1:out", to: "bus.stereo:in", kind: "send" }]);
   });
 
+  it("drops a connection whose params field is mistyped or carries a non-finite level/pan", () => {
+    // params is validated on read so a non-numeric level/pan can never reach the
+    // console's number formatting (.toFixed), and a mistyped tap/on can never be
+    // mistaken for a real value. A well-formed params survives untouched.
+    const doc = JSON.stringify({
+      ...base,
+      connections: [
+        { from: "ch1:out", to: "bus.fx1:in", kind: "send", params: "oops" }, // params not an object
+        { from: "ch2:out", to: "bus.fx1:in", kind: "send", params: { level: "abc" } }, // non-numeric level
+        { from: "ch3:out", to: "bus.fx1:in", kind: "send", params: { level: Infinity } }, // non-finite
+        { from: "ch4:out", to: "bus.fx1:in", kind: "send", params: { pan: NaN } }, // NaN → null in JSON
+        { from: "ch5:out", to: "bus.fx1:in", kind: "send", params: { tap: "bogus" } }, // bad enum
+        { from: "ch6:out", to: "bus.fx1:in", kind: "send", params: { on: "yes" } }, // non-boolean
+        { from: "ch7:out", to: "bus.fx1:in", kind: "send", params: { level: -10, tap: "pre", on: true } }, // valid
+      ],
+    });
+    const plan = deserialize(doc);
+    expect(plan.connections).toEqual([
+      { from: "ch7:out", to: "bus.fx1:in", kind: "send", params: { level: -10, tap: "pre", on: true } },
+    ]);
+  });
+
+  it("accepts a connection with no params field (params is optional)", () => {
+    const doc = JSON.stringify({
+      ...base,
+      connections: [{ from: "ch1:out", to: "bus.stereo:in", kind: "send" }],
+    });
+    expect(deserialize(doc).connections).toEqual([
+      { from: "ch1:out", to: "bus.stereo:in", kind: "send" },
+    ]);
+  });
+
   it("throws on a syntactically invalid JSON string (JSON.parse propagates)", () => {
     expect(() => deserialize("{ not json")).toThrow();
   });

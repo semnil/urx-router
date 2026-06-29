@@ -373,7 +373,9 @@ from `online` — distinct from the handshake / sync_status reads that fetch it 
 single `LinkEvent` to the frontend (`vdWatchLink`), or fails the in-flight command, and the frontend tears the live
 session down. When fetch or write fails on individual reads/writes, the count is shown in the status and the user
 is offered a Markdown report of each failure (`formatReadbackReport` / `formatWriteReport`); the save dialog is
-presented after the connection is released.
+presented after the connection is released. A device-follow read-back likewise counts any read failures into the
+status line (`← device (n, m unread)`) rather than only logging them, so a background reconcile that partially
+fails is not silent.
 
 Errors are surfaced by meaning. An **operation that did not complete** (a failed load, fetch, write, self-test,
 connect, or live-sync start, plus a link drop during live sync) is shown as a **modal** so it cannot be missed
