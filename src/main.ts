@@ -43,6 +43,7 @@ import {
   vdConnect,
   vdDisconnect,
   vdWatchLink,
+  type Connection,
   type DeviceSummary,
 } from "./core/platform";
 import { applyDeviceState, applyDirect, applyNodeState, formatReadbackReport } from "./core/control/readback";
@@ -243,6 +244,11 @@ let liveDeviceLabel = "";
 // instant it errors. deactivateLive guards on this so an error-path teardown
 // (where active is already false) still drops the connection and resets the UI.
 let liveSessionUp = false;
+// Generation of the connection the live session holds open, captured at connect.
+// deactivateLive disconnects with exactly this epoch, so a teardown that lands
+// late (the disconnect is fire-and-forget) cannot close a newer connection a
+// later device action opened in the meantime — the Rust side no-ops the mismatch.
+let liveEpoch = 0;
 // Holds the running self-test's controller (experimental); null when idle. Module
 // scope so applyStaticI18n keeps the button's "Cancel" label across a language
 // switch mid-run, instead of reverting it to "Self-test" while a run is in flight.
@@ -395,7 +401,7 @@ function deactivateLive(status?: string): void {
   liveSessionUp = false;
   follow?.end();
   live?.end();
-  void vdDisconnect();
+  void vdDisconnect(liveEpoch);
   setLiveUi(false);
   consoleView.setLive(false);
   // A CH → FX tap shown read-only while live becomes editable again off-line.
@@ -888,7 +894,8 @@ async function withDevice(
     try {
       await action(device);
     } finally {
-      await vdDisconnect();
+      // Release exactly the connection this action opened, by its epoch.
+      await vdDisconnect(device.epoch);
     }
   } catch (err) {
     // A cancel (throwIfAborted) surfaces as an AbortError DOMException; show the
@@ -1072,7 +1079,7 @@ if (!DEMO) {
       // without discarding the user's edits. Only on a live device do we confirm
       // the discard, since live sync overwrites the plan with the device state.
       setStatus(t().status.liveConnecting);
-      let device: DeviceSummary;
+      let device: Connection;
       try {
         device = await vdConnect();
       } catch (err) {
@@ -1081,13 +1088,13 @@ if (!DEMO) {
       }
       // Past the connect: any exit must release the held connection first. A
       // user-neutral exit (canceled) goes to the status line; a failure (failLive)
-      // surfaces as a dialog — both drop the connection first.
+      // surfaces as a dialog — both drop the connection first, by its epoch.
       const abort = async (status: string): Promise<void> => {
-        await vdDisconnect();
+        await vdDisconnect(device.epoch);
         setStatus(status);
       };
       const failLive = async (message: string): Promise<void> => {
-        await vdDisconnect();
+        await vdDisconnect(device.epoch);
         showError(message);
       };
       if (!(await confirmDiscard())) return await abort(t().status.canceled);
@@ -1113,6 +1120,9 @@ if (!DEMO) {
         liveDeviceLabel = device.model;
         live.begin();
         follow?.begin();
+        // Remember which generation the session holds, so deactivateLive releases
+        // exactly this one even when its disconnect lands after a later connect.
+        liveEpoch = device.epoch;
         liveSessionUp = true;
         // Watch the held-open link: if it drops while idle (no edit in flight to
         // surface "worker is gone"), stop the session instead of freezing. Routed

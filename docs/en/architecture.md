@@ -360,6 +360,18 @@ any other connect-stage fault falls back to the action's own error formatter. Be
 pre-check, fetch and live sync connect *before* prompting to discard edits, so a no-device state is reported
 plainly without first disturbing the plan.
 
+### Connection generations
+
+Only one connection is installed at a time (`VdState`), but the lifecycle of two actions can overlap: replacing the
+plan (loading a file, switching model) tears the live session down with a *fire-and-forget* `vdDisconnect`, and a
+later action (e.g. write) opens its own connection before that teardown has run. To stop a delayed teardown from
+closing the wrong connection, every connection carries a generation (`epoch`): `install` increments and returns it
+on connect, and `disconnect(epoch)` only closes when the current generation matches — a stale teardown of an earlier
+session is a structural no-op. Each frontend owner disconnects with the epoch it connected with (`withDevice` and
+self-test from their local `device`; the held-open live session from the `liveEpoch` it captured at connect). This
+makes the ordering of an un-awaited disconnect against a later connect harmless instead of relying on call-order
+discipline.
+
 ### Cancelling a long operation
 
 Fetch, write, and self-test each round-trip the whole device serially over one connection, so a stalled link can

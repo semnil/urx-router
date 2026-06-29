@@ -56,12 +56,14 @@ fn reset_storage_requested() -> bool {
 // would run on the main thread and freeze the webview for each round-trip — with
 // live sync mirroring every edit, that stalls the UI continuously.
 #[tauri::command]
-async fn vd_connect(state: State<'_, vd::VdState>) -> Result<vd::DeviceSummary, String> {
-    let (tx, summary) = tauri::async_runtime::spawn_blocking(vd::open)
+async fn vd_connect(state: State<'_, vd::VdState>) -> Result<vd::Connection, String> {
+    let (tx, device) = tauri::async_runtime::spawn_blocking(vd::open)
         .await
         .map_err(|e| e.to_string())??;
-    state.install(tx);
-    Ok(summary)
+    // The epoch identifies this connection: the frontend hands it back to
+    // vd_disconnect so a delayed teardown of an earlier session cannot close it.
+    let epoch = state.install(tx);
+    Ok(vd::Connection { device, epoch })
 }
 
 #[tauri::command]
@@ -178,8 +180,8 @@ fn vd_watch_link(
 // Disconnect only signals the worker to shut down (no reply wait), so it stays
 // synchronous.
 #[tauri::command]
-fn vd_disconnect(state: State<vd::VdState>) {
-    vd::disconnect(&state);
+fn vd_disconnect(state: State<vd::VdState>, epoch: u64) {
+    vd::disconnect(&state, epoch);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

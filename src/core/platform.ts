@@ -152,9 +152,16 @@ export interface DeviceSummary {
   label: string;
 }
 
-/** Connect to the URX via the broker; resolves with the connected device. */
-export function vdConnect(): Promise<DeviceSummary> {
-  return invoke<DeviceSummary>("vd_connect");
+/** A freshly opened connection: the device plus the generation (epoch) the Rust
+ * side assigned it. Hand `epoch` back to vdDisconnect so a delayed teardown of an
+ * earlier session can only close the exact connection it was opened for. */
+export interface Connection extends DeviceSummary {
+  epoch: number;
+}
+
+/** Connect to the URX via the broker; resolves with the connected device + epoch. */
+export function vdConnect(): Promise<Connection> {
+  return invoke<Connection>("vd_connect");
 }
 
 /** The currently connected device (rejects if not connected). */
@@ -264,9 +271,10 @@ export function vdWatchLink(onDrop: (reason: string) => void): void {
   void invoke<void>("vd_watch_link", { channel });
 }
 
-/** Close the live connection (no-op if not connected). */
-export function vdDisconnect(): Promise<void> {
-  return invoke<void>("vd_disconnect");
+/** Close the connection opened with generation `epoch` (no-op if a newer connect
+ * already replaced it, or none is connected). */
+export function vdDisconnect(epoch: number): Promise<void> {
+  return invoke<void>("vd_disconnect", { epoch });
 }
 
 // Auto-update (desktop only, via the updater/process plugins). These mirror the

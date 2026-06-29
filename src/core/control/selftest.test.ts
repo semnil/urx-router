@@ -39,7 +39,7 @@ function populatedPlan(): Plan {
 function installMockDevice(seed: Plan): Map<string, number> {
   const table = new Map<string, number>();
   for (const c of planToCommands(model, seed)) table.set(`${c.paramId}:${c.x}:${c.y}`, c.vdValue);
-  vi.mocked(vdConnect).mockResolvedValue({ model: "URX44V", label: "URX44V" });
+  vi.mocked(vdConnect).mockResolvedValue({ model: "URX44V", label: "URX44V", epoch: 1 });
   vi.mocked(vdDisconnect).mockResolvedValue(undefined);
   vi.mocked(vdGet).mockImplementation((id, x, y) => {
     const k = `${id}:${x}:${y}`;
@@ -113,7 +113,7 @@ describe("runSelfTest", () => {
 
   it("aborts on model mismatch without writing, and disconnects", async () => {
     installMockDevice(populatedPlan());
-    vi.mocked(vdConnect).mockResolvedValue({ model: "URX22", label: "URX22" });
+    vi.mocked(vdConnect).mockResolvedValue({ model: "URX22", label: "URX22", epoch: 1 });
     const report = await runSelfTest(model, 0);
     expect(report.ok).toBe(false);
     expect(report.errors.join(" ")).toContain("URX22");
@@ -154,7 +154,7 @@ describe("unverified-guess workflow (URX22)", () => {
   function installMock22(seed: Plan): Map<string, number> {
     const table = new Map<string, number>();
     for (const c of planToCommands(m22, seed)) table.set(`${c.paramId}:${c.x}:${c.y}`, c.vdValue);
-    vi.mocked(vdConnect).mockResolvedValue({ model: "URX22", label: "URX22" });
+    vi.mocked(vdConnect).mockResolvedValue({ model: "URX22", label: "URX22", epoch: 1 });
     vi.mocked(vdDisconnect).mockResolvedValue(undefined);
     vi.mocked(vdGet).mockImplementation((id, x, y) => {
       const k = `${id}:${x}:${y}`;

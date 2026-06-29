@@ -441,7 +441,7 @@ export async function runSelfTest(
     }
     return report;
   } finally {
-    await vdDisconnect();
+    await vdDisconnect(device.epoch);
   }
 }
 

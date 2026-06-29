@@ -22,6 +22,17 @@ pub struct DeviceSummary {
     pub label: String,
 }
 
+/// A freshly opened connection handed to the frontend: the device plus the
+/// generation (epoch) that install assigned it. The caller keeps the epoch and
+/// passes it back to disconnect, so a stale teardown can only close the exact
+/// connection it was issued for (never a newer one that replaced it).
+#[derive(Clone, Serialize)]
+pub struct Connection {
+    #[serde(flatten)]
+    pub device: DeviceSummary,
+    pub epoch: u64,
+}
+
 /// One live level-meter reading pushed to the frontend. `value` is the broker's
 /// raw meter value (deci-dBFS; 32767 = OVER), decoded on the JS side.
 #[derive(Clone, Serialize)]
@@ -110,10 +121,20 @@ pub enum Cmd {
     Shutdown,
 }
 
-/// Managed Tauri state: the channel to the live worker, if connected.
+/// The installed connection: the channel to the live worker (if any) and the
+/// generation it was assigned. `epoch` increments on every install, so a
+/// connection is identified by the generation that opened it.
+#[derive(Default)]
+struct Conn {
+    tx: Option<Sender<Cmd>>,
+    epoch: u64,
+}
+
+/// Managed Tauri state: the channel to the live worker, if connected, tagged with
+/// its generation so disconnect can target a specific connection.
 #[derive(Default)]
 pub struct VdState {
-    tx: Mutex<Option<Sender<Cmd>>>,
+    conn: Mutex<Conn>,
 }
 
 /// Spawn the worker and perform the broker handshake (blocking). Returns the
@@ -138,11 +159,16 @@ pub fn open() -> Result<(Sender<Cmd>, DeviceSummary), String> {
 }
 
 impl VdState {
-    /// Install a freshly opened connection, shutting down any prior worker.
-    pub fn install(&self, tx: Sender<Cmd>) {
-        if let Some(old) = self.tx.lock().unwrap().replace(tx) {
+    /// Install a freshly opened connection, shutting down any prior worker, and
+    /// return the generation assigned to it. The caller hands this epoch back to
+    /// disconnect so a delayed teardown of an earlier session cannot close this one.
+    pub fn install(&self, tx: Sender<Cmd>) -> u64 {
+        let mut c = self.conn.lock().unwrap();
+        if let Some(old) = c.tx.replace(tx) {
             let _ = old.send(Cmd::Shutdown);
         }
+        c.epoch += 1;
+        c.epoch
     }
 }
 
@@ -151,9 +177,10 @@ impl VdState {
 /// Tauri command never stalls the event loop while the broker round-trips.
 pub fn sender(state: &VdState) -> Result<Sender<Cmd>, String> {
     state
-        .tx
+        .conn
         .lock()
         .unwrap()
+        .tx
         .as_ref()
         .cloned()
         .ok_or_else(|| "not connected".to_string())
@@ -237,10 +264,16 @@ pub fn watch_link(tx: Sender<Cmd>, channel: Channel<LinkEvent>) -> Result<(), St
     tx.send(Cmd::WatchLink { channel }).map_err(|_| "control-worker-gone".to_string())
 }
 
-/// Close any live connection. Safe to call when not connected.
-pub fn disconnect(state: &VdState) {
-    if let Some(tx) = state.tx.lock().unwrap().take() {
-        let _ = tx.send(Cmd::Shutdown);
+/// Close the connection of generation `epoch`. A no-op if the current connection
+/// is a different generation (a newer install already replaced it) or none is
+/// installed — so a delayed teardown of an old session never closes a live one.
+/// Safe to call when not connected.
+pub fn disconnect(state: &VdState, epoch: u64) {
+    let mut c = state.conn.lock().unwrap();
+    if c.epoch == epoch {
+        if let Some(tx) = c.tx.take() {
+            let _ = tx.send(Cmd::Shutdown);
+        }
     }
 }
 
@@ -717,5 +750,65 @@ mod imp {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Connection-lifecycle race: a fire-and-forget disconnect of a torn-down live
+    // session must not close a newer connection that a later connect installed in
+    // the meantime. These drive VdState's install/sender/disconnect directly with
+    // dummy worker channels, so they reproduce the exact interleaving deterministi-
+    // cally on any host (no broker, no websocket, no threads).
+    use super::{disconnect, sender, Cmd, VdState};
+    use std::sync::mpsc;
+
+    // The reported field bug: live connects, its teardown's disconnect is delayed,
+    // a write connects (new generation), then the stale disconnect finally lands.
+    // It must be a no-op and leave the write's channel installed and reachable.
+    #[test]
+    fn stale_disconnect_spares_newer_connection() {
+        let state = VdState::default();
+
+        // Live session connects.
+        let (live_tx, _live_rx) = mpsc::channel::<Cmd>();
+        let live_epoch = state.install(live_tx);
+
+        // A later write connects before the live teardown's disconnect runs.
+        let (write_tx, write_rx) = mpsc::channel::<Cmd>();
+        let write_epoch = state.install(write_tx);
+        assert_ne!(live_epoch, write_epoch, "each install gets a fresh generation");
+
+        // The delayed stale disconnect now lands — targets the old generation.
+        disconnect(&state, live_epoch);
+
+        // The write's connection survives: sender() resolves (not "not connected")
+        // and the cloned channel still reaches its worker.
+        let tx = sender(&state).expect("write connection must stay installed");
+        tx.send(Cmd::Shutdown).expect("worker channel must still be open");
+        assert!(matches!(write_rx.recv(), Ok(Cmd::Shutdown)));
+    }
+
+    // A disconnect that matches the current generation closes it.
+    #[test]
+    fn matching_disconnect_closes() {
+        let state = VdState::default();
+        let (tx, _rx) = mpsc::channel::<Cmd>();
+        let epoch = state.install(tx);
+
+        disconnect(&state, epoch);
+
+        assert!(sender(&state).is_err(), "after its own disconnect: not connected");
+    }
+
+    // Installing a new connection shuts the prior worker down (unchanged behavior).
+    #[test]
+    fn install_shuts_prior_worker() {
+        let state = VdState::default();
+        let (tx1, rx1) = mpsc::channel::<Cmd>();
+        state.install(tx1);
+        let (tx2, _rx2) = mpsc::channel::<Cmd>();
+        state.install(tx2);
+        assert!(matches!(rx1.recv(), Ok(Cmd::Shutdown)), "prior worker told to stop");
     }
 }
