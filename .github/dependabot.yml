@@ -6,6 +6,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # @types/node is major-pinned to the Node 24 LTS runtime used in CI.
+      # Allow 24.x minor bumps; block major jumps ahead of the runtime.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   # Tauri shell crates.
   - package-ecosystem: cargo
