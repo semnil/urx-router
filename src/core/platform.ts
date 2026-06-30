@@ -214,7 +214,11 @@ export function vdMetersSubscribe(
   onUpdate: (m: MeterUpdate) => void,
 ): () => void {
   if (!isTauri()) return () => {};
-  const channel = newChannel<RawMeterUpdate>((d) => onUpdate({ meterId: d.meter_id, x: d.x, value: d.value }));
+  // Rust batches each pump cycle's readings into one channel message, so the IPC
+  // boundary is crossed ~30×/s instead of per reading; fan the batch back out here.
+  const channel = newChannel<RawMeterUpdate[]>((batch) => {
+    for (const d of batch) onUpdate({ meterId: d.meter_id, x: d.x, value: d.value });
+  });
   void invoke<void>("vd_meters_subscribe", { addrs, channel });
   return () => void invoke<void>("vd_meters_unsubscribe").catch(() => {});
 }
@@ -247,9 +251,11 @@ export function vdParamsSubscribe(
   onUpdate: (p: ParamUpdate) => void,
 ): () => void {
   if (!isTauri()) return () => {};
-  const channel = newChannel<RawParamUpdate>((d) =>
-    onUpdate({ paramId: d.param_id, x: d.x, y: d.y, value: d.value }),
-  );
+  // Batched per pump cycle on the Rust side (a device-side sweep arrives as one
+  // message), so fan the batch back out into per-notify callbacks here.
+  const channel = newChannel<RawParamUpdate[]>((batch) => {
+    for (const d of batch) onUpdate({ paramId: d.param_id, x: d.x, y: d.y, value: d.value });
+  });
   void invoke<void>("vd_params_subscribe", { addrs, channel });
   return () => void invoke<void>("vd_params_unsubscribe").catch(() => {});
 }

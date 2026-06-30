@@ -96,9 +96,11 @@ pub enum Cmd {
     /// Subscribe to a set of level meters (meter_id, x) and stream their readings
     /// through `channel`. Replaces any prior meter subscription. Fire-and-forget:
     /// the worker registers each address with the broker and forwards notifies.
+    /// Each `send` carries a whole pump cycle's readings (the broker streams ~250/s
+    /// across the set), so the IPC boundary is crossed ~30×/s instead of per reading.
     MetersSubscribe {
         addrs: Vec<(u32, i64)>,
-        channel: Channel<MeterUpdate>,
+        channel: Channel<Vec<MeterUpdate>>,
     },
     /// Drop the current meter subscription (unregisters each address).
     MetersUnsubscribe,
@@ -108,7 +110,7 @@ pub enum Cmd {
     /// forwards notifies, so device-side edits reach the frontend.
     ParamsSubscribe {
         addrs: Vec<(u32, i64, i64)>,
-        channel: Channel<ParamUpdate>,
+        channel: Channel<Vec<ParamUpdate>>,
     },
     /// Drop the current parameter subscription (unregisters each address).
     ParamsUnsubscribe,
@@ -232,7 +234,7 @@ pub fn info(tx: Sender<Cmd>) -> Result<DeviceSummary, String> {
 pub fn meters_subscribe(
     tx: Sender<Cmd>,
     addrs: Vec<(u32, i64)>,
-    channel: Channel<MeterUpdate>,
+    channel: Channel<Vec<MeterUpdate>>,
 ) -> Result<(), String> {
     tx.send(Cmd::MetersSubscribe { addrs, channel })
         .map_err(|_| "control-worker-gone".to_string())
@@ -248,7 +250,7 @@ pub fn meters_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
 pub fn params_subscribe(
     tx: Sender<Cmd>,
     addrs: Vec<(u32, i64, i64)>,
-    channel: Channel<ParamUpdate>,
+    channel: Channel<Vec<ParamUpdate>>,
 ) -> Result<(), String> {
     tx.send(Cmd::ParamsSubscribe { addrs, channel })
         .map_err(|_| "control-worker-gone".to_string())
@@ -321,11 +323,11 @@ mod imp {
 
         // Active meter subscription, if any: the channel to stream readings on and
         // the addresses registered with the broker (so we can unregister on change).
-        let mut meter_ch: Option<Channel<MeterUpdate>> = None;
+        let mut meter_ch: Option<Channel<Vec<MeterUpdate>>> = None;
         let mut meter_addrs: Vec<(u32, i64)> = Vec::new();
         // Active parameter subscription, if any: the channel for device-side param
         // notifies and the registered addresses (unregistered on change / drop).
-        let mut param_ch: Option<Channel<ParamUpdate>> = None;
+        let mut param_ch: Option<Channel<Vec<ParamUpdate>>> = None;
         let mut param_addrs: Vec<(u32, i64, i64)> = Vec::new();
         // Channel to push the one-shot link-lost event on, if the frontend is
         // watching: a held-open live session is dropped instead of freezing when
@@ -333,7 +335,16 @@ mod imp {
         let mut link_ch: Option<Channel<LinkEvent>> = None;
 
         loop {
-            match rx.recv_timeout(Duration::from_millis(50)) {
+            // While a subscription is streaming, poll for commands briefly so the
+            // bounded pump runs back-to-back and keeps up with the ~250/s feed; when
+            // idle, wait longer so the thread doesn't spin. pump's own blocking read
+            // (200 ms socket timeout) supplies the backpressure when the feed is quiet.
+            let wait = if meter_ch.is_some() || param_ch.is_some() {
+                Duration::from_millis(5)
+            } else {
+                Duration::from_millis(50)
+            };
+            match rx.recv_timeout(wait) {
                 Ok(Cmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
                 Ok(Cmd::Info { reply }) => {
                     let _ = reply.send(summary.clone());
@@ -671,25 +682,25 @@ mod imp {
     }
 
     /// Parse a meter `notify` frame and stream it to the frontend.
-    fn forward_meter(msg: &Value, ch: &Channel<MeterUpdate>) {
-        let Some((vdp, addr)) = notify_frame(msg, "/vd/meters/") else { return };
+    fn parse_meter(msg: &Value) -> Option<MeterUpdate> {
+        let (vdp, addr) = notify_frame(msg, "/vd/meters/")?;
         let mut parts = addr.split(':');
-        let (Some(id), Some(xs)) = (parts.next(), parts.next()) else { return };
-        let (Ok(meter_id), Ok(x)) = (id.parse::<u32>(), xs.parse::<i64>()) else { return };
+        let (id, xs) = (parts.next()?, parts.next()?);
+        let (meter_id, x) = (id.parse::<u32>().ok()?, xs.parse::<i64>().ok()?);
         let value = vdp.pointer("/data/current_value").and_then(Value::as_i64).unwrap_or(0);
-        let _ = ch.send(MeterUpdate { meter_id, x, value });
+        Some(MeterUpdate { meter_id, x, value })
     }
 
     /// Parse a parameter `notify` frame (a device-side change on a registered
-    /// address) and stream it to the frontend. A non-integer current_value (e.g.
-    /// a name string) is skipped — numeric follow only, matching the JS reconcile.
-    fn forward_param(msg: &Value, ch: &Channel<ParamUpdate>) {
-        let Some((vdp, addr)) = notify_frame(msg, "/vd/parameters/") else { return };
+    /// address). A non-integer current_value (e.g. a name string) yields None —
+    /// numeric follow only, matching the JS reconcile.
+    fn parse_param(msg: &Value) -> Option<ParamUpdate> {
+        let (vdp, addr) = notify_frame(msg, "/vd/parameters/")?;
         let mut parts = addr.split(':');
-        let (Some(ids), Some(xs), Some(ys)) = (parts.next(), parts.next(), parts.next()) else { return };
-        let (Ok(param_id), Ok(x), Ok(y)) = (ids.parse::<u32>(), xs.parse::<i64>(), ys.parse::<i64>()) else { return };
-        let Some(value) = vdp.pointer("/data/current_value").and_then(Value::as_i64) else { return };
-        let _ = ch.send(ParamUpdate { param_id, x, y, value });
+        let (ids, xs, ys) = (parts.next()?, parts.next()?, parts.next()?);
+        let (param_id, x, y) = (ids.parse::<u32>().ok()?, xs.parse::<i64>().ok()?, ys.parse::<i64>().ok()?);
+        let value = vdp.pointer("/data/current_value").and_then(Value::as_i64)?;
+        Some(ParamUpdate { param_id, x, y, value })
     }
 
     /// Detect a device-lost push: Device Center spontaneously sends a
@@ -713,30 +724,64 @@ mod imp {
         Some(format!("device disconnected (sync_status {status})"))
     }
 
-    /// Read whatever is buffered until the socket would block, forwarding meter
-    /// and parameter notifications to their channels (when subscribed) and
-    /// discarding everything else. Returns Err if the connection dropped, or if a
-    /// device-lost synchronize push arrived, so the worker can stop.
+    // Flush an accumulated notify batch in one channel send, leaving the buffer
+    // empty. No-op when there is no subscriber or nothing to send.
+    fn flush_meters(ch: Option<&Channel<Vec<MeterUpdate>>>, buf: &mut Vec<MeterUpdate>) {
+        if let (Some(ch), false) = (ch, buf.is_empty()) {
+            let _ = ch.send(std::mem::take(buf));
+        }
+    }
+    fn flush_params(ch: Option<&Channel<Vec<ParamUpdate>>>, buf: &mut Vec<ParamUpdate>) {
+        if let (Some(ch), false) = (ch, buf.is_empty()) {
+            let _ = ch.send(std::mem::take(buf));
+        }
+    }
+
+    // Bound a single pump's drain. The broker streams meters at ~250/s, so reads
+    // rarely block; without this the loop would run a full 512-frame drain (~2 s)
+    // before returning, monopolizing the worker for that long — which both delays
+    // the meter batch and stalls live writes (Set/Get wait behind the drain). 30 ms
+    // keeps the batch latency and (under a live feed) the command latency low while
+    // still draining many frames per send (so the IPC boundary stays ~30×/s). The
+    // budget is only checked after each read, so when the feed falls quiet a pending
+    // command can still wait out the final read's ~200 ms socket timeout before the
+    // worker yields — acceptable, since the quiet case is not the one that mattered.
+    const PUMP_BUDGET: Duration = Duration::from_millis(30);
+
+    /// Drain buffered frames for up to PUMP_BUDGET, collecting meter and parameter
+    /// notifications and forwarding them in one batched channel send each (the
+    /// boundary is crossed per pump, not once per ~250/s reading). Frames other than
+    /// the subscribed notifies are discarded. Returns Err if the connection dropped,
+    /// or if a device-lost synchronize push arrived, so the worker can stop.
     fn pump(
         ws: &mut Ws,
-        meter_ch: Option<&Channel<MeterUpdate>>,
-        param_ch: Option<&Channel<ParamUpdate>>,
+        meter_ch: Option<&Channel<Vec<MeterUpdate>>>,
+        param_ch: Option<&Channel<Vec<ParamUpdate>>>,
     ) -> Result<(), String> {
+        let mut meters: Vec<MeterUpdate> = Vec::new();
+        let mut params: Vec<ParamUpdate> = Vec::new();
+        let start = Instant::now();
+        // 512 is a non-binding hard ceiling; PUMP_BUDGET (or a drained socket)
+        // normally ends the loop first, so it only caps a pathological burst.
         for _ in 0..512 {
             match ws.read() {
                 Ok(Message::Text(t)) => {
                     // Parse the frame once and share it: synchronize_lost and both
-                    // forwarders all read the same envelope, and this drains the
-                    // ~250/s meter stream (avoid re-parsing per consumer).
+                    // parsers read the same envelope, and this drains the ~250/s
+                    // meter stream (avoid re-parsing per consumer).
                     let Ok(msg) = serde_json::from_str::<Value>(&t) else { continue };
                     if let Some(err) = synchronize_lost(&msg) {
                         return Err(err);
                     }
-                    if let Some(ch) = meter_ch {
-                        forward_meter(&msg, ch);
+                    if meter_ch.is_some() {
+                        if let Some(m) = parse_meter(&msg) {
+                            meters.push(m);
+                        }
                     }
-                    if let Some(ch) = param_ch {
-                        forward_param(&msg, ch);
+                    if param_ch.is_some() {
+                        if let Some(p) = parse_param(&msg) {
+                            params.push(p);
+                        }
                     }
                 }
                 Ok(Message::Close(_)) => return Err("Device Center closed the control connection".into()),
@@ -744,11 +789,18 @@ mod imp {
                 Err(tungstenite::Error::Io(e))
                     if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) =>
                 {
-                    return Ok(());
+                    break; // socket drained — fall through to flush the batch
                 }
                 Err(_) => return Err("Device Center closed the control connection".into()),
             }
+            // Yield the worker once the budget is spent so a pending command (and the
+            // accumulated batch below) is serviced without waiting out the stream.
+            if start.elapsed() >= PUMP_BUDGET {
+                break;
+            }
         }
+        flush_meters(meter_ch, &mut meters);
+        flush_params(param_ch, &mut params);
         Ok(())
     }
 }

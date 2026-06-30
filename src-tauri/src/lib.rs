@@ -132,7 +132,7 @@ async fn vd_get_str(
 fn vd_meters_subscribe(
     state: State<vd::VdState>,
     addrs: Vec<(u32, i64)>,
-    channel: tauri::ipc::Channel<vd::MeterUpdate>,
+    channel: tauri::ipc::Channel<Vec<vd::MeterUpdate>>,
 ) -> Result<(), String> {
     let tx = vd::sender(&state)?;
     vd::meters_subscribe(tx, addrs, channel)
@@ -152,7 +152,7 @@ fn vd_meters_unsubscribe(state: State<vd::VdState>) -> Result<(), String> {
 fn vd_params_subscribe(
     state: State<vd::VdState>,
     addrs: Vec<(u32, i64, i64)>,
-    channel: tauri::ipc::Channel<vd::ParamUpdate>,
+    channel: tauri::ipc::Channel<Vec<vd::ParamUpdate>>,
 ) -> Result<(), String> {
     let tx = vd::sender(&state)?;
     vd::params_subscribe(tx, addrs, channel)
