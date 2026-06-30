@@ -18,7 +18,7 @@
     "clean": "rm -rf node_modules/.vite dist && cargo clean --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
-    "@playwright/test": "^1.61.0",
+    "@playwright/test": "^1.61.1",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "22",
     "esbuild": "^0.28.1",
