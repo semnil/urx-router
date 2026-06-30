@@ -35,9 +35,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@v2
+      # cargo-about gates its CLI binary behind the non-default `cli` feature, so a
+      # prebuilt-less install (install-action's source-build fallback) yields no
+      # `cargo-about` binary. Build from source with the feature, cached by version.
+      - uses: taiki-e/cache-cargo-install-action@v2
         with:
-          tool: cargo-about
+          tool: cargo-about@0.9.1
+          features: cli
       # Fails if a dependency carries a license not in about.toml's accepted
       # list, so a new crate can't silently drop a required notice.
       - run: cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
