@@ -1031,8 +1031,17 @@ export class Console {
       this.subSig = sig;
     }
     if (!this.raf) {
-      const tick = (): void => {
-        this.paintMeters();
+      // Cap repaints to ~30 fps: the device streams meters at ~10 Hz, so a free-
+      // running rAF (60 Hz, or 120 Hz on a ProMotion display) repaints several
+      // times per reading for no visual gain. The rAF still fires at display rate
+      // but only the timed frames run the per-strip paint; the rest just reschedule.
+      const FRAME_MS = 1000 / 30;
+      let last = 0;
+      const tick = (now: number): void => {
+        if (now - last >= FRAME_MS) {
+          last = now;
+          this.paintMeters();
+        }
         this.raf = requestAnimationFrame(tick);
       };
       this.raf = requestAnimationFrame(tick);

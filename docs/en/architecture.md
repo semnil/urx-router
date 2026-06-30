@@ -314,21 +314,27 @@ a knob resets it to the **factory value** (from `defaultPlan`).
 - **Live meters** — the meter column is always shown; signal only flows while Live sync is on
   (`console.setLive`; at rest it sits at the floor). `core/meters.ts` maps node ids to broker meter addresses
   (`meterId:x`), decodes the raw value (deci-dBFS, 32767 = OVER) to dBFS, and holds the latest reading in a
-  `MeterStore`. The UI samples the ~10 Hz notifications on `requestAnimationFrame` and renders with fast
-  attack / slow release, peak hold, and an OVER latch (the top OVER box), writing only the lanes that changed
+  `MeterStore`. The UI samples the readings on a `requestAnimationFrame` loop capped to ~30 fps (the device
+  updates at ~10 Hz, so painting faster gives no gain) and renders with fast attack / slow release, peak hold,
+  and an OVER latch (the top OVER box), writing only the lanes that changed
   (compared at integer-percent). Subscriptions are scoped to the on-screen strips that have a meter in the
   current model (`metersForNodes`). Meter ids were confirmed on a real URX44V; models without a mapping show no meter.
 - **Streaming path** — the Rust side (`src-tauri/src/vd.rs`) handles a meter subscription
   (`MetersSubscribe`/`MetersUnsubscribe`) by registering each address with the broker, and forwards meter
-  `notify` frames to the frontend over a Tauri Channel during the idle socket drain (`pump` → `forward_meter`).
+  `notify` frames to the frontend over a Tauri Channel during the socket drain (`pump` parses each frame with
+  `parse_meter` and sends one `Vec<MeterUpdate>` batch per drain). The broker streams ~250 readings/s, so a
+  per-reading send would cross the IPC boundary ~250×/s; batching cuts that to ~30×/s. Each drain is
+  time-bounded (`PUMP_BUDGET`, 30 ms) so a continuous feed neither monopolizes the worker (live writes wait
+  behind it) nor delays the batch; while a subscription streams the worker also polls commands on a shorter
+  interval so the bounded pump runs back-to-back and keeps up with the feed.
   Meters stream only while Live sync is on (subscription starts in `console.setLive`).
   The subscription is bound to Live sync, not to view visibility: a GRAPH ↔ CONSOLE tab switch only stops the
   paint loop (`requestAnimationFrame` → `stopPaint`) and keeps the broker subscription warm. Re-registering every
   address on each toggle would stall the meters for ~1 s, so the full teardown (`stopMeters`) runs only when Live
   sync ends, and re-showing resumes from the warm stream at once.
 - **Device follow** — the reverse of live sync. The same drain path also carries device-side parameter
-  changes: `ParamsSubscribe`/`forward_param` (sharing the `notify_frame` envelope parse with the meter path)
-  register every writable address and forward each `notify`. A notify carries the changed address **and its
+  changes: `ParamsSubscribe`/`parse_param` (sharing the `notify_frame` envelope parse with the meter path)
+  register every writable address and forward each `notify` (batched per drain, like the meter path). A notify carries the changed address **and its
   new value**, so detection is free and exact. While Live sync is on, `core/control/follow.ts` `DeviceFollow`
   classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
   scalar (fader / pan / on / level, flagged `follow: "direct"` in the catalog) is decoded straight into the plan
