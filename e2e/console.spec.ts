@@ -6,6 +6,21 @@ import { test, expect, type Page } from "@playwright/test";
 const strip = (page: Page, name: string) =>
   page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
+// Mute a node's channel master (CH_ON) via the graph inspector. The console MUTE
+// chip now drives the → STEREO assign send, so the channel master is set from the
+// inspector's "Channel" ON toggle only. Leaves the view on the console MAIN tab.
+const muteMasterViaInspector = async (page: Page, nodeId: string) => {
+  await page.click("#btn-view-graph");
+  await page.locator(`g.node[data-id="${nodeId}"]`).click();
+  await page
+    .locator("#inspector .param")
+    .filter({ has: page.locator(".toggle") })
+    .filter({ hasText: "Channel" })
+    .getByRole("button", { name: "OFF", exact: true })
+    .click();
+  await page.click("#btn-view-console");
+};
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("urx-lang", "en");
@@ -151,8 +166,8 @@ test("the MAIN tab has no PRE chip on FX channels (STEREO main path has no tap)"
 });
 
 test("a master-muted FX channel dims its MIX strip with a CH MUTE badge, keeping sends operable", async ({ page }) => {
-  // Mute the FX 1 channel master from the MAIN tab (here MUTE = the channel ON).
-  await strip(page, "FX 1").getByRole("button", { name: "MUTE" }).click();
+  // Mute the FX 1 channel master via the inspector (console MUTE drives the send now).
+  await muteMasterViaInspector(page, "bus.fx1");
   await page.locator(".con-modepick").getByRole("button", { name: "MIX 1", exact: true }).click();
   const fx = strip(page, "FX 1");
   // The strip dims and shows the CH MUTE badge (the whole channel is muted)...
@@ -193,8 +208,8 @@ test("an input channel in an FX mode has a PRE chip and send-ON MUTE but no PAN 
 });
 
 test("a master-muted input channel dims its MIX strip with a CH MUTE badge", async ({ page }) => {
-  // Mute the CH 1 master from the MAIN tab (here MUTE = the channel ON).
-  await strip(page, "CH 1").getByRole("button", { name: "MUTE" }).click();
+  // Mute the CH 1 master via the inspector (console MUTE drives the send now).
+  await muteMasterViaInspector(page, "ch1");
   await page.locator(".con-modepick").getByRole("button", { name: "MIX 1", exact: true }).click();
   const ch = strip(page, "CH 1");
   // The strip dims and shows the CH MUTE badge (the whole channel is muted)...
@@ -204,6 +219,31 @@ test("a master-muted input channel dims its MIX strip with a CH MUTE badge", asy
   const pre = ch.getByRole("button", { name: "PRE", exact: true });
   await pre.click();
   await expect(pre).toHaveAttribute("aria-pressed", "true");
+});
+
+test("the MAIN tab MUTE drives the CH → STEREO assign, not the channel master", async ({ page }) => {
+  const ch = strip(page, "CH 1");
+  const mute = ch.getByRole("button", { name: "MUTE" });
+  await expect(mute).toHaveAttribute("aria-pressed", "false"); // → STEREO assign ships on
+  await mute.click();
+  await expect(mute).toHaveAttribute("aria-pressed", "true"); // → STEREO assign off
+  // The channel master is untouched: the strip is not master-muted (no CH MUTE badge).
+  await expect(ch).not.toHaveClass(/master-muted/);
+  await expect(ch.locator(".ch-mute")).toHaveCount(0);
+  // A MIX send tab confirms the master is still on there too.
+  await page.locator(".con-modepick").getByRole("button", { name: "MIX 1", exact: true }).click();
+  await expect(strip(page, "CH 1")).not.toHaveClass(/master-muted/);
+});
+
+test("a master-muted channel shows the CH MUTE badge on the MAIN tab too", async ({ page }) => {
+  await muteMasterViaInspector(page, "ch1"); // leaves the view on the MAIN tab
+  const ch = strip(page, "CH 1");
+  await expect(ch).toHaveClass(/master-muted/);
+  await expect(ch.locator(".ch-mute")).toHaveText("CH MUTE");
+  // The → STEREO assign MUTE chip stays operable under the channel-master mute.
+  const mute = ch.getByRole("button", { name: "MUTE" });
+  await mute.click();
+  await expect(mute).toHaveAttribute("aria-pressed", "true");
 });
 
 test("a MIX strip's MUTE drives the MIX → STEREO TO ST switch", async ({ page }) => {

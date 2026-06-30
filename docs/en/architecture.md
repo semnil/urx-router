@@ -234,7 +234,9 @@ unreachable +5/+10 ticks. Each tick centres its digits with the minus sign hangi
 `-10` line up vertically. Above the zone the scribble shows two lines — **node name + device CH SETTING
 name** (the monitor buses carry no CH SETTING name, so their second line names the linked PHONES output instead —
 `Phone 1` / `Phone 2`). Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE (on channels, FX channels, the
-master, the MIX buses and the MONITOR buses; an FX channel's is the device FX-channel ON, the master's is the
+master, the MIX buses and the MONITOR buses; an **input / FX channel's drives the active tab's send ON** — the
+→ STEREO assign on MAIN, the → MIX/FX send (SEND_ON) on a send tab — not the channel master (CH_ON /
+FX-channel ON), which is set from the inspector only; the master's is the
 STEREO master ON, a **MIX bus's drives the MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off), and a
 **MONITOR bus's is the device MONITOR ON** (`np.on` → `MONITOR_ON`, the MONITOR-screen [ON] button)). A MONITOR
 bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
@@ -282,7 +284,9 @@ a knob resets it to the **factory value** (from `defaultPlan`).
     graph/inspector tap; every CH/FX → MIX/FX send carries a tap). On the **FX 1 / FX 2** tabs the tap is a
     CH → FX send, which the device cannot accept from software, so while live sync is connected the chip is shown
     read-only — matching the inspector (see [known-issues.md](known-issues.md)). MIX-tab taps stay editable.
-  - Its **MUTE toggles that send's ON/OFF (SEND_ON)** — the channel's own mute lives on the MAIN tab and in the inspector.
+  - Its **MUTE toggles that send's ON/OFF** — on the MAIN tab the send is the → STEREO assign (the post-fader
+    SEND TO STEREO switch, firmware V1.3); on a MIX/FX tab it is the → MIX/FX send (SEND_ON). The channel's own
+    master mute (CH_ON) lives in the **graph inspector only**.
   - Its **PAN/BAL knob is tab-scoped**: MAIN edits the → STEREO main-path PAN/BAL, a send mode edits that send's
     pan (the same connection the fader controls). FX-bus sends are mono and carry no pan, so the **knob is dropped in an FX mode**.
   - **Channel-domain controls are MAIN-only** — the HA toggles (+48 / φ / HPF / Hi-Z), the processing chain
@@ -290,10 +294,11 @@ a knob resets it to the **factory value** (from `defaultPlan`).
     (gated by `!usesSend`; their `channelControl` capability lookup is skipped there too). A send tab keeps only
     the fader (send level), MUTE, PRE and PAN/BAL.
   So every strip control is per-tab independent — no MAIN-output control leaks into the send tabs. When a
-  **channel's / FX channel's own master is muted** (channel ON = off), a send-mode strip dims and shows a red
-  "CH MUTE" badge on its scribble (the muted-graph-node visual language), since the whole channel — every send
-  — is then silenced; the per-send MUTE/PRE/BAL stay operable (send ON/OFF and channel ON are independent
-  device params, and the device offers no gate-out display of its own).
+  **channel's / FX channel's own master is muted** (channel ON = off), the strip dims and shows a red
+  "CH MUTE" badge on its scribble (the muted-graph-node visual language) on **every tab — MAIN and send
+  alike**, since the whole channel — every send — is then silenced; the per-tab MUTE/PRE/BAL stay operable
+  (the send ON/OFF and the channel ON are independent device params, and the device offers no gate-out
+  display of its own).
 - **Scribble colour** — the scribble uses each node's **CH SETTING colour** (`plan.nodeColors`, a device
   parameter) rather than the node-kind rail. The text colour is whichever of black/white has the higher
   actual contrast ratio (WCAG relative luminance, `inkOn`), paired with a faint opposite-tone halo

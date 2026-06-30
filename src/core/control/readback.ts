@@ -9,7 +9,7 @@ import { ref } from "../../models/types";
 import type { ConnParams, EqBand, EqOneKnobParams, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsBand, SsmcsParams } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
 import { vdGet, vdGetStr } from "../platform";
-import { colorIndexToHex, COMP_EQ_SSMCS, normalizeInsertFx, PARAMS } from "./params";
+import { colorIndexToHex, COMP_EQ_SSMCS, FX_STEREO_ASSIGN_ON, normalizeInsertFx, PARAMS } from "./params";
 import type { ParamName } from "./params";
 import {
   FX_EFFECT_ARRAY_PARAM,
@@ -201,7 +201,9 @@ export async function applyDeviceState(
           update.ssmcs = { ...(await readSsmcs(dyn.y)), sweetSpotData };
         }
       }
-      conn.params = { ...conn.params, level, pan };
+      // → STEREO bus assign ON (post-fader, V1.3) onto the main path connection's on.
+      const stereoOn = vdToBool(await vdGet(cc.stereoOn, 0, cc.y));
+      conn.params = { ...conn.params, level, pan, on: stereoOn };
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...update };
       applied++;
     } catch (e) {
@@ -280,7 +282,8 @@ export async function applyDeviceState(
     try {
       const level = vdToLevel(await vdGet(PARAMS.FX_CHANNEL_FADER.id, 0, fxY));
       const pan = vdToPan(await vdGet(PARAMS.FX_CHANNEL_BAL.id, 0, fxY));
-      conn.params = { ...conn.params, level, pan };
+      const on = vdToBool(await vdGet(FX_STEREO_ASSIGN_ON, 0, fxY));
+      conn.params = { ...conn.params, level, pan, on };
       applied++;
     } catch (e) {
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
@@ -727,8 +730,8 @@ export function applyDirect(plan: Plan, node: string, name: ParamName, raw: numb
     case "PAN_LINK":
       setNp({ panLink: vdToBool(raw) });
       return true;
-    case "TO_ST":
-      // The MIX → STEREO "TO ST" switch lands on the MIX → STEREO connection's on.
+    case "TO_ST": // MIX → STEREO "TO ST" switch → the MIX → STEREO connection's on
+    case "STEREO_ASSIGN_ON": // CH/FX → STEREO assign ON → that node's main-path connection's on
       setMain({ on: vdToBool(raw) });
       return true;
     case "PHONES_LEVEL":

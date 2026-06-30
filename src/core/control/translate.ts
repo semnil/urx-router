@@ -34,6 +34,8 @@ import {
   OUTPUT_INSERT_FX_OPTIONS,
   paramNameForId,
   PARAMS,
+  FX_STEREO_ASSIGN_ON,
+  STEREO_ASSIGN_ON_STEREO,
   STEREO_FADER,
   STEREO_ON,
   STEREO_PAN,
@@ -217,6 +219,8 @@ export interface SectionToggle {
 export interface ChannelControl {
   fader: number;
   on: number;
+  /** → STEREO bus assign ON (post-fader). Distinct from `on` (the channel master). */
+  stereoOn: number;
   pan: number;
   y: number;
   hasHpf: boolean;
@@ -261,6 +265,7 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
     return {
       fader: STEREO_FADER,
       on: STEREO_ON,
+      stereoOn: STEREO_ASSIGN_ON_STEREO,
       pan: STEREO_PAN,
       y: si,
       hasHpf: false,
@@ -283,6 +288,7 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
   return {
     fader: PARAMS.CH_FADER.id,
     on: PARAMS.CH_ON.id,
+    stereoOn: PARAMS.STEREO_ASSIGN_ON.id,
     pan: PARAMS.CH_PAN.id,
     y,
     hasHpf: true,
@@ -1003,12 +1009,16 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (cc) {
       out.push(rawCommand("CH_FADER", cc.fader, "level", cc.y, conn.params?.level ?? 0));
       out.push(rawCommand("CH_PAN", cc.pan, "pan", cc.y, conn.params?.pan ?? 0));
+      // → STEREO bus assign ON (post-fader, firmware V1.3). Ships ON; distinct from
+      // the channel master CH_ON (emitted below from np.on).
+      out.push(rawCommand("STEREO_ASSIGN_ON", cc.stereoOn, "bool", cc.y, (conn.params?.on ?? true) ? 1 : 0));
     } else {
       const fxY = fxChannelIndex(fromId);
       const mixL = MIX_FADER_INSTANCES[fromId]?.[0];
       if (fxY !== null) {
         out.push(rawCommand("FX_CHANNEL_FADER", PARAMS.FX_CHANNEL_FADER.id, "level", fxY, conn.params?.level ?? 0));
         out.push(rawCommand("FX_CHANNEL_BAL", PARAMS.FX_CHANNEL_BAL.id, "pan", fxY, conn.params?.pan ?? 0));
+        out.push(rawCommand("STEREO_ASSIGN_ON", FX_STEREO_ASSIGN_ON, "bool", fxY, (conn.params?.on ?? true) ? 1 : 0));
       } else if (mixL !== undefined) {
         // MIX 1/2 → STEREO "TO ST": an ON/OFF switch at the MIX's L instance (off
         // by default, factory). No level/pan — the send is fixed routing.

@@ -688,16 +688,16 @@ export class Console {
     const level = usesSend ? this.getSend(m.id, this.mode as SendTarget) : this.getMain(m);
     const np = plan.nodeParams[m.id] ?? {};
 
-    // In a send mode the strip's MUTE chip controls that send's ON/OFF, not the
-    // channel master ON; when the master is muted the whole channel (and thus every
-    // send) is silenced regardless. Surface that override at the strip level (dim +
-    // a CH MUTE badge) so the per-send controls stay operable while the user still
-    // sees the channel is muted. Applies to input channels and FX channels alike;
-    // the MAIN tab shows the master directly via the MUTE chip instead. A MIX strip
-    // reuses the same indicator: its MUTE chip is the MIX → STEREO "TO ST" send, so
-    // the MIX master ON (675, edited in the graph inspector only) shows read-only as
-    // the dim + CH MUTE badge here too.
-    const masterMuted = (usesSend || this.isMixBus(m.id)) && np.on === false;
+    // For an input/FX channel the MUTE chip always controls a → bus send's ON/OFF,
+    // never the channel master: in MAIN it is the → STEREO assign ON (firmware V1.3),
+    // in a send tab the → MIX/FX send. When the channel master (CH_ON) is muted the
+    // whole channel — and thus every send — is silenced regardless, so surface that
+    // override at the strip level (dim + a CH MUTE badge) while the per-send chip
+    // stays operable. A MIX strip reuses the same indicator: its MUTE chip is the
+    // MIX → STEREO "TO ST" send, so the MIX master ON (675, edited in the graph
+    // inspector only) shows read-only as the dim + CH MUTE badge here too.
+    const usesConnMute = m.isChannel || this.isFxChannel(m.id) || this.isMixBus(m.id);
+    const masterMuted = usesConnMute && np.on === false;
 
     const strip = el("div", "con-strip" + (isMaster ? " master" : "") + (masterMuted ? " master-muted" : ""));
     strip.style.setProperty("--rail", m.rail);
@@ -733,10 +733,12 @@ export class Console {
     // channel + input (HA) group
     const top = el("div", "con-chips");
     if (m.hasMute) {
-      if (this.isMixBus(m.id) || usesSend) {
+      if (usesConnMute) {
         // The MUTE drives a connection's ON/OFF (never its wire presence): a CH/FX →
-        // MIX/FX send (ships ON), or — on a MIX strip in MAIN — the MIX → STEREO "TO
-        // ST" (ships off). The fixed wire is never added/removed, only params.on flips.
+        // MIX/FX send or → STEREO assign (ships ON), or — on a MIX strip — the MIX →
+        // STEREO "TO ST" (ships off). The fixed wire is never added/removed, only
+        // params.on flips. sendStripConn picks the → STEREO conn in MAIN, the → MIX/FX
+        // conn in a send tab.
         const mix = this.isMixBus(m.id);
         const conn = mix
           ? () => this.sendConn(this.hooks.getPlan(), m.id, MAIN_BUS)
@@ -749,8 +751,8 @@ export class Console {
           return !nextOn; // chip "on" (highlighted) = muted
         });
       } else {
-        // Master ON/OFF on the node's own `on` flag: a channel (CH_ON) / the STEREO
-        // master (STEREO_MASTER_ON) write to the device; a MONITOR bus is plan-only
+        // Master ON/OFF on the node's own `on` flag: the STEREO master
+        // (STEREO_MASTER_ON) writes to the device; a MONITOR bus is plan-only
         // (no confirmed monitor-ON param), so its mute lives in the plan alone.
         this.makeChip(m.id, top, t().console.mute, true, np.on === false, () => {
           const muted = planOf().on === false;

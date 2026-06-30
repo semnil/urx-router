@@ -9,9 +9,9 @@ document.
 
 ## Sources
 
-- Official block diagram: `USB AUDIO INTERFACE URX44V URX44 URX22 V1.2 Block Diagram`
-  (Yamaha Corporation, 2025, file ID `MWEM-B0`).
-  URL: <https://usa.yamaha.com/files/download/other_assets/5/2927055/URX44V_URX44_URX22_Block_Diagram_En_B0.pdf>
+- Official block diagram: `USB AUDIO INTERFACE URX44V URX44 URX22 Block Diagram`
+  (Yamaha Corporation, 2026, file ID `MWEM-C0`).
+  URL: <https://usa.yamaha.com/files/download/other_assets/5/2927055/urx44v_44_22_block_diagram_en_c0.pdf>
 - Official user guide (HTML): <https://manual.yamaha.com/audio/music_audio_production/urx44_urx22/ug/en-US/>
 
 > The PDFs themselves are not included in the repository because they are copyrighted. The structure
@@ -94,8 +94,8 @@ Connection kinds (`kind`):
 - `patch` — the receiver accepts **only one wire** (output patch / Signal Assign).
 - `key` — the receiver accepts **only one wire** (ducker sidechain-trigger select). A selector like
   `source`, but it never carries the mono-pair source mirroring, so it is its own kind (see §10).
-- `send` — the receiver accepts **many** (a bus is a summing mix), with level/pan/PRE-POST. Sends from channels / FX to buses.
-  The fixed main-fader paths (CH / FX channel → STEREO) are LEVEL/PAN only and carry **no PRE/POST** (see §2).
+- `send` — the receiver accepts **many** (a bus is a summing mix), with level/pan/PRE-POST/ON. Sends from channels / FX to buses.
+  The fixed main-fader paths (CH / FX channel → STEREO) are LEVEL/PAN + a **STEREO-assign ON** only and carry **no PRE/POST** (see §2).
 - `sendSwitch` — the receiver accepts **many** but the send is **ON/OFF only** (no per-wire level/pan). Used for the MIX→STEREO "TO ST" send.
 
 > A `source` / `patch` / `key` receiver rejects a second selector wire (only one source can feed it).
@@ -151,9 +151,13 @@ PAN/BAL uses the device scale **L63 – C – R63** (the UG shows C as the nomin
 hard-pan ends). PRE/POST states whether the send is tapped **before (PRE) or after (POST) the STEREO
 main-fader level** (the CH → STEREO level). The STEREO send itself — being that reference — has no PRE/POST.
 
-- STEREO (TO ST) — the channel's main fader path. In the block diagram it sits *outside* the dashed
-  SEND blocks; only LEVEL/PAN stay editable (**no PRE/POST and no per-send ON** — this path is the
-  PRE/POST reference point). Seeded at **unity (0 dB)**.
+- STEREO — the channel's main fader path. In the block diagram it sits *outside* the dashed
+  SEND blocks; LEVEL/PAN + a **STEREO-assign ON/OFF** stay editable. That ON is the **post-fader SEND TO
+  STEREO switch** added in firmware V1.3 (`params.on`, default ON), **independent of the channel master
+  (CH_ON)** — CH_ON mutes the whole channel, this ON only cuts the send into STEREO. It has **no PRE/POST**
+  (this path is the PRE/POST reference point). Seeded at **unity (0 dB)**. In the console the **MAIN tab
+  MUTE** toggles this STEREO assign (just as the MIX/FX tab MUTE toggles each send); the channel master
+  (CH_ON) is set from the graph inspector only (when off the strip dims with a CH MUTE tag).
 - MIX 1 / MIX 2 — LEVEL/PAN/**PRE/POST** + **ON/OFF (SEND_ON)**. Seeded **ON at -∞ (off)**.
 - FX 1 / FX 2 — LEVEL/**PRE/POST** + **ON/OFF (SEND_ON)** (FX-bus sends are mono and carry **no PAN**). Seeded **ON at -∞ (off)**.
 
@@ -177,15 +181,17 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
 - FX 1 / FX 2 channel → STEREO / MIX 1 / MIX 2 (`send`; **all fixed** — always wired, non-removable.
   The device has no "remove this routing", only a per-send ON switch (SEND_ON) and level, so the model
   matches that (same fixed + `params.on` model as the §2 input-channel → bus sends — every send unified).
-  - The **channel → STEREO** leg is the FX main path: **no PRE/POST** (LEVEL/BAL only — the main path is the
-    PRE/POST reference point).
+  - The **channel → STEREO** leg is the FX main path: **no PRE/POST** but a **STEREO-assign ON/OFF** (LEVEL/BAL
+    + the V1.3 post-fader ON `params.on` — the main path is the PRE/POST reference point).
   - The **MIX 1/2 sends** carry LEVEL/BAL/**PRE/POST** plus an **ON/OFF (SEND_ON)** held as a connection
     param (`params.on`, default ON) and toggled by the console's **MIX 1/2 tab MUTE button**.
   - Each leg is seeded at **-∞ (off)** by default so nothing sums until raised. **All ship ON at the factory**
     (SEND_ON = 1 at -∞) and a `new` plan seeds them ON.
-  - Each FX channel also has its own **channel ON/OFF** (mute), handled like the input-channel and
-    STEREO-master ON. **Both FX 1 and FX 2 ship ON at the factory**; the console controls it via the **MAIN tab
-    MUTE** and the inspector (the MIX tab MUTE means the send ON/OFF above). Off dims the node and tags it MUTE.
+  - Each FX channel also has its own **channel ON/OFF** (mute), handled like the input-channel CH_ON.
+    **Both FX 1 and FX 2 ship ON at the factory**. It is **set from the graph inspector only** — the console
+    MUTE drives a send ON/OFF on every tab (MAIN tab = → STEREO assign, MIX tab = → MIX send), so when the
+    channel master is off the strip dims with a **CH MUTE** tag (on the MAIN and send tabs alike). Off also
+    dims the node on the canvas and tags it MUTE.
   - MIX 1 / MIX 2 buses also have their own **master ON/OFF** (a bus-master switch like the STEREO master;
     ships ON), independent of the MIX → STEREO TO ST switch. It is **edited only in the graph inspector**; the
     console shows it read-only — when the master is off the MIX strip dims and gets a CH MUTE tag (the same

@@ -168,13 +168,13 @@ test("mirrors a paired channel's source onto its partner (CH1/CH2)", async ({ pa
   await expect(wires(page)).toHaveCount(FIXED);
 });
 
-test("drops PRE/POST from the fixed CH -> STEREO send", async ({ page }) => {
-  // CH1 -> STEREO is the fixed main-fader path. It exposes LEVEL and PAN but no
-  // PRE/POST toggle — it is itself the PRE/POST reference. Select it by endpoint
-  // (off sends paint behind, so it is no longer simply the first wire).
+test("drops PRE/POST from the fixed CH -> STEREO send but keeps its STEREO-assign ON", async ({ page }) => {
+  // CH1 -> STEREO is the fixed main-fader path. Since firmware V1.3 it carries a
+  // STEREO-assign ON (post-fader) plus LEVEL and PAN, but no PRE/POST toggle — it is
+  // itself the PRE/POST reference. Select it by endpoint (off sends paint behind).
   await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]').dispatchEvent("pointerdown");
-  await expect(page.locator("#inspector .param")).toHaveCount(2);
-  await expect(page.locator("#inspector .toggle")).toHaveCount(0);
+  await expect(page.locator("#inspector .param")).toHaveCount(3); // Send ON + Pan + Level
+  await expect(page.locator("#inspector .toggle")).toHaveCount(1); // the STEREO-assign ON only (no PRE/POST)
   await expect(page.locator("#inspector")).toContainText("Fixed connection");
 });
 
