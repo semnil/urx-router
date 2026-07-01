@@ -378,6 +378,8 @@ export const en = {
       `The connected device is ${device}, but ${ui} is selected. Switch to ${device} (replacing the current plan) and fetch?`,
     write: (n: number): string =>
       `Write ${n} change${n === 1 ? "" : "s"} to the device? This overwrites the device's current settings.`,
+    firmwareMismatch: (device: string, supported: string): string =>
+      `The connected device's firmware (${device}) differs from the version this app was tested with (${supported}). It may not work correctly. Continue anyway?`,
     selfTest:
       "Run the device self-test? It briefly overwrites every parameter to verify writes, then restores the original state. Outputs stay muted throughout (faders floored, oscillator and phantom off).",
     selfTestExport:

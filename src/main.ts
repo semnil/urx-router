@@ -51,6 +51,7 @@ import type { ReadbackResult } from "./core/control/readback";
 import { diffNames, diffPlan, formatWriteReport, sendConverging, sendNames } from "./core/control/client";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
+import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
 
 // Clear persisted UI state (theme / model / meter points / consent gate / recent
@@ -790,6 +791,14 @@ async function confirmDiscard(): Promise<boolean> {
   return confirmDialog(t().confirm.discard);
 }
 
+// Warn before touching a unit whose System firmware differs from the version this
+// build was validated against — the parameter mappings may not match. Returns true
+// to proceed (matching firmware, or the user chose to continue), false to abort.
+async function confirmFirmware(device: DeviceSummary): Promise<boolean> {
+  if (!firmwareMismatch(device.firmware)) return true;
+  return confirmDialog(t().confirm.firmwareMismatch(device.firmware, SUPPORTED_SYSTEM_FIRMWARE));
+}
+
 picker.addEventListener("change", async () => {
   const next = picker.value as ModelId;
   if (next === modelId) return;
@@ -941,6 +950,10 @@ if (!DEMO) {
     let report: ErrorReport = null;
     try {
       await withDevice(t().status.fetchConnecting, t().status.fetchError, async (device) => {
+        if (!(await confirmFirmware(device))) {
+          setStatus(t().status.canceled);
+          return;
+        }
         if (!(await confirmDiscard())) {
           setStatus(t().status.canceled);
           return;
@@ -1016,6 +1029,10 @@ if (!DEMO) {
       let report: ErrorReport = null;
       try {
         await withDevice(t().status.writeConnecting, t().status.writeError, async (device) => {
+          if (!(await confirmFirmware(device))) {
+            setStatus(t().status.canceled);
+            return;
+          }
           if (device.model !== modelId) {
             showError(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
             return;
@@ -1097,6 +1114,7 @@ if (!DEMO) {
         await vdDisconnect(device.epoch);
         showError(message);
       };
+      if (!(await confirmFirmware(device))) return await abort(t().status.canceled);
       if (!(await confirmDiscard())) return await abort(t().status.canceled);
       try {
         // A device of a different model maps onto the wrong channels; offer to

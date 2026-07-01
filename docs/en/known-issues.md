@@ -63,6 +63,12 @@ protocol, so newer versions are not guaranteed to behave identically.
 | Firmware | V1.3.0.1 |
 | Device Center | 2.2.0 (2.2.0.2) |
 
+On connect the app reads the unit's System firmware version (`/vd/device`); when
+it differs from the verified version above, fetch, write and live sync warn at
+the start that the app may not work correctly. The user can continue or stop — it
+never forces a halt (and when the firmware cannot be read, it proceeds without a
+warning).
+
 ## The AUTO (auto gain) trigger is not modeled
 
 The device's input screens offer an **AUTO** button that runs a one-shot

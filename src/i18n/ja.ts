@@ -371,6 +371,8 @@ export const ja: Messages = {
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。${device} に切り替えて (現在の計画は破棄) 取得しますか?`,
     write: (n: number): string =>
       `${n} 件の変更をデバイスに書き込みますか? デバイスの現在の設定を上書きします。`,
+    firmwareMismatch: (device: string, supported: string): string =>
+      `接続中のデバイスのファームウェア (${device}) は、このアプリの動作確認バージョン (${supported}) と異なります。正しく動作しない可能性があります。続行しますか?`,
     selfTest:
       "デバイスのセルフテストを実行しますか? 全パラメータを一時的に上書きして書き込みを検証し、元の状態に復元します。実行中は出力をミュート (フェーダー最小・発振器/ファンタム OFF) します。",
     selfTestExport:

@@ -15,11 +15,14 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::ipc::Channel;
 
-/// Device identity exposed to the frontend (no dev_uid / serial).
+/// Device identity exposed to the frontend (no dev_uid / serial). `firmware` is the
+/// unit's System firmware version (from /vd/device), or empty when the device does
+/// not report one; the frontend warns when it differs from the validated version.
 #[derive(Clone, Serialize)]
 pub struct DeviceSummary {
     pub model: String,
     pub label: String,
+    pub firmware: String,
 }
 
 /// A freshly opened connection handed to the frontend: the device plus the
@@ -464,9 +467,10 @@ mod imp {
                 return Err("no-device".into());
             };
             let dev_uid = dev.get("dev_uid").and_then(Value::as_str).unwrap_or_default().to_string();
-            let summary = DeviceSummary {
+            let mut summary = DeviceSummary {
                 model: dev.get("model").and_then(Value::as_str).unwrap_or("URX").to_string(),
                 label: dev.get("label").and_then(Value::as_str).unwrap_or("URX").to_string(),
+                firmware: String::new(),
             };
             if dev_uid.is_empty() {
                 return Err("device list entry had no identifier".into());
@@ -480,6 +484,10 @@ mod imp {
                 eprintln!("vd: URX listed but sync_status = {status}; treating as no-device");
                 return Err("no-device".into());
             }
+            // Read the System firmware version so the frontend can warn when the
+            // attached unit's firmware differs from the validated one. Best-effort:
+            // an unreadable list leaves it empty, which disables the warning.
+            summary.firmware = system_firmware(ws, &dev_uid);
             return Ok((dev_uid, summary));
         }
         // No device list within the deadline. The broker answered the WebSocket
@@ -489,11 +497,13 @@ mod imp {
         Err("no-device".into())
     }
 
-    /// Query the unit's live link state via /vd/synchronize: "online" means a URX
-    /// is actually attached. Device Center keeps the getDeviceList entry after the
-    /// unit is unplugged but reports a non-"online" status here, so this is what
-    /// separates a present device from a stale list entry.
-    fn sync_status(ws: &mut Ws, dev_uid: &str) -> Result<String, String> {
+    /// Send a `requestVD` GET for `uri` and return the matched response's `vdp.data`.
+    /// Shared by the handshake-time reads (synchronize, device); drains non-matching
+    /// frames until the address echoes back or the 3s deadline lapses. The parameter
+    /// read path (do_get_value) keeps its own loop — it also screens for a mid-read
+    /// device-lost push, which these handshake reads run before a session exists.
+    fn vd_get_data(ws: &mut Ws, dev_uid: &str, uri: &str) -> Result<Value, String> {
+        let base = uri.split('?').next().unwrap_or(uri).to_string();
         send_json(
             ws,
             json!({
@@ -501,7 +511,7 @@ mod imp {
                 "method": "requestVD",
                 "params": {
                     "dev_uid": dev_uid,
-                    "vdp": { "method": "get", "uri": "/vd/synchronize" }
+                    "vdp": { "method": "get", "uri": uri }
                 }
             }),
         )?;
@@ -514,16 +524,48 @@ mod imp {
             }
             let vdp = msg.pointer("/params/vdp");
             let ruri = vdp.and_then(|v| v.get("uri")).and_then(Value::as_str).unwrap_or("");
-            if ruri.split('?').next().unwrap_or(ruri) != "/vd/synchronize" {
+            if ruri.split('?').next().unwrap_or(ruri) != base {
                 continue;
             }
             return vdp
-                .and_then(|v| v.pointer("/data/sync_status"))
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .ok_or_else(|| "synchronize response had no sync_status".to_string());
+                .and_then(|v| v.get("data"))
+                .cloned()
+                .ok_or_else(|| format!("vd response had no data for {base}"));
         }
-        Err("timed out waiting for sync status".into())
+        Err(format!("timed out waiting for {base}"))
+    }
+
+    /// Query the unit's live link state via /vd/synchronize: "online" means a URX
+    /// is actually attached. Device Center keeps the getDeviceList entry after the
+    /// unit is unplugged but reports a non-"online" status here, so this is what
+    /// separates a present device from a stale list entry.
+    fn sync_status(ws: &mut Ws, dev_uid: &str) -> Result<String, String> {
+        vd_get_data(ws, dev_uid, "/vd/synchronize")?
+            .pointer("/sync_status")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| "synchronize response had no sync_status".to_string())
+    }
+
+    /// The unit's System firmware version, from /vd/device's firm_list. Best-effort:
+    /// any failure (no response, missing list, no System entry) yields an empty string
+    /// so the frontend simply skips the firmware-mismatch warning rather than blocking.
+    fn system_firmware(ws: &mut Ws, dev_uid: &str) -> String {
+        let Ok(data) = vd_get_data(ws, dev_uid, "/vd/device") else {
+            return String::new();
+        };
+        let Some(list) = data.pointer("/firm_list").and_then(Value::as_array) else {
+            return String::new();
+        };
+        // The System entry, matched by name (case-insensitive). A missing or renamed
+        // entry leaves the version empty (warning disabled) rather than mistaking
+        // another component's version for System.
+        for entry in list {
+            if entry.get("firm_name").and_then(Value::as_str).unwrap_or("").eq_ignore_ascii_case("system") {
+                return entry.get("firm_version").and_then(Value::as_str).unwrap_or("").to_string();
+            }
+        }
+        String::new()
     }
 
     fn do_set(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64, value: Value) -> Result<(), String> {

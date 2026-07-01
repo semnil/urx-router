@@ -150,6 +150,8 @@ export function nativeWriteBinary(path: string, bytes: Uint8Array): Promise<void
 export interface DeviceSummary {
   model: string;
   label: string;
+  /** The unit's System firmware version, or empty when the device reports none. */
+  firmware: string;
 }
 
 /** A freshly opened connection: the device plus the generation (epoch) the Rust

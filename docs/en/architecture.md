@@ -359,7 +359,11 @@ the Rust worker's `handshake`: it asks the broker `getDeviceList` for the unit's
 unit is physically attached by reading `/vd/synchronize` — `sync_status` is `"online"` only while a URX is
 connected. Device Center keeps the `getDeviceList` entry after the unit is unplugged (and answers cached
 parameter reads), so the list alone cannot tell a present device from a stale entry; the `sync_status` check
-is what distinguishes them.
+is what distinguishes them. Once online, the handshake also reads the unit's System firmware version from
+`/vd/device` (the `firm_list` entry named "System") and carries it on `DeviceSummary.firmware`; the frontend
+compares it against the validated `SUPPORTED_SYSTEM_FIRMWARE` (`core/control/firmware.ts`) and warns at the
+start of fetch / write / live sync when it differs, letting the user continue or stop. The read is best-effort:
+an unreadable firmware leaves the field empty, which disables the warning rather than blocking the operation.
 
 A failed connect returns a stable, machine-readable code rather than a raw English string: `broker-unreachable`
 (Device Center not running), `no-device` (running, but no URX attached — the empty-list, `sync_status != online`,
