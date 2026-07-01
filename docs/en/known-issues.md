@@ -60,8 +60,8 @@ protocol, so newer versions are not guaranteed to behave identically.
 | Component | Verified version |
 | --- | --- |
 | Device | URX44V |
-| Firmware | V1.2.0.2 |
-| Device Center | 2.1.0 (2.1.0.1) |
+| Firmware | V1.3.0.1 |
+| Device Center | 2.2.0 (2.2.0.2) |
 
 ## The AUTO (auto gain) trigger is not modeled
 

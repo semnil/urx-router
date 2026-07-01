@@ -30,6 +30,31 @@ describe("planToCommands", () => {
     expect(pan!.request.uri).toBe("/vd/parameters/141:0:0?operation=value");
   });
 
+  it("emits a STEREO-assign ON per channel + FX, defaulting ON, independent of CH_ON", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    const cmds = planToCommands(model, plan);
+    // 8 channels (4 mono + 4 stereo) + 2 FX returns, all default ON (1).
+    const assign = cmds.filter((c) => c.name === "STEREO_ASSIGN_ON");
+    expect(assign).toHaveLength(10);
+    expect(assign.every((c) => c.vdValue === 1)).toBe(true);
+    // Mono CH1 = 142, stereo CH5/6 = 269, FX1 = 340 — distinct from CH_ON (140).
+    expect(assign.some((c) => c.request.uri === "/vd/parameters/142:0:0?operation=value")).toBe(true);
+    expect(assign.some((c) => c.request.uri === "/vd/parameters/269:0:0?operation=value")).toBe(true);
+    expect(assign.some((c) => c.request.uri === "/vd/parameters/340:0:0?operation=value")).toBe(true);
+  });
+
+  it("STEREO-assign ON follows the main-path connection's on, not the channel master", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    // Turn the → STEREO send off but leave the channel master (CH_ON) on.
+    plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!.params = { on: false };
+    plan.nodeParams.ch1 = { on: true };
+    const cmds = planToCommands(model, plan);
+    expect(cmds.find((c) => c.name === "STEREO_ASSIGN_ON" && c.paramId === 142)!.vdValue).toBe(0);
+    expect(cmds.find((c) => c.name === "CH_ON" && c.y === 0)!.vdValue).toBe(1);
+  });
+
   it("defaults unedited channels to unity / center", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

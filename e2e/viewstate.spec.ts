@@ -61,16 +61,19 @@ test("a console fader edit is read back on the graph's CH -> STEREO wire", async
   ).toHaveText("+1.2 dB");
 });
 
-test("a graph-side mute is reflected on the console strip", async ({ page }) => {
+test("a graph-side channel mute shows the CH MUTE badge on the console strip", async ({ page }) => {
   // Mute CH 1 from the graph inspector (the channel ON toggle), then open the
-  // console: its MUTE chip must already read pressed.
+  // console: the console MUTE chip drives the → STEREO assign, so a channel-master
+  // mute surfaces as the strip's CH MUTE badge (dim), not the MUTE chip pressed.
   await page.locator('g.node[data-id="ch1"]').click();
   const onToggle = page.locator("#inspector .param", { hasText: "Channel" }).first();
   // The channel ON/OFF toggle lives in the inspector; click its OFF button to mute.
   await onToggle.locator(".toggle button").filter({ hasText: /^OFF$/ }).click();
 
   await page.click("#btn-view-console");
-  await expect(strip(page, "CH 1").getByRole("button", { name: "MUTE" })).toHaveAttribute("aria-pressed", "true");
+  const ch = strip(page, "CH 1");
+  await expect(ch).toHaveClass(/master-muted/);
+  await expect(ch.locator(".ch-mute")).toHaveText("CH MUTE");
 });
 
 test("a console MUTE persists across a GRAPH round-trip", async ({ page }) => {

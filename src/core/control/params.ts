@@ -65,6 +65,13 @@ export const PARAMS = {
   CH_FADER: { id: 139, axis: "input", encoding: "level", follow: "direct" },
   /** Input channel ON / mute (default ON). */
   CH_ON: { id: 140, axis: "input", encoding: "bool", follow: "direct" },
+  /** Input channel → STEREO bus assign ON, post-fader (default ON). Independent of
+   *  CH_ON (the channel master): this only gates the send into the STEREO main mix.
+   *  Mono id 142; stereo channels use 269, FX channels 340 — all emitted under this
+   *  one name (the id comes from channelControl / FX_STEREO_ASSIGN_ON). Added by
+   *  firmware V1.3 (SEND TO STEREO [ON]); confirmed on URX44V (2026-06-30, LCD toggle
+   *  → 142/269/340 track 1↔0; max=1 def=1, software write lands). */
+  STEREO_ASSIGN_ON: { id: 142, axis: "input", encoding: "bool", follow: "direct" },
   /** Input channel PAN/BAL (±63). */
   CH_PAN: { id: 141, axis: "input", encoding: "pan", follow: "direct" },
   /** Input channel HPF ON. */
@@ -716,6 +723,12 @@ export const SD_REC_TRACK_COUNT_OPTIONS = [2, 4, 6, 8, 10, 12, 14, 16].map((n) =
 export const STEREO_FADER = 266;
 export const STEREO_ON = 267;
 export const STEREO_PAN = 268;
+/** Stereo channel → STEREO bus assign ON (parallel to mono STEREO_ASSIGN_ON 142,
+ *  at +3 from the stereo fader block). Emitted under the STEREO_ASSIGN_ON name. */
+export const STEREO_ASSIGN_ON_STEREO = 269;
+/** FX channel → STEREO bus assign ON (parallel block, +3 from FX_CHANNEL_FADER 337).
+ *  Emitted under the STEREO_ASSIGN_ON name. */
+export const FX_STEREO_ASSIGN_ON = 340;
 
 /** Reverse lookup of the confirmed catalog: the param that owns a param id, if
  *  any. The self-test's collision audit uses it to tell a guessed id apart from

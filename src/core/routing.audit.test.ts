@@ -157,10 +157,12 @@ describe("send predicate consistency", () => {
     expect(sendHasOn(u44, ref("bus.mix1", "out"), ref("bus.stereo", "in"))).toBe(true);
   });
 
-  it("the CH/FX main fader path into STEREO has neither a tap nor an ON switch", () => {
+  it("the CH/FX main path into STEREO has a STEREO-assign ON switch but no PRE/POST tap (firmware V1.3)", () => {
     expect(sendHasTap(u44, ref("ch1", "out"), ref("bus.stereo", "in"))).toBe(false);
-    expect(sendHasOn(u44, ref("ch1", "out"), ref("bus.stereo", "in"))).toBe(false);
-    expect(sendHasOn(u44, ref("bus.fx1", "out"), ref("bus.stereo", "in"))).toBe(false);
+    expect(sendHasOn(u44, ref("ch1", "out"), ref("bus.stereo", "in"))).toBe(true);
+    expect(sendHasOn(u44, ref("bus.fx1", "out"), ref("bus.stereo", "in"))).toBe(true);
+    // OSC → STEREO is removable (not fixed), so its on/off is wire presence, not a send ON.
+    expect(sendHasOn(u44, ref("bus.osc", "out"), ref("bus.stereo", "in"))).toBe(false);
   });
 });
 

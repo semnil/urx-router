@@ -40,13 +40,14 @@ export function sendHasTap(model: DeviceModel, from: string, to: string): boolea
 }
 
 // Whether a route carries a per-send ON switch (the SEND_ON of a CH/FX -> MIX/FX
-// send, or the MIX -> STEREO "TO ST"). Every tapped send has one; so does the fixed
-// MIX -> STEREO sendSwitch. The fixed CH/FX -> STEREO main-fader paths do not (they
-// are the channel/return fader itself). Lets the UI ask the topology rather than
-// re-deriving it from tap + kind proxies.
+// send, the MIX -> STEREO "TO ST", or the CH/FX -> STEREO assign ON). Every tapped
+// send has one; so do the fixed routes into STEREO — the MIX -> STEREO sendSwitch
+// and, since firmware V1.3, the CH/FX -> STEREO main paths (a post-fader STEREO
+// assign ON, distinct from the channel master). Lets the UI ask the topology rather
+// than re-deriving it from tap + kind proxies.
 export function sendHasOn(model: DeviceModel, from: string, to: string): boolean {
   if (sendHasTap(model, from, to)) return true;
-  return isFixedConnection(model, from, to) && ruleKind(model, from, to) === "sendSwitch";
+  return isFixedConnection(model, from, to) && parseRef(to).nodeId === "bus.stereo";
 }
 
 // Whether a send's PRE/POST tap can be written to the device from software — the

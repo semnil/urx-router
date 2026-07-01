@@ -66,6 +66,6 @@ CI は 4 ワークフロー: PR は build + unit (`ci.yml`)、E2E と third-part
 
 ## 一次情報
 
-- ブロックダイアグラム V1.2 (`MWEM-B0`): <https://usa.yamaha.com/files/download/other_assets/5/2927055/URX44V_URX44_URX22_Block_Diagram_En_B0.pdf>
+- ブロックダイアグラム (`MWEM-C0`): <https://usa.yamaha.com/files/download/other_assets/5/2927055/urx44v_44_22_block_diagram_en_c0.pdf>
 - ユーザーガイド (HTML): <https://manual.yamaha.com/audio/music_audio_production/urx44_urx22/ug/en-US/>
 - 公式制御ソフト: TOOLS for MGX / URX (将来の制御解析対象)
