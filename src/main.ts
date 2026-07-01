@@ -302,8 +302,14 @@ const consoleView = new Console(consoleHost, {
 // Reflect a device-follow change back onto the plan's two views and re-base the
 // live snapshot so our own next diff (and the echoes of this read/apply) measure
 // from the device truth. Selection/viewport are untouched (refresh, not rebuild).
+// Set when a device-follow reflect lands while the graph is hidden (console view
+// active): defer its full rebuild and let setView refresh once on the way back.
+let graphDirty = false;
 function reflectFollow(): void {
-  graph.refresh();
+  // Only one view is ever visible, so skip the hidden view's rebuild. consoleView
+  // already self-guards on visibility; the graph is gated here via graphDirty.
+  if (graphHost.hidden) graphDirty = true;
+  else graph.refresh();
   consoleView.refresh();
   syncRateUi();
   live?.resync();
@@ -316,16 +322,23 @@ function followStatus(result: ReadbackResult): string {
     ? t().status.liveFollowedPartial(result.applied, result.errors.length)
     : t().status.liveFollowed(result.applied);
 }
-// Coalesce direct-apply reflects onto one animation frame: a device knob sweep
-// fires ~10 notifies/s, each applied straight into the plan, but the heavier
-// render + snapshot re-base runs at most once per frame.
-let reflectRaf = 0;
+// Single funnel for every device-follow reflect (direct notifies and the scoped /
+// full read-backs alike): a knob sweep delivers notifies in ~30/s IPC batches, any
+// of which would otherwise drive a full graph rebuild + snapshot re-base. Coalesce
+// them onto one timer capped at ~20 Hz (the device streams at ~10 Hz). applyDirect
+// and the read-backs have already written the latest values into the plan, so a
+// deferred reflect still renders current truth — no trailing state is lost.
+const REFLECT_MIN_MS = 50;
+let reflectTimer = 0;
+let lastReflect = 0;
 function requestReflect(): void {
-  if (reflectRaf) return;
-  reflectRaf = requestAnimationFrame(() => {
-    reflectRaf = 0;
+  if (reflectTimer) return;
+  const wait = Math.max(0, REFLECT_MIN_MS - (performance.now() - lastReflect));
+  reflectTimer = window.setTimeout(() => {
+    reflectTimer = 0;
+    lastReflect = performance.now();
     reflectFollow();
-  });
+  }, wait);
 }
 const follow =
   DEMO || !live
@@ -343,7 +356,7 @@ const follow =
         reconcileNodes: async (nodeIds) => {
           const result = await applyNodeState(getModel(modelId), plan, nodeIds);
           if (result.errors.length) console.warn("device-follow scoped readback issues:", result.errors);
-          reflectFollow();
+          requestReflect();
           setStatus(followStatus(result));
         },
         // Escalation / idle safety net: pull the whole device into the plan.
@@ -351,7 +364,7 @@ const follow =
           const result = await applyDeviceState(getModel(modelId), plan);
           if (result.errors.length) console.warn("device-follow readback issues:", result.errors);
           plan.unreadNodes = result.unreadNodes;
-          reflectFollow();
+          requestReflect();
           setStatus(followStatus(result));
         },
         onFollow: () => setStatus(t().status.liveFollowing),
@@ -371,9 +384,15 @@ function setView(next: ViewName): void {
     consoleView.show();
   } else {
     consoleView.hide();
-    // Reflect any console edits back onto the graph.
-    graph.repaintNodes();
-    graph.repaintWires();
+    // Reflect any console edits back onto the graph. If a device-follow reflect
+    // landed while the graph was hidden, do the deferred full refresh instead.
+    if (graphDirty) {
+      graphDirty = false;
+      graph.refresh();
+    } else {
+      graph.repaintNodes();
+      graph.repaintWires();
+    }
   }
 }
 

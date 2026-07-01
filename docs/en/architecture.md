@@ -343,12 +343,14 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   new value**, so detection is free and exact. While Live sync is on, `core/control/follow.ts` `DeviceFollow`
   classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
   scalar (fader / pan / on / level, flagged `follow: "direct"` in the catalog) is decoded straight into the plan
-  with no read-back (`applyDirect`, render coalesced on the next frame); anything else is **scoped** — the owner
+  with no read-back (`applyDirect`, reflect coalesced through the shared reflect funnel); anything else is **scoped** — the owner
   node is re-read once the burst settles (`applyNodeState`, the same device→plan inverse as `applyDeviceState`
   but gated to just the touched node(s), so it can never drift); an unknown address or **more than three** distinct
   controls at once (more than two hands plus one — a scene / preset recall) escalates to a full read. After the
   device goes quiet a single full read runs as a missed-notify safety net. So a fader moved on the unit itself
-  follows on screen with no round-trip, while a deeper edit re-reads only its node. Echoes of the app's own
+  follows on screen with no round-trip, while a deeper edit re-reads only its node. Every reflect — direct and
+  read-back alike — funnels through one timer capped at ~20 Hz (the device streams at ~10 Hz), and since only one
+  view is ever visible the hidden view's rebuild is deferred until it is next shown. Echoes of the app's own
   writes are filtered against the live snapshot, and the address set is re-registered only when a structural edit
   changed it.
 
