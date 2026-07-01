@@ -1955,7 +1955,7 @@ select:focus-visible,
   right: 100%;
 }
 .con-ladder {
-  width: 16px;
+  width: 20px;
   border-radius: 3px;
   position: relative;
   overflow: hidden;
@@ -1963,8 +1963,18 @@ select:focus-visible,
   border: 1px solid var(--meter-frame);
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.55);
 }
+/* Bar column inside the shared ladder frame: one on a mono strip (full width), two on
+   a stereo one (L/R, positioned below with a centre gap). It's the positioning context
+   for the bar/shade/peak, so those keep their inset:0 geometry per channel. */
+.con-ladder.sig .mtrcol {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
 /* The level meter, an LED-segment bar with three color zones keyed to absolute dBFS:
-   green up to --zy, yellow up to --zr, red above. The bar spans the whole ladder and
+   green up to --zy, yellow up to --zr, red above. The bar spans the whole column and
    the shade below hides the unlit part, so a zone's color stays put as the level moves. */
 .con-ladder.sig .bar {
   position: absolute;
@@ -2009,21 +2019,21 @@ select:focus-visible,
 }
 .con-ladder.sig .peak {
   position: absolute;
-  left: -1px;
-  right: -1px;
+  left: 0;
+  right: 0;
   top: 0;
   height: 100%;
   /* Full-height and transparent; the 2px marker sits at its bottom edge (::after)
-     and the whole box is lifted by --pk of the ladder via translateY. translateY %
+     and the whole box is lifted by --pk of the column via translateY. translateY %
      is relative to the box's own height (= the ladder), so --pk (0..1) maps 1:1 to
      the meter travel, and the move is compositor-only (no layout / paint). */
   transform: translateY(calc(var(--pk, 0) * -100%));
   pointer-events: none;
 }
-/* Promote the shade/peak to their own compositor layers only while the strip is
-   metering (JS toggles `.live`): an idle strip then holds no extra layer. */
-.con-ladder.sig.live .shade,
-.con-ladder.sig.live .peak {
+/* Promote the shade/peak to their own compositor layers only while the lane is
+   metering (JS toggles `.live` on the column): an idle lane holds no extra layer. */
+.con-ladder.sig .mtrcol.live .shade,
+.con-ladder.sig .mtrcol.live .peak {
   will-change: transform;
 }
 .con-ladder.sig .peak::after {
@@ -2041,7 +2051,7 @@ select:focus-visible,
 /* Meter column: the ladder rises to the 0 dB scale mark (--mzero, shared with the
    fader ruler) and the OVER clip window sits just above it. */
 .con-meter {
-  width: 16px;
+  width: 20px;
   flex-shrink: 0;
   position: relative;
 }
@@ -2052,6 +2062,17 @@ select:focus-visible,
   bottom: var(--mfloor, 0%);
   height: calc(var(--mzero, 100%) - var(--mfloor, 0%));
   width: auto;
+}
+/* Stereo strip: the ladder and OVER frames stay undivided, but their bar columns and
+   clip cells split into L and R with a 2px centre gap (the frame's groove shows through
+   it as a hairline divider), so each channel meters and clips independently. */
+.con-meter.stereo .con-ladder.sig .mtrcol.l,
+.con-meter.stereo .con-over .lit.l {
+  right: calc(50% + 1px);
+}
+.con-meter.stereo .con-ladder.sig .mtrcol.r,
+.con-meter.stereo .con-over .lit.r {
+  left: calc(50% + 1px);
 }
 /* OVER box — a framed clip indicator above the meter's 0 dB top (distinct from the
    ladder and the dB scale); its red lights up on the over latch. */

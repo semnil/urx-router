@@ -10,7 +10,7 @@ import { ref } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, type NodeParams, type Plan, type PlanConnection } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
-import { defaultTapKey, hasMeter, METER_FLOOR_DB, METER_GREEN_TOP_DB, METER_YELLOW_TOP_DB, MeterStore, subscribeMeters, tapAddrs, tapFor, tapsFor, type MeterTap } from "../core/meters";
+import { defaultTapKey, hasMeter, isStereoTap, METER_FLOOR_DB, METER_GREEN_TOP_DB, METER_YELLOW_TOP_DB, MeterStore, subscribeMeters, tapAddrs, tapFor, tapsFor, type MeterTap } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
 import { busBalance, channelControl, insertFxControl } from "../core/control/translate";
 import { isBalLinkedPair, mirrorBalPair, mixSendLocks, partnerChannel, sendTapWritable } from "../core/routing";
@@ -97,27 +97,40 @@ interface StripModel {
   range: LevelRange;
 }
 
+// One metered channel within a strip's meter column. A mono strip has a single lane;
+// a stereo strip (whose tap carries an R address) has two, L and R, sharing one ladder
+// frame and one OVER frame but each with its own bar column and clip cell.
+// v/pk: live level/peak ballistics; over: clip latch ballistic. lv/lpk/lov: last value
+// written to the DOM (-1 = none yet) so paintMeters can skip unchanged writes. live =
+// lane is animating (its `live` class promotes the shade/peak to compositor layers).
+interface MeterLane {
+  col: HTMLElement; // bar column (bar + shade + peak); `live` class gates its layers
+  shade: HTMLElement;
+  peak: HTMLElement;
+  clip: HTMLElement; // this channel's OVER latch cell
+  v: number;
+  pk: number;
+  over: number;
+  lv: number;
+  lpk: number;
+  lov: number;
+  live: boolean;
+}
+
 interface StripRef {
   m: StripModel;
   // The strip's root element, so a device-follow direct change can rebuild just this
   // strip in place (refreshStrip) instead of re-rendering the whole console.
   root: HTMLElement;
-  // The signal ladder: its `live` class promotes the shade/peak to compositor layers.
-  // Toggled per strip so only strips with signal hold layers (idle ones release them).
-  ladder: HTMLElement;
+  lanes: MeterLane[]; // 1 (mono) or 2 (stereo L, R)
   // Fader controls — absent on a meter-only strip (STREAMING), which has no fader.
   cap?: HTMLElement;
   fader?: HTMLElement;
   readDb?: HTMLElement;
-  sigShade: HTMLElement;
-  sigPeak: HTMLElement;
-  sigClip: HTMLElement;
-  readMtr: HTMLElement; // live meter value cell (the selected tap's dBFS)
+  readMtr: HTMLElement; // live meter value cell (the selected tap's dBFS, peak of L/R)
   tap: MeterTap | null; // the resolved tap this strip's meter shows (fixed per render)
-  // v/pk/over: live ballistics; lv/lpk/lov: last value written to the DOM (-1 =
-  // none yet) so paintMeters can skip unchanged writes. lmtr = last meter readout
-  // (deci-dB; 1 = sentinel "none written"). live = strip is animating (gates layers).
-  sig: { v: number; pk: number; over: number; lv: number; lpk: number; lov: number; lmtr: number; live: boolean };
+  // lmtr = last meter readout written (deci-dB; 1 = sentinel "none written").
+  sig: { lmtr: number };
 }
 
 interface KnobSpec {
@@ -224,13 +237,18 @@ export class Console {
     if (!old) return;
     const fresh = this.buildStrip(this.toStripModel(id), id === MAIN_BUS);
     // buildStrip re-registered refs.get(id) with fresh meter elements. Carry the
-    // ballistics (v/pk/over) so the level + peak-hold don't reset, but leave the
-    // last-written trackers (lv/lpk/lov/lmtr) at their fresh sentinels — the new
-    // elements are undrawn, so paintMeters must repaint them, not skip as unchanged.
-    const next = this.refs.get(id)!.sig;
-    next.v = old.sig.v;
-    next.pk = old.sig.pk;
-    next.over = old.sig.over;
+    // per-lane ballistics (v/pk/over) so the level + peak-hold + clip latch don't reset,
+    // but leave the last-written trackers (lv/lpk/lov/lmtr) at their fresh sentinels —
+    // the new elements are undrawn, so paintMeters must repaint them, not skip as
+    // unchanged. Lane count is stable across a refresh (same tap), so carry by index.
+    this.refs.get(id)!.lanes.forEach((ln, i) => {
+      const o = old.lanes[i];
+      if (o) {
+        ln.v = o.v;
+        ln.pk = o.pk;
+        ln.over = o.over;
+      }
+    });
     old.root.replaceWith(fresh);
   }
 
@@ -544,29 +562,42 @@ export class Console {
     parent.append(chip);
   }
 
-  // Build the meter column (OVER clip box + green→red signal ladder). Shared by
-  // every strip; returns the live elements paintMeters drives.
-  private buildMeterColumn(range: LevelRange): { meter: HTMLElement; sigLadder: HTMLElement; sigShade: HTMLElement; sigPeak: HTMLElement; sigClip: HTMLElement } {
-    const meter = el("div", "con-meter");
+  // Build one lane: its bar column (green→red LED bar + shade + peak marker) and its
+  // OVER latch cell. `side` is "" for a mono strip's single lane, or "l"/"r" to place
+  // it in a stereo pair (both lanes then sit in the shared ladder / OVER frames).
+  private buildLane(side: string): MeterLane {
+    const col = el("div", "mtrcol" + (side ? " " + side : ""));
+    const bar = el("div", "bar");
+    const shade = el("div", "shade");
+    const peak = el("div", "peak");
+    col.append(bar, shade, peak);
+    const clip = el("div", "lit" + (side ? " " + side : ""));
+    return { col, shade, peak, clip, v: 0, pk: 0, over: 0, lv: -1, lpk: -1, lov: -1, live: false };
+  }
+
+  // Build the meter column: one OVER frame + one ladder frame, each holding one lane
+  // (mono) or two (stereo L/R side by side with a gap). `stereo` splits the bars and
+  // the clip cells but keeps the framing undivided. Returns the lanes paintMeters drives.
+  private buildMeterColumn(range: LevelRange, stereo: boolean): { meter: HTMLElement; lanes: MeterLane[] } {
+    const meter = el("div", "con-meter" + (stereo ? " stereo" : ""));
     // The ladder spans from the scale's lowest tick (--mfloor) to the 0 dB mark
     // (--mzero); the OVER window sits above. Both share the strip's fader ruler.
     meter.style.setProperty("--mzero", dbToFrac(0, range) * 100 + "%");
     meter.style.setProperty("--mfloor", dbToFrac(range.ticks[range.ticks.length - 1], range) * 100 + "%");
     const over = el("div", "con-over");
-    const sigClip = el("div", "lit");
-    over.append(sigClip);
-    const sigLadder = el("div", "con-ladder sig");
+    const ladder = el("div", "con-ladder sig");
     // Color-zone boundaries as a fraction of the ladder, at the same travel as the dB
     // ticks of the matching value — so green/yellow/red map to absolute dBFS, not to
-    // the lit height.
-    sigLadder.style.setProperty("--zy", meterFrac(METER_GREEN_TOP_DB, range) * 100 + "%");
-    sigLadder.style.setProperty("--zr", meterFrac(METER_YELLOW_TOP_DB, range) * 100 + "%");
-    const sigBar = el("div", "bar");
-    const sigShade = el("div", "shade");
-    const sigPeak = el("div", "peak");
-    sigLadder.append(sigBar, sigShade, sigPeak);
-    meter.append(over, sigLadder);
-    return { meter, sigLadder, sigShade, sigPeak, sigClip };
+    // the lit height. Set on the frame; the bars inherit them.
+    ladder.style.setProperty("--zy", meterFrac(METER_GREEN_TOP_DB, range) * 100 + "%");
+    ladder.style.setProperty("--zr", meterFrac(METER_YELLOW_TOP_DB, range) * 100 + "%");
+    const lanes = stereo ? [this.buildLane("l"), this.buildLane("r")] : [this.buildLane("")];
+    for (const ln of lanes) {
+      over.append(ln.clip);
+      ladder.append(ln.col);
+    }
+    meter.append(over, ladder);
+    return { meter, lanes };
   }
 
   // STREAMING strip: a live meter only — no fader, no set-level readout, no chips
@@ -610,7 +641,8 @@ export class Console {
     const zone = el("div", "con-faderzone");
     zone.append(el("div", "con-taphead")); // empty: keeps fader/meter tops aligned
     const zrow = el("div", "con-zrow");
-    const { meter, sigLadder, sigShade, sigPeak, sigClip } = this.buildMeterColumn(m.range);
+    const tap = tapFor(m.id, this.tapKeyOf(m.id)) ?? null;
+    const { meter, lanes } = this.buildMeterColumn(m.range, isStereoTap(tap));
     // Meter tops out at 0 dBFS and there is no fader, so the scale stops at 0.
     zrow.append(this.buildScale(m.range, 0), meter);
     zone.append(zrow);
@@ -628,13 +660,10 @@ export class Console {
     this.refs.set(m.id, {
       m,
       root: strip,
-      ladder: sigLadder,
-      sigShade,
-      sigPeak,
-      sigClip,
+      lanes,
       readMtr: mtrEl,
-      tap: tapFor(m.id, this.tapKeyOf(m.id)) ?? null,
-      sig: { v: 0, pk: 0, over: 0, lv: -1, lpk: -1, lov: -1, lmtr: 1, live: false },
+      tap,
+      sig: { lmtr: 1 },
     });
     return strip;
   }
@@ -966,8 +995,9 @@ export class Console {
     fader.append(track, zero, cap);
 
     // Meter column: the ladder shares the fader ruler, topping out at the 0 dB mark
-    // with the OVER clip window above it.
-    const { meter, sigLadder, sigShade, sigPeak, sigClip } = this.buildMeterColumn(m.range);
+    // with the OVER clip window above it. Stereo taps split into independent L/R bars.
+    const tap = hasMeter(m.id) ? tapFor(m.id, tapKey) ?? null : null;
+    const { meter, lanes } = this.buildMeterColumn(m.range, isStereoTap(tap));
 
     zrow.append(fader, this.buildScale(m.range), meter);
     zone.append(zrow);
@@ -996,16 +1026,13 @@ export class Console {
     const refObj: StripRef = {
       m,
       root: strip,
-      ladder: sigLadder,
+      lanes,
       cap,
-      sigShade,
-      sigPeak,
-      sigClip,
       fader,
       readDb: dbEl,
       readMtr: mtrEl,
-      tap: hasMeter(m.id) ? tapFor(m.id, tapKey) ?? null : null,
-      sig: { v: 0, pk: 0, over: 0, lv: -1, lpk: -1, lov: -1, lmtr: 1, live: false },
+      tap,
+      sig: { lmtr: 1 },
     };
     this.refs.set(m.id, refObj);
     // A FIXED-bus send fader is display-only: keep it out of the input wiring.
@@ -1131,27 +1158,29 @@ export class Console {
   private resetMeters(): void {
     for (const r of this.refs.values()) {
       const s = r.sig;
-      s.v = s.pk = s.over = 0;
-      if (s.lv !== 0) {
-        r.sigShade.style.setProperty("--lvl", "0");
-        s.lv = 0;
-      }
-      if (s.lpk !== 0) {
-        r.sigPeak.style.setProperty("--pk", "0");
-        s.lpk = 0;
-      }
-      if (s.lov !== 0) {
-        r.sigClip.style.setProperty("--clip", "0");
-        s.lov = 0;
+      for (const ln of r.lanes) {
+        ln.v = ln.pk = ln.over = 0;
+        if (ln.lv !== 0) {
+          ln.shade.style.setProperty("--lvl", "0");
+          ln.lv = 0;
+        }
+        if (ln.lpk !== 0) {
+          ln.peak.style.setProperty("--pk", "0");
+          ln.lpk = 0;
+        }
+        if (ln.lov !== 0) {
+          ln.clip.style.setProperty("--clip", "0");
+          ln.lov = 0;
+        }
+        if (ln.live) {
+          ln.col.classList.remove("live"); // release the compositor layers on teardown
+          ln.live = false;
+        }
       }
       if (s.lmtr !== 1) {
         r.readMtr.textContent = "—";
         r.readMtr.classList.remove("off");
         s.lmtr = 1;
-      }
-      if (s.live) {
-        r.ladder.classList.remove("live"); // release the compositor layers on teardown
-        s.live = false;
       }
     }
   }
@@ -1174,38 +1203,47 @@ export class Console {
         r.readMtr.classList.toggle("off", mtr === -999);
         s.lmtr = mtr;
       }
-      const target = meterFrac(Math.max(reading.l, reading.r), r.m.range);
-      // Fast attack, slow release for a meter-like response; peak hold decays slowly.
-      s.v = target > s.v ? target : s.v + (target - s.v) * 0.3;
-      s.pk = Math.max(s.pk * 0.985, s.v);
-      // OVER clip cap: latch full on a clip, then fade so a brief over lingers.
-      s.over = reading.overL || reading.overR ? 1 : s.over * 0.95;
-      // Write only the values that actually changed (idle meters rest, so most
-      // frames skip every write) — at integer-percent resolution.
-      const v = Math.round(s.v * 100);
-      const pk = Math.round(s.pk * 100);
-      const over = s.over > 0.02 ? Math.round(s.over * 100) : 0;
-      // --lvl / --pk are fractions (0..1) driving compositor-only transforms
-      // (scaleY / translateY) on the shade and peak — no layout/paint per frame.
-      if (v !== s.lv) {
-        r.sigShade.style.setProperty("--lvl", v / 100 + "");
-        s.lv = v;
-      }
-      if (pk !== s.lpk) {
-        r.sigPeak.style.setProperty("--pk", pk / 100 + "");
-        s.lpk = pk;
-      }
-      if (over !== s.lov) {
-        r.sigClip.style.setProperty("--clip", over / 100 + "");
-        s.lov = over;
-      }
-      // Promote the shade/peak to compositor layers (via `.live`) only while the strip
-      // is actually animating; an idle strip (at the floor, no clip) drops its layers,
-      // so a mostly-quiet console isn't compositing a layer per silent meter.
-      const active = v > 0 || pk > 0 || over > 0;
-      if (active !== s.live) {
-        r.ladder.classList.toggle("live", active);
-        s.live = active;
+      // Drive each lane from its own channel — lane 0 = L, lane 1 = R. A mono strip has
+      // only lane 0, and readingTap mirrors R onto L there, so lane 0 meters its true
+      // level either way (no peak-fold; the peak-of-L/R fold is only for the readout).
+      for (let i = 0; i < r.lanes.length; i++) {
+        const ln = r.lanes[i];
+        const chDb = i === 0 ? reading.l : reading.r;
+        const chOver = i === 0 ? reading.overL : reading.overR;
+        const target = meterFrac(chDb, r.m.range);
+        // Fast attack, slow release for a meter-like response; peak hold decays slowly.
+        ln.v = target > ln.v ? target : ln.v + (target - ln.v) * 0.3;
+        ln.pk = Math.max(ln.pk * 0.985, ln.v);
+        // OVER clip cap: latch full on a clip in this channel, then fade so a brief
+        // over lingers.
+        ln.over = chOver ? 1 : ln.over * 0.95;
+        // Write only the values that actually changed (idle meters rest, so most
+        // frames skip every write) — at integer-percent resolution.
+        const v = Math.round(ln.v * 100);
+        const pk = Math.round(ln.pk * 100);
+        const over = ln.over > 0.02 ? Math.round(ln.over * 100) : 0;
+        // --lvl / --pk are fractions (0..1) driving compositor-only transforms
+        // (scaleY / translateY) on the shade and peak — no layout/paint per frame.
+        if (v !== ln.lv) {
+          ln.shade.style.setProperty("--lvl", v / 100 + "");
+          ln.lv = v;
+        }
+        if (pk !== ln.lpk) {
+          ln.peak.style.setProperty("--pk", pk / 100 + "");
+          ln.lpk = pk;
+        }
+        if (over !== ln.lov) {
+          ln.clip.style.setProperty("--clip", over / 100 + "");
+          ln.lov = over;
+        }
+        // Promote the shade/peak to compositor layers (via `.live`) only while the lane
+        // is actually animating; an idle lane (at the floor, no clip) drops its layers,
+        // so a mostly-quiet console isn't compositing a layer per silent meter.
+        const active = v > 0 || pk > 0 || over > 0;
+        if (active !== ln.live) {
+          ln.col.classList.toggle("live", active);
+          ln.live = active;
+        }
       }
     }
   }

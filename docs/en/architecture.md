@@ -226,7 +226,10 @@ bottom at the lowest tick (−∞). The ladder is split into **three color zones
 **absolute dBFS** (not the lit height): green ≤ -18 dBFS / yellow -18 to -9 dBFS / red -9 to 0 dBFS. The boundaries
 match the EBU R68-2000 reference levels (alignment level -18 dBFS / permitted maximum level -9 dBFS); the threshold
 constants live in `core/meters.ts` (`METER_GREEN_TOP_DB` / `METER_YELLOW_TOP_DB`). A separate **OVER box** sits just
-above the 0 dB top (clipping ≠ the level ceiling); it lights red on a device clip (raw 32767) via the `sig.over` latch and decays over ~1 s. The scale
+above the 0 dB top (clipping ≠ the level ceiling); it lights red on a device clip (raw 32767) via a per-channel over latch and decays over ~1 s.
+On a **stereo** tap (`isStereoTap` — the tap carries a second `r` meter address), the ladder and OVER frames stay undivided but each hold **two bar
+columns and two clip cells** (`.mtrcol.l/.r`, `.lit.l/.r`, a 2px centre gap between), so L and R meter and clip independently; a mono strip keeps a
+single column. The strip's meter state is a `MeterLane[]` (one entry mono, two stereo) that `paintMeters` steps by index (lane 0 = L, lane 1 = R). The scale
 follows each strip's range and aligns its top/bottom to the fader travel, so one ruler reads both the fader
 and the meter (a functional scale, 10/5/0/-5/-10/-20/-40/-∞); the 0 dB line crosses the fader cap centre.
 Strips whose fader/meter top out at 0 dB (the meter-only STREAMING and OSCILLATOR strips) drop the
@@ -323,7 +326,7 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   (`meterId:x`), decodes the raw value (deci-dBFS, 32767 = OVER) to dBFS, and holds the latest reading in a
   `MeterStore`. The UI samples the readings on a `requestAnimationFrame` loop capped to ~30 fps (the device
   updates at ~10 Hz, so painting faster gives no gain) and renders with fast attack / slow release, peak hold,
-  and an OVER latch (the top OVER box), writing only the lanes that changed
+  and a per-channel OVER latch (the top OVER box), writing only the lanes (L/R on a stereo strip) that changed
   (compared at integer-percent). **The paint is kept compositor-only**: the bars are driven by
   `transform: scaleY` / `translateY` from typed (`@property`) 0..1 custom properties rather than an animated
   `height` / `bottom`, so a moving meter never triggers per-frame style-recalc / layout / paint. Only the numeric

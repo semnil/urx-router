@@ -32,6 +32,10 @@ export interface MeterTap {
   r?: readonly [number, number];
 }
 
+/** A tap is stereo when it carries a second (R) meter address. Single source of the
+ *  "meter this point as L/R" predicate — the console builds one bar column per channel. */
+export const isStereoTap = (tap: MeterTap | null | undefined): boolean => tap?.r !== undefined;
+
 // Mono input channel CH1-4 (x = channel index 0..3): the full processing chain.
 // meter_id per tap confirmed on URX44V (reference/.local vd-meters.md stage probe).
 const monoTaps = (i: number): MeterTap[] => [
