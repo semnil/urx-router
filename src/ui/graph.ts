@@ -346,6 +346,29 @@ export class Graph {
     this.highlightSelectedNode();
   }
 
+  /** Repaint only the given nodes in place (a device-follow direct change touched
+   *  just these), then restore port glow, wires, and the selection frame. Rebuilds
+   *  a handful of node elements instead of every one, as render() would. */
+  repaintDirtyNodes(ids: string[]): void {
+    for (const id of ids) this.repaintNode(id);
+    this.refreshPortStates();
+    this.redrawWires();
+    this.highlightSelectedNode();
+  }
+
+  /** Rebuild one node's <g> in place. makeNode re-registers this node's nodeEls /
+   *  portEls / portPinEls entries (same keys), so the old port elements just detach
+   *  with the replaced group. Caller batches the port / wire / selection refresh. */
+  private repaintNode(id: string): void {
+    if (this.isHidden(id)) return;
+    const node = this.nodeById.get(id);
+    if (!node) return;
+    const old = this.nodeEls.get(id);
+    const g = this.makeNode(node);
+    if (old) old.replaceWith(g);
+    else this.nodeLayer.append(g);
+  }
+
   /** Set or clear a node's free-text note and repaint its in-frame panel. */
   setNote(id: string, text: string): void {
     this.plan.notes ??= {};

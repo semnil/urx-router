@@ -322,8 +322,13 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   `MeterStore`. The UI samples the readings on a `requestAnimationFrame` loop capped to ~30 fps (the device
   updates at ~10 Hz, so painting faster gives no gain) and renders with fast attack / slow release, peak hold,
   and an OVER latch (the top OVER box), writing only the lanes that changed
-  (compared at integer-percent). Subscriptions are scoped to the on-screen strips that have a meter in the
-  current model (`metersForNodes`). Meter ids were confirmed on a real URX44V; models without a mapping show no meter.
+  (compared at integer-percent). **The paint is kept compositor-only**: the bars are driven by
+  `transform: scaleY` / `translateY` from typed (`@property`) 0..1 custom properties rather than an animated
+  `height` / `bottom`, so a moving meter never triggers per-frame style-recalc / layout / paint. Only the numeric
+  readout text is throttled to every few frames (a text change forces layout), and `will-change` is applied only
+  to strips with signal (`.live`) so idle strips drop their compositor layers. Subscriptions are scoped to the
+  on-screen strips that have a meter in the current model (`metersForNodes`). Meter ids were confirmed on a real
+  URX44V; models without a mapping show no meter.
 - **Streaming path** — the Rust side (`src-tauri/src/vd.rs`) handles a meter subscription
   (`MetersSubscribe`/`MetersUnsubscribe`) by registering each address with the broker, and forwards meter
   `notify` frames to the frontend over a Tauri Channel during the socket drain (`pump` parses each frame with
@@ -343,16 +348,19 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   new value**, so detection is free and exact. While Live sync is on, `core/control/follow.ts` `DeviceFollow`
   classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
   scalar (fader / pan / on / level, flagged `follow: "direct"` in the catalog) is decoded straight into the plan
-  with no read-back (`applyDirect`, reflect coalesced through the shared reflect funnel); anything else is **scoped** — the owner
+  with no read-back (`applyDirect`), and its single snapshot entry is patched to the device value in place
+  (`live.noteDirect`, no full re-translate); anything else is **scoped** — the owner
   node is re-read once the burst settles (`applyNodeState`, the same device→plan inverse as `applyDeviceState`
   but gated to just the touched node(s), so it can never drift); an unknown address or **more than three** distinct
   controls at once (more than two hands plus one — a scene / preset recall) escalates to a full read. After the
   device goes quiet a single full read runs as a missed-notify safety net. So a fader moved on the unit itself
-  follows on screen with no round-trip, while a deeper edit re-reads only its node. Every reflect — direct and
-  read-back alike — funnels through one timer capped at ~20 Hz (the device streams at ~10 Hz), and since only one
-  view is ever visible the hidden view's rebuild is deferred until it is next shown. Echoes of the app's own
-  writes are filtered against the live snapshot, and the address set is re-registered only when a structural edit
-  changed it.
+  follows on screen with no round-trip, while a deeper edit re-reads only its node. Every reflect funnels through
+  one timer capped at ~20 Hz (the device streams at ~10 Hz). A direct-only reflect repaints just the touched nodes
+  (`graph.repaintDirtyNodes`) and strips (`console.refreshStrip`) — not the whole board — and skips the snapshot
+  re-base (already patched by `noteDirect`); only a scoped / full read-back re-derives both views and re-bases the
+  whole snapshot. Since only one view is ever visible the hidden view's rebuild is deferred until it is next shown.
+  Echoes of the app's own writes are filtered against the live snapshot, and the address set is re-registered only
+  when a structural edit changed it.
 
 ## Live control connection
 

@@ -299,20 +299,33 @@ const consoleView = new Console(consoleHost, {
 // re-rendered. Echoes of our own writes are filtered by the live snapshot. Null
 // in the demo / when live is absent, so it tree-shakes out with the rest of the
 // control layer.
-// Reflect a device-follow change back onto the plan's two views and re-base the
-// live snapshot so our own next diff (and the echoes of this read/apply) measure
-// from the device truth. Selection/viewport are untouched (refresh, not rebuild).
-// Set when a device-follow reflect lands while the graph is hidden (console view
-// active): defer its full rebuild and let setView refresh once on the way back.
+// Reflect a device-follow change back onto the plan's two views. A direct notify
+// (fader / pan / on) touches one node's scalar and already patched its snapshot
+// entry (noteDirect), so it only needs the touched nodes / strips repainted. A
+// scoped / full read-back can change anything, so it re-derives both views and
+// re-bases the whole snapshot. Selection/viewport are untouched (refresh, not
+// rebuild). graphDirty defers the graph's work while it is the hidden view (console
+// active); setView does it once on the way back.
 let graphDirty = false;
+const followDirtyNodes = new Set<string>();
+let followFull = false;
 function reflectFollow(): void {
-  // Only one view is ever visible, so skip the hidden view's rebuild. consoleView
-  // already self-guards on visibility; the graph is gated here via graphDirty.
-  if (graphHost.hidden) graphDirty = true;
-  else graph.refresh();
-  consoleView.refresh();
-  syncRateUi();
-  live?.resync();
+  const ids = [...followDirtyNodes];
+  followDirtyNodes.clear();
+  if (followFull) {
+    followFull = false;
+    if (graphHost.hidden) graphDirty = true;
+    else graph.refresh();
+    consoleView.refresh();
+    syncRateUi();
+    live?.resync();
+  } else {
+    // Direct-only: repaint just the changed nodes / strips. The snapshot is already
+    // current from noteDirect, so no full re-translate. Only one view is visible.
+    if (graphHost.hidden) graphDirty = true;
+    else graph.repaintDirtyNodes(ids);
+    for (const id of ids) consoleView.refreshStrip(id);
+  }
 }
 // Device-follow read-back status: surface the partial-failure count rather than
 // hiding read failures behind a console.warn (fetch/write make failures visible;
@@ -347,15 +360,23 @@ const follow =
         addrs: () => live?.writableAddrs() ?? [],
         isEcho: (p) => live?.isEcho(p.paramId, p.x, p.y, p.value) ?? false,
         lookup: (paramId, x, y) => live?.lookup(paramId, x, y),
-        // A direct (node-local scalar) change: decode the notify value straight
-        // into the plan, no read-back. Render + snapshot re-base are coalesced in
-        // flushDirect once the burst of direct notifies settles.
-        applyDirect: (node, name, value) => applyDirect(plan, node, name, value),
+        // A direct (node-local scalar) change: decode the notify value straight into
+        // the plan, no read-back, and record the node so the coalesced reflect
+        // repaints just it. The reflect is scheduled by flushDirect.
+        applyDirect: (node, name, value) => {
+          const ok = applyDirect(plan, node, name, value);
+          if (ok) followDirtyNodes.add(node);
+          return ok;
+        },
+        noteDirect: (paramId, x, y, value) => live?.noteDirect(paramId, x, y, value),
         flushDirect: () => requestReflect(),
         // A settled scoped change: re-read just the touched owner nodes and reflect.
+        // A read-back can change more than the direct fast path handles, so mark the
+        // reflect full (re-derive both views + re-base the snapshot).
         reconcileNodes: async (nodeIds) => {
           const result = await applyNodeState(getModel(modelId), plan, nodeIds);
           if (result.errors.length) console.warn("device-follow scoped readback issues:", result.errors);
+          followFull = true;
           requestReflect();
           setStatus(followStatus(result));
         },
@@ -364,6 +385,7 @@ const follow =
           const result = await applyDeviceState(getModel(modelId), plan);
           if (result.errors.length) console.warn("device-follow readback issues:", result.errors);
           plan.unreadNodes = result.unreadNodes;
+          followFull = true;
           requestReflect();
           setStatus(followStatus(result));
         },

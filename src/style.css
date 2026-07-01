@@ -1981,25 +1981,62 @@ select:focus-visible,
 /* Opaque cover over the unlit portion above the current level (--lvl); the lit bar is
    what remains visible below it. Always shown beside the fader; at rest it covers the
    whole ladder (empty meter) and only retreats while live sync streams. */
+/* Typed so a changing --lvl / --pk only re-evaluates the transform (compositor-only)
+   instead of invalidating style/layout for the meter subtree the way an untyped
+   custom property would. */
+@property --lvl {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+@property --pk {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
 .con-ladder.sig .shade {
   position: absolute;
   left: 0;
   right: 0;
   top: 0;
-  height: calc(100% - var(--lvl, 0%));
+  height: 100%;
+  /* Cover the unlit part above the level (--lvl is a 0..1 fraction). Driven by
+     scaleY from the top rather than an animated height, so a moving meter is
+     compositor-only — no per-frame style-recalc / layout / paint. */
+  transform: scaleY(calc(1 - var(--lvl, 0)));
+  transform-origin: top;
   background: var(--groove);
 }
 .con-ladder.sig .peak {
   position: absolute;
   left: -1px;
   right: -1px;
+  top: 0;
+  height: 100%;
+  /* Full-height and transparent; the 2px marker sits at its bottom edge (::after)
+     and the whole box is lifted by --pk of the ladder via translateY. translateY %
+     is relative to the box's own height (= the ladder), so --pk (0..1) maps 1:1 to
+     the meter travel, and the move is compositor-only (no layout / paint). */
+  transform: translateY(calc(var(--pk, 0) * -100%));
+  pointer-events: none;
+}
+/* Promote the shade/peak to their own compositor layers only while the strip is
+   metering (JS toggles `.live`): an idle strip then holds no extra layer. */
+.con-ladder.sig.live .shade,
+.con-ladder.sig.live .peak {
+  will-change: transform;
+}
+.con-ladder.sig .peak::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   height: 2px;
-  bottom: var(--pk, 0%);
+  /* White in both themes: the meter groove is kept dark even in light mode, so a
+     dark peak marker would vanish against it (it once matched a light groove). */
   background: #fff;
   opacity: 0.85;
-}
-[data-theme="light"] .con-ladder.sig .peak {
-  background: #2a2418;
 }
 /* Meter column: the ladder rises to the 0 dB scale mark (--mzero, shared with the
    fader ruler) and the OVER clip window sits just above it. */

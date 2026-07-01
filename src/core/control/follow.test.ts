@@ -36,6 +36,7 @@ function followFor(overrides: Partial<DeviceFollowHooks> = {}): DeviceFollow {
     isEcho: () => false,
     lookup: () => SCOPED,
     applyDirect: () => true,
+    noteDirect: () => {},
     flushDirect: () => {},
     reconcileNodes: async () => {},
     reconcileAll: async () => {},
@@ -90,12 +91,14 @@ describe("DeviceFollow", () => {
 
   it("applies a direct change straight to the plan with no read-back", async () => {
     const applyDirect = vi.fn(() => true);
+    const noteDirect = vi.fn();
     const flushDirect = vi.fn();
     const reconcileNodes = vi.fn(async () => {});
     const reconcileAll = vi.fn(async () => {});
     const follow = followFor({
       lookup: () => ({ name: "CH_FADER", node: "ch1", direct: true }),
       applyDirect,
+      noteDirect,
       flushDirect,
       reconcileNodes,
       reconcileAll,
@@ -104,11 +107,26 @@ describe("DeviceFollow", () => {
     notify(-600);
     // Applied synchronously; the host coalesces the render via flushDirect.
     expect(applyDirect).toHaveBeenCalledWith("ch1", "CH_FADER", -600);
+    // The snapshot is patched with the notify's address + value (no full re-translate).
+    expect(noteDirect).toHaveBeenCalledWith(ADDR[0], ADDR[1], ADDR[2], -600);
     expect(flushDirect).toHaveBeenCalled();
     // Settle window passes without any read-back (direct-only window).
     await vi.advanceTimersByTimeAsync(300);
     expect(reconcileNodes).not.toHaveBeenCalled();
     expect(reconcileAll).not.toHaveBeenCalled();
+  });
+
+  it("does not patch the snapshot when a direct apply reports unplaceable", async () => {
+    const noteDirect = vi.fn();
+    const follow = followFor({
+      lookup: () => ({ name: "CH_FADER", node: "ch1", direct: true }),
+      applyDirect: () => false,
+      noteDirect,
+    });
+    follow.begin();
+    notify(-600);
+    // Falls back to a scoped read, so the snapshot must not be pre-patched.
+    expect(noteDirect).not.toHaveBeenCalled();
   });
 
   it("falls back to a scoped read when a direct apply reports it is unplaceable", async () => {

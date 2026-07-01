@@ -99,6 +99,12 @@ interface StripModel {
 
 interface StripRef {
   m: StripModel;
+  // The strip's root element, so a device-follow direct change can rebuild just this
+  // strip in place (refreshStrip) instead of re-rendering the whole console.
+  root: HTMLElement;
+  // The signal ladder: its `live` class promotes the shade/peak to compositor layers.
+  // Toggled per strip so only strips with signal hold layers (idle ones release them).
+  ladder: HTMLElement;
   // Fader controls — absent on a meter-only strip (STREAMING), which has no fader.
   cap?: HTMLElement;
   fader?: HTMLElement;
@@ -110,8 +116,8 @@ interface StripRef {
   tap: MeterTap | null; // the resolved tap this strip's meter shows (fixed per render)
   // v/pk/over: live ballistics; lv/lpk/lov: last value written to the DOM (-1 =
   // none yet) so paintMeters can skip unchanged writes. lmtr = last meter readout
-  // (deci-dB; 1 = sentinel "none written").
-  sig: { v: number; pk: number; over: number; lv: number; lpk: number; lov: number; lmtr: number };
+  // (deci-dB; 1 = sentinel "none written"). live = strip is animating (gates layers).
+  sig: { v: number; pk: number; over: number; lv: number; lpk: number; lov: number; lmtr: number; live: boolean };
 }
 
 interface KnobSpec {
@@ -134,8 +140,13 @@ export interface ConsoleHooks {
   onChange: () => void;
 }
 
+// The bars animate every frame; the numeric readout text is refreshed only every
+// Nth frame (~6 Hz at 30 fps) so its text relayout/repaint isn't a per-frame cost.
+const READOUT_EVERY = 5;
+
 export class Console {
   private mode: Mode = "main";
+  private paintN = 0; // frame counter gating the throttled numeric readout
   private refs = new Map<string, StripRef>();
   private lastInsFx = new Map<string, number>(); // last non-none INS FX per node
   private factory: { id: string; plan: Plan } | null = null; // cached factory plan
@@ -197,6 +208,27 @@ export class Console {
   /** Re-read set levels after an external edit (inspector / graph / readback). */
   refresh(): void {
     if (this.visible) this.render();
+  }
+
+  /** Rebuild just one strip in place after a device-follow direct change, instead
+   *  of re-rendering the whole console. No-op when hidden or when the node has no
+   *  strip in the current view (mode-filtered). The strip's live-meter ballistics
+   *  carry across so the meter (and its peak-hold bar) doesn't jump, and the meter
+   *  subscription is untouched (same tap address). */
+  refreshStrip(id: string): void {
+    if (!this.visible) return;
+    const old = this.refs.get(id);
+    if (!old) return;
+    const fresh = this.buildStrip(this.toStripModel(id), id === MAIN_BUS);
+    // buildStrip re-registered refs.get(id) with fresh meter elements. Carry the
+    // ballistics (v/pk/over) so the level + peak-hold don't reset, but leave the
+    // last-written trackers (lv/lpk/lov/lmtr) at their fresh sentinels — the new
+    // elements are undrawn, so paintMeters must repaint them, not skip as unchanged.
+    const next = this.refs.get(id)!.sig;
+    next.v = old.sig.v;
+    next.pk = old.sig.pk;
+    next.over = old.sig.over;
+    old.root.replaceWith(fresh);
   }
 
   // ---- build / render ----
@@ -511,7 +543,7 @@ export class Console {
 
   // Build the meter column (OVER clip box + green→red signal ladder). Shared by
   // every strip; returns the live elements paintMeters drives.
-  private buildMeterColumn(range: LevelRange): { meter: HTMLElement; sigShade: HTMLElement; sigPeak: HTMLElement; sigClip: HTMLElement } {
+  private buildMeterColumn(range: LevelRange): { meter: HTMLElement; sigLadder: HTMLElement; sigShade: HTMLElement; sigPeak: HTMLElement; sigClip: HTMLElement } {
     const meter = el("div", "con-meter");
     // The ladder spans from the scale's lowest tick (--mfloor) to the 0 dB mark
     // (--mzero); the OVER window sits above. Both share the strip's fader ruler.
@@ -531,7 +563,7 @@ export class Console {
     const sigPeak = el("div", "peak");
     sigLadder.append(sigBar, sigShade, sigPeak);
     meter.append(over, sigLadder);
-    return { meter, sigShade, sigPeak, sigClip };
+    return { meter, sigLadder, sigShade, sigPeak, sigClip };
   }
 
   // STREAMING strip: a live meter only — no fader, no set-level readout, no chips
@@ -575,7 +607,7 @@ export class Console {
     const zone = el("div", "con-faderzone");
     zone.append(el("div", "con-taphead")); // empty: keeps fader/meter tops aligned
     const zrow = el("div", "con-zrow");
-    const { meter, sigShade, sigPeak, sigClip } = this.buildMeterColumn(m.range);
+    const { meter, sigLadder, sigShade, sigPeak, sigClip } = this.buildMeterColumn(m.range);
     // Meter tops out at 0 dBFS and there is no fader, so the scale stops at 0.
     zrow.append(this.buildScale(m.range, 0), meter);
     zone.append(zrow);
@@ -592,12 +624,14 @@ export class Console {
 
     this.refs.set(m.id, {
       m,
+      root: strip,
+      ladder: sigLadder,
       sigShade,
       sigPeak,
       sigClip,
       readMtr: mtrEl,
       tap: tapFor(m.id, this.tapKeyOf(m.id)) ?? null,
-      sig: { v: 0, pk: 0, over: 0, lv: -1, lpk: -1, lov: -1, lmtr: 1 },
+      sig: { v: 0, pk: 0, over: 0, lv: -1, lpk: -1, lov: -1, lmtr: 1, live: false },
     });
     return strip;
   }
@@ -912,7 +946,7 @@ export class Console {
 
     // Meter column: the ladder shares the fader ruler, topping out at the 0 dB mark
     // with the OVER clip window above it.
-    const { meter, sigShade, sigPeak, sigClip } = this.buildMeterColumn(m.range);
+    const { meter, sigLadder, sigShade, sigPeak, sigClip } = this.buildMeterColumn(m.range);
 
     zrow.append(fader, this.buildScale(m.range), meter);
     zone.append(zrow);
@@ -940,6 +974,8 @@ export class Console {
 
     const refObj: StripRef = {
       m,
+      root: strip,
+      ladder: sigLadder,
       cap,
       sigShade,
       sigPeak,
@@ -948,7 +984,7 @@ export class Console {
       readDb: dbEl,
       readMtr: mtrEl,
       tap: hasMeter(m.id) ? tapFor(m.id, tapKey) ?? null : null,
-      sig: { v: 0, pk: 0, over: 0, lv: -1, lpk: -1, lov: -1, lmtr: 1 },
+      sig: { v: 0, pk: 0, over: 0, lv: -1, lpk: -1, lov: -1, lmtr: 1, live: false },
     };
     this.refs.set(m.id, refObj);
     this.wireFader(refObj, usesSend);
@@ -1033,10 +1069,10 @@ export class Console {
       this.subSig = sig;
     }
     if (!this.raf) {
-      // Cap repaints to ~30 fps: the device streams meters at ~10 Hz, so a free-
-      // running rAF (60 Hz, or 120 Hz on a ProMotion display) repaints several
-      // times per reading for no visual gain. The rAF still fires at display rate
-      // but only the timed frames run the per-strip paint; the rest just reschedule.
+      // Cap repaints to ~30 fps for smooth ballistics (the device streams at ~10 Hz;
+      // the extra frames interpolate the attack/release). Per-frame cost is kept low
+      // by driving the bars with compositor-only transforms (scaleY / translateY, no
+      // layout/paint) and throttling the numeric readout to a fraction of the rate.
       const FRAME_MS = 1000 / 30;
       let last = 0;
       const tick = (now: number): void => {
@@ -1075,11 +1111,11 @@ export class Console {
       const s = r.sig;
       s.v = s.pk = s.over = 0;
       if (s.lv !== 0) {
-        r.sigShade.style.setProperty("--lvl", "0%");
+        r.sigShade.style.setProperty("--lvl", "0");
         s.lv = 0;
       }
       if (s.lpk !== 0) {
-        r.sigPeak.style.setProperty("--pk", "0%");
+        r.sigPeak.style.setProperty("--pk", "0");
         s.lpk = 0;
       }
       if (s.lov !== 0) {
@@ -1091,10 +1127,18 @@ export class Console {
         r.readMtr.classList.remove("off");
         s.lmtr = 1;
       }
+      if (s.live) {
+        r.ladder.classList.remove("live"); // release the compositor layers on teardown
+        s.live = false;
+      }
     }
   }
 
   private paintMeters(): void {
+    // Refresh the numeric readout on only every READOUT_EVERY-th frame: its text
+    // change relayouts/repaints the cell, so doing it every frame on every strip is
+    // a needless per-frame cost the animated bars don't share.
+    const showReadout = this.paintN++ % READOUT_EVERY === 0;
     for (const r of this.refs.values()) {
       if (!r.tap) continue;
       const reading = this.store.readingTap(r.tap);
@@ -1103,7 +1147,7 @@ export class Console {
       // Numeric meter readout (selected tap, peak of L/R), -∞ below the floor.
       const peakDb = Math.max(reading.l, reading.r);
       const mtr = peakDb <= METER_FLOOR_DB ? -999 : Math.round(peakDb * 10);
-      if (mtr !== s.lmtr) {
+      if (showReadout && mtr !== s.lmtr) {
         setLevelText(r.readMtr, mtr === -999 ? "-∞" : (mtr / 10).toFixed(1));
         r.readMtr.classList.toggle("off", mtr === -999);
         s.lmtr = mtr;
@@ -1119,17 +1163,27 @@ export class Console {
       const v = Math.round(s.v * 100);
       const pk = Math.round(s.pk * 100);
       const over = s.over > 0.02 ? Math.round(s.over * 100) : 0;
+      // --lvl / --pk are fractions (0..1) driving compositor-only transforms
+      // (scaleY / translateY) on the shade and peak — no layout/paint per frame.
       if (v !== s.lv) {
-        r.sigShade.style.setProperty("--lvl", v + "%");
+        r.sigShade.style.setProperty("--lvl", v / 100 + "");
         s.lv = v;
       }
       if (pk !== s.lpk) {
-        r.sigPeak.style.setProperty("--pk", pk + "%");
+        r.sigPeak.style.setProperty("--pk", pk / 100 + "");
         s.lpk = pk;
       }
       if (over !== s.lov) {
         r.sigClip.style.setProperty("--clip", over / 100 + "");
         s.lov = over;
+      }
+      // Promote the shade/peak to compositor layers (via `.live`) only while the strip
+      // is actually animating; an idle strip (at the floor, no clip) drops its layers,
+      // so a mostly-quiet console isn't compositing a layer per silent meter.
+      const active = v > 0 || pk > 0 || over > 0;
+      if (active !== s.live) {
+        r.ladder.classList.toggle("live", active);
+        s.live = active;
       }
     }
   }

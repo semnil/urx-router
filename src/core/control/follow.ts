@@ -48,6 +48,10 @@ export interface DeviceFollowHooks {
    *  when the param is not actually directly placeable (flagged direct but unhandled),
    *  so the caller falls back to a scoped read. */
   applyDirect: (node: string, name: ParamName, value: number) => boolean;
+  /** Patch the live snapshot's single entry for a just-applied direct change to the
+   *  device-reported value, so the host can skip the full re-translate on reflect
+   *  (and the next outgoing diff still measures from the device truth). */
+  noteDirect: (paramId: number, x: number, y: number, value: number) => void;
   /** A direct change was applied: request a re-render + live-snapshot re-base. The
    *  host coalesces these (one per animation frame), so calling it per notify during
    *  a sweep is cheap. */
@@ -148,6 +152,7 @@ export class DeviceFollow {
       // Direct: decode the value straight into the plan (host coalesces the render).
       // A param flagged direct but not actually placeable falls back to a scoped read.
       if (addr.direct && this.hooks.applyDirect(addr.node, addr.name, p.value)) {
+        this.hooks.noteDirect(p.paramId, p.x, p.y, p.value);
         this.hooks.flushDirect();
       } else {
         this.scopedNodes.add(addr.node);

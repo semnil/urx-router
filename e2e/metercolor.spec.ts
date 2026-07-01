@@ -31,9 +31,9 @@ test("the meter ladder carries ordered green/yellow/red zone boundaries", async 
   expect(zones.zr).toBeLessThan(100);
   expect(zones.zy).toBeLessThan(zones.zr);
 
-  // The colored bar spans the whole ladder and the shade hides the unlit part, so an
-  // empty meter (no live sync) is fully shaded.
+  // The colored bar spans the whole ladder and the shade covers the unlit part via
+  // scaleY(1 - --lvl), so an empty meter (no live sync, --lvl 0) is fully shaded.
   await expect(ladder.locator(".bar")).toHaveCount(1);
   const lvl = await ladder.locator(".shade").evaluate((el) => getComputedStyle(el).getPropertyValue("--lvl").trim());
-  expect(lvl === "" || lvl === "0%").toBeTruthy();
+  expect(lvl === "" || lvl === "0" || lvl === "0%").toBeTruthy();
 });

@@ -89,6 +89,15 @@ export class LiveSync {
     this.captureSnapshot();
   }
 
+  /** Patch one snapshot entry to a device-reported value (a direct follow notify),
+   *  so the next outgoing diff measures from it without a full re-translate. The
+   *  notify value is the same broker raw value the snapshot stores, and a direct
+   *  change never alters the writable-address set or the name snapshot, so patching
+   *  the single entry keeps the snapshot in agreement with the device. */
+  noteDirect(paramId: number, x: number, y: number, value: number): void {
+    this.snapshot.set(addrKey(paramId, x, y), value);
+  }
+
   /** Every writable parameter address the current plan maps to, as [paramId, x, y]
    *  triples — the set to register for device-side change notifies. Captured with
    *  the snapshot, so it must be called after begin()/resync(). Read-only. */
