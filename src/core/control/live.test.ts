@@ -163,3 +163,35 @@ describe("LiveSync flush error", () => {
     expect(live.isActive()).toBe(false);
   });
 });
+
+describe("LiveSync device-follow snapshot", () => {
+  it("noteDirect patches one entry so a device-followed value is not re-sent", async () => {
+    // The ch1 CH_FADER address + device value a -6 dB fader maps to.
+    const probe = basePlan();
+    setCh1Fader(probe, -6);
+    const cmd = planToCommands(model, probe).find((c) => c.name === "CH_FADER" && c.node === "ch1");
+    if (!cmd) throw new Error("expected a ch1 CH_FADER command");
+
+    // Baseline: without noteDirect the change diffs from the factory snapshot and sends.
+    const a = basePlan();
+    const liveA = liveFor(a);
+    liveA.begin();
+    setCh1Fader(a, -6);
+    liveA.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+
+    vi.mocked(vdSet).mockClear();
+
+    // With noteDirect patching the snapshot to the device value (the direct-follow
+    // path), the same edit is already in agreement, so nothing is re-sent.
+    const b = basePlan();
+    const liveB = liveFor(b);
+    liveB.begin();
+    setCh1Fader(b, -6);
+    liveB.noteDirect(cmd.paramId, cmd.x, cmd.y, cmd.vdValue);
+    liveB.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+});
