@@ -4,7 +4,10 @@
 // 176.4 / 192 kHz. Phase 2 surfaces these as warnings only; it does not forbid
 // the connections themselves. Language-agnostic — the UI maps codes to messages.
 
+import { parseRef } from "../models/types";
 import type { DeviceModel } from "../models/types";
+import type { Plan } from "./plan";
+import { directOutTarget } from "./routing";
 
 /** Selectable rates in Hz (44.1 kHz … 192 kHz). */
 export const SAMPLE_RATES = [44100, 48000, 88200, 96000, 176400, 192000];
@@ -37,6 +40,28 @@ export function rateConstraints(model: DeviceModel, sampleRate: number): RateCon
     if (has(HDMI_NODE)) warnings.push("hdmiEq");
   }
   return { warnings, disabledNodes };
+}
+
+// Channels whose Ducker is ON while the channel is also tapped straight to a USB
+// direct out (USB MAIN / SUB). That tap is the channel Rec Point, which the block
+// diagram places ahead of the fader and Ducker, so the ducked signal never reaches
+// the USB output — a silent surprise on a live output worth flagging (route via a
+// STEREO / MIX bus instead). microSD Rec is deliberately excluded: recording the
+// dry (pre-Ducker) signal is a standard workflow, and the Rec Point control already
+// makes that tap an explicit choice, so a standing warning there would be noise.
+// Returns the affected host-channel ids (the UI resolves them to labels).
+export function duckerBypassWarnings(model: DeviceModel, plan: Plan): string[] {
+  const hosts: string[] = [];
+  for (const node of model.nodes) {
+    if (node.kind !== "ducker" || !node.attachTo) continue;
+    if (plan.nodeParams[node.id]?.duckerOn !== true) continue;
+    const host = node.attachTo;
+    const tapped = plan.connections.some(
+      (c) => parseRef(c.from).nodeId === host && directOutTarget(model, c.from, c.to) === "usb",
+    );
+    if (tapped) hosts.push(host);
+  }
+  return hosts;
 }
 
 /** Human label for a rate, e.g. 44100 → "44.1 kHz". */

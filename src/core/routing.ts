@@ -78,6 +78,22 @@ export function sendTapWritable(model: DeviceModel, from: string, to: string): b
   return sendHasTap(model, from, to) && !parseRef(to).nodeId.startsWith("bus.fx");
 }
 
+// Classify a channel's "direct out" tap by destination, or null when `from → to`
+// is not one. On the device this is the channel's CH OUT, taken at its Rec Point —
+// which the block diagram places BEFORE the fader and the Ducker. So the fader, pan
+// and Ducker never reach this route; only a bus source (STEREO / MIX) carries the
+// post-Ducker signal to the same outputs. The routing kind already carries the
+// destination split — a channel → USB MAIN / SUB is `patch`, a channel → microSD
+// Rec is `record` — so callers read the concept here rather than re-deriving it
+// from node-id spelling. (A bus → USB is `patch` too, hence the source-kind test;
+// the DAW Rec 1:1 taps share this trait but are fixed, so they are not editable.)
+export function directOutTarget(model: DeviceModel, from: string, to: string): "usb" | "sdRec" | null {
+  const kind = ruleKind(model, from, to);
+  if (kind !== "patch" && kind !== "record") return null;
+  if (model.nodes.find((n) => n.id === parseRef(from).nodeId)?.kind !== "channel") return null;
+  return kind === "patch" ? "usb" : "sdRec";
+}
+
 export function canConnect(model: DeviceModel, plan: Plan, from: string, to: string): ConnectResult {
   const rule = findRule(model, from, to);
   if (!rule) return { ok: false, reason: "noRule" };

@@ -37,7 +37,7 @@ import {
   type InsertFxParamDesc,
   type MbcBandKey,
 } from "../core/control/insert-fx-effect";
-import { isBalLinkedPair, isFixedConnection, mixSendLocks, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
+import { directOutTarget, isBalLinkedPair, isFixedConnection, mixSendLocks, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
   busBalance,
@@ -134,8 +134,7 @@ import {
   PHONES_LEVEL_MAX,
   PHONES_LEVEL_DEFAULT,
 } from "../core/control/vd";
-import { rateConstraints } from "../core/constraints";
-import type { RateWarning } from "../core/constraints";
+import { duckerBypassWarnings, rateConstraints } from "../core/constraints";
 import { loadJson, saveJson } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
@@ -207,7 +206,13 @@ export function renderInspector(
   // hidden on the desktop side panel via CSS.
   host.append(closeButton(m.inspector.close, actions.onClose));
   const constraints = rateConstraints(model, plan.sampleRate);
-  if (constraints.warnings.length) host.append(warningBlock(m, constraints.warnings));
+  if (constraints.warnings.length)
+    host.append(warningBox(m.warning.title, constraints.warnings.map((w) => m.warning[w])));
+  // A live signal-flow caution (not rate-dependent): a channel with its Ducker on
+  // that is also tapped straight to a USB / SD direct out never carries the duck.
+  const duckerBypass = duckerBypassWarnings(model, plan);
+  if (duckerBypass.length)
+    host.append(warningBox(m.warning.duckerTitle, duckerBypass.map((id) => m.warning.duckerBypass(labelOf(id)))));
 
   if (!selection) {
     host.append(heading(m.inspector.title), hint(m.inspector.hint));
@@ -768,7 +773,14 @@ export function renderInspector(
       const tapEditable = !liveActive || sendTapWritable(model, from, to);
       for (const f of fields) host.append(paramControl(f, conn, actions.onUpdateParams, panLabel, tapEditable));
     } else {
-      host.append(hint(m.inspector.selectionOnly));
+      // A USB direct out is a live output where the missing fader / Ducker is a
+      // surprise (route via a bus to include them); a microSD Rec tap records the
+      // Rec Point stage on purpose, so it points at Rec Point instead. Anything else
+      // with no send params falls back to the generic note.
+      const directOut = directOutTarget(model, from, to);
+      const note =
+        directOut === "usb" ? m.inspector.directOutTap : directOut === "sdRec" ? m.inspector.sdRecTap : m.inspector.selectionOnly;
+      host.append(hint(note));
     }
     if (busFixed) host.append(hint(m.inspector.busFixedLevel));
     if (panLinked) host.append(hint(m.inspector.panLinked));
@@ -1862,17 +1874,17 @@ function notReadBadge(text: string): HTMLElement {
   return box;
 }
 
-function warningBlock(m: Messages, warnings: RateWarning[]): HTMLElement {
+function warningBox(title: string, lines: string[]): HTMLElement {
   const box = document.createElement("div");
   box.className = "warning";
   const head = document.createElement("div");
   head.className = "warning-title";
-  head.textContent = m.warning.title;
+  head.textContent = title;
   box.append(head);
-  for (const w of warnings) {
+  for (const l of lines) {
     const line = document.createElement("div");
     line.className = "warning-line";
-    line.textContent = m.warning[w];
+    line.textContent = l;
     box.append(line);
   }
   return box;

@@ -295,6 +295,13 @@ Source selection for the analog outputs (MAIN / LINE).
   The channel's **Rec Point** (recording / direct-out tap) selects a stage along this chain:
   MONO IN offers PRE GATE / PRE COMP / PRE EQ / PRE INS FX / PRE FADER; ST IN (EQ only) offers
   PRE EQ / PRE FADER. Default PRE FADER. Stored as a per-channel parameter, not a wire.
+  - **A channel direct out to USB MAIN / SUB or microSD Rec is tapped at this Rec Point** (i.e.
+    before the fader and Ducker). To send a fader/Ducker-processed signal to those outputs you must
+    route via a STEREO / MIX bus (the bus is post-Ducker). The planner surfaces this
+    (`directOutTarget` in `core/routing.ts`): a channel → USB/SD direct-out wire is annotated as a
+    Rec Point tap, and **a channel whose Ducker is on and is wired to a USB direct out raises a
+    warning at the top of the inspector** (`duckerBypassWarnings`). microSD Rec is excluded from the
+    warning — dry recording is a valid workflow — and gets a neutral note pointing at Rec Point.
 - MONO IN selects a **COMP/EQ Type** (CH SETTING) — COMP->EQ or **SSMCS** (Sweet Spot Morphing
   Channel Strip), mutually exclusive. SSMCS replaces the COMP / 4-band EQ with a dedicated morphing
   strip: pick one **Sweet Spot Data** preset (6 generic + 28 artist/use-case = 34), then shape it
