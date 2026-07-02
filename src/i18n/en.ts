@@ -96,6 +96,7 @@ export const en = {
     balance: "Balance",
     prePost: "Pre/Post",
     prePostLcdOnly: "CH → FX send Pre/Post is set on the device only (not writable from software).",
+    eqRateLocked: "Stereo channel EQ is disabled at 176.4 / 192 kHz — forced off.",
     channelOn: "Channel",
     sendOn: "Send",
     toSt: "TO ST",
@@ -302,8 +303,8 @@ export const en = {
   warning: {
     title: "Sample-rate notes",
     insFx: "Insert FX (MONO IN channels, MIX, STEREO) unavailable above 96 kHz.",
+    stereoEq: "Stereo channel (CH 5/6–11/12) EQ unavailable at 176.4 / 192 kHz.",
     fx2: "FX2 bus unavailable above 96 kHz.",
-    hdmiEq: "HDMI EQ unavailable at 176.4 / 192 kHz.",
     duckerTitle: "Ducker not on direct out",
     duckerBypass: (label: string): string =>
       `${label} — Ducker is on, but the USB / SD direct out taps before it. Route via a STEREO or MIX bus to include it.`,

@@ -1,11 +1,12 @@
 // Sample-rate-dependent feature limits. Transcribed from device-model.md
 // ("Sample-rate-dependent constraints"): above 96 kHz the insert FX and the FX2
-// bus are unavailable, and on models with HDMI the HDMI EQ is unavailable at
-// 176.4 / 192 kHz. Phase 2 surfaces these as warnings only; it does not forbid
-// the connections themselves. Language-agnostic — the UI maps codes to messages.
+// bus are unavailable, and the stereo channels' EQ drops out at 176.4 / 192 kHz.
+// Phase 2 surfaces these as warnings only; it does not forbid the connections
+// themselves. Language-agnostic — the UI maps codes to messages.
 
 import { parseRef } from "../models/types";
 import type { DeviceModel } from "../models/types";
+import { isStereoChannel } from "./control/translate";
 import type { Plan } from "./plan";
 import { directOutTarget } from "./routing";
 
@@ -14,7 +15,7 @@ export const SAMPLE_RATES = [44100, 48000, 88200, 96000, 176400, 192000];
 
 export const DEFAULT_SAMPLE_RATE = 48000;
 
-export type RateWarning = "insFx" | "fx2" | "hdmiEq";
+export type RateWarning = "insFx" | "stereoEq" | "fx2";
 
 export interface RateConstraints {
   warnings: RateWarning[];
@@ -23,21 +24,34 @@ export interface RateConstraints {
 }
 
 const FX2_NODE = "bus.fx2";
-const HDMI_NODE = "in.hdmi";
+
+/** Rate above which the >96 kHz feature drops (INS FX, FX2, stereo EQ) kick in. */
+const HI_RATE_HZ = 96000;
+
+// The stereo channels' EQ is inert at 176.4 / 192 kHz — the block diagram flags the
+// CH 5/6-11/12 EQ as "Disabled when sample rate is 176.4 kHz or 192 kHz". Mono
+// channel and output-bus EQ are unaffected. Callers force the control OFF and lock
+// it at those rates; the plan value is left intact so lowering the rate restores it.
+export function channelEqUnavailable(nodeId: string, sampleRate: number): boolean {
+  return isStereoChannel(nodeId) && sampleRate > HI_RATE_HZ;
+}
 
 export function rateConstraints(model: DeviceModel, sampleRate: number): RateConstraints {
   const warnings: RateWarning[] = [];
   const disabledNodes: string[] = [];
   const has = (id: string): boolean => model.nodes.some((n) => n.id === id);
 
-  // Above 96 kHz (i.e. 176.4 / 192 kHz) the insert FX and FX2 drop out.
-  if (sampleRate > 96000) {
+  // Above 96 kHz (i.e. 176.4 / 192 kHz) the insert FX, FX2 and stereo-channel EQ
+  // drop out.
+  if (sampleRate > HI_RATE_HZ) {
     warnings.push("insFx");
+    // The stereo channels' EQ goes inert (see channelEqUnavailable). The strip still
+    // passes audio — only its EQ dies — so this is a text warning, not a dimmed node.
+    if (model.nodes.some((n) => n.kind === "channel" && isStereoChannel(n.id))) warnings.push("stereoEq");
     if (has(FX2_NODE)) {
       warnings.push("fx2");
       disabledNodes.push(FX2_NODE);
     }
-    if (has(HDMI_NODE)) warnings.push("hdmiEq");
   }
   return { warnings, disabledNodes };
 }

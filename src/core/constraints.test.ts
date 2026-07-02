@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rateConstraints, formatRate, SAMPLE_RATES, DEFAULT_SAMPLE_RATE, duckerBypassWarnings } from "./constraints";
+import { rateConstraints, formatRate, SAMPLE_RATES, DEFAULT_SAMPLE_RATE, duckerBypassWarnings, channelEqUnavailable } from "./constraints";
 import { directOutTarget } from "./routing";
 import { emptyPlan } from "./plan";
 import { getModel } from "../models";
@@ -21,15 +21,33 @@ describe("rateConstraints", () => {
     expect(c.disabledNodes).toContain("bus.fx2");
   });
 
-  it("warns about HDMI EQ only on a model with HDMI (URX44V)", () => {
-    expect(rateConstraints(getModel("URX44V"), 176400).warnings).toContain("hdmiEq");
-    expect(rateConstraints(getModel("URX44"), 176400).warnings).not.toContain("hdmiEq");
+  it("warns the stereo-channel EQ drops out at 176.4 / 192 kHz, not at 96 kHz", () => {
+    for (const id of ["URX22", "URX44", "URX44V"] as const) {
+      expect(rateConstraints(getModel(id), 96000).warnings).not.toContain("stereoEq");
+      expect(rateConstraints(getModel(id), 176400).warnings).toContain("stereoEq");
+      expect(rateConstraints(getModel(id), 192000).warnings).toContain("stereoEq");
+    }
   });
 
   it("treats 176.4 kHz the same as 192 kHz", () => {
     const a = rateConstraints(getModel("URX22"), 176400);
     const b = rateConstraints(getModel("URX22"), 192000);
     expect(a).toEqual(b);
+  });
+});
+
+describe("channelEqUnavailable", () => {
+  it("is true only for a stereo channel at 176.4 / 192 kHz", () => {
+    expect(channelEqUnavailable("ch_5_6", 176400)).toBe(true);
+    expect(channelEqUnavailable("ch_5_6", 192000)).toBe(true);
+    expect(channelEqUnavailable("ch_5_6", 96000)).toBe(false);
+    expect(channelEqUnavailable("ch_5_6", 48000)).toBe(false);
+  });
+
+  it("never fires for a mono channel or a bus (their EQ survives high rates)", () => {
+    expect(channelEqUnavailable("ch1", 192000)).toBe(false);
+    expect(channelEqUnavailable("bus.stereo", 192000)).toBe(false);
+    expect(channelEqUnavailable("bus.mix1", 192000)).toBe(false);
   });
 });
 

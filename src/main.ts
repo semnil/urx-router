@@ -316,8 +316,7 @@ function reflectFollow(): void {
     followFull = false;
     if (graphHost.hidden) graphDirty = true;
     else graph.refresh();
-    consoleView.refresh();
-    syncRateUi();
+    syncRateUi(); // also refreshes the console (applyRateConstraints)
     live?.resync();
   } else {
     // Direct-only: repaint just the changed nodes / strips. The snapshot is already
@@ -772,12 +771,13 @@ function refreshInspector(): void {
   renderInspector(inspectorHost, getModel(modelId), plan, selection, inspectorActions, recent, live?.isActive() ?? false);
 }
 
-// Recompute the sample-rate constraints and reflect them in the graph badges and
-// the inspector warnings.
+// Recompute the sample-rate constraints and reflect them in the graph badges, the
+// inspector warnings and the console (the stereo EQ chip locks at 176.4 / 192 kHz).
 function applyRateConstraints(): void {
   const c = rateConstraints(getModel(modelId), plan.sampleRate);
   graph.setDisabledNodes(c.disabledNodes);
   refreshInspector();
+  consoleView.refresh();
 }
 
 // After a device readback, mirror the device's sample rate into the picker and
@@ -805,8 +805,7 @@ function loadPlan(next: Plan): void {
   selection = null;
   graph.setModel(getModel(modelId), plan);
   dirty = false;
-  applyRateConstraints();
-  consoleView.refresh();
+  applyRateConstraints(); // also refreshes the console
 }
 
 // Build a copyable, language-stable report of a plan's routing violations, so it
@@ -1057,9 +1056,8 @@ if (!DEMO) {
         // default, so the graph/inspector flag them as not read from the device.
         plan.unreadNodes = result.unreadNodes;
         graph.setModel(getModel(modelId), plan);
-        consoleView.refresh(); // re-render the CONSOLE strips if it is the open view
         selection = null;
-        syncRateUi();
+        syncRateUi(); // also re-renders the CONSOLE strips (applyRateConstraints)
         dirty = true;
         // Nodes the readback tried but could not confirm (left at their plan default).
         const unread = result.unreadNodes.size;

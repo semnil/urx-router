@@ -95,6 +95,7 @@ export const ja: Messages = {
     balance: "バランス",
     prePost: "PRE/POST",
     prePostLcdOnly: "CH → FX send の PRE/POST は本体でのみ設定可 (software から変更不可)。",
+    eqRateLocked: "176.4 / 192 kHz ではステレオ ch の EQ は無効 — 強制的に OFF。",
     channelOn: "チャンネル",
     sendOn: "Send",
     toSt: "TO ST",
@@ -301,8 +302,8 @@ export const ja: Messages = {
   warning: {
     title: "サンプルレート注意",
     insFx: "96 kHz 超では Insert FX (MONO IN ch・MIX・STEREO) を使用できません。",
+    stereoEq: "176.4 / 192 kHz ではステレオ ch (CH 5/6–11/12) の EQ を使用できません。",
     fx2: "96 kHz 超では FX2 Bus を使用できません。",
-    hdmiEq: "176.4 / 192 kHz では HDMI EQ を使用できません。",
     duckerTitle: "ダッカーがダイレクト出力に乗りません",
     duckerBypass: (label: string): string =>
       `${label} — ダッカー ON ですが USB / SD ダイレクト出力はその前段でタップします。含めるには STEREO / MIX バス経由で送ってください。`,

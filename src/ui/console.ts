@@ -12,6 +12,7 @@ import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, type NodeParams, type Plan, t
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
 import { defaultTapKey, hasMeter, isStereoTap, METER_FLOOR_DB, METER_GREEN_TOP_DB, METER_YELLOW_TOP_DB, MeterStore, subscribeMeters, tapAddrs, tapFor, tapsFor, type MeterTap } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
+import { channelEqUnavailable } from "../core/constraints";
 import { busBalance, channelControl, insertFxControl } from "../core/control/translate";
 import { isBalLinkedPair, mirrorBalPair, mixSendLocks, partnerChannel, sendTapWritable } from "../core/routing";
 import { INSERT_FX_NONE, type InsertFxOption } from "../core/control/params";
@@ -861,7 +862,13 @@ export class Console {
     if (!usesSend) {
       if (m.isMono) boolChip(proc, "GATE", "gateOn", false);
       if (m.isMono) boolChip(proc, "COMP", "compOn", false);
-      if (m.hasEq) boolChip(proc, t().console.eq, "eqOn", true);
+      if (m.hasEq) {
+        // Stereo-channel EQ is inert at 176.4 / 192 kHz: show the chip forced off and
+        // read-only (matches the inspector's locked EQ toggle), else a live toggle.
+        if (channelEqUnavailable(m.id, this.hooks.getPlan().sampleRate))
+          this.makeChip(m.id, proc, t().console.eq, false, false, () => false, t().inspector.eqRateLocked);
+        else boolChip(proc, t().console.eq, "eqOn", true);
+      }
       const ifx = insertFxControl(model, m.id);
       if (ifx) {
         const insOn = (): boolean => {

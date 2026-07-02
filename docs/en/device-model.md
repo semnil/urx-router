@@ -352,9 +352,8 @@ Source selection for the analog outputs (MAIN / LINE).
 | Constraint | Condition |
 | --- | --- |
 | INS FX unavailable | sample rate above 96 kHz |
+| Stereo channel (CH 5/6–11/12) EQ unavailable | sample rate 176.4 / 192 kHz |
 | FX2 unavailable | sample rate above 96 kHz |
-| HDMI EQ unavailable | sample rate 176.4 / 192 kHz |
-| HDMI down-mix EQ | enabled only when the input is 2ch |
 
 > As of Phase 2, these are surfaced as **warnings** (an inspector notice plus a dimmed, dashed
 > outline on the affected node); they do not forbid the wiring itself. The sample rate is set per
