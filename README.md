@@ -34,6 +34,12 @@ neither is verified on hardware yet. Writing overwrites the device's current set
 [Disclaimer](#disclaimer). The `--experimental` flag adds a destructive-then-restored
 self-test diagnostic on top.
 
+The console view shows the same plan as a mixer surface — per-strip faders, mutes, EQ,
+dynamics, and sends. Edits made here live-sync to the device the same way, and live meters
+run while Live sync is active.
+
+![URX Router console view of a URX44V as a mixer surface with per-strip faders, dynamics, EQ, and sends](docs/assets/screenshot-console-en.png)
+
 ## Claude Code skill
 
 This repo also publishes a [Claude Code](https://claude.com/claude-code) skill,
