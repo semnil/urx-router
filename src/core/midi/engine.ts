@@ -172,7 +172,7 @@ export class MidiEngine {
     // know it just muted something), so its LED feedback must go out promptly.
     if (!toggle) this.lastRecv.set(key, this.hooks.now());
     const before = control.get();
-    const target = toggle ? this.toggleTarget(key, ev, before) : this.continuousTarget(mapping, key, ev, before, control.step);
+    const target = toggle ? this.toggleTarget(mapping, key, ev, before) : this.continuousTarget(mapping, key, ev, before, control.step);
     if (target === null) return;
     if (!control.set(target)) return; // device-locked — swallowed
     // The controller already shows what it sent: remember the applied value as
@@ -181,17 +181,23 @@ export class MidiEngine {
     if (control.get() !== before) this.hooks.applied(control);
   }
 
-  // Toggles flip on a note-on or a CC rising edge (≥ 64); other messages are
-  // ignored. The take-in mode does not apply.
-  private toggleTarget(key: string, ev: MidiEvent, current: number): number | null {
-    if (ev.type === "note") return ev.on ? (current >= 0.5 ? 0 : 1) : null;
-    if (ev.type === "cc") {
-      const prev = this.lastCc.get(key);
-      this.lastCc.set(key, ev.value);
-      const rising = ev.value >= 64 && (prev === undefined || prev < 64);
-      return rising ? (current >= 0.5 ? 0 : 1) : null;
+  // Toggles: "edge" (default) flips on a note-on or a CC rising edge (≥ 64) —
+  // the momentary-button convention, where a release is ignored. "state"
+  // follows the value instead (note on / CC ≥ 64 = on, else off), for senders
+  // that alternate one message per press (e.g. a Stream Deck toggle button,
+  // which would otherwise miss every second press). Take-in modes don't apply.
+  private toggleTarget(mapping: MidiMapping, key: string, ev: MidiEvent, current: number): number | null {
+    if (ev.type === "pitchbend") return null;
+    if (mapping.button === "state") {
+      if (ev.type === "cc") this.lastCc.set(key, ev.value);
+      const target = ev.type === "note" ? (ev.on ? 1 : 0) : ev.value >= 64 ? 1 : 0;
+      return target === current ? null : target;
     }
-    return null;
+    if (ev.type === "note") return ev.on ? (current >= 0.5 ? 0 : 1) : null;
+    const prev = this.lastCc.get(key);
+    this.lastCc.set(key, ev.value);
+    const rising = ev.value >= 64 && (prev === undefined || prev < 64);
+    return rising ? (current >= 0.5 ? 0 : 1) : null;
   }
 
   private continuousTarget(mapping: MidiMapping, key: string, ev: MidiEvent, current: number, step: number): number | null {

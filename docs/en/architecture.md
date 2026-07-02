@@ -393,7 +393,11 @@ from an external MIDI controller (desktop app only). Configuration lives in the 
 - **Engine (`engine.ts`)** — routes incoming events onto bound controls. Take-in modes are per-mapping:
   absolute / pickup (swallowed until the physical value reaches or crosses the plan value) / relative (two's
   complement, offset-64, or sign-bit encodings; one click walks one detent). 14-bit CC assembles the MSB/LSB
-  pair (n / n+32). Toggles flip on a note-on or a CC rising edge (≥ 64) and ignore the take-in mode.
+  pair (n / n+32). Toggles carry a per-mapping button behavior instead of a take-in mode: the default
+  "flip on press" (note-on / CC rising edge ≥ 64 flips, a release is ignored — the momentary-button
+  convention) and "follow value" (note on / CC ≥ 64 = on, else off) for senders that alternate one
+  message per press — e.g. an Elgato Stream Deck MIDI-plugin toggle button, which edge detection would
+  otherwise miss on every second press.
 - **Learn** — turning the panel's Learn on gives armable console controls a dashed target ring; clicking one
   arms it (pulsing outline; already-bound controls carry an amber dot) and the next MIDI input binds. A CC
   settles on its second message (same CC = 7-bit, its pair partner = 14-bit); a lone CC (a button) commits

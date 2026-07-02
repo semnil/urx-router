@@ -112,6 +112,33 @@ describe("incoming application", () => {
     expect(d.value).toBe(0);
   });
 
+  it("state-mode toggles follow an alternating one-message-per-press sender (Stream Deck style)", () => {
+    // Regression for the Stream Deck MIDI plugin's toggle buttons: one CC per
+    // press, alternating 127 / 0 — edge mode misses every second press, so a
+    // per-mapping "state" behavior applies the value as the state instead.
+    const c = fake("ch1/mute", "toggle");
+    controls.set(c.id, c);
+    engine.setMappings([{ control: c.id, addr: { type: "cc", channel: 0, controller: 20 }, mode: "absolute", button: "state" }]);
+    const seen: number[] = [];
+    for (const value of [127, 0, 127, 0, 127]) {
+      engine.onMessage(encodeCc(0, 20, value));
+      seen.push(c.value);
+    }
+    seen.forEach((v, i) => expect(v).toBe(i % 2 === 0 ? 1 : 0)); // every press responds
+    expect(applied.length).toBe(5);
+    engine.onMessage(encodeCc(0, 20, 127)); // same state again → no-op, not dirty
+    expect(applied.length).toBe(5);
+
+    // A note binding in state mode acts as "on while held".
+    const n = fake("ch2/mute", "toggle");
+    controls.set(n.id, n);
+    engine.setMappings([{ control: n.id, addr: { type: "note", channel: 0, note: 60 }, mode: "absolute", button: "state" }]);
+    engine.onMessage(encodeNote(0, 60, true));
+    expect(n.value).toBe(1);
+    engine.onMessage(encodeNote(0, 60, false));
+    expect(n.value).toBe(0);
+  });
+
   it("pickup swallows input until the physical value reaches or crosses the plan value", () => {
     const c = fake("ch1/level", "continuous", 0.5);
     controls.set(c.id, c);

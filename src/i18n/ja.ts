@@ -86,6 +86,7 @@ export const ja: Messages = {
     remove: "割り当てを削除",
     mode: { absolute: "アブソリュート", pickup: "ピックアップ", relative: "リラティブ" },
     encoding: { twos: "2の補数", offset64: "オフセット64", signbit: "符号ビット" },
+    buttonMode: { edge: "押下で反転", state: "値に追従" },
     bound: (control: string, addr: string): string => `${addr} を ${control} に割り当てました`,
     inputError: (message: string): string => `MIDI 入力エラー: ${message}`,
     outputError: (message: string): string => `MIDI 出力エラー: ${message}`,

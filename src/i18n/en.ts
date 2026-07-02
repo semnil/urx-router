@@ -86,6 +86,7 @@ export const en = {
     remove: "Remove assignment",
     mode: { absolute: "Absolute", pickup: "Pickup", relative: "Relative" },
     encoding: { twos: "2's comp", offset64: "Offset 64", signbit: "Sign bit" },
+    buttonMode: { edge: "Flip on press", state: "Follow value" },
     bound: (control: string, addr: string): string => `Assigned ${addr} to ${control}`,
     inputError: (message: string): string => `MIDI input error: ${message}`,
     outputError: (message: string): string => `MIDI output error: ${message}`,

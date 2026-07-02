@@ -22,6 +22,13 @@ export type TakeMode = "absolute" | "pickup" | "relative";
  *  offset64 = value - 64; signbit = 0..63 up, 64..127 down by (value - 64). */
 export type RelativeEncoding = "twos" | "offset64" | "signbit";
 
+/** Toggle-button behavior (toggle controls only):
+ *  edge (default) = flip on a press (note-on / CC rising edge; a release is
+ *  ignored) — the momentary-button convention;
+ *  state = the value is the state (note on / CC ≥ 64 = on, else off) — for
+ *  senders that alternate one message per press (e.g. Stream Deck toggles). */
+export type ButtonMode = "edge" | "state";
+
 export interface MidiMapping {
   /** The bound console control (controls.ts id, e.g. "ch1/level@bus.mix1"). */
   control: string;
@@ -29,6 +36,8 @@ export interface MidiMapping {
   mode: TakeMode;
   /** Delta encoding, meaningful only when mode = "relative". */
   encoding?: RelativeEncoding;
+  /** Toggle behavior, meaningful only on toggle controls. Absent = edge. */
+  button?: ButtonMode;
 }
 
 /** A stable lookup key for an address (one mapping per physical control). */
@@ -96,6 +105,7 @@ export function isMapping(v: unknown): v is MidiMapping {
   if (!isAddr(m.addr)) return false;
   if (m.mode !== "absolute" && m.mode !== "pickup" && m.mode !== "relative") return false;
   if (m.encoding !== undefined && m.encoding !== "twos" && m.encoding !== "offset64" && m.encoding !== "signbit") return false;
+  if (m.button !== undefined && m.button !== "edge" && m.button !== "state") return false;
   return true;
 }
 

@@ -10,7 +10,7 @@ import { loadJson, saveJson } from "../core/storage";
 import { isTauri, midiCloseOutput, midiListInputs, midiListOutputs, midiOpenInput, midiOpenOutput, midiSend } from "../core/platform";
 import { MidiEngine } from "../core/midi/engine";
 import { bindControl, parseControlId, type BoundControl, type ControlParam } from "../core/midi/controls";
-import { addrKey, addrLabel, sanitizeMappings, type MidiAddr, type MidiMapping, type RelativeEncoding, type TakeMode } from "../core/midi/mapping";
+import { addrKey, addrLabel, sanitizeMappings, type ButtonMode, type MidiAddr, type MidiMapping, type RelativeEncoding, type TakeMode } from "../core/midi/mapping";
 import { mirrorBalPair } from "../core/routing";
 import { t } from "../i18n";
 
@@ -45,6 +45,7 @@ const LEARN_FLUSH_MS = 500;
 
 const MODES: TakeMode[] = ["absolute", "pickup", "relative"];
 const ENCODINGS: RelativeEncoding[] = ["twos", "offset64", "signbit"];
+const BUTTON_MODES: ButtonMode[] = ["edge", "state"];
 
 export class MidiControl {
   private engine: MidiEngine;
@@ -427,6 +428,22 @@ export class MidiControl {
           });
           row.append(enc);
         }
+      } else if (control?.kind === "toggle" && mapping.addr.type !== "pitchbend") {
+        // Toggle behavior: flip per press (momentary buttons, the default) or
+        // follow the value (alternating senders, e.g. Stream Deck toggles).
+        const btn = document.createElement("select");
+        btn.className = "mp-btn";
+        for (const value of BUTTON_MODES) {
+          const opt = document.createElement("option");
+          opt.value = value;
+          opt.textContent = m.buttonMode[value];
+          btn.append(opt);
+        }
+        btn.value = mapping.button ?? "edge";
+        btn.addEventListener("change", () => {
+          this.patchMapping(mapping, { button: btn.value as ButtonMode });
+        });
+        row.append(btn);
       }
       const del = el("button", "mp-del") as HTMLButtonElement;
       del.type = "button";

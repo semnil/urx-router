@@ -151,6 +151,26 @@ test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
   await expect(muteChip()).not.toHaveClass(/\bon\b/);
 });
 
+test("a follow-value toggle responds to every press of an alternating button", async ({ page }) => {
+  // Stream Deck style: the MIDI plugin's toggle button sends one CC per press,
+  // alternating 127 / 0. Default edge mode flips on the 127 presses only; the
+  // per-mapping "Follow value" behavior must respond to every press.
+  await openPanel(page);
+  await pickInputPort(page);
+  const muteChip = () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" });
+  await learnBinding(page, () => muteChip().click(), [0xb0, 20, 127], [0xb0, 20, 127]);
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+
+  const row = page.locator('#midi-panel .mp-row[data-control="ch1/mute"]');
+  await row.locator(".mp-btn").selectOption("state");
+  await sendMidi(page, [0xb0, 20, 127]);
+  await expect(muteChip()).toHaveClass(/\bon\b/); // 127 = muted
+  await sendMidi(page, [0xb0, 20, 0]);
+  await expect(muteChip()).not.toHaveClass(/\bon\b/); // 0 = unmuted — the press edge mode misses
+  await sendMidi(page, [0xb0, 20, 127]);
+  await expect(muteChip()).toHaveClass(/\bon\b/);
+});
+
 test("feedback follows UI edits out of the output port", async ({ page }) => {
   await openPanel(page);
   await pickInputPort(page);

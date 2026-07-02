@@ -2518,7 +2518,8 @@ select:focus-visible,
   white-space: nowrap;
 }
 .midi-panel .mp-mode,
-.midi-panel .mp-enc {
+.midi-panel .mp-enc,
+.midi-panel .mp-btn {
   flex-shrink: 0;
   font-size: 11px;
   max-width: 92px;
