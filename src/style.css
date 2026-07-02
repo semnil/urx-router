@@ -2338,3 +2338,42 @@ select:focus-visible,
   user-select: text;
   color: var(--text);
 }
+
+/* ---- MIDI learn (console) ---- */
+/* While learn mode is on, armable controls show a dashed target ring, the armed
+   one pulses solid, and an already-bound one carries an amber corner dot. */
+.con-root.midi-learn .con-fader,
+.con-root.midi-learn .con-knob,
+.con-root.midi-learn .con-chip:not(.readonly):not(.spacer) {
+  cursor: copy;
+}
+.midi-target {
+  outline: 1px dashed color-mix(in srgb, var(--led) 55%, transparent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+.midi-target.midi-armed {
+  outline: 2px solid var(--led);
+  animation: midi-armed-pulse 1s ease-in-out infinite;
+}
+@keyframes midi-armed-pulse {
+  50% {
+    outline-color: color-mix(in srgb, var(--led) 30%, transparent);
+  }
+}
+.midi-target.midi-mapped {
+  position: relative;
+}
+.midi-target.midi-mapped::before {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--led);
+  box-shadow: 0 0 0 1px var(--panel);
+  pointer-events: none;
+  z-index: 1;
+}

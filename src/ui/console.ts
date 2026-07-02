@@ -17,6 +17,7 @@ import { busBalance, channelControl, insertFxControl } from "../core/control/tra
 import { isBalLinkedPair, mirrorBalPair, mixSendLocks, partnerChannel, sendTapWritable } from "../core/routing";
 import { INSERT_FX_NONE, type InsertFxOption } from "../core/control/params";
 import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../core/control/vd";
+import { controlId } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
 import { t } from "../i18n";
 
@@ -150,11 +151,22 @@ interface KnobSpec {
   readonlyTitle?: string;
 }
 
+/** MIDI-learn integration: while learn mode is active, activating an armable
+ *  console control arms it for binding instead of editing it (the MIDI panel
+ *  owns the mode / armed state and re-renders the console when they change). */
+export interface ConsoleMidiHooks {
+  learnActive: () => boolean;
+  armedId: () => string | null;
+  isMapped: (id: string) => boolean;
+  arm: (id: string) => void;
+}
+
 export interface ConsoleHooks {
   getModel: () => DeviceModel;
   getPlan: () => Plan;
   /** An edit changed the plan (mute / fader / EQ): flag dirty + schedule live sync. */
   onChange: () => void;
+  midi?: ConsoleMidiHooks;
 }
 
 // The bars animate every frame; the numeric readout text is refreshed only every
@@ -505,6 +517,27 @@ export class Console {
     this.tapPop.replaceChildren();
   }
 
+  // ---- MIDI learn ----
+
+  /** In learn mode an armable control arms itself on activation instead of
+   *  editing. Returns true when the interaction was consumed by arming. */
+  private midiArm(id: string | undefined): boolean {
+    const midi = this.hooks.midi;
+    if (!id || !midi?.learnActive()) return false;
+    midi.arm(id);
+    return true;
+  }
+
+  /** Learn-mode affordances on an armable element: target ring, armed pulse,
+   *  already-mapped dot. No-op outside learn mode (no visual noise). */
+  private midiMark(el: HTMLElement, id: string | undefined): void {
+    const midi = this.hooks.midi;
+    if (!id || !midi?.learnActive()) return;
+    el.classList.add("midi-target");
+    if (midi.armedId() === id) el.classList.add("midi-armed");
+    if (midi.isMapped(id)) el.classList.add("midi-mapped");
+  }
+
   // Paint a scribble with the node's device CH SETTING colour (contrast-picked ink),
   // or leave the rail fallback when unset. Shared by both strip builders.
   private paintScribble(scrib: HTMLElement, id: string): void {
@@ -535,7 +568,17 @@ export class Console {
   // `toggle` flips the underlying plan flag and returns the new state, then the chip
   // commits (and re-renders when commit asks). A readonlyTitle renders it inert with a
   // tooltip. Shared across both strip builders (channel chips + the OSC ON button).
-  private makeChip(id: string, parent: HTMLElement, label: string, mute: boolean, on: boolean, toggle: () => boolean, readonlyTitle?: string): void {
+  // `midiId` makes the chip armable for MIDI learn (activation arms in learn mode).
+  private makeChip(
+    id: string,
+    parent: HTMLElement,
+    label: string,
+    mute: boolean,
+    on: boolean,
+    toggle: () => boolean,
+    readonlyTitle?: string,
+    midiId?: string,
+  ): void {
     const chip = el("div", "con-chip" + (mute ? " mute" : "") + (on ? " on" : "") + (readonlyTitle ? " readonly" : ""));
     chip.textContent = label;
     chip.setAttribute("role", "button");
@@ -547,7 +590,9 @@ export class Console {
       return;
     }
     chip.tabIndex = 0;
+    this.midiMark(chip, midiId);
     const run = (): void => {
+      if (this.midiArm(midiId)) return;
       const next = toggle();
       chip.classList.toggle("on", next);
       chip.setAttribute("aria-pressed", String(next));
@@ -620,7 +665,7 @@ export class Console {
         const next = !oscOn();
         np.osc = { ...np.osc, on: next };
         return next;
-      });
+      }, undefined, controlId(m.id, "oscOn"));
       chips.append(el("div", "con-chip spacer"));
       head.append(chips);
       // LEVEL knob: full OSC range (-96…0 dB). The indicator's horizontal marks read
@@ -635,7 +680,7 @@ export class Console {
         format: (v) => v.toFixed(1),
         reset: factory,
         angle: (v) => (v <= -50 ? -135 + ((v + 96) / 46) * 45 : v >= -8 ? 90 + ((v + 8) / 8) * 45 : -90 + ((v + 50) / 42) * 180),
-      }, m.id);
+      }, m.id, controlId(m.id, "level"));
     }
     strip.append(head);
 
@@ -676,6 +721,7 @@ export class Console {
       this.tapModel = model.id;
     }
     this.closeTapPop();
+    this.host.classList.toggle("midi-learn", this.hooks.midi?.learnActive() ?? false);
     this.outLabel.textContent = t().console.outputLabel;
     this.renderModes();
     this.refs.clear();
@@ -799,7 +845,7 @@ export class Console {
         const next = !(planOf()[key] ?? def);
         this.nodeParamsOf(m.id)[key] = next;
         return next;
-      });
+      }, undefined, controlId(m.id, key));
     };
 
     // channel + input (HA) group
@@ -821,7 +867,7 @@ export class Console {
           const nextOn = !sendOn();
           if (c) c.params = { ...c.params, on: nextOn };
           return !nextOn; // chip "on" (highlighted) = muted
-        });
+        }, undefined, controlId(m.id, "mute", usesSend ? this.mode : undefined));
       } else {
         // Master ON/OFF on the node's own `on` flag: the STEREO master
         // (STEREO_MASTER_ON) writes to the device; a MONITOR bus is plan-only
@@ -830,7 +876,7 @@ export class Console {
           const muted = planOf().on === false;
           this.nodeParamsOf(m.id).on = muted; // toggle: was muted → on, was on → muted
           return !muted;
-        });
+        }, undefined, controlId(m.id, "mute"));
       }
     }
     // HA input toggles (+48 / polarity / HPF / Hi-Z) are channel-domain, not send
@@ -887,7 +933,7 @@ export class Console {
           const next = !duckOn();
           this.nodeParamsOf(duckerId).duckerOn = next;
           return next;
-        });
+        }, undefined, controlId(duckerId, "duckerOn"));
       }
     }
 
@@ -936,7 +982,7 @@ export class Console {
         format: (v) => (v > 0 ? "+" : "") + v,
         reset: factory,
         angle: (v) => -90 + ((v - hl) / (hr - hl)) * 180,
-      }, m.id);
+      }, m.id, controlId(m.id, "gain"));
     }
     // PAN (mono) / BALANCE (stereo) = the source's send pan, L63 – C – R63. Both
     // channels and FX channels follow the tab: MAIN edits the → STEREO main path, a
@@ -970,7 +1016,7 @@ export class Console {
         reset: factory,
         // 2.0 at the left horizontal, 8.0 at the right (the device's markings).
         angle: (v) => -90 + ((v - 2) / (8 - 2)) * 180,
-      }, m.id);
+      }, m.id, controlId(m.id, "phonesLevel"));
     }
     strip.append(head);
 
@@ -1051,6 +1097,8 @@ export class Console {
     const fader = r.fader;
     if (!fader) return; // meter-only strips have no fader to wire
     const range = r.m.range;
+    const midiId = controlId(r.m.id, "level", usesSend ? this.mode : undefined);
+    this.midiMark(fader, midiId);
     const setLevel = (db: number): void => {
       if (usesSend) this.setSend(r.m.id, this.mode as SendTarget, db);
       else this.setMain(r.m, db);
@@ -1060,6 +1108,7 @@ export class Console {
     };
     fader.addEventListener("pointerdown", (e) => {
       e.preventDefault();
+      if (this.midiArm(midiId)) return;
       fader.setPointerCapture(e.pointerId);
       const rect = fader.getBoundingClientRect();
       const move = (ev: PointerEvent): void => {
@@ -1075,6 +1124,11 @@ export class Console {
       window.addEventListener("pointerup", up);
     });
     fader.addEventListener("keydown", (e) => {
+      if (this.hooks.midi?.learnActive()) {
+        e.preventDefault();
+        if (e.key === " " || e.key === "Enter") this.midiArm(midiId);
+        return;
+      }
       const cur = usesSend ? this.getSend(r.m.id, this.mode as SendTarget) : this.getMain(r.m);
       // Each range defines its own detent step (OSC: whole dB; level_gain: one grid
       // detent, a step down off the floor landing on -∞).
@@ -1092,6 +1146,7 @@ export class Console {
     });
     // Double-click resets the fader to its factory value.
     fader.addEventListener("dblclick", () => {
+      if (this.hooks.midi?.learnActive()) return; // pointerdown already armed
       const fp = this.factoryPlan();
       setLevel(usesSend ? this.sendLevelOf(fp, r.m.id, this.mode as SendTarget) : this.mainLevelOf(fp, r.m));
     });
@@ -1306,7 +1361,7 @@ export class Console {
       (v) => { const c = conn(); if (c) c.params = { ...c.params, pan: v }; },
       factory,
       readonlyTitle,
-    ), id);
+    ), id, controlId(id, "pan", target === MAIN_BUS ? undefined : target));
   }
 
   /** Add a BALANCE/PAN knob bound to a bus node's own master balance (`pan`,
@@ -1317,7 +1372,7 @@ export class Console {
       () => this.hooks.getPlan().nodeParams[id]?.pan ?? 0,
       (v) => void (this.nodeParamsOf(id).pan = v),
       factory,
-    ), id);
+    ), id, controlId(id, "pan"));
   }
 
   private nodeParamsOf(id: string): NodeParams {
@@ -1419,7 +1474,8 @@ export class Console {
 
   // Build a labelled rotary knob (label / value / knob) in the strip head and
   // wire it. Shared by the channel gain and the monitor PHONES level.
-  private addKnob(head: HTMLElement, label: string, k: KnobSpec, id: string): void {
+  // `midiId` makes the knob armable for MIDI learn.
+  private addKnob(head: HTMLElement, label: string, k: KnobSpec, id: string, midiId?: string): void {
     const box = el("div", "con-gain");
     const info = el("div", "info");
     const lbl = el("span", "lbl");
@@ -1440,13 +1496,13 @@ export class Console {
     } else {
       knob.tabIndex = 0;
     }
-    this.wireKnob(knob, val, k, id);
+    this.wireKnob(knob, val, k, id, midiId);
   }
 
   // Rotary knob: vertical drag (≈ full range over 150px) and arrow keys edit the
   // value (snapped to `step`); the indicator rotates over a 270° sweep; a
   // double-click resets to `reset`. Reads/writes via the spec's get/set.
-  private wireKnob(knob: HTMLElement, val: HTMLElement, k: KnobSpec, id: string): void {
+  private wireKnob(knob: HTMLElement, val: HTMLElement, k: KnobSpec, id: string, midiId?: string): void {
     const angle = k.angle ?? ((v: number): number => -135 + ((v - k.min) / (k.max - k.min)) * 270);
     const show = (v: number): void => {
       val.textContent = k.format(v);
@@ -1462,8 +1518,10 @@ export class Console {
     };
     show(Math.max(k.min, Math.min(k.max, k.get()))); // initial display, not dirty
     if (k.readonlyTitle) return; // device-locked: value painted, no input handlers
+    this.midiMark(knob, midiId);
     knob.addEventListener("pointerdown", (e) => {
       e.preventDefault();
+      if (this.midiArm(midiId)) return;
       knob.setPointerCapture(e.pointerId);
       const startY = e.clientY;
       const start = k.get();
@@ -1477,6 +1535,11 @@ export class Console {
       window.addEventListener("pointerup", up);
     });
     knob.addEventListener("keydown", (e) => {
+      if (this.hooks.midi?.learnActive()) {
+        e.preventDefault();
+        if (e.key === " " || e.key === "Enter") this.midiArm(midiId);
+        return;
+      }
       if (e.key === "ArrowUp" || e.key === "ArrowRight") apply(k.get() + k.step);
       else if (e.key === "ArrowDown" || e.key === "ArrowLeft") apply(k.get() - k.step);
       else return;
@@ -1484,6 +1547,7 @@ export class Console {
       this.syncPartnerStrip(id);
     });
     knob.addEventListener("dblclick", () => {
+      if (this.hooks.midi?.learnActive()) return; // pointerdown already armed
       apply(k.reset); // reset to factory value
       this.syncPartnerStrip(id);
     });
