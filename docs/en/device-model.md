@@ -299,6 +299,9 @@ Source selection for the analog outputs (MAIN / LINE).
   The channel's **Rec Point** (recording / direct-out tap) selects a stage along this chain:
   MONO IN offers PRE GATE / PRE COMP / PRE EQ / PRE INS FX / PRE FADER; ST IN (EQ only) offers
   PRE EQ / PRE FADER. Default PRE FADER. Stored as a per-channel parameter, not a wire.
+  In SSMCS mode the list drops PRE EQ (the morphing strip has no discrete EQ stage), and
+  switching to SSMCS with PRE EQ selected moves the tap to PRE COMP (device behavior,
+  mirrored by the planner).
   - **A channel direct out to USB MAIN / SUB or microSD Rec is tapped at this Rec Point** (i.e.
     before the fader and Ducker). To send a fader/Ducker-processed signal to those outputs you must
     route via a STEREO / MIX bus (the bus is post-Ducker). The planner surfaces this

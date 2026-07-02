@@ -587,14 +587,19 @@ export function sweetSpotDataAddr(index: number): string {
 // direct out (block diagram: "Rec Point" selector -> CH OUT). Labels are the
 // device CH SETTING strings (confirmed on device by user). MONO IN exposes all
 // five stages; ST IN has only EQ, so it offers the two `stereo` options. Default
-// PRE FADER on every channel. Control address = param 137 (in axis), confirmed by
-// live snapshot-diff for MONO IN; stereo channels' Rec Point address is
-// unconfirmed, so only MONO IN channels are written (see REC_POINT in PARAMS).
+// PRE FADER on every channel. In SSMCS mode the device drops PRE EQ from the
+// list (the morphing strip has no discrete EQ stage) and moves a selected PRE EQ
+// tap to PRE COMP on the switch (confirmed on device). Control address =
+// param 137 (in axis), confirmed by live snapshot-diff for MONO IN; stereo
+// channels' Rec Point address is unconfirmed, so only MONO IN channels are
+// written (see REC_POINT in PARAMS).
 export const REC_POINT_DEFAULT = 4;
+export const REC_POINT_PRE_COMP = 1;
+export const REC_POINT_PRE_EQ = 2;
 export const REC_POINT_OPTIONS = [
   { value: 0, label: "PRE GATE", stereo: false },
-  { value: 1, label: "PRE COMP", stereo: false },
-  { value: 2, label: "PRE EQ", stereo: true },
+  { value: REC_POINT_PRE_COMP, label: "PRE COMP", stereo: false },
+  { value: REC_POINT_PRE_EQ, label: "PRE EQ", stereo: true },
   { value: 3, label: "PRE INS FX", stereo: false },
   { value: 4, label: "PRE FADER", stereo: true },
 ];

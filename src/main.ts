@@ -20,7 +20,14 @@ import {
   saveTextDocument,
 } from "./core/storage";
 import type { RecentEntry } from "./core/storage";
-import { COMP_EQ_SSMCS, PAN_BAL_BAL, PAN_BAL_PAN, STEREO_PAN_DEFAULT } from "./core/control/params";
+import {
+  COMP_EQ_SSMCS,
+  PAN_BAL_BAL,
+  PAN_BAL_PAN,
+  REC_POINT_PRE_COMP,
+  REC_POINT_PRE_EQ,
+  STEREO_PAN_DEFAULT,
+} from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { renderInspector } from "./ui/inspector";
@@ -502,6 +509,9 @@ function resetCompEqBank(id: string, newType: number): void {
     np.ssmcs = structuredClone(factory.ssmcs ?? SSMCS_INITIAL);
     np.compOn = true;
     np.eqOn = true;
+    // SSMCS has no discrete EQ stage, so the device drops PRE EQ from the Rec
+    // Point list and moves a selected PRE EQ tap to PRE COMP; mirror that.
+    if (np.recPoint === REC_POINT_PRE_EQ) np.recPoint = REC_POINT_PRE_COMP;
   } else {
     // Entering COMP->EQ: restore the factory comp / 4-band EQ / EQ 1-knob bank and
     // its section ONs. A field absent at the factory is cleared, not left stale.

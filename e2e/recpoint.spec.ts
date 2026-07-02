@@ -32,6 +32,26 @@ test("stereo channel offers only PRE EQ and PRE FADER", async ({ page }) => {
   await expect(recSelect(page)).toHaveValue("4");
 });
 
+test("SSMCS drops PRE EQ and moves a PRE EQ tap to PRE COMP", async ({ page }) => {
+  // The device has no discrete EQ stage in SSMCS mode: the Rec Point list drops
+  // PRE EQ, and switching to SSMCS with PRE EQ selected lands on PRE COMP.
+  await node(page, "ch1").click();
+  await recSelect(page).selectOption("2"); // PRE EQ
+  const typeSelect = page.locator("#inspector .param", { hasText: "COMP/EQ Type" }).locator("select");
+  await typeSelect.selectOption("1"); // SSMCS
+  await expect(recSelect(page).locator("option")).toHaveText([
+    "PRE GATE",
+    "PRE COMP",
+    "PRE INS FX",
+    "PRE FADER",
+  ]);
+  await expect(recSelect(page)).toHaveValue("1"); // PRE COMP
+  // Back to COMP->EQ: PRE EQ reappears but the tap stays where the device left it.
+  await typeSelect.selectOption("0");
+  await expect(recSelect(page).locator("option")).toHaveCount(5);
+  await expect(recSelect(page)).toHaveValue("1");
+});
+
 test("rec point round-trips through save and open", async ({ page }, testInfo) => {
   await node(page, "ch1").click();
   await recSelect(page).selectOption("2"); // PRE EQ

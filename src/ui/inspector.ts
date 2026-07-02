@@ -73,6 +73,7 @@ import {
   OSC_MODE_SINE,
   REC_POINT_DEFAULT,
   REC_POINT_OPTIONS,
+  REC_POINT_PRE_EQ,
   BUS_TYPE_VARI,
   BUS_TYPE_OPTIONS,
   SD_REC_TRACK_COUNT_DEFAULT,
@@ -252,9 +253,13 @@ export function renderInspector(
     // Rec Point (CH SETTING): the recording / direct-out tap stage. MONO IN
     // offers all five stages; ST IN only the two `stereo` options. Channels only.
     if (node.kind === "channel") {
-      // MONO IN exposes all five tap stages; ST IN only the `stereo` ones.
+      // MONO IN exposes all five tap stages; ST IN only the `stereo` ones. In
+      // SSMCS mode the device drops PRE EQ (no discrete EQ stage to tap ahead of).
       const isMono = channelControl(model, node.id)?.hasMicStrip;
-      const recOptions = REC_POINT_OPTIONS.filter((o) => isMono || o.stereo);
+      const inSsmcs = isMono && plan.nodeParams[node.id]?.compEqType === COMP_EQ_SSMCS;
+      const recOptions = REC_POINT_OPTIONS.filter(
+        (o) => (isMono || o.stereo) && !(inSsmcs && o.value === REC_POINT_PRE_EQ),
+      );
       host.append(
         enumSelect(m.inspector.recPoint, recOptions, plan.nodeParams[node.id]?.recPoint ?? REC_POINT_DEFAULT, (v) =>
           actions.onUpdateNodeParams(node.id, { recPoint: v }),
