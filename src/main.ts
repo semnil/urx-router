@@ -4,7 +4,7 @@ import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
-import { mirrorBalPair, validatePlan } from "./core/routing";
+import { mirrorBalPair, partnerChannel, validatePlan } from "./core/routing";
 import type { PlanProblem } from "./core/routing";
 import { decodePlanParam, deserialize, emptyPlan, ensureFixedConnections, PlanError, serialize, SSMCS_INITIAL } from "./core/plan";
 import type { ConnParams, NodeParams, Plan } from "./core/plan";
@@ -32,6 +32,7 @@ import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { renderInspector } from "./ui/inspector";
 import { Console } from "./ui/console";
+import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
 import { showLoadReport } from "./ui/load-report";
 import { getLang, LANG_CODES, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
@@ -288,6 +289,10 @@ const graph = new Graph(graphHost, getModel(modelId), plan, {
   onHiddenChange: (hidden) => rememberHidden(modelId, hidden),
 });
 
+// External MIDI control (desktop only, assigned in the !DEMO block below).
+// Declared before the console so its learn hooks can close over the variable.
+let midi: MidiControl | null = null;
+
 // Mixer-style CONSOLE view: an alternate view of the same plan. Its edits go
 // through the same change funnel (markChanged) so Live sync mirrors them. The
 // live signal meters stream only while Live sync is on (consoleView.setLive).
@@ -298,6 +303,14 @@ const consoleView = new Console(consoleHost, {
   // re-renders the edited strip itself, so don't rebuild it here (that would
   // disrupt an in-progress fader drag).
   onChange: () => markChanged(),
+  // MIDI learn: while the panel's learn mode is on, console controls arm for
+  // binding instead of editing (no-ops while midi is absent — browser / demo).
+  midi: {
+    learnActive: () => midi?.learnActive() ?? false,
+    armedId: () => midi?.armedId() ?? null,
+    isMapped: (id) => midi?.isMapped(id) ?? false,
+    arm: (id) => midi?.arm(id),
+  },
 });
 
 // Device follow (experimental): the reverse of live sync. While live, parameter
@@ -319,6 +332,9 @@ let followFull = false;
 function reflectFollow(): void {
   const ids = [...followDirtyNodes];
   followDirtyNodes.clear();
+  // Device-side changes must reach a mapped MIDI controller too (follow writes
+  // the plan without running markChanged).
+  midi?.scheduleFeedback();
   if (followFull) {
     followFull = false;
     if (graphHost.hidden) graphDirty = true;
@@ -469,9 +485,12 @@ function stopLiveOnError(message: string): void {
 
 // An edit changed the plan: flag it unsaved and (when live) mirror it to the
 // device. Every edit funnel routes through here so neither concern is forgotten.
+// MIDI feedback also hangs off this funnel, so a mapped controller (motor fader /
+// LED) follows edits made anywhere in the UI.
 function markChanged(): void {
   dirty = true;
   live?.schedule();
+  midi?.scheduleFeedback();
 }
 
 // Re-initialize every bus send's pan for a STEREO-linked pair (named by its
@@ -706,6 +725,7 @@ function applyStaticI18n(): void {
   $("lbl-device").textContent = m.toolbar.device;
   $("btn-fetch").textContent = fetchAbort ? m.toolbar.fetchCancel : m.toolbar.fetchDevice;
   $("btn-write").textContent = writeAbort ? m.toolbar.writeCancel : m.toolbar.writeDevice;
+  $("btn-midi").textContent = m.midi.menuItem;
   $("btn-selftest").textContent = selfTestAbort ? m.toolbar.selfTestCancel : m.toolbar.selfTest;
   // Live-sync toggle keeps a static label; aria-pressed and the on-air tally
   // carry the on/off state. Refresh the tally text too (the device label is set
@@ -817,6 +837,8 @@ function loadPlan(next: Plan): void {
   graph.setModel(getModel(modelId), plan);
   dirty = false;
   applyRateConstraints(); // also refreshes the console
+  // Reload the (per-model) MIDI mappings and resync the controller to the new plan.
+  midi?.onModelChanged();
 }
 
 // Build a copyable, language-stable report of a plan's routing violations, so it
@@ -1250,6 +1272,28 @@ if (!DEMO) {
     });
   }
 
+  // External MIDI control: map controller messages onto console controls (with
+  // MIDI learn) and feed edits back to the controller. Incoming edits repaint
+  // through the coalesced follow reflect (a controller sweep arrives at wire
+  // rate) and run markChanged via onApplied, so Live sync mirrors them too.
+  midi = new MidiControl({
+    getModel: () => getModel(modelId),
+    getPlan: () => plan,
+    onApplied: (control, mirrored) => {
+      markChanged();
+      followDirtyNodes.add(control.node);
+      const partner = mirrored ? partnerChannel(getModel(modelId), control.node) : undefined;
+      if (partner) followDirtyNodes.add(partner);
+      requestReflect();
+      // A toggle (mute / section ON) dims wires on the canvas; the reflect
+      // repaints nodes only, so repaint the wires here (rare, toggle-rate).
+      if (control.kind === "toggle" && !graphHost.hidden) graph.repaintWires();
+    },
+    onLearnChanged: () => consoleView.refresh(),
+    onStatus: setStatus,
+  });
+  $("btn-midi").addEventListener("click", () => midi?.togglePanel());
+
   // Self-test: an experimental-only diagnostic that briefly overwrites every
   // parameter, so it stays behind --experimental even though write/live do not.
   experimentalEnabled().then((enabled) => {
@@ -1478,6 +1522,7 @@ onLangChange(() => {
   refreshInspector();
   consoleView.refresh();
   graph.relocalizeChrome();
+  midi?.relocalize();
   setStatus(t().status.language(LANG_NAMES[getLang()]));
 });
 
