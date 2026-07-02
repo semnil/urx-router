@@ -1477,6 +1477,7 @@ onLangChange(() => {
   applyStaticI18n();
   refreshInspector();
   consoleView.refresh();
+  graph.relocalizeChrome();
   setStatus(t().status.language(LANG_NAMES[getLang()]));
 });
 

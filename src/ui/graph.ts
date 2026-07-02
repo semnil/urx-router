@@ -611,6 +611,13 @@ export class Graph {
     this.renderSelBar();
   }
 
+  /** Repaint the shelf and multi-select bar with the current i18n messages,
+   *  leaving the hidden set and selection untouched (called on a language switch). */
+  relocalizeChrome(): void {
+    this.renderShelf();
+    this.renderSelBar();
+  }
+
   private renderNodes(): void {
     this.nodeLayer.replaceChildren();
     this.nodeEls.clear();
