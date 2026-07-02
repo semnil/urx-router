@@ -256,6 +256,21 @@ describe("feedback", () => {
     expect(sent).toEqual([encodeCc(0, 7, 32)]);
   });
 
+  it("confirms an incoming toggle back to the controller LED promptly", () => {
+    const m = fake("ch1/mute", "toggle", 0);
+    controls.set(m.id, m);
+    map(m.id, { type: "note", channel: 0, note: 60 });
+    engine.feedback(); // baseline: off
+    sent.length = 0;
+    clock = 1000;
+    engine.onMessage(encodeNote(0, 60, true)); // press toggles to muted
+    expect(m.value).toBe(1);
+    // A momentary button cannot know the new state: the very next feedback pass
+    // must light the LED — no quiet-gap deferral, no sent-cache suppression.
+    expect(engine.feedback()).toBe(false);
+    expect(sent).toEqual([encodeNote(0, 60, true)]);
+  });
+
   it("resync forgets the sent cache and re-emits everything", () => {
     const c = fake("ch1/level", "continuous", 0.5);
     controls.set(c.id, c);

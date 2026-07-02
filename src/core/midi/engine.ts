@@ -64,9 +64,10 @@ export class MidiEngine {
       if (list) list.push(m);
       else this.byKey.set(key, [m]);
     }
-    // Reset per-mapping state: stale pickup/edge state must not leak across sets.
+    // Reset per-mapping state: stale pickup/edge/pair state must not leak across sets.
     this.pickup.clear();
     this.lastCc.clear();
+    this.pair.clear();
   }
 
   isMapped(controlId: string): boolean {
@@ -165,16 +166,18 @@ export class MidiEngine {
   private apply(mapping: MidiMapping, key: string, ev: MidiEvent): void {
     const control = this.hooks.resolve(mapping.control);
     if (!control) return; // stale mapping (other model) — leave it inert
-    this.lastRecv.set(key, this.hooks.now());
+    const toggle = control.kind === "toggle";
+    // Receive bookkeeping suppresses the echo for continuous controls only: a
+    // toggle press does not represent the new state (a momentary button cannot
+    // know it just muted something), so its LED feedback must go out promptly.
+    if (!toggle) this.lastRecv.set(key, this.hooks.now());
     const before = control.get();
-    const target =
-      control.kind === "toggle" ? this.toggleTarget(key, ev, before) : this.continuousTarget(mapping, key, ev, before, control.step);
+    const target = toggle ? this.toggleTarget(key, ev, before) : this.continuousTarget(mapping, key, ev, before, control.step);
     if (target === null) return;
     if (!control.set(target)) return; // device-locked — swallowed
-    // The controller already shows what it sent: remember it as fed back so the
-    // settle pass only sends when the snapped plan value actually differs.
-    const raw = this.encodeRaw(mapping.addr, control.get());
-    if (mapping.mode !== "relative") this.lastSent.set(key, raw);
+    // The controller already shows what it sent: remember the applied value as
+    // fed back, so the settle pass only sends a genuinely different value.
+    if (!toggle && mapping.mode !== "relative") this.lastSent.set(key, this.encodeRaw(mapping.addr, control.get()));
     if (control.get() !== before) this.hooks.applied(control);
   }
 

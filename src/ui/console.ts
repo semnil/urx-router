@@ -1125,8 +1125,12 @@ export class Console {
     });
     fader.addEventListener("keydown", (e) => {
       if (this.hooks.midi?.learnActive()) {
-        e.preventDefault();
-        if (e.key === " " || e.key === "Enter") this.midiArm(midiId);
+        // Learn mode: Space/Enter arms; anything else (Tab, arrows) is left to
+        // the browser so keyboard navigation keeps working.
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          this.midiArm(midiId);
+        }
         return;
       }
       const cur = usesSend ? this.getSend(r.m.id, this.mode as SendTarget) : this.getMain(r.m);
@@ -1536,8 +1540,11 @@ export class Console {
     });
     knob.addEventListener("keydown", (e) => {
       if (this.hooks.midi?.learnActive()) {
-        e.preventDefault();
-        if (e.key === " " || e.key === "Enter") this.midiArm(midiId);
+        // Learn mode: Space/Enter arms; anything else is left to the browser.
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          this.midiArm(midiId);
+        }
         return;
       }
       if (e.key === "ArrowUp" || e.key === "ArrowRight") apply(k.get() + k.step);
