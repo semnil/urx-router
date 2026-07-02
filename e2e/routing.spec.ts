@@ -231,7 +231,9 @@ test("a microSD Rec assign carries no level / pan / PRE-POST", async ({ page }) 
   await expect(wires(page)).toHaveCount(FIXED + 1);
   await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.sdrec.t1:in"]').dispatchEvent("pointerdown");
   await expect(page.locator("#inspector .param")).toHaveCount(0);
-  await expect(page.locator("#inspector .hint")).toContainText("Selection only");
+  // A channel → SD Rec tap has no mix params; the hint explains it records at the
+  // channel Rec Point (the direct-out advisory) rather than the generic note.
+  await expect(page.locator("#inspector .hint")).toContainText("Rec Point");
 });
 
 test("the send pan slider uses the device L63 – C – R63 range", async ({ page }) => {
