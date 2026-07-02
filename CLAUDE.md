@@ -58,7 +58,7 @@ CI は 4 ワークフロー: PR は build + unit (`ci.yml`)、E2E と third-part
 
 - コード識別子・コメントは英語。コメントは振る舞いの説明のみ。diff は最小化
 - ドキュメントは日本語、図は Mermaid 記法
-- **ルーティング規則を変える際は `docs/{en,ja}/device-model.md` と `src/models/` を必ず一致させる** (公式ブロックダイアグラムが一次情報)。`src/models/` を変えたら `urx-routing-planner` スキルの同梱データ (`scripts/models.json` + `references/model-*.md`) も `UPDATE_SKILL=1 pnpm test skill-export` で再生成してコミットする (生成器は `src/models/skill-export.ts`、ドリフトは `skill-export.test.ts` が CI で検知)
+- **ルーティング規則を変える際は `docs/{en,ja}/device-model.md` と `src/models/` を必ず一致させる** (公式ブロックダイアグラムが一次情報)。`src/models/` を変えたら `urx-routing-planner` スキルの同梱データ (`scripts/models.json` + `references/model-*.md`) も `UPDATE_SKILL=1 pnpm test skill-export` で再生成してコミットする (生成器は `src/models/skill-export.ts`、ドリフトは `skill-export.test.ts` が CI で検知)。**ルート表に表れない意味的制約 (信号フロー順序=プリ/ポストフェーダー・ダッカー等) は生成データに載らないため、`skill-export` では反映されない**。ツールが新たにこの種の制約を扱うようになったら `.claude/skills/urx-routing-planner/SKILL.md` の feasibility 注記を手で更新する (例: チャンネル→USB/SD ダイレクトアウトは Rec Point タップ=プリフェーダー/プリダッカー)
 - テーマ配色は `src/style.css` の CSS 変数 (`:root` / `[data-theme="light"]`) と `src/ui/graph.ts` の `PALETTES` を一致させる
 - 装置固有値・実機 UDID・制御プロトコル実値はコード/ドキュメントに書かない (プレースホルダ + git 管理外)。ただしアプリケーションの動作要件に関わる値 (機種パラメータ・ルーティング規則・level_gain グリッド・確定済み broker param のアドレス/エンコード等、アプリが正しく動くために本文・コードに必要な値) はこの規約の対象外で、`docs/` や `src/` に記述してよい
 - 実機への書込み・Live sync (`src/core/control/`) はデスクトップ版で常時有効 (破壊リスクの同意は `src/ui/consent.ts` の初回起動ゲートとインストーラーライセンスで担保)。self-test 往復診断のみ `--experimental` 起動時。確定パラメータ (broker dump 照合済み) のみ書込み、推測アドレスは `params.ts` に載せない
