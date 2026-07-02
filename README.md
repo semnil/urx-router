@@ -1,10 +1,18 @@
 # URX Router
 
-A **routing planning tool** for the YAMAHA URX22 / URX44 / URX44V USB audio interfaces.
+A **routing planner and unofficial mixer controller (read / write / live sync)** for the
+YAMAHA URX22 / URX44 / URX44V USB audio interfaces.
 
 Based on the official block diagram, it visualizes input/output channels, mixer buses, and
 output patches as boxes and wires, and constrains the GUI so that **only physically routable
 paths** can be wired. Plans are saved/loaded as JSON, and the diagram can be exported as an image.
+
+The URX series has no dspMixFx-style mixer editor — dspMixFx supports the UR-C / URX-C lines,
+not the URX22 / URX44 / URX44V. Out of the box, the full mixer is only editable on the unit's
+touch screen: the official Stream Deck plugin covers basics like channel level, mute, and solo,
+and the Cubase / Nuendo / MixKey integration screens work only while that software is running.
+URX Router fills this gap: it reads, writes, and live-syncs the entire mixer from your computer,
+with or without a DAW — see [Device control](#device-control).
 
 > 日本語版は [README.ja.md](README.ja.md) を参照してください.
 
@@ -14,6 +22,17 @@ Runs entirely in your browser — no install required: **<https://urx-router.sem
 (file save/load and image export are disabled in the demo build).
 
 ![URX Router showing a URX44V routing plan in the dark studio-rack theme](docs/assets/screenshot-en.png)
+
+## Device control
+
+With the Device Center software (included in Yamaha's TOOLS for MGX / URX) running, desktop
+builds can **read** the connected interface's current mixer settings into the plan
+(**Device → Fetch from device**) and **write** a plan back to it (**Device → Write to device** /
+**Live sync**, which mirrors each edit as you make it). The parameter mapping is verified on
+hardware **only for URX44V**; **URX44** is assumed identical and **URX22** is inferred from it —
+neither is verified on hardware yet. Writing overwrites the device's current settings; see the
+[Disclaimer](#disclaimer). The `--experimental` flag adds a destructive-then-restored
+self-test diagnostic on top.
 
 ## Claude Code skill
 
@@ -70,17 +89,6 @@ recent files, inspector sections), open the browser app's reset URL or pass a la
 pnpm reset:storage                            # browser: opens http://localhost:5173/?reset
 pnpm tauri dev -- -- --reset-storage          # desktop: clears the webview's localStorage
 ```
-
-## Device control (URX44V only)
-
-With the Device Center software running, desktop builds can **read** the connected
-interface's current mixer settings into the plan (**Device → Fetch from device**) and
-**write** a plan back to it (**Device → Write to device** / **Live sync**, which mirrors
-each edit as you make it). The parameter mapping is verified on hardware **only for
-URX44V**; **URX44** is assumed identical and **URX22** is inferred from it — neither is
-verified on hardware yet. Writing overwrites the device's current settings; see the
-[Disclaimer](#disclaimer). The `--experimental` flag adds a destructive-then-restored
-self-test diagnostic on top.
 
 ## Disclaimer
 
