@@ -41,11 +41,13 @@ flowchart TD
       storage[storage.ts<br/>save/load/PNG/PDF]
       platform[platform.ts<br/>Tauri bridge / fallbacks]
       meters[meters.ts<br/>live meters<br/>map/decode/store]
+      midicore[midi/ external MIDI control<br/>message/mapping/controls/engine]
     end
     subgraph ui[ui/ presentation]
       graphts[graph.ts<br/>SVG node graph<br/>theme-aware palette]
       inspector[inspector.ts<br/>selected-element editing]
       console[console.ts<br/>mixer-style level overview]
+      midiui[midi.ts<br/>MIDI control panel]
     end
     subgraph i18n[i18n/ localization]
       cat[en.ts / ja.ts<br/>message catalogs]
@@ -53,7 +55,7 @@ flowchart TD
     end
   end
   subgraph shell[Tauri shell src-tauri/]
-    rust[main.rs / lib.rs<br/>webview host<br/>dialog plugin + file IO commands<br/>future: hardware-control commands]
+    rust[main.rs / lib.rs<br/>webview host<br/>dialog plugin + file IO<br/>hardware-control vd_* / MIDI midi_* commands]
   end
 
   main --> models & core & ui & i18n
@@ -366,6 +368,51 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   whole snapshot. Since only one view is ever visible the hidden view's rebuild is deferred until it is next shown.
   Echoes of the app's own writes are filtered against the live snapshot, and the address set is re-registered only
   when a structural edit changed it.
+
+## External MIDI control
+
+The CONSOLE view's controls (faders / send levels / MUTE / PAN-BAL / GAIN / PHONES / the toggles) can be driven
+from an external MIDI controller (desktop app only). Configuration lives in the non-modal panel under Device →
+"MIDI control" — it stays open while console controls are clicked to assign them.
+
+- **Bridge (Rust)** — `src-tauri/src/midi.rs` enumerates ports through midir (CoreMIDI on macOS, WinMM on
+  Windows) and holds one open input plus one open output. Incoming messages are batched per burst — the same
+  idea as the vd meter pump — and streamed to the frontend through a Tauri channel (`midi_list_inputs/outputs`,
+  `midi_open_input`, `midi_close_input`, `midi_open_output`, `midi_close_output`, `midi_send`). Everything is a
+  local OS-API round-trip (no broker), so the commands stay synchronous. The frontend bridge is
+  `core/platform.ts` (no-ops outside Tauri). midir has no hot-plug notification, so the port lists are
+  re-enumerated every time the panel opens.
+- **Mapping (core/midi/)** — pure, language-agnostic logic. `message.ts` decodes/encodes CC / note / pitch
+  bend; `mapping.ts` holds the free-mapping model (address, take-in mode, relative encoding) plus persistence
+  validation; `controls.ts` enumerates and resolves every console control under a **fixed control id**
+  (`node/param[@sendTarget]`, e.g. `ch1/level@bus.mix1`). Fixed ids do not depend on the visible tab or
+  send-on-fader: "CH 1 main fader" and "CH 1 → MIX 1 send" are separate controls, assigned individually.
+  Values cross the boundary normalized (0..1) and are snapped on set to the same grids the console uses
+  (the level_gain grid in `levels.ts`, the channel's GAIN dB range, PAN ±63, PHONES 0.1 steps). Device locks
+  (a FIXED bus's send level, a Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz) refuse the write.
+- **Engine (`engine.ts`)** — routes incoming events onto bound controls. Take-in modes are per-mapping:
+  absolute / pickup (swallowed until the physical value reaches or crosses the plan value) / relative (two's
+  complement, offset-64, or sign-bit encodings; one click walks one detent). 14-bit CC assembles the MSB/LSB
+  pair (n / n+32). Toggles flip on a note-on or a CC rising edge (≥ 64) and ignore the take-in mode.
+- **Learn** — turning the panel's Learn on gives armable console controls a dashed target ring; clicking one
+  arms it (pulsing outline; already-bound controls carry an amber dot) and the next MIDI input binds. A CC
+  settles on its second message (same CC = 7-bit, its pair partner = 14-bit); a lone CC (a button) commits
+  after a 500 ms quiet gap. One physical control per binding and one binding per control — a new binding
+  replaces both sides.
+- **Feedback (MIDI OUT)** — plan changes (UI edits, device follow, plan loads) are sent back through the
+  reverse lookup so motor faders / LEDs follow. It hangs off the shared change funnel (`markChanged`) and the
+  follow reflect, debounced at 120 ms and diffed against a sent cache so only changed values go out. Feedback
+  to an address that is still sending is deferred until a 300 ms quiet gap (echo suppression), and opening the
+  output port sends every binding's current value once.
+- **Applying edits** — an incoming edit runs the same funnel as a console edit: BAL pair mirror
+  (`mirrorBalPair`) → `markChanged` (dirty + Live sync) → the ~20 Hz reflect shared with device follow
+  (`requestReflect`) repaints the touched strips / nodes.
+- **Persistence** — one `localStorage` key (`urx-midi`) holds the port choice (hardware-specific, shared
+  across models) and the mapping list per model (control ids depend on the model's node set). Saved ports are
+  reopened best-effort on boot.
+- **Scope** — the browser / demo builds are out of scope (`isTauri` gate; the demo build dead-code-eliminates
+  the feature). E2E stubs the Tauri IPC bridge to inject incoming messages and capture `midi_send` bytes
+  (`e2e/midi.spec.ts`).
 
 ## Live control connection
 
