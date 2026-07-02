@@ -170,7 +170,7 @@ export function buildModel(p: ModelParams): DeviceModel {
   // node's identity, so the label needs no ordinal (see device-model.md).
   // Each is its own "ducker" kind and hangs under its parent channel (attachTo)
   // rather than living in the output column.
-  for (let d = 1; d <= 4; d++) {
+  for (let d = 1; d <= p.stereoCh; d++) {
     const a = stereoStart + 2 * (d - 1);
     add({
       id: `out.ducker${d}`,
