@@ -95,6 +95,7 @@ export const ja: Messages = {
     balance: "バランス",
     prePost: "PRE/POST",
     prePostLcdOnly: "CH → FX send の PRE/POST は本体でのみ設定可 (software から変更不可)。",
+    eqRateLocked: "176.4 / 192 kHz ではステレオ ch の EQ は無効 — 強制的に OFF。",
     channelOn: "チャンネル",
     sendOn: "Send",
     toSt: "TO ST",
@@ -244,7 +245,9 @@ export const ja: Messages = {
     selectionOnly: "選択のみ — Send パラメータはありません。",
     directOutTap: "ダイレクト出力 — チャンネルの Rec Point でタップ (フェーダー・ダッカーより前段)。含めるには STEREO / MIX バス経由で送ってください。",
     sdRecTap: "このチャンネルを Rec Point でタップして録音します (既定はプリフェーダー)。録音する段はチャンネルの Rec Point で選べます。",
+    duckerKeyTap: "ダッカーキー — キー元チャンネルの Rec Point (フェーダー・ダッカーより前段) でタップ。そのチャンネルのフェーダー・ミュートはトリガーに影響しません。post-fader でトリガーするには STEREO / MIX バスをキーにしてください。",
     fixedConnection: "固定接続 — 常時有効で削除できません。",
+    duckerPreSend: "このチャンネルのダッカーは ON ですが、この PRE (プリフェーダー) 送りはその手前でタップするためダッキングされません。ダックを含めるには POST に切り替えてください。",
     busType: "BUS Type",
     panLink: "Pan Link",
     busFixedLevel: "Send レベルは固定 (BUS Type: FIXED)。",
@@ -301,8 +304,8 @@ export const ja: Messages = {
   warning: {
     title: "サンプルレート注意",
     insFx: "96 kHz 超では Insert FX (MONO IN ch・MIX・STEREO) を使用できません。",
+    stereoEq: "176.4 / 192 kHz ではステレオ ch (CH 5/6–11/12) の EQ を使用できません。",
     fx2: "96 kHz 超では FX2 Bus を使用できません。",
-    hdmiEq: "176.4 / 192 kHz では HDMI EQ を使用できません。",
     duckerTitle: "ダッカーがダイレクト出力に乗りません",
     duckerBypass: (label: string): string =>
       `${label} — ダッカー ON ですが USB / SD ダイレクト出力はその前段でタップします。含めるには STEREO / MIX バス経由で送ってください。`,

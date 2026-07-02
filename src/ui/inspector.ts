@@ -37,7 +37,7 @@ import {
   type InsertFxParamDesc,
   type MbcBandKey,
 } from "../core/control/insert-fx-effect";
-import { directOutTarget, isBalLinkedPair, isFixedConnection, mixSendLocks, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
+import { directOutTarget, duckerKeySource, isBalLinkedPair, isFixedConnection, mixSendLocks, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
   busBalance,
@@ -134,7 +134,7 @@ import {
   PHONES_LEVEL_MAX,
   PHONES_LEVEL_DEFAULT,
 } from "../core/control/vd";
-import { duckerBypassWarnings, rateConstraints } from "../core/constraints";
+import { channelDuckerOn, channelEqUnavailable, duckerBypassWarnings, rateConstraints } from "../core/constraints";
 import { loadJson, saveJson } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
@@ -461,15 +461,20 @@ export function renderInspector(
       // sections render the morphing-strip controls. Default: EQ on, GATE/COMP off.
       const dyn = channelDynamics(model, node.id, compEqType);
       const ieq = inputEq(model, node.id, compEqType);
+      // The stereo channels' EQ dies at 176.4 / 192 kHz (block diagram): lock the
+      // section to OFF with a disabled toggle + tooltip, and drop the (now inert)
+      // band editor. The plan's eqOn is left untouched so lowering the rate restores it.
+      const eqLocked = channelEqUnavailable(node.id, plan.sampleRate);
       for (const sec of channelSections(model, node.id, compEqType)) {
-        const on = np[sec.key] ?? sec.key === "eqOn";
+        const locked = sec.key === "eqOn" && eqLocked;
+        const on = locked ? false : np[sec.key] ?? sec.key === "eqOn";
         const { el, body } = section(m.inspector[sec.key], { open: on, on, key: sec.key });
-        body.append(sectionToggle(node.id, sec.key, on, actions));
+        body.append(sectionToggle(node.id, sec.key, on, actions, locked ? m.inspector.eqRateLocked : undefined));
         if (sec.key === "gateOn" && dyn) body.append(gateDetailBlock(node.id, dyn.gate, np, plan, actions, m));
         else if (sec.key === "compOn" && ssmcs) body.append(ssmcsCompBlock(node.id, np, plan, actions, m));
         else if (sec.key === "compOn" && dyn?.comp) body.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
         else if (sec.key === "eqOn" && ssmcs) body.append(ssmcsEqBlock(node.id, np, plan, actions, m));
-        else if (sec.key === "eqOn" && ieq) {
+        else if (sec.key === "eqOn" && ieq && !locked) {
           body.append(eqOneKnobBlock(node.id, !isStereoChannel(node.id), np, plan, actions, m));
           if (!np.eqOneKnob?.on) body.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
         }
@@ -775,11 +780,19 @@ export function renderInspector(
     } else {
       // A USB direct out is a live output where the missing fader / Ducker is a
       // surprise (route via a bus to include them); a microSD Rec tap records the
-      // Rec Point stage on purpose, so it points at Rec Point instead. Anything else
-      // with no send params falls back to the generic note.
+      // Rec Point stage on purpose, so it points at Rec Point instead. A channel
+      // ducker key is the same pre-fader Rec Point tap, so the source channel's
+      // fader / mute do not move the trigger (a bus key is post-fader — no note).
+      // Anything else with no send params falls back to the generic note.
       const directOut = directOutTarget(model, from, to);
       const note =
-        directOut === "usb" ? m.inspector.directOutTap : directOut === "sdRec" ? m.inspector.sdRecTap : m.inspector.selectionOnly;
+        directOut === "usb"
+          ? m.inspector.directOutTap
+          : directOut === "sdRec"
+            ? m.inspector.sdRecTap
+            : duckerKeySource(model, from, to) === "channel"
+              ? m.inspector.duckerKeyTap
+              : m.inspector.selectionOnly;
       host.append(hint(note));
     }
     if (busFixed) host.append(hint(m.inspector.busFixedLevel));
@@ -790,6 +803,15 @@ export function renderInspector(
   // button, only a note that it is structural. Its level/pan above stay editable.
   if (isFixedConnection(model, from, to)) {
     host.append(hint(m.inspector.fixedConnection));
+    // A PRE (pre-fader) send from a channel whose Ducker is on taps ahead of the
+    // Ducker (which sits post-fader), so the send is not ducked — flag it next to
+    // the fixed-connection note rather than on the canvas.
+    if (
+      sendHasTap(model, from, to) &&
+      conn?.params?.tap === "pre" &&
+      channelDuckerOn(model, plan, parseRef(from).nodeId)
+    )
+      host.append(hint(m.inspector.duckerPreSend));
     return;
   }
 
@@ -881,11 +903,19 @@ function sectionToggle(
   key: string,
   on: boolean,
   actions: InspectorActions,
+  lockedTitle?: string,
 ): HTMLElement {
-  return boolToggle("", on, (v) => {
-    clearSectionOverride(key);
-    actions.onUpdateNodeParams(nodeId, { [key]: v });
-  });
+  // A lockedTitle shows the value with both buttons disabled + a tooltip (e.g. the
+  // stereo EQ above 96 kHz) — mirrors the read-only CH → FX tap control.
+  return boolToggle(
+    "",
+    on,
+    (v) => {
+      clearSectionOverride(key);
+      actions.onUpdateNodeParams(nodeId, { [key]: v });
+    },
+    lockedTitle,
+  );
 }
 
 // A collapsible inspector section (rack-module style): a summary header in the
@@ -1691,8 +1721,16 @@ function selectToggle(group: HTMLElement, button: HTMLButtonElement): void {
   button.classList.add("on");
 }
 
-function boolToggle(label: string, value: boolean, onChange: (v: boolean) => void): HTMLElement {
+// `lockedTitle`, when set, renders the pair read-only: both buttons disabled (no
+// click handler) and the reason shown as a row tooltip — the value is still visible.
+function boolToggle(
+  label: string,
+  value: boolean,
+  onChange: (v: boolean) => void,
+  lockedTitle?: string,
+): HTMLElement {
   const { row } = paramBlock(label, "");
+  if (lockedTitle !== undefined) row.title = lockedTitle;
   const group = document.createElement("div");
   group.className = "toggle";
   const make = (on: boolean, text: string): HTMLButtonElement => {
@@ -1700,10 +1738,12 @@ function boolToggle(label: string, value: boolean, onChange: (v: boolean) => voi
     b.type = "button";
     b.textContent = text;
     b.classList.toggle("on", value === on);
-    b.addEventListener("click", () => {
-      selectToggle(group, b);
-      onChange(on);
-    });
+    if (lockedTitle === undefined)
+      b.addEventListener("click", () => {
+        selectToggle(group, b);
+        onChange(on);
+      });
+    else b.disabled = true;
     return b;
   };
   group.append(make(true, t().inspector.on), make(false, t().inspector.off));

@@ -47,6 +47,19 @@ test("MAIN lays out the input channels and the master", async ({ page }) => {
   await expect(strip(page, "STEREO (MAIN)")).toBeVisible();
 });
 
+test("the stereo-channel EQ chip locks read-only and off at 192 kHz", async ({ page }) => {
+  const eqChip = strip(page, "CH 5/6").locator(".con-chip", { hasText: "EQ" }).first();
+  // EQ ships on at 48 kHz and is interactive (\bon\b avoids matching "con-chip").
+  await expect(eqChip).toHaveClass(/\bon\b/);
+  await expect(eqChip).not.toHaveClass(/readonly/);
+
+  await page.locator("#rate-picker").selectOption("192000");
+  const locked = strip(page, "CH 5/6").locator(".con-chip", { hasText: "EQ" }).first();
+  await expect(locked).toHaveClass(/readonly/);
+  await expect(locked).not.toHaveClass(/\bon\b/); // forced off
+  await expect(locked).toHaveAttribute("aria-disabled", "true");
+});
+
 test("a fader edits its level via the keyboard", async ({ page }) => {
   const s = strip(page, "CH 1");
   const readout = s.locator(".con-readout .rd:not(.mtr) .rv");

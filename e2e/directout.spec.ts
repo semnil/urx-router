@@ -90,3 +90,36 @@ test("a ducked channel recording to microSD raises no warning", async ({ page })
   // workflow), so turning the ducker on must not raise it.
   await expect(page.locator("#inspector .warning-title", { hasText: "Ducker not on direct out" })).toHaveCount(0);
 });
+
+test("a channel-sourced ducker key explains it is a pre-fader tap", async ({ page }) => {
+  // A channel key is the CH OUT (Rec Point) tap, so the source channel's fader /
+  // mute do not move the trigger — the inspector says so on the wire.
+  await connect(page, "ch1:out", "out.ducker1:in");
+  await selectWire(page, "ch1:out", "out.ducker1:in");
+  await expect(page.locator("#inspector .hint", { hasText: "Ducker key" })).toHaveCount(1);
+  await expect(page.locator("#inspector .hint", { hasText: "Selection only" })).toHaveCount(0);
+});
+
+test("a bus-sourced ducker key gets no pre-fader note (it is post-fader)", async ({ page }) => {
+  await connect(page, "bus.stereo:out", "out.ducker1:in");
+  await selectWire(page, "bus.stereo:out", "out.ducker1:in");
+  await expect(page.locator("#inspector .hint", { hasText: "Ducker key" })).toHaveCount(0);
+  await expect(page.locator("#inspector .hint", { hasText: "Selection only" })).toHaveCount(1);
+});
+
+test("a PRE send from a ducked channel is flagged next to the fixed-connection note", async ({ page }) => {
+  // ch_5_6 → MIX 1 is a fixed send with a Pre/Post tap; its ducker is out.ducker1.
+  await setDuckerOn(page, true);
+  await selectWire(page, "ch_5_6:out", "bus.mix1:in");
+
+  // POST by default → post-fader → post-Ducker → ducked, so no note.
+  const preSendNote = () => page.locator("#inspector .hint", { hasText: "not ducked" });
+  await expect(preSendNote()).toHaveCount(0);
+
+  // Switching to PRE taps ahead of the (post-fader) Ducker → not ducked.
+  await page
+    .locator("#inspector .param", { hasText: "Pre/Post" })
+    .getByRole("button", { name: "PRE", exact: true })
+    .click();
+  await expect(preSendNote()).toHaveCount(1);
+});
