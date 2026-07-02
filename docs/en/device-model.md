@@ -285,6 +285,9 @@ Source selection for the analog outputs (MAIN / LINE).
 ### 10. Ducker key source (`key`, one receiver)
 
 - Ducker 1–4 Source ← CH 1–N OUT / STEREO OUT / MIX 1 OUT / MIX 2 OUT (sidechain trigger select)
+- **A channel key is that channel's CH OUT — the same Rec Point tap as a direct out, ahead of its
+  fader and Ducker** — so the source channel's fader / mute do not change the trigger. A bus key
+  (STEREO / MIX) is post-fader. The planner notes this on a channel-sourced key wire in the inspector.
 - Each ducker lives on one stereo channel, so Ducker 1–4 map in order to the model's stereo pairs: URX22 = CH 3/4, 5/6, 7/8, 9/10; URX44 / URX44V = CH 5/6, 7/8, 9/10, 11/12. The on-canvas node is labeled simply `Ducker` with the host pair in its sublabel (`CH 5/6 · Source`); the 1–4 ordinal is the block-diagram enumeration only — the hung position already names the channel, so it is not repeated on the node.
 - Because a ducker belongs to its host channel rather than being a standalone output, it is drawn as a dedicated `ducker`-kind node hung directly below the matching stereo channel (placement, movement and hide behavior in [architecture.md](architecture.md)).
 - When a ducker's on/off (`duckerOn`, factory OFF) is off, the node dims and gets an `OFF` tag like a muted channel (it marks bypass, so the tag is `OFF` rather than `MUTE`).

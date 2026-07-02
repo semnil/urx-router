@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
-import { canConnect, isBalLinkedPair, isFixedConnection, legalSources, legalTargets, mirrorBalPair, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, sendTapWritable, upstreamNodes, validatePlan } from "./routing";
+import { canConnect, duckerKeySource, isBalLinkedPair, isFixedConnection, legalSources, legalTargets, mirrorBalPair, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, sendTapWritable, upstreamNodes, validatePlan } from "./routing";
 import { emptyPlan, type Plan, type PlanConnection } from "./plan";
 import { defaultPlan } from "../models/initial-state";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
@@ -336,5 +336,19 @@ describe("validatePlan on URX44", () => {
     const conn: PlanConnection = { from: ref("ch1", "out"), to: ref("bus.stereo", "in"), kind: "send" };
     plan.connections.push({ ...conn }, { ...conn });
     expect(validatePlan(u44, plan).some((p) => p.reason === "duplicate")).toBe(true);
+  });
+});
+
+describe("duckerKeySource", () => {
+  it("classifies a channel key as pre-fader and a bus key as post-fader", () => {
+    expect(duckerKeySource(u44, ref("ch1", "out"), ref("out.ducker1", "in"))).toBe("channel");
+    expect(duckerKeySource(u44, ref("ch_5_6", "out"), ref("out.ducker2", "in"))).toBe("channel");
+    expect(duckerKeySource(u44, ref("bus.stereo", "out"), ref("out.ducker1", "in"))).toBe("bus");
+    expect(duckerKeySource(u44, ref("bus.mix1", "out"), ref("out.ducker1", "in"))).toBe("bus");
+  });
+
+  it("is null when the wire is not a ducker key", () => {
+    expect(duckerKeySource(u44, ref("ch1", "out"), ref("bus.stereo", "in"))).toBeNull();
+    expect(duckerKeySource(u44, ref("ch1", "out"), ref("out.usbmain_b", "in"))).toBeNull();
   });
 });

@@ -94,6 +94,16 @@ export function directOutTarget(model: DeviceModel, from: string, to: string): "
   return kind === "patch" ? "usb" : "sdRec";
 }
 
+// A ducker's key (sidechain trigger) select, classified by source. A channel key is
+// its CH OUT — the same Rec Point tap as a direct out (directOutTarget), upstream of
+// that channel's fader and Ducker, so the source channel's fader / mute never change
+// the trigger. A bus key (STEREO / MIX) is post-fader instead. Returns the source
+// kind, or null when `from → to` is not a ducker key.
+export function duckerKeySource(model: DeviceModel, from: string, to: string): "channel" | "bus" | null {
+  if (ruleKind(model, from, to) !== "key") return null;
+  return model.nodes.find((n) => n.id === parseRef(from).nodeId)?.kind === "channel" ? "channel" : "bus";
+}
+
 export function canConnect(model: DeviceModel, plan: Plan, from: string, to: string): ConnectResult {
   const rule = findRule(model, from, to);
   if (!rule) return { ok: false, reason: "noRule" };

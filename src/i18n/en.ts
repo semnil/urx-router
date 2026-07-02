@@ -246,6 +246,7 @@ export const en = {
     selectionOnly: "Selection only — no send parameters.",
     directOutTap: "Direct out — tapped at the channel Rec Point, before the fader and Ducker. Route via a STEREO or MIX bus to include them.",
     sdRecTap: "Records this channel at its Rec Point (pre-fader by default). Change the channel's Rec Point to pick the recorded stage.",
+    duckerKeyTap: "Ducker key — tapped at the source channel's Rec Point, before its fader and Ducker, so that channel's fader / mute do not change the trigger. Key from a STEREO or MIX bus to trigger post-fader.",
     fixedConnection: "Fixed connection — always enabled, cannot be removed.",
     busType: "BUS Type",
     panLink: "Pan Link",

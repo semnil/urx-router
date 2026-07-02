@@ -37,7 +37,7 @@ import {
   type InsertFxParamDesc,
   type MbcBandKey,
 } from "../core/control/insert-fx-effect";
-import { directOutTarget, isBalLinkedPair, isFixedConnection, mixSendLocks, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
+import { directOutTarget, duckerKeySource, isBalLinkedPair, isFixedConnection, mixSendLocks, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
   busBalance,
@@ -780,11 +780,19 @@ export function renderInspector(
     } else {
       // A USB direct out is a live output where the missing fader / Ducker is a
       // surprise (route via a bus to include them); a microSD Rec tap records the
-      // Rec Point stage on purpose, so it points at Rec Point instead. Anything else
-      // with no send params falls back to the generic note.
+      // Rec Point stage on purpose, so it points at Rec Point instead. A channel
+      // ducker key is the same pre-fader Rec Point tap, so the source channel's
+      // fader / mute do not move the trigger (a bus key is post-fader — no note).
+      // Anything else with no send params falls back to the generic note.
       const directOut = directOutTarget(model, from, to);
       const note =
-        directOut === "usb" ? m.inspector.directOutTap : directOut === "sdRec" ? m.inspector.sdRecTap : m.inspector.selectionOnly;
+        directOut === "usb"
+          ? m.inspector.directOutTap
+          : directOut === "sdRec"
+            ? m.inspector.sdRecTap
+            : duckerKeySource(model, from, to) === "channel"
+              ? m.inspector.duckerKeyTap
+              : m.inspector.selectionOnly;
       host.append(hint(note));
     }
     if (busFixed) host.append(hint(m.inspector.busFixedLevel));
