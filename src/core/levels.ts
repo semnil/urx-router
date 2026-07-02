@@ -23,12 +23,18 @@ export const LEVEL_POS_MAX = LEVEL_STEPS_DB.length;
 
 /** Slider position (0 = off, 1..N = grid index + 1) → plan dB. */
 export function posToLevel(pos: number): number {
-  if (pos <= 0) return LEVEL_OFF_DB;
-  return LEVEL_STEPS_DB[Math.min(pos, LEVEL_POS_MAX) - 1];
+  // Round to a real detent (a fractional slider value would index the grid out of
+  // band) and treat NaN as off, so the return is always a finite grid dB.
+  const p = Number.isNaN(pos) ? 0 : Math.round(pos);
+  if (p <= 0) return LEVEL_OFF_DB;
+  return LEVEL_STEPS_DB[Math.min(p, LEVEL_POS_MAX) - 1];
 }
 
 /** Plan dB → nearest slider position. Below the lowest real value reads as off. */
 export function levelToPos(db: number): number {
+  // A non-finite level cannot enter the nearest-neighbor scan (every |step - db| is
+  // NaN/Infinity): +Infinity snaps to the loudest detent, NaN / -Infinity to off.
+  if (!Number.isFinite(db)) return db > 0 ? LEVEL_POS_MAX : 0;
   if (db < LEVEL_MIN_DB) return 0;
   let best = 0;
   let bestDelta = Infinity;
