@@ -298,6 +298,6 @@ export function loadRecent(): RecentEntry[] {
 /** Record a just-used path at the front, de-duplicated and capped. */
 export function rememberRecent(entry: RecentEntry): RecentEntry[] {
   const next = [entry, ...loadRecent().filter((e) => e.path !== entry.path)].slice(0, RECENT_MAX);
-  localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+  saveJson(RECENT_KEY, next);
   return next;
 }
