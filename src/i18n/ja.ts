@@ -242,6 +242,8 @@ export const ja: Messages = {
     off: "OFF",
     notReadFromDevice: "デバイスから読み込まれていません — 計画の初期値を表示しています。",
     selectionOnly: "選択のみ — Send パラメータはありません。",
+    directOutTap: "ダイレクト出力 — チャンネルの Rec Point でタップ (フェーダー・ダッカーより前段)。含めるには STEREO / MIX バス経由で送ってください。",
+    sdRecTap: "このチャンネルを Rec Point でタップして録音します (既定はプリフェーダー)。録音する段はチャンネルの Rec Point で選べます。",
     fixedConnection: "固定接続 — 常時有効で削除できません。",
     busType: "BUS Type",
     panLink: "Pan Link",
@@ -301,6 +303,9 @@ export const ja: Messages = {
     insFx: "96 kHz 超では Insert FX (MONO IN ch・MIX・STEREO) を使用できません。",
     fx2: "96 kHz 超では FX2 Bus を使用できません。",
     hdmiEq: "176.4 / 192 kHz では HDMI EQ を使用できません。",
+    duckerTitle: "ダッカーがダイレクト出力に乗りません",
+    duckerBypass: (label: string): string =>
+      `${label} — ダッカー ON ですが USB / SD ダイレクト出力はその前段でタップします。含めるには STEREO / MIX バス経由で送ってください。`,
   },
   status: {
     loaded: (model: string): string => `${model} を読み込みました — ドラッグで配置・結線`,

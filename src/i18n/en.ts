@@ -243,6 +243,8 @@ export const en = {
     off: "OFF",
     notReadFromDevice: "Not read from the device — showing the plan default.",
     selectionOnly: "Selection only — no send parameters.",
+    directOutTap: "Direct out — tapped at the channel Rec Point, before the fader and Ducker. Route via a STEREO or MIX bus to include them.",
+    sdRecTap: "Records this channel at its Rec Point (pre-fader by default). Change the channel's Rec Point to pick the recorded stage.",
     fixedConnection: "Fixed connection — always enabled, cannot be removed.",
     busType: "BUS Type",
     panLink: "Pan Link",
@@ -302,6 +304,9 @@ export const en = {
     insFx: "Insert FX (MONO IN channels, MIX, STEREO) unavailable above 96 kHz.",
     fx2: "FX2 bus unavailable above 96 kHz.",
     hdmiEq: "HDMI EQ unavailable at 176.4 / 192 kHz.",
+    duckerTitle: "Ducker not on direct out",
+    duckerBypass: (label: string): string =>
+      `${label} — Ducker is on, but the USB / SD direct out taps before it. Route via a STEREO or MIX bus to include it.`,
   },
   status: {
     loaded: (model: string): string => `Loaded ${model} — drag to place and connect`,
