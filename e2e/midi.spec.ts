@@ -169,6 +169,21 @@ test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
   await expect(muteChip()).not.toHaveClass(/\bon\b/);
 });
 
+test("assignment selects form an aligned column across rows", async ({ page }) => {
+  // Mode and button-behavior selects share a fixed width, so their left edges
+  // (and the address cells sitting against them) line up across rows.
+  await openPanel(page);
+  await pickInputPort(page);
+  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
+  await learnBinding(page, () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" }).click(), [0x90, 60, 127]);
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+
+  const mode = await page.locator('#midi-panel .mp-row[data-control="ch1/level"] .mp-mode').boundingBox();
+  const btn = await page.locator('#midi-panel .mp-row[data-control="ch1/mute"] .mp-btn').boundingBox();
+  expect(mode!.width).toBeCloseTo(btn!.width, 0);
+  expect(mode!.x).toBeCloseTo(btn!.x, 0);
+});
+
 test("the option legend explains every choice of a hovered select", async ({ page }) => {
   await openPanel(page);
   await pickInputPort(page);

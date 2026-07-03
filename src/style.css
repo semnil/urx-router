@@ -2330,7 +2330,9 @@ select:focus-visible,
   top: 58px;
   right: 12px;
   z-index: 39; /* below the dropdown menus (40) so an open menu overlays it */
-  width: 320px;
+  /* Wide enough for a one-line row with the widest single-select column:
+     name (110px min) + "CH 16 PITCH BEND" + fixed 92px select + delete. */
+  width: 360px;
   max-height: calc(100vh - 110px);
   display: flex;
   flex-direction: column;
@@ -2464,7 +2466,9 @@ select:focus-visible,
 .midi-panel .mp-btn {
   flex-shrink: 0;
   font-size: 11px;
-  max-width: 92px;
+  /* Fixed width: the selects form a column across rows, which also
+     right-aligns the address cell sitting against them. */
+  width: 92px;
 }
 /* Option legend: behavior notes for the hovered / focused select's options,
    the selected one highlighted. */
