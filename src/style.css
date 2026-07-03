@@ -2495,6 +2495,9 @@ select:focus-visible,
 }
 .midi-panel .mp-row {
   display: flex;
+  /* A relative-mode row carries two selects: keep the control name readable
+     and let the selects wrap to a second line instead of crushing it. */
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 4px;
@@ -2505,7 +2508,7 @@ select:focus-visible,
 }
 .midi-panel .mp-ctl {
   flex: 1;
-  min-width: 0;
+  min-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2523,4 +2526,24 @@ select:focus-visible,
   flex-shrink: 0;
   font-size: 11px;
   max-width: 92px;
+}
+/* Option legend: behavior notes for the hovered / focused select's options,
+   the selected one highlighted. A plain block, so [hidden] hides it as-is. */
+.midi-panel .mp-info {
+  border-top: 1px solid var(--line);
+  padding: 7px 10px 9px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.midi-panel .mp-info .ln {
+  padding-left: 12px;
+  text-indent: -12px; /* hanging indent: wrapped lines align past the name */
+}
+.midi-panel .mp-info .nm {
+  font-family: var(--mono);
+  color: var(--text);
+}
+.midi-panel .mp-info .ln.cur .nm {
+  color: var(--led);
 }

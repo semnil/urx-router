@@ -68,6 +68,7 @@ export class MidiControl {
   private hintEl!: HTMLElement;
   private listHead!: HTMLElement;
   private listEl!: HTMLElement;
+  private infoEl!: HTMLElement;
 
   constructor(private hooks: MidiHooks) {
     this.engine = new MidiEngine({
@@ -345,8 +346,13 @@ export class MidiControl {
 
     this.listHead = el("div", "mp-listhead");
     this.listEl = el("div", "mp-list");
+    // Option legend: while a take-in / encoding / button select is hovered or
+    // focused, every option is listed here with a one-line behavior note (a
+    // native dropdown cannot annotate its own options). Hidden when idle.
+    this.infoEl = el("div", "mp-info");
+    this.infoEl.hidden = true;
 
-    panel.append(head, ports, learnRow, this.listHead, this.listEl);
+    panel.append(head, ports, learnRow, this.listHead, this.listEl, this.infoEl);
     document.body.append(panel);
     this.panel = panel;
     this.applyPanelI18n();
@@ -381,6 +387,10 @@ export class MidiControl {
   private renderList(): void {
     if (!this.panel) return;
     const m = t().midi;
+    // Rebuilding detaches the selects, so a legend they were showing would
+    // never receive its blur/leave — clear it with them.
+    this.infoEl.hidden = true;
+    this.infoEl.replaceChildren();
     this.listEl.replaceChildren();
     const mappings = this.engine.getMappings();
     if (mappings.length === 0) {
@@ -412,6 +422,7 @@ export class MidiControl {
         mode.addEventListener("change", () => {
           this.patchMapping(mapping, { mode: mode.value as TakeMode });
         });
+        this.wireLegend(mode, () => MODES.map((v) => ({ value: v, label: t().midi.mode[v], desc: t().midi.modeDesc[v] })));
         row.append(mode);
         if (mapping.mode === "relative") {
           const enc = document.createElement("select");
@@ -426,6 +437,7 @@ export class MidiControl {
           enc.addEventListener("change", () => {
             this.patchMapping(mapping, { encoding: enc.value as RelativeEncoding });
           });
+          this.wireLegend(enc, () => ENCODINGS.map((v) => ({ value: v, label: t().midi.encoding[v], desc: t().midi.encodingDesc[v] })));
           row.append(enc);
         }
       } else if (control?.kind === "toggle" && mapping.addr.type !== "pitchbend") {
@@ -443,6 +455,7 @@ export class MidiControl {
         btn.addEventListener("change", () => {
           this.patchMapping(mapping, { button: btn.value as ButtonMode });
         });
+        this.wireLegend(btn, () => BUTTON_MODES.map((v) => ({ value: v, label: t().midi.buttonMode[v], desc: t().midi.buttonModeDesc[v] })));
         row.append(btn);
       }
       const del = el("button", "mp-del") as HTMLButtonElement;
@@ -460,6 +473,38 @@ export class MidiControl {
 
   private patchMapping(mapping: MidiMapping, patch: Partial<MidiMapping>): void {
     this.applyMappings(this.engine.getMappings().map((x) => (x === mapping ? { ...x, ...patch } : x)));
+  }
+
+  // ---- option legend ----
+
+  /** Show the legend for one select: every option with its behavior note, the
+   *  selected one highlighted. `options` is a thunk so a language switch
+   *  between interactions re-reads the active catalog. */
+  private wireLegend(sel: HTMLSelectElement, options: () => Array<{ value: string; label: string; desc: string }>): void {
+    const show = (): void => {
+      this.infoEl.replaceChildren();
+      for (const o of options()) {
+        const ln = el("div", "ln" + (o.value === sel.value ? " cur" : ""));
+        const nm = el("span", "nm");
+        nm.textContent = o.label;
+        ln.append(nm, document.createTextNode(" — " + o.desc));
+        this.infoEl.append(ln);
+      }
+      this.infoEl.hidden = false;
+    };
+    const hide = (): void => {
+      this.infoEl.hidden = true;
+      this.infoEl.replaceChildren();
+    };
+    // No "change" handler: a change patches the mapping, which rebuilds the
+    // list (renderList) — the legend is cleared there, since blur/leave never
+    // fire on the detached select.
+    sel.addEventListener("focus", show);
+    sel.addEventListener("pointerenter", show);
+    sel.addEventListener("blur", hide);
+    sel.addEventListener("pointerleave", () => {
+      if (document.activeElement !== sel) hide();
+    });
   }
 }
 

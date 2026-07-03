@@ -87,6 +87,22 @@ export const en = {
     mode: { absolute: "Absolute", pickup: "Pickup", relative: "Relative" },
     encoding: { twos: "2's comp", offset64: "Offset 64", signbit: "Sign bit" },
     buttonMode: { edge: "Flip on press", state: "Follow value" },
+    // One-line behavior notes shown in the legend strip while a select is
+    // hovered / focused (a native dropdown cannot annotate its own options).
+    modeDesc: {
+      absolute: "Applies the received value as-is. Jumps when the physical control and the on-screen value disagree.",
+      pickup: "Ignored until the physical control reaches or crosses the on-screen value — no jumps, but inert until it catches up.",
+      relative: "Treats each message as an increment, one click = one step (endless encoders). Match the encoding to the controller.",
+    },
+    encodingDesc: {
+      twos: "1–63 steps up, 127–65 steps down (two's complement).",
+      offset64: "65 and above steps up, 63 and below steps down (64 = no change).",
+      signbit: "1–63 steps up, 65–127 steps down (sign bit).",
+    },
+    buttonModeDesc: {
+      edge: "Flips once per press; the release (0) is ignored.",
+      state: "The value is the state: 64 and above = on, below = off — for hold-to-enable buttons and alternating senders (e.g. Stream Deck toggles).",
+    },
     bound: (control: string, addr: string): string => `Assigned ${addr} to ${control}`,
     inputError: (message: string): string => `MIDI input error: ${message}`,
     outputError: (message: string): string => `MIDI output error: ${message}`,

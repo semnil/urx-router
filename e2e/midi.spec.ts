@@ -151,6 +151,26 @@ test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
   await expect(muteChip()).not.toHaveClass(/\bon\b/);
 });
 
+test("the option legend explains every choice of a hovered select", async ({ page }) => {
+  await openPanel(page);
+  await pickInputPort(page);
+  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+
+  const info = page.locator("#midi-panel .mp-info");
+  await expect(info).toBeHidden();
+  const mode = page.locator('#midi-panel .mp-row[data-control="ch1/level"] .mp-mode');
+  await mode.focus();
+  await expect(info).toBeVisible();
+  await expect(info.locator(".ln")).toHaveCount(3); // one note per take-in mode
+  await expect(info.locator(".ln.cur .nm")).toHaveText("Absolute"); // current choice highlighted
+  await mode.blur();
+  await expect(info).toBeHidden();
+  // Changing the mode rebuilds the row; the legend never lingers detached.
+  await mode.selectOption("pickup");
+  await expect(info).toBeHidden();
+});
+
 test("a follow-value toggle responds to every press of an alternating button", async ({ page }) => {
   // Stream Deck style: the MIDI plugin's toggle button sends one CC per press,
   // alternating 127 / 0. Default edge mode flips on the 127 presses only; the

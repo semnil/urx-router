@@ -87,6 +87,22 @@ export const ja: Messages = {
     mode: { absolute: "アブソリュート", pickup: "ピックアップ", relative: "リラティブ" },
     encoding: { twos: "2の補数", offset64: "オフセット64", signbit: "符号ビット" },
     buttonMode: { edge: "押下で反転", state: "値に追従" },
+    // セレクトのホバー / フォーカス中に凡例ストリップへ出す挙動説明
+    // (ネイティブのドロップダウンは選択肢に注釈を付けられない)。
+    modeDesc: {
+      absolute: "受信値をそのまま位置として適用。物理位置と盤面値がずれていると値が飛ぶ。",
+      pickup: "物理値が盤面値に追いつく (通過する) まで無視。値は飛ばないが、追いつくまで効かない。",
+      relative: "受信値を増減量として適用、1 クリック = 1 目盛 (エンドレスエンコーダー用)。エンコードは機器側の設定に合わせる。",
+    },
+    encodingDesc: {
+      twos: "1〜63 で増、127〜65 で減 (2の補数)。",
+      offset64: "65 以上で増、63 以下で減 (64 = 変化なし)。",
+      signbit: "1〜63 で増、65〜127 で減 (符号ビット)。",
+    },
+    buttonModeDesc: {
+      edge: "押すたびに 1 回反転。離した信号 (0) は無視する。",
+      state: "値がそのまま状態になる: 64 以上で ON、未満で OFF — 押している間だけ ON にするボタンや 127/0 交互送信 (Stream Deck 等) 向け。",
+    },
     bound: (control: string, addr: string): string => `${addr} を ${control} に割り当てました`,
     inputError: (message: string): string => `MIDI 入力エラー: ${message}`,
     outputError: (message: string): string => `MIDI 出力エラー: ${message}`,
