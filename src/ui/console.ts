@@ -301,7 +301,10 @@ export class Console {
     for (const db of range.ticks) {
       if (db > ceilingDb) continue;
       const tick = el("div", "t");
-      tick.style.bottom = dbToFrac(db, range) * 100 + "%";
+      // The bottom tick reads -∞ (off), so it sits at the fader's off position —
+      // the very bottom of the travel — not at the lowest detent one notch above.
+      const isOff = db <= range.min;
+      tick.style.bottom = dbToFrac(isOff ? range.off : db, range) * 100 + "%";
       // The number is centred; a minus sign hangs to its left so the digits of
       // e.g. "10" and "-10" line up vertically.
       const num = el("span", "num");
@@ -310,7 +313,7 @@ export class Console {
         sign.textContent = "−";
         num.append(sign);
       }
-      if (db === -96) {
+      if (isOff) {
         const inf = el("span", "glyph-inf");
         inf.textContent = "∞";
         num.append(inf);
