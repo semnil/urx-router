@@ -3,7 +3,7 @@
 // reuse as the input.
 
 import type { ConnectionKind, DeviceModel, ModelId } from "../models/types";
-import { parseRef } from "../models/types";
+import { parseRef, ref } from "../models/types";
 import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES } from "./constraints";
 
 // LEVEL fader / send range in dB (the device level_gain table, shared by every
@@ -500,6 +500,12 @@ export function removeConnection(plan: Plan, from: string, to: string): void {
 // wire into a destination; these mutators express that single-input invariant.
 export function incomingConnection(plan: Plan, to: string, kind: ConnectionKind): PlanConnection | undefined {
   return plan.connections.find((c) => c.to === to && c.kind === kind);
+}
+
+/** The wire from node `from`'s out port to node `to`'s in port, if any — the
+ *  send / main-path lookup shared by the console and the MIDI control catalog. */
+export function sendConnection(plan: Plan, from: string, to: string): PlanConnection | undefined {
+  return plan.connections.find((c) => c.from === ref(from, "out") && c.to === ref(to, "in"));
 }
 
 export function clearIncoming(plan: Plan, to: string, kind: ConnectionKind): void {

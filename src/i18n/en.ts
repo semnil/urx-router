@@ -71,6 +71,66 @@ export const en = {
     groupBus: "BUS / FX",
     groupMon: "MONITOR",
   },
+  midi: {
+    menuItem: "MIDI control",
+    title: "MIDI CONTROL",
+    input: "Input",
+    output: "Output",
+    portNone: "None",
+    learn: "Learn",
+    hintIdle: "Turn on Learn, click a console control, then move a control on your MIDI device.",
+    hintLearn: "Click a console control to arm it for binding.",
+    hintArmed: (control: string): string => `Move a MIDI control to bind ${control}…`,
+    mappings: "Assignments",
+    noMappings: "No assignments yet.",
+    remove: "Remove assignment",
+    mode: { absolute: "Absolute", pickup: "Pickup", relative: "Relative" },
+    encoding: { twos: "2's comp", offset64: "Offset 64", signbit: "Sign bit" },
+    // Industry button-type names (matching other MIDI-mapping tools): Toggle =
+    // flip per press, Momentary = the value is the state. Stored values stay
+    // "edge" / "state" for persistence compatibility.
+    buttonMode: { edge: "Toggle", state: "Momentary" },
+    // One-line behavior notes shown in the legend strip while a select is
+    // hovered / focused (a native dropdown cannot annotate its own options).
+    modeDesc: {
+      absolute: "Applies the received value as-is. Jumps when the physical control and the on-screen value disagree.",
+      pickup: "Ignored until the physical control reaches or crosses the on-screen value — no jumps, but inert until it catches up.",
+      relative: "Treats each message as an increment, one click = one step (endless encoders). Match the encoding to the controller.",
+    },
+    encodingDesc: {
+      twos: "1–63 steps up, 127–65 steps down (two's complement).",
+      offset64: "65 and above steps up, 63 and below steps down (64 = no change).",
+      signbit: "1–63 steps up, 65–127 steps down (sign bit).",
+    },
+    buttonModeDesc: {
+      edge: "Flips once per press; the release (0) is ignored.",
+      state: "The value is the state: 64 and above = on, below = off — for hold-to-enable buttons and alternating senders (e.g. Stream Deck toggles).",
+    },
+    bound: (control: string, addr: string): string => `Assigned ${addr} to ${control}`,
+    inputError: (message: string): string => `MIDI input error: ${message}`,
+    outputError: (message: string): string => `MIDI output error: ${message}`,
+    // Control labels reuse the console strip wording (chips / knob captions).
+    param: {
+      level: "Level",
+      mute: "MUTE",
+      pan: "PAN/BAL",
+      gain: "GAIN",
+      phonesLevel: "PHONES",
+      oscOn: "ON",
+      cueInterrupt: "C.INT",
+      mono: "MONO",
+      gateOn: "GATE",
+      compOn: "COMP",
+      eqOn: "EQ",
+      phantom: "+48",
+      phase: "φ",
+      phaseL: "φL",
+      phaseR: "φR",
+      hpf: "HPF",
+      hiZ: "Hi-Z",
+      duckerOn: "DUCKER",
+    },
+  },
   inspector: {
     title: "Inspector",
     close: "Close",

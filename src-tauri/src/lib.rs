@@ -7,6 +7,7 @@
 use std::fs;
 use tauri::State;
 
+mod midi;
 mod vd;
 
 #[tauri::command]
@@ -184,11 +185,54 @@ fn vd_disconnect(state: State<vd::VdState>, epoch: u64) {
     vd::disconnect(&state, epoch);
 }
 
+// External MIDI control: the frontend maps incoming MIDI messages onto console
+// controls and sends feedback back to the controller. All calls are local OS-API
+// round-trips (no broker / network), so they stay synchronous — see midi.rs.
+#[tauri::command]
+fn midi_list_inputs() -> Result<Vec<String>, String> {
+    midi::list_inputs()
+}
+
+#[tauri::command]
+fn midi_list_outputs() -> Result<Vec<String>, String> {
+    midi::list_outputs()
+}
+
+#[tauri::command]
+fn midi_open_input(
+    state: State<midi::MidiState>,
+    port: String,
+    channel: tauri::ipc::Channel<Vec<midi::MidiMessage>>,
+) -> Result<(), String> {
+    midi::open_input(&state, port, channel)
+}
+
+#[tauri::command]
+fn midi_close_input(state: State<midi::MidiState>) {
+    midi::close_input(&state);
+}
+
+#[tauri::command]
+fn midi_open_output(state: State<midi::MidiState>, port: String) -> Result<(), String> {
+    midi::open_output(&state, port)
+}
+
+#[tauri::command]
+fn midi_close_output(state: State<midi::MidiState>) {
+    midi::close_output(&state);
+}
+
+#[tauri::command]
+fn midi_send(state: State<midi::MidiState>, bytes: Vec<u8>) -> Result<(), String> {
+    midi::send(&state, bytes)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(vd::VdState::default());
+        .manage(vd::VdState::default())
+        .manage(midi::MidiState::default());
 
     // The updater/process plugins exist on desktop only; the frontend checks for
     // updates at startup and restarts the app once a new bundle is installed.
@@ -216,7 +260,14 @@ pub fn run() {
             vd_params_subscribe,
             vd_params_unsubscribe,
             vd_watch_link,
-            vd_disconnect
+            vd_disconnect,
+            midi_list_inputs,
+            midi_list_outputs,
+            midi_open_input,
+            midi_close_input,
+            midi_open_output,
+            midi_close_output,
+            midi_send
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

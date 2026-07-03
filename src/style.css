@@ -123,6 +123,13 @@
   box-sizing: border-box;
 }
 
+/* An author `display` (flex/grid/…) on a class outranks the `hidden`
+   attribute's UA rule and silently un-hides the element. Settle it once,
+   globally: hidden always wins, no per-class re-assertions. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -232,8 +239,7 @@ select#model-picker {
 }
 
 /* On-air tally: while live sync holds the device, a console-style red lamp says
-   "edits are going to the hardware right now". Re-assert display over the [hidden]
-   UA rule (like the menu panel) so the author flex does not beat it. */
+   "edits are going to the hardware right now". */
 .live-tally {
   display: inline-flex;
   align-items: center;
@@ -250,10 +256,6 @@ select#model-picker {
   background: var(--tally-bg);
   border: 1px solid color-mix(in srgb, var(--tally) 45%, var(--ctl-border));
   box-shadow: 0 0 10px color-mix(in srgb, var(--tally) 28%, transparent);
-}
-
-.live-tally[hidden] {
-  display: none;
 }
 
 .live-tally::before {
@@ -379,12 +381,6 @@ button {
   flex-shrink: 0;
 }
 
-/* The class display above outranks the `hidden` attribute's UA style, so keep
-   the link out of non-demo builds explicitly. */
-.desktop-link[hidden] {
-  display: none;
-}
-
 /* File menu: a console module that drops out of the rack. The trigger is a
    normal tool button with a caret; the panel is positioned fixed so the
    toolbar's overflow-x scroll does not clip it. */
@@ -433,15 +429,6 @@ button {
   border-radius: 8px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45), var(--ctl-shadow);
   animation: menu-in 0.13s ease;
-}
-
-/* An author display value (the flex on the panel and on each item) would
-   otherwise beat the [hidden] UA rule, so re-assert it for both — e.g. the
-   non-experimental self-test item stays hidden. */
-.menu-panel[hidden],
-.menu-panel .menu-item[hidden],
-.menu-panel .menu-sep[hidden] {
-  display: none;
 }
 
 @keyframes menu-in {
@@ -1552,10 +1539,6 @@ select:focus-visible,
 [data-theme="light"] #console-host {
   --groove: #2a251d;
 }
-#console-host[hidden] {
-  display: none;
-}
-
 .con-strips {
   flex: 1;
   display: flex;
@@ -1843,9 +1826,6 @@ select:focus-visible,
   border-radius: 8px;
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6);
   overflow: hidden;
-}
-.con-tappop[hidden] {
-  display: none;
 }
 .con-tappop .ph {
   font: 700 8.5px var(--mono);
@@ -2257,9 +2237,6 @@ select:focus-visible,
   padding: 24px;
   background: var(--vignette);
 }
-.consent-scrim[hidden] {
-  display: none;
-}
 .consent-box {
   width: min(560px, 100%);
   max-height: calc(100vh - 48px);
@@ -2337,4 +2314,210 @@ select:focus-visible,
   white-space: pre;
   user-select: text;
   color: var(--text);
+}
+
+/* ---- MIDI learn (console) ---- */
+/* While learn mode is on, armable controls show a dashed target ring, the armed
+   one pulses solid, and an already-bound one carries an amber corner dot. */
+.con-root.midi-learn .con-fader,
+.con-root.midi-learn .con-knob,
+.con-root.midi-learn .con-chip:not(.readonly):not(.spacer) {
+  cursor: copy;
+}
+/* No border-radius here: the outline follows each element's own radius (chips /
+   fader caps keep theirs, knobs stay circular) — declaring one would override
+   the knob's 50% and square it while learn mode is on. */
+.midi-target {
+  outline: 1px dashed color-mix(in srgb, var(--led) 55%, transparent);
+  outline-offset: 1px;
+}
+.midi-target.midi-armed {
+  outline: 2px solid var(--led);
+  animation: midi-armed-pulse 1s ease-in-out infinite;
+}
+@keyframes midi-armed-pulse {
+  50% {
+    outline-color: color-mix(in srgb, var(--led) 30%, transparent);
+  }
+}
+.midi-target.midi-mapped {
+  position: relative;
+}
+.midi-target.midi-mapped::before {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--led);
+  box-shadow: 0 0 0 1px var(--panel);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ---- MIDI control panel ---- */
+/* Non-modal floating panel (Device menu → MIDI control): stays open while the
+   user clicks console controls to arm them for learn. */
+.midi-panel {
+  position: fixed;
+  top: 58px;
+  right: 12px;
+  z-index: 39; /* below the dropdown menus (40) so an open menu overlays it */
+  width: 320px;
+  max-height: calc(100vh - 110px);
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, var(--ctl-bg2), var(--ctl-bg));
+  border: 1px solid var(--ctl-border);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45), var(--ctl-shadow);
+  font-size: 12px;
+  color: var(--ctl-text);
+}
+.midi-panel .mp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.midi-panel .mp-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+}
+.midi-panel .mp-close,
+.midi-panel .mp-del {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.midi-panel .mp-close:hover,
+.midi-panel .mp-del:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--led) 12%, transparent);
+}
+.midi-panel .mp-ports {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.midi-panel .mp-port {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.midi-panel .mp-port > span {
+  flex: 0 0 52px;
+  color: var(--text-dim);
+}
+.midi-panel .mp-port > select {
+  flex: 1;
+  min-width: 0;
+}
+.midi-panel .mp-learn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.midi-panel .mp-learn-btn {
+  flex-shrink: 0;
+  padding: 5px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  border-radius: 5px;
+  border: 1px solid var(--ctl-border);
+  background: var(--ctl-bg);
+  color: var(--ctl-text);
+  cursor: pointer;
+}
+.midi-panel .mp-learn-btn.on {
+  background: var(--led);
+  border-color: var(--led);
+  color: #14110d;
+  font-weight: 600;
+}
+.midi-panel .mp-hint {
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.midi-panel .mp-listhead {
+  padding: 8px 10px 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+}
+.midi-panel .mp-list {
+  overflow-y: auto;
+  padding: 0 6px 8px;
+}
+.midi-panel .mp-empty {
+  padding: 6px 4px 8px;
+  color: var(--text-dim);
+}
+.midi-panel .mp-row {
+  display: flex;
+  /* A relative-mode row carries two selects: keep the control name readable
+     and let the selects wrap to a second line instead of crushing it. */
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 5px;
+}
+.midi-panel .mp-row:hover {
+  background: color-mix(in srgb, var(--led) 7%, transparent);
+}
+.midi-panel .mp-ctl {
+  flex: 1;
+  min-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.midi-panel .mp-addr {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.midi-panel .mp-mode,
+.midi-panel .mp-enc,
+.midi-panel .mp-btn {
+  flex-shrink: 0;
+  font-size: 11px;
+  max-width: 92px;
+}
+/* Option legend: behavior notes for the hovered / focused select's options,
+   the selected one highlighted. */
+.midi-panel .mp-info {
+  border-top: 1px solid var(--line);
+  padding: 7px 10px 9px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.midi-panel .mp-info .ln {
+  padding-left: 12px;
+  text-indent: -12px; /* hanging indent: wrapped lines align past the name */
+}
+.midi-panel .mp-info .nm {
+  font-family: var(--mono);
+  color: var(--text);
+}
+.midi-panel .mp-info .ln.cur .nm {
+  color: var(--led);
 }

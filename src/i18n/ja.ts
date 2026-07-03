@@ -71,6 +71,66 @@ export const ja: Messages = {
     groupBus: "BUS / FX",
     groupMon: "モニター",
   },
+  midi: {
+    menuItem: "MIDI コントロール",
+    title: "MIDI コントロール",
+    input: "入力",
+    output: "出力",
+    portNone: "なし",
+    learn: "ラーン",
+    hintIdle: "ラーンをオンにしてコンソールのコントロールをクリックし、MIDI 機器のコントロールを動かします。",
+    hintLearn: "割り当てるコンソールのコントロールをクリックしてください。",
+    hintArmed: (control: string): string => `${control} に割り当てる MIDI コントロールを動かしてください…`,
+    mappings: "割り当て",
+    noMappings: "割り当てはまだありません。",
+    remove: "割り当てを削除",
+    mode: { absolute: "アブソリュート", pickup: "ピックアップ", relative: "リラティブ" },
+    encoding: { twos: "2の補数", offset64: "オフセット64", signbit: "符号ビット" },
+    // 業界標準のボタン種別名 (他の MIDI マッピングツールと同語彙): トグル =
+    // 押すたび反転、モーメンタリ = 値がそのまま状態。保存値は互換のため
+    // "edge" / "state" のまま。
+    buttonMode: { edge: "トグル", state: "モーメンタリ" },
+    // セレクトのホバー / フォーカス中に凡例ストリップへ出す挙動説明
+    // (ネイティブのドロップダウンは選択肢に注釈を付けられない)。
+    modeDesc: {
+      absolute: "受信値をそのまま位置として適用。物理位置と盤面値がずれていると値が飛ぶ。",
+      pickup: "物理値が盤面値に追いつく (通過する) まで無視。値は飛ばないが、追いつくまで効かない。",
+      relative: "受信値を増減量として適用、1 クリック = 1 目盛 (エンドレスエンコーダー用)。エンコードは機器側の設定に合わせる。",
+    },
+    encodingDesc: {
+      twos: "1〜63 で増、127〜65 で減 (2の補数)。",
+      offset64: "65 以上で増、63 以下で減 (64 = 変化なし)。",
+      signbit: "1〜63 で増、65〜127 で減 (符号ビット)。",
+    },
+    buttonModeDesc: {
+      edge: "押すたびに 1 回反転。離した信号 (0) は無視する。",
+      state: "値がそのまま状態になる: 64 以上で ON、未満で OFF — 押している間だけ ON にするボタンや 127/0 交互送信 (Stream Deck 等) 向け。",
+    },
+    bound: (control: string, addr: string): string => `${addr} を ${control} に割り当てました`,
+    inputError: (message: string): string => `MIDI 入力エラー: ${message}`,
+    outputError: (message: string): string => `MIDI 出力エラー: ${message}`,
+    // コントロール名はコンソールストリップの表記 (チップ / ノブ) をそのまま使う。
+    param: {
+      level: "Level",
+      mute: "MUTE",
+      pan: "PAN/BAL",
+      gain: "GAIN",
+      phonesLevel: "PHONES",
+      oscOn: "ON",
+      cueInterrupt: "C.INT",
+      mono: "MONO",
+      gateOn: "GATE",
+      compOn: "COMP",
+      eqOn: "EQ",
+      phantom: "+48",
+      phase: "φ",
+      phaseL: "φL",
+      phaseR: "φR",
+      hpf: "HPF",
+      hiZ: "Hi-Z",
+      duckerOn: "DUCKER",
+    },
+  },
   inspector: {
     title: "インスペクタ",
     close: "閉じる",

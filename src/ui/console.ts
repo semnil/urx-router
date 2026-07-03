@@ -6,9 +6,8 @@
 // sync mirrors them to the device exactly like the graph/inspector do.
 
 import type { DeviceModel } from "../models/types";
-import { ref } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
-import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, type NodeParams, type Plan, type PlanConnection } from "../core/plan";
+import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, sendConnection, type NodeParams, type Plan, type PlanConnection } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
 import { defaultTapKey, hasMeter, isStereoTap, METER_FLOOR_DB, METER_GREEN_TOP_DB, METER_YELLOW_TOP_DB, MeterStore, subscribeMeters, tapAddrs, tapFor, tapsFor, type MeterTap } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
@@ -17,22 +16,21 @@ import { busBalance, channelControl, insertFxControl } from "../core/control/tra
 import { isBalLinkedPair, mirrorBalPair, mixSendLocks, partnerChannel, sendTapWritable } from "../core/routing";
 import { INSERT_FX_NONE, type InsertFxOption } from "../core/control/params";
 import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../core/control/vd";
+// MAIN_BUS (the STEREO master, every channel's fixed main send) and the
+// send-on-fader targets are shared with the MIDI control catalog.
+import { controlId, MAIN_BUS, SEND_TARGETS, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
+import { el } from "./dom";
 import { t } from "../i18n";
 
-type SendTarget = "bus.mix1" | "bus.mix2" | "bus.fx1" | "bus.fx2";
 type Mode = "main" | SendTarget;
 
-const SEND_TARGETS: SendTarget[] = ["bus.fx1", "bus.fx2", "bus.mix1", "bus.mix2"];
 const SEND_LABEL: Record<SendTarget, string> = {
   "bus.mix1": "MIX 1",
   "bus.mix2": "MIX 2",
   "bus.fx1": "FX 1",
   "bus.fx2": "FX 2",
 };
-
-// The STEREO master / main-sum node: every channel's & FX channel's fixed main send.
-const MAIN_BUS = "bus.stereo";
 
 // A fader scale. Each range owns how a dB maps to/from travel (toFrac/fromFrac),
 // how the keyboard steps it (step), and its ruler ticks — so the "which scale am
@@ -150,11 +148,22 @@ interface KnobSpec {
   readonlyTitle?: string;
 }
 
+/** MIDI-learn integration: while learn mode is active, activating an armable
+ *  console control arms it for binding instead of editing it (the MIDI panel
+ *  owns the mode / armed state and re-renders the console when they change). */
+export interface ConsoleMidiHooks {
+  learnActive: () => boolean;
+  armedId: () => string | null;
+  isMapped: (id: string) => boolean;
+  arm: (id: string) => void;
+}
+
 export interface ConsoleHooks {
   getModel: () => DeviceModel;
   getPlan: () => Plan;
   /** An edit changed the plan (mute / fader / EQ): flag dirty + schedule live sync. */
   onChange: () => void;
+  midi?: ConsoleMidiHooks;
 }
 
 // The bars animate every frame; the numeric readout text is refreshed only every
@@ -505,6 +514,39 @@ export class Console {
     this.tapPop.replaceChildren();
   }
 
+  // ---- MIDI learn ----
+
+  /** In learn mode an armable control arms itself on activation instead of
+   *  editing. Returns true when the interaction was consumed by arming. */
+  private midiArm(id: string | undefined): boolean {
+    const midi = this.hooks.midi;
+    if (!id || !midi?.learnActive()) return false;
+    midi.arm(id);
+    return true;
+  }
+
+  /** Learn-mode keyboard gate for the fader / knob handlers: Space/Enter arms;
+   *  anything else (Tab, arrows) is left to the browser so keyboard navigation
+   *  keeps working. True when learn mode owns the event (skip the edit keys). */
+  private midiLearnKey(e: KeyboardEvent, midiId: string | undefined): boolean {
+    if (!this.hooks.midi?.learnActive()) return false;
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      this.midiArm(midiId);
+    }
+    return true;
+  }
+
+  /** Learn-mode affordances on an armable element: target ring, armed pulse,
+   *  already-mapped dot. No-op outside learn mode (no visual noise). */
+  private midiMark(el: HTMLElement, id: string | undefined): void {
+    const midi = this.hooks.midi;
+    if (!id || !midi?.learnActive()) return;
+    el.classList.add("midi-target");
+    if (midi.armedId() === id) el.classList.add("midi-armed");
+    if (midi.isMapped(id)) el.classList.add("midi-mapped");
+  }
+
   // Paint a scribble with the node's device CH SETTING colour (contrast-picked ink),
   // or leave the rail fallback when unset. Shared by both strip builders.
   private paintScribble(scrib: HTMLElement, id: string): void {
@@ -533,9 +575,19 @@ export class Console {
 
   // A toggle chip ("MUTE"/"EQ"/"ON"/…): role=button, aria-pressed, keyboard-activated;
   // `toggle` flips the underlying plan flag and returns the new state, then the chip
-  // commits (and re-renders when commit asks). A readonlyTitle renders it inert with a
-  // tooltip. Shared across both strip builders (channel chips + the OSC ON button).
-  private makeChip(id: string, parent: HTMLElement, label: string, mute: boolean, on: boolean, toggle: () => boolean, readonlyTitle?: string): void {
+  // commits (and re-renders when commit asks). opts.readonlyTitle renders it inert
+  // with a tooltip; opts.midiId makes it armable for MIDI learn. Shared across both
+  // strip builders (channel chips + the OSC ON button).
+  private makeChip(
+    id: string,
+    parent: HTMLElement,
+    label: string,
+    mute: boolean,
+    on: boolean,
+    toggle: () => boolean,
+    opts?: { readonlyTitle?: string; midiId?: string },
+  ): void {
+    const { readonlyTitle, midiId } = opts ?? {};
     const chip = el("div", "con-chip" + (mute ? " mute" : "") + (on ? " on" : "") + (readonlyTitle ? " readonly" : ""));
     chip.textContent = label;
     chip.setAttribute("role", "button");
@@ -547,7 +599,9 @@ export class Console {
       return;
     }
     chip.tabIndex = 0;
+    this.midiMark(chip, midiId);
     const run = (): void => {
+      if (this.midiArm(midiId)) return;
       const next = toggle();
       chip.classList.toggle("on", next);
       chip.setAttribute("aria-pressed", String(next));
@@ -620,7 +674,7 @@ export class Console {
         const next = !oscOn();
         np.osc = { ...np.osc, on: next };
         return next;
-      });
+      }, { midiId: controlId(m.id, "oscOn") });
       chips.append(el("div", "con-chip spacer"));
       head.append(chips);
       // LEVEL knob: full OSC range (-96…0 dB). The indicator's horizontal marks read
@@ -635,7 +689,7 @@ export class Console {
         format: (v) => v.toFixed(1),
         reset: factory,
         angle: (v) => (v <= -50 ? -135 + ((v + 96) / 46) * 45 : v >= -8 ? 90 + ((v + 8) / 8) * 45 : -90 + ((v + 50) / 42) * 180),
-      }, m.id);
+      }, m.id, controlId(m.id, "level"));
     }
     strip.append(head);
 
@@ -676,6 +730,7 @@ export class Console {
       this.tapModel = model.id;
     }
     this.closeTapPop();
+    this.host.classList.toggle("midi-learn", this.hooks.midi?.learnActive() ?? false);
     this.outLabel.textContent = t().console.outputLabel;
     this.renderModes();
     this.refs.clear();
@@ -799,7 +854,7 @@ export class Console {
         const next = !(planOf()[key] ?? def);
         this.nodeParamsOf(m.id)[key] = next;
         return next;
-      });
+      }, { midiId: controlId(m.id, key) });
     };
 
     // channel + input (HA) group
@@ -813,7 +868,7 @@ export class Console {
         // conn in a send tab.
         const mix = this.isMixBus(m.id);
         const conn = mix
-          ? () => this.sendConn(this.hooks.getPlan(), m.id, MAIN_BUS)
+          ? () => sendConnection(this.hooks.getPlan(), m.id, MAIN_BUS)
           : this.sendStripConn(m.id, usesSend);
         const sendOn = (): boolean => conn()?.params?.on ?? !mix; // sends default ON, TO ST off
         this.makeChip(m.id, top, t().console.mute, true, !sendOn(), () => {
@@ -821,7 +876,7 @@ export class Console {
           const nextOn = !sendOn();
           if (c) c.params = { ...c.params, on: nextOn };
           return !nextOn; // chip "on" (highlighted) = muted
-        });
+        }, { midiId: controlId(m.id, "mute", usesSend ? this.mode : undefined) });
       } else {
         // Master ON/OFF on the node's own `on` flag: the STEREO master
         // (STEREO_MASTER_ON) writes to the device; a MONITOR bus is plan-only
@@ -830,7 +885,7 @@ export class Console {
           const muted = planOf().on === false;
           this.nodeParamsOf(m.id).on = muted; // toggle: was muted → on, was on → muted
           return !muted;
-        });
+        }, { midiId: controlId(m.id, "mute") });
       }
     }
     // HA input toggles (+48 / polarity / HPF / Hi-Z) are channel-domain, not send
@@ -866,7 +921,7 @@ export class Console {
         // Stereo-channel EQ is inert at 176.4 / 192 kHz: show the chip forced off and
         // read-only (matches the inspector's locked EQ toggle), else a live toggle.
         if (channelEqUnavailable(m.id, this.hooks.getPlan().sampleRate))
-          this.makeChip(m.id, proc, t().console.eq, false, false, () => false, t().inspector.eqRateLocked);
+          this.makeChip(m.id, proc, t().console.eq, false, false, () => false, { readonlyTitle: t().inspector.eqRateLocked });
         else boolChip(proc, t().console.eq, "eqOn", true);
       }
       const ifx = insertFxControl(model, m.id);
@@ -887,7 +942,7 @@ export class Console {
           const next = !duckOn();
           this.nodeParamsOf(duckerId).duckerOn = next;
           return next;
-        });
+        }, { midiId: controlId(duckerId, "duckerOn") });
       }
     }
 
@@ -914,7 +969,7 @@ export class Console {
         const c = conn();
         if (c) c.params = { ...c.params, tap: next ? "pre" : "post" };
         return next;
-      }, tapReadonly ? t().inspector.prePostLcdOnly : undefined);
+      }, tapReadonly ? { readonlyTitle: t().inspector.prePostLcdOnly } : undefined);
       preGroup.append(el("div", "con-chip spacer"));
       head.append(preGroup);
     }
@@ -936,7 +991,7 @@ export class Console {
         format: (v) => (v > 0 ? "+" : "") + v,
         reset: factory,
         angle: (v) => -90 + ((v - hl) / (hr - hl)) * 180,
-      }, m.id);
+      }, m.id, controlId(m.id, "gain"));
     }
     // PAN (mono) / BALANCE (stereo) = the source's send pan, L63 – C – R63. Both
     // channels and FX channels follow the tab: MAIN edits the → STEREO main path, a
@@ -970,7 +1025,7 @@ export class Console {
         reset: factory,
         // 2.0 at the left horizontal, 8.0 at the right (the device's markings).
         angle: (v) => -90 + ((v - 2) / (8 - 2)) * 180,
-      }, m.id);
+      }, m.id, controlId(m.id, "phonesLevel"));
     }
     strip.append(head);
 
@@ -1051,6 +1106,8 @@ export class Console {
     const fader = r.fader;
     if (!fader) return; // meter-only strips have no fader to wire
     const range = r.m.range;
+    const midiId = controlId(r.m.id, "level", usesSend ? this.mode : undefined);
+    this.midiMark(fader, midiId);
     const setLevel = (db: number): void => {
       if (usesSend) this.setSend(r.m.id, this.mode as SendTarget, db);
       else this.setMain(r.m, db);
@@ -1060,6 +1117,7 @@ export class Console {
     };
     fader.addEventListener("pointerdown", (e) => {
       e.preventDefault();
+      if (this.midiArm(midiId)) return;
       fader.setPointerCapture(e.pointerId);
       const rect = fader.getBoundingClientRect();
       const move = (ev: PointerEvent): void => {
@@ -1075,6 +1133,7 @@ export class Console {
       window.addEventListener("pointerup", up);
     });
     fader.addEventListener("keydown", (e) => {
+      if (this.midiLearnKey(e, midiId)) return;
       const cur = usesSend ? this.getSend(r.m.id, this.mode as SendTarget) : this.getMain(r.m);
       // Each range defines its own detent step (OSC: whole dB; level_gain: one grid
       // detent, a step down off the floor landing on -∞).
@@ -1092,6 +1151,7 @@ export class Console {
     });
     // Double-click resets the fader to its factory value.
     fader.addEventListener("dblclick", () => {
+      if (this.hooks.midi?.learnActive()) return; // pointerdown already armed
       const fp = this.factoryPlan();
       setLevel(usesSend ? this.sendLevelOf(fp, r.m.id, this.mode as SendTarget) : this.mainLevelOf(fp, r.m));
     });
@@ -1273,13 +1333,8 @@ export class Console {
     return this.mode !== "main" && (m.isChannel || (this.isFxChannel(m.id) && this.isMixMode()));
   }
 
-  /** The wire from `fromId`'s out to `toId`'s in, if any. */
-  private sendConn(plan: Plan, fromId: string, toId: string): PlanConnection | undefined {
-    return plan.connections.find((c) => c.from === ref(fromId, "out") && c.to === ref(toId, "in"));
-  }
-
   private hasSend(id: string, target: SendTarget): boolean {
-    return this.sendConn(this.hooks.getPlan(), id, target) !== undefined;
+    return sendConnection(this.hooks.getPlan(), id, target) !== undefined;
   }
 
   /** Live getter for the connection a tab-scoped strip control (MUTE / PRE) edits:
@@ -1287,7 +1342,7 @@ export class Console {
    *  both input-channel and FX-channel strips. */
   private sendStripConn(id: string, usesSend: boolean): () => PlanConnection | undefined {
     const target = usesSend ? (this.mode as SendTarget) : MAIN_BUS;
-    return () => this.sendConn(this.hooks.getPlan(), id, target);
+    return () => sendConnection(this.hooks.getPlan(), id, target);
   }
 
   /** Shared PAN/BALANCE knob spec (±63, C / Ln / Rn display); get/set/reset bind
@@ -1299,14 +1354,14 @@ export class Console {
   /** Add a PAN/BALANCE knob bound to a send connection's `pan` (L63 – C – R63),
    *  resetting to the factory plan's value on double-click. */
   private addSendPanKnob(head: HTMLElement, id: string, target: string, label: string, readonlyTitle?: string): void {
-    const conn = (): PlanConnection | undefined => this.sendConn(this.hooks.getPlan(), id, target);
-    const factory = this.sendConn(this.factoryPlan(), id, target)?.params?.pan ?? 0;
+    const conn = (): PlanConnection | undefined => sendConnection(this.hooks.getPlan(), id, target);
+    const factory = sendConnection(this.factoryPlan(), id, target)?.params?.pan ?? 0;
     this.addKnob(head, label, this.panKnobSpec(
       () => conn()?.params?.pan ?? 0,
       (v) => { const c = conn(); if (c) c.params = { ...c.params, pan: v }; },
       factory,
       readonlyTitle,
-    ), id);
+    ), id, controlId(id, "pan", target === MAIN_BUS ? undefined : target));
   }
 
   /** Add a BALANCE/PAN knob bound to a bus node's own master balance (`pan`,
@@ -1317,7 +1372,7 @@ export class Console {
       () => this.hooks.getPlan().nodeParams[id]?.pan ?? 0,
       (v) => void (this.nodeParamsOf(id).pan = v),
       factory,
-    ), id);
+    ), id, controlId(id, "pan"));
   }
 
   private nodeParamsOf(id: string): NodeParams {
@@ -1363,7 +1418,7 @@ export class Console {
     if (m.isOsc) return plan.nodeParams[m.id]?.osc?.level ?? -14;
     if (m.fadersOnly) return plan.nodeParams[m.id]?.level ?? 0;
     // channel / FX channel main path = the fixed send into STEREO
-    return this.sendConn(plan, m.id, MAIN_BUS)?.params?.level ?? 0;
+    return sendConnection(plan, m.id, MAIN_BUS)?.params?.level ?? 0;
   }
 
   private getMain(m: StripModel): number {
@@ -1381,12 +1436,12 @@ export class Console {
       this.nodeParamsOf(m.id).level = db;
       return;
     }
-    const conn = this.sendConn(plan, m.id, MAIN_BUS);
+    const conn = sendConnection(plan, m.id, MAIN_BUS);
     if (conn) conn.params = { ...conn.params, level: db };
   }
 
   private sendLevelOf(plan: Plan, id: string, target: SendTarget): number {
-    return this.sendConn(plan, id, target)?.params?.level ?? LEVEL_OFF_DB;
+    return sendConnection(plan, id, target)?.params?.level ?? LEVEL_OFF_DB;
   }
 
   private getSend(id: string, target: SendTarget): number {
@@ -1394,7 +1449,7 @@ export class Console {
   }
 
   private setSend(id: string, target: SendTarget, db: number): void {
-    const conn = this.sendConn(this.hooks.getPlan(), id, target);
+    const conn = sendConnection(this.hooks.getPlan(), id, target);
     // The console adjusts an existing send's level only; it never adds or removes
     // routing (that stays in the graph). Unconnected send strips are hidden, so a
     // conn is present here in practice — bail defensively if not.
@@ -1419,7 +1474,8 @@ export class Console {
 
   // Build a labelled rotary knob (label / value / knob) in the strip head and
   // wire it. Shared by the channel gain and the monitor PHONES level.
-  private addKnob(head: HTMLElement, label: string, k: KnobSpec, id: string): void {
+  // `midiId` makes the knob armable for MIDI learn.
+  private addKnob(head: HTMLElement, label: string, k: KnobSpec, id: string, midiId?: string): void {
     const box = el("div", "con-gain");
     const info = el("div", "info");
     const lbl = el("span", "lbl");
@@ -1440,13 +1496,13 @@ export class Console {
     } else {
       knob.tabIndex = 0;
     }
-    this.wireKnob(knob, val, k, id);
+    this.wireKnob(knob, val, k, id, midiId);
   }
 
   // Rotary knob: vertical drag (≈ full range over 150px) and arrow keys edit the
   // value (snapped to `step`); the indicator rotates over a 270° sweep; a
   // double-click resets to `reset`. Reads/writes via the spec's get/set.
-  private wireKnob(knob: HTMLElement, val: HTMLElement, k: KnobSpec, id: string): void {
+  private wireKnob(knob: HTMLElement, val: HTMLElement, k: KnobSpec, id: string, midiId?: string): void {
     const angle = k.angle ?? ((v: number): number => -135 + ((v - k.min) / (k.max - k.min)) * 270);
     const show = (v: number): void => {
       val.textContent = k.format(v);
@@ -1462,8 +1518,10 @@ export class Console {
     };
     show(Math.max(k.min, Math.min(k.max, k.get()))); // initial display, not dirty
     if (k.readonlyTitle) return; // device-locked: value painted, no input handlers
+    this.midiMark(knob, midiId);
     knob.addEventListener("pointerdown", (e) => {
       e.preventDefault();
+      if (this.midiArm(midiId)) return;
       knob.setPointerCapture(e.pointerId);
       const startY = e.clientY;
       const start = k.get();
@@ -1477,6 +1535,7 @@ export class Console {
       window.addEventListener("pointerup", up);
     });
     knob.addEventListener("keydown", (e) => {
+      if (this.midiLearnKey(e, midiId)) return;
       if (e.key === "ArrowUp" || e.key === "ArrowRight") apply(k.get() + k.step);
       else if (e.key === "ArrowDown" || e.key === "ArrowLeft") apply(k.get() - k.step);
       else return;
@@ -1484,16 +1543,11 @@ export class Console {
       this.syncPartnerStrip(id);
     });
     knob.addEventListener("dblclick", () => {
+      if (this.hooks.midi?.learnActive()) return; // pointerdown already armed
       apply(k.reset); // reset to factory value
       this.syncPartnerStrip(id);
     });
   }
-}
-
-function el(tag: string, cls: string): HTMLElement {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  return e;
 }
 
 // WCAG relative luminance of a #rrggbb colour (0..1).

@@ -285,6 +285,60 @@ export function vdDisconnect(epoch: number): Promise<void> {
   return invoke<void>("vd_disconnect", { epoch });
 }
 
+// External MIDI control (desktop only). The Rust midi module owns the open
+// input/output connections; the frontend opens a port by name, receives raw
+// message bytes through a channel, and sends feedback bytes back out.
+
+// The Rust side streams MidiMessage batches (one per burst — see midi.rs).
+interface RawMidiMessage {
+  bytes: number[];
+}
+
+/** Names of the attached MIDI input ports (re-enumerated per call; the name is
+ * the port id passed to midiOpenInput). Empty outside Tauri. */
+export function midiListInputs(): Promise<string[]> {
+  if (!isTauri()) return Promise.resolve([]);
+  return invoke<string[]>("midi_list_inputs");
+}
+
+/** Names of the attached MIDI output ports. Empty outside Tauri. */
+export function midiListOutputs(): Promise<string[]> {
+  if (!isTauri()) return Promise.resolve([]);
+  return invoke<string[]>("midi_list_outputs");
+}
+
+/**
+ * Open a MIDI input port and stream each raw message through onMessage.
+ * Replaces any previously open input. Rejects when the port is gone. Returns a
+ * close function. No-op (resolved noop) outside Tauri.
+ */
+export async function midiOpenInput(port: string, onMessage: (bytes: number[]) => void): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  // Rust batches a controller burst into one channel message; fan it back out.
+  const channel = newChannel<RawMidiMessage[]>((batch) => {
+    for (const m of batch) onMessage(m.bytes);
+  });
+  await invoke<void>("midi_open_input", { port, channel });
+  return () => void invoke<void>("midi_close_input").catch(() => {});
+}
+
+/** Open a MIDI output port for controller feedback (motor faders / LEDs).
+ * Replaces any previously open output. Rejects when the port is gone. */
+export function midiOpenOutput(port: string): Promise<void> {
+  return invoke<void>("midi_open_output", { port });
+}
+
+/** Close the feedback output port, if one is open. */
+export function midiCloseOutput(): Promise<void> {
+  if (!isTauri()) return Promise.resolve();
+  return invoke<void>("midi_close_output").catch(() => {});
+}
+
+/** Send one raw message out of the open feedback port. */
+export function midiSend(bytes: number[]): Promise<void> {
+  return invoke<void>("midi_send", { bytes });
+}
+
 // Auto-update (desktop only, via the updater/process plugins). These mirror the
 // official @tauri-apps/plugin-updater bindings but call invoke directly so the
 // frontend keeps zero npm runtime dependencies, like the dialog calls above.

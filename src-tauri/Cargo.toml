@@ -24,8 +24,10 @@ serde_json = "1"
 # Auto-update is desktop-only: the updater downloads and swaps the installed
 # bundle, and process restarts the app afterwards. Live hardware control speaks
 # the Device Center broker's WebSocket (plain ws://, no TLS) and is likewise
-# desktop-only.
+# desktop-only, as is the external MIDI control bridge (midir: CoreMIDI on
+# macOS, WinMM on Windows).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tungstenite = "0.29"
+midir = "0.10"
