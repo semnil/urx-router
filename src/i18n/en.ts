@@ -86,7 +86,10 @@ export const en = {
     remove: "Remove assignment",
     mode: { absolute: "Absolute", pickup: "Pickup", relative: "Relative" },
     encoding: { twos: "2's comp", offset64: "Offset 64", signbit: "Sign bit" },
-    buttonMode: { edge: "Flip on press", state: "Follow value" },
+    // Industry button-type names (matching other MIDI-mapping tools): Toggle =
+    // flip per press, Momentary = the value is the state. Stored values stay
+    // "edge" / "state" for persistence compatibility.
+    buttonMode: { edge: "Toggle", state: "Momentary" },
     // One-line behavior notes shown in the legend strip while a select is
     // hovered / focused (a native dropdown cannot annotate its own options).
     modeDesc: {

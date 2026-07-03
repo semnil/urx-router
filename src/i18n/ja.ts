@@ -86,7 +86,10 @@ export const ja: Messages = {
     remove: "割り当てを削除",
     mode: { absolute: "アブソリュート", pickup: "ピックアップ", relative: "リラティブ" },
     encoding: { twos: "2の補数", offset64: "オフセット64", signbit: "符号ビット" },
-    buttonMode: { edge: "押下で反転", state: "値に追従" },
+    // 業界標準のボタン種別名 (他の MIDI マッピングツールと同語彙): トグル =
+    // 押すたび反転、モーメンタリ = 値がそのまま状態。保存値は互換のため
+    // "edge" / "state" のまま。
+    buttonMode: { edge: "トグル", state: "モーメンタリ" },
     // セレクトのホバー / フォーカス中に凡例ストリップへ出す挙動説明
     // (ネイティブのドロップダウンは選択肢に注釈を付けられない)。
     modeDesc: {
