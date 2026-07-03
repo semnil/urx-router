@@ -1,9 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// App-chrome behaviour: the theme and language toggles, and the canvas hit-test
-// after a zoom. These cut across the whole UI (toolbar + graph + console), which
-// the per-feature specs do not exercise. Each toggle button labels the state it
-// switches TO, so its text flips after a click.
+// App-chrome behaviour: the theme and language toggles, the toolbar brand and
+// Device-menu grouping, and the canvas hit-test after a zoom. These cut across
+// the whole UI (toolbar + graph + console), which the per-feature specs do not
+// exercise. Each toggle button labels the state it switches TO, so its text
+// flips after a click.
 
 const port = (page: Page, ref: string) => page.locator(`[data-ref="${ref}"]`);
 const wires = (page: Page) => page.locator("#graph-host .wire-hit");
@@ -162,5 +163,62 @@ test.describe("canvas hit-test", () => {
 
     await expect(wires(page)).toHaveCount(base + 1);
     await expect(page.locator("#statusbar")).toHaveText("Connected");
+  });
+});
+
+test.describe("toolbar", () => {
+  test("the brand is the logo alone (no tagline, no meter decoration)", async ({ page }) => {
+    // The brand block is static markup untouched by i18n / model state, so no
+    // localStorage pinning is needed.
+    await page.goto("/");
+    await expect(page.locator(".brand .word")).toHaveText("URX·ROUTER");
+    await expect(page.locator(".brand .meta")).toHaveCount(0);
+    await expect(page.locator(".brand .seg")).toHaveCount(0);
+  });
+
+  // The Device menu only shows under the Tauri shell; stub the bridge (the
+  // midi.spec.ts pattern) so its grouping is testable in the browser.
+  async function gotoWithDeviceMenu(page: Page, experimental: boolean): Promise<void> {
+    await page.addInitScript((exp) => {
+      localStorage.setItem("urx-lang", "en");
+      localStorage.setItem("urx-model", "URX44V");
+      localStorage.setItem("urx-disclaimer-accepted", "1"); // skip the consent gate
+      (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
+        Channel: class {
+          onmessage: (data: unknown) => void = () => {};
+        },
+        invoke: (cmd: string) => {
+          switch (cmd) {
+            case "experimental_enabled":
+              return Promise.resolve(exp);
+            case "self_test_requested":
+            case "reset_storage_requested":
+              return Promise.resolve(false);
+            case "plugin:updater|check":
+              return Promise.resolve(null);
+            default:
+              return Promise.reject(new Error(`stub: unhandled command ${cmd}`));
+          }
+        },
+      };
+    }, experimental);
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await page.click("#btn-device");
+    await expect(page.locator("#btn-fetch")).toBeVisible(); // the menu is open
+  }
+
+  test("the device menu groups live sync, transfers, and the experimental entries", async ({ page }) => {
+    await gotoWithDeviceMenu(page, true);
+    await expect(page.locator("#btn-midi")).toBeVisible();
+    await expect(page.locator("#btn-selftest")).toBeVisible();
+    await expect(page.locator("#device-menu .menu-sep[data-experimental-only]")).toBeVisible();
+  });
+
+  test("without --experimental the experimental group hides with its separator", async ({ page }) => {
+    await gotoWithDeviceMenu(page, false);
+    await expect(page.locator("#btn-midi")).toBeHidden();
+    await expect(page.locator("#btn-selftest")).toBeHidden();
+    await expect(page.locator("#device-menu .menu-sep[data-experimental-only]")).toBeHidden();
   });
 });

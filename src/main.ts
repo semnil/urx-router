@@ -446,7 +446,6 @@ function setView(next: ViewName): void {
 function setLiveUi(on: boolean): void {
   const liveBtn = document.getElementById("btn-live");
   if (liveBtn) liveBtn.setAttribute("aria-pressed", String(on));
-  for (const el of document.querySelectorAll<HTMLElement>("[data-live-only]")) el.hidden = !on;
   const tally = document.getElementById("live-tally");
   if (tally) {
     tally.hidden = !on;
@@ -1296,19 +1295,19 @@ if (!DEMO) {
   });
   $("btn-midi").addEventListener("click", () => midi?.togglePanel());
 
-  // Experimental-only menu entries: MIDI control (pending hardware
-  // verification) and the self-test, a diagnostic that briefly overwrites
-  // every parameter — write/live do not need the flag.
+  // Experimental-only menu group (its separator, MIDI control, self-test):
+  // MIDI control awaits hardware verification, and the self-test is a
+  // diagnostic that briefly overwrites every parameter — write/live do not
+  // need the flag.
   experimentalEnabled().then((enabled) => {
     if (!enabled) return;
-    $("btn-midi").hidden = false;
+    for (const el of document.querySelectorAll<HTMLElement>("[data-experimental-only]")) el.hidden = false;
 
     // Device self-test (experimental): read the device, write a perturbed copy,
     // verify it matches, then restore. It owns its own connection, so it does not
     // go through withDevice. Reports are console.warn'd (not log) so they reach
     // the dev-server log for a headless read.
     const selfTestBtn = $<HTMLButtonElement>("btn-selftest");
-    selfTestBtn.hidden = false;
     // selfTestAbort (module scope) holds the in-flight run's controller, so a second
     // menu click cancels instead of starting another run (the run can take minutes
     // of serial round-trips, and stalls entirely if the device link drops mid-test).

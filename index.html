@@ -43,15 +43,6 @@
         <div class="brand">
           <span class="led"></span>
           <span class="word">URX·ROUTER</span>
-          <span class="meta">routing planner</span>
-          <span class="seg" aria-hidden="true">
-            <i style="height: 9px"></i>
-            <i style="height: 15px"></i>
-            <i style="height: 12px"></i>
-            <i style="height: 18px"></i>
-            <i style="height: 8px"></i>
-            <i style="height: 13px"></i>
-          </span>
         </div>
         <label class="model-select">
           <span id="lbl-model">Model</span>
@@ -125,11 +116,14 @@
               <button id="btn-live" class="menu-item" type="button" role="menuitem" aria-pressed="false" hidden>
                 Live sync
               </button>
-              <span class="menu-sep" role="separator" data-live-only hidden></span>
+              <span class="menu-sep" role="separator"></span>
               <button id="btn-fetch" class="menu-item" type="button" role="menuitem">Fetch from device</button>
               <button id="btn-write" class="menu-item" type="button" role="menuitem" disabled>Write to device</button>
-              <button id="btn-midi" class="menu-item" type="button" role="menuitem" hidden>MIDI control</button>
-              <button id="btn-selftest" class="menu-item" type="button" role="menuitem" hidden>Self-test (experimental)</button>
+              <span class="menu-sep" role="separator" data-experimental-only hidden></span>
+              <button id="btn-midi" class="menu-item" type="button" role="menuitem" data-experimental-only hidden>MIDI control</button>
+              <button id="btn-selftest" class="menu-item" type="button" role="menuitem" data-experimental-only hidden>
+                Self-test (experimental)
+              </button>
             </div>
           </div>
           <span class="tool-sep"></span>

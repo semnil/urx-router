@@ -511,7 +511,7 @@ across re-renders), and the INPUT toggles flow two-up. Its visibility is driven 
 `graph.clearSelection()`, reusing the existing deselect path) or by tapping empty canvas. Canvas zoom
 works by mouse wheel (desktop) and two-finger pinch (touch); both share one "zoom about a fixed point"
 routine (`zoomAt` in `graph.ts`). `viewport-fit=cover` plus `env(safe-area-inset-bottom)` clears the
-notch / home indicator, and the toolbar drops its decorative VU meter + tagline below 720px.
+notch / home indicator.
 
 ## Hiding nodes
 
