@@ -133,6 +133,22 @@ test("the ✕ button closes the panel and drops learn mode", async ({ page }) =>
   await expect(page.locator("#midi-panel")).toBeVisible();
 });
 
+test("a press outside the panel dismisses it, except while learn is on", async ({ page }) => {
+  await openPanel(page);
+  // Presses inside the panel keep it open.
+  await page.locator("#midi-panel .mp-title").click();
+  await expect(page.locator("#midi-panel")).toBeVisible();
+  // While learn is on, outside presses arm console controls instead of closing.
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn on
+  await strip(page, "CH 1").locator(".con-fader").click();
+  await expect(page.locator("#midi-panel")).toBeVisible();
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  // With learn off an outside press closes the panel, and it can reopen.
+  await page.click("#btn-view-console");
+  await expect(page.locator("#midi-panel")).toBeHidden();
+  await openPanel(page);
+});
+
 test("learn binds a CC to a fader and incoming CC moves it", async ({ page }) => {
   await openPanel(page);
   await pickInputPort(page);

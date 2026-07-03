@@ -164,13 +164,28 @@ export class MidiControl {
       void this.refreshPorts();
       this.renderList();
       this.updateLearnUi();
+      // Capture phase, like the toolbar menus: console / graph handlers may
+      // stop propagation, but an outside press must still dismiss the panel.
+      document.addEventListener("pointerdown", this.onOutside, true);
     } else {
       this.closePanel();
     }
   }
 
+  /** A press outside the panel dismisses it — except while learn is on
+   *  (arming clicks land on console controls outside the panel) and on the
+   *  menu entry itself (its click handler toggles; closing here would make
+   *  that toggle reopen the panel). */
+  private onOutside = (e: PointerEvent): void => {
+    const target = e.target as Node;
+    if (this.panel!.contains(target) || (target as Element).closest?.("#btn-midi")) return;
+    if (this.learnOn) return;
+    this.closePanel();
+  };
+
   private closePanel(): void {
     if (!this.panel) return;
+    document.removeEventListener("pointerdown", this.onOutside, true);
     this.panel.hidden = true;
     this.setLearn(false);
   }
