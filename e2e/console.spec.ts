@@ -334,6 +334,20 @@ test("the dB scale ticks sit on real level_gain detents", async ({ page }) => {
   await expect(scale).toContainText("40");
 });
 
+test("the -∞ tick sits at the fader's bottom of travel", async ({ page }) => {
+  const s = strip(page, "CH 1");
+  const fader = s.locator(".con-fader");
+  await fader.focus();
+  await page.keyboard.press("End"); // fader all the way down = off (-∞)
+  await expect(s.locator(".con-readout .rd:not(.mtr) .rv")).toHaveText("-∞");
+  // The cap centre and the -∞ tick centre share the same travel coordinate.
+  const cap = await s.locator(".con-fader .cap").boundingBox();
+  const tick = await s.locator(".con-scale .t").last().boundingBox();
+  expect(cap).toBeTruthy();
+  expect(tick).toBeTruthy();
+  expect(Math.abs(cap!.y + cap!.height / 2 - (tick!.y + tick!.height / 2))).toBeLessThanOrEqual(1);
+});
+
 test("a node hidden in the graph drops from the console", async ({ page }) => {
   await expect(strip(page, "CH 1")).toBeVisible();
 
