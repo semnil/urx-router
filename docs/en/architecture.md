@@ -224,7 +224,7 @@ MASTER groups, scrolling horizontally (there is no shared left ruler). The fader
 a **fader** (a real-console thin slot + cap; the cap position is the value), a **dB scale**, and a **level
 meter** — the meter shares that one scale: the signal ladder (signal only while Live sync streams)
 maps each dBFS reading onto the same travel as the matching dB tick, its **top at the 0 dB mark** and its
-bottom at the lowest tick (−∞). The ladder is split into **three color zones — green / yellow / red** keyed to
+bottom at the lowest real detent (−96 dB). The ladder is split into **three color zones — green / yellow / red** keyed to
 **absolute dBFS** (not the lit height): green ≤ -18 dBFS / yellow -18 to -9 dBFS / red -9 to 0 dBFS. The boundaries
 match the EBU R68-2000 reference levels (alignment level -18 dBFS / permitted maximum level -9 dBFS); the threshold
 constants live in `core/meters.ts` (`METER_GREEN_TOP_DB` / `METER_YELLOW_TOP_DB`). A separate **OVER box** sits just
@@ -233,7 +233,9 @@ On a **stereo** tap (`isStereoTap` — the tap carries a second `r` meter addres
 columns and two clip cells** (`.mtrcol.l/.r`, `.lit.l/.r`, a 2px centre gap between), so L and R meter and clip independently; a mono strip keeps a
 single column. The strip's meter state is a `MeterLane[]` (one entry mono, two stereo) that `paintMeters` steps by index (lane 0 = L, lane 1 = R). The scale
 follows each strip's range and aligns its top/bottom to the fader travel, so one ruler reads both the fader
-and the meter (a functional scale, 10/5/0/-5/-10/-20/-40/-∞); the 0 dB line crosses the fader cap centre.
+and the meter (a functional scale, 10/5/0/-5/-10/-20/-40/-∞); the 0 dB line crosses the fader cap centre,
+and the −∞ tick sits at the very bottom of the travel — the fader's off position, one notch below the
+−96 detent.
 Strips whose fader/meter top out at 0 dB (the meter-only STREAMING and OSCILLATOR strips) drop the
 unreachable +5/+10 ticks. Each tick centres its digits with the minus sign hanging left, so `10` and
 `-10` line up vertically. Above the zone the scribble shows two lines — **node name + device CH SETTING
