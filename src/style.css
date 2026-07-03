@@ -184,34 +184,6 @@ body {
   color: var(--text);
 }
 
-.brand .meta {
-  display: flex;
-  align-items: center;
-  height: 22px;
-  margin-left: 2px;
-  padding-left: 12px;
-  border-left: 1px solid var(--line);
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-.brand .seg {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 20px;
-  margin-left: 2px;
-}
-
-.brand .seg i {
-  width: 3px;
-  border-radius: 1px;
-  background: var(--seg);
-}
-
 .model-select {
   display: flex;
   align-items: center;
@@ -1394,13 +1366,6 @@ select:focus-visible,
   body {
     /* Stop the page itself rubber-banding when a gesture starts on chrome. */
     overscroll-behavior: none;
-  }
-
-  /* Drop the decorative VU meter + tagline so the control rack fits more of its
-     real buttons before the horizontal scroll kicks in. */
-  .brand .meta,
-  .brand .seg {
-    display: none;
   }
 
   /* Comfortable touch targets for the rack and the inspector controls. */
