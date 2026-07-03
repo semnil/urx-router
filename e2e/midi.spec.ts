@@ -133,6 +133,22 @@ test("the ✕ button closes the panel and drops learn mode", async ({ page }) =>
   await expect(page.locator("#midi-panel")).toBeVisible();
 });
 
+test("a press outside the panel dismisses it, except while learn is on", async ({ page }) => {
+  await openPanel(page);
+  // Presses inside the panel keep it open.
+  await page.locator("#midi-panel .mp-title").click();
+  await expect(page.locator("#midi-panel")).toBeVisible();
+  // While learn is on, outside presses arm console controls instead of closing.
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn on
+  await strip(page, "CH 1").locator(".con-fader").click();
+  await expect(page.locator("#midi-panel")).toBeVisible();
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  // With learn off an outside press closes the panel, and it can reopen.
+  await page.click("#btn-view-console");
+  await expect(page.locator("#midi-panel")).toBeHidden();
+  await openPanel(page);
+});
+
 test("learn binds a CC to a fader and incoming CC moves it", async ({ page }) => {
   await openPanel(page);
   await pickInputPort(page);
@@ -167,6 +183,21 @@ test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
   await expect(muteChip()).toHaveClass(/\bon\b/); // highlighted = muted
   await sendMidi(page, [0x80, 60, 0], [0x90, 60, 127]); // release, press again
   await expect(muteChip()).not.toHaveClass(/\bon\b/);
+});
+
+test("assignment selects form an aligned column across rows", async ({ page }) => {
+  // Mode and button-behavior selects share a fixed width, so their left edges
+  // (and the address cells sitting against them) line up across rows.
+  await openPanel(page);
+  await pickInputPort(page);
+  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
+  await learnBinding(page, () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" }).click(), [0x90, 60, 127]);
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+
+  const mode = await page.locator('#midi-panel .mp-row[data-control="ch1/level"] .mp-mode').boundingBox();
+  const btn = await page.locator('#midi-panel .mp-row[data-control="ch1/mute"] .mp-btn').boundingBox();
+  expect(mode!.width).toBeCloseTo(btn!.width, 0);
+  expect(mode!.x).toBeCloseTo(btn!.x, 0);
 });
 
 test("the option legend explains every choice of a hovered select", async ({ page }) => {
