@@ -123,6 +123,13 @@
   box-sizing: border-box;
 }
 
+/* An author `display` (flex/grid/…) on a class outranks the `hidden`
+   attribute's UA rule and silently un-hides the element. Settle it once,
+   globally: hidden always wins, no per-class re-assertions. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -232,8 +239,7 @@ select#model-picker {
 }
 
 /* On-air tally: while live sync holds the device, a console-style red lamp says
-   "edits are going to the hardware right now". Re-assert display over the [hidden]
-   UA rule (like the menu panel) so the author flex does not beat it. */
+   "edits are going to the hardware right now". */
 .live-tally {
   display: inline-flex;
   align-items: center;
@@ -250,10 +256,6 @@ select#model-picker {
   background: var(--tally-bg);
   border: 1px solid color-mix(in srgb, var(--tally) 45%, var(--ctl-border));
   box-shadow: 0 0 10px color-mix(in srgb, var(--tally) 28%, transparent);
-}
-
-.live-tally[hidden] {
-  display: none;
 }
 
 .live-tally::before {
@@ -379,12 +381,6 @@ button {
   flex-shrink: 0;
 }
 
-/* The class display above outranks the `hidden` attribute's UA style, so keep
-   the link out of non-demo builds explicitly. */
-.desktop-link[hidden] {
-  display: none;
-}
-
 /* File menu: a console module that drops out of the rack. The trigger is a
    normal tool button with a caret; the panel is positioned fixed so the
    toolbar's overflow-x scroll does not clip it. */
@@ -433,15 +429,6 @@ button {
   border-radius: 8px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45), var(--ctl-shadow);
   animation: menu-in 0.13s ease;
-}
-
-/* An author display value (the flex on the panel and on each item) would
-   otherwise beat the [hidden] UA rule, so re-assert it for both — e.g. the
-   non-experimental self-test item stays hidden. */
-.menu-panel[hidden],
-.menu-panel .menu-item[hidden],
-.menu-panel .menu-sep[hidden] {
-  display: none;
 }
 
 @keyframes menu-in {
@@ -1552,10 +1539,6 @@ select:focus-visible,
 [data-theme="light"] #console-host {
   --groove: #2a251d;
 }
-#console-host[hidden] {
-  display: none;
-}
-
 .con-strips {
   flex: 1;
   display: flex;
@@ -1843,9 +1826,6 @@ select:focus-visible,
   border-radius: 8px;
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6);
   overflow: hidden;
-}
-.con-tappop[hidden] {
-  display: none;
 }
 .con-tappop .ph {
   font: 700 8.5px var(--mono);
@@ -2257,9 +2237,6 @@ select:focus-visible,
   padding: 24px;
   background: var(--vignette);
 }
-.consent-scrim[hidden] {
-  display: none;
-}
 .consent-box {
   width: min(560px, 100%);
   max-height: calc(100vh - 48px);
@@ -2399,11 +2376,6 @@ select:focus-visible,
   font-size: 12px;
   color: var(--ctl-text);
 }
-/* The flex above outranks the `hidden` attribute's UA style (the .menu-panel
-   gotcha), so re-assert it — the ✕ button hides the panel via [hidden]. */
-.midi-panel[hidden] {
-  display: none;
-}
 .midi-panel .mp-head {
   display: flex;
   align-items: center;
@@ -2530,7 +2502,7 @@ select:focus-visible,
   max-width: 92px;
 }
 /* Option legend: behavior notes for the hovered / focused select's options,
-   the selected one highlighted. A plain block, so [hidden] hides it as-is. */
+   the selected one highlighted. */
 .midi-panel .mp-info {
   border-top: 1px solid var(--line);
   padding: 7px 10px 9px;
