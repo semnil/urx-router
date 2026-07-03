@@ -84,12 +84,12 @@ export const ja: Messages = {
     mappings: "割り当て",
     noMappings: "割り当てはまだありません。",
     remove: "割り当てを削除",
-    mode: { absolute: "アブソリュート", pickup: "ピックアップ", relative: "リラティブ" },
-    encoding: { twos: "2の補数", offset64: "オフセット64", signbit: "符号ビット" },
-    // 業界標準のボタン種別名 (他の MIDI マッピングツールと同語彙): トグル =
-    // 押すたび反転、モーメンタリ = 値がそのまま状態。保存値は互換のため
-    // "edge" / "state" のまま。
-    buttonMode: { edge: "トグル", state: "モーメンタリ" },
+    // 選択肢ラベルは英語表記のまま (幅固定のセレクトでカタカナ表記は
+    // 「アブソリュート」等が収まらない。他の MIDI マッピングツールとも同語彙)。
+    // 挙動説明 (下の *Desc) のみ日本語。保存値は互換のため "edge" / "state" のまま。
+    mode: { absolute: "Absolute", pickup: "Pickup", relative: "Relative" },
+    encoding: { twos: "2's comp", offset64: "Offset 64", signbit: "Sign bit" },
+    buttonMode: { edge: "Toggle", state: "Momentary" },
     // セレクトのホバー / フォーカス中に凡例ストリップへ出す挙動説明
     // (ネイティブのドロップダウンは選択肢に注釈を付けられない)。
     modeDesc: {
