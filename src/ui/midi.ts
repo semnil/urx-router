@@ -10,8 +10,9 @@ import { loadJson, saveJson } from "../core/storage";
 import { isTauri, midiCloseOutput, midiListInputs, midiListOutputs, midiOpenInput, midiOpenOutput, midiSend } from "../core/platform";
 import { MidiEngine } from "../core/midi/engine";
 import { bindControl, parseControlId, type BoundControl, type ControlParam } from "../core/midi/controls";
-import { addrKey, addrLabel, sanitizeMappings, type ButtonMode, type MidiAddr, type MidiMapping, type RelativeEncoding, type TakeMode } from "../core/midi/mapping";
+import { addrKey, addrLabel, BUTTON_MODES, RELATIVE_ENCODINGS, sanitizeMappings, TAKE_MODES, type MidiAddr, type MidiMapping } from "../core/midi/mapping";
 import { mirrorBalPair } from "../core/routing";
+import { el } from "./dom";
 import { t } from "../i18n";
 
 export interface MidiHooks {
@@ -43,10 +44,6 @@ const FEEDBACK_SETTLE_MS = 350;
 // A lone CC learn candidate commits after this quiet gap (single-message buttons).
 const LEARN_FLUSH_MS = 500;
 
-const MODES: TakeMode[] = ["absolute", "pickup", "relative"];
-const ENCODINGS: RelativeEncoding[] = ["twos", "offset64", "signbit"];
-const BUTTON_MODES: ButtonMode[] = ["edge", "state"];
-
 export class MidiControl {
   private engine: MidiEngine;
   private learnOn = false;
@@ -54,7 +51,7 @@ export class MidiControl {
   private closeInput: (() => void) | null = null;
   private inputPort: string | null = null;
   private outputPort: string | null = null;
-  private outputOpen = false;
+  private bound = new Map<string, BoundControl>();
   private feedbackTimer = 0;
   private settleTimer = 0;
   private learnFlushTimer = 0;
@@ -72,7 +69,7 @@ export class MidiControl {
 
   constructor(private hooks: MidiHooks) {
     this.engine = new MidiEngine({
-      resolve: (id) => bindControl(hooks.getModel(), hooks.getPlan(), id),
+      resolve: (id) => this.resolve(id),
       applied: (control) => {
         // Same funnel as a console edit: mirror onto a BAL-linked partner, then
         // let the app flag dirty / schedule live sync / repaint.
@@ -81,14 +78,27 @@ export class MidiControl {
         this.scheduleFeedback();
       },
       send: (bytes) => {
-        if (this.outputOpen) void midiSend(bytes).catch(() => {});
+        if (this.outputPort) void midiSend(bytes).catch(() => {});
       },
       learned: (addr) => this.onLearned(addr),
       learnPending: () => this.bumpLearnFlush(),
       now: () => performance.now(),
     });
     this.engine.setMappings(this.loadMappings());
-    void this.restorePorts();
+    this.restorePorts();
+  }
+
+  /** Resolve a control id, memoized: an incoming sweep resolves per message and
+   *  every fresh bind rebuilds the node's whole catalog. A bound control reads
+   *  the plan lazily, so in-place edits stay live; the cache only goes stale
+   *  when the plan object itself is replaced — onModelChanged clears it. Only
+   *  hits are cached, so a send wired up later still binds on demand. */
+  private resolve(id: string): BoundControl | null {
+    const hit = this.bound.get(id);
+    if (hit) return hit;
+    const control = bindControl(this.hooks.getModel(), this.hooks.getPlan(), id);
+    if (control) this.bound.set(id, control);
+    return control;
   }
 
   // ---- console hooks ----
@@ -105,8 +115,12 @@ export class MidiControl {
     return this.engine.isMapped(id);
   }
 
-  /** The console armed a control: the next MIDI input binds to it. */
+  /** The console armed a control: the next MIDI input binds to it. An id the
+   *  catalog cannot bind (a console control missing from controls.ts) is
+   *  refused, so drift fails visibly at arm time instead of persisting a
+   *  mapping that would be dead on receive. */
   arm(id: string): void {
+    if (!this.resolve(id)) return;
     this.armed = id;
     this.engine.startLearn();
     this.hooks.onLearnChanged();
@@ -118,6 +132,7 @@ export class MidiControl {
   /** The plan (and possibly the model) was replaced: reload that model's
    *  mappings and resync the controller to the new plan values. */
   onModelChanged(): void {
+    this.bound.clear(); // bound controls captured the old plan object
     this.engine.setMappings(this.loadMappings());
     if (this.panel && !this.panel.hidden) this.renderList();
     this.runFeedback(true);
@@ -126,7 +141,7 @@ export class MidiControl {
   /** Batch a feedback pass after a plan edit (debounced; called from the shared
    *  change funnel, so UI / follow / MIDI edits all land here). */
   scheduleFeedback(): void {
-    if (!this.outputOpen || this.feedbackTimer) return;
+    if (!this.outputPort || this.feedbackTimer) return;
     this.feedbackTimer = window.setTimeout(() => {
       this.feedbackTimer = 0;
       this.runFeedback(false);
@@ -162,12 +177,13 @@ export class MidiControl {
 
   // ---- ports ----
 
-  private async restorePorts(): Promise<void> {
+  private restorePorts(): void {
     if (!isTauri()) return;
     const s = this.store();
-    // Boot restore is best-effort: a saved port may be unplugged right now.
-    if (s.input) await this.openInput(s.input, true);
-    if (s.output) await this.openOutput(s.output, true);
+    // Boot restore is best-effort (a saved port may be unplugged right now);
+    // the two opens are independent, so let them run concurrently.
+    if (s.input) void this.openInput(s.input, true);
+    if (s.output) void this.openOutput(s.output, true);
   }
 
   private async openInput(port: string, silent = false): Promise<void> {
@@ -186,10 +202,8 @@ export class MidiControl {
     try {
       await midiOpenOutput(port);
       this.outputPort = port;
-      this.outputOpen = true;
       this.runFeedback(true); // align motor faders / LEDs with the plan at once
     } catch (err) {
-      this.outputOpen = false;
       this.outputPort = null;
       if (!silent) this.hooks.onStatus(t().midi.outputError(err instanceof Error ? err.message : String(err)));
     }
@@ -211,7 +225,6 @@ export class MidiControl {
       await this.openOutput(port);
     } else {
       void midiCloseOutput();
-      this.outputOpen = false;
       this.outputPort = null;
     }
     this.savePorts();
@@ -220,7 +233,7 @@ export class MidiControl {
   // ---- feedback ----
 
   private runFeedback(resync: boolean): void {
-    if (!this.outputOpen) return;
+    if (!this.outputPort) return;
     const deferred = this.engine.feedback(resync);
     if (deferred && !this.settleTimer) {
       this.settleTimer = window.setTimeout(() => {
@@ -408,55 +421,16 @@ export class MidiControl {
       addr.textContent = addrLabel(mapping.addr);
       row.append(name, addr);
       // The take-in mode applies to continuous controls only (toggles just fire).
-      const control = bindControl(this.hooks.getModel(), this.hooks.getPlan(), mapping.control);
+      const control = this.resolve(mapping.control);
       if (control?.kind === "continuous") {
-        const mode = document.createElement("select");
-        mode.className = "mp-mode";
-        for (const value of MODES) {
-          const opt = document.createElement("option");
-          opt.value = value;
-          opt.textContent = m.mode[value];
-          mode.append(opt);
-        }
-        mode.value = mapping.mode;
-        mode.addEventListener("change", () => {
-          this.patchMapping(mapping, { mode: mode.value as TakeMode });
-        });
-        this.wireLegend(mode, () => MODES.map((v) => ({ value: v, label: t().midi.mode[v], desc: t().midi.modeDesc[v] })));
-        row.append(mode);
+        this.addChoice(row, "mp-mode", TAKE_MODES, mapping.mode, () => ({ label: t().midi.mode, desc: t().midi.modeDesc }), (mode) => this.patchMapping(mapping, { mode }));
         if (mapping.mode === "relative") {
-          const enc = document.createElement("select");
-          enc.className = "mp-enc";
-          for (const value of ENCODINGS) {
-            const opt = document.createElement("option");
-            opt.value = value;
-            opt.textContent = m.encoding[value];
-            enc.append(opt);
-          }
-          enc.value = mapping.encoding ?? "twos";
-          enc.addEventListener("change", () => {
-            this.patchMapping(mapping, { encoding: enc.value as RelativeEncoding });
-          });
-          this.wireLegend(enc, () => ENCODINGS.map((v) => ({ value: v, label: t().midi.encoding[v], desc: t().midi.encodingDesc[v] })));
-          row.append(enc);
+          this.addChoice(row, "mp-enc", RELATIVE_ENCODINGS, mapping.encoding ?? "twos", () => ({ label: t().midi.encoding, desc: t().midi.encodingDesc }), (encoding) => this.patchMapping(mapping, { encoding }));
         }
       } else if (control?.kind === "toggle" && mapping.addr.type !== "pitchbend") {
-        // Toggle behavior: flip per press (momentary buttons, the default) or
-        // follow the value (alternating senders, e.g. Stream Deck toggles).
-        const btn = document.createElement("select");
-        btn.className = "mp-btn";
-        for (const value of BUTTON_MODES) {
-          const opt = document.createElement("option");
-          opt.value = value;
-          opt.textContent = m.buttonMode[value];
-          btn.append(opt);
-        }
-        btn.value = mapping.button ?? "edge";
-        btn.addEventListener("change", () => {
-          this.patchMapping(mapping, { button: btn.value as ButtonMode });
-        });
-        this.wireLegend(btn, () => BUTTON_MODES.map((v) => ({ value: v, label: t().midi.buttonMode[v], desc: t().midi.buttonModeDesc[v] })));
-        row.append(btn);
+        // Toggle behavior: flip per press (Toggle, the default) or follow the
+        // value (Momentary — alternating senders, e.g. Stream Deck toggles).
+        this.addChoice(row, "mp-btn", BUTTON_MODES, mapping.button ?? "edge", () => ({ label: t().midi.buttonMode, desc: t().midi.buttonModeDesc }), (button) => this.patchMapping(mapping, { button }));
       }
       const del = el("button", "mp-del") as HTMLButtonElement;
       del.type = "button";
@@ -473,6 +447,31 @@ export class MidiControl {
 
   private patchMapping(mapping: MidiMapping, patch: Partial<MidiMapping>): void {
     this.applyMappings(this.engine.getMappings().map((x) => (x === mapping ? { ...x, ...patch } : x)));
+  }
+
+  /** One mapping-option select: options from `values`, named/explained by the
+   *  i18n tables `texts` reads (a thunk, so a language switch between
+   *  interactions re-reads), the legend wired, a change handed to `onPick`. */
+  private addChoice<T extends string>(
+    row: HTMLElement,
+    cls: string,
+    values: readonly T[],
+    current: T,
+    texts: () => { label: Record<T, string>; desc: Record<T, string> },
+    onPick: (v: T) => void,
+  ): void {
+    const sel = document.createElement("select");
+    sel.className = cls;
+    for (const value of values) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = texts().label[value];
+      sel.append(opt);
+    }
+    sel.value = current;
+    sel.addEventListener("change", () => onPick(sel.value as T));
+    this.wireLegend(sel, () => values.map((v) => ({ value: v, label: texts().label[v], desc: texts().desc[v] })));
+    row.append(sel);
   }
 
   // ---- option legend ----
@@ -522,10 +521,4 @@ function fillPortSelect(sel: HTMLSelectElement, ports: string[], current: string
     sel.append(opt);
   }
   sel.value = current ?? "";
-}
-
-function el(tag: string, cls: string): HTMLElement {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  return e;
 }
