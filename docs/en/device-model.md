@@ -362,6 +362,7 @@ Source selection for the analog outputs (MAIN / LINE).
 | Stereo channel (CH 5/6–11/12) EQ unavailable | sample rate 176.4 / 192 kHz |
 | FX2 unavailable | sample rate above 96 kHz |
 
-> As of Phase 2, these are surfaced as **warnings** (an inspector notice plus a dimmed, dashed
-> outline on the affected node); they do not forbid the wiring itself. The sample rate is set per
-> plan and persisted in the plan JSON. Wiring will be tightened in future hardware reflection.
+> These are surfaced as **warnings** (an inspector notice plus a dimmed, dashed outline on the
+> affected node); they do not forbid the wiring itself — matching the device, which keeps the
+> routing and merely disables the setting when the rate changes. The sample rate is set per plan
+> and persisted in the plan JSON.

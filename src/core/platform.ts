@@ -74,6 +74,14 @@ export function resetStorageRequested(): Promise<boolean> {
   return invoke<boolean>("reset_storage_requested");
 }
 
+/**
+ * The bundled third-party license notice (cargo-about HTML). Desktop only —
+ * the menu entry that calls this is hidden in a plain browser.
+ */
+export function thirdPartyLicenses(): Promise<string> {
+  return invoke<string>("third_party_licenses");
+}
+
 export interface FileFilter {
   ext: string;
   label: string;

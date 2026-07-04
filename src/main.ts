@@ -35,6 +35,7 @@ import { Console } from "./ui/console";
 import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
 import { showLoadReport } from "./ui/load-report";
+import { showLicenses } from "./ui/licenses";
 import { getLang, LANG_CODES, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
 import { DEMO } from "./core/env";
 import {
@@ -48,6 +49,7 @@ import {
   experimentalEnabled,
   selfTestRequested,
   resetStorageRequested,
+  thirdPartyLicenses,
   vdConnect,
   vdDisconnect,
   vdWatchLink,
@@ -713,6 +715,7 @@ function applyStaticI18n(): void {
   $("btn-save").textContent = m.toolbar.save;
   $("btn-export").textContent = m.toolbar.exportPng;
   $("btn-export-pdf").textContent = m.toolbar.exportPdf;
+  $("btn-licenses").textContent = m.licenses.title;
   const viewGraphBtn = $("btn-view-graph");
   viewGraphBtn.textContent = m.toolbar.viewGraph;
   viewGraphBtn.title = m.toolbar.viewGraphHint;
@@ -774,8 +777,9 @@ if (DEMO) {
   }
 }
 
-// Live hardware control needs the Tauri shell (the Rust vd commands); hide its
-// controls in a plain browser and the demo, where they could only fail.
+// Live hardware control and the bundled license notice need the Tauri shell
+// (Rust commands / resources); hide their controls in a plain browser and the
+// demo, where they could only fail.
 if (!isTauri()) {
   for (const el of document.querySelectorAll<HTMLElement>("[data-control-hide]")) {
     el.style.display = "none";
@@ -973,6 +977,12 @@ $("btn-export").addEventListener("click", () => {
 
 $("btn-export-pdf").addEventListener("click", () => {
   graph.exportPdf(`${modelId}-routing.pdf`);
+});
+
+// Third-party license notice (desktop only): the cargo-about page bundled as a
+// Tauri resource, shown in a sandboxed frame so its styles stay self-contained.
+$("btn-licenses").addEventListener("click", () => {
+  thirdPartyLicenses().then(showLicenses, (e: unknown) => showError(t().licenses.error(String(e))));
 });
 
 $("btn-auto").addEventListener("click", () => {

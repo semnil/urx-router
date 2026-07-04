@@ -467,6 +467,11 @@ export const ja: Messages = {
     copied: "コピーしました",
     close: "閉じる",
   },
+  licenses: {
+    title: "サードパーティライセンス",
+    close: "閉じる",
+    error: (message: string): string => `ライセンス情報を読み込めませんでした: ${message}`,
+  },
   filter: {
     plan: "URX Router 計画",
     png: "PNG 画像",

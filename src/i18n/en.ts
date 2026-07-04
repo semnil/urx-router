@@ -474,6 +474,11 @@ export const en = {
     copied: "Copied",
     close: "Close",
   },
+  licenses: {
+    title: "Third-party licenses",
+    close: "Close",
+    error: (message: string): string => `Could not load the license notice: ${message}`,
+  },
   filter: {
     plan: "URX Router plan",
     png: "PNG image",
