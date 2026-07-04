@@ -8,8 +8,8 @@ YAMAHA URX22 / URX44 / URX44V USB オーディオインターフェース用の
 
 URX シリーズに dspMixFx は存在しない — dspMixFx が対応するのは UR-C / URX-C 系で、URX22 / URX44 / URX44V は
 対象外。標準構成でフルミキサーを編集できるのは本体のタッチスクリーンだけで、公式の Stream Deck プラグインが
-扱えるのはチャンネルのレベル・ミュート・ソロといった基本操作、Cubase / Nuendo / MixKey の連携画面は各ソフトの
-起動中しか使えない。URX Router はこの空白を埋め、DAW の有無に関わらず PC からミキサー全体を読み書き・
+扱えるのはレベルの段階増減・ミュート・各ブロックの ON/OFF といったワンタッチ操作、Cubase / Nuendo / MixKey の
+連携画面は各ソフトの起動中しか使えない。URX Router はこの空白を埋め、DAW の有無に関わらず PC からミキサー全体を読み書き・
 ライブ同期できる — [デバイス制御](#デバイス制御) を参照。
 
 > For the English version, see [README.md](README.md).

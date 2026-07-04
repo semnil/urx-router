@@ -9,8 +9,9 @@ paths** can be wired. Plans are saved/loaded as JSON, and the diagram can be exp
 
 The URX series has no dspMixFx-style mixer editor — dspMixFx supports the UR-C / URX-C lines,
 not the URX22 / URX44 / URX44V. Out of the box, the full mixer is only editable on the unit's
-touch screen: the official Stream Deck plugin covers basics like channel level, mute, and solo,
-and the Cubase / Nuendo / MixKey integration screens work only while that software is running.
+touch screen: the official Stream Deck plugin covers one-touch operations like level steps,
+mutes, and processing-block on/off toggles, and the Cubase / Nuendo / MixKey integration
+screens work only while that software is running.
 URX Router fills this gap: it reads, writes, and live-syncs the entire mixer from your computer,
 with or without a DAW — see [Device control](#device-control).
 
