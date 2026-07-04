@@ -105,6 +105,10 @@ the device default. The full set:
 - `comp` — `{ threshold, ratio, knee (0/1/2), gain, attack, release,
   autoMakeup, oneKnob, oneKnobLevel }`; `compOn` (bool).
 - `ducker` — `{ threshold, range (dB), attack, decay (ms) }`; `duckerOn` (bool).
+  Set these under the **ducker node's id** (`out.ducker1` …, kind `ducker` in
+  the model reference), never under the channel it ducks — a channel id
+  carrying `duckerOn` loads but has no effect. The `key` wire only picks the
+  trigger; the ducked signal is always the ducker's own channel.
 - `compEqType` — 0 COMP→EQ, 1 SSMCS.
 - `recPoint` — channel record/direct-out tap (enum; absent = PRE FADER).
 - `stereoLink` — stereo-link a MONO IN pair (set on the odd/primary channel).

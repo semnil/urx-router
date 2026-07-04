@@ -82,6 +82,19 @@ Signal flows: **input → channel → bus → output**. A typical chain:
 `in.micline_1_2:out → ch1:in` (source), then `ch1:out → bus.stereo:in` (send),
 then `bus.stereo:out → out.main:in` (patch).
 
+**A Ducker is its own node, not a channel parameter.** Each stereo channel's
+Ducker is a separate node permanently attached to that channel — the label in
+the model reference names the pairing (e.g. URX44V `out.ducker1` = "Ducker CH
+5/6"; on the URX22 `out.ducker1` is CH 3/4). Two consequences:
+
+- Enable and tune it in `nodeParams` under the **ducker's own id**:
+  `"out.ducker1": { "duckerOn": true, "ducker": { … } }`. Putting `duckerOn` on
+  the channel id (`"ch_5_6": { "duckerOn": true }`) loads without complaint but
+  does nothing — the validator warns about it.
+- The `key` wire into `out.duckerN:in` selects only the **trigger** (what makes
+  it duck). What gets ducked is always the channel the ducker is attached to;
+  a ducker cannot be re-aimed at another channel.
+
 ## Workflow
 
 This is the plan-building path. For a pure feasibility question, you may stop
@@ -121,8 +134,9 @@ python scripts/plan_tool.py validate plan.json
 ```
 
 It prints `OK` (the app will load it without complaint) or a problem report. It
-also prints `WARNING:` lines to stderr for wrong-`kind` wires and for
-raw-encoded params (see step 6).
+also prints `WARNING:` lines to stderr for wrong-`kind` wires, for Ducker params
+placed on a non-ducker node (move them to the channel's `out.duckerN` id), and
+for raw-encoded params (see step 6).
 
 **5. Self-correct from the report.** If validation fails, the report lists each
 illegal wire in the same format the app's viewer shows — so a report pasted back
@@ -204,7 +218,9 @@ The desktop app's menu labels follow whatever UI language the user has selected,
 so name a menu in the user's language and you may add the English label in
 parentheses if it helps them find it.
 
-## Worked example
+## Worked examples
+
+### Mic to the main mix with reverb
 
 Request: "On my URX44V, take mic 1 into channel 1, name it Lead Vox, high-pass
 it, send it to the main mix at -3 dB, and also feed FX1 for reverb."
@@ -228,6 +244,39 @@ it, send it to the main mix at -3 dB, and also feed FX1 for reverb."
 
 `ch1 → bus.stereo` and `ch1 → bus.fx1` are fixed sends; listing them with
 `params` sets their levels. Validate, then emit the link.
+
+### Duck game audio under a mic (Ducker on)
+
+Request: "URX44V: my mic is MIC/LINE 1 into channel 1, and my PC's game sound
+comes back on USB MAIN A into channel 5/6. Duck the game sound while I talk,
+and give my streaming app the ducked mix on USB MAIN A."
+
+```json
+{
+  "format": "urx-router-plan",
+  "version": 1,
+  "modelId": "URX44V",
+  "connections": [
+    { "from": "in.micline_1_2:out", "to": "ch1:in", "kind": "source" },
+    { "from": "in.usbmain_a:out", "to": "ch_5_6:in", "kind": "source" },
+    { "from": "ch1:out", "to": "out.ducker1:in", "kind": "key" },
+    { "from": "ch1:out", "to": "bus.mix1:in", "kind": "send", "params": { "level": 0 } },
+    { "from": "ch_5_6:out", "to": "bus.mix1:in", "kind": "send", "params": { "level": 0 } },
+    { "from": "bus.mix1:out", "to": "out.usbmain_a:in", "kind": "patch" }
+  ],
+  "nodeParams": {
+    "out.ducker1": { "duckerOn": true, "ducker": { "threshold": -40, "range": -24 } }
+  },
+  "nodeNames": { "ch1": "Mic", "ch_5_6": "Game" }
+}
+```
+
+Everything Ducker lives on `out.ducker1`, the Ducker node attached to CH 5/6:
+the mic keys it via the `key` wire, and `duckerOn` / `ducker` sit under
+`"out.ducker1"` in `nodeParams` (a `duckerOn` under `"ch_5_6"` would do
+nothing). The ducked game audio reaches USB through `bus.mix1`, which is
+post-Ducker; wiring `ch_5_6:out → out.usbmain_a:in` directly would tap
+pre-fader/pre-Ducker and defeat the ducking (see the caveat above).
 
 ## Boundaries
 

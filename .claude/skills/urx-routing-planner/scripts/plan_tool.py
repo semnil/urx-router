@@ -103,11 +103,22 @@ RAW_PARAM_KEYS = {
 }
 
 
+# Ducker settings live on the ducker node itself (kind "ducker", e.g.
+# out.ducker1), not on the channel it ducks; a channel id carrying them loads
+# without complaint but has no effect.
+DUCKER_KEYS = ("duckerOn", "ducker")
+
+
 def stability_warnings(plan, nodes):
     out = []
     for node_id, params in (plan.get("nodeParams") or {}).items():
         if not isinstance(params, dict):
             continue
+        if any(k in params for k in DUCKER_KEYS) and nodes.get(node_id, {}).get("kind") != "ducker":
+            duckers = ", ".join(i for i, n in nodes.items() if n.get("kind") == "ducker")
+            out.append(
+                f"node {node_id}: duckerOn/ducker have no effect here — set them on the channel's own ducker node ({duckers})"
+            )
         for key, note in RAW_PARAM_KEYS.items():
             if key not in params:
                 continue
