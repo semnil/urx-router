@@ -346,6 +346,10 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   time-bounded (`PUMP_BUDGET`, 30 ms) so a continuous feed neither monopolizes the worker (live writes wait
   behind it) nor delays the batch; while a subscription streams the worker also polls commands on a shorter
   interval so the bounded pump runs back-to-back and keeps up with the feed.
+  A subscribed notify that lands while a command awaits its response (the `do_set` / `do_get_value` loops) is
+  absorbed into the same pending batch instead of discarded, and the batch flushes on the pump cadence
+  (subscription channels and pending batches live in the worker's `Subs`) — so the meters keep streaming with
+  bounded latency even while a long command sequence (e.g. a device-follow readback) holds the worker.
   Meters stream only while Live sync is on (subscription starts in `console.setLive`).
   The subscription is bound to Live sync, not to view visibility: a GRAPH ↔ CONSOLE tab switch only stops the
   paint loop (`requestAnimationFrame` → `stopPaint`) and keeps the broker subscription warm. Re-registering every

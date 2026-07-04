@@ -297,6 +297,79 @@ mod imp {
     const URL: &str = "ws://127.0.0.1:51780/casket";
     type Ws = WebSocket<MaybeTlsStream<TcpStream>>;
 
+    /// Active frontend subscriptions (meter / parameter channels) plus their
+    /// pending notify batches. Shared by the idle pump and the command await
+    /// loops (do_set / do_get_value): a notify that lands while a command waits
+    /// for its response is absorbed into the batch instead of discarded, so the
+    /// console meters keep streaming while a long command sequence (e.g. a
+    /// device-follow readback) holds the worker. Batches flush on the pump
+    /// cadence (PUMP_BUDGET) inside absorb itself, so batch latency stays
+    /// bounded even while commands run back-to-back, and the IPC boundary is
+    /// still crossed ~30×/s, never per reading.
+    struct Subs {
+        meter_ch: Option<Channel<Vec<MeterUpdate>>>,
+        param_ch: Option<Channel<Vec<ParamUpdate>>>,
+        meters: Vec<MeterUpdate>,
+        params: Vec<ParamUpdate>,
+        last_flush: Instant,
+    }
+
+    impl Subs {
+        fn new() -> Self {
+            Subs {
+                meter_ch: None,
+                param_ch: None,
+                meters: Vec::new(),
+                params: Vec::new(),
+                last_flush: Instant::now(),
+            }
+        }
+
+        /// Whether any subscription is streaming (drives the worker's poll cadence).
+        fn active(&self) -> bool {
+            self.meter_ch.is_some() || self.param_ch.is_some()
+        }
+
+        /// Collect a subscribed meter / parameter notify into its pending batch,
+        /// flushing on the pump cadence. Returns true when the frame was consumed
+        /// (callers skip further matching).
+        fn absorb(&mut self, msg: &Value) -> bool {
+            if self.meter_ch.is_some() {
+                if let Some(m) = parse_meter(msg) {
+                    self.meters.push(m);
+                    self.flush_due();
+                    return true;
+                }
+            }
+            if self.param_ch.is_some() {
+                if let Some(p) = parse_param(msg) {
+                    self.params.push(p);
+                    self.flush_due();
+                    return true;
+                }
+            }
+            false
+        }
+
+        /// Flush once the pump cadence has elapsed (bounds the batch latency).
+        fn flush_due(&mut self) {
+            if self.last_flush.elapsed() >= PUMP_BUDGET {
+                self.flush();
+            }
+        }
+
+        /// Send the pending batches (one channel send each; no-op when empty).
+        fn flush(&mut self) {
+            if let (Some(ch), false) = (self.meter_ch.as_ref(), self.meters.is_empty()) {
+                let _ = ch.send(std::mem::take(&mut self.meters));
+            }
+            if let (Some(ch), false) = (self.param_ch.as_ref(), self.params.is_empty()) {
+                let _ = ch.send(std::mem::take(&mut self.params));
+            }
+            self.last_flush = Instant::now();
+        }
+    }
+
     pub fn worker(rx: Receiver<Cmd>, ready: Sender<Result<DeviceSummary, String>>) {
         let mut ws = match connect(URL) {
             Ok((ws, _)) => ws,
@@ -324,13 +397,11 @@ mod imp {
             return; // caller gave up
         }
 
-        // Active meter subscription, if any: the channel to stream readings on and
-        // the addresses registered with the broker (so we can unregister on change).
-        let mut meter_ch: Option<Channel<Vec<MeterUpdate>>> = None;
+        // Subscribed meter / parameter channels and their pending notify batches
+        // (see Subs); the address lists registered with the broker stay local so
+        // a replaced subscription can unregister its old set.
+        let mut subs = Subs::new();
         let mut meter_addrs: Vec<(u32, i64)> = Vec::new();
-        // Active parameter subscription, if any: the channel for device-side param
-        // notifies and the registered addresses (unregistered on change / drop).
-        let mut param_ch: Option<Channel<Vec<ParamUpdate>>> = None;
         let mut param_addrs: Vec<(u32, i64, i64)> = Vec::new();
         // Channel to push the one-shot link-lost event on, if the frontend is
         // watching: a held-open live session is dropped instead of freezing when
@@ -342,7 +413,7 @@ mod imp {
             // bounded pump runs back-to-back and keeps up with the ~250/s feed; when
             // idle, wait longer so the thread doesn't spin. pump's own blocking read
             // (200 ms socket timeout) supplies the backpressure when the feed is quiet.
-            let wait = if meter_ch.is_some() || param_ch.is_some() {
+            let wait = if subs.active() {
                 Duration::from_millis(5)
             } else {
                 Duration::from_millis(50)
@@ -353,16 +424,16 @@ mod imp {
                     let _ = reply.send(summary.clone());
                 }
                 Ok(Cmd::Set { param_id, x, y, value, reply }) => {
-                    let _ = reply.send(do_set(&mut ws, &dev_uid, param_id, x, y, json!(value)));
+                    let _ = reply.send(do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value)));
                 }
                 Ok(Cmd::Get { param_id, x, y, reply }) => {
-                    let _ = reply.send(do_get(&mut ws, &dev_uid, param_id, x, y));
+                    let _ = reply.send(do_get(&mut ws, &mut subs, &dev_uid, param_id, x, y));
                 }
                 Ok(Cmd::SetStr { param_id, x, y, value, reply }) => {
-                    let _ = reply.send(do_set(&mut ws, &dev_uid, param_id, x, y, json!(value)));
+                    let _ = reply.send(do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value)));
                 }
                 Ok(Cmd::GetStr { param_id, x, y, reply }) => {
-                    let _ = reply.send(do_get_str(&mut ws, &dev_uid, param_id, x, y));
+                    let _ = reply.send(do_get_str(&mut ws, &mut subs, &dev_uid, param_id, x, y));
                 }
                 Ok(Cmd::MetersSubscribe { addrs, channel }) => {
                     // Replace any prior subscription: unregister the old set, then
@@ -375,14 +446,16 @@ mod imp {
                         let _ = reg_meter(&mut ws, &dev_uid, id, x, "regist");
                     }
                     meter_addrs = addrs;
-                    meter_ch = Some(channel);
+                    subs.meters.clear();
+                    subs.meter_ch = Some(channel);
                 }
                 Ok(Cmd::MetersUnsubscribe) => {
                     for &(id, x) in &meter_addrs {
                         let _ = reg_meter(&mut ws, &dev_uid, id, x, "unregist");
                     }
                     meter_addrs.clear();
-                    meter_ch = None;
+                    subs.meters.clear();
+                    subs.meter_ch = None;
                 }
                 Ok(Cmd::ParamsSubscribe { addrs, channel }) => {
                     // Replace any prior subscription: unregister the old set, then
@@ -395,14 +468,16 @@ mod imp {
                         let _ = reg_param(&mut ws, &dev_uid, id, x, y, "regist");
                     }
                     param_addrs = addrs;
-                    param_ch = Some(channel);
+                    subs.params.clear();
+                    subs.param_ch = Some(channel);
                 }
                 Ok(Cmd::ParamsUnsubscribe) => {
                     for &(id, x, y) in &param_addrs {
                         let _ = reg_param(&mut ws, &dev_uid, id, x, y, "unregist");
                     }
                     param_addrs.clear();
-                    param_ch = None;
+                    subs.params.clear();
+                    subs.param_ch = None;
                 }
                 Ok(Cmd::WatchLink { channel }) => {
                     link_ch = Some(channel);
@@ -413,7 +488,7 @@ mod imp {
                     // notifications to the frontend instead of discarding them; stop
                     // if the link dropped, pushing the link-lost event first so a
                     // held-open live session is dropped instead of freezing silently.
-                    if let Err(e) = pump(&mut ws, meter_ch.as_ref(), param_ch.as_ref()) {
+                    if let Err(e) = pump(&mut ws, &mut subs) {
                         eprintln!("vd: {e}; stopping control worker");
                         if let Some(ch) = &link_ch {
                             let _ = ch.send(LinkEvent { reason: e });
@@ -568,7 +643,7 @@ mod imp {
         String::new()
     }
 
-    fn do_set(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64, value: Value) -> Result<(), String> {
+    fn do_set(ws: &mut Ws, subs: &mut Subs, dev_uid: &str, param_id: u32, x: i64, y: i64, value: Value) -> Result<(), String> {
         let uri = format!("/vd/parameters/{param_id}:{x}:{y}?operation=value");
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
         send_json(
@@ -591,6 +666,11 @@ mod imp {
             // write itself); fail the command so the session tears down.
             if let Some(err) = synchronize_lost(&msg) {
                 return Err(err);
+            }
+            // Subscribed notifies landing mid-command are batched, not discarded
+            // (see Subs).
+            if subs.absorb(&msg) {
+                continue;
             }
             if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
                 continue;
@@ -619,7 +699,7 @@ mod imp {
     // Read a parameter instance's raw current_value (numeric or string). do_get /
     // do_get_str decode it; sharing the request + address-matched await loop here
     // keeps the two get paths from drifting.
-    fn do_get_value(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<Value, String> {
+    fn do_get_value(ws: &mut Ws, subs: &mut Subs, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<Value, String> {
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
         send_json(
             ws,
@@ -641,6 +721,11 @@ mod imp {
             if let Some(err) = synchronize_lost(&msg) {
                 return Err(err);
             }
+            // Subscribed notifies landing mid-command are batched, not discarded
+            // (see Subs).
+            if subs.absorb(&msg) {
+                continue;
+            }
             if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
                 continue;
             }
@@ -660,8 +745,8 @@ mod imp {
         Err(format!("timed out waiting for the parameter value at {param_id}:{x}:{y}"))
     }
 
-    fn do_get(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
-        do_get_value(ws, dev_uid, param_id, x, y)?
+    fn do_get(ws: &mut Ws, subs: &mut Subs, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
+        do_get_value(ws, subs, dev_uid, param_id, x, y)?
             .as_i64()
             .ok_or_else(|| "parameter value was not an integer".to_string())
     }
@@ -669,8 +754,8 @@ mod imp {
     // The broker returns a name as a preset index (number) until one is typed,
     // then the literal string; a non-string value decodes to "" so callers see
     // "no custom name".
-    fn do_get_str(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<String, String> {
-        Ok(do_get_value(ws, dev_uid, param_id, x, y)?
+    fn do_get_str(ws: &mut Ws, subs: &mut Subs, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<String, String> {
+        Ok(do_get_value(ws, subs, dev_uid, param_id, x, y)?
             .as_str()
             .unwrap_or("")
             .to_string())
@@ -766,19 +851,6 @@ mod imp {
         Some(format!("device disconnected (sync_status {status})"))
     }
 
-    // Flush an accumulated notify batch in one channel send, leaving the buffer
-    // empty. No-op when there is no subscriber or nothing to send.
-    fn flush_meters(ch: Option<&Channel<Vec<MeterUpdate>>>, buf: &mut Vec<MeterUpdate>) {
-        if let (Some(ch), false) = (ch, buf.is_empty()) {
-            let _ = ch.send(std::mem::take(buf));
-        }
-    }
-    fn flush_params(ch: Option<&Channel<Vec<ParamUpdate>>>, buf: &mut Vec<ParamUpdate>) {
-        if let (Some(ch), false) = (ch, buf.is_empty()) {
-            let _ = ch.send(std::mem::take(buf));
-        }
-    }
-
     // Bound a single pump's drain. The broker streams meters at ~250/s, so reads
     // rarely block; without this the loop would run a full 512-frame drain (~2 s)
     // before returning, monopolizing the worker for that long — which both delays
@@ -790,41 +862,26 @@ mod imp {
     // worker yields — acceptable, since the quiet case is not the one that mattered.
     const PUMP_BUDGET: Duration = Duration::from_millis(30);
 
-    /// Drain buffered frames for up to PUMP_BUDGET, collecting meter and parameter
+    /// Drain buffered frames for up to PUMP_BUDGET, absorbing meter and parameter
     /// notifications and forwarding them in one batched channel send each (the
     /// boundary is crossed per pump, not once per ~250/s reading). Frames other than
     /// the subscribed notifies are discarded. Returns Err if the connection dropped,
     /// or if a device-lost synchronize push arrived, so the worker can stop.
-    fn pump(
-        ws: &mut Ws,
-        meter_ch: Option<&Channel<Vec<MeterUpdate>>>,
-        param_ch: Option<&Channel<Vec<ParamUpdate>>>,
-    ) -> Result<(), String> {
-        let mut meters: Vec<MeterUpdate> = Vec::new();
-        let mut params: Vec<ParamUpdate> = Vec::new();
+    fn pump(ws: &mut Ws, subs: &mut Subs) -> Result<(), String> {
         let start = Instant::now();
         // 512 is a non-binding hard ceiling; PUMP_BUDGET (or a drained socket)
         // normally ends the loop first, so it only caps a pathological burst.
         for _ in 0..512 {
             match ws.read() {
                 Ok(Message::Text(t)) => {
-                    // Parse the frame once and share it: synchronize_lost and both
-                    // parsers read the same envelope, and this drains the ~250/s
-                    // meter stream (avoid re-parsing per consumer).
+                    // Parse the frame once and share it: synchronize_lost and absorb
+                    // read the same envelope, and this drains the ~250/s meter
+                    // stream (avoid re-parsing per consumer).
                     let Ok(msg) = serde_json::from_str::<Value>(&t) else { continue };
                     if let Some(err) = synchronize_lost(&msg) {
                         return Err(err);
                     }
-                    if meter_ch.is_some() {
-                        if let Some(m) = parse_meter(&msg) {
-                            meters.push(m);
-                        }
-                    }
-                    if param_ch.is_some() {
-                        if let Some(p) = parse_param(&msg) {
-                            params.push(p);
-                        }
-                    }
+                    subs.absorb(&msg);
                 }
                 Ok(Message::Close(_)) => return Err("Device Center closed the control connection".into()),
                 Ok(_) => {} // ping/pong/binary — discard, keep going
@@ -841,9 +898,124 @@ mod imp {
                 break;
             }
         }
-        flush_meters(meter_ch, &mut meters);
-        flush_params(param_ch, &mut params);
+        subs.flush();
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod subs_tests {
+        // Pure data-path tests for Subs (no broker, no websocket): absorb must
+        // batch subscribed notifies (and leave command replies alone), and the
+        // batch must flush on the pump cadence.
+        use super::{Subs, PUMP_BUDGET};
+        use serde_json::{json, Value};
+        use std::sync::{Arc, Mutex};
+        use std::time::Instant;
+        use tauri::ipc::{Channel, InvokeResponseBody};
+
+        // A broker notify frame as the read loops see it (already-parsed JSON).
+        fn notify(uri: String, value: i64) -> Value {
+            json!({
+                "jsonrpc": "1.0",
+                "params": { "vdp": {
+                    "method": "notify",
+                    "uri": uri,
+                    "data": { "current_value": value }
+                }}
+            })
+        }
+
+        // A capture channel: each flushed batch lands as one JSON payload.
+        fn capture<T>() -> (Channel<T>, Arc<Mutex<Vec<Value>>>) {
+            let seen: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+            let sink = seen.clone();
+            let ch = Channel::new(move |body| {
+                if let InvokeResponseBody::Json(s) = body {
+                    sink.lock().unwrap().push(serde_json::from_str(&s).unwrap());
+                }
+                Ok(())
+            });
+            (ch, seen)
+        }
+
+        #[test]
+        fn absorb_batches_subscribed_notifies_until_flush() {
+            let mut subs = Subs::new();
+            let (meter_ch, meters_seen) = capture();
+            subs.meter_ch = Some(meter_ch);
+
+            // Two meter readings are consumed; a param notify has no subscriber,
+            // so it falls through to the caller's own frame matching. A fresh
+            // last_flush keeps absorb's own cadence flush out of this test.
+            subs.last_flush = Instant::now();
+            assert!(subs.absorb(&notify("/vd/meters/115:0".into(), -183)));
+            assert!(subs.absorb(&notify("/vd/meters/115:1?x=y".into(), 32767)));
+            assert!(!subs.absorb(&notify("/vd/parameters/142:0:0".into(), 1)));
+            assert!(meters_seen.lock().unwrap().is_empty(), "nothing sent before flush");
+
+            subs.flush();
+            let batches = meters_seen.lock().unwrap();
+            assert_eq!(batches.len(), 1, "one channel send per flush");
+            assert_eq!(
+                batches[0],
+                json!([
+                    { "meter_id": 115, "x": 0, "value": -183 },
+                    { "meter_id": 115, "x": 1, "value": 32767 }
+                ])
+            );
+            drop(batches);
+
+            // The buffer was emptied: a second flush sends nothing.
+            subs.flush();
+            assert_eq!(meters_seen.lock().unwrap().len(), 1);
+        }
+
+        #[test]
+        fn absorb_leaves_command_replies_for_the_await_loops() {
+            let mut subs = Subs::new();
+            let (meter_ch, _) = capture();
+            let (param_ch, _) = capture();
+            subs.meter_ch = Some(meter_ch);
+            subs.param_ch = Some(param_ch);
+
+            // A get / set reply (vdp.method is not "notify") must never be
+            // consumed, or the awaiting command would time out.
+            let reply = json!({
+                "jsonrpc": "1.0",
+                "method": "requestVD",
+                "params": { "vdp": {
+                    "method": "get",
+                    "uri": "/vd/parameters/142:0:0",
+                    "data": { "current_value": 1 }
+                }}
+            });
+            assert!(!subs.absorb(&reply));
+        }
+
+        #[test]
+        fn absorb_flushes_on_the_pump_cadence() {
+            let mut subs = Subs::new();
+            let (meter_ch, meters_seen) = capture();
+            subs.meter_ch = Some(meter_ch);
+
+            // Within the cadence window a reading only accumulates…
+            subs.last_flush = Instant::now();
+            assert!(subs.absorb(&notify("/vd/meters/100:2".into(), -50)));
+            assert!(meters_seen.lock().unwrap().is_empty());
+
+            // …and once the window has elapsed, the next absorb sends the batch.
+            subs.last_flush = Instant::now() - PUMP_BUDGET;
+            assert!(subs.absorb(&notify("/vd/meters/100:3".into(), -40)));
+            let batches = meters_seen.lock().unwrap();
+            assert_eq!(batches.len(), 1);
+            assert_eq!(
+                batches[0],
+                json!([
+                    { "meter_id": 100, "x": 2, "value": -50 },
+                    { "meter_id": 100, "x": 3, "value": -40 }
+                ])
+            );
+        }
     }
 }
 
