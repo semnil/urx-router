@@ -130,7 +130,6 @@ describe("normalized value access", () => {
     expect(plan.nodeParams.ch1?.gain).toBe(70);
     c.set(0.5);
     expect(plan.nodeParams.ch1?.gain).toBe(31);
-    expect(c.step).toBeCloseTo(1 / 78);
   });
 
   it("maps pan L63 … R63 and phones 0.0 … 10.0 without float dust", () => {

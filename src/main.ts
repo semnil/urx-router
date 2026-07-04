@@ -334,9 +334,7 @@ let followFull = false;
 function reflectFollow(): void {
   const ids = [...followDirtyNodes];
   followDirtyNodes.clear();
-  // Device-side changes must reach a mapped MIDI controller too (follow writes
-  // the plan without running markChanged).
-  midi?.scheduleFeedback();
+  planReadFromDevice();
   if (followFull) {
     followFull = false;
     if (graphHost.hidden) graphDirty = true;
@@ -491,6 +489,14 @@ function stopLiveOnError(message: string): void {
 function markChanged(): void {
   dirty = true;
   live?.schedule();
+  midi?.scheduleFeedback();
+}
+
+// Device values entered the plan without an edit (follow reflect, fetch, the
+// initial readback at Live-sync start): no dirty flag or live mirroring, but a
+// mapped MIDI controller must still follow the values now in the plan. Every
+// readback path funnels through here so the next one cannot forget it.
+function planReadFromDevice(): void {
   midi?.scheduleFeedback();
 }
 
@@ -1119,6 +1125,8 @@ if (!DEMO) {
     } finally {
       fetchAbort = null;
       fetchBtn.textContent = t().toolbar.fetchDevice;
+      // In the finally: even a canceled read may have applied part of the device state.
+      planReadFromDevice();
     }
     await offerErrorReport(report);
   });
@@ -1270,6 +1278,9 @@ if (!DEMO) {
         setStatus(t().status.liveOn(device.model, result.applied));
       } catch (err) {
         await failLive(t().status.liveError(err instanceof Error ? err.message : String(err)));
+      } finally {
+        // In the finally: a partially failed readback still applied device values.
+        planReadFromDevice();
       }
     }
 

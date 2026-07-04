@@ -87,24 +87,19 @@ export const ja: Messages = {
     // 選択肢ラベルは英語表記のまま (幅固定のセレクトでカタカナ表記は
     // 「アブソリュート」等が収まらない。他の MIDI マッピングツールとも同語彙)。
     // 挙動説明 (下の *Desc) のみ日本語。保存値は互換のため "edge" / "state" のまま。
-    mode: { absolute: "Absolute", pickup: "Pickup", relative: "Relative" },
-    encoding: { twos: "2's comp", offset64: "Offset 64", signbit: "Sign bit" },
-    buttonMode: { edge: "Toggle", state: "Momentary" },
+    // ボタン動作は送信側 (コントローラー・Stream Deck 等) のボタン種別で命名:
+    // モーメンタリーボタン (押下で値・離すと 0) = edge、トグルボタン (127/0 交互) = state。
+    mode: { absolute: "Absolute", pickup: "Pickup" },
+    buttonMode: { edge: "Momentary", state: "Toggle" },
     // セレクトのホバー / フォーカス中に凡例ストリップへ出す挙動説明
     // (ネイティブのドロップダウンは選択肢に注釈を付けられない)。
     modeDesc: {
       absolute: "受信値をそのまま位置として適用。物理位置と盤面値がずれていると値が飛ぶ。",
       pickup: "物理値が盤面値に追いつく (通過する) まで無視。値は飛ばないが、追いつくまで効かない。",
-      relative: "受信値を増減量として適用、1 クリック = 1 目盛 (エンドレスエンコーダー用)。エンコードは機器側の設定に合わせる。",
-    },
-    encodingDesc: {
-      twos: "1〜63 で増、127〜65 で減 (2の補数)。",
-      offset64: "65 以上で増、63 以下で減 (64 = 変化なし)。",
-      signbit: "1〜63 で増、65〜127 で減 (符号ビット)。",
     },
     buttonModeDesc: {
-      edge: "押すたびに 1 回反転。離した信号 (0) は無視する。",
-      state: "値がそのまま状態になる: 64 以上で ON、未満で OFF — 押している間だけ ON にするボタンや 127/0 交互送信 (Stream Deck 等) 向け。",
+      edge: "プッシュ / モーメンタリーボタン向け: 押すたびに 1 回反転し、離した信号 (0) は無視する。ボタンが on 値のみ送り 0 を送らなくても毎回反転する。",
+      state: "トグルボタン (押すたび 127/0 交互送信、Stream Deck 等) 向け: 値がそのまま状態になる — 64 以上で ON、未満で OFF。モーメンタリーボタンなら押している間だけ ON。",
     },
     bound: (control: string, addr: string): string => `${addr} を ${control} に割り当てました`,
     inputError: (message: string): string => `MIDI 入力エラー: ${message}`,
