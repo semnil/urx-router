@@ -65,7 +65,7 @@ test.beforeEach(async ({ page }) => {
       invoke: (cmd: string, args: Record<string, unknown>) => {
         switch (cmd) {
           case "experimental_enabled":
-            return Promise.resolve(true); // the MIDI menu entry is experimental-gated
+            return Promise.resolve(false); // MIDI control ships without the flag (only the self-test is gated)
           case "self_test_requested":
           case "reset_storage_requested":
             return Promise.resolve(false);
@@ -104,19 +104,14 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#console-host")).toBeVisible();
 });
 
-test("without --experimental the MIDI menu entry stays hidden", async ({ page }) => {
-  // Runs after the beforeEach stub, so it can wrap the stubbed invoke and flip
-  // just the experimental gate off for the next load.
-  await page.addInitScript(() => {
-    const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
-    const orig = internals.invoke;
-    internals.invoke = (cmd, args) => (cmd === "experimental_enabled" ? Promise.resolve(false) : orig(cmd, args));
-  });
-  await page.reload();
-  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+test("MIDI control is available without --experimental; only the self-test is gated", async ({ page }) => {
+  // The beforeEach stub already reports experimental_enabled = false, so opening
+  // the Device menu surfaces MIDI as a first-class entry while the self-test
+  // (still behind the flag) stays hidden.
   await page.click("#btn-device");
   await expect(page.locator("#btn-fetch")).toBeVisible(); // the menu itself is open
-  await expect(page.locator("#btn-midi")).toBeHidden();
+  await expect(page.locator("#btn-midi")).toBeVisible();
+  await expect(page.locator("#btn-selftest")).toBeHidden();
 });
 
 test("the ✕ button closes the panel and drops learn mode", async ({ page }) => {

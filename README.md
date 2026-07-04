@@ -31,9 +31,9 @@ builds can **read** the connected interface's current mixer settings into the pl
 **Live sync**, which mirrors each edit as you make it). The parameter mapping is verified on
 hardware **only for URX44V**; **URX44** is assumed identical and **URX22** is inferred from it —
 neither is verified on hardware yet. Writing overwrites the device's current settings; see the
-[Disclaimer](#disclaimer). The `--experimental` flag additionally reveals the external MIDI
-controller mapping panel (**Device → MIDI control**, pending verification against physical
-controllers) and a destructive-then-restored self-test diagnostic.
+[Disclaimer](#disclaimer). External MIDI controllers can be mapped to the console controls
+(**Device → MIDI control**). The `--experimental` flag additionally reveals a
+destructive-then-restored self-test diagnostic.
 
 The console view shows the same plan as a mixer surface — per-strip faders, mutes, EQ,
 dynamics, and sends. Edits made here live-sync to the device the same way, and live meters
@@ -81,8 +81,7 @@ Because the planning UI is pure frontend, you can verify behavior in a browser w
 even without Rust installed. Desktop builds (`pnpm tauri dev` / `pnpm tauri build`) require
 [Rust](https://rustup.rs/).
 
-Pass `--experimental` to enable the hidden-by-default extras (the external MIDI control
-panel and the on-device self-test diagnostic):
+Pass `--experimental` to enable the hidden-by-default on-device self-test diagnostic:
 
 ```sh
 pnpm tauri dev -- -- --experimental          # dev

@@ -242,7 +242,7 @@ for (const rate of SAMPLE_RATES) {
 }
 ratePicker.value = String(plan.sampleRate);
 
-// Live sync (experimental): mirror each edit to the connected device. The model
+// Live sync: mirror each edit to the connected device. The model
 // and plan are read through getters because loadPlan reassigns `plan`. A write
 // failure stops sync and drops the connection (deactivateLive). The device label
 // shown on the on-air tally is captured when sync turns on. Declared before the
@@ -315,7 +315,7 @@ const consoleView = new Console(consoleHost, {
   },
 });
 
-// Device follow (experimental): the reverse of live sync. While live, parameter
+// Device follow: the reverse of live sync. While live, parameter
 // changes made on the device itself (LCD / physical controls) are pulled back
 // into the plan via a debounced readback that reuses applyDeviceState, then
 // re-rendered. Echoes of our own writes are filtered by the live snapshot. Null
@@ -444,7 +444,7 @@ function setView(next: ViewName): void {
 
 // Reflect the live-sync state across the toggle, the on-air tally, and the other
 // device actions (which conflict with the held connection while sync is on).
-// Only ever called in the experimental build path, so re-enabling on `off` is safe.
+// Only ever called in the desktop live-sync path, so re-enabling on `off` is safe.
 function setLiveUi(on: boolean): void {
   const liveBtn = document.getElementById("btn-live");
   if (liveBtn) liveBtn.setAttribute("aria-pressed", String(on));
@@ -1285,8 +1285,6 @@ if (!DEMO) {
   // MIDI learn) and feed edits back to the controller. Incoming edits repaint
   // through the coalesced follow reflect (a controller sweep arrives at wire
   // rate) and run markChanged via onApplied, so Live sync mirrors them too.
-  // The menu entry is revealed by the --experimental gate below while the
-  // feature awaits hardware verification; the wiring itself is unconditional.
   midi = new MidiControl({
     getModel: () => getModel(modelId),
     getPlan: () => plan,
@@ -1305,10 +1303,9 @@ if (!DEMO) {
   });
   $("btn-midi").addEventListener("click", () => midi?.togglePanel());
 
-  // Experimental-only menu group (its separator, MIDI control, self-test):
-  // MIDI control awaits hardware verification, and the self-test is a
-  // diagnostic that briefly overwrites every parameter — write/live do not
-  // need the flag.
+  // Experimental-only menu group (its separator + the self-test): the self-test
+  // is a diagnostic that briefly overwrites every parameter, so it stays behind
+  // the flag — MIDI control, write, and live sync do not.
   experimentalEnabled().then((enabled) => {
     if (!enabled) return;
     for (const el of document.querySelectorAll<HTMLElement>("[data-experimental-only]")) el.hidden = false;
@@ -1522,7 +1519,7 @@ function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
   });
   // Each item runs its own action listener; close the menu once one is chosen.
   // Delegated to the panel so items enabled after setup (the experimental device
-  // actions, disabled at this point) are covered too. An item's async action
+  // self-test, disabled at this point) is covered too. An item's async action
   // yields at its first await, so this runs and hides the menu before any
   // confirm dialog renders.
   panel.addEventListener("click", (e) => {

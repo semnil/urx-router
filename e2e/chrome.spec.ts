@@ -187,16 +187,16 @@ test.describe("toolbar", () => {
     await expect(page.locator("#btn-fetch")).toBeVisible(); // the menu is open
   }
 
-  test("the device menu groups live sync, transfers, and the experimental entries", async ({ page }) => {
+  test("the device menu groups live sync, transfers, MIDI, and the experimental self-test", async ({ page }) => {
     await gotoWithDeviceMenu(page, true);
     await expect(page.locator("#btn-midi")).toBeVisible();
     await expect(page.locator("#btn-selftest")).toBeVisible();
     await expect(page.locator("#device-menu .menu-sep[data-experimental-only]")).toBeVisible();
   });
 
-  test("without --experimental the experimental group hides with its separator", async ({ page }) => {
+  test("without --experimental MIDI stays but the self-test hides with its separator", async ({ page }) => {
     await gotoWithDeviceMenu(page, false);
-    await expect(page.locator("#btn-midi")).toBeHidden();
+    await expect(page.locator("#btn-midi")).toBeVisible();
     await expect(page.locator("#btn-selftest")).toBeHidden();
     await expect(page.locator("#device-menu .menu-sep[data-experimental-only]")).toBeHidden();
   });

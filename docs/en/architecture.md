@@ -380,9 +380,7 @@ a knob resets it to the **factory value** (from `defaultPlan`).
 The CONSOLE view's controls (faders / send levels / MUTE / PAN-BAL / GAIN / PHONES / the toggles) can be driven
 from an external MIDI controller (desktop app only). Configuration lives in the non-modal panel under Device →
 "MIDI control" — it stays open while console controls are clicked to assign them. The panel is dismissed by its
-✕ button or a press outside it (except while learn is on — outside clicks are the arming gesture then). The menu
-entry appears only when the app is launched with `--experimental`, while the feature awaits verification against
-physical controllers.
+✕ button or a press outside it (except while learn is on — outside clicks are the arming gesture then).
 
 - **Bridge (Rust)** — `src-tauri/src/midi.rs` enumerates ports through midir (CoreMIDI on macOS, WinMM on
   Windows) and holds one open input plus one open output. Incoming messages are batched per burst — the same
