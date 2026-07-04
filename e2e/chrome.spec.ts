@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { stubTauriBoot } from "./tauri-stub";
 
 // App-chrome behaviour: the theme and language toggles, the toolbar brand and
 // Device-menu grouping, and the canvas hit-test after a zoom. These cut across
@@ -176,32 +177,10 @@ test.describe("toolbar", () => {
     await expect(page.locator(".brand .seg")).toHaveCount(0);
   });
 
-  // The Device menu only shows under the Tauri shell; stub the bridge (the
-  // midi.spec.ts pattern) so its grouping is testable in the browser.
+  // The Device menu only shows under the Tauri shell; stub the bridge so its
+  // grouping is testable in the browser.
   async function gotoWithDeviceMenu(page: Page, experimental: boolean): Promise<void> {
-    await page.addInitScript((exp) => {
-      localStorage.setItem("urx-lang", "en");
-      localStorage.setItem("urx-model", "URX44V");
-      localStorage.setItem("urx-disclaimer-accepted", "1"); // skip the consent gate
-      (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
-        Channel: class {
-          onmessage: (data: unknown) => void = () => {};
-        },
-        invoke: (cmd: string) => {
-          switch (cmd) {
-            case "experimental_enabled":
-              return Promise.resolve(exp);
-            case "self_test_requested":
-            case "reset_storage_requested":
-              return Promise.resolve(false);
-            case "plugin:updater|check":
-              return Promise.resolve(null);
-            default:
-              return Promise.reject(new Error(`stub: unhandled command ${cmd}`));
-          }
-        },
-      };
-    }, experimental);
+    await stubTauriBoot(page, { experimental_enabled: experimental });
     await page.goto("/");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
     await page.click("#btn-device");
