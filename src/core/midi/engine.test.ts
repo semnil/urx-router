@@ -322,3 +322,64 @@ describe("feedback", () => {
     expect(sent).toEqual([encodeCc(0, 7, 64)]);
   });
 });
+
+describe("gang (several controls on one address)", () => {
+  it("drives every ganged control from one incoming message", () => {
+    const a = fake("ch1/level@bus.mix1", "continuous");
+    const b = fake("ch2/level@bus.mix1", "continuous");
+    controls.set(a.id, a);
+    controls.set(b.id, b);
+    map(a.id, { type: "cc", channel: 0, controller: 7 });
+    map(b.id, { type: "cc", channel: 0, controller: 7 });
+    engine.onMessage(encodeCc(0, 7, 127));
+    expect(a.value).toBe(1);
+    expect(b.value).toBe(1);
+    expect(applied).toEqual([a.id, b.id]);
+  });
+
+  it("feeds back only from the list head (the first learned)", () => {
+    const a = fake("ch1/level@bus.mix1", "continuous", 0.5);
+    const b = fake("ch2/level@bus.mix1", "continuous", 1);
+    controls.set(a.id, a);
+    controls.set(b.id, b);
+    map(a.id, { type: "cc", channel: 0, controller: 7 });
+    map(b.id, { type: "cc", channel: 0, controller: 7 });
+    // The head (0.5 → 64) alone drives the one physical control; the member's
+    // divergent value (1.0) must not emit a second, fighting message.
+    engine.feedback();
+    expect(sent).toEqual([encodeCc(0, 7, 64)]);
+  });
+
+  it("drops a toggle feedback echo for the whole gang, not just the head", () => {
+    const a = fake("ch1/mute", "toggle", 0);
+    const b = fake("ch2/mute", "toggle", 0);
+    controls.set(a.id, a);
+    controls.set(b.id, b);
+    map(a.id, { type: "cc", channel: 0, controller: 20 });
+    map(b.id, { type: "cc", channel: 0, controller: 20 });
+    engine.onMessage(encodeCc(0, 20, 127)); // a real press flips both
+    expect([a.value, b.value]).toEqual([1, 1]);
+    engine.feedback(); // the head arms the address' echo guard
+    expect(sent).toEqual([encodeCc(0, 20, 127)]);
+    clock += 50;
+    engine.onMessage(encodeCc(0, 20, 127)); // the echo: neither member may flip
+    expect([a.value, b.value]).toEqual([1, 1]);
+    clock += 400;
+    engine.onMessage(encodeCc(0, 20, 127)); // a real press past the window flips both
+    expect([a.value, b.value]).toEqual([0, 0]);
+  });
+
+  it("engages pickup from the head; members cross over together", () => {
+    const a = fake("ch1/level@bus.mix1", "continuous", 0.5);
+    const b = fake("ch2/level@bus.mix1", "continuous", 0.5);
+    controls.set(a.id, a);
+    controls.set(b.id, b);
+    map(a.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
+    map(b.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
+    engine.onMessage(encodeCc(0, 7, 20)); // below the head value → both swallowed
+    expect([a.value, b.value]).toEqual([0.5, 0.5]);
+    engine.onMessage(encodeCc(0, 7, 70)); // crosses the head value → both engage
+    expect(a.value).toBeCloseTo(0.55, 5);
+    expect(b.value).toBeCloseTo(0.55, 5);
+  });
+});

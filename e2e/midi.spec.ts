@@ -182,6 +182,43 @@ test("learn binds a CC to a fader and incoming CC moves it", async ({ page }) =>
   await expect(readLevel(page, "CH 1")).toHaveText("-∞");
 });
 
+test("one physical control can gang several console controls", async ({ page }) => {
+  // Assigning the same MIDI control to a second console control links them: one
+  // CC drives both at once, and the later row is tagged as linked to the first
+  // (which owns the feedback). Saves learning every send source individually.
+  await openPanel(page);
+  await pickInputPort(page);
+  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
+  await learnBinding(page, () => strip(page, "CH 2").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+
+  const head = page.locator('#midi-panel .mp-row[data-control="ch1/level"]');
+  const member = page.locator('#midi-panel .mp-row[data-control="ch2/level"]');
+  // The head shows the shared MIDI address ("CH 1 CC 7" = MIDI channel 1, CC 7);
+  // the member drops the repeated address for a "Linked" marker and is grouped
+  // under the head (the .linked row class rails + indents it).
+  await expect(head).toContainText("CH 1 · Level");
+  await expect(head).toContainText("CH 1 CC 7");
+  await expect(head).not.toHaveClass(/\blinked\b/);
+  await expect(member).toContainText("CH 2 · Level");
+  await expect(member).toHaveClass(/\blinked\b/);
+  await expect(member.locator(".mp-addr")).toHaveText("Linked");
+  await expect(member).not.toContainText("CC 7"); // no repeated code address
+  // The reported bug: the marker must not shift the mode/behavior select column.
+  // Head and member selects stay left-aligned.
+  const headSel = await head.locator(".mp-mode, .mp-btn").boundingBox();
+  const memberSel = await member.locator(".mp-mode, .mp-btn").boundingBox();
+  expect(memberSel!.x).toBeCloseTo(headSel!.x, 0);
+
+  // One incoming CC moves both faders together.
+  await sendMidi(page, [0xb0, 7, 127]);
+  await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
+  await expect(readLevel(page, "CH 2")).toHaveText("+10.0");
+  await sendMidi(page, [0xb0, 7, 0]);
+  await expect(readLevel(page, "CH 1")).toHaveText("-∞");
+  await expect(readLevel(page, "CH 2")).toHaveText("-∞");
+});
+
 test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
   await openPanel(page);
   await pickInputPort(page);

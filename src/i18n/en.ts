@@ -84,6 +84,10 @@ export const en = {
     mappings: "Assignments",
     noMappings: "No assignments yet.",
     remove: "Remove assignment",
+    // Shown on a row that shares its MIDI control with an earlier assignment
+    // (a gang): they move together, and feedback follows the first-assigned.
+    linked: "Linked",
+    linkedHint: "Shares one MIDI control with the first assignment for this address; they move together, and MIDI feedback follows that first assignment.",
     mode: { absolute: "Absolute", pickup: "Pickup" },
     // Named after the SENDER's button type (the controller-side setting the
     // user reads, e.g. Stream Deck): a momentary button (value on press, 0 on
