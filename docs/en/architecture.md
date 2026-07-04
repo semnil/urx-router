@@ -411,9 +411,10 @@ from an external MIDI controller (desktop app only). Configuration lives in the 
   settles on its second message (same CC = 7-bit, its pair partner = 14-bit); a lone CC (a button) commits
   after a 500 ms quiet gap. One physical control per binding and one binding per control — a new binding
   replaces both sides.
-- **Feedback (MIDI OUT)** — plan changes (UI edits, device follow, plan loads) are sent back through the
-  reverse lookup so motor faders / LEDs follow. It hangs off the shared change funnel (`markChanged`) and the
-  follow reflect, debounced at 120 ms and diffed against a sent cache so only changed values go out. Feedback
+- **Feedback (MIDI OUT)** — plan changes (UI edits, device follow, device readbacks, plan loads) are sent back
+  through the reverse lookup so motor faders / LEDs follow. It hangs off the shared change funnel
+  (`markChanged`) and its readback twin (`planReadFromDevice`: follow reflect, fetch, the initial readback at
+  Live-sync start), debounced at 120 ms and diffed against a sent cache so only changed values go out. Feedback
   to an address that is still sending is deferred until a 300 ms quiet gap (echo suppression), and opening the
   output port sends every binding's current value once.
 - **Applying edits** — an incoming edit runs the same funnel as a console edit: BAL pair mirror

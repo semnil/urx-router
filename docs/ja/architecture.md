@@ -320,8 +320,9 @@ CONSOLE ビューのコントロール (フェーダー / 送りレベル / MUTE
   待ちになり (アームはパルス表示・割当済みは琥珀ドット)、次の MIDI 入力が束縛される。CC は 2 通目で確定 (同一
   CC = 7bit・ペア相手 = 14bit)、単発 CC (ボタン) は 500 ms の静寂で確定する。1 物理コントロール = 1 割当・
   1 コントロール = 1 割当で、新しい束縛が既存を置換する。
-- **フィードバック (MIDI OUT)** — 盤面変更 (UI 編集・実機 follow・plan 読込) を割当の逆引きで送出し、モーター
-  フェーダー / LED を追従させる。共通 change funnel (`markChanged`) と follow 反映にぶら下がり、120 ms デバウンス +
+- **フィードバック (MIDI OUT)** — 盤面変更 (UI 編集・実機 follow・実機 readback・plan 読込) を割当の逆引きで
+  送出し、モーターフェーダー / LED を追従させる。共通 change funnel (`markChanged`) とその readback 版
+  (`planReadFromDevice`: follow 反映・取得・Live sync 開始時の初期 readback) にぶら下がり、120 ms デバウンス +
   送信済みキャッシュ差分で変化した値だけを送る。受信中のアドレスへは 300 ms の静寂まで送出を保留してスイープと
   衝突させず (エコー抑制)、出力ポートを開いた時点で全割当の現在値を初期送出する。
 - **適用の反映** — 受信編集は console の編集と同じファネルを通る: BAL ペアミラー (`mirrorBalPair`) →

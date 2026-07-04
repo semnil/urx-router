@@ -39,6 +39,11 @@ const pickInputPort = async (page: Page) => {
   await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
 };
 
+const pickOutputPort = async (page: Page) => {
+  await page.locator("#midi-panel .mp-out").selectOption("Stub Out");
+  await expect.poll(() => page.evaluate(() => window.__midiTest.outputPort)).toBe("Stub Out");
+};
+
 /** Learn one binding: arm `control` (a locator inside the console), then move
  *  the given MIDI control (two messages settle a plain CC without the flush timer). */
 const learnBinding = async (page: Page, arm: () => Promise<void>, ...msgs: number[][]) => {
@@ -92,6 +97,18 @@ test.beforeEach(async ({ page }) => {
           case "midi_send":
             state.sent.push(args.bytes as number[]);
             return Promise.resolve();
+          // Minimal vd surface for the fetch feedback test: a matching device with
+          // no firmware gate, every parameter read answering 0 (CH levels = 0.0 dB).
+          case "vd_connect":
+            return Promise.resolve({ model: "URX44V", label: "Stub URX", firmware: "", epoch: 1 });
+          case "vd_disconnect":
+            return Promise.resolve();
+          case "vd_get":
+            return Promise.resolve(0);
+          case "vd_get_str":
+            return Promise.resolve("");
+          case "plugin:dialog|message":
+            return Promise.resolve("Ok"); // confirm dialogs (discard edits): proceed
           default:
             return Promise.reject(new Error(`stub: unhandled command ${cmd}`));
         }
@@ -242,8 +259,7 @@ test("feedback follows UI edits out of the output port", async ({ page }) => {
   await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
 
   // Opening the output resyncs every binding to the current plan value.
-  await page.locator("#midi-panel .mp-out").selectOption("Stub Out");
-  await expect.poll(() => page.evaluate(() => window.__midiTest.outputPort)).toBe("Stub Out");
+  await pickOutputPort(page);
   await expect.poll(() => page.evaluate(() => window.__midiTest.sent.length)).toBeGreaterThan(0);
   const synced = await page.evaluate(() => window.__midiTest.sent.at(-1));
   expect(synced?.[0]).toBe(0xb0);
@@ -255,6 +271,34 @@ test("feedback follows UI edits out of the output port", async ({ page }) => {
   await fader.click();
   await fader.press("End"); // fader to -∞ → CC value 0
   await expect.poll(() => page.evaluate(() => window.__midiTest.sent.at(-1))).toEqual([0xb0, 7, 0]);
+});
+
+test("feedback follows a device fetch out of the output port", async ({ page }) => {
+  // A fetch readback rewrites the plan without markChanged, so it must push the
+  // fetched values to the controller itself — otherwise the next touch of the
+  // physical control would send the stale value back and overwrite the plan.
+  await openPanel(page);
+  await pickInputPort(page);
+  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 64], [0xb0, 7, 65]);
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  await pickOutputPort(page);
+
+  // Park the fader at -∞ so the stubbed readback (every read = 0 → 0.0 dB) is a
+  // real change, and drain the port-open resync + the edit's own feedback before
+  // fetching (the resync already carried a CC 7 above zero).
+  const fader = strip(page, "CH 1").locator(".con-fader");
+  await fader.click();
+  await fader.press("End");
+  await expect.poll(() => page.evaluate(() => window.__midiTest.sent.at(-1))).toEqual([0xb0, 7, 0]);
+  await page.evaluate(() => (window.__midiTest.sent.length = 0));
+
+  await page.click("#btn-device");
+  await page.click("#btn-fetch");
+  await expect(readLevel(page, "CH 1")).toHaveText("0.0"); // the fetch landed
+  // The fetched level goes out as feedback: CC 7 with the 0.0 dB position (> 0).
+  await expect
+    .poll(() => page.evaluate(() => window.__midiTest.sent.find((b) => b[0] === 0xb0 && b[1] === 7)?.[2] ?? -1))
+    .toBeGreaterThan(0);
 });
 
 test("assignments and the port choice survive a reload", async ({ page }) => {
