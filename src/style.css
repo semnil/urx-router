@@ -2449,8 +2449,8 @@ select:focus-visible,
 }
 .midi-panel .mp-row {
   display: flex;
-  /* A relative-mode row carries two selects: keep the control name readable
-     and let the selects wrap to a second line instead of crushing it. */
+  /* A long 14-bit CC address can crowd the behavior select: keep the control
+     name readable and let the cells wrap to a second line instead of crushing it. */
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
@@ -2475,7 +2475,6 @@ select:focus-visible,
   white-space: nowrap;
 }
 .midi-panel .mp-mode,
-.midi-panel .mp-enc,
 .midi-panel .mp-btn {
   flex-shrink: 0;
   font-size: 11px;

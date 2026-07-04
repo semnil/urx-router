@@ -10,7 +10,7 @@ import { loadJson, saveJson } from "../core/storage";
 import { isTauri, midiCloseOutput, midiListInputs, midiListOutputs, midiOpenInput, midiOpenOutput, midiSend } from "../core/platform";
 import { MidiEngine } from "../core/midi/engine";
 import { bindControl, parseControlId, type BoundControl, type ControlParam } from "../core/midi/controls";
-import { addrKey, addrLabel, BUTTON_MODES, RELATIVE_ENCODINGS, sanitizeMappings, TAKE_MODES, type MidiAddr, type MidiMapping } from "../core/midi/mapping";
+import { addrKey, addrLabel, BUTTON_MODES, sanitizeMappings, TAKE_MODES, type MidiAddr, type MidiMapping } from "../core/midi/mapping";
 import { mirrorBalPair } from "../core/routing";
 import { el } from "./dom";
 import { t } from "../i18n";
@@ -46,6 +46,10 @@ const LEARN_FLUSH_MS = 500;
 
 export class MidiControl {
   private engine: MidiEngine;
+  // Dev diagnostic: set `localStorage["urx-midi-log"] = "1"` (reload to apply) to
+  // trace every rx/tx byte string and the engine's per-message decision to the
+  // console — the ground truth for "this press did not land" reports.
+  private traceLog = localStorage.getItem("urx-midi-log") ? (msg: string) => console.debug("[midi]", msg) : undefined;
   private learnOn = false;
   private armed: string | null = null;
   private closeInput: (() => void) | null = null;
@@ -78,11 +82,14 @@ export class MidiControl {
         this.scheduleFeedback();
       },
       send: (bytes) => {
-        if (this.outputPort) void midiSend(bytes).catch(() => {});
+        if (!this.outputPort) return;
+        this.traceLog?.(`tx [${bytes.join(" ")}]`);
+        void midiSend(bytes).catch(() => {});
       },
       learned: (addr) => this.onLearned(addr),
       learnPending: () => this.bumpLearnFlush(),
       now: () => performance.now(),
+      trace: this.traceLog,
     });
     this.engine.setMappings(this.loadMappings());
     this.restorePorts();
@@ -204,7 +211,10 @@ export class MidiControl {
   private async openInput(port: string, silent = false): Promise<void> {
     try {
       // The Rust side replaces any prior input, so no explicit close first.
-      this.closeInput = await midiOpenInput(port, (bytes) => this.engine.onMessage(bytes));
+      this.closeInput = await midiOpenInput(port, (bytes) => {
+        this.traceLog?.(`rx [${bytes.join(" ")}]`);
+        this.engine.onMessage(bytes);
+      });
       this.inputPort = port;
     } catch (err) {
       this.closeInput = null;
@@ -374,7 +384,7 @@ export class MidiControl {
 
     this.listHead = el("div", "mp-listhead");
     this.listEl = el("div", "mp-list");
-    // Option legend: while a take-in / encoding / button select is hovered or
+    // Option legend: while a take-in / button select is hovered or
     // focused, every option is listed here with a one-line behavior note (a
     // native dropdown cannot annotate its own options). Hidden when idle.
     this.infoEl = el("div", "mp-info");
@@ -441,12 +451,10 @@ export class MidiControl {
       const control = this.resolve(mapping.control);
       if (control?.kind === "continuous") {
         this.addChoice(row, "mp-mode", TAKE_MODES, mapping.mode, () => ({ label: t().midi.mode, desc: t().midi.modeDesc }), (mode) => this.patchMapping(mapping, { mode }));
-        if (mapping.mode === "relative") {
-          this.addChoice(row, "mp-enc", RELATIVE_ENCODINGS, mapping.encoding ?? "twos", () => ({ label: t().midi.encoding, desc: t().midi.encodingDesc }), (encoding) => this.patchMapping(mapping, { encoding }));
-        }
       } else if (control?.kind === "toggle" && mapping.addr.type !== "pitchbend") {
-        // Toggle behavior: flip per press (Toggle, the default) or follow the
-        // value (Momentary — alternating senders, e.g. Stream Deck toggles).
+        // Button behavior, named after the sender's button type: Momentary
+        // (edge, the default — flip per press) or Toggle (state — the value is
+        // the state, for alternating senders like Stream Deck toggle buttons).
         this.addChoice(row, "mp-btn", BUTTON_MODES, mapping.button ?? "edge", () => ({ label: t().midi.buttonMode, desc: t().midi.buttonModeDesc }), (button) => this.patchMapping(mapping, { button }));
       }
       const del = el("button", "mp-del") as HTMLButtonElement;

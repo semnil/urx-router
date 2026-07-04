@@ -390,22 +390,24 @@ from an external MIDI controller (desktop app only). Configuration lives in the 
   `core/platform.ts` (no-ops outside Tauri). midir has no hot-plug notification, so the port lists are
   re-enumerated every time the panel opens.
 - **Mapping (core/midi/)** — pure, language-agnostic logic. `message.ts` decodes/encodes CC / note / pitch
-  bend; `mapping.ts` holds the free-mapping model (address, take-in mode, relative encoding) plus persistence
-  validation; `controls.ts` enumerates and resolves every console control under a **fixed control id**
+  bend; `mapping.ts` holds the free-mapping model (address, take-in mode) plus persistence validation (a
+  persisted mapping in the removed "relative" take-in mode migrates to absolute on load); `controls.ts`
+  enumerates and resolves every console control under a **fixed control id**
   (`node/param[@sendTarget]`, e.g. `ch1/level@bus.mix1`). Fixed ids do not depend on the visible tab or
   send-on-fader: "CH 1 main fader" and "CH 1 → MIX 1 send" are separate controls, assigned individually.
   Values cross the boundary normalized (0..1) and are snapped on set to the same grids the console uses
   (the level_gain grid in `levels.ts`, the channel's GAIN dB range, PAN ±63, PHONES 0.1 steps). Device locks
   (a FIXED bus's send level, a Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz) refuse the write.
 - **Engine (`engine.ts`)** — routes incoming events onto bound controls. Take-in modes are per-mapping:
-  absolute / pickup (swallowed until the physical value reaches or crosses the plan value) / relative (two's
-  complement, offset-64, or sign-bit encodings; one click walks one detent). 14-bit CC assembles the MSB/LSB
-  pair (n / n+32). Toggles carry a per-mapping button behavior instead of a take-in mode: the default
-  "Toggle" (note-on / CC rising edge ≥ 64 flips, a release is ignored) and "Momentary" (note on /
-  CC ≥ 64 = on, else off — the value is the state) for hold-to-enable buttons and for senders that
-  alternate one message per press — e.g. an Elgato Stream Deck MIDI-plugin toggle button, which edge
-  detection would otherwise miss on every second press. The display names follow the vocabulary other
-  MIDI-mapping tools use; the stored values stay edge / state.
+  absolute / pickup (swallowed until the physical value reaches or crosses the plan value). 14-bit CC assembles the MSB/LSB
+  pair (n / n+32). Toggles carry a per-mapping button behavior instead of a take-in mode, named after the
+  SENDER's button type (the controller-side setting the user reads): the default "Momentary" (edge — flips
+  on each on-value: a note-on or a CC ≥ 64, the release ignored; not a rising-edge test, so a push button
+  that sends a fixed on-value per press with no release-to-0 between still flips every press, not just the
+  first — the feedback loopback, also ≥ 64, is swallowed by the receive-side echo guard so it does not flip
+  back) and "Toggle" (state — for buttons that alternate 127/0 per press, e.g. an Elgato Stream Deck
+  MIDI-plugin toggle button, which value-follows-state handles per press; note on / CC ≥ 64 = on, else off,
+  so a momentary button gives hold-to-enable). The stored values stay edge / state.
 - **Learn** — turning the panel's Learn on gives armable console controls a dashed target ring; clicking one
   arms it (pulsing outline; already-bound controls carry an amber dot) and the next MIDI input binds. A CC
   settles on its second message (same CC = 7-bit, its pair partner = 14-bit); a lone CC (a button) commits
@@ -416,7 +418,12 @@ from an external MIDI controller (desktop app only). Configuration lives in the 
   (`markChanged`) and its readback twin (`planReadFromDevice`: follow reflect, fetch, the initial readback at
   Live-sync start), debounced at 120 ms and diffed against a sent cache so only changed values go out. Feedback
   to an address that is still sending is deferred until a 300 ms quiet gap (echo suppression), and opening the
-  output port sends every binding's current value once.
+  output port sends every binding's current value once. The receive side mirrors the guard for toggles: for
+  300 ms after feedback goes out, the first incoming value equal to it on the same address is dropped as an
+  echo and the guard disarms (a shared virtual MIDI bus, or a controller that re-sends its state when
+  feedback changes it, would otherwise flip an edge-mode toggle straight back; consuming the echo one-shot
+  keeps an equal real press right after it alive). Setting `localStorage["urx-midi-log"]` traces every rx/tx
+  byte string and the engine's per-message decision (drop/ignore/apply) to the console.
 - **Applying edits** — an incoming edit runs the same funnel as a console edit: BAL pair mirror
   (`mirrorBalPair`) → `markChanged` (dirty + Live sync) → the ~20 Hz reflect shared with device follow
   (`requestReflect`) repaints the touched strips / nodes.

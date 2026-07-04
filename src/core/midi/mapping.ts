@@ -17,23 +17,17 @@ export type MidiAddr =
 
 /** How a continuous mapping takes values in (toggles ignore this):
  *  absolute = apply as-is (jumps when the physical control is elsewhere);
- *  pickup = ignore until the physical value reaches/crosses the current one;
- *  relative = the CC value is a signed delta (endless encoders). */
-export const TAKE_MODES = ["absolute", "pickup", "relative"] as const;
+ *  pickup = ignore until the physical value reaches/crosses the current one. */
+export const TAKE_MODES = ["absolute", "pickup"] as const;
 export type TakeMode = (typeof TAKE_MODES)[number];
 
-/** Relative-CC delta encodings (controller-dependent):
- *  twos = two's complement (1..63 up, 127..65 down);
- *  offset64 = value - 64; signbit = 0..63 up, 64..127 down by (value - 64). */
-export const RELATIVE_ENCODINGS = ["twos", "offset64", "signbit"] as const;
-export type RelativeEncoding = (typeof RELATIVE_ENCODINGS)[number];
-
-/** Toggle-button behavior (toggle controls only):
- *  edge (default, shown as "Toggle") = flip on a press (note-on / CC rising
- *  edge; a release is ignored);
- *  state (shown as "Momentary") = the value is the state (note on / CC ≥ 64 =
- *  on, else off) — for hold buttons and senders that alternate one message per
- *  press (e.g. Stream Deck toggles). */
+/** Toggle-button behavior (toggle controls only), named after the sender's
+ *  button type:
+ *  edge (default, shown as "Momentary") = flip on each on-value (note-on / CC
+ *  ≥ 64); the release is ignored — for push / momentary buttons;
+ *  state (shown as "Toggle") = the value is the state (note on / CC ≥ 64 = on,
+ *  else off) — for toggle buttons that alternate one message per press
+ *  (e.g. Stream Deck toggles). */
 export const BUTTON_MODES = ["edge", "state"] as const;
 export type ButtonMode = (typeof BUTTON_MODES)[number];
 
@@ -42,8 +36,6 @@ export interface MidiMapping {
   control: string;
   addr: MidiAddr;
   mode: TakeMode;
-  /** Delta encoding, meaningful only when mode = "relative". */
-  encoding?: RelativeEncoding;
   /** Toggle behavior, meaningful only on toggle controls. Absent = edge. */
   button?: ButtonMode;
 }
@@ -116,12 +108,21 @@ export function isMapping(v: unknown): v is MidiMapping {
   if (typeof m.control !== "string" || !m.control) return false;
   if (!isAddr(m.addr)) return false;
   if (!oneOf(TAKE_MODES, m.mode)) return false;
-  if (m.encoding !== undefined && !oneOf(RELATIVE_ENCODINGS, m.encoding)) return false;
   if (m.button !== undefined && !oneOf(BUTTON_MODES, m.button)) return false;
   return true;
 }
 
+// Migrate a persisted entry from the removed "relative" take-in mode (endless-
+// encoder deltas): coerce it to absolute so the binding survives — which is
+// also what those controllers were sending all along — and drop the now-unused
+// delta encoding field.
+function coerceLegacy(v: unknown): unknown {
+  if (typeof v !== "object" || v === null) return v;
+  const { encoding: _drop, ...rest } = v as Record<string, unknown>;
+  return rest.mode === "relative" ? { ...rest, mode: "absolute" } : rest;
+}
+
 /** Filter a persisted mapping list down to the valid entries. */
 export function sanitizeMappings(v: unknown): MidiMapping[] {
-  return Array.isArray(v) ? v.filter(isMapping) : [];
+  return Array.isArray(v) ? v.map(coerceLegacy).filter(isMapping) : [];
 }

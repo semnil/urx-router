@@ -1,34 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MidiEngine } from "./engine";
-import type { BoundControl } from "./controls";
 import type { MidiAddr, MidiMapping } from "./mapping";
 import { encodeCc, encodeNote } from "./message";
-
-// A scripted control: value held locally, optional lock, snap to `step`.
-interface Fake extends BoundControl {
-  value: number;
-  locked: boolean;
-}
-
-function fake(id: string, kind: "continuous" | "toggle", value = 0, step = 1 / 40): Fake {
-  const f: Fake = {
-    id,
-    node: id.split("/")[0],
-    param: "level",
-    kind,
-    step,
-    value,
-    locked: false,
-    get: () => f.value,
-    set: (v) => {
-      if (f.locked) return false;
-      const clamped = Math.max(0, Math.min(1, v));
-      f.value = kind === "toggle" ? (clamped >= 0.5 ? 1 : 0) : Math.round(clamped / step) * step;
-      return true;
-    },
-  };
-  return f;
-}
+import { fake, type Fake } from "./fake-control";
 
 let controls: Map<string, Fake>;
 let applied: string[];
@@ -55,8 +29,8 @@ beforeEach(() => {
   });
 });
 
-const map = (control: string, addr: MidiAddr, mode: MidiMapping["mode"] = "absolute", encoding?: MidiMapping["encoding"]): void => {
-  engine.setMappings([...engine.getMappings(), { control, addr, mode, ...(encoding ? { encoding } : {}) }]);
+const map = (control: string, addr: MidiAddr, mode: MidiMapping["mode"] = "absolute"): void => {
+  engine.setMappings([...engine.getMappings(), { control, addr, mode }]);
 };
 
 describe("incoming application", () => {
@@ -89,13 +63,13 @@ describe("incoming application", () => {
     expect(applied).toEqual([]);
   });
 
-  it("toggles on note-on and on a CC rising edge only", () => {
+  it("edge mode flips on each on-value; the release is ignored", () => {
     const c = fake("ch1/mute", "toggle");
     controls.set(c.id, c);
     map(c.id, { type: "note", channel: 0, note: 60 });
     engine.onMessage(encodeNote(0, 60, true));
     expect(c.value).toBe(1);
-    engine.onMessage(encodeNote(0, 60, false)); // release: no re-toggle
+    engine.onMessage(encodeNote(0, 60, false)); // release: ignored, no re-toggle
     expect(c.value).toBe(1);
     engine.onMessage(encodeNote(0, 60, true));
     expect(c.value).toBe(0);
@@ -103,13 +77,17 @@ describe("incoming application", () => {
     const d = fake("ch2/mute", "toggle");
     controls.set(d.id, d);
     map(d.id, { type: "cc", channel: 0, controller: 20 });
-    engine.onMessage(encodeCc(0, 20, 127)); // rising → toggle
+    engine.onMessage(encodeCc(0, 20, 127)); // on → toggle
     expect(d.value).toBe(1);
-    engine.onMessage(encodeCc(0, 20, 100)); // still high → no re-toggle
-    expect(d.value).toBe(1);
-    engine.onMessage(encodeCc(0, 20, 0)); // falling → no toggle
-    engine.onMessage(encodeCc(0, 20, 127)); // rising again → toggle back
+    // A button that sends a fixed on-value per press with no release-to-0 between
+    // (e.g. a Stream Deck "Push" set to 127 only) must flip on every press, not
+    // just the first — no rising-edge requirement.
+    engine.onMessage(encodeCc(0, 20, 127)); // on again → toggle back
     expect(d.value).toBe(0);
+    engine.onMessage(encodeCc(0, 20, 127)); // and again
+    expect(d.value).toBe(1);
+    engine.onMessage(encodeCc(0, 20, 0)); // release (< 64) → ignored
+    expect(d.value).toBe(1);
   });
 
   it("state-mode toggles follow an alternating one-message-per-press sender (Stream Deck style)", () => {
@@ -151,24 +129,6 @@ describe("incoming application", () => {
     expect(c.value).toBeCloseTo(0.55, 5); // 70/127 snapped to the 1/40 grid
     engine.onMessage(encodeCc(0, 7, 20)); // engaged: tracks anywhere now
     expect(c.value).toBeCloseTo(0.15, 5);
-  });
-
-  it("relative CC walks one detent per click in each encoding", () => {
-    const c = fake("ch1/level", "continuous", 0.5);
-    controls.set(c.id, c);
-    map(c.id, { type: "cc", channel: 0, controller: 7 }, "relative", "twos");
-    engine.onMessage(encodeCc(0, 7, 1)); // +1
-    expect(c.value).toBeCloseTo(0.5 + 1 / 40, 9);
-    engine.onMessage(encodeCc(0, 7, 127)); // -1 (two's complement)
-    expect(c.value).toBeCloseTo(0.5, 9);
-
-    engine.setMappings([{ control: c.id, addr: { type: "cc", channel: 0, controller: 7 }, mode: "relative", encoding: "offset64" }]);
-    engine.onMessage(encodeCc(0, 7, 66)); // +2
-    expect(c.value).toBeCloseTo(0.5 + 2 / 40, 9);
-
-    engine.setMappings([{ control: c.id, addr: { type: "cc", channel: 0, controller: 7 }, mode: "relative", encoding: "signbit" }]);
-    engine.onMessage(encodeCc(0, 7, 65)); // -1
-    expect(c.value).toBeCloseTo(0.5 + 1 / 40, 9);
   });
 
   it("assembles a 14-bit CC pair from both halves", () => {
@@ -296,6 +256,60 @@ describe("feedback", () => {
     // must light the LED — no quiet-gap deferral, no sent-cache suppression.
     expect(engine.feedback()).toBe(false);
     expect(sent).toEqual([encodeNote(0, 60, true)]);
+  });
+
+  it("drops an echo of just-sent toggle feedback instead of flipping back", () => {
+    // A controller that mirrors feedback (a shared virtual MIDI bus, or a
+    // plugin that re-sends its state when feedback changes it) returns the
+    // just-sent value; an edge-mode toggle must not flip straight back.
+    const mute = fake("ch1/mute", "toggle", 0);
+    controls.set("ch1/mute", mute);
+    map("ch1/mute", { type: "cc", channel: 0, controller: 20 });
+    mute.value = 1; // muted via the UI
+    engine.feedback();
+    expect(sent).toEqual([encodeCc(0, 20, 127)]);
+    clock += 50;
+    engine.onMessage(encodeCc(0, 20, 127)); // the echo
+    expect(mute.value).toBe(1);
+    expect(applied).toEqual([]);
+    // A real press lands after the echo window and still flips.
+    clock += 400;
+    engine.onMessage(encodeCc(0, 20, 127));
+    expect(mute.value).toBe(0);
+    expect(applied).toEqual(["ch1/mute"]);
+  });
+
+  it("consumes the echo one-shot — an equal real press right after still applies", () => {
+    // The transports deliver exactly one echo per sent message, so the guard
+    // must disarm on the first match: a same-value press following the echo is
+    // a real press (edge-mode presses are always 127) and must flip.
+    const mute = fake("ch1/mute", "toggle", 0);
+    controls.set("ch1/mute", mute);
+    map("ch1/mute", { type: "cc", channel: 0, controller: 20 });
+    mute.value = 1;
+    engine.feedback(); // confirm 127
+    clock += 10;
+    engine.onMessage(encodeCc(0, 20, 127)); // the echo — dropped
+    expect(mute.value).toBe(1);
+    clock += 100; // still well inside the window
+    engine.onMessage(encodeCc(0, 20, 127)); // a real press
+    expect(mute.value).toBe(0);
+    expect(applied).toEqual(["ch1/mute"]);
+  });
+
+  it("drops a note feedback echo the same way", () => {
+    const mute = fake("ch1/mute", "toggle", 0);
+    controls.set("ch1/mute", mute);
+    map("ch1/mute", { type: "note", channel: 0, note: 60 });
+    mute.value = 1;
+    engine.feedback();
+    expect(sent).toEqual([encodeNote(0, 60, true)]);
+    clock += 50;
+    engine.onMessage(encodeNote(0, 60, true)); // the echo
+    expect(mute.value).toBe(1);
+    clock += 400;
+    engine.onMessage(encodeNote(0, 60, true));
+    expect(mute.value).toBe(0);
   });
 
   it("resync forgets the sent cache and re-emits everything", () => {

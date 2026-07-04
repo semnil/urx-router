@@ -20,7 +20,6 @@ describe("MIDI mapping model", () => {
     const good: MidiMapping[] = [
       { control: "ch1/level", addr: { type: "cc", channel: 0, controller: 7 }, mode: "absolute" },
       { control: "ch1/level@bus.mix1", addr: { type: "cc14", channel: 0, controller: 1 }, mode: "pickup" },
-      { control: "ch1/gain", addr: { type: "cc", channel: 0, controller: 10 }, mode: "relative", encoding: "twos" },
       { control: "ch1/mute", addr: { type: "cc", channel: 0, controller: 20 }, mode: "absolute", button: "state" },
     ];
     const bad = [
@@ -31,10 +30,20 @@ describe("MIDI mapping model", () => {
       { control: "x", addr: { type: "cc", channel: 0, controller: 128 }, mode: "absolute" }, // data out of range
       { control: "x", addr: { type: "cc14", channel: 0, controller: 32 }, mode: "absolute" }, // cc14 MSB must be < 32
       { control: "x", addr: { type: "cc", channel: 0, controller: 7 }, mode: "sticky" }, // unknown mode
-      { control: "x", addr: { type: "cc", channel: 0, controller: 7 }, mode: "relative", encoding: "weird" },
       { control: "x", addr: { type: "cc", channel: 0, controller: 7 }, mode: "absolute", button: "latch" }, // unknown button mode
     ];
     expect(sanitizeMappings([...good, ...bad])).toEqual(good);
     expect(sanitizeMappings("not a list")).toEqual([]);
+  });
+
+  it("migrates the removed relative mode to absolute and drops its encoding", () => {
+    const persisted = [
+      { control: "ch1/gain", addr: { type: "cc", channel: 0, controller: 10 }, mode: "relative", encoding: "twos" },
+      { control: "ch2/level", addr: { type: "cc", channel: 0, controller: 11 }, mode: "pickup", encoding: "offset64" },
+    ];
+    expect(sanitizeMappings(persisted)).toEqual([
+      { control: "ch1/gain", addr: { type: "cc", channel: 0, controller: 10 }, mode: "absolute" },
+      { control: "ch2/level", addr: { type: "cc", channel: 0, controller: 11 }, mode: "pickup" },
+    ]);
   });
 });

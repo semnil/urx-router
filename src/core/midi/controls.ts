@@ -61,9 +61,6 @@ export interface BoundControl extends ControlDesc {
   /** Snap + write a normalized value. False when the control is device-locked
    *  (FIXED-bus send level, Pan-Link send pan, rate-locked stereo EQ): no edit. */
   set(v: number): boolean;
-  /** Size of one detent in the normalized domain (relative-mode step);
-   *  meaningful for continuous controls only. */
-  step: number;
 }
 
 export function controlId(node: string, param: ControlParam, send?: string): string {
@@ -83,17 +80,15 @@ function clamp01(v: number): number {
 const levelCodec = {
   get: (db: number): number => levelToPos(db) / LEVEL_POS_MAX,
   set: (v: number): number => posToLevel(Math.round(clamp01(v) * LEVEL_POS_MAX)),
-  step: 1 / LEVEL_POS_MAX,
 };
 
-function linearCodec(min: number, max: number, step: number): { get(x: number): number; set(v: number): number; step: number } {
+function linearCodec(min: number, max: number, step: number): { get(x: number): number; set(v: number): number } {
   const span = max - min;
   return {
     get: (x) => clamp01((x - min) / span),
     // toFixed strips the float dust fractional steps accumulate (0.1-step
     // arithmetic yields 2.9000000000000004) — the same snap wireKnob applies.
     set: (v) => Number((min + Math.round((clamp01(v) * span) / step) * step).toFixed(4)),
-    step: step / span,
   };
 }
 
@@ -136,7 +131,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   const connControl = (
     param: "level" | "pan",
     send: string | undefined,
-    codec: { get(x: number): number; set(v: number): number; step: number },
+    codec: { get(x: number): number; set(v: number): number },
     fallback: number,
     locked?: () => boolean,
   ): BoundControl => {
@@ -147,7 +142,6 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       param,
       ...(send ? { send } : {}),
       kind: "continuous",
-      step: codec.step,
       get: () => codec.get(conn(to)?.params?.[param] ?? fallback),
       set: (v) => {
         const c = conn(to);
@@ -169,7 +163,6 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       param: "mute",
       ...(send ? { send } : {}),
       kind: "toggle",
-      step: 1,
       get: () => ((conn(to)?.params?.on ?? defaultOn) ? 0 : 1),
       set: (v) => {
         const c = conn(to);
@@ -185,7 +178,6 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     node: id,
     param: "mute",
     kind: "toggle",
-    step: 1,
     get: () => (plan.nodeParams[id]?.on === false ? 1 : 0),
     set: (v) => {
       np().on = v < 0.5;
@@ -199,7 +191,6 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     node: id,
     param,
     kind: "toggle",
-    step: 1,
     get: () => (locked?.() ? 0 : (plan.nodeParams[id]?.[param] ?? def) ? 1 : 0),
     set: (v) => {
       if (locked?.()) return false;
@@ -211,14 +202,13 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   // A continuous control persisted on the node's own params.
   const nodeControl = (
     param: "level" | "pan" | "gain" | "phonesLevel",
-    codec: { get(x: number): number; set(v: number): number; step: number },
+    codec: { get(x: number): number; set(v: number): number },
     fallback: number,
   ): BoundControl => ({
     id: controlId(id, param),
     node: id,
     param,
     kind: "continuous",
-    step: codec.step,
     get: () => codec.get(plan.nodeParams[id]?.[param] ?? fallback),
     set: (v) => {
       np()[param] = codec.set(v);
@@ -243,7 +233,6 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       node: id,
       param: "level",
       kind: "continuous",
-      step: oscLevelCodec.step,
       get: () => oscLevelCodec.get(plan.nodeParams[id]?.osc?.level ?? -14),
       set: (v) => {
         const p = np();
@@ -256,7 +245,6 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       node: id,
       param: "oscOn",
       kind: "toggle",
-      step: 1,
       get: () => (plan.nodeParams[id]?.osc?.on ? 1 : 0),
       set: (v) => {
         const p = np();

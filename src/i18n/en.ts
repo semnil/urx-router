@@ -84,27 +84,22 @@ export const en = {
     mappings: "Assignments",
     noMappings: "No assignments yet.",
     remove: "Remove assignment",
-    mode: { absolute: "Absolute", pickup: "Pickup", relative: "Relative" },
-    encoding: { twos: "2's comp", offset64: "Offset 64", signbit: "Sign bit" },
-    // Industry button-type names (matching other MIDI-mapping tools): Toggle =
-    // flip per press, Momentary = the value is the state. Stored values stay
-    // "edge" / "state" for persistence compatibility.
-    buttonMode: { edge: "Toggle", state: "Momentary" },
+    mode: { absolute: "Absolute", pickup: "Pickup" },
+    // Named after the SENDER's button type (the controller-side setting the
+    // user reads, e.g. Stream Deck): a momentary button (value on press, 0 on
+    // release) wants edge handling, a toggle button (alternating 127/0) wants
+    // value-follows-state. Stored values stay "edge" / "state" for persistence
+    // compatibility.
+    buttonMode: { edge: "Momentary", state: "Toggle" },
     // One-line behavior notes shown in the legend strip while a select is
     // hovered / focused (a native dropdown cannot annotate its own options).
     modeDesc: {
       absolute: "Applies the received value as-is. Jumps when the physical control and the on-screen value disagree.",
       pickup: "Ignored until the physical control reaches or crosses the on-screen value — no jumps, but inert until it catches up.",
-      relative: "Treats each message as an increment, one click = one step (endless encoders). Match the encoding to the controller.",
-    },
-    encodingDesc: {
-      twos: "1–63 steps up, 127–65 steps down (two's complement).",
-      offset64: "65 and above steps up, 63 and below steps down (64 = no change).",
-      signbit: "1–63 steps up, 65–127 steps down (sign bit).",
     },
     buttonModeDesc: {
-      edge: "Flips once per press; the release (0) is ignored.",
-      state: "The value is the state: 64 and above = on, below = off — for hold-to-enable buttons and alternating senders (e.g. Stream Deck toggles).",
+      edge: "For push / momentary buttons: flips once on each press; the release (0) is ignored — and it still flips every press even if the button sends only an on-value and never a release.",
+      state: "For toggle buttons that alternate 127/0 per press (e.g. Stream Deck toggles): the value is the state — 64 and above = on, below = off. A momentary button gives hold-to-enable.",
     },
     bound: (control: string, addr: string): string => `Assigned ${addr} to ${control}`,
     inputError: (message: string): string => `MIDI input error: ${message}`,

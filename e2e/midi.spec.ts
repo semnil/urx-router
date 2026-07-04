@@ -197,6 +197,27 @@ test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
   await expect(muteChip()).not.toHaveClass(/\bon\b/);
 });
 
+test("edge-mode MUTE flips on every CC press even with no release-to-0 between", async ({ page }) => {
+  // Regression for a Stream Deck "Push" button set to send 127 only (no 0 on
+  // release, confirmed by a bus trace): edge mode must flip on every press, not
+  // just the first — a rising-edge test would stick after the first press.
+  await openPanel(page);
+  await pickInputPort(page);
+  const muteChip = () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" });
+  await learnBinding(page, () => muteChip().click(), [0xb0, 20, 127], [0xb0, 20, 127]);
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  // Default button behavior is Momentary (edge).
+  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/mute"] .mp-btn')).toHaveValue("edge");
+
+  await expect(muteChip()).not.toHaveClass(/\bon\b/);
+  await sendMidi(page, [0xb0, 20, 127]); // press 1
+  await expect(muteChip()).toHaveClass(/\bon\b/);
+  await sendMidi(page, [0xb0, 20, 127]); // press 2 — same value, no 0 between
+  await expect(muteChip()).not.toHaveClass(/\bon\b/);
+  await sendMidi(page, [0xb0, 20, 127]); // press 3
+  await expect(muteChip()).toHaveClass(/\bon\b/);
+});
+
 test("assignment selects form an aligned column across rows", async ({ page }) => {
   // Mode and button-behavior selects share a fixed width, so their left edges
   // (and the address cells sitting against them) line up across rows.
@@ -223,7 +244,7 @@ test("the option legend explains every choice of a hovered select", async ({ pag
   const mode = page.locator('#midi-panel .mp-row[data-control="ch1/level"] .mp-mode');
   await mode.focus();
   await expect(info).toBeVisible();
-  await expect(info.locator(".ln")).toHaveCount(3); // one note per take-in mode
+  await expect(info.locator(".ln")).toHaveCount(2); // one note per take-in mode (absolute / pickup)
   await expect(info.locator(".ln.cur .nm")).toHaveText("Absolute"); // current choice highlighted
   await mode.blur();
   await expect(info).toBeHidden();
@@ -243,6 +264,10 @@ test("a follow-value toggle responds to every press of an alternating button", a
   await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
 
   const row = page.locator('#midi-panel .mp-row[data-control="ch1/mute"]');
+  // The labels name the SENDER's button type (what the user reads on the
+  // Stream Deck side): edge = "Momentary", state = "Toggle".
+  await expect(row.locator('.mp-btn option[value="edge"]')).toHaveText("Momentary");
+  await expect(row.locator('.mp-btn option[value="state"]')).toHaveText("Toggle");
   await row.locator(".mp-btn").selectOption("state");
   await sendMidi(page, [0xb0, 20, 127]);
   await expect(muteChip()).toHaveClass(/\bon\b/); // 127 = muted
@@ -271,6 +296,29 @@ test("feedback follows UI edits out of the output port", async ({ page }) => {
   await fader.click();
   await fader.press("End"); // fader to -∞ → CC value 0
   await expect.poll(() => page.evaluate(() => window.__midiTest.sent.at(-1))).toEqual([0xb0, 7, 0]);
+});
+
+test("a toggle ignores the echo of its own feedback", async ({ page }) => {
+  // A controller that reflects feedback back (a shared virtual MIDI bus, or a
+  // plugin that re-sends its state when feedback changes it) returns the value
+  // just sent; the mute must stay put instead of flipping straight back.
+  await openPanel(page);
+  await pickInputPort(page);
+  const muteChip = () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" });
+  await learnBinding(page, () => muteChip().click(), [0xb0, 20, 127], [0xb0, 20, 127]);
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  await pickOutputPort(page);
+
+  await muteChip().click(); // mute via the UI
+  await expect(muteChip()).toHaveClass(/\bon\b/);
+  await expect.poll(() => page.evaluate(() => window.__midiTest.sent.at(-1))).toEqual([0xb0, 20, 127]); // feedback out
+  await sendMidi(page, [0xb0, 20, 127]); // the echo
+  await page.waitForTimeout(150);
+  await expect(muteChip()).toHaveClass(/\bon\b/); // still muted
+  // The echo is consumed one-shot: an equal press right after it is a real
+  // press and still unmutes (a blanket window would eat it).
+  await sendMidi(page, [0xb0, 20, 127]);
+  await expect(muteChip()).not.toHaveClass(/\bon\b/);
 });
 
 test("feedback follows a device fetch out of the output port", async ({ page }) => {
