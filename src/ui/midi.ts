@@ -10,7 +10,7 @@ import { loadJson, saveJson } from "../core/storage";
 import { isTauri, midiCloseOutput, midiListInputs, midiListOutputs, midiOpenInput, midiOpenOutput, midiSend } from "../core/platform";
 import { MidiEngine } from "../core/midi/engine";
 import { bindControl, parseControlId, type BoundControl, type ControlParam } from "../core/midi/controls";
-import { addrKey, addrLabel, BUTTON_MODES, sanitizeMappings, TAKE_MODES, type MidiAddr, type MidiMapping } from "../core/midi/mapping";
+import { addrLabel, BUTTON_MODES, sanitizeMappings, TAKE_MODES, type MidiAddr, type MidiMapping } from "../core/midi/mapping";
 import { mirrorBalPair } from "../core/routing";
 import { el } from "./dom";
 import { t } from "../i18n";
@@ -294,9 +294,10 @@ export class MidiControl {
     const id = this.armed;
     this.armed = null;
     if (!id) return;
-    // One physical control per binding, one binding per control: replace both.
-    const key = addrKey(addr);
-    const next = this.engine.getMappings().filter((m) => m.control !== id && addrKey(m.addr) !== key);
+    // One binding per console control (replace the control's old binding). An
+    // address may be shared: learning several controls to one physical control
+    // gangs them, and the first-learned (list head) owns that address' feedback.
+    const next = this.engine.getMappings().filter((m) => m.control !== id);
     next.push({ control: id, addr, mode: "absolute" });
     this.applyMappings(next);
     this.hooks.onLearnChanged();
@@ -430,7 +431,9 @@ export class MidiControl {
     this.infoEl.hidden = true;
     this.infoEl.replaceChildren();
     this.listEl.replaceChildren();
-    const mappings = this.engine.getMappings();
+    // Gangs render contiguously (head then its members), so a member can drop
+    // the repeated address and just mark itself as linked to the row above.
+    const mappings = this.engine.getGangedMappings();
     if (mappings.length === 0) {
       const empty = el("div", "mp-empty");
       empty.textContent = m.noMappings;
@@ -438,14 +441,23 @@ export class MidiControl {
       return;
     }
     for (const mapping of mappings) {
-      const row = el("div", "mp-row");
+      const linked = this.engine.isLinkedMember(mapping);
+      const row = el("div", linked ? "mp-row linked" : "mp-row");
       row.dataset.control = mapping.control;
       const label = this.labelOf(mapping.control);
       const name = el("div", "mp-ctl");
       name.textContent = label;
       name.title = label; // the cell ellipsizes long names; hover shows the full one
+      // A gang member shares the head's physical control, so it carries no
+      // address of its own: the address slot shows a "Linked" marker instead of
+      // repeating it, which keeps the select column aligned across every row.
       const addr = el("div", "mp-addr");
-      addr.textContent = addrLabel(mapping.addr);
+      if (linked) {
+        addr.textContent = m.linked;
+        addr.title = `${m.linkedHint}\n${addrLabel(mapping.addr)}`;
+      } else {
+        addr.textContent = addrLabel(mapping.addr);
+      }
       row.append(name, addr);
       // The take-in mode applies to continuous controls only (toggles just fire).
       const control = this.resolve(mapping.control);

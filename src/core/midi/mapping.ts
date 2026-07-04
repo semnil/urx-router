@@ -40,7 +40,8 @@ export interface MidiMapping {
   button?: ButtonMode;
 }
 
-/** A stable lookup key for an address (one mapping per physical control). */
+/** A stable lookup key for an address. Several mappings may share one (a gang:
+ *  one physical control driving several console controls). */
 export function addrKey(addr: MidiAddr): string {
   switch (addr.type) {
     case "cc":

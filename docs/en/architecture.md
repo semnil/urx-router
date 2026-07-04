@@ -411,8 +411,10 @@ from an external MIDI controller (desktop app only). Configuration lives in the 
 - **Learn** — turning the panel's Learn on gives armable console controls a dashed target ring; clicking one
   arms it (pulsing outline; already-bound controls carry an amber dot) and the next MIDI input binds. A CC
   settles on its second message (same CC = 7-bit, its pair partner = 14-bit); a lone CC (a button) commits
-  after a 500 ms quiet gap. One physical control per binding and one binding per control — a new binding
-  replaces both sides.
+  after a 500 ms quiet gap. One binding per console control (a new binding replaces the control's previous
+  one), but a physical control may drive several controls: learning it to more than one gangs them — one
+  message moves all of them — and the first-learned owns that address' feedback (the assignment list tags the
+  later rows "Linked").
 - **Feedback (MIDI OUT)** — plan changes (UI edits, device follow, device readbacks, plan loads) are sent back
   through the reverse lookup so motor faders / LEDs follow. It hangs off the shared change funnel
   (`markChanged`) and its readback twin (`planReadFromDevice`: follow reflect, fetch, the initial readback at

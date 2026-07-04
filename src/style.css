@@ -2474,6 +2474,19 @@ select:focus-visible,
   color: var(--text-dim);
   white-space: nowrap;
 }
+/* A gang member: it shares one physical control with the row above, so the list
+   indents it and rails it to the group with a dim LED accent (like a mixer's
+   channel-link). Its address slot carries a "Linked" marker, not a code address,
+   so every row keeps the same shape and the select column stays aligned. */
+.midi-panel .mp-row.linked {
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 2px solid color-mix(in srgb, var(--led) 40%, transparent);
+}
+.midi-panel .mp-row.linked .mp-addr {
+  font-style: italic;
+  text-transform: none;
+}
 .midi-panel .mp-mode,
 .midi-panel .mp-btn {
   flex-shrink: 0;
