@@ -88,6 +88,8 @@
               <span class="menu-sep" role="separator"></span>
               <button id="btn-export" class="menu-item" type="button" role="menuitem">Export PNG</button>
               <button id="btn-export-pdf" class="menu-item" type="button" role="menuitem">Export PDF</button>
+              <span class="menu-sep" role="separator" data-control-hide></span>
+              <button id="btn-licenses" class="menu-item" type="button" role="menuitem" data-control-hide>Third-party licenses</button>
             </div>
           </div>
           <span class="tool-sep" data-control-hide></span>
@@ -205,6 +207,15 @@
         <div class="consent-actions">
           <button id="load-report-copy" type="button" class="consent-btn-secondary"></button>
           <button id="load-report-close" type="button" class="consent-btn-primary"></button>
+        </div>
+      </div>
+    </div>
+    <div id="licenses-modal" class="consent-scrim" role="dialog" aria-modal="true" aria-labelledby="licenses-title" hidden>
+      <div class="consent-box licenses-box">
+        <h2 id="licenses-title"></h2>
+        <iframe id="licenses-frame" class="licenses-frame" sandbox=""></iframe>
+        <div class="consent-actions">
+          <button id="licenses-close" type="button" class="consent-btn-primary"></button>
         </div>
       </div>
     </div>

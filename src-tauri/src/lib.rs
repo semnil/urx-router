@@ -48,6 +48,19 @@ fn reset_storage_requested() -> bool {
     std::env::args().any(|a| a == "--reset-storage")
 }
 
+// The third-party license notice bundled as an app resource (cargo-about output;
+// release.yml generates it before packaging). A small local read, so synchronous
+// like the other file IO commands.
+#[tauri::command]
+fn third_party_licenses(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let path = app
+        .path()
+        .resolve("THIRD_PARTY_LICENSES.html", tauri::path::BaseDirectory::Resource)
+        .map_err(|e| e.to_string())?;
+    fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
 // Live control: connect to / set parameters on / disconnect from the URX via the
 // Device Center broker. The device GUID stays in Rust; the frontend addresses
 // parameters by (param_id, x, y) and an absolute integer value.
@@ -249,6 +262,7 @@ pub fn run() {
             experimental_enabled,
             self_test_requested,
             reset_storage_requested,
+            third_party_licenses,
             vd_connect,
             vd_info,
             vd_set,

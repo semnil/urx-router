@@ -2259,6 +2259,19 @@ select:focus-visible,
 [data-theme="light"] .consent-btn-primary {
   color: #fff;
 }
+/* Third-party license notice: the cargo-about page is a self-contained light
+   document, so the frame keeps a white background in both themes. */
+.licenses-box {
+  width: min(920px, 100%);
+}
+.licenses-frame {
+  display: block;
+  width: 100%;
+  height: min(560px, 62vh);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
 .load-report-intro {
   margin: 0 0 12px;
   font-size: 13px;

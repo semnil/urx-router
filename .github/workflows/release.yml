@@ -106,6 +106,14 @@ jobs:
         with:
           workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
+      # Generate the third-party license notice bundled as an app resource
+      # (bundle.resources). Same tool pinning as the post-merge licenses job.
+      - uses: taiki-e/cache-cargo-install-action@v2
+        with:
+          tool: cargo-about@0.9.1
+          features: cli
+      - run: cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
+        working-directory: src-tauri
       - id: tauri
         uses: tauri-apps/tauri-action@v1
         env:
