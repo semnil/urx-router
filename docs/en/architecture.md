@@ -6,17 +6,17 @@
 
 Create and visualize routing plans for the YAMAHA URX22 / URX44 / URX44V in a GUI, constraining
 the editor so that only paths the device physically allows can be wired. Plans persist as JSON and
-can be exported as images. In the future the same plan data will be reflected onto real
-hardware.
+can be exported as images. The same plan data is also reflected onto real
+hardware over live sync in the desktop build.
 
 ## Tech stack and rationale
 
 | Layer | Choice | Rationale |
 | --- | --- | --- |
-| Desktop shell | Tauri 2 | Ship Windows 11 / Apple silicon macOS from one source. Small binary. Future hardware control can be implemented natively in Rust |
+| Desktop shell | Tauri 2 | Ship Windows 11 / Apple silicon macOS from one source. Small binary. Hardware control is implemented natively in Rust |
 | Frontend | TypeScript + Vite | The planning UI is pure frontend. It can be verified in a browser even without Rust |
 | Rendering | Plain SVG | Draws the node-graph wiring. Keeps the no-runtime-dependency policy |
-| Persistence | JSON | Human-readable. Also serves as the input for future hardware reflection |
+| Persistence | JSON | Human-readable. Also serves as the input for hardware reflection |
 
 Hardware control is handled on the Tauri (Rust) side, and the UI and core (model / constraints /
 plan) are kept shell-independent.
@@ -551,8 +551,8 @@ an export) as rail-colored chips; clicking a chip restores that one, and "Show a
 - A hidden node also drops from the **CONSOLE view** (`console.ts` filters `plan.hidden` out of its
   strip list, and a shelved ducker drops its chip from the parent strip).
 - The hidden set persists as `plan.hidden` (an array of node ids) and is restored on load. Like
-  `positions`, it is pure view state and does not affect routing rules (future hardware reflection may
-  ignore it).
+  `positions`, it is pure view state and does not affect routing rules (the live hardware reflection
+  ignores it).
 - The hidden set is also mirrored per model in `localStorage("urx-hidden")` (a model-id → node-id-array
   map); `newPlan` restores that model's entry on startup, model switch and new plan, so the layout
   survives an app restart for the live device-control workflow. A loaded file's `hidden` still wins
@@ -632,7 +632,7 @@ PDF exports.
 - **Minimize / expand** — a noted node shows a `+` / `−` button (`makeNoteToggle`): `−` minimizes
   the note to the header, `+` re-expands it. The minimized state persists per node.
 - **Persistence & layout** — notes persist as `plan.notes` (node id → text) and the minimized set as
-  `plan.noteCollapsed`, both pure view state (future hardware reflection may ignore them). `Arrange` stacks each column
+  `plan.noteCollapsed`, both pure view state (the live hardware reflection ignores them). `Arrange` stacks each column
   by the nodes' actual heights (`nodeHeight`, expanded note included), so a note never overlaps the
   node below it.
 
