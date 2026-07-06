@@ -101,3 +101,15 @@ meter only, with no meter-point selector. The pre/post readings do differ in
 timing once a delay is set, but the device offers no pre-DELAY reading to show —
 the source bus's own meter (STEREO / MIX, whichever feeds STREAMING) is the
 closest equivalent for the pre-DELAY level.
+
+## The HDMI sample-rate ceiling depends on the audio mode
+
+The HDMI input's sample-rate ceiling depends on the mode set on the device's
+HDMI menu: **2ch mode** is capped at 48 kHz, while **Multi Channels mode** goes
+up to 192 kHz with the multichannel audio down-mixed 8→2 into the stereo pair.
+Because the active mode — and therefore both the ceiling and the down-mix —
+follows the incoming HDMI signal at run time, not anything a saved plan holds,
+the planner does not model this interaction: it is not enforced in the
+sample-rate warnings. The HDMI input stays a selectable channel source and the
+8→2 down-mix appears in the routing (see [device-model.md](device-model.md));
+only the mode-dependent rate ceiling is out of scope.
