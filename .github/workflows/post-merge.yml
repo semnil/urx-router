@@ -38,7 +38,7 @@ jobs:
       # cargo-about gates its CLI binary behind the non-default `cli` feature, so a
       # prebuilt-less install (install-action's source-build fallback) yields no
       # `cargo-about` binary. Build from source with the feature, cached by version.
-      - uses: taiki-e/cache-cargo-install-action@v2
+      - uses: taiki-e/cache-cargo-install-action@v3
         with:
           tool: cargo-about@0.9.1
           features: cli

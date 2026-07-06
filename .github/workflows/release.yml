@@ -108,7 +108,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Generate the third-party license notice bundled as an app resource
       # (bundle.resources). Same tool pinning as the post-merge licenses job.
-      - uses: taiki-e/cache-cargo-install-action@v2
+      - uses: taiki-e/cache-cargo-install-action@v3
         with:
           tool: cargo-about@0.9.1
           features: cli
