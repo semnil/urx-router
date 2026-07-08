@@ -111,7 +111,8 @@ test.describe("language", () => {
   test("switching to Japanese relocalizes the toolbar and the console output label live", async ({ page }) => {
     await expect(page.locator("#btn-view-graph")).toHaveText("Graph");
     await page.click("#btn-view-console");
-    await expect(page.locator(".con-modelabel")).toHaveText("Output");
+    // The first mode-group label is Output (the Send to label stays English).
+    await expect(page.locator(".con-modelabel").first()).toHaveText("Output");
 
     // The button shows the current language code; clicking it re-localizes both
     // the toolbar (static i18n) and the already-rendered console (refresh()).
@@ -120,7 +121,7 @@ test.describe("language", () => {
 
     await expect(page.locator("#btn-view-graph")).toHaveText("グラフ");
     await expect(page.locator("#btn-hide-unused")).toHaveText("未接続を隠す");
-    await expect(page.locator(".con-modelabel")).toHaveText("出力");
+    await expect(page.locator(".con-modelabel").first()).toHaveText("出力");
     await expect(page.locator("#btn-lang")).toHaveText("JA"); // now the current language
   });
 

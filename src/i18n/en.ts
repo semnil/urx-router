@@ -57,16 +57,23 @@ export const en = {
   },
   console: {
     outputLabel: "Output",
+    // Label for the send-on-fader group (MIX/FX). Matches the device SEND TO screen.
+    sendToLabel: "Send to",
     mute: "MUTE",
     on: "ON",
     eq: "EQ",
     pre: "PRE",
     cue: "C.INT",
+    // Full name of the C.INT chip (kept distinct from the device's plain CUE).
+    cueFull: "Cue Interrupt",
     mono: "MONO",
     chMute: "CH MUTE",
     master: "MASTER",
     meterPoint: "METER POINT",
     meterPointHint: "Only taps the device meters are listed.",
+    // Readout captions: the set fader level vs the live signal meter.
+    readFader: "FADER",
+    readMeter: "METER",
     groupInputs: "INPUTS",
     groupBus: "BUS / FX",
     groupMon: "MONITOR",

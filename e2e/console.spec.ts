@@ -311,6 +311,8 @@ test("a MONITOR strip has C.INT (on by default) and MONO (off) chips", async ({ 
   const mon = strip(page, "MONITOR 1");
   const cue = mon.getByRole("button", { name: "C.INT" });
   await expect(cue).toHaveAttribute("aria-pressed", "true"); // CUE Interrupt defaults on
+  // The terse C.INT label carries a tooltip spelling out its full name.
+  await expect(cue).toHaveAttribute("title", "Cue Interrupt");
   await cue.click();
   await expect(cue).toHaveAttribute("aria-pressed", "false");
   const mono = mon.getByRole("button", { name: "MONO" });
@@ -372,4 +374,65 @@ test("scrolling stays inside the strip grid (no window scroll)", async ({ page }
   });
   expect(m.bodyVOver).toBe(0); // the window never scrolls vertically
   expect(m.stripsHOver).toBeGreaterThan(0); // strips overflow horizontally inside .con-strips
+});
+
+test("the mode bar splits into Output (MAIN) and Send to (MIX/FX) groups", async ({ page }) => {
+  const groups = page.locator(".con-modegroup");
+  await expect(groups).toHaveCount(2);
+  const out = groups.filter({ hasText: "Output" });
+  const send = groups.filter({ hasText: "Send to" });
+  // MAIN lives under Output; the aux sends live under Send to.
+  await expect(out.getByRole("button", { name: "MAIN", exact: true })).toBeVisible();
+  await expect(out.getByRole("button", { name: "MIX 1", exact: true })).toHaveCount(0);
+  for (const name of ["FX 1", "FX 2", "MIX 1", "MIX 2"]) {
+    await expect(send.getByRole("button", { name, exact: true })).toBeVisible();
+  }
+  await expect(send.getByRole("button", { name: "MAIN", exact: true })).toHaveCount(0);
+});
+
+test("the STREAMING strip has a DELAY on/off chip and a TIME knob", async ({ page }) => {
+  const strm = strip(page, "STREAMING");
+  const delay = strm.getByRole("button", { name: "DELAY", exact: true });
+  await expect(delay).toHaveAttribute("aria-pressed", "false"); // delay off at the factory
+  await delay.click();
+  await expect(delay).toHaveAttribute("aria-pressed", "true");
+  // The delay TIME knob starts at the 1 ms minimum and steps up (whole ms) on the arrows.
+  const time = strm.locator(".con-knob[aria-label='TIME']");
+  await expect(time).toBeVisible();
+  await expect(time).toHaveAttribute("aria-valuenow", "1");
+  await time.focus();
+  await time.press("ArrowUp");
+  await expect(time).toHaveAttribute("aria-valuenow", "2");
+});
+
+test("the longest meter-point badge fits within its strip", async ({ page }) => {
+  // PRE DUCKER (stereo channels) / PRE INS FX (mono) are the widest tap labels; the
+  // badge must not overflow the 94 px strip into its neighbour.
+  const ch = strip(page, "CH 7/8");
+  await ch.locator(".con-tap").click();
+  await page.locator(".con-tappop .crow", { hasText: "PRE DUCKER" }).click();
+  const fit = await ch.evaluate((s) => {
+    const badge = s.querySelector(".con-tap")!.getBoundingClientRect();
+    const strip = s.getBoundingClientRect();
+    return { leftIn: badge.left >= strip.left, rightIn: badge.right <= strip.right };
+  });
+  expect(fit.leftIn).toBe(true);
+  expect(fit.rightIn).toBe(true);
+});
+
+test("the readout cells carry FADER / METER captions", async ({ page }) => {
+  const readout = strip(page, "CH 1").locator(".con-readout");
+  await expect(readout.locator(".rd:not(.mtr) .cap2")).toHaveText("FADER");
+  await expect(readout.locator(".rd.mtr .cap2")).toHaveText("METER");
+  // The value is a sibling of the caption, so the level still reads on its own.
+  await expect(readout.locator(".rd:not(.mtr) .rv")).toHaveText("0.0");
+});
+
+test("the meter-point badge shows a meter glyph, distinct from the send-tap chip", async ({ page }) => {
+  // In a send tab a source strip carries both a PRE send-tap chip and the POST
+  // meter-point badge; only the badge gets the meter-bars glyph.
+  await page.locator(".con-modepick").getByRole("button", { name: "MIX 1", exact: true }).click();
+  const ch = strip(page, "CH 1");
+  await expect(ch.getByRole("button", { name: "PRE", exact: true })).toBeVisible();
+  await expect(ch.locator(".con-tap .mtr-ico")).toHaveCount(1);
 });

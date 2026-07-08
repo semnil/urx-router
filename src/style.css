@@ -1731,7 +1731,7 @@ select:focus-visible,
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 0 2px 8px 4px;
+  padding: 0 2px 8px 3px;
 }
 .con-zrow {
   flex: 1;
@@ -1746,14 +1746,14 @@ select:focus-visible,
 .con-tap {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 4px 6px;
+  gap: 2px;
+  padding: 4px 5px;
   border-radius: 4px;
   border: 1px solid var(--led);
   background: color-mix(in srgb, var(--led) 16%, var(--ctl-bg));
   color: var(--led);
-  font: 700 9.5px var(--mono);
-  letter-spacing: 0.3px;
+  font: 700 9px var(--mono);
+  letter-spacing: 0.2px;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
@@ -1761,15 +1761,11 @@ select:focus-visible,
 [data-theme="light"] .con-tap {
   color: #7a5a08;
 }
-.con-tap .pt {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--led);
-  box-shadow: 0 0 4px var(--led);
-}
-[data-theme="light"] .con-tap .pt {
-  box-shadow: none;
+/* Meter-bars glyph on the meter-point badge (currentColor tracks the badge tint),
+   marking it apart from the send-tap PRE/POST chip. */
+.con-tap .mtr-ico {
+  display: block;
+  flex: none;
 }
 .con-tap .cv {
   font-size: 8px;
@@ -2122,6 +2118,16 @@ select:focus-visible,
 .con-readout .rd + .rd {
   border-left: 1px solid var(--line);
 }
+.con-readout .cap2 {
+  display: block;
+  font: 700 7px var(--mono);
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+.con-readout .mtr .cap2 {
+  color: color-mix(in srgb, var(--led) 62%, var(--text-dim));
+}
 .con-readout .rv {
   font: 700 12px var(--mono);
 }
@@ -2155,6 +2161,17 @@ select:focus-visible,
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+/* Two labeled segmented groups (Output / Send to) sit side by side in the bar. */
+.con-modebar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.con-modegroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .con-modelabel {
   font: 700 11px var(--mono);

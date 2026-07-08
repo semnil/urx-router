@@ -15,7 +15,7 @@ import { channelEqUnavailable } from "../core/constraints";
 import { busBalance, channelControl, insertFxControl } from "../core/control/translate";
 import { isBalLinkedPair, mirrorBalPair, mixSendLocks, partnerChannel, sendTapWritable } from "../core/routing";
 import { INSERT_FX_NONE, type InsertFxOption } from "../core/control/params";
-import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../core/control/vd";
+import { DELAY_TIME_MAX_MS, DELAY_TIME_MIN_MS, PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../core/control/vd";
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
 // send-on-fader targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, type SendTarget } from "../core/midi/controls";
@@ -79,6 +79,37 @@ function fmtDb(db: number, r: LevelRange): { text: string; off: boolean } {
   return { text: (db > 0 ? "+" : "") + db.toFixed(1), off: false };
 }
 
+// A three-bar meter glyph (rising heights), coloured by the host's currentColor
+// so it tracks the badge's amber (dark) / brown (light). Marks the meter-point
+// badge apart from the send-tap chip.
+function meterGlyph(): SVGElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 8 8");
+  svg.setAttribute("width", "8");
+  svg.setAttribute("height", "8");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("mtr-ico");
+  for (const [x, y, h] of [[0, 4, 4], [3.1, 2, 6], [6.2, 0, 8]]) {
+    const rect = document.createElementNS(ns, "rect");
+    rect.setAttribute("x", String(x));
+    rect.setAttribute("y", String(y));
+    rect.setAttribute("width", "1.7");
+    rect.setAttribute("height", String(h));
+    rect.setAttribute("fill", "currentColor");
+    svg.append(rect);
+  }
+  return svg;
+}
+
+// A readout caption (FADER / METER): a terse label above a readout value so the
+// set-level cell and the live-meter cell read apart at a glance, not by colour alone.
+function readCap(text: string): HTMLElement {
+  const cap = el("span", "cap2");
+  cap.textContent = text;
+  return cap;
+}
+
 interface StripModel {
   id: string;
   label: string;
@@ -89,6 +120,7 @@ interface StripModel {
   isBalance: boolean; // pan reads as a BALANCE (stereo / FX channel, or a BAL-linked pair)
   fadersOnly: boolean; // bus/mon/osc/master: always show their own level
   isOsc: boolean;
+  isStream: boolean; // the STREAMING bus (meter-only, carries the DELAY chip + TIME knob)
   hasMute: boolean; // channels + master
   hasEq: boolean; // channels + mix + stereo
   hasPhones: boolean; // monitor buses (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2)
@@ -188,8 +220,7 @@ export class Console {
   private tapOpenFor: string | null = null; // node whose tap popover is open
   private readonly TAP_STORE = "urx-metertap";
   private bar!: HTMLElement;
-  private outLabel!: HTMLElement;
-  private modePick!: HTMLElement;
+  private modeBar!: HTMLElement;
   private tapPop!: HTMLElement;
   private stripsHost!: HTMLElement;
 
@@ -267,11 +298,10 @@ export class Console {
   private build(): void {
     this.host.classList.add("con-root");
     this.bar = el("div", "con-bar");
-    this.outLabel = el("span", "con-modelabel");
-    this.outLabel.textContent = t().console.outputLabel;
-    this.modePick = el("div", "con-modepick");
-    this.modePick.setAttribute("role", "group");
-    this.bar.append(this.outLabel, this.modePick);
+    // Two labeled segmented groups (Output = the main mix, Send to = the MIX/FX
+    // aux sends), rebuilt per render by renderModes from the visible buses.
+    this.modeBar = el("div", "con-modebar");
+    this.bar.append(this.modeBar);
 
     this.stripsHost = el("div", "con-strips");
     const wrap = el("div", "con-wrap");
@@ -353,6 +383,7 @@ export class Console {
     const isChannel = node.kind === "channel";
     const isMaster = id === MAIN_BUS;
     const isOsc = id === "bus.osc";
+    const isStream = id === "bus.stream";
     const isMix = this.isMixBus(id);
     const isMon = id === "bus.mon1" || id === "bus.mon2";
     const isMono = /^ch\d+$/.test(id); // mono channels are ch1..ch4 (the only gain/gate/comp/φ-bearing strips)
@@ -370,13 +401,14 @@ export class Console {
       isBalance: !isMono || isBalLinkedPair(this.hooks.getModel(), this.hooks.getPlan(), id),
       fadersOnly: !(isChannel || this.isFxChannel(id)),
       isOsc,
+      isStream,
       // MIX strips carry a MUTE (the MIX → STEREO "TO ST" switch; the MIX master ON
       // 675 shows read-only — see masterMuted in buildStrip), and the MONITOR strips
       // carry a MUTE (np.on → MONITOR_ON, the device [ON] button).
       hasMute: isChannel || isMaster || this.isFxChannel(id) || isMix || isMon,
       hasEq: isChannel || isMix || isMaster,
       hasPhones: id === "bus.mon1" || id === "bus.mon2",
-      meterOnly: id === "bus.stream" || isOsc, // STREAMING + OSC: no fader (OSC uses a level knob)
+      meterOnly: isStream || isOsc, // STREAMING + OSC: no fader (OSC uses a level knob)
       // OSC drives its level via the LEVEL knob, so its meter/scale use the shared
       // level_gain ruler like every other strip (and the meter-only STREAMING strip).
       range: NORMAL_RANGE,
@@ -388,9 +420,22 @@ export class Console {
   // back to MAIN so the strips never render against a gone bus.
   private renderModes(): void {
     const ids = this.visibleIds();
-    const modes: Mode[] = ["main", ...SEND_TARGETS.filter((m) => ids.has(m))];
-    if (!modes.includes(this.mode)) this.mode = "main";
-    this.modePick.replaceChildren();
+    const sends = SEND_TARGETS.filter((m) => ids.has(m));
+    if (this.mode !== "main" && !sends.includes(this.mode)) this.mode = "main";
+    this.modeBar.replaceChildren();
+    // Output = MAIN (the STEREO main mix / home fader view). Send to = the aux
+    // sends, mirroring the device's SEND TO screen (MIX/FX destinations).
+    this.modeBar.append(this.modeGroup(t().console.outputLabel, ["main"]));
+    if (sends.length) this.modeBar.append(this.modeGroup(t().console.sendToLabel, sends));
+  }
+
+  // One labeled segmented group in the mode bar (a label + its mode buttons).
+  private modeGroup(label: string, modes: Mode[]): HTMLElement {
+    const group = el("div", "con-modegroup");
+    const lbl = el("span", "con-modelabel");
+    lbl.textContent = label;
+    const pick = el("div", "con-modepick");
+    pick.setAttribute("role", "group");
     for (const m of modes) {
       const b = el("button", "") as HTMLButtonElement;
       b.type = "button";
@@ -400,8 +445,10 @@ export class Console {
         this.mode = m;
         this.render();
       });
-      this.modePick.append(b);
+      pick.append(b);
     }
+    group.append(lbl, pick);
+    return group;
   }
 
   // ---- meter point (per-strip tap selection) ----
@@ -445,11 +492,14 @@ export class Console {
     badge.setAttribute("role", "button");
     badge.setAttribute("aria-haspopup", "menu");
     badge.tabIndex = 0;
-    const dot = el("span", "pt");
+    // A small meter-bars glyph marks this as the METER point selector — so it
+    // reads apart from the send-tap PRE/POST chip (which shares the pre/post
+    // vocabulary but controls the send, not the meter).
+    const ico = meterGlyph();
     const name = document.createTextNode(tap?.label ?? "");
     const cv = el("span", "cv");
     cv.textContent = "▾";
-    badge.append(dot, name, cv);
+    badge.append(ico, name, cv);
     const toggle = (): void => {
       if (this.tapOpenFor === id) this.closeTapPop();
       else this.openTapPop(id, badge);
@@ -588,13 +638,15 @@ export class Console {
     mute: boolean,
     on: boolean,
     toggle: () => boolean,
-    opts?: { readonlyTitle?: string; midiId?: string },
+    opts?: { readonlyTitle?: string; midiId?: string; title?: string },
   ): void {
-    const { readonlyTitle, midiId } = opts ?? {};
+    const { readonlyTitle, midiId, title } = opts ?? {};
     const chip = el("div", "con-chip" + (mute ? " mute" : "") + (on ? " on" : "") + (readonlyTitle ? " readonly" : ""));
     chip.textContent = label;
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-pressed", String(on));
+    // A hover tooltip spelling out a terse label (e.g. C.INT → Cue Interrupt).
+    if (title) chip.title = title;
     if (readonlyTitle) {
       chip.setAttribute("aria-disabled", "true");
       chip.title = readonlyTitle;
@@ -694,6 +746,34 @@ export class Console {
         angle: (v) => (v <= -50 ? -135 + ((v + 96) / 46) * 45 : v >= -8 ? 90 + ((v + 8) / 8) * 45 : -90 + ((v + 50) / 42) * 180),
       }, m.id, controlId(m.id, "level"));
     }
+    // STREAMING: a DELAY on/off chip and a TIME knob (the delay time, 1…1000 ms).
+    // Gives the otherwise-bare head controls so the strip reads as purposeful, and
+    // mirrors the OSCILLATOR's ON + LEVEL pairing. Finer time steps stay in the inspector.
+    if (m.isStream) {
+      const chips = el("div", "con-chips");
+      const delayOn = (): boolean => this.hooks.getPlan().nodeParams[m.id]?.delay?.on ?? false;
+      this.makeChip(m.id, chips, "DELAY", false, delayOn(), () => {
+        const np = this.nodeParamsOf(m.id);
+        const next = !delayOn();
+        np.delay = { ...np.delay, on: next };
+        return next;
+      });
+      chips.append(el("div", "con-chip spacer"));
+      head.append(chips);
+      const factory = this.factoryPlan().nodeParams[m.id]?.delay?.time ?? DELAY_TIME_MIN_MS;
+      this.addKnob(head, "TIME", {
+        get: () => this.hooks.getPlan().nodeParams[m.id]?.delay?.time ?? DELAY_TIME_MIN_MS,
+        set: (v) => {
+          const np = this.nodeParamsOf(m.id);
+          np.delay = { ...np.delay, time: v };
+        },
+        min: DELAY_TIME_MIN_MS,
+        max: DELAY_TIME_MAX_MS,
+        step: 1, // whole-ms on the knob; the inspector keeps the 0.01 ms grid
+        format: (v) => (v < 100 ? v.toFixed(1) : String(Math.round(v))),
+        reset: factory,
+      }, m.id);
+    }
     strip.append(head);
 
     const zone = el("div", "con-faderzone");
@@ -711,7 +791,7 @@ export class Console {
     const mtrCell = el("div", "rd mtr");
     const mtrEl = el("div", "rv");
     mtrEl.textContent = "—";
-    mtrCell.append(mtrEl);
+    mtrCell.append(readCap(t().console.readMeter), mtrEl);
     readout.append(mtrCell);
     strip.append(readout);
 
@@ -734,7 +814,6 @@ export class Console {
     }
     this.closeTapPop();
     this.host.classList.toggle("midi-learn", this.hooks.midi?.learnActive() ?? false);
-    this.outLabel.textContent = t().console.outputLabel;
     this.renderModes();
     this.refs.clear();
     const send = this.mode !== "main";
@@ -852,12 +931,12 @@ export class Console {
     // spacer chip so the last real chip never stretches to full width.
     type BoolKey = "gateOn" | "compOn" | "eqOn" | "phantom" | "phase" | "phaseL" | "phaseR" | "hpf" | "hiZ" | "cueInterrupt" | "mono";
     const planOf = (): NodeParams => this.hooks.getPlan().nodeParams[m.id] ?? {};
-    const boolChip = (parent: HTMLElement, label: string, key: BoolKey, def: boolean): void => {
+    const boolChip = (parent: HTMLElement, label: string, key: BoolKey, def: boolean, title?: string): void => {
       this.makeChip(m.id, parent, label, false, planOf()[key] ?? def, () => {
         const next = !(planOf()[key] ?? def);
         this.nodeParamsOf(m.id)[key] = next;
         return next;
-      }, { midiId: controlId(m.id, key) });
+      }, { midiId: controlId(m.id, key), title });
     };
 
     // channel + input (HA) group
@@ -910,7 +989,7 @@ export class Console {
     // Both are confirmed device params (MONITOR_CUE_INTERRUPT / MONITOR_MONO), so
     // they sync live like the channel toggles. CUE Interrupt ships ON, MONO OFF.
     if (m.hasPhones) {
-      boolChip(top, t().console.cue, "cueInterrupt", true);
+      boolChip(top, t().console.cue, "cueInterrupt", true, t().console.cueFull);
       boolChip(top, t().console.mono, "mono", false);
     }
 
@@ -1068,22 +1147,22 @@ export class Console {
     zone.append(zrow);
     strip.append(zone);
 
-    // readout: fader set-level dB (white) and, for metered strips, the live meter
-    // value of the selected tap (amber). No captions — the meter cell updates live
-    // while the fader cell is static, and the colour distinguishes them.
+    // readout: fader set-level dB (white, FADER) and, for metered strips, the live
+    // meter value of the selected tap (amber, METER). The captions and colour tell
+    // the static set level from the live meter apart.
     const readout = el("div", "con-readout");
     const faderCell = el("div", "rd");
     const dbEl = el("div", "rv");
     const f = fmtDb(level, m.range);
     setLevelText(dbEl, f.text);
     if (f.off) dbEl.classList.add("off");
-    faderCell.append(dbEl);
+    faderCell.append(readCap(t().console.readFader), dbEl);
     readout.append(faderCell);
     const mtrEl = el("div", "rv");
     if (hasMeter(m.id)) {
       const mtrCell = el("div", "rd mtr");
       mtrEl.textContent = "—";
-      mtrCell.append(mtrEl);
+      mtrCell.append(readCap(t().console.readMeter), mtrEl);
       readout.append(mtrCell);
     }
     strip.append(readout);
