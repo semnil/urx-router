@@ -292,6 +292,26 @@ test("BAL mode shares one balance across both channels in the CONSOLE", async ({
   await expect(bal("CH 2")).toHaveText("R1");
 });
 
+test("BAL mode edits a MIX send pan without closing the SEND PAN popover", async ({ page }) => {
+  // Regression: a BAL-linked pan edit re-rendered the console to sync the partner
+  // strip, which tore down the open SEND PAN popover on every nudge. The popover knob
+  // now skips that sync (the plan mirror via commit is enough; no partner send-pan
+  // control is on screen), so the popover survives.
+  await node(page, "ch1").click();
+  await sigSelect(page).selectOption("1"); // STEREO
+  await panBalSelect(page).selectOption("1"); // BAL
+
+  await page.click("#btn-view-console");
+  await cstrip(page, "CH 1").locator(".con-panbtn").click();
+  const pop = page.locator(".con-spop");
+  const val = pop.locator(".pcol", { hasText: "MIX 1" }).locator(".rv");
+  await expect(val).toHaveText("C");
+  await pop.locator(".pcol", { hasText: "MIX 1" }).locator(".con-knob").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(val).toHaveText("R1"); // the edit applied...
+  await expect(pop).toBeVisible(); // ...and the popover stayed open
+});
+
 test("PAN mode keeps the two channels' faders independent in the CONSOLE", async ({ page }) => {
   await node(page, "ch1").click();
   await sigSelect(page).selectOption("1"); // STEREO, default PAN mode

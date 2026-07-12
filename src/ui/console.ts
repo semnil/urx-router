@@ -1,7 +1,9 @@
 // CONSOLE view: a mixer-style overview of every level-settable node, laid out as
 // vertical channel strips. Each strip shows the set fader level (amber ladder),
 // the live signal meter (green→red, only while Live sync streams), mute, gain, and
-// EQ. A send-on-fader mode flips the input/FX strips to a chosen MIX/FX send level.
+// EQ. A per-strip SENDS rack (between the head and the fader zone) gives every
+// strip always-available columns for all of its MIX/FX sends — an enable chip, a
+// PRE button and a vertical mini-fader per send — plus a SEND PAN popover.
 // Edits go straight onto the plan and through the shared change funnel, so Live
 // sync mirrors them to the device exactly like the graph/inspector do.
 
@@ -17,19 +19,25 @@ import { isBalLinkedPair, mirrorBalPair, mixSendLocks, partnerChannel, sendTapWr
 import { INSERT_FX_NONE, type InsertFxOption } from "../core/control/params";
 import { DELAY_TIME_MAX_MS, DELAY_TIME_MIN_MS, PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../core/control/vd";
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
-// send-on-fader targets are shared with the MIDI control catalog.
+// MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
 import { el } from "./dom";
 import { t } from "../i18n";
 
-type Mode = "main" | SendTarget;
-
+// Full destination name (header readout + SEND PAN popover) and the short chip
+// label (rack column). SEND_TARGETS fixes the column order: FX 1, FX 2, MIX 1, MIX 2.
 const SEND_LABEL: Record<SendTarget, string> = {
   "bus.mix1": "MIX 1",
   "bus.mix2": "MIX 2",
   "bus.fx1": "FX 1",
   "bus.fx2": "FX 2",
+};
+const SEND_SHORT: Record<SendTarget, string> = {
+  "bus.mix1": "M1",
+  "bus.mix2": "M2",
+  "bus.fx1": "F1",
+  "bus.fx2": "F2",
 };
 
 // A fader scale. Each range owns how a dB maps to/from travel (toFrac/fromFrac),
@@ -162,6 +170,18 @@ interface StripRef {
   tap: MeterTap | null; // the resolved tap this strip's meter shows (fixed per render)
   // lmtr = last meter readout written (deci-dB; 1 = sentinel "none written").
   sig: { lmtr: number };
+  // SENDS rack: the per-send column faders — kept so a BAL-linked partner's rack
+  // fader can be mirrored in place, like the main fader. The header readout and the
+  // collapsed dots are reached via `root` when the global collapse toggles.
+  sendCols?: SendColRef[];
+}
+
+// One send column's fader in a strip's SENDS rack, keyed by send target so a
+// BAL-linked partner strip can mirror the matching column live (mirrorPartnerSend).
+interface SendColRef {
+  target: SendTarget;
+  fader: HTMLElement;
+  cap: HTMLElement;
 }
 
 interface KnobSpec {
@@ -203,7 +223,6 @@ export interface ConsoleHooks {
 const READOUT_EVERY = 5;
 
 export class Console {
-  private mode: Mode = "main";
   private paintN = 0; // frame counter gating the throttled numeric readout
   private refs = new Map<string, StripRef>();
   private lastInsFx = new Map<string, number>(); // last non-none INS FX per node
@@ -216,11 +235,18 @@ export class Console {
   private live = false;
   private visible = false;
   private meterTap = new Map<string, string>(); // node id → chosen tap key (override)
+  private idsCache = { key: "", ids: new Set<string>() }; // visibleIds memo (model + hidden)
   private tapModel = ""; // model id the meterTap map was loaded for
   private tapOpenFor: string | null = null; // node whose tap popover is open
   private readonly TAP_STORE = "urx-metertap";
-  private bar!: HTMLElement;
-  private modeBar!: HTMLElement;
+  private readonly SENDS_STORE = "urx-sends-open";
+  // SENDS rack global collapse (one state for every strip so the columns stay
+  // aligned), persisted across sessions; the SEND PAN popover and the strip it is
+  // open for. Collapse toggles a host class — no re-render — so the state is read
+  // once at build and kept here.
+  private sendsOpen = loadJson<boolean>(this.SENDS_STORE, true);
+  private sendPanPop!: HTMLElement;
+  private sendPanOpenFor: string | null = null;
   private tapPop!: HTMLElement;
   private stripsHost!: HTMLElement;
 
@@ -297,15 +323,11 @@ export class Console {
 
   private build(): void {
     this.host.classList.add("con-root");
-    this.bar = el("div", "con-bar");
-    // Two labeled segmented groups (Output = the main mix, Send to = the MIX/FX
-    // aux sends), rebuilt per render by renderModes from the visible buses.
-    this.modeBar = el("div", "con-modebar");
-    this.bar.append(this.modeBar);
+    this.host.classList.toggle("sends-collapsed", !this.sendsOpen);
 
     this.stripsHost = el("div", "con-strips");
     const wrap = el("div", "con-wrap");
-    wrap.append(this.bar, this.stripsHost);
+    wrap.append(this.stripsHost);
     this.host.append(wrap);
 
     // Floating meter-point popover (positioned fixed so it escapes the strip
@@ -313,12 +335,19 @@ export class Console {
     this.tapPop = el("div", "con-tappop");
     this.tapPop.hidden = true;
     this.host.append(this.tapPop);
-    // Close on any outside interaction (a tap badge manages its own toggle).
+    // SEND PAN popover: one reused element, anchored below the strip's PAN ▾ button.
+    this.sendPanPop = el("div", "con-spop below");
+    this.sendPanPop.hidden = true;
+    this.host.append(this.sendPanPop);
+    // Close either popover on any outside interaction (each trigger manages its own
+    // toggle, so a click on the trigger is excluded).
     document.addEventListener("pointerdown", (e) => {
-      if (!this.tapOpenFor) return;
       const tgt = e.target as HTMLElement;
-      if (this.tapPop.contains(tgt) || tgt.closest(".con-tap")) return;
-      this.closeTapPop();
+      if (this.tapOpenFor && !this.tapPop.contains(tgt) && !tgt.closest(".con-tap")) this.closeTapPop();
+      if (this.sendPanOpenFor && !this.sendPanPop.contains(tgt) && !tgt.closest(".con-panbtn")) this.closeSendPan();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && this.sendPanOpenFor) this.closeSendPan();
     });
   }
 
@@ -358,10 +387,17 @@ export class Console {
 
   // The node ids on screen: every model node minus the ones shelved out of the
   // graph (a shelved node drops from the console too). Shared by the strip groups,
-  // the send-mode tabs and the head-height probe so "visible" is defined once.
+  // the rack send slots and the head-height probe so "visible" is defined once.
+  // Memoized on model + hidden set, since a single render resolves it once per strip
+  // (and once per rack) — all with the same answer.
   private visibleIds(): Set<string> {
-    const hidden = new Set(this.hooks.getPlan().hidden);
-    return new Set(this.hooks.getModel().nodes.map((n) => n.id).filter((i) => !hidden.has(i)));
+    const hidden = this.hooks.getPlan().hidden;
+    const key = this.hooks.getModel().id + "|" + hidden.join(",");
+    if (this.idsCache.key !== key) {
+      const h = new Set(hidden);
+      this.idsCache = { key, ids: new Set(this.hooks.getModel().nodes.map((n) => n.id).filter((i) => !h.has(i))) };
+    }
+    return this.idsCache.ids;
   }
 
   private stripModels(): { groups: { label: string; ids: string[] }[]; master: string | null } {
@@ -415,40 +451,12 @@ export class Console {
     };
   }
 
-  // Rebuild the send-mode tabs from the visible buses (a FX/MIX node shelved out
-  // of the graph drops its tab too). If the active tab's bus is now hidden, fall
-  // back to MAIN so the strips never render against a gone bus.
-  private renderModes(): void {
+  // The MIX/FX send targets that exist in this model and are not shelved out of the
+  // graph — the fixed column set for every strip's SENDS rack (a shelved bus drops
+  // its column on every strip). Order follows SEND_TARGETS: FX 1, FX 2, MIX 1, MIX 2.
+  private sendSlots(): SendTarget[] {
     const ids = this.visibleIds();
-    const sends = SEND_TARGETS.filter((m) => ids.has(m));
-    if (this.mode !== "main" && !sends.includes(this.mode)) this.mode = "main";
-    this.modeBar.replaceChildren();
-    // Output = MAIN (the STEREO main mix / home fader view). Send to = the aux
-    // sends, mirroring the device's SEND TO screen (MIX/FX destinations).
-    this.modeBar.append(this.modeGroup(t().console.outputLabel, ["main"]));
-    if (sends.length) this.modeBar.append(this.modeGroup(t().console.sendToLabel, sends));
-  }
-
-  // One labeled segmented group in the mode bar (a label + its mode buttons).
-  private modeGroup(label: string, modes: Mode[]): HTMLElement {
-    const group = el("div", "con-modegroup");
-    const lbl = el("span", "con-modelabel");
-    lbl.textContent = label;
-    const pick = el("div", "con-modepick");
-    pick.setAttribute("role", "group");
-    for (const m of modes) {
-      const b = el("button", "") as HTMLButtonElement;
-      b.type = "button";
-      b.textContent = m === "main" ? "MAIN" : SEND_LABEL[m as SendTarget];
-      b.setAttribute("aria-pressed", String(m === this.mode));
-      b.addEventListener("click", () => {
-        this.mode = m;
-        this.render();
-      });
-      pick.append(b);
-    }
-    group.append(lbl, pick);
-    return group;
+    return SEND_TARGETS.filter((s) => ids.has(s));
   }
 
   // ---- meter point (per-strip tap selection) ----
@@ -549,15 +557,7 @@ export class Console {
     this.tapPop.hidden = false;
     this.tapOpenFor = id;
     // Position fixed near the badge, clamped to the viewport (top-right aligned).
-    const r = anchor.getBoundingClientRect();
-    const pw = this.tapPop.offsetWidth;
-    const phh = this.tapPop.offsetHeight;
-    let left = Math.min(r.right - pw, window.innerWidth - pw - 6);
-    left = Math.max(6, left);
-    let top = r.bottom + 2;
-    if (top + phh > window.innerHeight - 6) top = Math.max(6, r.top - phh - 2);
-    this.tapPop.style.left = left + "px";
-    this.tapPop.style.top = top + "px";
+    this.placePopover(this.tapPop, anchor, "right", 2);
   }
 
   private closeTapPop(): void {
@@ -565,6 +565,339 @@ export class Console {
     this.tapOpenFor = null;
     this.tapPop.hidden = true;
     this.tapPop.replaceChildren();
+  }
+
+  // ---- SENDS rack ----
+
+  // Build the per-strip SENDS rack (between the head and the fader zone): a header
+  // (SENDS label / value readout / global collapse arrow + collapsed active-send
+  // dots) and, for a strip that has sends, one fixed column per model send slot
+  // (enable chip → PRE button → vertical mini-fader) plus a full-width PAN ▾ button
+  // opening the SEND PAN popover. A strip with no sends renders the dimmed header
+  // only (its arrow still drives the global collapse); a slot the strip lacks leaves
+  // an empty column so columns stay aligned across strips.
+  private buildSendRack(m: StripModel): { el: HTMLElement; cols: SendColRef[] } {
+    const slots = this.sendSlots();
+    const owned = slots.map((s) => this.hasSend(m.id, s)); // hasSend excludes self-sends
+    const hasAny = owned.some(Boolean);
+    const rack = el("div", "con-sends" + (hasAny ? "" : " empty"));
+
+    const sh = el("div", "con-sh" + (hasAny ? "" : " dim"));
+    sh.setAttribute("role", "button");
+    sh.setAttribute("aria-expanded", String(this.sendsOpen));
+    sh.tabIndex = 0;
+    const lb = el("span", "lb");
+    lb.textContent = t().console.sends;
+    const rdout = el("span", "rdout");
+    const ar = el("span", "ar");
+    const dots = el("span", "dots");
+    sh.append(lb, rdout, dots, ar);
+    const toggle = (): void => this.toggleSends();
+    sh.addEventListener("click", toggle);
+    sh.addEventListener("keydown", (e) => {
+      if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+    // Hovering one header previews the global scope: highlight every header at once.
+    sh.addEventListener("pointerenter", () => this.host.classList.add("sends-hover"));
+    sh.addEventListener("pointerleave", () => this.host.classList.remove("sends-hover"));
+    rack.append(sh);
+    if (!hasAny) return { el: rack, cols: [] };
+
+    // The header label swaps to a value readout while a column is touched.
+    const swap = (text: string | null): void => {
+      if (text === null) sh.classList.remove("readout");
+      else {
+        rdout.textContent = text;
+        sh.classList.add("readout");
+      }
+    };
+
+    const cols: SendColRef[] = [];
+    const scols = el("div", "con-scols");
+    slots.forEach((s, i) => {
+      if (!owned[i]) {
+        scols.append(el("div", "con-scol empty"));
+        return;
+      }
+      const built = this.buildSendCol(m, s, swap);
+      cols.push(built.ref);
+      scols.append(built.el);
+    });
+    rack.append(scols);
+    this.fillDots(dots, m.id, slots);
+
+    // PAN ▾ button → SEND PAN popover (send-pan is a MIX-send subparameter with no
+    // room on the narrow column, so it lives in a popover below this button).
+    const panbtn = el("button", "con-panbtn") as HTMLButtonElement;
+    panbtn.type = "button";
+    panbtn.dataset.strip = m.id;
+    const cv = el("span", "cv");
+    cv.textContent = "▾";
+    panbtn.append(document.createTextNode("PAN"), cv);
+    panbtn.addEventListener("click", () => {
+      if (this.sendPanOpenFor === m.id) this.closeSendPan();
+      else this.openSendPan(m.id, panbtn);
+    });
+    rack.append(panbtn);
+    return { el: rack, cols };
+  }
+
+  // One send column: enable chip (params.on, amber = active) → PRE button (params.tap,
+  // amber = pre; read-only for a CH → FX tap while live) → vertical mini-fader
+  // (params.level, relative drag, snapped to the level_gain grid).
+  private buildSendCol(m: StripModel, target: SendTarget, swap: (text: string | null) => void): { el: HTMLElement; ref: SendColRef } {
+    const range = m.range;
+    // The column's connection object is stable for this build's lifetime — edits
+    // mutate its `params` in place, and a plan swap re-renders — so capture it once
+    // instead of re-scanning plan.connections for every read/write. `pre`/`level`/`on`
+    // are read off `c.params` live (reassigned in place).
+    const c = sendConnection(this.hooks.getPlan(), m.id, target);
+    const isMix = target === "bus.mix1" || target === "bus.mix2";
+    // FIXED BUS Type locks the MIX send level read-only (matching the graph inspector);
+    // the PRE tap and enable chip stay editable.
+    const busFixed = isMix && mixSendLocks(this.hooks.getPlan(), target).busFixed;
+
+    const col = el("div", "con-scol" + (c?.params?.on !== false ? "" : " off"));
+    // vertical mini-fader (built first so the PRE button can refresh its aria-valuetext)
+    const fader = el("div", "con-vfad" + (busFixed ? " readonly" : ""));
+    fader.setAttribute("role", "slider");
+    fader.setAttribute("aria-label", SEND_LABEL[target]);
+    if (busFixed) {
+      fader.setAttribute("aria-disabled", "true");
+      fader.title = t().inspector.busFixedLevel;
+    } else {
+      fader.tabIndex = 0;
+    }
+    const cap = el("div", "cap");
+    const zero = el("div", "zero");
+    zero.style.setProperty("--zero", (1 - dbToFrac(0, range)) * 100 + "%");
+    fader.append(el("div", "track"), zero, cap);
+    const ref: SendColRef = { target, fader, cap };
+    const readoutText = (): string => {
+      const pre = c?.params?.tap === "pre" ? " " + t().console.pre : "";
+      return SEND_LABEL[target] + pre + " " + fmtDb(c?.params?.level ?? LEVEL_OFF_DB, range).text;
+    };
+
+    // enable chip
+    const chip = this.buildChip(m.id, SEND_SHORT[target], c?.params?.on !== false, () => {
+      const next = c?.params?.on === false; // was off → turn on
+      if (c) c.params = { ...c.params, on: next };
+      return next;
+    }, { cls: "con-sl", midiId: controlId(m.id, "mute", target), after: (next) => col.classList.toggle("off", !next) });
+
+    // PRE button
+    const tapReadonly = this.live && !sendTapWritable(this.hooks.getModel(), m.id, target);
+    const preBtn = this.buildChip(m.id, t().console.pre, c?.params?.tap === "pre", () => {
+      const next = c?.params?.tap !== "pre";
+      if (c) c.params = { ...c.params, tap: next ? "pre" : "post" };
+      this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, next); // refresh PRE prefix
+      return next;
+    }, tapReadonly
+      ? { cls: "con-slp", readonlyTitle: t().inspector.prePostLcdOnly, title: t().console.preHint }
+      : { cls: "con-slp", midiId: isMix ? controlId(m.id, "tap", target) : undefined, title: t().console.preHint });
+
+    // A FIXED-bus send fader is display-only: paint its value but skip the wiring.
+    if (!busFixed) this.wireColFader(m.id, target, c, ref, range, swap, readoutText);
+    this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, c?.params?.tap === "pre");
+    col.append(chip, preBtn, fader);
+    return { el: col, ref };
+  }
+
+  // Wire a send column's vertical mini-fader: relative drag (no jump-to-click, since
+  // one pixel is a whole detent), a 3 px threshold before the first write, Shift =
+  // fine, and the keyboard grid steps of the main fader. The header readout mirrors
+  // the value while the column is touched, then reverts to the SENDS label.
+  private wireColFader(
+    node: string,
+    target: SendTarget,
+    c: PlanConnection | undefined,
+    ref: SendColRef,
+    range: LevelRange,
+    swap: (text: string | null) => void,
+    readoutText: () => string,
+  ): void {
+    const { fader } = ref;
+    const midiId = controlId(node, "level", target);
+    this.midiMark(fader, midiId);
+    const level = (): number => c?.params?.level ?? LEVEL_OFF_DB;
+    // The header readout is shared by the rack's columns, so revert it only when no
+    // column in this rack is still hovered or focused (else leaving column B would
+    // clear column A's readout while A keeps focus). The rack ancestor is fixed for
+    // the fader's lifetime, so resolve it once.
+    const rack = fader.closest(".con-sends");
+    const rackTouched = (): boolean => !!rack?.querySelector(".con-vfad:hover, .con-vfad:focus");
+    const set = (db: number): void => {
+      if (c) c.params = { ...c.params, level: db };
+      this.updateColLevel(ref, range, db, c?.params?.tap === "pre");
+      swap(readoutText());
+      this.commit(node);
+      this.mirrorPartnerSend(node, target);
+    };
+    let dragging = false;
+    fader.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      if (this.midiArm(midiId)) return;
+      fader.setPointerCapture(e.pointerId);
+      dragging = true;
+      const startY = e.clientY;
+      const startFrac = dbToFrac(level(), range);
+      const travel = fader.getBoundingClientRect().height - 12;
+      let moved = false;
+      const move = (ev: PointerEvent): void => {
+        const dy = startY - ev.clientY;
+        if (!moved && Math.abs(dy) < 3) return; // threshold guards mis-grabs / dblclick
+        moved = true;
+        const frac = startFrac + (dy * (ev.shiftKey ? 0.25 : 1)) / travel;
+        set(fracToDb(frac, range));
+      };
+      const up = (): void => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        dragging = false;
+        swap(rackTouched() ? readoutText() : null); // keep it if still hovered/focused
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    });
+    fader.addEventListener("keydown", (e) => {
+      if (this.midiLearnKey(e, midiId)) return;
+      const next = this.faderKeyStep(e, range, level());
+      if (next === null) return;
+      e.preventDefault();
+      set(next);
+    });
+    fader.addEventListener("pointerenter", () => swap(readoutText()));
+    fader.addEventListener("pointerleave", () => {
+      // Keep the readout up while dragging (pointer captured) or if any sibling column
+      // in this rack is still hovered / keyboard-focused.
+      if (!dragging && !rackTouched()) swap(null);
+    });
+    fader.addEventListener("focus", () => swap(readoutText()));
+    fader.addEventListener("blur", () => {
+      if (!rackTouched()) swap(null);
+    });
+    fader.addEventListener("dblclick", () => {
+      if (this.hooks.midi?.learnActive()) return; // pointerdown already armed
+      set(this.sendLevelOf(this.factoryPlan(), node, target));
+    });
+  }
+
+  // The next fader level for a keydown (Arrow = 1 detent, PageUp/Down = 6, Home = max,
+  // End = −∞), or null for a non-stepping key. Shared by the main fader and the rack
+  // columns; a step down off the floor lands on −∞ via the range's own step().
+  private faderKeyStep(e: KeyboardEvent, range: LevelRange, cur: number): number | null {
+    const base = cur < range.min ? range.min : cur;
+    if (e.key === "ArrowUp") return range.step(base, 1);
+    if (e.key === "ArrowDown") return range.step(base, -1);
+    if (e.key === "PageUp") return range.step(base, 6);
+    if (e.key === "PageDown") return range.step(base, -6);
+    if (e.key === "Home") return range.max;
+    if (e.key === "End") return range.off;
+    return null;
+  }
+
+  // Paint a send column's fader cap position + accessible value from a dB level + tap.
+  private updateColLevel(ref: SendColRef, range: LevelRange, db: number, pre: boolean): void {
+    ref.cap.style.setProperty("--pos", (1 - dbToFrac(db, range)) * 100 + "%");
+    const f = fmtDb(db, range);
+    ref.fader.setAttribute("aria-valuenow", String(Math.round(db)));
+    ref.fader.setAttribute("aria-valuetext", f.off ? "off (-∞)" : (pre ? "PRE, " : "") + f.text + " dB");
+  }
+
+  // Fill a collapsed-header dots row: one amber dot per active (ON) send.
+  private fillDots(dots: HTMLElement, id: string, slots: SendTarget[]): void {
+    dots.replaceChildren();
+    for (const s of slots) {
+      if (s === id) continue;
+      const c = sendConnection(this.hooks.getPlan(), id, s);
+      if (c && c.params?.on !== false) dots.append(el("i", ""));
+    }
+  }
+
+  // Toggle the global SENDS collapse (one state for every strip so the columns stay
+  // aligned): flip the host class, persist, and in one pass per strip reset the value
+  // readout, sync aria-expanded, and refresh the collapsed dots (all reached via the
+  // strip's `.con-sh` header, so no separate DOM sweep is needed).
+  private toggleSends(): void {
+    this.sendsOpen = !this.sendsOpen;
+    saveJson(this.SENDS_STORE, this.sendsOpen);
+    this.host.classList.toggle("sends-collapsed", !this.sendsOpen);
+    this.closeSendPan();
+    const slots = this.sendSlots();
+    for (const ref of this.refs.values()) {
+      const sh = ref.root.querySelector<HTMLElement>(".con-sh");
+      if (!sh) continue;
+      sh.classList.remove("readout");
+      sh.setAttribute("aria-expanded", String(this.sendsOpen));
+      const dots = sh.querySelector<HTMLElement>(".dots");
+      if (dots) this.fillDots(dots, ref.m.id, slots);
+    }
+  }
+
+  // Open the SEND PAN popover below a strip's PAN ▾ button: the strip's MIX sends'
+  // pan as rotary knobs laid out in horizontal columns (destination label above,
+  // value below), echoing the rack columns. FX sends are mono and carry no pan.
+  private openSendPan(stripId: string, anchor: HTMLElement): void {
+    this.closeTapPop();
+    const plan = this.hooks.getPlan();
+    this.sendPanPop.replaceChildren();
+    const ph = el("div", "ph");
+    ph.textContent = t().console.sendPan;
+    const grid = el("div", "pcols");
+    for (const target of this.sendSlots()) {
+      if ((target !== "bus.mix1" && target !== "bus.mix2") || !this.hasSend(stripId, target)) continue;
+      const pcol = el("div", "pcol");
+      const capEl = el("span", "cap");
+      capEl.textContent = SEND_LABEL[target];
+      const conn = (): PlanConnection | undefined => sendConnection(this.hooks.getPlan(), stripId, target);
+      const factory = sendConnection(this.factoryPlan(), stripId, target)?.params?.pan ?? 0;
+      const { panLinked } = mixSendLocks(plan, target);
+      const spec = this.panKnobSpec(
+        () => conn()?.params?.pan ?? 0,
+        (v) => {
+          const c = conn();
+          if (c) c.params = { ...c.params, pan: v };
+        },
+        factory,
+        panLinked ? t().inspector.panLinked : undefined,
+      );
+      // partnerSync off: a BAL-linked mirror is handled by commit; a re-render would
+      // tear down this popover, and no partner send-pan control is on screen.
+      const { knob, val } = this.buildKnob(spec, SEND_LABEL[target], stripId, "rv", controlId(stripId, "pan", target), false);
+      pcol.append(capEl, knob, val);
+      grid.append(pcol);
+    }
+    this.sendPanPop.append(ph, grid);
+    this.sendPanPop.hidden = false;
+    this.sendPanOpenFor = stripId;
+    // Anchor below the PAN ▾ button, centred on it (upward caret), clamped to the viewport.
+    this.placePopover(this.sendPanPop, anchor, "center", 8);
+  }
+
+  private closeSendPan(): void {
+    if (!this.sendPanOpenFor) return;
+    this.sendPanOpenFor = null;
+    this.sendPanPop.hidden = true;
+    this.sendPanPop.replaceChildren();
+  }
+
+  // Position a fixed popover by its anchor, clamped to the viewport: opens `gap` px
+  // below the anchor (flipping above on bottom overflow); `align` picks the horizontal
+  // edge — "right" (the popover's right under the anchor's right, for the meter badge)
+  // or "center" (centred on the anchor, for the SEND PAN button).
+  private placePopover(pop: HTMLElement, anchor: HTMLElement, align: "right" | "center", gap: number): void {
+    const r = anchor.getBoundingClientRect();
+    const pw = pop.offsetWidth;
+    const phh = pop.offsetHeight;
+    let left = align === "center" ? r.left + r.width / 2 - pw / 2 : r.right - pw;
+    left = Math.max(6, Math.min(left, window.innerWidth - pw - 6));
+    let top = r.bottom + gap;
+    if (top + phh > window.innerHeight - 6) top = Math.max(6, r.top - phh - gap);
+    pop.style.left = left + "px";
+    pop.style.top = top + "px";
   }
 
   // ---- MIDI learn ----
@@ -628,9 +961,8 @@ export class Console {
 
   // A toggle chip ("MUTE"/"EQ"/"ON"/…): role=button, aria-pressed, keyboard-activated;
   // `toggle` flips the underlying plan flag and returns the new state, then the chip
-  // commits (and re-renders when commit asks). opts.readonlyTitle renders it inert
-  // with a tooltip; opts.midiId makes it armable for MIDI learn. Shared across both
-  // strip builders (channel chips + the OSC ON button).
+  // commits (and re-renders when commit asks). Appends to `parent`; see buildChip for
+  // the returning variant (the SENDS rack builds columns before appending).
   private makeChip(
     id: string,
     parent: HTMLElement,
@@ -640,8 +972,22 @@ export class Console {
     toggle: () => boolean,
     opts?: { readonlyTitle?: string; midiId?: string; title?: string },
   ): void {
-    const { readonlyTitle, midiId, title } = opts ?? {};
-    const chip = el("div", "con-chip" + (mute ? " mute" : "") + (on ? " on" : "") + (readonlyTitle ? " readonly" : ""));
+    parent.append(this.buildChip(id, label, on, toggle, { ...opts, mute }));
+  }
+
+  // The chip primitive, returning the element. `cls` picks the base class (con-chip
+  // for the head chips, con-sl / con-slp for the rack's enable chip / PRE button);
+  // opts.mute paints the MUTE colour, opts.after runs after the toggle (before commit),
+  // opts.readonlyTitle renders it inert with a tooltip, opts.midiId arms MIDI learn.
+  private buildChip(
+    id: string,
+    label: string,
+    on: boolean,
+    toggle: () => boolean,
+    opts?: { cls?: string; mute?: boolean; readonlyTitle?: string; midiId?: string; title?: string; after?: (next: boolean) => void },
+  ): HTMLElement {
+    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after } = opts ?? {};
+    const chip = el("div", cls + (mute ? " mute" : "") + (on ? " on" : "") + (readonlyTitle ? " readonly" : ""));
     chip.textContent = label;
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-pressed", String(on));
@@ -650,8 +996,7 @@ export class Console {
     if (readonlyTitle) {
       chip.setAttribute("aria-disabled", "true");
       chip.title = readonlyTitle;
-      parent.append(chip);
-      return;
+      return chip;
     }
     chip.tabIndex = 0;
     this.midiMark(chip, midiId);
@@ -660,6 +1005,7 @@ export class Console {
       const next = toggle();
       chip.classList.toggle("on", next);
       chip.setAttribute("aria-pressed", String(next));
+      after?.(next);
       if (this.commit(id)) this.render();
     };
     chip.addEventListener("click", run);
@@ -669,7 +1015,7 @@ export class Console {
         run();
       }
     });
-    parent.append(chip);
+    return chip;
   }
 
   // Build one lane: its bar column (green→red LED bar + shade + peak marker) and its
@@ -775,6 +1121,10 @@ export class Console {
       }, m.id);
     }
     strip.append(head);
+    // A meter-only strip has no sends, so its rack is the dimmed SENDS header only —
+    // but it reserves the same rack height as every other strip so the fader/meter
+    // tops stay aligned (and the global collapse is reachable from its header too).
+    strip.append(this.buildSendRack(m).el);
 
     const zone = el("div", "con-faderzone");
     zone.append(el("div", "con-taphead")); // empty: keeps fader/meter tops aligned
@@ -813,57 +1163,41 @@ export class Console {
       this.tapModel = model.id;
     }
     this.closeTapPop();
+    this.closeSendPan();
     this.host.classList.toggle("midi-learn", this.hooks.midi?.learnActive() ?? false);
-    this.renderModes();
     this.refs.clear();
-    const send = this.mode !== "main";
     const { groups, master } = this.stripModels();
     this.stripsHost.replaceChildren();
     for (const g of groups) {
-      const strips: HTMLElement[] = [];
-      for (const id of g.ids) {
-        const m = this.toStripModel(id);
-        // The console adjusts levels only; routing stays in the graph. A send mode
-        // shows only the sources that send to the selected bus (so non-send nodes —
-        // monitors, master, the buses themselves — drop out), and never offers a
-        // wire-less strip to connect (setSend never drops a wire either).
-        if (send && !(this.usesSend(m) && this.hasSend(id, this.mode as SendTarget))) continue;
-        strips.push(this.buildStrip(m, false));
-      }
-      if (strips.length === 0) continue;
       const group = el("div", "con-group");
       const lbl = el("div", "con-grouplabel");
       lbl.textContent = g.label;
-      group.append(lbl, ...strips);
+      group.append(lbl, ...g.ids.map((id) => this.buildStrip(this.toStripModel(id), false)));
       this.stripsHost.append(group);
     }
-    // The STEREO (MAIN) master is not a send source, so it only appears in MAIN.
-    if (master && !send) {
+    if (master) {
       const group = el("div", "con-group master");
       const lbl = el("div", "con-grouplabel");
       lbl.textContent = t().console.master;
       group.append(lbl, this.buildStrip(this.toStripModel(master), true));
       this.stripsHost.append(group);
     }
-    // Lock every head (name / chips / knobs) to the MAIN tab's tallest strip, so the
-    // head area is uniform across all channels and all tabs; the fader/meter zone
-    // (flex: 1) takes the rest of the window height.
+    // Lock every head (name / chips / knobs) to the tallest strip, so the head area
+    // is uniform across all channels; the fader/meter zone (flex: 1) takes the rest
+    // of the window height (the SENDS rack between them has its own fixed height).
     this.host.style.setProperty("--head-h", this.mainHeadHeight() + "px");
     this.startMeters(); // rescope the meter subscription to the rebuilt strips
   }
 
-  // The MAIN tab's tallest head (a mono channel carries the most chips + two knobs)
-  // sets the fixed head height for every tab. Measure it by laying out the MAIN
-  // strips off-screen with auto-height heads, then cache by model + hidden set
-  // (the only inputs that change which strips exist). A send tab thus reserves the
-  // same head area even though it shows fewer controls.
+  // The tallest head (a mono channel carries the most chips + two knobs) sets the
+  // fixed head height for every strip. Measure it by laying out the strips off-screen
+  // with auto-height heads, then cache by model + hidden set (the only inputs that
+  // change which strips exist).
   private mainHeadHeight(): number {
     const key = this.hooks.getModel().id + "|" + [...this.hooks.getPlan().hidden].sort().join(",");
     if (this.headH.key === key) return this.headH.px;
     const savedRefs = this.refs;
-    const savedMode = this.mode;
     this.refs = new Map(); // buildStrip registers refs/listeners; keep them off the live map
-    this.mode = "main";
     const probe = el("div", "con-strips");
     probe.style.cssText = "position:absolute;visibility:hidden;height:auto;";
     const { groups, master } = this.stripModels();
@@ -879,7 +1213,6 @@ export class Console {
     for (const h of heads) max = Math.max(max, h.offsetHeight);
     probe.remove();
     this.refs = savedRefs;
-    this.mode = savedMode;
     this.headH = { key, px: max };
     return max;
   }
@@ -888,30 +1221,23 @@ export class Console {
     if (m.meterOnly) return this.buildMeterOnlyStrip(m);
     const plan = this.hooks.getPlan();
     const model = this.hooks.getModel();
-    const usesSend = this.usesSend(m);
-    const level = usesSend ? this.getSend(m.id, this.mode as SendTarget) : this.getMain(m);
+    const level = this.getMain(m);
     const np = plan.nodeParams[m.id] ?? {};
 
-    // In a MIX send tab, mirror the destination bus's hidden-mode locks: FIXED BUS
-    // Type locks the send fader and Pan Link locks the send pan knob read-only (the
-    // graph inspector drops those controls instead — same rule, different view).
-    const { busFixed, panLinked } = usesSend ? mixSendLocks(plan, this.mode) : { busFixed: false, panLinked: false };
-
-    // For an input/FX channel the MUTE chip always controls a → bus send's ON/OFF,
-    // never the channel master: in MAIN it is the → STEREO assign ON (firmware V1.3),
-    // in a send tab the → MIX/FX send. When the channel master (CH_ON) is muted the
-    // whole channel — and thus every send — is silenced regardless, so surface that
-    // override at the strip level (dim + a CH MUTE badge) while the per-send chip
-    // stays operable. A MIX strip reuses the same indicator: its MUTE chip is the
-    // MIX → STEREO "TO ST" send, so the MIX master ON (675, edited in the graph
-    // inspector only) shows read-only as the dim + CH MUTE badge here too.
+    // The MUTE chip controls the fixed main-path connection's ON/OFF: for an input /
+    // FX channel the → STEREO assign ON (firmware V1.3), for a MIX strip the MIX →
+    // STEREO "TO ST" send — never the wire. When the channel / MIX master (CH_ON /
+    // MIX 675, edited in the graph inspector) is muted the whole strip is silenced
+    // regardless, so surface that as a dim + a CH MUTE badge while the chip stays
+    // operable. The per-send ON/OFF now lives in the SENDS rack below.
     const usesConnMute = m.isChannel || this.isFxChannel(m.id) || this.isMixBus(m.id);
     const masterMuted = usesConnMute && np.on === false;
 
     const strip = el("div", "con-strip" + (isMaster ? " master" : "") + (masterMuted ? " master-muted" : ""));
     strip.style.setProperty("--rail", m.rail);
 
-    // head: scribble + chips + gain
+    // head: scribble + chips + gain (always the MAIN control set — sends live in the
+    // SENDS rack below, so the head no longer swaps per send target).
     const head = el("div", "con-head");
     const scrib = this.scribble(m);
     if (masterMuted) {
@@ -921,9 +1247,7 @@ export class Console {
     }
     head.append(scrib);
 
-    // Channel-domain controls (HA toggles, gain knob) are hidden in a send tab, so
-    // their capability lookup is skipped there too.
-    const cc = usesSend ? undefined : channelControl(model, m.id);
+    const cc = channelControl(model, m.id);
 
     // Toggle chips in two 2-column groups: channel + input (HA) toggles, then the
     // processing chain GATE → COMP → EQ → INS FX. Each chip flips a plan flag (the
@@ -943,22 +1267,17 @@ export class Console {
     const top = el("div", "con-chips");
     if (m.hasMute) {
       if (usesConnMute) {
-        // The MUTE drives a connection's ON/OFF (never its wire presence): a CH/FX →
-        // MIX/FX send or → STEREO assign (ships ON), or — on a MIX strip — the MIX →
-        // STEREO "TO ST" (ships off). The fixed wire is never added/removed, only
-        // params.on flips. sendStripConn picks the → STEREO conn in MAIN, the → MIX/FX
-        // conn in a send tab.
+        // The MUTE drives the fixed main-path connection's ON/OFF (never its wire): a
+        // CH/FX → STEREO assign (ships ON), or a MIX → STEREO "TO ST" (ships off).
         const mix = this.isMixBus(m.id);
-        const conn = mix
-          ? () => sendConnection(this.hooks.getPlan(), m.id, MAIN_BUS)
-          : this.sendStripConn(m.id, usesSend);
-        const sendOn = (): boolean => conn()?.params?.on ?? !mix; // sends default ON, TO ST off
+        const conn = (): PlanConnection | undefined => sendConnection(this.hooks.getPlan(), m.id, MAIN_BUS);
+        const sendOn = (): boolean => conn()?.params?.on ?? !mix; // assign ships ON, TO ST off
         this.makeChip(m.id, top, t().console.mute, true, !sendOn(), () => {
           const c = conn();
           const nextOn = !sendOn();
           if (c) c.params = { ...c.params, on: nextOn };
           return !nextOn; // chip "on" (highlighted) = muted
-        }, { midiId: controlId(m.id, "mute", usesSend ? this.mode : undefined) });
+        }, { midiId: controlId(m.id, "mute") });
       } else {
         // Master ON/OFF on the node's own `on` flag: the STEREO master
         // (STEREO_MASTER_ON) writes to the device; a MONITOR bus is plan-only
@@ -970,21 +1289,18 @@ export class Console {
         }, { midiId: controlId(m.id, "mute") });
       }
     }
-    // HA input toggles (+48 / polarity / HPF / Hi-Z) are channel-domain, not send
-    // controls, so a send tab (which edits the → MIX/FX send) hides them.
-    if (!usesSend) {
-      if (cc?.hasMicStrip) boolChip(top, "+48", "phantom", false);
-      // Polarity: one φ on a mono channel, independent φL / φR on a stereo one. Keep
-      // the stereo pair on a single row by padding to an even count before them.
-      if ((cc?.phases.length ?? 0) === 2 && top.childElementCount % 2 === 1) {
-        top.append(el("div", "con-chip spacer"));
-      }
-      for (const ph of cc?.phases ?? []) {
-        boolChip(top, ph.key === "phase" ? "φ" : ph.key === "phaseL" ? "φL" : "φR", ph.key, false);
-      }
-      if (cc?.hasHpf) boolChip(top, "HPF", "hpf", false);
-      if (cc?.hasHiZ) boolChip(top, "Hi-Z", "hiZ", false);
+    // HA input toggles (+48 / polarity / HPF / Hi-Z).
+    if (cc?.hasMicStrip) boolChip(top, "+48", "phantom", false);
+    // Polarity: one φ on a mono channel, independent φL / φR on a stereo one. Keep
+    // the stereo pair on a single row by padding to an even count before them.
+    if ((cc?.phases.length ?? 0) === 2 && top.childElementCount % 2 === 1) {
+      top.append(el("div", "con-chip spacer"));
     }
+    for (const ph of cc?.phases ?? []) {
+      boolChip(top, ph.key === "phase" ? "φ" : ph.key === "phaseL" ? "φL" : "φR", ph.key, false);
+    }
+    if (cc?.hasHpf) boolChip(top, "HPF", "hpf", false);
+    if (cc?.hasHiZ) boolChip(top, "Hi-Z", "hiZ", false);
     // MONITOR strips carry the device [CUE] (cue interrupt) and [MONO] buttons.
     // Both are confirmed device params (MONITOR_CUE_INTERRUPT / MONITOR_MONO), so
     // they sync live like the channel toggles. CUE Interrupt ships ON, MONO OFF.
@@ -993,39 +1309,36 @@ export class Console {
       boolChip(top, t().console.mono, "mono", false);
     }
 
-    // processing group (GATE / COMP / EQ / INS FX / DUCKER) — channel-domain
-    // processing, not send controls, so a send tab hides the whole group.
+    // processing group (GATE / COMP / EQ / INS FX / DUCKER)
     const proc = el("div", "con-chips");
-    if (!usesSend) {
-      if (m.isMono) boolChip(proc, "GATE", "gateOn", false);
-      if (m.isMono) boolChip(proc, "COMP", "compOn", false);
-      if (m.hasEq) {
-        // Stereo-channel EQ is inert at 176.4 / 192 kHz: show the chip forced off and
-        // read-only (matches the inspector's locked EQ toggle), else a live toggle.
-        if (channelEqUnavailable(m.id, this.hooks.getPlan().sampleRate))
-          this.makeChip(m.id, proc, t().console.eq, false, false, () => false, { readonlyTitle: t().inspector.eqRateLocked });
-        else boolChip(proc, t().console.eq, "eqOn", true);
-      }
-      const ifx = insertFxControl(model, m.id);
-      if (ifx) {
-        const insOn = (): boolean => {
-          const v = planOf().insertFx;
-          return v != null && v !== INSERT_FX_NONE;
-        };
-        this.makeChip(m.id, proc, "INS FX", false, insOn(), () => this.toggleInsFx(m.id, ifx.options));
-      }
-      // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
-      // A shelved ducker drops its chip even while the parent strip stays.
-      const hidden = this.hooks.getPlan().hidden;
-      const duckerId = model.nodes.find((n) => n.kind === "ducker" && n.attachTo === m.id && !hidden.includes(n.id))?.id;
-      if (duckerId) {
-        const duckOn = (): boolean => this.hooks.getPlan().nodeParams[duckerId]?.duckerOn === true;
-        this.makeChip(duckerId, proc, "DUCKER", false, duckOn(), () => {
-          const next = !duckOn();
-          this.nodeParamsOf(duckerId).duckerOn = next;
-          return next;
-        }, { midiId: controlId(duckerId, "duckerOn") });
-      }
+    if (m.isMono) boolChip(proc, "GATE", "gateOn", false);
+    if (m.isMono) boolChip(proc, "COMP", "compOn", false);
+    if (m.hasEq) {
+      // Stereo-channel EQ is inert at 176.4 / 192 kHz: show the chip forced off and
+      // read-only (matches the inspector's locked EQ toggle), else a live toggle.
+      if (channelEqUnavailable(m.id, this.hooks.getPlan().sampleRate))
+        this.makeChip(m.id, proc, t().console.eq, false, false, () => false, { readonlyTitle: t().inspector.eqRateLocked });
+      else boolChip(proc, t().console.eq, "eqOn", true);
+    }
+    const ifx = insertFxControl(model, m.id);
+    if (ifx) {
+      const insOn = (): boolean => {
+        const v = planOf().insertFx;
+        return v != null && v !== INSERT_FX_NONE;
+      };
+      this.makeChip(m.id, proc, "INS FX", false, insOn(), () => this.toggleInsFx(m.id, ifx.options));
+    }
+    // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
+    // A shelved ducker drops its chip even while the parent strip stays.
+    const hidden = this.hooks.getPlan().hidden;
+    const duckerId = model.nodes.find((n) => n.kind === "ducker" && n.attachTo === m.id && !hidden.includes(n.id))?.id;
+    if (duckerId) {
+      const duckOn = (): boolean => this.hooks.getPlan().nodeParams[duckerId]?.duckerOn === true;
+      this.makeChip(duckerId, proc, "DUCKER", false, duckOn(), () => {
+        const next = !duckOn();
+        this.nodeParamsOf(duckerId).duckerOn = next;
+        return next;
+      }, { midiId: controlId(duckerId, "duckerOn") });
     }
 
     for (const group of [top, proc]) {
@@ -1033,32 +1346,8 @@ export class Console {
       if (group.childElementCount) head.append(group);
     }
 
-    // Send PRE/POST tap: a chip mirroring the send connection's `tap` (the device
-    // SEND TO screen's PRE button). Every CH/FX → MIX/FX send carries a settable
-    // tap, so it shows in any send mode (the STEREO main path has none — see
-    // device-model.md §3); on = PRE, off = POST.
-    if (usesSend) {
-      const conn = this.sendStripConn(m.id, usesSend);
-      const preGroup = el("div", "con-chips");
-      const isPre = (): boolean => conn()?.params?.tap === "pre";
-      // The tap stays freely editable in the planner, but a CH → FX send tap
-      // (FX 1 / 2 tabs) cannot be written to the device, so it is shown read-only
-      // while live-connected — matching the graph CH node's PRE/POST. MIX taps
-      // stay editable. See sendTapWritable / inspector.
-      const tapReadonly = this.live && !sendTapWritable(model, m.id, this.mode as SendTarget);
-      this.makeChip(m.id, preGroup, t().console.pre, false, isPre(), () => {
-        const next = !isPre();
-        const c = conn();
-        if (c) c.params = { ...c.params, tap: next ? "pre" : "post" };
-        return next;
-      }, tapReadonly ? { readonlyTitle: t().inspector.prePostLcdOnly } : undefined);
-      preGroup.append(el("div", "con-chip spacer"));
-      head.append(preGroup);
-    }
-
-    // A.GAIN / D.GAIN is the channel head-amp / digital gain, not a send control,
-    // so it is hidden in a send tab.
-    if (m.isChannel && !usesSend) {
+    // A.GAIN / D.GAIN is the channel head-amp / digital gain.
+    if (m.isChannel) {
       const min = cc?.gain?.minDb ?? (m.isMono ? -8 : -24);
       const max = cc?.gain?.maxDb ?? (m.isMono ? 70 : 24);
       const factory = this.factoryPlan().nodeParams[m.id]?.gain ?? (m.isMono ? -8 : 0);
@@ -1075,22 +1364,17 @@ export class Console {
         angle: (v) => -90 + ((v - hl) / (hr - hl)) * 180,
       }, m.id, controlId(m.id, "gain"));
     }
-    // PAN (mono) / BALANCE (stereo) = the source's send pan, L63 – C – R63. Both
-    // channels and FX channels follow the tab: MAIN edits the → STEREO main path, a
-    // send mode edits that send (same connection as the fader). The FX-bus sends are
-    // mono and carry no pan on the device, so the knob is dropped in an FX mode.
+    // PAN (mono) / BALANCE (stereo) = the source's → STEREO main-path pan,
+    // L63 – C – R63. Per-send pan lives in the SENDS rack's SEND PAN popover.
     if (m.isChannel || this.isFxChannel(m.id)) {
-      const target = usesSend ? (this.mode as SendTarget) : MAIN_BUS;
-      if (target !== "bus.fx1" && target !== "bus.fx2") {
-        this.addSendPanKnob(head, m.id, target, m.isBalance ? "BAL" : "PAN", panLinked ? t().inspector.panLinked : undefined);
-      }
+      this.addSendPanKnob(head, m.id, MAIN_BUS, m.isBalance ? "BAL" : "PAN");
     }
     // Master balance (STEREO 583 / MIX 676) = the bus output's L/R balance, edited
     // on the node's own `pan`. `busBalance` is the single source of truth for which
     // buses have one (shared with the inspector / translate / readback). The device
     // keeps the BALANCE label even under Pan Link (confirmed on URX44V), so it is
-    // always "BAL". Only shown in MAIN (these strips are not send sources).
-    if (!usesSend && busBalance(m.id)) {
+    // always "BAL".
+    if (busBalance(m.id)) {
       this.addNodePanKnob(head, m.id, "BAL");
     }
     if (m.hasPhones) {
@@ -1111,6 +1395,12 @@ export class Console {
     }
     strip.append(head);
 
+    // SENDS rack: per-strip columns for every MIX/FX send (enable chip + PRE button +
+    // vertical mini-fader), a header (label / value readout / global collapse), and a
+    // SEND PAN popover trigger. Built between the head and the fader zone, at a fixed
+    // height so the fader tops stay aligned across every strip (blank on sendless ones).
+    const rack = this.buildSendRack(m);
+
     // fader zone: a meter-point header row, then the fader (thin slot + cap;
     // position = setting) beside the dB scale and the live level meter.
     const zone = el("div", "con-faderzone");
@@ -1120,15 +1410,10 @@ export class Console {
     zone.append(tapHead);
     const zrow = el("div", "con-zrow");
 
-    const fader = el("div", "con-fader" + (busFixed ? " readonly" : ""));
+    const fader = el("div", "con-fader");
     fader.setAttribute("role", "slider");
     fader.setAttribute("aria-label", m.label);
-    if (busFixed) {
-      fader.setAttribute("aria-disabled", "true");
-      fader.title = t().inspector.busFixedLevel;
-    } else {
-      fader.tabIndex = 0;
-    }
+    fader.tabIndex = 0;
     const track = el("div", "track");
     // The 0 dB line rides the fader (not the inset track) so it shares the cap's
     // coordinate space and passes through the cap centre when the fader sits at 0 dB.
@@ -1145,7 +1430,7 @@ export class Console {
 
     zrow.append(fader, this.buildScale(m.range), meter);
     zone.append(zrow);
-    strip.append(zone);
+    strip.append(rack.el, zone);
 
     // readout: fader set-level dB (white, FADER) and, for metered strips, the live
     // meter value of the selected tap (amber, METER). The captions and colour tell
@@ -1177,22 +1462,21 @@ export class Console {
       readMtr: mtrEl,
       tap,
       sig: { lmtr: 1 },
+      sendCols: rack.cols,
     };
     this.refs.set(m.id, refObj);
-    // A FIXED-bus send fader is display-only: keep it out of the input wiring.
-    if (!busFixed) this.wireFader(refObj, usesSend);
+    this.wireFader(refObj);
     return strip;
   }
 
-  private wireFader(r: StripRef, usesSend: boolean): void {
+  private wireFader(r: StripRef): void {
     const fader = r.fader;
     if (!fader) return; // meter-only strips have no fader to wire
     const range = r.m.range;
-    const midiId = controlId(r.m.id, "level", usesSend ? this.mode : undefined);
+    const midiId = controlId(r.m.id, "level");
     this.midiMark(fader, midiId);
     const setLevel = (db: number): void => {
-      if (usesSend) this.setSend(r.m.id, this.mode as SendTarget, db);
-      else this.setMain(r.m, db);
+      this.setMain(r.m, db);
       this.updateStripLevel(r, db);
       this.commit(r.m.id);
       this.mirrorPartnerLevel(r.m.id); // a BAL-linked partner tracks the fader live
@@ -1216,17 +1500,7 @@ export class Console {
     });
     fader.addEventListener("keydown", (e) => {
       if (this.midiLearnKey(e, midiId)) return;
-      const cur = usesSend ? this.getSend(r.m.id, this.mode as SendTarget) : this.getMain(r.m);
-      // Each range defines its own detent step (OSC: whole dB; level_gain: one grid
-      // detent, a step down off the floor landing on -∞).
-      const base = cur < range.min ? range.min : cur;
-      let next: number | null = null;
-      if (e.key === "ArrowUp") next = range.step(base, 1);
-      else if (e.key === "ArrowDown") next = range.step(base, -1);
-      else if (e.key === "PageUp") next = range.step(base, 6);
-      else if (e.key === "PageDown") next = range.step(base, -6);
-      else if (e.key === "Home") next = range.max;
-      else if (e.key === "End") next = range.off;
+      const next = this.faderKeyStep(e, range, this.getMain(r.m));
       if (next === null) return;
       e.preventDefault();
       setLevel(next);
@@ -1234,8 +1508,7 @@ export class Console {
     // Double-click resets the fader to its factory value.
     fader.addEventListener("dblclick", () => {
       if (this.hooks.midi?.learnActive()) return; // pointerdown already armed
-      const fp = this.factoryPlan();
-      setLevel(usesSend ? this.sendLevelOf(fp, r.m.id, this.mode as SendTarget) : this.mainLevelOf(fp, r.m));
+      setLevel(this.mainLevelOf(this.factoryPlan(), r.m));
     });
   }
 
@@ -1402,29 +1675,14 @@ export class Console {
   private isFxChannel(id: string): boolean {
     return id === "bus.fx1" || id === "bus.fx2";
   }
-  private isMixMode(): boolean {
-    return this.mode === "bus.mix1" || this.mode === "bus.mix2";
-  }
   private isMixBus(id: string): boolean {
     return id === "bus.mix1" || id === "bus.mix2";
   }
 
-  // Channels and FX channels follow send-on-fader in a send mode; FX channels only
-  // to MIX buses. Everything else always shows its own main level.
-  private usesSend(m: StripModel): boolean {
-    return this.mode !== "main" && (m.isChannel || (this.isFxChannel(m.id) && this.isMixMode()));
-  }
-
+  /** Whether a strip has a send connection to a target bus (a rack column exists).
+   *  A strip never sends to itself, so `id === target` is excluded here once. */
   private hasSend(id: string, target: SendTarget): boolean {
-    return sendConnection(this.hooks.getPlan(), id, target) !== undefined;
-  }
-
-  /** Live getter for the connection a tab-scoped strip control (MUTE / PRE) edits:
-   *  the → MIX/FX send in a send mode, or the → STEREO main path in MAIN. Used by
-   *  both input-channel and FX-channel strips. */
-  private sendStripConn(id: string, usesSend: boolean): () => PlanConnection | undefined {
-    const target = usesSend ? (this.mode as SendTarget) : MAIN_BUS;
-    return () => sendConnection(this.hooks.getPlan(), id, target);
+    return id !== target && sendConnection(this.hooks.getPlan(), id, target) !== undefined;
   }
 
   /** Shared PAN/BALANCE knob spec (±63, C / Ln / Rn display); get/set/reset bind
@@ -1485,8 +1743,19 @@ export class Console {
     const partner = partnerChannel(this.hooks.getModel(), id);
     const pr = partner ? this.refs.get(partner) : undefined;
     if (!pr) return;
-    const db = this.usesSend(pr.m) ? this.getSend(partner!, this.mode as SendTarget) : this.getMain(pr.m);
-    this.updateStripLevel(pr, db);
+    this.updateStripLevel(pr, this.getMain(pr.m));
+  }
+
+  /** Mirror a BAL-linked strip's send-column fader onto the partner strip's matching
+   *  column DOM in place, so a linked send fader tracks live without a rebuild. */
+  private mirrorPartnerSend(id: string, target: SendTarget): void {
+    if (!isBalLinkedPair(this.hooks.getModel(), this.hooks.getPlan(), id)) return;
+    const partner = partnerChannel(this.hooks.getModel(), id);
+    const pr = partner ? this.refs.get(partner) : undefined;
+    const col = pr?.sendCols?.find((c) => c.target === target);
+    if (!col) return;
+    const pc = sendConnection(this.hooks.getPlan(), partner!, target);
+    this.updateColLevel(col, pr!.m.range, pc?.params?.level ?? LEVEL_OFF_DB, pc?.params?.tap === "pre");
   }
 
   // The factory plan (cached): the source for double-click "reset to default".
@@ -1522,21 +1791,10 @@ export class Console {
     if (conn) conn.params = { ...conn.params, level: db };
   }
 
+  // The factory send level (double-click reset); the live send level/pan/tap are read
+  // off the column's captured connection object (see buildSendCol), not via a helper.
   private sendLevelOf(plan: Plan, id: string, target: SendTarget): number {
     return sendConnection(plan, id, target)?.params?.level ?? LEVEL_OFF_DB;
-  }
-
-  private getSend(id: string, target: SendTarget): number {
-    return this.sendLevelOf(this.hooks.getPlan(), id, target);
-  }
-
-  private setSend(id: string, target: SendTarget, db: number): void {
-    const conn = sendConnection(this.hooks.getPlan(), id, target);
-    // The console adjusts an existing send's level only; it never adds or removes
-    // routing (that stays in the graph). Unconnected send strips are hidden, so a
-    // conn is present here in practice — bail defensively if not.
-    if (!conn) return;
-    conn.params = { ...conn.params, level: db };
   }
 
   // INS FX has no separate on/off flag — "off" is the No Effect value. Toggling
@@ -1562,29 +1820,40 @@ export class Console {
     const info = el("div", "info");
     const lbl = el("span", "lbl");
     lbl.textContent = label;
-    const val = el("span", "val");
+    const { knob, val } = this.buildKnob(k, label, id, "val", midiId);
     info.append(lbl, val);
-    const knob = el("div", "con-knob" + (k.readonlyTitle ? " readonly" : ""));
-    knob.setAttribute("role", "slider");
-    knob.setAttribute("aria-label", label);
-    knob.append(el("i", "ind"));
     box.append(info, knob);
     head.append(box);
-    // A device-locked knob shows its value but takes no input; wireKnob paints the
-    // value in both cases and only skips the drag / key handlers when locked.
+  }
+
+  // The knob primitive: the con-knob element + its value span (readonly / aria /
+  // tabindex plumbing), wired via wireKnob. addKnob wraps it in the head's con-gain
+  // box; the SEND PAN popover wraps it in a pcol (with a "rv" value class). A
+  // device-locked knob shows its value but takes no input (wireKnob skips handlers).
+  private buildKnob(k: KnobSpec, ariaLabel: string, id: string, valCls: string, midiId?: string, partnerSync = true): { knob: HTMLElement; val: HTMLElement } {
+    const knob = el("div", "con-knob" + (k.readonlyTitle ? " readonly" : ""));
+    knob.setAttribute("role", "slider");
+    knob.setAttribute("aria-label", ariaLabel);
+    knob.append(el("i", "ind"));
+    const val = el("span", valCls);
     if (k.readonlyTitle) {
       knob.setAttribute("aria-disabled", "true");
       knob.title = k.readonlyTitle;
     } else {
       knob.tabIndex = 0;
     }
-    this.wireKnob(knob, val, k, id, midiId);
+    this.wireKnob(knob, val, k, id, midiId, partnerSync);
+    return { knob, val };
   }
 
   // Rotary knob: vertical drag (≈ full range over 150px) and arrow keys edit the
   // value (snapped to `step`); the indicator rotates over a 270° sweep; a
   // double-click resets to `reset`. Reads/writes via the spec's get/set.
-  private wireKnob(knob: HTMLElement, val: HTMLElement, k: KnobSpec, id: string, midiId?: string): void {
+  // `partnerSync` (default on) re-renders after a BAL-linked edit so the partner
+  // strip's head knob catches up; the SEND PAN popover knob turns it OFF, since a
+  // render would tear the popover down and no partner send-pan control is on screen
+  // (the plan mirror via `commit` is enough).
+  private wireKnob(knob: HTMLElement, val: HTMLElement, k: KnobSpec, id: string, midiId?: string, partnerSync = true): void {
     const angle = k.angle ?? ((v: number): number => -135 + ((v - k.min) / (k.max - k.min)) * 270);
     const show = (v: number): void => {
       val.textContent = k.format(v);
@@ -1611,7 +1880,7 @@ export class Console {
       const up = (): void => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
-        this.syncPartnerStrip(id);
+        if (partnerSync) this.syncPartnerStrip(id);
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
@@ -1622,12 +1891,12 @@ export class Console {
       else if (e.key === "ArrowDown" || e.key === "ArrowLeft") apply(k.get() - k.step);
       else return;
       e.preventDefault();
-      this.syncPartnerStrip(id);
+      if (partnerSync) this.syncPartnerStrip(id);
     });
     knob.addEventListener("dblclick", () => {
       if (this.hooks.midi?.learnActive()) return; // pointerdown already armed
       apply(k.reset); // reset to factory value
-      this.syncPartnerStrip(id);
+      if (partnerSync) this.syncPartnerStrip(id);
     });
   }
 }

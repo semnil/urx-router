@@ -1,9 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// GRAPH <-> CONSOLE are two views of one plan. These tests cover the state that
-// must carry across a view round-trip: the console's selected send mode, and the
-// fact that an edit made in one view is read back in the other (both views funnel
-// edits through markChanged, and switching back repaints the target view).
+// GRAPH <-> CONSOLE are two views of one plan. These tests cover that an edit made
+// in one view is read back in the other (both views funnel edits through
+// markChanged, and switching back repaints the target view), for the head fader,
+// the SENDS rack, and the MUTE chip.
 
 // A console strip located by its scribble's exact node name (so "CH 1" never
 // matches "CH 11/12"). Runs against the factory plan (no "empty" seed).
@@ -20,26 +20,23 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 });
 
-test("the console send-mode tab survives a GRAPH round-trip", async ({ page }) => {
+test("a rack send-fader edit is read back on the graph's CH -> MIX wire", async ({ page }) => {
   await page.click("#btn-view-console");
-  const mix1 = page.locator(".con-modepick").getByRole("button", { name: "MIX 1", exact: true });
-  await mix1.click();
-  await expect(mix1).toHaveAttribute("aria-pressed", "true");
+  // Edit the CH 1 → MIX 1 send level in the SENDS rack column (Home = +10.0 dB max).
+  const fader = strip(page, "CH 1")
+    .locator(".con-scol", { has: page.getByRole("button", { name: "M1", exact: true }) })
+    .locator(".con-vfad");
+  await fader.focus();
+  await page.keyboard.press("Home");
+  // The header readout reflects the edited send.
+  await expect(strip(page, "CH 1").locator(".con-sh .rdout")).toContainText("MIX 1 +10.0");
 
-  // Bounce out to the graph and back; the console keeps its selected send mode
-  // rather than resetting to MAIN.
+  // The same send level reads back on the graph's CH 1 -> MIX 1 wire.
   await page.click("#btn-view-graph");
-  await expect(page.locator("#graph-host")).toBeVisible();
-  await page.click("#btn-view-console");
-
-  await expect(page.locator(".con-modepick").getByRole("button", { name: "MIX 1", exact: true })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  // The strips re-rendered into the MIX 1 send view, not MAIN: a send mode shows
-  // only the bus's sources, so the master strip is gone while CH 1 stays.
-  await expect(strip(page, "CH 1")).toBeVisible();
-  await expect(strip(page, "STEREO (MAIN)")).toHaveCount(0);
+  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
+  await expect(
+    page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val"),
+  ).toHaveText("+10.0 dB");
 });
 
 test("a console fader edit is read back on the graph's CH -> STEREO wire", async ({ page }) => {

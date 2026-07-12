@@ -1640,15 +1640,23 @@ select:focus-visible,
 }
 /* Read-only chip (e.g. CH → FX send Pre/Post while live): value shown, edits off.
    Matches the inspector toggle's disabled look (#inspector .toggle button:disabled). */
-.con-chip.readonly {
+.con-chip.readonly,
+.con-slp.readonly {
   cursor: not-allowed;
   opacity: 0.45;
 }
-.con-chip:focus-visible {
+/* Shared toggle-chip state, applied to the head chips (con-chip) and the SENDS rack's
+   enable chip / PRE button (con-sl / con-slp) — same primitive (buildChip), different
+   base layout. */
+.con-chip:focus-visible,
+.con-sl:focus-visible,
+.con-slp:focus-visible {
   outline: 2px solid var(--led);
   outline-offset: -2px;
 }
-.con-chip.on {
+.con-chip.on,
+.con-sl.on,
+.con-slp.on {
   background: var(--led);
   color: #14110d;
   border-color: transparent;
@@ -1658,7 +1666,9 @@ select:focus-visible,
   color: #fff;
   border-color: transparent;
 }
-[data-theme="light"] .con-chip.on {
+[data-theme="light"] .con-chip.on,
+[data-theme="light"] .con-sl.on,
+[data-theme="light"] .con-slp.on {
   color: #fff;
 }
 .con-gain {
@@ -2097,6 +2107,7 @@ select:focus-visible,
 /* A device-locked control (FIXED-bus send level / Pan-Link send pan): shows its
    value but dimmed and non-interactive, mirroring the graph inspector. */
 .con-fader.readonly,
+.con-vfad.readonly,
 .con-knob.readonly {
   cursor: not-allowed;
   opacity: 0.45;
@@ -2144,66 +2155,290 @@ select:focus-visible,
   color: #a06a08;
 }
 
-/* mode picker (send-on-fader) lives in the ruler cap row via the toolbar; the
-   console adds its own bar above the strips */
-.con-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  height: 38px;
-  flex-shrink: 0;
-  background: var(--bar);
-  border-bottom: 1px solid var(--line);
-}
 .con-wrap {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
-/* Two labeled segmented groups (Output / Send to) sit side by side in the bar. */
-.con-modebar {
+
+/* SENDS rack: a fixed-height section between the head and the fader zone. Expanded,
+   it holds the header, one column per send, and the PAN ▾ button; collapsed (a global
+   state, so every strip's rack collapses together to keep columns aligned) it shrinks
+   to the header alone. Reserved even on sendless strips so fader tops stay aligned. */
+.con-sends {
+  flex-shrink: 0;
+  height: 156px;
+  border-bottom: 1px solid var(--line);
   display: flex;
-  align-items: center;
-  gap: 18px;
-}
-.con-modegroup {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.con-modelabel {
-  font: 700 11px var(--mono);
-  letter-spacing: 1.5px;
-  color: var(--text-dim);
-}
-.con-modepick {
-  display: flex;
-  border: 1px solid var(--ctl-border);
-  border-radius: 7px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px 5px 6px;
   overflow: hidden;
 }
-.con-modepick button {
-  font: 600 10px var(--mono);
+.con-root.sends-collapsed .con-sends {
+  height: 22px;
+}
+.con-root.sends-collapsed .con-scols,
+.con-root.sends-collapsed .con-panbtn {
+  display: none;
+}
+/* rack header: SENDS label / value readout (swaps in on column touch) / active-send
+   dots (collapsed) / collapse arrow. Fixed height so the readout swap never reflows. */
+.con-sh {
+  height: 13px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;
+}
+.con-sh.dim {
+  opacity: 0.55;
+}
+.con-sh .lb {
+  font: 700 8.5px var(--mono);
   letter-spacing: 1px;
-  padding: 5px 10px;
-  border: 0;
-  border-right: 1px solid var(--ctl-border);
+  color: var(--text-dim);
+}
+.con-sh .rdout {
+  display: none;
+  font: 700 9px var(--mono);
+  color: var(--led);
+  white-space: nowrap;
+  overflow: hidden;
+}
+[data-theme="light"] .con-sh .rdout {
+  color: #7a5a08;
+}
+.con-sh.readout .lb {
+  display: none;
+}
+.con-sh.readout .rdout {
+  display: block;
+}
+.con-sh .ar {
+  margin-left: auto;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text-dim);
+}
+.con-sh .ar::after {
+  content: "▾";
+}
+.con-root.sends-collapsed .con-sh .ar::after {
+  content: "▸";
+}
+/* Hovering one header previews the global collapse scope by tinting every header. */
+.con-root.sends-hover .con-sh .lb,
+.con-root.sends-hover .con-sh .ar {
+  color: var(--led);
+}
+.con-sh .dots {
+  display: none;
+}
+.con-root.sends-collapsed .con-sh .dots {
+  display: flex;
+  gap: 2px;
+}
+.con-sh .dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--led);
+}
+
+/* send columns: one per model send slot (fixed order), each an enable chip → PRE
+   button → vertical mini-fader. A slot the strip lacks is an empty (hidden) column. */
+.con-scols {
+  flex: 1;
+  display: flex;
+  gap: 3px;
+  min-height: 0;
+}
+.con-scol {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.con-scol.off {
+  opacity: 0.5;
+}
+.con-scol.empty {
+  visibility: hidden;
+}
+/* enable chip (amber = send active, ON polarity) + PRE button (amber = pre). The
+   PRE and PAN ▾ buttons share this fixed height with the enable chip (--rack-btn-h),
+   so the three button rows line up. */
+.con-sl,
+.con-slp,
+.con-panbtn {
+  flex-shrink: 0;
+  height: var(--rack-btn-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ctl-border);
   background: var(--ctl-bg);
   color: var(--text-dim);
   cursor: pointer;
-  white-space: nowrap;
+  user-select: none;
 }
-.con-modepick button:last-child {
-  border-right: 0;
+.con-sends {
+  --rack-btn-h: 18px;
 }
-.con-modepick button[aria-pressed="true"] {
+.con-sl,
+.con-slp {
+  border-radius: 3px;
+}
+.con-sl {
+  font: 700 8.5px var(--mono);
+}
+.con-slp {
+  font: 700 7px var(--mono);
+  letter-spacing: 0.5px;
+}
+/* Chip state (.on / light .on / .readonly / :focus-visible) is shared with .con-chip
+   — see the "Shared toggle-chip state" rule above. */
+/* vertical send mini-fader: same groove/cap/0-dB grammar as the main fader, smaller.
+   Flexes to fill the rack height so the four columns' 0-dB ticks form one baseline.
+   A little top/bottom margin keeps the cap's overhang at the travel extremes clear of
+   the PRE button above and the PAN button below. */
+.con-vfad {
+  flex: 1;
+  min-height: 24px;
+  margin: 4px 0;
+  position: relative;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.con-vfad .track {
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  bottom: 6px;
+  width: 4px;
+  transform: translateX(-50%);
+  border-radius: 2px;
+  background: var(--groove);
+  box-shadow: inset 0 0 2px rgba(0, 0, 0, 0.7);
+}
+.con-vfad .zero {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 1px;
+  background: var(--text-dim);
+  opacity: 0.5;
+  top: calc(var(--zero, 24%) - 1px);
+}
+.con-vfad .cap {
+  position: absolute;
+  left: 50%;
+  width: 16px;
+  height: 9px;
+  transform: translate(-50%, -50%);
+  top: var(--pos, 30%);
+  background: linear-gradient(180deg, var(--ctl-bg2), var(--ctl-bg));
+  border: 1px solid var(--ctl-border);
+  border-radius: 2px;
+  box-shadow: var(--ctl-shadow);
+}
+.con-vfad .cap::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 50%;
+  height: 1.5px;
+  transform: translateY(-50%);
   background: var(--led);
-  color: #14110d;
+  border-radius: 1px;
 }
-[data-theme="light"] .con-modepick button[aria-pressed="true"] {
-  color: #fff;
+.con-scol.off .con-vfad .cap::after {
+  background: var(--text-dim);
+}
+.con-vfad:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+/* full-width PAN ▾ button → SEND PAN popover (height shared with the chips above) */
+.con-panbtn {
+  font: 700 8.5px var(--mono);
+  letter-spacing: 1px;
+  border-radius: 4px;
+  gap: 3px;
+}
+.con-panbtn .cv {
+  font-size: 8px;
+}
+.con-panbtn:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
+}
+
+/* SEND PAN popover: anchored below the PAN ▾ button (upward caret), the strip's MIX
+   sends' pan as rotary knobs in horizontal columns (label above, value below). */
+.con-spop {
+  position: fixed;
+  z-index: 60;
+  background: var(--panel);
+  border: 1px solid var(--ctl-border);
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6);
+  color: var(--text);
+  /* visible (not hidden) so the upward anchor caret (::before at top:-8px) shows;
+     the content sits within the rounded box on its own, nothing overflows sideways. */
+  overflow: visible;
+}
+.con-spop .ph {
+  font: 700 9.5px var(--mono);
+  letter-spacing: 1px;
+  padding: 7px 10px 5px;
+  border-bottom: 1px solid var(--line);
+}
+.con-spop.below::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-bottom-color: var(--ctl-border);
+}
+.con-spop .pcols {
+  display: flex;
+  gap: 12px;
+  padding: 9px 13px 11px;
+  justify-content: center;
+}
+.con-spop .pcol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+.con-spop .pcol .cap {
+  font: 700 7px var(--mono);
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+}
+.con-spop .pcol .con-knob {
+  width: 30px;
+  height: 30px;
+}
+.con-spop .pcol .con-knob .ind {
+  top: 3px;
+  height: 10px;
+  transform-origin: 50% 11px;
+}
+.con-spop .pcol .rv {
+  font: 700 11px var(--mono);
 }
 
 /* First-run consent gate: a full-screen modal shown once on desktop before the

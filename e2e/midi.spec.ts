@@ -234,6 +234,30 @@ test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
   await expect(muteChip()).not.toHaveClass(/\bon\b/);
 });
 
+test("the SENDS rack controls arm with send-scoped control ids", async ({ page }) => {
+  await openPanel(page);
+  await pickInputPort(page);
+  const m1 = strip(page, "CH 1").locator(".con-scol", {
+    has: page.getByRole("button", { name: "M1", exact: true }),
+  });
+  // The MIX 1 enable chip reuses the send-scoped mute id (old send-tab mappings work).
+  await learnBinding(page, () => m1.getByRole("button", { name: "M1", exact: true }).click(), [0xb0, 30, 100], [0xb0, 30, 101]);
+  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/mute@bus.mix1"]')).toBeVisible();
+  // The MIX 1 PRE button binds the send tap (a new toggle control).
+  await learnBinding(page, () => m1.locator(".con-slp").click(), [0x90, 61, 127]);
+  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/tap@bus.mix1"]')).toBeVisible();
+  // The MIX 1 column fader binds the send level.
+  await learnBinding(page, () => m1.locator(".con-vfad").click(), [0xb0, 31, 100], [0xb0, 31, 101]);
+  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/level@bus.mix1"]')).toBeVisible();
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+
+  // The bound note flips the PRE tap on.
+  const pre = m1.locator(".con-slp");
+  await expect(pre).toHaveAttribute("aria-pressed", "false");
+  await sendMidi(page, [0x90, 61, 127]);
+  await expect(pre).toHaveAttribute("aria-pressed", "true");
+});
+
 test("edge-mode MUTE flips on every CC press even with no release-to-0 between", async ({ page }) => {
   // Regression for a Stream Deck "Push" button set to send 127 only (no 0 on
   // release, confirmed by a bus trace): edge mode must flip on every press, not

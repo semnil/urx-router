@@ -171,7 +171,7 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
 > adjustable LEVEL). **Pan Link** (VARI only) ties each send's PAN to the source channel PAN, so the
 > per-send PAN is no longer independent. Stored on the MIX bus node; the connection panel hides the
 > LEVEL (FIXED) or PAN (Pan Link) accordingly and shows a short note. The console applies the same
-> locks in that MIX send tab, rendering the send fader (FIXED) or pan knob (Pan Link) read-only.
+> locks in the SENDS rack (FIXED locks that MIX column's mini-fader; Pan Link locks its SEND PAN knob).
 
 > On the canvas a PRE MIX/FX send is drawn **dashed with an amber "PRE" tap marker just after the
 > source**, so it is visible without selecting the connection. POST (the default) is solid and unmarked.
@@ -185,18 +185,18 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
   - The **channel → STEREO** leg is the FX main path: **no PRE/POST** but a **STEREO-assign ON/OFF** (LEVEL/BAL
     + the V1.3 post-fader ON `params.on` — the main path is the PRE/POST reference point).
   - The **MIX 1/2 sends** carry LEVEL/BAL/**PRE/POST** plus an **ON/OFF (SEND_ON)** held as a connection
-    param (`params.on`, default ON) and toggled by the console's **MIX 1/2 tab MUTE button**.
+    param (`params.on`, default ON) and toggled by the console's **MIX 1/2 rack enable chip**.
   - Each leg is seeded at **-∞ (off)** by default so nothing sums until raised. **All ship ON at the factory**
     (SEND_ON = 1 at -∞) and a `new` plan seeds them ON.
   - Each FX channel also has its own **channel ON/OFF** (mute), handled like the input-channel CH_ON.
     **Both FX 1 and FX 2 ship ON at the factory**. It is **set from the graph inspector only** — the console
-    MUTE drives a send ON/OFF on every tab (MAIN tab = → STEREO assign, MIX tab = → MIX send), so when the
-    channel master is off the strip dims with a **CH MUTE** tag (on the MAIN and send tabs alike). Off also
+    head MUTE drives the → STEREO assign ON/OFF (the per-send ON/OFF lives in the SENDS rack), so when the
+    channel master is off the strip dims with a **CH MUTE** tag. Off also
     dims the node on the canvas and tags it MUTE.
   - MIX 1 / MIX 2 buses also have their own **master ON/OFF** (a bus-master switch like the STEREO master;
     ships ON), independent of the MIX → STEREO TO ST switch. It is **edited only in the graph inspector**; the
     console shows it read-only — when the master is off the MIX strip dims and gets a CH MUTE tag (the same
-    indicator a send tab uses for a channel whose master is off). The STEREO / MIX inspector toggles sit at the
+    indicator used for a channel whose master is off). The STEREO / MIX inspector toggles sit at the
     top of the Parameters section under the same "Channel" label as an FX channel.
   - The STEREO master and each MIX bus also carry a **master BALANCE** — the bus output's L/R balance
     (±63, centre 0; STEREO param 583, MIX 676 with the L/R instances linked per bus). It is edited in the
