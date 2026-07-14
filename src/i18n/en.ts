@@ -56,13 +56,15 @@ export const en = {
     desktopAppHint: "Get the desktop app — save/load plans, export images, and control the device live",
   },
   console: {
-    outputLabel: "Output",
-    // Label for the send-on-fader group (MIX/FX). Matches the device SEND TO screen.
-    sendToLabel: "Send to",
     mute: "MUTE",
     on: "ON",
     eq: "EQ",
     pre: "PRE",
+    // Per-strip SENDS rack: header label, the SEND PAN popover header, and the
+    // hover tooltip on the PRE button (mirrors cueFull's tooltip mechanism).
+    sends: "SENDS",
+    sendPan: "SEND PAN",
+    preHint: "Pre-fader send",
     cue: "C.INT",
     // Full name of the C.INT chip (kept distinct from the device's plain CUE).
     cueFull: "Cue Interrupt",
@@ -120,6 +122,7 @@ export const en = {
       level: "Level",
       mute: "MUTE",
       pan: "PAN/BAL",
+      tap: "PRE",
       gain: "GAIN",
       phonesLevel: "PHONES",
       oscOn: "ON",

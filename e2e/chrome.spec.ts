@@ -108,11 +108,11 @@ test.describe("language", () => {
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   });
 
-  test("switching to Japanese relocalizes the toolbar and the console output label live", async ({ page }) => {
+  test("switching to Japanese relocalizes the toolbar and the console group label live", async ({ page }) => {
     await expect(page.locator("#btn-view-graph")).toHaveText("Graph");
     await page.click("#btn-view-console");
-    // The first mode-group label is Output (the Send to label stays English).
-    await expect(page.locator(".con-modelabel").first()).toHaveText("Output");
+    // The first strip-group label is INPUTS (the rack's SENDS label stays English).
+    await expect(page.locator(".con-grouplabel").first()).toHaveText("INPUTS");
 
     // The button shows the current language code; clicking it re-localizes both
     // the toolbar (static i18n) and the already-rendered console (refresh()).
@@ -121,7 +121,7 @@ test.describe("language", () => {
 
     await expect(page.locator("#btn-view-graph")).toHaveText("グラフ");
     await expect(page.locator("#btn-hide-unused")).toHaveText("未接続を隠す");
-    await expect(page.locator(".con-modelabel").first()).toHaveText("出力");
+    await expect(page.locator(".con-grouplabel").first()).toHaveText("入力");
     await expect(page.locator("#btn-lang")).toHaveText("JA"); // now the current language
   });
 

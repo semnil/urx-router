@@ -241,9 +241,9 @@ unreachable +5/+10 ticks. Each tick centres its digits with the minus sign hangi
 `-10` line up vertically. Above the zone the scribble shows two lines — **node name + device CH SETTING
 name** (the monitor buses carry no CH SETTING name, so their second line names the linked PHONES output instead —
 `Phone 1` / `Phone 2`). Below it sit two 2-column chip groups: (1) channel / input (HA) — MUTE (on channels, FX channels, the
-master, the MIX buses and the MONITOR buses; an **input / FX channel's drives the active tab's send ON** — the
-→ STEREO assign on MAIN, the → MIX/FX send (SEND_ON) on a send tab — not the channel master (CH_ON /
-FX-channel ON), which is set from the inspector only; the master's is the
+master, the MIX buses and the MONITOR buses; an **input / FX channel's drives the → STEREO assign ON**
+(firmware V1.3, the post-fader SEND TO STEREO switch) — not the channel master (CH_ON /
+FX-channel ON), which is set from the inspector only; the per-send ON/OFF lives in the SENDS rack; the master's is the
 STEREO master ON, a **MIX bus's drives the MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off), and a
 **MONITOR bus's is the device MONITOR ON** (`np.on` → `MONITOR_ON`, the MONITOR-screen [ON] button)). A MONITOR
 bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
@@ -286,34 +286,23 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   removes connections (routing stays in the graph). `setSend` only updates an existing wire's level, so
   lowering a send to -∞ keeps the wire (the strip stays). INS FX has no separate on/off (No Effect is off),
   so toggling on restores the last chosen effect (or the first real option).
-- **Send-on-fader** — two labeled segmented groups: **Output** (MAIN — the STEREO main mix / home fader view)
-  and **Send to** (the MIX/FX aux sends), mirroring the device's SEND TO screen, which lists STEREO/MIX/FX as
-  send destinations. The mode-bar
-  tabs are rebuilt from the visible buses each render (`renderModes` → `modeGroup`): hiding a FX/MIX bus in the graph drops its
-  tab, and if the active tab's bus is gone the view falls back to MAIN. A send
-  mode flips the input-channel and FX-channel faders to the send level into the chosen MIX/FX bus and shows
-  **only that bus's sources** — non-send nodes (monitors, master, the buses themselves) and wire-less strips
-  drop out. FX channels only follow sends to MIX buses. MAIN shows every strip at its own level. Since every
-  send is now fixed (always wired), input channels and FX channels behave the same in a send mode:
-  - A send-mode strip gets a **`PRE` chip** that toggles that send's PRE/POST tap (the same value as the
-    graph/inspector tap; every CH/FX → MIX/FX send carries a tap). On the **FX 1 / FX 2** tabs the tap is a
-    CH → FX send, which the device cannot accept from software, so while live sync is connected the chip is shown
-    read-only — matching the inspector (see [known-issues.md](known-issues.md)). MIX-tab taps stay editable.
-  - Its **MUTE toggles that send's ON/OFF** — on the MAIN tab the send is the → STEREO assign (the post-fader
-    SEND TO STEREO switch, firmware V1.3); on a MIX/FX tab it is the → MIX/FX send (SEND_ON). The channel's own
-    master mute (CH_ON) lives in the **graph inspector only**.
-  - Its **PAN/BAL knob is tab-scoped**: MAIN edits the → STEREO main-path PAN/BAL, a send mode edits that send's
-    pan (the same connection the fader controls). FX-bus sends are mono and carry no pan, so the **knob is dropped in an FX mode**.
-  - **Channel-domain controls are MAIN-only** — the HA toggles (+48 / φ / HPF / Hi-Z), the processing chain
-    (GATE / COMP / EQ / INS FX / DUCKER) and the Gain knob have no send equivalent, so a send tab hides them
-    (gated by `!usesSend`; their `channelControl` capability lookup is skipped there too). A send tab keeps only
-    the fader (send level), MUTE, PRE and PAN/BAL.
-  So every strip control is per-tab independent — no MAIN-output control leaks into the send tabs. When a
-  **channel's / FX channel's own master is muted** (channel ON = off), the strip dims and shows a red
-  "CH MUTE" badge on its scribble (the muted-graph-node visual language) on **every tab — MAIN and send
-  alike**, since the whole channel — every send — is then silenced; the per-tab MUTE/PRE/BAL stay operable
-  (the send ON/OFF and the channel ON are independent device params, and the device offers no gate-out
-  display of its own).
+- **SENDS rack** — the head always shows the MAIN control set; every strip's MIX/FX sends live in a
+  per-strip **SENDS rack** between the head and the fader zone (spec: [console-sends.md](console-sends.md)).
+  The rack has one fixed column per model send slot (order FX 1 / FX 2 / MIX 1 / MIX 2 = `SEND_TARGETS`, a
+  shelved bus drops its column on every strip), each an **enable chip** (`params.on`, amber = active, ON
+  polarity), a **PRE button** (`params.tap`; a CH → FX tap the device cannot accept is shown read-only while
+  live — `sendTapWritable`, see [known-issues.md](known-issues.md)), and a **vertical mini-fader**
+  (`params.level`, relative drag snapped to the level_gain grid; FIXED BUS Type locks it read-only). A strip
+  with no sends (MIX / MONITOR / STEREO / OSCILLATOR / STREAMING) renders a dimmed `SENDS` header only, and
+  meter-only strips get the same spacer, so fader tops stay aligned. The header swaps its `SENDS` label for a
+  value readout (`MIX 1 PRE -3.2`) while a column is touched, and a full-width **PAN ▾** button opens the
+  **SEND PAN popover** below it — the MIX sends' pan as rotary knobs (FX sends are mono; Pan Link locks a knob
+  read-only). Clicking any `SENDS` header collapses/expands every rack together (a `sends-collapsed` host
+  class, persisted in `localStorage` `urx-sends-open`), showing one amber dot per active send when collapsed.
+  When a **channel's / FX channel's own master is muted** (channel ON = off), the strip dims and shows a red
+  "CH MUTE" badge on its scribble (the muted-graph-node visual language), since the whole channel — every
+  send — is then silenced; the head MUTE and the rack sends stay operable (the send ON/OFF and the channel ON
+  are independent device params).
 - **Scribble colour** — the scribble uses each node's **CH SETTING colour** (`plan.nodeColors`, a device
   parameter) rather than the node-kind rail. The text colour is whichever of black/white has the higher
   actual contrast ratio (WCAG relative luminance, `inkOn`), paired with a faint opposite-tone halo
@@ -322,14 +311,13 @@ a knob resets it to the **factory value** (from `defaultPlan`).
 - **Layout / scroll** — `#console-host` uses `min-width:0; overflow:hidden` to stay within `#stage`, keeping
   horizontal scroll inside the strip grid (`.con-strips`, its bar above the status bar). It does not scroll
   vertically except on very short windows (then within the strip grid). The master (STEREO) is no longer
-  pinned to the right; it scrolls with the rest. **The head area (name / chips / knobs) is locked to the MAIN
-  tab's tallest strip** across every tab and channel (measured by laying the MAIN strips out off-screen in
-  `mainHeadHeight`, cached by model + hidden set); the fader / level-meter zone (`flex: 1`) takes the rest of the
-  window height. So the fader and meter heights fit the open window, and a send tab keeps the same head height
-  and fader start as MAIN.
+  pinned to the right; it scrolls with the rest. **The head area (name / chips / knobs) is locked to the
+  tallest strip** across every channel (measured by laying the strips out off-screen in `mainHeadHeight`,
+  cached by model + hidden set); the fixed-height SENDS rack sits below it, and the fader / level-meter zone
+  (`flex: 1`) takes the rest of the window height, so the fader and meter heights fit the open window.
 - **Readout** — each strip's bottom readout carries no send-destination row (the FADER / live METER cells are
-  covered above); the destination is conveyed by the active tab, so the old “→ MAIN / → MIX SEND” line is gone.
-  The mono font draws `∞` at x-height, smaller
+  covered above); the send destinations are conveyed by the rack columns, and per-send levels by the rack
+  header readout on column touch. The mono font draws `∞` at x-height, smaller
   than the digits, so a `-∞` readout scales the `∞` up to digit height (`setLevelText` wraps each `∞` in a
   `.glyph-inf` span; shared `src/ui/glyph.ts` covers the CONSOLE readout, the dB scale, and the inspector values).
 - **Live meters** — the meter column is always shown; signal only flows while Live sync is on
@@ -400,8 +388,10 @@ from an external MIDI controller (desktop app only). Configuration lives in the 
   bend; `mapping.ts` holds the free-mapping model (address, take-in mode) plus persistence validation (a
   persisted mapping in the removed "relative" take-in mode migrates to absolute on load); `controls.ts`
   enumerates and resolves every console control under a **fixed control id**
-  (`node/param[@sendTarget]`, e.g. `ch1/level@bus.mix1`). Fixed ids do not depend on the visible tab or
-  send-on-fader: "CH 1 main fader" and "CH 1 → MIX 1 send" are separate controls, assigned individually.
+  (`node/param[@sendTarget]`, e.g. `ch1/level@bus.mix1`). Fixed ids do not depend on the visible view or the
+  SENDS rack's collapse state: "CH 1 main fader" and "CH 1 → MIX 1 send" are separate controls, assigned
+  individually (the rack chip / PRE button / column fader arm the same send-scoped ids, plus a `tap` control
+  for a MIX send's PRE/POST).
   Values cross the boundary normalized (0..1) and are snapped on set to the same grids the console uses
   (the level_gain grid in `levels.ts`, the channel's GAIN dB range, PAN ±63, PHONES 0.1 steps). Device locks
   (a FIXED bus's send level, a Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz) refuse the write.

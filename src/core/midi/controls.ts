@@ -16,7 +16,7 @@ import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_
 /** The STEREO master — every channel's / FX channel's fixed main send target. */
 export const MAIN_BUS = "bus.stereo";
 
-/** Send targets a channel strip can follow (the console's send-on-fader tabs). */
+/** Send targets a channel strip can follow (the console's SENDS rack columns). */
 export const SEND_TARGETS = ["bus.fx1", "bus.fx2", "bus.mix1", "bus.mix2"] as const;
 export type SendTarget = (typeof SEND_TARGETS)[number];
 
@@ -25,6 +25,7 @@ export type ControlParam =
   | "level"
   | "mute"
   | "pan"
+  | "tap"
   | "gain"
   | "phonesLevel"
   | "oscOn"
@@ -271,6 +272,22 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       out.push(connMute(target, true));
       if (target === "bus.mix1" || target === "bus.mix2") {
         out.push(connControl("pan", target, panCodec, 0, () => locks().panLinked));
+        // Send tap (PRE/POST) as a toggle: MIX taps are freely writable (a CH → FX
+        // tap is device-locked and gets no control — the rack shows it read-only).
+        out.push({
+          id: controlId(id, "tap", target),
+          node: id,
+          param: "tap",
+          send: target,
+          kind: "toggle",
+          get: () => (conn(target)?.params?.tap === "pre" ? 1 : 0),
+          set: (v) => {
+            const c = conn(target);
+            if (!c) return false;
+            c.params = { ...c.params, tap: v >= 0.5 ? "pre" : "post" };
+            return true;
+          },
+        });
       }
     }
   } else if (isMix) {
