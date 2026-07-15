@@ -51,6 +51,17 @@ test("the console lays out the input channels and the master", async ({ page }) 
   await expect(strip(page, "STEREO")).toBeVisible();
 });
 
+test("the longest channel name (CH 11/12) shrinks a step so it fits its scribble", async ({ page }) => {
+  // "CH 11/12" (8 chars) overflows the 11px scribble name beside the power LED in
+  // SF Mono, so the head drops it to 9px; assert the shrink and that the full label
+  // is present un-clipped (no ellipsis).
+  const txt = strip(page, "CH 11/12").locator(".con-scribble .txt");
+  await expect(txt).toHaveText("CH 11/12");
+  await expect(txt).toHaveCSS("font-size", "9px");
+  const clipped = await txt.evaluate((n) => n.scrollWidth > n.clientWidth);
+  expect(clipped).toBe(false);
+});
+
 test("the stereo-channel EQ chip locks read-only and off at 192 kHz", async ({ page }) => {
   const eqChip = strip(page, "CH 5/6").locator(".con-chip", { hasText: "EQ" }).first();
   // EQ ships on at 48 kHz and is interactive (\bon\b avoids matching "con-chip").
@@ -221,7 +232,10 @@ test("the PAN ▾ button opens the SEND PAN popover below it with MIX knobs only
   await strip(page, "CH 1").locator(".con-panbtn").click();
   const pop = page.locator(".con-spop");
   await expect(pop).toBeVisible();
-  await expect(pop.locator(".ph")).toHaveText("SEND PAN");
+  // The header names the category and the owning strip, so the floating popover
+  // stays identifiable away from its anchor.
+  await expect(pop.locator(".ph .cat")).toHaveText("SEND PAN");
+  await expect(pop.locator(".ph .who")).toHaveText("CH 1");
   // One rotary knob column per MIX send (FX sends are mono and carry no pan).
   await expect(pop.locator(".pcol")).toHaveCount(2);
   await expect(pop.locator(".pcol .cap").first()).toHaveText("MIX 1");
@@ -237,6 +251,30 @@ test("the PAN ▾ button opens the SEND PAN popover below it with MIX knobs only
   // Escape closes it.
   await page.keyboard.press("Escape");
   await expect(pop).toBeHidden();
+  // Another strip's popover names that strip (the header tracks its owner).
+  await strip(page, "CH 2").locator(".con-panbtn").click();
+  await expect(pop.locator(".ph .who")).toHaveText("CH 2");
+});
+
+test("the PAN ▾ button reads active while its SEND PAN popover is open", async ({ page }) => {
+  const btn1 = strip(page, "CH 1").locator(".con-panbtn");
+  await expect(btn1).not.toHaveClass(/\bopen\b/);
+  await expect(btn1).toHaveAttribute("aria-expanded", "false");
+  // Opening marks the trigger active.
+  await btn1.click();
+  await expect(page.locator(".con-spop")).toBeVisible();
+  await expect(btn1).toHaveClass(/\bopen\b/);
+  await expect(btn1).toHaveAttribute("aria-expanded", "true");
+  // Switching straight to CH 2's button hands the active state over (CH 1 clears).
+  const btn2 = strip(page, "CH 2").locator(".con-panbtn");
+  await btn2.click();
+  await expect(btn1).not.toHaveClass(/\bopen\b/);
+  await expect(btn2).toHaveClass(/\bopen\b/);
+  // Closing clears it.
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".con-spop")).toBeHidden();
+  await expect(btn2).not.toHaveClass(/\bopen\b/);
+  await expect(btn2).toHaveAttribute("aria-expanded", "false");
 });
 
 test("hiding a MIX bus in the graph drops its rack column from every strip", async ({ page }) => {
@@ -409,4 +447,21 @@ test("the meter-point badge shows a meter glyph, distinct from the send-tap PRE 
   // The rack carries the PRE send-tap buttons; only the meter badge gets the glyph.
   await expect(ch.locator(".con-slp").first()).toBeVisible();
   await expect(ch.locator(".con-tap .mtr-ico")).toHaveCount(1);
+});
+
+test("switching the model rebuilds the console strip set in place", async ({ page }) => {
+  // URX44V carries four mono channels (CH 1..CH 4); URX22 has only two, pairing the
+  // rest, so CH 4 is a mono strip here but CH 3/4 (a stereo pair) is not. Switching
+  // the model must re-render the console with the new device's strips (via refresh),
+  // without leaving the view or dropping the master.
+  await expect(strip(page, "CH 4")).toBeVisible();
+  await expect(strip(page, "CH 3/4")).toHaveCount(0);
+
+  await page.locator("#model-picker").selectOption("URX22");
+  await expect(page.locator("#model-picker")).toHaveValue("URX22");
+
+  await expect(page.locator("#console-host")).toBeVisible(); // still on the console
+  await expect(strip(page, "CH 4")).toHaveCount(0); // URX22 has no mono CH 4
+  await expect(strip(page, "CH 3/4")).toBeVisible(); // now a stereo pair
+  await expect(strip(page, "STEREO")).toBeVisible(); // master persists
 });

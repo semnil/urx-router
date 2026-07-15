@@ -140,6 +140,7 @@ import { loadJson, saveJson } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
 import { setLevelText } from "./glyph";
+import { onWheelStep } from "./dom";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 
@@ -1003,6 +1004,21 @@ function paramControl(
     : sliderControl(conn, onUpdate, "pan", panLabel, PAN_MIN, PAN_MAX, 1, 0, formatPan);
 }
 
+// Native <input type=range> ignores the scroll wheel, so wire it up via onWheelStep:
+// a notch nudges the value one step and fires 'input' so the row's own listener updates
+// the readout and reports the change. Shared by rangeSlider and snappedSlider.
+function wheelStep(slider: HTMLInputElement): void {
+  onWheelStep(slider, (dir) => {
+    const step = Number(slider.step) || 1;
+    const lo = Number(slider.min);
+    const hi = Number(slider.max);
+    const next = Math.min(hi, Math.max(lo, Number(slider.value) + dir * step));
+    if (next === Number(slider.value)) return;
+    slider.value = String(next);
+    slider.dispatchEvent(new Event("input"));
+  });
+}
+
 // A labeled range slider that updates its value readout and reports the numeric
 // value on every input. Mutates in place (no re-render) so it keeps focus while
 // dragging. Shared by the connection (sliderControl) and node-level controls.
@@ -1027,6 +1043,7 @@ function rangeSlider(
     setLevelText(value, fmt(v));
     onInput(v);
   });
+  wheelStep(slider);
   row.append(slider);
   return row;
 }
@@ -1680,6 +1697,7 @@ function snappedSlider(
     setLevelText(value, fmt(v));
     onChange(v);
   });
+  wheelStep(slider);
   row.append(slider);
   return row;
 }

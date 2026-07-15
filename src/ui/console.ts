@@ -22,7 +22,7 @@ import { DELAY_TIME_MAX_MS, DELAY_TIME_MIN_MS, PAN_MAX, PAN_MIN, PHONES_LEVEL_DE
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
-import { el } from "./dom";
+import { el, onWheelStep } from "./dom";
 import { t } from "../i18n";
 
 // Full destination name (header readout + SEND PAN popover) and the short chip
@@ -256,6 +256,7 @@ export class Console {
   private sendsOpen = loadJson<boolean>(this.SENDS_STORE, true);
   private sendPanPop!: HTMLElement;
   private sendPanOpenFor: string | null = null;
+  private sendPanBtn: HTMLElement | null = null; // the PAN ▾ button the open popover anchors to
   private tapPop!: HTMLElement;
   private stripsHost!: HTMLElement;
 
@@ -648,6 +649,8 @@ export class Console {
     const panbtn = el("button", "con-panbtn") as HTMLButtonElement;
     panbtn.type = "button";
     panbtn.dataset.strip = m.id;
+    panbtn.setAttribute("aria-haspopup", "true");
+    panbtn.setAttribute("aria-expanded", "false");
     const cv = el("span", "cv");
     cv.textContent = "▾";
     panbtn.append(document.createTextNode("PAN"), cv);
@@ -797,6 +800,10 @@ export class Console {
       if (this.hooks.midi?.learnActive()) return; // pointerdown already armed
       set(this.sendLevelOf(this.factoryPlan(), node, target));
     });
+    // Hover + wheel steps one detent, matching the main fader. The pointer sits over
+    // the column while scrolling, so pointerenter has already surfaced the readout;
+    // set() keeps it in step.
+    onWheelStep(fader, (dir) => set(this.faderWheelStep(range, level(), dir)), () => this.hooks.midi?.learnActive());
   }
 
   // The next fader level for a keydown (Arrow = 1 detent, PageUp/Down = 6, Home = max,
@@ -811,6 +818,13 @@ export class Console {
     if (e.key === "Home") return range.max;
     if (e.key === "End") return range.off;
     return null;
+  }
+
+  // One detent up/down from a wheel notch, mirroring the Arrow keys (a step down
+  // off the floor lands on −∞ via the range's own step()). Shared by both faders.
+  private faderWheelStep(range: LevelRange, cur: number, dir: 1 | -1): number {
+    const base = cur < range.min ? range.min : cur;
+    return range.step(base, dir);
   }
 
   // Paint a send column's fader cap position + accessible value from a dB level + tap.
@@ -856,10 +870,17 @@ export class Console {
   // value below), echoing the rack columns. FX sends are mono and carry no pan.
   private openSendPan(stripId: string, anchor: HTMLElement): void {
     this.closeTapPop();
+    this.closeSendPan(); // clears any previously-open PAN trigger before opening the new one
     const plan = this.hooks.getPlan();
     this.sendPanPop.replaceChildren();
+    // The popover floats free of its strip once open, so name the owning strip in
+    // the header — position alone no longer ties it back.
     const ph = el("div", "ph");
-    ph.textContent = t().console.sendPan;
+    const cat = el("span", "cat");
+    cat.textContent = t().console.sendPan;
+    const who = el("span", "who");
+    who.textContent = this.toStripModel(stripId).label;
+    ph.append(cat, who);
     const grid = el("div", "pcols");
     for (const target of this.sendSlots()) {
       if ((target !== "bus.mix1" && target !== "bus.mix2") || !this.hasSend(stripId, target)) continue;
@@ -887,6 +908,12 @@ export class Console {
     this.sendPanPop.append(ph, grid);
     this.sendPanPop.hidden = false;
     this.sendPanOpenFor = stripId;
+    // Mark the trigger active so it reads as the open popover's owner; closeSendPan
+    // clears it (the anchor outlives the open/close cycle — a render closes the
+    // popover before rebuilding the strips).
+    this.sendPanBtn = anchor;
+    anchor.classList.add("open");
+    anchor.setAttribute("aria-expanded", "true");
     // Anchor below the PAN ▾ button, centred on it (upward caret), clamped to the viewport.
     this.placePopover(this.sendPanPop, anchor, "center", 8);
   }
@@ -896,6 +923,11 @@ export class Console {
     this.sendPanOpenFor = null;
     this.sendPanPop.hidden = true;
     this.sendPanPop.replaceChildren();
+    if (this.sendPanBtn) {
+      this.sendPanBtn.classList.remove("open");
+      this.sendPanBtn.setAttribute("aria-expanded", "false");
+      this.sendPanBtn = null;
+    }
   }
 
   // Position a fixed popover by its anchor, clamped to the viewport: opens `gap` px
@@ -975,10 +1007,11 @@ export class Console {
     }
     const txt = el("span", "txt");
     txt.textContent = m.label;
-    // The LED steals ~2 chars; shrink long bus names a step (or two for OSCILLATOR)
-    // so they fit beside it. Channels top out at "CH 11/12" and keep 11px; STREAMING
-    // has no LED (spec null), so its 9-char name stays full-size.
-    if (spec && m.label.length >= 9) txt.style.fontSize = m.label.length >= 10 ? "8px" : "9px";
+    // The LED steals ~2 chars; shrink long names a step (or two for OSCILLATOR) so
+    // they fit beside it. "CH 11/12" (8 chars) overflows 11px by ~1px in SF Mono, so
+    // 8-char names drop to 9px; STREAMING has no LED (spec null), so its 9-char name
+    // stays full-size.
+    if (spec && m.label.length >= 8) txt.style.fontSize = m.label.length >= 10 ? "8px" : "9px";
     name.append(txt);
     const dev = el("div", "id");
     dev.textContent = m.deviceName || "—";
@@ -1563,6 +1596,9 @@ export class Console {
       if (this.hooks.midi?.learnActive()) return; // pointerdown already armed
       setLevel(this.mainLevelOf(this.factoryPlan(), r.m));
     });
+    // Hover + wheel steps one detent (mirrors the Arrow keys); skipped while
+    // assigning MIDI so a stray scroll doesn't edit an armed control.
+    onWheelStep(fader, (dir) => setLevel(this.faderWheelStep(range, this.getMain(r.m), dir)), () => this.hooks.midi?.learnActive());
   }
 
   private updateStripLevel(r: StripRef, db: number): void {
@@ -1951,6 +1987,12 @@ export class Console {
       apply(k.reset); // reset to factory value
       if (partnerSync) this.syncPartnerStrip(id);
     });
+    // Hover + wheel nudges by one step (mirrors the Arrow keys). This sits below the
+    // readonlyTitle early-return above, so device-locked knobs take no wheel input.
+    onWheelStep(knob, (dir) => {
+      apply(k.get() + dir * k.step);
+      if (partnerSync) this.syncPartnerStrip(id);
+    }, () => this.hooks.midi?.learnActive());
   }
 }
 

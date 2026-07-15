@@ -81,7 +81,8 @@ Expanded height ≈ 156 px, collapsed ≈ 24 px (header only). Orientation, groo
   detent and live sync writes immediately). First write only after a 3 px drag threshold
   (protects against mis-grabs and double-click). Shift-drag = fine mode (per detent).
 - Keyboard: Arrow = 1 detent, PageUp/PageDown = 6, Home = max, End = −∞ (same as the main fader).
-  Double-click = factory reset.
+  Double-click = factory reset. Scroll wheel = 1 detent per notch (mirrors Arrow; the main fader,
+  the head knob, and the inspector sliders share the same `onWheelStep` wiring in `src/ui/dom.ts`).
 - No numeric column. While a column is hovered / dragged / focused, the rack header swaps its
   `SENDS` label for a value readout — `MIX 1 PRE -3.2` (destination, tap when PRE, level). The
   header has a fixed height so the swap never reflows the rack. Exact values are also exposed via
@@ -100,18 +101,22 @@ Expanded height ≈ 156 px, collapsed ≈ 24 px (header only). Orientation, groo
 
 - Trigger: the full-width `PAN ▾` button at the rack bottom (only on strips that have sends). The
   popover opens directly below that button at strip width, with an upward caret pointing at it.
-- Content: header `SEND PAN`, then the MIX sends' rotary knobs laid out as horizontal columns
-  (destination label above each knob, value below). The column order, the "C" knob, and the
-  label-on-top arrangement reuse the head BAL/PAN knob and the SENDS rack column grammar, so the
-  rack and the popover stay symmetric. FX sends are mono on the device and have no pan. Pan Link
-  (BUS type) locks render the knob read-only, as in the inspector.
+  While its popover is open the button reads active (an amber frame + tint, distinct from the
+  solid-amber enable chips) and carries `aria-expanded`, so its owner is obvious.
+- Content: header (`SEND PAN` on the left, the owning strip's name on the right — the popover
+  floats free of its strip once open, so the name ties it back without relying on position), then
+  the MIX sends' rotary knobs laid out as horizontal columns (destination label above each knob,
+  value below). The column order, the "C" knob, and the label-on-top arrangement reuse the head
+  BAL/PAN knob and the SENDS rack column grammar, so the rack and the popover stay symmetric. FX
+  sends are mono on the device and have no pan. Pan Link (BUS type) locks render the knob
+  read-only, as in the inspector.
 
   ```text
-  ┌─── SEND PAN ───┐
-  │  MIX 1   MIX 2  │  destination labels (above the knobs)
-  │   (◎)     (◎)   │  rotary knobs (side by side, same as the head BAL/PAN knob)
-  │    C       C    │  values (below the knobs)
-  └─────────────────┘
+  ┌── SEND PAN    CH 1 ──┐  header: category (left) + owning strip (right)
+  │    MIX 1     MIX 2    │  destination labels (above the knobs)
+  │     (◎)       (◎)     │  rotary knobs (side by side, same as the head BAL/PAN knob)
+  │      C         C      │  values (below the knobs)
+  └───────────────────────┘
   ```
 
 - The knobs form one horizontal band, so a future inter-send pan link fits as a full-width row
