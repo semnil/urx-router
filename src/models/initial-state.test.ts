@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { colorControl, planToCommands } from "../core/control/translate";
 import { PORT_REF_NONE } from "../core/control/vd";
+import { deserialize, serialize } from "../core/plan";
+import { validatePlan } from "../core/routing";
 import { MODELS } from "./index";
 import { defaultPlan } from "./initial-state";
 import { URX22_CONNECTIONS, URX22_NODE_PARAMS } from "./initial-urx22";
@@ -71,6 +73,21 @@ describe("defaultPlan", () => {
     factory.forEach((v, y) => expect(byTrack.get(y), `track ${y}`).toBe(v));
     // Track Count is read-only, so it is seeded for the UI but never emitted.
     expect(defaultPlan("URX44V").nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(16);
+  });
+
+  // A fresh document must be routing-legal for every model: no wire without a
+  // matching rule, and no single-input receiver carrying two wires. Guards the
+  // captured factory routing against the model's own connection rules.
+  it.each(["URX22", "URX44", "URX44V"] as const)("%s seed passes routing validation", (id) => {
+    expect(validatePlan(MODELS[id], defaultPlan(id))).toEqual([]);
+  });
+
+  // The factory seed is the input format future hardware reflection reuses, so it
+  // must survive the JSON document round-trip byte-for-byte (deserialize drops no
+  // captured connection/param and re-serializes identically).
+  it.each(["URX22", "URX44", "URX44V"] as const)("%s seed round-trips through serialize/deserialize", (id) => {
+    const text = serialize(defaultPlan(id));
+    expect(serialize(deserialize(text))).toBe(text);
   });
 
   // The color picker shows exactly for device-colorable nodes, so every such node

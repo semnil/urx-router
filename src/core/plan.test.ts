@@ -261,6 +261,18 @@ describe("encodePlanParam / decodePlanParam", () => {
     expect(deserialize(decodePlanParam(encoded))).toEqual(plan);
   });
 
+  it("round-trips 4-byte UTF-8 (emoji surrogate pairs) through the hand-rolled base64", () => {
+    // The encoder walks the UTF-8 byte array through String.fromCharCode + btoa;
+    // surrogate-pair emoji (4-byte code points) are the classic break point for a
+    // hand-rolled byte<->base64 loop, so pin one explicitly.
+    const plan = emptyPlan("URX22");
+    plan.nodeNames["ch1"] = "🎸🥁 Ø 日本語";
+    plan.notes["ch1"] = "🎚️ +2 dB 😀";
+    const restored = deserialize(decodePlanParam(encodePlanParam(plan)));
+    expect(restored.nodeNames["ch1"]).toBe("🎸🥁 Ø 日本語");
+    expect(restored.notes["ch1"]).toBe("🎚️ +2 dB 😀");
+  });
+
   it("throws on a malformed encoded parameter", () => {
     expect(() => decodePlanParam("not base64 !!!")).toThrow();
   });

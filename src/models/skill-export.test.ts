@@ -39,4 +39,15 @@ describe("urx-routing-planner skill data stays in sync with the device model", (
       check(modelMd(id), renderModelMarkdown(getModel(id)), `references/model-${id.toLowerCase()}.md`);
     });
   }
+
+  // The drift guard above is a pure equality check, so the renderers must be
+  // deterministic: rendering the same model twice (the same process, back to back)
+  // has to yield byte-identical output. This catches a stray Set/Object iteration
+  // order or Date/Math.random creeping into the export before it flaps CI.
+  it("renders identical output on repeated calls (no nondeterminism)", () => {
+    expect(skillModelsJson()).toBe(skillModelsJson());
+    for (const id of MODEL_IDS) {
+      expect(renderModelMarkdown(getModel(id))).toBe(renderModelMarkdown(getModel(id)));
+    }
+  });
 });

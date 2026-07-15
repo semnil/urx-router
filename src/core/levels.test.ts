@@ -43,4 +43,20 @@ describe("level_gain grid", () => {
     expect(stepLevel(-96, -1)).toBe(LEVEL_OFF_DB);
     expect(stepLevel(10, 1)).toBe(10);
   });
+
+  it("steps back up from off onto the floor detent (off is one notch below -96)", () => {
+    // levelToPos(LEVEL_OFF_DB) is 0 (off), so a single step up lands on the lowest
+    // real value, mirroring stepLevel(-96, -1) === off in the other direction.
+    expect(stepLevel(LEVEL_OFF_DB, 1)).toBe(-96);
+  });
+
+  it("resolves an exact midpoint deterministically to the lower (quieter) detent", () => {
+    // -15 sits exactly between the -16 and -14 detents; the nearest-neighbor scan
+    // uses strict < over an ascending grid, so the first (lower-index = quieter)
+    // detent wins the tie. Pin the direction so a rounding change is caught.
+    expect(snap(-15)).toBe(-16); // midpoint of -16 / -14
+    expect(snap(-0.2)).toBe(-0.4); // midpoint of -0.4 / 0
+    expect(snap(0.2)).toBe(0); // midpoint of 0 / 0.4
+    expect(snap(-60)).toBe(-64); // midpoint of -64 / -56 in the coarse tail
+  });
 });

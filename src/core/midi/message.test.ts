@@ -22,6 +22,15 @@ describe("MIDI message decode", () => {
     expect(decodeMessage([0xc0, 5, 0])).toBeNull(); // program change
     expect(decodeMessage([0xf8])).toBeNull(); // clock
     expect(decodeMessage([0xb0, 7])).toBeNull(); // truncated
+    expect(decodeMessage([])).toBeNull(); // empty
+    expect(decodeMessage([0x90, 60])).toBeNull(); // 2-byte note (needs a status + 2 data)
+  });
+
+  it("treats any note-on velocity > 0 as on and masks out-of-range data bytes", () => {
+    expect(decodeMessage([0x90, 60, 1])).toEqual({ type: "note", channel: 0, note: 60, on: true }); // velocity 1 = on
+    expect(decodeMessage([0x80, 60, 127])).toEqual({ type: "note", channel: 0, note: 60, on: false }); // note-off velocity ignored
+    // The status high nibble selects the message; data bytes are masked to 7 bits.
+    expect(decodeMessage([0xb0, 0x80, 0xff])).toEqual({ type: "cc", channel: 0, controller: 0, value: 127 });
   });
 
   it("masks data bytes to 7 bits on encode", () => {
@@ -30,6 +39,13 @@ describe("MIDI message decode", () => {
     expect(encodeNote(1, 60, false)).toEqual([0x81, 60, 0]);
     expect(encodePitchBend(0, 16383)).toEqual([0xe0, 0x7f, 0x7f]);
     expect(encodePitchBend(0, 20000)).toEqual([0xe0, 0x7f, 0x7f]); // clamped
+  });
+
+  it("masks the channel nibble and splits pitch bend LSB-first", () => {
+    expect(encodeCc(16, 7, 10)).toEqual([0xb0, 7, 10]); // channel 16 wraps to 0
+    expect(encodeCc(0, 128, 10)).toEqual([0xb0, 0, 10]); // controller masked
+    expect(encodePitchBend(0, 8192)).toEqual([0xe0, 0, 0x40]); // center = MSB 0x40, LSB 0
+    expect(encodePitchBend(0, -5)).toEqual([0xe0, 0, 0]); // clamped low
   });
 
   it("round-trips encode → decode", () => {

@@ -182,6 +182,41 @@ describe("normalized value access", () => {
     expect(plan.nodeParams.ch_5_6?.eqOn).toBe(seeded);
   });
 
+  it("locks only the FIXED-bus send level; its MUTE and PRE/POST tap stay writable", () => {
+    // FIXED BUS Type freezes the send level (and Pan Link the pan), but the send's
+    // ON (MUTE) and its PRE/POST tap remain editable — matching the console chip.
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], busType: 1 };
+    expect(bindControl(model, plan, "ch1/level@bus.mix1")!.set(1)).toBe(false); // level inert
+    const mute = bindControl(model, plan, "ch1/mute@bus.mix1")!;
+    expect(mute.set(1)).toBe(true);
+    expect(conn("ch1", "bus.mix1").params?.on).toBe(false);
+    const tap = bindControl(model, plan, "ch1/tap@bus.mix1")!;
+    expect(tap.set(1)).toBe(true);
+    expect(conn("ch1", "bus.mix1").params?.tap).toBe("pre");
+  });
+
+  it("has no writable control for the read-only CH → FX send tap", () => {
+    // CH → FX taps are device-locked (broker max_value=0): the catalog omits the
+    // control entirely, so a MIDI mapping can never write one.
+    expect(bindControl(model, plan, "ch1/tap@bus.fx1")).toBeNull();
+    expect(listControls(model, plan).some((c) => c.id === "ch1/tap@bus.fx1")).toBe(false);
+  });
+
+  it("rejects out-of-range normalized input by clamping, never writing past a grid end", () => {
+    // Normalized values arrive 0..1; anything outside (or NaN) clamps rather than
+    // driving the plan past the level_gain / pan grids.
+    const level = bindControl(model, plan, "ch1/level")!;
+    level.set(5); // above 1 → clamps to the top detent
+    expect(conn("ch1", "bus.stereo").params?.level).toBe(10);
+    level.set(-3); // below 0 → clamps to off
+    expect(conn("ch1", "bus.stereo").params?.level).toBe(LEVEL_OFF_DB);
+    level.set(NaN); // non-finite → treated as 0 → off
+    expect(conn("ch1", "bus.stereo").params?.level).toBe(LEVEL_OFF_DB);
+    const pan = bindControl(model, plan, "ch1/pan")!;
+    pan.set(2); // above 1 → clamps to R63
+    expect(conn("ch1", "bus.stereo").params?.pan).toBe(63);
+  });
+
   it("drives the OSC level / ON through the osc params object", () => {
     const level = bindControl(model, plan, "bus.osc/level")!;
     level.set(1);

@@ -2407,6 +2407,14 @@ select:focus-visible,
 .con-panbtn .cv {
   font-size: 8px;
 }
+/* Open state: while its SEND PAN popover is up the button reads as engaged — an amber
+   frame + tint + ink, distinct from the solid-amber enable chips (this is a momentary
+   popover trigger, not an on/off setting). */
+.con-panbtn.open {
+  background: color-mix(in srgb, var(--led) 22%, var(--ctl-bg));
+  border-color: var(--led);
+  color: var(--led);
+}
 .con-panbtn:focus-visible {
   outline: 2px solid var(--led);
   outline-offset: -2px;
@@ -2427,10 +2435,21 @@ select:focus-visible,
   overflow: visible;
 }
 .con-spop .ph {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font: 700 9.5px var(--mono);
   letter-spacing: 1px;
   padding: 7px 10px 5px;
   border-bottom: 1px solid var(--line);
+}
+.con-spop .ph .cat {
+  color: var(--text-dim);
+}
+.con-spop .ph .who {
+  margin-left: auto;
+  color: var(--led);
+  letter-spacing: 0.5px;
 }
 .con-spop.below::before {
   content: "";

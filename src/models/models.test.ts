@@ -70,5 +70,61 @@ describe("model-specific topology", () => {
   it("pairs mono channels for shared source selection", () => {
     expect(MODELS.URX22.channelPairs).toEqual([["ch1", "ch2"]]);
     expect(MODELS.URX44.channelPairs).toEqual([["ch1", "ch2"], ["ch3", "ch4"]]);
+    // URX44V shares URX44's 4 mono channels, so it pairs identically.
+    expect(MODELS.URX44V.channelPairs).toEqual([["ch1", "ch2"], ["ch3", "ch4"]]);
+  });
+});
+
+// Structural contracts every consumer (routing engine, seeding, skill export)
+// assumes when it walks a DeviceModel. These are model-wide invariants rather
+// than per-feature checks: a node-id collision, a backwards wire, or a dangling
+// node would silently corrupt connect / validate for all three models.
+describe("model structural invariants", () => {
+  it.each(MODEL_IDS)("%s: node ids are unique", (id) => {
+    const ids = MODELS[id].nodes.map((n) => n.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it.each(MODEL_IDS)("%s: no duplicate (from,to) routing rule", (id) => {
+    // findRule / ruleKind return the first match, so a repeated from->to pair would
+    // make the second rule (possibly a different kind) unreachable and ambiguous.
+    const keys = MODELS[id].rules.map((r) => `${r.from} ${r.to}`);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it.each(MODEL_IDS)("%s: every rule.from is an out port and every rule.to is an in port", (id) => {
+    // A wire is directional; a rule endpoint pointing at the wrong port direction
+    // (e.g. from an in port) would let the graph draw a backwards connection.
+    const m = MODELS[id];
+    const dir = (r: string, want: "in" | "out"): boolean => {
+      const { nodeId, portId } = parseRef(r);
+      return m.nodes.find((n) => n.id === nodeId)?.ports.find((p) => p.id === portId)?.direction === want;
+    };
+    for (const rule of m.rules) {
+      expect(dir(rule.from, "out"), `${id}: from ${rule.from}`).toBe(true);
+      expect(dir(rule.to, "in"), `${id}: to ${rule.to}`).toBe(true);
+    }
+  });
+
+  it.each(MODEL_IDS)("%s: the only nodes absent from every routing rule are headers", (id) => {
+    // Every node must be wired into the graph except the microSD Rec header, which
+    // deliberately takes no wire (its track slots carry the record routes).
+    const m = MODELS[id];
+    const inRule = new Set<string>();
+    for (const r of m.rules) {
+      inRule.add(parseRef(r.from).nodeId);
+      inRule.add(parseRef(r.to).nodeId);
+    }
+    for (const n of m.nodes.filter((x) => !inRule.has(x.id))) {
+      expect(n.header, `${id}: ${n.id} is orphaned but not a header`).toBe(true);
+    }
+  });
+
+  // The non-removable wire budget per model: channels x 5 sends + 2 FX x 3 sends +
+  // 2 MIX "TO ST" switches = 5*(mono+stereo) + 8. URX22 = 5*6+8 = 38; URX44/44V =
+  // 5*8+8 = 48. Pins the count the FIXED-wire e2e and seeding rely on.
+  const FIXED_COUNT = { URX22: 38, URX44: 48, URX44V: 48 } as const;
+  it.each(MODEL_IDS)("%s: carries exactly its expected number of fixed wires", (id) => {
+    expect(MODELS[id].rules.filter((r) => r.fixed).length).toBe(FIXED_COUNT[id]);
   });
 });

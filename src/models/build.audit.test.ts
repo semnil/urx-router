@@ -39,6 +39,27 @@ describe("ducker <-> stereo-channel coupling", () => {
       expect(MONO_CH.test(d.attachTo ?? ""), `${d.id} -> ${d.attachTo}`).toBe(false);
     }
   });
+
+  // The ducker NODES come from a `d <= stereoCh` loop but the ducker KEY RULES come
+  // from a hardcoded `d <= 4` loop (build.ts rule 12). They agree only because every
+  // model ships stereoCh = 4: a different stereo count would either dangle key rules
+  // onto a non-existent ducker or leave a real ducker with no selectable key source.
+  // This pins the key-rule <-> ducker-node bijection so that drift is caught.
+  it.each(MODEL_IDS)("%s: key rules target exactly the ducker nodes, each offering every key source", (id) => {
+    const model = MODELS[id];
+    const duckers = model.nodes.filter((n) => n.kind === "ducker").map((n) => n.id).sort();
+    const keyDests = [...new Set(model.rules.filter((r) => r.kind === "key").map((r) => parseRef(r.to).nodeId))].sort();
+    expect(keyDests).toEqual(duckers);
+    // Each ducker selects one trigger from every channel plus STEREO / MIX 1 / MIX 2.
+    const channelIds = model.nodes.filter((n) => n.kind === "channel").map((n) => n.id);
+    const expectedSources = new Set([...channelIds, "bus.stereo", "bus.mix1", "bus.mix2"]);
+    for (const d of duckers) {
+      const got = new Set(
+        model.rules.filter((r) => r.kind === "key" && parseRef(r.to).nodeId === d).map((r) => parseRef(r.from).nodeId),
+      );
+      expect(got, `${id}: ${d} key sources`).toEqual(expectedSources);
+    }
+  });
 });
 
 describe("attachTo integrity (every hung node points at a real parent)", () => {
