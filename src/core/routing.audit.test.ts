@@ -16,9 +16,12 @@ import {
   pairPrimary,
   sendHasOn,
   sendHasTap,
+  mirrorBalPair,
 } from "./routing";
 import { emptyPlan, setExclusiveConnection } from "./plan";
 import { rateConstraints, SAMPLE_RATES } from "./constraints";
+import { defaultPlan } from "../models/initial-state";
+import { PAN_BAL_BAL } from "./control/params";
 
 describe("rule integrity per model", () => {
   it.each(MODEL_IDS)("%s: no duplicate (from,to) rule pairs", (id) => {
@@ -291,5 +294,53 @@ describe("setExclusiveConnection ↔ canConnect single-input consistency (URX44V
     expect(canConnect(model, plan, ref("in.aux", "out"), chIn).reason).toBe("singleInput");
     // No source is freely addable while the slot is occupied (swap must go via the mutator).
     expect(legalSources(model, plan, chIn).size).toBe(0);
+  });
+});
+
+// canConnect counts occupancy on a single-input port kind-agnostically (any wire into
+// the port blocks a new source/patch/key/record). That count is only self-consistent
+// if a port never mixes a single-input rule with a summing (send/sendSwitch) rule:
+// otherwise adding the summing wire would be allowed while adding the selector wire
+// would be blocked by that same summing wire (an asymmetry). Pin that no generated
+// input port is ever "mixed", so the kind-agnostic guard stays sound across models.
+describe("no input port mixes a single-input rule with a summing rule", () => {
+  it.each(MODEL_IDS)("%s: every destination port is either all-single-input or all-summing", (id) => {
+    const byTo = new Map<string, boolean[]>();
+    for (const r of MODELS[id].rules) {
+      const arr = byTo.get(r.to) ?? [];
+      arr.push(isSingleInput(r.kind));
+      byTo.set(r.to, arr);
+    }
+    for (const [to, kinds] of byTo) {
+      const allSame = kinds.every((k) => k === kinds[0]);
+      expect(allSame, `${id} port ${to} mixes single-input and summing rules`).toBe(true);
+    }
+  });
+});
+
+// AUDIT (routing.ts mirrorBalPair, S4 latent): the mirror shallow-spreads the source
+// channel's nodeParams onto the partner, so NESTED param objects (gate / comp / eqBands
+// / ssmcs / osc / eqOneKnob) are shared by reference between the two channels rather
+// than deep-copied. It is benign under the standard edit path (onUpdateNodeParams
+// rebuilds the top-level object and every linked edit re-mirrors), but an in-place
+// mutation of a shared nested object would bleed into the partner — including after the
+// pair is later unlinked, since the alias persists until a replace-style edit or a JSON
+// round-trip breaks it. Pin the current sharing so a future deep-copy is a deliberate change.
+describe("AUDIT mirrorBalPair shares nested param objects by reference", () => {
+  it("aliases the partner's nested gate/eqBands to the source (no deep copy)", () => {
+    const plan = defaultPlan("URX44");
+    plan.nodeParams.ch1 = {
+      stereoLink: true,
+      panBal: PAN_BAL_BAL,
+      gate: { threshold: -20 },
+      eqBands: [{ gain: 3 }],
+    };
+    expect(mirrorBalPair(MODELS.URX44, plan, "ch1")).toBe(true);
+    // Same object identity, not a clone.
+    expect(plan.nodeParams.ch2!.gate).toBe(plan.nodeParams.ch1!.gate);
+    expect(plan.nodeParams.ch2!.eqBands).toBe(plan.nodeParams.ch1!.eqBands);
+    // Consequently an in-place edit to the source's nested object bleeds into the partner.
+    plan.nodeParams.ch1!.gate!.threshold = -99;
+    expect(plan.nodeParams.ch2!.gate!.threshold).toBe(-99);
   });
 });

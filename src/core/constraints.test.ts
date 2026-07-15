@@ -113,6 +113,37 @@ describe("duckerBypassWarnings", () => {
     plan.connections.push({ from: ref("bus.stereo", "out"), to: ref("out.usbmain_b", "in"), kind: "patch" });
     expect(duckerBypassWarnings(u44v, plan)).toEqual([]);
   });
+
+  // Two independent ducked channels, each tapped to a USB direct out, must each be
+  // flagged (the warning is per host, not a single boolean). Discover the ducker→host
+  // mapping from the model so the pairing stays correct if build.ts renumbers.
+  it("flags every ducked-and-tapped channel, not just the first", () => {
+    const duckers = u44v.nodes.filter((n) => n.kind === "ducker" && n.attachTo);
+    expect(duckers.length).toBeGreaterThanOrEqual(2);
+    const [d1, d2] = duckers;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams[d1.id] = { duckerOn: true };
+    plan.nodeParams[d2.id] = { duckerOn: true };
+    plan.connections.push(
+      { from: ref(d1.attachTo!, "out"), to: ref("out.usbmain_b", "in"), kind: "patch" },
+      { from: ref(d2.attachTo!, "out"), to: ref("out.usbsub", "in"), kind: "patch" },
+    );
+    expect(duckerBypassWarnings(u44v, plan).sort()).toEqual([d1.attachTo, d2.attachTo].sort());
+  });
+
+  // A host tapped to BOTH a USB out and a microSD Rec out is still flagged exactly once
+  // for the USB tap; the SD tap neither adds a second entry nor suppresses the warning.
+  it("flags a host once when it feeds both a USB out and a microSD Rec out", () => {
+    const d = u44v.nodes.find((n) => n.kind === "ducker" && n.attachTo)!;
+    const host = d.attachTo!;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams[d.id] = { duckerOn: true };
+    plan.connections.push(
+      { from: ref(host, "out"), to: ref("out.usbmain_b", "in"), kind: "patch" },
+      { from: ref(host, "out"), to: ref("out.sdrec.t1", "in"), kind: "record" },
+    );
+    expect(duckerBypassWarnings(u44v, plan)).toEqual([host]);
+  });
 });
 
 describe("channelDuckerOn", () => {

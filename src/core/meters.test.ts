@@ -10,6 +10,7 @@ import {
   tapFor,
   tapsFor,
 } from "./meters";
+import { MODELS, MODEL_IDS } from "../models/index";
 
 describe("decodeMeterDb", () => {
   it("scales the raw deci-dBFS value by 1/10", () => {
@@ -61,6 +62,10 @@ describe("tap points", () => {
     expect(defaultTapKey("ch_5_6")).toBe("post");
     expect(defaultTapKey("bus.fx1")).toBe("post");
     expect(defaultTapKey("bus.mon1")).toBe("post");
+    // An unmapped node has no taps at all; the key still resolves to the "post"
+    // convention rather than undefined, so a caller can round-trip it safely.
+    expect(defaultTapKey("out.main")).toBe("post");
+    expect(defaultTapKey("nope")).toBe("post");
   });
 
   it("resolves a tap by key and falls back to the last tap for an unknown key", () => {
@@ -125,5 +130,34 @@ describe("tapAddrs", () => {
   it("dedupes addresses shared across taps", () => {
     const t = tapFor("ch1", "input")!;
     expect(tapAddrs([t, t])).toEqual([[100, 0]]);
+  });
+});
+
+// Every DSP tap point is a distinct hardware meter, so no two (node, tap) pairs may
+// share the same broker address [meterId, x]. The address table is dense and hand-laid
+// (mono channels share a meterId at distinct x; stereo/bus pairs pack L/R into adjacent
+// x), which is exactly where a copy-paste x-offset slip (e.g. giving MIX2 x=0 like MIX1)
+// would silently make two strips mirror each other's meter. Pin global uniqueness across
+// every metered node in every model so such a slip is caught.
+describe("meter address table has no collisions", () => {
+  it("maps every (node, tap, side) to a unique broker address", () => {
+    const ids = new Set<string>();
+    for (const id of MODEL_IDS) for (const n of MODELS[id].nodes) if (hasMeter(n.id)) ids.add(n.id);
+    // Guard against an empty scan silently passing.
+    expect(ids.size).toBeGreaterThan(10);
+    const owner = new Map<string, string>();
+    const collisions: string[] = [];
+    for (const id of ids) {
+      for (const t of tapsFor(id)) {
+        for (const a of [t.l, t.r]) {
+          if (!a) continue;
+          const key = `${a[0]}:${a[1]}`;
+          const here = `${id}.${t.key}`;
+          if (owner.has(key)) collisions.push(`${key} -> ${owner.get(key)} & ${here}`);
+          else owner.set(key, here);
+        }
+      }
+    }
+    expect(collisions).toEqual([]);
   });
 });

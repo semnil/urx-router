@@ -271,6 +271,27 @@ test("the scribble power LED arms the node master (chOn) and a note toggles it",
   await expect(power()).toHaveAttribute("aria-pressed", "false"); // toggled off
 });
 
+test("learn mode ignores a wheel over a fader so a stray scroll never edits it", async ({ page }) => {
+  // The console fader/knob wheel handlers bail while learn is active, so scrolling
+  // over an armable control neither edits its level nor consumes the arm gesture.
+  await openPanel(page);
+  await pickInputPort(page);
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn on
+  await expect(page.locator("#console-host")).toHaveClass(/midi-learn/);
+
+  const fader = strip(page, "CH 1").locator(".con-fader");
+  await expect(readLevel(page, "CH 1")).toHaveText("0.0");
+  const box = await fader.boundingBox();
+  if (!box) throw new Error("fader has no bounding box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -100); // a wheel notch up — would be +0.4 dB outside learn
+  await expect(readLevel(page, "CH 1")).toHaveText("0.0"); // unchanged: learn swallowed it
+
+  // The control is still armable by click, proving the wheel did not consume learn.
+  await fader.click();
+  await expect(fader).toHaveClass(/midi-armed/);
+});
+
 test("edge-mode MUTE flips on every CC press even with no release-to-0 between", async ({ page }) => {
   // Regression for a Stream Deck "Push" button set to send 127 only (no 0 on
   // release, confirmed by a bus trace): edge mode must flip on every press, not

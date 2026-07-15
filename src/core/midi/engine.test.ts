@@ -140,6 +140,68 @@ describe("incoming application", () => {
     engine.onMessage(encodeCc(0, 39, 32)); // LSB refines
     expect(c.value).toBeCloseTo(((64 << 7) | 32) / 16383, 6);
   });
+
+  it("assembles a 14-bit CC pair regardless of arrival order (LSB before MSB)", () => {
+    const c = fake("ch1/level", "continuous", 0, 1 / 16383);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc14", channel: 0, controller: 7 });
+    engine.onMessage(encodeCc(0, 39, 32)); // LSB first: MSB still 0 → tiny value
+    expect(c.value).toBeCloseTo(32 / 16383, 6);
+    engine.onMessage(encodeCc(0, 7, 64)); // MSB completes the pair
+    expect(c.value).toBeCloseTo(((64 << 7) | 32) / 16383, 6);
+  });
+
+  it("pickup engages on an exact touch of the plan value, then tracks", () => {
+    const c = fake("ch1/level", "continuous", 0.5);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
+    engine.onMessage(encodeCc(0, 7, 64)); // 64/127 ≈ 0.504, within the ±2-step window → engaged
+    engine.onMessage(encodeCc(0, 7, 127)); // now tracks anywhere
+    expect(c.value).toBe(1);
+  });
+
+  it("pickup engages when the physical value crosses the plan value from above", () => {
+    const c = fake("ch1/level", "continuous", 0.5);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
+    engine.onMessage(encodeCc(0, 7, 90)); // far above → swallowed, records the position
+    expect(c.value).toBe(0.5);
+    engine.onMessage(encodeCc(0, 7, 20)); // sweeps down through 0.5 → engaged, applies
+    expect(c.value).toBeCloseTo(0.15, 5); // 20/127 snapped to the 1/40 grid
+  });
+
+  it("drives a continuous control from a note as a momentary full / zero switch", () => {
+    const c = fake("ch1/level", "continuous", 0.3);
+    controls.set(c.id, c);
+    map(c.id, { type: "note", channel: 0, note: 60 });
+    engine.onMessage(encodeNote(0, 60, true)); // press → full
+    expect(c.value).toBe(1);
+    engine.onMessage(encodeNote(0, 60, false)); // release → zero
+    expect(c.value).toBe(0);
+  });
+
+  it("a pitch bend bound to a toggle does nothing", () => {
+    const t = fake("ch1/mute", "toggle", 0);
+    controls.set(t.id, t);
+    map(t.id, { type: "pitchbend", channel: 0 });
+    engine.onMessage([0xe0, 0x7f, 0x7f]); // full-scale bend
+    expect(t.value).toBe(0);
+    expect(applied).toEqual([]);
+  });
+
+  it("clears half-assembled 14-bit pair state and engaged pickup on a mapping replace", () => {
+    // A remap must not carry a stale MSB half or a still-engaged pickup into the
+    // next set (setMappings resets pair / pickup / echo-guard state).
+    const c = fake("ch1/level", "continuous", 0, 1 / 16383);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc14", channel: 0, controller: 7 });
+    engine.onMessage(encodeCc(0, 7, 127)); // MSB only → coarse-high
+    expect(c.value).toBeCloseTo((127 << 7) / 16383, 6);
+    // Replace the mappings (same address): the retained MSB must not survive.
+    engine.setMappings([{ control: c.id, addr: { type: "cc14", channel: 0, controller: 7 }, mode: "absolute" }]);
+    engine.onMessage(encodeCc(0, 39, 64)); // LSB only → assembles against a fresh MSB 0
+    expect(c.value).toBeCloseTo(64 / 16383, 6);
+  });
 });
 
 describe("learn", () => {
@@ -194,6 +256,28 @@ describe("learn", () => {
     expect(c.value).toBe(0);
     engine.cancelLearn();
     expect(engine.isLearning()).toBe(false);
+  });
+
+  it("ignores a note release while learning (a lifted pad must not bind)", () => {
+    engine.startLearn();
+    engine.onMessage(encodeNote(0, 60, false)); // release only: no candidate, still learning
+    expect(learned).toEqual([]);
+    expect(engine.isLearning()).toBe(true);
+    engine.onMessage(encodeNote(0, 60, true)); // the actual press binds
+    expect(learned).toEqual([{ type: "note", channel: 0, note: 60 }]);
+    expect(engine.isLearning()).toBe(false);
+  });
+
+  it("cancel drops a pending CC candidate, and flushLearn is a no-op when idle", () => {
+    engine.flushLearn(); // idle: nothing pending, must not bind or throw
+    expect(learned).toEqual([]);
+    engine.startLearn();
+    engine.onMessage(encodeCc(0, 30, 100)); // one CC: a pending candidate
+    expect(pendingCount).toBe(1);
+    engine.cancelLearn();
+    expect(engine.isLearning()).toBe(false);
+    engine.flushLearn(); // the cancelled candidate must not resurrect
+    expect(learned).toEqual([]);
   });
 });
 
@@ -310,6 +394,21 @@ describe("feedback", () => {
     clock += 400;
     engine.onMessage(encodeNote(0, 60, true));
     expect(mute.value).toBe(0);
+  });
+
+  it("only guards echoes within the echo window; a later equal message flips the toggle", () => {
+    // The receive-side echo guard spans ECHO_MS (300 ms). A same-value message
+    // that arrives after the window is treated as a genuine press, not an echo.
+    const mute = fake("ch1/mute", "toggle", 0);
+    controls.set("ch1/mute", mute);
+    map("ch1/mute", { type: "cc", channel: 0, controller: 20 });
+    mute.value = 1;
+    engine.feedback(); // sends 127, arms the guard at clock 0
+    expect(sent).toEqual([encodeCc(0, 20, 127)]);
+    clock = 300; // exactly at the window edge → guard expired
+    engine.onMessage(encodeCc(0, 20, 127)); // no longer treated as an echo → edge flips
+    expect(mute.value).toBe(0);
+    expect(applied).toEqual(["ch1/mute"]);
   });
 
   it("resync forgets the sent cache and re-emits everything", () => {

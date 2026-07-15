@@ -139,6 +139,31 @@ describe("deserialize tolerance to malformed documents", () => {
     ]);
   });
 
+  it("AUDIT: does NOT deep-validate nodeParams values (asymmetry with connection params)", () => {
+    // deserialize validates each connection's params (isValidConnParams: numeric
+    // level/pan, boolean flags) so a garbled wire can never reach the console's
+    // .toFixed. The per-node nodeParams collection gets only the top-level
+    // isStringRecord check — its VALUES pass through untouched. So a hostile /
+    // hand-corrupted plan can carry a string level / gain, a non-boolean on, or an
+    // entirely wrong-typed entry, and it survives the load verbatim. Downstream
+    // formatters guard the common fader paths (fmtDb / levelToPos treat a non-finite
+    // or non-number as -∞/off), but the guard is not universal — an inspector
+    // rangeSlider format callback calls .toFixed directly on e.g. osc.level. Pin the
+    // current (unvalidated) behavior so tightening it is a deliberate change.
+    const doc = JSON.stringify({
+      ...base,
+      nodeParams: {
+        ch1: { level: "abc", gain: {}, on: "notbool", hpfFreq: null },
+        ch2: "not even an object",
+        "bus.osc": { osc: { level: "loud" } },
+      },
+    });
+    const plan = deserialize(doc);
+    expect(plan.nodeParams.ch1).toEqual({ level: "abc", gain: {}, on: "notbool", hpfFreq: null });
+    expect(plan.nodeParams.ch2 as unknown).toBe("not even an object");
+    expect((plan.nodeParams["bus.osc"] as { osc: { level: unknown } }).osc.level).toBe("loud");
+  });
+
   it("accepts a connection with no params field (params is optional)", () => {
     const doc = JSON.stringify({
       ...base,

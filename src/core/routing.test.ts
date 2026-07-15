@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
-import { canConnect, duckerKeySource, isBalLinkedPair, isFixedConnection, legalSources, legalTargets, mirrorBalPair, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, sendTapWritable, upstreamNodes, validatePlan } from "./routing";
+import { canConnect, duckerKeySource, isBalLinkedPair, isFixedConnection, isNodeInactive, legalSources, legalTargets, mirrorBalPair, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, sendTapWritable, upstreamNodes, validatePlan } from "./routing";
 import { emptyPlan, type Plan, type PlanConnection } from "./plan";
 import { defaultPlan } from "../models/initial-state";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
@@ -336,6 +336,64 @@ describe("validatePlan on URX44", () => {
     const conn: PlanConnection = { from: ref("ch1", "out"), to: ref("bus.stereo", "in"), kind: "send" };
     plan.connections.push({ ...conn }, { ...conn });
     expect(validatePlan(u44, plan).some((p) => p.reason === "duplicate")).toBe(true);
+  });
+});
+
+// isNodeInactive is the shared dim predicate the GRAPH and CONSOLE both read, yet
+// had no direct coverage. Each node kind carries its off-state on a different param
+// (duckerOn / osc.on / on), and the default polarity differs — a channel is on when
+// absent, a ducker/oscillator is off when absent — so each branch needs its own case.
+describe("isNodeInactive", () => {
+  it("dims a channel / bus / FX / monitor only when its master on is explicitly false", () => {
+    const plan = emptyPlan("URX44");
+    // Absent params = device default ON, so nothing is dimmed out of the box.
+    expect(isNodeInactive(plan, { id: "ch1", kind: "channel" })).toBe(false);
+    expect(isNodeInactive(plan, { id: "bus.stereo", kind: "bus" })).toBe(false);
+    expect(isNodeInactive(plan, { id: "bus.fx1", kind: "bus" })).toBe(false);
+    expect(isNodeInactive(plan, { id: "bus.mon1", kind: "output" })).toBe(false);
+    plan.nodeParams.ch1 = { on: false };
+    plan.nodeParams["bus.fx1"] = { on: false };
+    expect(isNodeInactive(plan, { id: "ch1", kind: "channel" })).toBe(true);
+    expect(isNodeInactive(plan, { id: "bus.fx1", kind: "bus" })).toBe(true);
+    // on: true reads as active again.
+    plan.nodeParams.ch1 = { on: true };
+    expect(isNodeInactive(plan, { id: "ch1", kind: "channel" })).toBe(false);
+  });
+
+  it("treats a ducker as inactive unless duckerOn is explicitly true (default off)", () => {
+    const plan = emptyPlan("URX44");
+    // A ducker reads its own duckerOn, not `on`; absent = bypassed = inactive.
+    expect(isNodeInactive(plan, { id: "out.ducker1", kind: "ducker" })).toBe(true);
+    plan.nodeParams["out.ducker1"] = { duckerOn: true };
+    expect(isNodeInactive(plan, { id: "out.ducker1", kind: "ducker" })).toBe(false);
+    plan.nodeParams["out.ducker1"] = { duckerOn: false };
+    expect(isNodeInactive(plan, { id: "out.ducker1", kind: "ducker" })).toBe(true);
+    // A stray top-level `on` must NOT flip a ducker (wrong param for this kind).
+    plan.nodeParams["out.ducker1"] = { on: true, duckerOn: false };
+    expect(isNodeInactive(plan, { id: "out.ducker1", kind: "ducker" })).toBe(true);
+  });
+
+  it("treats the oscillator as inactive unless osc.on is explicitly true (default off)", () => {
+    const plan = emptyPlan("URX44");
+    // The oscillator's off lives under osc.on, and its default polarity is OFF, so a
+    // fresh plan shows it dimmed — the inverse of a channel.
+    expect(isNodeInactive(plan, { id: "bus.osc", kind: "input" })).toBe(true);
+    plan.nodeParams["bus.osc"] = { osc: { on: true } };
+    expect(isNodeInactive(plan, { id: "bus.osc", kind: "input" })).toBe(false);
+    plan.nodeParams["bus.osc"] = { osc: { on: false } };
+    expect(isNodeInactive(plan, { id: "bus.osc", kind: "input" })).toBe(true);
+    // osc present but with no `on` key resolves to inactive.
+    plan.nodeParams["bus.osc"] = { osc: { level: -14 } };
+    expect(isNodeInactive(plan, { id: "bus.osc", kind: "input" })).toBe(true);
+  });
+
+  it("tolerates a plan with no nodeParams map at all (optional-chaining guard)", () => {
+    // The predicate reads plan.nodeParams?.[id]; a malformed plan missing the map
+    // must not throw. Each kind then falls to its default polarity.
+    const bare = { ...emptyPlan("URX44"), nodeParams: undefined as never };
+    expect(isNodeInactive(bare, { id: "ch1", kind: "channel" })).toBe(false); // default on
+    expect(isNodeInactive(bare, { id: "out.ducker1", kind: "ducker" })).toBe(true); // default off
+    expect(isNodeInactive(bare, { id: "bus.osc", kind: "input" })).toBe(true); // default off
   });
 });
 
