@@ -102,7 +102,10 @@ export const en = {
     // value-follows-state. Stored values stay "edge" / "state" for persistence
     // compatibility.
     buttonMode: { edge: "Momentary", state: "Toggle" },
-    // One-line behavior notes shown in the legend strip while a select is
+    // Legend-card headers: which setting the hovered select controls.
+    modeTitle: "Take-in mode",
+    buttonModeTitle: "Button behavior",
+    // One-line behavior notes shown in the legend card while a select is
     // hovered / focused (a native dropdown cannot annotate its own options).
     modeDesc: {
       absolute: "Applies the received value as-is. Jumps when the physical control and the on-screen value disagree.",

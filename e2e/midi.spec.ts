@@ -368,12 +368,73 @@ test("the option legend explains every choice of a hovered select", async ({ pag
   const mode = page.locator('#midi-panel .mp-row[data-control="ch1/level"] .mp-mode');
   await mode.focus();
   await expect(info).toBeVisible();
+  await expect(info.locator(".ph .cat")).toHaveText("Take-in mode"); // header names the setting…
+  await expect(info.locator(".ph .who")).toHaveText("CH 1 · Level"); // …and the owning assignment
   await expect(info.locator(".ln")).toHaveCount(2); // one note per take-in mode (absolute / pickup)
   await expect(info.locator(".ln.cur .nm")).toHaveText("Absolute"); // current choice highlighted
   await mode.blur();
   await expect(info).toBeHidden();
   // Changing the mode rebuilds the row; the legend never lingers detached.
   await mode.selectOption("pickup");
+  await expect(info).toBeHidden();
+});
+
+test("the option legend floats beside its row and never hides the hovered select", async ({ page }) => {
+  // Seed enough assignments that the panel hits its max height — the regression
+  // ground: an in-flow legend shrank the scrolling list and flickered with the
+  // hover it depends on; a panel-bottom overlay covered the hovered select.
+  await page.evaluate(() => {
+    const mappings: Array<{ control: string }> = [];
+    for (const ch of ["ch1", "ch2"]) {
+      mappings.push({ control: `${ch}/level` }, { control: `${ch}/mute` });
+      for (const send of ["bus.mix1", "bus.mix2", "bus.fx1", "bus.fx2"]) {
+        mappings.push({ control: `${ch}/level@${send}` }, { control: `${ch}/mute@${send}` });
+      }
+    }
+    mappings.push({ control: "ch3/level" }, { control: "ch4/mute" });
+    const models = { URX44V: mappings.map((m, i) => ({ ...m, addr: { type: "cc", channel: 0, controller: i + 1 }, mode: "absolute" })) };
+    localStorage.setItem("urx-midi", JSON.stringify({ models }));
+  });
+  await page.reload();
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await openPanel(page);
+
+  const rows = page.locator("#midi-panel .mp-row");
+  await expect(rows).toHaveCount(22);
+  // The regression needs a list that already scrolls inside the panel.
+  const list = page.locator("#midi-panel .mp-list");
+  expect(await list.evaluate((e) => e.scrollHeight > e.clientHeight)).toBe(true);
+  const info = page.locator("#midi-panel .mp-info");
+
+  // Bottom row: no room below in the viewport, so the card flips above the row.
+  const lastSel = rows.last().locator(".mp-btn");
+  await lastSel.scrollIntoViewIfNeeded();
+  const selBox = (await lastSel.boundingBox())!;
+  const lastRowBox = (await rows.last().boundingBox())!;
+  await lastSel.hover();
+  await expect(info).toBeVisible();
+  const above = (await info.boundingBox())!;
+  expect(above.y + above.height).toBeLessThanOrEqual(lastRowBox.y + 1);
+  // The select neither moves nor loses the pointer to the card, so the card
+  // holds steady instead of toggling with the hover that shows it.
+  expect(await lastSel.boundingBox()).toEqual(selBox);
+  const hit = await page.evaluate(
+    ([x, y]) => (document.elementFromPoint(x, y) as HTMLElement | null)?.className ?? "",
+    [selBox.x + selBox.width / 2, selBox.y + selBox.height / 2] as const,
+  );
+  expect(hit).toContain("mp-btn");
+
+  // Top row: room below, so the card sits directly under its row.
+  const firstSel = rows.first().locator(".mp-mode");
+  await firstSel.scrollIntoViewIfNeeded();
+  const firstRowBox = (await rows.first().boundingBox())!;
+  await firstSel.hover();
+  await expect(info).toBeVisible();
+  const below = (await info.boundingBox())!;
+  expect(below.y).toBeGreaterThanOrEqual(firstRowBox.y + firstRowBox.height - 1);
+
+  // Scrolling the list moves the rows out from under the card: it hides.
+  await list.evaluate((e) => e.scrollBy(0, 40));
   await expect(info).toBeHidden();
 });
 
