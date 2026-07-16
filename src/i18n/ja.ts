@@ -37,9 +37,6 @@ export const ja: Messages = {
     liveSyncHint: "編集を接続中のデバイスへ即時反映する",
     liveTag: "LIVE",
     theme: "配色テーマを切り替え",
-    light: "ライト",
-    dark: "ダーク",
-    auto: "自動",
     themeTitle: {
       light: "ライト (クリックでダーク)",
       dark: "ダーク (クリックで自動)",

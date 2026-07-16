@@ -37,9 +37,6 @@ export const en = {
     liveSyncHint: "Mirror every edit to the connected device in real time",
     liveTag: "LIVE",
     theme: "Toggle color theme",
-    light: "Light",
-    dark: "Dark",
-    auto: "Auto",
     themeTitle: {
       light: "Light (click: Dark)",
       dark: "Dark (click: Auto)",

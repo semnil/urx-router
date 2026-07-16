@@ -23,7 +23,7 @@ document.
 | --- | --- | --- | --- |
 | Mono input channels | CH1–2 | CH1–4 | CH1–4 |
 | Stereo input channels | CH3/4, 5/6, 7/8, 9/10 | CH5/6, 7/8, 9/10, 11/12 | CH5/6, 7/8, 9/10, 11/12 |
-| MIC/LINE combo inputs | 2 (1 is Hi-Z) | 4 (3/4 are Hi-Z) | 4 (3/4 are Hi-Z) |
+| MIC/LINE combo inputs | 2 (2 is Hi-Z) | 4 (3/4 are Hi-Z) | 4 (3/4 are Hi-Z) |
 | MIC IN (front mini) | yes (wired into the MIC/LINE 1 input) | same | same |
 | AUX IN | yes | yes | yes |
 | Analog outputs | MAIN OUT | MAIN OUT + LINE OUT | MAIN OUT + LINE OUT |
@@ -77,7 +77,8 @@ flowchart LR
   FX1 & FX2 --> STEREO & MIX1 & MIX2
   MIX1 & MIX2 -->|TO ST| STEREO
   STEREO & MIX1 & MIX2 --> STREAM & MON
-  STEREO & MIX1 & MIX2 & STREAM --> MAIN & LINE & USBOUT & SDREC
+  STEREO & MIX1 & MIX2 --> MAIN & LINE & USBOUT & SDREC
+  STREAM --> MAIN & LINE & USBOUT
   MONO & ST & STEREO & MIX1 & MIX2 -->|key| DUCK
 ```
 

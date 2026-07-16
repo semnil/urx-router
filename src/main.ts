@@ -564,7 +564,8 @@ const inspectorActions = {
     if (!conn) return;
     conn.params = { ...conn.params, ...patch };
     // A STEREO-linked pair in BAL mode moves as one: copy the same send change to
-    // the partner channel (pan stays per-channel — see mirrorBalPair).
+    // the partner channel, pan included — in BAL mode the pan is the pair's one
+    // shared balance (see mirrorBalPair).
     const mirrored = mirrorBalPair(getModel(modelId), plan, parseRef(from).nodeId);
     markChanged();
     // A PRE/POST change flips the wire's pre-fader marker; a send ON/OFF or an OSC

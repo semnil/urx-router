@@ -21,7 +21,7 @@
 | --- | --- | --- | --- |
 | モノ入力チャンネル | CH1–2 | CH1–4 | CH1–4 |
 | ステレオ入力チャンネル | CH3/4, 5/6, 7/8, 9/10 | CH5/6, 7/8, 9/10, 11/12 | CH5/6, 7/8, 9/10, 11/12 |
-| MIC/LINE combo 入力 | 2 (1 は Hi-Z) | 4 (3/4 は Hi-Z) | 4 (3/4 は Hi-Z) |
+| MIC/LINE combo 入力 | 2 (2 は Hi-Z) | 4 (3/4 は Hi-Z) | 4 (3/4 は Hi-Z) |
 | MIC IN (front mini) | あり (MIC/LINE 1 入力に内部結線) | 同左 | 同左 |
 | AUX IN | あり | あり | あり |
 | アナログ出力 | MAIN OUT | MAIN OUT + LINE OUT | MAIN OUT + LINE OUT |
@@ -75,7 +75,8 @@ flowchart LR
   FX1 & FX2 --> STEREO & MIX1 & MIX2
   MIX1 & MIX2 -->|TO ST| STEREO
   STEREO & MIX1 & MIX2 --> STREAM & MON
-  STEREO & MIX1 & MIX2 & STREAM --> MAIN & LINE & USBOUT & SDREC
+  STEREO & MIX1 & MIX2 --> MAIN & LINE & USBOUT & SDREC
+  STREAM --> MAIN & LINE & USBOUT
   MONO & ST & STEREO & MIX1 & MIX2 -->|key| DUCK
 ```
 
