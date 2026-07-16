@@ -57,6 +57,26 @@ test("EQ bands are tabs; the active band shows alone and survives a relayout", a
   await expect(section(page, /^EQ$/).locator(".eq-panel:not([hidden])")).toHaveCount(1);
 });
 
+test("OSC slider edits merge — a Frequency edit keeps a prior Level edit", async ({ page }) => {
+  await node(page, "bus.osc").click();
+  const param = (label: string) =>
+    page.locator("#inspector .param", { has: page.getByText(label, { exact: true }) });
+
+  // Edit Level, then Frequency, without any re-render in between (sliders keep
+  // focus, so only the plan is updated). The second edit must not revert the first.
+  await param("Level").locator("input[type=range]").fill("-20");
+  await expect(param("Level").locator(".param-val")).toHaveText("-20.0 dB");
+  await param("Freq").locator("input[type=range]").fill("700");
+  const freqText = await param("Freq").locator(".param-val").innerText();
+  expect(freqText).not.toBe("1.00 kHz");
+
+  // Re-select the node: both edits must have reached the plan.
+  await node(page, "ch1").click();
+  await node(page, "bus.osc").click();
+  await expect(param("Level").locator(".param-val")).toHaveText("-20.0 dB");
+  await expect(param("Freq").locator(".param-val")).toHaveText(freqText);
+});
+
 test("toggling a section value reverts its fold to follow the on-state", async ({ page }) => {
   await node(page, "ch1").click();
 
