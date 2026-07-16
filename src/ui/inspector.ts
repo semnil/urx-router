@@ -454,7 +454,12 @@ export function renderInspector(
       if (ssmcs) {
         const son = np.ssmcs?.on ?? SSMCS_INITIAL.on;
         const { el, body } = section(m.inspector.ssmcs.title, { open: son, on: son, key: "ssmcsOn" });
-        body.append(boolToggle(m.inspector.ssmcs.title, son, (v) => mergeSsmcs(actions, plan, node.id, { on: v })));
+        // Toggling the on flag drops any manual fold so the section reverts to
+        // following the on-state, matching sectionToggle's contract.
+        body.append(boolToggle(m.inspector.ssmcs.title, son, (v) => {
+          clearSectionOverride("ssmcsOn");
+          mergeSsmcs(actions, plan, node.id, { on: v });
+        }));
         body.append(ssmcsMasterBlock(node.id, np, plan, actions, m));
         ssmcsMasterEl = el;
       }

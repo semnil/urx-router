@@ -28,6 +28,8 @@
   --w-send: #76d690;
   --w-sendswitch: #4fc8b0;
   --w-patch: #ffb347;
+  --w-key: #59b2ff;
+  --w-record: #b58fe0;
 
   --rail-input: #3f7fb0;
   --rail-channel: #9a6fc0;
@@ -88,6 +90,8 @@
   --w-send: #1f8a52;
   --w-sendswitch: #13836f;
   --w-patch: #b8700a;
+  --w-key: #1f6fc8;
+  --w-record: #7a52c0;
 
   --rail-input: #2f6f9e;
   --rail-channel: #7a4fa0;
@@ -797,6 +801,14 @@ select:focus-visible,
 
 .dot-patch {
   background: var(--w-patch);
+}
+
+.dot-key {
+  background: var(--w-key);
+}
+
+.dot-record {
+  background: var(--w-record);
 }
 
 /* ---- node note ---- */
