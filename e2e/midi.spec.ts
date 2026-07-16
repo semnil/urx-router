@@ -244,7 +244,11 @@ test("an incoming DUCKER toggle repaints the parent strip's chip in place", asyn
   await pickInputPort(page);
   const duckChip = () => strip(page, "CH 5/6").getByRole("button", { name: "DUCKER" });
   await learnBinding(page, () => duckChip().click(), [0x90, 62, 127]); // a note binds on its first message
-  await expect(page.locator('#midi-panel .mp-row[data-control="out.ducker1/duckerOn"]')).toContainText("CH 1 NOTE 62");
+  const duckRow = page.locator('#midi-panel .mp-row[data-control="out.ducker1/duckerOn"]');
+  await expect(duckRow).toContainText("CH 1 NOTE 62");
+  // A hung ducker names its parent channel (not the bare "Ducker"), so the
+  // assignment says which channel the ducker belongs to.
+  await expect(duckRow.locator(".mp-ctl")).toHaveText("CH 5/6 · DUCKER");
   await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
 
   // Still in CONSOLE view (no view switch): the chip must flip in place.

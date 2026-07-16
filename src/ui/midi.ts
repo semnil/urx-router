@@ -340,7 +340,12 @@ export class MidiControl {
     const parsed = parseControlId(id);
     if (!parsed) return id;
     const nodes = this.hooks.getModel().nodes;
-    const node = nodes.find((n) => n.id === parsed.node)?.label ?? parsed.node;
+    const self = nodes.find((n) => n.id === parsed.node);
+    // A hung node (a ducker under its stereo channel) is labeled just "Ducker",
+    // which does not say which channel it belongs to: show the parent's name
+    // (attachTo) instead, so the assignment reads e.g. "CH 5/6 · DUCKER".
+    const owner = self?.attachTo ? nodes.find((n) => n.id === self.attachTo) : self;
+    const node = owner?.label ?? parsed.node;
     const send = parsed.send ? ` → ${nodes.find((n) => n.id === parsed.send)?.label ?? parsed.send}` : "";
     const param = t().midi.param[parsed.param as ControlParam] ?? parsed.param;
     return `${node}${send} · ${param}`;
