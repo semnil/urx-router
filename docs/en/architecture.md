@@ -420,7 +420,9 @@ from an external MIDI controller (desktop app only). Configuration lives in the 
   after a 500 ms quiet gap. One binding per console control (a new binding replaces the control's previous
   one), but a physical control may drive several controls: learning it to more than one gangs them — one
   message moves all of them — and the first-learned owns that address' feedback (the assignment list tags the
-  later rows "Linked"). Replacing the plan or model (a model switch, a plan load) cancels an in-flight
+  later rows "Linked"). A control on a hung node (a ducker, which sits under its stereo channel and is labeled
+  only "Ducker") is named by its parent channel in the list, so the binding reads e.g. `CH 5/6 · DUCKER`.
+  Replacing the plan or model (a model switch, a plan load) cancels an in-flight
   learn, dropping the armed control instead of committing it under the new model's mapping key.
 - **Feedback (MIDI OUT)** — plan changes (UI edits, device follow, device readbacks, plan loads) are sent back
   through the reverse lookup so motor faders / LEDs follow. It hangs off the shared change funnel
