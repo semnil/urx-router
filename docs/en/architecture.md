@@ -365,7 +365,9 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   (`live.noteDirect`, no full re-translate); anything else is **scoped** — the owner
   node is re-read once the burst settles (`applyNodeState`, the same device→plan inverse as `applyDeviceState`
   but gated to just the touched node(s), so it can never drift); an unknown address or **more than three** distinct
-  controls at once (more than two hands plus one — a scene / preset recall) escalates to a full read. After the
+  controls at once (more than two hands plus one — a scene / preset recall) escalates to a full read. A scene
+  recall on the unit actually pushes a single address-less bulk-change notify instead of per-address ones;
+  the Rust side forwards it as an unmappable sentinel so it takes the same full-read path. After the
   device goes quiet a single full read runs as a missed-notify safety net. So a fader moved on the unit itself
   follows on screen with no round-trip, while a deeper edit re-reads only its node. Every reflect funnels through
   one timer capped at ~20 Hz (the device streams at ~10 Hz). A direct-only reflect repaints just the touched nodes
