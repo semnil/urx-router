@@ -10,19 +10,48 @@ use tauri::State;
 mod midi;
 mod vd;
 
+// File IO runs on a worker thread (spawn_blocking), like the vd commands below:
+// a synchronous command would run on the main thread and stall the webview while
+// the disk IO completes.
 #[tauri::command]
-fn read_text_file(path: String) -> Result<String, String> {
-    fs::read_to_string(&path).map_err(|e| e.to_string())
+async fn read_text_file(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || fs::read_to_string(&path).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn write_text_file(path: String, contents: String) -> Result<(), String> {
-    fs::write(&path, contents).map_err(|e| e.to_string())
+async fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || fs::write(&path, contents).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
+// Image export (PNG / PDF). The payload travels as the raw IPC request body — a
+// JSON argument would serialize a multi-MB image byte-by-byte as a number array —
+// and the destination path rides in the percent-encoded x-file-path header.
 #[tauri::command]
-fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<(), String> {
-    fs::write(&path, bytes).map_err(|e| e.to_string())
+async fn write_binary_file(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected a raw request body".to_string());
+    };
+    // The frontend sends the path encodeURIComponent-ed, because raw header
+    // values must stay ASCII while paths can hold non-ASCII characters.
+    let path = percent_encoding::percent_decode_str(
+        request
+            .headers()
+            .get("x-file-path")
+            .ok_or("missing x-file-path header")?
+            .to_str()
+            .map_err(|e| e.to_string())?,
+    )
+    .decode_utf8()
+    .map_err(|e| e.to_string())?
+    .into_owned();
+    let bytes = bytes.clone();
+    tauri::async_runtime::spawn_blocking(move || fs::write(&path, bytes).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // True when the app was launched with the --experimental flag, gating
@@ -49,8 +78,8 @@ fn reset_storage_requested() -> bool {
 }
 
 // The third-party license notice bundled as an app resource (cargo-about output;
-// release.yml generates it before packaging). A small local read, so synchronous
-// like the other file IO commands.
+// release.yml generates it before packaging). A small read of a bundled file, so
+// it stays synchronous.
 #[tauri::command]
 fn third_party_licenses(app: tauri::AppHandle) -> Result<String, String> {
     use tauri::Manager;

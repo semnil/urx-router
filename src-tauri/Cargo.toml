@@ -20,6 +20,9 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Decodes the percent-encoded x-file-path IPC header (already in the tree via
+# tauri -> url, so this adds no new crate to the build).
+percent-encoding = "2"
 
 # Auto-update is desktop-only: the updater downloads and swaps the installed
 # bundle, and process restarts the app afterwards. Live hardware control speaks
