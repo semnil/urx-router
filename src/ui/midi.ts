@@ -4,7 +4,7 @@
 // core/midi; incoming edits run the same funnel as console edits (BAL pair
 // mirror + the shared change hook), so Live sync mirrors them to the device.
 
-import type { DeviceModel } from "../models/types";
+import type { DeviceModel, DeviceNode } from "../models/types";
 import type { Plan } from "../core/plan";
 import { loadJson, saveJson } from "../core/storage";
 import { isTauri, midiCloseOutput, midiListInputs, midiListOutputs, midiOpenInput, midiOpenOutput, midiSend } from "../core/platform";
@@ -12,7 +12,7 @@ import { MidiEngine } from "../core/midi/engine";
 import { bindControl, parseControlId, type BoundControl, type ControlParam } from "../core/midi/controls";
 import { addrLabel, BUTTON_MODES, sanitizeMappings, TAKE_MODES, type MidiAddr, type MidiMapping } from "../core/midi/mapping";
 import { mirrorBalPair } from "../core/routing";
-import { el } from "./dom";
+import { el, popTop } from "./dom";
 import { t } from "../i18n";
 
 export interface MidiHooks {
@@ -347,13 +347,14 @@ export class MidiControl {
     const parsed = parseControlId(id);
     if (!parsed) return id;
     const nodes = this.hooks.getModel().nodes;
-    const self = nodes.find((n) => n.id === parsed.node);
+    const byId = (nid: string): DeviceNode | undefined => nodes.find((n) => n.id === nid);
+    const self = byId(parsed.node);
     // A hung node (a ducker under its stereo channel) is labeled just "Ducker",
     // which does not say which channel it belongs to: show the parent's name
     // (attachTo) instead, so the assignment reads e.g. "CH 5/6 · DUCKER".
-    const owner = self?.attachTo ? nodes.find((n) => n.id === self.attachTo) : self;
+    const owner = self?.attachTo ? byId(self.attachTo) : self;
     const node = owner?.label ?? parsed.node;
-    const send = parsed.send ? ` → ${nodes.find((n) => n.id === parsed.send)?.label ?? parsed.send}` : "";
+    const send = parsed.send ? ` → ${byId(parsed.send)?.label ?? parsed.send}` : "";
     const param = t().midi.param[parsed.param as ControlParam] ?? parsed.param;
     return `${node}${send} · ${param}`;
   }
@@ -397,11 +398,15 @@ export class MidiControl {
 
     this.listHead = el("div", "mp-listhead");
     this.listEl = el("div", "mp-list");
-    // Option legend: while a take-in / button select is hovered or
+    // Option legend card: while a take-in / button select is hovered or
     // focused, every option is listed here with a one-line behavior note (a
-    // native dropdown cannot annotate its own options). Hidden when idle.
+    // native dropdown cannot annotate its own options). Floats anchored to the
+    // owning row (placeInfo); hidden when idle.
     this.infoEl = el("div", "mp-info");
     this.infoEl.hidden = true;
+    // Scrolling moves the rows out from under a shown card; hide it rather
+    // than track (the next hover re-anchors it).
+    this.listEl.addEventListener("scroll", () => this.hideInfo(), { passive: true });
 
     panel.append(head, ports, learnRow, this.listHead, this.listEl, this.infoEl);
     document.body.append(panel);
@@ -440,8 +445,7 @@ export class MidiControl {
     const m = t().midi;
     // Rebuilding detaches the selects, so a legend they were showing would
     // never receive its blur/leave — clear it with them.
-    this.infoEl.hidden = true;
-    this.infoEl.replaceChildren();
+    this.hideInfo();
     this.listEl.replaceChildren();
     // Gangs render contiguously (head then its members), so a member can drop
     // the repeated address and just mark itself as linked to the row above.
@@ -474,12 +478,12 @@ export class MidiControl {
       // The take-in mode applies to continuous controls only (toggles just fire).
       const control = this.resolve(mapping.control);
       if (control?.kind === "continuous") {
-        this.addChoice(row, "mp-mode", TAKE_MODES, mapping.mode, () => ({ label: t().midi.mode, desc: t().midi.modeDesc }), (mode) => this.patchMapping(mapping, { mode }));
+        this.addChoice(row, "mp-mode", TAKE_MODES, mapping.mode, () => ({ title: t().midi.modeTitle, who: label, label: t().midi.mode, desc: t().midi.modeDesc }), (mode) => this.patchMapping(mapping, { mode }));
       } else if (control?.kind === "toggle" && mapping.addr.type !== "pitchbend") {
         // Button behavior, named after the sender's button type: Momentary
         // (edge, the default — flip per press) or Toggle (state — the value is
         // the state, for alternating senders like Stream Deck toggle buttons).
-        this.addChoice(row, "mp-btn", BUTTON_MODES, mapping.button ?? "edge", () => ({ label: t().midi.buttonMode, desc: t().midi.buttonModeDesc }), (button) => this.patchMapping(mapping, { button }));
+        this.addChoice(row, "mp-btn", BUTTON_MODES, mapping.button ?? "edge", () => ({ title: t().midi.buttonModeTitle, who: label, label: t().midi.buttonMode, desc: t().midi.buttonModeDesc }), (button) => this.patchMapping(mapping, { button }));
       }
       const del = el("button", "mp-del") as HTMLButtonElement;
       del.type = "button";
@@ -499,51 +503,66 @@ export class MidiControl {
   }
 
   /** One mapping-option select: options from `values`, named/explained by the
-   *  i18n tables `texts` reads (a thunk, so a language switch between
-   *  interactions re-reads), the legend wired, a change handed to `onPick`. */
+   *  `content` thunk (the i18n tables plus the setting name and the owning
+   *  assignment; a thunk, so a language switch between interactions
+   *  re-reads), the legend wired, a change handed to `onPick`. */
   private addChoice<T extends string>(
     row: HTMLElement,
     cls: string,
     values: readonly T[],
     current: T,
-    texts: () => { label: Record<T, string>; desc: Record<T, string> },
+    content: () => { title: string; who: string; label: Record<T, string>; desc: Record<T, string> },
     onPick: (v: T) => void,
   ): void {
     const sel = document.createElement("select");
     sel.className = cls;
+    const c = content();
     for (const value of values) {
       const opt = document.createElement("option");
       opt.value = value;
-      opt.textContent = texts().label[value];
+      opt.textContent = c.label[value];
       sel.append(opt);
     }
     sel.value = current;
+    sel.setAttribute("aria-label", `${c.title} — ${c.who}`);
     sel.addEventListener("change", () => onPick(sel.value as T));
-    this.wireLegend(sel, () => values.map((v) => ({ value: v, label: texts().label[v], desc: texts().desc[v] })));
+    this.wireLegend(sel, row, values, content);
     row.append(sel);
   }
 
   // ---- option legend ----
 
-  /** Show the legend for one select: every option with its behavior note, the
-   *  selected one highlighted. `options` is a thunk so a language switch
+  /** Show the legend card for one select: a header naming the setting and the
+   *  owning assignment, then every option with its behavior note, the
+   *  selected one highlighted. `content` is a thunk so a language switch
    *  between interactions re-reads the active catalog. */
-  private wireLegend(sel: HTMLSelectElement, options: () => Array<{ value: string; label: string; desc: string }>): void {
+  private wireLegend<T extends string>(
+    sel: HTMLSelectElement,
+    row: HTMLElement,
+    values: readonly T[],
+    content: () => { title: string; who: string; label: Record<T, string>; desc: Record<T, string> },
+  ): void {
     const show = (): void => {
+      const c = content();
       this.infoEl.replaceChildren();
-      for (const o of options()) {
-        const ln = el("div", "ln" + (o.value === sel.value ? " cur" : ""));
+      const ph = el("div", "ph");
+      const cat = el("span", "cat");
+      cat.textContent = c.title;
+      const who = el("span", "who");
+      who.textContent = c.who;
+      ph.append(cat, who);
+      this.infoEl.append(ph);
+      for (const v of values) {
+        const ln = el("div", "ln" + (v === sel.value ? " cur" : ""));
         const nm = el("span", "nm");
-        nm.textContent = o.label;
-        ln.append(nm, document.createTextNode(" — " + o.desc));
+        nm.textContent = c.label[v];
+        ln.append(nm, document.createTextNode(" — " + c.desc[v]));
         this.infoEl.append(ln);
       }
       this.infoEl.hidden = false;
+      this.placeInfo(row);
     };
-    const hide = (): void => {
-      this.infoEl.hidden = true;
-      this.infoEl.replaceChildren();
-    };
+    const hide = (): void => this.hideInfo();
     // No "change" handler: a change patches the mapping, which rebuilds the
     // list (renderList) — the legend is cleared there, since blur/leave never
     // fire on the detached select.
@@ -553,6 +572,24 @@ export class MidiControl {
     sel.addEventListener("pointerleave", () => {
       if (document.activeElement !== sel) hide();
     });
+  }
+
+  /** Anchor the legend card to the owning row: preferred directly below it,
+   *  flipped directly above when the viewport bottom is close (popTop) —
+   *  either way the row and its hovered select stay visible beside the card.
+   *  The width write precedes the height read: the card's wrap depends on it. */
+  private placeInfo(row: HTMLElement): void {
+    if (!this.panel) return;
+    const panelBox = this.panel.getBoundingClientRect();
+    const s = this.infoEl.style;
+    s.left = `${panelBox.left + 6}px`;
+    s.width = `${panelBox.width - 12}px`;
+    s.top = `${popTop(row.getBoundingClientRect(), this.infoEl.offsetHeight, 6)}px`;
+  }
+
+  private hideInfo(): void {
+    this.infoEl.hidden = true;
+    this.infoEl.replaceChildren();
   }
 }
 

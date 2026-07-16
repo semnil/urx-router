@@ -382,7 +382,11 @@ a knob resets it to the **factory value** (from `defaultPlan`).
 The CONSOLE view's controls (faders / send levels / MUTE / PAN-BAL / GAIN / PHONES / the toggles) can be driven
 from an external MIDI controller (desktop app only). Configuration lives in the non-modal panel under Device →
 "MIDI control" — it stays open while console controls are clicked to assign them. The panel is dismissed by its
-✕ button or a press outside it (except while learn is on — outside clicks are the arming gesture then).
+✕ button or a press outside it (except while learn is on — outside clicks are the arming gesture then). The
+assignment list's per-mapping selects (take-in mode / button behavior) explain their options in a legend card
+anchored to the hovered / focused row — below it, flipped above near the viewport bottom, so the row and its
+select stay visible — with a header naming the setting and the owning assignment (`ui/dom.ts` `popTop` holds
+the below/flip-above placement shared with the console popovers).
 
 - **Bridge (Rust)** — `src-tauri/src/midi.rs` enumerates ports through midir (CoreMIDI on macOS, WinMM on
   Windows) and holds one open input plus one open output. Incoming messages are batched per burst — the same
@@ -420,7 +424,9 @@ from an external MIDI controller (desktop app only). Configuration lives in the 
   after a 500 ms quiet gap. One binding per console control (a new binding replaces the control's previous
   one), but a physical control may drive several controls: learning it to more than one gangs them — one
   message moves all of them — and the first-learned owns that address' feedback (the assignment list tags the
-  later rows "Linked"). Replacing the plan or model (a model switch, a plan load) cancels an in-flight
+  later rows "Linked"). A control on a hung node (a ducker, which sits under its stereo channel and is labeled
+  only "Ducker") is named by its parent channel in the list, so the binding reads e.g. `CH 5/6 · DUCKER`.
+  Replacing the plan or model (a model switch, a plan load) cancels an in-flight
   learn, dropping the armed control instead of committing it under the new model's mapping key.
 - **Feedback (MIDI OUT)** — plan changes (UI edits, device follow, device readbacks, plan loads) are sent back
   through the reverse lookup so motor faders / LEDs follow. It hangs off the shared change funnel

@@ -2808,14 +2808,46 @@ select:focus-visible,
      right-aligns the address cell sitting against them. */
   width: 92px;
 }
-/* Option legend: behavior notes for the hovered / focused select's options,
-   the selected one highlighted. */
+/* Option legend: a floating card anchored to the hovered / focused select's
+   row (below it, flipped above near the viewport bottom — placeInfo), so the
+   row and its select stay visible beside the card. Same recipe as the console
+   popovers; position: fixed escapes the panel, pointer-events: none keeps it
+   from stealing the very hover that shows it (in-flow it shrank the list and
+   flickered; pinned to the panel bottom it covered the hovered select). */
 .midi-panel .mp-info {
-  border-top: 1px solid var(--line);
-  padding: 7px 10px 9px;
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  background: var(--panel);
+  border: 1px solid var(--ctl-border);
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6);
+  padding: 6px 10px 9px;
   font-size: 11px;
   line-height: 1.55;
   color: var(--text-dim);
+}
+/* Card header, like the SEND PAN popover's: the setting name plus the owning
+   assignment — the card floats free of its row, so position alone does not
+   tie it back. */
+.midi-panel .mp-info .ph {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font: 700 9.5px var(--mono);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding-bottom: 5px;
+  margin-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+}
+.midi-panel .mp-info .ph .cat {
+  color: var(--text-dim);
+}
+.midi-panel .mp-info .ph .who {
+  margin-left: auto;
+  color: var(--led);
+  letter-spacing: 0.5px;
 }
 .midi-panel .mp-info .ln {
   padding-left: 12px;

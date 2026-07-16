@@ -97,7 +97,10 @@ export const ja: Messages = {
     // モーメンタリーボタン (押下で値・離すと 0) = edge、トグルボタン (127/0 交互) = state。
     mode: { absolute: "Absolute", pickup: "Pickup" },
     buttonMode: { edge: "Momentary", state: "Toggle" },
-    // セレクトのホバー / フォーカス中に凡例ストリップへ出す挙動説明
+    // 凡例カードのヘッダ: ホバー中のセレクトが操作する設定名。
+    modeTitle: "取り込みモード",
+    buttonModeTitle: "ボタン動作",
+    // セレクトのホバー / フォーカス中に凡例カードへ出す挙動説明
     // (ネイティブのドロップダウンは選択肢に注釈を付けられない)。
     modeDesc: {
       absolute: "受信値をそのまま位置として適用。物理位置と盤面値がずれていると値が飛ぶ。",

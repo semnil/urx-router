@@ -22,3 +22,14 @@ export function onWheelStep(el: HTMLElement, step: (dir: 1 | -1) => void, blocke
     { passive: false },
   );
 }
+
+// Vertical placement for a floating popover: `gap` px below the anchor rect,
+// flipped above it when the viewport bottom is too close, clamped to a 6px
+// viewport inset. Shared by the console popovers and the MIDI legend card so
+// the flip/inset contract lives in one place (horizontal placement stays with
+// each caller — they anchor differently).
+export function popTop(anchor: DOMRect, height: number, gap: number): number {
+  const below = anchor.bottom + gap;
+  if (below + height <= window.innerHeight - 6) return below;
+  return Math.max(6, anchor.top - height - gap);
+}
