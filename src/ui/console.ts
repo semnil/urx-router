@@ -310,15 +310,20 @@ export class Console {
    *  subscription is untouched (same tap address). */
   refreshStrip(id: string): void {
     if (!this.visible) return;
-    const old = this.refs.get(id);
+    // A hung node (a ducker) has no strip of its own — its chip lives on the
+    // parent strip (attachTo). Retarget to the parent so an external edit of the
+    // child (a MIDI DUCKER toggle / device follow) repaints that chip; without
+    // this the refs lookup misses and the chip stays stale until a full re-render.
+    const stripId = this.hooks.getModel().nodes.find((n) => n.id === id)?.attachTo ?? id;
+    const old = this.refs.get(stripId);
     if (!old) return;
-    const fresh = this.buildStrip(this.toStripModel(id));
-    // buildStrip re-registered refs.get(id) with fresh meter elements. Carry the
+    const fresh = this.buildStrip(this.toStripModel(stripId));
+    // buildStrip re-registered refs.get(stripId) with fresh meter elements. Carry the
     // per-lane ballistics (v/pk/over) so the level + peak-hold + clip latch don't reset,
     // but leave the last-written trackers (lv/lpk/lov/lmtr) at their fresh sentinels —
     // the new elements are undrawn, so paintMeters must repaint them, not skip as
     // unchanged. Lane count is stable across a refresh (same tap), so carry by index.
-    this.refs.get(id)!.lanes.forEach((ln, i) => {
+    this.refs.get(stripId)!.lanes.forEach((ln, i) => {
       const o = old.lanes[i];
       if (o) {
         ln.v = o.v;

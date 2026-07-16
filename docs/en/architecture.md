@@ -368,8 +368,10 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   follows on screen with no round-trip, while a deeper edit re-reads only its node. Every reflect funnels through
   one timer capped at ~20 Hz (the device streams at ~10 Hz). A direct-only reflect repaints just the touched nodes
   (`graph.repaintDirtyNodes`) and strips (`console.refreshStrip`) — not the whole board — and skips the snapshot
-  re-base (already patched by `noteDirect`); only a scoped / full read-back re-derives both views and re-bases the
-  whole snapshot. Since only one view is ever visible the hidden view's rebuild is deferred until it is next shown.
+  re-base (already patched by `noteDirect`). A hung node has no console strip of its own — its chip is drawn on the
+  parent strip — so `refreshStrip` retargets a node with `attachTo` (a ducker) to that parent, else the chip stays
+  stale until a full re-render; the graph needs no such retarget since a ducker is its own graph node. Only a scoped
+  / full read-back re-derives both views and re-bases the whole snapshot. Since only one view is ever visible the hidden view's rebuild is deferred until it is next shown.
   Echoes of the app's own writes are filtered against the live snapshot, and the address set is re-registered only
   when a structural edit changed it.
 
