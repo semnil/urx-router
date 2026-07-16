@@ -5,7 +5,13 @@
 // commands are not gated by Tauri capabilities, so no permission entries are
 // required. Kept language-agnostic — localized dialog labels are passed in.
 
-type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+// A Uint8Array payload is sent as the raw IPC request body (no JSON encoding);
+// options.headers then carries the string arguments (see nativeWriteBinary).
+type InvokeFn = (
+  cmd: string,
+  args?: Record<string, unknown> | Uint8Array,
+  options?: { headers: Record<string, string> },
+) => Promise<unknown>;
 
 // A Tauri IPC channel: invoke serializes it into a callback id the Rust side
 // streams events back through. Only onmessage is needed here.
@@ -39,10 +45,14 @@ export function isTauri(): boolean {
 }
 
 /** Invoke an app command; rejects when not running under Tauri. */
-export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+export function invoke<T>(
+  cmd: string,
+  args?: Record<string, unknown> | Uint8Array,
+  options?: { headers: Record<string, string> },
+): Promise<T> {
   const fn = resolveInvoke();
   if (!fn) return Promise.reject(new Error("not running under Tauri"));
-  return fn(cmd, args ?? {}) as Promise<T>;
+  return fn(cmd, args ?? {}, options) as Promise<T>;
 }
 
 /**
@@ -147,7 +157,13 @@ export function nativeWriteText(path: string, contents: string): Promise<void> {
 }
 
 export function nativeWriteBinary(path: string, bytes: Uint8Array): Promise<void> {
-  return invoke<void>("write_binary_file", { path, bytes: Array.from(bytes) });
+  // The bytes travel as the raw IPC request body — a JSON argument would
+  // serialize a multi-MB image byte-by-byte as a number array. The destination
+  // path rides in a header, percent-encoded because raw header values must stay
+  // ASCII while paths can hold non-ASCII characters.
+  return invoke<void>("write_binary_file", bytes, {
+    headers: { "x-file-path": encodeURIComponent(path) },
+  });
 }
 
 // Live hardware control (desktop only). The Rust vd module owns the WebSocket to

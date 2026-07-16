@@ -122,7 +122,8 @@ Expanded height ≈ 156 px, collapsed ≈ 24 px (header only). Orientation, groo
 - The knobs form one horizontal band, so a future inter-send pan link fits as a full-width row
   below the columns.
 - Open/close mirrors the meter-point popover (outside click / Escape close, viewport clamping,
-  anchor caret).
+  anchor caret). An external edit that rebuilds the strip re-opens the popover in place instead of
+  closing it (see "Live sync / follow").
 
 The popover deliberately holds **only** pan: level editing lives on the column fader, on/off on
 the chip, tap on the PRE button, and value reading in the header readout, so every control has
@@ -140,8 +141,11 @@ exactly one home.
 
 All rack edits go through the shared `markChanged` funnel (identical to the graph / inspector),
 BAL-linked pairs mirror via `mirrorBalPair`, and device-side changes arrive through `follow` →
-`refreshStrip`, which rebuilds the whole strip including the rack. Sends have no meters — the
-broker exposes no per-send meter addresses — so the rack contains no signal display by design.
+`refreshStrip`, which rebuilds the whole strip including the rack. If the strip's SEND PAN popover
+is open, `refreshStrip` re-opens it against the fresh strip's PAN ▾ button, so the knobs re-read
+the plan and the trigger keeps its open marking (device follow and external MIDI alike). Sends
+have no meters — the broker exposes no per-send meter addresses — so the rack contains no signal
+display by design.
 
 ## Rejected alternatives (do not re-litigate without new evidence)
 

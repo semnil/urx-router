@@ -80,6 +80,29 @@ test("re-entering an SSMCS/COMP->EQ mode resets that bank to factory", async ({ 
   await expect(param(page, "Sweet Spot Data").locator("select")).toHaveValue("1");
 });
 
+test("toggling the SSMCS value reverts its fold to follow the on-state", async ({ page }) => {
+  await node(page, "ch1").click();
+  await typeSelect(page).selectOption("1"); // SSMCS
+  const ssmcs = page.locator("#inspector details").filter({ has: page.locator("summary", { hasText: "SSMCS" }) });
+  const onOff = ssmcs.locator(".sec-body > .param").first();
+  await expect(ssmcs).toHaveJSProperty("open", true); // on by default → open
+
+  // Turn SSMCS off: the section folds with the on-state.
+  await onOff.locator("button", { hasText: "OFF" }).click();
+  await expect(ssmcs).toHaveJSProperty("open", false);
+
+  // Open it by hand while off; the manual fold persists.
+  await ssmcs.locator("summary").click();
+  await expect(ssmcs).toHaveJSProperty("open", true);
+
+  // Toggling the value on then off must drop the manual override, so an off
+  // SSMCS folds again rather than staying open from the earlier hand-open.
+  await onOff.locator("button", { hasText: "ON" }).click();
+  await expect(ssmcs).toHaveJSProperty("open", true);
+  await onOff.locator("button", { hasText: "OFF" }).click();
+  await expect(ssmcs).toHaveJSProperty("open", false);
+});
+
 test("SSMCS is a MONO IN feature — stereo channels have no COMP/EQ Type", async ({ page }) => {
   await node(page, "ch_5_6").click();
   await expect(typeSelect(page)).toHaveCount(0);

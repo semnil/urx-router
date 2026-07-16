@@ -34,7 +34,7 @@ const openPanel = async (page: Page) => {
 };
 
 const pickInputPort = async (page: Page) => {
-  await expect(page.locator("#midi-panel .mp-in option")).toHaveCount(2); // None + Stub In
+  await expect(page.locator("#midi-panel .mp-in option")).toHaveCount(3); // None + Stub In + Broken In
   await page.locator("#midi-panel .mp-in").selectOption("Stub In");
   await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
 };
@@ -76,11 +76,14 @@ test.beforeEach(async ({ page }) => {
             return Promise.resolve(false);
           case "plugin:updater|check":
             return Promise.resolve(null);
+          // The "Broken" ports refuse to open (a WinMM-style exclusive port
+          // already held by another app), for the failed-open UI tests.
           case "midi_list_inputs":
-            return Promise.resolve(["Stub In"]);
+            return Promise.resolve(["Stub In", "Broken In"]);
           case "midi_list_outputs":
-            return Promise.resolve(["Stub Out"]);
+            return Promise.resolve(["Stub Out", "Broken Out"]);
           case "midi_open_input":
+            if (args.port === "Broken In") return Promise.reject(new Error("port busy"));
             state.inChannel = args.channel as Window["__midiTest"]["inChannel"];
             state.inputPort = args.port as string;
             return Promise.resolve();
@@ -89,6 +92,7 @@ test.beforeEach(async ({ page }) => {
             state.inputPort = null;
             return Promise.resolve();
           case "midi_open_output":
+            if (args.port === "Broken Out") return Promise.reject(new Error("port busy"));
             state.outputPort = args.port as string;
             return Promise.resolve();
           case "midi_close_output":
@@ -483,6 +487,75 @@ test("assignments and the port choice survive a reload", async ({ page }) => {
   await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
   await openPanel(page);
   await expect(page.locator('#midi-panel .mp-row[data-control="ch1/level"]')).toBeVisible();
+});
+
+test("an open SEND PAN popover follows an incoming mapped pan CC", async ({ page }) => {
+  // Regression: an external edit repaints through refreshStrip, which used to
+  // swap the strip without touching an open SEND PAN popover — the knob kept its
+  // stale value and the fresh PAN ▾ button came up unmarked (no .open) while the
+  // popover stayed on screen.
+  await openPanel(page);
+  await pickInputPort(page);
+  const panBtn = () => strip(page, "CH 1").locator(".con-panbtn");
+  const pop = page.locator(".con-spop");
+  const mix1 = () => pop.locator(".pcol", { hasText: "MIX 1" });
+  // The pan knob lives inside the popover, so open it under learn to arm it.
+  await learnBinding(page, async () => {
+    await panBtn().click();
+    await mix1().locator(".con-knob").click();
+  }, [0xb0, 21, 60], [0xb0, 21, 61]);
+  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/pan@bus.mix1"]')).toBeVisible();
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off (the press also closes the popover)
+
+  await panBtn().click(); // reopen the popover, then push an external pan edit
+  await expect(pop).toBeVisible();
+  await sendMidi(page, [0xb0, 21, 127]);
+  // The popover follows: its knob shows the new value, and the rebuilt strip's
+  // PAN ▾ button still owns it.
+  await expect(mix1().locator(".rv")).toHaveText("R63");
+  await expect(pop).toBeVisible();
+  await expect(pop.locator(".ph .who")).toHaveText("CH 1");
+  await expect(panBtn()).toHaveClass(/\bopen\b/);
+  await expect(panBtn()).toHaveAttribute("aria-expanded", "true");
+});
+
+test("switching the model cancels an armed learn instead of persisting a dead mapping", async ({ page }) => {
+  // While learn is on the panel ignores outside presses, so the toolbar model
+  // picker stays reachable; committing the old model's armed id after the
+  // switch would store a mapping under the new model's key that may never bind.
+  await openPanel(page);
+  await pickInputPort(page);
+  await page.locator("#midi-panel .mp-learn-btn").click(); // learn on
+  const fader = strip(page, "CH 1").locator(".con-fader");
+  await fader.click(); // armed
+  await expect(fader).toHaveClass(/midi-armed/);
+
+  await page.locator("#model-picker").selectOption("URX22");
+  await expect(page.locator("#model-picker")).toHaveValue("URX22");
+  // The switch dropped learn mode and the armed control with it.
+  await expect(page.locator("#console-host")).not.toHaveClass(/midi-learn/);
+  await expect(page.locator("#midi-panel .mp-learn-btn")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator(".midi-armed")).toHaveCount(0);
+  // The messages that would have completed the learn create no mapping.
+  await sendMidi(page, [0xb0, 7, 100], [0xb0, 7, 101]);
+  await expect(page.locator("#midi-panel .mp-empty")).toBeVisible();
+  await expect(page.locator("#midi-panel .mp-row")).toHaveCount(0);
+});
+
+test("a port that fails to open reverts its select to none and reports the error", async ({ page }) => {
+  // The stub's "Broken" ports reject midi_open_* (an exclusive port held by
+  // another app); the select must fall back to "none" instead of keeping a
+  // choice that is not actually open.
+  await openPanel(page);
+  await page.locator("#midi-panel .mp-in").selectOption("Broken In");
+  await expect(page.locator("#statusbar")).toContainText("MIDI input error");
+  await expect(page.locator("#midi-panel .mp-in")).toHaveValue("");
+  expect(await page.evaluate(() => window.__midiTest.inputPort)).toBe(null);
+  await page.locator("#midi-panel .mp-out").selectOption("Broken Out");
+  await expect(page.locator("#statusbar")).toContainText("MIDI output error");
+  await expect(page.locator("#midi-panel .mp-out")).toHaveValue("");
+  // A working port still opens normally afterwards.
+  await pickInputPort(page);
 });
 
 test("removing an assignment stops the control from responding", async ({ page }) => {

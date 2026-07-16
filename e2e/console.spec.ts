@@ -277,6 +277,30 @@ test("the PAN ▾ button reads active while its SEND PAN popover is open", async
   await expect(btn2).toHaveAttribute("aria-expanded", "false");
 });
 
+test("the SEND PAN popover flips above its anchor near the viewport bottom", async ({ page }) => {
+  // The static "below" class never changes, so only the geometry proves the flip.
+  // Measure the popover at the default viewport (room below), then shrink the
+  // viewport so that room is gone: popTop must place the popover above the button.
+  const btn = strip(page, "CH 1").locator(".con-panbtn");
+  const pop = page.locator(".con-spop");
+  await btn.click();
+  await expect(pop).toBeVisible();
+  const popBox = (await pop.boundingBox())!;
+  const b = (await btn.boundingBox())!;
+  expect(popBox.y).toBeGreaterThanOrEqual(b.y + b.height); // baseline: it opened below
+  await page.keyboard.press("Escape");
+  await expect(pop).toBeHidden();
+
+  // The head + SENDS rack heights are viewport-independent, so the button keeps
+  // its y; only the room below it shrinks (re-measured to be safe).
+  await page.setViewportSize({ width: 1280, height: Math.ceil(b.y + b.height + popBox.height) });
+  await btn.click();
+  await expect(pop).toBeVisible();
+  const btnBox = (await btn.boundingBox())!;
+  const above = (await pop.boundingBox())!;
+  expect(above.y + above.height).toBeLessThanOrEqual(btnBox.y + 1);
+});
+
 test("hiding a MIX bus in the graph drops its rack column from every strip", async ({ page }) => {
   await expect(strip(page, "CH 1").getByRole("button", { name: "M2", exact: true })).toBeVisible();
 

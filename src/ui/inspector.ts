@@ -454,7 +454,12 @@ export function renderInspector(
       if (ssmcs) {
         const son = np.ssmcs?.on ?? SSMCS_INITIAL.on;
         const { el, body } = section(m.inspector.ssmcs.title, { open: son, on: son, key: "ssmcsOn" });
-        body.append(boolToggle(m.inspector.ssmcs.title, son, (v) => mergeSsmcs(actions, plan, node.id, { on: v })));
+        // Toggling the on flag drops any manual fold so the section reverts to
+        // following the on-state, matching sectionToggle's contract.
+        body.append(boolToggle(m.inspector.ssmcs.title, son, (v) => {
+          clearSectionOverride("ssmcsOn");
+          mergeSsmcs(actions, plan, node.id, { on: v });
+        }));
         body.append(ssmcsMasterBlock(node.id, np, plan, actions, m));
         ssmcsMasterEl = el;
       }
@@ -600,8 +605,10 @@ export function renderInspector(
     // (mode change relayouts, see main.ts).
     if (node.id === "bus.osc") {
       const osc = plan.nodeParams[node.id]?.osc ?? {};
+      // Read the latest stored osc at edit time so a second field edit (the
+      // inspector is not re-rendered between edits) does not clobber the first.
       const setOsc = (patch: Partial<typeof osc>): void =>
-        actions.onUpdateNodeParams(node.id, { osc: { ...osc, ...patch } });
+        actions.onUpdateNodeParams(node.id, { osc: { ...(plan.nodeParams[node.id]?.osc ?? {}), ...patch } });
       // OSCILLATOR menu order (device top-left → bottom-right): Mode, ON, then the
       // Frequency / Level row (Frequency shows only in Sine Wave mode).
       const ps = section(m.inspector.parameters, { key: "params" });

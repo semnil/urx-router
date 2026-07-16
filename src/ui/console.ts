@@ -332,6 +332,16 @@ export class Console {
       }
     });
     old.root.replaceWith(fresh);
+    // The SEND PAN popover floats free of its strip, so the rebuild above left an
+    // open one anchored to the detached PAN button with stale knob values. Re-open
+    // it against the fresh strip's button: openSendPan re-reads the plan for the
+    // knobs, re-marks the live trigger (.open / aria-expanded) and re-anchors in
+    // place (the fresh strip occupies the old one's slot).
+    if (this.sendPanOpenFor === stripId) {
+      const btn = fresh.querySelector<HTMLElement>(".con-panbtn");
+      if (btn) this.openSendPan(stripId, btn);
+      else this.closeSendPan();
+    }
   }
 
   // ---- build / render ----
@@ -1511,7 +1521,6 @@ export class Console {
     const zero = el("div", "zero");
     zero.style.setProperty("--zero", (1 - dbToFrac(0, m.range)) * 100 + "%");
     const cap = el("div", "cap");
-    cap.style.setProperty("--pos", (1 - dbToFrac(level, m.range)) * 100 + "%");
     fader.append(track, zero, cap);
 
     // Meter column: the ladder shares the fader ruler, topping out at the 0 dB mark
@@ -1529,9 +1538,6 @@ export class Console {
     const readout = el("div", "con-readout");
     const faderCell = el("div", "rd");
     const dbEl = el("div", "rv");
-    const f = fmtDb(level, m.range);
-    setLevelText(dbEl, f.text);
-    if (f.off) dbEl.classList.add("off");
     faderCell.append(readCap(t().console.readFader), dbEl);
     readout.append(faderCell);
     const mtrEl = el("div", "rv");
@@ -1556,6 +1562,10 @@ export class Console {
       sendCols: rack.cols,
     };
     this.refs.set(m.id, refObj);
+    // Paint the cap position, readout and aria-valuenow through the same helper
+    // the edit path uses (as buildSendCol does via updateColLevel), so build and
+    // edit cannot drift apart.
+    this.updateStripLevel(refObj, level);
     this.wireFader(refObj);
     return strip;
   }

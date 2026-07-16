@@ -193,6 +193,33 @@ describe("DeviceFollow", () => {
     expect(reconcileAll).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the idle full reconcile when it fires during an in-flight scoped read", async () => {
+    // A scoped node readback is dozens of sequential round-trips, so the idle
+    // timer routinely fires while it is still in flight. Hold the scoped read
+    // open with a manually resolved promise to reproduce that overlap.
+    let release: () => void = () => {};
+    const reconcileNodes = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const reconcileAll = vi.fn(async () => {});
+    const follow = followFor({ reconcileNodes, reconcileAll });
+    follow.begin();
+    notify(-600);
+    // The settle fires and starts the scoped read, which stays in flight.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(reconcileNodes).toHaveBeenCalledTimes(1);
+    // The idle timer fires at 900 ms while still reconciling: deferred, not run.
+    await vi.advanceTimersByTimeAsync(600);
+    expect(reconcileAll).not.toHaveBeenCalled();
+    // The scoped read completes → the replay must run the promised full read.
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reconcileAll).toHaveBeenCalledTimes(1);
+  });
+
   it("does not re-register after a reconcile that left the address set unchanged", async () => {
     const follow = followFor();
     follow.begin();

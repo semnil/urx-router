@@ -37,9 +37,6 @@ export const ja: Messages = {
     liveSyncHint: "編集を接続中のデバイスへ即時反映する",
     liveTag: "LIVE",
     theme: "配色テーマを切り替え",
-    light: "ライト",
-    dark: "ダーク",
-    auto: "自動",
     themeTitle: {
       light: "ライト (クリックでダーク)",
       dark: "ダーク (クリックで自動)",
@@ -436,6 +433,8 @@ export const ja: Messages = {
     themeAuto: "システム設定に追従します",
     language: (name: string): string => `言語: ${name}`,
     loadError: (message: string): string => `読込エラー: ${message}`,
+    saveError: (message: string): string => `保存エラー: ${message}`,
+    exportError: (message: string): string => `出力エラー: ${message}`,
     updateDownloading: "更新をダウンロード中… 完了後にアプリを再起動します",
   },
   confirm: {

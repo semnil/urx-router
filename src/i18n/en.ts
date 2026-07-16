@@ -37,9 +37,6 @@ export const en = {
     liveSyncHint: "Mirror every edit to the connected device in real time",
     liveTag: "LIVE",
     theme: "Toggle color theme",
-    light: "Light",
-    dark: "Dark",
-    auto: "Auto",
     themeTitle: {
       light: "Light (click: Dark)",
       dark: "Dark (click: Auto)",
@@ -448,6 +445,8 @@ export const en = {
     themeAuto: "Following the system theme",
     language: (name: string): string => `Language: ${name}`,
     loadError: (message: string): string => `Load error: ${message}`,
+    saveError: (message: string): string => `Save error: ${message}`,
+    exportError: (message: string): string => `Export error: ${message}`,
     updateDownloading: "Downloading update… the app will restart",
   },
   confirm: {

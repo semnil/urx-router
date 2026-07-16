@@ -2,7 +2,7 @@
 // model / meter points / consent gate / recent files / inspector sections) and
 // boots clean. Requires `pnpm dev` to be running. Zero-dependency.
 //   pnpm reset:storage
-// The desktop app uses the launch flag instead: `pnpm tauri dev -- --reset-storage`.
+// The desktop app uses the launch flag instead: `pnpm tauri dev -- -- --reset-storage`.
 
 import { spawn } from "node:child_process";
 

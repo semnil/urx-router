@@ -208,7 +208,7 @@ export class Graph {
   // provenance (new / loaded / hand-edited plan).
   private unreadNodes = new Set<string>();
   // Node ids collapsed off the canvas into the bottom shelf. Kept in sync with
-  // plan.hidden; a node is only actually hidden while it has no connections.
+  // plan.hidden; a shelved node is hidden along with its wires.
   private hidden = new Set<string>();
   // Node ids whose in-frame note panel is minimized to the header. Synced with
   // plan.noteCollapsed.

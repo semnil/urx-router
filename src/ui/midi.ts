@@ -139,6 +139,9 @@ export class MidiControl {
   /** The plan (and possibly the model) was replaced: reload that model's
    *  mappings and resync the controller to the new plan values. */
   onModelChanged(): void {
+    // An in-flight learn was armed against the old model; committing it now
+    // would persist a mapping under the new model that may never bind.
+    this.setLearn(false);
     this.bound.clear(); // bound controls captured the old plan object
     this.engine.setMappings(this.loadMappings());
     if (this.panel && !this.panel.hidden) this.renderList();
@@ -237,6 +240,9 @@ export class MidiControl {
   private async setInputPort(port: string | null): Promise<void> {
     if (port) {
       await this.openInput(port);
+      // A failed open (exclusive / unplugged port) left no input: put the
+      // select back on "none" so it does not keep showing a dead choice.
+      if (!this.inputPort) this.inSel.value = "";
     } else {
       this.closeInput?.();
       this.closeInput = null;
@@ -248,6 +254,7 @@ export class MidiControl {
   private async setOutputPort(port: string | null): Promise<void> {
     if (port) {
       await this.openOutput(port);
+      if (!this.outputPort) this.outSel.value = "";
     } else {
       void midiCloseOutput();
       this.outputPort = null;

@@ -74,6 +74,9 @@ export class DeviceFollow {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private reconciling = false;
   private pending = false;
+  // A full (idle safety net) reconcile arrived while one was in flight: the replay
+  // must keep the full scope rather than downgrade to a scoped/no-op pass.
+  private pendingFull = false;
   // The current settle window's accumulated state: nodes needing a scoped read,
   // distinct logical controls touched (node:name), and whether a full reconcile
   // is forced (an unknown address or too many controls at once).
@@ -101,6 +104,7 @@ export class DeviceFollow {
   end(): void {
     this.active = false;
     this.pending = false;
+    this.pendingFull = false;
     this.clearWindow();
     if (this.settleTimer !== null) {
       clearTimeout(this.settleTimer);
@@ -186,6 +190,7 @@ export class DeviceFollow {
     if (!this.active) return;
     if (this.reconciling) {
       this.pending = true;
+      if (idle) this.pendingFull = true;
       return;
     }
     // Decide the scope before the await: idle is always a full sweep; otherwise a
@@ -216,7 +221,9 @@ export class DeviceFollow {
     }
     if (this.pending) {
       this.pending = false;
-      void this.runReconcile(false);
+      const replayFull = this.pendingFull;
+      this.pendingFull = false;
+      void this.runReconcile(replayFull);
     }
   }
 }

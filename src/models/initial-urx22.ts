@@ -4,7 +4,7 @@
 //     are CH3/4, 5/6, 7/8, 9/10 (build.ts shifts the stereo numbering with the
 //     mono count). Stereo defaults are copied by POSITION among the stereo group,
 //     so URX22 CH3/4 <- URX44V CH5/6, CH5/6 <- CH7/8, CH7/8 <- CH9/10, CH9/10 <- CH11/12.
-//   - No LINE OUT and no microSD on URX22, so the MONITOR 2 -> LINE OUT default
+//   - No LINE OUT and no microSD on URX22, so the MIX 1 -> LINE OUT default
 //     patch is dropped and no SD nodes are seeded.
 //   - Hi-Z lives on CH2 (HI_Z_CHANNELS in translate.ts), so only CH2 carries hiZ.
 // Values not affected by the model differences mirror URX44V verbatim. Treat the
@@ -71,7 +71,7 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
   ch2: monoChannel(false),
   ch_3_4: stereoChannel(0),
   ch_5_6: stereoChannel(-14),
-  ch_7_8: stereoChannel(0),
+  ch_7_8: stereoChannel(-14),
   ch_9_10: stereoChannel(-14),
   "bus.stereo": { ...outputBus(), on: true },
   "bus.mix1": { ...outputBus(), busType: 0, on: true, panLink: false },

@@ -207,9 +207,10 @@ The connection and node colors live in both layers: wire colors as `--w-*` (CSS)
 > As with model/rule consistency (device-model.md ↔ models/), **keep the theme palette in sync
 > between the CSS variables in style.css and `PALETTES` in graph.ts** — wire (`--w-*` ↔ `PALETTES.wire`),
 > node rail (`--rail-*` ↔ `PALETTES.rail`), and the surface colors.
-> Exception: `key` (the ducker key source) shares `source`'s blue and has no separate legend row, so it
-> carries only a `PALETTES.wire.key` entry for rendering and no `--w-key` CSS variable (the `--w-*`
-> variables back the legend swatches only).
+> The `--w-*` variables back the legend swatches and the inspector routing-list dots. `key` (the ducker
+> key source) shares `source`'s blue and, like `record`, has no legend row of its own, but both carry
+> `--w-key` / `--w-record` CSS variables for the routing-list dots (`.dot-key` / `.dot-record`) alongside
+> their `PALETTES.wire` entries.
 
 PNG and PDF export (`core/storage.ts`) read `--canvas-bg` to paint the background, so the exported
 image follows the current theme too. The PDF is a hand-built single-page document embedding one
@@ -285,9 +286,9 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   CONSOLE edit through the same snapshot diff. CONSOLE re-renders only the edited strip itself, avoiding a
   full rebuild mid-drag; returning to GRAPH reflects the edits via `graph.repaint*`.
 - **Levels only (no routing)** — CONSOLE adjusts the levels of existing sends / paths; it never adds or
-  removes connections (routing stays in the graph). `setSend` only updates an existing wire's level, so
-  lowering a send to -∞ keeps the wire (the strip stays). INS FX has no separate on/off (No Effect is off),
-  so toggling on restores the last chosen effect (or the first real option).
+  removes connections (routing stays in the graph). The SENDS-rack mini-fader only mutates an existing
+  connection's `params.level`, so lowering a send to -∞ keeps the wire (the strip stays). INS FX has no
+  separate on/off (No Effect is off), so toggling on restores the last chosen effect (or the first real option).
 - **SENDS rack** — the head always shows the MAIN control set; every strip's MIX/FX sends live in a
   per-strip **SENDS rack** between the head and the fader zone (spec: [console-sends.md](console-sends.md)).
   The rack has one fixed column per model send slot (order FX 1 / FX 2 / MIX 1 / MIX 2 = `SEND_TARGETS`, a
@@ -334,7 +335,8 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   `height` / `bottom`, so a moving meter never triggers per-frame style-recalc / layout / paint. Only the numeric
   readout text is throttled to every few frames (a text change forces layout), and `will-change` is applied only
   to strips with signal (`.live`) so idle strips drop their compositor layers. Subscriptions are scoped to the
-  on-screen strips that have a meter in the current model (`metersForNodes`). Meter ids were confirmed on a real
+  on-screen strips that have a meter in the current model (`startMeters` collects each visible strip's
+  selected tap and passes it through `tapAddrs` / `subscribeMeters`). Meter ids were confirmed on a real
   URX44V; models without a mapping show no meter.
 - **Streaming path** — the Rust side (`src-tauri/src/vd.rs`) handles a meter subscription
   (`MetersSubscribe`/`MetersUnsubscribe`) by registering each address with the broker, and forwards meter
@@ -388,7 +390,8 @@ from an external MIDI controller (desktop app only). Configuration lives in the 
   `midi_open_input`, `midi_close_input`, `midi_open_output`, `midi_close_output`, `midi_send`). Everything is a
   local OS-API round-trip (no broker), so the commands stay synchronous. The frontend bridge is
   `core/platform.ts` (no-ops outside Tauri). midir has no hot-plug notification, so the port lists are
-  re-enumerated every time the panel opens.
+  re-enumerated every time the panel opens. A port that fails to open reports the error on the status
+  line and drops the select back to "None" (the stored port entry is removed too).
 - **Mapping (core/midi/)** — pure, language-agnostic logic. `message.ts` decodes/encodes CC / note / pitch
   bend; `mapping.ts` holds the free-mapping model (address, take-in mode) plus persistence validation (a
   persisted mapping in the removed "relative" take-in mode migrates to absolute on load, and the STEREO /
@@ -417,7 +420,8 @@ from an external MIDI controller (desktop app only). Configuration lives in the 
   after a 500 ms quiet gap. One binding per console control (a new binding replaces the control's previous
   one), but a physical control may drive several controls: learning it to more than one gangs them — one
   message moves all of them — and the first-learned owns that address' feedback (the assignment list tags the
-  later rows "Linked").
+  later rows "Linked"). Replacing the plan or model (a model switch, a plan load) cancels an in-flight
+  learn, dropping the armed control instead of committing it under the new model's mapping key.
 - **Feedback (MIDI OUT)** — plan changes (UI edits, device follow, device readbacks, plan loads) are sent back
   through the reverse lookup so motor faders / LEDs follow. It hangs off the shared change funnel
   (`markChanged`) and its readback twin (`planReadFromDevice`: follow reflect, fetch, the initial readback at
@@ -498,8 +502,9 @@ presented after the connection is released. A device-follow read-back likewise c
 status line (`← device (n, m unread)`) rather than only logging them, so a background reconcile that partially
 fails is not silent.
 
-Errors are surfaced by meaning. An **operation that did not complete** (a failed load, fetch, write, self-test,
-connect, or live-sync start, plus a link drop during live sync) is shown as a **modal** so it cannot be missed
+Errors are surfaced by meaning. An **operation that did not complete** (a failed load, save, image export,
+fetch, write, self-test, connect, or live-sync start, plus a link drop during live sync) is shown as a
+**modal** so it cannot be missed
 (`errorDialog` → `showError`, which clears the status line first so a stale "Connecting…" does not linger behind
 it). **Routine progress, info, cancellation, and partial successes** stay on the status line at the bottom. A live
 runtime error can arrive from several sources at once (live / follow / link watch), so they funnel through
@@ -603,7 +608,7 @@ grid both stack each column independently. Both also share one vertical grid: a 
 ducker), and `autoLayout` snaps each node's advance to whole `ROW_GAP` rows — so running Arrange on a
 fresh board moves nothing, while an expanded note simply claims more rows.
 
-A node's `kind` (which drives its rail color and the channel-only name field) can differ from its
+A node's `kind` (which drives its rail color and the channel/bus-only name field) can differ from its
 layout column: OSCILLATOR is `kind: "input"` (a signal source) and the MONITORs are `kind: "output"`
 (sinks), so their rail color reflects their signal role even though they sit in the bus/channel
 columns. The device does not color these in CH SETTING, so — unlike the STEREO / MIX / FX / STREAMING
@@ -663,9 +668,19 @@ PDF exports.
 
 Phase 1 implemented save/load with browser standards (Blob download / file input). Phase 2 adds
 native save/open dialogs (`tauri-plugin-dialog`) plus a recent-plans list; file IO uses small
-`std::fs` app commands (`read_text_file` / `write_text_file` / `write_binary_file`). Everything is
+app commands (`read_text_file` / `write_text_file` / `write_binary_file`), each `async` with the
+`std::fs` work on a worker thread (`spawn_blocking`, like the vd commands) and each enforcing an
+extension allowlist (read: `json`; write text: `json` / `md`; write binary: `png` / `pdf`).
+`write_binary_file` receives the PNG/PDF bytes as the raw IPC request body — not a JSON number
+array — with the destination path in a percent-encoded `x-file-path` request header. The webview
+itself runs under a strict CSP (`security.csp` + `devCsp` in `tauri.conf.json`): scripts from
+`'self'` only, inline styles allowed (the sandboxed licenses page inherits the page CSP),
+`blob:` / `data:` images for the export rasterizer and the noise texture, and the Tauri IPC
+endpoints in `connect-src` (dev additionally allows the Vite HMR websocket). Everything is
 reached via `core/platform.ts` through `window.__TAURI_INTERNALS__.invoke`, so no Tauri npm package
-is bundled; when not running under Tauri it falls back to the browser path. The plan format is
+is bundled; when not running under Tauri it falls back to the browser path. A failed save or image
+export surfaces as a modal error dialog (`status.saveError` / `status.exportError`); a failed save
+keeps the plan dirty. The plan format is
 unchanged apart from the added `sampleRate`, `nodeNames`, `nodeColors`, `hidden`, `notes` and
 `noteCollapsed` fields (older files default them on load). Loading (`deserialize`) is tolerant of
 corrupt input: every collection passes a type guard that drops a non-conforming value to its empty
