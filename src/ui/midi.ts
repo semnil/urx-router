@@ -4,7 +4,7 @@
 // core/midi; incoming edits run the same funnel as console edits (BAL pair
 // mirror + the shared change hook), so Live sync mirrors them to the device.
 
-import type { DeviceModel } from "../models/types";
+import type { DeviceModel, DeviceNode } from "../models/types";
 import type { Plan } from "../core/plan";
 import { loadJson, saveJson } from "../core/storage";
 import { isTauri, midiCloseOutput, midiListInputs, midiListOutputs, midiOpenInput, midiOpenOutput, midiSend } from "../core/platform";
@@ -347,13 +347,14 @@ export class MidiControl {
     const parsed = parseControlId(id);
     if (!parsed) return id;
     const nodes = this.hooks.getModel().nodes;
-    const self = nodes.find((n) => n.id === parsed.node);
+    const byId = (nid: string): DeviceNode | undefined => nodes.find((n) => n.id === nid);
+    const self = byId(parsed.node);
     // A hung node (a ducker under its stereo channel) is labeled just "Ducker",
     // which does not say which channel it belongs to: show the parent's name
     // (attachTo) instead, so the assignment reads e.g. "CH 5/6 · DUCKER".
-    const owner = self?.attachTo ? nodes.find((n) => n.id === self.attachTo) : self;
+    const owner = self?.attachTo ? byId(self.attachTo) : self;
     const node = owner?.label ?? parsed.node;
-    const send = parsed.send ? ` → ${nodes.find((n) => n.id === parsed.send)?.label ?? parsed.send}` : "";
+    const send = parsed.send ? ` → ${byId(parsed.send)?.label ?? parsed.send}` : "";
     const param = t().midi.param[parsed.param as ControlParam] ?? parsed.param;
     return `${node}${send} · ${param}`;
   }
