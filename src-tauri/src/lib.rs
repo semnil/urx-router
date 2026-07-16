@@ -10,11 +10,26 @@ use tauri::State;
 mod midi;
 mod vd;
 
+// Reject a path whose extension (case-insensitive) is outside the command's
+// allowlist, so each file IO command only touches the file kinds its native
+// dialog offers.
+fn check_extension(path: &str, allowed: &[&str]) -> Result<(), String> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    match ext {
+        Some(e) if allowed.contains(&e.as_str()) => Ok(()),
+        _ => Err(format!("unexpected file extension (allowed: {})", allowed.join(", "))),
+    }
+}
+
 // File IO runs on a worker thread (spawn_blocking), like the vd commands below:
 // a synchronous command would run on the main thread and stall the webview while
 // the disk IO completes.
 #[tauri::command]
 async fn read_text_file(path: String) -> Result<String, String> {
+    check_extension(&path, &["json"])?;
     tauri::async_runtime::spawn_blocking(move || fs::read_to_string(&path).map_err(|e| e.to_string()))
         .await
         .map_err(|e| e.to_string())?
@@ -22,6 +37,7 @@ async fn read_text_file(path: String) -> Result<String, String> {
 
 #[tauri::command]
 async fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    check_extension(&path, &["json", "md"])?;
     tauri::async_runtime::spawn_blocking(move || fs::write(&path, contents).map_err(|e| e.to_string()))
         .await
         .map_err(|e| e.to_string())?
@@ -48,6 +64,7 @@ async fn write_binary_file(request: tauri::ipc::Request<'_>) -> Result<(), Strin
     .decode_utf8()
     .map_err(|e| e.to_string())?
     .into_owned();
+    check_extension(&path, &["png", "pdf"])?;
     let bytes = bytes.clone();
     tauri::async_runtime::spawn_blocking(move || fs::write(&path, bytes).map_err(|e| e.to_string()))
         .await
