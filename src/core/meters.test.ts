@@ -180,6 +180,7 @@ describe("meter address table has no collisions", () => {
           }
         }
       }
+      expect(owner.size, modelId).toBeGreaterThan(10);
       expect(collisions).toEqual([]);
     }
   });
