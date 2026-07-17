@@ -44,6 +44,16 @@ describe("tap points", () => {
     expect(tapsFor("ch_5_6").map((t) => t.key)).toEqual(["input", "prefader", "preducker", "post"]);
   });
 
+  it("lists INPUT, PRE FADER, PRE DUCKER and POST for a stereo channel (URX22)", () => {
+    expect(tapsFor("ch_3_4", "URX22").map((t) => t.key)).toEqual(["input", "prefader", "preducker", "post"]);
+    expect(tapsFor("ch_5_6", "URX22").map((t) => t.key)).toEqual(["input", "prefader", "preducker", "post"]);
+  });
+
+  it("lists INPUT, PRE FADER, PRE DUCKER and POST for a stereo channel (URX44/URX44V)", () => {
+    expect(tapsFor("ch_5_6", "URX44").map((t) => t.key)).toEqual(["input", "prefader", "preducker", "post"]);
+    expect(tapsFor("ch_5_6", "URX44V").map((t) => t.key)).toEqual(["input", "prefader", "preducker", "post"]);
+  });
+
   it("lists the four output-bus taps in signal order", () => {
     expect(tapsFor("bus.mix1").map((t) => t.key)).toEqual(["preeq", "prefader", "preinsfx", "post"]);
   });
@@ -73,6 +83,20 @@ describe("tap points", () => {
     expect(tapFor("ch2", "preeq")!.l).toEqual([111, 1]);
     expect(tapFor("ch1", "bogus")!.l).toEqual([115, 0]); // → default (post)
     expect(tapFor("nope", "post")).toBeUndefined();
+  });
+
+  it("resolves a tap by key for URX22", () => {
+    expect(tapFor("ch_3_4", "input", "URX22")!.l).toEqual([101, 0]);
+    expect(tapFor("ch_3_4", "input", "URX22")!.r).toEqual([101, 1]);
+    expect(tapFor("ch_5_6", "input", "URX22")!.l).toEqual([101, 2]);
+    expect(tapFor("ch_5_6", "input", "URX22")!.r).toEqual([101, 3]);
+  });
+
+  it("resolves a tap by key for URX44/URX44V", () => {
+    expect(tapFor("ch_5_6", "input", "URX44")!.l).toEqual([101, 0]);
+    expect(tapFor("ch_5_6", "input", "URX44")!.r).toEqual([101, 1]);
+    expect(tapFor("ch_5_6", "input", "URX44V")!.l).toEqual([101, 0]);
+    expect(tapFor("ch_5_6", "input", "URX44V")!.r).toEqual([101, 1]);
   });
 });
 
@@ -140,24 +164,24 @@ describe("tapAddrs", () => {
 // would silently make two strips mirror each other's meter. Pin global uniqueness across
 // every metered node in every model so such a slip is caught.
 describe("meter address table has no collisions", () => {
-  it("maps every (node, tap, side) to a unique broker address", () => {
-    const ids = new Set<string>();
-    for (const id of MODEL_IDS) for (const n of MODELS[id].nodes) if (hasMeter(n.id)) ids.add(n.id);
-    // Guard against an empty scan silently passing.
-    expect(ids.size).toBeGreaterThan(10);
-    const owner = new Map<string, string>();
-    const collisions: string[] = [];
-    for (const id of ids) {
-      for (const t of tapsFor(id)) {
-        for (const a of [t.l, t.r]) {
-          if (!a) continue;
-          const key = `${a[0]}:${a[1]}`;
-          const here = `${id}.${t.key}`;
-          if (owner.has(key)) collisions.push(`${key} -> ${owner.get(key)} & ${here}`);
-          else owner.set(key, here);
+  it("maps every (node, tap, side) to a unique broker address within each model", () => {
+    for (const modelId of MODEL_IDS) {
+      const owner = new Map<string, string>();
+      const collisions: string[] = [];
+      for (const n of MODELS[modelId].nodes) {
+        if (!hasMeter(n.id, modelId)) continue;
+        for (const t of tapsFor(n.id, modelId)) {
+          for (const a of [t.l, t.r]) {
+            if (!a) continue;
+            const key = `${a[0]}:${a[1]}`;
+            const here = `${n.id}.${t.key}`;
+            if (owner.has(key)) collisions.push(`[${modelId}] ${key} -> ${owner.get(key)} & ${here}`);
+            else owner.set(key, here);
+          }
         }
       }
+      expect(owner.size, modelId).toBeGreaterThan(10);
+      expect(collisions).toEqual([]);
     }
-    expect(collisions).toEqual([]);
   });
 });

@@ -493,7 +493,7 @@ export class Console {
 
   /** The tap key a strip's meter shows: the per-strip override or the default. */
   private tapKeyOf(id: string): string {
-    return this.meterTap.get(id) ?? defaultTapKey(id);
+    return this.meterTap.get(id) ?? defaultTapKey(id, this.hooks.getModel().id);
   }
 
   // Persist the per-strip tap choices per model in localStorage (shape:
@@ -525,7 +525,7 @@ export class Console {
   // Build a strip's meter-point badge (the popover trigger). Shown only when the
   // node has more than one tap; single-meter nodes get no selector.
   private buildTapBadge(id: string): HTMLElement {
-    const tap = tapFor(id, this.tapKeyOf(id));
+    const tap = tapFor(id, this.tapKeyOf(id), this.hooks.getModel().id);
     const badge = el("div", "con-tap");
     badge.setAttribute("role", "button");
     badge.setAttribute("aria-haspopup", "menu");
@@ -562,7 +562,7 @@ export class Console {
     const ph = el("div", "ph");
     ph.textContent = t().console.meterPoint;
     const chain = el("div", "chain");
-    for (const tp of tapsFor(id)) {
+    for (const tp of tapsFor(id, this.hooks.getModel().id)) {
       const row = el("div", "crow" + (tp.key === cur ? " active" : ""));
       row.setAttribute("role", "menuitemradio");
       row.setAttribute("aria-checked", String(tp.key === cur));
@@ -1250,7 +1250,7 @@ export class Console {
     const zone = el("div", "con-faderzone");
     zone.append(el("div", "con-taphead")); // empty: keeps fader/meter tops aligned
     const zrow = el("div", "con-zrow");
-    const tap = tapFor(m.id, this.tapKeyOf(m.id)) ?? null;
+    const tap = tapFor(m.id, this.tapKeyOf(m.id), this.hooks.getModel().id) ?? null;
     const { meter, lanes } = this.buildMeterColumn(m.range, isStereoTap(tap));
     // Meter tops out at 0 dBFS and there is no fader, so the scale stops at 0.
     zrow.append(this.buildScale(m.range, 0), meter);
@@ -1504,7 +1504,7 @@ export class Console {
     const zone = el("div", "con-faderzone");
     const tapKey = this.tapKeyOf(m.id);
     const tapHead = el("div", "con-taphead");
-    if (tapsFor(m.id).length > 1) tapHead.append(this.buildTapBadge(m.id));
+    if (tapsFor(m.id, this.hooks.getModel().id).length > 1) tapHead.append(this.buildTapBadge(m.id));
     zone.append(tapHead);
     const zrow = el("div", "con-zrow");
 
@@ -1522,7 +1522,7 @@ export class Console {
 
     // Meter column: the ladder shares the fader ruler, topping out at the 0 dB mark
     // with the OVER clip window above it. Stereo taps split into independent L/R bars.
-    const tap = hasMeter(m.id) ? tapFor(m.id, tapKey) ?? null : null;
+    const tap = hasMeter(m.id, this.hooks.getModel().id) ? tapFor(m.id, tapKey, this.hooks.getModel().id) ?? null : null;
     const { meter, lanes } = this.buildMeterColumn(m.range, isStereoTap(tap));
 
     zrow.append(fader, this.buildScale(m.range), meter);
@@ -1538,7 +1538,7 @@ export class Console {
     faderCell.append(readCap(t().console.readFader), dbEl);
     readout.append(faderCell);
     const mtrEl = el("div", "rv");
-    if (hasMeter(m.id)) {
+    if (hasMeter(m.id, this.hooks.getModel().id)) {
       const mtrCell = el("div", "rd mtr");
       mtrEl.textContent = "—";
       mtrCell.append(readCap(t().console.readMeter), mtrEl);

@@ -77,10 +77,26 @@ const single = (l: readonly [number, number], r?: readonly [number, number]): Me
   r ? { key: "post", label: "OUT", l, r } : { key: "post", label: "OUT", l },
 ];
 
-// Node id → tap points (signal order). Confirmed on URX44V by stage probe + block
-// diagram: mono CH1-4, stereo CH5-12 (101/114/116/120), STEREO master 104/121/123/125,
-// MIX 105/122/124/126, FX channels 131/118, plus single-meter monitors / oscillator.
-const NODE_TAPS: Record<string, MeterTap[]> = {
+// URX22 stereo pairs are shifted compared to URX44/44V (ch_3_4 is the first pair, i.e. pair 0)
+const NODE_TAPS_URX22: Record<string, MeterTap[]> = {
+  ch1: monoTaps(0),
+  ch2: monoTaps(1),
+  ch_3_4: stereoTaps(0),
+  ch_5_6: stereoTaps(1),
+  ch_7_8: stereoTaps(2),
+  ch_9_10: stereoTaps(3),
+  "bus.stereo": busTaps(104, 121, 123, 125, 0),
+  "bus.mix1": busTaps(105, 122, 124, 126, 0),
+  "bus.mix2": busTaps(105, 122, 124, 126, 2),
+  "bus.fx1": fxTaps(0, 0),
+  "bus.fx2": fxTaps(1, 2),
+  "bus.stream": single([127, 0], [127, 1]),
+  "bus.mon1": single([129, 0], [129, 1]),
+  "bus.mon2": single([129, 2], [129, 3]),
+  "bus.osc": single([135, 0]),
+};
+
+const NODE_TAPS_URX44: Record<string, MeterTap[]> = {
   ch1: monoTaps(0),
   ch2: monoTaps(1),
   ch3: monoTaps(2),
@@ -102,6 +118,14 @@ const NODE_TAPS: Record<string, MeterTap[]> = {
   "bus.osc": single([135, 0]),
 };
 
+const NODE_TAPS_URX44V: Record<string, MeterTap[]> = NODE_TAPS_URX44;
+
+const getTapsMap = (modelId?: string): Record<string, MeterTap[]> => {
+  if (modelId === "URX22") return NODE_TAPS_URX22;
+  if (modelId === "URX44") return NODE_TAPS_URX44;
+  return NODE_TAPS_URX44V;
+};
+
 const addrKey = (meterId: number, x: number): string => `${meterId}:${x}`;
 
 /** Decode a raw broker meter value to dBFS. OVER and the silence floor both
@@ -112,26 +136,26 @@ export function decodeMeterDb(raw: number): number {
 }
 
 /** The tap points a node exposes (signal order), or [] when it has no meter. */
-export function tapsFor(nodeId: string): MeterTap[] {
-  return NODE_TAPS[nodeId] ?? [];
+export function tapsFor(nodeId: string, modelId?: string): MeterTap[] {
+  return getTapsMap(modelId)[nodeId] ?? [];
 }
 
 /** Whether a node has any live meter mapping (so the UI can show a meter lane). */
-export function hasMeter(nodeId: string): boolean {
-  return (NODE_TAPS[nodeId]?.length ?? 0) > 0;
+export function hasMeter(nodeId: string, modelId?: string): boolean {
+  return (getTapsMap(modelId)[nodeId]?.length ?? 0) > 0;
 }
 
 /** Default tap = POST (the conventional post-fader / output meter) for every strip
  *  that has it; falls back to the most downstream point only if a node has no POST. */
-export function defaultTapKey(nodeId: string): string {
-  const taps = NODE_TAPS[nodeId];
+export function defaultTapKey(nodeId: string, modelId?: string): string {
+  const taps = getTapsMap(modelId)[nodeId];
   if (!taps || !taps.length) return "post";
   return taps.some((t) => t.key === "post") ? "post" : taps[taps.length - 1].key;
 }
 
 /** Resolve a node's tap by key, falling back to its default (most downstream). */
-export function tapFor(nodeId: string, key: string): MeterTap | undefined {
-  const taps = NODE_TAPS[nodeId];
+export function tapFor(nodeId: string, key: string, modelId?: string): MeterTap | undefined {
+  const taps = getTapsMap(modelId)[nodeId];
   if (!taps || !taps.length) return undefined;
   return taps.find((t) => t.key === key) ?? taps[taps.length - 1];
 }
@@ -173,8 +197,8 @@ export class MeterStore {
   }
 
   /** Decoded reading for a node's tap by key (resolves the tap, then decodes). */
-  reading(nodeId: string, tapKey: string): MeterReading | null {
-    return this.readingTap(tapFor(nodeId, tapKey) ?? null);
+  reading(nodeId: string, tapKey: string, modelId?: string): MeterReading | null {
+    return this.readingTap(tapFor(nodeId, tapKey, modelId) ?? null);
   }
 }
 
