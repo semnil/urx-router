@@ -49,6 +49,11 @@ describe("tap points", () => {
     expect(tapsFor("ch_5_6", "URX22").map((t) => t.key)).toEqual(["input", "prefader", "preducker", "post"]);
   });
 
+  it("lists INPUT, PRE FADER, PRE DUCKER and POST for a stereo channel (URX44/URX44V)", () => {
+    expect(tapsFor("ch_5_6", "URX44").map((t) => t.key)).toEqual(["input", "prefader", "preducker", "post"]);
+    expect(tapsFor("ch_5_6", "URX44V").map((t) => t.key)).toEqual(["input", "prefader", "preducker", "post"]);
+  });
+
   it("lists the four output-bus taps in signal order", () => {
     expect(tapsFor("bus.mix1").map((t) => t.key)).toEqual(["preeq", "prefader", "preinsfx", "post"]);
   });
@@ -85,6 +90,13 @@ describe("tap points", () => {
     expect(tapFor("ch_3_4", "input", "URX22")!.r).toEqual([101, 1]);
     expect(tapFor("ch_5_6", "input", "URX22")!.l).toEqual([101, 2]);
     expect(tapFor("ch_5_6", "input", "URX22")!.r).toEqual([101, 3]);
+  });
+
+  it("resolves a tap by key for URX44/URX44V", () => {
+    expect(tapFor("ch_5_6", "input", "URX44")!.l).toEqual([101, 0]);
+    expect(tapFor("ch_5_6", "input", "URX44")!.r).toEqual([101, 1]);
+    expect(tapFor("ch_5_6", "input", "URX44V")!.l).toEqual([101, 0]);
+    expect(tapFor("ch_5_6", "input", "URX44V")!.r).toEqual([101, 1]);
   });
 });
 
