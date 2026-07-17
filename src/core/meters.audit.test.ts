@@ -175,7 +175,8 @@ describe("tapAddrs → apply → reading pipeline (subscription set is sufficien
 });
 
 describe("hasMeter mapping completeness", () => {
-  it("covers exactly the metered console strips and excludes output patches (default / URX44V / URX44)", () => {
+  it("covers exactly the metered console strips and excludes output patches for URX44 and URX44V", () => {
+    // Test both explicit model IDs and the undefined default fallback (backward compatibility)
     for (const modelId of [undefined, "URX44V", "URX44"] as const) {
       for (const id of [
         "ch1", "ch4", "ch_5_6", "ch_11_12",
