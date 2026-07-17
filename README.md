@@ -137,6 +137,13 @@ Distributed desktop builds bundle the Tauri runtime and other open-source
 components; their license notices are included in the build (see
 [docs/en/architecture.md](docs/en/architecture.md#third-party-licenses)).
 
+## Acknowledgments
+
+The URX22 meter mapping was verified on real hardware by
+[@takashyx](https://github.com/takashyx)
+([#173](https://github.com/semnil/urx-router/pull/173)) — the first meter mapping
+confirmed on a model other than the URX44V.
+
 ## Trademark notice
 
 YAMAHA, URX22, URX44, and URX44V are trademarks of Yamaha Corporation. This is an

@@ -124,6 +124,11 @@ URX Router を使用することで、このリスクを受諾したものとす
 配布するデスクトップビルドには Tauri ランタイムほかオープンソースコンポーネントが同梱され、
 それらのライセンス表示はビルドに含める ([docs/ja/architecture.md](docs/ja/architecture.md#サードパーティライセンス) を参照)。
 
+## 謝辞
+
+URX22 のメーターマッピングは [@takashyx](https://github.com/takashyx) 氏が実機で検証してくださいました
+([#173](https://github.com/semnil/urx-router/pull/173))。URX44V 以外の機種で初めて確定したメーターマッピングです。
+
 ## 商標について
 
 YAMAHA、URX22、URX44、URX44V は Yamaha Corporation の商標です。本ツールは非公式・独立の
