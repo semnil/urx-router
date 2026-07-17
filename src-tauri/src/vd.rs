@@ -822,6 +822,15 @@ mod imp {
     /// address). A non-integer current_value (e.g. a name string) yields None —
     /// numeric follow only, matching the JS reconcile.
     fn parse_param(msg: &Value) -> Option<ParamUpdate> {
+        // A namespace-level notify — `/vd/parameters` with no address and no value —
+        // is the broker's bulk-change push: a scene recall on the unit emits only
+        // this single frame (confirmed by capture; the changed parameters get no
+        // per-address notifies). Forward it as a sentinel no real address can
+        // collide with (catalog x/y are never negative), so the follow layer's
+        // unknown-address path escalates it to a full readback.
+        if notify_frame(msg, "/vd/parameters").is_some_and(|(_, rest)| rest.is_empty()) {
+            return Some(ParamUpdate { param_id: 0, x: -1, y: -1, value: 0 });
+        }
         let (vdp, addr) = notify_frame(msg, "/vd/parameters/")?;
         let mut parts = addr.split(':');
         let (ids, xs, ys) = (parts.next()?, parts.next()?, parts.next()?);
@@ -1013,6 +1022,37 @@ mod imp {
                 json!([
                     { "meter_id": 100, "x": 2, "value": -50 },
                     { "meter_id": 100, "x": 3, "value": -40 }
+                ])
+            );
+        }
+
+        #[test]
+        fn absorb_forwards_the_bulk_change_notify_as_the_sentinel() {
+            let mut subs = Subs::new();
+            let (param_ch, params_seen) = capture();
+            subs.param_ch = Some(param_ch);
+
+            // The broker's scene-recall push (capture-confirmed shape): a
+            // namespace-level notify with no address and no data. It must absorb
+            // as the unmappable sentinel — without depending on a value — while
+            // an addressed notify keeps parsing normally alongside it.
+            let bulk = json!({
+                "jsonrpc": "1.0",
+                "method": "onNotifyVD",
+                "params": { "vdp": { "method": "notify", "uri": "/vd/parameters" } }
+            });
+            subs.last_flush = Instant::now();
+            assert!(subs.absorb(&bulk));
+            assert!(subs.absorb(&notify("/vd/parameters/142:0:0".into(), 1)));
+
+            subs.flush();
+            let batches = params_seen.lock().unwrap();
+            assert_eq!(batches.len(), 1);
+            assert_eq!(
+                batches[0],
+                json!([
+                    { "param_id": 0, "x": -1, "y": -1, "value": 0 },
+                    { "param_id": 142, "x": 0, "y": 0, "value": 1 }
                 ])
             );
         }

@@ -164,6 +164,24 @@ describe("DeviceFollow", () => {
     expect(reconcileNodes).not.toHaveBeenCalled();
   });
 
+  it("escalates the bulk-change sentinel (scene recall) to a full read", async () => {
+    // A scene recall emits a single address-less namespace notify, which vd.rs
+    // forwards as the 0:-1:-1 sentinel (negative coordinates cannot exist in the
+    // catalog, so the live index never resolves them).
+    const reconcileAll = vi.fn(async () => {});
+    const reconcileNodes = vi.fn(async () => {});
+    const follow = followFor({
+      lookup: (_id, x) => (x < 0 ? undefined : SCOPED),
+      reconcileAll,
+      reconcileNodes,
+    });
+    follow.begin();
+    h.onUpdate!({ paramId: 0, x: -1, y: -1, value: 0 });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(reconcileAll).toHaveBeenCalledTimes(1);
+    expect(reconcileNodes).not.toHaveBeenCalled();
+  });
+
   it("escalates to a full read when more than three controls change at once", async () => {
     const reconcileAll = vi.fn(async () => {});
     const reconcileNodes = vi.fn(async () => {});

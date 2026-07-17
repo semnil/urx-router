@@ -1,6 +1,6 @@
 {
   "name": "urx-router",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Routing planner for YAMAHA URX22 / URX44 / URX44V USB audio interfaces",
   "license": "MIT",
   "private": true,
