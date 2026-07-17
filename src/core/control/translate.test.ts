@@ -3,6 +3,7 @@ import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections } from "../plan";
 import { COLOR_OFF_INDEX, COLOR_PALETTE, EQ_TYPE_PASS, colorIndexToHex, hexToColorIndex } from "./params";
 import { nameControl, planToCommands, planToNameWrites } from "./translate";
+import { GATE_RANGE_OFF_DB, VD_LEVEL_OFF } from "./vd";
 
 describe("planToCommands", () => {
   const model = getModel("URX44V");
@@ -968,6 +969,23 @@ describe("pushDynCommands clamping", () => {
     const cmds = planToCommands(model, plan);
     expect(vOf(cmds, "GATE_THRESHOLD")).toBe(-4000); // -40 dB, not clamped
     expect(vOf(cmds, "COMP_RATIO")).toBe(400); // 4:1, not clamped
+  });
+
+  it("emits GATE range -∞ as the off sentinel and finite values as centi-dB", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { gate: { range: GATE_RANGE_OFF_DB } };
+    expect(vOf(planToCommands(model, plan), "GATE_RANGE")).toBe(VD_LEVEL_OFF); // -∞
+    plan.nodeParams.ch1 = { gate: { range: -72 } };
+    expect(vOf(planToCommands(model, plan), "GATE_RANGE")).toBe(-7200); // deepest finite step
+  });
+
+  it("clamps DUCKER range down to the -70 dB floor", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams["out.ducker1"] = { ducker: { range: -120 } };
+    const cmds = planToCommands(model, plan);
+    expect(vOf(cmds, "DUCKER_RANGE")).toBe(-70 * 100); // clamped to -70 dB (no -∞)
   });
 });
 

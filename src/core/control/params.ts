@@ -25,6 +25,7 @@ export type ParamEncoding =
   | "q"
   | "eqGain"
   | "centiDb"
+  | "gateRange"
   | "delayTime"
   | "phonesLevel"
   | "burstWidth"
@@ -150,7 +151,7 @@ export const PARAMS = {
   /** GATE threshold (dB). */
   GATE_THRESHOLD: { id: 29, axis: "input", encoding: "centiDb" },
   /** GATE range / attenuation depth (dB). */
-  GATE_RANGE: { id: 30, axis: "input", encoding: "centiDb" },
+  GATE_RANGE: { id: 30, axis: "input", encoding: "gateRange" },
   /** GATE attack time (ms). */
   GATE_ATTACK: { id: 31, axis: "input", encoding: "attackTime" },
   /** GATE hold time (ms). */

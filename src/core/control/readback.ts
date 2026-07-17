@@ -57,6 +57,7 @@ import {
   vdToBool,
   vdToBurstWidth,
   vdToCentiDb,
+  vdToGateRange,
   vdToDelayTime,
   vdToPhonesLevel,
   vdToEqFreq,
@@ -790,6 +791,8 @@ function decodeDyn(encoding: ParamEncoding, raw: number): number {
   switch (encoding) {
     case "centiDb":
       return vdToCentiDb(raw);
+    case "gateRange":
+      return vdToGateRange(raw);
     case "attackTime":
       return vdToAttack(raw);
     case "holdTime":

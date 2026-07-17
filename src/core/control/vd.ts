@@ -328,6 +328,26 @@ export function vdToCentiDb(value: number): number {
   return value / 100;
 }
 
+/**
+ * GATE range (param 30). Unlike the other centi-dB dynamics fields, the broker's
+ * `range` display table has a -INF step below its -72 dB floor, encoded as the
+ * same int16 -∞ sentinel as level params. `GATE_RANGE_OFF_DB` is the plan-domain
+ * notch one step below the -72 dB floor that stands for that -∞.
+ */
+export const GATE_RANGE_OFF_DB = -73;
+
+/** Plan dB → broker centi-dB for GATE range: the -∞ notch maps to the off sentinel. */
+export function gateRangeToVd(db: number): number {
+  if (db <= GATE_RANGE_OFF_DB) return VD_LEVEL_OFF;
+  return clamp(Math.round(db * 100), -7200, 0);
+}
+
+/** Broker centi-dB → plan dB for GATE range: anything below the -72 dB floor is -∞. */
+export function vdToGateRange(value: number): number {
+  if (value < -7200) return GATE_RANGE_OFF_DB;
+  return clamp(value / 100, -72, 0);
+}
+
 /** Plan attack time (ms) → broker µs (×1000). */
 export function attackToVd(ms: number): number {
   return clamp(Math.round(ms * 1000), DYN_ATTACK_MIN_MS * 1000, DYN_ATTACK_MAX_MS * 1000);

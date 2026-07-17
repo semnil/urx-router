@@ -134,6 +134,7 @@ import {
   PHONES_LEVEL_MIN,
   PHONES_LEVEL_MAX,
   PHONES_LEVEL_DEFAULT,
+  GATE_RANGE_OFF_DB,
 } from "../core/control/vd";
 import { channelDuckerOn, channelEqUnavailable, duckerBypassWarnings, rateConstraints } from "../core/constraints";
 import { loadJson, saveJson } from "../core/storage";
@@ -1228,7 +1229,12 @@ function dynFieldSlider(
   onSet: (key: DynField["key"], v: number) => void,
 ): HTMLElement {
   const label = (m.inspector.dyn as Record<string, string>)[f.key];
-  return rangeSlider(label, f.min, f.max, f.step, cur ?? f.def, (v) => formatDyn(v, f.unit), (v) => onSet(f.key, v));
+  // GATE range has a -∞ notch (one step below its -72 dB floor = fully closed).
+  const fmt =
+    f.name === "GATE_RANGE"
+      ? (v: number) => (v <= GATE_RANGE_OFF_DB ? "-∞ dB" : formatDyn(v, f.unit))
+      : (v: number) => formatDyn(v, f.unit);
+  return rangeSlider(label, f.min, f.max, f.step, cur ?? f.def, fmt, (v) => onSet(f.key, v));
 }
 
 // Merge a patch into a node's FX effect object / its raw params map, reading the

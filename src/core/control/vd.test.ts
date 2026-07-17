@@ -38,6 +38,9 @@ import {
   PHONES_LEVEL_MAX,
   phonesLevelToVd,
   vdToPhonesLevel,
+  GATE_RANGE_OFF_DB,
+  gateRangeToVd,
+  vdToGateRange,
 } from "./vd";
 
 describe("level encoding (shared by faders, sends and the monitor)", () => {
@@ -62,6 +65,29 @@ describe("level encoding (shared by faders, sends and the monitor)", () => {
     expect(vdToLevel(levelToVd(LEVEL_MIN_DB))).toBe(LEVEL_MIN_DB);
     expect(vdToLevel(0)).toBe(0);
     expect(vdToLevel(VD_LEVEL_OFF)).toBe(LEVEL_OFF_DB); // off sentinel → -∞ notch
+  });
+});
+
+describe("GATE range encoding (param 30: -∞ notch below the -72 dB floor)", () => {
+  it("maps the -∞ notch to the off sentinel and dB to centi-dB", () => {
+    expect(gateRangeToVd(GATE_RANGE_OFF_DB)).toBe(VD_LEVEL_OFF); // -73 (-∞) → off
+    expect(gateRangeToVd(GATE_RANGE_OFF_DB - 10)).toBe(VD_LEVEL_OFF);
+    expect(gateRangeToVd(-72)).toBe(-7200); // the deepest finite step
+    expect(gateRangeToVd(-56)).toBe(-5600);
+    expect(gateRangeToVd(0)).toBe(0);
+  });
+
+  it("reads the off sentinel (and anything below -72 dB) back as the -∞ notch", () => {
+    expect(vdToGateRange(VD_LEVEL_OFF)).toBe(GATE_RANGE_OFF_DB); // -32768 → -∞
+    expect(vdToGateRange(-10000)).toBe(GATE_RANGE_OFF_DB); // below -72 dB → -∞
+    expect(vdToGateRange(-7200)).toBe(-72);
+    expect(vdToGateRange(0)).toBe(0);
+  });
+
+  it("round-trips both the -∞ notch and finite values", () => {
+    expect(vdToGateRange(gateRangeToVd(GATE_RANGE_OFF_DB))).toBe(GATE_RANGE_OFF_DB);
+    expect(vdToGateRange(gateRangeToVd(-72))).toBe(-72);
+    expect(vdToGateRange(gateRangeToVd(-56))).toBe(-56);
   });
 });
 
