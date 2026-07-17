@@ -77,6 +77,7 @@ const single = (l: readonly [number, number], r?: readonly [number, number]): Me
   r ? { key: "post", label: "OUT", l, r } : { key: "post", label: "OUT", l },
 ];
 
+// URX22 stereo pairs are shifted compared to URX44/44V (ch_3_4 is the first pair, i.e. pair 0)
 const NODE_TAPS_URX22: Record<string, MeterTap[]> = {
   ch1: monoTaps(0),
   ch2: monoTaps(1),
