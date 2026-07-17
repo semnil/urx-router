@@ -15,7 +15,7 @@ vi.mock("../platform", () => ({
 import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
 import { auditUnverified, planToCommands } from "./translate";
 import {
-  D_GAIN_PARAM,
+  dGainParam,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
@@ -235,21 +235,24 @@ describe("unverified-guess workflow (URX22)", () => {
     return table;
   }
 
-  it("has no static collisions after the ch_3_4 D.Gain id was moved off CLIP_SAFE", () => {
-    // The re-guess (param 11) is free; the earlier guess (5) collided with CLIP_SAFE.
+  it("has no static collisions: the URX22 D.Gain map reuses confirmed ids, inventing none", () => {
+    // The positional map (CH3/4 = 9) reuses URX44V-confirmed D.Gain ids, so there is
+    // no invented id to collide with a catalog param.
     expect(auditUnverified("URX22")).toEqual([]);
-    expect(D_GAIN_PARAM["ch_3_4"]).not.toBe(PARAMS.CLIP_SAFE.id);
+    expect(dGainParam("URX22", "ch_3_4")).toBe(9);
   });
 
-  it("suppressGuess drops a D.Gain write without touching the shared-id confirmed param", () => {
+  it("suppressing dgain-urx22 drops every URX22 D.Gain write but leaves other params", () => {
     const original = seed22();
     original.nodeParams["ch_3_4"] = { gain: 6 };
+    original.nodeParams["ch_5_6"] = { gain: -3 };
     original.nodeParams["ch1"] = { clipSafe: true };
-    const plan = perturbedPlan(m22, original, 0, new Set(["dgain-ch_3_4"]));
+    const plan = perturbedPlan(m22, original, 0, new Set(["dgain-urx22"]));
     expect(plan.nodeParams["ch_3_4"]?.gain).toBeUndefined();
+    expect(plan.nodeParams["ch_5_6"]?.gain).toBeUndefined();
     const cmds = planToCommands(m22, plan);
-    // The D.Gain (HA_GAIN at its own id) is gone; CLIP_SAFE is still sent.
-    expect(cmds.some((c) => c.name === "HA_GAIN" && c.paramId === D_GAIN_PARAM["ch_3_4"])).toBe(false);
+    // No D.Gain (HA_GAIN at a D.Gain block id) is sent; CLIP_SAFE is still sent.
+    expect(cmds.some((c) => c.name === "HA_GAIN" && [9, 13, 14, 15].includes(c.paramId))).toBe(false);
     expect(cmds.some((c) => c.name === "CLIP_SAFE" && c.paramId === PARAMS.CLIP_SAFE.id)).toBe(true);
   });
 
@@ -273,7 +276,7 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.device).toBe("URX22");
     expect(report.collisions).toEqual([]);
     expect(report.unverified.map((u) => u.key).sort()).toEqual(
-      ["dgain-ch_3_4", "hiz-channel", "input-ports", "stereo-block"].sort(),
+      ["dgain-urx22", "hiz-channel", "input-ports", "stereo-block"].sort(),
     );
     for (const u of report.unverified) {
       expect(u.collision).toBe(false);

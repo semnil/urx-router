@@ -741,21 +741,37 @@ export const DELAY_FRAME_RATE_DEFAULT = 5;
 
 // Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain): each
 // stereo channel has its own dedicated param, written to both L/R instances
-// (y = 0 and 1) which the device keeps linked. Keyed by node id so each model
-// uses its own. The block is the consecutive ids 9..17 (all ±2400 centi-dB =
-// ±24 dB range); URX44V occupies {9,13,14,15}, confirmed by a live broker probe
-// (per-id sentinel write → on-device D.Gain readout: CH5/6=9, CH7/8=13,
-// CH9/10=14, CH11/12=15). The remaining ids (10/11/12/16/17) are firmware
-// overcount slots with no URX44V UI. ch_3_4 (URX22's extra stereo channel,
-// absent on URX44V) is an UNVERIFIED guess pending a URX22 owner's self-test; 11
-// is one of the free slots and does not collide with any confirmed param.
-export const D_GAIN_PARAM: Record<string, number> = {
-  ch_3_4: 11,
+// (y = 0 and 1) which the device keeps linked. The block is the consecutive ids
+// 9..17 (all ±2400 centi-dB = ±24 dB range); URX44V occupies {9,13,14,15},
+// confirmed by a live broker probe (per-id sentinel write → on-device D.Gain
+// readout: CH5/6=9, CH7/8=13, CH9/10=14, CH11/12=15). URX44 shares that map.
+//
+// Keyed by MODEL because the broker indexes stereo channels by pair POSITION, not
+// by displayed label. The URX22 meter verification on real hardware (PR #173)
+// showed the stereo meter address is the pair position (URX22's CH5/6 is position
+// 1, NOT the same slot as URX44V's CH5/6 = position 0), and the stereo fader/ON/pan
+// (266/267/268) and source (209/210) blocks are already position-indexed. So the
+// D.Gain block is very likely positional too: URX22's four stereo pairs (CH3/4,
+// CH5/6, CH7/8, CH9/10 = positions 0..3) reuse the SAME confirmed ids {9,13,14,15}
+// BY POSITION — CH3/4 = 9, retiring the old free-slot guess (11). This is the
+// leading, meter-corroborated hypothesis but is NOT yet confirmed on a real URX22:
+// tracked in UNVERIFIED_MAPPINGS ("dgain-urx22") and settled by one sentinel write.
+const D_GAIN_URX44V: Record<string, number> = {
   ch_5_6: 9,
   ch_7_8: 13,
   ch_9_10: 14,
   ch_11_12: 15,
 };
+const D_GAIN_URX22: Record<string, number> = {
+  ch_3_4: 9,
+  ch_5_6: 13,
+  ch_7_8: 14,
+  ch_9_10: 15,
+};
+/** D.Gain param id for a stereo channel on a model, or undefined when the node has
+ *  none. URX44 shares the URX44V label map; URX22 uses the positional map (above). */
+export const dGainParam = (modelId: string, nodeId: string): number | undefined =>
+  (modelId === "URX22" ? D_GAIN_URX22 : D_GAIN_URX44V)[nodeId];
 
 // microSD Rec Track Count (RECORDER menu): how many tracks record, an even 2..16.
 // The plan stores the actual count (readback = device raw × 2). Read-only on the

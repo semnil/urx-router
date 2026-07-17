@@ -37,7 +37,7 @@ import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
   COMP_EQ_COMP_FIRST,
   COMP_EQ_SSMCS,
-  D_GAIN_PARAM,
+  dGainParam,
   denormalizeInsertFx,
   EQ_ONE_KNOB_LEVEL_MAX,
   EQ_ONE_KNOB_LEVEL_MIN,
@@ -283,7 +283,7 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
   if (isStereoChannel(nodeId)) {
     const si = stereoIndexMap(model).get(nodeId);
     if (si === undefined) return null;
-    const dParam = D_GAIN_PARAM[nodeId];
+    const dParam = dGainParam(model.id, nodeId);
     return {
       fader: STEREO_FADER,
       on: STEREO_ON,
@@ -1621,19 +1621,24 @@ export interface UnverifiedMapping {
 
 export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
   {
-    key: "dgain-ch_3_4",
-    label: "URX22 ch_3_4 digital input gain (D.Gain) param id",
+    // URX22 D.Gain channel→id map is the positional hypothesis (CH3/4, CH5/6,
+    // CH7/8, CH9/10 = ids 9, 13, 14, 15 by stereo-pair position — see D_GAIN maps
+    // in params.ts). It reuses URX44V-confirmed ids, so it invents none (empty
+    // guessedIds); what is unverified is the assignment on a real URX22. The
+    // self-test writes each channel's sentinel and reads it back to settle it.
+    key: "dgain-urx22",
+    label: "URX22 D.Gain channel→id map (positional: CH3/4,5/6,7/8,9/10 = 9,13,14,15)",
     models: ["URX22"],
-    guessedIds: [D_GAIN_PARAM.ch_3_4],
+    guessedIds: [],
     addresses: (model) =>
-      stereoIndexMap(model).has("ch_3_4")
-        ? [
-            [D_GAIN_PARAM.ch_3_4, 0],
-            [D_GAIN_PARAM.ch_3_4, 1],
-          ]
-        : [],
+      [...stereoIndexMap(model).keys()].flatMap((nodeId) => {
+        const id = dGainParam(model.id, nodeId);
+        return id === undefined ? [] : [[id, 0] as GuessAddress, [id, 1] as GuessAddress];
+      }),
     suppress: (plan) => {
-      if (plan.nodeParams["ch_3_4"]) delete plan.nodeParams["ch_3_4"].gain;
+      for (const nodeId of ["ch_3_4", "ch_5_6", "ch_7_8", "ch_9_10"]) {
+        if (plan.nodeParams[nodeId]) delete plan.nodeParams[nodeId].gain;
+      }
     },
   },
   {
