@@ -267,7 +267,7 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   meter-bars glyph so it reads apart from the send-tap PRE/POST chip — above the
   meter opens a vertical signal-chain popover (`con-tappop`, listed in flow order, active tap highlighted);
   it is position-fixed so it escapes the strip scroll container. Tap → `meter_id` was confirmed on the
-  device against the block diagram (`core/meters.ts` `NODE_TAPS`): mono channels INPUT → PRE GATE → PRE COMP →
+  device against the block diagram (`core/meters.ts`; the stereo-channel maps are per-model — `NODE_TAPS_URX22` / `NODE_TAPS_URX44`, with URX44V aliasing the URX44 map — because the meters are indexed by stereo-pair position and the URX22's first stereo channel is CH3/4, confirmed on real URX22 hardware): mono channels INPUT → PRE GATE → PRE COMP →
   PRE EQ → PRE INS FX → PRE FADER → POST; stereo channels INPUT → PRE FADER → PRE DUCKER → POST (no
   HPF/GATE/COMP/INS FX, and the LEVEL sits before the DUCKER); output buses PRE EQ (sum) → PRE FADER →
   PRE INS FX → POST; FX channels PRE FADER → POST; monitors and the oscillator are single-meter and have

@@ -47,9 +47,12 @@ controlled is the per-channel CUE on/off (the assignment).
 Live device control was developed and verified against a real **URX44V**. The
 **URX44** reuses the URX44V control map verbatim (the only hardware difference
 is the HDMI input, which is not routed by default), so it is expected to match
-but has not been verified on hardware. The **URX22** control map and
-factory-initial plan are a conjectured mirror of the URX44V — there is no URX22
-hardware to verify against — so its values may not match the device exactly.
+but has not been verified on hardware. On the **URX22**, the CONSOLE live-meter
+routing has now been confirmed against real hardware by a URX22 owner (the stereo
+channels' meters are indexed by stereo-pair position, which shifts on the URX22
+because it has only two mono channels, so its first stereo channel is CH3/4). Its
+control (write) map and factory-initial plan, however, remain a conjectured mirror
+of the URX44V and are unverified, so those values may not match the device exactly.
 Offline planning, the plan JSON and image export are unaffected; this concerns
 only live sync on those two models.
 
