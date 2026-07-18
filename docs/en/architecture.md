@@ -702,8 +702,9 @@ Installers are produced by `pnpm tauri build`, which embeds `frontendDist`
 (`../dist`) into the binary. A plain `cargo build` artifact instead reads
 `devUrl` and shows a blank window without the dev server (always verify with
 `tauri build`). The app version has a single source: `src-tauri/tauri.conf.json` sets `version`
-to `"../package.json"`, so Tauri reads it from the root `package.json` at build time (`Cargo.toml`'s
-version stays independent as the crate version).
+to `"../package.json"`, so Tauri reads it from the root `package.json` at build time. `Cargo.toml`'s
+version is pinned at `0.0.0` because the crate is never published, so a version bump touches
+`package.json` alone.
 
 | Platform | Output | Notes |
 | --- | --- | --- |
