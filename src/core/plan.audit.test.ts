@@ -17,6 +17,7 @@ import {
   hasConnection,
   PLAN_FORMAT,
   PLAN_VERSION,
+  PlanError,
   LEVEL_OFF_DB,
 } from "./plan";
 import { DEFAULT_SAMPLE_RATE } from "./constraints";
@@ -59,13 +60,25 @@ describe("serialize / deserialize round-trip identity", () => {
 describe("deserialize tolerance to malformed documents", () => {
   const base = { format: PLAN_FORMAT, version: PLAN_VERSION, modelId: "URX44" };
 
-  it("ignores a future/unknown version field (no version gate today)", () => {
-    // AUDIT(low): version is written but never read on load. A document tagged a
-    // higher version than this build understands is accepted as-is rather than
-    // rejected or migrated. Current behavior: the field is dropped on read.
+  it("refuses a document tagged newer than this build", () => {
+    // A newer document may carry semantics this build would misread, and a plan
+    // drives writes to real hardware — so it is refused with a typed code rather
+    // than half-read.
     const doc = JSON.stringify({ ...base, version: 999, connections: [] });
-    expect(() => deserialize(doc)).not.toThrow();
-    expect(deserialize(doc).connections).toEqual([]);
+    expect(() => deserialize(doc)).toThrow(PlanError);
+    try {
+      deserialize(doc);
+    } catch (e) {
+      expect((e as PlanError).code).toBe("planVersionUnsupported");
+    }
+  });
+
+  it("accepts the current version, and an absent / non-numeric one as current", () => {
+    expect(deserialize(JSON.stringify({ ...base, connections: [] })).connections).toEqual([]);
+    // A hand-authored plan that omits version (or mistypes it) still loads.
+    const noVersion = JSON.stringify({ format: PLAN_FORMAT, modelId: "URX44", connections: [] });
+    expect(() => deserialize(noVersion)).not.toThrow();
+    expect(() => deserialize(JSON.stringify({ ...base, version: "abc" }))).not.toThrow();
   });
 
   it("coerces a non-array connections value to []", () => {
@@ -139,29 +152,45 @@ describe("deserialize tolerance to malformed documents", () => {
     ]);
   });
 
-  it("AUDIT: does NOT deep-validate nodeParams values (asymmetry with connection params)", () => {
-    // deserialize validates each connection's params (isValidConnParams: numeric
-    // level/pan, boolean flags) so a garbled wire can never reach the console's
-    // .toFixed. The per-node nodeParams collection gets only the top-level
-    // isStringRecord check — its VALUES pass through untouched. So a hostile /
-    // hand-corrupted plan can carry a string level / gain, a non-boolean on, or an
-    // entirely wrong-typed entry, and it survives the load verbatim. Downstream
-    // formatters guard the common fader paths (fmtDb / levelToPos treat a non-finite
-    // or non-number as -∞/off), but the guard is not universal — an inspector
-    // rangeSlider format callback calls .toFixed directly on e.g. osc.level. Pin the
-    // current (unvalidated) behavior so tightening it is a deliberate change.
+  it("deep-validates nodeParams values, symmetrically with connection params", () => {
+    // Every NodeParams leaf is a boolean or a number, so a leaf that is anything
+    // else is dropped on read — absence is the documented "device default" state,
+    // whereas a surviving string would reach an inspector rangeSlider format
+    // callback that calls .toFixed on it. A non-record node entry is dropped whole.
     const doc = JSON.stringify({
       ...base,
       nodeParams: {
-        ch1: { level: "abc", gain: {}, on: "notbool", hpfFreq: null },
+        ch1: { level: "abc", gain: {}, on: "notbool", hpfFreq: null, phantom: true, pan: 12 },
         ch2: "not even an object",
-        "bus.osc": { osc: { level: "loud" } },
+        "bus.osc": { osc: { level: "loud", freq: 1000, on: true } },
       },
     });
     const plan = deserialize(doc);
-    expect(plan.nodeParams.ch1).toEqual({ level: "abc", gain: {}, on: "notbool", hpfFreq: null });
-    expect(plan.nodeParams.ch2 as unknown).toBe("not even an object");
-    expect((plan.nodeParams["bus.osc"] as { osc: { level: unknown } }).osc.level).toBe("loud");
+    // Malformed leaves gone; well-formed ones (including a nested group) kept.
+    expect(plan.nodeParams.ch1).toEqual({ phantom: true, pan: 12 });
+    expect(plan.nodeParams.ch2).toBeUndefined();
+    expect(plan.nodeParams["bus.osc"]?.osc).toEqual({ freq: 1000, on: true });
+  });
+
+  it("drops non-finite numbers, and an eqBands array with any malformed element", () => {
+    const doc = JSON.stringify({
+      ...base,
+      nodeParams: {
+        // JSON has no NaN/Infinity literal, so they arrive as null — same drop path.
+        ch1: { gain: null, level: 3 },
+        ch2: { eqBands: [{ freq: 100 }, "bogus"] },
+        ch3: { eqBands: [{ freq: 100 }, { gain: 2 }] },
+      },
+    });
+    const plan = deserialize(doc);
+    expect(plan.nodeParams.ch1).toEqual({ level: 3 });
+    expect(plan.nodeParams.ch2).toEqual({}); // one bad band drops the array, not the node
+    expect(plan.nodeParams.ch3?.eqBands).toEqual([{ freq: 100 }, { gain: 2 }]);
+  });
+
+  it("keeps a well-formed unknown key (forward compatibility within a version)", () => {
+    const doc = JSON.stringify({ ...base, nodeParams: { ch1: { futureFlag: true, futureValue: 7 } } });
+    expect(deserialize(doc).nodeParams.ch1).toEqual({ futureFlag: true, futureValue: 7 });
   });
 
   it("accepts a connection with no params field (params is optional)", () => {

@@ -337,7 +337,7 @@ export const PLAN_FORMAT = "urx-router-plan";
 export const PLAN_VERSION = 1;
 
 // Language-agnostic load failures. The UI maps the code to a localized message.
-export type PlanErrorCode = "notPlanFile" | "missingModel" | "planUrlUnsupported";
+export type PlanErrorCode = "notPlanFile" | "missingModel" | "planUrlUnsupported" | "planVersionUnsupported";
 
 export class PlanError extends Error {
   constructor(readonly code: PlanErrorCode) {
@@ -387,6 +387,15 @@ export function deserialize(text: string): Plan {
   if (data.format !== PLAN_FORMAT) {
     throw new PlanError("notPlanFile");
   }
+  // Version gate. A document tagged NEWER than this build is refused rather than
+  // half-read: its fields may carry semantics this build would misinterpret, and
+  // a plan drives writes to real hardware. An absent / non-numeric version is
+  // treated as current, so a hand-authored plan that omits it still loads. Older
+  // versions load as-is today — when a breaking change lands, migrate here.
+  const version = Number.isFinite(data.version) ? (data.version as number) : PLAN_VERSION;
+  if (version > PLAN_VERSION) {
+    throw new PlanError("planVersionUnsupported");
+  }
   if (typeof data.modelId !== "string") {
     throw new PlanError("missingModel");
   }
@@ -395,7 +404,7 @@ export function deserialize(text: string): Plan {
     sampleRate: SAMPLE_RATES.includes(data.sampleRate as number) ? (data.sampleRate as number) : DEFAULT_SAMPLE_RATE,
     positions: isStringRecord(data.positions) ? (data.positions as unknown as Record<string, NodePos>) : {},
     connections: Array.isArray(data.connections) ? data.connections.filter(isPlanConnection) : [],
-    nodeParams: isStringRecord(data.nodeParams) ? (data.nodeParams as unknown as Record<string, NodeParams>) : {},
+    nodeParams: sanitizeNodeParams(data.nodeParams),
     nodeNames: isStringRecord(data.nodeNames) ? (data.nodeNames as Record<string, string>) : {},
     nodeColors: isStringRecord(data.nodeColors) ? (data.nodeColors as Record<string, string>) : {},
     hidden: Array.isArray(data.hidden) ? (data.hidden as string[]) : [],
@@ -500,6 +509,52 @@ function isValidConnParams(p: unknown): boolean {
     if (key in q && typeof q[key] !== "boolean") return false;
   }
   return true;
+}
+
+// Deep-sanitize the per-node parameter collection, the counterpart of
+// isValidConnParams for the node side. Every NodeParams leaf is a boolean or a
+// number (nested groups — gate / comp / ssmcs / osc / eqBands … — bottom out in
+// those two), so a leaf that is anything else (string, null, NaN, Infinity) is
+// dropped rather than kept: absence is already the documented "use the device
+// default" state, whereas a surviving string would reach a formatter that calls
+// .toFixed on it. Unknown keys with well-formed values are preserved, so a
+// document from a future minor version keeps its extras.
+function sanitizeParamValue(v: unknown): unknown {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
+  if (Array.isArray(v)) {
+    // Arrays hold records (eqBands); a malformed element would shift the band
+    // indices, so one bad element drops the whole array.
+    const items = v.map((el) => (isStringRecord(el) ? sanitizeParamRecord(el) : undefined));
+    return items.every((el) => el !== undefined) ? items : undefined;
+  }
+  if (isStringRecord(v)) {
+    // A nested group that sanitizes to empty carries nothing — including the case
+    // where a scalar field was mistyped as an object ("gain": {}). Drop it so the
+    // node falls back to the device default rather than holding an inert husk.
+    const rec = sanitizeParamRecord(v);
+    return Object.keys(rec).length > 0 ? rec : undefined;
+  }
+  return undefined;
+}
+
+function sanitizeParamRecord(rec: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(rec)) {
+    const clean = sanitizeParamValue(v);
+    if (clean !== undefined) out[k] = clean;
+  }
+  return out;
+}
+
+function sanitizeNodeParams(v: unknown): Record<string, NodeParams> {
+  if (!isStringRecord(v)) return {};
+  const out: Record<string, NodeParams> = {};
+  for (const [nodeId, np] of Object.entries(v)) {
+    // A non-record entry carries nothing recoverable — drop the node outright.
+    if (isStringRecord(np)) out[nodeId] = sanitizeParamRecord(np) as NodeParams;
+  }
+  return out;
 }
 
 function isPlanConnection(v: unknown): v is PlanConnection {
