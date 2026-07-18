@@ -44,6 +44,7 @@ pnpm build        # tsc --noEmit + vite build
 pnpm build:demo   # browser demo build (VITE_DEMO=1; excludes save/image export)
 pnpm test         # vitest (core: routing/constraints/plan/levels/meters/midi, control: vd/translate/readback/live/follow/fx/insert-fx/firmware etc., models)
 pnpm test:e2e     # Playwright E2E (e2e/*.spec.ts: routing/hide/notes/multiselect/bustype/signaltype/insertfx/midi etc.). CI runs this post-merge
+pnpm format       # Prettier --write on the TS sources (src/e2e/scripts + root *.ts; config = package.json "prettier", printWidth 120)
 pnpm clean        # remove the Vite cache (node_modules/.vite) + dist + Cargo target
 pnpm reset:storage # clear the dev app's (browser) localStorage = opens the ?reset URL
 ```
@@ -54,11 +55,12 @@ On this machine (Mac), node/pnpm go through nodenv (`~/.anyenv/envs/nodenv/shims
 
 If `pnpm tauri dev` keeps showing a stale version or UI, discard the build caches with `pnpm clean` and restart (the version is embedded at build time via `tauri.conf.json`→`../package.json`, so it easily sticks in the Vite cache). The webview's persistent data (the consent gate in `localStorage`, etc.) lives outside the app and is not covered by `pnpm clean`; on macOS delete `~/Library/WebKit/<productName or identifier>/` manually.
 
-CI is 4 workflows: PRs run build + unit tests (`ci.yml`); E2E and third-party license generation run post-merge (`post-merge.yml`); the browser demo auto-deploys to GitHub Pages on `vX.Y.Z` release tag push (`pages.yml`); desktop installers also build on tag push (`release.yml`).
+CI is 5 workflows: PRs run build + unit tests (`ci.yml`) and get formatting auto-applied (`format.yml`: Prettier + cargo fmt; same-repo PRs get a validated `style:` fixup commit, fork PRs a failing check — mechanics in the workflow header); E2E and third-party license generation run post-merge (`post-merge.yml`); the browser demo auto-deploys to GitHub Pages on `vX.Y.Z` release tag push (`pages.yml`); desktop installers also build on tag push (`release.yml`).
 
 ## Conventions
 
 - Code identifiers and comments in English. Comments describe behavior only. Minimize diffs
+- Run `pnpm format` (+ `cargo fmt` for Rust changes) before committing. `format.yml` auto-fixes drift on same-repo PRs, but its fixup commit diverges the local branch (manual rebase needed), so local formatting is the primary path
 - Documentation is maintained in Japanese and English (`docs/{ja,en}`); diagrams use Mermaid notation
 - **When changing routing rules, keep `docs/{en,ja}/device-model.md` and `src/models/` in sync** (the official block diagram is the primary source). After changing `src/models/`, also regenerate the data bundled with the `urx-routing-planner` skill (`.claude/skills/urx-routing-planner/scripts/models.json` + `.claude/skills/urx-routing-planner/references/model-*.md`) via `UPDATE_SKILL=1 pnpm test skill-export` and commit it (generator: `src/models/skill-export.ts`; drift is caught in CI by `skill-export.test.ts`). **Semantic constraints that do not appear in the route table (signal-flow ordering = pre/post-fader, duckers, etc.) are absent from the generated data, so `skill-export` does not carry them**. When the tool starts handling a new constraint of this kind, hand-update the feasibility notes in `.claude/skills/urx-routing-planner/SKILL.md` (example: channel → USB/SD direct outs tap at the Rec Point = pre-fader/pre-ducker)
 - Keep the theme palettes in sync between the CSS variables in `src/style.css` (`:root` / `[data-theme="light"]`) and `PALETTES` in `src/ui/graph.ts`

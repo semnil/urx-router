@@ -1,0 +1,73 @@
+name: Format
+
+# Auto-applies code formatting: Prettier for the TypeScript sources (pnpm
+# format) and cargo fmt for the Rust shell. On pull requests from branches in
+# this repository the fixes are validated (build + unit tests) and pushed back
+# to the branch as a fixup commit. GITHUB_TOKEN cannot push to forks, so fork
+# PRs fall back to a check that fails with the diff and asks the author to
+# run `pnpm format` locally.
+# Notes: pushes made with GITHUB_TOKEN do not retrigger workflows, so the
+# fixup commit gets no separate CI run — the in-job build + test gate stands
+# in for it. Formatting drift on main (e.g. a fork PR merged over a red
+# check) self-heals on the next same-repo PR, since pnpm format covers the
+# full tree.
+on:
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: format-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Check out the head commit itself (not the merge commit) so
+          # formatting fixes can be committed and pushed back. Fork head SHAs
+          # are fetchable from the base repository via the advertised PR refs.
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Push formatting fixes (same-repo PRs)
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        # The branch name is untrusted input, so it reaches the shell only as
+        # a quoted environment variable. The fixup commit triggers no workflow
+        # runs of its own, so build + unit tests run here before pushing. If
+        # the branch moved while this run was in flight the push fails; the
+        # newer push retriggers the job.
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          pnpm build
+          pnpm test
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -am 'style: apply automatic formatting'
+          git push origin "HEAD:refs/heads/$BRANCH"
+      - name: Verify formatting (fork PRs)
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          git diff --exit-code || {
+            echo '::error::Unformatted code found. Run `pnpm format` (and `cargo fmt` for Rust) locally and commit the result.'
+            exit 1
+          }
