@@ -276,8 +276,12 @@ export function buildModel(p: ModelParams): DeviceModel {
   //     input remains a selectable channel source.
 
   // 12. Ducker key source — each ducker selects one trigger from CH / STEREO / MIX.
+  //     One ducker per stereo channel, matching the node loop above (p.stereoCh),
+  //     so a model with a different stereo-channel count stays consistent.
   const duckerSources = [...channels, "bus.stereo", "bus.mix1", "bus.mix2"];
-  for (let d = 1; d <= 4; d++) for (const s of duckerSources) r(ref(s, "out"), ref(`out.ducker${d}`, "in"), "key");
+  for (let d = 1; d <= p.stereoCh; d++) {
+    for (const s of duckerSources) r(ref(s, "out"), ref(`out.ducker${d}`, "in"), "key");
+  }
 
   return { id: p.id, name: p.name, nodes, rules, channelPairs };
 }

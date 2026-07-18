@@ -14,10 +14,9 @@ const STEREO_CH = /^ch_\d+_\d+$/;
 const MONO_CH = /^ch\d+$/;
 
 describe("ducker <-> stereo-channel coupling", () => {
-  // build.ts creates stereo channels with a `k < stereoCh` loop but hangs duckers
-  // with a hardcoded `d <= 4` loop. They agree only because every model ships
-  // stereoCh = 4; this pins the coupling so a model with a different stereo count
-  // (which would leave duckers and channels mismatched) is caught.
+  // build.ts derives both the stereo channels (`k < stereoCh`) and the duckers
+  // (`d <= stereoCh`) from the same model parameter. This pins the coupling so a
+  // model with a different stereo count keeps them matched.
   it.each(MODEL_IDS)("%s: exactly one ducker per stereo channel, each attached to a real one", (id) => {
     const model = MODELS[id];
     const stereoChannels = model.nodes.filter((n) => n.kind === "channel" && STEREO_CH.test(n.id)).map((n) => n.id);
@@ -40,11 +39,10 @@ describe("ducker <-> stereo-channel coupling", () => {
     }
   });
 
-  // The ducker NODES come from a `d <= stereoCh` loop but the ducker KEY RULES come
-  // from a hardcoded `d <= 4` loop (build.ts rule 12). They agree only because every
-  // model ships stereoCh = 4: a different stereo count would either dangle key rules
-  // onto a non-existent ducker or leave a real ducker with no selectable key source.
-  // This pins the key-rule <-> ducker-node bijection so that drift is caught.
+  // The ducker NODES and the ducker KEY RULES (build.ts rule 12) both come from a
+  // `d <= stereoCh` loop, so a different stereo count can no longer dangle key
+  // rules onto a non-existent ducker or leave a real ducker with no selectable key
+  // source. This pins the key-rule <-> ducker-node bijection so that drift is caught.
   it.each(MODEL_IDS)("%s: key rules target exactly the ducker nodes, each offering every key source", (id) => {
     const model = MODELS[id];
     const duckers = model.nodes
