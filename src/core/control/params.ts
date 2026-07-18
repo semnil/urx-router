@@ -191,6 +191,11 @@ export const PARAMS = {
    *  array on the device, so live must converge (re-read then re-apply the plan's
    *  effect params). See control/insert-fx-effect.ts. */
   INSERT_FX: { id: 135, axis: "input", encoding: "insertFx", sideEffect: true },
+  /** Input channel insert FX ON/OFF (bypass) — independent of the selector (135).
+   *  The device auto-engages it whenever an effect is (re)selected, so translate
+   *  emits it after the selector to enforce the plan's state. Confirmed by notify
+   *  reverse-lookup (LCD INS FX button). */
+  INSERT_FX_ON: { id: 134, axis: "input", encoding: "bool" },
   /** Input channel Rec Point: the signal-path tap fed to the recording / direct
    *  out (enum 0..4, PRE GATE..PRE FADER). Confirmed by live snapshot-diff
    *  (MONO CH1 4 → 0). MONO IN only — stereo channels' Rec Point address is
@@ -199,8 +204,12 @@ export const PARAMS = {
   /** STEREO master insert FX (single). Enum from output_insert_fx. sideEffect:
    *  rebinds + repopulates the output engine array (see INSERT_FX). */
   OUTPUT_INSERT_FX_STEREO: { id: 578, axis: "global", encoding: "insertFx", sideEffect: true },
+  /** STEREO master insert FX ON/OFF (single; bypass, auto-engaged on selection — see INSERT_FX_ON). */
+  OUTPUT_INSERT_FX_ON_STEREO: { id: 577, axis: "global", encoding: "bool" },
   /** MIX bus insert FX (L/R-linked). Enum from output_insert_fx. sideEffect: as above. */
   OUTPUT_INSERT_FX_MIX: { id: 671, axis: "output", encoding: "insertFx", sideEffect: true },
+  /** MIX bus insert FX ON/OFF (L/R-linked; bypass, auto-engaged on selection — see INSERT_FX_ON). */
+  OUTPUT_INSERT_FX_ON_MIX: { id: 670, axis: "output", encoding: "bool" },
   // Analog mic-strip toggles (CH1-4 only). Confirmed by live scan.
   /** Input channel +48V phantom power. */
   PHANTOM: { id: 0, axis: "input", encoding: "bool" },
@@ -513,6 +522,23 @@ export const OUTPUT_INSERT_FX_OPTIONS: InsertFxOption[] = [
   { value: 1793, label: "Compander-H", maxRate: 96000, slot: "out-dyn" },
   { value: 1794, label: "Compander-S", maxRate: 96000, slot: "out-dyn" },
 ];
+
+/** True when the insert-FX option is selectable at the given sample rate. */
+export function insertFxAvailable(option: InsertFxOption, sampleRate: number): boolean {
+  return option.maxRate === undefined || sampleRate <= option.maxRate;
+}
+
+/** True when a node has an insert effect selected (whatever the bypass switch).
+ *  The ON/OFF switch only applies while one is — see insertFxEngaged. */
+export function insertFxSelected(np: { insertFx?: number } | undefined): boolean {
+  return np?.insertFx != null && np.insertFx !== INSERT_FX_NONE;
+}
+
+/** True when a node's insert effect is selected and not bypassed (absent
+ *  `insertFxOn` = engaged, matching the device's auto-engage on selection). */
+export function insertFxEngaged(np: { insertFx?: number; insertFxOn?: boolean } | undefined): boolean {
+  return insertFxSelected(np) && np?.insertFxOn !== false;
+}
 
 /** Normalize a broker insert-FX value to the table's value (uint32 none → -1). */
 export function normalizeInsertFx(raw: number): number {

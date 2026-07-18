@@ -39,6 +39,7 @@ import {
   D_GAIN_PARAM,
   denormalizeInsertFx,
   hexToColorIndex,
+  INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
   paramNameForId,
@@ -1030,6 +1031,11 @@ export const OSC_ASSIGN_BUSES = Object.keys(OSC_ASSIGN);
 /** Insert FX for a node: which param, the instance(s) it writes, and its options. */
 export interface InsertFxControl {
   param: number;
+  /** The matching insert FX ON/OFF (bypass) param — 134 / 577 / 670. */
+  onParam: number;
+  /** Output bus (STEREO / MIX) rather than an input channel — the two use
+   *  different option menus and different engine arrays. */
+  isOutput: boolean;
   instances: number[];
   options: InsertFxOption[];
 }
@@ -1048,13 +1054,33 @@ const MIX_INSERT_FX_INSTANCES: Record<string, number[]> = {
  */
 export function insertFxControl(model: DeviceModel, nodeId: string): InsertFxControl | null {
   if (nodeId === "bus.stereo") {
-    return { param: PARAMS.OUTPUT_INSERT_FX_STEREO.id, instances: [0], options: OUTPUT_INSERT_FX_OPTIONS };
+    return {
+      param: PARAMS.OUTPUT_INSERT_FX_STEREO.id,
+      onParam: PARAMS.OUTPUT_INSERT_FX_ON_STEREO.id,
+      isOutput: true,
+      instances: [0],
+      options: OUTPUT_INSERT_FX_OPTIONS,
+    };
   }
   const mix = MIX_INSERT_FX_INSTANCES[nodeId];
-  if (mix) return { param: PARAMS.OUTPUT_INSERT_FX_MIX.id, instances: mix, options: OUTPUT_INSERT_FX_OPTIONS };
+  if (mix) {
+    return {
+      param: PARAMS.OUTPUT_INSERT_FX_MIX.id,
+      onParam: PARAMS.OUTPUT_INSERT_FX_ON_MIX.id,
+      isOutput: true,
+      instances: mix,
+      options: OUTPUT_INSERT_FX_OPTIONS,
+    };
+  }
   const cc = channelControl(model, nodeId);
   if (cc && !isStereoChannel(nodeId)) {
-    return { param: PARAMS.INSERT_FX.id, instances: [cc.y], options: INSERT_FX_OPTIONS };
+    return {
+      param: PARAMS.INSERT_FX.id,
+      onParam: PARAMS.INSERT_FX_ON.id,
+      isOutput: false,
+      instances: [cc.y],
+      options: INSERT_FX_OPTIONS,
+    };
   }
   return null;
 }
@@ -1252,19 +1278,17 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   // plan's values (absolute state, like the FX-channel effects).
   for (const node of model.nodes) {
     const ifx = insertFxControl(model, node.id);
-    const v = plan.nodeParams[node.id]?.insertFx;
-    if (!ifx || v === undefined) continue;
+    const np = plan.nodeParams[node.id] ?? {};
+    if (!ifx || np.insertFx === undefined) continue;
+    const v = np.insertFx;
     for (const inst of ifx.instances) out.push(rawCommand("INSERT_FX", ifx.param, "insertFx", inst, v));
-    const fam = insertFxFamilyOf(v);
-    if (fam) {
-      const isOutput = ifx.param !== PARAMS.INSERT_FX.id;
-      pushInsertFxEffectCommands(
-        out,
-        insertFxEngine(fam.family, isOutput),
-        fam.family,
-        plan.nodeParams[node.id]?.insertFxParams,
-      );
+    if (np.insertFxOn !== undefined && v !== INSERT_FX_NONE) {
+      for (const inst of ifx.instances) {
+        out.push(rawCommand("INSERT_FX_ON", ifx.onParam, "bool", inst, np.insertFxOn ? 1 : 0));
+      }
     }
+    const fam = insertFxFamilyOf(v);
+    if (fam) pushInsertFxEffectCommands(out, insertFxEngine(fam.family, ifx.isOutput), fam.family, np.insertFxParams);
     own(node.id);
   }
 

@@ -44,7 +44,7 @@ import {
   partnerChannel,
   sendTapWritable,
 } from "../core/routing";
-import { INSERT_FX_NONE, type InsertFxOption } from "../core/control/params";
+import { INSERT_FX_NONE, insertFxEngaged, insertFxSelected, type InsertFxOption } from "../core/control/params";
 import {
   DELAY_TIME_MAX_MS,
   DELAY_TIME_MIN_MS,
@@ -1109,9 +1109,9 @@ export class Console {
   }
 
   // The strip's power control (the scribble LED): the node master ON on np.on — a
-  // CH_ON / FX / MIX 675 (armed as "chOn", since "mute" already carries the CH/FX/MIX
-  // → STEREO send) or a STEREO / MONITOR master (which has no such send, so the LED
-  // reuses the send-less "mute" id) — or the oscillator on osc.on. STREAMING: none.
+  // CH_ON / FX / MIX 675, or a STEREO / MONITOR master — or the oscillator on
+  // osc.on. STREAMING has no master, so it gets no LED. Every non-OSC strip arms
+  // the same "chOn" id (see below); "mute" is the separate → STEREO send.
   private powerSpec(m: StripModel): PowerSpec | null {
     if (m.isStream) return null;
     if (m.isOsc) {
@@ -1543,10 +1543,7 @@ export class Console {
     }
     const ifx = insertFxControl(model, m.id);
     if (ifx) {
-      const insOn = (): boolean => {
-        const v = planOf().insertFx;
-        return v != null && v !== INSERT_FX_NONE;
-      };
+      const insOn = (): boolean => insertFxEngaged(planOf());
       this.makeChip(m.id, proc, "INS FX", false, insOn(), () => this.toggleInsFx(m.id, ifx.options));
     }
     // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
@@ -2071,19 +2068,22 @@ export class Console {
     return sendConnection(plan, id, target)?.params?.level ?? LEVEL_OFF_DB;
   }
 
-  // INS FX has no separate on/off flag — "off" is the No Effect value. Toggling
-  // off remembers the chosen effect so toggling back on restores it (else the
-  // first real option). Returns the new on state.
+  // The INS FX chip drives the device's insert ON/OFF (bypass) switch. With an
+  // effect selected, toggling flips insertFxOn and keeps the selection (absent =
+  // on, matching the device's auto-engage). With No Effect, toggling on restores
+  // the last chosen effect (else the first real option) and engages it. Returns
+  // the new on state.
   private toggleInsFx(id: string, options: InsertFxOption[]): boolean {
     const np = this.nodeParamsOf(id);
-    const cur = np.insertFx;
-    if (cur != null && cur !== INSERT_FX_NONE) {
-      this.lastInsFx.set(id, cur);
-      np.insertFx = INSERT_FX_NONE;
-      return false;
+    if (insertFxSelected(np)) {
+      this.lastInsFx.set(id, np.insertFx!);
+      np.insertFxOn = np.insertFxOn === false;
+      return np.insertFxOn;
     }
     np.insertFx = this.lastInsFx.get(id) ?? options.find((o) => o.value !== INSERT_FX_NONE)?.value ?? INSERT_FX_NONE;
-    return np.insertFx !== INSERT_FX_NONE;
+    if (np.insertFx === INSERT_FX_NONE) return false;
+    np.insertFxOn = true;
+    return true;
   }
 
   // Build a labelled rotary knob (label / value / knob) in the strip head and

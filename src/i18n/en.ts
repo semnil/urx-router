@@ -187,6 +187,7 @@ export const en = {
     clipSafe: "Clip Safe",
     hiZ: "Hi-Z",
     insertFx: "Insert FX",
+    insertFxOn: "Insert FX ON",
     compEqType: "COMP/EQ Type",
     eqOn: "EQ",
     compOn: "COMP",

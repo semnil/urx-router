@@ -223,3 +223,36 @@ test("insert-fx param round-trips through save and open", async ({ page }, testI
   await expect(insertSelect(page)).toHaveValue("256"); // Clean
   await expect(paramSelect(page, "SP Type")).toHaveValue("8"); // JC 2x12
 });
+
+test("selecting an effect reveals the ON/OFF (bypass) toggle; bypass keeps the selection", async ({ page }) => {
+  await node(page, "ch1").click();
+  await expect(param(page, "Insert FX ON")).toHaveCount(0); // hidden under No Effect
+  await insertSelect(page).selectOption({ label: "Compander-S" });
+  const onRow = param(page, "Insert FX ON");
+  await expect(onRow.locator(".toggle button.on")).toHaveText("ON"); // ships engaged
+  await onRow.getByRole("button", { name: "OFF", exact: true }).click();
+  await expect(onRow.locator(".toggle button.on")).toHaveText("OFF");
+  await expect(insertSelect(page)).toHaveValue("1794"); // bypass never clears the selector
+  // Re-selecting an effect mirrors the device's auto-engage.
+  await insertSelect(page).selectOption({ label: "Compander-H" });
+  await expect(param(page, "Insert FX ON").locator(".toggle button.on")).toHaveText("ON");
+});
+
+test("the console INS FX chip bypasses without clearing the selection", async ({ page }) => {
+  await node(page, "ch1").click();
+  await insertSelect(page).selectOption({ label: "Compander-S" });
+  await page.click("#btn-view-console");
+  const chip = page
+    .locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) })
+    .locator(".con-chip", { hasText: "INS FX" })
+    .first();
+  await expect(chip).toHaveClass(/\bon\b/);
+  await chip.click();
+  await expect(chip).not.toHaveClass(/\bon\b/);
+  await chip.click();
+  await expect(chip).toHaveClass(/\bon\b/);
+  // The selection survived the bypass round-trip.
+  await page.click("#btn-view-graph");
+  await node(page, "ch1").click();
+  await expect(insertSelect(page)).toHaveValue("1794");
+});

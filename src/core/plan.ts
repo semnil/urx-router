@@ -204,6 +204,10 @@ export interface NodeParams {
   hpfFreq?: number;
   /** INSERT_FX: insert-effect enum value (MONO IN channels / output buses). Absent or -1 = No Effect. */
   insertFx?: number;
+  /** INSERT_FX_ON: insert-effect ON/OFF (bypass), independent of the selector. The
+   *  device auto-engages it whenever an effect is (re)selected. Absent = leave the
+   *  device state alone; only written while an effect is selected. */
+  insertFxOn?: boolean;
   /** Insert-FX effect parameters: RAW broker values keyed by the engine array SLOT
    *  (see control/insert-fx-effect.ts), mirroring the device so a captured plan
    *  round-trips. The selected `insertFx` value picks the slot layout. Absent slots

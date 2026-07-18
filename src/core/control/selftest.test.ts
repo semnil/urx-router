@@ -14,7 +14,14 @@ vi.mock("../platform", () => ({
 
 import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
 import { auditUnverified, planToCommands } from "./translate";
-import { D_GAIN_PARAM, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
+import {
+  D_GAIN_PARAM,
+  INSERT_FX_NONE,
+  INSERT_FX_OPTIONS,
+  OUTPUT_INSERT_FX_OPTIONS,
+  PARAMS,
+  PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
+} from "./params";
 import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
 import { formatSelfTestReport, PASSES, perturbedPlan, runSelfTest } from "./selftest";
 
@@ -121,23 +128,64 @@ describe("runSelfTest", () => {
     expect(vi.mocked(vdDisconnect)).toHaveBeenCalled();
   });
 
-  it("emits identical insert FX commands on every pass (unmodeled ON/OFF switch)", () => {
-    // A captured "selected but bypassed" effect: re-selecting it on the device
-    // would auto-engage its unmodeled insert ON/OFF switch, so the perturbed
-    // plans must never change what the insert-FX params would write — pinned at
-    // the command layer, so the diff-based send can never see an insert-FX
-    // difference to send.
+  it("sweeps insert FX one node per kind and writes the modeled ON/OFF after the selector", () => {
+    // A captured "selected but bypassed" effect: the sweep may re-select effects
+    // because the ON/OFF (bypass) switch is modeled (insertFxOn) and emitted
+    // after the selector, overriding the device's auto-engage — the restore then
+    // puts the bypass back.
     const original = populatedPlan();
-    original.nodeParams["ch1"] = { ...original.nodeParams["ch1"], insertFx: 1794, insertFxParams: { "6": -1000 } };
-    original.nodeParams["bus.mix1"] = { insertFx: 1794 };
-    const insertFxCommands = (plan: Plan) =>
-      planToCommands(model, plan)
-        .filter((c) => c.name.includes("INSERT_FX"))
-        .map((c) => [c.name, c.x, c.y, c.vdValue]);
-    const baseline = insertFxCommands(original);
-    expect(baseline.length).toBeGreaterThan(0);
+    // A real capture reads insertFxOn on every insert-capable node; mirror that.
+    for (const id of ["ch1", "ch2", "ch3", "ch4"]) {
+      original.nodeParams[id] = { ...original.nodeParams[id], insertFxOn: id !== "ch1" };
+    }
+    original.nodeParams["ch1"] = {
+      ...original.nodeParams["ch1"],
+      insertFx: 1794,
+      insertFxParams: { "6": -1000 },
+    };
+    original.nodeParams["bus.mix1"] = { insertFx: 1794, insertFxOn: true };
     for (let pass = 0; pass < PASSES; pass++) {
-      expect(insertFxCommands(perturbedPlan(model, original, pass))).toEqual(baseline);
+      const plan = perturbedPlan(model, original, pass);
+      // Stale engine params never survive the sweep: they belong to the captured
+      // effect, and writing them into a freshly selected engine would be nonsense.
+      for (const np of Object.values(plan.nodeParams)) expect(np.insertFxParams).toBeUndefined();
+      // At most one active effect per kind (device-wide 1-of-N slot exclusivity),
+      // holding exactly this pass's option.
+      const held = Object.values(plan.nodeParams)
+        .map((np) => np.insertFx)
+        .filter((v): v is number => v !== undefined && v !== INSERT_FX_NONE);
+      const inputOpt = INSERT_FX_OPTIONS[pass % INSERT_FX_OPTIONS.length].value;
+      const outputOpt = OUTPUT_INSERT_FX_OPTIONS[pass % OUTPUT_INSERT_FX_OPTIONS.length].value;
+      const expected = [inputOpt, outputOpt].filter((v) => v !== INSERT_FX_NONE);
+      expect(held.sort()).toEqual(expected.sort());
+      // The ON/OFF switch is written only for effect-bearing nodes, after their
+      // selector (the device auto-engages on selection; the plan's state must
+      // land last). The receiving input rotates across the mono channels per pass.
+      const activeIn = ["ch1", "ch2", "ch3", "ch4"][pass % 4];
+      const cmds = planToCommands(model, plan);
+      if (inputOpt === INSERT_FX_NONE) {
+        expect(cmds.filter((c) => c.node === activeIn).map((c) => c.name)).not.toContain("INSERT_FX_ON");
+      } else {
+        const names = cmds.filter((c) => c.node === activeIn && c.name.startsWith("INSERT_FX")).map((c) => c.name);
+        expect(names).toEqual(["INSERT_FX", "INSERT_FX_ON"]);
+      }
+      // ch1's captured bypass (false) is flipped by perturb, so whenever ch1 is
+      // the active holder its switch write is 1.
+      if (activeIn === "ch1" && inputOpt !== INSERT_FX_NONE) {
+        expect(cmds.find((c) => c.node === "ch1" && c.name === "INSERT_FX_ON")!.vdValue).toBe(1);
+      }
+      if (inputOpt === INSERT_FX_NONE && outputOpt === INSERT_FX_NONE) {
+        expect(cmds.filter((c) => c.name === "INSERT_FX_ON")).toEqual([]);
+      }
+    }
+  });
+
+  it("never sweeps a rate-locked insert FX option (Pitch Fix above 48 kHz)", () => {
+    const original = populatedPlan();
+    original.sampleRate = 96000;
+    for (let pass = 0; pass < PASSES; pass++) {
+      const plan = perturbedPlan(model, original, pass);
+      for (const np of Object.values(plan.nodeParams)) expect(np.insertFx).not.toBe(512);
     }
   });
 

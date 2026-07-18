@@ -365,7 +365,9 @@ export async function applyDeviceState(
     }
   }
 
-  // Insert FX (enum): mono input channels (135) and output buses (578 / 671).
+  // Insert FX (enum): mono input channels (135) and output buses (578 / 671),
+  // plus the ON/OFF (bypass) switch (134 / 577 / 670) so a captured "selected
+  // but bypassed" effect round-trips.
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     if (!want(node.id)) continue;
@@ -374,17 +376,17 @@ export async function applyDeviceState(
     attempted.add(node.id);
     try {
       const insertFx = normalizeInsertFx(await vdGet(ifx.param, 0, ifx.instances[0]));
+      const insertFxOn = vdToBool(await vdGet(ifx.onParam, 0, ifx.instances[0]));
       const fam = insertFxFamilyOf(insertFx);
       let insertFxParams: Record<string, number> | undefined;
       if (fam) {
-        const isOutput = ifx.param !== PARAMS.INSERT_FX.id;
-        const engine = insertFxEngine(fam.family, isOutput);
+        const engine = insertFxEngine(fam.family, ifx.isOutput);
         insertFxParams = {};
         for (const s of insertFxWritableSlots(fam.family)) {
           insertFxParams[String(s.slot)] = await vdGet(engine, 0, s.slot);
         }
       }
-      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], insertFx, insertFxParams };
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], insertFx, insertFxOn, insertFxParams };
       applied++;
     } catch (e) {
       failed.add(node.id);

@@ -102,6 +102,8 @@ import {
   EQ_ONE_KNOB_TYPE_MONO_OPTIONS,
   EQ_ONE_KNOB_TYPE_WIDE_OPTIONS,
   EQ_ONE_KNOB_TYPE_DEFAULT,
+  insertFxAvailable,
+  insertFxEngaged,
 } from "../core/control/params";
 import type { InsertFxSlot } from "../core/control/params";
 import {
@@ -713,22 +715,38 @@ export function renderInspector(
         const slot = other.options.find((o) => o.value === v)?.slot;
         if (slot) taken.add(slot);
       }
+      const ifxSel = plan.nodeParams[node.id]?.insertFx;
       (tailBody ?? host).append(
         selectControl(
           m.inspector.insertFx,
           ifx.options.map((o) => ({
             value: String(o.value),
             label: o.label,
-            disabled:
-              (o.maxRate !== undefined && plan.sampleRate > o.maxRate) || (o.slot !== undefined && taken.has(o.slot)),
+            disabled: !insertFxAvailable(o, plan.sampleRate) || (o.slot !== undefined && taken.has(o.slot)),
           })),
-          String(plan.nodeParams[node.id]?.insertFx ?? INSERT_FX_NONE),
-          (v) => actions.onUpdateNodeParams(node.id, { insertFx: Number(v) }),
+          String(ifxSel ?? INSERT_FX_NONE),
+          // Selecting an effect auto-engages it on the device, so mirror that in
+          // the plan; selecting No Effect leaves the dormant switch state alone.
+          (v) => {
+            const sel = Number(v);
+            actions.onUpdateNodeParams(
+              node.id,
+              sel === INSERT_FX_NONE ? { insertFx: sel } : { insertFx: sel, insertFxOn: true },
+            );
+          },
         ),
       );
+      // ON/OFF (bypass) switch below the selector — hidden under No Effect (the
+      // device ignores the switch then, and re-engages it on every selection).
+      if (ifxSel !== undefined && ifxSel !== INSERT_FX_NONE) {
+        (tailBody ?? host).append(
+          boolToggle(m.inspector.insertFxOn, insertFxEngaged(plan.nodeParams[node.id]), (v) =>
+            actions.onUpdateNodeParams(node.id, { insertFxOn: v }),
+          ),
+        );
+      }
       // Editable parameters for the selected effect (guitar amp / pitch fix /
       // compander / multi-band comp), below the selector.
-      const ifxSel = plan.nodeParams[node.id]?.insertFx;
       if (ifxSel !== undefined) {
         const fxSec = insertFxEffectSection(node.id, ifxSel, plan, actions, m);
         if (fxSec) (tailBody ?? host).append(fxSec);
@@ -1465,6 +1483,7 @@ function renderMbc(
   );
   // Per-band: Threshold / Ratio / Attack / Gain, each from MBC_BAND_PARAM.
   const bandLabel = { low: t.bandLow, mid: t.bandMid, high: t.bandHigh };
+  // Display order, deliberately not the catalog's MBC_BAND_KEYS order.
   const bandKeys: MbcBandKey[] = ["threshold", "ratio", "attack", "gain"];
   for (const b of MBC_BANDS) {
     for (const k of bandKeys) {

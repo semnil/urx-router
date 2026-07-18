@@ -19,6 +19,7 @@ import {
   BUS_TYPE_OPTIONS,
   denormalizeInsertFx,
   DELAY_FRAME_RATE_OPTIONS,
+  INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
   PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
@@ -89,6 +90,32 @@ describe("insert-FX: every option encodes and round-trips", () => {
       expect(back.nodeParams["bus.stereo"]?.insertFx).toBe(opt.value);
     });
   }
+});
+
+describe("insert-FX ON/OFF (bypass) round-trips", () => {
+  it("input bypass (both states) — written after the selector", async () => {
+    const plan = base();
+    plan.nodeParams["ch1"] = { insertFx: 1794, insertFxOn: false };
+    expect(cmd(plan, "INSERT_FX_ON", 0)!.vdValue).toBe(0);
+    expect((await roundTrip(plan)).nodeParams["ch1"]?.insertFxOn).toBe(false);
+    plan.nodeParams["ch1"] = { insertFx: 1794, insertFxOn: true };
+    expect(cmd(plan, "INSERT_FX_ON", 0)!.vdValue).toBe(1);
+    expect((await roundTrip(plan)).nodeParams["ch1"]?.insertFxOn).toBe(true);
+  });
+
+  it("MIX bypass writes both L/R-linked instances", async () => {
+    const plan = base();
+    plan.nodeParams["bus.mix1"] = { insertFx: 1792, insertFxOn: true };
+    expect(cmd(plan, "INSERT_FX_ON", 0)!.vdValue).toBe(1);
+    expect(cmd(plan, "INSERT_FX_ON", 1)!.vdValue).toBe(1);
+    expect((await roundTrip(plan)).nodeParams["bus.mix1"]?.insertFxOn).toBe(true);
+  });
+
+  it("not written under No Effect (the device ignores the switch then)", () => {
+    const plan = base();
+    plan.nodeParams["ch1"] = { insertFx: INSERT_FX_NONE, insertFxOn: false };
+    expect(cmd(plan, "INSERT_FX_ON", 0)).toBeUndefined();
+  });
 });
 
 describe("new CH SETTING / MIX params round-trip", () => {
