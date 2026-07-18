@@ -321,16 +321,15 @@ describe("no input port mixes a single-input rule with a summing rule", () => {
   });
 });
 
-// AUDIT (routing.ts mirrorBalPair, S4 latent): the mirror shallow-spreads the source
-// channel's nodeParams onto the partner, so NESTED param objects (gate / comp / eqBands
-// / ssmcs / osc / eqOneKnob) are shared by reference between the two channels rather
-// than deep-copied. It is benign under the standard edit path (onUpdateNodeParams
-// rebuilds the top-level object and every linked edit re-mirrors), but an in-place
-// mutation of a shared nested object would bleed into the partner — including after the
-// pair is later unlinked, since the alias persists until a replace-style edit or a JSON
-// round-trip breaks it. Pin the current sharing so a future deep-copy is a deliberate change.
-describe("AUDIT mirrorBalPair shares nested param objects by reference", () => {
-  it("aliases the partner's nested gate/eqBands to the source (no deep copy)", () => {
+// AUDIT (routing.ts mirrorBalPair, S4 latent — FIXED): the mirror used to shallow-spread
+// the source channel's nodeParams onto the partner, sharing the NESTED param objects
+// (gate / comp / eqBands / ssmcs / osc / eqOneKnob) by reference. That was benign under
+// the standard edit path (onUpdateNodeParams rebuilds the top-level object and every
+// linked edit re-mirrors), but an in-place mutation bled into the partner — and the alias
+// outlived the link, persisting until a replace-style edit or a JSON round-trip broke it.
+// The mirror now deep-copies; these tests pin that so a regression to sharing is caught.
+describe("mirrorBalPair deep-copies nested param objects", () => {
+  it("gives the partner its own nested gate/eqBands, with equal values", () => {
     const plan = defaultPlan("URX44");
     plan.nodeParams.ch1 = {
       stereoLink: true,
@@ -339,11 +338,13 @@ describe("AUDIT mirrorBalPair shares nested param objects by reference", () => {
       eqBands: [{ gain: 3 }],
     };
     expect(mirrorBalPair(MODELS.URX44, plan, "ch1")).toBe(true);
-    // Same object identity, not a clone.
-    expect(plan.nodeParams.ch2!.gate).toBe(plan.nodeParams.ch1!.gate);
-    expect(plan.nodeParams.ch2!.eqBands).toBe(plan.nodeParams.ch1!.eqBands);
-    // Consequently an in-place edit to the source's nested object bleeds into the partner.
+    // Mirrored by value, not by identity.
+    expect(plan.nodeParams.ch2!.gate).toEqual(plan.nodeParams.ch1!.gate);
+    expect(plan.nodeParams.ch2!.gate).not.toBe(plan.nodeParams.ch1!.gate);
+    expect(plan.nodeParams.ch2!.eqBands).toEqual(plan.nodeParams.ch1!.eqBands);
+    expect(plan.nodeParams.ch2!.eqBands).not.toBe(plan.nodeParams.ch1!.eqBands);
+    // An in-place edit to the source no longer bleeds into the partner.
     plan.nodeParams.ch1!.gate!.threshold = -99;
-    expect(plan.nodeParams.ch2!.gate!.threshold).toBe(-99);
+    expect(plan.nodeParams.ch2!.gate!.threshold).toBe(-20);
   });
 });

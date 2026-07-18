@@ -190,12 +190,17 @@ export function mirrorBalPair(model: DeviceModel, plan: Plan, id: string): boole
   const partner = partnerChannel(model, id);
   if (!partner) return false;
   // Replace the partner's node params with the source's, but keep the partner's
-  // own pair-level fields (only the primary carries stereoLink / panBal).
+  // own pair-level fields (only the primary carries stereoLink / panBal). The copy
+  // is deep: a shallow spread would alias the nested groups (gate / comp / eqBands
+  // / ssmcs / osc / eqOneKnob) between the two channels, so an in-place edit to one
+  // would bleed into the other — and the alias would outlive the link, since it
+  // persists until a replace-style edit or a JSON round-trip breaks it.
   const src = plan.nodeParams[id] ?? {};
   const { stereoLink, panBal } = plan.nodeParams[partner] ?? {};
-  plan.nodeParams[partner] = { ...src, stereoLink, panBal };
+  plan.nodeParams[partner] = { ...structuredClone(src), stereoLink, panBal };
   // Copy each send's mix params (level / PRE-POST / ON / pan) to the partner's send
-  // into the same destination — the BAL pan is shared across the pair.
+  // into the same destination — the BAL pan is shared across the pair. ConnParams
+  // are flat scalars, so the spread is a full copy here.
   for (const c of plan.connections) {
     if (c.kind !== "send" || c.from !== ref(id, "out")) continue;
     const pc = plan.connections.find((p) => p.kind === "send" && p.from === ref(partner, "out") && p.to === c.to);
