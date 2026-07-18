@@ -14,16 +14,16 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: playwright-report
@@ -33,12 +33,16 @@ jobs:
   licenses:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # SHA pin drops the branch-name toolchain shorthand, so the channel is
+      # passed explicitly. No version tags; Dependabot leaves this pin alone.
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
       # cargo-about gates its CLI binary behind the non-default `cli` feature, so a
       # prebuilt-less install (install-action's source-build fallback) yields no
       # `cargo-about` binary. Build from source with the feature, cached by version.
-      - uses: taiki-e/cache-cargo-install-action@v3
+      - uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
           tool: cargo-about@0.9.1
           features: cli
@@ -46,7 +50,7 @@ jobs:
       # list, so a new crate can't silently drop a required notice.
       - run: cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
         working-directory: src-tauri
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: third-party-licenses
           path: src-tauri/THIRD_PARTY_LICENSES.html
