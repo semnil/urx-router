@@ -34,8 +34,8 @@ setting.
 - `version` — always `1`.
 - `modelId` — `"URX22"`, `"URX44"`, or `"URX44V"`.
 - `sampleRate` — Hz, one of `44100, 48000, 88200, 96000, 176400, 192000`
-  (default `48000`). Some features (FX2, insert FX, HDMI EQ) warn/disable at high
-  rates — the app shows those notes; the plan still loads.
+  (default `48000`). Some features (insert FX, FX2, stereo-channel EQ) warn/disable
+  above 96 kHz — the app shows those notes; the plan still loads.
 
 ## connections
 
@@ -119,6 +119,9 @@ the device default. The full set:
 - `cueInterrupt`, `mono` (bool, monitor buses); `phonesLevel` (0.0–10.0).
 - `delay` — STREAMING bus: `{ on, time (ms, 1–1000), frameRate (enum 0–7) }`.
 - `insertFx` — insert-effect selector enum (-1 = none). Selecting one is stable.
+- `insertFxOn` — insert-effect ON/OFF (bypass), `true`/`false`. The device
+  re-engages it whenever an effect is (re)selected; it only applies (and is only
+  written) while an effect is selected.
 - `sdRecTrackCount` — even 2–16. **Read-only on the device** (the front panel
   sets it); the app reads it back but never writes it. It only gates how many
   record-track slots show.

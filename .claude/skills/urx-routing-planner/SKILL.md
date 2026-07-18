@@ -47,7 +47,7 @@ one-directional (input → channel → bus → output), the common "not possible
 are requests that fight it — channel → channel, output → channel, or two sources
 into one single-input selector.
 
-**One caveat the route table can't show — direct outs are pre-fader/pre-Ducker.**
+**A caveat the route table can't show — direct outs are pre-fader/pre-Ducker.**
 A channel wired straight to a USB output (`out.usbmain_*` / `out.usbsub`) or a
 microSD Rec track is tapped at the channel's **Rec Point**, which sits before the
 fader and the Ducker. So a legal channel → USB/SD route carries the *dry* channel:
@@ -58,6 +58,18 @@ USB output instead (a bus is post-Ducker). Channel → USB/SD direct is right on
 when the dry channel is wanted (e.g. a clean per-channel feed to a DAW, or a dry
 recording). Flag this whenever a request pairs a Ducker (or a specific fader level)
 with a channel → USB direct out.
+
+**Another blind spot — a channel Ducker key ignores that channel's fader/mute.**
+A `key` wire from a channel taps the channel's Rec Point, the same
+pre-fader/pre-Ducker tap as a direct out, so fading or muting the trigger channel
+never changes the ducking. When the trigger should follow a fader or mute, key
+from a STEREO/MIX bus instead — a bus key is post-fader.
+
+**High sample rates drop features.** Above 96 kHz (i.e. at 176.4 / 192 kHz) the
+insert FX and the FX2 bus are unavailable and the stereo channels' EQ is forced
+off. The plan still loads — the app warns and disables FX2 — but flag this when a
+request combines `sampleRate` 176400/192000 with insert FX, FX2 sends, or
+stereo-channel EQ.
 
 **Building a plan.** Emit the plan JSON only once the requirements are settled.
 Vague requests usually leave gaps that change the routing — which model, which
