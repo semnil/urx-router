@@ -1,8 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
-const recSelect = (page: Page) =>
-  page.locator("#inspector .param", { hasText: "Rec Point" }).locator("select");
+const recSelect = (page: Page) => page.locator("#inspector .param", { hasText: "Rec Point" }).locator("select");
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -39,12 +38,7 @@ test("SSMCS drops PRE EQ and moves a PRE EQ tap to PRE COMP", async ({ page }) =
   await recSelect(page).selectOption("2"); // PRE EQ
   const typeSelect = page.locator("#inspector .param", { hasText: "COMP/EQ Type" }).locator("select");
   await typeSelect.selectOption("1"); // SSMCS
-  await expect(recSelect(page).locator("option")).toHaveText([
-    "PRE GATE",
-    "PRE COMP",
-    "PRE INS FX",
-    "PRE FADER",
-  ]);
+  await expect(recSelect(page).locator("option")).toHaveText(["PRE GATE", "PRE COMP", "PRE INS FX", "PRE FADER"]);
   await expect(recSelect(page)).toHaveValue("1"); // PRE COMP
   // Back to COMP->EQ: PRE EQ reappears but the tap stays where the device left it.
   await typeSelect.selectOption("0");

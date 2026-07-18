@@ -141,7 +141,11 @@ function basePlan(): Plan {
   return plan;
 }
 
-function liveFor(plan: Plan, onError: (message: string) => void = () => {}, onSent: (n: number) => void = () => {}): LiveSync {
+function liveFor(
+  plan: Plan,
+  onError: (message: string) => void = () => {},
+  onSent: (n: number) => void = () => {},
+): LiveSync {
   return new LiveSync({ getModel: () => model, getPlan: () => plan, onError, onSent });
 }
 

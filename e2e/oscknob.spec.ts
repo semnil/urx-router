@@ -2,8 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 
 // The OSCILLATOR strip drives its level with a rotary LEVEL knob (not a fader) and
 // borrows the meter-only layout + scale of the STREAMING strip.
-const strip = (page: Page, name: string) =>
-  page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
+const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {

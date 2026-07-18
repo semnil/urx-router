@@ -112,7 +112,10 @@ describe("defaultPlan", () => {
   // would offer a settable color with no factory value (or vice versa).
   it.each(["URX22", "URX44", "URX44V"] as const)("%s seeds a color for exactly the colorable nodes", (id) => {
     const model = MODELS[id];
-    const colorable = model.nodes.filter((n) => colorControl(model, n.id)).map((n) => n.id).sort();
+    const colorable = model.nodes
+      .filter((n) => colorControl(model, n.id))
+      .map((n) => n.id)
+      .sort();
     const seeded = Object.keys(defaultPlan(id).nodeColors).sort();
     expect(seeded).toEqual(colorable);
   });

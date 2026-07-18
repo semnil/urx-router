@@ -2,8 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 
 // METER POINT selector: each strip's level meter can show one of the node's
 // observable tap points (INPUT → … → POST). Runs against the factory plan.
-const strip = (page: Page, name: string) =>
-  page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
+const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -24,7 +23,13 @@ test("a mono channel defaults to POST and lists its full chain in signal order",
   const pop = page.locator(".con-tappop");
   await expect(pop).toBeVisible();
   await expect(pop.locator(".crow .nm")).toHaveText([
-    "INPUT", "PRE GATE", "PRE COMP", "PRE EQ", "PRE INS FX", "PRE FADER", "POST",
+    "INPUT",
+    "PRE GATE",
+    "PRE COMP",
+    "PRE EQ",
+    "PRE INS FX",
+    "PRE FADER",
+    "POST",
   ]);
   await expect(pop.locator(".crow.active .nm")).toHaveText("POST");
 });

@@ -15,12 +15,17 @@ beforeEach(() => {
   ensureFixedConnections(model, plan);
 });
 
-const conn = (from: string, to: string) => plan.connections.find((c) => c.from === ref(from, "out") && c.to === ref(to, "in"))!;
+const conn = (from: string, to: string) =>
+  plan.connections.find((c) => c.from === ref(from, "out") && c.to === ref(to, "in"))!;
 
 describe("control ids", () => {
   it("round-trip through the id syntax, including send scopes", () => {
     expect(parseControlId(controlId("ch1", "level"))).toEqual({ node: "ch1", param: "level" });
-    expect(parseControlId(controlId("bus.fx1", "level", "bus.mix1"))).toEqual({ node: "bus.fx1", param: "level", send: "bus.mix1" });
+    expect(parseControlId(controlId("bus.fx1", "level", "bus.mix1"))).toEqual({
+      node: "bus.fx1",
+      param: "level",
+      send: "bus.mix1",
+    });
     expect(parseControlId("nonsense")).toBeNull();
     expect(parseControlId("a/b@c@d")).toBeNull();
   });

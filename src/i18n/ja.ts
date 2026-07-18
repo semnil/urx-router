@@ -89,7 +89,8 @@ export const ja: Messages = {
     // 先の割り当てと MIDI コントロールを共有する行 (連動) に表示。一緒に動き、
     // フィードバックは最初の割り当てに追従する。
     linked: "連動",
-    linkedHint: "このアドレスの最初の割り当てと 1 つの MIDI コントロールを共有します。一緒に動き、MIDI フィードバックは最初の割り当てに追従します。",
+    linkedHint:
+      "このアドレスの最初の割り当てと 1 つの MIDI コントロールを共有します。一緒に動き、MIDI フィードバックは最初の割り当てに追従します。",
     // 選択肢ラベルは英語表記のまま (幅固定のセレクトでカタカナ表記は
     // 「アブソリュート」等が収まらない。他の MIDI マッピングツールとも同語彙)。
     // 挙動説明 (下の *Desc) のみ日本語。保存値は互換のため "edge" / "state" のまま。
@@ -108,7 +109,8 @@ export const ja: Messages = {
     },
     buttonModeDesc: {
       edge: "プッシュ / モーメンタリーボタン向け: 押すたびに 1 回反転し、離した信号 (0) は無視する。ボタンが on 値のみ送り 0 を送らなくても毎回反転する。",
-      state: "トグルボタン (押すたび 127/0 交互送信、Stream Deck 等) 向け: 値がそのまま状態になる — 64 以上で ON、未満で OFF。モーメンタリーボタンなら押している間だけ ON。",
+      state:
+        "トグルボタン (押すたび 127/0 交互送信、Stream Deck 等) 向け: 値がそのまま状態になる — 64 以上で ON、未満で OFF。モーメンタリーボタンなら押している間だけ ON。",
     },
     bound: (control: string, addr: string): string => `${addr} を ${control} に割り当てました`,
     inputError: (message: string): string => `MIDI 入力エラー: ${message}`,
@@ -310,11 +312,15 @@ export const ja: Messages = {
     off: "OFF",
     notReadFromDevice: "デバイスから読み込まれていません — 計画の初期値を表示しています。",
     selectionOnly: "選択のみ — Send パラメータはありません。",
-    directOutTap: "ダイレクト出力 — チャンネルの Rec Point でタップ (フェーダー・ダッカーより前段)。含めるには STEREO / MIX バス経由で送ってください。",
-    sdRecTap: "このチャンネルを Rec Point でタップして録音します (既定はプリフェーダー)。録音する段はチャンネルの Rec Point で選べます。",
-    duckerKeyTap: "ダッカーキー — キー元チャンネルの Rec Point (フェーダー・ダッカーより前段) でタップ。そのチャンネルのフェーダー・ミュートはトリガーに影響しません。post-fader でトリガーするには STEREO / MIX バスをキーにしてください。",
+    directOutTap:
+      "ダイレクト出力 — チャンネルの Rec Point でタップ (フェーダー・ダッカーより前段)。含めるには STEREO / MIX バス経由で送ってください。",
+    sdRecTap:
+      "このチャンネルを Rec Point でタップして録音します (既定はプリフェーダー)。録音する段はチャンネルの Rec Point で選べます。",
+    duckerKeyTap:
+      "ダッカーキー — キー元チャンネルの Rec Point (フェーダー・ダッカーより前段) でタップ。そのチャンネルのフェーダー・ミュートはトリガーに影響しません。post-fader でトリガーするには STEREO / MIX バスをキーにしてください。",
     fixedConnection: "固定接続 — 常時有効で削除できません。",
-    duckerPreSend: "このチャンネルのダッカーは ON ですが、この PRE (プリフェーダー) 送りはその手前でタップするためダッキングされません。ダックを含めるには POST に切り替えてください。",
+    duckerPreSend:
+      "このチャンネルのダッカーは ON ですが、この PRE (プリフェーダー) 送りはその手前でタップするためダッキングされません。ダックを含めるには POST に切り替えてください。",
     busType: "BUS Type",
     panLink: "Pan Link",
     busFixedLevel: "Send レベルは固定 (BUS Type: FIXED)。",
@@ -446,16 +452,14 @@ export const ja: Messages = {
     update: (version: string): string => `バージョン ${version} が利用可能です。今すぐ更新しますか?`,
     switchModel: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。${device} に切り替えて (現在の計画は破棄) 取得しますか?`,
-    write: (n: number): string =>
-      `${n} 件の変更をデバイスに書き込みますか? デバイスの現在の設定を上書きします。`,
+    write: (n: number): string => `${n} 件の変更をデバイスに書き込みますか? デバイスの現在の設定を上書きします。`,
     firmwareMismatch: (device: string, supported: string): string =>
       `接続中のデバイスのファームウェア (${device}) は、このアプリの動作確認バージョン (${supported}) と異なります。正しく動作しない可能性があります。続行しますか?`,
     selfTest:
       "デバイスのセルフテストを実行しますか? 全パラメータを一時的に上書きして書き込みを検証し、元の状態に復元します。実行中は出力をミュート (フェーダー最小・発振器/ファンタム OFF) します。",
     selfTestExport:
       "この機種には未確認のパラメータ対応があります。確認のため返送できるよう、セルフテストのレポートを保存しますか?",
-    deviceErrorExport:
-      "一部のパラメータを読み取り/書き込みできませんでした。各失敗を記載したレポートを保存しますか?",
+    deviceErrorExport: "一部のパラメータを読み取り/書き込みできませんでした。各失敗を記載したレポートを保存しますか?",
   },
   consent: {
     title: "ご利用の前に",
@@ -495,7 +499,8 @@ export const ja: Messages = {
     cannotConnect: "接続できません",
     brokerUnreachable: "Device Center が起動していません。起動して URX を接続してから再度お試しください。",
     noDevice: "Device Center は起動していますが、URX が接続されていません。本体を接続してから再度お試しください。",
-    controlWorkerGone: "デバイス制御の接続が中断されました。再接続してください。繰り返す場合はアプリを再起動してください。",
+    controlWorkerGone:
+      "デバイス制御の接続が中断されました。再接続してください。繰り返す場合はアプリを再起動してください。",
     linkLost: "デバイスとの接続が切断されました (USB 抜去または Device Center 終了)",
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>

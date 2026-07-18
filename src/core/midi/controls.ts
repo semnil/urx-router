@@ -116,7 +116,9 @@ export function bindControl(model: DeviceModel, plan: Plan, id: string): BoundCo
 function controlNodes(model: DeviceModel): string[] {
   const ids = new Set(model.nodes.map((n) => n.id));
   const channels = model.nodes.filter((n) => n.kind === "channel").map((n) => n.id);
-  const buses = ["bus.fx1", "bus.fx2", "bus.mix1", "bus.mix2", "bus.mon1", "bus.mon2", "bus.osc", MAIN_BUS].filter((i) => ids.has(i));
+  const buses = ["bus.fx1", "bus.fx2", "bus.mix1", "bus.mix2", "bus.mon1", "bus.mon2", "bus.osc", MAIN_BUS].filter(
+    (i) => ids.has(i),
+  );
   const duckers = model.nodes.filter((n) => n.kind === "ducker").map((n) => n.id);
   return [...channels, ...buses, ...duckers];
 }
@@ -191,7 +193,19 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     },
   });
 
-  type BoolKey = "gateOn" | "compOn" | "eqOn" | "phantom" | "phase" | "phaseL" | "phaseR" | "hpf" | "hiZ" | "cueInterrupt" | "mono" | "duckerOn";
+  type BoolKey =
+    | "gateOn"
+    | "compOn"
+    | "eqOn"
+    | "phantom"
+    | "phase"
+    | "phaseL"
+    | "phaseR"
+    | "hpf"
+    | "hiZ"
+    | "cueInterrupt"
+    | "mono"
+    | "duckerOn";
   const boolControl = (param: BoolKey, def: boolean, locked?: () => boolean): BoundControl => ({
     id: controlId(id, param),
     node: id,

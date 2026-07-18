@@ -1,7 +1,24 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
-import { canConnect, duckerKeySource, isBalLinkedPair, isFixedConnection, isNodeInactive, legalSources, legalTargets, mirrorBalPair, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, sendTapWritable, upstreamNodes, validatePlan } from "./routing";
+import {
+  canConnect,
+  duckerKeySource,
+  isBalLinkedPair,
+  isFixedConnection,
+  isNodeInactive,
+  legalSources,
+  legalTargets,
+  mirrorBalPair,
+  partnerChannel,
+  possibleSources,
+  possibleTargets,
+  ruleKind,
+  sendHasTap,
+  sendTapWritable,
+  upstreamNodes,
+  validatePlan,
+} from "./routing";
 import { emptyPlan, type Plan, type PlanConnection } from "./plan";
 import { defaultPlan } from "../models/initial-state";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";

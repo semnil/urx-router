@@ -34,8 +34,9 @@ import {
 const model = getModel("URX44V");
 
 // First mono input channel that exposes the input insert FX (param 135).
-const monoInput = model.nodes.find((n) => n.id === "ch_1" || n.id === "ch1" || n.id.startsWith("ch_1"))?.id
-  ?? model.nodes.find((n) => n.kind === "channel")!.id;
+const monoInput =
+  model.nodes.find((n) => n.id === "ch_1" || n.id === "ch1" || n.id.startsWith("ch_1"))?.id ??
+  model.nodes.find((n) => n.kind === "channel")!.id;
 
 function engineWrites(cmds: VdCommand[], engine: number): Map<number, number> {
   const m = new Map<number, number>();
@@ -131,8 +132,11 @@ describe("insert-fx family / engine / slot mapping", () => {
     expect(ids).toContain(34); // MIDI enable
     expect(ids).toContain(35); // MIDI realtime
     // Coarse/Fine/Formant carry a mirror slot.
-    expect(slots.filter((s) => s.mirror !== undefined).map((s) => `${s.slot}->${s.mirror}`))
-      .toEqual(["6->9", "7->10", "8->11"]);
+    expect(slots.filter((s) => s.mirror !== undefined).map((s) => `${s.slot}->${s.mirror}`)).toEqual([
+      "6->9",
+      "7->10",
+      "8->11",
+    ]);
   });
 });
 
@@ -193,7 +197,14 @@ describe("insert-fx effect round-trip (emit∘readback fixed point)", () => {
     const table = new Map<string, number>();
     // selector 135 on the mono input's instance + engine 689 slots.
     table.set("135:0:0", 1793);
-    for (const [slot, v] of [[6, -1500], [7, 600], [8, 10000], [9, 2000], [10, -300], [11, 3000]]) {
+    for (const [slot, v] of [
+      [6, -1500],
+      [7, 600],
+      [8, 10000],
+      [9, 2000],
+      [10, -300],
+      [11, 3000],
+    ]) {
       table.set(`${ENGINE_COMPANDER_INPUT}:0:${slot}`, v);
     }
     vi.mocked(vdGet).mockImplementation((id, x, y) => {
@@ -219,10 +230,13 @@ describe("insert-fx effect round-trip (emit∘readback fixed point)", () => {
     table.set("135:0:0", 512); // pitch selector on the mono input instance
     // Readback iterates writable slots by primary slot only; seed coarse/fine/formant
     // primaries (the mirror is enforced on write, not read).
-    for (const [slot, v] of [[6, 5], [7, -20], [8, 90]]) table.set(`${ENGINE_PITCH}:0:${slot}`, v);
-    vi.mocked(vdGet).mockImplementation((id, x, y) =>
-      Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0),
-    );
+    for (const [slot, v] of [
+      [6, 5],
+      [7, -20],
+      [8, 90],
+    ])
+      table.set(`${ENGINE_PITCH}:0:${slot}`, v);
+    vi.mocked(vdGet).mockImplementation((id, x, y) => Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0));
     const plan = emptyPlan("URX44V");
     await applyDeviceState(model, plan);
     const owner = Object.entries(plan.nodeParams).find(([, p]) => p.insertFx === 512)?.[0];
@@ -242,9 +256,7 @@ describe("insert-fx effect round-trip (emit∘readback fixed point)", () => {
     table.set(`${ctrl.param}:0:${ctrl.instances[0]}`, 1792); // MBC selector on the STEREO bus
     table.set(`${ENGINE_OUTPUT}:0:9`, 100); // LOW threshold
     table.set(`${ENGINE_OUTPUT}:0:23`, 50); // L-M crossover
-    vi.mocked(vdGet).mockImplementation((id, x, y) =>
-      Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0),
-    );
+    vi.mocked(vdGet).mockImplementation((id, x, y) => Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0));
     const plan = emptyPlan("URX44V");
     await applyDeviceState(model, plan);
     expect(plan.nodeParams[stereo]?.insertFx).toBe(1792);

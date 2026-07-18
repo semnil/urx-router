@@ -33,13 +33,10 @@ test("the stereo-channel EQ note appears at 176.4 / 192 kHz, not at 96 kHz", asy
 // The EQ section (stereo channel) locks to OFF with a disabled toggle at 176.4 /
 // 192 kHz, and returns to an interactive toggle at 96 kHz and below.
 const eqSection = (page: import("@playwright/test").Page) =>
-  page
-    .locator("#inspector details.insp-section")
-    .filter({ has: page.locator('summary:has-text("EQ")') });
+  page.locator("#inspector details.insp-section").filter({ has: page.locator('summary:has-text("EQ")') });
 // The section's own ON/OFF toggle is its first .param row (the 1-knob toggle, when
 // present, is a later row labeled "1-knob").
-const eqToggle = (page: import("@playwright/test").Page) =>
-  eqSection(page).locator(".sec-body > .param").first();
+const eqToggle = (page: import("@playwright/test").Page) => eqSection(page).locator(".sec-body > .param").first();
 
 test("the stereo-channel EQ toggle is forced off and disabled at 192 kHz", async ({ page }) => {
   await page.locator('#graph-host g.node[data-id="ch_5_6"]').click();

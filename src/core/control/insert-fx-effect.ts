@@ -22,27 +22,29 @@ export const ENGINE_OUTPUT = 693; // MBC + output compander share this engine
 // ---- effect families ----
 
 export type InsertFxFamily =
-  | "guitar-clean"
-  | "guitar-crunch"
-  | "guitar-lead"
-  | "guitar-drive"
-  | "pitch"
-  | "compander"
-  | "mbc";
+  "guitar-clean" | "guitar-crunch" | "guitar-lead" | "guitar-drive" | "pitch" | "compander" | "mbc";
 
 /** Map an insert-FX selector enum value to its effect family (engine resolved by
  *  insertFxEngine, since the compander binds a different engine on input vs output). */
 export function insertFxFamilyOf(selectorValue: number): { family: InsertFxFamily } | null {
   switch (selectorValue) {
-    case 256: return { family: "guitar-clean" };
-    case 257: return { family: "guitar-crunch" };
-    case 258: return { family: "guitar-lead" };
-    case 259: return { family: "guitar-drive" };
-    case 512: return { family: "pitch" };
+    case 256:
+      return { family: "guitar-clean" };
+    case 257:
+      return { family: "guitar-crunch" };
+    case 258:
+      return { family: "guitar-lead" };
+    case 259:
+      return { family: "guitar-drive" };
+    case 512:
+      return { family: "pitch" };
     case 1793:
-    case 1794: return { family: "compander" };
-    case 1792: return { family: "mbc" };
-    default: return null;
+    case 1794:
+      return { family: "compander" };
+    case 1792:
+      return { family: "mbc" };
+    default:
+      return null;
   }
 }
 
@@ -56,9 +58,12 @@ export function insertFxEngine(family: InsertFxFamily, isOutput: boolean): numbe
     case "guitar-lead":
     case "guitar-drive":
       return ENGINE_GUITAR;
-    case "pitch": return ENGINE_PITCH;
-    case "mbc": return ENGINE_OUTPUT;
-    case "compander": return isOutput ? ENGINE_OUTPUT : ENGINE_COMPANDER_INPUT;
+    case "pitch":
+      return ENGINE_PITCH;
+    case "mbc":
+      return ENGINE_OUTPUT;
+    case "compander":
+      return isOutput ? ENGINE_OUTPUT : ENGINE_COMPANDER_INPUT;
   }
 }
 
@@ -88,8 +93,8 @@ function mbcGainLabel(raw: number): string {
 // 127 a pure 1/12-oct formula gives). raw is the R40 sequence index with raw 0 =
 // 15 Hz, raw 6 = 21.2 Hz; freq = R40[(raw+47) mod 40] × 10^floor((raw+47)/40).
 const R40_MANTISSA = [
-  1.0, 1.06, 1.12, 1.18, 1.25, 1.32, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.12, 2.24, 2.36, 2.5, 2.65, 2.8, 3.0,
-  3.15, 3.35, 3.55, 3.75, 4.0, 4.25, 4.5, 4.75, 5.0, 5.3, 5.6, 6.0, 6.3, 6.7, 7.1, 7.5, 8.0, 8.5, 9.0, 9.5,
+  1.0, 1.06, 1.12, 1.18, 1.25, 1.32, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.12, 2.24, 2.36, 2.5, 2.65, 2.8, 3.0, 3.15,
+  3.35, 3.55, 3.75, 4.0, 4.25, 4.5, 4.75, 5.0, 5.3, 5.6, 6.0, 6.3, 6.7, 7.1, 7.5, 8.0, 8.5, 9.0, 9.5,
 ];
 /** MBC crossover raw → Hz (exact R40 table; raw 0 = 15 Hz). */
 export function mbcXoverHz(raw: number): number {
@@ -109,7 +114,12 @@ export const MBC_XOVER_MH_RANGE = { min: 18, max: 109 } as const;
 // Guitar Amp Output level (slot 14, 128-step taper, raw 0 = -∞ … raw 127 = 0 dB).
 // Live-read anchors; piecewise-linear between them (the device taper is smooth).
 const GUITAR_OUTPUT_ANCHORS: ReadonlyArray<readonly [number, number]> = [
-  [8, -48.0], [20, -32.1], [40, -20.1], [64, -11.9], [96, -4.9], [127, 0],
+  [8, -48.0],
+  [20, -32.1],
+  [40, -20.1],
+  [64, -11.9],
+  [96, -4.9],
+  [127, 0],
 ];
 /** Guitar Amp Output raw → dB (-∞ at raw 0). */
 function guitarOutputDb(raw: number): number {
@@ -128,8 +138,12 @@ function guitarOutputLabel(raw: number): string {
 
 // MBC index tables (raw = 0-based index into the list). Live-read full sweeps.
 const MBC_RATIO_STEPS = [1.0, 1.5, 2.0, 3.0, 5.0, 7.0, 10.0, 20.0];
-const MBC_ATTACK_MS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 23, 26, 30, 35, 40, 50, 60, 70, 80, 100, 120, 140, 160, 180, 200];
-export const MBC_RELEASE_MS = [10, 15, 25, 35, 45, 55, 65, 75, 85, 100, 115, 140, 170, 230, 340, 680, 850, 1000, 1200, 1500, 1700, 2000, 2400, 3000];
+const MBC_ATTACK_MS = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 23, 26, 30, 35, 40, 50, 60, 70, 80, 100, 120, 140, 160, 180, 200,
+];
+export const MBC_RELEASE_MS = [
+  10, 15, 25, 35, 45, 55, 65, 75, 85, 100, 115, 140, 170, 230, 340, 680, 850, 1000, 1200, 1500, 1700, 2000, 2400, 3000,
+];
 
 // Twelve semitone names, the single source for the Key select, Pitch note row,
 // and MIDI note naming.
@@ -218,12 +232,66 @@ export interface InsertFxParamDesc {
 // Compander-H / Compander-S (engine 689 input / 693 output). Encodings match the
 // dedicated COMP path (centi-dB / ratio×100 / attack µs / release ms×10).
 const COMPANDER_PARAMS: InsertFxParamDesc[] = [
-  { slot: 6, label: "threshold", control: "slider", rawMin: -5400, rawMax: 0, rawStep: 10, def: -1000, format: (r) => `${(r / 100).toFixed(1)} dB` },
-  { slot: 7, label: "ratio", control: "slider", rawMin: 100, rawMax: 2000, rawStep: 10, def: 350, format: (r) => `${(r / 100).toFixed(1)}:1` },
-  { slot: 8, label: "attack", control: "slider", rawMin: 0, rawMax: 120000, rawStep: 1000, def: 1000, format: (r) => `${Math.round(r / 1000)} ms` },
-  { slot: 9, label: "release", control: "slider", rawMin: 50, rawMax: 423000, rawStep: 10, def: 2290, format: (r) => (r >= 10000 ? `${(r / 10000).toFixed(2)} s` : `${Math.round(r / 10)} ms`) },
-  { slot: 10, label: "outGain", control: "slider", rawMin: -1800, rawMax: 0, rawStep: 10, def: 0, format: (r) => `${(r / 100).toFixed(1)} dB` },
-  { slot: 11, label: "width", control: "slider", rawMin: 100, rawMax: 9000, rawStep: 10, def: 600, format: (r) => `${Math.round(r / 100)} dB` },
+  {
+    slot: 6,
+    label: "threshold",
+    control: "slider",
+    rawMin: -5400,
+    rawMax: 0,
+    rawStep: 10,
+    def: -1000,
+    format: (r) => `${(r / 100).toFixed(1)} dB`,
+  },
+  {
+    slot: 7,
+    label: "ratio",
+    control: "slider",
+    rawMin: 100,
+    rawMax: 2000,
+    rawStep: 10,
+    def: 350,
+    format: (r) => `${(r / 100).toFixed(1)}:1`,
+  },
+  {
+    slot: 8,
+    label: "attack",
+    control: "slider",
+    rawMin: 0,
+    rawMax: 120000,
+    rawStep: 1000,
+    def: 1000,
+    format: (r) => `${Math.round(r / 1000)} ms`,
+  },
+  {
+    slot: 9,
+    label: "release",
+    control: "slider",
+    rawMin: 50,
+    rawMax: 423000,
+    rawStep: 10,
+    def: 2290,
+    format: (r) => (r >= 10000 ? `${(r / 10000).toFixed(2)} s` : `${Math.round(r / 10)} ms`),
+  },
+  {
+    slot: 10,
+    label: "outGain",
+    control: "slider",
+    rawMin: -1800,
+    rawMax: 0,
+    rawStep: 10,
+    def: 0,
+    format: (r) => `${(r / 100).toFixed(1)} dB`,
+  },
+  {
+    slot: 11,
+    label: "width",
+    control: "slider",
+    rawMin: 100,
+    rawMax: 9000,
+    rawStep: 10,
+    def: 600,
+    format: (r) => `${Math.round(r / 100)} dB`,
+  },
 ];
 
 // Multi-Band Compressor (engine 693, output only). Per-band Attack/Threshold/
@@ -246,10 +314,18 @@ export const MBC_GLOBAL = {
   outGain: 26, // raw = dB + 64
 } as const;
 /** Per-band raw bounds + formatters (shared by all three bands). */
-export const MBC_BAND_PARAM: Record<MbcBandKey, { rawMin: number; rawMax: number; def: number; format: (r: number) => string }> = {
+export const MBC_BAND_PARAM: Record<
+  MbcBandKey,
+  { rawMin: number; rawMax: number; def: number; format: (r: number) => string }
+> = {
   attack: { rawMin: 0, rawMax: MBC_ATTACK_MS.length - 1, def: 17, format: (r) => `${MBC_ATTACK_MS[r] ?? "?"} ms` },
   threshold: { rawMin: 73, rawMax: 121, def: 107, format: (r) => `${mbcThresholdDb(r)} dB` },
-  ratio: { rawMin: 0, rawMax: MBC_RATIO_STEPS.length - 1, def: 2, format: (r) => `${(MBC_RATIO_STEPS[r] ?? 0).toFixed(1)}:1` },
+  ratio: {
+    rawMin: 0,
+    rawMax: MBC_RATIO_STEPS.length - 1,
+    def: 2,
+    format: (r) => `${(MBC_RATIO_STEPS[r] ?? 0).toFixed(1)}:1`,
+  },
   gain: { rawMin: 0, rawMax: 55, def: 39, format: mbcGainLabel },
 };
 /** MBC Out Gain raw → display ("+4 dB"). raw = dB + 64. */
@@ -257,16 +333,73 @@ export const mbcOutGainLabel = (raw: number): string => `${raw - 64} dB`;
 
 // Pitch Fix (engine 701).
 const PITCH_PARAMS: InsertFxParamDesc[] = [
-  { slot: 6, mirror: 9, label: "coarse", control: "slider", rawMin: -12, rawMax: 12, rawStep: 1, def: 0, format: (r) => `${r > 0 ? "+" : ""}${r}` },
-  { slot: 7, mirror: 10, label: "fine", control: "slider", rawMin: -50, rawMax: 50, rawStep: 1, def: 0, format: (r) => `${r > 0 ? "+" : ""}${r}` },
-  { slot: 8, mirror: 11, label: "formant", control: "slider", rawMin: 2, rawMax: 126, rawStep: 1, def: 64, format: (r) => `${r - 64 > 0 ? "+" : ""}${r - 64}` },
+  {
+    slot: 6,
+    mirror: 9,
+    label: "coarse",
+    control: "slider",
+    rawMin: -12,
+    rawMax: 12,
+    rawStep: 1,
+    def: 0,
+    format: (r) => `${r > 0 ? "+" : ""}${r}`,
+  },
+  {
+    slot: 7,
+    mirror: 10,
+    label: "fine",
+    control: "slider",
+    rawMin: -50,
+    rawMax: 50,
+    rawStep: 1,
+    def: 0,
+    format: (r) => `${r > 0 ? "+" : ""}${r}`,
+  },
+  {
+    slot: 8,
+    mirror: 11,
+    label: "formant",
+    control: "slider",
+    rawMin: 2,
+    rawMax: 126,
+    rawStep: 1,
+    def: 64,
+    format: (r) => `${r - 64 > 0 ? "+" : ""}${r - 64}`,
+  },
   { slot: 13, label: "correction", control: "toggle", def: 1 },
   { slot: 14, label: "mix", control: "slider", rawMin: 0, rawMax: 126, rawStep: 1, def: 126, format: (r) => String(r) },
   { slot: 15, label: "key", control: "select", def: 0, options: PITCH_KEYS },
-  { slot: 18, label: "speed", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 100, format: (r) => String(r) },
-  { slot: 19, label: "tolerance", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: (r) => String(r) },
+  {
+    slot: 18,
+    label: "speed",
+    control: "slider",
+    rawMin: 0,
+    rawMax: 100,
+    rawStep: 1,
+    def: 100,
+    format: (r) => String(r),
+  },
+  {
+    slot: 19,
+    label: "tolerance",
+    control: "slider",
+    rawMin: 0,
+    rawMax: 100,
+    rawStep: 1,
+    def: 50,
+    format: (r) => String(r),
+  },
   { slot: 20, label: "noteLow", control: "slider", rawMin: 0, rawMax: 127, rawStep: 1, def: 0, format: midiNoteName },
-  { slot: 21, label: "noteHigh", control: "slider", rawMin: 0, rawMax: 127, rawStep: 1, def: 127, format: midiNoteName },
+  {
+    slot: 21,
+    label: "noteHigh",
+    control: "slider",
+    rawMin: 0,
+    rawMax: 127,
+    rawStep: 1,
+    def: 127,
+    format: midiNoteName,
+  },
 ];
 
 // Guitar Amp Classics (engine 697). Common params shared by all four types, plus
@@ -277,34 +410,106 @@ const GUITAR_COMMON_PARAMS: InsertFxParamDesc[] = [
   { slot: 10, label: "middle", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
   { slot: 11, label: "treble", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
   { slot: 12, label: "presence", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
-  { slot: 14, label: "output", control: "slider", rawMin: 0, rawMax: 127, rawStep: 1, def: 64, format: guitarOutputLabel },
+  {
+    slot: 14,
+    label: "output",
+    control: "slider",
+    rawMin: 0,
+    rawMax: 127,
+    rawStep: 1,
+    def: 64,
+    format: guitarOutputLabel,
+  },
   { slot: 16, label: "spType", control: "select", def: 1, options: GUITAR_SP_TYPES },
   { slot: 18, label: "micPosition", control: "select", def: 0, options: GUITAR_MIC_POSITION },
   { slot: 24, label: "gate", control: "toggle", def: 0 },
-  { slot: 25, label: "gateLevel", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 20, format: tenthDisplay },
+  {
+    slot: 25,
+    label: "gateLevel",
+    control: "slider",
+    rawMin: 0,
+    rawMax: 100,
+    rawStep: 1,
+    def: 20,
+    format: tenthDisplay,
+  },
 ];
 /** Type-specific descriptors. slot 6 differs per type; Clean/Lead/Drive add more. */
 function guitarTypeParams(family: InsertFxFamily): InsertFxParamDesc[] {
   switch (family) {
     case "guitar-clean":
       return [
-        { slot: 6, label: "blend", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
-        { slot: 8, label: "distortion", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 0, format: tenthDisplay },
+        {
+          slot: 6,
+          label: "blend",
+          control: "slider",
+          rawMin: 0,
+          rawMax: 100,
+          rawStep: 1,
+          def: 50,
+          format: tenthDisplay,
+        },
+        {
+          slot: 8,
+          label: "distortion",
+          control: "slider",
+          rawMin: 0,
+          rawMax: 100,
+          rawStep: 1,
+          def: 0,
+          format: tenthDisplay,
+        },
         { slot: 19, label: "mod", control: "select", def: 1, options: GUITAR_CLEAN_MOD },
-        { slot: 20, label: "modSpeed", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
-        { slot: 21, label: "modDepth", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
+        {
+          slot: 20,
+          label: "modSpeed",
+          control: "slider",
+          rawMin: 0,
+          rawMax: 100,
+          rawStep: 1,
+          def: 50,
+          format: tenthDisplay,
+        },
+        {
+          slot: 21,
+          label: "modDepth",
+          control: "slider",
+          rawMin: 0,
+          rawMax: 100,
+          rawStep: 1,
+          def: 50,
+          format: tenthDisplay,
+        },
       ];
     case "guitar-crunch":
       return [{ slot: 6, label: "character", control: "select", def: 1, options: GUITAR_CRUNCH_CHAR }];
     case "guitar-lead":
       return [
         { slot: 6, label: "character", control: "select", def: 0, options: GUITAR_LEAD_CHAR },
-        { slot: 13, label: "master", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
+        {
+          slot: 13,
+          label: "master",
+          control: "slider",
+          rawMin: 0,
+          rawMax: 100,
+          rawStep: 1,
+          def: 50,
+          format: tenthDisplay,
+        },
       ];
     case "guitar-drive":
       return [
         { slot: 6, label: "ampType", control: "select", def: 3, options: GUITAR_AMP_TYPES },
-        { slot: 13, label: "master", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
+        {
+          slot: 13,
+          label: "master",
+          control: "slider",
+          rawMin: 0,
+          rawMax: 100,
+          rawStep: 1,
+          def: 50,
+          format: tenthDisplay,
+        },
       ];
     default:
       return [];
@@ -323,10 +528,13 @@ export function insertFxParams(family: InsertFxFamily): InsertFxParamDesc[] {
   let cached = PARAMS_CACHE.get(family);
   if (!cached) {
     cached =
-      family === "compander" ? COMPANDER_PARAMS
-      : family === "pitch" ? PITCH_PARAMS
-      : family === "mbc" ? []
-      : [...GUITAR_COMMON_PARAMS, ...guitarTypeParams(family)];
+      family === "compander"
+        ? COMPANDER_PARAMS
+        : family === "pitch"
+          ? PITCH_PARAMS
+          : family === "mbc"
+            ? []
+            : [...GUITAR_COMMON_PARAMS, ...guitarTypeParams(family)];
     PARAMS_CACHE.set(family, cached);
   }
   return cached;

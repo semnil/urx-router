@@ -92,7 +92,10 @@ describe("planToCommands absolute-state completeness", () => {
     // OSC → bus assign: every assignable bus emits its toggle(s), all off.
     for (const n of ["OSC_ASSIGN_STEREO", "OSC_ASSIGN_MIX", "OSC_ASSIGN_FX"]) {
       expect(named(n).length, n).toBeGreaterThan(0);
-      expect(named(n).every((c) => c.vdValue === 0), n).toBe(true);
+      expect(
+        named(n).every((c) => c.vdValue === 0),
+        n,
+      ).toBe(true);
     }
   });
 

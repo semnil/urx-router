@@ -35,11 +35,7 @@ export interface DiffResult {
  * parameter is written rather than silently skipped). The caller must have
  * connected first (platform.vdConnect).
  */
-export async function diffPlan(
-  model: DeviceModel,
-  plan: Plan,
-  signal?: AbortSignal,
-): Promise<DiffResult> {
+export async function diffPlan(model: DeviceModel, plan: Plan, signal?: AbortSignal): Promise<DiffResult> {
   const diffs: CommandDiff[] = [];
   const errors: string[] = [];
   for (const command of planToCommands(model, plan)) {
@@ -66,10 +62,7 @@ export interface SendOutcome {
  * outcome is reported so a partial failure stays visible. The caller must have
  * connected first (platform.vdConnect).
  */
-export async function sendCommands(
-  commands: VdCommand[],
-  signal?: AbortSignal,
-): Promise<SendOutcome[]> {
+export async function sendCommands(commands: VdCommand[], signal?: AbortSignal): Promise<SendOutcome[]> {
   const outcomes: SendOutcome[] = [];
   for (const command of commands) {
     signal?.throwIfAborted();
@@ -99,10 +92,7 @@ export interface NameOutcome {
  * analogue of diffPlan, so a name-only edit is counted and a matching name is
  * not re-sent. A read failure keeps the write (it is sent rather than skipped).
  */
-export async function diffNames(
-  model: DeviceModel,
-  plan: Plan,
-): Promise<{ writes: NameWrite[]; errors: string[] }> {
+export async function diffNames(model: DeviceModel, plan: Plan): Promise<{ writes: NameWrite[]; errors: string[] }> {
   const writes: NameWrite[] = [];
   const errors: string[] = [];
   for (const write of planToNameWrites(model, plan)) {
@@ -167,7 +157,12 @@ export async function sendConverging(
   let rounds = 0;
   while (residual.length > 0 && rounds < maxRounds) {
     signal?.throwIfAborted();
-    outcomes.push(...(await sendCommands(residual.map((d) => d.command), signal)));
+    outcomes.push(
+      ...(await sendCommands(
+        residual.map((d) => d.command),
+        signal,
+      )),
+    );
     rounds++;
     // A side-effect reset (e.g. from a COMP/EQ-type change) lands asynchronously,
     // a beat after the write returns. Let it settle before re-reading, so the
@@ -205,7 +200,9 @@ export function formatWriteReport(
     lines.push("## Did not converge (device value still differs)");
     for (const d of residual) {
       const c = d.command;
-      lines.push(`- ${c.name} @ ${c.paramId}:${c.x}:${c.y} — wrote ${c.vdValue}, device has ${d.current ?? "unreadable"}`);
+      lines.push(
+        `- ${c.name} @ ${c.paramId}:${c.x}:${c.y} — wrote ${c.vdValue}, device has ${d.current ?? "unreadable"}`,
+      );
     }
   }
   lines.push("");

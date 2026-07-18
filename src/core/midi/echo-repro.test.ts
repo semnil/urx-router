@@ -31,7 +31,9 @@ class Bus {
       learnPending: () => {},
       now: () => this.clock,
     });
-    this.engine.setMappings([{ control: "ch1/mute", addr: { type: "cc", channel: 0, controller: 0 }, mode: "absolute", button: "edge" }]);
+    this.engine.setMappings([
+      { control: "ch1/mute", addr: { type: "cc", channel: 0, controller: 0 }, mode: "absolute", button: "edge" },
+    ]);
   }
   private after(ms: number, run: () => void): void {
     this.queue.push({ at: this.clock + ms, run });

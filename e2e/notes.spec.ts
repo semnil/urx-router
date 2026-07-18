@@ -102,10 +102,7 @@ test("notes and collapse state round-trip through save and open", async ({ page 
   await expect(node(page, "ch1").locator(".note-panel")).toHaveCount(0);
 
   await page.click("#btn-file");
-  const [download] = await Promise.all([
-    page.waitForEvent("download"),
-    page.click("#btn-save"),
-  ]);
+  const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
   const saved = testInfo.outputPath("URX44V-plan.json");
   await download.saveAs(saved);
 
@@ -116,10 +113,7 @@ test("notes and collapse state round-trip through save and open", async ({ page 
   await expect(node(page, "ch1").locator(".note-add")).toHaveCount(1);
 
   await page.click("#btn-file");
-  const [chooser] = await Promise.all([
-    page.waitForEvent("filechooser"),
-    page.click("#btn-open"),
-  ]);
+  const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
   await chooser.setFiles(saved);
 
   // The note returns minimized (toggle present, panel hidden until expanded).

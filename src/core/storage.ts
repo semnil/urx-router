@@ -32,11 +32,7 @@ export function downloadText(filename: string, text: string, mime = "application
 }
 
 /** Save text to a native-chosen path (Tauri) or download it (browser). */
-export async function saveTextDocument(
-  defaultName: string,
-  text: string,
-  filter: FileFilter,
-): Promise<SaveResult> {
+export async function saveTextDocument(defaultName: string, text: string, filter: FileFilter): Promise<SaveResult> {
   if (isTauri()) {
     const path = await nativeSavePath(defaultName, filter);
     if (!path) return { saved: false };
@@ -178,13 +174,7 @@ async function deflate(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
 }
 
 /** Minimal single-page PDF holding one full-bleed DeviceRGB image. */
-function buildImagePdf(
-  deflated: Uint8Array,
-  pxW: number,
-  pxH: number,
-  ptW: number,
-  ptH: number,
-): Blob {
+function buildImagePdf(deflated: Uint8Array, pxW: number, pxH: number, ptW: number, ptH: number): Blob {
   const w = Math.round(ptW);
   const h = Math.round(ptH);
   const enc = new TextEncoder();

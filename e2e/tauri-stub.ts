@@ -24,7 +24,9 @@ export async function stubTauriBoot(page: Page, commands: Record<string, unknown
         onmessage: (data: unknown) => void = () => {};
       },
       invoke: (cmd: string) =>
-        cmd in responses ? Promise.resolve(responses[cmd]) : Promise.reject(new Error(`stub: unhandled command ${cmd}`)),
+        cmd in responses
+          ? Promise.resolve(responses[cmd])
+          : Promise.reject(new Error(`stub: unhandled command ${cmd}`)),
     };
   }, commands);
 }

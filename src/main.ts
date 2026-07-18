@@ -6,7 +6,15 @@ import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
 import { mirrorBalPair, partnerChannel, validatePlan } from "./core/routing";
 import type { PlanProblem } from "./core/routing";
-import { decodePlanParam, deserialize, emptyPlan, ensureFixedConnections, PlanError, serialize, SSMCS_INITIAL } from "./core/plan";
+import {
+  decodePlanParam,
+  deserialize,
+  emptyPlan,
+  ensureFixedConnections,
+  PlanError,
+  serialize,
+  SSMCS_INITIAL,
+} from "./core/plan";
 import type { ConnParams, NodeParams, Plan } from "./core/plan";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import {
@@ -513,8 +521,7 @@ function resetStereoSendPans(primary: string): void {
   const bal = (np.panBal ?? PAN_BAL_PAN) === PAN_BAL_BAL;
   pair.forEach((ch, idx) => {
     const pan = bal ? 0 : idx === 0 ? -STEREO_PAN_DEFAULT : STEREO_PAN_DEFAULT;
-    for (const c of plan.connections)
-      if (c.from === `${ch}:out` && c.kind === "send") c.params = { ...c.params, pan };
+    for (const c of plan.connections) if (c.from === `${ch}:out` && c.kind === "send") c.params = { ...c.params, pan };
   });
 }
 
@@ -627,8 +634,7 @@ const inspectorActions = {
     // OSC on / mode toggles re-render (mode shows or hides the frequency control);
     // the level / frequency sliders must not (they keep focus while dragging).
     const oscRelayout =
-      patch.osc !== undefined &&
-      (patch.osc.on !== prev?.osc?.on || patch.osc.mode !== prev?.osc?.mode);
+      patch.osc !== undefined && (patch.osc.on !== prev?.osc?.on || patch.osc.mode !== prev?.osc?.mode);
     // SSMCS on / side-chain on / EQ band on are two-button toggles whose active
     // state only refreshes on re-render; the morphing-strip value sliders must not
     // re-render (they keep focus). Selects (Sweet Spot Data / Knee) self-update.
@@ -641,8 +647,7 @@ const inspectorActions = {
         patch.ssmcs.eq?.high?.on !== prev?.ssmcs?.eq?.high?.on);
     // EQ 1-knob ON toggles between the 1-knob controls and the band tabs, so it
     // re-renders; the type select self-updates and the level slider keeps focus.
-    const eqOneKnobRelayout =
-      patch.eqOneKnob !== undefined && patch.eqOneKnob.on !== prev?.eqOneKnob?.on;
+    const eqOneKnobRelayout = patch.eqOneKnob !== undefined && patch.eqOneKnob.on !== prev?.eqOneKnob?.on;
     // Toggles re-render to update the active button; sliders (gain/level) mutate
     // in place so they keep focus while dragging.
     if (
@@ -809,7 +814,15 @@ function refreshInspector(): void {
   // On mobile the inspector is a bottom sheet that slides up only while something
   // is selected; this flag drives that state (no effect on the desktop panel).
   document.body.classList.toggle("has-selection", selection !== null);
-  renderInspector(inspectorHost, getModel(modelId), plan, selection, inspectorActions, recent, live?.isActive() ?? false);
+  renderInspector(
+    inspectorHost,
+    getModel(modelId),
+    plan,
+    selection,
+    inspectorActions,
+    recent,
+    live?.isActive() ?? false,
+  );
 }
 
 // Recompute the sample-rate constraints and reflect them in the graph badges, the
@@ -1216,7 +1229,10 @@ if (!DEMO) {
           // Failures/non-convergence are otherwise console-only: capture a report to
           // offer after disconnect (below), so the reasons are visible without the console.
           if (failed.length || residual.length) {
-            report = { filename: `${modelId}-write-errors.md`, markdown: formatWriteReport(device.model, failed, residual) };
+            report = {
+              filename: `${modelId}-write-errors.md`,
+              markdown: formatWriteReport(device.model, failed, residual),
+            };
           }
         });
       } finally {
@@ -1350,7 +1366,10 @@ if (!DEMO) {
       setStatus(t().status.selfTestRunning);
       try {
         const report = await runSelfTest(getModel(modelId), 300, controller.signal);
-        console.warn(`[self-test] ${report.aborted ? "CANCELLED" : report.ok ? "PASS" : "FAIL"}`, JSON.stringify(report));
+        console.warn(
+          `[self-test] ${report.aborted ? "CANCELLED" : report.ok ? "PASS" : "FAIL"}`,
+          JSON.stringify(report),
+        );
         if (report.errors.length) console.warn("[self-test] issues:", JSON.stringify(report.errors));
         if (report.residual.length) console.warn("[self-test] mismatches:", JSON.stringify(report.residual));
         const verdicts = summarizeVerdicts(report.unverified);

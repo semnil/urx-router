@@ -208,8 +208,7 @@ test("MONO x 2 (unlinked) leaves send pans untouched", async ({ page }, testInfo
 });
 
 // A console strip located by its scribble's node name (exact).
-const cstrip = (page: Page, name: string) =>
-  page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
+const cstrip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
 test("CONSOLE reads a BAL-linked mono channel's pan as BAL, matching the inspector", async ({ page }) => {
   await page.click("#btn-view-console");
@@ -264,8 +263,12 @@ test("BAL mode links a gain edit across both channels in the CONSOLE", async ({ 
   await panBalSelect(page).selectOption("1"); // BAL
 
   await page.click("#btn-view-console");
-  const g1 = cstrip(page, "CH 1").locator(".con-gain", { has: page.locator(".con-knob[aria-label='A.GAIN']") }).locator(".val");
-  const g2 = cstrip(page, "CH 2").locator(".con-gain", { has: page.locator(".con-knob[aria-label='A.GAIN']") }).locator(".val");
+  const g1 = cstrip(page, "CH 1")
+    .locator(".con-gain", { has: page.locator(".con-knob[aria-label='A.GAIN']") })
+    .locator(".val");
+  const g2 = cstrip(page, "CH 2")
+    .locator(".con-gain", { has: page.locator(".con-knob[aria-label='A.GAIN']") })
+    .locator(".val");
   await expect(g1).toHaveText("-8");
   await expect(g2).toHaveText("-8");
   await cstrip(page, "CH 1").locator(".con-knob[aria-label='A.GAIN']").focus();
@@ -281,7 +284,9 @@ test("BAL mode shares one balance across both channels in the CONSOLE", async ({
 
   await page.click("#btn-view-console");
   const bal = (name: string) =>
-    cstrip(page, name).locator(".con-gain", { has: page.locator(".con-knob[aria-label='BAL']") }).locator(".val");
+    cstrip(page, name)
+      .locator(".con-gain", { has: page.locator(".con-knob[aria-label='BAL']") })
+      .locator(".val");
   await expect(bal("CH 1")).toHaveText("C");
   await expect(bal("CH 2")).toHaveText("C");
 

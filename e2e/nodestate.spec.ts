@@ -27,7 +27,10 @@ test("the oscillator node is dimmed and tagged OFF until it is turned on", async
   await expect(node(page, "bus.osc").getByText("OFF")).toBeVisible();
 
   await node(page, "bus.osc").click();
-  const oscOn = page.locator("#inspector .param").filter({ has: page.locator(".toggle") }).filter({ hasText: "Oscillator" });
+  const oscOn = page
+    .locator("#inspector .param")
+    .filter({ has: page.locator(".toggle") })
+    .filter({ hasText: "Oscillator" });
   await oscOn.getByRole("button", { name: "ON", exact: true }).click();
 
   // Generating now: the node clears its dimming at once, still selected.
@@ -39,8 +42,12 @@ test("muting a node darkens its jacks", async ({ page }) => {
   await expect(pin(page, "ch1:out")).not.toHaveAttribute("fill", PORT_PIN_OFF);
 
   await node(page, "ch1").click();
-  await page.locator("#inspector .param").filter({ has: page.locator(".toggle") }).filter({ hasText: "Channel" })
-    .getByRole("button", { name: "OFF", exact: true }).click();
+  await page
+    .locator("#inspector .param")
+    .filter({ has: page.locator(".toggle") })
+    .filter({ hasText: "Channel" })
+    .getByRole("button", { name: "OFF", exact: true })
+    .click();
 
   // Every ch1 wire is now off, so its output jack stops reading as live.
   await expect(pin(page, "ch1:out")).toHaveAttribute("fill", PORT_PIN_OFF);

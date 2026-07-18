@@ -116,9 +116,7 @@ describe("LiveSync sideEffect converge", () => {
     // The device mirrors the plan as it stands when the converge starts, so the
     // converge's initial diff is empty and it exits after one read pass (the exact
     // window where a late edit is at risk of being baked into the snapshot).
-    const mirror = new Map(
-      planToCommands(model, plan).map((c) => [`${c.paramId}:${c.x}:${c.y}`, c.vdValue]),
-    );
+    const mirror = new Map(planToCommands(model, plan).map((c) => [`${c.paramId}:${c.x}:${c.y}`, c.vdValue]));
     // On the converge's first device read — after its command list was already
     // built, so this edit is NOT in the read pass — simulate a user moving the ch1
     // fader (-6 dB → encoded -600). With the frozen-copy converge it stays a diff

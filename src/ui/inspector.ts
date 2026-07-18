@@ -4,16 +4,19 @@
 
 import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
-import type { ConnParams, EqBand, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsBand, SsmcsParams } from "../core/plan";
+import type {
+  ConnParams,
+  EqBand,
+  FxEffectParams,
+  NodeParams,
+  Plan,
+  PlanConnection,
+  SsmcsBand,
+  SsmcsParams,
+} from "../core/plan";
 import { LEVEL_MIN_DB, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
-import {
-  formatHz,
-  FX_EFFECT_TYPE_DEFAULT,
-  fxEffectTypes,
-  fxFamilyOf,
-  fxParams,
-} from "../core/control/fx-effect";
+import { formatHz, FX_EFFECT_TYPE_DEFAULT, fxEffectTypes, fxFamilyOf, fxParams } from "../core/control/fx-effect";
 import {
   insertFxFamilyOf,
   insertFxParams,
@@ -37,7 +40,17 @@ import {
   type InsertFxParamDesc,
   type MbcBandKey,
 } from "../core/control/insert-fx-effect";
-import { directOutTarget, duckerKeySource, isBalLinkedPair, isFixedConnection, mixSendLocks, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
+import {
+  directOutTarget,
+  duckerKeySource,
+  isBalLinkedPair,
+  isFixedConnection,
+  mixSendLocks,
+  pairPrimary,
+  sendHasOn,
+  sendHasTap,
+  sendTapWritable,
+} from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
   busBalance,
@@ -210,12 +223,22 @@ export function renderInspector(
   host.append(closeButton(m.inspector.close, actions.onClose));
   const constraints = rateConstraints(model, plan.sampleRate);
   if (constraints.warnings.length)
-    host.append(warningBox(m.warning.title, constraints.warnings.map((w) => m.warning[w])));
+    host.append(
+      warningBox(
+        m.warning.title,
+        constraints.warnings.map((w) => m.warning[w]),
+      ),
+    );
   // A live signal-flow caution (not rate-dependent): a channel with its Ducker on
   // that is also tapped straight to a USB / SD direct out never carries the duck.
   const duckerBypass = duckerBypassWarnings(model, plan);
   if (duckerBypass.length)
-    host.append(warningBox(m.warning.duckerTitle, duckerBypass.map((id) => m.warning.duckerBypass(labelOf(id)))));
+    host.append(
+      warningBox(
+        m.warning.duckerTitle,
+        duckerBypass.map((id) => m.warning.duckerBypass(labelOf(id))),
+      ),
+    );
 
   if (!selection) {
     host.append(heading(m.inspector.title), hint(m.inspector.hint));
@@ -247,9 +270,7 @@ export function renderInspector(
     // STEREO / MIX / FX / STREAMING buses). Monitor and OSC buses have no device
     // color param, so they get no picker.
     if (colorControl(model, node.id)) {
-      host.append(
-        colorSwatches(m.inspector.color, plan.nodeColors[node.id], (c) => actions.onRecolorNode(node.id, c)),
-      );
+      host.append(colorSwatches(m.inspector.color, plan.nodeColors[node.id], (c) => actions.onRecolorNode(node.id, c)));
     }
 
     // Rec Point (CH SETTING): the recording / direct-out tap stage. MONO IN
@@ -317,8 +338,12 @@ export function renderInspector(
     if (node.id === "out.sdrec") {
       const count = plan.nodeParams[node.id]?.sdRecTrackCount ?? SD_REC_TRACK_COUNT_DEFAULT;
       host.append(
-        enumSelect(m.inspector.sdRecTrackCount, SD_REC_TRACK_COUNT_OPTIONS, count, (v) =>
-          actions.onUpdateNodeParams(node.id, { sdRecTrackCount: v }), liveActive,
+        enumSelect(
+          m.inspector.sdRecTrackCount,
+          SD_REC_TRACK_COUNT_OPTIONS,
+          count,
+          (v) => actions.onUpdateNodeParams(node.id, { sdRecTrackCount: v }),
+          liveActive,
         ),
       );
       if (liveActive) host.append(hint(m.inspector.sdRecTrackCountLive));
@@ -357,9 +382,7 @@ export function renderInspector(
       // Channel ON (mute) leads the parameters, matching the bus / FX / MONITOR
       // inspectors — every node now puts its on/off at the top of the group.
       host.append(
-        boolToggle(m.inspector.channelOn, np.on ?? true, (v) =>
-          actions.onUpdateNodeParams(node.id, { on: v }),
-        ),
+        boolToggle(m.inspector.channelOn, np.on ?? true, (v) => actions.onUpdateNodeParams(node.id, { on: v })),
       );
       const cc = channelControl(model, node.id);
       const compEqType = np.compEqType ?? COMP_EQ_COMP_FIRST;
@@ -391,9 +414,7 @@ export function renderInspector(
       }
       if (cc?.hasHiZ) {
         input.append(
-          boolToggle(m.inspector.hiZ, np.hiZ ?? false, (v) =>
-            actions.onUpdateNodeParams(node.id, { hiZ: v }),
-          ),
+          boolToggle(m.inspector.hiZ, np.hiZ ?? false, (v) => actions.onUpdateNodeParams(node.id, { hiZ: v })),
         );
       }
       if (cc?.hasMicStrip) {
@@ -407,16 +428,12 @@ export function renderInspector(
       for (const ph of cc?.phases ?? []) {
         const label = ph.side ? `${m.inspector.phase} ${ph.side}` : m.inspector.phase;
         input.append(
-          boolToggle(label, np[ph.key] ?? false, (v) =>
-            actions.onUpdateNodeParams(node.id, { [ph.key]: v }),
-          ),
+          boolToggle(label, np[ph.key] ?? false, (v) => actions.onUpdateNodeParams(node.id, { [ph.key]: v })),
         );
       }
       if (cc?.hasHpf) {
         input.append(
-          boolToggle(m.inspector.hpf, np.hpf ?? false, (v) =>
-            actions.onUpdateNodeParams(node.id, { hpf: v }),
-          ),
+          boolToggle(m.inspector.hpf, np.hpf ?? false, (v) => actions.onUpdateNodeParams(node.id, { hpf: v })),
         );
         input.append(
           rangeSlider(
@@ -457,10 +474,12 @@ export function renderInspector(
         const { el, body } = section(m.inspector.ssmcs.title, { open: son, on: son, key: "ssmcsOn" });
         // Toggling the on flag drops any manual fold so the section reverts to
         // following the on-state, matching sectionToggle's contract.
-        body.append(boolToggle(m.inspector.ssmcs.title, son, (v) => {
-          clearSectionOverride("ssmcsOn");
-          mergeSsmcs(actions, plan, node.id, { on: v });
-        }));
+        body.append(
+          boolToggle(m.inspector.ssmcs.title, son, (v) => {
+            clearSectionOverride("ssmcsOn");
+            mergeSsmcs(actions, plan, node.id, { on: v });
+          }),
+        );
         body.append(ssmcsMasterBlock(node.id, np, plan, actions, m));
         ssmcsMasterEl = el;
       }
@@ -479,12 +498,13 @@ export function renderInspector(
       const eqLocked = channelEqUnavailable(node.id, plan.sampleRate);
       for (const sec of channelSections(model, node.id, compEqType)) {
         const locked = sec.key === "eqOn" && eqLocked;
-        const on = locked ? false : np[sec.key] ?? sec.key === "eqOn";
+        const on = locked ? false : (np[sec.key] ?? sec.key === "eqOn");
         const { el, body } = section(m.inspector[sec.key], { open: on, on, key: sec.key });
         body.append(sectionToggle(node.id, sec.key, on, actions, locked ? m.inspector.eqRateLocked : undefined));
         if (sec.key === "gateOn" && dyn) body.append(gateDetailBlock(node.id, dyn.gate, np, plan, actions, m));
         else if (sec.key === "compOn" && ssmcs) body.append(ssmcsCompBlock(node.id, np, plan, actions, m));
-        else if (sec.key === "compOn" && dyn?.comp) body.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
+        else if (sec.key === "compOn" && dyn?.comp)
+          body.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
         else if (sec.key === "eqOn" && ssmcs) body.append(ssmcsEqBlock(node.id, np, plan, actions, m));
         else if (sec.key === "eqOn" && ieq && !locked) {
           body.append(eqOneKnobBlock(node.id, !isStereoChannel(node.id), np, plan, actions, m));
@@ -512,14 +532,10 @@ export function renderInspector(
       const ps = section(m.inspector.parameters, { key: "params" });
       if (busMasterOn(node.id)) {
         ps.body.append(
-          boolToggle(m.inspector.channelOn, np.on ?? true, (v) =>
-            actions.onUpdateNodeParams(node.id, { on: v }),
-          ),
+          boolToggle(m.inspector.channelOn, np.on ?? true, (v) => actions.onUpdateNodeParams(node.id, { on: v })),
         );
       }
-      ps.body.append(
-        faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
-      );
+      ps.body.append(faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })));
       // Master balance (STEREO 583 / MIX 676): the bus output's L/R balance. The
       // device keeps the BALANCE label even under Pan Link (confirmed on URX44V),
       // so it is always "Balance".
@@ -568,13 +584,9 @@ export function renderInspector(
       const np = plan.nodeParams[node.id] ?? {};
       const ps = section(m.inspector.parameters, { key: "params" });
       ps.body.append(
-        boolToggle(m.inspector.monitorOn, np.on ?? true, (v) =>
-          actions.onUpdateNodeParams(node.id, { on: v }),
-        ),
+        boolToggle(m.inspector.monitorOn, np.on ?? true, (v) => actions.onUpdateNodeParams(node.id, { on: v })),
       );
-      ps.body.append(
-        faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })),
-      );
+      ps.body.append(faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })));
       // PHONES output level: a unit-less 0.0..10.0 scale, independent of the
       // monitor fader (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2 — same signal, own level).
       ps.body.append(
@@ -594,9 +606,7 @@ export function renderInspector(
         ),
       );
       ps.body.append(
-        boolToggle(m.inspector.mono, np.mono ?? false, (v) =>
-          actions.onUpdateNodeParams(node.id, { mono: v }),
-        ),
+        boolToggle(m.inspector.mono, np.mono ?? false, (v) => actions.onUpdateNodeParams(node.id, { mono: v })),
       );
       host.append(ps.el);
     }
@@ -627,20 +637,30 @@ export function renderInspector(
         ps.body.append(eqFreqControl(osc.freq ?? 1000, (hz) => setOsc({ freq: hz })));
       } else if (oscMode === OSC_MODE_BURST) {
         ps.body.append(
-          rangeSlider(m.inspector.oscWidth, 0.1, 10, 0.1, osc.width ?? 0.1, (v) => `${v.toFixed(1)} s`, (v) =>
-            setOsc({ width: v }),
+          rangeSlider(
+            m.inspector.oscWidth,
+            0.1,
+            10,
+            0.1,
+            osc.width ?? 0.1,
+            (v) => `${v.toFixed(1)} s`,
+            (v) => setOsc({ width: v }),
           ),
         );
         ps.body.append(
-          rangeSlider(m.inspector.oscInterval, 1, 30, 1, osc.interval ?? 1, (v) => `${v} s`, (v) =>
-            setOsc({ interval: v }),
+          rangeSlider(
+            m.inspector.oscInterval,
+            1,
+            30,
+            1,
+            osc.interval ?? 1,
+            (v) => `${v} s`,
+            (v) => setOsc({ interval: v }),
           ),
         );
       }
       ps.body.append(
-        rangeSlider(m.inspector.oscLevel, -96, 0, 1, osc.level ?? -14, formatDb, (v) =>
-          setOsc({ level: v }),
-        ),
+        rangeSlider(m.inspector.oscLevel, -96, 0, 1, osc.level ?? -14, formatDb, (v) => setOsc({ level: v })),
       );
       host.append(ps.el);
     }
@@ -655,8 +675,11 @@ export function renderInspector(
         actions.onUpdateNodeParams(node.id, { delay: { ...(plan.nodeParams[node.id]?.delay ?? {}), ...patch } });
       const ps = section(m.inspector.delayTitle, { key: "delay" });
       ps.body.append(
-        enumSelect(m.inspector.delayFrameRate, DELAY_FRAME_RATE_OPTIONS, delay.frameRate ?? DELAY_FRAME_RATE_DEFAULT, (v) =>
-          setDelay({ frameRate: v }),
+        enumSelect(
+          m.inspector.delayFrameRate,
+          DELAY_FRAME_RATE_OPTIONS,
+          delay.frameRate ?? DELAY_FRAME_RATE_DEFAULT,
+          (v) => setDelay({ frameRate: v }),
         ),
       );
       ps.body.append(boolToggle(m.inspector.delayOn, delay.on ?? false, (v) => setDelay({ on: v })));
@@ -697,8 +720,7 @@ export function renderInspector(
             value: String(o.value),
             label: o.label,
             disabled:
-              (o.maxRate !== undefined && plan.sampleRate > o.maxRate) ||
-              (o.slot !== undefined && taken.has(o.slot)),
+              (o.maxRate !== undefined && plan.sampleRate > o.maxRate) || (o.slot !== undefined && taken.has(o.slot)),
           })),
           String(plan.nodeParams[node.id]?.insertFx ?? INSERT_FX_NONE),
           (v) => actions.onUpdateNodeParams(node.id, { insertFx: Number(v) }),
@@ -761,9 +783,7 @@ export function renderInspector(
     // fixed STEREO / FX-channel main paths show LEVEL / PAN but no PRE/POST.
     const fields = PARAM_FIELDS[conn.kind].filter(
       (f) =>
-        (f !== "tap" || sendHasTap(model, from, to)) &&
-        (f !== "level" || !busFixed) &&
-        (f !== "pan" || !panLinked),
+        (f !== "tap" || sendHasTap(model, from, to)) && (f !== "level" || !busFixed) && (f !== "pan" || !panLinked),
     );
     // Expose a per-send ON toggle where the route carries one (sendHasOn): the
     // CH/FX → MIX/FX sends and the fixed MIX → STEREO "TO ST". The STEREO main paths
@@ -782,9 +802,7 @@ export function renderInspector(
       }
       // A stereo channel's "pan" is a balance; so is a STEREO-linked MONO IN pair
       // in BAL mode. Label it BALANCE to match the device; PAN otherwise.
-      const panLabel = isBalanceChannel(model, plan, parseRef(from).nodeId)
-        ? m.inspector.balance
-        : m.inspector.pan;
+      const panLabel = isBalanceChannel(model, plan, parseRef(from).nodeId) ? m.inspector.balance : m.inspector.pan;
       // The tap is always editable in the planner (the plan records intent). It is
       // turned read-only only while live-connected and the device cannot accept the
       // write — CH → FX taps (the device rejects a software PRE write); shown
@@ -1073,13 +1091,7 @@ function sliderControl(
 }
 
 // Node-level gain slider (HA / D.Gain): integer dB steps over the given range.
-function gainControl(
-  label: string,
-  min: number,
-  max: number,
-  cur: number,
-  onChange: (v: number) => void,
-): HTMLElement {
+function gainControl(label: string, min: number, max: number, cur: number, onChange: (v: number) => void): HTMLElement {
   return rangeSlider(label, min, max, 1, cur, formatGainDb, onChange);
 }
 
@@ -1121,10 +1133,18 @@ function eqOneKnobBlock(
   frag.append(boolToggle(m.inspector.eqOneKnob, ok.on ?? false, (v) => setOk({ on: v })));
   if (ok.on) {
     const opts = mono ? EQ_ONE_KNOB_TYPE_MONO_OPTIONS : EQ_ONE_KNOB_TYPE_WIDE_OPTIONS;
-    frag.append(enumSelect(m.inspector.eqOneKnobType, opts, ok.type ?? EQ_ONE_KNOB_TYPE_DEFAULT, (v) => setOk({ type: v })));
     frag.append(
-      rangeSlider(m.inspector.eqOneKnobLevel, 0, 100, 1, ok.level ?? 0, (v) => `${v}%`, (v) =>
-        setOk({ level: v }),
+      enumSelect(m.inspector.eqOneKnobType, opts, ok.type ?? EQ_ONE_KNOB_TYPE_DEFAULT, (v) => setOk({ type: v })),
+    );
+    frag.append(
+      rangeSlider(
+        m.inspector.eqOneKnobLevel,
+        0,
+        100,
+        1,
+        ok.level ?? 0,
+        (v) => `${v}%`,
+        (v) => setOk({ level: v }),
       ),
     );
   }
@@ -1193,8 +1213,14 @@ function eqBandBlock(
     // shown only for a peaking band, gain only when the band is not a pass filter.
     if (effType === EQ_TYPE_PEAKING) {
       panel.append(
-        rangeSlider(m.inspector.q, EQ_Q_MIN, EQ_Q_MAX, 0.1, bv.q ?? EQ_Q_DEFAULT, (v) => v.toFixed(2), (v) =>
-          setBand(band.index, { q: v }),
+        rangeSlider(
+          m.inspector.q,
+          EQ_Q_MIN,
+          EQ_Q_MAX,
+          0.1,
+          bv.q ?? EQ_Q_DEFAULT,
+          (v) => v.toFixed(2),
+          (v) => setBand(band.index, { q: v }),
         ),
       );
     }
@@ -1273,7 +1299,17 @@ function fxEffectSection(
     ),
   );
   body.append(boolToggle(t.effectOn, fx.on ?? true, (v) => mergeFxEffect(actions, plan, nodeId, { on: v })));
-  body.append(rangeSlider(t.level, 0, 100, 1, fx.level ?? 100, (r) => String(r), (v) => mergeFxEffect(actions, plan, nodeId, { level: v })));
+  body.append(
+    rangeSlider(
+      t.level,
+      0,
+      100,
+      1,
+      fx.level ?? 100,
+      (r) => String(r),
+      (v) => mergeFxEffect(actions, plan, nodeId, { level: v }),
+    ),
+  );
 
   // Sibling raw values, so the REV-X Reverb Time readout can fold in Room Size.
   const ctx: Record<string, number> = {};
@@ -1295,8 +1331,14 @@ function fxEffectSection(
       );
     } else {
       body.append(
-        rangeSlider(label, d.rawMin ?? 0, d.rawMax ?? 0, d.rawStep ?? 1, cur, (r) => (d.format ? d.format(r, ctx) : String(r)), (v) =>
-          mergeFxParam(actions, plan, nodeId, d.key, v),
+        rangeSlider(
+          label,
+          d.rawMin ?? 0,
+          d.rawMax ?? 0,
+          d.rawStep ?? 1,
+          cur,
+          (r) => (d.format ? d.format(r, ctx) : String(r)),
+          (v) => mergeFxParam(actions, plan, nodeId, d.key, v),
         ),
       );
     }
@@ -1309,7 +1351,12 @@ function fxEffectSection(
 function insertFxVal(plan: Plan, nodeId: string, slot: number, def: number): number {
   return plan.nodeParams[nodeId]?.insertFxParams?.[String(slot)] ?? def;
 }
-function mergeInsertFxParams(actions: InspectorActions, plan: Plan, nodeId: string, patch: Record<number, number>): void {
+function mergeInsertFxParams(
+  actions: InspectorActions,
+  plan: Plan,
+  nodeId: string,
+  patch: Record<number, number>,
+): void {
   const params = plan.nodeParams[nodeId]?.insertFxParams ?? {};
   const next = { ...params };
   for (const [slot, raw] of Object.entries(patch)) next[slot] = raw;
@@ -1336,10 +1383,25 @@ function appendInsertFxDesc(
     body.append(boolToggle(label, cur !== 0, (v) => set(v ? 1 : 0)));
   } else if (desc.control === "select") {
     body.append(
-      selectControl(label, (desc.options ?? []).map((o) => ({ value: String(o.value), label: o.label })), String(cur), (v) => set(Number(v))),
+      selectControl(
+        label,
+        (desc.options ?? []).map((o) => ({ value: String(o.value), label: o.label })),
+        String(cur),
+        (v) => set(Number(v)),
+      ),
     );
   } else {
-    body.append(rangeSlider(label, desc.rawMin ?? 0, desc.rawMax ?? 0, desc.rawStep ?? 1, cur, (r) => (desc.format ? desc.format(r) : String(r)), set));
+    body.append(
+      rangeSlider(
+        label,
+        desc.rawMin ?? 0,
+        desc.rawMax ?? 0,
+        desc.rawStep ?? 1,
+        cur,
+        (r) => (desc.format ? desc.format(r) : String(r)),
+        set,
+      ),
+    );
   }
 }
 
@@ -1385,23 +1447,88 @@ function renderMbc(
 ): void {
   const set = (slot: number, raw: number) => mergeInsertFxParams(actions, plan, nodeId, { [slot]: raw });
   // 1-knob
-  body.append(boolToggle(t.params.oneKnobOn, insertFxVal(plan, nodeId, MBC_GLOBAL.oneKnobOn, 0) !== 0, (v) => set(MBC_GLOBAL.oneKnobOn, v ? 1 : 0)));
-  body.append(rangeSlider(t.params.oneKnobLevel, 0, 48, 1, insertFxVal(plan, nodeId, MBC_GLOBAL.oneKnobLevel, 0), (r) => String(r), (v) => set(MBC_GLOBAL.oneKnobLevel, v)));
+  body.append(
+    boolToggle(t.params.oneKnobOn, insertFxVal(plan, nodeId, MBC_GLOBAL.oneKnobOn, 0) !== 0, (v) =>
+      set(MBC_GLOBAL.oneKnobOn, v ? 1 : 0),
+    ),
+  );
+  body.append(
+    rangeSlider(
+      t.params.oneKnobLevel,
+      0,
+      48,
+      1,
+      insertFxVal(plan, nodeId, MBC_GLOBAL.oneKnobLevel, 0),
+      (r) => String(r),
+      (v) => set(MBC_GLOBAL.oneKnobLevel, v),
+    ),
+  );
   // Per-band: Threshold / Ratio / Attack / Gain, each from MBC_BAND_PARAM.
   const bandLabel = { low: t.bandLow, mid: t.bandMid, high: t.bandHigh };
   const bandKeys: MbcBandKey[] = ["threshold", "ratio", "attack", "gain"];
   for (const b of MBC_BANDS) {
     for (const k of bandKeys) {
       const p = MBC_BAND_PARAM[k];
-      body.append(rangeSlider(`${bandLabel[b.band]} ${t.params[k]}`, p.rawMin, p.rawMax, 1, insertFxVal(plan, nodeId, b[k], p.def), p.format, (v) => set(b[k], v)));
+      body.append(
+        rangeSlider(
+          `${bandLabel[b.band]} ${t.params[k]}`,
+          p.rawMin,
+          p.rawMax,
+          1,
+          insertFxVal(plan, nodeId, b[k], p.def),
+          p.format,
+          (v) => set(b[k], v),
+        ),
+      );
     }
   }
   // Global
-  body.append(boolToggle(t.params.bypass, insertFxVal(plan, nodeId, MBC_GLOBAL.bypass, 0) !== 0, (v) => set(MBC_GLOBAL.bypass, v ? 1 : 0)));
-  body.append(rangeSlider(t.params.xoverLowMid, MBC_XOVER_LM_RANGE.min, MBC_XOVER_LM_RANGE.max, 1, insertFxVal(plan, nodeId, MBC_GLOBAL.xoverLowMid, 37), mbcXoverLabel, (v) => set(MBC_GLOBAL.xoverLowMid, v)));
-  body.append(rangeSlider(t.params.xoverMidHigh, MBC_XOVER_MH_RANGE.min, MBC_XOVER_MH_RANGE.max, 1, insertFxVal(plan, nodeId, MBC_GLOBAL.xoverMidHigh, 94), mbcXoverLabel, (v) => set(MBC_GLOBAL.xoverMidHigh, v)));
-  body.append(rangeSlider(t.params.release, 0, MBC_RELEASE_MS.length - 1, 1, insertFxVal(plan, nodeId, MBC_GLOBAL.release, 7), (r) => { const ms = MBC_RELEASE_MS[r] ?? 0; return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`; }, (v) => set(MBC_GLOBAL.release, v)));
-  body.append(rangeSlider(t.params.outGain, 52, 76, 1, insertFxVal(plan, nodeId, MBC_GLOBAL.outGain, 68), mbcOutGainLabel, (v) => set(MBC_GLOBAL.outGain, v)));
+  body.append(
+    boolToggle(t.params.bypass, insertFxVal(plan, nodeId, MBC_GLOBAL.bypass, 0) !== 0, (v) =>
+      set(MBC_GLOBAL.bypass, v ? 1 : 0),
+    ),
+  );
+  body.append(
+    rangeSlider(
+      t.params.xoverLowMid,
+      MBC_XOVER_LM_RANGE.min,
+      MBC_XOVER_LM_RANGE.max,
+      1,
+      insertFxVal(plan, nodeId, MBC_GLOBAL.xoverLowMid, 37),
+      mbcXoverLabel,
+      (v) => set(MBC_GLOBAL.xoverLowMid, v),
+    ),
+  );
+  body.append(
+    rangeSlider(
+      t.params.xoverMidHigh,
+      MBC_XOVER_MH_RANGE.min,
+      MBC_XOVER_MH_RANGE.max,
+      1,
+      insertFxVal(plan, nodeId, MBC_GLOBAL.xoverMidHigh, 94),
+      mbcXoverLabel,
+      (v) => set(MBC_GLOBAL.xoverMidHigh, v),
+    ),
+  );
+  body.append(
+    rangeSlider(
+      t.params.release,
+      0,
+      MBC_RELEASE_MS.length - 1,
+      1,
+      insertFxVal(plan, nodeId, MBC_GLOBAL.release, 7),
+      (r) => {
+        const ms = MBC_RELEASE_MS[r] ?? 0;
+        return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`;
+      },
+      (v) => set(MBC_GLOBAL.release, v),
+    ),
+  );
+  body.append(
+    rangeSlider(t.params.outGain, 52, 76, 1, insertFxVal(plan, nodeId, MBC_GLOBAL.outGain, 68), mbcOutGainLabel, (v) =>
+      set(MBC_GLOBAL.outGain, v),
+    ),
+  );
 }
 
 function renderPitchScale(
@@ -1425,7 +1552,8 @@ function renderPitchScale(
         const sel = Number(v);
         const patch: Record<number, number> = { [PITCH_SCALE_SLOT]: sel };
         if (sel === PITCH_SCALE_CHROMATIC) PITCH_NOTE_SLOTS.forEach((s) => (patch[s] = 1));
-        else if (sel === PITCH_SCALE_MAJOR) PITCH_NOTE_SLOTS.forEach((s, i) => (patch[s] = PITCH_MAJOR_ON.has(i) ? 1 : 0));
+        else if (sel === PITCH_SCALE_MAJOR)
+          PITCH_NOTE_SLOTS.forEach((s, i) => (patch[s] = PITCH_MAJOR_ON.has(i) ? 1 : 0));
         mergeInsertFxParams(actions, plan, nodeId, patch);
       },
     ),
@@ -1486,19 +1614,15 @@ function mergeSection(
 
 // Ducker node detail editor: the on/off plus threshold/range/attack/decay sliders.
 // The ducker source is a key-source connection, edited on the canvas, not here.
-function duckerBlock(
-  nodeId: string,
-  np: NodeParams,
-  plan: Plan,
-  actions: InspectorActions,
-  m: Messages,
-): HTMLElement {
+function duckerBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): HTMLElement {
   const on = np.duckerOn ?? false;
   const { el, body } = section(m.inspector.duckerOn, { open: on, on, key: "duckerOn" });
   body.append(sectionToggle(nodeId, "duckerOn", on, actions));
   const vals = (np.ducker ?? {}) as Record<string, number | undefined>;
   for (const f of DUCKER_FIELDS)
-    body.append(dynFieldSlider(f, m, vals[f.key], (key, v) => mergeSection(actions, plan, nodeId, "ducker", { [key]: v })));
+    body.append(
+      dynFieldSlider(f, m, vals[f.key], (key, v) => mergeSection(actions, plan, nodeId, "ducker", { [key]: v })),
+    );
   return el;
 }
 
@@ -1517,7 +1641,9 @@ function gateDetailBlock(
   const frag = document.createDocumentFragment();
   const gate = (np.gate ?? {}) as Record<string, number | undefined>;
   for (const f of fields)
-    frag.append(dynFieldSlider(f, m, gate[f.key], (key, v) => mergeSection(actions, plan, nodeId, "gate", { [key]: v })));
+    frag.append(
+      dynFieldSlider(f, m, gate[f.key], (key, v) => mergeSection(actions, plan, nodeId, "gate", { [key]: v })),
+    );
   return frag;
 }
 
@@ -1565,7 +1691,13 @@ function mergeSsmcsBand(
 }
 
 // SSMCS Main controls (Sweet Spot Data preset + Comp Drive / Morphing / Out Gain).
-function ssmcsMasterBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): DocumentFragment {
+function ssmcsMasterBlock(
+  nodeId: string,
+  np: NodeParams,
+  plan: Plan,
+  actions: InspectorActions,
+  m: Messages,
+): DocumentFragment {
   const frag = document.createDocumentFragment();
   const s = np.ssmcs ?? SSMCS_INITIAL;
   frag.append(
@@ -1577,32 +1709,86 @@ function ssmcsMasterBlock(nodeId: string, np: NodeParams, plan: Plan, actions: I
     ),
   );
   frag.append(
-    rangeSlider(m.inspector.ssmcs.compDrive, SSMCS_COMP_DRIVE_MIN, SSMCS_COMP_DRIVE_MAX, 1, s.compDrive ?? SSMCS_INITIAL.compDrive, (v) => ssmcsCompDrive(v).toFixed(2), (v) => mergeSsmcs(actions, plan, nodeId, { compDrive: v })),
+    rangeSlider(
+      m.inspector.ssmcs.compDrive,
+      SSMCS_COMP_DRIVE_MIN,
+      SSMCS_COMP_DRIVE_MAX,
+      1,
+      s.compDrive ?? SSMCS_INITIAL.compDrive,
+      (v) => ssmcsCompDrive(v).toFixed(2),
+      (v) => mergeSsmcs(actions, plan, nodeId, { compDrive: v }),
+    ),
   );
   frag.append(
-    rangeSlider(m.inspector.ssmcs.morphing, SSMCS_MORPHING_MIN, SSMCS_MORPHING_MAX, 1, s.morphing ?? SSMCS_INITIAL.morphing, String, (v) => mergeSsmcs(actions, plan, nodeId, { morphing: v })),
+    rangeSlider(
+      m.inspector.ssmcs.morphing,
+      SSMCS_MORPHING_MIN,
+      SSMCS_MORPHING_MAX,
+      1,
+      s.morphing ?? SSMCS_INITIAL.morphing,
+      String,
+      (v) => mergeSsmcs(actions, plan, nodeId, { morphing: v }),
+    ),
   );
   frag.append(
-    rangeSlider(m.inspector.ssmcs.outGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, s.outGain ?? SSMCS_INITIAL.outGain, fmtSsmcsGain, (v) => mergeSsmcs(actions, plan, nodeId, { outGain: v })),
+    rangeSlider(
+      m.inspector.ssmcs.outGain,
+      SSMCS_GAIN_MIN,
+      SSMCS_GAIN_MAX,
+      1,
+      s.outGain ?? SSMCS_INITIAL.outGain,
+      fmtSsmcsGain,
+      (v) => mergeSsmcs(actions, plan, nodeId, { outGain: v }),
+    ),
   );
   return frag;
 }
 
 // SSMCS COMP detail: Attack / Release / Ratio / Knee + the side-chain filter. The
 // device-internal threshold/makeup (not shown on the LCD) are left untouched.
-function ssmcsCompBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): DocumentFragment {
+function ssmcsCompBlock(
+  nodeId: string,
+  np: NodeParams,
+  plan: Plan,
+  actions: InspectorActions,
+  m: Messages,
+): DocumentFragment {
   const frag = document.createDocumentFragment();
   const ci = SSMCS_INITIAL.comp;
   const c = np.ssmcs?.comp ?? ci;
   const setComp = (patch: Record<string, number>): void => mergeSsmcsSub(actions, plan, nodeId, "comp", patch);
   frag.append(
-    rangeSlider(m.inspector.dyn.attack, SSMCS_ATTACK_RAW_MIN, SSMCS_ATTACK_RAW_MAX, 1, c.attack ?? ci.attack, (v) => fmtSsmcsMs(ssmcsAttackMs(v)), (v) => setComp({ attack: v })),
+    rangeSlider(
+      m.inspector.dyn.attack,
+      SSMCS_ATTACK_RAW_MIN,
+      SSMCS_ATTACK_RAW_MAX,
+      1,
+      c.attack ?? ci.attack,
+      (v) => fmtSsmcsMs(ssmcsAttackMs(v)),
+      (v) => setComp({ attack: v }),
+    ),
   );
   frag.append(
-    rangeSlider(m.inspector.dyn.release, SSMCS_RELEASE_RAW_MIN, SSMCS_RELEASE_RAW_MAX, 1, c.release ?? ci.release, (v) => fmtSsmcsMs(ssmcsReleaseMs(v)), (v) => setComp({ release: v })),
+    rangeSlider(
+      m.inspector.dyn.release,
+      SSMCS_RELEASE_RAW_MIN,
+      SSMCS_RELEASE_RAW_MAX,
+      1,
+      c.release ?? ci.release,
+      (v) => fmtSsmcsMs(ssmcsReleaseMs(v)),
+      (v) => setComp({ release: v }),
+    ),
   );
   frag.append(
-    rangeSlider(m.inspector.dyn.ratio, SSMCS_RATIO_RAW_MIN, SSMCS_RATIO_RAW_MAX, 1, c.ratio ?? ci.ratio, (v) => fmtSsmcsRatio(ssmcsRatio(v)), (v) => setComp({ ratio: v })),
+    rangeSlider(
+      m.inspector.dyn.ratio,
+      SSMCS_RATIO_RAW_MIN,
+      SSMCS_RATIO_RAW_MAX,
+      1,
+      c.ratio ?? ci.ratio,
+      (v) => fmtSsmcsRatio(ssmcsRatio(v)),
+      (v) => setComp({ ratio: v }),
+    ),
   );
   frag.append(
     selectControl(
@@ -1616,9 +1802,19 @@ function ssmcsCompBlock(nodeId: string, np: NodeParams, plan: Plan, actions: Ins
   const sc = np.ssmcs?.sc ?? si;
   const setSc = (patch: Record<string, number | boolean>): void => mergeSsmcsSub(actions, plan, nodeId, "sc", patch);
   frag.append(boolToggle(m.inspector.ssmcs.sideChain, sc.on ?? si.on, (v) => setSc({ on: v })));
-  frag.append(rangeSlider(m.inspector.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX, 1, sc.q ?? si.q, fmtSsmcsQ, (v) => setSc({ q: v })));
-  frag.append(rangeSlider(m.inspector.frequency, SSMCS_FREQ_RAW_MIN, SSMCS_FREQ_RAW_MAX, 1, sc.freq ?? si.freq, fmtSsmcsHz, (v) => setSc({ freq: v })));
-  frag.append(rangeSlider(m.inspector.eqGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, sc.gain ?? si.gain, fmtSsmcsGain, (v) => setSc({ gain: v })));
+  frag.append(
+    rangeSlider(m.inspector.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX, 1, sc.q ?? si.q, fmtSsmcsQ, (v) => setSc({ q: v })),
+  );
+  frag.append(
+    rangeSlider(m.inspector.frequency, SSMCS_FREQ_RAW_MIN, SSMCS_FREQ_RAW_MAX, 1, sc.freq ?? si.freq, fmtSsmcsHz, (v) =>
+      setSc({ freq: v }),
+    ),
+  );
+  frag.append(
+    rangeSlider(m.inspector.eqGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, sc.gain ?? si.gain, fmtSsmcsGain, (v) =>
+      setSc({ gain: v }),
+    ),
+  );
   return frag;
 }
 
@@ -1632,16 +1828,35 @@ const SSMCS_EQ_BANDS = [
 
 // SSMCS 3-band EQ (Low shelf / Mid peak / High shelf). Band order Q → Freq → Gain
 // matches the device EQ screen and the COMP->EQ inspector convention.
-function ssmcsEqBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): DocumentFragment {
+function ssmcsEqBlock(
+  nodeId: string,
+  np: NodeParams,
+  plan: Plan,
+  actions: InspectorActions,
+  m: Messages,
+): DocumentFragment {
   const frag = document.createDocumentFragment();
   for (const spec of SSMCS_EQ_BANDS) {
     const bi = SSMCS_INITIAL.eq[spec.key];
     const b: SsmcsBand = np.ssmcs?.eq?.[spec.key] ?? bi;
     const setBand = (patch: Partial<SsmcsBand>): void => mergeSsmcsBand(actions, plan, nodeId, spec.key, patch);
     frag.append(boolToggle(m.inspector.ssmcs.bands[spec.key], b.on ?? bi.on, (v) => setBand({ on: v })));
-    if (spec.hasQ) frag.append(rangeSlider(m.inspector.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX, 1, b.q ?? SSMCS_INITIAL.eq.mid.q, fmtSsmcsQ, (v) => setBand({ q: v })));
-    frag.append(rangeSlider(m.inspector.frequency, spec.freqMin, spec.freqMax, 1, b.freq ?? bi.freq, fmtSsmcsHz, (v) => setBand({ freq: v })));
-    frag.append(rangeSlider(m.inspector.eqGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, b.gain ?? bi.gain, fmtSsmcsGain, (v) => setBand({ gain: v })));
+    if (spec.hasQ)
+      frag.append(
+        rangeSlider(m.inspector.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX, 1, b.q ?? SSMCS_INITIAL.eq.mid.q, fmtSsmcsQ, (v) =>
+          setBand({ q: v }),
+        ),
+      );
+    frag.append(
+      rangeSlider(m.inspector.frequency, spec.freqMin, spec.freqMax, 1, b.freq ?? bi.freq, fmtSsmcsHz, (v) =>
+        setBand({ freq: v }),
+      ),
+    );
+    frag.append(
+      rangeSlider(m.inspector.eqGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, b.gain ?? bi.gain, fmtSsmcsGain, (v) =>
+        setBand({ gain: v }),
+      ),
+    );
   }
   return frag;
 }
@@ -1655,8 +1870,7 @@ function compDetailBlock(
   m: Messages,
 ): DocumentFragment {
   const frag = document.createDocumentFragment();
-  const setComp = (patch: Record<string, number | boolean>): void =>
-    mergeSection(actions, plan, nodeId, "comp", patch);
+  const setComp = (patch: Record<string, number | boolean>): void => mergeSection(actions, plan, nodeId, "comp", patch);
   const comp = np.comp ?? {};
   const compVals = comp as Record<string, number | undefined>;
   if (!comp.oneKnob) {
@@ -1665,8 +1879,14 @@ function compDetailBlock(
   frag.append(boolToggle(m.inspector.oneKnob, comp.oneKnob ?? false, (v) => setComp({ oneKnob: v })));
   if (comp.oneKnob) {
     frag.append(
-      rangeSlider(m.inspector.oneKnobLevel, 0, 100, 1, comp.oneKnobLevel ?? 0, (v) => `${v}%`, (v) =>
-        setComp({ oneKnobLevel: v }),
+      rangeSlider(
+        m.inspector.oneKnobLevel,
+        0,
+        100,
+        1,
+        comp.oneKnobLevel ?? 0,
+        (v) => `${v}%`,
+        (v) => setComp({ oneKnobLevel: v }),
       ),
     );
     // The device drives ratio/gain from the 1-knob level and shows them read-only;
@@ -1770,12 +1990,7 @@ function selectToggle(group: HTMLElement, button: HTMLButtonElement): void {
 
 // `lockedTitle`, when set, renders the pair read-only: both buttons disabled (no
 // click handler) and the reason shown as a row tooltip — the value is still visible.
-function boolToggle(
-  label: string,
-  value: boolean,
-  onChange: (v: boolean) => void,
-  lockedTitle?: string,
-): HTMLElement {
+function boolToggle(label: string, value: boolean, onChange: (v: boolean) => void, lockedTitle?: string): HTMLElement {
   const { row } = paramBlock(label, "");
   if (lockedTitle !== undefined) row.title = lockedTitle;
   const group = document.createElement("div");
@@ -1878,12 +2093,7 @@ function colorSwatches(
 
 // A labeled single-line text field. Reports every keystroke (trimmed by the
 // caller) without re-rendering, so it keeps focus while typing.
-function textInput(
-  label: string,
-  value: string,
-  placeholder: string,
-  onInput: (v: string) => void,
-): HTMLElement {
+function textInput(label: string, value: string, placeholder: string, onInput: (v: string) => void): HTMLElement {
   const { row } = paramBlock(label, "");
   const input = document.createElement("input");
   input.type = "text";

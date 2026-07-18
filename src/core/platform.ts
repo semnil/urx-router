@@ -235,10 +235,7 @@ interface RawMeterUpdate {
  * `addrs` is a list of [meterId, x] pairs. Replaces any prior subscription.
  * Returns an unsubscribe function. No-op (returns a noop) outside Tauri.
  */
-export function vdMetersSubscribe(
-  addrs: Array<[number, number]>,
-  onUpdate: (m: MeterUpdate) => void,
-): () => void {
+export function vdMetersSubscribe(addrs: Array<[number, number]>, onUpdate: (m: MeterUpdate) => void): () => void {
   if (!isTauri()) return () => {};
   // Rust batches each pump cycle's readings into one channel message, so the IPC
   // boundary is crossed ~30×/s instead of per reading; fan the batch back out here.

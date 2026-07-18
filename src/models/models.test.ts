@@ -69,9 +69,15 @@ describe("model-specific topology", () => {
 
   it("pairs mono channels for shared source selection", () => {
     expect(MODELS.URX22.channelPairs).toEqual([["ch1", "ch2"]]);
-    expect(MODELS.URX44.channelPairs).toEqual([["ch1", "ch2"], ["ch3", "ch4"]]);
+    expect(MODELS.URX44.channelPairs).toEqual([
+      ["ch1", "ch2"],
+      ["ch3", "ch4"],
+    ]);
     // URX44V shares URX44's 4 mono channels, so it pairs identically.
-    expect(MODELS.URX44V.channelPairs).toEqual([["ch1", "ch2"], ["ch3", "ch4"]]);
+    expect(MODELS.URX44V.channelPairs).toEqual([
+      ["ch1", "ch2"],
+      ["ch3", "ch4"],
+    ]);
   });
 });
 

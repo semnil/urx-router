@@ -101,10 +101,7 @@ test("round-trips a plan through save and open", async ({ page }, testInfo) => {
   await expect(wires(page)).toHaveCount(FIXED + 1);
 
   await page.click("#btn-file");
-  const [download] = await Promise.all([
-    page.waitForEvent("download"),
-    page.click("#btn-save"),
-  ]);
+  const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
   expect(download.suggestedFilename()).toBe("URX44V-plan.json");
   const saved = testInfo.outputPath("URX44V-plan.json");
   await download.saveAs(saved);
@@ -116,10 +113,7 @@ test("round-trips a plan through save and open", async ({ page }, testInfo) => {
   await expect(wires(page)).toHaveCount(FIXED);
 
   await page.click("#btn-file");
-  const [chooser] = await Promise.all([
-    page.waitForEvent("filechooser"),
-    page.click("#btn-open"),
-  ]);
+  const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
   await chooser.setFiles(saved);
   await expect(wires(page)).toHaveCount(FIXED + 1);
   await expect(page.locator("#statusbar")).toHaveText("Plan loaded");
@@ -191,7 +185,10 @@ test("marks a PRE MIX send on the canvas without opening the inspector", async (
   await expect(preMarker).toHaveCount(0);
   await page.locator("#inspector .toggle button").filter({ hasText: /^PRE$/ }).click();
   await expect(preMarker).toHaveCount(1);
-  await page.locator("#inspector .toggle button").filter({ hasText: /^POST$/ }).click();
+  await page
+    .locator("#inspector .toggle button")
+    .filter({ hasText: /^POST$/ })
+    .click();
   await expect(preMarker).toHaveCount(0);
 });
 

@@ -121,7 +121,12 @@ describe("applyDeviceState round-trip", () => {
     plan.nodeParams["bus.osc"] = { osc: { on: true, level: -12, mode: 0, freq: 1000 } };
 
     // OSC → STEREO assign (L/R on).
-    plan.connections.push({ from: "bus.osc:out", to: "bus.stereo:in", kind: "sendSwitch", params: { oscL: true, oscR: true } });
+    plan.connections.push({
+      from: "bus.osc:out",
+      to: "bus.stereo:in",
+      kind: "sendSwitch",
+      params: { oscL: true, oscR: true },
+    });
 
     // Routing selectors: streaming source + monitor1 source from a MIX bus; an
     // input source on CH2; an output patch on out.main.
@@ -280,7 +285,27 @@ describe("applyDeviceState round-trip", () => {
     const names = 8 + 6; // CH SETTING name: same node set as color
     const sdRec = 8 + 1; // microSD Rec: 8 track-pair source slots + Track Count
     const expected =
-      channels + sends + fxEffect + fxMainPath + toSt + busFaders + insertFx + busEqOn + busEqBands + duckers + master + monitors + osc + delay + sampleRate + oscAssign + inputSource + selectors + colors + names + sdRec;
+      channels +
+      sends +
+      fxEffect +
+      fxMainPath +
+      toSt +
+      busFaders +
+      insertFx +
+      busEqOn +
+      busEqBands +
+      duckers +
+      master +
+      monitors +
+      osc +
+      delay +
+      sampleRate +
+      oscAssign +
+      inputSource +
+      selectors +
+      colors +
+      names +
+      sdRec;
     expect(result.applied).toBe(expected);
     // Sanity: far more than the channel-only count, proving every group counts.
     expect(result.applied).toBeGreaterThan(channels);
@@ -389,15 +414,28 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
       ],
     };
     plan.nodeParams.ch_5_6 = { gain: -12, phaseL: true, phaseR: false };
-    plan.connections.push({ from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { level: -3, pan: -63, tap: "pre" } });
+    plan.connections.push({
+      from: "ch1:out",
+      to: "bus.mix1:in",
+      kind: "send",
+      params: { level: -3, pan: -63, tap: "pre" },
+    });
     plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9 } });
     plan.nodeParams["bus.stereo"] = { on: true, level: 2, eqOn: true, insertFx: 1793 };
     plan.nodeParams["bus.mix1"] = { level: -4, insertFx: 1792 };
-    plan.nodeParams["out.ducker1"] = { duckerOn: true, ducker: { threshold: -50, range: -20, attack: 25, decay: 1500 } };
+    plan.nodeParams["out.ducker1"] = {
+      duckerOn: true,
+      ducker: { threshold: -50, range: -20, attack: 25, decay: 1500 },
+    };
     plan.nodeParams["bus.mon1"] = { level: -10, cueInterrupt: true, mono: true };
     plan.nodeParams["bus.mon2"] = { level: -20, cueInterrupt: false, mono: false };
     plan.nodeParams["bus.osc"] = { osc: { on: true, level: -12, mode: 0, freq: 1000 } };
-    plan.connections.push({ from: "bus.osc:out", to: "bus.stereo:in", kind: "sendSwitch", params: { oscL: true, oscR: true } });
+    plan.connections.push({
+      from: "bus.osc:out",
+      to: "bus.stereo:in",
+      kind: "sendSwitch",
+      params: { oscL: true, oscR: true },
+    });
     plan.connections.push({ from: "bus.mix1:out", to: "bus.stream:in", kind: "source" });
     plan.connections.push({ from: "bus.mix2:out", to: "bus.mon1:in", kind: "source" });
     plan.connections.push({ from: "in.aux:out", to: "ch2:in", kind: "source" });

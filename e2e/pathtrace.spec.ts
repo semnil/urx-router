@@ -83,12 +83,18 @@ test("a multi-hop chain reaches the input two hops behind the traced bus", async
 // selection so it does not interfere with a later trace.
 async function muteChannel(page: Page, id: string): Promise<void> {
   await node(page, id).click();
-  await page.locator("#inspector .param").filter({ has: page.locator(".toggle") }).filter({ hasText: "Channel" })
-    .getByRole("button", { name: "OFF", exact: true }).click();
+  await page
+    .locator("#inspector .param")
+    .filter({ has: page.locator(".toggle") })
+    .filter({ hasText: "Channel" })
+    .getByRole("button", { name: "OFF", exact: true })
+    .click();
   await page.keyboard.press("Escape");
 }
 
-test("an off send breaks the trace at the muted node but its live pair partner keeps the input lit", async ({ page }) => {
+test("an off send breaks the trace at the muted node but its live pair partner keeps the input lit", async ({
+  page,
+}) => {
   // A stereo input feeds a channel pair: connecting in.micline_1_2 to ch1 mirrors
   // the source onto ch2. Muting only ch1 silences its fixed STEREO send, so the
   // trace must not walk ch1's leg back — yet ch2 still carries the same input to

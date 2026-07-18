@@ -117,7 +117,7 @@ describe("SSMCS / preset codec defensive edges (documents current behavior)", ()
     expect(ssmcsRatio(0)).toBe(1);
   });
 
-  it("sweetSpotDataToStr(NaN) falls back to the in-range floor \"0001\"", () => {
+  it('sweetSpotDataToStr(NaN) falls back to the in-range floor "0001"', () => {
     // NaN is now coerced to 0 before the [1, 34] clamp, so a malformed index yields
     // the factory-default preset string rather than "0NaN".
     expect(sweetSpotDataToStr(NaN)).toBe("0001");

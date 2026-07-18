@@ -47,7 +47,10 @@ describe("ducker <-> stereo-channel coupling", () => {
   // This pins the key-rule <-> ducker-node bijection so that drift is caught.
   it.each(MODEL_IDS)("%s: key rules target exactly the ducker nodes, each offering every key source", (id) => {
     const model = MODELS[id];
-    const duckers = model.nodes.filter((n) => n.kind === "ducker").map((n) => n.id).sort();
+    const duckers = model.nodes
+      .filter((n) => n.kind === "ducker")
+      .map((n) => n.id)
+      .sort();
     const keyDests = [...new Set(model.rules.filter((r) => r.kind === "key").map((r) => parseRef(r.to).nodeId))].sort();
     expect(keyDests).toEqual(duckers);
     // Each ducker selects one trigger from every channel plus STEREO / MIX 1 / MIX 2.
@@ -88,7 +91,10 @@ describe("microSD Rec header <-> track-slot integrity", () => {
     // The header itself is never a routing endpoint; its slots carry the record wires.
     expect(model.rules.some((r) => parseRef(r.to).nodeId === "out.sdrec")).toBe(false);
     for (const s of slots) {
-      expect(model.rules.some((r) => parseRef(r.to).nodeId === s.id), `${s.id} has a record rule`).toBe(true);
+      expect(
+        model.rules.some((r) => parseRef(r.to).nodeId === s.id),
+        `${s.id} has a record rule`,
+      ).toBe(true);
     }
   });
 });

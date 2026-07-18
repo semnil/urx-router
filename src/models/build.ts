@@ -3,15 +3,7 @@
 // diagram (see docs/device-model.md). Keep the two in sync.
 
 import { ref } from "./types";
-import type {
-  ConnectionKind,
-  DeviceModel,
-  DeviceNode,
-  ModelId,
-  NodeKind,
-  Port,
-  RoutingRule,
-} from "./types";
+import type { ConnectionKind, DeviceModel, DeviceNode, ModelId, NodeKind, Port, RoutingRule } from "./types";
 
 export interface ModelParams {
   id: ModelId;
@@ -153,7 +145,15 @@ export function buildModel(p: ModelParams): DeviceModel {
 
   // --- Outputs -------------------------------------------------------------
   const addOut = (id: string, label: string, sublabel?: string, header = false): void =>
-    add({ id, kind: "output", label, sublabel, column: "output", ports: inPort(), ...(header ? { header: true } : {}) });
+    add({
+      id,
+      kind: "output",
+      label,
+      sublabel,
+      column: "output",
+      ports: inPort(),
+      ...(header ? { header: true } : {}),
+    });
   addOut("out.main", "MAIN OUT");
   if (p.hasLineOut) addOut("out.line", "LINE OUT");
   // PHONES 1/2/front and HDMI THRU are fixed 1:1 passthroughs (no source
@@ -201,8 +201,7 @@ export function buildModel(p: ModelParams): DeviceModel {
 
   // --- Routing rules -------------------------------------------------------
   // 1. Each channel selects one input source.
-  for (const ch of channels)
-    for (const inp of inputs) r(ref(inp, "out"), ref(ch, "in"), "source");
+  for (const ch of channels) for (const inp of inputs) r(ref(inp, "out"), ref(ch, "in"), "source");
 
   // 2. Channel -> bus sends (summing, with level/pan). Every send is fixed (always
   //    wired, non-removable): the device has no "remove this routing", only a
@@ -211,8 +210,7 @@ export function buildModel(p: ModelParams): DeviceModel {
   //    PRE/POST); the MIX 1/2 and FX 1/2 sends carry LEVEL/PAN(BAL)/PRE-POST plus
   //    the ON toggle. So "wire present = SEND_ON" is gone — on/off lives in params.
   const sendBuses = ["bus.stereo", "bus.mix1", "bus.mix2", "bus.fx1", "bus.fx2"];
-  for (const ch of channels)
-    for (const b of sendBuses) r(ref(ch, "out"), ref(b, "in"), "send", true);
+  for (const ch of channels) for (const b of sendBuses) r(ref(ch, "out"), ref(b, "in"), "send", true);
 
   // 3. FX channels -> STEREO / MIX buses. All are fixed (always wired): the device
   //    has no "remove this routing", only a per-send ON switch (SEND_ON) and level.
@@ -233,8 +231,7 @@ export function buildModel(p: ModelParams): DeviceModel {
     r(ref("bus.osc", "out"), ref(b, "in"), "sendSwitch");
 
   // 5. Streaming source select.
-  for (const s of ["bus.stereo", "bus.mix1", "bus.mix2"])
-    r(ref(s, "out"), ref("bus.stream", "in"), "source");
+  for (const s of ["bus.stereo", "bus.mix1", "bus.mix2"]) r(ref(s, "out"), ref("bus.stream", "in"), "source");
 
   // 6. Monitor source select.
   for (const mon of ["bus.mon1", "bus.mon2"])
@@ -245,14 +242,12 @@ export function buildModel(p: ModelParams): DeviceModel {
   //    they carry no rule.
   const patchSources = ["bus.stereo", "bus.mix1", "bus.mix2", "bus.stream", "bus.mon1", "bus.mon2"];
   const analogOuts = p.hasLineOut ? ["out.main", "out.line"] : ["out.main"];
-  for (const o of analogOuts)
-    for (const s of patchSources) r(ref(s, "out"), ref(o, "in"), "patch");
+  for (const o of analogOuts) for (const s of patchSources) r(ref(s, "out"), ref(o, "in"), "patch");
 
   // 8. USB OUT signal assign (single source each).
   const usbOuts = ["out.usbmain_a", "out.usbmain_b", "out.usbmain_c", "out.usbsub"];
   for (const o of usbOuts) {
-    for (const s of ["bus.stereo", "bus.stream", "bus.mix1", "bus.mix2"])
-      r(ref(s, "out"), ref(o, "in"), "patch");
+    for (const s of ["bus.stereo", "bus.stream", "bus.mix1", "bus.mix2"]) r(ref(s, "out"), ref(o, "in"), "patch");
     for (const c of channels) r(ref(c, "out"), ref(o, "in"), "patch");
   }
 
@@ -282,8 +277,7 @@ export function buildModel(p: ModelParams): DeviceModel {
 
   // 12. Ducker key source — each ducker selects one trigger from CH / STEREO / MIX.
   const duckerSources = [...channels, "bus.stereo", "bus.mix1", "bus.mix2"];
-  for (let d = 1; d <= 4; d++)
-    for (const s of duckerSources) r(ref(s, "out"), ref(`out.ducker${d}`, "in"), "key");
+  for (let d = 1; d <= 4; d++) for (const s of duckerSources) r(ref(s, "out"), ref(`out.ducker${d}`, "in"), "key");
 
   return { id: p.id, name: p.name, nodes, rules, channelPairs };
 }

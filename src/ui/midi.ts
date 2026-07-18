@@ -7,10 +7,25 @@
 import type { DeviceModel, DeviceNode } from "../models/types";
 import type { Plan } from "../core/plan";
 import { loadJson, saveJson } from "../core/storage";
-import { isTauri, midiCloseOutput, midiListInputs, midiListOutputs, midiOpenInput, midiOpenOutput, midiSend } from "../core/platform";
+import {
+  isTauri,
+  midiCloseOutput,
+  midiListInputs,
+  midiListOutputs,
+  midiOpenInput,
+  midiOpenOutput,
+  midiSend,
+} from "../core/platform";
 import { MidiEngine } from "../core/midi/engine";
 import { bindControl, parseControlId, type BoundControl, type ControlParam } from "../core/midi/controls";
-import { addrLabel, BUTTON_MODES, sanitizeMappings, TAKE_MODES, type MidiAddr, type MidiMapping } from "../core/midi/mapping";
+import {
+  addrLabel,
+  BUTTON_MODES,
+  sanitizeMappings,
+  TAKE_MODES,
+  type MidiAddr,
+  type MidiMapping,
+} from "../core/midi/mapping";
 import { mirrorBalPair } from "../core/routing";
 import { el, popTop } from "./dom";
 import { t } from "../i18n";
@@ -428,7 +443,11 @@ export class MidiControl {
     const m = t().midi;
     this.learnBtn.setAttribute("aria-pressed", String(this.learnOn));
     this.learnBtn.classList.toggle("on", this.learnOn);
-    this.hintEl.textContent = !this.learnOn ? m.hintIdle : this.armed ? m.hintArmed(this.labelOf(this.armed)) : m.hintLearn;
+    this.hintEl.textContent = !this.learnOn
+      ? m.hintIdle
+      : this.armed
+        ? m.hintArmed(this.labelOf(this.armed))
+        : m.hintLearn;
   }
 
   // Re-enumerate the ports (midir has no hot-plug events, so every panel open
@@ -478,12 +497,31 @@ export class MidiControl {
       // The take-in mode applies to continuous controls only (toggles just fire).
       const control = this.resolve(mapping.control);
       if (control?.kind === "continuous") {
-        this.addChoice(row, "mp-mode", TAKE_MODES, mapping.mode, () => ({ title: t().midi.modeTitle, who: label, label: t().midi.mode, desc: t().midi.modeDesc }), (mode) => this.patchMapping(mapping, { mode }));
+        this.addChoice(
+          row,
+          "mp-mode",
+          TAKE_MODES,
+          mapping.mode,
+          () => ({ title: t().midi.modeTitle, who: label, label: t().midi.mode, desc: t().midi.modeDesc }),
+          (mode) => this.patchMapping(mapping, { mode }),
+        );
       } else if (control?.kind === "toggle" && mapping.addr.type !== "pitchbend") {
         // Button behavior, named after the sender's button type: Momentary
         // (edge, the default — flip per press) or Toggle (state — the value is
         // the state, for alternating senders like Stream Deck toggle buttons).
-        this.addChoice(row, "mp-btn", BUTTON_MODES, mapping.button ?? "edge", () => ({ title: t().midi.buttonModeTitle, who: label, label: t().midi.buttonMode, desc: t().midi.buttonModeDesc }), (button) => this.patchMapping(mapping, { button }));
+        this.addChoice(
+          row,
+          "mp-btn",
+          BUTTON_MODES,
+          mapping.button ?? "edge",
+          () => ({
+            title: t().midi.buttonModeTitle,
+            who: label,
+            label: t().midi.buttonMode,
+            desc: t().midi.buttonModeDesc,
+          }),
+          (button) => this.patchMapping(mapping, { button }),
+        );
       }
       const del = el("button", "mp-del") as HTMLButtonElement;
       del.type = "button";

@@ -9,8 +9,7 @@ const section = (page: Page, title: RegExp) =>
   page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: title }) });
 // A console strip located by its scribble's exact node name (so "CH 1" never
 // matches "CH 11/12").
-const strip = (page: Page, name: string) =>
-  page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
+const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
 test.describe("model switch clears the selection", () => {
   test.beforeEach(async ({ page }) => {
@@ -90,9 +89,9 @@ test.describe("GRAPH <-> CONSOLE EQ sync", () => {
     await node(page, "ch1").click();
     // The EQ section's active toggle button reads OFF (its class survives the fold
     // an off section triggers, so no need to expand it first).
-    await expect(
-      section(page, /^EQ$/).locator(".sec-body > .param").first().locator(".toggle button.on"),
-    ).toHaveText("OFF");
+    await expect(section(page, /^EQ$/).locator(".sec-body > .param").first().locator(".toggle button.on")).toHaveText(
+      "OFF",
+    );
   });
 });
 

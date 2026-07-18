@@ -5,12 +5,10 @@ import { test, expect, type Page } from "@playwright/test";
 // round-trip through save/open. Slots/encodings: core/control/insert-fx-effect.ts.
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
-const insertSelect = (page: Page) =>
-  page.locator("#inspector .param", { hasText: "Insert FX" }).locator("select");
+const insertSelect = (page: Page) => page.locator("#inspector .param", { hasText: "Insert FX" }).locator("select");
 const paramSelect = (page: Page, label: string) =>
   page.locator("#inspector .param", { hasText: label }).locator("select");
-const param = (page: Page, label: string) =>
-  page.locator("#inspector .param", { hasText: label });
+const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -134,11 +132,21 @@ test("insert FX option set depends on node kind (input vs output)", async ({ pag
   // family leaks into the other's selector.
   await node(page, "ch1").click();
   await expect(insertSelect(page).locator("option")).toHaveText([
-    "No Effect", "Clean", "Crunch", "Lead", "Drive", "Pitch Fix", "Compander-H", "Compander-S",
+    "No Effect",
+    "Clean",
+    "Crunch",
+    "Lead",
+    "Drive",
+    "Pitch Fix",
+    "Compander-H",
+    "Compander-S",
   ]);
   await node(page, "bus.stereo").click();
   await expect(insertSelect(page).locator("option")).toHaveText([
-    "No Effect", "M.Band Comp", "Compander-H", "Compander-S",
+    "No Effect",
+    "M.Band Comp",
+    "Compander-H",
+    "Compander-S",
   ]);
 });
 

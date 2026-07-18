@@ -94,7 +94,8 @@ export const en = {
     // Shown on a row that shares its MIDI control with an earlier assignment
     // (a gang): they move together, and feedback follows the first-assigned.
     linked: "Linked",
-    linkedHint: "Shares one MIDI control with the first assignment for this address; they move together, and MIDI feedback follows that first assignment.",
+    linkedHint:
+      "Shares one MIDI control with the first assignment for this address; they move together, and MIDI feedback follows that first assignment.",
     mode: { absolute: "Absolute", pickup: "Pickup" },
     // Named after the SENDER's button type (the controller-side setting the
     // user reads, e.g. Stream Deck): a momentary button (value on press, 0 on
@@ -109,11 +110,13 @@ export const en = {
     // hovered / focused (a native dropdown cannot annotate its own options).
     modeDesc: {
       absolute: "Applies the received value as-is. Jumps when the physical control and the on-screen value disagree.",
-      pickup: "Ignored until the physical control reaches or crosses the on-screen value — no jumps, but inert until it catches up.",
+      pickup:
+        "Ignored until the physical control reaches or crosses the on-screen value — no jumps, but inert until it catches up.",
     },
     buttonModeDesc: {
       edge: "For push / momentary buttons: flips once on each press; the release (0) is ignored — and it still flips every press even if the button sends only an on-value and never a release.",
-      state: "For toggle buttons that alternate 127/0 per press (e.g. Stream Deck toggles): the value is the state — 64 and above = on, below = off. A momentary button gives hold-to-enable.",
+      state:
+        "For toggle buttons that alternate 127/0 per press (e.g. Stream Deck toggles): the value is the state — 64 and above = on, below = off. A momentary button gives hold-to-enable.",
     },
     bound: (control: string, addr: string): string => `Assigned ${addr} to ${control}`,
     inputError: (message: string): string => `MIDI input error: ${message}`,
@@ -316,11 +319,15 @@ export const en = {
     off: "OFF",
     notReadFromDevice: "Not read from the device — showing the plan default.",
     selectionOnly: "Selection only — no send parameters.",
-    directOutTap: "Direct out — tapped at the channel Rec Point, before the fader and Ducker. Route via a STEREO or MIX bus to include them.",
-    sdRecTap: "Records this channel at its Rec Point (pre-fader by default). Change the channel's Rec Point to pick the recorded stage.",
-    duckerKeyTap: "Ducker key — tapped at the source channel's Rec Point, before its fader and Ducker, so that channel's fader / mute do not change the trigger. Key from a STEREO or MIX bus to trigger post-fader.",
+    directOutTap:
+      "Direct out — tapped at the channel Rec Point, before the fader and Ducker. Route via a STEREO or MIX bus to include them.",
+    sdRecTap:
+      "Records this channel at its Rec Point (pre-fader by default). Change the channel's Rec Point to pick the recorded stage.",
+    duckerKeyTap:
+      "Ducker key — tapped at the source channel's Rec Point, before its fader and Ducker, so that channel's fader / mute do not change the trigger. Key from a STEREO or MIX bus to trigger post-fader.",
     fixedConnection: "Fixed connection — always enabled, cannot be removed.",
-    duckerPreSend: "This channel's Ducker is on, but this PRE (pre-fader) send taps ahead of it, so the send is not ducked. Switch to POST to include the duck.",
+    duckerPreSend:
+      "This channel's Ducker is on, but this PRE (pre-fader) send taps ahead of it, so the send is not ducked. Switch to POST to include the duck.",
     busType: "BUS Type",
     panLink: "Pan Link",
     busFixedLevel: "Send level is fixed (BUS Type: FIXED).",
@@ -397,20 +404,17 @@ export const en = {
     pdfExported: "PDF exported",
     arranged: "Arranged to the default layout",
     fetchConnecting: "Connecting to the device…",
-    fetchedDevice: (model: string, n: number): string =>
-      `Fetched ${n} setting${n === 1 ? "" : "s"} from ${model}`,
+    fetchedDevice: (model: string, n: number): string => `Fetched ${n} setting${n === 1 ? "" : "s"} from ${model}`,
     fetchedUnread: (model: string, n: number, unread: number): string =>
       `Fetched ${n} from ${model}; ${unread} node${unread === 1 ? "" : "s"} not read`,
     fetchPartial: (n: number, failed: number, unread: number): string =>
-      `Fetched ${n}, ${failed} failed` +
-      (unread ? `, ${unread} node${unread === 1 ? "" : "s"} not read` : ""),
+      `Fetched ${n}, ${failed} failed` + (unread ? `, ${unread} node${unread === 1 ? "" : "s"} not read` : ""),
     fetchError: (message: string): string => `Device fetch failed: ${message}`,
     writeConnecting: "Connecting to the device…",
     writeNoChanges: "Device already matches the plan — nothing to write",
     written: (n: number): string => `Wrote ${n} setting${n === 1 ? "" : "s"} to the device`,
     writePartial: (n: number, failed: number): string => `Wrote ${n}, ${failed} failed`,
-    writeResidual: (n: number): string =>
-      `Wrote, but ${n} param${n === 1 ? "" : "s"} did not take (see console)`,
+    writeResidual: (n: number): string => `Wrote, but ${n} param${n === 1 ? "" : "s"} did not take (see console)`,
     writeError: (message: string): string => `Device write failed: ${message}`,
     selfTestRunning: "Running device self-test… do not disconnect (use the menu again to cancel)",
     selfTestCancelled: "Self-test cancelled — device left silent; fetch again to restore your state",
@@ -422,8 +426,7 @@ export const en = {
       `Self-test guesses: ${confirmed} confirmed, ${refuted} refuted, ${untestable} untestable`,
     selfTestError: (message: string): string => `Self-test error: ${message}`,
     liveConnecting: "Connecting for live sync…",
-    liveOn: (model: string, n: number): string =>
-      `Live sync on · ${model} · ${n} setting${n === 1 ? "" : "s"} read`,
+    liveOn: (model: string, n: number): string => `Live sync on · ${model} · ${n} setting${n === 1 ? "" : "s"} read`,
     liveOff: "Live sync off",
     liveSynced: (n: number): string => `→ device (${n})`,
     liveFollowing: "← device…",
@@ -466,8 +469,7 @@ export const en = {
       "Run the device self-test? It briefly overwrites every parameter to verify writes, then restores the original state. Outputs stay muted throughout (faders floored, oscillator and phantom off).",
     selfTestExport:
       "This model has unconfirmed parameter mappings. Save the self-test report so it can be sent back to confirm them?",
-    deviceErrorExport:
-      "Some parameters could not be read or written. Save a report listing each failure?",
+    deviceErrorExport: "Some parameters could not be read or written. Save a report listing each failure?",
   },
   consent: {
     title: "Before you start",

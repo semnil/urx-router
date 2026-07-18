@@ -177,9 +177,21 @@ describe("tapAddrs → apply → reading pipeline (subscription set is sufficien
 describe("hasMeter mapping completeness", () => {
   it("covers exactly the metered console strips and excludes output patches for URX22", () => {
     for (const id of [
-      "ch1", "ch2", "ch_3_4", "ch_5_6", "ch_7_8", "ch_9_10",
-      "bus.stereo", "bus.mix1", "bus.mix2", "bus.fx1", "bus.fx2",
-      "bus.stream", "bus.mon1", "bus.mon2", "bus.osc",
+      "ch1",
+      "ch2",
+      "ch_3_4",
+      "ch_5_6",
+      "ch_7_8",
+      "ch_9_10",
+      "bus.stereo",
+      "bus.mix1",
+      "bus.mix2",
+      "bus.fx1",
+      "bus.fx2",
+      "bus.stream",
+      "bus.mon1",
+      "bus.mon2",
+      "bus.osc",
     ]) {
       expect(hasMeter(id, "URX22"), id).toBe(true);
     }
@@ -192,9 +204,19 @@ describe("hasMeter mapping completeness", () => {
     // Test both explicit model IDs and the undefined default fallback (backward compatibility)
     for (const modelId of ["URX44", "URX44V", undefined] as const) {
       for (const id of [
-        "ch1", "ch4", "ch_5_6", "ch_11_12",
-        "bus.stereo", "bus.mix1", "bus.mix2", "bus.fx1", "bus.fx2",
-        "bus.stream", "bus.mon1", "bus.mon2", "bus.osc",
+        "ch1",
+        "ch4",
+        "ch_5_6",
+        "ch_11_12",
+        "bus.stereo",
+        "bus.mix1",
+        "bus.mix2",
+        "bus.fx1",
+        "bus.fx2",
+        "bus.stream",
+        "bus.mon1",
+        "bus.mon2",
+        "bus.osc",
       ]) {
         expect(hasMeter(id, modelId), `${modelId}: ${id}`).toBe(true);
       }

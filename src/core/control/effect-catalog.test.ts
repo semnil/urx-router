@@ -9,19 +9,8 @@
 // the value-domain tests, which only probe calibrated interior points, do not.
 
 import { describe, expect, it } from "vitest";
-import {
-  DELAY_PARAMS,
-  REVR3_PARAMS,
-  REVX_PARAMS,
-  fxParams,
-  type FxParamDesc,
-} from "./fx-effect";
-import {
-  MBC_BAND_PARAM,
-  insertFxParams,
-  type InsertFxFamily,
-  type InsertFxParamDesc,
-} from "./insert-fx-effect";
+import { DELAY_PARAMS, REVR3_PARAMS, REVX_PARAMS, fxParams, type FxParamDesc } from "./fx-effect";
+import { MBC_BAND_PARAM, insertFxParams, type InsertFxFamily, type InsertFxParamDesc } from "./insert-fx-effect";
 
 // A label must be a non-empty string with no NaN/undefined leaking into it.
 function assertLabel(label: string, ctx: string): void {

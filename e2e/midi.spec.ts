@@ -270,7 +270,12 @@ test("the SENDS rack controls arm with send-scoped control ids", async ({ page }
     has: page.getByRole("button", { name: "M1", exact: true }),
   });
   // The MIX 1 enable chip reuses the send-scoped mute id (old send-tab mappings work).
-  await learnBinding(page, () => m1.getByRole("button", { name: "M1", exact: true }).click(), [0xb0, 30, 100], [0xb0, 30, 101]);
+  await learnBinding(
+    page,
+    () => m1.getByRole("button", { name: "M1", exact: true }).click(),
+    [0xb0, 30, 100],
+    [0xb0, 30, 101],
+  );
   await expect(page.locator('#midi-panel .mp-row[data-control="ch1/mute@bus.mix1"]')).toBeVisible();
   // The MIX 1 PRE button binds the send tap (a new toggle control).
   await learnBinding(page, () => m1.locator(".con-slp").click(), [0x90, 61, 127]);
@@ -348,7 +353,11 @@ test("assignment selects form an aligned column across rows", async ({ page }) =
   await openPanel(page);
   await pickInputPort(page);
   await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
-  await learnBinding(page, () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" }).click(), [0x90, 60, 127]);
+  await learnBinding(
+    page,
+    () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" }).click(),
+    [0x90, 60, 127],
+  );
   await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
 
   const mode = await page.locator('#midi-panel .mp-row[data-control="ch1/level"] .mp-mode').boundingBox();
@@ -394,7 +403,9 @@ test("the option legend floats beside its row and never hides the hovered select
       }
     }
     mappings.push({ control: "ch3/level" }, { control: "ch4/mute" });
-    const models = { URX44V: mappings.map((m, i) => ({ ...m, addr: { type: "cc", channel: 0, controller: i + 1 }, mode: "absolute" })) };
+    const models = {
+      URX44V: mappings.map((m, i) => ({ ...m, addr: { type: "cc", channel: 0, controller: i + 1 }, mode: "absolute" })),
+    };
     localStorage.setItem("urx-midi", JSON.stringify({ models }));
   });
   await page.reload();
@@ -563,10 +574,15 @@ test("an open SEND PAN popover follows an incoming mapped pan CC", async ({ page
   const pop = page.locator(".con-spop");
   const mix1 = () => pop.locator(".pcol", { hasText: "MIX 1" });
   // The pan knob lives inside the popover, so open it under learn to arm it.
-  await learnBinding(page, async () => {
-    await panBtn().click();
-    await mix1().locator(".con-knob").click();
-  }, [0xb0, 21, 60], [0xb0, 21, 61]);
+  await learnBinding(
+    page,
+    async () => {
+      await panBtn().click();
+      await mix1().locator(".con-knob").click();
+    },
+    [0xb0, 21, 60],
+    [0xb0, 21, 61],
+  );
   await expect(page.locator('#midi-panel .mp-row[data-control="ch1/pan@bus.mix1"]')).toBeVisible();
   await page.locator("#midi-panel .mp-learn-btn").click(); // learn off (the press also closes the popover)
 

@@ -47,7 +47,10 @@ test("muting a channel dims the node and its outgoing send wire", async ({ page 
 test("Channel ON leads the channel inspector", async ({ page }) => {
   await chNode(page).click();
   // The first parameter row that carries an ON/OFF toggle is Channel ON.
-  const firstToggle = page.locator("#inspector .param").filter({ has: page.locator(".toggle") }).first();
+  const firstToggle = page
+    .locator("#inspector .param")
+    .filter({ has: page.locator(".toggle") })
+    .first();
   await expect(firstToggle).toContainText("Channel");
 });
 

@@ -81,11 +81,7 @@ function roundedCornerCoverage(x, y) {
 function pixel(x, y) {
   // Background gradient (top lighter), masked to a rounded square.
   const g = y / N;
-  const bg = [
-    Math.round(36 - 18 * g),
-    Math.round(28 - 13 * g),
-    Math.round(17 - 7 * g),
-  ];
+  const bg = [Math.round(36 - 18 * g), Math.round(28 - 13 * g), Math.round(17 - 7 * g)];
   const bgCov = roundedCornerCoverage(x, y);
   let c = [bg[0], bg[1], bg[2], bgCov];
 

@@ -112,7 +112,11 @@ describe("new CH SETTING / MIX params round-trip", () => {
   });
 
   it("STEREO / MIX master balance round-trips", async () => {
-    for (const [id, pan] of [["bus.stereo", -20], ["bus.mix1", 30], ["bus.mix2", -63]] as const) {
+    for (const [id, pan] of [
+      ["bus.stereo", -20],
+      ["bus.mix1", 30],
+      ["bus.mix2", -63],
+    ] as const) {
       const plan = base();
       plan.nodeParams[id] = { ...plan.nodeParams[id], pan };
       const back = await roundTrip(plan);
@@ -121,7 +125,10 @@ describe("new CH SETTING / MIX params round-trip", () => {
   });
 
   it("Signal Type stereo link and PAN/BAL mode", async () => {
-    for (const [stereoLink, panBal] of [[true, 1], [false, 0]] as const) {
+    for (const [stereoLink, panBal] of [
+      [true, 1],
+      [false, 0],
+    ] as const) {
       const plan = base();
       plan.nodeParams["ch1"] = { stereoLink, panBal };
       const back = await roundTrip(plan);
@@ -160,7 +167,12 @@ describe("enum options round-trip", () => {
   });
 
   it("EQ 1-knob type — mono (Intensity/Vocal) and output (Intensity/Loudness) round-trip", async () => {
-    for (const [id, type] of [["ch1", 0], ["ch1", 1], ["bus.stereo", 0], ["bus.stereo", 2]] as const) {
+    for (const [id, type] of [
+      ["ch1", 0],
+      ["ch1", 1],
+      ["bus.stereo", 0],
+      ["bus.stereo", 2],
+    ] as const) {
       const plan = base();
       plan.nodeParams[id] = { eqOneKnob: { on: true, type, level: 80 } };
       const back = await roundTrip(plan);
@@ -193,7 +205,10 @@ describe("STREAMING DELAY time round-trips at its extremes", () => {
 });
 
 describe("PHONES level round-trips at its extremes (PHONES 1 / 2)", () => {
-  for (const [id, level] of [["bus.mon1", PHONES_LEVEL_MIN], ["bus.mon2", PHONES_LEVEL_MAX]] as const) {
+  for (const [id, level] of [
+    ["bus.mon1", PHONES_LEVEL_MIN],
+    ["bus.mon2", PHONES_LEVEL_MAX],
+  ] as const) {
     it(`${id} = ${level}`, async () => {
       const plan = base();
       plan.nodeParams[id] = { phonesLevel: level };

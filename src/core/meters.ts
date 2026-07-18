@@ -186,7 +186,7 @@ export class MeterStore {
   readingTap(tap: MeterTap | null): MeterReading | null {
     if (!tap) return null;
     const lRaw = this.raw.get(addrKey(tap.l[0], tap.l[1])) ?? METER_SILENCE_RAW;
-    const rRaw = tap.r ? this.raw.get(addrKey(tap.r[0], tap.r[1])) ?? METER_SILENCE_RAW : lRaw;
+    const rRaw = tap.r ? (this.raw.get(addrKey(tap.r[0], tap.r[1])) ?? METER_SILENCE_RAW) : lRaw;
     return {
       l: decodeMeterDb(lRaw),
       r: decodeMeterDb(rRaw),

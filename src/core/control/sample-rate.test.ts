@@ -56,9 +56,7 @@ describe("sample rate — readback round-trip", () => {
   it("recovers a non-default device rate onto plan.sampleRate", async () => {
     // The all-default round-trip in readback.test only exercises 48 kHz; pin that
     // a non-default rate survives emit → device table → readback.
-    vi.mocked(vdGet).mockImplementation((paramId: number) =>
-      Promise.resolve(paramId === SAMPLE_RATE_ID ? 96000 : 0),
-    );
+    vi.mocked(vdGet).mockImplementation((paramId: number) => Promise.resolve(paramId === SAMPLE_RATE_ID ? 96000 : 0));
     const target = emptyPlan("URX44V");
     await applyDeviceState(model, target);
     expect(target.sampleRate).toBe(96000);

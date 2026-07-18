@@ -2,8 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 
 // The console runs against the factory plan (sends present), so we do NOT seed
 // "empty" here — the CH → MIX sends the FIXED / Pan-Link locks act on exist.
-const strip = (page: Page, name: string) =>
-  page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
+const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
 // The CH 1 → MIX 1 send column (chip → PRE → mini-fader) in the SENDS rack.
 const mix1Col = (page: Page) =>

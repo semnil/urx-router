@@ -198,9 +198,7 @@ export function mirrorBalPair(model: DeviceModel, plan: Plan, id: string): boole
   // into the same destination — the BAL pan is shared across the pair.
   for (const c of plan.connections) {
     if (c.kind !== "send" || c.from !== ref(id, "out")) continue;
-    const pc = plan.connections.find(
-      (p) => p.kind === "send" && p.from === ref(partner, "out") && p.to === c.to,
-    );
+    const pc = plan.connections.find((p) => p.kind === "send" && p.from === ref(partner, "out") && p.to === c.to);
     if (!pc) continue;
     pc.params = { ...pc.params, ...c.params };
   }
@@ -261,11 +259,7 @@ export function possibleSources(model: DeviceModel, to: string): Set<string> {
  *  connections to follow — pass a predicate that rejects silent (off / -∞) sends,
  *  otherwise the always-wired send mesh traces every node back to all inputs and
  *  the closure becomes the whole board. Cycle-safe via the visited closure. */
-export function upstreamNodes(
-  plan: Plan,
-  nodeId: string,
-  live: (conn: PlanConnection) => boolean,
-): Set<string> {
+export function upstreamNodes(plan: Plan, nodeId: string, live: (conn: PlanConnection) => boolean): Set<string> {
   const closure = new Set<string>([nodeId]);
   const stack = [nodeId];
   while (stack.length) {

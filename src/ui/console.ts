@@ -9,15 +9,51 @@
 
 import type { DeviceModel } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
-import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB, sendConnection, type NodeParams, type Plan, type PlanConnection } from "../core/plan";
+import {
+  LEVEL_MAX_DB,
+  LEVEL_MIN_DB,
+  LEVEL_OFF_DB,
+  sendConnection,
+  type NodeParams,
+  type Plan,
+  type PlanConnection,
+} from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
-import { defaultTapKey, hasMeter, isStereoTap, METER_FLOOR_DB, METER_GREEN_TOP_DB, METER_YELLOW_TOP_DB, MeterStore, subscribeMeters, tapAddrs, tapFor, tapsFor, type MeterTap } from "../core/meters";
+import {
+  defaultTapKey,
+  hasMeter,
+  isStereoTap,
+  METER_FLOOR_DB,
+  METER_GREEN_TOP_DB,
+  METER_YELLOW_TOP_DB,
+  MeterStore,
+  subscribeMeters,
+  tapAddrs,
+  tapFor,
+  tapsFor,
+  type MeterTap,
+} from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
 import { channelEqUnavailable } from "../core/constraints";
 import { busBalance, channelControl, insertFxControl } from "../core/control/translate";
-import { isBalLinkedPair, isNodeInactive, mirrorBalPair, mixSendLocks, partnerChannel, sendTapWritable } from "../core/routing";
+import {
+  isBalLinkedPair,
+  isNodeInactive,
+  mirrorBalPair,
+  mixSendLocks,
+  partnerChannel,
+  sendTapWritable,
+} from "../core/routing";
 import { INSERT_FX_NONE, type InsertFxOption } from "../core/control/params";
-import { DELAY_TIME_MAX_MS, DELAY_TIME_MIN_MS, PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../core/control/vd";
+import {
+  DELAY_TIME_MAX_MS,
+  DELAY_TIME_MIN_MS,
+  PAN_MAX,
+  PAN_MIN,
+  PHONES_LEVEL_DEFAULT,
+  PHONES_LEVEL_MAX,
+  PHONES_LEVEL_MIN,
+} from "../core/control/vd";
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, type SendTarget } from "../core/midi/controls";
@@ -65,7 +101,6 @@ const NORMAL_RANGE: LevelRange = {
   ticks: [10, 5, 0, -5, -10, -20, -40, -96],
 };
 
-
 function dbToFrac(db: number, r: LevelRange): number {
   return r.toFrac(db);
 }
@@ -98,7 +133,11 @@ function meterGlyph(): SVGElement {
   svg.setAttribute("height", "8");
   svg.setAttribute("aria-hidden", "true");
   svg.classList.add("mtr-ico");
-  for (const [x, y, h] of [[0, 4, 4], [3.1, 2, 6], [6.2, 0, 8]]) {
+  for (const [x, y, h] of [
+    [0, 4, 4],
+    [3.1, 2, 6],
+    [6.2, 0, 8],
+  ]) {
     const rect = document.createElementNS(ns, "rect");
     rect.setAttribute("x", String(x));
     rect.setAttribute("y", String(y));
@@ -420,7 +459,15 @@ export class Console {
     const key = this.hooks.getModel().id + "|" + hidden.join(",");
     if (this.idsCache.key !== key) {
       const h = new Set(hidden);
-      this.idsCache = { key, ids: new Set(this.hooks.getModel().nodes.map((n) => n.id).filter((i) => !h.has(i))) };
+      this.idsCache = {
+        key,
+        ids: new Set(
+          this.hooks
+            .getModel()
+            .nodes.map((n) => n.id)
+            .filter((i) => !h.has(i)),
+        ),
+      };
     }
     return this.idsCache.ids;
   }
@@ -505,7 +552,8 @@ export class Console {
   private loadTaps(): void {
     this.meterTap.clear();
     const m = this.allTaps()[this.hooks.getModel().id];
-    if (m && typeof m === "object") for (const [k, v] of Object.entries(m)) if (typeof v === "string") this.meterTap.set(k, v);
+    if (m && typeof m === "object")
+      for (const [k, v] of Object.entries(m)) if (typeof v === "string") this.meterTap.set(k, v);
   }
 
   private saveTaps(): void {
@@ -680,7 +728,11 @@ export class Console {
   // One send column: enable chip (params.on, amber = active) → PRE button (params.tap,
   // amber = pre; read-only for a CH → FX tap while live) → vertical mini-fader
   // (params.level, relative drag, snapped to the level_gain grid).
-  private buildSendCol(m: StripModel, target: SendTarget, swap: (text: string | null) => void): { el: HTMLElement; ref: SendColRef } {
+  private buildSendCol(
+    m: StripModel,
+    target: SendTarget,
+    swap: (text: string | null) => void,
+  ): { el: HTMLElement; ref: SendColRef } {
     const range = m.range;
     // The column's connection object is stable for this build's lifetime — edits
     // mutate its `params` in place, and a plan swap re-renders — so capture it once
@@ -714,22 +766,34 @@ export class Console {
     };
 
     // enable chip
-    const chip = this.buildChip(m.id, SEND_SHORT[target], c?.params?.on !== false, () => {
-      const next = c?.params?.on === false; // was off → turn on
-      if (c) c.params = { ...c.params, on: next };
-      return next;
-    }, { cls: "con-sl", midiId: controlId(m.id, "mute", target), after: (next) => col.classList.toggle("off", !next) });
+    const chip = this.buildChip(
+      m.id,
+      SEND_SHORT[target],
+      c?.params?.on !== false,
+      () => {
+        const next = c?.params?.on === false; // was off → turn on
+        if (c) c.params = { ...c.params, on: next };
+        return next;
+      },
+      { cls: "con-sl", midiId: controlId(m.id, "mute", target), after: (next) => col.classList.toggle("off", !next) },
+    );
 
     // PRE button
     const tapReadonly = this.live && !sendTapWritable(this.hooks.getModel(), m.id, target);
-    const preBtn = this.buildChip(m.id, t().console.pre, c?.params?.tap === "pre", () => {
-      const next = c?.params?.tap !== "pre";
-      if (c) c.params = { ...c.params, tap: next ? "pre" : "post" };
-      this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, next); // refresh PRE prefix
-      return next;
-    }, tapReadonly
-      ? { cls: "con-slp", readonlyTitle: t().inspector.prePostLcdOnly, title: t().console.preHint }
-      : { cls: "con-slp", midiId: isMix ? controlId(m.id, "tap", target) : undefined, title: t().console.preHint });
+    const preBtn = this.buildChip(
+      m.id,
+      t().console.pre,
+      c?.params?.tap === "pre",
+      () => {
+        const next = c?.params?.tap !== "pre";
+        if (c) c.params = { ...c.params, tap: next ? "pre" : "post" };
+        this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, next); // refresh PRE prefix
+        return next;
+      },
+      tapReadonly
+        ? { cls: "con-slp", readonlyTitle: t().inspector.prePostLcdOnly, title: t().console.preHint }
+        : { cls: "con-slp", midiId: isMix ? controlId(m.id, "tap", target) : undefined, title: t().console.preHint },
+    );
 
     // A FIXED-bus send fader is display-only: paint its value but skip the wiring.
     if (!busFixed) this.wireColFader(m.id, target, c, ref, range, swap, readoutText);
@@ -818,7 +882,11 @@ export class Console {
     // Hover + wheel steps one detent, matching the main fader. The pointer sits over
     // the column while scrolling, so pointerenter has already surfaced the readout;
     // set() keeps it in step.
-    onWheelStep(fader, (dir) => set(this.faderWheelStep(range, level(), dir)), () => this.hooks.midi?.learnActive());
+    onWheelStep(
+      fader,
+      (dir) => set(this.faderWheelStep(range, level(), dir)),
+      () => this.hooks.midi?.learnActive(),
+    );
   }
 
   // The next fader level for a keydown (Arrow = 1 detent, PageUp/Down = 6, Home = max,
@@ -916,7 +984,14 @@ export class Console {
       );
       // partnerSync off: a BAL-linked mirror is handled by commit; a re-render would
       // tear down this popover, and no partner send-pan control is on screen.
-      const { knob, val } = this.buildKnob(spec, SEND_LABEL[target], stripId, "rv", controlId(stripId, "pan", target), false);
+      const { knob, val } = this.buildKnob(
+        spec,
+        SEND_LABEL[target],
+        stripId,
+        "rv",
+        controlId(stripId, "pan", target),
+        false,
+      );
       pcol.append(capEl, knob, val);
       grid.append(pcol);
     }
@@ -1122,7 +1197,14 @@ export class Console {
     label: string,
     on: boolean,
     toggle: () => boolean,
-    opts?: { cls?: string; mute?: boolean; readonlyTitle?: string; midiId?: string; title?: string; after?: (next: boolean) => void },
+    opts?: {
+      cls?: string;
+      mute?: boolean;
+      readonlyTitle?: string;
+      midiId?: string;
+      title?: string;
+      after?: (next: boolean) => void;
+    },
   ): HTMLElement {
     const { cls = "con-chip", mute, readonlyTitle, midiId, title, after } = opts ?? {};
     const chip = el("div", cls + (mute ? " mute" : "") + (on ? " on" : "") + (readonlyTitle ? " readonly" : ""));
@@ -1202,16 +1284,23 @@ export class Console {
       // LEVEL knob: full OSC range (-96…0 dB). The indicator's horizontal marks read
       // -50 (left) / -8 (right); the extremes (down-left / down-right) reach -96 / 0.
       const factory = this.factoryPlan().nodeParams[m.id]?.osc?.level ?? -14;
-      this.addKnob(head, "LEVEL", {
-        get: () => this.getMain(m),
-        set: (v) => this.setMain(m, v),
-        min: -96,
-        max: 0,
-        step: 1,
-        format: (v) => v.toFixed(1),
-        reset: factory,
-        angle: (v) => (v <= -50 ? -135 + ((v + 96) / 46) * 45 : v >= -8 ? 90 + ((v + 8) / 8) * 45 : -90 + ((v + 50) / 42) * 180),
-      }, m.id, controlId(m.id, "level"));
+      this.addKnob(
+        head,
+        "LEVEL",
+        {
+          get: () => this.getMain(m),
+          set: (v) => this.setMain(m, v),
+          min: -96,
+          max: 0,
+          step: 1,
+          format: (v) => v.toFixed(1),
+          reset: factory,
+          angle: (v) =>
+            v <= -50 ? -135 + ((v + 96) / 46) * 45 : v >= -8 ? 90 + ((v + 8) / 8) * 45 : -90 + ((v + 50) / 42) * 180,
+        },
+        m.id,
+        controlId(m.id, "level"),
+      );
     }
     // STREAMING: a DELAY on/off chip and a TIME knob (the delay time, 1…1000 ms).
     // Gives the otherwise-bare head controls so the strip reads as purposeful, and
@@ -1228,18 +1317,23 @@ export class Console {
       chips.append(el("div", "con-chip spacer"));
       head.append(chips);
       const factory = this.factoryPlan().nodeParams[m.id]?.delay?.time ?? DELAY_TIME_MIN_MS;
-      this.addKnob(head, "TIME", {
-        get: () => this.hooks.getPlan().nodeParams[m.id]?.delay?.time ?? DELAY_TIME_MIN_MS,
-        set: (v) => {
-          const np = this.nodeParamsOf(m.id);
-          np.delay = { ...np.delay, time: v };
+      this.addKnob(
+        head,
+        "TIME",
+        {
+          get: () => this.hooks.getPlan().nodeParams[m.id]?.delay?.time ?? DELAY_TIME_MIN_MS,
+          set: (v) => {
+            const np = this.nodeParamsOf(m.id);
+            np.delay = { ...np.delay, time: v };
+          },
+          min: DELAY_TIME_MIN_MS,
+          max: DELAY_TIME_MAX_MS,
+          step: 1, // whole-ms on the knob; the inspector keeps the 0.01 ms grid
+          format: (v) => (v < 100 ? v.toFixed(1) : String(Math.round(v))),
+          reset: factory,
         },
-        min: DELAY_TIME_MIN_MS,
-        max: DELAY_TIME_MAX_MS,
-        step: 1, // whole-ms on the knob; the inspector keeps the 0.01 ms grid
-        format: (v) => (v < 100 ? v.toFixed(1) : String(Math.round(v))),
-        reset: factory,
-      }, m.id);
+        m.id,
+      );
     }
     strip.append(head);
     // A meter-only strip has no sends, so its rack is the dimmed SENDS header only —
@@ -1361,14 +1455,33 @@ export class Console {
     // processing chain GATE → COMP → EQ → INS FX. Each chip flips a plan flag (the
     // device mirrors it via the shared change funnel). An odd group gets an unused
     // spacer chip so the last real chip never stretches to full width.
-    type BoolKey = "gateOn" | "compOn" | "eqOn" | "phantom" | "phase" | "phaseL" | "phaseR" | "hpf" | "hiZ" | "cueInterrupt" | "mono";
+    type BoolKey =
+      | "gateOn"
+      | "compOn"
+      | "eqOn"
+      | "phantom"
+      | "phase"
+      | "phaseL"
+      | "phaseR"
+      | "hpf"
+      | "hiZ"
+      | "cueInterrupt"
+      | "mono";
     const planOf = (): NodeParams => this.hooks.getPlan().nodeParams[m.id] ?? {};
     const boolChip = (parent: HTMLElement, label: string, key: BoolKey, def: boolean, title?: string): void => {
-      this.makeChip(m.id, parent, label, false, planOf()[key] ?? def, () => {
-        const next = !(planOf()[key] ?? def);
-        this.nodeParamsOf(m.id)[key] = next;
-        return next;
-      }, { midiId: controlId(m.id, key), title });
+      this.makeChip(
+        m.id,
+        parent,
+        label,
+        false,
+        planOf()[key] ?? def,
+        () => {
+          const next = !(planOf()[key] ?? def);
+          this.nodeParamsOf(m.id)[key] = next;
+          return next;
+        },
+        { midiId: controlId(m.id, key), title },
+      );
     };
 
     // channel + input (HA) group
@@ -1380,12 +1493,20 @@ export class Console {
       const mix = this.isMixBus(m.id);
       const conn = (): PlanConnection | undefined => sendConnection(this.hooks.getPlan(), m.id, MAIN_BUS);
       const sendOn = (): boolean => conn()?.params?.on ?? !mix; // assign ships ON, TO ST off
-      this.makeChip(m.id, top, t().console.mute, true, !sendOn(), () => {
-        const c = conn();
-        const nextOn = !sendOn();
-        if (c) c.params = { ...c.params, on: nextOn };
-        return !nextOn; // chip "on" (highlighted) = muted
-      }, { midiId: controlId(m.id, "mute") });
+      this.makeChip(
+        m.id,
+        top,
+        t().console.mute,
+        true,
+        !sendOn(),
+        () => {
+          const c = conn();
+          const nextOn = !sendOn();
+          if (c) c.params = { ...c.params, on: nextOn };
+          return !nextOn; // chip "on" (highlighted) = muted
+        },
+        { midiId: controlId(m.id, "mute") },
+      );
     }
     // HA input toggles (+48 / polarity / HPF / Hi-Z).
     if (cc?.hasMicStrip) boolChip(top, "+48", "phantom", false);
@@ -1415,7 +1536,9 @@ export class Console {
       // Stereo-channel EQ is inert at 176.4 / 192 kHz: show the chip forced off and
       // read-only (matches the inspector's locked EQ toggle), else a live toggle.
       if (channelEqUnavailable(m.id, this.hooks.getPlan().sampleRate))
-        this.makeChip(m.id, proc, t().console.eq, false, false, () => false, { readonlyTitle: t().inspector.eqRateLocked });
+        this.makeChip(m.id, proc, t().console.eq, false, false, () => false, {
+          readonlyTitle: t().inspector.eqRateLocked,
+        });
       else boolChip(proc, t().console.eq, "eqOn", true);
     }
     const ifx = insertFxControl(model, m.id);
@@ -1432,11 +1555,19 @@ export class Console {
     const duckerId = model.nodes.find((n) => n.kind === "ducker" && n.attachTo === m.id && !hidden.includes(n.id))?.id;
     if (duckerId) {
       const duckOn = (): boolean => this.hooks.getPlan().nodeParams[duckerId]?.duckerOn === true;
-      this.makeChip(duckerId, proc, "DUCKER", false, duckOn(), () => {
-        const next = !duckOn();
-        this.nodeParamsOf(duckerId).duckerOn = next;
-        return next;
-      }, { midiId: controlId(duckerId, "duckerOn") });
+      this.makeChip(
+        duckerId,
+        proc,
+        "DUCKER",
+        false,
+        duckOn(),
+        () => {
+          const next = !duckOn();
+          this.nodeParamsOf(duckerId).duckerOn = next;
+          return next;
+        },
+        { midiId: controlId(duckerId, "duckerOn") },
+      );
     }
 
     for (const group of [top, proc]) {
@@ -1451,16 +1582,22 @@ export class Console {
       const factory = this.factoryPlan().nodeParams[m.id]?.gain ?? (m.isMono ? -8 : 0);
       // Horizontal-marking values: A.Gain +8/+55, D.Gain -14/+15.
       const [hl, hr] = m.isMono ? [8, 55] : [-14, 15];
-      this.addKnob(head, m.isMono ? "A.GAIN" : "D.GAIN", {
-        get: () => this.hooks.getPlan().nodeParams[m.id]?.gain ?? factory,
-        set: (v) => void (this.nodeParamsOf(m.id).gain = v),
-        min,
-        max,
-        step: 1,
-        format: (v) => (v > 0 ? "+" : "") + v,
-        reset: factory,
-        angle: (v) => -90 + ((v - hl) / (hr - hl)) * 180,
-      }, m.id, controlId(m.id, "gain"));
+      this.addKnob(
+        head,
+        m.isMono ? "A.GAIN" : "D.GAIN",
+        {
+          get: () => this.hooks.getPlan().nodeParams[m.id]?.gain ?? factory,
+          set: (v) => void (this.nodeParamsOf(m.id).gain = v),
+          min,
+          max,
+          step: 1,
+          format: (v) => (v > 0 ? "+" : "") + v,
+          reset: factory,
+          angle: (v) => -90 + ((v - hl) / (hr - hl)) * 180,
+        },
+        m.id,
+        controlId(m.id, "gain"),
+      );
     }
     // PAN (mono) / BALANCE (stereo) = the source's → STEREO main-path pan,
     // L63 – C – R63. Per-send pan lives in the SENDS rack's SEND PAN popover.
@@ -1479,17 +1616,23 @@ export class Console {
       // PHONES output level: a 0.0..10.0 scale (not dB) on the monitor bus,
       // independent of the monitor fader (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2).
       const factory = this.factoryPlan().nodeParams[m.id]?.phonesLevel ?? PHONES_LEVEL_DEFAULT;
-      this.addKnob(head, "PHONES", {
-        get: () => this.hooks.getPlan().nodeParams[m.id]?.phonesLevel ?? PHONES_LEVEL_DEFAULT,
-        set: (v) => void (this.nodeParamsOf(m.id).phonesLevel = v),
-        min: PHONES_LEVEL_MIN,
-        max: PHONES_LEVEL_MAX,
-        step: 0.1,
-        format: (v) => v.toFixed(1),
-        reset: factory,
-        // 2.0 at the left horizontal, 8.0 at the right (the device's markings).
-        angle: (v) => -90 + ((v - 2) / (8 - 2)) * 180,
-      }, m.id, controlId(m.id, "phonesLevel"));
+      this.addKnob(
+        head,
+        "PHONES",
+        {
+          get: () => this.hooks.getPlan().nodeParams[m.id]?.phonesLevel ?? PHONES_LEVEL_DEFAULT,
+          set: (v) => void (this.nodeParamsOf(m.id).phonesLevel = v),
+          min: PHONES_LEVEL_MIN,
+          max: PHONES_LEVEL_MAX,
+          step: 0.1,
+          format: (v) => v.toFixed(1),
+          reset: factory,
+          // 2.0 at the left horizontal, 8.0 at the right (the device's markings).
+          angle: (v) => -90 + ((v - 2) / (8 - 2)) * 180,
+        },
+        m.id,
+        controlId(m.id, "phonesLevel"),
+      );
     }
     strip.append(head);
 
@@ -1522,7 +1665,9 @@ export class Console {
 
     // Meter column: the ladder shares the fader ruler, topping out at the 0 dB mark
     // with the OVER clip window above it. Stereo taps split into independent L/R bars.
-    const tap = hasMeter(m.id, this.hooks.getModel().id) ? tapFor(m.id, tapKey, this.hooks.getModel().id) ?? null : null;
+    const tap = hasMeter(m.id, this.hooks.getModel().id)
+      ? (tapFor(m.id, tapKey, this.hooks.getModel().id) ?? null)
+      : null;
     const { meter, lanes } = this.buildMeterColumn(m.range, isStereoTap(tap));
 
     zrow.append(fader, this.buildScale(m.range), meter);
@@ -1610,7 +1755,11 @@ export class Console {
     });
     // Hover + wheel steps one detent (mirrors the Arrow keys); skipped while
     // assigning MIDI so a stray scroll doesn't edit an armed control.
-    onWheelStep(fader, (dir) => setLevel(this.faderWheelStep(range, this.getMain(r.m), dir)), () => this.hooks.midi?.learnActive());
+    onWheelStep(
+      fader,
+      (dir) => setLevel(this.faderWheelStep(range, this.getMain(r.m), dir)),
+      () => this.hooks.midi?.learnActive(),
+    );
   }
 
   private updateStripLevel(r: StripRef, db: number): void {
@@ -1789,7 +1938,16 @@ export class Console {
   /** Shared PAN/BALANCE knob spec (±63, C / Ln / Rn display); get/set/reset bind
    *  the source — a connection's send pan or a node's master balance. */
   private panKnobSpec(get: () => number, set: (v: number) => void, reset: number, readonlyTitle?: string): KnobSpec {
-    return { get, set, min: PAN_MIN, max: PAN_MAX, step: 1, format: (v) => (v === 0 ? "C" : v < 0 ? "L" + -v : "R" + v), reset, readonlyTitle };
+    return {
+      get,
+      set,
+      min: PAN_MIN,
+      max: PAN_MAX,
+      step: 1,
+      format: (v) => (v === 0 ? "C" : v < 0 ? "L" + -v : "R" + v),
+      reset,
+      readonlyTitle,
+    };
   }
 
   /** Add a PAN/BALANCE knob bound to a send connection's `pan` (L63 – C – R63),
@@ -1797,23 +1955,38 @@ export class Console {
   private addSendPanKnob(head: HTMLElement, id: string, target: string, label: string, readonlyTitle?: string): void {
     const conn = (): PlanConnection | undefined => sendConnection(this.hooks.getPlan(), id, target);
     const factory = sendConnection(this.factoryPlan(), id, target)?.params?.pan ?? 0;
-    this.addKnob(head, label, this.panKnobSpec(
-      () => conn()?.params?.pan ?? 0,
-      (v) => { const c = conn(); if (c) c.params = { ...c.params, pan: v }; },
-      factory,
-      readonlyTitle,
-    ), id, controlId(id, "pan", target === MAIN_BUS ? undefined : target));
+    this.addKnob(
+      head,
+      label,
+      this.panKnobSpec(
+        () => conn()?.params?.pan ?? 0,
+        (v) => {
+          const c = conn();
+          if (c) c.params = { ...c.params, pan: v };
+        },
+        factory,
+        readonlyTitle,
+      ),
+      id,
+      controlId(id, "pan", target === MAIN_BUS ? undefined : target),
+    );
   }
 
   /** Add a BALANCE/PAN knob bound to a bus node's own master balance (`pan`,
    *  STEREO 583 / MIX 676), resetting to the factory plan's value on double-click. */
   private addNodePanKnob(head: HTMLElement, id: string, label: string): void {
     const factory = this.factoryPlan().nodeParams[id]?.pan ?? 0;
-    this.addKnob(head, label, this.panKnobSpec(
-      () => this.hooks.getPlan().nodeParams[id]?.pan ?? 0,
-      (v) => void (this.nodeParamsOf(id).pan = v),
-      factory,
-    ), id, controlId(id, "pan"));
+    this.addKnob(
+      head,
+      label,
+      this.panKnobSpec(
+        () => this.hooks.getPlan().nodeParams[id]?.pan ?? 0,
+        (v) => void (this.nodeParamsOf(id).pan = v),
+        factory,
+      ),
+      id,
+      controlId(id, "pan"),
+    );
   }
 
   private nodeParamsOf(id: string): NodeParams {
@@ -1931,7 +2104,14 @@ export class Console {
   // tabindex plumbing), wired via wireKnob. addKnob wraps it in the head's con-gain
   // box; the SEND PAN popover wraps it in a pcol (with a "rv" value class). A
   // device-locked knob shows its value but takes no input (wireKnob skips handlers).
-  private buildKnob(k: KnobSpec, ariaLabel: string, id: string, valCls: string, midiId?: string, partnerSync = true): { knob: HTMLElement; val: HTMLElement } {
+  private buildKnob(
+    k: KnobSpec,
+    ariaLabel: string,
+    id: string,
+    valCls: string,
+    midiId?: string,
+    partnerSync = true,
+  ): { knob: HTMLElement; val: HTMLElement } {
     const knob = el("div", "con-knob" + (k.readonlyTitle ? " readonly" : ""));
     knob.setAttribute("role", "slider");
     knob.setAttribute("aria-label", ariaLabel);
@@ -1954,7 +2134,14 @@ export class Console {
   // strip's head knob catches up; the SEND PAN popover knob turns it OFF, since a
   // render would tear the popover down and no partner send-pan control is on screen
   // (the plan mirror via `commit` is enough).
-  private wireKnob(knob: HTMLElement, val: HTMLElement, k: KnobSpec, id: string, midiId?: string, partnerSync = true): void {
+  private wireKnob(
+    knob: HTMLElement,
+    val: HTMLElement,
+    k: KnobSpec,
+    id: string,
+    midiId?: string,
+    partnerSync = true,
+  ): void {
     const angle = k.angle ?? ((v: number): number => -135 + ((v - k.min) / (k.max - k.min)) * 270);
     const show = (v: number): void => {
       val.textContent = k.format(v);
@@ -2001,10 +2188,14 @@ export class Console {
     });
     // Hover + wheel nudges by one step (mirrors the Arrow keys). This sits below the
     // readonlyTitle early-return above, so device-locked knobs take no wheel input.
-    onWheelStep(knob, (dir) => {
-      apply(k.get() + dir * k.step);
-      if (partnerSync) this.syncPartnerStrip(id);
-    }, () => this.hooks.midi?.learnActive());
+    onWheelStep(
+      knob,
+      (dir) => {
+        apply(k.get() + dir * k.step);
+        if (partnerSync) this.syncPartnerStrip(id);
+      },
+      () => this.hooks.midi?.learnActive(),
+    );
   }
 }
 

@@ -101,7 +101,12 @@ describe("MIDI mapping model", () => {
 
   it("applies the relative→absolute and mute→chOn migrations together in one entry", () => {
     const persisted = [
-      { control: "bus.stereo/mute", addr: { type: "cc", channel: 0, controller: 7 }, mode: "relative", encoding: "twos" },
+      {
+        control: "bus.stereo/mute",
+        addr: { type: "cc", channel: 0, controller: 7 },
+        mode: "relative",
+        encoding: "twos",
+      },
     ];
     expect(sanitizeMappings(persisted)).toEqual([
       { control: "bus.stereo/chOn", addr: { type: "cc", channel: 0, controller: 7 }, mode: "absolute" },

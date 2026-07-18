@@ -6,7 +6,20 @@ import type { DeviceModel, DeviceNode, NodeKind, PortDirection } from "../models
 import { fullLabel, hangsUnderHeader, isSingleInput, parseRef, ref } from "../models/types";
 import type { Plan, PlanConnection } from "../core/plan";
 import { hasConnection, LEVEL_MIN_DB, removeConnection } from "../core/plan";
-import { canConnect, isFixedConnection, isNodeInactive, legalSources, legalTargets, pairPrimary, partnerChannel, possibleSources, possibleTargets, ruleKind, sendHasTap, upstreamNodes } from "../core/routing";
+import {
+  canConnect,
+  isFixedConnection,
+  isNodeInactive,
+  legalSources,
+  legalTargets,
+  pairPrimary,
+  partnerChannel,
+  possibleSources,
+  possibleTargets,
+  ruleKind,
+  sendHasTap,
+  upstreamNodes,
+} from "../core/routing";
 import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
 import type { SaveResult } from "../core/storage";
 import { oscAssign } from "../core/control/translate";
@@ -119,7 +132,14 @@ const PALETTES: Record<ThemeName, Palette> = {
     label: "#f1e8d6",
     portOuter: "#0c0a07",
     portPinOff: "#241d12",
-    wire: { source: "#59b2ff", send: "#76d690", sendSwitch: "#4fc8b0", patch: "#ffb347", key: "#59b2ff", record: "#b58fe0" },
+    wire: {
+      source: "#59b2ff",
+      send: "#76d690",
+      sendSwitch: "#4fc8b0",
+      patch: "#ffb347",
+      key: "#59b2ff",
+      record: "#b58fe0",
+    },
     tempWire: "#caa86a",
     legalFill: "#1d3b2a",
     legalStroke: "#7fd0a0",
@@ -139,7 +159,14 @@ const PALETTES: Record<ThemeName, Palette> = {
     label: "#2a2418",
     portOuter: "#d9d0bd",
     portPinOff: "#cabd9f",
-    wire: { source: "#1f6fc8", send: "#1f8a52", sendSwitch: "#13836f", patch: "#b8700a", key: "#1f6fc8", record: "#7a52c0" },
+    wire: {
+      source: "#1f6fc8",
+      send: "#1f8a52",
+      sendSwitch: "#13836f",
+      patch: "#b8700a",
+      key: "#1f6fc8",
+      record: "#7a52c0",
+    },
     tempWire: "#9a8d70",
     legalFill: "#cde7d6",
     legalStroke: "#2f8f63",
@@ -151,10 +178,7 @@ const PALETTES: Record<ThemeName, Palette> = {
   },
 };
 
-export type Selection =
-  | { type: "node"; id: string }
-  | { type: "conn"; from: string; to: string }
-  | null;
+export type Selection = { type: "node"; id: string } | { type: "conn"; from: string; to: string } | null;
 
 export interface GraphCallbacks {
   onSelect: (sel: Selection) => void;
@@ -246,9 +270,13 @@ export class Graph {
   // A port press: starts as "pending", becomes a "connecting" rubber-band once
   // dragged past the threshold, or "noop" if the dragged port has no legal
   // partner. On release a non-connecting input press selects its incoming wire.
-  private connect:
-    | { ref: string; dir: PortDirection; startX: number; startY: number; mode: "pending" | "connecting" | "noop" }
-    | null = null;
+  private connect: {
+    ref: string;
+    dir: PortDirection;
+    startX: number;
+    startY: number;
+    mode: "pending" | "connecting" | "noop";
+  } | null = null;
   private tempWire: SVGPathElement | null = null;
   private panning: { startX: number; startY: number; panX: number; panY: number } | null = null;
   // Active touch points, used to detect a two-finger pinch. While two are down a
@@ -589,10 +617,7 @@ export class Graph {
   }
 
   private applyTransform(): void {
-    this.viewport.setAttribute(
-      "transform",
-      `translate(${this.pan.x} ${this.pan.y}) scale(${this.zoom})`,
-    );
+    this.viewport.setAttribute("transform", `translate(${this.pan.x} ${this.pan.y}) scale(${this.zoom})`);
     this.positionNoteEditor();
   }
 
@@ -737,9 +762,7 @@ export class Graph {
 
   // Whether a node is an endpoint of any wire (fixed sends included).
   private nodeHasWire(id: string): boolean {
-    return this.plan.connections.some(
-      (c) => parseRef(c.from).nodeId === id || parseRef(c.to).nodeId === id,
-    );
+    return this.plan.connections.some((c) => parseRef(c.from).nodeId === id || parseRef(c.to).nodeId === id);
   }
 
   // Whether a connection is an inaudible send: switched off (params.on === false —
@@ -1229,9 +1252,7 @@ export class Graph {
     const g = document.createElementNS(SVGNS, "g");
     const d = this.wirePath(conn.from, conn.to);
     const selected =
-      this.selection?.type === "conn" &&
-      this.selection.from === conn.from &&
-      this.selection.to === conn.to;
+      this.selection?.type === "conn" && this.selection.from === conn.from && this.selection.to === conn.to;
     const fromId = parseRef(conn.from).nodeId;
     const toId = parseRef(conn.to).nodeId;
     // An off / -∞ send recedes: faint and finely dotted, so a board of always-wired
@@ -1436,7 +1457,10 @@ export class Graph {
       const unread = !on && !onPath && !disabled && this.unreadNodes.has(id) && !this.isNodeInactive(node);
       el.classList.toggle("selected", on);
       rect.setAttribute("stroke-width", on ? "2.5" : onPath ? "2" : disabled ? "1.5" : unread ? "1.2" : "1");
-      rect.setAttribute("stroke", on || onPath ? this.palette.tempWire : disabled || unread ? this.palette.warn : this.palette.nodeStroke);
+      rect.setAttribute(
+        "stroke",
+        on || onPath ? this.palette.tempWire : disabled || unread ? this.palette.warn : this.palette.nodeStroke,
+      );
       if (disabled) rect.setAttribute("stroke-dasharray", "4 3");
       else if (unread) rect.setAttribute("stroke-dasharray", "2 3");
       else rect.removeAttribute("stroke-dasharray");
@@ -1466,15 +1490,10 @@ export class Graph {
       const partner = partnerChannel(this.model, parseRef(to).nodeId);
       if (partner) {
         const mirrorTo = ref(partner, parseRef(to).portId);
-        this.plan.connections = this.plan.connections.filter(
-          (c) => !(c.to === mirrorTo && isSingleInput(c.kind)),
-        );
+        this.plan.connections = this.plan.connections.filter((c) => !(c.to === mirrorTo && isSingleInput(c.kind)));
       }
     }
-    const isSel =
-      this.selection?.type === "conn" &&
-      this.selection.from === from &&
-      this.selection.to === to;
+    const isSel = this.selection?.type === "conn" && this.selection.from === from && this.selection.to === to;
     if (isSel) this.select(null);
     else this.redrawWires();
     this.refreshPortStates();
@@ -1501,9 +1520,10 @@ export class Graph {
     const target = e.target as Element;
 
     // Header note controls live inside the node group; read the id from it.
-    const btnNode = (target.closest(".note-toggle") || target.closest(".note-add"))
-      ? (target.closest(".node") as SVGGElement | null)
-      : null;
+    const btnNode =
+      target.closest(".note-toggle") || target.closest(".note-add")
+        ? (target.closest(".node") as SVGGElement | null)
+        : null;
     if (btnNode) {
       e.preventDefault();
       const id = btnNode.dataset.id!;
@@ -1809,14 +1829,10 @@ export class Graph {
   // or an input with no legal source — the latter keeps a press on a full input
   // selecting its incoming wire instead of opening a dead rubber-band.
   private beginConnect(from: string, dir: PortDirection): boolean {
-    const legal =
-      dir === "out"
-        ? legalTargets(this.model, this.plan, from)
-        : legalSources(this.model, this.plan, from);
+    const legal = dir === "out" ? legalTargets(this.model, this.plan, from) : legalSources(this.model, this.plan, from);
     // Possible partners include occupied ones, shown outline-only so the user can
     // see where a port could route even when the destination is taken.
-    const possible =
-      dir === "out" ? possibleTargets(this.model, from) : possibleSources(this.model, from);
+    const possible = dir === "out" ? possibleTargets(this.model, from) : possibleSources(this.model, from);
     // Gate: outputs open on any possible route (occupied targets still highlight);
     // inputs open only on a legal source, so a full input falls back to wire-select.
     if (dir === "out" ? !possible.size : !legal.size) return false;
@@ -1853,10 +1869,7 @@ export class Graph {
     // inputs to the left.
     const aCtrl = dir === "out" ? a.x + dx : a.x - dx;
     const bCtrl = dir === "out" ? to.x - dx : to.x + dx;
-    this.tempWire.setAttribute(
-      "d",
-      `M ${a.x} ${a.y} C ${aCtrl} ${a.y}, ${bCtrl} ${to.y}, ${to.x} ${to.y}`,
-    );
+    this.tempWire.setAttribute("d", `M ${a.x} ${a.y} C ${aCtrl} ${a.y}, ${bCtrl} ${to.y}, ${to.x} ${to.y}`);
   }
 
   // Commit a wire from a drag that started at `from` (output or input) released
@@ -1899,8 +1912,7 @@ export class Graph {
     const mirrorTo = ref(partner, portId);
     for (const c of this.plan.connections.filter((c) => c.to === mirrorTo && isSingleInput(c.kind)))
       removeConnection(this.plan, c.from, c.to);
-    if (!hasConnection(this.plan, from, mirrorTo))
-      this.plan.connections.push({ from, to: mirrorTo, kind: "source" });
+    if (!hasConnection(this.plan, from, mirrorTo)) this.plan.connections.push({ from, to: mirrorTo, kind: "source" });
   }
 
   private clearPortHighlights(): void {
@@ -2346,7 +2358,15 @@ function svgRect(x: number, y: number, w: number, h: number, rx: number, fill: s
   return r;
 }
 
-function svgLine(x1: number, y1: number, x2: number, y2: number, stroke: string, width: number, opacity: number): SVGLineElement {
+function svgLine(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  stroke: string,
+  width: number,
+  opacity: number,
+): SVGLineElement {
   const l = document.createElementNS(SVGNS, "line");
   l.setAttribute("x1", String(x1));
   l.setAttribute("y1", String(y1));

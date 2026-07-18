@@ -197,7 +197,10 @@ describe("rateConstraints boundary (BVA around 96 kHz)", () => {
     // URX22 does have bus.fx2; assert the disable list references a real node.
     const c = rateConstraints(MODELS.URX22, 192000);
     for (const id of c.disabledNodes) {
-      expect(MODELS.URX22.nodes.some((n) => n.id === id), id).toBe(true);
+      expect(
+        MODELS.URX22.nodes.some((n) => n.id === id),
+        id,
+      ).toBe(true);
     }
   });
 

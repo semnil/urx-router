@@ -30,8 +30,7 @@ async function stubFailingWrites(page: Page): Promise<void> {
           dialogs.push(String(args?.message ?? ""));
           return Promise.resolve("Ok");
         }
-        if (cmd === "write_text_file" || cmd === "write_binary_file")
-          return Promise.reject(new Error("disk full"));
+        if (cmd === "write_text_file" || cmd === "write_binary_file") return Promise.reject(new Error("disk full"));
         return cmd in constants
           ? Promise.resolve(constants[cmd])
           : Promise.reject(new Error(`stub: unhandled command ${cmd}`));

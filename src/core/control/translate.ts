@@ -10,7 +10,16 @@
 
 import type { ConnectionKind, DeviceModel, ModelId } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
-import type { CompParams, EqBand, EqOneKnobParams, FxEffectParams, GateParams, Plan, SsmcsBand, SsmcsParams } from "../plan";
+import type {
+  CompParams,
+  EqBand,
+  EqOneKnobParams,
+  FxEffectParams,
+  GateParams,
+  Plan,
+  SsmcsBand,
+  SsmcsParams,
+} from "../plan";
 import { incomingConnection } from "../plan";
 import {
   FX_EFFECT_ARRAY_PARAM,
@@ -632,16 +641,48 @@ export interface DynField {
 const GATE_FIELDS: DynField[] = [
   { key: "threshold", name: "GATE_THRESHOLD", min: -72, max: 0, step: 1, def: -50, unit: "db" },
   { key: "range", name: "GATE_RANGE", min: GATE_RANGE_OFF_DB, max: 0, step: 1, def: -56, unit: "db" },
-  { key: "attack", name: "GATE_ATTACK", min: DYN_ATTACK_MIN_MS, max: DYN_ATTACK_MAX_MS, step: 0.1, def: 20.17, unit: "ms" },
+  {
+    key: "attack",
+    name: "GATE_ATTACK",
+    min: DYN_ATTACK_MIN_MS,
+    max: DYN_ATTACK_MAX_MS,
+    step: 0.1,
+    def: 20.17,
+    unit: "ms",
+  },
   { key: "hold", name: "GATE_HOLD", min: DYN_HOLD_MIN_MS, max: DYN_HOLD_MAX_MS, step: 1, def: 15.3, unit: "ms" },
-  { key: "decay", name: "GATE_DECAY", min: DYN_RELEASE_MIN_MS, max: DYN_RELEASE_MAX_MS, step: 1, def: 150.2, unit: "ms" },
+  {
+    key: "decay",
+    name: "GATE_DECAY",
+    min: DYN_RELEASE_MIN_MS,
+    max: DYN_RELEASE_MAX_MS,
+    step: 1,
+    def: 150.2,
+    unit: "ms",
+  },
 ];
 const COMP_FIELDS: DynField[] = [
   { key: "threshold", name: "COMP_THRESHOLD", min: -54, max: 0, step: 1, def: -18, unit: "db" },
   { key: "ratio", name: "COMP_RATIO", min: DYN_RATIO_MIN, max: 20, step: 0.1, def: 3, unit: "ratio" },
   { key: "gain", name: "COMP_GAIN", min: 0, max: 18, step: 0.5, def: 2, unit: "db" },
-  { key: "attack", name: "COMP_ATTACK", min: DYN_ATTACK_MIN_MS, max: DYN_ATTACK_MAX_MS, step: 0.1, def: 34.58, unit: "ms" },
-  { key: "release", name: "COMP_RELEASE", min: DYN_RELEASE_MIN_MS, max: DYN_RELEASE_MAX_MS, step: 1, def: 218, unit: "ms" },
+  {
+    key: "attack",
+    name: "COMP_ATTACK",
+    min: DYN_ATTACK_MIN_MS,
+    max: DYN_ATTACK_MAX_MS,
+    step: 0.1,
+    def: 34.58,
+    unit: "ms",
+  },
+  {
+    key: "release",
+    name: "COMP_RELEASE",
+    min: DYN_RELEASE_MIN_MS,
+    max: DYN_RELEASE_MAX_MS,
+    step: 1,
+    def: 218,
+    unit: "ms",
+  },
 ];
 // Ducker detail (260-263, stereo channel sidechain). Same shapes as GATE but no
 // hold; decay shares the ×10 release scale with a wider range. Ordered as the
@@ -649,8 +690,24 @@ const COMP_FIELDS: DynField[] = [
 // Threshold box); each field carries its own param name, so order is display-only.
 export const DUCKER_FIELDS: DynField[] = [
   { key: "range", name: "DUCKER_RANGE", min: -70, max: 0, step: 1, def: -56, unit: "db" },
-  { key: "attack", name: "DUCKER_ATTACK", min: DYN_ATTACK_MIN_MS, max: DYN_ATTACK_MAX_MS, step: 0.1, def: 20.17, unit: "ms" },
-  { key: "decay", name: "DUCKER_DECAY", min: DUCKER_DECAY_MIN_MS, max: DUCKER_DECAY_MAX_MS, step: 1, def: 1000, unit: "ms" },
+  {
+    key: "attack",
+    name: "DUCKER_ATTACK",
+    min: DYN_ATTACK_MIN_MS,
+    max: DYN_ATTACK_MAX_MS,
+    step: 0.1,
+    def: 20.17,
+    unit: "ms",
+  },
+  {
+    key: "decay",
+    name: "DUCKER_DECAY",
+    min: DUCKER_DECAY_MIN_MS,
+    max: DUCKER_DECAY_MAX_MS,
+    step: 1,
+    def: 1000,
+    unit: "ms",
+  },
   { key: "threshold", name: "DUCKER_THRESHOLD", min: -60, max: 0, step: 1, def: -40, unit: "db" },
 ];
 
@@ -678,7 +735,12 @@ export function channelDynamics(model: DeviceModel, nodeId: string, compEqType: 
 // Each value is clamped to its DynField plan-domain range before encoding, since
 // the shared encoders (e.g. centiDbToVd / releaseToVd) only clamp to the broker's
 // raw int/scale bounds, not the per-field dB/ms limits the UI enforces.
-function pushDynCommands(out: VdCommand[], fields: DynField[], y: number, vals: Record<string, number | undefined>): void {
+function pushDynCommands(
+  out: VdCommand[],
+  fields: DynField[],
+  y: number,
+  vals: Record<string, number | undefined>,
+): void {
   for (const f of fields) {
     const v = vals[f.key];
     if (v !== undefined) out.push(command(f.name, y, v < f.min ? f.min : v > f.max ? f.max : v));
@@ -1196,7 +1258,12 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const fam = insertFxFamilyOf(v);
     if (fam) {
       const isOutput = ifx.param !== PARAMS.INSERT_FX.id;
-      pushInsertFxEffectCommands(out, insertFxEngine(fam.family, isOutput), fam.family, plan.nodeParams[node.id]?.insertFxParams);
+      pushInsertFxEffectCommands(
+        out,
+        insertFxEngine(fam.family, isOutput),
+        fam.family,
+        plan.nodeParams[node.id]?.insertFxParams,
+      );
     }
     own(node.id);
   }
@@ -1333,7 +1400,10 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   }
 
   // Monitor bus ON / level / CUE interrupt / MONO: bus.mon1 → y0, bus.mon2 → y1.
-  for (const [id, y] of [["bus.mon1", 0], ["bus.mon2", 1]] as const) {
+  for (const [id, y] of [
+    ["bus.mon1", 0],
+    ["bus.mon2", 1],
+  ] as const) {
     const np = plan.nodeParams[id];
     if (np?.on !== undefined) out.push(command("MONITOR_ON", y, np.on ? 1 : 0));
     if (np?.level !== undefined) out.push(command("MONITOR_LEVEL", y, np.level));
@@ -1475,7 +1545,10 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     guessedIds: [D_GAIN_PARAM.ch_3_4],
     addresses: (model) =>
       stereoIndexMap(model).has("ch_3_4")
-        ? [[D_GAIN_PARAM.ch_3_4, 0], [D_GAIN_PARAM.ch_3_4, 1]]
+        ? [
+            [D_GAIN_PARAM.ch_3_4, 0],
+            [D_GAIN_PARAM.ch_3_4, 1],
+          ]
         : [],
     suppress: (plan) => {
       if (plan.nodeParams["ch_3_4"]) delete plan.nodeParams["ch_3_4"].gain;
@@ -1508,8 +1581,8 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     models: ["URX22", "URX44"],
     guessedIds: [],
     addresses: (model) =>
-      model.nodes.flatMap(
-        (node) => (channelInputSlots(model, node.id) ?? []).map((s) => [PARAMS.INPUT_SOURCE.id, s] as GuessAddress),
+      model.nodes.flatMap((node) =>
+        (channelInputSlots(model, node.id) ?? []).map((s) => [PARAMS.INPUT_SOURCE.id, s] as GuessAddress),
       ),
   },
 ];

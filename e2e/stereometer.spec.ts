@@ -5,8 +5,7 @@ import { test, expect, type Page } from "@playwright/test";
 // `.mtrcol.r`) and two clip cells (`.lit.l` / `.lit.r`), while a mono strip has a single
 // column and clip. The split follows the selected tap's channel count, so switching an
 // FX strip from its stereo POST tap to a mono PRE FADER tap collapses it to one bar.
-const strip = (page: Page, name: string) =>
-  page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
+const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {

@@ -13,8 +13,7 @@ async function wheelOver(page: Page, target: Locator, deltaY: number): Promise<v
   await page.mouse.wheel(0, deltaY);
 }
 
-const strip = (page: Page, name: string) =>
-  page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
+const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 const col = (page: Page, name: string, send: string) =>
   strip(page, name).locator(".con-scol", { has: page.getByRole("button", { name: send, exact: true }) });
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);

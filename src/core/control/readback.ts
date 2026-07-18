@@ -6,7 +6,17 @@
 
 import type { DeviceModel } from "../../models/types";
 import { ref } from "../../models/types";
-import type { ConnParams, EqBand, EqOneKnobParams, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsBand, SsmcsParams } from "../plan";
+import type {
+  ConnParams,
+  EqBand,
+  EqOneKnobParams,
+  FxEffectParams,
+  NodeParams,
+  Plan,
+  PlanConnection,
+  SsmcsBand,
+  SsmcsParams,
+} from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
 import { vdGet, vdGetStr } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, FX_STEREO_ASSIGN_ON, normalizeInsertFx, PARAMS } from "./params";
@@ -301,7 +311,10 @@ export async function applyDeviceState(
     if (!bf) continue;
     attempted.add(node.id);
     try {
-      const next: NodeParams = { ...plan.nodeParams[node.id], level: vdToLevel(await vdGet(bf.param, 0, bf.instances[0])) };
+      const next: NodeParams = {
+        ...plan.nodeParams[node.id],
+        level: vdToLevel(await vdGet(bf.param, 0, bf.instances[0])),
+      };
       // Master balance (STEREO 583 / MIX 676): same instance layout as the fader.
       const bb = busBalance(node.id);
       if (bb) next.pan = vdToPan(await vdGet(bb.param, 0, bb.instances[0]));
@@ -478,7 +491,10 @@ export async function applyDeviceState(
   }
 
   // Monitor bus levels: bus.mon1 → y0, bus.mon2 → y1.
-  for (const [id, y] of [["bus.mon1", 0], ["bus.mon2", 1]] as const) {
+  for (const [id, y] of [
+    ["bus.mon1", 0],
+    ["bus.mon2", 1],
+  ] as const) {
     if (!want(id)) continue;
     attempted.add(id);
     try {
@@ -817,7 +833,13 @@ async function readDyn(fields: DynField[], y: number): Promise<Record<string, nu
 }
 
 // Read one SSMCS EQ band's raw values (Low/High have no Q → q omitted).
-async function readSsmcsBand(onId: number, qId: number | null, freqId: number, gainId: number, y: number): Promise<SsmcsBand> {
+async function readSsmcsBand(
+  onId: number,
+  qId: number | null,
+  freqId: number,
+  gainId: number,
+  y: number,
+): Promise<SsmcsBand> {
   const b: SsmcsBand = {
     on: vdToBool(await vdGet(onId, 0, y)),
     freq: await vdGet(freqId, 0, y),
@@ -867,9 +889,27 @@ async function readSsmcs(y: number): Promise<SsmcsParams> {
       gain: await vdGet(PARAMS.SSMCS_SC_GAIN.id, 0, y),
     },
     eq: {
-      low: await readSsmcsBand(PARAMS.SSMCS_EQ_LOW_ON.id, null, PARAMS.SSMCS_EQ_LOW_FREQ.id, PARAMS.SSMCS_EQ_LOW_GAIN.id, y),
-      mid: await readSsmcsBand(PARAMS.SSMCS_EQ_MID_ON.id, PARAMS.SSMCS_EQ_MID_Q.id, PARAMS.SSMCS_EQ_MID_FREQ.id, PARAMS.SSMCS_EQ_MID_GAIN.id, y),
-      high: await readSsmcsBand(PARAMS.SSMCS_EQ_HIGH_ON.id, null, PARAMS.SSMCS_EQ_HIGH_FREQ.id, PARAMS.SSMCS_EQ_HIGH_GAIN.id, y),
+      low: await readSsmcsBand(
+        PARAMS.SSMCS_EQ_LOW_ON.id,
+        null,
+        PARAMS.SSMCS_EQ_LOW_FREQ.id,
+        PARAMS.SSMCS_EQ_LOW_GAIN.id,
+        y,
+      ),
+      mid: await readSsmcsBand(
+        PARAMS.SSMCS_EQ_MID_ON.id,
+        PARAMS.SSMCS_EQ_MID_Q.id,
+        PARAMS.SSMCS_EQ_MID_FREQ.id,
+        PARAMS.SSMCS_EQ_MID_GAIN.id,
+        y,
+      ),
+      high: await readSsmcsBand(
+        PARAMS.SSMCS_EQ_HIGH_ON.id,
+        null,
+        PARAMS.SSMCS_EQ_HIGH_FREQ.id,
+        PARAMS.SSMCS_EQ_HIGH_GAIN.id,
+        y,
+      ),
     },
   };
 }
@@ -883,7 +923,9 @@ export function formatReadbackReport(model: string, result: ReadbackResult): str
   const lines: string[] = [];
   lines.push(`# URX fetch report — ${model}`);
   lines.push("");
-  lines.push(`- Groups read: ${result.applied}; read failures: ${result.errors.length}; nodes unconfirmed: ${result.unreadNodes.size}`);
+  lines.push(
+    `- Groups read: ${result.applied}; read failures: ${result.errors.length}; nodes unconfirmed: ${result.unreadNodes.size}`,
+  );
   if (result.errors.length) {
     lines.push("");
     lines.push("## Read failures");

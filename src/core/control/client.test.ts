@@ -92,9 +92,7 @@ describe("sendCommands / sendPlan", () => {
     const commands = planToCommands(model, basePlan());
     const first = commands[0];
     vi.mocked(vdSet).mockImplementation((id, x, y) =>
-      id === first.paramId && x === first.x && y === first.y
-        ? Promise.reject(new Error("nak"))
-        : Promise.resolve(),
+      id === first.paramId && x === first.x && y === first.y ? Promise.reject(new Error("nak")) : Promise.resolve(),
     );
     const outcomes = await sendCommands(commands);
     expect(outcomes[0].ok).toBe(false);

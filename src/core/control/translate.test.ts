@@ -216,8 +216,7 @@ describe("planToCommands", () => {
     // CH2 SSMCS: morphing bank (GATE 28, COMP 94, EQ 106, inverted: 0 = on).
     plan.nodeParams.ch2 = { compEqType: 1, compOn: true, eqOn: true };
     const cmds = planToCommands(model, plan);
-    const at = (name: string, y: number) =>
-      cmds.find((c) => c.name === name && c.y === y);
+    const at = (name: string, y: number) => cmds.find((c) => c.name === name && c.y === y);
     // CH1 (y0): GATE on = 1, COMP on = 1, EQ off = 0 (off is the on-complement).
     expect(at("GATE_ON", 0)!.vdValue).toBe(1);
     expect(at("COMP_ON", 0)!.vdValue).toBe(1);
@@ -621,7 +620,11 @@ describe("planToCommands", () => {
         outGain: 180,
         comp: { attack: 170, release: 159, ratio: 60, knee: 1, threshold: 100, makeup: 70 },
         sc: { on: true, q: 12, freq: 30, gain: 133 },
-        eq: { low: { on: true, freq: 32, gain: 180 }, mid: { on: true, q: 12, freq: 72, gain: 243 }, high: { on: true, freq: 112, gain: 180 } },
+        eq: {
+          low: { on: true, freq: 32, gain: 180 },
+          mid: { on: true, q: 12, freq: 72, gain: 243 },
+          high: { on: true, freq: 112, gain: 180 },
+        },
       },
     };
     const cmds = planToCommands(model, plan);
@@ -638,7 +641,7 @@ describe("planToCommands", () => {
     expect(at("SSMCS_EQ_MID_Q")!.request.uri).toBe("/vd/parameters/111:0:0?operation=value");
     expect(at("SSMCS_EQ_HIGH_FREQ")!.vdValue).toBe(112);
     // Low/High bands carry no Q.
-    expect(cmds.some((c) => c.name === "SSMCS_EQ_LOW_Q" as never)).toBe(false);
+    expect(cmds.some((c) => c.name === ("SSMCS_EQ_LOW_Q" as never))).toBe(false);
   });
 
   it("emits no SSMCS detail in COMP->EQ mode", () => {
@@ -763,9 +766,7 @@ describe("planToCommands", () => {
     expect(cmds.find((c) => c.name === "STREAM_DELAY_ON")!.vdValue).toBe(1);
     expect(cmds.find((c) => c.name === "STREAM_DELAY_TIME")!.vdValue).toBe(10000); // 100.00 ms = ms×100
     expect(cmds.find((c) => c.name === "STREAM_DELAY_FRAME_RATE")!.vdValue).toBe(7); // 120 fps index
-    expect(cmds.find((c) => c.name === "STREAM_DELAY_ON")!.request.uri).toBe(
-      "/vd/parameters/707:0:0?operation=value",
-    );
+    expect(cmds.find((c) => c.name === "STREAM_DELAY_ON")!.request.uri).toBe("/vd/parameters/707:0:0?operation=value");
     expect(cmds.find((c) => c.name === "STREAM_DELAY_TIME")!.request.uri).toBe(
       "/vd/parameters/708:0:0?operation=value",
     );

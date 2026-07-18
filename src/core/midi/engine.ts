@@ -193,7 +193,11 @@ export class MidiEngine {
     const addrs: MidiAddr[] = [];
     if (ev.type === "cc") {
       addrs.push({ type: "cc", channel: ev.channel, controller: ev.controller });
-      addrs.push({ type: "cc14", channel: ev.channel, controller: ev.controller < 32 ? ev.controller : ev.controller - 32 });
+      addrs.push({
+        type: "cc14",
+        channel: ev.channel,
+        controller: ev.controller < 32 ? ev.controller : ev.controller - 32,
+      });
     } else if (ev.type === "note") {
       addrs.push({ type: "note", channel: ev.channel, note: ev.note });
     } else {
@@ -281,7 +285,9 @@ export class MidiEngine {
       // Pickup state is owned by the address' head, which is applied first
       // (matches() preserves byKey order), so ganged members can inherit its
       // engagement and cross over together behind the one physical control.
-      const engaged = this.isHead(key, mapping) ? this.pickupEngaged(key, incoming, current) : (this.pickup.get(key)?.engaged ?? false);
+      const engaged = this.isHead(key, mapping)
+        ? this.pickupEngaged(key, incoming, current)
+        : (this.pickup.get(key)?.engaged ?? false);
       if (!engaged) return null;
     }
     return incoming;

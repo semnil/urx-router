@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { rateConstraints, formatRate, SAMPLE_RATES, DEFAULT_SAMPLE_RATE, duckerBypassWarnings, channelDuckerOn, channelEqUnavailable } from "./constraints";
+import {
+  rateConstraints,
+  formatRate,
+  SAMPLE_RATES,
+  DEFAULT_SAMPLE_RATE,
+  duckerBypassWarnings,
+  channelDuckerOn,
+  channelEqUnavailable,
+} from "./constraints";
 import { directOutTarget } from "./routing";
 import { emptyPlan } from "./plan";
 import { getModel } from "../models";

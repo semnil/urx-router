@@ -96,7 +96,9 @@ describe("incoming application", () => {
     // per-mapping "state" behavior applies the value as the state instead.
     const c = fake("ch1/mute", "toggle");
     controls.set(c.id, c);
-    engine.setMappings([{ control: c.id, addr: { type: "cc", channel: 0, controller: 20 }, mode: "absolute", button: "state" }]);
+    engine.setMappings([
+      { control: c.id, addr: { type: "cc", channel: 0, controller: 20 }, mode: "absolute", button: "state" },
+    ]);
     const seen: number[] = [];
     for (const value of [127, 0, 127, 0, 127]) {
       engine.onMessage(encodeCc(0, 20, value));
@@ -110,7 +112,9 @@ describe("incoming application", () => {
     // A note binding in state mode acts as "on while held".
     const n = fake("ch2/mute", "toggle");
     controls.set(n.id, n);
-    engine.setMappings([{ control: n.id, addr: { type: "note", channel: 0, note: 60 }, mode: "absolute", button: "state" }]);
+    engine.setMappings([
+      { control: n.id, addr: { type: "note", channel: 0, note: 60 }, mode: "absolute", button: "state" },
+    ]);
     engine.onMessage(encodeNote(0, 60, true));
     expect(n.value).toBe(1);
     engine.onMessage(encodeNote(0, 60, false));

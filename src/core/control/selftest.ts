@@ -146,15 +146,7 @@ const ENUM_SWEEP: Record<string, number[]> = {
 // toggling it resets the secondary channel and rejects independent writes to it
 // while linked — and panBal is a 0/1 enum only meaningful while linked, so the
 // generic "+1" perturb drives it out of range. Both round-trip in value-coverage.
-const SKIP = new Set([
-  "insertFx",
-  "insertFxParams",
-  "autoMakeup",
-  "oneKnob",
-  "fxEffect",
-  "stereoLink",
-  "panBal",
-]);
+const SKIP = new Set(["insertFx", "insertFxParams", "autoMakeup", "oneKnob", "fxEffect", "stereoLink", "panBal"]);
 
 // Passes needed to sweep every enum option at least once (the largest is the
 // input insert-FX option list).
@@ -259,9 +251,7 @@ function sweepInputSource(plan: Plan, pass: number, model: DeviceModel): void {
   const channelIds = new Set(groups.flat());
   // Drop existing channel source wires (other "source" wires — stream / monitor —
   // are left alone), then assign each group one cycling input node.
-  plan.connections = plan.connections.filter(
-    (c) => c.kind !== "source" || !channelIds.has(parseRef(c.to).nodeId),
-  );
+  plan.connections = plan.connections.filter((c) => c.kind !== "source" || !channelIds.has(parseRef(c.to).nodeId));
   groups.forEach((group, gi) => {
     const inputId = inputs[(pass + gi) % inputs.length];
     for (const chId of group) {
@@ -296,12 +286,7 @@ function sweepEqOneKnobType(plan: Plan, pass: number, model: DeviceModel): void 
  * (the confirmed param sharing that address is still written, so it stays
  * covered). Exported for tests.
  */
-export function perturbedPlan(
-  model: DeviceModel,
-  original: Plan,
-  pass: number,
-  suppress?: ReadonlySet<string>,
-): Plan {
+export function perturbedPlan(model: DeviceModel, original: Plan, pass: number, suppress?: ReadonlySet<string>): Plan {
   const plan = structuredClone(original);
   for (const np of Object.values(plan.nodeParams)) perturb(np as Record<string, unknown>, pass);
   for (const c of plan.connections) if (c.params) perturb(c.params as Record<string, unknown>, pass);
@@ -321,11 +306,7 @@ export function perturbedPlan(
  * leaves `phase` at the failing step. The caller must ensure the connected
  * device matches `model`.
  */
-export async function runSelfTest(
-  model: DeviceModel,
-  settleMs = 300,
-  signal?: AbortSignal,
-): Promise<SelfTestReport> {
+export async function runSelfTest(model: DeviceModel, settleMs = 300, signal?: AbortSignal): Promise<SelfTestReport> {
   const report: SelfTestReport = {
     ok: false,
     device: "",
@@ -484,7 +465,9 @@ export function formatSelfTestReport(report: SelfTestReport): string {
           : `REFUTED — ${u.mismatches.length} address(es) did not round-trip`;
       lines.push(`- **${u.label}** (${u.key}): ${verdict}`);
       for (const m of u.mismatches) {
-        lines.push(`  - ${m.name} @ ${m.paramId}:${m.x}:${m.y} — wrote ${m.expected}, read ${m.actual ?? "unreadable"}`);
+        lines.push(
+          `  - ${m.name} @ ${m.paramId}:${m.x}:${m.y} — wrote ${m.expected}, read ${m.actual ?? "unreadable"}`,
+        );
       }
     }
   }
@@ -503,7 +486,9 @@ export function formatSelfTestReport(report: SelfTestReport): string {
     lines.push("");
     lines.push("## Other device divergence (confirmed params)");
     for (const m of other) {
-      lines.push(`- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — wrote ${m.expected}, read ${m.actual ?? "unreadable"}`);
+      lines.push(
+        `- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — wrote ${m.expected}, read ${m.actual ?? "unreadable"}`,
+      );
     }
   }
 

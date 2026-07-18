@@ -169,9 +169,7 @@ describe("deserialize tolerance to malformed documents", () => {
       ...base,
       connections: [{ from: "ch1:out", to: "bus.stereo:in", kind: "send" }],
     });
-    expect(deserialize(doc).connections).toEqual([
-      { from: "ch1:out", to: "bus.stereo:in", kind: "send" },
-    ]);
+    expect(deserialize(doc).connections).toEqual([{ from: "ch1:out", to: "bus.stereo:in", kind: "send" }]);
   });
 
   it("throws on a syntactically invalid JSON string (JSON.parse propagates)", () => {
@@ -215,7 +213,9 @@ describe("ensureFixedConnections idempotency across models", () => {
     const plan = emptyPlan("URX44");
     ensureFixedConnections(MODELS.URX44, plan);
     const before = plan.connections.length;
-    plan.connections = plan.connections.filter((c) => !(c.from === ref("ch1", "out") && c.to === ref("bus.stereo", "in")));
+    plan.connections = plan.connections.filter(
+      (c) => !(c.from === ref("ch1", "out") && c.to === ref("bus.stereo", "in")),
+    );
     expect(plan.connections.length).toBe(before - 1);
     ensureFixedConnections(MODELS.URX44, plan);
     expect(plan.connections.length).toBe(before);

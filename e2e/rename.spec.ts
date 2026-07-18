@@ -83,10 +83,7 @@ test("name and color round-trip through save and open", async ({ page }, testInf
   await expect(node(page, "ch1").locator('rect[height="3"]')).toHaveCount(1);
 
   await page.click("#btn-file");
-  const [download] = await Promise.all([
-    page.waitForEvent("download"),
-    page.click("#btn-save"),
-  ]);
+  const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
   const saved = testInfo.outputPath("URX44V-plan.json");
   await download.saveAs(saved);
 
@@ -96,10 +93,7 @@ test("name and color round-trip through save and open", async ({ page }, testInf
   await expect(node(page, "ch1").locator('rect[height="3"]')).toHaveCount(0);
 
   await page.click("#btn-file");
-  const [chooser] = await Promise.all([
-    page.waitForEvent("filechooser"),
-    page.click("#btn-open"),
-  ]);
+  const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
   await chooser.setFiles(saved);
   await expect(node(page, "ch1").locator("text").first()).toHaveText("VocalMic");
   await expect(node(page, "ch1").locator('rect[height="3"]')).toHaveCount(1);

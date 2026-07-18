@@ -388,14 +388,10 @@ export function deserialize(text: string): Plan {
   }
   return {
     modelId: data.modelId as ModelId,
-    sampleRate: SAMPLE_RATES.includes(data.sampleRate as number)
-      ? (data.sampleRate as number)
-      : DEFAULT_SAMPLE_RATE,
+    sampleRate: SAMPLE_RATES.includes(data.sampleRate as number) ? (data.sampleRate as number) : DEFAULT_SAMPLE_RATE,
     positions: isStringRecord(data.positions) ? (data.positions as unknown as Record<string, NodePos>) : {},
     connections: Array.isArray(data.connections) ? data.connections.filter(isPlanConnection) : [],
-    nodeParams: isStringRecord(data.nodeParams)
-      ? (data.nodeParams as unknown as Record<string, NodeParams>)
-      : {},
+    nodeParams: isStringRecord(data.nodeParams) ? (data.nodeParams as unknown as Record<string, NodeParams>) : {},
     nodeNames: isStringRecord(data.nodeNames) ? (data.nodeNames as Record<string, string>) : {},
     nodeColors: isStringRecord(data.nodeColors) ? (data.nodeColors as Record<string, string>) : {},
     hidden: Array.isArray(data.hidden) ? (data.hidden as string[]) : [],

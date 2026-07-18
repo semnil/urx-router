@@ -92,7 +92,9 @@ function isAddr(v: unknown): v is MidiAddr {
       return isData7(a.controller);
     case "cc14":
       // MSB controller only; the LSB pair partner (controller + 32) is implied.
-      return typeof a.controller === "number" && Number.isInteger(a.controller) && a.controller >= 0 && a.controller < 32;
+      return (
+        typeof a.controller === "number" && Number.isInteger(a.controller) && a.controller >= 0 && a.controller < 32
+      );
     case "note":
       return isData7(a.note);
     case "pitchbend":

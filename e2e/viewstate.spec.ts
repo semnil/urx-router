@@ -7,8 +7,7 @@ import { test, expect, type Page } from "@playwright/test";
 
 // A console strip located by its scribble's exact node name (so "CH 1" never
 // matches "CH 11/12"). Runs against the factory plan (no "empty" seed).
-const strip = (page: Page, name: string) =>
-  page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
+const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -34,9 +33,7 @@ test("a rack send-fader edit is read back on the graph's CH -> MIX wire", async 
   // The same send level reads back on the graph's CH 1 -> MIX 1 wire.
   await page.click("#btn-view-graph");
   await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
-  await expect(
-    page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val"),
-  ).toHaveText("+10.0 dB");
+  await expect(page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val")).toHaveText("+10.0 dB");
 });
 
 test("a console fader edit is read back on the graph's CH -> STEREO wire", async ({ page }) => {
@@ -53,9 +50,7 @@ test("a console fader edit is read back on the graph's CH -> STEREO wire", async
   // the graph must show the same +1.2 dB the console just set.
   await page.click("#btn-view-graph");
   await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]').dispatchEvent("pointerdown");
-  await expect(
-    page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val"),
-  ).toHaveText("+1.2 dB");
+  await expect(page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val")).toHaveText("+1.2 dB");
 });
 
 test("a graph-side channel mute dims the console strip and unlights its power LED", async ({ page }) => {

@@ -3,8 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
 // "CH 11/12"). The console runs against the factory plan, so we do NOT seed
 // "empty" — channels, sends, monitors and the master are all present.
-const strip = (page: Page, name: string) =>
-  page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
+const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
 // A send column (chip → PRE → mini-fader) located by its enable-chip label.
 const col = (page: Page, name: string, send: string) =>
