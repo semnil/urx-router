@@ -44,7 +44,8 @@ pnpm tauri dev    # desktop app (Rust required; install via rustup if missing)
 pnpm build        # tsc --noEmit + vite build
 pnpm build:demo   # browser demo build (VITE_DEMO=1; excludes save/image export)
 pnpm preview      # serve the built dist/ at http://localhost:4173 (browser check of a build:demo bundle)
-pnpm test         # vitest (core: routing/constraints/plan/levels/meters/midi, control: vd/translate/readback/live/follow/fx/insert-fx/firmware etc., models)
+pnpm e2e:serve    # vite build + preview on 4173 — what playwright.config.ts launches as its webServer
+pnpm test         # vitest (core: routing/constraints/plan/levels/meters/midi, control: vd/translate/readback/live/follow/fx/insert-fx/firmware etc., models, ui: console)
 pnpm test:e2e     # Playwright E2E (e2e/*.spec.ts: routing/hide/notes/multiselect/bustype/signaltype/insertfx/midi etc.). CI runs this post-merge
 pnpm format       # Prettier --write on the TS sources (src/e2e/scripts + root *.ts; config = package.json "prettier", printWidth 120)
 pnpm clean        # remove the Vite cache (node_modules/.vite) + dist + Cargo target
@@ -59,7 +60,11 @@ Node >= 21.2 is required (`package.json` `engines`): the `?plan=` deep-link code
 
 If `pnpm tauri dev` keeps showing a stale version or UI, discard the build caches with `pnpm clean` and restart (the version is embedded at build time via `tauri.conf.json`→`../package.json`, so it easily sticks in the Vite cache). The webview's persistent data (the consent gate in `localStorage`, etc.) lives outside the app and is not covered by `pnpm clean`; on macOS delete `~/Library/WebKit/<productName or identifier>/` manually.
 
-CI is 5 workflows: PRs run build + unit tests (`ci.yml`) and get formatting auto-applied (`format.yml`: Prettier + cargo fmt; same-repo PRs get a validated `style:` fixup commit, fork PRs a failing check — mechanics in the workflow header); E2E and third-party license generation run post-merge (`post-merge.yml`); the browser demo auto-deploys to GitHub Pages on `vX.Y.Z` release tag push (`pages.yml`); desktop installers also build on tag push (`release.yml`). All third-party actions are SHA-pinned (`uses: owner/repo@<sha> # vX.Y.Z`); Dependabot's github-actions ecosystem (`.github/dependabot.yml`) bumps the pin and the version comment together. Exception: `dtolnay/rust-toolchain` has no version tags, so it is pinned to a master commit with an explicit `toolchain:` input and updated manually.
+E2E runs against a production build served on port 4173, and `reuseExistingServer` is on locally: a `pnpm preview` left running (a `build:demo` bundle, say) is reused as-is by `pnpm test:e2e`, silently testing the wrong bundle. Stop it first.
+
+The version lives in `package.json` alone — `src-tauri/Cargo.toml` stays at `0.0.0` and `tauri.conf.json` reads `"../package.json"`. A version bump touches that one file.
+
+CI is 5 workflows: PRs run build + unit tests (`ci.yml`; skipped for `**/*.md` / `docs/**`-only changes, except the skill's generated `references/model-*.md`, which `skill-export.test.ts` diffs) and get formatting auto-applied (`format.yml`: Prettier + cargo fmt; same-repo PRs get a validated `style:` fixup commit, fork PRs a failing check — mechanics in the workflow header); E2E and third-party license generation run post-merge (`post-merge.yml`); the browser demo auto-deploys to GitHub Pages on `vX.Y.Z` release tag push (`pages.yml`); desktop installers also build on tag push (`release.yml`). All third-party actions are SHA-pinned (`uses: owner/repo@<sha> # vX.Y.Z`); Dependabot's github-actions ecosystem (`.github/dependabot.yml`) bumps the pin and the version comment together. Exception: `dtolnay/rust-toolchain` has no version tags, so it is pinned to a master commit with an explicit `toolchain:` input and updated manually.
 
 ## Conventions
 
