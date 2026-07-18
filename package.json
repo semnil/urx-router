@@ -6,6 +6,9 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.7.1",
+  "engines": {
+    "node": ">=21.2"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

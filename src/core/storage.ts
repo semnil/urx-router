@@ -12,6 +12,7 @@ import {
   nativeWriteText,
 } from "./platform";
 import type { FileFilter } from "./platform";
+import { pipeBytes } from "./plan";
 
 /** Outcome of a save: not saved means the user canceled the native dialog. */
 export interface SaveResult {
@@ -164,13 +165,8 @@ function dropAlpha(rgba: Uint8ClampedArray): Uint8Array<ArrayBuffer> {
 }
 
 /** zlib deflate via the platform CompressionStream (PDF FlateDecode format). */
-async function deflate(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
-  const cs = new CompressionStream("deflate");
-  const writer = cs.writable.getWriter();
-  void writer.write(bytes);
-  void writer.close();
-  const buf = await new Response(cs.readable).arrayBuffer();
-  return new Uint8Array(buf);
+function deflate(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
+  return pipeBytes(bytes, new CompressionStream("deflate"));
 }
 
 /** Minimal single-page PDF holding one full-bleed DeviceRGB image. */

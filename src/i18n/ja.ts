@@ -51,6 +51,10 @@ export const ja: Messages = {
     langTitle: { en: "言語: 英語 (クリックで日本語)", ja: "言語: 日本語 (クリックで English)" },
     desktopApp: "デスクトップ版",
     desktopAppHint: "デスクトップ版を入手 — 計画の保存・読込、画像出力、デバイスのライブ制御に対応",
+    shareUrl: "共有 URL",
+    shareUrlHint: "この計画を共有できるリンクをコピー (アドレスバーにも反映)",
+    downloadJson: "JSON ダウンロード",
+    downloadJsonHint: "この計画を JSON でダウンロード — デスクトップ版で開けます",
   },
   console: {
     mute: "MUTE",
@@ -392,6 +396,10 @@ export const ja: Messages = {
     planSaved: "計画を保存しました",
     savedTo: (name: string): string => `${name} に保存しました`,
     openedFrom: (name: string): string => `${name} を開きました`,
+    shareUrlCopied: "共有 URL をクリップボードにコピーしました",
+    shareUrlInBar: "クリップボードを使用できません — アドレスバーから共有 URL をコピーしてください",
+    shareUrlError: (message: string): string => `共有 URL の生成に失敗しました: ${message}`,
+    planDownloaded: "計画の JSON をダウンロードしました",
     canceled: "キャンセルしました",
     pngExported: "PNG を出力しました",
     pdfExported: "PDF を出力しました",
@@ -508,5 +516,7 @@ export const ja: Messages = {
     notPlanFile: "URX Router の計画ファイルではありません",
     missingModel: "計画ファイルに modelId がありません",
     badPlanUrl: "計画リンクが不正です (デコードできません)",
+    planUrlUnsupported:
+      "このブラウザは圧縮された計画リンクに対応していません — 新しい Chrome / Edge / Firefox、または Safari 16.4 以降をご利用ください",
   },
 };

@@ -51,6 +51,12 @@ export const en = {
     langTitle: { en: "Language: English (click: 日本語)", ja: "Language: 日本語 (click: English)" },
     desktopApp: "Desktop app",
     desktopAppHint: "Get the desktop app — save/load plans, export images, and control the device live",
+    // Demo-only sharing: the demo has no file IO, so the plan travels as a
+    // ?plan= URL or as a JSON download the desktop app opens.
+    shareUrl: "Share URL",
+    shareUrlHint: "Copy a shareable link to this plan (also placed in the address bar)",
+    downloadJson: "Download JSON",
+    downloadJsonHint: "Download this plan as JSON — the desktop app opens it",
   },
   console: {
     mute: "MUTE",
@@ -399,6 +405,10 @@ export const en = {
     planSaved: "Plan saved",
     savedTo: (name: string): string => `Saved to ${name}`,
     openedFrom: (name: string): string => `Opened ${name}`,
+    shareUrlCopied: "Share URL copied to the clipboard",
+    shareUrlInBar: "Couldn't copy to the clipboard — copy the share URL from the address bar",
+    shareUrlError: (message: string): string => `Share URL could not be generated: ${message}`,
+    planDownloaded: "Plan JSON downloaded",
     canceled: "Canceled",
     pngExported: "PNG exported",
     pdfExported: "PDF exported",
@@ -518,6 +528,8 @@ export const en = {
     notPlanFile: "This is not a URX Router plan file",
     missingModel: "The plan file has no modelId",
     badPlanUrl: "The plan link is malformed (could not be decoded)",
+    planUrlUnsupported:
+      "This browser doesn't support compressed plan links — use a recent Chrome / Edge / Firefox, or Safari 16.4+",
   },
 };
 

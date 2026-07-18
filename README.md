@@ -22,7 +22,8 @@ with or without a DAW — see [Device control](#device-control).
 ## Live demo
 
 Runs entirely in your browser — no install required: **<https://urx-router.semnil.com>**
-(file save/load and image export are disabled in the demo build).
+(file save/load and image export are disabled in the demo build; instead it shares
+a plan as a URL and downloads the plan JSON for the desktop app).
 
 ![URX Router showing a URX44V routing plan in the dark studio-rack theme](docs/assets/screenshot-en.png)
 

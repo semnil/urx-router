@@ -333,7 +333,7 @@ export const PLAN_FORMAT = "urx-router-plan";
 export const PLAN_VERSION = 1;
 
 // Language-agnostic load failures. The UI maps the code to a localized message.
-export type PlanErrorCode = "notPlanFile" | "missingModel";
+export type PlanErrorCode = "notPlanFile" | "missingModel" | "planUrlUnsupported";
 
 export class PlanError extends Error {
   constructor(readonly code: PlanErrorCode) {
@@ -400,24 +400,71 @@ export function deserialize(text: string): Plan {
   };
 }
 
-// Encode a plan as a URL-safe base64 of its UTF-8 JSON, for the `?plan=` deep
-// link: a generated plan becomes a shareable URL the viewer opens. Inverse of
-// decodePlanParam.
-export function encodePlanParam(plan: Plan): string {
-  const bytes = new TextEncoder().encode(serialize(plan));
+// Encode a plan for the `?plan=` deep link: "z" + URL-safe base64 of the
+// raw-deflated UTF-8 JSON, so a generated plan becomes a shareable URL the
+// viewer opens. Compression is what keeps real plans inside GitHub Pages'
+// ~8 KB URL limit (a factory-seeded plan already encodes to ~36k chars
+// uncompressed, ~2.6k compressed). Inverse of decodePlanParam.
+export async function encodePlanParam(plan: Plan): Promise<string> {
+  const json = new TextEncoder().encode(serialize(plan));
+  return "z" + toBase64Url(await pipeBytes(json, deflateRawStream()));
+}
+
+// Decode a `?plan=` parameter back to plan JSON text. "z…" is the compressed
+// format above; anything else is the legacy uncompressed URL-safe base64 (its
+// JSON always starts "{", so a legacy param always starts "e" — never "z").
+// Rejects on malformed base64 / deflate; invalid UTF-8 decodes lossily (U+FFFD)
+// and is caught by the JSON parse downstream, as it was pre-compression. The
+// caller treats a rejection as a load failure, and deserialize then validates
+// the JSON shape.
+export async function decodePlanParam(encoded: string): Promise<string> {
+  const bytes = encoded.startsWith("z")
+    ? await pipeBytes(fromBase64Url(encoded.slice(1)), inflateRawStream())
+    : fromBase64Url(encoded);
+  return new TextDecoder().decode(bytes);
+}
+
+// Old webviews lack Compression/DecompressionStream (or their "deflate-raw"
+// format). Surface that as the typed browser-floor error, so callers can tell
+// "this browser can't run the codec" apart from a broken link — the legacy
+// uncompressed path stays available regardless.
+function deflateRawStream(): CompressionStream {
+  try {
+    return new CompressionStream("deflate-raw");
+  } catch {
+    throw new PlanError("planUrlUnsupported");
+  }
+}
+
+function inflateRawStream(): DecompressionStream {
+  try {
+    return new DecompressionStream("deflate-raw");
+  } catch {
+    throw new PlanError("planUrlUnsupported");
+  }
+}
+
+function toBase64Url(bytes: Uint8Array): string {
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-// Decode a `?plan=` parameter (URL-safe base64 of UTF-8 JSON) back to plan JSON
-// text. Throws on malformed base64 / UTF-8; the caller treats that as a load
-// failure, and deserialize then validates the JSON shape.
-export function decodePlanParam(encoded: string): string {
+function fromBase64Url(encoded: string): Uint8Array<ArrayBuffer> {
   const b64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
   const bin = atob(b64);
-  const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
+  return Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+}
+
+/** Run bytes through a platform (de)compression stream and collect the output.
+ *  A codec failure errors the piped readable, so the read rejects — no writer
+ *  promise is left dangling. Also the byte pump for storage's PDF deflate. */
+export async function pipeBytes(
+  bytes: Uint8Array<ArrayBuffer>,
+  stream: CompressionStream | DecompressionStream,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const out = new Blob([bytes]).stream().pipeThrough(stream);
+  return new Uint8Array(await new Response(out).arrayBuffer());
 }
 
 function isStringRecord(v: unknown): v is Record<string, string> {

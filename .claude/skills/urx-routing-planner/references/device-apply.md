@@ -11,17 +11,20 @@ Encode the plan into a deep link and open it:
 
 ```sh
 python scripts/plan_tool.py url plan.json
-# -> https://urx-router.semnil.com/?plan=<base64url>
+# -> https://urx-router.semnil.com/?plan=z<base64url of raw-deflated JSON>
 ```
 
 Opening that URL loads the plan straight into the viewer and draws the node
 graph. If the plan has routing problems the viewer shows a copyable report
 instead of loading (see the self-correction loop in SKILL.md).
 
-Note: the `?plan=` deep link requires a URX Router build that supports it (the
-release that added URL plan loading onward). The public demo reflects it after
-that release ships; for a local checkout, `pnpm dev` serves it at
-`http://localhost:5173/?plan=…`. Pass `--base` to point at a different host.
+Note: the `?plan=` deep link requires a URX Router build that supports it (for
+the compressed `z` links this tool emits, the release that added compression
+onward — older builds report them as malformed; the browser needs
+`DecompressionStream("deflate-raw")`, i.e. Safari 16.4+ or any current Chrome /
+Edge / Firefox). The public demo reflects it after that release ships; for a
+local checkout, `pnpm dev` serves it at `http://localhost:5173/?plan=…`. Pass
+`--base` to point at a different host.
 
 ## 2. Write to the device (desktop app)
 
