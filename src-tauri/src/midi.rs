@@ -35,12 +35,20 @@ const CLIENT: &str = "urx-router";
 /// the name doubles as the port id when opening.
 pub fn list_inputs() -> Result<Vec<String>, String> {
     let midi_in = MidiInput::new(CLIENT).map_err(|e| e.to_string())?;
-    Ok(midi_in.ports().iter().filter_map(|p| midi_in.port_name(p).ok()).collect())
+    Ok(midi_in
+        .ports()
+        .iter()
+        .filter_map(|p| midi_in.port_name(p).ok())
+        .collect())
 }
 
 pub fn list_outputs() -> Result<Vec<String>, String> {
     let midi_out = MidiOutput::new(CLIENT).map_err(|e| e.to_string())?;
-    Ok(midi_out.ports().iter().filter_map(|p| midi_out.port_name(p).ok()).collect())
+    Ok(midi_out
+        .ports()
+        .iter()
+        .filter_map(|p| midi_out.port_name(p).ok())
+        .collect())
 }
 
 /// Open the named input port and stream its messages through `channel`,
@@ -48,7 +56,11 @@ pub fn list_outputs() -> Result<Vec<String>, String> {
 /// thread; it hands each message to a forwarder thread that drains bursts into
 /// one channel batch, so a controller sweep crosses the IPC boundary per burst
 /// rather than per message (the same batching idea as the vd meter pump).
-pub fn open_input(state: &MidiState, port: String, channel: Channel<Vec<MidiMessage>>) -> Result<(), String> {
+pub fn open_input(
+    state: &MidiState,
+    port: String,
+    channel: Channel<Vec<MidiMessage>>,
+) -> Result<(), String> {
     let mut slot = state.input.lock().unwrap();
     // Drop the previous connection first: its callback sender dies with it,
     // which ends the old forwarder thread through the closed mpsc receiver.
@@ -100,7 +112,9 @@ pub fn open_output(state: &MidiState, port: String) -> Result<(), String> {
         .into_iter()
         .find(|p| midi_out.port_name(p).ok().as_deref() == Some(port.as_str()))
         .ok_or("midi-port-not-found")?;
-    let conn = midi_out.connect(&target, "urx-router-output").map_err(|e| e.to_string())?;
+    let conn = midi_out
+        .connect(&target, "urx-router-output")
+        .map_err(|e| e.to_string())?;
     *slot = Some(conn);
     Ok(())
 }

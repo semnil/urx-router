@@ -196,39 +196,68 @@ pub fn sender(state: &VdState) -> Result<Sender<Cmd>, String> {
 /// rejects the write.
 pub fn set(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64, value: i64) -> Result<(), String> {
     let (reply, wait) = mpsc::channel();
-    tx.send(Cmd::Set { param_id, x, y, value, reply })
-        .map_err(|_| "control-worker-gone".to_string())?;
+    tx.send(Cmd::Set {
+        param_id,
+        x,
+        y,
+        value,
+        reply,
+    })
+    .map_err(|_| "control-worker-gone".to_string())?;
     wait.recv().map_err(|_| "control-worker-gone".to_string())?
 }
 
 /// Read one parameter instance's current absolute value.
 pub fn get(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
     let (reply, wait) = mpsc::channel();
-    tx.send(Cmd::Get { param_id, x, y, reply })
-        .map_err(|_| "control-worker-gone".to_string())?;
+    tx.send(Cmd::Get {
+        param_id,
+        x,
+        y,
+        reply,
+    })
+    .map_err(|_| "control-worker-gone".to_string())?;
     wait.recv().map_err(|_| "control-worker-gone".to_string())?
 }
 
 /// Set one string-valued parameter instance (e.g. a CH SETTING name).
-pub fn set_str(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64, value: String) -> Result<(), String> {
+pub fn set_str(
+    tx: Sender<Cmd>,
+    param_id: u32,
+    x: i64,
+    y: i64,
+    value: String,
+) -> Result<(), String> {
     let (reply, wait) = mpsc::channel();
-    tx.send(Cmd::SetStr { param_id, x, y, value, reply })
-        .map_err(|_| "control-worker-gone".to_string())?;
+    tx.send(Cmd::SetStr {
+        param_id,
+        x,
+        y,
+        value,
+        reply,
+    })
+    .map_err(|_| "control-worker-gone".to_string())?;
     wait.recv().map_err(|_| "control-worker-gone".to_string())?
 }
 
 /// Read one string-valued parameter instance's current value.
 pub fn get_str(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64) -> Result<String, String> {
     let (reply, wait) = mpsc::channel();
-    tx.send(Cmd::GetStr { param_id, x, y, reply })
-        .map_err(|_| "control-worker-gone".to_string())?;
+    tx.send(Cmd::GetStr {
+        param_id,
+        x,
+        y,
+        reply,
+    })
+    .map_err(|_| "control-worker-gone".to_string())?;
     wait.recv().map_err(|_| "control-worker-gone".to_string())?
 }
 
 /// The currently connected device, or an error if not connected.
 pub fn info(tx: Sender<Cmd>) -> Result<DeviceSummary, String> {
     let (reply, wait) = mpsc::channel();
-    tx.send(Cmd::Info { reply }).map_err(|_| "control-worker-gone".to_string())?;
+    tx.send(Cmd::Info { reply })
+        .map_err(|_| "control-worker-gone".to_string())?;
     wait.recv().map_err(|_| "control-worker-gone".to_string())
 }
 
@@ -245,7 +274,8 @@ pub fn meters_subscribe(
 
 /// Drop the current meter subscription.
 pub fn meters_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
-    tx.send(Cmd::MetersUnsubscribe).map_err(|_| "control-worker-gone".to_string())
+    tx.send(Cmd::MetersUnsubscribe)
+        .map_err(|_| "control-worker-gone".to_string())
 }
 
 /// Subscribe to device-side parameter changes; notifies stream through `channel`.
@@ -261,12 +291,14 @@ pub fn params_subscribe(
 
 /// Drop the current parameter subscription.
 pub fn params_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
-    tx.send(Cmd::ParamsUnsubscribe).map_err(|_| "control-worker-gone".to_string())
+    tx.send(Cmd::ParamsUnsubscribe)
+        .map_err(|_| "control-worker-gone".to_string())
 }
 
 /// Register a channel to receive the link-lost event. Replaces any prior watch.
 pub fn watch_link(tx: Sender<Cmd>, channel: Channel<LinkEvent>) -> Result<(), String> {
-    tx.send(Cmd::WatchLink { channel }).map_err(|_| "control-worker-gone".to_string())
+    tx.send(Cmd::WatchLink { channel })
+        .map_err(|_| "control-worker-gone".to_string())
 }
 
 /// Close the connection of generation `epoch`. A no-op if the current connection
@@ -423,16 +455,54 @@ mod imp {
                 Ok(Cmd::Info { reply }) => {
                     let _ = reply.send(summary.clone());
                 }
-                Ok(Cmd::Set { param_id, x, y, value, reply }) => {
-                    let _ = reply.send(do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value)));
+                Ok(Cmd::Set {
+                    param_id,
+                    x,
+                    y,
+                    value,
+                    reply,
+                }) => {
+                    let _ = reply.send(do_set(
+                        &mut ws,
+                        &mut subs,
+                        &dev_uid,
+                        param_id,
+                        x,
+                        y,
+                        json!(value),
+                    ));
                 }
-                Ok(Cmd::Get { param_id, x, y, reply }) => {
+                Ok(Cmd::Get {
+                    param_id,
+                    x,
+                    y,
+                    reply,
+                }) => {
                     let _ = reply.send(do_get(&mut ws, &mut subs, &dev_uid, param_id, x, y));
                 }
-                Ok(Cmd::SetStr { param_id, x, y, value, reply }) => {
-                    let _ = reply.send(do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value)));
+                Ok(Cmd::SetStr {
+                    param_id,
+                    x,
+                    y,
+                    value,
+                    reply,
+                }) => {
+                    let _ = reply.send(do_set(
+                        &mut ws,
+                        &mut subs,
+                        &dev_uid,
+                        param_id,
+                        x,
+                        y,
+                        json!(value),
+                    ));
                 }
-                Ok(Cmd::GetStr { param_id, x, y, reply }) => {
+                Ok(Cmd::GetStr {
+                    param_id,
+                    x,
+                    y,
+                    reply,
+                }) => {
                     let _ = reply.send(do_get_str(&mut ws, &mut subs, &dev_uid, param_id, x, y));
                 }
                 Ok(Cmd::MetersSubscribe { addrs, channel }) => {
@@ -502,7 +572,8 @@ mod imp {
     }
 
     fn send_json(ws: &mut Ws, v: Value) -> Result<(), String> {
-        ws.send(Message::Text(v.to_string().into())).map_err(|e| e.to_string())
+        ws.send(Message::Text(v.to_string().into()))
+            .map_err(|e| e.to_string())
     }
 
     /// Read one text message, or None on read timeout. Errors on a closed or
@@ -517,7 +588,10 @@ mod imp {
             Ok(Message::Binary(_)) => Err("unexpected binary frame from broker".into()),
             Ok(_) => Ok(None), // ping/pong — ignore
             Err(tungstenite::Error::Io(e))
-                if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) =>
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
             {
                 Ok(None)
             }
@@ -530,7 +604,9 @@ mod imp {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
             let Some(text) = read_text(ws)? else { continue };
-            let Ok(msg) = serde_json::from_str::<Value>(&text) else { continue };
+            let Ok(msg) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
             if msg.get("method").and_then(Value::as_str) != Some("getDeviceList") {
                 continue;
             }
@@ -541,10 +617,22 @@ mod imp {
                 // with no URX attached. Stable code; the frontend localizes it.
                 return Err("no-device".into());
             };
-            let dev_uid = dev.get("dev_uid").and_then(Value::as_str).unwrap_or_default().to_string();
+            let dev_uid = dev
+                .get("dev_uid")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
             let mut summary = DeviceSummary {
-                model: dev.get("model").and_then(Value::as_str).unwrap_or("URX").to_string(),
-                label: dev.get("label").and_then(Value::as_str).unwrap_or("URX").to_string(),
+                model: dev
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("URX")
+                    .to_string(),
+                label: dev
+                    .get("label")
+                    .and_then(Value::as_str)
+                    .unwrap_or("URX")
+                    .to_string(),
                 firmware: String::new(),
             };
             if dev_uid.is_empty() {
@@ -593,12 +681,17 @@ mod imp {
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
             let Some(text) = read_text(ws)? else { continue };
-            let Ok(msg) = serde_json::from_str::<Value>(&text) else { continue };
+            let Ok(msg) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
             if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
                 continue;
             }
             let vdp = msg.pointer("/params/vdp");
-            let ruri = vdp.and_then(|v| v.get("uri")).and_then(Value::as_str).unwrap_or("");
+            let ruri = vdp
+                .and_then(|v| v.get("uri"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
             if ruri.split('?').next().unwrap_or(ruri) != base {
                 continue;
             }
@@ -636,14 +729,31 @@ mod imp {
         // entry leaves the version empty (warning disabled) rather than mistaking
         // another component's version for System.
         for entry in list {
-            if entry.get("firm_name").and_then(Value::as_str).unwrap_or("").eq_ignore_ascii_case("system") {
-                return entry.get("firm_version").and_then(Value::as_str).unwrap_or("").to_string();
+            if entry
+                .get("firm_name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .eq_ignore_ascii_case("system")
+            {
+                return entry
+                    .get("firm_version")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
             }
         }
         String::new()
     }
 
-    fn do_set(ws: &mut Ws, subs: &mut Subs, dev_uid: &str, param_id: u32, x: i64, y: i64, value: Value) -> Result<(), String> {
+    fn do_set(
+        ws: &mut Ws,
+        subs: &mut Subs,
+        dev_uid: &str,
+        param_id: u32,
+        x: i64,
+        y: i64,
+        value: Value,
+    ) -> Result<(), String> {
         let uri = format!("/vd/parameters/{param_id}:{x}:{y}?operation=value");
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
         send_json(
@@ -661,7 +771,9 @@ mod imp {
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
             let Some(text) = read_text(ws)? else { continue };
-            let Ok(msg) = serde_json::from_str::<Value>(&text) else { continue };
+            let Ok(msg) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
             // A device-lost push can land mid-write (the broker still ACKs the
             // write itself); fail the command so the session tears down.
             if let Some(err) = synchronize_lost(&msg) {
@@ -676,7 +788,10 @@ mod imp {
                 continue;
             }
             let vdp = msg.pointer("/params/vdp");
-            let ruri = vdp.and_then(|v| v.get("uri")).and_then(Value::as_str).unwrap_or("");
+            let ruri = vdp
+                .and_then(|v| v.get("uri"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
             // Match the address exactly so another instance's reply (e.g. y=12) cannot
             // satisfy a y=1 request via a prefix match.
             let ruri_addr = ruri.split('?').next().unwrap_or(ruri);
@@ -690,16 +805,27 @@ mod imp {
             return if code == 200 {
                 Ok(())
             } else {
-                Err(format!("broker rejected the write at {param_id}:{x}:{y} (response_code {code})"))
+                Err(format!(
+                    "broker rejected the write at {param_id}:{x}:{y} (response_code {code})"
+                ))
             };
         }
-        Err(format!("timed out waiting for the broker to confirm the write at {param_id}:{x}:{y}"))
+        Err(format!(
+            "timed out waiting for the broker to confirm the write at {param_id}:{x}:{y}"
+        ))
     }
 
     // Read a parameter instance's raw current_value (numeric or string). do_get /
     // do_get_str decode it; sharing the request + address-matched await loop here
     // keeps the two get paths from drifting.
-    fn do_get_value(ws: &mut Ws, subs: &mut Subs, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<Value, String> {
+    fn do_get_value(
+        ws: &mut Ws,
+        subs: &mut Subs,
+        dev_uid: &str,
+        param_id: u32,
+        x: i64,
+        y: i64,
+    ) -> Result<Value, String> {
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
         send_json(
             ws,
@@ -715,7 +841,9 @@ mod imp {
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
             let Some(text) = read_text(ws)? else { continue };
-            let Ok(msg) = serde_json::from_str::<Value>(&text) else { continue };
+            let Ok(msg) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
             // A device-lost push can land mid-read; fail the command so the caller
             // (readback / converge / live) surfaces the drop instead of timing out.
             if let Some(err) = synchronize_lost(&msg) {
@@ -730,7 +858,10 @@ mod imp {
                 continue;
             }
             let vdp = msg.pointer("/params/vdp");
-            let ruri = vdp.and_then(|v| v.get("uri")).and_then(Value::as_str).unwrap_or("");
+            let ruri = vdp
+                .and_then(|v| v.get("uri"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
             // Match the address exactly so another instance's reply (e.g. y=12) cannot
             // satisfy a y=1 request via a prefix match.
             let ruri_addr = ruri.split('?').next().unwrap_or(ruri);
@@ -740,12 +871,23 @@ mod imp {
             return vdp
                 .and_then(|v| v.pointer("/data/current_value"))
                 .cloned()
-                .ok_or_else(|| format!("broker response had no current_value at {param_id}:{x}:{y}"));
+                .ok_or_else(|| {
+                    format!("broker response had no current_value at {param_id}:{x}:{y}")
+                });
         }
-        Err(format!("timed out waiting for the parameter value at {param_id}:{x}:{y}"))
+        Err(format!(
+            "timed out waiting for the parameter value at {param_id}:{x}:{y}"
+        ))
     }
 
-    fn do_get(ws: &mut Ws, subs: &mut Subs, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
+    fn do_get(
+        ws: &mut Ws,
+        subs: &mut Subs,
+        dev_uid: &str,
+        param_id: u32,
+        x: i64,
+        y: i64,
+    ) -> Result<i64, String> {
         do_get_value(ws, subs, dev_uid, param_id, x, y)?
             .as_i64()
             .ok_or_else(|| "parameter value was not an integer".to_string())
@@ -754,7 +896,14 @@ mod imp {
     // The broker returns a name as a preset index (number) until one is typed,
     // then the literal string; a non-string value decodes to "" so callers see
     // "no custom name".
-    fn do_get_str(ws: &mut Ws, subs: &mut Subs, dev_uid: &str, param_id: u32, x: i64, y: i64) -> Result<String, String> {
+    fn do_get_str(
+        ws: &mut Ws,
+        subs: &mut Subs,
+        dev_uid: &str,
+        param_id: u32,
+        x: i64,
+        y: i64,
+    ) -> Result<String, String> {
         Ok(do_get_value(ws, subs, dev_uid, param_id, x, y)?
             .as_str()
             .unwrap_or("")
@@ -763,7 +912,13 @@ mod imp {
 
     /// Register or unregister one meter address with the broker. Fire-and-forget:
     /// the response_code reply is drained by `pump` like any other frame.
-    fn reg_meter(ws: &mut Ws, dev_uid: &str, meter_id: u32, x: i64, op: &str) -> Result<(), String> {
+    fn reg_meter(
+        ws: &mut Ws,
+        dev_uid: &str,
+        meter_id: u32,
+        x: i64,
+        op: &str,
+    ) -> Result<(), String> {
         send_json(
             ws,
             json!({
@@ -779,7 +934,14 @@ mod imp {
 
     /// Register or unregister one parameter address with the broker for change
     /// notifies. Fire-and-forget, like reg_meter: the reply is drained by `pump`.
-    fn reg_param(ws: &mut Ws, dev_uid: &str, param_id: u32, x: i64, y: i64, op: &str) -> Result<(), String> {
+    fn reg_param(
+        ws: &mut Ws,
+        dev_uid: &str,
+        param_id: u32,
+        x: i64,
+        y: i64,
+        op: &str,
+    ) -> Result<(), String> {
         send_json(
             ws,
             json!({
@@ -814,7 +976,10 @@ mod imp {
         let mut parts = addr.split(':');
         let (id, xs) = (parts.next()?, parts.next()?);
         let (meter_id, x) = (id.parse::<u32>().ok()?, xs.parse::<i64>().ok()?);
-        let value = vdp.pointer("/data/current_value").and_then(Value::as_i64).unwrap_or(0);
+        let value = vdp
+            .pointer("/data/current_value")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
         Some(MeterUpdate { meter_id, x, value })
     }
 
@@ -829,14 +994,28 @@ mod imp {
         // collide with (catalog x/y are never negative), so the follow layer's
         // unknown-address path escalates it to a full readback.
         if notify_frame(msg, "/vd/parameters").is_some_and(|(_, rest)| rest.is_empty()) {
-            return Some(ParamUpdate { param_id: 0, x: -1, y: -1, value: 0 });
+            return Some(ParamUpdate {
+                param_id: 0,
+                x: -1,
+                y: -1,
+                value: 0,
+            });
         }
         let (vdp, addr) = notify_frame(msg, "/vd/parameters/")?;
         let mut parts = addr.split(':');
         let (ids, xs, ys) = (parts.next()?, parts.next()?, parts.next()?);
-        let (param_id, x, y) = (ids.parse::<u32>().ok()?, xs.parse::<i64>().ok()?, ys.parse::<i64>().ok()?);
+        let (param_id, x, y) = (
+            ids.parse::<u32>().ok()?,
+            xs.parse::<i64>().ok()?,
+            ys.parse::<i64>().ok()?,
+        );
         let value = vdp.pointer("/data/current_value").and_then(Value::as_i64)?;
-        Some(ParamUpdate { param_id, x, y, value })
+        Some(ParamUpdate {
+            param_id,
+            x,
+            y,
+            value,
+        })
     }
 
     /// Detect a device-lost push: Device Center spontaneously sends a
@@ -886,16 +1065,23 @@ mod imp {
                     // Parse the frame once and share it: synchronize_lost and absorb
                     // read the same envelope, and this drains the ~250/s meter
                     // stream (avoid re-parsing per consumer).
-                    let Ok(msg) = serde_json::from_str::<Value>(&t) else { continue };
+                    let Ok(msg) = serde_json::from_str::<Value>(&t) else {
+                        continue;
+                    };
                     if let Some(err) = synchronize_lost(&msg) {
                         return Err(err);
                     }
                     subs.absorb(&msg);
                 }
-                Ok(Message::Close(_)) => return Err("Device Center closed the control connection".into()),
+                Ok(Message::Close(_)) => {
+                    return Err("Device Center closed the control connection".into())
+                }
                 Ok(_) => {} // ping/pong/binary — discard, keep going
                 Err(tungstenite::Error::Io(e))
-                    if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) =>
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
                 {
                     break; // socket drained — fall through to flush the batch
                 }
@@ -960,7 +1146,10 @@ mod imp {
             assert!(subs.absorb(&notify("/vd/meters/115:0".into(), -183)));
             assert!(subs.absorb(&notify("/vd/meters/115:1?x=y".into(), 32767)));
             assert!(!subs.absorb(&notify("/vd/parameters/142:0:0".into(), 1)));
-            assert!(meters_seen.lock().unwrap().is_empty(), "nothing sent before flush");
+            assert!(
+                meters_seen.lock().unwrap().is_empty(),
+                "nothing sent before flush"
+            );
 
             subs.flush();
             let batches = meters_seen.lock().unwrap();
@@ -1083,7 +1272,10 @@ mod tests {
         // A later write connects before the live teardown's disconnect runs.
         let (write_tx, write_rx) = mpsc::channel::<Cmd>();
         let write_epoch = state.install(write_tx);
-        assert_ne!(live_epoch, write_epoch, "each install gets a fresh generation");
+        assert_ne!(
+            live_epoch, write_epoch,
+            "each install gets a fresh generation"
+        );
 
         // The delayed stale disconnect now lands — targets the old generation.
         disconnect(&state, live_epoch);
@@ -1091,7 +1283,8 @@ mod tests {
         // The write's connection survives: sender() resolves (not "not connected")
         // and the cloned channel still reaches its worker.
         let tx = sender(&state).expect("write connection must stay installed");
-        tx.send(Cmd::Shutdown).expect("worker channel must still be open");
+        tx.send(Cmd::Shutdown)
+            .expect("worker channel must still be open");
         assert!(matches!(write_rx.recv(), Ok(Cmd::Shutdown)));
     }
 
@@ -1104,7 +1297,10 @@ mod tests {
 
         disconnect(&state, epoch);
 
-        assert!(sender(&state).is_err(), "after its own disconnect: not connected");
+        assert!(
+            sender(&state).is_err(),
+            "after its own disconnect: not connected"
+        );
     }
 
     // Installing a new connection shuts the prior worker down (unchanged behavior).
@@ -1115,6 +1311,9 @@ mod tests {
         state.install(tx1);
         let (tx2, _rx2) = mpsc::channel::<Cmd>();
         state.install(tx2);
-        assert!(matches!(rx1.recv(), Ok(Cmd::Shutdown)), "prior worker told to stop");
+        assert!(
+            matches!(rx1.recv(), Ok(Cmd::Shutdown)),
+            "prior worker told to stop"
+        );
     }
 }

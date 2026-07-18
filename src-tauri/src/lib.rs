@@ -20,7 +20,10 @@ fn check_extension(path: &str, allowed: &[&str]) -> Result<(), String> {
         .map(|e| e.to_ascii_lowercase());
     match ext {
         Some(e) if allowed.contains(&e.as_str()) => Ok(()),
-        _ => Err(format!("unexpected file extension (allowed: {})", allowed.join(", "))),
+        _ => Err(format!(
+            "unexpected file extension (allowed: {})",
+            allowed.join(", ")
+        )),
     }
 }
 
@@ -30,17 +33,21 @@ fn check_extension(path: &str, allowed: &[&str]) -> Result<(), String> {
 #[tauri::command]
 async fn read_text_file(path: String) -> Result<String, String> {
     check_extension(&path, &["json"])?;
-    tauri::async_runtime::spawn_blocking(move || fs::read_to_string(&path).map_err(|e| e.to_string()))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        fs::read_to_string(&path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 async fn write_text_file(path: String, contents: String) -> Result<(), String> {
     check_extension(&path, &["json", "md"])?;
-    tauri::async_runtime::spawn_blocking(move || fs::write(&path, contents).map_err(|e| e.to_string()))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        fs::write(&path, contents).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // Image export (PNG / PDF). The payload travels as the raw IPC request body — a
@@ -102,7 +109,10 @@ fn third_party_licenses(app: tauri::AppHandle) -> Result<String, String> {
     use tauri::Manager;
     let path = app
         .path()
-        .resolve("THIRD_PARTY_LICENSES.html", tauri::path::BaseDirectory::Resource)
+        .resolve(
+            "THIRD_PARTY_LICENSES.html",
+            tauri::path::BaseDirectory::Resource,
+        )
         .map_err(|e| e.to_string())?;
     fs::read_to_string(&path).map_err(|e| e.to_string())
 }
@@ -149,7 +159,12 @@ async fn vd_set(
 }
 
 #[tauri::command]
-async fn vd_get(state: State<'_, vd::VdState>, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
+async fn vd_get(
+    state: State<'_, vd::VdState>,
+    param_id: u32,
+    x: i64,
+    y: i64,
+) -> Result<i64, String> {
     let tx = vd::sender(&state)?;
     tauri::async_runtime::spawn_blocking(move || vd::get(tx, param_id, x, y))
         .await
