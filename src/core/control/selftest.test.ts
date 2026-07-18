@@ -14,9 +14,9 @@ vi.mock("../platform", () => ({
 
 import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
 import { auditUnverified, planToCommands } from "./translate";
-import { D_GAIN_PARAM, INSERT_FX_OPTIONS, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
+import { D_GAIN_PARAM, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
-import { formatSelfTestReport, perturbedPlan, runSelfTest } from "./selftest";
+import { formatSelfTestReport, PASSES, perturbedPlan, runSelfTest } from "./selftest";
 
 const model = getModel("URX44V");
 
@@ -65,7 +65,7 @@ describe("runSelfTest", () => {
     const report = await runSelfTest(model, 0);
     expect(report.device).toBe("URX44V");
     expect(report.phase).toBe("done");
-    expect(report.passes).toBe(INSERT_FX_OPTIONS.length);
+    expect(report.passes).toBe(8);
     expect(report.residual).toEqual([]);
     expect(report.ok).toBe(true);
     expect(report.restored).toBe(true);
@@ -119,6 +119,26 @@ describe("runSelfTest", () => {
     expect(report.errors.join(" ")).toContain("URX22");
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(vi.mocked(vdDisconnect)).toHaveBeenCalled();
+  });
+
+  it("emits identical insert FX commands on every pass (unmodeled ON/OFF switch)", () => {
+    // A captured "selected but bypassed" effect: re-selecting it on the device
+    // would auto-engage its unmodeled insert ON/OFF switch, so the perturbed
+    // plans must never change what the insert-FX params would write — pinned at
+    // the command layer, so the diff-based send can never see an insert-FX
+    // difference to send.
+    const original = populatedPlan();
+    original.nodeParams["ch1"] = { ...original.nodeParams["ch1"], insertFx: 1794, insertFxParams: { "6": -1000 } };
+    original.nodeParams["bus.mix1"] = { insertFx: 1794 };
+    const insertFxCommands = (plan: Plan) =>
+      planToCommands(model, plan)
+        .filter((c) => c.name.includes("INSERT_FX"))
+        .map((c) => [c.name, c.x, c.y, c.vdValue]);
+    const baseline = insertFxCommands(original);
+    expect(baseline.length).toBeGreaterThan(0);
+    for (let pass = 0; pass < PASSES; pass++) {
+      expect(insertFxCommands(perturbedPlan(model, original, pass))).toEqual(baseline);
+    }
   });
 
   it("perturbed plans are silent — faders floored, oscillator and phantom off", () => {

@@ -13,12 +13,16 @@
 //
 // COVERAGE: enum params are swept across passes — pass k selects option
 // (k mod optionCount) for COMP/EQ type, COMP knee, OSC mode and EQ-band type, so
-// every option is written over the run. Insert FX is swept on a single node per
-// pass (one input channel + one output bus), the rest set to none, to respect
-// the device-wide 1-of-N slot exclusivity. Input source is swept across the
-// model's selectable input ports, so the (still-unverified on URX22/44) physical
-// port map is exercised, not just the captured selection. PASSES covers the
-// largest enum.
+// every option is written over the run. Insert FX selectors are NOT swept: the
+// device auto-engages a (re)selected effect through its insert ON/OFF switch, a
+// device param this app does not model, so a sweep would leave a captured
+// "selected but bypassed" effect audibly engaged after the restore (and the
+// restore verification, which only checks params it writes, cannot see it). The
+// captured selectors pass through untouched — the diff-based send then never
+// writes them. Re-enable the sweep once the insert ON/OFF switch is modeled.
+// Input source is swept across the model's selectable input ports, so the
+// (still-unverified on URX22/44) physical port map is exercised, not just the
+// captured selection.
 //
 // UNVERIFIED GUESSES: some device mappings are confirmed only on URX44V and remain
 // guesses on URX22/URX44 (see UNVERIFIED_MAPPINGS). A static audit first refutes
@@ -37,9 +41,6 @@ import {
   BUS_TYPE_OPTIONS,
   EQ_ONE_KNOB_TYPE_MONO_OPTIONS,
   EQ_ONE_KNOB_TYPE_WIDE_OPTIONS,
-  INSERT_FX_NONE,
-  INSERT_FX_OPTIONS,
-  OUTPUT_INSERT_FX_OPTIONS,
   REC_POINT_OPTIONS,
 } from "./params";
 import { sendConverging } from "./client";
@@ -48,7 +49,6 @@ import {
   auditUnverified,
   channelControl,
   inputPorts,
-  insertFxControl,
   isStereoChannel,
   UNVERIFIED_MAPPINGS,
   unverifiedAddresses,
@@ -122,8 +122,9 @@ const SILENCE_DB = -200;
 // exercises both banks over the run. Every captured enum must be listed here so
 // it cycles within its legal range — a blind +1 (the fallback for plain numbers)
 // drives a 2-value enum like busType out of range, which the broker rejects.
-// Driver toggles (oneKnob/autoMakeup), insertFx, and EQ 1-knob type (its legal
-// subset depends on the node) are handled separately, not by the generic sweep.
+// Driver toggles (oneKnob/autoMakeup) and EQ 1-knob type (its legal subset
+// depends on the node) are handled separately; insertFx is left untouched
+// entirely (see the COVERAGE note above).
 const ENUM_SWEEP: Record<string, number[]> = {
   compEqType: [0, 1],
   knee: [0, 1, 2],
@@ -139,8 +140,9 @@ const ENUM_SWEEP: Record<string, number[]> = {
 // rejects (a false failure when a captured baseline has an effect assigned).
 // fxEffect's type is per-FX (FX1 0..2/1024..1025, FX2 768..770/1024..1025), and
 // both repopulate the array on a type/selector change (sideEffect). The selector
-// itself (insertFx) is swept by sweepInsertFx; round-trip coverage for the engine
-// slots lives in the completeness / insert-fx-effect / translate unit tests.
+// itself (insertFx) is skipped for the ON/OFF reason in the COVERAGE note;
+// round-trip coverage for the selectors and the engine slots lives in the
+// completeness / value-coverage / insert-fx-effect / translate unit tests.
 //
 // stereoLink / panBal are skipped too: stereoLink (Signal Type) is structural —
 // toggling it resets the secondary channel and rejects independent writes to it
@@ -148,9 +150,14 @@ const ENUM_SWEEP: Record<string, number[]> = {
 // generic "+1" perturb drives it out of range. Both round-trip in value-coverage.
 const SKIP = new Set(["insertFx", "insertFxParams", "autoMakeup", "oneKnob", "fxEffect", "stereoLink", "panBal"]);
 
-// Passes needed to sweep every enum option at least once (the largest is the
-// input insert-FX option list).
-const PASSES = INSERT_FX_OPTIONS.length;
+// Sweep passes. Must cover every generic enum option at least once (the largest
+// is the 5-option Rec Point). Held at 8 — the count the input insert-FX option
+// list historically imposed — so the input-source port sweep keeps exactly its
+// previous coverage: each pass shifts every channel group one port further, and
+// with 8 passes the last input ports stay unreached on URX44/44V (full port
+// coverage would need ports - groups + 1 passes: 10/9/7 per model). A deliberate
+// hold, not a coverage invariant. Exported for tests.
+export const PASSES = 8;
 
 // Perturb every scalar in an object tree in place: flip bools, nudge numbers,
 // cycle the PRE/POST tap, and set swept enums to this pass's option.
@@ -195,30 +202,6 @@ function makeSilent(model: DeviceModel, plan: Plan): void {
   // channel fader / send carries no signal even when the captured plan did not
   // set it explicitly. Connection kinds with no level (source/patch/key/sendSwitch) ignore it.
   for (const c of plan.connections) c.params = { ...c.params, level: SILENCE_DB };
-}
-
-// Sweep insert FX: one input channel and one output bus get this pass's option,
-// every other insert-FX node is set to none. A single active effect per kind
-// respects the device-wide 1-of-N slot exclusivity (two channels cannot hold the
-// same slot at once), so the write is always legal.
-function sweepInsertFx(plan: Plan, pass: number, model: DeviceModel): void {
-  const inputs: string[] = [];
-  const outputs: string[] = [];
-  for (const node of model.nodes) {
-    const ifx = insertFxControl(model, node.id);
-    if (!ifx) continue;
-    // Reset the selector and drop any captured effect params: a fresh effect
-    // populates its own per-type defaults on the device, and emitting another
-    // effect's stale slots would write nonsense to the new engine.
-    const np = (plan.nodeParams[node.id] ??= {});
-    np.insertFx = INSERT_FX_NONE;
-    delete np.insertFxParams;
-    (ifx.options === INSERT_FX_OPTIONS ? inputs : outputs).push(node.id);
-  }
-  if (inputs.length) plan.nodeParams[inputs[0]].insertFx = INSERT_FX_OPTIONS[pass % INSERT_FX_OPTIONS.length].value;
-  if (outputs.length) {
-    plan.nodeParams[outputs[0]].insertFx = OUTPUT_INSERT_FX_OPTIONS[pass % OUTPUT_INSERT_FX_OPTIONS.length].value;
-  }
 }
 
 // Sweep input-source selection across the model's selectable input ports, so the
@@ -290,7 +273,6 @@ export function perturbedPlan(model: DeviceModel, original: Plan, pass: number, 
   const plan = structuredClone(original);
   for (const np of Object.values(plan.nodeParams)) perturb(np as Record<string, unknown>, pass);
   for (const c of plan.connections) if (c.params) perturb(c.params as Record<string, unknown>, pass);
-  sweepInsertFx(plan, pass, model);
   sweepInputSource(plan, pass, model);
   sweepEqOneKnobType(plan, pass, model);
   if (suppress) for (const m of UNVERIFIED_MAPPINGS) if (suppress.has(m.key)) m.suppress?.(plan);
