@@ -96,9 +96,14 @@ export class MidiEngine {
   }
 
   /** Mappings grouped by shared address (head first within each group), in
-   *  first-learned order — the assignment list renders gangs contiguously. */
+   *  first-learned order — the assignment list renders gangs contiguously. The
+   *  head is the first member that resolves (see headOf), so an inert mapping
+   *  never renders above the member that actually owns the address. */
   getGangedMappings(): MidiMapping[] {
-    return [...this.byKey.values()].flat();
+    return [...this.byKey.entries()].flatMap(([key, gang]) => {
+      const head = this.headOf(key);
+      return head ? [head, ...gang.filter((m) => m !== head)] : gang;
+    });
   }
 
   // ---- learn ----
@@ -206,10 +211,22 @@ export class MidiEngine {
     return addrs.flatMap((addr) => this.byKey.get(addrKey(addr)) ?? []);
   }
 
-  // A shared address drives a gang of controls; its list head (the first learned)
-  // is the representative — it alone owns the address' feedback and pickup state.
+  // A shared address drives a gang of controls; one member is the representative —
+  // it alone owns the address' feedback and pickup state. That is the first
+  // learned member that RESOLVES for the current plan: a mapping whose control is
+  // gone (a removed send, or one persisted for another model) can own neither, or
+  // it would strand the whole gang — no feedback ever emitted, and pickup state
+  // never created, so every live member stays swallowed. Resolution follows plan
+  // state, so it is recomputed rather than cached; callers on the message path
+  // resolve once and pass the result down.
+  private headOf(key: string): MidiMapping | undefined {
+    const gang = this.byKey.get(key);
+    if (!gang || gang.length === 1) return gang?.[0];
+    return gang.find((m) => this.hooks.resolve(m.control) !== null) ?? gang[0];
+  }
+
   private isHead(key: string, mapping: MidiMapping): boolean {
-    return this.byKey.get(key)?.[0] === mapping;
+    return this.headOf(key) === mapping;
   }
 
   // Consume the one-shot toggle echo guard for a mapping's address, tracing the
@@ -232,7 +249,12 @@ export class MidiEngine {
     // (The toggle echo guard itself ran per address in onMessage.)
     if (!toggle) this.lastRecv.set(key, this.hooks.now());
     const before = control.get();
-    const target = toggle ? this.toggleTarget(mapping, ev, before) : this.continuousTarget(mapping, key, ev, before);
+    // Head ownership is needed twice below (pickup engagement, then the sent
+    // cache); resolve it once per message rather than per use.
+    const isHead = !toggle && this.headOf(key) === mapping;
+    const target = toggle
+      ? this.toggleTarget(mapping, ev, before)
+      : this.continuousTarget(mapping, key, ev, before, isHead);
     if (target === null) {
       this.hooks.trace?.(`ignore ${mapping.control}`); // release / same state / pickup hold
       return;
@@ -245,7 +267,7 @@ export class MidiEngine {
     // The controller already shows what it sent: remember the applied value as
     // fed back, so the settle pass only sends a genuinely different value. A gang
     // shares one address, and its head owns that feedback cache — only it records.
-    if (!toggle && this.isHead(key, mapping)) this.lastSent.set(key, this.encodeRaw(mapping.addr, after));
+    if (isHead) this.lastSent.set(key, this.encodeRaw(mapping.addr, after));
     this.hooks.trace?.(`apply ${mapping.control} ${before} -> ${after}`);
     if (after !== before) this.hooks.applied(control);
   }
@@ -270,7 +292,13 @@ export class MidiEngine {
     return on ? (current >= 0.5 ? 0 : 1) : null;
   }
 
-  private continuousTarget(mapping: MidiMapping, key: string, ev: MidiEvent, current: number): number | null {
+  private continuousTarget(
+    mapping: MidiMapping,
+    key: string,
+    ev: MidiEvent,
+    current: number,
+    isHead: boolean,
+  ): number | null {
     // A note bound to a continuous control acts as a momentary full/zero switch.
     if (ev.type === "note") return ev.on ? 1 : 0;
     let incoming: number;
@@ -285,9 +313,7 @@ export class MidiEngine {
       // Pickup state is owned by the address' head, which is applied first
       // (matches() preserves byKey order), so ganged members can inherit its
       // engagement and cross over together behind the one physical control.
-      const engaged = this.isHead(key, mapping)
-        ? this.pickupEngaged(key, incoming, current)
-        : (this.pickup.get(key)?.engaged ?? false);
+      const engaged = isHead ? this.pickupEngaged(key, incoming, current) : (this.pickup.get(key)?.engaged ?? false);
       if (!engaged) return null;
     }
     return incoming;
@@ -331,14 +357,14 @@ export class MidiEngine {
     if (resync) this.lastSent.clear();
     const now = this.hooks.now();
     let deferred = false;
-    for (const mapping of this.mappings) {
-      const key = addrKey(mapping.addr);
-      // One address drives one physical control: when a gang shares it, only the
-      // head feeds back (the controls it represents may diverge, and a single
-      // physical control can follow just one — the first-learned).
-      if (!this.isHead(key, mapping)) continue;
-      const control = this.hooks.resolve(mapping.control);
-      if (!control) continue;
+    // One address drives one physical control, so iterate ADDRESSES: when a gang
+    // shares one, only its head feeds back (the controls it represents may
+    // diverge, and a single physical control can follow just one). Walking byKey
+    // rather than every mapping also resolves the head once per address per pass.
+    for (const key of this.byKey.keys()) {
+      const mapping = this.headOf(key);
+      const control = mapping && this.hooks.resolve(mapping.control);
+      if (!mapping || !control) continue;
       const value = control.get();
       const raw = this.encodeRaw(mapping.addr, value);
       if (this.lastSent.get(key) === raw) continue;
