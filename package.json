@@ -17,6 +17,7 @@
     "test:e2e": "playwright test",
     "format": "prettier --write \"src/**/*.ts\" \"e2e/**/*.ts\" \"scripts/**/*.mjs\" \"*.ts\"",
     "preview": "vite preview --port 4173 --strictPort",
+    "e2e:serve": "vite build && pnpm preview",
     "reset:storage": "node scripts/reset-storage.mjs",
     "tauri": "tauri",
     "clean": "rm -rf node_modules/.vite dist && cargo clean --manifest-path src-tauri/Cargo.toml"
