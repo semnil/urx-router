@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   emptyPlan,
   ensureFixedConnections,
@@ -7,6 +7,7 @@ import {
   deserialize,
   decodePlanParam,
   encodePlanParam,
+  pipeBytes,
   hasConnection,
   removeConnection,
   PlanError,
@@ -253,27 +254,85 @@ describe("hasConnection / removeConnection", () => {
 });
 
 describe("encodePlanParam / decodePlanParam", () => {
-  it("round-trips a plan through the URL-safe base64 used by the ?plan= link", () => {
+  it("round-trips a plan through the compressed z format used by the ?plan= link", async () => {
     const plan = defaultPlan("URX44V");
     plan.nodeNames["ch1"] = "ボーカル"; // multi-byte to exercise UTF-8
-    const encoded = encodePlanParam(plan);
+    const encoded = await encodePlanParam(plan);
+    expect(encoded.startsWith("z")).toBe(true);
     expect(encoded).not.toMatch(/[+/=]/); // URL-safe, unpadded
-    expect(deserialize(decodePlanParam(encoded))).toEqual(plan);
+    expect(deserialize(await decodePlanParam(encoded))).toEqual(plan);
   });
 
-  it("round-trips 4-byte UTF-8 (emoji surrogate pairs) through the hand-rolled base64", () => {
-    // The encoder walks the UTF-8 byte array through String.fromCharCode + btoa;
+  it("compresses a factory-seeded plan to well under the ~8 KB URL limit", async () => {
+    // The whole point of the z format: an uncompressed factory URX44V plan
+    // encodes to >30k chars, past GitHub Pages' request-line cap.
+    const encoded = await encodePlanParam(defaultPlan("URX44V"));
+    expect(encoded.length).toBeLessThan(8000);
+  });
+
+  it("round-trips 4-byte UTF-8 (emoji surrogate pairs) through the hand-rolled base64", async () => {
+    // The encoder walks the deflated byte array through String.fromCharCode + btoa;
     // surrogate-pair emoji (4-byte code points) are the classic break point for a
     // hand-rolled byte<->base64 loop, so pin one explicitly.
     const plan = emptyPlan("URX22");
     plan.nodeNames["ch1"] = "🎸🥁 Ø 日本語";
     plan.notes["ch1"] = "🎚️ +2 dB 😀";
-    const restored = deserialize(decodePlanParam(encodePlanParam(plan)));
+    const restored = deserialize(await decodePlanParam(await encodePlanParam(plan)));
     expect(restored.nodeNames["ch1"]).toBe("🎸🥁 Ø 日本語");
     expect(restored.notes["ch1"]).toBe("🎚️ +2 dB 😀");
   });
 
-  it("throws on a malformed encoded parameter", () => {
-    expect(() => decodePlanParam("not base64 !!!")).toThrow();
+  it("still decodes a legacy uncompressed parameter (pre-compression links)", async () => {
+    // Links emitted before the z format are plain URL-safe base64 of the JSON;
+    // the JSON always starts "{", so they always start "e" — never "z" — and
+    // must keep loading.
+    const plan = emptyPlan("URX22");
+    plan.nodeNames["ch1"] = "レガシー";
+    const json = serialize(plan);
+    const legacy = Buffer.from(json, "utf8").toString("base64url");
+    expect(legacy.startsWith("e")).toBe(true);
+    expect(legacy.startsWith("z")).toBe(false);
+    expect(await decodePlanParam(legacy)).toBe(json);
+  });
+
+  it("rejects malformed encoded parameters in both formats", async () => {
+    await expect(decodePlanParam("not base64 !!!")).rejects.toThrow();
+    await expect(decodePlanParam("z!!!")).rejects.toThrow();
+    // Valid base64url after "z" but not valid deflate data.
+    await expect(decodePlanParam("zeyJmb3JtYXQi")).rejects.toThrow();
+  });
+
+  it("decodes invalid UTF-8 lossily instead of rejecting (legacy parity)", async () => {
+    // TextDecoder runs non-fatal, matching the pre-compression decoder: bad
+    // bytes become U+FFFD and the failure surfaces at the JSON parse instead.
+    const legacy = Buffer.from([0x7b, 0xff, 0x7d]).toString("base64url"); // "{" 0xFF "}"
+    await expect(decodePlanParam(legacy)).resolves.toBe("{�}");
+  });
+
+  it('round-trips pipeBytes in the zlib "deflate" format (the PDF FlateDecode pump)', async () => {
+    // storage.ts's PDF export delegates its deflate to pipeBytes with the zlib
+    // wrapper format; pin that both directions work alongside deflate-raw.
+    const src = new TextEncoder().encode("PDF stream bytes");
+    const deflated = await pipeBytes(src, new CompressionStream("deflate"));
+    const inflated = await pipeBytes(deflated, new DecompressionStream("deflate"));
+    expect(new TextDecoder().decode(inflated)).toBe("PDF stream bytes");
+  });
+
+  it("throws the typed browser-floor PlanError when the deflate-raw codec is missing", async () => {
+    // Old webviews (Safari <16.4 etc.) lack the codec: both directions must
+    // reject with PlanError("planUrlUnsupported") so the UI reports a browser
+    // limitation instead of a broken link — while legacy uncompressed params
+    // keep decoding without the codec at all.
+    const plan = emptyPlan("URX22");
+    const legacy = Buffer.from(serialize(plan), "utf8").toString("base64url");
+    vi.stubGlobal("CompressionStream", undefined);
+    vi.stubGlobal("DecompressionStream", undefined);
+    try {
+      await expect(encodePlanParam(plan)).rejects.toMatchObject({ name: "PlanError", code: "planUrlUnsupported" });
+      await expect(decodePlanParam("zAAAA")).rejects.toMatchObject({ name: "PlanError", code: "planUrlUnsupported" });
+      await expect(decodePlanParam(legacy)).resolves.toBe(serialize(plan));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

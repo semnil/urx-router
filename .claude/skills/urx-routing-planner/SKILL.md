@@ -174,7 +174,9 @@ python scripts/plan_tool.py url plan.json
 
 and the apply options. See `references/device-apply.md` for the full hardware
 write / Live sync procedure. Lead with the link (instant visual check, no
-hardware) and note that device writes are desktop-only.
+hardware) and note that device writes are desktop-only. The opened link's
+Download JSON button saves the same plan as a file, which the desktop app
+opens via File → Open — the no-copy-paste route onto hardware.
 
 ## Output format
 
@@ -194,7 +196,8 @@ hardware) and note that device writes are desktop-only.
 3. The **`?plan=` deep link**.
 4. **Apply options**: open the link to visualize; or open the JSON in the desktop
    URX Router and use Device → Write to device / Live sync (point to
-   `references/device-apply.md`).
+   `references/device-apply.md`). The JSON file can come straight from the
+   opened link via its Download JSON button.
 5. Any **stability warnings** from step 6.
 
 ## Output language

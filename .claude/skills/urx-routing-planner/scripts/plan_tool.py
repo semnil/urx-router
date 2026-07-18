@@ -6,8 +6,10 @@ loads it without the validation modal":
 
 - validation matches core/routing.ts `validatePlan` (noRule / singleInput /
   duplicate), and
-- the URL encoding matches core/plan.ts `encodePlanParam` (URL-safe base64 of the
-  UTF-8 JSON, padding stripped), read back by `?plan=` on startup.
+- the URL encoding matches core/plan.ts `encodePlanParam` ("z" + URL-safe base64
+  of the raw-deflated UTF-8 JSON, padding stripped), read back by `?plan=` on
+  startup. Compression keeps full plans inside GitHub Pages' ~8 KB URL limit;
+  the app also still decodes the legacy uncompressed base64 form.
 
 Routing ground truth lives in scripts/models.json (extracted from the device
 model). Only routes listed there are legal.
@@ -26,6 +28,7 @@ import base64
 import json
 import os
 import sys
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODELS_PATH = os.path.join(HERE, "models.json")
@@ -144,7 +147,9 @@ def format_report(plan, problems):
 
 def encode_plan_param(plan):
     raw = json.dumps(plan, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+    co = zlib.compressobj(9, zlib.DEFLATED, -15)  # raw deflate = CompressionStream "deflate-raw"
+    deflated = co.compress(raw) + co.flush()
+    return "z" + base64.urlsafe_b64encode(deflated).rstrip(b"=").decode("ascii")
 
 
 def main(argv=None):

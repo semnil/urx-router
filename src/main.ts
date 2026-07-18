@@ -10,6 +10,7 @@ import {
   decodePlanParam,
   deserialize,
   emptyPlan,
+  encodePlanParam,
   ensureFixedConnections,
   PlanError,
   serialize,
@@ -19,6 +20,7 @@ import type { ConnParams, NodeParams, Plan } from "./core/plan";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import {
   baseName,
+  downloadText,
   loadJson,
   loadRecent,
   openTextDocument,
@@ -774,6 +776,13 @@ function applyStaticI18n(): void {
   const desktopLink = document.getElementById("btn-desktop");
   if (desktopLbl) desktopLbl.textContent = m.toolbar.desktopApp;
   if (desktopLink) desktopLink.title = m.toolbar.desktopAppHint;
+  // Demo-only share / download buttons (same reveal mechanism as the link above).
+  const shareBtn = $("btn-share");
+  shareBtn.textContent = m.toolbar.shareUrl;
+  shareBtn.title = m.toolbar.shareUrlHint;
+  const downloadBtn = $("btn-download");
+  downloadBtn.textContent = m.toolbar.downloadJson;
+  downloadBtn.title = m.toolbar.downloadJsonHint;
 }
 applyStaticI18n();
 
@@ -995,6 +1004,49 @@ $("btn-save").addEventListener("click", async () => {
   } catch (err) {
     showError(t().status.saveError(String(err)));
   }
+});
+
+// Demo-only sharing (the buttons stay hidden outside the demo build, but are
+// wired unconditionally so the dev-server E2E can drive them): the demo has no
+// file IO, so the plan travels as a ?plan= deep link — the same encoding
+// loadPlanFromUrl reads — or as a JSON download the desktop app opens.
+$("btn-share").addEventListener("click", async () => {
+  const url = new URL(location.href);
+  url.search = "";
+  url.hash = "";
+  // Encoding compresses via the platform CompressionStream; surface a failure
+  // as a modal rather than silently copying nothing. A missing deflate-raw
+  // codec arrives as the typed browser-floor PlanError, same as the decode path.
+  try {
+    url.searchParams.set("plan", await encodePlanParam(plan));
+  } catch (err) {
+    showError(err instanceof PlanError ? t().error[err.code] : t().status.shareUrlError(String(err)));
+    return;
+  }
+  const link = url.toString();
+  // Put the link in the address bar first, so it stays copyable by hand when
+  // the clipboard is unavailable (insecure context) or rejects the write.
+  try {
+    history.replaceState(null, "", link);
+  } catch {
+    // ignore (history unavailable)
+  }
+  if (navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(link).then(
+      () => setStatus(t().status.shareUrlCopied),
+      () => setStatus(t().status.shareUrlInBar),
+    );
+  } else {
+    setStatus(t().status.shareUrlInBar);
+  }
+});
+
+$("btn-download").addEventListener("click", () => {
+  // The demo's stand-in for Save: the downloaded JSON matches a desktop save,
+  // so File → Open on the desktop app loads it as-is.
+  downloadText(`${modelId}-plan.json`, serialize(plan));
+  dirty = false;
+  setStatus(t().status.planDownloaded);
 });
 
 $("btn-export").addEventListener("click", () => {
@@ -1597,7 +1649,7 @@ setStatus(t().status.loaded(modelId));
 // into the viewer (a generator emits a shareable URL). A decode failure or a
 // routing violation surfaces the copyable report instead of loading, leaving the
 // default plan on screen. Runs after the initial render so a failure is visible.
-function loadPlanFromUrl(): void {
+async function loadPlanFromUrl(): Promise<void> {
   let encoded: string | null;
   try {
     encoded = new URL(location.href).searchParams.get("plan");
@@ -1607,14 +1659,16 @@ function loadPlanFromUrl(): void {
   if (!encoded) return;
   let text: string;
   try {
-    text = decodePlanParam(encoded);
-  } catch {
-    showLoadReport(t().error.badPlanUrl);
+    text = await decodePlanParam(encoded);
+  } catch (err) {
+    // A z link failing on a webview without the deflate-raw codec is a browser
+    // limitation, not a broken link — the codec reports it as a typed PlanError.
+    showLoadReport(err instanceof PlanError ? t().error[err.code] : t().error.badPlanUrl);
     return;
   }
   loadFromText(text);
 }
-loadPlanFromUrl();
+void loadPlanFromUrl();
 
 // Desktop boot: gate on first-run consent, then check for updates. DEMO is
 // statically false in the desktop build, so the browser demo bundle drops the

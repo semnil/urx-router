@@ -1,10 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-
-// URL-safe base64 of a plan's JSON — the encoding the ?plan= deep link uses
-// (matches encodePlanParam in core/plan.ts).
-function planParam(plan: unknown): string {
-  return Buffer.from(JSON.stringify(plan), "utf8").toString("base64url");
-}
+import { planParam, planParamZ } from "./plan-param";
 
 const validPlan = {
   format: "urx-router-plan",
@@ -37,6 +32,29 @@ test("a valid ?plan= link loads the plan into the viewer", async ({ page }) => {
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await expect(page.locator("#statusbar")).toContainText("Plan loaded");
   await expect(report(page)).toBeHidden();
+});
+
+test("a compressed z ?plan= link loads the plan into the viewer", async ({ page }) => {
+  await page.goto(`/?plan=${planParamZ(validPlan)}`);
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await expect(page.locator("#statusbar")).toContainText("Plan loaded");
+  await expect(report(page)).toBeHidden();
+});
+
+test("a malformed compressed link reports a decode failure", async ({ page }) => {
+  await page.goto("/?plan=z!!!not-deflate");
+  await expect(report(page)).toBeVisible();
+  await expect(page.locator("#load-report-body")).toContainText("malformed");
+});
+
+test("a browser without the deflate-raw codec reports unsupported, not malformed", async ({ page }) => {
+  // Simulate an old webview (Safari <16.4 etc.): no DecompressionStream at all.
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "DecompressionStream", { value: undefined });
+  });
+  await page.goto(`/?plan=${planParamZ(validPlan)}`);
+  await expect(report(page)).toBeVisible();
+  await expect(page.locator("#load-report-body")).toContainText("doesn't support compressed plan links");
 });
 
 test("an illegal plan surfaces a copyable report and does not load", async ({ page }) => {
