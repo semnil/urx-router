@@ -1,10 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
+import { drag, port, tapJack } from "./graph-helpers";
 
 // Each committed connection renders one transparent .wire-hit band (plus a
 // sibling painted path); counting the band gives one element per connection and
 // targets the element that carries the wire's pointerdown handler.
 const wires = (page: Page) => page.locator("#graph-host .wire-hit");
-const port = (page: Page, ref: string) => page.locator(`[data-ref="${ref}"]`);
 
 // Fixed wires are seeded on every plan and shown pre-connected; the diagram never
 // starts empty. Every CH / FX-channel send is fixed now (always wired, on/off in a
@@ -16,16 +16,13 @@ const FIXED_URX22 = 38; // URX22: 6 CH→STEREO + 2 FX→STEREO + 4 FX→MIX + 6
 
 // A connection is a pointer drag between an output port (.port-out) and an input
 // port (.port-in), in either direction; Playwright's mouse generates the
-// matching pointer events.
-async function connect(page: Page, fromRef: string, toRef: string): Promise<void> {
-  const a = await port(page, fromRef).boundingBox();
-  const b = await port(page, toRef).boundingBox();
-  if (!a || !b) throw new Error(`port not found: ${fromRef} -> ${toRef}`);
-  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 });
-  await page.mouse.up();
-}
+// matching pointer events. A direct out / recording instead leaves the channel's
+// Rec Point tap, so those go through connectFromTap.
+const connect = (page: Page, fromRef: string, toRef: string): Promise<void> =>
+  drag(page, port(page, fromRef), port(page, toRef));
+
+const connectFromTap = (page: Page, fromRef: string, toRef: string): Promise<void> =>
+  drag(page, tapJack(page, fromRef), port(page, toRef));
 
 test.beforeEach(async ({ page }) => {
   // Pin language so status-bar assertions are stable regardless of locale.
@@ -224,7 +221,7 @@ test("a fixed MIX → STEREO (TO ST) switch exposes a TO ST toggle and no delete
 test("a microSD Rec assign carries no level / pan / PRE-POST", async ({ page }) => {
   // SD Rec is a per-track-pair source select (record), not a summing send: a
   // channel pair / STEREO / MIX feeds one track-pair slot, with no mix params.
-  await connect(page, "ch1:out", "out.sdrec.t1:in");
+  await connectFromTap(page, "ch1:out", "out.sdrec.t1:in");
   await expect(wires(page)).toHaveCount(FIXED + 1);
   await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.sdrec.t1:in"]').dispatchEvent("pointerdown");
   await expect(page.locator("#inspector .param")).toHaveCount(0);
