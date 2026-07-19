@@ -646,13 +646,45 @@ per-node column index is `layoutCol` in `build.ts`, stored as `pos.col`; `autoLa
 grid both stack each column independently. Both also share one vertical grid: a default row is
 `pos.row * ROW_GAP` (with `build.ts` reserving an extra row under each stereo channel for its hung
 ducker), and `autoLayout` snaps each node's advance to whole `ROW_GAP` rows — so running Arrange on a
-fresh board moves nothing, while an expanded note simply claims more rows.
+fresh board moves nothing, while an expanded note simply claims more rows. Because Arrange and the
+default grid are the same grid, the row pitch is not adjustable for one of them alone. The gutter it
+leaves (`ROW_GAP - NODE_H`) is working space rather than slack: a Rec Point tap rises into it and runs
+across it, so a tighter pitch makes those wires hug the underside of the node above.
 
 A node's `kind` (which drives its rail color and the channel/bus-only name field) can differ from its
 layout column: OSCILLATOR is `kind: "input"` (a signal source) and the MONITORs are `kind: "output"`
 (sinks), so their rail color reflects their signal role even though they sit in the bus/channel
 columns. The device does not color these in CH SETTING, so — unlike the STEREO / MIX / FX / STREAMING
 buses — they carry no color picker.
+
+## Rec Point tap jack
+
+A channel carries two source jacks, because it has two places a signal leaves it. The right-edge
+output feeds the mixer stage — the bus sends and a ducker key — while the **Rec Point tap** on the top
+edge feeds the direct outs (USB MAIN / SUB) and the microSD Rec tracks, which the block diagram takes
+**ahead of the fader and the Ducker** (see `device-model.md`). Classifying a wire is `directOutTarget`
+in `core/routing.ts`; the canvas simply draws from whichever jack the route actually leaves.
+
+A node gets a tap when the model actually gives it such a route — read from the rules, not from its
+kind — so the jack and the wires that leave it can never disagree. Today that is exactly the channels.
+The jack is drawn whether or not it is wired (otherwise the drag origin would be undiscoverable) and
+lit only while it carries an audible route; its wire climbs a short straight riser into the row gutter
+before sweeping across. That exit is the point: a route leaving the top visibly bypasses the Ducker
+hung below the channel, so the same fact the inspector states in words is also readable from the
+geometry. A single cubic bent upward was tried first and rejected — it dives back through the
+channel's own faceplate whenever the destination sits below, hiding the exit entirely.
+
+The two jacks are **separate origins**, not two handles on one port: a drag from the tap offers only
+USB and microSD Rec, a drag from the output offers everything else, and dragging back from a USB input
+highlights each channel's tap rather than its output. Committing a route from the wrong jack is
+refused with a message naming the one to use — but only when that route exists at all, so a target
+neither jack can reach still reports plainly that there is no such route. A ducker key stays on the
+output even though the device takes it at the same Rec Point stage, so the top edge means "audio taken
+before the fader" alone.
+
+None of this reaches the plan: both jacks carry the channel's `ch:out` ref, so the saved JSON, the
+`?plan=` link and the device translation are unchanged by which jack a wire was drawn from. In the DOM
+the tap is addressed by `data-tap` (not `data-ref`), keeping a `[data-ref]` lookup single-element.
 
 ## Node labels
 
