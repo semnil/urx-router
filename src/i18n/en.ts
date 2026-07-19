@@ -157,8 +157,9 @@ export const en = {
     hint:
       "Drag nodes to place them, then drag from an output port (right) to an " +
       "input port (left) to connect. Connectable ports are highlighted in green " +
-      "while connecting. Click the pen on a node to add a note, then click the " +
-      "note to edit it.",
+      "while connecting. A channel's direct outs and recordings start at the Rec " +
+      "Point tap on its top edge instead. Click the pen on a node to add a note, " +
+      "then click the note to edit it.",
     type: "Type",
     name: "Name",
     color: "Color",
@@ -376,6 +377,7 @@ export const en = {
       sendSwitch: "Send (ON/OFF)",
       patch: "Output patch",
       pre: "Pre-fader send",
+      recPoint: "Rec Point tap",
     },
   },
   shelf: {
@@ -392,6 +394,7 @@ export const en = {
     addNote: "Add a note",
     collapseNote: "Minimize note",
     expandNote: "Expand note",
+    recPointTap: "Rec Point tap — before the fader and Ducker. Drag from here to a USB output or microSD Rec.",
   },
   warning: {
     title: "Sample-rate notes",
@@ -528,6 +531,9 @@ export const en = {
     duplicate: "Already connected",
     singleInput: "This input accepts only one source (remove the existing connection first)",
     cannotConnect: "Cannot connect",
+    recPointRequired: "Connect USB outputs and microSD Rec from the Rec Point tap — the jack on top of the channel",
+    recPointTargets:
+      "The Rec Point tap reaches only USB outputs and microSD Rec — use the channel's output for the rest",
     // Connect-time failure codes from the Rust vd worker (vd.rs), localized here.
     brokerUnreachable: "Device Center isn't running. Start it, connect the URX, then try again.",
     noDevice: "Device Center is running, but no URX is connected. Connect the unit, then try again.",

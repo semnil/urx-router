@@ -2246,6 +2246,7 @@ function legendBlock(m: Messages): DocumentFragment {
   frag.append(legendPreRow(m.inspector.legend.pre));
   frag.append(legendRow("var(--w-sendswitch)", m.inspector.legend.sendSwitch));
   frag.append(legendRow("var(--w-patch)", m.inspector.legend.patch));
+  frag.append(legendRecPointRow(m.inspector.legend.recPoint));
   frag.append(subheading(m.inspector.legend.nodes));
   frag.append(legendRow("var(--rail-input)", m.inspector.nodeKind.input, true));
   frag.append(legendRow("var(--rail-channel)", m.inspector.nodeKind.channel, true));
@@ -2255,34 +2256,74 @@ function legendBlock(m: Messages): DocumentFragment {
   return frag;
 }
 
-// A PRE legend row whose swatch mirrors the on-canvas marker: a dashed send wire
-// with an amber tap glyph. Theme colors come from CSS variables via inline style.
-function legendPreRow(label: string): HTMLElement {
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// A legend row whose swatch is drawn rather than a plain colored dot, for entries
+// whose meaning is a shape (a dash pattern, an exit point) that a dot cannot carry.
+// The 20x12 box is shared by every such row so the label column stays flush.
+function legendSwatchRow(label: string, draw: () => SVGElement[]): HTMLElement {
   const row = document.createElement("div");
   row.className = "conn-row";
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
+  const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("width", "20");
   svg.setAttribute("height", "12");
   svg.setAttribute("viewBox", "0 0 20 12");
   svg.style.flexShrink = "0";
-  const line = document.createElementNS(ns, "line");
-  line.setAttribute("x1", "0");
-  line.setAttribute("y1", "8");
-  line.setAttribute("x2", "20");
-  line.setAttribute("y2", "8");
-  line.setAttribute("stroke-width", "2");
-  line.setAttribute("stroke-dasharray", "5 3");
-  line.setAttribute("stroke-linecap", "round");
-  line.style.stroke = "var(--w-send)";
-  const tri = document.createElementNS(ns, "path");
-  tri.setAttribute("d", "M 6 3 L 12 6 L 6 9 Z");
-  tri.style.fill = "var(--led)";
-  svg.append(line, tri);
+  svg.append(...draw());
   const text = document.createElement("span");
   text.textContent = label;
   row.append(svg, text);
   return row;
+}
+
+// The PRE swatch mirrors the on-canvas marker: a dashed send wire with an amber
+// tap glyph. Theme colors come from CSS variables via inline style.
+function legendPreRow(label: string): HTMLElement {
+  return legendSwatchRow(label, () => {
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("x1", "0");
+    line.setAttribute("y1", "8");
+    line.setAttribute("x2", "20");
+    line.setAttribute("y2", "8");
+    line.setAttribute("stroke-width", "2");
+    line.setAttribute("stroke-dasharray", "5 3");
+    line.setAttribute("stroke-linecap", "round");
+    line.style.stroke = "var(--w-send)";
+    const tri = document.createElementNS(SVG_NS, "path");
+    tri.setAttribute("d", "M 6 3 L 12 6 L 6 9 Z");
+    tri.style.fill = "var(--led)";
+    return [line, tri];
+  });
+}
+
+// The Rec Point swatch mirrors the canvas: a wire leaving the top of a channel
+// faceplate through its tap jack, rather than the right edge every other route
+// uses. That exit is the whole point of the row, so the swatch draws the strip's
+// corner around it.
+function legendRecPointRow(label: string): HTMLElement {
+  return legendSwatchRow(label, () => {
+    const face = document.createElementNS(SVG_NS, "rect");
+    face.setAttribute("x", "0.5");
+    face.setAttribute("y", "6.5");
+    face.setAttribute("width", "11");
+    face.setAttribute("height", "5");
+    face.setAttribute("rx", "1.5");
+    face.setAttribute("fill", "none");
+    face.setAttribute("stroke-width", "1");
+    face.style.stroke = "var(--rail-channel)";
+    const wire = document.createElementNS(SVG_NS, "path");
+    wire.setAttribute("d", "M 6 6.5 C 6 2, 12 1, 20 1");
+    wire.setAttribute("fill", "none");
+    wire.setAttribute("stroke-width", "1.6");
+    wire.setAttribute("stroke-linecap", "round");
+    wire.style.stroke = "var(--w-record)";
+    const jack = document.createElementNS(SVG_NS, "circle");
+    jack.setAttribute("cx", "6");
+    jack.setAttribute("cy", "6.5");
+    jack.setAttribute("r", "1.8");
+    jack.style.fill = "var(--w-record)";
+    return [face, wire, jack];
+  });
 }
 
 function legendRow(color: string, label: string, square = false): HTMLElement {
