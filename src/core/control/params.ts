@@ -198,9 +198,12 @@ export const PARAMS = {
   INSERT_FX_ON: { id: 134, axis: "input", encoding: "bool" },
   /** Input channel Rec Point: the signal-path tap fed to the recording / direct
    *  out (enum 0..4, PRE GATE..PRE FADER). Confirmed by live snapshot-diff
-   *  (MONO CH1 4 → 0). MONO IN only — stereo channels' Rec Point address is
-   *  unconfirmed (translate.ts writes it for mono channels only). */
+   *  (MONO CH1 4 → 0). MONO IN channels, on the input slot y. */
   REC_POINT: { id: 137, axis: "input", encoding: "enum" },
+  /** Stereo channel Rec Point (same enum as 137), indexed by stereo position —
+   *  part of the 264-268 block parallel to mono 137-141. Confirmed by notify
+   *  reverse-lookup (LCD CH5/6 PRE FADER → PRE EQ fired 264:0:0 = 4 ↔ 2). */
+  REC_POINT_STEREO: { id: 264, axis: "global", encoding: "enum" },
   /** STEREO master insert FX (single). Enum from output_insert_fx. sideEffect:
    *  rebinds + repopulates the output engine array (see INSERT_FX). */
   OUTPUT_INSERT_FX_STEREO: { id: 578, axis: "global", encoding: "insertFx", sideEffect: true },
@@ -616,10 +619,10 @@ export function sweetSpotDataAddr(index: number): string {
 // five stages; ST IN has only EQ, so it offers the two `stereo` options. Default
 // PRE FADER on every channel. In SSMCS mode the device drops PRE EQ from the
 // list (the morphing strip has no discrete EQ stage) and moves a selected PRE EQ
-// tap to PRE COMP on the switch (confirmed on device). Control address =
-// param 137 (in axis), confirmed by live snapshot-diff for MONO IN; stereo
-// channels' Rec Point address is unconfirmed, so only MONO IN channels are
-// written (see REC_POINT in PARAMS).
+// tap to PRE COMP on the switch (confirmed on device). Control addresses: MONO IN
+// = param 137 (in axis, live snapshot-diff), stereo channels = the parallel
+// param 264 at the stereo index (notify reverse-lookup) — see REC_POINT /
+// REC_POINT_STEREO in PARAMS.
 export const REC_POINT_DEFAULT = 4;
 export const REC_POINT_PRE_COMP = 1;
 export const REC_POINT_PRE_EQ = 2;

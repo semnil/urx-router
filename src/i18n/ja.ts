@@ -252,6 +252,11 @@ export const ja: Messages = {
       scaleChromatic: "Chromatic",
       scaleMajor: "Major",
       scaleCustom: "Custom",
+      scaleSingle: "Single",
+      scaleNaturalMinor: "Natural Minor",
+      scaleHarmonicMinor: "Harmonic Minor",
+      scaleMelodicMinor: "Melodic Minor",
+      scalePentatonic: "Pentatonic",
       params: {
         threshold: "Threshold",
         ratio: "Ratio",

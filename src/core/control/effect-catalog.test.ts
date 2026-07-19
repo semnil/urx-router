@@ -49,7 +49,9 @@ describe("FX-channel effect descriptors are internally consistent", () => {
     ["revx", REVX_PARAMS],
     ["revr3", REVR3_PARAMS],
     ["delay", DELAY_PARAMS],
-    ["fxParams(revx)", fxParams("revx")],
+    // fxParams(0)/(1024) return REVX_PARAMS/DELAY_PARAMS (covered above); only the
+    // Ping Pong variant is a distinct array worth checking here.
+    ["fxParams(pingpong=1025)", fxParams(1025)],
   ];
   for (const [name, descs] of families) {
     it(`${name}: defaults in bounds, formatters finite at endpoints`, () => {

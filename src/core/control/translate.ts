@@ -27,7 +27,6 @@ import {
   FX_EFFECT_TYPE_PARAM,
   FX_SLOT_LEVEL,
   FX_SLOT_ON,
-  fxFamilyOf,
   isFxEffectType,
   fxParams,
 } from "./fx-effect";
@@ -244,6 +243,8 @@ export interface ChannelControl {
   /** → STEREO bus assign ON (post-fader). Distinct from `on` (the channel master). */
   stereoOn: number;
   pan: number;
+  /** Rec Point (record / direct-out tap): mono param 137 (input axis), stereo 264. */
+  recPoint: number;
   y: number;
   hasHpf: boolean;
   /** The analog mic-strip toggles (+48V / Clip Safe) exist only on the mono mic channels. */
@@ -289,6 +290,7 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
       on: STEREO_ON,
       stereoOn: STEREO_ASSIGN_ON_STEREO,
       pan: STEREO_PAN,
+      recPoint: PARAMS.REC_POINT_STEREO.id,
       y: si,
       hasHpf: false,
       hasMicStrip: false,
@@ -312,6 +314,7 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
     on: PARAMS.CH_ON.id,
     stereoOn: PARAMS.STEREO_ASSIGN_ON.id,
     pan: PARAMS.CH_PAN.id,
+    recPoint: PARAMS.REC_POINT.id,
     y,
     hasHpf: true,
     hasMicStrip: true,
@@ -818,7 +821,7 @@ function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectPar
   out.push(rawCommand("FX_EFFECT_TYPE", typeId, "enum", 0, type));
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_ON, (fx.on ?? true) ? 1 : 0));
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_LEVEL, boundRaw(planRaw(fx.level, 100), 0, 100)));
-  for (const desc of fxParams(fxFamilyOf(type))) {
+  for (const desc of fxParams(type)) {
     const raw = boundRaw(planRaw(fx.params?.[desc.key], desc.def), desc.rawMin, desc.rawMax);
     out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", desc.slot, raw));
   }
@@ -1233,9 +1236,9 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (cc.hasHiZ && np.hiZ !== undefined) out.push(command("HI_Z", cc.y, np.hiZ ? 1 : 0));
     // COMP/EQ type (COMP->EQ vs SSMCS) is a MONO IN channel feature (= mic strip).
     if (cc.hasMicStrip && np.compEqType !== undefined) out.push(command("COMP_EQ_TYPE", cc.y, np.compEqType));
-    // Rec Point: per-channel record / direct-out tap (param 137 on the input slot
-    // y). MONO IN only — stereo channels' Rec Point address is unconfirmed.
-    if (cc.hasMicStrip && np.recPoint !== undefined) out.push(command("REC_POINT", cc.y, np.recPoint));
+    // Rec Point: per-channel record / direct-out tap (cc.recPoint = mono 137 /
+    // stereo 264, resolved by channelControl like fader/on/pan).
+    if (np.recPoint !== undefined) out.push(rawCommand("REC_POINT", cc.recPoint, "enum", cc.y, np.recPoint));
     // Channel-strip section ON (GATE/COMP/EQ). The active COMP/EQ bank follows the
     // type; polarity per toggle. Stereo channels expose only EQ.
     for (const sec of channelSections(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST)) {

@@ -10,7 +10,9 @@ import {
   delayMs,
   fx2FreqHz,
   fxFamilyOf,
+  fxParams,
   initDelayMs,
+  pingPongDelayMs,
   ratio10,
   revR3TimeSec,
   revxFreqHz,
@@ -37,6 +39,20 @@ describe("fx-effect encodings (live calibration anchors)", () => {
   it("Mono delay = raw / 14.976", () => {
     expect(delayMs(7563)).toBeCloseTo(505, 0);
     expect(Math.round(delayMs(40436))).toBe(2700);
+  });
+  it("Ping Pong delay = raw / 10 (LCD-confirmed 2026-07-19)", () => {
+    expect(pingPongDelayMs(13500)).toBeCloseTo(1350, 1); // official max
+    expect(pingPongDelayMs(20218)).toBeCloseTo(2021.8, 1);
+    expect(pingPongDelayMs(10)).toBeCloseTo(1.0, 5); // official min
+  });
+  it("Ping Pong delay-time slot has its own law and range, not Mono's", () => {
+    const pp = fxParams(1025).find((d) => d.key === "delay")!;
+    const mono = fxParams(1024).find((d) => d.key === "delay")!;
+    expect(pp.rawMax).toBe(13500);
+    expect(mono.rawMax).toBe(40436);
+    // Same raw, different displayed ms between the two delay types.
+    expect(pp.format!(13500, {})).toBe("1350 ms");
+    expect(pp.format!(13500, {})).not.toBe(mono.format!(13500, {}));
   });
   it("Hi/Low ratio = raw / 10", () => {
     expect(ratio10(8)).toBeCloseTo(0.8, 5);

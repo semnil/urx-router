@@ -277,8 +277,9 @@ describe("continuous extremes round-trip through the device path", () => {
   });
 });
 
-// Addresses confirmed by live snapshot-diff on URX44V (Rec Point 137, BUS Type
-// 587, OSC Burst width 714 / interval 715).
+// Addresses confirmed on URX44V: Rec Point 137 by live snapshot-diff, stereo
+// Rec Point 264 by notify reverse-lookup, BUS Type 587 by live snapshot-diff,
+// OSC Burst width 714 / interval 715 by live snapshot-diff.
 describe("Rec Point / BUS Type / OSC Burst round-trip", () => {
   it("Rec Point — every MONO IN option encodes raw and round-trips (param 137)", async () => {
     for (const opt of REC_POINT_OPTIONS) {
@@ -287,6 +288,19 @@ describe("Rec Point / BUS Type / OSC Burst round-trip", () => {
       expect(cmd(plan, "REC_POINT", 0)!.vdValue).toBe(opt.value);
       const back = await roundTrip(plan);
       expect(back.nodeParams["ch1"]?.recPoint).toBe(opt.value);
+    }
+  });
+
+  it("Rec Point — stereo options write the stereo block and round-trip (param 264)", async () => {
+    for (const opt of REC_POINT_OPTIONS.filter((o) => o.stereo)) {
+      const plan = base();
+      plan.nodeParams["ch_5_6"] = { recPoint: opt.value };
+      // Emitted under the shared REC_POINT name but the stereo param id (264).
+      const c = cmd(plan, "REC_POINT", 0)!;
+      expect(c.paramId).toBe(264);
+      expect(c.vdValue).toBe(opt.value);
+      const back = await roundTrip(plan);
+      expect(back.nodeParams["ch_5_6"]?.recPoint).toBe(opt.value);
     }
   });
 
