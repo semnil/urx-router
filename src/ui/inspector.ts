@@ -16,7 +16,7 @@ import type {
 } from "../core/plan";
 import { LEVEL_MIN_DB, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
-import { formatHz, FX_EFFECT_TYPE_DEFAULT, fxEffectTypes, fxFamilyOf, fxParams } from "../core/control/fx-effect";
+import { formatHz, FX_EFFECT_TYPE_DEFAULT, fxEffectTypes, fxParams } from "../core/control/fx-effect";
 import {
   insertFxFamilyOf,
   insertFxParams,
@@ -34,6 +34,11 @@ import {
   PITCH_SCALE_CHROMATIC,
   PITCH_SCALE_MAJOR,
   PITCH_SCALE_CUSTOM,
+  PITCH_SCALE_SINGLE,
+  PITCH_SCALE_NATURAL_MINOR,
+  PITCH_SCALE_HARMONIC_MINOR,
+  PITCH_SCALE_MELODIC_MINOR,
+  PITCH_SCALE_PENTATONIC,
   PITCH_MIDI_ENABLE_SLOT,
   PITCH_MIDI_REALTIME_SLOT,
   type InsertFxFamily,
@@ -1304,8 +1309,7 @@ function fxEffectSection(
   const t = m.inspector.fxEffect;
   const fx = plan.nodeParams[nodeId]?.fxEffect ?? {};
   const type = fx.type ?? FX_EFFECT_TYPE_DEFAULT[fxIndex];
-  const family = fxFamilyOf(type);
-  const descs = fxParams(family);
+  const descs = fxParams(type);
   const { el, body } = section(t.title, { key: "fxEffect" });
 
   body.append(
@@ -1558,15 +1562,24 @@ function renderPitchScale(
   t: Messages["inspector"]["insertFxEffect"],
 ): void {
   const scale = insertFxVal(plan, nodeId, PITCH_SCALE_SLOT, PITCH_SCALE_CHROMATIC);
+  // The app only authors note patterns for Chromatic / Major (`editable`); every
+  // other device preset (read back from hardware) is display-only — shown when it
+  // is the current value, never selectable.
+  const scales = [
+    { value: PITCH_SCALE_CHROMATIC, label: t.scaleChromatic, editable: true },
+    { value: PITCH_SCALE_MAJOR, label: t.scaleMajor, editable: true },
+    { value: PITCH_SCALE_CUSTOM, label: t.scaleCustom },
+    { value: PITCH_SCALE_SINGLE, label: t.scaleSingle },
+    { value: PITCH_SCALE_NATURAL_MINOR, label: t.scaleNaturalMinor },
+    { value: PITCH_SCALE_HARMONIC_MINOR, label: t.scaleHarmonicMinor },
+    { value: PITCH_SCALE_MELODIC_MINOR, label: t.scaleMelodicMinor },
+    { value: PITCH_SCALE_PENTATONIC, label: t.scalePentatonic },
+  ];
   body.append(
     selectControl(
       t.scale,
-      [
-        { value: String(PITCH_SCALE_CHROMATIC), label: t.scaleChromatic },
-        { value: String(PITCH_SCALE_MAJOR), label: t.scaleMajor },
-        { value: String(PITCH_SCALE_CUSTOM), label: t.scaleCustom, disabled: scale !== PITCH_SCALE_CUSTOM },
-      ],
-      String(scale === PITCH_SCALE_CHROMATIC || scale === PITCH_SCALE_MAJOR ? scale : PITCH_SCALE_CUSTOM),
+      scales.map((o) => ({ value: String(o.value), label: o.label, disabled: !o.editable && scale !== o.value })),
+      String(scales.some((o) => o.value === scale) ? scale : PITCH_SCALE_CUSTOM),
       (v) => {
         const sel = Number(v);
         const patch: Record<number, number> = { [PITCH_SCALE_SLOT]: sel };

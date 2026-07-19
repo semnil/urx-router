@@ -73,10 +73,10 @@ export function insertFxEngine(family: InsertFxFamily, isOutput: boolean): numbe
 const tenthDisplay = (raw: number): string => (raw / 10).toFixed(1);
 /** MBC band Threshold: raw = dB + 127 (range -54..-6 dB → raw 73..121). */
 const mbcThresholdDb = (raw: number): number => raw - 127;
-// MBC band Gain taper (live-read): raw 0 = -∞, raw 1 = -60 dB, then a steep
-// segment up to raw 20 = -17 dB, above which it is linear dB = raw - 37
-// (confirmed raw 20/-17, 39/+2, 47/+10, 55/+18). raw 1..19 is the deep-
-// attenuation region (sparse anchors → linear approximation).
+// MBC band Gain taper (live-read): raw 0 = -∞ (LCD-confirmed), raw 1 = -60 dB,
+// then a steep segment up to raw 20 = -17 dB, above which it is linear
+// dB = raw - 37 (confirmed raw 20/-17, 39/+2, 47/+10, 55/+18). raw 1..19 is the
+// deep-attenuation region (sparse anchors → linear approximation).
 function mbcGainDb(raw: number): number {
   if (raw <= 0) return -Infinity;
   if (raw >= 20) return raw - 37;
@@ -195,12 +195,18 @@ const GUITAR_LEAD_CHAR = [
 
 // Pitch Fix slots. Key (15) is a semitone; Scale (16) is a preset label, with the
 // 12 note on/off toggles (22..33) the editable ground truth (Chromatic = all on;
-// editing any note shows "Custom"). MIDI Control packs two bits across 34/35:
+// editing any note shows "Custom"). The full Scale enum is LCD-confirmed
+// (sentinel writes, values 0..7). MIDI Control packs two bits across 34/35:
 // Off (0,0) / Setting (1,0) / Real Time (1,1).
 const PITCH_KEYS = SEMITONE_NAMES.map((label, value) => ({ value, label }));
 export const PITCH_SCALE_SLOT = 16;
 export const PITCH_SCALE_CUSTOM = 0;
+export const PITCH_SCALE_SINGLE = 1;
 export const PITCH_SCALE_MAJOR = 2;
+export const PITCH_SCALE_NATURAL_MINOR = 3;
+export const PITCH_SCALE_HARMONIC_MINOR = 4;
+export const PITCH_SCALE_MELODIC_MINOR = 5;
+export const PITCH_SCALE_PENTATONIC = 6;
 export const PITCH_SCALE_CHROMATIC = 7;
 /** Note-keyboard array slots (12 semitones from the Key root). */
 export const PITCH_NOTE_SLOTS = [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33];

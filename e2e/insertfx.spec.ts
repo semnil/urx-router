@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { planParamZ } from "./plan-param";
 
 // Insert-FX effect editing: selecting an insert effect (guitar amp / pitch fix /
 // compander / multi-band comp) reveals its parameter editor, and the values
@@ -111,6 +112,25 @@ test("pitch scale select seeds the note keyboard, and a note edit persists as Cu
   await expect(paramSelect(page, "Scale")).toHaveValue("0"); // Custom
   await expect(paramSelect(page, "Scale").locator("option", { hasText: "Custom" })).toBeEnabled();
   await expect(noteToggle(page, "F#").getByRole("button", { name: "ON", exact: true })).toHaveClass(/on/);
+});
+
+// A plan can carry a device-side Scale preset the app never writes (only
+// Chromatic / Major seed note patterns): it must display verbatim instead of
+// collapsing to Custom. Enum values are LCD-confirmed (insert-fx-effect.ts).
+test("a device-preset pitch scale (Pentatonic) loaded from a plan displays verbatim", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch1: { insertFx: 512, insertFxParams: { "16": 6 } } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await node(page, "ch1").click();
+  const scale = paramSelect(page, "Scale");
+  await expect(scale).toHaveValue("6");
+  await expect(scale.locator("option", { hasText: "Pentatonic" })).toBeEnabled();
+  await expect(scale.locator("option", { hasText: "Melodic Minor" })).toBeDisabled();
 });
 
 test("MBC crossover sliders expose the per-band valid ranges", async ({ page }) => {

@@ -86,9 +86,14 @@ export function fx2FreqHz(raw: number): number {
 export function initDelayMs(raw: number): number {
   return (raw * 200) / 127;
 }
-/** Mono / Ping Pong Delay time: linear ms = raw / 14.976. */
+/** Mono Delay time: linear ms = raw / 14.976. */
 export function delayMs(raw: number): number {
   return raw / 14.976;
+}
+/** Ping Pong Delay time: linear ms = raw / 10 (LCD-confirmed 2026-07-19: raw
+ *  13500 → 1350.0 ms, raw 20218 → 2021.8 ms — a different law from Mono Delay). */
+export function pingPongDelayMs(raw: number): number {
+  return raw / 10;
 }
 /** Hi / Low Ratio: display = raw / 10. */
 export function ratio10(raw: number): number {
@@ -414,10 +419,13 @@ export const REVR3_PARAMS: FxParamDesc[] = [
   },
 ];
 
-// Mono / Ping Pong Delay (both FX channels). Delay raw range differs by type
-// (Mono 2700 ms, Ping Pong 1350 ms); the wider Mono bound is used and the device
-// clamps the display. Note is only meaningful when Sync is on.
+// Mono / Ping Pong Delay (both FX channels). Delay time uses a different law per
+// type — Mono ms = raw / 14.976 (0.1–2700 ms), Ping Pong ms = raw / 10
+// (1.0–1350 ms) — so the delay-time slot is overridden for Ping Pong (see
+// PINGPONG_DELAY_PARAMS). Note is only meaningful when Sync is on.
 const DELAY_RAW_MAX_MONO = 40436; // 2700 ms × 14.976
+const DELAY_RAW_MAX_PINGPONG = 13500; // 1350 ms × 10
+const DELAY_RAW_MIN_PINGPONG = 10; // 1.0 ms × 10
 export const DELAY_PARAMS: FxParamDesc[] = [
   {
     key: "delay",
@@ -489,7 +497,28 @@ export const DELAY_PARAMS: FxParamDesc[] = [
   { key: "note", slot: 11, label: "note", control: "select", def: 9, options: FX_NOTE_OPTIONS },
 ];
 
-/** Parameter descriptors for an effect family. */
-export function fxParams(family: FxFamily): FxParamDesc[] {
-  return family === "revx" ? REVX_PARAMS : family === "revr3" ? REVR3_PARAMS : DELAY_PARAMS;
+// Ping Pong shares the delay layout but its delay-time slot has its own law and
+// range (see pingPongDelayMs); every other slot is identical to Mono Delay.
+export const PINGPONG_DELAY_PARAMS: FxParamDesc[] = DELAY_PARAMS.map((d) =>
+  d.key === "delay"
+    ? {
+        ...d, // Mono delay slot (def 5000 = 500 ms here) with the Ping Pong law and range.
+        rawMin: DELAY_RAW_MIN_PINGPONG,
+        rawMax: DELAY_RAW_MAX_PINGPONG,
+        rawStep: 10,
+        format: (r) => formatMs(pingPongDelayMs(r)),
+      }
+    : d,
+);
+
+/** EFFECT TYPE value for Ping Pong Delay (shared by both FX channels). */
+export const PINGPONG_TYPE = 1025;
+
+/** Parameter descriptors for an EFFECT TYPE. Delay splits by type because Mono
+ *  and Ping Pong encode the delay time differently (see PINGPONG_DELAY_PARAMS). */
+export function fxParams(type: number): FxParamDesc[] {
+  const family = fxFamilyOf(type);
+  if (family === "revx") return REVX_PARAMS;
+  if (family === "revr3") return REVR3_PARAMS;
+  return type === PINGPONG_TYPE ? PINGPONG_DELAY_PARAMS : DELAY_PARAMS;
 }

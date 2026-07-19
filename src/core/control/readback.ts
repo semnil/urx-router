@@ -21,14 +21,7 @@ import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveCo
 import { vdGet, vdGetStr } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, FX_STEREO_ASSIGN_ON, normalizeInsertFx, PARAMS } from "./params";
 import type { ParamName } from "./params";
-import {
-  FX_EFFECT_ARRAY_PARAM,
-  FX_EFFECT_TYPE_PARAM,
-  FX_SLOT_LEVEL,
-  FX_SLOT_ON,
-  fxFamilyOf,
-  fxParams,
-} from "./fx-effect";
+import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, FX_SLOT_LEVEL, FX_SLOT_ON, fxParams } from "./fx-effect";
 import { insertFxEngine, insertFxFamilyOf, insertFxWritableSlots } from "./insert-fx-effect";
 import type { DynField, EqControl, EqOneKnobControl } from "./translate";
 import {
@@ -172,8 +165,8 @@ export async function applyDeviceState(
       }
       if (cc.hasHiZ) update.hiZ = vdToBool(await vdGet(PARAMS.HI_Z.id, 0, cc.y));
       if (cc.hasMicStrip) update.compEqType = await vdGet(PARAMS.COMP_EQ_TYPE.id, 0, cc.y);
-      // Rec Point: per-channel record / direct-out tap (MONO IN only, param 137).
-      if (cc.hasMicStrip) update.recPoint = await vdGet(PARAMS.REC_POINT.id, 0, cc.y);
+      // Rec Point: per-channel record / direct-out tap (cc.recPoint = mono 137 / stereo 264).
+      update.recPoint = await vdGet(cc.recPoint, 0, cc.y);
       // Signal Type (stereo link, 23) + PAN/BAL (891): pair-level CH SETTING held on
       // the pair's primary (odd) channel. Read at the primary's input index only.
       if (model.channelPairs.some(([a]) => a === node.id)) {
@@ -857,7 +850,7 @@ async function readFxEffect(fxIndex: number): Promise<FxEffectParams> {
   const arrId = FX_EFFECT_ARRAY_PARAM[fxIndex];
   const type = await vdGet(FX_EFFECT_TYPE_PARAM[fxIndex], 0, 0);
   const params: Record<string, number> = {};
-  for (const desc of fxParams(fxFamilyOf(type))) {
+  for (const desc of fxParams(type)) {
     params[desc.key] = await vdGet(arrId, 0, desc.slot);
   }
   return {
