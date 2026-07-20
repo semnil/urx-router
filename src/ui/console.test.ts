@@ -44,4 +44,39 @@ describe("Console UI", () => {
     consoleInstance.hide();
     document.body.removeChild(host);
   });
+
+  // Above 96 kHz no insert effect can run, so the chip must not offer a toggle that
+  // silently selects one the device would refuse. It gets the stereo EQ's treatment:
+  // shown, forced off, inert.
+  it("locks the INS FX chip off above 96 kHz and restores it below", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    const consoleInstance = new Console(host, { getModel: () => model, getPlan: () => plan, onChange: () => {} });
+
+    const insFxChip = (): HTMLElement | undefined =>
+      [...host.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === "INS FX");
+
+    plan.sampleRate = 192000;
+    consoleInstance.show();
+    const locked = insFxChip();
+    expect(locked).toBeDefined();
+    expect(locked!.getAttribute("aria-disabled")).toBe("true");
+    expect(locked!.getAttribute("aria-pressed")).toBe("false");
+    // A click on an inert chip must not select an effect the rate cannot run
+    // (the plan ships with No Effect selected, so it has to stay there).
+    const before = plan.nodeParams["ch1"]?.insertFx;
+    locked!.click();
+    expect(plan.nodeParams["ch1"]?.insertFx).toBe(before);
+    expect(plan.nodeParams["ch1"]?.insertFxOn).toBeUndefined();
+
+    plan.sampleRate = 96000;
+    consoleInstance.refresh();
+    const live = insFxChip();
+    expect(live!.getAttribute("aria-disabled")).toBeNull();
+
+    consoleInstance.hide();
+    document.body.removeChild(host);
+  });
 });

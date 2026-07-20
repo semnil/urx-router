@@ -44,7 +44,13 @@ import {
   partnerChannel,
   sendTapWritable,
 } from "../core/routing";
-import { INSERT_FX_NONE, insertFxEngaged, insertFxSelected, type InsertFxOption } from "../core/control/params";
+import {
+  INSERT_FX_NONE,
+  insertFxAvailable,
+  insertFxEngaged,
+  insertFxSelected,
+  type InsertFxOption,
+} from "../core/control/params";
 import {
   DELAY_TIME_MAX_MS,
   DELAY_TIME_MIN_MS,
@@ -1537,10 +1543,11 @@ export class Console {
     const proc = el("div", "con-chips");
     if (m.isMono) boolChip(proc, "GATE", "gateOn", false);
     if (m.isMono) boolChip(proc, "COMP", "compOn", false);
+    const rate = this.hooks.getPlan().sampleRate;
     if (m.hasEq) {
       // Stereo-channel EQ is inert at 176.4 / 192 kHz: show the chip forced off and
       // read-only (matches the inspector's locked EQ toggle), else a live toggle.
-      if (channelEqUnavailable(m.id, this.hooks.getPlan().sampleRate))
+      if (channelEqUnavailable(m.id, rate))
         this.makeChip(m.id, proc, t().console.eq, false, false, () => false, {
           readonlyTitle: t().inspector.eqRateLocked,
         });
@@ -1548,8 +1555,16 @@ export class Console {
     }
     const ifx = insertFxControl(model, m.id);
     if (ifx) {
-      const insOn = (): boolean => insertFxEngaged(planOf());
-      this.makeChip(m.id, proc, "INS FX", false, insOn(), () => this.toggleInsFx(m.id, ifx.options));
+      // Every insert effect has a rate ceiling, so above 96 kHz none of them can
+      // run: show the chip forced off and read-only, the same treatment the stereo
+      // EQ gets. Below that the list still narrows (Pitch Fix stops at 48 kHz), so
+      // the toggle is offered only what the current rate can actually engage.
+      const legal = ifx.options.filter((o) => o.value !== INSERT_FX_NONE && insertFxAvailable(o, rate));
+      if (!legal.length)
+        this.makeChip(m.id, proc, "INS FX", false, false, () => false, {
+          readonlyTitle: t().inspector.insFxRateLocked,
+        });
+      else this.makeChip(m.id, proc, "INS FX", false, insertFxEngaged(planOf()), () => this.toggleInsFx(m.id, legal));
     }
     // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
     // A shelved ducker drops its chip even while the parent strip stays.
@@ -2103,7 +2118,10 @@ export class Console {
   // effect selected, toggling flips insertFxOn and keeps the selection (absent =
   // on, matching the device's auto-engage). With No Effect, toggling on restores
   // the last chosen effect (else the first real option) and engages it. Returns
-  // the new on state.
+  // the new on state. `options` is the non-empty set of real effects the current
+  // sample rate can run (the caller filters out No Effect and anything the rate
+  // rules out, and locks the chip when nothing is left), so a remembered effect the
+  // rate has since ruled out is not silently re-selected.
   private toggleInsFx(id: string, options: InsertFxOption[]): boolean {
     const np = this.nodeParamsOf(id);
     if (insertFxSelected(np)) {
@@ -2111,8 +2129,8 @@ export class Console {
       np.insertFxOn = np.insertFxOn === false;
       return np.insertFxOn;
     }
-    np.insertFx = this.lastInsFx.get(id) ?? options.find((o) => o.value !== INSERT_FX_NONE)?.value ?? INSERT_FX_NONE;
-    if (np.insertFx === INSERT_FX_NONE) return false;
+    const last = this.lastInsFx.get(id);
+    np.insertFx = options.some((o) => o.value === last) ? last : options[0].value;
     np.insertFxOn = true;
     return true;
   }
