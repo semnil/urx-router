@@ -1193,7 +1193,26 @@ if (!DEMO) {
           }
           loadPlan(emptyPlan(device.model as ModelId));
         }
-        const result = await applyDeviceState(getModel(modelId), plan, controller.signal);
+        // A cancel lands mid-read, leaving the plan a mix of device values and the
+        // ones they replaced, with nothing to mark which is which — unreadNodes is
+        // never set, dirty never moves, so a later New/Open discards it without
+        // asking and a later Write sends the mixture. Keep the pre-read plan so a
+        // cancel means nothing happened.
+        const beforeRead = structuredClone(plan);
+        const dirtyBeforeRead = dirty;
+        let result: Awaited<ReturnType<typeof applyDeviceState>>;
+        try {
+          result = await applyDeviceState(getModel(modelId), plan, controller.signal);
+        } catch (e) {
+          if (e instanceof DOMException && e.name === "AbortError") {
+            plan = beforeRead;
+            dirty = dirtyBeforeRead;
+            graph.setModel(getModel(modelId), plan);
+            selection = null;
+            syncRateUi();
+          }
+          throw e;
+        }
         if (result.errors.length) console.warn("device readback issues:", result.errors);
         // Per-node provenance: nodes whose body read failed still show their plan
         // default, so the graph/inspector flag them as not read from the device.
