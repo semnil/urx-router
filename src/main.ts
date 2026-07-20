@@ -72,11 +72,17 @@ import {
   diffNames,
   diffPlan,
   formatWriteReport,
+  FOLLOW_USB_ADDR,
   reachedAndFailed,
+  rateAction,
+  readClockState,
+  readFollowUsb,
   sendConverging,
   sendNames,
+  setFollowUsb,
   type CommandDiff,
 } from "./core/control/client";
+import { askRateChoice } from "./ui/rate-choice";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
 import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
@@ -103,10 +109,44 @@ const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) 
 
 const picker = $<HTMLSelectElement>("model-picker");
 const ratePicker = $<HTMLSelectElement>("rate-picker");
+const followUsbBadge = $<HTMLButtonElement>("follow-usb");
 const graphHost = $<HTMLElement>("graph-host");
 const inspectorHost = $<HTMLElement>("inspector");
 const consoleHost = $<HTMLElement>("console-host");
 const statusbar = $<HTMLElement>("statusbar");
+
+// The device's SETUP > Follow USB state, as far as this session has seen it. Null
+// until the app has actually read a device, and back to null when a read fails —
+// an unknown state is drawn as no badge at all rather than as "off", since "off" is
+// the state in which the rate picker is trusted to stick.
+//
+// Session-scoped on purpose: unlike the model and the rate, this is not a choice the
+// operator makes in the app and carries between sessions. It is the device's own
+// clock policy, so a remembered value would be a claim about hardware that may not
+// even be attached.
+let followUsbState: boolean | null = null;
+
+// Paint the badge from the state above. Separate from the setter so the language
+// switch can re-label it without pretending to change the state (applyStaticI18n).
+//
+// Three states, not two. Unknown is drawn as its own thing (dimmed, aria-pressed
+// "mixed") rather than hidden: the badge exists to warn that the rate picker will
+// not stick, and hiding it until a device action meant the warning only ever
+// arrived after the operator had already committed to one. It must still never be
+// drawn as "off", which is the state in which the picker IS trusted.
+function renderFollowUsbBadge(): void {
+  const m = t().toolbar;
+  const state = followUsbState;
+  followUsbBadge.dataset.state = state === null ? "unknown" : state ? "on" : "off";
+  followUsbBadge.setAttribute("aria-pressed", state === null ? "mixed" : String(state));
+  followUsbBadge.textContent = m.followUsb;
+  followUsbBadge.title = state === null ? m.followUsbUnknownHint : state ? m.followUsbOnHint : m.followUsbOffHint;
+}
+
+function setFollowUsbBadge(state: boolean | null): void {
+  followUsbState = state;
+  renderFollowUsbBadge();
+}
 
 // Theme mode mirrors the analyze tools: "light" | "dark" | "auto", where auto
 // follows the OS color scheme. A fresh install defaults to auto; an explicit
@@ -223,8 +263,7 @@ function rememberView(view: ViewName): void {
 }
 
 let modelId: ModelId = detectModel();
-let plan: Plan = newPlan(modelId);
-plan.sampleRate = detectRate(plan.sampleRate);
+let plan: Plan = newPlanAtLastRate(modelId);
 ensureFixedConnections(getModel(modelId), plan);
 let dirty = false;
 let selection: Selection = null;
@@ -403,7 +442,15 @@ const follow =
   DEMO || !live
     ? null
     : new DeviceFollow({
-        addrs: () => live?.writableAddrs() ?? [],
+        // The plan's writable set plus Follow USB, which the plan deliberately does
+        // not carry (params.ts) but the badge has to keep in step with the device.
+        addrs: () => [...(live?.writableAddrs() ?? []), FOLLOW_USB_ADDR],
+        intercept: (p) => {
+          const [id, x, y] = FOLLOW_USB_ADDR;
+          if (p.paramId !== id || p.x !== x || p.y !== y) return false;
+          setFollowUsbBadge(p.value !== 0);
+          return true;
+        },
         isEcho: (p) => live?.isEcho(p.paramId, p.x, p.y, p.value) ?? false,
         lookup: (paramId, x, y) => live?.lookup(paramId, x, y),
         // A direct (node-local scalar) change: decode the notify value straight into
@@ -484,6 +531,18 @@ function setLiveUi(on: boolean): void {
     const el = document.getElementById(id) as HTMLButtonElement | null;
     if (el) el.disabled = on;
   }
+  // A rate change re-clocks the device and renegotiates the USB stream, which
+  // interrupts audio mid-session and puts the held connection at risk. The rate is
+  // settled at the write boundary instead (settleSampleRate), so while live the
+  // picker only reports what the device is running at. Locked here, beside the
+  // other device actions, so no early return can leave it stuck disabled.
+  //
+  // This is a guard rail, not an invariant: nothing below the UI enforces it, so a
+  // future path that mutates plan.sampleRate while live would bypass it.
+  //
+  // The badge stays live: toggling Follow USB only re-clocks when the host is on a
+  // different rate, and measured on a URX44V the connection survived it.
+  ratePicker.disabled = on;
 }
 
 // Turn live sync off and release the connection. Used by the toggle, by a write
@@ -508,6 +567,10 @@ function deactivateLive(status?: string): void {
 function stopLiveOnError(message: string): void {
   if (!liveSessionUp) return;
   deactivateLive();
+  // The badge asserts something about the device on the other end of a link that
+  // just went away, so it goes back to unknown rather than keeping a claim about
+  // hardware that may no longer be attached.
+  setFollowUsbBadge(null);
   showError(t().status.liveError(message));
 }
 
@@ -742,6 +805,9 @@ function applyStaticI18n(): void {
   const m = t();
   $("lbl-model").textContent = m.toolbar.model;
   $("lbl-rate").textContent = m.toolbar.rate;
+  // The badge's hint differs by state, so it cannot be relabelled from the
+  // language alone — re-paint it from the state the session already holds.
+  renderFollowUsbBadge();
   $("btn-new").textContent = m.toolbar.new;
   $("lbl-file").textContent = m.toolbar.file;
   $("btn-open").textContent = m.toolbar.open;
@@ -866,6 +932,11 @@ function applyRateConstraints(): void {
 // re-apply the rate-dependent constraints (which also refreshes the inspector).
 function syncRateUi(): void {
   ratePicker.value = String(plan.sampleRate);
+  // A rate that arrived from the device counts as the last known rate, exactly like
+  // one picked by hand. The same person operates both the app and the hardware, so
+  // a rate set on the device's own front panel is no less their choice — and a new
+  // plan started afterwards should open at the rate their rig is actually running.
+  rememberRate(plan.sampleRate);
   applyRateConstraints();
 }
 
@@ -879,6 +950,17 @@ function rerenderPlan(): void {
   syncRateUi(); // also re-renders the CONSOLE strips (applyRateConstraints)
 }
 
+// A fresh plan, opened at the rate this session last worked at. The model picker
+// already keeps the last model across New; the rate belongs to the same rig and
+// does not change because a new plan was started. newPlan itself stays at the
+// module default — it is a pure core function, and the persisted choice is the
+// shell's business (the startup plan takes the same detectRate path).
+function newPlanAtLastRate(id: ModelId): Plan {
+  const next = newPlan(id);
+  next.sampleRate = detectRate(next.sampleRate);
+  return next;
+}
+
 function loadPlan(next: Plan): void {
   // Replacing the whole plan invalidates the live snapshot; leave sync first.
   // (Live's own enable path calls loadPlan before begin(), so this is a no-op there.)
@@ -886,18 +968,16 @@ function loadPlan(next: Plan): void {
   modelId = next.modelId;
   rememberModel(modelId);
   plan = next;
-  rememberRate(plan.sampleRate);
   // Keep the persisted hidden layout in step with the plan now on screen, whether
   // it came from a file (its hidden wins) or a fresh new/switch plan (already
   // seeded from the same store, so this is a no-op).
   rememberHidden(modelId, plan.hidden);
   ensureFixedConnections(getModel(modelId), plan);
   picker.value = modelId;
-  ratePicker.value = String(plan.sampleRate);
   selection = null;
   graph.setModel(getModel(modelId), plan);
   dirty = false;
-  applyRateConstraints(); // also refreshes the console
+  syncRateUi(); // picker + persisted rate + constraints (also refreshes the console)
   // Reload the (per-model) MIDI mappings and resync the controller to the new plan.
   midi?.onModelChanged();
 }
@@ -984,24 +1064,26 @@ picker.addEventListener("change", async () => {
     picker.value = modelId;
     return;
   }
-  loadPlan(newPlan(next));
+  loadPlan(newPlanAtLastRate(next));
+  // A different model is plausibly a different unit, so what was read from the last
+  // one is no longer a claim we can make.
+  setFollowUsbBadge(null);
   setStatus(t().status.switchedModel(next));
 });
 
 ratePicker.addEventListener("change", () => {
   plan.sampleRate = Number(ratePicker.value);
-  rememberRate(plan.sampleRate);
   // Same change funnel as every other edit: dirty + (in Live sync) push the new
   // rate to the device. Re-clocking glitches audio, but that is inherent to a
   // deliberate rate change and keeps Live sync from deferring it onto a later edit.
   markChanged();
-  applyRateConstraints();
+  syncRateUi(); // the picker assignment is a no-op here — it is the source
   setStatus(t().status.sampleRate(formatRate(plan.sampleRate)));
 });
 
 $("btn-new").addEventListener("click", async () => {
   if (!(await confirmDiscard())) return;
-  loadPlan(newPlan(modelId));
+  loadPlan(newPlanAtLastRate(modelId));
   setStatus(t().status.newPlan);
 });
 
@@ -1174,6 +1256,58 @@ async function offerErrorReport(report: ErrorReport): Promise<void> {
 // bundle, so this branch — and the control imports it alone references — drops
 // from the demo build.
 if (!DEMO) {
+  // Pick up the device's Follow USB state from a round-trip already being made, so
+  // the badge reflects the unit currently on the link. A failed read leaves the
+  // state unknown (no badge) rather than asserting "off" — nothing else depends on
+  // it, so this is the one device read that does not abort its caller.
+  async function refreshFollowUsbBadge(): Promise<void> {
+    try {
+      setFollowUsbBadge(await readFollowUsb());
+    } catch (err) {
+      console.warn("Follow USB state unread:", err);
+      setFollowUsbBadge(null);
+    }
+  }
+
+  // Toggle the device's clock policy from the badge. Turning it ON hands the clock
+  // back to the USB host: if the host is on a different rate the device re-clocks to
+  // it there and then, so the confirm names that possibility — but when the rates
+  // already agree nothing happens at all, which is why it is a confirm rather than a
+  // refusal. Turning it OFF changes nothing immediately; it only makes the rate
+  // picker authoritative again.
+  followUsbBadge.addEventListener("click", async () => {
+    // Unknown: the click reads the device rather than toggling it. Toggling from
+    // unknown would have to guess which way, and the operator's first question here
+    // is "what is it?", not "change it".
+    if (followUsbState === null) {
+      // Not refreshFollowUsbBadge: that one swallows a read failure back to unknown
+      // because nothing depends on it. Here the read IS the requested action, so let
+      // it throw and be reported.
+      await withDevice(t().status.writeConnecting, t().status.writeError, async () => {
+        setFollowUsbBadge(await readFollowUsb());
+      });
+      return;
+    }
+    const next = !followUsbState;
+    if (next && !(await confirmDialog(t().confirm.followUsbOn))) return;
+    const apply = async (): Promise<void> => {
+      await setFollowUsb(next);
+      setFollowUsbBadge(next);
+      setStatus(next ? t().status.followUsbOn : t().status.followUsbOff);
+    };
+    // While live the connection is already held for the session; opening a second
+    // one would fight it. Otherwise connect just for this write.
+    if (liveSessionUp) {
+      try {
+        await apply();
+      } catch (err) {
+        stopLiveOnError(String(err));
+      }
+      return;
+    }
+    await withDevice(t().status.writeConnecting, t().status.writeError, apply);
+  });
+
   const fetchBtn = $<HTMLButtonElement>("btn-fetch");
   // A click cancels an in-flight fetch; otherwise it starts one. The whole-device
   // read is serial and stalls when the link drops, so it threads the controller's
@@ -1230,6 +1364,10 @@ if (!DEMO) {
           throw e;
         }
         if (result.errors.length) console.warn("device readback issues:", result.errors);
+        // Follow USB is outside the plan (see params.ts), so the readback does not
+        // carry it — read it on the same connection so the badge matches the values
+        // that just landed.
+        await refreshFollowUsbBadge();
         // Per-node provenance: nodes whose body read failed still show their plan
         // default, so the graph/inspector flag them as not read from the device.
         plan.unreadNodes = result.unreadNodes;
@@ -1258,6 +1396,74 @@ if (!DEMO) {
     }
     await offerErrorReport(report);
   });
+
+  // Settle what sample rate this write is going to happen at, before anything is
+  // sent. Returns true to go ahead, false to abort the write.
+  //
+  // The rate is the one plan value the device can accept and then undo on its own:
+  // with SETUP > Follow USB on it slaves its clock to the USB host, so a rate write
+  // re-clocks the hardware and is dragged back to the host's rate about a second
+  // later. Writing straight through would report success for a change that did not
+  // last. The check is here, at the write boundary, rather than wherever the rate
+  // was chosen: the picker and plan loading both happen with no device attached, so
+  // there is nothing to compare against until now.
+  //
+  // A read failure aborts. Which rate the device will end up running at decides
+  // which parameters the rest of the write may even contain, so proceeding without
+  // it would be writing on a premise the link just failed to establish.
+  async function settleSampleRate(): Promise<boolean> {
+    let clock;
+    try {
+      clock = await readClockState();
+    } catch (err) {
+      showError(t().status.writeError(t().error.clockUnread(String(err))));
+      return false;
+    }
+    // The read just told us what the badge is for; show it whether or not there is
+    // anything to settle.
+    setFollowUsbBadge(clock.followUsb);
+    const action = rateAction(plan.sampleRate, clock);
+    if (action === "proceed") return true;
+    const planRate = formatRate(plan.sampleRate);
+    const deviceRate = formatRate(clock.sampleRate);
+    if (action === "confirmReclock") {
+      // The device will take the rate and hold it. Re-clocking interrupts audio and
+      // renegotiates the USB stream, so it is worth stating outright — but it is a
+      // plain yes/no: the plan's rate is the one that sticks.
+      if (await confirmDialog(t().confirm.reclock(deviceRate, planRate))) return true;
+      setStatus(t().status.canceled);
+      return false;
+    }
+    // Above 96 kHz whole features drop out, so adopting a high device rate means
+    // part of the plan will not be written. Name it before the choice is made.
+    const limits = rateConstraints(getModel(modelId), clock.sampleRate)
+      .warnings.map((w) => t().warning[w])
+      .join(" ");
+    const note = limits ? t().rateChoice.hiRateNote(limits) : null;
+    const choice = await askRateChoice(planRate, deviceRate, note);
+    if (choice === "cancel") {
+      setStatus(t().status.canceled);
+      return false;
+    }
+    if (choice === "adopt") {
+      // The device's rate becomes the plan's, so the rate write is a no-op and the
+      // gating downstream matches what the hardware can actually hold. This is an
+      // edit like any other — the operator chose it — so it goes through the same
+      // funnel and is remembered as the last known rate.
+      plan.sampleRate = clock.sampleRate;
+      markChanged();
+      syncRateUi(); // persists the adopted rate as the last known one
+      return true;
+    }
+    try {
+      await setFollowUsb(false);
+    } catch (err) {
+      showError(t().status.writeError(t().error.followUsbWrite(String(err))));
+      return false;
+    }
+    setFollowUsbBadge(false);
+    return true;
+  }
 
   // Write the plan to the connected device: diff the plan against the device's
   // current values, confirm the change count, then send only what differs.
@@ -1292,6 +1498,7 @@ if (!DEMO) {
             showError(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
             return;
           }
+          if (!(await settleSampleRate())) return;
           // One attempt of the whole diff → confirm → send sequence. Returns the
           // sent/not-sent split when the send stopped part-way (so the caller can
           // offer a retry), or null when there is nothing left to do.
@@ -1452,6 +1659,9 @@ if (!DEMO) {
         }
         dirty = false;
         liveDeviceLabel = device.model;
+        // Read before the session is up, so the badge is already right when the rate
+        // picker locks — the badge is the only Follow USB control while live.
+        await refreshFollowUsbBadge();
         live.begin();
         // Both registrations are awaited before the session counts as up. Without
         // the notify stream the app is blind to device-side edits and the next

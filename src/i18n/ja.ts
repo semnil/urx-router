@@ -55,6 +55,13 @@ export const ja: Messages = {
     shareUrlHint: "この計画を共有できるリンクをコピー (アドレスバーにも反映)",
     downloadJson: "JSON ダウンロード",
     downloadJsonHint: "この計画を JSON でダウンロード — デスクトップ版で開けます",
+    followUsb: "FOLLOW USB",
+    followUsbOnHint:
+      "デバイスは USB ホストからクロックを受け取っているため、左のレートをデバイス側で変更できません。クリックすると Follow USB を OFF にします。",
+    followUsbOffHint:
+      "デバイスは自身のクロックで動作しているため、左のレートがそのまま動作レートです。クリックするとクロックを USB ホストに委ねます。",
+    followUsbUnknownHint:
+      "デバイスが USB ホストからクロックを受け取っているかは未取得です。左のレートが実際の動作レートとは限りません。クリックするとデバイスから読み取ります。",
   },
   console: {
     mute: "MUTE",
@@ -169,6 +176,7 @@ export const ja: Messages = {
     prePost: "PRE/POST",
     prePostLcdOnly: "CH → FX send の PRE/POST は本体でのみ設定可 (software から変更不可)。",
     eqRateLocked: "176.4 / 192 kHz ではステレオ ch の EQ は無効 — 強制的に OFF。",
+    insFxRateLocked: "96 kHz 超では Insert FX は使用不可 — 強制的に OFF。",
     channelOn: "チャンネル",
     sendOn: "Send",
     toSt: "TO ST",
@@ -400,6 +408,8 @@ export const ja: Messages = {
     loaded: (model: string): string => `${model} を読み込みました — ドラッグで配置・結線`,
     switchedModel: (model: string): string => `${model} に切り替えました`,
     sampleRate: (rate: string): string => `サンプルレート: ${rate}`,
+    followUsbOn: "Follow USB ON — デバイスは USB ホストのクロックで動作します",
+    followUsbOff: "Follow USB OFF — デバイスは自身のクロックで動作します",
     newPlan: "新規計画を作成しました",
     planLoaded: "計画を読み込みました",
     planSaved: "計画を保存しました",
@@ -478,6 +488,10 @@ export const ja: Messages = {
     selfTestExport:
       "この機種には未確認のパラメータ対応があります。確認のため返送できるよう、セルフテストのレポートを保存しますか?",
     deviceErrorExport: "一部のパラメータを読み取り/書き込みできませんでした。各失敗を記載したレポートを保存しますか?",
+    reclock: (deviceRate: string, planRate: string): string =>
+      `デバイスは ${deviceRate}、計画は ${planRate} です。書き込むとデバイスがリクロックし USB ストリームが再ネゴシエートされるため、音声が一瞬中断されます。コンピューター側はデバイスの新しいレートに追従します。続行しますか?`,
+    followUsbOn:
+      "Follow USB を ON にしますか? デバイスはクロックをコンピューターに委ねます。コンピューターが別のレートで動作している場合は直ちにそのレートへリクロックするため、音声が中断される場合があります。レートが既に一致していれば何も起きません。",
     writeRetry: (sent: number, notSent: number): string =>
       `失敗により書き込みが停止しました: ${sent} 件がデバイスに届き、${notSent} 件が未送信です。もう一度実施しますか? 差分のある設定のみを送信します。`,
   },
@@ -491,6 +505,16 @@ export const ja: Messages = {
     accept: "続行することで、このリスクを受諾したものとします。",
     agree: "同意して続行",
     quit: "終了",
+  },
+  rateChoice: {
+    title: "デバイスが USB ホストに追従しています",
+    intro: (planRate: string, deviceRate: string): string =>
+      `計画は ${planRate} ですが、デバイスは ${deviceRate} で動作しており、Follow USB が ON のためクロックをコンピューターから受け取っています。ここで ${planRate} を書き込むとデバイスは一度リクロックしますが、まもなく ${deviceRate} に戻ります。`,
+    hiRateNote: (limits: string): string =>
+      `${limits} これらの設定は今回の書き込みから除外されますが、計画には保持されるため、レートを下げれば再び書き込まれます。`,
+    adopt: (deviceRate: string): string => `${deviceRate} で書き込む`,
+    release: (planRate: string): string => `Follow USB を OFF にして ${planRate} で書き込む`,
+    cancel: "キャンセル",
   },
   loadReport: {
     title: "計画を読み込めませんでした",
@@ -531,6 +555,10 @@ export const ja: Messages = {
       `${n} 件の設定を読み取れず、デバイスの状態を完全には把握できません。Live sync の開始には完全な読み取りが必要です。`,
     followReadIncomplete: (n: number): string =>
       `デバイス側の変更後、${n} 件の設定を読み戻せず、プランが実機と一致しなくなりました。取得し直して同期してください。`,
+    clockUnread: (message: string): string =>
+      `デバイスのサンプルレートと Follow USB の状態を読み取れませんでした (${message})。計画のレートが定着するか判断できないため、何も書き込んでいません。`,
+    followUsbWrite: (message: string): string =>
+      `Follow USB を OFF にできませんでした (${message})。何も書き込んでいません。`,
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。書き込む前に一致する計画を開くか切り替えてください。`,
