@@ -47,6 +47,18 @@ describe("defaultPlan", () => {
     }
   });
 
+  // The device right-aligns each number of a stereo pair label in a 2-character
+  // field, so single-digit numbers carry a leading space. Pinned against param 206
+  // of a factory-reset unit's own settings backup: dropping the leading space made
+  // a fresh plan rewrite the device's factory names on the next sync.
+  it("seeds the stereo pair labels exactly as the device ships them", () => {
+    expect(URX44V_NODE_NAMES.ch_5_6).toBe(" 5/ 6");
+    expect(URX44V_NODE_NAMES.ch_7_8).toBe(" 7/ 8");
+    expect(URX44V_NODE_NAMES.ch_9_10).toBe(" 9/10");
+    // Two-digit pairs need no padding.
+    expect(URX44V_NODE_NAMES.ch_11_12).toBe("11/12");
+  });
+
   it("deep-clones the seed so edits never mutate the shared defaults", () => {
     const plan = defaultPlan("URX44V");
     plan.nodeParams.ch1.gain = 99;
