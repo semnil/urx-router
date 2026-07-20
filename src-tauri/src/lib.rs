@@ -40,14 +40,28 @@ async fn read_text_file(path: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Write a file by filling a sibling temp file and renaming it into place, so a
+/// failure part-way leaves the previous contents intact. A bare `fs::write`
+/// truncates first: a full disk (or a pulled drive) then destroys the only copy
+/// on disk before the error is raised, and the app aborting cleanly afterwards
+/// no longer helps — there is nothing left to abort back to. The rename is
+/// atomic on the same filesystem, which a sibling temp guarantees.
+fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
+    let tmp = format!("{path}.tmp");
+    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn write_text_file(path: String, contents: String) -> Result<(), String> {
     check_extension(&path, &["json", "md"])?;
-    tauri::async_runtime::spawn_blocking(move || {
-        fs::write(&path, contents).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || write_atomic(&path, contents.as_bytes()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // Image export (PNG / PDF). The payload travels as the raw IPC request body — a
@@ -73,7 +87,7 @@ async fn write_binary_file(request: tauri::ipc::Request<'_>) -> Result<(), Strin
     .into_owned();
     check_extension(&path, &["png", "pdf"])?;
     let bytes = bytes.clone();
-    tauri::async_runtime::spawn_blocking(move || fs::write(&path, bytes).map_err(|e| e.to_string()))
+    tauri::async_runtime::spawn_blocking(move || write_atomic(&path, &bytes))
         .await
         .map_err(|e| e.to_string())?
 }

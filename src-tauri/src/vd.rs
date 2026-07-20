@@ -416,8 +416,14 @@ mod imp {
             }
         };
         // Short read timeout so the loop can interleave draining and commands.
+        // Not optional: every read below blocks with no deadline of its own, so a
+        // socket left in blocking mode turns any quiet moment into a hang the user
+        // can only escape by quitting. Refuse the session instead.
         if let MaybeTlsStream::Plain(s) = ws.get_ref() {
-            let _ = s.set_read_timeout(Some(Duration::from_millis(200)));
+            if let Err(e) = s.set_read_timeout(Some(Duration::from_millis(200))) {
+                let _ = ready.send(Err(format!("could not set the socket read timeout: {e}")));
+                return;
+            }
         }
 
         let (dev_uid, summary) = match handshake(&mut ws) {
@@ -441,6 +447,29 @@ mod imp {
         // watching: a held-open live session is dropped instead of freezing when
         // the broker link goes away while idle.
         let mut link_ch: Option<Channel<LinkEvent>> = None;
+        // Latched once a device-lost push is seen. The push arrives exactly once,
+        // so the command that consumed it is the only one that could ever notice:
+        // without this, every later command keeps talking to a broker that still
+        // ACKs writes with no unit attached and answers reads from its cache, and
+        // the frontend is told a plan was written when nothing reached hardware.
+        let mut lost: Option<String> = None;
+        // Fail a command outright once the session is known dead, and latch the
+        // reason the first time one surfaces it.
+        macro_rules! guard {
+            ($reply:expr, $call:expr) => {{
+                if let Some(reason) = &lost {
+                    let _ = $reply.send(Err(reason.clone()));
+                } else {
+                    let r = $call;
+                    if let Err(e) = &r {
+                        if e.starts_with(DEVICE_LOST_PREFIX) {
+                            lost = Some(e.clone());
+                        }
+                    }
+                    let _ = $reply.send(r);
+                }
+            }};
+        }
 
         loop {
             // While a subscription is streaming, poll for commands briefly so the
@@ -464,15 +493,10 @@ mod imp {
                     value,
                     reply,
                 }) => {
-                    let _ = reply.send(do_set(
-                        &mut ws,
-                        &mut subs,
-                        &dev_uid,
-                        param_id,
-                        x,
-                        y,
-                        json!(value),
-                    ));
+                    guard!(
+                        reply,
+                        do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value))
+                    );
                 }
                 Ok(Cmd::Get {
                     param_id,
@@ -480,7 +504,7 @@ mod imp {
                     y,
                     reply,
                 }) => {
-                    let _ = reply.send(do_get(&mut ws, &mut subs, &dev_uid, param_id, x, y));
+                    guard!(reply, do_get(&mut ws, &mut subs, &dev_uid, param_id, x, y));
                 }
                 Ok(Cmd::SetStr {
                     param_id,
@@ -489,15 +513,10 @@ mod imp {
                     value,
                     reply,
                 }) => {
-                    let _ = reply.send(do_set(
-                        &mut ws,
-                        &mut subs,
-                        &dev_uid,
-                        param_id,
-                        x,
-                        y,
-                        json!(value),
-                    ));
+                    guard!(
+                        reply,
+                        do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value))
+                    );
                 }
                 Ok(Cmd::GetStr {
                     param_id,
@@ -505,7 +524,10 @@ mod imp {
                     y,
                     reply,
                 }) => {
-                    let _ = reply.send(do_get_str(&mut ws, &mut subs, &dev_uid, param_id, x, y));
+                    guard!(
+                        reply,
+                        do_get_str(&mut ws, &mut subs, &dev_uid, param_id, x, y)
+                    );
                 }
                 Ok(Cmd::MetersSubscribe { addrs, channel }) => {
                     // Replace any prior subscription: unregister the old set, then
@@ -814,9 +836,40 @@ mod imp {
                 ))
             };
         }
+        drain_late_reply(ws, subs, &base);
         Err(format!(
             "timed out waiting for the broker to confirm the write at {param_id}:{x}:{y}"
         ))
+    }
+
+    /// A command that timed out may still have its reply in flight. The vd protocol
+    /// carries no request id, so a late reply for an address is indistinguishable
+    /// from the reply to the *next* command on that same address — it would satisfy
+    /// it with a stale value. Drain what is already buffered (bounded, and only
+    /// after a timeout, so the healthy path pays nothing) and drop any reply for the
+    /// address that just gave up. Notifies stay batched via subs, as everywhere else.
+    fn drain_late_reply(ws: &mut Ws, subs: &mut Subs, base: &str) {
+        let deadline = Instant::now() + Duration::from_millis(250);
+        while Instant::now() < deadline {
+            let Ok(Some(text)) = read_text(ws) else { break };
+            let Ok(msg) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
+            if subs.absorb(&msg) {
+                continue;
+            }
+            if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
+                continue;
+            }
+            let ruri = msg
+                .pointer("/params/vdp")
+                .and_then(|v| v.get("uri"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if ruri.split('?').next().unwrap_or(ruri) == base {
+                return; // the straggler is consumed; the socket is clean again
+            }
+        }
     }
 
     // Read a parameter instance's raw current_value (numeric or string). do_get /
@@ -879,6 +932,7 @@ mod imp {
                     format!("broker response had no current_value at {param_id}:{x}:{y}")
                 });
         }
+        drain_late_reply(ws, subs, &base);
         Err(format!(
             "timed out waiting for the parameter value at {param_id}:{x}:{y}"
         ))
@@ -980,10 +1034,10 @@ mod imp {
         let mut parts = addr.split(':');
         let (id, xs) = (parts.next()?, parts.next()?);
         let (meter_id, x) = (id.parse::<u32>().ok()?, xs.parse::<i64>().ok()?);
-        let value = vdp
-            .pointer("/data/current_value")
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
+        // Drop the frame rather than substituting a value, like parse_param does:
+        // 0 here is not "no reading", it is 0.0 dBFS, so a malformed frame would
+        // slam the bar to full scale and read as clipping that never happened.
+        let value = vdp.pointer("/data/current_value").and_then(Value::as_i64)?;
         Some(MeterUpdate { meter_id, x, value })
     }
 
@@ -1040,8 +1094,12 @@ mod imp {
         if status == "online" {
             return None;
         }
-        Some(format!("device disconnected (sync_status {status})"))
+        Some(format!("{DEVICE_LOST_PREFIX} (sync_status {status})"))
     }
+
+    /// Prefix every device-lost error carries, so the worker can recognise one of
+    /// its own and latch the session as dead rather than re-deriving the state.
+    pub(super) const DEVICE_LOST_PREFIX: &str = "device disconnected";
 
     // Bound a single pump's drain. The broker streams meters at ~250/s, so reads
     // rarely block; without this the loop would run a full 512-frame drain (~2 s)
