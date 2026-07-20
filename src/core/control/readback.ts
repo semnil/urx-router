@@ -349,7 +349,11 @@ export async function applyDeviceState(
     const nc = nameControl(model, node.id);
     if (!nc) continue;
     try {
-      const name = (await vdGetStr(nc.param, 0, nc.instances[0])).trim();
+      // trimEnd, not trim: the device right-aligns numbers in the stereo pair
+      // labels, so the factory name really is " 5/ 6" and a leading-space strip
+      // would write the shortened form back on the next sync. Trailing padding
+      // is still dropped so an all-blank name reads as empty.
+      const name = (await vdGetStr(nc.param, 0, nc.instances[0])).trimEnd();
       if (name) plan.nodeNames[node.id] = name;
       else delete plan.nodeNames[node.id];
       applied++;

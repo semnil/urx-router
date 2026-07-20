@@ -145,15 +145,17 @@ export const URX22_NODE_COLORS: Record<string, string> = {
 };
 
 // CH SETTING names, mirroring the URX44V capture by analogy: mono channels ship
-// "ch 1"/"ch 2", stereo channels their pair label "3/ 4"…, buses their short
-// labels.
+// "ch 1"/"ch 2", stereo channels their pair label " 3/ 4"…, buses their short
+// labels. The leading space follows the 2-character right-aligned numbering
+// confirmed on a URX44V factory unit (param 206 = " 5/ 6"); the URX22 labels
+// themselves are still position-derived, not captured.
 export const URX22_NODE_NAMES: Record<string, string> = {
   ch1: "ch 1",
   ch2: "ch 2",
-  ch_3_4: "3/ 4",
-  ch_5_6: "5/ 6",
-  ch_7_8: "7/ 8",
-  ch_9_10: "9/10",
+  ch_3_4: " 3/ 4",
+  ch_5_6: " 5/ 6",
+  ch_7_8: " 7/ 8",
+  ch_9_10: " 9/10",
   "bus.fx1": "FX 1",
   "bus.fx2": "FX 2",
   "bus.mix1": "MIX1",

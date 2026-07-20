@@ -545,6 +545,26 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     expect(target.nodeNames["bus.mix1"]).toBeUndefined();
   });
 
+  // The device's own stereo pair labels are right-aligned in a 2-character field
+  // (" 5/ 6"), so a leading-space strip would shorten the name and write the
+  // shortened form back on the next sync. Only trailing padding may be dropped.
+  it("keeps a leading space in a device name but drops trailing padding", async () => {
+    mockVdGetFrom(new Map());
+    vi.mocked(vdGetStr).mockImplementation((paramId: number, _x: number, y: number) => {
+      if (paramId === 206 && y === 0) return Promise.resolve(" 5/ 6");
+      if (paramId === 18 && y === 0) return Promise.resolve("Vox   ");
+      if (paramId === 18 && y === 1) return Promise.resolve("   ");
+      return Promise.resolve("");
+    });
+    const target = emptyPlan("URX44V");
+    await applyDeviceState(model, target);
+
+    expect(target.nodeNames.ch_5_6).toBe(" 5/ 6");
+    expect(target.nodeNames.ch1).toBe("Vox");
+    // An all-blank name still reads as empty, so it clears to the model label.
+    expect(target.nodeNames.ch2).toBeUndefined();
+  });
+
   it("reads CH SETTING color back into nodeColors (palette index → swatch hex)", async () => {
     const source = emptyPlan("URX44V");
     ensureFixedConnections(model, source);

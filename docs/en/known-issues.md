@@ -108,19 +108,24 @@ closest equivalent for the pre-DELAY level.
 ## The sample rate is only written when the device's Follow USB is off
 
 The planner's **Rate** setting is written to the device (param 766) and re-clocks
-it. That write only lands while the device's own **Follow USB** setting is
-**off**: with Follow USB on, the URX follows the USB host's clock and a software
-rate write is ignored or immediately overridden.
+it. That write only sticks while the device's own **Follow USB** setting is
+**off**. With Follow USB on the URX takes its clock from the computer on USB
+MAIN, and although the device's front panel locks its rate buttons, it does
+**not** reject the write: it accepts the new rate, re-clocks (the LCD shows its
+switching dialog), and roughly 0.4 s later the host's rate is reasserted and the
+device returns to it. The audible result is a brief interruption for a change
+that does not last.
 
-Follow USB itself cannot be read or written from software — it is not exposed as
-a broker parameter at all (verified on a real URX44V by diffing a full parameter
-snapshot across an off → on toggle: no parameter changes). So the planner can
-neither switch it nor detect its state, and it cannot warn when a rate write is
-about to be swallowed.
+Follow USB is exposed as a broker parameter (848) and can be both read and
+written; its factory default is on. The planner does not currently read it, so
+it cannot yet warn that a rate write is about to be undone.
 
 In practice: if a rate change does not take effect on the hardware, turn
 **Follow USB off** on the device (Setup → the sample-rate screen) and set the
 rate again. The plan keeps the rate it recorded either way.
+
+Writing the rate the device already has costs nothing — the planner only sends
+values that differ, and the device ignores an identical write in any case.
 
 ## The HDMI sample-rate ceiling depends on the audio mode
 
