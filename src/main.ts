@@ -1384,11 +1384,18 @@ if (!DEMO) {
           loadPlan(emptyPlan(device.model as ModelId));
         }
         const result = await applyDeviceState(getModel(modelId), plan);
-        if (result.errors.length) console.warn("live readback issues:", result.errors);
         plan.unreadNodes = result.unreadNodes;
         graph.setModel(getModel(modelId), plan);
         selection = null;
         syncRateUi();
+        // A partial read leaves the plan holding defaults where the device was not
+        // heard from, and the live snapshot would enshrine those as device truth —
+        // the first sideEffect edit then converges the whole plan and writes them
+        // over the real values. Live sync needs a complete read to start from.
+        if (result.errors.length) {
+          console.warn("live readback issues:", result.errors);
+          return await failLive(t().status.liveError(t().error.liveReadIncomplete(result.errors.length)));
+        }
         dirty = false;
         liveDeviceLabel = device.model;
         live.begin();

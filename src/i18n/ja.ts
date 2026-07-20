@@ -520,6 +520,8 @@ export const ja: Messages = {
     controlWorkerGone:
       "デバイス制御の接続が中断されました。再接続してください。繰り返す場合はアプリを再起動してください。",
     linkLost: "デバイスとの接続が切断されました (USB 抜去または Device Center 終了)",
+    liveReadIncomplete: (n: number): string =>
+      `${n} 件の設定を読み取れず、デバイスの状態を完全には把握できません。Live sync の開始には完全な読み取りが必要です。`,
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。書き込む前に一致する計画を開くか切り替えてください。`,
