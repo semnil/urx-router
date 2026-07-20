@@ -428,6 +428,15 @@ export const PARAMS = {
    *  edit, never perturbed by self-test (plan.sampleRate is a top-level scalar,
    *  outside the perturb walk over nodeParams/connections). */
   SAMPLE_RATE: { id: 766, axis: "global", encoding: "raw" },
+  /** SETUP > Follow USB (global, y0): when ON the device slaves its clock to the
+   *  USB host, so a 766 write is accepted and re-clocks but is dragged back to the
+   *  host's rate ~0.4 s later (measured on URX44V; the LCD shows the switch, then
+   *  the rate reverts). Factory default ON. Readable and writable in both
+   *  directions. Deliberately NOT part of the plan or planToCommands: it is a
+   *  device-side clock policy, not a routing choice, and emitting it would make
+   *  every Live-sync flush re-assert it. The write path reads it as a pre-check and
+   *  the badge writes it with a single vdSet. */
+  FOLLOW_USB: { id: 848, axis: "global", encoding: "bool" },
   /** microSD Rec per-track record-source assign (y = track 0..15). Raw port ref in
    *  the bus/channel namespace (CH n = its input slot, STEREO = 256/257, MIX1 =
    *  288/289, MIX2 = 290/291, none = the uint32 sentinel). Writable + readable.
