@@ -349,6 +349,9 @@ describe("applyDeviceState round-trip", () => {
     expect(target.connections.some((c) => c.to === ref("ch1", "in") && c.kind === "source")).toBe(true);
     expect(target.connections.some((c) => c.to === ref("bus.stream", "in") && c.kind === "source")).toBe(true);
     expect(result.errors.filter((e) => e.includes("unknown source port")).length).toBeGreaterThanOrEqual(2);
+    // The wire kept is the plan's own, not the device's, so the destination is
+    // unread — otherwise a later converge writes it over the real routing.
+    expect(result.unreadNodes.has("bus.stream")).toBe(true);
   });
 
   it("marks a fixed send OFF (params.on=false) but keeps its wire when the device reports OFF", async () => {

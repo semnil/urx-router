@@ -421,7 +421,9 @@ export const ja: Messages = {
     writeNoChanges: "デバイスは計画と一致しています — 書き込む変更はありません",
     written: (n: number): string => `${n} 件の設定をデバイスに書き込みました`,
     writePartial: (n: number, failed: number): string => `${n} 件書き込み、${failed} 件失敗`,
+    writeStopped: (n: number, notSent: number): string => `失敗のため書き込みを停止: ${n} 件送信、${notSent} 件未送信`,
     writeResidual: (n: number): string => `書き込みましたが ${n} 件が反映されませんでした (コンソール参照)`,
+    writeReadFailed: (n: number): string => `書き込みを中止しました: ${n} 件の設定をデバイスから読み取れません`,
     writeError: (message: string): string => `デバイスへの書き込みに失敗しました: ${message}`,
     selfTestRunning: "デバイスのセルフテストを実行中… 切断しないでください (メニューから中止できます)",
     selfTestCancelled: "セルフテストを中止しました — デバイスは無音状態です。元に戻すには再度取得してください",
@@ -437,7 +439,6 @@ export const ja: Messages = {
     liveSynced: (n: number): string => `→ デバイス (${n})`,
     liveFollowing: "← デバイス…",
     liveFollowed: (n: number): string => `← デバイス (${n})`,
-    liveFollowedPartial: (n: number, failed: number): string => `← デバイス (${n}・${failed} 件未読)`,
     liveError: (message: string): string => `ライブ同期を停止: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",
@@ -474,6 +475,8 @@ export const ja: Messages = {
     selfTestExport:
       "この機種には未確認のパラメータ対応があります。確認のため返送できるよう、セルフテストのレポートを保存しますか?",
     deviceErrorExport: "一部のパラメータを読み取り/書き込みできませんでした。各失敗を記載したレポートを保存しますか?",
+    writeRetry: (sent: number, notSent: number): string =>
+      `失敗により書き込みが停止しました: ${sent} 件がデバイスに届き、${notSent} 件が未送信です。もう一度実施しますか? 差分のある設定のみを送信します。`,
   },
   consent: {
     title: "ご利用の前に",
@@ -516,6 +519,12 @@ export const ja: Messages = {
     controlWorkerGone:
       "デバイス制御の接続が中断されました。再接続してください。繰り返す場合はアプリを再起動してください。",
     linkLost: "デバイスとの接続が切断されました (USB 抜去または Device Center 終了)",
+    firmwareUnread:
+      "デバイスのファームウェアバージョンを読み取れず、このビルドのパラメーターマッピングが実機に適合するか確認できません。接続し直してからやり直してください。",
+    liveReadIncomplete: (n: number): string =>
+      `${n} 件の設定を読み取れず、デバイスの状態を完全には把握できません。Live sync の開始には完全な読み取りが必要です。`,
+    followReadIncomplete: (n: number): string =>
+      `デバイス側の変更後、${n} 件の設定を読み戻せず、プランが実機と一致しなくなりました。取得し直して同期してください。`,
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。書き込む前に一致する計画を開くか切り替えてください。`,

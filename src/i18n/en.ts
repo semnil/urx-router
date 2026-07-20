@@ -430,7 +430,11 @@ export const en = {
     writeNoChanges: "Device already matches the plan — nothing to write",
     written: (n: number): string => `Wrote ${n} setting${n === 1 ? "" : "s"} to the device`,
     writePartial: (n: number, failed: number): string => `Wrote ${n}, ${failed} failed`,
+    writeStopped: (n: number, notSent: number): string =>
+      `Write stopped after a failure: ${n} sent, ${notSent} not sent`,
     writeResidual: (n: number): string => `Wrote, but ${n} param${n === 1 ? "" : "s"} did not take (see console)`,
+    writeReadFailed: (n: number): string =>
+      `Write canceled: ${n} setting${n === 1 ? "" : "s"} could not be read from the device`,
     writeError: (message: string): string => `Device write failed: ${message}`,
     selfTestRunning: "Running device self-test… do not disconnect (use the menu again to cancel)",
     selfTestCancelled: "Self-test cancelled — device left silent; fetch again to restore your state",
@@ -447,7 +451,6 @@ export const en = {
     liveSynced: (n: number): string => `→ device (${n})`,
     liveFollowing: "← device…",
     liveFollowed: (n: number): string => `← device (${n})`,
-    liveFollowedPartial: (n: number, failed: number): string => `← device (${n}, ${failed} unread)`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",
@@ -486,6 +489,8 @@ export const en = {
     selfTestExport:
       "This model has unconfirmed parameter mappings. Save the self-test report so it can be sent back to confirm them?",
     deviceErrorExport: "Some parameters could not be read or written. Save a report listing each failure?",
+    writeRetry: (sent: number, notSent: number): string =>
+      `The write stopped after a failure: ${sent} setting${sent === 1 ? "" : "s"} reached the device and ${notSent} did not. Try again? Only what still differs will be sent.`,
   },
   consent: {
     title: "Before you start",
@@ -528,6 +533,12 @@ export const en = {
     noDevice: "Device Center is running, but no URX is connected. Connect the unit, then try again.",
     controlWorkerGone: "The control connection was interrupted. Reconnect, and restart the app if it keeps happening.",
     linkLost: "the device link dropped (USB unplugged or Device Center quit)",
+    firmwareUnread:
+      "The device's firmware version could not be read, so this build cannot check that its parameter mappings apply to your unit. Reconnect and try again.",
+    liveReadIncomplete: (n: number): string =>
+      `${n} setting${n === 1 ? "" : "s"} could not be read, so the device's state is not fully known. Live sync needs a complete read to start.`,
+    followReadIncomplete: (n: number): string =>
+      `${n} setting${n === 1 ? "" : "s"} could not be read back after a change on the device, so the plan no longer matches it. Fetch again to resync.`,
     unknownModel: (model: string): string => `Unknown model: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `The connected device is ${device}, but ${ui} is selected. Open or switch to the matching plan before writing.`,

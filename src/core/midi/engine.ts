@@ -354,7 +354,7 @@ export class MidiEngine {
    * `resync = true` (forget the sent cache) after opening the output port.
    */
   feedback(resync = false): boolean {
-    if (resync) this.lastSent.clear();
+    if (resync) this.forgetFeedback();
     const now = this.hooks.now();
     let deferred = false;
     // One address drives one physical control, so iterate ADDRESSES: when a gang
@@ -401,6 +401,17 @@ export class MidiEngine {
     if (raw !== this.lastSent.get(key)) return false;
     this.lastFedAt.delete(key); // one echo per sent message — disarm on the match
     return true;
+  }
+
+  /** Forget what the controller has been told, so the next feedback pass re-sends
+   *  every mapped value. Called when a feedback send failed: the cache would
+   *  otherwise record a value the controller never received, leaving its LED or
+   *  fader showing the wrong state until that value happens to change again. The
+   *  echo guard is dropped with it — the echo of a send that never left cannot
+   *  arrive, and leaving it armed would swallow a real press instead. */
+  forgetFeedback(): void {
+    this.lastSent.clear();
+    this.lastFedAt.clear();
   }
 
   private emit(addr: MidiAddr, value: number, raw: number): void {

@@ -68,7 +68,15 @@ import {
 } from "./core/platform";
 import { applyDeviceState, applyDirect, applyNodeState, formatReadbackReport } from "./core/control/readback";
 import type { ReadbackResult } from "./core/control/readback";
-import { diffNames, diffPlan, formatWriteReport, sendConverging, sendNames } from "./core/control/client";
+import {
+  diffNames,
+  diffPlan,
+  formatWriteReport,
+  reachedAndFailed,
+  sendConverging,
+  sendNames,
+  type CommandDiff,
+} from "./core/control/client";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
 import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
@@ -315,6 +323,9 @@ const consoleView = new Console(consoleHost, {
   // re-renders the edited strip itself, so don't rebuild it here (that would
   // disrupt an in-progress fader drag).
   onChange: () => markChanged(),
+  // The meter stream failed to register. Floor-stuck bars read as "no signal",
+  // so end the session rather than let the operator trust a dead display.
+  onMeterError: (message) => stopLiveOnError(message),
   // MIDI learn: while the panel's learn mode is on, console controls arm for
   // binding instead of editing (no-ops while midi is absent — browser / demo).
   midi: {
@@ -359,13 +370,16 @@ function reflectFollow(): void {
     for (const id of ids) consoleView.refreshStrip(id);
   }
 }
-// Device-follow read-back status: surface the partial-failure count rather than
-// hiding read failures behind a console.warn (fetch/write make failures visible;
-// follow must too). A background read uses the status line, not a modal.
-function followStatus(result: ReadbackResult): string {
-  return result.errors.length
-    ? t().status.liveFollowedPartial(result.applied, result.errors.length)
-    : t().status.liveFollowed(result.applied);
+// A reconcile read that fails loses the device-side change it was called for —
+// the notify already fired and nothing re-triggers the read — and the next
+// converge would then write the plan's stale value back over the operator's own
+// edit on the hardware. Throwing takes DeviceFollow's stop-following path, which
+// its hook contract already declares. Shared by both reconcile hooks so the rule
+// has one spelling.
+function assertReadComplete(result: ReadbackResult, label: string): void {
+  if (!result.errors.length) return;
+  console.warn(label, result.errors);
+  throw new Error(t().error.followReadIncomplete(result.errors.length));
 }
 // Single funnel for every device-follow reflect (direct notifies and the scoped /
 // full read-backs alike): a knob sweep delivers notifies in ~30/s IPC batches, any
@@ -405,21 +419,26 @@ const follow =
         // A settled scoped change: re-read just the touched owner nodes and reflect.
         // A read-back can change more than the direct fast path handles, so mark the
         // reflect full (re-derive both views + re-base the snapshot).
+        // A reconcile read that fails loses the device-side change it was called
+        // for — the notify already fired and nothing re-triggers the read — and
+        // the next converge would then write the plan's stale value back over the
+        // operator's own edit on the hardware. Reject so DeviceFollow takes its
+        // stop-following path, the same one a rejected reconcile already took.
         reconcileNodes: async (nodeIds) => {
           const result = await applyNodeState(getModel(modelId), plan, nodeIds);
-          if (result.errors.length) console.warn("device-follow scoped readback issues:", result.errors);
           followFull = true;
           requestReflect();
-          setStatus(followStatus(result));
+          assertReadComplete(result, "device-follow scoped readback issues:");
+          setStatus(t().status.liveFollowed(result.applied));
         },
         // Escalation / idle safety net: pull the whole device into the plan.
         reconcileAll: async () => {
           const result = await applyDeviceState(getModel(modelId), plan);
-          if (result.errors.length) console.warn("device-follow readback issues:", result.errors);
           plan.unreadNodes = result.unreadNodes;
           followFull = true;
           requestReflect();
-          setStatus(followStatus(result));
+          assertReadComplete(result, "device-follow readback issues:");
+          setStatus(t().status.liveFollowed(result.applied));
         },
         onFollow: () => setStatus(t().status.liveFollowing),
         onError: (message) => stopLiveOnError(message),
@@ -850,6 +869,16 @@ function syncRateUi(): void {
   applyRateConstraints();
 }
 
+// Re-render the plan in place, without loadPlan's ownership side effects (it
+// clears dirty, leaves live sync, and re-seeds the persisted model/rate/hidden).
+// Used wherever the plan's contents changed under the same document — a device
+// readback, or restoring the one a cancelled read started from.
+function rerenderPlan(): void {
+  graph.setModel(getModel(modelId), plan);
+  selection = null;
+  syncRateUi(); // also re-renders the CONSOLE strips (applyRateConstraints)
+}
+
 function loadPlan(next: Plan): void {
   // Replacing the whole plan invalidates the live snapshot; leave sync first.
   // (Live's own enable path calls loadPlan before begin(), so this is a no-op there.)
@@ -938,6 +967,12 @@ async function confirmDiscard(): Promise<boolean> {
 // build was validated against — the parameter mappings may not match. Returns true
 // to proceed (matching firmware, or the user chose to continue), false to abort.
 async function confirmFirmware(device: DeviceSummary): Promise<boolean> {
+  // An unread version is not a missing one: proceeding would silently disable the
+  // very check that decides whether this build's parameter mappings apply.
+  if (device.firmware === null) {
+    showError(t().error.firmwareUnread);
+    return false;
+  }
   if (!firmwareMismatch(device.firmware)) return true;
   return confirmDialog(t().confirm.firmwareMismatch(device.firmware, SUPPORTED_SYSTEM_FIRMWARE));
 }
@@ -1176,14 +1211,29 @@ if (!DEMO) {
           }
           loadPlan(emptyPlan(device.model as ModelId));
         }
-        const result = await applyDeviceState(getModel(modelId), plan, controller.signal);
+        // A cancel lands mid-read, leaving the plan a mix of device values and the
+        // ones they replaced, with nothing to mark which is which — unreadNodes is
+        // never set, dirty never moves, so a later New/Open discards it without
+        // asking and a later Write sends the mixture. Keep the pre-read plan so a
+        // cancel means nothing happened.
+        const beforeRead = structuredClone(plan);
+        const dirtyBeforeRead = dirty;
+        let result: ReadbackResult;
+        try {
+          result = await applyDeviceState(getModel(modelId), plan, controller.signal);
+        } catch (e) {
+          if (e instanceof DOMException && e.name === "AbortError") {
+            plan = beforeRead;
+            dirty = dirtyBeforeRead;
+            rerenderPlan();
+          }
+          throw e;
+        }
         if (result.errors.length) console.warn("device readback issues:", result.errors);
         // Per-node provenance: nodes whose body read failed still show their plan
         // default, so the graph/inspector flag them as not read from the device.
         plan.unreadNodes = result.unreadNodes;
-        graph.setModel(getModel(modelId), plan);
-        selection = null;
-        syncRateUi(); // also re-renders the CONSOLE strips (applyRateConstraints)
+        rerenderPlan();
         dirty = true;
         // Nodes the readback tried but could not confirm (left at their plan default).
         const unread = result.unreadNodes.size;
@@ -1242,49 +1292,102 @@ if (!DEMO) {
             showError(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
             return;
           }
-          const { diffs, errors } = await diffPlan(getModel(modelId), plan, signal);
-          if (errors.length) console.warn("device diff issues:", errors);
-          // CH SETTING names are string params outside the numeric diff; diff them
-          // separately so a name-only change still counts and writes.
-          signal.throwIfAborted();
-          const { writes: nameWrites, errors: nameErrors } = await diffNames(getModel(modelId), plan);
-          if (nameErrors.length) console.warn("device name diff issues:", nameErrors);
-          const total = diffs.length + nameWrites.length;
-          if (total === 0) {
-            setStatus(t().status.writeNoChanges);
-            return;
-          }
-          if (!(await confirmDialog(t().confirm.write(total)))) {
-            setStatus(t().status.canceled);
-            return;
-          }
-          const { outcomes, residual } = await sendConverging(getModel(modelId), plan, diffs, 3, 300, signal);
-          signal.throwIfAborted();
-          const nameOutcomes = await sendNames(nameWrites);
-          // Normalize the two outcome shapes (numeric command vs string name write)
-          // to {name, error} so the count and the saved report share one list.
-          const failed = [
-            ...outcomes.filter((o) => !o.ok).map((o) => ({ name: o.command.name, error: o.error })),
-            ...nameOutcomes
-              .filter((o) => !o.ok)
-              .map((o) => ({ name: `name ${o.write.param}:${o.write.y}`, error: o.error })),
-          ];
-          if (failed.length) console.warn("device write failures:", failed);
-          if (residual.length) console.warn("device write did not converge:", residual);
-          setStatus(
-            failed.length
-              ? t().status.writePartial(total - failed.length, failed.length)
-              : residual.length
-                ? t().status.writeResidual(residual.length)
-                : t().status.written(total),
-          );
-          // Failures/non-convergence are otherwise console-only: capture a report to
-          // offer after disconnect (below), so the reasons are visible without the console.
-          if (failed.length || residual.length) {
+          // One attempt of the whole diff → confirm → send sequence. Returns the
+          // sent/not-sent split when the send stopped part-way (so the caller can
+          // offer a retry), or null when there is nothing left to do.
+          const saveReport = (
+            failed: Array<{ name: string; error?: string }>,
+            residual: CommandDiff[],
+            reads: string[],
+          ): void => {
             report = {
               filename: `${modelId}-write-errors.md`,
-              markdown: formatWriteReport(device.model, failed, residual),
+              markdown: formatWriteReport(device.model, failed, residual, reads),
             };
+          };
+          const attemptWrite = async (confirmFirst: boolean): Promise<{ sent: number; notSent: number } | null> => {
+            // A read failure leaves those parameters' device values unknown, so the
+            // write stops on the first one — the rest of the sweep would only be
+            // establishing values for a write that is already canceled.
+            const { diffs, errors } = await diffPlan(getModel(modelId), plan, signal, true);
+            if (errors.length) {
+              setStatus(t().status.writeReadFailed(errors.length));
+              saveReport([], [], errors);
+              return null;
+            }
+            // CH SETTING names are string params outside the numeric diff; diff them
+            // separately so a name-only change still counts and writes.
+            signal.throwIfAborted();
+            const { writes: nameWrites, errors: nameErrors } = await diffNames(getModel(modelId), plan);
+            if (nameErrors.length) {
+              setStatus(t().status.writeReadFailed(nameErrors.length));
+              saveReport([], [], nameErrors);
+              return null;
+            }
+            const total = diffs.length + nameWrites.length;
+            if (total === 0) {
+              setStatus(t().status.writeNoChanges);
+              return null;
+            }
+            if (confirmFirst && !(await confirmDialog(t().confirm.write(total)))) {
+              setStatus(t().status.canceled);
+              return null;
+            }
+            const {
+              outcomes,
+              residual,
+              readErrors: convergeErrors,
+            } = await sendConverging(getModel(modelId), plan, diffs, 3, 300, signal);
+            const skipped = outcomes.filter((o) => o.skipped).length;
+            const failed: Array<{ name: string; error?: string }> = outcomes
+              .filter(reachedAndFailed)
+              .map((o) => ({ name: o.command.name, error: o.error }));
+            // Names only go out once the numeric phase reached the device intact —
+            // a stopped or unreadable numeric phase means the link already failed.
+            if (!failed.length && !skipped && !convergeErrors.length) {
+              signal.throwIfAborted();
+              const nameOutcomes = await sendNames(nameWrites);
+              // Normalize the two outcome shapes (numeric command vs string name write)
+              // to {name, error} so the count and the saved report share one list.
+              failed.push(
+                ...nameOutcomes
+                  .filter((o) => !o.ok)
+                  .map((o) => ({ name: `name ${o.write.param}:${o.write.y}`, error: o.error })),
+              );
+            }
+            if (failed.length) console.warn("device write failures:", failed);
+            if (residual.length) console.warn("device write did not converge:", residual);
+            // Failures/non-convergence are otherwise console-only: capture a report to
+            // offer after disconnect (below), so the reasons are visible without the console.
+            if (failed.length || residual.length || convergeErrors.length) {
+              saveReport(failed, residual, convergeErrors);
+            }
+            if (!skipped) {
+              setStatus(
+                failed.length
+                  ? t().status.writePartial(total - failed.length, failed.length)
+                  : residual.length
+                    ? t().status.writeResidual(residual.length)
+                    : t().status.written(total),
+              );
+              return null;
+            }
+            // Counted from the outcomes rather than against `total`: a converge round
+            // re-sends what the device reset, so `total` (the round-1 count) is not the
+            // denominator. A stopped numeric phase never sent the names, so they are
+            // all not-sent too.
+            const sent = outcomes.filter((o) => o.ok).length;
+            const notSent = skipped + nameWrites.length;
+            setStatus(t().status.writeStopped(sent, notSent));
+            return { sent, notSent };
+          };
+
+          // A stopped write leaves the device holding part of what was confirmed.
+          // Offer to run it again rather than reporting a breakdown the user cannot
+          // act on: the retry re-diffs, so what already landed drops out by itself.
+          let stop = await attemptWrite(true);
+          while (stop && (await confirmDialog(t().confirm.writeRetry(stop.sent, stop.notSent)))) {
+            stop = await attemptWrite(false);
           }
         });
       } finally {
@@ -1337,23 +1440,30 @@ if (!DEMO) {
           loadPlan(emptyPlan(device.model as ModelId));
         }
         const result = await applyDeviceState(getModel(modelId), plan);
-        if (result.errors.length) console.warn("live readback issues:", result.errors);
         plan.unreadNodes = result.unreadNodes;
-        graph.setModel(getModel(modelId), plan);
-        selection = null;
-        syncRateUi();
+        rerenderPlan();
+        // A partial read leaves the plan holding defaults where the device was not
+        // heard from, and the live snapshot would enshrine those as device truth —
+        // the first sideEffect edit then converges the whole plan and writes them
+        // over the real values. Live sync needs a complete read to start from.
+        if (result.errors.length) {
+          console.warn("live readback issues:", result.errors);
+          return await failLive(t().status.liveError(t().error.liveReadIncomplete(result.errors.length)));
+        }
         dirty = false;
         liveDeviceLabel = device.model;
         live.begin();
-        follow?.begin();
+        // Both registrations are awaited before the session counts as up. Without
+        // the notify stream the app is blind to device-side edits and the next
+        // converge writes the plan back over them; without the link watch an idle
+        // drop freezes the session instead of ending it. Either failure throws to
+        // failLive rather than starting a session that cannot do its job.
+        await follow?.begin();
+        await vdWatchLink(() => stopLiveOnError(t().error.linkLost));
         // Remember which generation the session holds, so deactivateLive releases
         // exactly this one even when its disconnect lands after a later connect.
         liveEpoch = device.epoch;
         liveSessionUp = true;
-        // Watch the held-open link: if it drops while idle (no edit in flight to
-        // surface "worker is gone"), stop the session instead of freezing. Routed
-        // through the one-shot error path, so it surfaces once as a dialog.
-        vdWatchLink(() => stopLiveOnError(t().error.linkLost));
         setLiveUi(true);
         consoleView.setLive(true);
         setStatus(t().status.liveOn(device.model, result.applied));

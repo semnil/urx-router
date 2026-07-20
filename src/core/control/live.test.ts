@@ -136,6 +136,34 @@ describe("LiveSync sideEffect converge", () => {
     // The fader value (-600) must have reached the device despite landing mid-converge.
     expect(vi.mocked(vdSet).mock.calls.some((c) => c[3] === -600)).toBe(true);
   });
+
+  // sendConverging reports per-command failures rather than rejecting, so a write
+  // that fails inside the converge would otherwise be swallowed — and the snapshot
+  // would then claim the plan as device truth, leaving those params diverged with
+  // no diff left to retry them. It must take the same teardown a direct write does.
+  it("stops the session when a write inside the converge fails", async () => {
+    const plan = basePlan();
+    const errors: string[] = [];
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: (m) => errors.push(m),
+      onSent: () => {},
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    // Let the direct writes through, then fail every write the converge issues.
+    let direct = true;
+    vi.mocked(vdGet).mockResolvedValue(0);
+    vi.mocked(vdSet).mockImplementation(() => (direct ? Promise.resolve() : Promise.reject(new Error("converge nak"))));
+    const flushed = live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    direct = false;
+    await vi.advanceTimersByTimeAsync(2000);
+    void flushed;
+    expect(errors).toHaveLength(1);
+    expect(live.isActive()).toBe(false);
+  });
 });
 
 describe("LiveSync flush error", () => {

@@ -62,7 +62,10 @@ describe("diffPlan", () => {
     expect(diffs[0].current).toBe(target.vdValue + 1);
   });
 
-  it("keeps an unreadable command (current=null) and records the error", async () => {
+  // An unreadable parameter leaves its device value unknown, so it is reported
+  // and left out of the diff rather than written blind — the caller aborts the
+  // whole write on a non-empty errors list.
+  it("drops an unreadable command from the diff and records the error", async () => {
     const plan = basePlan();
     const target = planToCommands(model, plan)[0];
     const table = deviceTableFor(plan);
@@ -72,9 +75,21 @@ describe("diffPlan", () => {
         : Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0),
     );
     const { diffs, errors } = await diffPlan(model, plan);
-    expect(diffs).toHaveLength(1);
-    expect(diffs[0].current).toBeNull();
+    expect(diffs).toHaveLength(0);
     expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("timeout");
+  });
+
+  // A caller that aborts on any read failure gains nothing from the rest of the
+  // sweep, and on a link that times out rather than fails fast those reads are
+  // minutes of waiting for an answer already decided.
+  it("stops at the first read failure when asked to", async () => {
+    const plan = basePlan();
+    vi.mocked(vdGet).mockRejectedValue(new Error("timeout"));
+    const all = await diffPlan(model, plan);
+    const stopped = await diffPlan(model, plan, undefined, true);
+    expect(stopped.errors).toHaveLength(1);
+    expect(all.errors.length).toBeGreaterThan(1);
   });
 });
 
@@ -88,16 +103,22 @@ describe("sendCommands / sendPlan", () => {
     expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(commands.length);
   });
 
-  it("reports a failed command without aborting the rest", async () => {
+  // Order matters (a type selector binds the array that follows it), so the loop
+  // stops at the first failure and the rest are reported as never attempted.
+  it("stops at the first failure and marks the rest as skipped", async () => {
     const commands = planToCommands(model, basePlan());
     const first = commands[0];
     vi.mocked(vdSet).mockImplementation((id, x, y) =>
       id === first.paramId && x === first.x && y === first.y ? Promise.reject(new Error("nak")) : Promise.resolve(),
     );
     const outcomes = await sendCommands(commands);
+    expect(outcomes).toHaveLength(commands.length);
     expect(outcomes[0].ok).toBe(false);
     expect(outcomes[0].error).toBe("nak");
-    expect(outcomes.slice(1).every((o) => o.ok)).toBe(true);
+    expect(outcomes[0].skipped).toBeUndefined();
+    expect(outcomes.slice(1).every((o) => !o.ok && o.skipped === true)).toBe(true);
+    // Only the failing command reached the transport.
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
   });
 
   it("sendPlan sends the full plan command list", async () => {
@@ -161,9 +182,45 @@ describe("sendConverging", () => {
     expect(r.rounds).toBe(3);
     expect(r.residual.some((d) => d.command.paramId === 140)).toBe(true);
   });
+
+  // Re-sending the whole plan over a link that just failed would re-trigger the
+  // side-effect resets this loop exists to settle, so one round is all it does.
+  it("stops after a round that failed to send instead of retrying", async () => {
+    installDevice();
+    vi.mocked(vdSet).mockRejectedValue(new Error("link down"));
+    const r = await sendConverging(model, dirtyPlan(), undefined, 3, 0);
+    expect(r.rounds).toBe(1);
+    expect(r.outcomes.some((o) => !o.ok && !o.skipped)).toBe(true);
+  });
+
+  // A re-diff that cannot read the device leaves the residual unknowable, so the
+  // loop ends and surfaces why rather than sending another round blind.
+  it("stops and reports readErrors when a re-diff cannot read the device", async () => {
+    installDevice({ stuckKey: "140:0:0" }); // forces a second round
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    let reads = 0;
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      // Fail once the first round's writes are done and the re-diff starts.
+      if (++reads > 200 && id === 140) return Promise.reject(new Error("timeout"));
+      return realGet(id, x, y);
+    });
+    const r = await sendConverging(model, dirtyPlan(), undefined, 3, 0);
+    expect(r.readErrors.length).toBeGreaterThan(0);
+    expect(r.rounds).toBeLessThan(3);
+  });
 });
 
 describe("formatWriteReport", () => {
+  // A write aborted on a read failure wrote nothing, so the report must not file
+  // those under "Write failures" — the fetch report already models reads properly.
+  it("reports read failures as their own category, not as write failures", () => {
+    const md = formatWriteReport("URX44V", [], [], ["CH_FADER: timeout"]);
+    expect(md).toContain("## Read failures");
+    expect(md).toContain("CH_FADER: timeout");
+    expect(md).toContain("nothing was written");
+    expect(md).not.toContain("Write failures: 1");
+  });
+
   // The report reads only name/paramId/x/y/vdValue, so stub a minimal command
   // (the full VdCommand carries planValue/request, irrelevant to formatting).
   const cmd = (name: string, paramId: number, vdValue: number) =>

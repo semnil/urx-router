@@ -174,8 +174,11 @@ export function nativeWriteBinary(path: string, bytes: Uint8Array): Promise<void
 export interface DeviceSummary {
   model: string;
   label: string;
-  /** The unit's System firmware version, or empty when the device reports none. */
-  firmware: string;
+  /** The unit's System firmware version. Empty when the device answered but
+   *  reports none (the mismatch check is then skipped by design); null when the
+   *  read itself did not land, so the version is unknown rather than absent and
+   *  the caller must not proceed on a gate it could not evaluate. */
+  firmware: string | null;
 }
 
 /** A freshly opened connection: the device plus the generation (epoch) the Rust
@@ -235,14 +238,20 @@ interface RawMeterUpdate {
  * `addrs` is a list of [meterId, x] pairs. Replaces any prior subscription.
  * Returns an unsubscribe function. No-op (returns a noop) outside Tauri.
  */
-export function vdMetersSubscribe(addrs: Array<[number, number]>, onUpdate: (m: MeterUpdate) => void): () => void {
+export async function vdMetersSubscribe(
+  addrs: Array<[number, number]>,
+  onUpdate: (m: MeterUpdate) => void,
+): Promise<() => void> {
   if (!isTauri()) return () => {};
   // Rust batches each pump cycle's readings into one channel message, so the IPC
   // boundary is crossed ~30×/s instead of per reading; fan the batch back out here.
   const channel = newChannel<RawMeterUpdate[]>((batch) => {
     for (const d of batch) onUpdate({ meterId: d.meter_id, x: d.x, value: d.value });
   });
-  void invoke<void>("vd_meters_subscribe", { addrs, channel });
+  // Awaited: bars stuck on the floor read as "no signal" and send the operator
+  // chasing gain that was never the problem, so a failed registration is surfaced
+  // rather than left to look like silence.
+  await invoke<void>("vd_meters_subscribe", { addrs, channel });
   return () => void invoke<void>("vd_meters_unsubscribe").catch(() => {});
 }
 
@@ -269,17 +278,20 @@ interface RawParamUpdate {
  * [paramId, x, y] triples. Replaces any prior subscription. Returns an
  * unsubscribe function. No-op (returns a noop) outside Tauri.
  */
-export function vdParamsSubscribe(
+export async function vdParamsSubscribe(
   addrs: Array<[number, number, number]>,
   onUpdate: (p: ParamUpdate) => void,
-): () => void {
+): Promise<() => void> {
   if (!isTauri()) return () => {};
   // Batched per pump cycle on the Rust side (a device-side sweep arrives as one
   // message), so fan the batch back out into per-notify callbacks here.
   const channel = newChannel<RawParamUpdate[]>((batch) => {
     for (const d of batch) onUpdate({ paramId: d.param_id, x: d.x, y: d.y, value: d.value });
   });
-  void invoke<void>("vd_params_subscribe", { addrs, channel });
+  // Awaited, not fire-and-forget: a failed registration leaves the app blind to
+  // device-side edits, and the next converge would then write the plan's stale
+  // values back over them. The caller stops rather than running half-deaf.
+  await invoke<void>("vd_params_subscribe", { addrs, channel });
   return () => void invoke<void>("vd_params_unsubscribe").catch(() => {});
 }
 
@@ -294,10 +306,13 @@ interface RawLinkEvent {
  * session does not silently freeze. The channel dies with the worker on
  * disconnect, so no explicit unwatch is needed. No-op outside Tauri.
  */
-export function vdWatchLink(onDrop: (reason: string) => void): void {
+export async function vdWatchLink(onDrop: (reason: string) => void): Promise<void> {
   if (!isTauri()) return;
   const channel = newChannel<RawLinkEvent>((d) => onDrop(d.reason));
-  void invoke<void>("vd_watch_link", { channel });
+  // Awaited: without this watch an idle link drop surfaces as a frozen session
+  // (tally lit, meters stopped) instead of a teardown, so a failure here has to
+  // stop the session rather than start one that cannot notice its own death.
+  await invoke<void>("vd_watch_link", { channel });
 }
 
 /** Close the connection opened with generation `epoch` (no-op if a newer connect

@@ -263,6 +263,10 @@ export interface ConsoleHooks {
   getPlan: () => Plan;
   /** An edit changed the plan (mute / fader / EQ): flag dirty + schedule live sync. */
   onChange: () => void;
+  /** The meter stream could not be registered. Bars stuck on the floor are
+   *  indistinguishable from silence, so the host surfaces this rather than
+   *  leaving a live session that quietly shows nothing. */
+  onMeterError?: (message: string) => void;
   midi?: ConsoleMidiHooks;
 }
 
@@ -279,6 +283,7 @@ export class Console {
   private store = new MeterStore();
   private unsub: (() => void) | null = null;
   private subSig = ""; // signature of the currently subscribed address set
+  private subPending = false; // a registration is in flight (see startMeters)
   private raf = 0;
   private live = false;
   private visible = false;
@@ -1775,16 +1780,42 @@ export class Console {
   // every render: it self-guards on live/visible and only re-subscribes when the
   // displayed address set actually changes (e.g. a model switch), so mode/lang
   // re-renders don't churn the broker registration.
+  // The awaited half of startMeters. Its failure has to be loud: bars stuck on
+  // the floor look exactly like silence, and an operator reading them chases gain
+  // that was never the problem — so it goes to the same handler a live error takes.
+  private async resubscribeMeters(addrs: Array<[number, number]>, sig: string): Promise<void> {
+    this.subPending = true;
+    let unsub: () => void;
+    try {
+      unsub = await subscribeMeters(this.store, addrs);
+    } catch (e) {
+      this.subSig = "";
+      this.hooks.onMeterError?.(e instanceof Error ? e.message : String(e));
+      return;
+    } finally {
+      this.subPending = false;
+    }
+    // A stop/re-scope raced the registration; drop this one rather than leaving a
+    // stream nothing will unsubscribe.
+    if (this.subSig !== sig || !this.live || !this.visible) unsub();
+    else this.unsub = unsub;
+  }
+
   private startMeters(): void {
     if (!this.live || !this.visible) return;
     const taps: MeterTap[] = [];
     for (const r of this.refs.values()) if (r.tap) taps.push(r.tap);
     const addrs = tapAddrs(taps);
     const sig = addrs.map((a) => a.join(":")).join(",");
-    if (!this.unsub || sig !== this.subSig) {
+    // subPending closes the window the await opens: without it a render landing
+    // mid-registration sees no unsub, and re-registers the same address set —
+    // which on the device is unregister-then-register for every address, the
+    // ~1 s stall hide() already documents.
+    if (!this.subPending && (!this.unsub || sig !== this.subSig)) {
       this.unsub?.();
-      this.unsub = subscribeMeters(this.store, addrs);
+      this.unsub = null;
       this.subSig = sig;
+      void this.resubscribeMeters(addrs, sig);
     }
     if (!this.raf) {
       // Cap repaints to ~30 fps for smooth ballistics (the device streams at ~10 Hz;

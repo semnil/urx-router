@@ -14,7 +14,7 @@ import { PARAMS } from "./params";
 import type { ParamName, ParamSpec } from "./params";
 import { planToCommands, planToNameWrites } from "./translate";
 import type { VdCommand, NameWrite } from "./translate";
-import { sendConverging } from "./client";
+import { reachedAndFailed, sendConverging } from "./client";
 
 // Coalesce rapid edits (a slider drag fires per pixel) into one flush so the
 // single-threaded device worker is not flooded; the snapshot diff means only the
@@ -197,7 +197,16 @@ export class LiveSync {
         // not get baked into the snapshot here as if already on the device (which
         // would silently drop it).
         const converged = structuredClone(plan);
-        await sendConverging(model, converged);
+        const r = await sendConverging(model, converged);
+        // sendConverging reports per-command failures instead of rejecting, so a
+        // failed write here would otherwise be swallowed — and captureSnapshot
+        // would then record the plan as device truth, leaving those parameters
+        // diverged for the rest of the session with no diff left to retry them.
+        // Route it into the same teardown a direct write failure takes.
+        const failed = r.outcomes.find(reachedAndFailed);
+        if (failed || r.readErrors.length) {
+          throw new Error(failed?.error ?? r.readErrors[0] ?? "converge failed");
+        }
         this.captureSnapshot(converged);
       }
       if (sent) this.hooks.onSent(sent);

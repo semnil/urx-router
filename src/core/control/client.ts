@@ -21,21 +21,33 @@ export interface CommandDiff {
 }
 
 export interface DiffResult {
-  /** Commands whose plan value differs from the device, or could not be confirmed. */
+  /** Commands whose plan value differs from the device. */
   diffs: CommandDiff[];
-  /** Per-command read failures (e.g. timeout); the command is still kept in diffs. */
+  /** Per-command read failures (e.g. timeout). A non-empty list means the
+   *  comparison is incomplete and the caller must not write on it. */
   errors: string[];
 }
 
 /**
  * Compare the plan's intended writes against the device's current values, so the
  * UI can write only what differs (and preview the count). Reads each planned
- * command's live value; a command is included when it differs or could not be
- * read (read failures are reported but the command is kept, so an unreadable
- * parameter is written rather than silently skipped). The caller must have
- * connected first (platform.vdConnect).
+ * command's live value and includes it when it differs. A read failure leaves
+ * the device's value unknown, so the command is reported in `errors` and left
+ * out of `diffs` — the caller aborts rather than writing a parameter whose
+ * current value it never confirmed. The caller must have connected first
+ * (platform.vdConnect).
+ *
+ * `stopOnError` returns at the first failure. A caller that aborts on any read
+ * failure has nothing to gain from the rest of the sweep, and a link that times
+ * out rather than fails fast makes those hundreds of doomed round-trips minutes
+ * of waiting for an answer already decided.
  */
-export async function diffPlan(model: DeviceModel, plan: Plan, signal?: AbortSignal): Promise<DiffResult> {
+export async function diffPlan(
+  model: DeviceModel,
+  plan: Plan,
+  signal?: AbortSignal,
+  stopOnError = false,
+): Promise<DiffResult> {
   const diffs: CommandDiff[] = [];
   const errors: string[] = [];
   for (const command of planToCommands(model, plan)) {
@@ -45,7 +57,7 @@ export async function diffPlan(model: DeviceModel, plan: Plan, signal?: AbortSig
       if (current !== command.vdValue) diffs.push({ command, current });
     } catch (e) {
       errors.push(`${command.name}: ${e instanceof Error ? e.message : String(e)}`);
-      diffs.push({ command, current: null });
+      if (stopOnError) break;
     }
   }
   return { diffs, errors };
@@ -55,12 +67,20 @@ export interface SendOutcome {
   command: VdCommand;
   ok: boolean;
   error?: string;
+  /** True when the loop stopped before this command was tried, so the device
+   *  never saw it. Distinct from ok:false, which did reach the device and fail. */
+  skipped?: boolean;
 }
 
 /**
- * Send commands to the connected device, in order, stopping at nothing — each
- * outcome is reported so a partial failure stays visible. The caller must have
- * connected first (platform.vdConnect).
+ * Send commands to the connected device, in order, stopping at the first
+ * failure. Order matters — a type selector precedes the parameter array it
+ * binds (FX type before its array, insert-FX selector before the engine
+ * arrays), so continuing past a failed selector would write slot values that
+ * the device interprets under the wrong type. The commands after the failure
+ * are reported as `skipped` rather than dropped, so the caller can say what the
+ * device did and did not see. The caller must have connected first
+ * (platform.vdConnect).
  */
 export async function sendCommands(commands: VdCommand[], signal?: AbortSignal): Promise<SendOutcome[]> {
   const outcomes: SendOutcome[] = [];
@@ -71,10 +91,17 @@ export async function sendCommands(commands: VdCommand[], signal?: AbortSignal):
       outcomes.push({ command, ok: true });
     } catch (e) {
       outcomes.push({ command, ok: false, error: e instanceof Error ? e.message : String(e) });
+      break;
     }
   }
+  // Everything past the stop was never attempted.
+  for (const command of commands.slice(outcomes.length)) outcomes.push({ command, ok: false, skipped: true });
   return outcomes;
 }
+
+/** A command the device saw and refused, as opposed to one the loop never tried.
+ *  Both are ok:false, so every reader of an outcome list needs the distinction. */
+export const reachedAndFailed = (o: SendOutcome): boolean => !o.ok && !o.skipped;
 
 /** Send every command a plan implies (no diff) — the full-write path. */
 export function sendPlan(model: DeviceModel, plan: Plan): Promise<SendOutcome[]> {
@@ -90,18 +117,18 @@ export interface NameOutcome {
 /**
  * The CH SETTING name writes whose value differs from the device — the string
  * analogue of diffPlan, so a name-only edit is counted and a matching name is
- * not re-sent. A read failure keeps the write (it is sent rather than skipped).
+ * not re-sent. A read failure is reported and the write left out, matching
+ * diffPlan: the caller aborts rather than writing over a name it could not read.
  */
 export async function diffNames(model: DeviceModel, plan: Plan): Promise<{ writes: NameWrite[]; errors: string[] }> {
   const writes: NameWrite[] = [];
   const errors: string[] = [];
   for (const write of planToNameWrites(model, plan)) {
     try {
-      const current = (await vdGetStr(write.param, 0, write.y)).trim();
+      const current = (await vdGetStr(write.param, 0, write.y)).trimEnd();
       if (current !== write.value) writes.push(write);
     } catch (e) {
       errors.push(`name ${write.param}:${write.y}: ${e instanceof Error ? e.message : String(e)}`);
-      writes.push(write);
     }
   }
   return { writes, errors };
@@ -132,6 +159,10 @@ export interface ConvergeResult {
   rounds: number;
   /** Diffs still remaining after the last round — empty means the device matches. */
   residual: CommandDiff[];
+  /** Read failures from a re-diff between rounds. Non-empty means the loop
+   *  stopped early because the device's state could no longer be confirmed, so
+   *  `residual` is what was known at that point rather than a settled answer. */
+  readErrors: string[];
 }
 
 /**
@@ -143,6 +174,11 @@ export interface ConvergeResult {
  * reset has settled and it is re-sent. The caller must have connected first; it
  * may pass the diff it already computed (for the confirm prompt) to skip the
  * first re-read. Stops early when nothing differs.
+ *
+ * Retrying is only sound while the link is healthy. A round that failed to send,
+ * or a re-diff that could not read the device, ends the loop instead of starting
+ * another round — re-sending the whole plan over a link that just failed would
+ * re-trigger the side-effect resets this loop exists to settle.
  */
 export async function sendConverging(
   model: DeviceModel,
@@ -153,43 +189,67 @@ export async function sendConverging(
   signal?: AbortSignal,
 ): Promise<ConvergeResult> {
   const outcomes: SendOutcome[] = [];
-  let residual = initialDiffs ?? (await diffPlan(model, plan, signal)).diffs;
+  const readErrors: string[] = [];
+  let residual = initialDiffs;
+  if (!residual) {
+    const seed = await diffPlan(model, plan, signal);
+    readErrors.push(...seed.errors);
+    residual = seed.diffs;
+  }
   let rounds = 0;
-  while (residual.length > 0 && rounds < maxRounds) {
+  while (residual.length > 0 && rounds < maxRounds && !readErrors.length) {
     signal?.throwIfAborted();
-    outcomes.push(
-      ...(await sendCommands(
-        residual.map((d) => d.command),
-        signal,
-      )),
+    const sent = await sendCommands(
+      residual.map((d) => d.command),
+      signal,
     );
+    outcomes.push(...sent);
     rounds++;
+    if (sent.some(reachedAndFailed)) break;
     // A side-effect reset (e.g. from a COMP/EQ-type change) lands asynchronously,
     // a beat after the write returns. Let it settle before re-reading, so the
     // residual is the true post-reset state and the next round's re-send is not
     // racing a reset still in flight. (settleMs = 0 in tests, where the mock has
     // no async reset.)
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
-    residual = (await diffPlan(model, plan, signal)).diffs;
+    const next = await diffPlan(model, plan, signal);
+    readErrors.push(...next.errors);
+    residual = next.diffs;
   }
-  return { outcomes, rounds, residual };
+  return { outcomes, rounds, residual, readErrors };
 }
 
 /**
  * Render a write's failures as human-readable Markdown the user can save, so the
  * per-command reasons (otherwise console-only) are visible off the status bar.
  * `failed` is the failed send/name outcomes (normalized to name + error);
- * `residual` is the diff that never converged (the device still differs). Pure.
+ * `residual` is the diff that never converged (the device still differs);
+ * `reads` are parameters whose current value could not be read. A read failure
+ * is its own category — when it aborts the write, nothing was written at all, so
+ * it must not be counted among the write failures. Pure.
  */
 export function formatWriteReport(
   model: string,
   failed: Array<{ name: string; error?: string }>,
   residual: CommandDiff[],
+  reads: string[] = [],
 ): string {
   const lines: string[] = [];
   lines.push(`# URX write report — ${model}`);
   lines.push("");
-  lines.push(`- Write failures: ${failed.length}; parameters that did not converge: ${residual.length}`);
+  if (reads.length && !failed.length && !residual.length) {
+    lines.push(`- Read failures: ${reads.length}. The write was canceled — nothing was written.`);
+  } else {
+    lines.push(
+      `- Write failures: ${failed.length}; parameters that did not converge: ${residual.length}` +
+        (reads.length ? `; read failures: ${reads.length}` : ""),
+    );
+  }
+  if (reads.length) {
+    lines.push("");
+    lines.push("## Read failures");
+    for (const e of reads) lines.push(`- ${e}`);
+  }
   if (failed.length) {
     lines.push("");
     lines.push("## Write failures");

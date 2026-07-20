@@ -303,6 +303,23 @@ describe("feedback", () => {
     expect(sent).toEqual([encodeNote(0, 60, false)]);
   });
 
+  // A send that failed never reached the controller, so the cache must not claim
+  // it did — otherwise the LED or fader keeps showing the wrong state until that
+  // value happens to change again on its own.
+  it("re-sends everything after forgetFeedback", () => {
+    const m = fake("ch1/mute", "toggle", 1);
+    controls.set(m.id, m);
+    map(m.id, { type: "note", channel: 0, note: 60 });
+    engine.feedback();
+    expect(sent).toEqual([encodeNote(0, 60, true)]);
+    sent.length = 0;
+    engine.feedback(); // unchanged → nothing goes out
+    expect(sent).toEqual([]);
+    engine.forgetFeedback();
+    engine.feedback();
+    expect(sent).toEqual([encodeNote(0, 60, true)]);
+  });
+
   it("sends a 14-bit value as an MSB/LSB pair", () => {
     const c = fake("ch1/level", "continuous", 1, 1 / 16383);
     controls.set(c.id, c);
