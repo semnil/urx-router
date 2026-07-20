@@ -149,6 +149,7 @@ export const ja: Messages = {
     hint:
       "ノードをドラッグして配置し、出力ポート (右) から入力ポート (左) へ" +
       "ドラッグして結線します。接続可能なポートは結線中に緑でハイライトされます。" +
+      "チャンネルのダイレクト出力・録音は、上辺の Rec Point タップから配線します。" +
       "ノード右上のペンでノートを追加し、ノートをクリックすると編集できます。",
     type: "種別",
     name: "名前",
@@ -367,6 +368,7 @@ export const ja: Messages = {
       sendSwitch: "Send (ON/OFF)",
       patch: "出力パッチ",
       pre: "Pre-fader send",
+      recPoint: "Rec Point タップ",
     },
   },
   shelf: {
@@ -383,6 +385,7 @@ export const ja: Messages = {
     addNote: "ノートを追加",
     collapseNote: "ノートを最小化",
     expandNote: "ノートを展開",
+    recPointTap: "Rec Point タップ — フェーダー・ダッカーより前段。USB 出力・microSD Rec へはここからドラッグします",
   },
   warning: {
     title: "サンプルレート注意",
@@ -514,6 +517,9 @@ export const ja: Messages = {
     duplicate: "すでに接続済みです",
     singleInput: "この入力は1系統のみです (既存の接続を外してください)",
     cannotConnect: "接続できません",
+    recPointRequired: "USB 出力・microSD Rec はチャンネル上辺の Rec Point タップから配線してください",
+    recPointTargets:
+      "Rec Point タップの接続先は USB 出力・microSD Rec のみです。他はチャンネルの出力から配線してください",
     brokerUnreachable: "Device Center が起動していません。起動して URX を接続してから再度お試しください。",
     noDevice: "Device Center は起動していますが、URX が接続されていません。本体を接続してから再度お試しください。",
     controlWorkerGone:

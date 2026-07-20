@@ -309,6 +309,9 @@ Source selection for the analog outputs (MAIN / LINE).
     Rec Point tap, and **a channel whose Ducker is on and is wired to a USB direct out raises a
     warning at the top of the inspector** (`duckerBypassWarnings`). microSD Rec is excluded from the
     warning — dry recording is a valid workflow — and gets a neutral note pointing at Rec Point.
+    On the canvas these routes leave a dedicated **Rec Point tap jack on the channel's top edge**
+    rather than its right-edge output, so the bypass is visible in the diagram itself; see the
+    "Rec Point tap jack" section of `architecture.md`.
 - MONO IN selects a **COMP/EQ Type** (CH SETTING) — COMP->EQ or **SSMCS** (Sweet Spot Morphing
   Channel Strip), mutually exclusive. SSMCS replaces the COMP / 4-band EQ with a dedicated morphing
   strip: pick one **Sweet Spot Data** preset (6 generic + 28 artist/use-case = 34), then shape it

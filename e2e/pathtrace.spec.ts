@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { faceplate } from "./graph-helpers";
 
 // Long-pressing a node traces the live signal path feeding it: every upstream
 // input / channel / bus reached through live wiring lights up, the rest fade.
@@ -7,7 +8,7 @@ const node = (page: Page, id: string) => page.locator(`g.node[data-id="${id}"]`)
 
 // Press and hold a node past the long-press threshold (450ms), then release.
 async function longPress(page: Page, id: string): Promise<void> {
-  const box = await node(page, id).boundingBox();
+  const box = await faceplate(page, id).boundingBox();
   if (!box) throw new Error(`node not found: ${id}`);
   await page.mouse.move(box.x + box.width / 2, box.y + 10);
   await page.mouse.down();

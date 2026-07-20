@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { drag, port, tapJack } from "./graph-helpers";
 
 // A channel wired straight to a USB / SD direct out is tapped at its Rec Point,
 // upstream of the fader and Ducker. The inspector explains that on the wire
@@ -9,18 +10,15 @@ const USB_B_IN = "out.usbmain_b:in";
 const SD_T1_IN = "out.sdrec.t1:in";
 const DUCKER = "out.ducker1"; // hung on CH 5/6
 
-const port = (page: Page, ref: string) => page.locator(`[data-ref="${ref}"]`);
 const duckerNode = (page: Page) => page.locator(`#graph-host g.node[data-id="${DUCKER}"]`);
 
-async function connect(page: Page, fromRef: string, toRef: string): Promise<void> {
-  const a = await port(page, fromRef).boundingBox();
-  const b = await port(page, toRef).boundingBox();
-  if (!a || !b) throw new Error(`port not found: ${fromRef} -> ${toRef}`);
-  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 });
-  await page.mouse.up();
-}
+const connect = (page: Page, fromRef: string, toRef: string): Promise<void> =>
+  drag(page, port(page, fromRef), port(page, toRef));
+
+// Direct outs and recordings are wired from the Rec Point tap, so the tests that
+// build one start where the app requires it.
+const connectFromTap = (page: Page, fromRef: string, toRef: string): Promise<void> =>
+  drag(page, tapJack(page, fromRef), port(page, toRef));
 
 // dispatchEvent bypasses the overlapping wire-hit bands' pointer interception.
 async function selectWire(page: Page, from: string, to: string): Promise<void> {
@@ -47,7 +45,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("a channel-sourced USB direct out explains it is a pre-Ducker tap", async ({ page }) => {
-  await connect(page, CH_OUT, USB_B_IN);
+  await connectFromTap(page, CH_OUT, USB_B_IN);
   await selectWire(page, CH_OUT, USB_B_IN);
 
   await expect(page.locator("#inspector .hint", { hasText: "Direct out" })).toHaveCount(1);
@@ -57,7 +55,7 @@ test("a channel-sourced USB direct out explains it is a pre-Ducker tap", async (
 });
 
 test("turning the ducker on warns that the direct out drops the duck", async ({ page }) => {
-  await connect(page, CH_OUT, USB_B_IN);
+  await connectFromTap(page, CH_OUT, USB_B_IN);
 
   // No conflict yet: the ducker is bypassed on a fresh board.
   await selectWire(page, CH_OUT, USB_B_IN);
@@ -72,7 +70,7 @@ test("turning the ducker on warns that the direct out drops the duck", async ({ 
 });
 
 test("a microSD Rec tap gets a neutral note, not the bus-reroute advice", async ({ page }) => {
-  await connect(page, CH_OUT, SD_T1_IN);
+  await connectFromTap(page, CH_OUT, SD_T1_IN);
   await selectWire(page, CH_OUT, SD_T1_IN);
 
   // Recording the dry Rec Point tap is intentional: point at Rec Point, don't push
@@ -83,7 +81,7 @@ test("a microSD Rec tap gets a neutral note, not the bus-reroute advice", async 
 });
 
 test("a ducked channel recording to microSD raises no warning", async ({ page }) => {
-  await connect(page, CH_OUT, SD_T1_IN);
+  await connectFromTap(page, CH_OUT, SD_T1_IN);
   await setDuckerOn(page, true);
 
   // microSD Rec is excluded from the ducker-bypass warning (dry record is a valid

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { faceplate } from "./graph-helpers";
 
 // A node is a g.node carrying its id; the note controls live inside it.
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
@@ -62,7 +63,7 @@ test("the toggle minimizes and re-expands the note", async ({ page }) => {
 
 test("clicking the note area of a selected node edits it; the header does not", async ({ page }) => {
   await addNote(page, "ch1", "two\nlines"); // leaves ch1 selected
-  const box = await node(page, "ch1").boundingBox();
+  const box = await faceplate(page, "ch1").boundingBox();
   if (!box) throw new Error("ch1 not found");
 
   // Note area (lower part) opens the editor.
@@ -89,8 +90,8 @@ test("Arrange spaces a column by the expanded note's height (no overlap)", async
   await page.click("#btn-view");
   await page.click("#btn-auto");
   await page.waitForTimeout(150);
-  const a = await node(page, "ch1").boundingBox();
-  const b = await node(page, "ch2").boundingBox();
+  const a = await faceplate(page, "ch1").boundingBox();
+  const b = await faceplate(page, "ch2").boundingBox();
   if (!a || !b) throw new Error("ch1/ch2 not found");
   // ch2's top must clear ch1's bottom; a fixed row pitch would overlap them.
   expect(b.y).toBeGreaterThanOrEqual(a.y + a.height - 1);

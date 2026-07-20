@@ -8,6 +8,7 @@ import type { Plan, PlanConnection } from "../core/plan";
 import { hasConnection, LEVEL_MIN_DB, removeConnection } from "../core/plan";
 import {
   canConnect,
+  directOutTarget,
   isFixedConnection,
   isNodeInactive,
   legalSources,
@@ -31,20 +32,50 @@ const SVGNS = "http://www.w3.org/2000/svg";
 const NODE_W = 184;
 const NODE_H = 44;
 const COL_GAP = 256;
-const ROW_GAP = 60;
+// Row pitch. The gutter it leaves (ROW_GAP - NODE_H) is not slack: a Rec Point tap
+// rises into it and runs across it, so a pitch that leaves less than roughly
+// TAP_RISE plus clearance makes those wires hug the underside of the node above
+// and read as belonging to it.
+const ROW_GAP = 68;
 const MARGIN = 40;
 
 // Vertical gap between a parent channel and the ducker hung directly under it.
 const DUCKER_GAP = 8;
 
-// Visible jack radius is 6; the clickable target is widened to this so the
-// small connector is easy to grab. Stays within the column/row gaps so the
-// halos of neighboring ports never overlap.
+// Jack geometry: the socket ring, its pin at rest and lit, and the radius a jack
+// grows to while it is a candidate during a connect drag.
+const JACK_R = 6;
+const PIN_R_OFF = 2.4;
+const PIN_R_ON = 3;
+const JACK_R_CANDIDATE = 8;
+
+// The clickable target is widened past the visible jack so the small connector is
+// easy to grab. Stays within the column/row gaps so the halos of neighboring ports
+// never overlap.
 const PORT_HIT_R = 14;
 
 // Visible wire is 2-3.5px; the clickable band along it is widened to this so
 // the thin curve is easy to select.
 const WIRE_HIT_W = 14;
+
+// The Rec Point tap jack on a channel's top edge: the direct-out / recording
+// pickup, which the block diagram places ahead of the fader and Ducker. It sits
+// left of center on purpose — the STEREO-link tie lands on the top-center, and a
+// tap taken before the strip's mixer stage belongs at its upstream end. TAP_RISE
+// is the straight riser its wire climbs before sweeping across, so the route
+// visibly leaves the faceplate upward instead of joining the bus sends at the
+// right edge. Kept under the row gutter (ROW_GAP - NODE_H) so the riser stands in
+// clear space rather than behind the node above.
+const TAP_CX = 62;
+const TAP_RISE = 14;
+// The tap's pointer target: a band sized to the jack itself, not to the row
+// gutter. Reaching further up would be free space only in the default layout —
+// nodes drag freely, so a tall band lands on whatever the user parked above and
+// steals that node's drag — and reaching further down would eat into the header,
+// which is where a node is grabbed. Kept close to the jack, both stay reliable.
+const TAP_HIT_W = 26;
+const TAP_HIT_UP = 12;
+const TAP_HIT_DOWN = 8;
 
 // Pointer travel (screen px) past which a port press becomes a connect drag
 // rather than a click. A click on an input port selects its incoming wire.
@@ -212,6 +243,11 @@ export class Graph {
   private nodeEls = new Map<string, SVGGElement>();
   private portEls = new Map<string, SVGCircleElement>();
   private portPinEls = new Map<string, SVGCircleElement>();
+  // Rec Point tap jacks, keyed by channel id. Separate from portEls because the
+  // tap shares the channel's `ch:out` ref (the plan is unchanged by it) — one ref
+  // would otherwise collide in a single map.
+  private tapEls = new Map<string, SVGCircleElement>();
+  private tapPinEls = new Map<string, SVGCircleElement>();
   // STEREO-link tie elements, keyed by the pair's primary (odd) channel id, so a
   // drag can redraw the tie in place as the pair moves.
   private stereoLinkEls = new Map<string, SVGGElement>();
@@ -273,6 +309,10 @@ export class Graph {
   private connect: {
     ref: string;
     dir: PortDirection;
+    // True when the press landed on a channel's Rec Point tap rather than its
+    // right-edge output. The two are separate origins: each offers only the
+    // routes that leave from it.
+    tap: boolean;
     startX: number;
     startY: number;
     mode: "pending" | "connecting" | "noop";
@@ -385,8 +425,9 @@ export class Graph {
   }
 
   /** Rebuild one node's <g> in place. makeNode re-registers this node's nodeEls /
-   *  portEls / portPinEls entries (same keys), so the old port elements just detach
-   *  with the replaced group. Caller batches the port / wire / selection refresh. */
+   *  portEls / portPinEls / tap-jack entries (same keys), so the old port elements
+   *  just detach with the replaced group. Caller batches the port / wire /
+   *  selection refresh. */
   private repaintNode(id: string): void {
     if (this.isHidden(id)) return;
     const node = this.nodeById.get(id);
@@ -608,6 +649,37 @@ export class Graph {
     return { x, y: base.y + NODE_H / 2 };
   }
 
+  /** The Rec Point tap jack's point on a channel's top edge. */
+  private tapPoint(nodeId: string): Pt {
+    const base = this.posOf(nodeId);
+    return { x: base.x + TAP_CX, y: base.y };
+  }
+
+  /** Whether `from → to` leaves the channel at its Rec Point rather than through
+   *  the mixer stage — a direct out (USB) or a microSD Rec track. These are the
+   *  routes drawn from the tap jack. */
+  private isRecPointTap(from: string, to: string): boolean {
+    return directOutTarget(this.model, from, to) !== null;
+  }
+
+  /** Whether a node needs a Rec Point tap jack — read from the routes that would
+   *  leave it, not from its kind. Asking the same predicate that decides where a
+   *  wire is drawn keeps the jack and its wires from ever disagreeing: a node with
+   *  such a route always has the jack the wire rises out of, and one without never
+   *  shows a jack nothing can leave. Today that is exactly the channels. */
+  private hasTapJack(node: DeviceNode): boolean {
+    const out = ref(node.id, "out");
+    return [...possibleTargets(this.model, out)].some((r) => this.isRecPointTap(out, r));
+  }
+
+  /** The jack that represents `sourceRef` for a wire into `targetRef`: a channel's
+   *  Rec Point tap for a direct out / recording, its right-edge output otherwise. */
+  private sourceJack(sourceRef: string, targetRef: string): SVGCircleElement | undefined {
+    return this.isRecPointTap(sourceRef, targetRef)
+      ? this.tapEls.get(parseRef(sourceRef).nodeId)
+      : this.portEls.get(sourceRef);
+  }
+
   private clientToContent(e: PointerEvent): Pt {
     const rect = this.svg.getBoundingClientRect();
     return {
@@ -648,6 +720,8 @@ export class Graph {
     this.nodeEls.clear();
     this.portEls.clear();
     this.portPinEls.clear();
+    this.tapEls.clear();
+    this.tapPinEls.clear();
     for (const node of this.model.nodes) {
       if (this.isHidden(node.id)) continue;
       this.nodeLayer.append(this.makeNode(node));
@@ -918,29 +992,21 @@ export class Graph {
       hit.style.pointerEvents = "all";
       g.append(hit);
 
-      const c = document.createElementNS(SVGNS, "circle");
-      c.dataset.dir = port.direction;
-      c.setAttribute("cx", String(cx));
-      c.setAttribute("cy", String(NODE_H / 2));
-      c.setAttribute("r", "6");
-      c.setAttribute("fill", p.portOuter);
-      c.setAttribute("stroke", rail);
-      c.setAttribute("stroke-width", "1.5");
-      c.style.pointerEvents = "none";
-      g.append(c);
-      this.portEls.set(r, c);
-
-      const pin = document.createElementNS(SVGNS, "circle");
-      pin.classList.add("port-pin");
+      const { jack, pin } = jackPair(cx, NODE_H / 2, rail, p);
+      // Marks the painted jack (not its hit disc) for tests and DOM inspection;
+      // the Rec Point tap deliberately has no counterpart, since it is identified
+      // by its port-tap class.
+      jack.dataset.dir = port.direction;
       pin.dataset.pin = r;
-      pin.setAttribute("cx", String(cx));
-      pin.setAttribute("cy", String(NODE_H / 2));
-      pin.setAttribute("r", "2.4");
-      pin.setAttribute("fill", p.portPinOff);
-      pin.style.pointerEvents = "none";
-      g.append(pin);
+      g.append(jack, pin);
+      this.portEls.set(r, jack);
       this.portPinEls.set(r, pin);
     }
+
+    // The channel's Rec Point tap, on the top edge: direct outs and recordings
+    // leave here, ahead of the fader and Ducker that the right-edge output feeds.
+    // Every channel shows one so the tap is findable before anything is wired.
+    if (this.hasTapJack(node)) g.append(this.makeTapJack(node, rail, p));
 
     // A node may read as inactive (muted / bypassed / osc-off), rate-disabled or
     // unread-from-device at once; show only the highest-ranked state so the badges
@@ -1022,6 +1088,43 @@ export class Graph {
     }
 
     this.nodeEls.set(node.id, g);
+    return g;
+  }
+
+  /** A channel's Rec Point tap jack: the pickup for direct outs and recordings,
+   *  taken ahead of the fader and Ducker. Built like the side ports — an oversized
+   *  transparent hit disc under a decorative jack and pin — but keyed by node id,
+   *  since it shares the channel's `ch:out` ref. A <title> names the stage in the
+   *  same words the inspector uses on the wires that leave here. */
+  private makeTapJack(node: DeviceNode, rail: string, p: Palette): SVGGElement {
+    const g = document.createElementNS(SVGNS, "g");
+    const title = document.createElementNS(SVGNS, "title");
+    title.textContent = t().tooltip.recPointTap;
+    g.append(title);
+
+    // Unlike the side ports, the tap's target reaches mostly upward, into the
+    // gutter above the strip, rather than a disc centered on the jack: the top
+    // edge is where a node is grabbed to drag it, and a full-size disc there
+    // would swallow presses meant for the faceplate.
+    const hit = document.createElementNS(SVGNS, "rect");
+    // port-out lets the release hit-test find it like any other source jack; the
+    // extra port-tap class (and data-tap, not data-ref) tells the two apart
+    // without giving one ref two elements under a [data-ref] lookup.
+    hit.classList.add("port", "port-hit", "port-out", "port-tap");
+    hit.dataset.tap = ref(node.id, "out");
+    hit.setAttribute("x", String(TAP_CX - TAP_HIT_W / 2));
+    hit.setAttribute("y", String(-TAP_HIT_UP));
+    hit.setAttribute("width", String(TAP_HIT_W));
+    hit.setAttribute("height", String(TAP_HIT_UP + TAP_HIT_DOWN));
+    hit.setAttribute("fill", "transparent");
+    hit.style.pointerEvents = "all";
+    g.append(hit);
+
+    const { jack, pin } = jackPair(TAP_CX, 0, rail, p);
+    pin.dataset.tapPin = node.id;
+    g.append(jack, pin);
+    this.tapEls.set(node.id, jack);
+    this.tapPinEls.set(node.id, pin);
     return g;
   }
 
@@ -1180,6 +1283,10 @@ export class Graph {
   /** Light the inner pin of every port that currently carries a wire. */
   private refreshPortStates(): void {
     const wired = new Set<string>();
+    // Channels whose Rec Point tap carries an audible wire. A tapped route leaves
+    // the top jack, so it lights that pin instead of the right-edge output — the
+    // right edge stays dark unless something actually goes through the mixer stage.
+    const tapWired = new Set<string>();
     for (const c of this.plan.connections) {
       // A wire to a hidden endpoint is not drawn, so its ports must not read as
       // in use (e.g. a hidden ducker's key source on the still-visible source).
@@ -1187,40 +1294,68 @@ export class Graph {
       // An off / muted wire recedes, so its jacks must not glow as live either — a
       // port lights only when it carries at least one audible (non-off) connection.
       if (this.isOffSend(c)) continue;
-      wired.add(c.from);
+      if (this.isRecPointTap(c.from, c.to)) tapWired.add(parseRef(c.from).nodeId);
+      else wired.add(c.from);
       wired.add(c.to);
     }
-    for (const [r, pin] of this.portPinEls) {
-      const on = wired.has(r);
-      const kind = this.nodeById.get(parseRef(r).nodeId)!.kind;
-      pin.setAttribute("fill", on ? this.palette.rail[kind] : this.palette.portPinOff);
-      pin.setAttribute("r", on ? "3" : "2.4");
-      if (on) pin.setAttribute("filter", "url(#jack-glow)");
-      else pin.removeAttribute("filter");
-    }
+    for (const [r, pin] of this.portPinEls) this.setPinState(pin, wired.has(r), parseRef(r).nodeId);
+    for (const [id, pin] of this.tapPinEls) this.setPinState(pin, tapWired.has(id), id);
+  }
+
+  /** Paint one jack pin lit (rail color, glowing) or dark. */
+  private setPinState(pin: SVGCircleElement, on: boolean, nodeId: string): void {
+    const kind = this.nodeById.get(nodeId)!.kind;
+    pin.setAttribute("fill", on ? this.palette.rail[kind] : this.palette.portPinOff);
+    pin.setAttribute("r", String(on ? PIN_R_ON : PIN_R_OFF));
+    if (on) pin.setAttribute("filter", "url(#jack-glow)");
+    else pin.removeAttribute("filter");
+  }
+
+  // Where a wire leaves its source and, for a Rec Point tap, the jack it rises from
+  // first. The tap climbs a straight riser and only then sweeps across: a single
+  // cubic bent upward still dives back through the channel's own faceplate as soon
+  // as the destination sits below it, hiding the exit the tap exists to show.
+  // Shared by the committed wire and the drag's rubber band so the two exit the
+  // same way and the band never jumps on release.
+  private wireAnchor(from: string, tap: boolean): { riser: Pt | null; a: Pt } {
+    if (!tap) return { riser: null, a: this.portPoint(from) };
+    const jack = this.tapPoint(parseRef(from).nodeId);
+    return { riser: jack, a: { x: jack.x, y: jack.y - TAP_RISE } };
+  }
+
+  /** Path prefix that walks a riser (if any) up to the cubic's start point. */
+  private static pathHead(riser: Pt | null, a: Pt): string {
+    return riser ? `M ${riser.x} ${riser.y} L ${a.x} ${a.y}` : `M ${a.x} ${a.y}`;
+  }
+
+  // The full curve of a committed wire. wirePath and wirePoint both read it from
+  // here, so the PRE marker can never drift off the line it annotates.
+  private wireGeometry(from: string, to: string): { riser: Pt | null; a: Pt; b: Pt; c1: Pt; c2: Pt } {
+    const b = this.portPoint(to);
+    const { riser, a } = this.wireAnchor(from, this.isRecPointTap(from, to));
+    const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
+    return { riser, a, b, c1: { x: a.x + dx, y: a.y }, c2: { x: b.x - dx, y: b.y } };
   }
 
   private wirePath(from: string, to: string): string {
-    const a = this.portPoint(from);
-    const b = this.portPoint(to);
-    const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
-    return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
+    const { riser, a, b, c1, c2 } = this.wireGeometry(from, to);
+    return `${Graph.pathHead(riser, a)} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${b.x} ${b.y}`;
   }
 
   // Point and tangent angle (deg) at parameter t on the same cubic the wire uses,
   // for placing the PRE tap marker along the curve near the source end.
   private wirePoint(from: string, to: string, t: number): { x: number; y: number; angle: number } {
-    const a = this.portPoint(from);
-    const b = this.portPoint(to);
-    const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
-    const p1x = a.x + dx;
-    const p2x = b.x - dx;
+    const { a, b, c1, c2 } = this.wireGeometry(from, to);
     const mt = 1 - t;
-    const x = mt * mt * mt * a.x + 3 * mt * mt * t * p1x + 3 * mt * t * t * p2x + t * t * t * b.x;
-    const y = mt * mt * mt * a.y + 3 * mt * mt * t * a.y + 3 * mt * t * t * b.y + t * t * t * b.y;
-    const ddx = 3 * mt * mt * (p1x - a.x) + 6 * mt * t * (p2x - p1x) + 3 * t * t * (b.x - p2x);
-    const ddy = 6 * mt * t * (b.y - a.y);
-    return { x, y, angle: (Math.atan2(ddy, ddx) * 180) / Math.PI };
+    const at = (p0: number, p1: number, p2: number, p3: number): number =>
+      mt * mt * mt * p0 + 3 * mt * mt * t * p1 + 3 * mt * t * t * p2 + t * t * t * p3;
+    const slope = (p0: number, p1: number, p2: number, p3: number): number =>
+      3 * mt * mt * (p1 - p0) + 6 * mt * t * (p2 - p1) + 3 * t * t * (p3 - p2);
+    return {
+      x: at(a.x, c1.x, c2.x, b.x),
+      y: at(a.y, c1.y, c2.y, b.y),
+      angle: (Math.atan2(slope(a.y, c1.y, c2.y, b.y), slope(a.x, c1.x, c2.x, b.x)) * 180) / Math.PI,
+    };
   }
 
   private redrawWires(): void {
@@ -1290,6 +1425,22 @@ export class Graph {
       e.stopPropagation();
       this.select({ type: "conn", from: conn.from, to: conn.to });
     });
+    // Explain a Rec Point tap on hover, in the same words the inspector puts on
+    // the wire when it is selected — the tap's stage is the one thing the geometry
+    // alone cannot say. Touch has no hover, so selecting still carries the note.
+    const tapTarget = directOutTarget(this.model, conn.from, conn.to);
+    if (tapTarget) {
+      // Keyed exhaustively rather than by a ternary: a new direct-out destination
+      // must then be given its own wording instead of silently inheriting the
+      // recording note.
+      const notes: Record<typeof tapTarget, string> = {
+        usb: t().inspector.directOutTap,
+        sdRec: t().inspector.sdRecTap,
+      };
+      const title = document.createElementNS(SVGNS, "title");
+      title.textContent = notes[tapTarget];
+      hit.append(title);
+    }
     g.append(hit);
 
     const color = this.palette.wire[conn.kind] ?? "#888";
@@ -1536,11 +1687,18 @@ export class Graph {
       return;
     }
 
-    const portEl = target.closest(".port") as SVGCircleElement | null;
+    // The Rec Point tap's target is a rect, the side ports' are circles, so this
+    // is typed at the element they share.
+    const portEl = target.closest(".port") as SVGElement | null;
     if (portEl) {
       e.preventDefault();
       const dir: PortDirection = portEl.classList.contains("port-out") ? "out" : "in";
-      this.connect = { ref: portEl.dataset.ref!, dir, startX: e.clientX, startY: e.clientY, mode: "pending" };
+      // A Rec Point tap carries the channel's own `ch:out` ref in data-tap, so the
+      // plan is unaffected by which of the channel's two jacks was pressed — only
+      // the routes offered and the wire's exit point are.
+      const tap = portEl.classList.contains("port-tap");
+      const ref = tap ? portEl.dataset.tap! : portEl.dataset.ref!;
+      this.connect = { ref, dir, tap, startX: e.clientX, startY: e.clientY, mode: "pending" };
       this.capturePointer(e.pointerId);
       return;
     }
@@ -1685,11 +1843,13 @@ export class Graph {
       if (this.connect.mode === "pending") {
         const moved = Math.hypot(e.clientX - this.connect.startX, e.clientY - this.connect.startY);
         if (moved < DRAG_THRESHOLD) return;
-        this.connect.mode = this.beginConnect(this.connect.ref, this.connect.dir) ? "connecting" : "noop";
+        this.connect.mode = this.beginConnect(this.connect.ref, this.connect.dir, this.connect.tap)
+          ? "connecting"
+          : "noop";
       }
       if (this.connect.mode === "connecting") {
         const p = this.clientToContent(e);
-        this.updateTempWire(this.connect.ref, this.connect.dir, p);
+        this.updateTempWire(this.connect.ref, this.connect.dir, this.connect.tap, p);
       }
       return;
     }
@@ -1730,8 +1890,13 @@ export class Graph {
         // under the release point rather than trusting e.target.
         const wantClass = c.dir === "out" ? ".port-in" : ".port-out";
         const under = document.elementFromPoint(e.clientX, e.clientY);
-        const target = under?.closest(wantClass) as SVGCircleElement | null;
-        this.finishConnect(c.ref, c.dir, target?.dataset.ref ?? null);
+        const target = under?.closest(wantClass) as SVGElement | null;
+        // Whichever end of the drag is the source side decides whether the route
+        // was taken from the Rec Point tap: the origin when dragging out of it, the
+        // released jack when dragging back from an input.
+        const releasedTap = target?.classList.contains("port-tap") ?? false;
+        const ref = target ? (target.dataset.ref ?? target.dataset.tap ?? null) : null;
+        this.finishConnect(c.ref, c.dir, ref, c.dir === "out" ? c.tap : releasedTap);
       } else if (c.dir === "in") {
         // A click (or a drag with no legal source) on an input port selects its
         // single incoming wire, mirroring a click on the wire itself.
@@ -1828,21 +1993,34 @@ export class Graph {
   // press should fall back to a click: an output with no possible route at all,
   // or an input with no legal source — the latter keeps a press on a full input
   // selecting its incoming wire instead of opening a dead rubber-band.
-  private beginConnect(from: string, dir: PortDirection): boolean {
-    const legal = dir === "out" ? legalTargets(this.model, this.plan, from) : legalSources(this.model, this.plan, from);
+  private beginConnect(from: string, dir: PortDirection, tap: boolean): boolean {
+    let legal = dir === "out" ? legalTargets(this.model, this.plan, from) : legalSources(this.model, this.plan, from);
     // Possible partners include occupied ones, shown outline-only so the user can
     // see where a port could route even when the destination is taken.
-    const possible = dir === "out" ? possibleTargets(this.model, from) : possibleSources(this.model, from);
+    let possible = dir === "out" ? possibleTargets(this.model, from) : possibleSources(this.model, from);
+    // A channel's two source jacks are separate origins: the Rec Point tap offers
+    // only the direct outs and recordings, the right-edge output only the routes
+    // through the mixer stage. So an output drag keeps just the side it left from.
+    // Only outputs need this — a tap is always an output, so an input drag has
+    // nothing to split.
+    if (dir === "out") {
+      const fromThisJack = (rs: Set<string>): Set<string> =>
+        new Set([...rs].filter((r) => this.isRecPointTap(from, r) === tap));
+      legal = fromThisJack(legal);
+      possible = fromThisJack(possible);
+    }
     // Gate: outputs open on any possible route (occupied targets still highlight);
     // inputs open only on a legal source, so a full input falls back to wire-select.
     if (dir === "out" ? !possible.size : !legal.size) return false;
     // Reset every port to its default look, then light the partners: legal ones
-    // filled, occupied-but-possible ones outline-only.
+    // filled, occupied-but-possible ones outline-only. Dragging back from an input
+    // lights each source at the jack that route would actually leave from, so a
+    // channel offers its tap for a USB / microSD target and its output otherwise.
     this.clearPortHighlights();
-    const opposite = dir === "out" ? "in" : "out";
-    for (const [r, el] of this.portEls) {
-      if (el.dataset.dir !== opposite || !possible.has(r)) continue;
-      el.setAttribute("r", "8");
+    for (const r of possible) {
+      const el = dir === "out" ? this.portEls.get(r) : this.sourceJack(r, from);
+      if (!el) continue;
+      el.setAttribute("r", String(JACK_R_CANDIDATE));
       if (legal.has(r)) {
         el.setAttribute("fill", this.palette.legalFill);
         el.setAttribute("stroke", this.palette.legalStroke);
@@ -1861,21 +2039,22 @@ export class Graph {
     return true;
   }
 
-  private updateTempWire(from: string, dir: PortDirection, to: Pt): void {
+  private updateTempWire(from: string, dir: PortDirection, tap: boolean, to: Pt): void {
     if (!this.tempWire) return;
-    const a = this.portPoint(from);
+    // Same exit as the committed wire (wireAnchor), but bowed toward a free pointer
+    // rather than a target port: outputs leave to the right, inputs to the left.
+    const { riser, a } = this.wireAnchor(from, tap);
     const dx = Math.max(40, Math.abs(to.x - a.x) * 0.5);
-    // Bow the curve out of the originating side: outputs leave to the right,
-    // inputs to the left.
     const aCtrl = dir === "out" ? a.x + dx : a.x - dx;
     const bCtrl = dir === "out" ? to.x - dx : to.x + dx;
-    this.tempWire.setAttribute("d", `M ${a.x} ${a.y} C ${aCtrl} ${a.y}, ${bCtrl} ${to.y}, ${to.x} ${to.y}`);
+    const d = `${Graph.pathHead(riser, a)} C ${aCtrl} ${a.y}, ${bCtrl} ${to.y}, ${to.x} ${to.y}`;
+    this.tempWire.setAttribute("d", d);
   }
 
   // Commit a wire from a drag that started at `from` (output or input) released
   // over `released`. Normalizes to from=output / to=input so the constraint
   // engine and source mirroring stay direction-agnostic.
-  private finishConnect(from: string, dir: PortDirection, released: string | null): void {
+  private finishConnect(from: string, dir: PortDirection, released: string | null, tapUsed: boolean): void {
     this.tempWire?.remove();
     this.tempWire = null;
     this.clearPortHighlights();
@@ -1883,13 +2062,24 @@ export class Graph {
     if (!released) return;
     const out = dir === "out" ? from : released;
     const into = dir === "out" ? released : from;
+    // The Rec Point tap and the mixer-stage output are separate jacks on the same
+    // channel, so a route dropped on the wrong one is refused with the jack to use
+    // instead. Both would pass canConnect — the rule engine keys off the plan ref,
+    // which is `ch:out` either way. Only a route that exists at all earns this
+    // message: pointing at the other jack for a target neither can reach would send
+    // the user to a second, different failure.
+    const kind = ruleKind(this.model, out, into);
+    if (kind && this.isRecPointTap(out, into) !== tapUsed) {
+      this.cb.onStatus(tapUsed ? t().error.recPointTargets : t().error.recPointRequired);
+      return;
+    }
     const result = canConnect(this.model, this.plan, out, into);
     if (!result.ok) {
       this.cb.onStatus(result.reason ? t().error[result.reason] : t().error.cannotConnect);
       return;
     }
-    const kind = ruleKind(this.model, out, into)!;
-    this.plan.connections.push({ from: out, to: into, kind });
+    // canConnect rejects a route with no rule, so reaching here means kind is set.
+    this.plan.connections.push({ from: out, to: into, kind: kind! });
     if (kind === "source") this.mirrorPairSource(out, into);
     this.redrawWires();
     this.refreshPortStates();
@@ -1916,13 +2106,13 @@ export class Graph {
   }
 
   private clearPortHighlights(): void {
-    for (const [r, el] of this.portEls) {
-      const { nodeId } = parseRef(r);
-      const node = this.nodeById.get(nodeId)!;
+    const reset = (el: SVGCircleElement, nodeId: string): void => {
       el.setAttribute("fill", this.palette.portOuter);
-      el.setAttribute("r", "6");
-      el.setAttribute("stroke", this.palette.rail[node.kind]);
-    }
+      el.setAttribute("r", String(JACK_R));
+      el.setAttribute("stroke", this.palette.rail[this.nodeById.get(nodeId)!.kind]);
+    };
+    for (const [r, el] of this.portEls) reset(el, parseRef(r).nodeId);
+    for (const [id, el] of this.tapEls) reset(el, id);
   }
 
   // --- hide / show ---------------------------------------------------------
@@ -2344,6 +2534,30 @@ function labelText(
 function fitScale(text: string, fontSize: number, letterSpacing: number): number {
   const est = noteWidth(text) * (fontSize * MONO_ADVANCE + letterSpacing);
   return est > LABEL_MAX_W ? Math.max(LABEL_MIN_SCALE, LABEL_MAX_W / est) : 1;
+}
+
+// The decorative half of a jack: the socket ring and the pin that lights inside it
+// when the jack carries a live wire. Both are pointer-transparent — an oversized
+// hit target drawn beneath them receives the pointer instead. Shared by the side
+// ports and the Rec Point tap so the two read as the same connector.
+function jackPair(cx: number, cy: number, rail: string, p: Palette): { jack: SVGCircleElement; pin: SVGCircleElement } {
+  const jack = document.createElementNS(SVGNS, "circle");
+  jack.setAttribute("cx", String(cx));
+  jack.setAttribute("cy", String(cy));
+  jack.setAttribute("r", String(JACK_R));
+  jack.setAttribute("fill", p.portOuter);
+  jack.setAttribute("stroke", rail);
+  jack.setAttribute("stroke-width", "1.5");
+  jack.style.pointerEvents = "none";
+
+  const pin = document.createElementNS(SVGNS, "circle");
+  pin.classList.add("port-pin");
+  pin.setAttribute("cx", String(cx));
+  pin.setAttribute("cy", String(cy));
+  pin.setAttribute("r", String(PIN_R_OFF));
+  pin.setAttribute("fill", p.portPinOff);
+  pin.style.pointerEvents = "none";
+  return { jack, pin };
 }
 
 function svgRect(x: number, y: number, w: number, h: number, rx: number, fill: string): SVGRectElement {

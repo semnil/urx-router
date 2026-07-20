@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
+import { faceplate } from "./graph-helpers";
 
+// Positions below are compared with node(), pointer grabs measured with
+// faceplate() — the two boxes differ by the tap jack's overhang, so never mix them
+// within one before/after comparison.
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
 const sigSelect = (page: Page) => param(page, "Signal Type").locator("select");
@@ -81,8 +85,8 @@ test("a STEREO pair drags as one unit; the heart tie follows", async ({ page }) 
   await node(page, "ch1").click();
   await sigSelect(page).selectOption("1"); // STEREO
 
-  const before1 = await node(page, "ch1").boundingBox();
-  const before2 = await node(page, "ch2").boundingBox();
+  const before1 = await faceplate(page, "ch1").boundingBox();
+  const before2 = await faceplate(page, "ch2").boundingBox();
   if (!before1 || !before2) throw new Error("nodes not found");
 
   // Drag CH2 (the partner, not the just-clicked node, to avoid the double-press
@@ -94,8 +98,8 @@ test("a STEREO pair drags as one unit; the heart tie follows", async ({ page }) 
   await page.mouse.move(gx + 130, gy + 80, { steps: 10 });
   await page.mouse.up();
 
-  const after1 = await node(page, "ch1").boundingBox();
-  const after2 = await node(page, "ch2").boundingBox();
+  const after1 = await faceplate(page, "ch1").boundingBox();
+  const after2 = await faceplate(page, "ch2").boundingBox();
   if (!after1 || !after2) throw new Error("nodes gone");
   expect(Math.hypot(after2.x - before2.x, after2.y - before2.y)).toBeGreaterThan(20);
   expect(Math.abs(after1.x - before1.x - (after2.x - before2.x))).toBeLessThan(2);
@@ -105,7 +109,7 @@ test("a STEREO pair drags as one unit; the heart tie follows", async ({ page }) 
 
 test("STEREO-linking snaps a partner moved away back beside the kept primary", async ({ page }) => {
   const c1 = await node(page, "ch1").boundingBox();
-  const start2 = await node(page, "ch2").boundingBox();
+  const start2 = await faceplate(page, "ch2").boundingBox();
   if (!c1 || !start2) throw new Error("nodes not found");
 
   // Drag CH2 far away while still MONO x 2 (it moves alone), opening a gap.
@@ -134,7 +138,7 @@ test("STEREO-linking snaps a partner moved away back beside the kept primary", a
 
 test("STEREO-linking from the partner keeps the partner and realigns the primary above it", async ({ page }) => {
   const c2 = await node(page, "ch2").boundingBox();
-  const start1 = await node(page, "ch1").boundingBox();
+  const start1 = await faceplate(page, "ch1").boundingBox();
   if (!c2 || !start1) throw new Error("nodes not found");
 
   // Drag CH1 (the primary) far away while still MONO x 2.
