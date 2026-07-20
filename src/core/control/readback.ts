@@ -627,6 +627,7 @@ export async function applyDeviceState(
   for (const [to, kind, pl, , yl] of ROUTING_SELECTORS) {
     if (!model.nodes.some((n) => n.id === to)) continue;
     if (!want(to)) continue;
+    attempted.add(to);
     try {
       const port = vdToPortRef(await vdGet(PARAMS[pl].id, 0, yl));
       const src = port === null ? null : nodeForPort(model, port);
@@ -637,11 +638,16 @@ export async function applyDeviceState(
         clearIncoming(plan, ref(to, "in"), kind);
         applied++;
       } else {
-        // Unknown port: leave the existing wire untouched rather than clearing it.
+        // The device named a source this build cannot decode, so its real routing
+        // stays unknown. The plan's own wire is kept rather than cleared, which
+        // makes it a value we did not read — flagged like any other failed read so
+        // the node carries its unread badge and a converge is not built on it.
         errors.push(`${to}: unknown source port ${port}`);
+        failed.add(to);
       }
     } catch (e) {
       errors.push(`${to}: ${e instanceof Error ? e.message : String(e)}`);
+      failed.add(to);
     }
   }
 
@@ -651,6 +657,7 @@ export async function applyDeviceState(
   for (const slot of recordSlots(model)) {
     signal?.throwIfAborted();
     if (!want(slot.id)) continue;
+    attempted.add(slot.id);
     try {
       const port = vdToPortRef(await vdGet(PARAMS.SD_REC_SOURCE.id, 0, slot.trackL));
       const src = port === null ? null : nodeForPort(model, port);
@@ -661,11 +668,14 @@ export async function applyDeviceState(
         clearIncoming(plan, ref(slot.id, "in"), "record");
         applied++;
       } else {
-        // Unknown port: leave the existing wire untouched rather than clearing it.
+        // Undecodable source, same as the routing loop above: the plan's wire is
+        // kept but it is not what was read, so the slot counts as unread.
         errors.push(`${slot.id}: unknown record source port ${port}`);
+        failed.add(slot.id);
       }
     } catch (e) {
       errors.push(`${slot.id}: ${e instanceof Error ? e.message : String(e)}`);
+      failed.add(slot.id);
     }
   }
   // microSD Rec Track Count (839, read-only): tracks = raw × 2, onto the SD Rec
