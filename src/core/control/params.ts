@@ -262,7 +262,7 @@ export const PARAMS = {
    *  pair's primary channel input index. Switching mode rewrites the pair's pan
    *  values on the device, so live must converge. Confirmed by live param-notify
    *  (CH1/CH2 pair BAL → PAN fired 891:0:0 = 0). */
-  PAN_BAL: { id: 891, axis: "global", encoding: "enum", sideEffect: true },
+  PAN_BAL: { id: 891, axis: "input", encoding: "enum", sideEffect: true },
   /** SSMCS Sweet Spot Data preset index (MONO IN, SSMCS mode), at the channel input
    *  index. A 4-digit zero-padded STRING ("0001".."0034"; "0035"+ clamps to "0001"),
    *  so it rides the string-write path (vd_set_str / vd_get_str), not the numeric
@@ -372,7 +372,9 @@ export const PARAMS = {
   /** Streaming source select L/R (y = 0). Tagged port ref (0x80000000 | port). */
   STREAM_SRC_L: { id: 705, axis: "global", encoding: "portRefTagged" },
   STREAM_SRC_R: { id: 706, axis: "global", encoding: "portRefTagged" },
-  /** USB output source select (y = 0). Raw port ref: one bus or channel per out. */
+  /** USB output source select (y = 0 and 1, the L/R pair). Raw port ref: one bus
+   *  or channel per out. The device allocates 2 slots per selector and both are
+   *  written (ROUTING_SELECTORS in translate.ts). */
   USB_OUT_SRC_A: { id: 732, axis: "global", encoding: "portRef" },
   USB_OUT_SRC_B: { id: 733, axis: "global", encoding: "portRef" },
   USB_OUT_SRC_C: { id: 734, axis: "global", encoding: "portRef" },
@@ -410,7 +412,8 @@ export const PARAMS = {
   STEREO_COLOR: { id: 496, axis: "global", encoding: "raw" },
   /** FX bus color (palette index): FX1 = y0, FX2 = y1 (mono, no L/R mirror). */
   FX_COLOR: { id: 335, axis: "global", encoding: "raw" },
-  /** STREAMING bus color (palette index), y = L/R-mirrored slots 0/1. */
+  /** STREAMING bus color (palette index). The device allocates 8 slots and mirrors
+   *  the value across all of them; the app writes the L/R pair 0/1. */
   STREAM_COLOR: { id: 704, axis: "global", encoding: "raw" },
   /** STREAMING DELAY (the bus.stream node, y = 0): on/off, time (ms×100,
    *  1.00..1000.00 ms), frame rate (enum 0..7). Confirmed by live snapshot-diff. */
