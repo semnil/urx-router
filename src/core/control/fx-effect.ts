@@ -11,7 +11,13 @@
 // into the device's display units here, so a captured plan round-trips exactly and
 // the inspector sliders edit raw with a display-only formatter.
 
-/** EFFECT TYPE selector param_id per FX channel index (FX1 = 0, FX2 = 1). */
+/** EFFECT TYPE selector param_id per FX channel index (FX1 = 0, FX2 = 1). Note the
+ *  selector is per CHANNEL, not a y index on one param — FX2 is 683, not 679:0:1.
+ *
+ *  Writing it is NOT reversible: the device refills the effect array with the new
+ *  type's defaults, and selecting the original type back only refills it with that
+ *  type's defaults. See the header of insert-fx-effect.ts, where the same rule is
+ *  spelled out in full — it was measured there. */
 export const FX_EFFECT_TYPE_PARAM = [679, 683] as const;
 /** Effect-parameter array param_id per FX channel index. Addressed by slot on y. */
 export const FX_EFFECT_ARRAY_PARAM = [681, 685] as const;

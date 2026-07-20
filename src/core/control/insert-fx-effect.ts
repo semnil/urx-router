@@ -11,6 +11,26 @@
 // the node), so a captured plan round-trips and the inspector edits raw with a
 // display-only formatter. The selector binds the engine and populates per-type
 // defaults; urx-router only writes the slots the plan explicitly carries.
+//
+// A SELECTOR WRITE IS NOT REVERSIBLE. Writing the selector makes the device fill
+// the bound engine array with that type's defaults, and selecting the ORIGINAL type
+// back only fills it with the original type's defaults — the values that were there
+// are gone. Confirmed on a URX44V by round-tripping CH1 Compander-S -> H -> S, which
+// left five slots (threshold / ratio / attack / outGain / width) at the defaults.
+// The same holds for the FX-channel effect type in fx-effect.ts.
+//
+// The engine array is a shared WORKING AREA, not storage: it is addressed by slot
+// with no channel axis, and it still held the previous effect's values while the
+// channel's selector read No Effect. So a selector write can overwrite settings
+// belonging to whatever else uses the same engine. (Whether the device even lets
+// two input channels hold companders at once is not measured; the output engine 693
+// is documented as exclusive — user guide p.180.)
+//
+// planToCommands is safe here because it emits the selector and then immediately
+// overwrites the array with the plan's own values, so the device ends up matching
+// the plan either way. What is unsafe is writing a selector ALONE — a hand-issued
+// vd_set or a diagnostic probe. Anything doing that must snapshot every slot first
+// and write them all back explicitly; re-selecting the old type does not restore.
 
 // Engine array param_id each effect family binds (confirmed by the live pointer
 // read; the selector/enable/pointer params themselves live in params.ts).
