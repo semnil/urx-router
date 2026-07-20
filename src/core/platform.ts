@@ -20,8 +20,12 @@ interface TauriChannel<T> {
 }
 type ChannelCtor = new <T>() => TauriChannel<T>;
 
+// Registers a JS callback and returns the numeric id the Rust side calls it by.
+// Only the event plugin needs it — commands take their callbacks as Channels.
+type TransformCallback = (callback: (payload: unknown) => void, once?: boolean) => number;
+
 interface TauriGlobals {
-  __TAURI_INTERNALS__?: { invoke?: InvokeFn; Channel?: ChannelCtor };
+  __TAURI_INTERNALS__?: { invoke?: InvokeFn; Channel?: ChannelCtor; transformCallback?: TransformCallback };
   __TAURI__?: { core?: { invoke?: InvokeFn; Channel?: ChannelCtor } };
 }
 
@@ -150,6 +154,26 @@ export async function nativeOpenPath(filter: FileFilter): Promise<string | null>
 
 export function nativeReadText(path: string): Promise<string> {
   return invoke<string>("read_text_file", { path });
+}
+
+/** Read a binary file by path (Tauri only). The bytes come back as the raw IPC
+ *  response body, not a JSON number array. */
+export async function nativeReadBinary(path: string): Promise<Uint8Array> {
+  const buffer = await invoke<ArrayBuffer>("read_binary_file", { path });
+  return new Uint8Array(buffer);
+}
+
+/**
+ * Subscribe to a Tauri webview event (the drag & drop events; commands use
+ * Channels instead). Driving the event plugin directly keeps the frontend free of
+ * npm runtime dependencies, like the dialog and updater calls above. No-op outside
+ * Tauri, where the webview delivers DOM drag & drop events instead.
+ */
+export async function listenEvent<T>(event: string, handler: (payload: T) => void): Promise<void> {
+  const transformCallback = (window as unknown as TauriGlobals).__TAURI_INTERNALS__?.transformCallback;
+  if (!transformCallback) return;
+  const id = transformCallback((message) => handler((message as { payload: T }).payload));
+  await invoke<number>("plugin:event|listen", { event, target: { kind: "Any" }, handler: id });
 }
 
 export function nativeWriteText(path: string, contents: string): Promise<void> {
