@@ -105,27 +105,49 @@ timing once a delay is set, but the device offers no pre-DELAY reading to show �
 the source bus's own meter (STEREO / MIX, whichever feeds STREAMING) is the
 closest equivalent for the pre-DELAY level.
 
-## The sample rate is only written when the device's Follow USB is off
+## The sample rate only sticks when the device's Follow USB is off
 
 The planner's **Rate** setting is written to the device (param 766) and re-clocks
 it. That write only sticks while the device's own **Follow USB** setting is
-**off**. With Follow USB on the URX takes its clock from the computer on USB
-MAIN, and although the device's front panel locks its rate buttons, it does
-**not** reject the write: it accepts the new rate, re-clocks (the LCD shows its
-switching dialog), and roughly 0.4 s later the host's rate is reasserted and the
-device returns to it. The audible result is a brief interruption for a change
-that does not last.
+**off**. Follow USB decides which side is the clock master, and both directions
+are confirmed on a URX44V:
+
+| Follow USB | Clock master | What a rate write does |
+| --- | --- | --- |
+| **off** | the device | the rate sticks, and the computer follows the device onto it |
+| **on** | the computer | the device accepts the rate, re-clocks, and is pulled back |
+
+With Follow USB on, the device's front panel locks its rate buttons but the broker
+does **not** reject the write: it accepts the new rate, re-clocks (the LCD shows
+its switching dialog), and roughly 0.4 s later the host's rate is reasserted and
+the device returns to it — measured twice, at +53 ms accept / +374 ms revert and
++38 ms / +398 ms. The audible result is a brief interruption for a change that
+does not last.
+
+The LCD's switching dialog belongs to that pulled-back re-clock specifically. A
+rate write with Follow USB **off** re-clocks the device without any dialog (three
+transitions observed), though it does interrupt audio just the same — the dialog
+and the interruption are separate things.
 
 Follow USB is exposed as a broker parameter (848) and can be both read and
-written; its factory default is on. The planner does not currently read it, so
-it cannot yet warn that a rate write is about to be undone.
+written; its factory default is on. **Write to device** reads it together with
+the device's current rate before sending anything, so this no longer happens
+silently: when the rates differ and Follow USB is on, the planner asks whether to
+write at the device's rate or to turn Follow USB off first. The **FOLLOW USB**
+badge beside the Rate picker shows the state and toggles it. Before any device
+has been read it shows a dimmed "unknown" rather than "off" — clicking it then
+reads the state from the device instead of toggling. If the state cannot be read,
+the write is canceled rather than sent on a guess.
 
-In practice: if a rate change does not take effect on the hardware, turn
-**Follow USB off** on the device (Setup → the sample-rate screen) and set the
-rate again. The plan keeps the rate it recorded either way.
+The plan keeps the rate it recorded either way, and writing the rate the device
+already has costs nothing — the planner only sends values that differ, and the
+device ignores an identical write in any case.
 
-Writing the rate the device already has costs nothing — the planner only sends
-values that differ, and the device ignores an identical write in any case.
+While Live sync is on, the Rate picker is locked: re-clocking renegotiates the
+USB stream, interrupting audio mid-session and putting the held connection at
+risk. Change the rate before starting Live sync, or through **Write to device**.
+The FOLLOW USB badge stays available, because toggling it only re-clocks when the
+computer is running a different rate.
 
 ## The HDMI sample-rate ceiling depends on the audio mode
 
