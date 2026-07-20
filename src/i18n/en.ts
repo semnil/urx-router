@@ -430,7 +430,11 @@ export const en = {
     writeNoChanges: "Device already matches the plan — nothing to write",
     written: (n: number): string => `Wrote ${n} setting${n === 1 ? "" : "s"} to the device`,
     writePartial: (n: number, failed: number): string => `Wrote ${n}, ${failed} failed`,
+    writeStopped: (n: number, notSent: number): string =>
+      `Write stopped after a failure: ${n} sent, ${notSent} not sent`,
     writeResidual: (n: number): string => `Wrote, but ${n} param${n === 1 ? "" : "s"} did not take (see console)`,
+    writeReadFailed: (n: number): string =>
+      `Write canceled: ${n} setting${n === 1 ? "" : "s"} could not be read from the device`,
     writeError: (message: string): string => `Device write failed: ${message}`,
     selfTestRunning: "Running device self-test… do not disconnect (use the menu again to cancel)",
     selfTestCancelled: "Self-test cancelled — device left silent; fetch again to restore your state",
@@ -486,6 +490,8 @@ export const en = {
     selfTestExport:
       "This model has unconfirmed parameter mappings. Save the self-test report so it can be sent back to confirm them?",
     deviceErrorExport: "Some parameters could not be read or written. Save a report listing each failure?",
+    writeRetry: (sent: number, notSent: number): string =>
+      `The write stopped after a failure: ${sent} setting${sent === 1 ? "" : "s"} reached the device and ${notSent} did not. Try again? Only what still differs will be sent.`,
   },
   consent: {
     title: "Before you start",

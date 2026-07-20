@@ -1242,49 +1242,96 @@ if (!DEMO) {
             showError(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
             return;
           }
-          const { diffs, errors } = await diffPlan(getModel(modelId), plan, signal);
-          if (errors.length) console.warn("device diff issues:", errors);
-          // CH SETTING names are string params outside the numeric diff; diff them
-          // separately so a name-only change still counts and writes.
-          signal.throwIfAborted();
-          const { writes: nameWrites, errors: nameErrors } = await diffNames(getModel(modelId), plan);
-          if (nameErrors.length) console.warn("device name diff issues:", nameErrors);
-          const total = diffs.length + nameWrites.length;
-          if (total === 0) {
-            setStatus(t().status.writeNoChanges);
-            return;
-          }
-          if (!(await confirmDialog(t().confirm.write(total)))) {
-            setStatus(t().status.canceled);
-            return;
-          }
-          const { outcomes, residual } = await sendConverging(getModel(modelId), plan, diffs, 3, 300, signal);
-          signal.throwIfAborted();
-          const nameOutcomes = await sendNames(nameWrites);
-          // Normalize the two outcome shapes (numeric command vs string name write)
-          // to {name, error} so the count and the saved report share one list.
-          const failed = [
-            ...outcomes.filter((o) => !o.ok).map((o) => ({ name: o.command.name, error: o.error })),
-            ...nameOutcomes
-              .filter((o) => !o.ok)
-              .map((o) => ({ name: `name ${o.write.param}:${o.write.y}`, error: o.error })),
-          ];
-          if (failed.length) console.warn("device write failures:", failed);
-          if (residual.length) console.warn("device write did not converge:", residual);
-          setStatus(
-            failed.length
-              ? t().status.writePartial(total - failed.length, failed.length)
-              : residual.length
-                ? t().status.writeResidual(residual.length)
-                : t().status.written(total),
-          );
-          // Failures/non-convergence are otherwise console-only: capture a report to
-          // offer after disconnect (below), so the reasons are visible without the console.
-          if (failed.length || residual.length) {
-            report = {
-              filename: `${modelId}-write-errors.md`,
-              markdown: formatWriteReport(device.model, failed, residual),
-            };
+          // One attempt of the whole diff → confirm → send sequence. Returns the
+          // sent/not-sent split when the send stopped part-way (so the caller can
+          // offer a retry), or null when there is nothing left to do.
+          const attemptWrite = async (confirmFirst: boolean): Promise<{ sent: number; notSent: number } | null> => {
+            const { diffs, errors } = await diffPlan(getModel(modelId), plan, signal);
+            // CH SETTING names are string params outside the numeric diff; diff them
+            // separately so a name-only change still counts and writes.
+            signal.throwIfAborted();
+            const { writes: nameWrites, errors: nameErrors } = await diffNames(getModel(modelId), plan);
+            // A read failure leaves those parameters' device values unknown. Writing
+            // the rest would build on a premise the link just failed to establish,
+            // so stop and report which ones could not be read.
+            const readErrors = [...errors, ...nameErrors];
+            if (readErrors.length) {
+              setStatus(t().status.writeReadFailed(readErrors.length));
+              report = {
+                filename: `${modelId}-write-errors.md`,
+                markdown: formatWriteReport(
+                  device.model,
+                  readErrors.map((e) => ({ name: "read", error: e })),
+                  [],
+                ),
+              };
+              return null;
+            }
+            const total = diffs.length + nameWrites.length;
+            if (total === 0) {
+              setStatus(t().status.writeNoChanges);
+              return null;
+            }
+            if (confirmFirst && !(await confirmDialog(t().confirm.write(total)))) {
+              setStatus(t().status.canceled);
+              return null;
+            }
+            const {
+              outcomes,
+              residual,
+              readErrors: convergeErrors,
+            } = await sendConverging(getModel(modelId), plan, diffs, 3, 300, signal);
+            const skipped = outcomes.filter((o) => o.skipped).length;
+            const failed: Array<{ name: string; error?: string }> = outcomes
+              .filter((o) => !o.ok && !o.skipped)
+              .map((o) => ({ name: o.command.name as string, error: o.error }));
+            // Names only go out once the numeric phase reached the device intact —
+            // a stopped or unreadable numeric phase means the link already failed.
+            const numericClean = !failed.length && !skipped && !convergeErrors.length;
+            if (numericClean) {
+              signal.throwIfAborted();
+              const nameOutcomes = await sendNames(nameWrites);
+              // Normalize the two outcome shapes (numeric command vs string name write)
+              // to {name, error} so the count and the saved report share one list.
+              failed.push(
+                ...nameOutcomes
+                  .filter((o) => !o.ok)
+                  .map((o) => ({ name: `name ${o.write.param}:${o.write.y}`, error: o.error })),
+              );
+            }
+            if (failed.length) console.warn("device write failures:", failed);
+            if (residual.length) console.warn("device write did not converge:", residual);
+            const notSent = skipped + (numericClean ? 0 : nameWrites.length);
+            const sent = Math.max(0, total - notSent - failed.length);
+            setStatus(
+              skipped
+                ? t().status.writeStopped(sent, notSent)
+                : failed.length
+                  ? t().status.writePartial(total - failed.length, failed.length)
+                  : residual.length
+                    ? t().status.writeResidual(residual.length)
+                    : t().status.written(total),
+            );
+            // Failures/non-convergence are otherwise console-only: capture a report to
+            // offer after disconnect (below), so the reasons are visible without the console.
+            if (failed.length || residual.length || convergeErrors.length) {
+              report = {
+                filename: `${modelId}-write-errors.md`,
+                markdown: formatWriteReport(
+                  device.model,
+                  [...failed, ...convergeErrors.map((e) => ({ name: "read", error: e }))],
+                  residual,
+                ),
+              };
+            }
+            return skipped ? { sent, notSent } : null;
+          };
+
+          // A stopped write leaves the device holding part of what was confirmed.
+          // Offer to run it again rather than reporting a breakdown the user cannot
+          // act on: the retry re-diffs, so what already landed drops out by itself.
+          for (let stop = await attemptWrite(true); stop; stop = await attemptWrite(false)) {
+            if (!(await confirmDialog(t().confirm.writeRetry(stop.sent, stop.notSent)))) break;
           }
         });
       } finally {
