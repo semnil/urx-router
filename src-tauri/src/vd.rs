@@ -16,13 +16,15 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 
 /// Device identity exposed to the frontend (no dev_uid / serial). `firmware` is the
-/// unit's System firmware version (from /vd/device), or empty when the device does
-/// not report one; the frontend warns when it differs from the validated version.
+/// unit's System firmware version (from /vd/device); empty when the device reports
+/// none, and null when the read did not land at all. The frontend warns on a
+/// mismatch against the validated version, and refuses the operation on null —
+/// an unknown version is not the same as no version.
 #[derive(Clone, Serialize)]
 pub struct DeviceSummary {
     pub model: String,
     pub label: String,
-    pub firmware: String,
+    pub firmware: Option<String>,
 }
 
 /// A freshly opened connection handed to the frontend: the device plus the
@@ -633,7 +635,7 @@ mod imp {
                     .and_then(Value::as_str)
                     .unwrap_or("URX")
                     .to_string(),
-                firmware: String::new(),
+                firmware: Some(String::new()),
             };
             if dev_uid.is_empty() {
                 return Err("device list entry had no identifier".into());
@@ -648,8 +650,9 @@ mod imp {
                 return Err("no-device".into());
             }
             // Read the System firmware version so the frontend can warn when the
-            // attached unit's firmware differs from the validated one. Best-effort:
-            // an unreadable list leaves it empty, which disables the warning.
+            // attached unit's firmware differs from the validated one. A failed read
+            // yields None, which the frontend treats as a reason to stop rather than
+            // as a reason to skip the check.
             summary.firmware = system_firmware(ws, &dev_uid);
             return Ok((dev_uid, summary));
         }
@@ -715,16 +718,15 @@ mod imp {
             .ok_or_else(|| "synchronize response had no sync_status".to_string())
     }
 
-    /// The unit's System firmware version, from /vd/device's firm_list. Best-effort:
-    /// any failure (no response, missing list, no System entry) yields an empty string
-    /// so the frontend simply skips the firmware-mismatch warning rather than blocking.
-    fn system_firmware(ws: &mut Ws, dev_uid: &str) -> String {
-        let Ok(data) = vd_get_data(ws, dev_uid, "/vd/device") else {
-            return String::new();
-        };
-        let Some(list) = data.pointer("/firm_list").and_then(Value::as_array) else {
-            return String::new();
-        };
+    /// The unit's System firmware version, from /vd/device's firm_list. `Some("")`
+    /// means the unit answered but reports no System version, which legitimately
+    /// disables the frontend's mismatch warning. `None` means the read itself did
+    /// not land — an unanswered /vd/device or a response without a firm_list — so
+    /// the version is unknown rather than absent, and the frontend refuses to touch
+    /// the device instead of proceeding with the gate silently disabled.
+    fn system_firmware(ws: &mut Ws, dev_uid: &str) -> Option<String> {
+        let data = vd_get_data(ws, dev_uid, "/vd/device").ok()?;
+        let list = data.pointer("/firm_list").and_then(Value::as_array)?;
         // The System entry, matched by name (case-insensitive). A missing or renamed
         // entry leaves the version empty (warning disabled) rather than mistaking
         // another component's version for System.
@@ -735,14 +737,16 @@ mod imp {
                 .unwrap_or("")
                 .eq_ignore_ascii_case("system")
             {
-                return entry
-                    .get("firm_version")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
+                return Some(
+                    entry
+                        .get("firm_version")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                );
             }
         }
-        String::new()
+        Some(String::new())
     }
 
     fn do_set(

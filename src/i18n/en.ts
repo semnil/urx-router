@@ -534,6 +534,8 @@ export const en = {
     noDevice: "Device Center is running, but no URX is connected. Connect the unit, then try again.",
     controlWorkerGone: "The control connection was interrupted. Reconnect, and restart the app if it keeps happening.",
     linkLost: "the device link dropped (USB unplugged or Device Center quit)",
+    firmwareUnread:
+      "The device's firmware version could not be read, so this build cannot check that its parameter mappings apply to your unit. Reconnect and try again.",
     liveReadIncomplete: (n: number): string =>
       `${n} setting${n === 1 ? "" : "s"} could not be read, so the device's state is not fully known. Live sync needs a complete read to start.`,
     unknownModel: (model: string): string => `Unknown model: ${model}`,

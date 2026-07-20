@@ -949,6 +949,12 @@ async function confirmDiscard(): Promise<boolean> {
 // build was validated against — the parameter mappings may not match. Returns true
 // to proceed (matching firmware, or the user chose to continue), false to abort.
 async function confirmFirmware(device: DeviceSummary): Promise<boolean> {
+  // An unread version is not a missing one: proceeding would silently disable the
+  // very check that decides whether this build's parameter mappings apply.
+  if (device.firmware === null) {
+    showError(t().error.firmwareUnread);
+    return false;
+  }
   if (!firmwareMismatch(device.firmware)) return true;
   return confirmDialog(t().confirm.firmwareMismatch(device.firmware, SUPPORTED_SYSTEM_FIRMWARE));
 }

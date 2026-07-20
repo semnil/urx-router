@@ -174,8 +174,11 @@ export function nativeWriteBinary(path: string, bytes: Uint8Array): Promise<void
 export interface DeviceSummary {
   model: string;
   label: string;
-  /** The unit's System firmware version, or empty when the device reports none. */
-  firmware: string;
+  /** The unit's System firmware version. Empty when the device answered but
+   *  reports none (the mismatch check is then skipped by design); null when the
+   *  read itself did not land, so the version is unknown rather than absent and
+   *  the caller must not proceed on a gate it could not evaluate. */
+  firmware: string | null;
 }
 
 /** A freshly opened connection: the device plus the generation (epoch) the Rust
