@@ -439,7 +439,6 @@ export const ja: Messages = {
     liveSynced: (n: number): string => `→ デバイス (${n})`,
     liveFollowing: "← デバイス…",
     liveFollowed: (n: number): string => `← デバイス (${n})`,
-    liveFollowedPartial: (n: number, failed: number): string => `← デバイス (${n}・${failed} 件未読)`,
     liveError: (message: string): string => `ライブ同期を停止: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",
@@ -524,6 +523,8 @@ export const ja: Messages = {
       "デバイスのファームウェアバージョンを読み取れず、このビルドのパラメーターマッピングが実機に適合するか確認できません。接続し直してからやり直してください。",
     liveReadIncomplete: (n: number): string =>
       `${n} 件の設定を読み取れず、デバイスの状態を完全には把握できません。Live sync の開始には完全な読み取りが必要です。`,
+    followReadIncomplete: (n: number): string =>
+      `デバイス側の変更後、${n} 件の設定を読み戻せず、プランが実機と一致しなくなりました。取得し直して同期してください。`,
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。書き込む前に一致する計画を開くか切り替えてください。`,

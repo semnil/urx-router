@@ -354,7 +354,7 @@ export class MidiEngine {
    * `resync = true` (forget the sent cache) after opening the output port.
    */
   feedback(resync = false): boolean {
-    if (resync) this.lastSent.clear();
+    if (resync) this.forgetFeedback();
     const now = this.hooks.now();
     let deferred = false;
     // One address drives one physical control, so iterate ADDRESSES: when a gang

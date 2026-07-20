@@ -504,11 +504,43 @@ drain) and in the read/write round-trip loops (`do_set` / `do_get_value`), for (
 `/vd/synchronize` frame Device Center spontaneously sends at the moment of disconnect (`sync_status` flipping away
 from `online` — distinct from the handshake / sync_status reads that fetch it on purpose). On either, it pushes a
 single `LinkEvent` to the frontend (`vdWatchLink`), or fails the in-flight command, and the frontend tears the live
-session down. When fetch or write fails on individual reads/writes, the count is shown in the status and the user
-is offered a Markdown report of each failure (`formatReadbackReport` / `formatWriteReport`); the save dialog is
-presented after the connection is released. A device-follow read-back likewise counts any read failures into the
-status line (`← device (n, m unread)`) rather than only logging them, so a background reconcile that partially
-fails is not silent.
+session down. That drop is also **latched** in the worker: the `/vd/synchronize` push arrives exactly once, so
+without latching only the command that consumed it could ever notice, and every command after it would keep talking
+to a broker that ACKs writes with no unit attached and answers reads from its cache. Once latched, every later
+command fails until a reconnect.
+
+### Aborting on failure
+
+On the device link a failed operation **aborts the operation**, rather than continuing on a premise the link just
+failed to establish. `diffPlan` / `diffNames` report an unreadable parameter and leave it out of the diff, and the
+write handler stops there with a report — writing a parameter whose current value was never confirmed, over a link
+that just demonstrated it is unreliable, is the case with the least justification for proceeding. `sendCommands`
+stops at the **first** failure and marks the rest `skipped`, because order binds meaning: a type selector precedes
+the array it types (FX type, insert-FX engine), so continuing past a failed selector writes slot values the device
+reads under the wrong type. `sendConverging` ends its loop on a failed round or an unreadable re-diff instead of
+re-sending the whole plan over a broken link. Name writes are held back until the numeric phase has reached the
+device intact. A write that stops part-way leaves the device holding some of what was confirmed, so the handler
+offers to **run it again** rather than print a breakdown nobody can act on — the retry re-diffs, so whatever landed
+drops out by itself.
+
+The read paths draw the line differently, by what the result is used for. **Fetch tolerates a partial read**: the
+count goes to the status line (`fetchPartial`), the nodes that failed carry `unreadNodes` provenance, a Markdown
+report is offered (`formatReadbackReport` / `formatWriteReport`, after the connection is released), and nothing
+arms a write on it. **Live sync does not**, because its snapshot would enshrine the plan's defaults as device truth
+and the first sideEffect edit would converge them onto the hardware unconfirmed — so an incomplete read refuses to
+start the session, and a reconcile that cannot read stops following instead of letting the next converge write a
+stale value back over the operator's own edit on the device. A cancelled fetch restores the plan it started from, so
+a cancel means nothing happened rather than leaving an unlabelled mixture of old and device values.
+
+The live session's two registrations — the device-side notify stream and the link watch — are awaited before the
+session counts as started, and the worker replies only once every address is registered with the broker, so a
+refused registration ends the attempt rather than starting a session that cannot do its job.
+
+Everything **outside** the device link keeps a softer rule — salvage what can be salvaged, but never in silence. A
+failed MIDI feedback send drops the engine's sent-cache so the next pass re-sends (a dead port keeps failing
+harmlessly; a one-off heals), boot port restore reports to the status line instead of leaving the panel showing a
+controller that was never opened, and a file write goes through a temp file and a rename so a failure cannot
+destroy the copy already on disk.
 
 Errors are surfaced by meaning. An **operation that did not complete** (a failed load, save, image export,
 fetch, write, self-test, connect, or live-sync start, plus a link drop during live sync) is shown as a

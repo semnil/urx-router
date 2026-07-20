@@ -99,23 +99,27 @@ pub enum Cmd {
         reply: Sender<DeviceSummary>,
     },
     /// Subscribe to a set of level meters (meter_id, x) and stream their readings
-    /// through `channel`. Replaces any prior meter subscription. Fire-and-forget:
-    /// the worker registers each address with the broker and forwards notifies.
+    /// through `channel`. Replaces any prior meter subscription. The reply carries
+    /// the first registration failure, so the caller learns the stream never
+    /// started instead of reading floor-stuck bars as silence.
     /// Each `send` carries a whole pump cycle's readings (the broker streams ~250/s
     /// across the set), so the IPC boundary is crossed ~30×/s instead of per reading.
     MetersSubscribe {
         addrs: Vec<(u32, i64)>,
         channel: Channel<Vec<MeterUpdate>>,
+        reply: Sender<Result<(), String>>,
     },
     /// Drop the current meter subscription (unregisters each address).
     MetersUnsubscribe,
     /// Subscribe to a set of parameter addresses (param_id, x, y) and stream their
     /// `notify` frames through `channel`. Replaces any prior parameter subscription.
-    /// Fire-and-forget: the worker registers each address with the broker and
-    /// forwards notifies, so device-side edits reach the frontend.
+    /// The reply carries the first registration failure: without the notify stream
+    /// the app cannot see device-side edits, and the next converge would write the
+    /// plan's stale values back over them.
     ParamsSubscribe {
         addrs: Vec<(u32, i64, i64)>,
         channel: Channel<Vec<ParamUpdate>>,
+        reply: Sender<Result<(), String>>,
     },
     /// Drop the current parameter subscription (unregisters each address).
     ParamsUnsubscribe,
@@ -264,14 +268,21 @@ pub fn info(tx: Sender<Cmd>) -> Result<DeviceSummary, String> {
 }
 
 /// Subscribe to live level meters; readings stream through `channel`. Replaces
-/// any prior subscription. Fire-and-forget (no broker round-trip awaited here).
+/// any prior subscription. Blocks until the worker has registered every address,
+/// so a refused registration reaches the caller rather than showing as silence.
 pub fn meters_subscribe(
     tx: Sender<Cmd>,
     addrs: Vec<(u32, i64)>,
     channel: Channel<Vec<MeterUpdate>>,
 ) -> Result<(), String> {
-    tx.send(Cmd::MetersSubscribe { addrs, channel })
-        .map_err(|_| "control-worker-gone".to_string())
+    let (reply, rx) = mpsc::channel();
+    tx.send(Cmd::MetersSubscribe {
+        addrs,
+        channel,
+        reply,
+    })
+    .map_err(|_| "control-worker-gone".to_string())?;
+    rx.recv().map_err(|_| "control-worker-gone".to_string())?
 }
 
 /// Drop the current meter subscription.
@@ -281,14 +292,22 @@ pub fn meters_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
 }
 
 /// Subscribe to device-side parameter changes; notifies stream through `channel`.
-/// Replaces any prior subscription. Fire-and-forget (no broker round-trip awaited).
+/// Replaces any prior subscription. Blocks until the worker has registered every
+/// address, so a refused registration reaches the caller rather than leaving the
+/// app blind to edits made on the device.
 pub fn params_subscribe(
     tx: Sender<Cmd>,
     addrs: Vec<(u32, i64, i64)>,
     channel: Channel<Vec<ParamUpdate>>,
 ) -> Result<(), String> {
-    tx.send(Cmd::ParamsSubscribe { addrs, channel })
-        .map_err(|_| "control-worker-gone".to_string())
+    let (reply, rx) = mpsc::channel();
+    tx.send(Cmd::ParamsSubscribe {
+        addrs,
+        channel,
+        reply,
+    })
+    .map_err(|_| "control-worker-gone".to_string())?;
+    rx.recv().map_err(|_| "control-worker-gone".to_string())?
 }
 
 /// Drop the current parameter subscription.
@@ -453,24 +472,6 @@ mod imp {
         // ACKs writes with no unit attached and answers reads from its cache, and
         // the frontend is told a plan was written when nothing reached hardware.
         let mut lost: Option<String> = None;
-        // Fail a command outright once the session is known dead, and latch the
-        // reason the first time one surfaces it.
-        macro_rules! guard {
-            ($reply:expr, $call:expr) => {{
-                if let Some(reason) = &lost {
-                    let _ = $reply.send(Err(reason.clone()));
-                } else {
-                    let r = $call;
-                    if let Err(e) = &r {
-                        if e.starts_with(DEVICE_LOST_PREFIX) {
-                            lost = Some(e.clone());
-                        }
-                    }
-                    let _ = $reply.send(r);
-                }
-            }};
-        }
-
         loop {
             // While a subscription is streaming, poll for commands briefly so the
             // bounded pump runs back-to-back and keeps up with the ~250/s feed; when
@@ -493,10 +494,9 @@ mod imp {
                     value,
                     reply,
                 }) => {
-                    guard!(
-                        reply,
+                    let _ = reply.send(guard(&mut lost, || {
                         do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value))
-                    );
+                    }));
                 }
                 Ok(Cmd::Get {
                     param_id,
@@ -504,7 +504,9 @@ mod imp {
                     y,
                     reply,
                 }) => {
-                    guard!(reply, do_get(&mut ws, &mut subs, &dev_uid, param_id, x, y));
+                    let _ = reply.send(guard(&mut lost, || {
+                        do_get(&mut ws, &mut subs, &dev_uid, param_id, x, y)
+                    }));
                 }
                 Ok(Cmd::SetStr {
                     param_id,
@@ -513,10 +515,9 @@ mod imp {
                     value,
                     reply,
                 }) => {
-                    guard!(
-                        reply,
+                    let _ = reply.send(guard(&mut lost, || {
                         do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value))
-                    );
+                    }));
                 }
                 Ok(Cmd::GetStr {
                     param_id,
@@ -524,24 +525,32 @@ mod imp {
                     y,
                     reply,
                 }) => {
-                    guard!(
-                        reply,
+                    let _ = reply.send(guard(&mut lost, || {
                         do_get_str(&mut ws, &mut subs, &dev_uid, param_id, x, y)
-                    );
+                    }));
                 }
-                Ok(Cmd::MetersSubscribe { addrs, channel }) => {
+                Ok(Cmd::MetersSubscribe {
+                    addrs,
+                    channel,
+                    reply,
+                }) => {
                     // Replace any prior subscription: unregister the old set, then
                     // register the new one address by address (never a bulk post on
                     // /vd/meters — that has been seen to crash Device Center).
                     for &(id, x) in &meter_addrs {
                         let _ = reg_meter(&mut ws, &dev_uid, id, x, "unregist");
                     }
+                    let mut first = Ok(());
                     for &(id, x) in &addrs {
-                        let _ = reg_meter(&mut ws, &dev_uid, id, x, "regist");
+                        let r = guard(&mut lost, || reg_meter(&mut ws, &dev_uid, id, x, "regist"));
+                        if first.is_ok() {
+                            first = r;
+                        }
                     }
                     meter_addrs = addrs;
                     subs.meters.clear();
                     subs.meter_ch = Some(channel);
+                    let _ = reply.send(first);
                 }
                 Ok(Cmd::MetersUnsubscribe) => {
                     for &(id, x) in &meter_addrs {
@@ -551,19 +560,30 @@ mod imp {
                     subs.meters.clear();
                     subs.meter_ch = None;
                 }
-                Ok(Cmd::ParamsSubscribe { addrs, channel }) => {
+                Ok(Cmd::ParamsSubscribe {
+                    addrs,
+                    channel,
+                    reply,
+                }) => {
                     // Replace any prior subscription: unregister the old set, then
                     // register the new one address by address (per-address regist
                     // only, mirroring meters — a bulk post has crashed Device Center).
                     for &(id, x, y) in &param_addrs {
                         let _ = reg_param(&mut ws, &dev_uid, id, x, y, "unregist");
                     }
+                    let mut first = Ok(());
                     for &(id, x, y) in &addrs {
-                        let _ = reg_param(&mut ws, &dev_uid, id, x, y, "regist");
+                        let r = guard(&mut lost, || {
+                            reg_param(&mut ws, &dev_uid, id, x, y, "regist")
+                        });
+                        if first.is_ok() {
+                            first = r;
+                        }
                     }
                     param_addrs = addrs;
                     subs.params.clear();
                     subs.param_ch = Some(channel);
+                    let _ = reply.send(first);
                 }
                 Ok(Cmd::ParamsUnsubscribe) => {
                     for &(id, x, y) in &param_addrs {
@@ -807,25 +827,11 @@ mod imp {
             }
             // Subscribed notifies landing mid-command are batched, not discarded
             // (see Subs).
-            if subs.absorb(&msg) {
+            let Some(vdp) = reply_for(subs, &msg, &base) else {
                 continue;
-            }
-            if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
-                continue;
-            }
-            let vdp = msg.pointer("/params/vdp");
-            let ruri = vdp
-                .and_then(|v| v.get("uri"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            // Match the address exactly so another instance's reply (e.g. y=12) cannot
-            // satisfy a y=1 request via a prefix match.
-            let ruri_addr = ruri.split('?').next().unwrap_or(ruri);
-            if ruri_addr != base {
-                continue;
-            }
+            };
             let code = vdp
-                .and_then(|v| v.pointer("/data/response_code"))
+                .pointer("/data/response_code")
                 .and_then(Value::as_i64)
                 .unwrap_or(0);
             return if code == 200 {
@@ -849,27 +855,39 @@ mod imp {
     /// after a timeout, so the healthy path pays nothing) and drop any reply for the
     /// address that just gave up. Notifies stay batched via subs, as everywhere else.
     fn drain_late_reply(ws: &mut Ws, subs: &mut Subs, base: &str) {
-        let deadline = Instant::now() + Duration::from_millis(250);
-        while Instant::now() < deadline {
+        // Bounded by frames rather than wall clock: under Live sync the broker
+        // streams meters continuously, so a deadline would always run to the end
+        // while absorbing notifies. The straggler is the next reply frame, not a
+        // quarter-second of meters away.
+        for _ in 0..DRAIN_FRAMES {
             let Ok(Some(text)) = read_text(ws) else { break };
             let Ok(msg) = serde_json::from_str::<Value>(&text) else {
                 continue;
             };
-            if subs.absorb(&msg) {
-                continue;
-            }
-            if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
-                continue;
-            }
-            let ruri = msg
-                .pointer("/params/vdp")
-                .and_then(|v| v.get("uri"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            if ruri.split('?').next().unwrap_or(ruri) == base {
+            if reply_for(subs, &msg, base).is_some() {
                 return; // the straggler is consumed; the socket is clean again
             }
         }
+    }
+
+    /// Frames drain_late_reply will look through for a straggler before giving up.
+    const DRAIN_FRAMES: usize = 64;
+
+    /// The `requestVD` reply body for `base`, or None when the message was a notify
+    /// (absorbed into the pending batch) or belonged to another address. Shared by
+    /// the two await loops and the late drain so the matching cannot drift — the
+    /// exact-address compare is what stops another instance's reply (e.g. y=12)
+    /// satisfying a y=1 request through a prefix match.
+    fn reply_for<'a>(subs: &mut Subs, msg: &'a Value, base: &str) -> Option<&'a Value> {
+        if subs.absorb(msg) {
+            return None;
+        }
+        if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
+            return None;
+        }
+        let vdp = msg.pointer("/params/vdp")?;
+        let uri = vdp.get("uri").and_then(Value::as_str).unwrap_or("");
+        (uri.split('?').next().unwrap_or(uri) == base).then_some(vdp)
     }
 
     // Read a parameter instance's raw current_value (numeric or string). do_get /
@@ -908,29 +926,12 @@ mod imp {
             }
             // Subscribed notifies landing mid-command are batched, not discarded
             // (see Subs).
-            if subs.absorb(&msg) {
+            let Some(vdp) = reply_for(subs, &msg, &base) else {
                 continue;
-            }
-            if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
-                continue;
-            }
-            let vdp = msg.pointer("/params/vdp");
-            let ruri = vdp
-                .and_then(|v| v.get("uri"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            // Match the address exactly so another instance's reply (e.g. y=12) cannot
-            // satisfy a y=1 request via a prefix match.
-            let ruri_addr = ruri.split('?').next().unwrap_or(ruri);
-            if ruri_addr != base {
-                continue;
-            }
-            return vdp
-                .and_then(|v| v.pointer("/data/current_value"))
-                .cloned()
-                .ok_or_else(|| {
-                    format!("broker response had no current_value at {param_id}:{x}:{y}")
-                });
+            };
+            return vdp.pointer("/data/current_value").cloned().ok_or_else(|| {
+                format!("broker response had no current_value at {param_id}:{x}:{y}")
+            });
         }
         drain_late_reply(ws, subs, &base);
         Err(format!(
@@ -1100,6 +1101,27 @@ mod imp {
     /// Prefix every device-lost error carries, so the worker can recognise one of
     /// its own and latch the session as dead rather than re-deriving the state.
     pub(super) const DEVICE_LOST_PREFIX: &str = "device disconnected";
+
+    /// Fail a command outright once the session is known dead, latching the reason
+    /// the first time one surfaces it. The device-lost push arrives exactly once,
+    /// so without the latch only the command that consumed it could ever notice —
+    /// every later one would keep talking to a broker that ACKs writes with no unit
+    /// attached and answers reads from its cache.
+    pub(super) fn guard<T>(
+        lost: &mut Option<String>,
+        call: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        if let Some(reason) = lost {
+            return Err(reason.clone());
+        }
+        let r = call();
+        if let Err(e) = &r {
+            if e.starts_with(DEVICE_LOST_PREFIX) {
+                *lost = Some(e.clone());
+            }
+        }
+        r
+    }
 
     // Bound a single pump's drain. The broker streams meters at ~250/s, so reads
     // rarely block; without this the loop would run a full 512-frame drain (~2 s)

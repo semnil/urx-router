@@ -451,7 +451,6 @@ export const en = {
     liveSynced: (n: number): string => `→ device (${n})`,
     liveFollowing: "← device…",
     liveFollowed: (n: number): string => `← device (${n})`,
-    liveFollowedPartial: (n: number, failed: number): string => `← device (${n}, ${failed} unread)`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",
@@ -538,6 +537,8 @@ export const en = {
       "The device's firmware version could not be read, so this build cannot check that its parameter mappings apply to your unit. Reconnect and try again.",
     liveReadIncomplete: (n: number): string =>
       `${n} setting${n === 1 ? "" : "s"} could not be read, so the device's state is not fully known. Live sync needs a complete read to start.`,
+    followReadIncomplete: (n: number): string =>
+      `${n} setting${n === 1 ? "" : "s"} could not be read back after a change on the device, so the plan no longer matches it. Fetch again to resync.`,
     unknownModel: (model: string): string => `Unknown model: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `The connected device is ${device}, but ${ui} is selected. Open or switch to the matching plan before writing.`,

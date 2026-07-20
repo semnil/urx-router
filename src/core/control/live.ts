@@ -14,7 +14,7 @@ import { PARAMS } from "./params";
 import type { ParamName, ParamSpec } from "./params";
 import { planToCommands, planToNameWrites } from "./translate";
 import type { VdCommand, NameWrite } from "./translate";
-import { sendConverging } from "./client";
+import { reachedAndFailed, sendConverging } from "./client";
 
 // Coalesce rapid edits (a slider drag fires per pixel) into one flush so the
 // single-threaded device worker is not flooded; the snapshot diff means only the
@@ -203,9 +203,9 @@ export class LiveSync {
         // would then record the plan as device truth, leaving those parameters
         // diverged for the rest of the session with no diff left to retry them.
         // Route it into the same teardown a direct write failure takes.
-        const failed = r.outcomes.filter((o) => !o.ok && !o.skipped);
-        if (failed.length || r.readErrors.length) {
-          throw new Error(failed[0]?.error ?? r.readErrors[0] ?? "converge failed");
+        const failed = r.outcomes.find(reachedAndFailed);
+        if (failed || r.readErrors.length) {
+          throw new Error(failed?.error ?? r.readErrors[0] ?? "converge failed");
         }
         this.captureSnapshot(converged);
       }

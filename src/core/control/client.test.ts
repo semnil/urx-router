@@ -79,6 +79,18 @@ describe("diffPlan", () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("timeout");
   });
+
+  // A caller that aborts on any read failure gains nothing from the rest of the
+  // sweep, and on a link that times out rather than fails fast those reads are
+  // minutes of waiting for an answer already decided.
+  it("stops at the first read failure when asked to", async () => {
+    const plan = basePlan();
+    vi.mocked(vdGet).mockRejectedValue(new Error("timeout"));
+    const all = await diffPlan(model, plan);
+    const stopped = await diffPlan(model, plan, undefined, true);
+    expect(stopped.errors).toHaveLength(1);
+    expect(all.errors.length).toBeGreaterThan(1);
+  });
 });
 
 describe("sendCommands / sendPlan", () => {
@@ -199,6 +211,16 @@ describe("sendConverging", () => {
 });
 
 describe("formatWriteReport", () => {
+  // A write aborted on a read failure wrote nothing, so the report must not file
+  // those under "Write failures" — the fetch report already models reads properly.
+  it("reports read failures as their own category, not as write failures", () => {
+    const md = formatWriteReport("URX44V", [], [], ["CH_FADER: timeout"]);
+    expect(md).toContain("## Read failures");
+    expect(md).toContain("CH_FADER: timeout");
+    expect(md).toContain("nothing was written");
+    expect(md).not.toContain("Write failures: 1");
+  });
+
   // The report reads only name/paramId/x/y/vdValue, so stub a minimal command
   // (the full VdCommand carries planValue/request, irrelevant to formatting).
   const cmd = (name: string, paramId: number, vdValue: number) =>

@@ -36,8 +36,18 @@ export interface DiffResult {
  * out of `diffs` — the caller aborts rather than writing a parameter whose
  * current value it never confirmed. The caller must have connected first
  * (platform.vdConnect).
+ *
+ * `stopOnError` returns at the first failure. A caller that aborts on any read
+ * failure has nothing to gain from the rest of the sweep, and a link that times
+ * out rather than fails fast makes those hundreds of doomed round-trips minutes
+ * of waiting for an answer already decided.
  */
-export async function diffPlan(model: DeviceModel, plan: Plan, signal?: AbortSignal): Promise<DiffResult> {
+export async function diffPlan(
+  model: DeviceModel,
+  plan: Plan,
+  signal?: AbortSignal,
+  stopOnError = false,
+): Promise<DiffResult> {
   const diffs: CommandDiff[] = [];
   const errors: string[] = [];
   for (const command of planToCommands(model, plan)) {
@@ -47,6 +57,7 @@ export async function diffPlan(model: DeviceModel, plan: Plan, signal?: AbortSig
       if (current !== command.vdValue) diffs.push({ command, current });
     } catch (e) {
       errors.push(`${command.name}: ${e instanceof Error ? e.message : String(e)}`);
+      if (stopOnError) break;
     }
   }
   return { diffs, errors };
@@ -73,19 +84,24 @@ export interface SendOutcome {
  */
 export async function sendCommands(commands: VdCommand[], signal?: AbortSignal): Promise<SendOutcome[]> {
   const outcomes: SendOutcome[] = [];
-  for (const [i, command] of commands.entries()) {
+  for (const command of commands) {
     signal?.throwIfAborted();
     try {
       await vdSet(command.paramId, command.x, command.y, command.vdValue);
       outcomes.push({ command, ok: true });
     } catch (e) {
       outcomes.push({ command, ok: false, error: e instanceof Error ? e.message : String(e) });
-      for (const rest of commands.slice(i + 1)) outcomes.push({ command: rest, ok: false, skipped: true });
       break;
     }
   }
+  // Everything past the stop was never attempted.
+  for (const command of commands.slice(outcomes.length)) outcomes.push({ command, ok: false, skipped: true });
   return outcomes;
 }
+
+/** A command the device saw and refused, as opposed to one the loop never tried.
+ *  Both are ok:false, so every reader of an outcome list needs the distinction. */
+export const reachedAndFailed = (o: SendOutcome): boolean => !o.ok && !o.skipped;
 
 /** Send every command a plan implies (no diff) — the full-write path. */
 export function sendPlan(model: DeviceModel, plan: Plan): Promise<SendOutcome[]> {
@@ -174,13 +190,12 @@ export async function sendConverging(
 ): Promise<ConvergeResult> {
   const outcomes: SendOutcome[] = [];
   const readErrors: string[] = [];
-  let first = initialDiffs;
-  if (!first) {
+  let residual = initialDiffs;
+  if (!residual) {
     const seed = await diffPlan(model, plan, signal);
     readErrors.push(...seed.errors);
-    first = seed.diffs;
+    residual = seed.diffs;
   }
-  let residual = first;
   let rounds = 0;
   while (residual.length > 0 && rounds < maxRounds && !readErrors.length) {
     signal?.throwIfAborted();
@@ -190,7 +205,7 @@ export async function sendConverging(
     );
     outcomes.push(...sent);
     rounds++;
-    if (sent.some((o) => !o.ok)) break;
+    if (sent.some(reachedAndFailed)) break;
     // A side-effect reset (e.g. from a COMP/EQ-type change) lands asynchronously,
     // a beat after the write returns. Let it settle before re-reading, so the
     // residual is the true post-reset state and the next round's re-send is not
@@ -208,17 +223,33 @@ export async function sendConverging(
  * Render a write's failures as human-readable Markdown the user can save, so the
  * per-command reasons (otherwise console-only) are visible off the status bar.
  * `failed` is the failed send/name outcomes (normalized to name + error);
- * `residual` is the diff that never converged (the device still differs). Pure.
+ * `residual` is the diff that never converged (the device still differs);
+ * `reads` are parameters whose current value could not be read. A read failure
+ * is its own category — when it aborts the write, nothing was written at all, so
+ * it must not be counted among the write failures. Pure.
  */
 export function formatWriteReport(
   model: string,
   failed: Array<{ name: string; error?: string }>,
   residual: CommandDiff[],
+  reads: string[] = [],
 ): string {
   const lines: string[] = [];
   lines.push(`# URX write report — ${model}`);
   lines.push("");
-  lines.push(`- Write failures: ${failed.length}; parameters that did not converge: ${residual.length}`);
+  if (reads.length && !failed.length && !residual.length) {
+    lines.push(`- Read failures: ${reads.length}. The write was canceled — nothing was written.`);
+  } else {
+    lines.push(
+      `- Write failures: ${failed.length}; parameters that did not converge: ${residual.length}` +
+        (reads.length ? `; read failures: ${reads.length}` : ""),
+    );
+  }
+  if (reads.length) {
+    lines.push("");
+    lines.push("## Read failures");
+    for (const e of reads) lines.push(`- ${e}`);
+  }
   if (failed.length) {
     lines.push("");
     lines.push("## Write failures");

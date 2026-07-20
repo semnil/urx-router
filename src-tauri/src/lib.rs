@@ -216,15 +216,18 @@ async fn vd_get_str(
 
 // Subscribe to live level meters: the worker registers each (meter_id, x) with
 // the broker and streams readings through the channel. Replaces any prior
-// subscription. Fire-and-forget, so no blocking round-trip / spawn_blocking.
+// subscription. Registration is per-address, so this waits on the worker like
+// set/get do — the reply tells the caller whether the stream actually started.
 #[tauri::command]
-fn vd_meters_subscribe(
-    state: State<vd::VdState>,
+async fn vd_meters_subscribe(
+    state: State<'_, vd::VdState>,
     addrs: Vec<(u32, i64)>,
     channel: tauri::ipc::Channel<Vec<vd::MeterUpdate>>,
 ) -> Result<(), String> {
     let tx = vd::sender(&state)?;
-    vd::meters_subscribe(tx, addrs, channel)
+    tauri::async_runtime::spawn_blocking(move || vd::meters_subscribe(tx, addrs, channel))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -236,15 +239,17 @@ fn vd_meters_unsubscribe(state: State<vd::VdState>) -> Result<(), String> {
 // Subscribe to device-side parameter changes: the worker registers each
 // (param_id, x, y) with the broker and streams `notify` frames through the
 // channel, so edits made on the device follow into the UI. Replaces any prior
-// subscription. Fire-and-forget, like the meter subscription.
+// subscription. Waits on the worker, like the meter subscription.
 #[tauri::command]
-fn vd_params_subscribe(
-    state: State<vd::VdState>,
+async fn vd_params_subscribe(
+    state: State<'_, vd::VdState>,
     addrs: Vec<(u32, i64, i64)>,
     channel: tauri::ipc::Channel<Vec<vd::ParamUpdate>>,
 ) -> Result<(), String> {
     let tx = vd::sender(&state)?;
-    vd::params_subscribe(tx, addrs, channel)
+    tauri::async_runtime::spawn_blocking(move || vd::params_subscribe(tx, addrs, channel))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

@@ -13,8 +13,6 @@ interface StubOptions {
   firmware?: string | null;
   /** Reject every vd_get, so the write's diff cannot establish device values. */
   failReads?: boolean;
-  /** Reject every vd_set after this many succeed, so the send stops part-way. */
-  writesBeforeFailure?: number;
 }
 
 async function stubDevice(page: Page, opts: StubOptions = {}): Promise<void> {
@@ -32,7 +30,6 @@ async function stubDevice(page: Page, opts: StubOptions = {}): Promise<void> {
       vd_get_str: "",
     };
     const dialogs: string[] = [];
-    let writes = 0;
     let sets = 0;
     const w = window as unknown as { __urxDialogs: string[]; __urxSets: () => number };
     w.__urxDialogs = dialogs;
@@ -61,10 +58,6 @@ async function stubDevice(page: Page, opts: StubOptions = {}): Promise<void> {
         }
         if (cmd === "vd_set") {
           sets++;
-          writes++;
-          if (o.writesBeforeFailure !== undefined && writes > o.writesBeforeFailure) {
-            return Promise.reject(new Error("device nak"));
-          }
           return Promise.resolve(null);
         }
         return cmd in constants
