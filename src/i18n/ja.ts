@@ -9,6 +9,7 @@ export const ja: Messages = {
     new: "新規",
     file: "ファイル",
     open: "開く",
+    openSettings: "設定ファイルを取り込み (実験的)",
     save: "保存",
     exportPng: "PNG 出力",
     exportPdf: "PDF 出力",
@@ -429,6 +430,14 @@ export const ja: Messages = {
       `${model} から ${n} 件取得、${unread} ノード未取得`,
     fetchPartial: (n: number, failed: number, unread: number): string =>
       `${n} 件取得、${failed} 件失敗` + (unread ? `、${unread} ノード未取得` : ""),
+    settingsImported: (name: string, n: number): string => `${name} から ${n} 件の設定を取り込みました`,
+    settingsPartial: (n: number, failed: number, unread: number): string =>
+      `${n} 件取り込み、${failed} 件失敗` + (unread ? `、${unread} ノード未取得` : ""),
+    settingsError: (message: string): string => `設定ファイルを取り込めませんでした: ${message}`,
+    dropUnsupported: (name: string): string => `${name} は開けません — 計画ファイル (.json) をドロップしてください`,
+    dropUnsupportedSettings: (name: string): string =>
+      `${name} は開けません — 計画ファイル (.json) か設定ファイル (.urxf) をドロップしてください`,
+    dropMultiple: "ファイルは 1 つずつドロップしてください",
     fetchError: (message: string): string => `デバイスからの取得に失敗しました: ${message}`,
     writeConnecting: "デバイスに接続しています…",
     writeNoChanges: "デバイスは計画と一致しています — 書き込む変更はありません",
@@ -488,6 +497,8 @@ export const ja: Messages = {
     selfTestExport:
       "この機種には未確認のパラメータ対応があります。確認のため返送できるよう、セルフテストのレポートを保存しますか?",
     deviceErrorExport: "一部のパラメータを読み取り/書き込みできませんでした。各失敗を記載したレポートを保存しますか?",
+    importSettings: (name: string, model: string): string =>
+      `${name} を現在の ${model} 計画に取り込みますか? 設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます (ファイルに編集状態は含まれません)。`,
     reclock: (deviceRate: string, planRate: string): string =>
       `デバイスは ${deviceRate}、計画は ${planRate} です。書き込むとデバイスがリクロックし USB ストリームが再ネゴシエートされるため、音声が一瞬中断されます。コンピューター側はデバイスの新しいレートに追従します。続行しますか?`,
     followUsbOn:
@@ -529,8 +540,13 @@ export const ja: Messages = {
     close: "閉じる",
     error: (message: string): string => `ライセンス情報を読み込めませんでした: ${message}`,
   },
+  dropzone: {
+    plan: "計画ファイル (.json) をドロップして開く",
+    planOrSettings: "計画ファイル (.json) または URX 設定ファイル (.urxf) をドロップ",
+  },
   filter: {
     plan: "URX Router 計画",
+    settings: "URX 設定ファイル",
     png: "PNG 画像",
     pdf: "PDF 文書",
     report: "セルフテストのレポート",
@@ -562,7 +578,17 @@ export const ja: Messages = {
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。書き込む前に一致する計画を開くか切り替えてください。`,
+    notWhileLive:
+      "先にライブ同期を停止してください — 取り込みは全設定を一度に置き換えるため、ライブ同期中は追従できません。",
     notPlanFile: "URX Router の計画ファイルではありません",
+    urxf: {
+      notUrxf: "URX の設定ファイルではありません",
+      truncated: "設定ファイルが途中で切れているか、想定外のレコードがあります",
+      badBlock: "設定ファイルのブロック構造を読み取れません",
+      badDescriptor: "このビルドが解釈できないパラメータが設定ファイルに含まれています",
+      lengthMismatch: "設定ファイルのパラメータ表と値が一致しません (ファイルが破損しています)",
+      noCurrent: "設定ファイルに現在の設定が含まれていません (保存済みシーンのみ)",
+    },
     missingModel: "計画ファイルに modelId がありません",
     badPlanUrl: "計画リンクが不正です (デコードできません)",
     planUrlUnsupported:

@@ -2549,6 +2549,24 @@ select:focus-visible,
   font: 700 11px var(--mono);
 }
 
+/* Drag & drop target: the shared full-window scrim below, plus two overrides.
+   It sits above the modals so a drag over one is still legible, and its pointer
+   events stay off so the overlay cannot swallow the drop it is advertising (the
+   browser path listens on the window). */
+.dropzone {
+  z-index: 120;
+  pointer-events: none;
+}
+.dropzone-box {
+  padding: 20px 28px;
+  border: 2px dashed var(--led);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+  color: var(--text);
+  font: 600 14px -apple-system, "Segoe UI", "Meiryo", system-ui, sans-serif;
+}
+
 /* First-run consent gate: a full-screen modal shown once on desktop before the
    app is usable (the Windows installer shows the same notice, but macOS
    drag-install and auto-updates bypass it). */

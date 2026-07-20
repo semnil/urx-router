@@ -9,6 +9,7 @@ export const en = {
     new: "New",
     file: "File",
     open: "Open",
+    openSettings: "Import settings file (experimental)",
     save: "Save",
     exportPng: "Export PNG",
     exportPdf: "Export PDF",
@@ -438,6 +439,14 @@ export const en = {
       `Fetched ${n} from ${model}; ${unread} node${unread === 1 ? "" : "s"} not read`,
     fetchPartial: (n: number, failed: number, unread: number): string =>
       `Fetched ${n}, ${failed} failed` + (unread ? `, ${unread} node${unread === 1 ? "" : "s"} not read` : ""),
+    settingsImported: (name: string, n: number): string => `Imported ${n} setting${n === 1 ? "" : "s"} from ${name}`,
+    settingsPartial: (n: number, failed: number, unread: number): string =>
+      `Imported ${n}, ${failed} failed` + (unread ? `, ${unread} node${unread === 1 ? "" : "s"} not read` : ""),
+    settingsError: (message: string): string => `Settings file could not be imported: ${message}`,
+    dropUnsupported: (name: string): string => `${name} cannot be opened here — drop a plan (.json)`,
+    dropUnsupportedSettings: (name: string): string =>
+      `${name} cannot be opened here — drop a plan (.json) or a settings file (.urxf)`,
+    dropMultiple: "Drop one file at a time",
     fetchError: (message: string): string => `Device fetch failed: ${message}`,
     writeConnecting: "Connecting to the device…",
     writeNoChanges: "Device already matches the plan — nothing to write",
@@ -502,6 +511,8 @@ export const en = {
     selfTestExport:
       "This model has unconfirmed parameter mappings. Save the self-test report so it can be sent back to confirm them?",
     deviceErrorExport: "Some parameters could not be read or written. Save a report listing each failure?",
+    importSettings: (name: string, model: string): string =>
+      `Import ${name} onto the current ${model} plan? A settings file does not say which unit it came from, so check that ${model} is the right model. Layout, hidden nodes, and notes are kept — the file carries no editing state.`,
     reclock: (deviceRate: string, planRate: string): string =>
       `The device is running at ${deviceRate} and the plan is set to ${planRate}. Writing re-clocks the device and renegotiates the USB stream, interrupting audio for a moment. The computer follows the device's new rate. Continue?`,
     followUsbOn:
@@ -543,8 +554,13 @@ export const en = {
     close: "Close",
     error: (message: string): string => `Could not load the license notice: ${message}`,
   },
+  dropzone: {
+    plan: "Drop a plan (.json) to open it",
+    planOrSettings: "Drop a plan (.json) or a URX settings file (.urxf)",
+  },
   filter: {
     plan: "URX Router plan",
+    settings: "URX settings file",
     png: "PNG image",
     pdf: "PDF document",
     report: "Self-test report",
@@ -576,7 +592,17 @@ export const en = {
     unknownModel: (model: string): string => `Unknown model: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `The connected device is ${device}, but ${ui} is selected. Open or switch to the matching plan before writing.`,
+    notWhileLive:
+      "Stop Live sync first — importing replaces every setting at once, which a live session cannot follow.",
     notPlanFile: "This is not a URX Router plan file",
+    urxf: {
+      notUrxf: "This is not a URX settings file",
+      truncated: "The settings file is truncated or has an unexpected record",
+      badBlock: "The settings file's block structure is not readable",
+      badDescriptor: "The settings file describes a parameter this build cannot decode",
+      lengthMismatch: "The settings file's parameter table and values do not match (the file looks corrupt)",
+      noCurrent: "The settings file holds no current settings (only stored scenes)",
+    },
     missingModel: "The plan file has no modelId",
     badPlanUrl: "The plan link is malformed (could not be decoded)",
     planUrlUnsupported:

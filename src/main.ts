@@ -23,6 +23,7 @@ import {
   downloadText,
   loadJson,
   loadRecent,
+  openBinaryDocument,
   openTextDocument,
   readTextByPath,
   rememberRecent,
@@ -44,6 +45,7 @@ import { renderInspector } from "./ui/inspector";
 import { Console } from "./ui/console";
 import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
+import { initDropzone } from "./ui/dropzone";
 import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
 import { getLang, LANG_CODES, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
@@ -66,8 +68,15 @@ import {
   type Connection,
   type DeviceSummary,
 } from "./core/platform";
-import { applyDeviceState, applyDirect, applyNodeState, formatReadbackReport } from "./core/control/readback";
+import {
+  applyDeviceState,
+  applyDirect,
+  applyNodeState,
+  applySourceState,
+  formatReadbackReport,
+} from "./core/control/readback";
 import type { ReadbackResult } from "./core/control/readback";
+import { parseUrxf, paramSourceOf, UrxfError } from "./core/control/urxf";
 import {
   diffNames,
   diffPlan,
@@ -527,7 +536,7 @@ function setLiveUi(on: boolean): void {
     tally.hidden = !on;
     if (on) tally.textContent = `${t().toolbar.liveTag} · ${liveDeviceLabel}`;
   }
-  for (const id of ["btn-fetch", "btn-write", "btn-selftest"]) {
+  for (const id of ["btn-fetch", "btn-write", "btn-selftest", "btn-open-settings"]) {
     const el = document.getElementById(id) as HTMLButtonElement | null;
     if (el) el.disabled = on;
   }
@@ -811,6 +820,7 @@ function applyStaticI18n(): void {
   $("btn-new").textContent = m.toolbar.new;
   $("lbl-file").textContent = m.toolbar.file;
   $("btn-open").textContent = m.toolbar.open;
+  $("btn-open-settings").textContent = m.toolbar.openSettings;
   $("btn-save").textContent = m.toolbar.save;
   $("btn-export").textContent = m.toolbar.exportPng;
   $("btn-export-pdf").textContent = m.toolbar.exportPdf;
@@ -1028,14 +1038,20 @@ function loadFromText(text: string, path?: string): boolean {
   }
 }
 
-async function openRecent(path: string): Promise<void> {
+// Open a plan from wherever its text comes from — a recent path, a dropped file —
+// with the one discard prompt and the one failure surface both share. `path` is
+// what the plan is remembered by, so it is absent for a browser drop.
+async function openPlanFrom(read: () => Promise<string>, path?: string): Promise<void> {
   if (!(await confirmDiscard())) return;
   try {
-    const text = await readTextByPath(path);
-    loadFromText(text, path);
+    loadFromText(await read(), path);
   } catch (err) {
     showError(t().status.loadError(String(err)));
   }
+}
+
+function openRecent(path: string): Promise<void> {
+  return openPlanFrom(() => readTextByPath(path), path);
 }
 
 async function confirmDiscard(): Promise<boolean> {
@@ -1097,6 +1113,26 @@ $("btn-open").addEventListener("click", async () => {
     showError(t().status.loadError(String(err)));
   }
 });
+
+// Drag & drop, the second way into File > Open. A dropped plan lands exactly as it
+// would from the dialog — same validation, same recent-list entry when the drop
+// carried a real path. The experimental settings-file import registers "urxf" here
+// once its gate resolves (see the !DEMO block below); until then nothing takes it,
+// and the caption and the refusal both name whatever is registered at that moment.
+const dropzone = initDropzone({
+  caption: (accepted) => (accepted.includes("urxf") ? t().dropzone.planOrSettings : t().dropzone.plan),
+  // A refused drop is a routine "not that file" — the status line, not a modal.
+  onReject: (rejection, name, accepted) => {
+    setStatus(
+      rejection === "multiple"
+        ? t().status.dropMultiple
+        : accepted.includes("urxf")
+          ? t().status.dropUnsupportedSettings(name)
+          : t().status.dropUnsupported(name),
+    );
+  },
+});
+dropzone.register("json", (file) => openPlanFrom(() => file.text(), file.path));
 
 $("btn-save").addEventListener("click", async () => {
   // A failed write must keep the plan dirty and surface as a modal, like the
@@ -1718,9 +1754,84 @@ if (!DEMO) {
   // Experimental-only menu group (its separator + the self-test): the self-test
   // is a diagnostic that briefly overwrites every parameter, so it stays behind
   // the flag — MIDI control, write, and live sync do not.
+  // Import a URX settings file (.urxf) — what the unit itself writes to microSD
+  // from SETUP > SAVE — onto the plan already open, through the same device→plan
+  // inverse a fetch uses. Nothing is sent to hardware: the file is the source.
+  //
+  // Two things the file cannot supply, both surfaced in the confirm: it names no
+  // model (its header reads "URX" for every variant, so the operator vouches for
+  // the selected one), and it holds no editing state, so layout / hidden / notes
+  // stay as they are rather than being reset.
+  // `load` fetches the bytes when the import is actually going ahead (a dialog
+  // that returns null was canceled). Reading and parsing share one failure
+  // surface, so neither entry point below carries its own catch.
+  async function importSettings(load: () => Promise<{ bytes: Uint8Array; name: string } | null>): Promise<void> {
+    // Replacing every value at once is what Live sync cannot follow, so the import
+    // is refused while a session is up — the same rule fetch and write follow, which
+    // setLiveUi enforces on the menu entry. The drop target needs it stated here.
+    if (liveSessionUp) {
+      showError(t().error.notWhileLive);
+      return;
+    }
+    let name = "";
+    let current;
+    try {
+      const doc = await load();
+      if (!doc) return;
+      name = doc.name;
+      // CURRENT is the unit's live settings. Stored scenes are separate chunks with
+      // no place in a plan — their names exist only in the file's scaffolding.
+      current = parseUrxf(doc.bytes).chunks.find((chunk) => chunk.name === "CURRENT");
+      if (!current) throw new UrxfError("noCurrent");
+    } catch (err) {
+      showError(t().status.settingsError(err instanceof UrxfError ? t().error.urxf[err.code] : String(err)));
+      return;
+    }
+    if (!(await confirmDiscard())) return;
+    if (!(await confirmDialog(t().confirm.importSettings(name, modelId)))) {
+      setStatus(t().status.canceled);
+      return;
+    }
+    let result: ReadbackResult;
+    try {
+      result = await applySourceState(getModel(modelId), plan, paramSourceOf(current));
+    } catch (err) {
+      showError(t().status.settingsError(String(err)));
+      return;
+    }
+    if (result.errors.length) console.warn("settings import issues:", result.errors);
+    // Same provenance as a device fetch: nodes whose values did not come through
+    // still show their plan default, and the graph flags them as such.
+    plan.unreadNodes = result.unreadNodes;
+    rerenderPlan();
+    dirty = true;
+    planReadFromDevice();
+    const unread = result.unreadNodes.size;
+    setStatus(
+      result.errors.length
+        ? t().status.settingsPartial(result.applied, result.errors.length, unread)
+        : t().status.settingsImported(name, result.applied),
+    );
+    await offerErrorReport(
+      result.errors.length
+        ? { filename: `${modelId}-import-errors.md`, markdown: formatReadbackReport(modelId, result) }
+        : null,
+    );
+  }
+
   experimentalEnabled().then((enabled) => {
     if (!enabled) return;
     for (const el of document.querySelectorAll<HTMLElement>("[data-experimental-only]")) el.hidden = false;
+
+    // Arm the settings-file import: the File menu entry (revealed just above) and
+    // the drop target, which only accepts .urxf from this registration on.
+    dropzone.register("urxf", (file) => importSettings(async () => ({ bytes: await file.bytes(), name: file.name })));
+    $("btn-open-settings").addEventListener("click", () =>
+      importSettings(async () => {
+        const doc = await openBinaryDocument({ ext: "urxf", label: t().filter.settings });
+        return doc && { bytes: doc.bytes, name: baseName(doc.path) };
+      }),
+    );
 
     // Device self-test (experimental): read the device, write a perturbed copy,
     // verify it matches, then restore. It owns its own connection, so it does not
