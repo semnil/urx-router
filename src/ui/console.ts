@@ -263,6 +263,10 @@ export interface ConsoleHooks {
   getPlan: () => Plan;
   /** An edit changed the plan (mute / fader / EQ): flag dirty + schedule live sync. */
   onChange: () => void;
+  /** The meter stream could not be registered. Bars stuck on the floor are
+   *  indistinguishable from silence, so the host surfaces this rather than
+   *  leaving a live session that quietly shows nothing. */
+  onMeterError?: (message: string) => void;
   midi?: ConsoleMidiHooks;
 }
 
@@ -1783,8 +1787,23 @@ export class Console {
     const sig = addrs.map((a) => a.join(":")).join(",");
     if (!this.unsub || sig !== this.subSig) {
       this.unsub?.();
-      this.unsub = subscribeMeters(this.store, addrs);
+      this.unsub = null;
       this.subSig = sig;
+      // render() is synchronous, so the registration is awaited off to the side.
+      // Its failure still has to be loud: bars stuck on the floor look exactly
+      // like silence, and an operator reading them chases gain that was never
+      // the problem. Route it to the same handler a live error takes.
+      void subscribeMeters(this.store, addrs)
+        .then((unsub) => {
+          // A stop/re-scope raced the registration; drop this one rather than
+          // leaving a stream nothing will unsubscribe.
+          if (this.subSig !== sig || !this.live || !this.visible) unsub();
+          else this.unsub = unsub;
+        })
+        .catch((e: unknown) => {
+          this.subSig = "";
+          this.hooks.onMeterError?.(e instanceof Error ? e.message : String(e));
+        });
     }
     if (!this.raf) {
       // Cap repaints to ~30 fps for smooth ballistics (the device streams at ~10 Hz;

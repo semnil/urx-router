@@ -224,6 +224,6 @@ export function tapAddrs(taps: Iterable<MeterTap>): Array<[number, number]> {
  * an unsubscribe function. No-op (returns a noop) outside Tauri / when not
  * connected.
  */
-export function subscribeMeters(store: MeterStore, addrs: Array<[number, number]>): () => void {
+export function subscribeMeters(store: MeterStore, addrs: Array<[number, number]>): Promise<() => void> {
   return vdMetersSubscribe(addrs, (m) => store.apply(m));
 }

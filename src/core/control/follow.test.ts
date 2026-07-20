@@ -11,13 +11,20 @@ const h = vi.hoisted(() => ({
   addrs: null as null | Array<[number, number, number]>,
   unsub: vi.fn(),
   subscribeCalls: 0,
+  failNext: false,
 }));
 
 vi.mock("../platform", () => ({
-  vdParamsSubscribe: vi.fn((addrs: Array<[number, number, number]>, onUpdate: typeof h.onUpdate) => {
+  // Awaited by DeviceFollow, so a failed registration stops the session rather
+  // than leaving it blind to device-side edits.
+  vdParamsSubscribe: vi.fn(async (addrs: Array<[number, number, number]>, onUpdate: typeof h.onUpdate) => {
     h.addrs = addrs;
     h.onUpdate = onUpdate;
     h.subscribeCalls++;
+    if (h.failNext) {
+      h.failNext = false;
+      throw new Error("subscribe rejected");
+    }
     return h.unsub;
   }),
 }));
@@ -59,6 +66,7 @@ beforeEach(() => {
   h.addrs = null;
   h.unsub.mockReset();
   h.subscribeCalls = 0;
+  h.failNext = false;
   vi.useFakeTimers();
 });
 
@@ -67,17 +75,26 @@ afterEach(() => {
 });
 
 describe("DeviceFollow", () => {
-  it("registers the writable address set on begin", () => {
+  it("registers the writable address set on begin", async () => {
     const follow = followFor();
-    follow.begin();
+    await follow.begin();
     expect(h.subscribeCalls).toBe(1);
     expect(h.addrs).toEqual([ADDR]);
+  });
+
+  // Without the notify stream the app cannot see device-side edits, and the next
+  // converge writes the plan back over them — so a failed registration has to
+  // reach the caller instead of leaving a session that looks started.
+  it("rejects from begin when the registration fails", async () => {
+    h.failNext = true;
+    const follow = followFor();
+    await expect(follow.begin()).rejects.toThrow("subscribe rejected");
   });
 
   it("re-reads the owner node once after a scoped burst settles", async () => {
     const reconcileNodes = vi.fn(async () => {});
     const follow = followFor({ reconcileNodes });
-    follow.begin();
+    await follow.begin();
     // A knob sweep: several non-echo notifies inside the debounce window.
     for (let i = 1; i <= 6; i++) {
       notify(-i * 100);
@@ -103,7 +120,7 @@ describe("DeviceFollow", () => {
       reconcileNodes,
       reconcileAll,
     });
-    follow.begin();
+    await follow.begin();
     notify(-600);
     // Applied synchronously; the host coalesces the render via flushDirect.
     expect(applyDirect).toHaveBeenCalledWith("ch1", "CH_FADER", -600);
@@ -123,7 +140,7 @@ describe("DeviceFollow", () => {
       applyDirect: () => false,
       noteDirect,
     });
-    follow.begin();
+    await follow.begin();
     notify(-600);
     // Falls back to a scoped read, so the snapshot must not be pre-patched.
     expect(noteDirect).not.toHaveBeenCalled();
@@ -136,7 +153,7 @@ describe("DeviceFollow", () => {
       applyDirect: () => false,
       reconcileNodes,
     });
-    follow.begin();
+    await follow.begin();
     notify(-600);
     await vi.advanceTimersByTimeAsync(300);
     expect(reconcileNodes).toHaveBeenCalledWith(new Set(["ch1"]));
@@ -146,7 +163,7 @@ describe("DeviceFollow", () => {
     const applyDirect = vi.fn();
     const reconcileNodes = vi.fn(async () => {});
     const follow = followFor({ isEcho: () => true, applyDirect, reconcileNodes });
-    follow.begin();
+    await follow.begin();
     notify(-600);
     await vi.advanceTimersByTimeAsync(500);
     expect(applyDirect).not.toHaveBeenCalled();
@@ -157,7 +174,7 @@ describe("DeviceFollow", () => {
     const reconcileAll = vi.fn(async () => {});
     const reconcileNodes = vi.fn(async () => {});
     const follow = followFor({ lookup: () => undefined, reconcileAll, reconcileNodes });
-    follow.begin();
+    await follow.begin();
     notify(-600);
     await vi.advanceTimersByTimeAsync(300);
     expect(reconcileAll).toHaveBeenCalledTimes(1);
@@ -175,7 +192,7 @@ describe("DeviceFollow", () => {
       reconcileAll,
       reconcileNodes,
     });
-    follow.begin();
+    await follow.begin();
     h.onUpdate!({ paramId: 0, x: -1, y: -1, value: 0 });
     await vi.advanceTimersByTimeAsync(300);
     expect(reconcileAll).toHaveBeenCalledTimes(1);
@@ -190,7 +207,7 @@ describe("DeviceFollow", () => {
       reconcileAll,
       reconcileNodes,
     });
-    follow.begin();
+    await follow.begin();
     for (const id of [10, 11, 12, 13]) notifyAddr(id, -100);
     await vi.advanceTimersByTimeAsync(300);
     expect(reconcileAll).toHaveBeenCalledTimes(1);
@@ -201,7 +218,7 @@ describe("DeviceFollow", () => {
     const reconcileNodes = vi.fn(async () => {});
     const reconcileAll = vi.fn(async () => {});
     const follow = followFor({ reconcileNodes, reconcileAll });
-    follow.begin();
+    await follow.begin();
     notify(-600);
     await vi.advanceTimersByTimeAsync(300);
     expect(reconcileNodes).toHaveBeenCalledTimes(1);
@@ -224,7 +241,7 @@ describe("DeviceFollow", () => {
     );
     const reconcileAll = vi.fn(async () => {});
     const follow = followFor({ reconcileNodes, reconcileAll });
-    follow.begin();
+    await follow.begin();
     notify(-600);
     // The settle fires and starts the scoped read, which stays in flight.
     await vi.advanceTimersByTimeAsync(300);
@@ -240,7 +257,7 @@ describe("DeviceFollow", () => {
 
   it("does not re-register after a reconcile that left the address set unchanged", async () => {
     const follow = followFor();
-    follow.begin();
+    await follow.begin();
     expect(h.subscribeCalls).toBe(1);
     notify(-600);
     await vi.advanceTimersByTimeAsync(300);
@@ -257,7 +274,7 @@ describe("DeviceFollow", () => {
         addrs = [ADDR, [140, 0, 0]];
       },
     });
-    follow.begin();
+    await follow.begin();
     expect(h.subscribeCalls).toBe(1);
     notify(-600);
     await vi.advanceTimersByTimeAsync(300);
@@ -274,7 +291,7 @@ describe("DeviceFollow", () => {
       },
       onError,
     });
-    follow.begin();
+    await follow.begin();
     notify(-600);
     await vi.advanceTimersByTimeAsync(300);
     expect(onError).toHaveBeenCalledWith("readback failed");
@@ -285,7 +302,7 @@ describe("DeviceFollow", () => {
     const reconcileNodes = vi.fn(async () => {});
     const reconcileAll = vi.fn(async () => {});
     const follow = followFor({ reconcileNodes, reconcileAll });
-    follow.begin();
+    await follow.begin();
     notify(-600); // schedules a reconcile + idle full
     follow.end();
     expect(h.unsub).toHaveBeenCalled();

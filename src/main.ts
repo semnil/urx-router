@@ -315,6 +315,9 @@ const consoleView = new Console(consoleHost, {
   // re-renders the edited strip itself, so don't rebuild it here (that would
   // disrupt an in-progress fader drag).
   onChange: () => markChanged(),
+  // The meter stream failed to register. Floor-stuck bars read as "no signal",
+  // so end the session rather than let the operator trust a dead display.
+  onMeterError: (message) => stopLiveOnError(message),
   // MIDI learn: while the panel's learn mode is on, console controls arm for
   // binding instead of editing (no-ops while midi is absent — browser / demo).
   midi: {
@@ -1435,15 +1438,17 @@ if (!DEMO) {
         dirty = false;
         liveDeviceLabel = device.model;
         live.begin();
-        follow?.begin();
+        // Both registrations are awaited before the session counts as up. Without
+        // the notify stream the app is blind to device-side edits and the next
+        // converge writes the plan back over them; without the link watch an idle
+        // drop freezes the session instead of ending it. Either failure throws to
+        // failLive rather than starting a session that cannot do its job.
+        await follow?.begin();
+        await vdWatchLink(() => stopLiveOnError(t().error.linkLost));
         // Remember which generation the session holds, so deactivateLive releases
         // exactly this one even when its disconnect lands after a later connect.
         liveEpoch = device.epoch;
         liveSessionUp = true;
-        // Watch the held-open link: if it drops while idle (no edit in flight to
-        // surface "worker is gone"), stop the session instead of freezing. Routed
-        // through the one-shot error path, so it surfaces once as a dialog.
-        vdWatchLink(() => stopLiveOnError(t().error.linkLost));
         setLiveUi(true);
         consoleView.setLive(true);
         setStatus(t().status.liveOn(device.model, result.applied));

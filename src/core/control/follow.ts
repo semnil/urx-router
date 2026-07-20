@@ -96,9 +96,9 @@ export class DeviceFollow {
 
   /** Start following. Call after the live snapshot is captured (begin/resync), so
    *  the writable address set and its index are known. */
-  begin(): void {
+  async begin(): Promise<void> {
     this.active = true;
-    this.subscribe();
+    await this.subscribe();
   }
 
   /** Stop following and cancel any pending work. Does not touch the connection. */
@@ -122,7 +122,7 @@ export class DeviceFollow {
   // Register the current writable address set for notifies. The set rarely changes
   // (only a structural plan edit alters it), so when it matches what is already
   // registered this is a no-op rather than re-posting every address to the broker.
-  private subscribe(): void {
+  private async subscribe(): Promise<void> {
     if (!this.active) return;
     const addrs = this.hooks.addrs();
     // The address order is deterministic (planToCommands order), so a plain join
@@ -131,7 +131,15 @@ export class DeviceFollow {
     if (this.unsub && key === this.registeredKey) return;
     this.registeredKey = key;
     this.unsub?.();
-    this.unsub = vdParamsSubscribe(addrs, (p) => this.onNotify(p));
+    this.unsub = null;
+    const unsub = await vdParamsSubscribe(addrs, (p) => this.onNotify(p));
+    // end() may have run while the registration was in flight; drop it rather
+    // than leaving a live subscription with no owner to unsubscribe it.
+    if (!this.active) {
+      unsub();
+      return;
+    }
+    this.unsub = unsub;
   }
 
   private clearWindow(): void {
@@ -212,7 +220,7 @@ export class DeviceFollow {
       else await this.hooks.reconcileNodes(nodes);
       // The reconcile may have changed the plan's structure (and so its writable
       // address set), so re-register against the post-reconcile set.
-      this.subscribe();
+      await this.subscribe();
     } catch (e) {
       this.active = false;
       this.hooks.onError(e instanceof Error ? e.message : String(e));
