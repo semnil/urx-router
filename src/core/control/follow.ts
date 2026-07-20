@@ -59,7 +59,8 @@ export interface DeviceFollowHooks {
   /** Scoped reconcile: re-read the given owner nodes, reflect them, re-render, and
    *  re-base the live snapshot. Read failures reject. */
   reconcileNodes: (nodeIds: ReadonlySet<string>) => Promise<void>;
-  /** Full reconcile: re-read the whole device (escalation + idle safety net). */
+  /** Full reconcile: re-read the whole device (escalation + idle safety net).
+   *  Read failures reject, like reconcileNodes. */
   reconcileAll: () => Promise<void>;
   /** A device-side change is being reflected — for an optional "← device" status. */
   onFollow: () => void;

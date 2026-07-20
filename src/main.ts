@@ -405,20 +405,31 @@ const follow =
         // A settled scoped change: re-read just the touched owner nodes and reflect.
         // A read-back can change more than the direct fast path handles, so mark the
         // reflect full (re-derive both views + re-base the snapshot).
+        // A reconcile read that fails loses the device-side change it was called
+        // for — the notify already fired and nothing re-triggers the read — and
+        // the next converge would then write the plan's stale value back over the
+        // operator's own edit on the hardware. Reject so DeviceFollow takes its
+        // stop-following path, the same one a rejected reconcile already took.
         reconcileNodes: async (nodeIds) => {
           const result = await applyNodeState(getModel(modelId), plan, nodeIds);
-          if (result.errors.length) console.warn("device-follow scoped readback issues:", result.errors);
           followFull = true;
           requestReflect();
+          if (result.errors.length) {
+            console.warn("device-follow scoped readback issues:", result.errors);
+            throw new Error(t().error.liveReadIncomplete(result.errors.length));
+          }
           setStatus(followStatus(result));
         },
         // Escalation / idle safety net: pull the whole device into the plan.
         reconcileAll: async () => {
           const result = await applyDeviceState(getModel(modelId), plan);
-          if (result.errors.length) console.warn("device-follow readback issues:", result.errors);
           plan.unreadNodes = result.unreadNodes;
           followFull = true;
           requestReflect();
+          if (result.errors.length) {
+            console.warn("device-follow readback issues:", result.errors);
+            throw new Error(t().error.liveReadIncomplete(result.errors.length));
+          }
           setStatus(followStatus(result));
         },
         onFollow: () => setStatus(t().status.liveFollowing),
