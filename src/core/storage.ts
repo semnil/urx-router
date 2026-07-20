@@ -104,7 +104,10 @@ export async function exportSvgToPng(
 ): Promise<SaveResult> {
   const canvas = await rasterizeSvg(svg, opts);
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-  if (!blob) return { saved: false };
+  // saved:false is the signal for "the user canceled the dialog". A null blob is
+  // an encode failure, so throwing keeps it out of that signal and lets the
+  // caller show it as the failure it is.
+  if (!blob) throw new Error("PNG encoding failed");
   return saveBlob(filename, blob, filter);
 }
 

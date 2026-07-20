@@ -403,6 +403,17 @@ export class MidiEngine {
     return true;
   }
 
+  /** Forget what the controller has been told, so the next feedback pass re-sends
+   *  every mapped value. Called when a feedback send failed: the cache would
+   *  otherwise record a value the controller never received, leaving its LED or
+   *  fader showing the wrong state until that value happens to change again. The
+   *  echo guard is dropped with it — the echo of a send that never left cannot
+   *  arrive, and leaving it armed would swallow a real press instead. */
+  forgetFeedback(): void {
+    this.lastSent.clear();
+    this.lastFedAt.clear();
+  }
+
   private emit(addr: MidiAddr, value: number, raw: number): void {
     switch (addr.type) {
       case "cc":

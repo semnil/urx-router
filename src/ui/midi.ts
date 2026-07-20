@@ -99,7 +99,14 @@ export class MidiControl {
       send: (bytes) => {
         if (!this.outputPort) return;
         this.traceLog?.(`tx [${bytes.join(" ")}]`);
-        void midiSend(bytes).catch(() => {});
+        void midiSend(bytes).catch(() => {
+          // The controller never got this value, so drop what the engine thinks
+          // it has been told and schedule another pass. A dead port keeps
+          // failing harmlessly; a one-off failure self-heals.
+          this.traceLog?.("tx failed — re-sending feedback");
+          this.engine.forgetFeedback();
+          this.scheduleFeedback();
+        });
       },
       learned: (addr) => this.onLearned(addr),
       learnPending: () => this.bumpLearnFlush(),
@@ -220,13 +227,17 @@ export class MidiControl {
   private restorePorts(): void {
     if (!isTauri()) return;
     const s = this.store();
-    // Boot restore is best-effort (a saved port may be unplugged right now);
-    // the two opens are independent, so let them run concurrently.
-    if (s.input) void this.openInput(s.input, true);
-    if (s.output) void this.openOutput(s.output, true);
+    // Boot restore is best-effort (a saved port may be unplugged right now); the
+    // two opens are independent, so let them run concurrently. Not silent
+    // though: a saved port that no longer exists otherwise leaves the panel
+    // showing a controller that was never actually opened, and the operator only
+    // finds out when a fader does nothing. The failure goes to the status line,
+    // not a dialog — nothing was interrupted, it just did not come back.
+    if (s.input) void this.openInput(s.input);
+    if (s.output) void this.openOutput(s.output);
   }
 
-  private async openInput(port: string, silent = false): Promise<void> {
+  private async openInput(port: string): Promise<void> {
     try {
       // The Rust side replaces any prior input, so no explicit close first.
       this.closeInput = await midiOpenInput(port, (bytes) => {
@@ -237,18 +248,18 @@ export class MidiControl {
     } catch (err) {
       this.closeInput = null;
       this.inputPort = null;
-      if (!silent) this.hooks.onStatus(t().midi.inputError(err instanceof Error ? err.message : String(err)));
+      this.hooks.onStatus(t().midi.inputError(err instanceof Error ? err.message : String(err)));
     }
   }
 
-  private async openOutput(port: string, silent = false): Promise<void> {
+  private async openOutput(port: string): Promise<void> {
     try {
       await midiOpenOutput(port);
       this.outputPort = port;
       this.runFeedback(true); // align motor faders / LEDs with the plan at once
     } catch (err) {
       this.outputPort = null;
-      if (!silent) this.hooks.onStatus(t().midi.outputError(err instanceof Error ? err.message : String(err)));
+      this.hooks.onStatus(t().midi.outputError(err instanceof Error ? err.message : String(err)));
     }
   }
 
