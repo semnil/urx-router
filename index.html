@@ -52,6 +52,7 @@
           <span id="lbl-rate">Rate</span>
           <select id="rate-picker"></select>
         </label>
+        <button id="follow-usb" type="button" class="follow-usb" data-demo-hide data-control-hide aria-pressed="mixed"></button>
         <div class="view-tabs" id="view-tabs" role="group" aria-label="View">
           <button id="btn-view-graph" type="button" aria-pressed="true">Graph</button>
           <button id="btn-view-console" type="button" aria-pressed="false">Console</button>
@@ -210,6 +211,18 @@
         <div class="consent-actions">
           <button id="load-report-copy" type="button" class="consent-btn-secondary"></button>
           <button id="load-report-close" type="button" class="consent-btn-primary"></button>
+        </div>
+      </div>
+    </div>
+    <div id="rate-choice" class="consent-scrim" role="dialog" aria-modal="true" aria-labelledby="rate-choice-title" hidden>
+      <div class="consent-box">
+        <h2 id="rate-choice-title"></h2>
+        <p id="rate-choice-intro" class="load-report-intro"></p>
+        <p id="rate-choice-note" class="load-report-intro" hidden></p>
+        <div class="consent-actions rate-choice-actions">
+          <button id="rate-choice-cancel" type="button" class="consent-btn-secondary"></button>
+          <button id="rate-choice-release" type="button" class="consent-btn-secondary"></button>
+          <button id="rate-choice-adopt" type="button" class="consent-btn-primary"></button>
         </div>
       </div>
     </div>

@@ -39,6 +39,11 @@ const MAX_CONCENTRATION = 3;
 export interface DeviceFollowHooks {
   /** Writable parameter addresses to register for notifies ([paramId, x, y]). */
   addrs: () => Array<[number, number, number]>;
+  /** First refusal on an incoming notify, for addresses the host registers itself
+   *  and owns outside the plan (SETUP > Follow USB is the one such address today).
+   *  Returning true consumes the notify. Without this they would resolve to no node
+   *  and escalate every change to a full re-read of the device. */
+  intercept?: (p: ParamUpdate) => boolean;
   /** Whether an incoming notify is the echo of a known/just-written value. */
   isEcho: (p: ParamUpdate) => boolean;
   /** Resolve a notify address to its catalog name, owner node, and follow kind,
@@ -150,6 +155,9 @@ export class DeviceFollow {
 
   private onNotify(p: ParamUpdate): void {
     if (!this.active) return;
+    // Host-owned address: handled there, and never part of a reconcile window — it
+    // has no node, so letting it through would force a full re-read every time.
+    if (this.hooks.intercept?.(p)) return;
     // Our own write (or a value we already hold) coming back — not a change.
     if (this.hooks.isEcho(p)) return;
     // Signal "following" once at the start of a burst, not on every notify in it.

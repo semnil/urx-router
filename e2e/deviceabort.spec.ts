@@ -1,12 +1,11 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
 
 // The device paths abort rather than continue once a premise has failed: a write
 // whose diff could not be read never writes, a unit whose firmware version could
 // not be read is not touched at all, and a send that stops part-way offers a
-// retry instead of a breakdown the user cannot act on. Bespoke stub (like
-// saveerror.spec.ts): stubTauriBoot serves constants only, and these flows need
-// per-command handlers plus a dialog sink recording what was shown.
+// retry instead of a breakdown the user cannot act on.
 
 interface StubOptions {
   /** null = the firmware read did not land (the Q-1 gate). */
@@ -15,63 +14,15 @@ interface StubOptions {
   failReads?: boolean;
 }
 
-async function stubDevice(page: Page, opts: StubOptions = {}): Promise<void> {
-  await page.addInitScript((o: StubOptions) => {
-    localStorage.setItem("urx-lang", "en");
-    localStorage.setItem("urx-model", "URX44V");
-    localStorage.setItem("urx-disclaimer-accepted", "1"); // skip the consent gate
-    const constants: Record<string, unknown> = {
-      experimental_enabled: false,
-      self_test_requested: false,
-      reset_storage_requested: false,
-      "plugin:updater|check": null,
-      vd_disconnect: null,
-      vd_set_str: null,
-      vd_get_str: "",
-    };
-    const dialogs: string[] = [];
-    let sets = 0;
-    const w = window as unknown as { __urxDialogs: string[]; __urxSets: () => number };
-    w.__urxDialogs = dialogs;
-    w.__urxSets = () => sets;
-    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
-      Channel: class {
-        onmessage: (data: unknown) => void = () => {};
-      },
-      invoke: (cmd: string, args?: Record<string, unknown>) => {
-        if (cmd === "plugin:dialog|message") {
-          dialogs.push(String(args?.message ?? ""));
-          // Decline every confirm: a test that reaches one has already failed to
-          // abort, so agreeing would mask the very thing under test.
-          return Promise.resolve("Cancel");
-        }
-        if (cmd === "vd_connect") {
-          return Promise.resolve({
-            model: "URX44V",
-            label: "URX44V",
-            firmware: o.firmware === undefined ? "1.3.0.1" : o.firmware,
-            epoch: 1,
-          });
-        }
-        if (cmd === "vd_get") {
-          return o.failReads ? Promise.reject(new Error("read timeout")) : Promise.resolve(0);
-        }
-        if (cmd === "vd_set") {
-          sets++;
-          return Promise.resolve(null);
-        }
-        return cmd in constants
-          ? Promise.resolve(constants[cmd])
-          : Promise.reject(new Error(`stub: unhandled command ${cmd}`));
-      },
-    };
-  }, opts);
+// The write reads the device's clock state (sample rate 766 / Follow USB 848)
+// before the diff, so those two are answered even under failReads: this file is
+// about the DIFF read failing, and the clock read's own abort is samplerate.spec.
+// 48 kHz matches the plan and Follow USB off means there is nothing to settle.
+function stubDevice(page: Page, opts: StubOptions = {}): Promise<void> {
+  return stubTauriDevice(page, { ...opts, values: { 766: 48000, 848: 0 } });
 }
 
-const dialogsOf = (page: Page): Promise<string[]> =>
-  page.evaluate(() => (window as unknown as { __urxDialogs: string[] }).__urxDialogs);
-const setsOf = (page: Page): Promise<number> =>
-  page.evaluate(() => (window as unknown as { __urxSets: () => number }).__urxSets());
+const setsOf = async (page: Page): Promise<number> => (await writesOf(page)).length;
 
 test("a write whose diff cannot be read is canceled before anything is sent", async ({ page }) => {
   await stubDevice(page, { failReads: true });

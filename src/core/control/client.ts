@@ -6,8 +6,68 @@
 import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
+import { PARAMS } from "./params";
 import { planToCommands, planToNameWrites } from "./translate";
 import type { NameWrite, VdCommand } from "./translate";
+
+/** The device's clock state: whether it slaves to the USB host, and the rate it
+ *  is running at right now. Read together as the pre-check a write needs. */
+export interface ClockState {
+  followUsb: boolean;
+  sampleRate: number;
+}
+
+/**
+ * Read the device's clock state. The caller must have connected first.
+ *
+ * Rejects rather than reporting a partial answer: both halves are needed to decide
+ * whether a rate write can stick, and guessing either one is the failure this check
+ * exists to prevent. The write path treats a rejection as fail-closed and stops.
+ */
+export async function readClockState(): Promise<ClockState> {
+  const followUsb = await readFollowUsb();
+  const sampleRate = await vdGet(PARAMS.SAMPLE_RATE.id, 0, 0);
+  return { followUsb, sampleRate };
+}
+
+/** Read just the Follow USB policy. Separate from readClockState because the badge
+ *  refresh runs right after a full readback, which has already brought the rate
+ *  back — re-reading it there would be a round-trip for a value just obtained. */
+export async function readFollowUsb(): Promise<boolean> {
+  return (await vdGet(PARAMS.FOLLOW_USB.id, 0, 0)) !== 0;
+}
+
+/**
+ * What a write should do about the plan's rate, given what the device reports.
+ *
+ * - `proceed` — the device already runs the plan's rate; nothing to settle.
+ * - `confirmReclock` — the rates differ and the device holds its own clock, so the
+ *   plan's rate will stick. Worth stating (re-clocking interrupts audio) but it is
+ *   a plain yes/no.
+ * - `askChoice` — the rates differ and the device is slaved to its USB host, so
+ *   writing the plan's rate would be undone a moment later. Neither answer can be
+ *   inferred, so the operator picks.
+ *
+ * Pure, so the matrix is testable without a device or a dialog; the caller owns the
+ * IO and the prompts.
+ */
+export type RateAction = "proceed" | "confirmReclock" | "askChoice";
+
+export function rateAction(planRate: number, clock: ClockState): RateAction {
+  if (clock.sampleRate === planRate) return "proceed";
+  return clock.followUsb ? "askChoice" : "confirmReclock";
+}
+
+/** Turn the device's Follow USB policy on or off. A single write, outside the plan
+ *  (see params.ts FOLLOW_USB). The caller must have connected first. */
+export function setFollowUsb(on: boolean): Promise<void> {
+  return vdSet(PARAMS.FOLLOW_USB.id, 0, 0, on ? 1 : 0);
+}
+
+/** Follow USB's notify address. Exported because it is outside the plan, so a
+ *  caller that wants device-side changes to it must register the address itself
+ *  rather than getting it from the plan's writable set. */
+export const FOLLOW_USB_ADDR: [number, number, number] = [PARAMS.FOLLOW_USB.id, 0, 0];
 
 /** The vd commands a plan currently implies — the confirm-before-send preview. */
 export function dryRun(model: DeviceModel, plan: Plan): VdCommand[] {

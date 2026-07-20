@@ -256,6 +256,38 @@ select#model-picker {
   }
 }
 
+/* Follow USB: the device's clock policy, sitting next to the rate it governs. Lit
+   when on (the device is slaved to its USB host, so the rate picker cannot make a
+   change stick), plain when off. Before any device has been read it is drawn as its
+   own dimmed, dashed "unknown" — never as "off", which is the state in which the
+   picker IS trusted, and never hidden, since the warning is worth the least once the
+   operator has already committed to a device action. */
+.follow-usb {
+  align-self: center;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--ctl-bg);
+  border: 1px solid var(--ctl-border);
+  cursor: pointer;
+}
+
+.follow-usb[data-state="on"] {
+  color: var(--tally);
+  background: var(--tally-bg);
+  border-color: color-mix(in srgb, var(--tally) 45%, var(--ctl-border));
+}
+
+.follow-usb[data-state="unknown"] {
+  color: color-mix(in srgb, var(--text-dim) 60%, transparent);
+  border-style: dashed;
+}
+
 .tools {
   display: flex;
   gap: 8px;
@@ -2565,6 +2597,11 @@ select:focus-visible,
   justify-content: flex-end;
   gap: 10px;
   margin-top: 20px;
+}
+/* Three choices, each spelled out rather than labelled OK/Cancel, so they wrap
+   onto a second row on a narrow window instead of being squeezed. */
+.rate-choice-actions {
+  flex-wrap: wrap;
 }
 .consent-actions button {
   padding: 9px 18px;

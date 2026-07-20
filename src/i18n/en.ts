@@ -57,6 +57,13 @@ export const en = {
     shareUrlHint: "Copy a shareable link to this plan (also placed in the address bar)",
     downloadJson: "Download JSON",
     downloadJsonHint: "Download this plan as JSON — the desktop app opens it",
+    followUsb: "FOLLOW USB",
+    followUsbOnHint:
+      "The device is taking its clock from the USB host, so the rate above cannot be changed on the device. Click to turn Follow USB off.",
+    followUsbOffHint:
+      "The device is holding its own clock, so the rate above is the one it runs at. Click to hand the clock back to the USB host.",
+    followUsbUnknownHint:
+      "Whether the device is taking its clock from the USB host has not been read yet, so the rate above may not be the one it runs at. Click to read it from the device.",
   },
   console: {
     mute: "MUTE",
@@ -178,6 +185,7 @@ export const en = {
     prePost: "Pre/Post",
     prePostLcdOnly: "CH → FX send Pre/Post is set on the device only (not writable from software).",
     eqRateLocked: "Stereo channel EQ is disabled at 176.4 / 192 kHz — forced off.",
+    insFxRateLocked: "Insert FX is unavailable above 96 kHz — forced off.",
     channelOn: "Channel",
     sendOn: "Send",
     toSt: "TO ST",
@@ -409,6 +417,8 @@ export const en = {
     loaded: (model: string): string => `Loaded ${model} — drag to place and connect`,
     switchedModel: (model: string): string => `Switched to ${model}`,
     sampleRate: (rate: string): string => `Sample rate: ${rate}`,
+    followUsbOn: "Follow USB on — the device now clocks from the USB host",
+    followUsbOff: "Follow USB off — the device now holds its own clock",
     newPlan: "Created a new plan",
     planLoaded: "Plan loaded",
     planSaved: "Plan saved",
@@ -492,6 +502,10 @@ export const en = {
     selfTestExport:
       "This model has unconfirmed parameter mappings. Save the self-test report so it can be sent back to confirm them?",
     deviceErrorExport: "Some parameters could not be read or written. Save a report listing each failure?",
+    reclock: (deviceRate: string, planRate: string): string =>
+      `The device is running at ${deviceRate} and the plan is set to ${planRate}. Writing re-clocks the device and renegotiates the USB stream, interrupting audio for a moment. The computer follows the device's new rate. Continue?`,
+    followUsbOn:
+      "Turn Follow USB on? The device hands its clock back to the computer. If the computer is running a different rate, the device re-clocks to it immediately, which can interrupt audio; if the rates already match, nothing changes.",
     writeRetry: (sent: number, notSent: number): string =>
       `The write stopped after a failure: ${sent} setting${sent === 1 ? "" : "s"} reached the device and ${notSent} did not. Try again? Only what still differs will be sent.`,
   },
@@ -505,6 +519,16 @@ export const en = {
     accept: "By continuing, you accept this risk.",
     agree: "Agree and continue",
     quit: "Quit",
+  },
+  rateChoice: {
+    title: "The device is following its USB host",
+    intro: (planRate: string, deviceRate: string): string =>
+      `The plan is set to ${planRate}, but the device is running at ${deviceRate} and Follow USB is on, so it takes its clock from the computer. Writing ${planRate} now would re-clock the device and then revert to ${deviceRate} a moment later.`,
+    hiRateNote: (limits: string): string =>
+      `${limits} Those settings stay out of this write, but the plan keeps them — lowering the rate writes them again.`,
+    adopt: (deviceRate: string): string => `Write at ${deviceRate}`,
+    release: (planRate: string): string => `Turn Follow USB off and write at ${planRate}`,
+    cancel: "Cancel",
   },
   loadReport: {
     title: "Plan could not be loaded",
@@ -545,6 +569,10 @@ export const en = {
       `${n} setting${n === 1 ? "" : "s"} could not be read, so the device's state is not fully known. Live sync needs a complete read to start.`,
     followReadIncomplete: (n: number): string =>
       `${n} setting${n === 1 ? "" : "s"} could not be read back after a change on the device, so the plan no longer matches it. Fetch again to resync.`,
+    clockUnread: (message: string): string =>
+      `The device's sample rate and Follow USB state could not be read (${message}), so there is no way to tell whether the plan's rate would stick. Nothing was written.`,
+    followUsbWrite: (message: string): string =>
+      `Follow USB could not be turned off (${message}). Nothing was written.`,
     unknownModel: (model: string): string => `Unknown model: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `The connected device is ${device}, but ${ui} is selected. Open or switch to the matching plan before writing.`,

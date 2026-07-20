@@ -551,6 +551,48 @@ runtime error can arrive from several sources at once (live / follow / link watc
 `stopLiveOnError`, which uses the `liveSessionUp` flag to drop the connection and show the dialog exactly once — the
 second and later calls return early because `deactivateLive` clears that flag synchronously.
 
+### Sample rate and Follow USB
+
+The sample rate is the one plan value the device can accept and then undo by itself. With **SETUP > Follow USB**
+on, the URX slaves its clock to the USB host: a write to 766 is accepted, re-clocks the hardware, and roughly
+0.4 s later the host's rate is reasserted (measured on a URX44V). Writing straight through would report success
+for a change that did not last.
+
+`Write to device` therefore reads the device's clock state — Follow USB (848) and the running rate (766) — before
+the diff, and settles the rate before anything is sent (`settleSampleRate` in `main.ts`, `readClockState` in
+`client.ts`). Matching rates proceed unchanged. With Follow USB **off**, a mismatch is a plain confirm, since the
+plan's rate is the one that sticks. With it **on**, a modal (`ui/rate-choice.ts`) offers the two real answers —
+write at the device's rate, or turn Follow USB off and write the plan's — rather than guessing which was meant.
+A failed read cancels the write, per the rule above: the rate decides which parameters the write may even contain.
+
+The check lives at the **write boundary**, not where the rate is chosen. The picker and plan loading both happen
+with no device attached, so there is nothing to compare against until a connection exists.
+
+Follow USB is deliberately **not** part of the plan or `planToCommands`: it is a device-side clock policy rather
+than a routing choice, and emitting it would make every Live-sync flush re-assert it. It is read as a pre-check and
+written with a single `vdSet`. Live sync registers 848 for notifies alongside the plan's writable set and
+**intercepts** it ahead of node resolution (`DeviceFollow`'s `intercept` hook) — an address with no owner node
+would otherwise escalate every change to a full device re-read. The **FOLLOW USB** badge beside the Rate picker
+shows and toggles the state. Before any device has been read it is drawn as a dimmed "unknown" (clicking it then
+reads the state rather than toggling), never as "off" — hiding it until a device action meant the warning only
+arrived once the operator had already committed to one. It is session-scoped rather than persisted, since a
+remembered value would be a claim about
+hardware that may not even be attached. The Rate picker itself locks while Live sync is on, because re-clocking
+renegotiates the USB stream, interrupting audio and putting the held connection at risk. The badge stays live:
+toggling Follow USB only re-clocks when the host is on a different rate, and the connection survived it on a URX44V.
+
+Above 96 kHz the device drops whole features (stereo channel EQ, insert FX, the FX2 bus), but it still **accepts
+and holds writes to their parameters** — measured on a URX44V at 192 kHz for the stereo CH EQ (213), FX2's fader,
+send and effect type, and the insert FX selector (135). "The feature is unavailable" does not mean "the parameter
+is unwritable": only the DSP is gone, the stored value survives. So the write set is not gated by rate. Doing so
+was tried and reverted: it did not prevent a non-convergence (there was none to prevent), it only stopped the plan
+from reaching the device, which would leave settings the plan never asked for in place once the rate came back
+down. The UI still reflects the functional limits (`channelEqUnavailable` / `insertFxAvailable` lock the EQ and
+INS FX chips, `rateConstraints` dims FX2), because those features genuinely do not run at those rates.
+
+`SAMPLE_RATE` is emitted **first** so the rest of the write lands on a device already clocked the way the plan
+says. Confirmed on hardware: a rate-changing write completes, with the commands after the re-clock all arriving.
+
 ## Responsive layout (mobile)
 
 The inspector — a fixed 300px column on desktop — becomes a bottom sheet (a rack drawer that slides up
