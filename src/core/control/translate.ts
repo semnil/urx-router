@@ -1159,6 +1159,17 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     for (let i = mark; i < out.length; i++) if (out[i].node === undefined) out[i].node = id;
     mark = out.length;
   };
+  // Sample rate (global y0, raw Hz). A top-level plan scalar (always set), so it is
+  // emitted unconditionally as absolute state. Writing it re-clocks the hardware;
+  // only 766 is sent (843 auto-follows). See params.ts SAMPLE_RATE.
+  //
+  // Emitted FIRST so the rest of the write lands on a device already clocked the way
+  // the plan says. Re-clocking is the largest single thing a write can do to the
+  // hardware, and everything after it is a value meant to hold under that clock.
+  // Confirmed on a URX44V: a rate-changing write completes, with the commands that
+  // follow the re-clock all reaching the device.
+  out.push(command("SAMPLE_RATE", 0, plan.sampleRate));
+  own(undefined);
   for (const conn of plan.connections) {
     // Fixed main path into STEREO: the channel's CH_FADER / CH_PAN, or the FX
     // channel's FX_CHANNEL_FADER / FX_CHANNEL_BAL — the source's main level / pan.
@@ -1519,12 +1530,6 @@ export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   if (delay?.time !== undefined) out.push(command("STREAM_DELAY_TIME", 0, delay.time));
   if (delay?.frameRate !== undefined) out.push(command("STREAM_DELAY_FRAME_RATE", 0, delay.frameRate));
   own("bus.stream");
-
-  // Sample rate (global y0, raw Hz). A top-level plan scalar (always set), so it
-  // is emitted unconditionally as absolute state. Writing it re-clocks the
-  // hardware; only 766 is sent (843 auto-follows). See params.ts SAMPLE_RATE.
-  out.push(command("SAMPLE_RATE", 0, plan.sampleRate));
-  own(undefined);
 
   // OSC → bus assign — absolute over every OSC-assignable bus. A wire turns the
   // destination's L/R channels on (oscL/oscR; absent = on); no wire turns both
