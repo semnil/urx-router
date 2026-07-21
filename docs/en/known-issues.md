@@ -63,8 +63,8 @@ protocol, so newer versions are not guaranteed to behave identically.
 | Component | Verified version |
 | --- | --- |
 | Device | URX44V |
-| Firmware | V1.3.0.1 |
-| Device Center | 2.2.0 (2.2.0.2) |
+| Firmware | V1.3.1.0 |
+| Device Center | 2.2.1 (2.2.1.1) |
 
 On connect the app reads the unit's System firmware version (`/vd/device`); when
 it differs from the verified version above, fetch, write and live sync warn at
@@ -152,11 +152,16 @@ computer is running a different rate.
 ## The HDMI sample-rate ceiling depends on the audio mode
 
 The HDMI input's sample-rate ceiling depends on the mode set on the device's
-HDMI menu: **2ch mode** is capped at 48 kHz, while **Multi Channels mode** goes
-up to 192 kHz with the multichannel audio down-mixed 8→2 into the stereo pair.
-Because the active mode — and therefore both the ceiling and the down-mix —
-follows the incoming HDMI signal at run time, not anything a saved plan holds,
-the planner does not model this interaction: it is not enforced in the
-sample-rate warnings. The HDMI input stays a selectable channel source and the
-8→2 down-mix appears in the routing (see [device-model.md](device-model.md));
-only the mode-dependent rate ceiling is out of scope.
+**HDMI menu** (SETUP > Peripheral > HDMI): **2ch mode** is capped at 48 kHz,
+while **Multi Channels mode** goes up to 192 kHz with the multichannel audio
+down-mixed 8→2 into the stereo pair.
+
+This mode does not follow the incoming signal; it is a device setting configured
+and held on the unit (param 768, both readable and writable). The planner treats
+it like HDCP, Brightness, Language, and Auto Power Off — a device-utility setting
+that is known but kept out of the routing plan's scope — so it models neither the
+mode nor the mode-dependent rate ceiling (neither is reflected in the sample-rate
+warnings). The 8→2 down-mix, and whether a high-rate signal actually arrives in
+Multi Channels mode, still follow the incoming HDMI signal and are not determined
+by a saved plan either. The HDMI input stays a selectable channel source and the
+8→2 down-mix appears in the routing (see [device-model.md](device-model.md)).

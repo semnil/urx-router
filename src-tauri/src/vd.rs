@@ -1,7 +1,7 @@
 // Live hardware control transport: a client for the Device Center broker's
 // "vd" protocol over WebSocket (ws://127.0.0.1:51780/casket, JSON-RPC 1.0).
 // Device Center must be running with a URX connected; it bridges the broker to
-// the unit's CDC serial. See reference/.local/vd-protocol.md.
+// the unit's CDC serial. See reference/work/vd/vd-protocol.md.
 //
 // A dedicated worker thread owns the socket so the broker's continuous meter
 // notifications are drained without blocking command latency, and so the device

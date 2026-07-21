@@ -5,7 +5,7 @@
 // ONE "engine" array param addressed by a SLOT on the y axis, and a pointer param
 // names which engine the selected effect was bound to. This module isolates that
 // addressing plus the raw↔display encodings (all established by live LCD
-// calibration on a factory URX44V; see reference/.local/.../insert-fx-calib).
+// calibration on a factory URX44V; see reference/work/device-tests/insert-fx-calib).
 //
 // Plan storage keeps RAW broker integers keyed by engine SLOT (insertFxParams on
 // the node), so a captured plan round-trips and the inspector edits raw with a

@@ -20,8 +20,9 @@
 // (insertFxOn) and emitted after the selector, so the restore puts a captured
 // "selected but bypassed" effect back to bypassed. Input source is swept across
 // the model's selectable input ports, so the (still-unverified on URX22/44)
-// physical port map is exercised, not just the captured selection. PASSES
-// covers the largest enum.
+// physical port map is exercised, not just the captured selection. The pass count
+// (passesFor) is the max of the largest swept enum and the passes needed to reach
+// every input port, so the trailing ports (usbsub / hdmi) are covered too.
 //
 // UNVERIFIED GUESSES: some device mappings are confirmed only on URX44V and remain
 // guesses on URX22/URX44 (see UNVERIFIED_MAPPINGS). A static audit first refutes
@@ -153,12 +154,9 @@ const ENUM_SWEEP: Record<string, number[]> = {
 // generic "+1" perturb drives it out of range. Both round-trip in value-coverage.
 const SKIP = new Set(["insertFx", "insertFxParams", "autoMakeup", "oneKnob", "fxEffect", "stereoLink", "panBal"]);
 
-// Sweep passes: the max option-list length across every swept enum (today the 8
-// input insert-FX options), computed so every option of every swept enum is
-// written at least once over the run. The input-source port sweep shares the
-// same passes; the last input ports stay unreached on URX44/44V (full port
-// coverage would need ports - groups + 1 passes: 10/9/7 per model). Exported
-// for tests.
+// Enum-sweep floor: the max option-list length across every swept enum (today
+// the 8 input insert-FX options), so every option of every swept enum is written
+// at least once over the run. Exported for tests.
 export const PASSES = Math.max(
   INSERT_FX_OPTIONS.length,
   OUTPUT_INSERT_FX_OPTIONS.length,
@@ -166,6 +164,18 @@ export const PASSES = Math.max(
   EQ_ONE_KNOB_TYPE_WIDE_OPTIONS.length,
   ...Object.values(ENUM_SWEEP).map((o) => o.length),
 );
+
+// Passes for a model: enough to write every swept enum option at least once AND
+// to point some channel group at every selectable input port. The input-source
+// sweep gives group gi the port at (pass + gi) mod N, so the union across G
+// groups reaches every one of the N ports only after N - G + 1 passes (URX44V 10
+// / URX44 9 / URX22 7). Taking the max with the enum floor keeps the last input
+// ports (usbsub / hdmi) reached instead of leaving their INPUT_PORTS guess
+// unexercised. Exported for tests.
+export function passesFor(model: DeviceModel): number {
+  const ports = selectableInputIds(model).length;
+  return Math.max(PASSES, ports - channelSourceGroups(model).length + 1);
+}
 
 // Perturb every scalar in an object tree in place: flip bools, nudge numbers,
 // cycle the PRE/POST tap, and set swept enums to this pass's option.
@@ -246,20 +256,18 @@ function sweepInsertFx(plan: Plan, pass: number, model: DeviceModel): void {
   }
 }
 
-// Sweep input-source selection across the model's selectable input ports, so the
-// physical port map (INPUT_PORTS) is verified — not just whatever the captured
-// state happened to assign. Each pass points every channel group at a different
-// input node (cycling), replacing its source wire. A linked mono pair is assigned
-// together to one node (the device fixes the partner: its L port to the first
-// channel, R to its partner), and a stereo channel takes one node's L/R pair —
-// matching how planToCommands derives the per-slot port. The port value written is
-// inputPorts(node), so a mismatch on read-back pins INPUT_PORTS as wrong. Levels
-// are floored by makeSilent, so re-routing inputs stays silent.
-function sweepInputSource(plan: Plan, pass: number, model: DeviceModel): void {
-  const inputs = model.nodes.filter((n) => n.kind === "input" && inputPorts(n.id)).map((n) => n.id);
-  if (!inputs.length) return;
-  // Group channels into source-selection units: a linked mono pair, or a single
-  // channel (unpaired mono / stereo).
+// Ids of the model's selectable input nodes — those with a physical port map
+// (INPUT_PORTS). Shared by the input-source sweep (which cycles channel groups
+// across them) and the pass count (which needs their count, N). Exported for tests.
+export function selectableInputIds(model: DeviceModel): string[] {
+  return model.nodes.filter((n) => n.kind === "input" && inputPorts(n.id)).map((n) => n.id);
+}
+
+// Group channels into source-selection units: a linked mono pair, or a single
+// channel (unpaired mono / stereo). Shared by the input-source sweep (which
+// assigns each group an input node) and the pass count (which needs the group
+// count, G, to size full port coverage).
+function channelSourceGroups(model: DeviceModel): string[][] {
   const groups: string[][] = [];
   const seen = new Set<string>();
   for (const node of model.nodes) {
@@ -273,6 +281,22 @@ function sweepInputSource(plan: Plan, pass: number, model: DeviceModel): void {
       seen.add(node.id);
     }
   }
+  return groups;
+}
+
+// Sweep input-source selection across the model's selectable input ports, so the
+// physical port map (INPUT_PORTS) is verified — not just whatever the captured
+// state happened to assign. Each pass points every channel group at a different
+// input node (cycling), replacing its source wire. A linked mono pair is assigned
+// together to one node (the device fixes the partner: its L port to the first
+// channel, R to its partner), and a stereo channel takes one node's L/R pair —
+// matching how planToCommands derives the per-slot port. The port value written is
+// inputPorts(node), so a mismatch on read-back pins INPUT_PORTS as wrong. Levels
+// are floored by makeSilent, so re-routing inputs stays silent.
+function sweepInputSource(plan: Plan, pass: number, model: DeviceModel): void {
+  const inputs = selectableInputIds(model);
+  if (!inputs.length) return;
+  const groups = channelSourceGroups(model);
   const channelIds = new Set(groups.flat());
   // Drop existing channel source wires (other "source" wires — stream / monitor —
   // are left alone), then assign each group one cycling input node.
@@ -332,11 +356,12 @@ export function perturbedPlan(model: DeviceModel, original: Plan, pass: number, 
  * device matches `model`.
  */
 export async function runSelfTest(model: DeviceModel, settleMs = 300, signal?: AbortSignal): Promise<SelfTestReport> {
+  const passes = passesFor(model);
   const report: SelfTestReport = {
     ok: false,
     device: "",
     applied: 0,
-    passes: PASSES,
+    passes,
     written: 0,
     residual: [],
     collisions: [],
@@ -393,7 +418,7 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300, signal?: A
     // residual after convergence is the pass's mismatches. Cancellation stops
     // issuing round-trips between commands; the in-flight one finishes (so the
     // device is left consistent), then sendConverging throws and phaseStep bails.
-    for (let pass = 0; pass < PASSES; pass++) {
+    for (let pass = 0; pass < passes; pass++) {
       const plan = perturbedPlan(model, original, pass, suppress);
       report.phase = "write";
       const result = await phaseStep(sendConverging(model, plan, undefined, 3, settleMs, signal));

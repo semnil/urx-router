@@ -5,7 +5,7 @@
 // param per FX channel (681 for FX1, 685 for FX2), addressed by a SLOT on the y
 // axis, and the slot's meaning depends on the selected effect type. This module
 // isolates that addressing oddity plus the raw↔display encodings (all established
-// by live LCD calibration; see reference/.local/vd-params.md "FX channel EFFECT").
+// by live LCD calibration; see reference/work/vd/vd-params.md "FX channel EFFECT").
 //
 // Plan storage mirrors SSMCS: raw broker integers are kept in the plan and turned
 // into the device's display units here, so a captured plan round-trips exactly and

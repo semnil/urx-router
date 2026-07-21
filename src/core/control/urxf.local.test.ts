@@ -1,5 +1,5 @@
 // Parser check against files the hardware actually wrote. The samples live in the
-// private reference repository (reference/.local/sd, excluded from this one), so
+// private reference repository (reference/work/urxf/samples, excluded from this one), so
 // this suite runs where they are present and skips where they are not — CI and a
 // fresh clone see it skip, with the reason on the describe name. urxf.test.ts is
 // the portable suite; this one is what proves the format notes match the device.
@@ -11,7 +11,7 @@ import { applySourceState } from "./readback";
 import { getModel } from "../../models";
 import { emptyPlan } from "../plan";
 
-const DIR = "reference/.local/sd";
+const DIR = "reference/work/urxf/samples";
 const present = existsSync(DIR);
 const read = (name: string): Uint8Array => new Uint8Array(readFileSync(`${DIR}/${name}`));
 
