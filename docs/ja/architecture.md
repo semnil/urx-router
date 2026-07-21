@@ -781,9 +781,10 @@ SHA とコメントを一緒にバンプする。例外は `dtolnay/rust-toolcha
 (`pnpm build:demo`。`.env.demo` が `VITE_DEMO=1` を与える) でビルドし、`.github/workflows/pages.yml`
 が `vX.Y.Z` リリースタグの push 時に `dist` を Pages へ公開する (デモはリリース版に追従する)。タグ push 前に
 ローカルで確認するには `pnpm build:demo` の後に `pnpm preview` を実行する (`dist` を
-`http://localhost:4173` で配信)。デモはビューア用途のため、ファイルの保存 / 読込と
+`http://localhost:4173` で配信)。デモはネイティブのファイル IO を持たないため、保存 / 読込ダイアログと
 PNG / PDF 出力をツールバーから隠す (`src/core/env.ts` の `DEMO` フラグが `[data-demo-hide]` 要素を
-非表示にする)。代わりにデモでは `[data-demo-only]` のコントロールを表示する: 「共有 URL」は計画を
+非表示にする) — ただし計画 JSON をウィンドウにドロップして開くことは可能 (ブラウザの
+ドラッグ & ドロップ経路はデモでも無効化しない)。代わりにデモでは `[data-demo-only]` のコントロールを表示する: 「共有 URL」は計画を
 `?plan=` ディープリンクとしてコピーし (手動コピーのフォールバックとしてアドレスバーにも反映)、
 「JSON ダウンロード」はデスクトップ版の保存と同一の計画ドキュメントをダウンロードする — デモで
 作成・読込した計画をデスクトップ版へ持ち込める。`?plan=` のペイロードは deflate 圧縮

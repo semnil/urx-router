@@ -928,8 +928,10 @@ Separate from the desktop app, a browser-only demo is published to GitHub Pages.
 (`pnpm build:demo`, with `.env.demo` setting `VITE_DEMO=1`) builds it, and `.github/workflows/pages.yml`
 publishes `dist` to Pages when a `vX.Y.Z` release tag is pushed, so the demo tracks released versions. To
 check the demo bundle locally before a tag, run `pnpm build:demo` then `pnpm preview` (serves `dist` at
-`http://localhost:4173`). The demo is a viewer, so file save / load and PNG / PDF
-export are hidden from the toolbar (`src/core/env.ts`'s `DEMO` flag hides `[data-demo-hide]` elements). In
+`http://localhost:4173`). The demo has no native file IO, so the save / load dialogs and PNG / PDF
+export are hidden from the toolbar (`src/core/env.ts`'s `DEMO` flag hides `[data-demo-hide]` elements) —
+though a plan JSON can still be opened by dropping it on the window (the browser drag & drop path is not
+demo-gated). In
 their place the demo reveals `[data-demo-only]` controls: Share URL copies the plan as a `?plan=` deep link
 (also placed in the address bar as a copy-by-hand fallback), and Download JSON downloads the plan document —
 identical to a desktop save — so a plan built or opened in the demo carries over to the desktop app. The
