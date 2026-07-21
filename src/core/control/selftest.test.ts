@@ -23,7 +23,7 @@ import {
   PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
 } from "./params";
 import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
-import { formatSelfTestReport, PASSES, perturbedPlan, runSelfTest } from "./selftest";
+import { formatSelfTestReport, passesFor, PASSES, perturbedPlan, runSelfTest, selectableInputIds } from "./selftest";
 
 const model = getModel("URX44V");
 
@@ -66,13 +66,49 @@ beforeEach(() => {
   for (const m of [vdConnect, vdDisconnect, vdGet, vdSet, vdGetStr]) vi.mocked(m).mockReset();
 });
 
+describe("passesFor (model-driven sweep count)", () => {
+  // Port refs the input-source sweep writes over `passes` passes (NONE sentinel
+  // excluded) — the physical ports the run actually exercises.
+  function sourcePortsCovered(m: ReturnType<typeof getModel>, passes: number): Set<number> {
+    const seed = emptyPlan(m.id);
+    ensureFixedConnections(m, seed);
+    const covered = new Set<number>();
+    for (let pass = 0; pass < passes; pass++) {
+      for (const c of planToCommands(m, perturbedPlan(m, seed, pass))) {
+        if (/^INPUT_SOURCE$|^STEREO_INPUT_SOURCE_[LR]$/.test(c.name) && c.vdValue !== PORT_REF_NONE) {
+          covered.add(c.vdValue);
+        }
+      }
+    }
+    return covered;
+  }
+  for (const id of ["URX44V", "URX44", "URX22"] as const) {
+    it(`${id}: reaches every selectable input port, at least the enum floor`, () => {
+      const m = getModel(id);
+      expect(passesFor(m)).toBeGreaterThanOrEqual(PASSES);
+      // A full cycle (one pass per input port) is maximal coverage; passesFor must
+      // reach the same port set with its computed count — no port left unexercised.
+      const full = sourcePortsCovered(m, selectableInputIds(m).length);
+      const actual = sourcePortsCovered(m, passesFor(m));
+      expect([...actual].sort((a, b) => a - b)).toEqual([...full].sort((a, b) => a - b));
+    });
+  }
+
+  it("URX44V/44 need more than the enum floor (the gap this closes)", () => {
+    // The old fixed count (PASSES) left the trailing input ports (usbsub / hdmi)
+    // unreached on these models; passesFor raises it so they are covered.
+    expect(passesFor(getModel("URX44V"))).toBeGreaterThan(PASSES);
+    expect(passesFor(getModel("URX44"))).toBeGreaterThan(PASSES);
+  });
+});
+
 describe("runSelfTest", () => {
   it("passes and restores against a faithful device", async () => {
     installMockDevice(populatedPlan());
     const report = await runSelfTest(model, 0);
     expect(report.device).toBe("URX44V");
     expect(report.phase).toBe("done");
-    expect(report.passes).toBe(8);
+    expect(report.passes).toBe(passesFor(model));
     expect(report.residual).toEqual([]);
     expect(report.ok).toBe(true);
     expect(report.restored).toBe(true);
