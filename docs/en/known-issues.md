@@ -63,8 +63,8 @@ protocol, so newer versions are not guaranteed to behave identically.
 | Component | Verified version |
 | --- | --- |
 | Device | URX44V |
-| Firmware | V1.3.0.1 |
-| Device Center | 2.2.0 (2.2.0.2) |
+| Firmware | V1.3.1.0 |
+| Device Center | 2.2.1 (2.2.1.1) |
 
 On connect the app reads the unit's System firmware version (`/vd/device`); when
 it differs from the verified version above, fetch, write and live sync warn at

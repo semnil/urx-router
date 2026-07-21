@@ -8,7 +8,7 @@
  * reporting a different System version triggers the mismatch warning. Empty
  * disables the gate entirely (e.g. before a validated version has been recorded).
  */
-export const SUPPORTED_SYSTEM_FIRMWARE = "1.3.0.1";
+export const SUPPORTED_SYSTEM_FIRMWARE = "1.3.1.0";
 
 /**
  * Whether the connected unit's System firmware differs from the validated version
