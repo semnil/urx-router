@@ -32,6 +32,8 @@ export const en = {
     fetchCancel: "Cancel fetch",
     writeDevice: "Write to device",
     writeCancel: "Cancel write",
+    compare: "Compare with device (experimental)",
+    compareCancel: "Cancel compare",
     selfTest: "Self-test (experimental)",
     selfTestCancel: "Cancel self-test",
     liveSync: "Live sync",
@@ -448,6 +450,13 @@ export const en = {
       `${name} cannot be opened here — drop a plan (.json) or a settings file (.urxf)`,
     dropMultiple: "Drop one file at a time",
     fetchError: (message: string): string => `Device fetch failed: ${message}`,
+    compareConnecting: "Comparing with the device…",
+    compareMatch: (compared: number, ms: number): string => `All ${compared} settings read match the device (${ms} ms)`,
+    compareDiff: (differ: number, compared: number, ms: number): string =>
+      `${differ} of ${compared} settings read differ from the device (${ms} ms)`,
+    comparePartial: (differ: number, compared: number, failed: number, ms: number): string =>
+      `${differ} of ${compared} differ, ${failed} could not be read (${ms} ms)`,
+    compareError: (message: string): string => `Device compare failed: ${message}`,
     writeConnecting: "Connecting to the device…",
     writeNoChanges: "Device already matches the plan — nothing to write",
     written: (n: number): string => `Wrote ${n} setting${n === 1 ? "" : "s"} to the device`,
@@ -548,6 +557,11 @@ export const en = {
     copy: "Copy",
     copied: "Copied",
     close: "Close",
+  },
+  compareReport: {
+    title: "Device comparison",
+    intro:
+      "Read-only — nothing was written. Every parameter the tool round-trips was read from the device and compared with the plan; the summary counts them and the full log lists each one, so a match can be verified rather than trusted. Use it to check an imported settings file against the hardware — connect the unit the file came from and compare.",
   },
   licenses: {
     title: "Third-party licenses",

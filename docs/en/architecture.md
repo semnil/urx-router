@@ -488,11 +488,27 @@ discipline.
 
 ### Cancelling a long operation
 
-Fetch, write, and self-test each round-trip the whole device serially over one connection, so a stalled link can
-take minutes. Each therefore holds an `AbortController` and toggles its menu item to a "Cancel" label while
+Fetch, write, self-test, and compare each round-trip the whole device serially over one connection, so a stalled
+link can take minutes. Each therefore holds an `AbortController` and toggles its menu item to a "Cancel" label while
 running (a second click calls `abort()`). The signal is checked between round-trips in the readback
 (`applyDeviceState`) and the diff/send (`diffPlan` / `sendConverging`); the in-flight round-trip is allowed to
 finish (leaving the device consistent) before bailing. A cancel surfaces through `withDevice` as `status.canceled`.
+
+### Compare with device (experimental)
+
+A read-only check that reads every parameter the plan implies, records the device's value beside the plan's, and
+**writes nothing** — the automated counterpart to eyeballing an imported settings file. Import a `.urxf`, connect the
+unit it came from, and compare: a faithful import shows no differences. `comparePlan` reads each planned command's
+device value and keeps every one (matched or not); `compareNames` does the same for CH SETTING names against the
+device's actual name. Unlike a write it does not stop on the first read failure: the audit wants every parameter it
+can still read, with the unreadable ones listed as gaps that leave the comparison incomplete.
+
+The report (`formatCompareReport`, shown in the shared `#load-report` modal) is **always shown, even on a full
+match**, and carries a compared count, the differences, and a **full per-parameter log** — because a comparison that
+returns "matches" instantly is otherwise indistinguishable from one that read nothing. The status line states the
+count and the elapsed read time (`status.compareMatch` / `compareDiff` / `comparePartial`), so ~500 serial
+round-trips reading in a fraction of a second, or a suspiciously instant verdict, is visible rather than trusted.
+Behind `--experimental` and, like fetch and write, disabled while Live sync holds the connection.
 
 ### Reporting a drop or partial failure
 

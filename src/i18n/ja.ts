@@ -32,6 +32,8 @@ export const ja: Messages = {
     fetchCancel: "取得を中止",
     writeDevice: "デバイスへ書き込み",
     writeCancel: "書き込みを中止",
+    compare: "デバイスと照合 (実験的)",
+    compareCancel: "照合を中止",
     selfTest: "セルフテスト (実験的)",
     selfTestCancel: "セルフテストを中止",
     liveSync: "ライブ同期",
@@ -439,6 +441,13 @@ export const ja: Messages = {
       `${name} は開けません — 計画ファイル (.json) か設定ファイル (.urxf) をドロップしてください`,
     dropMultiple: "ファイルは 1 つずつドロップしてください",
     fetchError: (message: string): string => `デバイスからの取得に失敗しました: ${message}`,
+    compareConnecting: "デバイスと照合しています…",
+    compareMatch: (compared: number, ms: number): string => `読み取った全 ${compared} 件がデバイスと一致 (${ms} ms)`,
+    compareDiff: (differ: number, compared: number, ms: number): string =>
+      `読み取った ${compared} 件中 ${differ} 件がデバイスと相違 (${ms} ms)`,
+    comparePartial: (differ: number, compared: number, failed: number, ms: number): string =>
+      `${compared} 件中 ${differ} 件が相違、${failed} 件は読み取れず (${ms} ms)`,
+    compareError: (message: string): string => `デバイスとの照合に失敗しました: ${message}`,
     writeConnecting: "デバイスに接続しています…",
     writeNoChanges: "デバイスは計画と一致しています — 書き込む変更はありません",
     written: (n: number): string => `${n} 件の設定をデバイスに書き込みました`,
@@ -534,6 +543,11 @@ export const ja: Messages = {
     copy: "コピー",
     copied: "コピーしました",
     close: "閉じる",
+  },
+  compareReport: {
+    title: "デバイスとの照合",
+    intro:
+      "読み取り専用 — 書き込みは行っていません。ツールが往復する全 param をデバイスから読み、計画と照合しました。要約に件数を、全件ログに 1 件ずつ示すので、一致を鵜呑みにせず検証できます。取り込んだ設定ファイルを実機と照合する用途に使えます — ファイルの元となった個体を接続して照合してください。",
   },
   licenses: {
     title: "サードパーティライセンス",

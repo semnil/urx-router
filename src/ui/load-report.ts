@@ -1,10 +1,12 @@
 import { t } from "../i18n";
 
-// Show a copyable plan-load failure report (a `?plan=` decode error or a routing
-// validation failure). The report text is selectable and the Copy button writes
-// it to the clipboard, so it can be pasted back to the tool that generated the
-// plan to fix it. Re-showing replaces the text and re-binds the buttons.
-export function showLoadReport(report: string): void {
+// Show a copyable report in the shared modal. The default framing is a plan-load
+// failure (a `?plan=` decode error or a routing validation failure); `opts`
+// overrides the title and intro so the same copyable-<pre> surface serves other
+// long, copyable reports (e.g. a read-only device↔plan comparison). The report
+// text is selectable and the Copy button writes it to the clipboard. Re-showing
+// replaces the text and re-binds the buttons.
+export function showLoadReport(report: string, opts?: { title: string; intro: string }): void {
   const scrim = document.getElementById("load-report") as HTMLElement;
   const title = document.getElementById("load-report-title") as HTMLElement;
   const intro = document.getElementById("load-report-intro") as HTMLElement;
@@ -13,8 +15,8 @@ export function showLoadReport(report: string): void {
   const close = document.getElementById("load-report-close") as HTMLButtonElement;
 
   const m = t().loadReport;
-  title.textContent = m.title;
-  intro.textContent = m.intro;
+  title.textContent = opts?.title ?? m.title;
+  intro.textContent = opts?.intro ?? m.intro;
   copy.textContent = m.copy;
   close.textContent = m.close;
   body.textContent = report;

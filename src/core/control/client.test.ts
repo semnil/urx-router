@@ -7,7 +7,16 @@ import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
 vi.mock("../platform", () => ({ vdGet: vi.fn(), vdSet: vi.fn() }));
 
 import { vdGet, vdSet } from "../platform";
-import { diffPlan, dryRun, formatWriteReport, sendCommands, sendConverging, sendPlan } from "./client";
+import {
+  compareCounts,
+  diffPlan,
+  dryRun,
+  formatCompareReport,
+  formatWriteReport,
+  sendCommands,
+  sendConverging,
+  sendPlan,
+} from "./client";
 import { planToCommands, type VdCommand } from "./translate";
 import { PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { PORT_REF_NONE } from "./vd";
@@ -246,5 +255,65 @@ describe("formatWriteReport", () => {
   it("falls back to a generic reason when an outcome has no error string", () => {
     const md = formatWriteReport("URX44V", [{ name: "CH2 EQ" }], []);
     expect(md).toContain("- CH2 EQ — unknown error");
+  });
+});
+
+const cmpCmd = (name: string, paramId: number, vdValue: number) =>
+  ({ name, paramId, x: 0, y: 1, vdValue }) as unknown as VdCommand;
+const cmpEntry = (name: string, paramId: number, vdValue: number, device: number) => ({
+  command: cmpCmd(name, paramId, vdValue),
+  device,
+  match: device === vdValue,
+});
+
+// One definition of the count rule, shared by the report and the status line.
+describe("compareCounts", () => {
+  it("counts compared and differ from the entries and returns the differing ones", () => {
+    const { compared, differ, numDiffs, nameDiffs } = compareCounts(
+      [cmpEntry("A", 1, 1, 1), cmpEntry("B", 2, 2, 9)],
+      [{ write: { param: 18, y: 0, value: "x" }, device: "y", match: false }],
+    );
+    expect(compared).toBe(3);
+    expect(differ).toBe(2);
+    expect(numDiffs.map((e) => e.command.name)).toEqual(["B"]);
+    expect(nameDiffs).toHaveLength(1);
+  });
+});
+
+describe("formatCompareReport", () => {
+  const entry = cmpEntry;
+
+  // The point of the full log: an all-match comparison still lists every read, so
+  // an instant "matches" is verifiable as N reads that agreed rather than zero.
+  it("logs every parameter, matched or not, with a compared count", () => {
+    const md = formatCompareReport("URX44V", [entry("CH1 FADER", 139, 800, 800), entry("CH1 PAN", 140, 512, 480)], []);
+    expect(md).toContain("Compared 2 parameters: 1 match, 1 differ");
+    expect(md).toContain("## Full log (every parameter compared)");
+    expect(md).toContain("CH1 FADER @ 139:0:1 — plan 800, device 800 — match");
+    expect(md).toContain("CH1 PAN @ 140:0:1 — plan 512, device 480 — DIFFER");
+  });
+
+  it("surfaces the mismatches up top before the full log", () => {
+    const md = formatCompareReport("URX44V", [entry("CH1 PAN", 140, 512, 480)], []);
+    expect(md.indexOf("## Differences (plan vs device)")).toBeLessThan(md.indexOf("## Full log"));
+    expect(md).toContain("- CH1 PAN @ 140:0:1 — plan 512, device 480");
+  });
+
+  it("compares names against the device value", () => {
+    const md = formatCompareReport(
+      "URX44V",
+      [],
+      [{ write: { param: 18, y: 2, value: "Lead Vox" }, device: "ch 3", match: false }],
+    );
+    expect(md).toContain('name @ 18:2 — plan "Lead Vox", device "ch 3" — DIFFER');
+  });
+
+  // A read failure leaves the comparison incomplete, so it is its own section
+  // rather than being folded into "matched".
+  it("reports unreadable parameters as an incomplete comparison", () => {
+    const md = formatCompareReport("URX44V", [entry("CH1 ON", 140, 1, 1)], [], ["CH_PAN: timeout"]);
+    expect(md).toContain("1 match, 0 differ; 1 could not be read");
+    expect(md).toContain("## Could not be read (comparison incomplete)");
+    expect(md).toContain("CH_PAN: timeout");
   });
 });

@@ -78,8 +78,12 @@ import {
 import type { ReadbackResult } from "./core/control/readback";
 import { parseUrxf, paramSourceOf, UrxfError } from "./core/control/urxf";
 import {
+  compareCounts,
+  compareNames,
+  comparePlan,
   diffNames,
   diffPlan,
+  formatCompareReport,
   formatWriteReport,
   FOLLOW_USB_ADDR,
   reachedAndFailed,
@@ -335,6 +339,9 @@ let selfTestAbort: AbortController | null = null;
 // second menu click cancels and applyStaticI18n keeps the "Cancel" label.
 let fetchAbort: AbortController | null = null;
 let writeAbort: AbortController | null = null;
+// The experimental read-only compare (device vs plan): same cancel-on-second-click
+// pattern as fetch, so its serial diff sweep can be stopped when the link stalls.
+let compareAbort: AbortController | null = null;
 const live = DEMO
   ? null
   : new LiveSync({
@@ -536,7 +543,7 @@ function setLiveUi(on: boolean): void {
     tally.hidden = !on;
     if (on) tally.textContent = `${t().toolbar.liveTag} · ${liveDeviceLabel}`;
   }
-  for (const id of ["btn-fetch", "btn-write", "btn-selftest", "btn-open-settings"]) {
+  for (const id of ["btn-fetch", "btn-write", "btn-selftest", "btn-open-settings", "btn-compare"]) {
     const el = document.getElementById(id) as HTMLButtonElement | null;
     if (el) el.disabled = on;
   }
@@ -837,6 +844,7 @@ function applyStaticI18n(): void {
   $("btn-fetch").textContent = fetchAbort ? m.toolbar.fetchCancel : m.toolbar.fetchDevice;
   $("btn-write").textContent = writeAbort ? m.toolbar.writeCancel : m.toolbar.writeDevice;
   $("btn-midi").textContent = m.midi.menuItem;
+  $("btn-compare").textContent = compareAbort ? m.toolbar.compareCancel : m.toolbar.compare;
   $("btn-selftest").textContent = selfTestAbort ? m.toolbar.selfTestCancel : m.toolbar.selfTest;
   // Live-sync toggle keeps a static label; aria-pressed and the on-air tally
   // carry the on/off state. Refresh the tally text too (the device label is set
@@ -1832,6 +1840,70 @@ if (!DEMO) {
         return doc && { bytes: doc.bytes, name: baseName(doc.path) };
       }),
     );
+
+    // Compare with device (experimental): a read-only pass that reads every
+    // parameter the plan implies, records the device's value beside the plan's,
+    // and writes nothing. It is the automated counterpart to eyeballing an
+    // imported settings file — connect the unit the .urxf came from and compare,
+    // and a faithful import shows no differences. Same shape as fetch: connect,
+    // confirm firmware, require the model to match, then read; a second click
+    // cancels the (serial, link-stalling) sweep. Unlike fetch it does not stop on
+    // a read failure — the audit wants every parameter it can still read.
+    //
+    // The result is always shown, even on a full match, as a full per-parameter
+    // log with a compared count and the elapsed time: an instant "matches" is
+    // otherwise indistinguishable from a comparison that read nothing, so the
+    // report has to make the reads visible rather than asking the operator to
+    // trust the verdict.
+    const compareBtn = $<HTMLButtonElement>("btn-compare");
+    compareBtn.addEventListener("click", async () => {
+      if (compareAbort) {
+        compareAbort.abort();
+        return;
+      }
+      const controller = new AbortController();
+      const { signal } = controller;
+      compareAbort = controller;
+      compareBtn.textContent = t().toolbar.compareCancel;
+      // Built while connected, shown after disconnect — like the fetch/write error
+      // reports, so an indefinite modal does not hold the broker connection open.
+      let report: string | null = null;
+      try {
+        await withDevice(t().status.compareConnecting, t().status.compareError, async (device) => {
+          if (!(await confirmFirmware(device))) {
+            setStatus(t().status.canceled);
+            return;
+          }
+          if (device.model !== modelId) {
+            showError(t().status.compareError(t().error.modelMismatch(device.model, modelId)));
+            return;
+          }
+          const model = getModel(modelId);
+          const startedAt = performance.now();
+          const { entries, errors } = await comparePlan(model, plan, signal);
+          signal.throwIfAborted();
+          const { entries: nameEntries, errors: nameErrors } = await compareNames(model, plan);
+          const elapsedMs = Math.round(performance.now() - startedAt);
+          const reads = [...errors, ...nameErrors];
+          const { compared, differ } = compareCounts(entries, nameEntries);
+          report = formatCompareReport(device.model, entries, nameEntries, reads);
+          setStatus(
+            reads.length
+              ? t().status.comparePartial(differ, compared, reads.length, elapsedMs)
+              : differ
+                ? t().status.compareDiff(differ, compared, elapsedMs)
+                : t().status.compareMatch(compared, elapsedMs),
+          );
+        });
+      } finally {
+        compareAbort = null;
+        compareBtn.textContent = t().toolbar.compare;
+      }
+      // Always shown (match or not): the full log is the point — it lets an
+      // instant "all match" be verified as N reads that agreed.
+      const m = t().compareReport;
+      if (report) showLoadReport(report, { title: m.title, intro: m.intro });
+    });
 
     // Device self-test (experimental): read the device, write a perturbed copy,
     // verify it matches, then restore. It owns its own connection, so it does not

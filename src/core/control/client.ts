@@ -328,3 +328,135 @@ export function formatWriteReport(
   lines.push("");
   return lines.join("\n");
 }
+
+// One numeric parameter compared against the device: the full, auditable form of
+// a CommandDiff, kept whether or not it matched.
+export interface CompareEntry {
+  command: VdCommand;
+  /** The device's current encoded value. */
+  device: number;
+  match: boolean;
+}
+
+// One CH SETTING name compared against the device.
+export interface NameCompareEntry {
+  write: NameWrite;
+  /** The device's current name (trailing padding trimmed). */
+  device: string;
+  match: boolean;
+}
+
+/**
+ * Read every parameter the plan implies and record the device's value beside the
+ * plan's — the full, auditable form of `diffPlan`, which keeps only the
+ * mismatches. The read-only "Compare with device" uses this so the report can
+ * show that every parameter was actually read, not just the ones that differ (a
+ * comparison that returns "matches" instantly is otherwise indistinguishable from
+ * one that read nothing). A read failure is collected in `errors` and that
+ * parameter left out of `entries`, so "matched" and "could not be read" stay
+ * distinct. Reads all — no stopOnError — so one dead parameter does not truncate
+ * the audit. The caller must have connected first.
+ */
+export async function comparePlan(
+  model: DeviceModel,
+  plan: Plan,
+  signal?: AbortSignal,
+): Promise<{ entries: CompareEntry[]; errors: string[] }> {
+  const entries: CompareEntry[] = [];
+  const errors: string[] = [];
+  for (const command of planToCommands(model, plan)) {
+    signal?.throwIfAborted();
+    try {
+      const device = await vdGet(command.paramId, command.x, command.y);
+      entries.push({ command, device, match: device === command.vdValue });
+    } catch (e) {
+      errors.push(`${command.name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { entries, errors };
+}
+
+/** The CH SETTING name analogue of comparePlan (string params, via the string IPC). */
+export async function compareNames(
+  model: DeviceModel,
+  plan: Plan,
+): Promise<{ entries: NameCompareEntry[]; errors: string[] }> {
+  const entries: NameCompareEntry[] = [];
+  const errors: string[] = [];
+  for (const write of planToNameWrites(model, plan)) {
+    try {
+      const device = (await vdGetStr(write.param, 0, write.y)).trimEnd();
+      entries.push({ write, device, match: device === write.value });
+    } catch (e) {
+      errors.push(`name ${write.param}:${write.y}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { entries, errors };
+}
+
+/**
+ * The counts a comparison reports, plus the differing entries the report lists.
+ * One definition of "what counts as compared / differ", so the status line and
+ * the report cannot drift apart (both derive from this). Pure.
+ */
+export function compareCounts(
+  entries: CompareEntry[],
+  nameEntries: NameCompareEntry[],
+): { compared: number; differ: number; numDiffs: CompareEntry[]; nameDiffs: NameCompareEntry[] } {
+  const numDiffs = entries.filter((e) => !e.match);
+  const nameDiffs = nameEntries.filter((e) => !e.match);
+  return {
+    compared: entries.length + nameEntries.length,
+    differ: numDiffs.length + nameDiffs.length,
+    numDiffs,
+    nameDiffs,
+  };
+}
+
+/**
+ * Render a read-only device↔plan comparison as human-readable Markdown. A summary
+ * count, then the differences (the actionable part), then a **full log of every
+ * parameter compared** — so an instant "matches" can be verified as hundreds of
+ * reads that agreed, not zero reads. `errors` are parameters whose device value
+ * could not be read, which leave the comparison incomplete. Pure.
+ */
+export function formatCompareReport(
+  model: string,
+  entries: CompareEntry[],
+  nameEntries: NameCompareEntry[],
+  errors: string[] = [],
+): string {
+  const lines: string[] = [];
+  const numLine = (e: CompareEntry): string =>
+    `${e.command.name} @ ${e.command.paramId}:${e.command.x}:${e.command.y} — plan ${e.command.vdValue}, device ${e.device}`;
+  const nameLine = (e: NameCompareEntry): string =>
+    `name @ ${e.write.param}:${e.write.y} — plan "${e.write.value}", device "${e.device}"`;
+
+  const { compared, differ, numDiffs, nameDiffs } = compareCounts(entries, nameEntries);
+  lines.push(`# URX compare report — ${model}`);
+  lines.push("");
+  lines.push(
+    `- Compared ${compared} parameters: ${compared - differ} match, ${differ} differ` +
+      (errors.length ? `; ${errors.length} could not be read` : ""),
+  );
+
+  if (numDiffs.length || nameDiffs.length) {
+    lines.push("");
+    lines.push("## Differences (plan vs device)");
+    for (const e of numDiffs) lines.push(`- ${numLine(e)}`);
+    for (const e of nameDiffs) lines.push(`- ${nameLine(e)}`);
+  }
+  if (errors.length) {
+    lines.push("");
+    lines.push("## Could not be read (comparison incomplete)");
+    for (const e of errors) lines.push(`- ${e}`);
+  }
+  // Full audit log: every parameter, matched or not, so the comparison can be
+  // checked rather than trusted.
+  lines.push("");
+  lines.push("## Full log (every parameter compared)");
+  for (const e of entries) lines.push(`- ${numLine(e)} — ${e.match ? "match" : "DIFFER"}`);
+  for (const e of nameEntries) lines.push(`- ${nameLine(e)} — ${e.match ? "match" : "DIFFER"}`);
+  lines.push("");
+  return lines.join("\n");
+}
