@@ -488,11 +488,27 @@ discipline.
 
 ### Cancelling a long operation
 
-Fetch, write, and self-test each round-trip the whole device serially over one connection, so a stalled link can
-take minutes. Each therefore holds an `AbortController` and toggles its menu item to a "Cancel" label while
+Fetch, write, self-test, and compare each round-trip the whole device serially over one connection, so a stalled
+link can take minutes. Each therefore holds an `AbortController` and toggles its menu item to a "Cancel" label while
 running (a second click calls `abort()`). The signal is checked between round-trips in the readback
 (`applyDeviceState`) and the diff/send (`diffPlan` / `sendConverging`); the in-flight round-trip is allowed to
 finish (leaving the device consistent) before bailing. A cancel surfaces through `withDevice` as `status.canceled`.
+
+### Compare with device (experimental)
+
+A read-only check that reads every parameter the plan implies, records the device's value beside the plan's, and
+**writes nothing** — the automated counterpart to eyeballing an imported settings file. Import a `.urxf`, connect the
+unit it came from, and compare: a faithful import shows no differences. `comparePlan` reads each planned command's
+device value and keeps every one (matched or not); `compareNames` does the same for CH SETTING names against the
+device's actual name. Unlike a write it does not stop on the first read failure: the audit wants every parameter it
+can still read, with the unreadable ones listed as gaps that leave the comparison incomplete.
+
+The report (`formatCompareReport`, shown in the shared `#load-report` modal) is **always shown, even on a full
+match**, and carries a compared count, the differences, and a **full per-parameter log** — because a comparison that
+returns "matches" instantly is otherwise indistinguishable from one that read nothing. The status line states the
+count and the elapsed read time (`status.compareMatch` / `compareDiff` / `comparePartial`), so ~500 serial
+round-trips reading in a fraction of a second, or a suspiciously instant verdict, is visible rather than trusted.
+Behind `--experimental` and, like fetch and write, disabled while Live sync holds the connection.
 
 ### Reporting a drop or partial failure
 
@@ -782,9 +798,10 @@ PDF exports.
 
 Phase 1 implemented save/load with browser standards (Blob download / file input). Phase 2 adds
 native save/open dialogs (`tauri-plugin-dialog`) plus a recent-plans list; file IO uses small
-app commands (`read_text_file` / `write_text_file` / `write_binary_file`), each `async` with the
-`std::fs` work on a worker thread (`spawn_blocking`, like the vd commands) and each enforcing an
-extension allowlist (read: `json`; write text: `json` / `md`; write binary: `png` / `pdf`).
+app commands (`read_text_file` / `read_binary_file` / `write_text_file` / `write_binary_file`), each
+`async` with the `std::fs` work on a worker thread (`spawn_blocking`, like the vd commands) and each
+enforcing an extension allowlist (read text: `json`; read binary: `urxf`; write text: `json` / `md`;
+write binary: `png` / `pdf`).
 `write_binary_file` receives the PNG/PDF bytes as the raw IPC request body — not a JSON number
 array — with the destination path in a percent-encoded `x-file-path` request header. The webview
 itself runs under a strict CSP (`security.csp` + `devCsp` in `tauri.conf.json`): scripts from
@@ -801,6 +818,69 @@ corrupt input: every collection passes a type guard that drops a non-conforming 
 default (`positions` included, symmetrically), and `connections` is validated element-by-element so
 malformed wires (null, wrong-typed, unknown `kind`) are discarded — keeping garbled values from a
 hand edit or an older build out of the plan where they could break routing invariants.
+
+## Opening files: drag & drop, and settings files
+
+A file can be dropped onto the window instead of going through File > Open (`ui/dropzone.ts`).
+There are two delivery paths, because the desktop shell intercepts drops before the webview sees
+them:
+
+| | Desktop (Tauri) | Browser / demo |
+| --- | --- | --- |
+| Events | `tauri://drag-enter` / `-leave` / `-drop` via `platform.listenEvent` | DOM `dragenter` / `dragover` / `dragleave` / `drop` |
+| Payload | real file paths | `File` objects, no path |
+| Consequence | a dropped plan joins the recent list, exactly as if opened from the dialog | no recent-list entry (there is no path to record) |
+
+The DOM handlers are registered only outside Tauri, so a drop is never handled twice. Both paths
+funnel into the same check: the extension has to be one the build accepts, and exactly one file may
+be dropped — a multi-file drop is refused rather than resolved by guessing which one was meant.
+A refused drop reports on the status line (a routine "not that file"); a dropped plan that fails to
+parse raises the same modal File > Open would.
+
+`listenEvent` drives the event plugin directly through
+`window.__TAURI_INTERNALS__.transformCallback` + `plugin:event|listen`, keeping the frontend free of
+npm runtime dependencies like the dialog / updater calls.
+
+### Settings file (`.urxf`) import — experimental
+
+The unit writes its own settings to microSD from SETUP > SAVE. That file carries **the same
+parameter space as the vd broker**, so importing it needs no second device→plan inverse: `core/control/urxf.ts`
+parses the file and exposes one chunk as a `ParamSource`, and `readback.ts` runs its existing
+`applyDeviceState` logic against that source instead of the live device (`applySourceState`). The
+source travels as a parameter: the pass and each reading helper bind their own `vdGet` / `vdGetStr`
+from it, so a device follow reconcile and a file import cannot read each other's source and need no
+guard against overlapping. Because an import replaces every value at once — which Live sync cannot
+follow — it is refused while a session is up, the same rule fetch and write already follow.
+
+Format notes that shape the reader (full spec: the private reference repository):
+
+- **Endianness alternates by level.** Record headers and the F descriptor records are big-endian;
+  block headers and every value in the D block are little-endian.
+- **D is a frameless concatenation** walked only with its own F table. `Σ(elemSize × count) == D
+  length` and `record bytes == F length` are the file's only integrity checks, so both are asserted.
+- **Branch on `typecode`, never on element size** — a 4-byte unsigned bitmask and a 4-byte ASCII
+  field are the same width, and reading either by width alone gives a wrong value silently.
+- **An x axis is stored flattened onto consecutive ids** (id + band), folded back into an `(id, x)`
+  address by the parameter source.
+
+Two things a settings file cannot supply, both stated in the import confirm:
+
+- **The model.** The header reads `URX` for every variant, so the values land on the model currently
+  selected and the operator vouches for the match.
+- **The editing layer.** No parameter holds positions, hidden nodes, or notes, so those are kept as
+  they are rather than reset. (Scene names are the same kind of gap in reverse: they exist only in
+  the file scaffolding, with no parameter behind them.)
+
+One parameter — the oscillator's ON state (710) — has no descriptor in the format at all: the unit
+does not persist it and loads with it off. So the source supplies off (0) rather than failing on it,
+and a clean file imports with no failures and no unread nodes. This is a whitelisted gap; anything
+else genuinely absent still surfaces as a read failure.
+
+Import is gated behind `--experimental` (File > Import settings file, and `.urxf` in the drop
+target's accept list), and is **read-only**: writing a settings file back is not implemented, because
+whether loading a file with fewer scene chunks erases the unit's scene memory is untested on
+hardware. Reading the bytes uses `read_binary_file` (extension allowlist `urxf`), which returns them
+as the raw IPC response body rather than a JSON number array.
 
 ## Build and distribution
 
@@ -848,8 +928,10 @@ Separate from the desktop app, a browser-only demo is published to GitHub Pages.
 (`pnpm build:demo`, with `.env.demo` setting `VITE_DEMO=1`) builds it, and `.github/workflows/pages.yml`
 publishes `dist` to Pages when a `vX.Y.Z` release tag is pushed, so the demo tracks released versions. To
 check the demo bundle locally before a tag, run `pnpm build:demo` then `pnpm preview` (serves `dist` at
-`http://localhost:4173`). The demo is a viewer, so file save / load and PNG / PDF
-export are hidden from the toolbar (`src/core/env.ts`'s `DEMO` flag hides `[data-demo-hide]` elements). In
+`http://localhost:4173`). The demo has no native file IO, so the save / load dialogs and PNG / PDF
+export are hidden from the toolbar (`src/core/env.ts`'s `DEMO` flag hides `[data-demo-hide]` elements) —
+though a plan JSON can still be opened by dropping it on the window (the browser drag & drop path is not
+demo-gated). In
 their place the demo reveals `[data-demo-only]` controls: Share URL copies the plan as a `?plan=` deep link
 (also placed in the address bar as a copy-by-hand fallback), and Download JSON downloads the plan document —
 identical to a desktop save — so a plan built or opened in the demo carries over to the desktop app. The

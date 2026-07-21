@@ -22,8 +22,8 @@ with or without a DAW — see [Device control](#device-control).
 ## Live demo
 
 Runs entirely in your browser — no install required: **<https://urx-router.semnil.com>**
-(file save/load and image export are disabled in the demo build; instead it shares
-a plan as a URL and downloads the plan JSON for the desktop app).
+(the demo has no save dialog or image export; instead you can **drop a plan JSON onto the
+window to open it**, share a plan as a URL, and download the plan JSON for the desktop app).
 
 ![URX Router showing a URX44V routing plan in the dark studio-rack theme](docs/assets/screenshot-en.png)
 
@@ -86,11 +86,17 @@ The skill's routing data is generated from the same device model the app uses
 pnpm install
 pnpm dev            # browser at http://localhost:5173 (Rust not required)
 pnpm tauri dev      # launch as a desktop app (Rust toolchain required)
+pnpm build:demo     # build the browser demo bundle (VITE_DEMO=1: no save dialog / image export)
+pnpm preview        # serve the demo bundle at http://localhost:4173 — the same build as the live demo
 ```
 
 Because the planning UI is pure frontend, you can verify behavior in a browser with `pnpm dev`
 even without Rust installed. Desktop builds (`pnpm tauri dev` / `pnpm tauri build`) require
-[Rust](https://rustup.rs/).
+[Rust](https://rustup.rs/). `pnpm dev` runs the full build; to see the reduced **demo** build
+locally (what <https://urx-router.semnil.com> serves), use `pnpm build:demo` then `pnpm preview`.
+
+The full command list (unit/e2e tests, formatting, cache cleaning) and development notes live in
+[CLAUDE.md](CLAUDE.md).
 
 Pass `--experimental` to enable the hidden-by-default on-device self-test diagnostic:
 

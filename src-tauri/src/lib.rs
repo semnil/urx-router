@@ -40,6 +40,19 @@ async fn read_text_file(path: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+// Read a URX microSD settings file (.urxf). The bytes travel back as the raw IPC
+// response body — a JSON result would serialize the whole file byte-by-byte as a
+// number array. Read-only: the app never writes a settings file back.
+#[tauri::command]
+async fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> {
+    check_extension(&path, &["urxf"])?;
+    let bytes =
+        tauri::async_runtime::spawn_blocking(move || fs::read(&path).map_err(|e| e.to_string()))
+            .await
+            .map_err(|e| e.to_string())??;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// Write a file by filling a sibling temp file and renaming it into place, so a
 /// failure part-way leaves the previous contents intact. A bare `fs::write`
 /// truncates first: a full disk (or a pulled drive) then destroys the only copy
@@ -337,6 +350,7 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             read_text_file,
+            read_binary_file,
             write_text_file,
             write_binary_file,
             experimental_enabled,

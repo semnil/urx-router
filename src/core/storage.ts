@@ -6,6 +6,7 @@
 import {
   isTauri,
   nativeOpenPath,
+  nativeReadBinary,
   nativeReadText,
   nativeSavePath,
   nativeWriteBinary,
@@ -55,9 +56,32 @@ export async function openTextDocument(filter: FileFilter): Promise<OpenResult |
   return text == null ? null : { text };
 }
 
-/** Read a previously-used file by its path (Tauri only; used for recent plans). */
+/** Read a previously-used file by its path (Tauri only; used for recent plans and
+ *  by a desktop drag & drop, which carries real paths). */
 export function readTextByPath(path: string): Promise<string> {
   return nativeReadText(path);
+}
+
+/** The binary counterpart (Tauri only), so a settings file read from a dropped
+ *  path and one read from the dialog take the same route. */
+export function readBinaryByPath(path: string): Promise<Uint8Array> {
+  return nativeReadBinary(path);
+}
+
+/** Outcome of a binary open: the bytes plus the source path. */
+export interface OpenBinaryResult {
+  bytes: Uint8Array;
+  path: string;
+}
+
+/** Open a binary file from a native dialog. Desktop only — the one caller (the
+ *  experimental .urxf import) is itself desktop-only, and a browser has no path
+ *  to read back. Returns null when canceled or outside Tauri. */
+export async function openBinaryDocument(filter: FileFilter): Promise<OpenBinaryResult | null> {
+  if (!isTauri()) return null;
+  const path = await nativeOpenPath(filter);
+  if (!path) return null;
+  return { bytes: await nativeReadBinary(path), path };
 }
 
 async function saveBlob(defaultName: string, blob: Blob, filter: FileFilter): Promise<SaveResult> {

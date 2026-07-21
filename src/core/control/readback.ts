@@ -18,7 +18,7 @@ import type {
   SsmcsParams,
 } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
-import { vdGet, vdGetStr } from "../platform";
+import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, FX_STEREO_ASSIGN_ON, normalizeInsertFx, PARAMS } from "./params";
 import type { ParamName } from "./params";
 import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, FX_SLOT_LEVEL, FX_SLOT_ON, fxParams } from "./fx-effect";
@@ -76,6 +76,42 @@ import {
   vdToRelease,
 } from "./vd";
 
+/**
+ * Where one readback pass reads parameters from. The live device is the default;
+ * an offline source (a parsed .urxf settings file) serves the same broker address
+ * space from memory, so the whole device→plan inverse below is reused verbatim
+ * instead of growing a second, drifting copy of it.
+ */
+export interface ParamSource {
+  get(paramId: number, x: number, y: number): Promise<number>;
+  getStr(paramId: number, x: number, y: number): Promise<string>;
+}
+
+// Delegating rather than referencing the imports directly: the binding is resolved
+// per call, so a group that never reads a string never touches vdGetStr — which is
+// what lets a test stub only the accessor its path uses (several control tests mock
+// ../platform with vdGet alone).
+const LIVE_SOURCE: ParamSource = {
+  get: (paramId, x, y) => vdGetLive(paramId, x, y),
+  getStr: (paramId, x, y) => vdGetStrLive(paramId, x, y),
+};
+
+// The source travels as a parameter, not module state: each pass and each reading
+// helper binds its own vdGet / vdGetStr from it, so overlapping passes (a device
+// follow reconcile while a file import runs) cannot read each other's source and
+// need no guard against doing so. The call sites below stay unchanged either way.
+type Readers = {
+  vdGet: (paramId: number, x: number, y: number) => Promise<number>;
+  vdGetStr: (paramId: number, x: number, y: number) => Promise<string>;
+};
+
+function readers(source: ParamSource): Readers {
+  return {
+    vdGet: (paramId, x, y) => source.get(paramId, x, y),
+    vdGetStr: (paramId, x, y) => source.getStr(paramId, x, y),
+  };
+}
+
 export interface ReadbackResult {
   /**
    * Count of node/parameter groups successfully read and applied to the plan
@@ -122,6 +158,27 @@ export async function applyDeviceState(
   signal?: AbortSignal,
   only?: ReadonlySet<string>,
 ): Promise<ReadbackResult> {
+  return readPass(LIVE_SOURCE, model, plan, signal, only);
+}
+
+/**
+ * Apply a parsed settings file (.urxf) to the plan, through the same inverse the
+ * device read uses. The file cannot supply the model (its header names no variant)
+ * or the editing layer (positions / hidden / notes have no parameter), so the
+ * caller picks the model and the values land on the plan already open.
+ */
+export async function applySourceState(model: DeviceModel, plan: Plan, from: ParamSource): Promise<ReadbackResult> {
+  return readPass(from, model, plan);
+}
+
+async function readPass(
+  source: ParamSource,
+  model: DeviceModel,
+  plan: Plan,
+  signal?: AbortSignal,
+  only?: ReadonlySet<string>,
+): Promise<ReadbackResult> {
+  const { vdGet, vdGetStr } = readers(source);
   ensureFixedConnections(model, plan);
   // Scoped readback: when `only` is given, every per-node group whose owner id is
   // not in the set is skipped, so a settled device-side change re-reads just the
@@ -182,17 +239,17 @@ export async function applyDeviceState(
       }
       // Input 4-band PEQ band values (mono COMP->EQ mode / stereo channels).
       const ieq = inputEq(model, node.id, update.compEqType ?? 0);
-      if (ieq) update.eqBands = await readEqBands(ieq);
+      if (ieq) update.eqBands = await readEqBands(source, ieq);
       // Input EQ 1-knob (ON / TYPE / LEVEL).
       const iok = eqOneKnob(model, node.id, update.compEqType ?? 0);
-      if (iok) update.eqOneKnob = await readEqOneKnob(iok);
+      if (iok) update.eqOneKnob = await readEqOneKnob(source, iok);
       // Input GATE / COMP detail values (MONO IN channels; COMP only in COMP->EQ).
       const dyn = channelDynamics(model, node.id, update.compEqType ?? 0);
       if (dyn) {
-        update.gate = await readDyn(dyn.gate, dyn.y);
+        update.gate = await readDyn(source, dyn.gate, dyn.y);
         if (dyn.comp) {
           update.comp = {
-            ...(await readDyn(dyn.comp, dyn.y)),
+            ...(await readDyn(source, dyn.comp, dyn.y)),
             knee: await vdGet(PARAMS.COMP_KNEE.id, 0, dyn.y),
             autoMakeup: vdToBool(await vdGet(PARAMS.COMP_AUTO_MAKEUP.id, 0, dyn.y)),
             oneKnob: vdToBool(await vdGet(PARAMS.COMP_ONE_KNOB.id, 0, dyn.y)),
@@ -203,7 +260,7 @@ export async function applyDeviceState(
           // Comp/EQ section ON were read above via channelSections (compOn/eqOn).
           // Sweet Spot Data is a string param (91), read via the string IPC.
           const sweetSpotData = strToSweetSpotData((await vdGetStr(PARAMS.SWEET_SPOT_DATA.id, 0, dyn.y)).trim());
-          update.ssmcs = { ...(await readSsmcs(dyn.y)), sweetSpotData };
+          update.ssmcs = { ...(await readSsmcs(source, dyn.y)), sweetSpotData };
         }
       }
       // → STEREO bus assign ON (post-fader, V1.3) onto the main path connection's on.
@@ -275,7 +332,7 @@ export async function applyDeviceState(
     // read whether or not the FX → STEREO main path is wired.
     attempted.add(node.id);
     try {
-      const fxEffect = await readFxEffect(fxY);
+      const fxEffect = await readFxEffect(source, fxY);
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], fxEffect };
       applied++;
     } catch (e) {
@@ -420,9 +477,9 @@ export async function applyDeviceState(
     if (!oeq) continue;
     attempted.add(node.id);
     try {
-      const np = { ...plan.nodeParams[node.id], eqBands: await readEqBands(oeq) };
+      const np = { ...plan.nodeParams[node.id], eqBands: await readEqBands(source, oeq) };
       const ok = eqOneKnob(model, node.id, 0);
-      if (ok) np.eqOneKnob = await readEqOneKnob(ok);
+      if (ok) np.eqOneKnob = await readEqOneKnob(source, ok);
       plan.nodeParams[node.id] = np;
       applied++;
     } catch (e) {
@@ -441,7 +498,7 @@ export async function applyDeviceState(
     attempted.add(node.id);
     try {
       const duckerOn = vdToBool(await vdGet(PARAMS.DUCKER_ON.id, 0, dc.y));
-      const ducker = await readDyn(DUCKER_FIELDS, dc.y);
+      const ducker = await readDyn(source, DUCKER_FIELDS, dc.y);
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], duckerOn, ducker };
       applied++;
       // Ducker key source (259): decode the port to its channel/bus node. An
@@ -784,7 +841,8 @@ export function applyDirect(plan: Plan, node: string, name: ParamName, raw: numb
 
 // Read a 4-band PEQ's band values from the device (first instance; linked L/R
 // stay in sync). A fixed-peaking mid band (type null) has no filter type to read.
-async function readEqBands(ctrl: EqControl): Promise<EqBand[]> {
+async function readEqBands(source: ParamSource, ctrl: EqControl): Promise<EqBand[]> {
+  const { vdGet } = readers(source);
   const inst = ctrl.instances[0];
   const eqBands: EqBand[] = [];
   for (const band of ctrl.bands) {
@@ -802,7 +860,8 @@ async function readEqBands(ctrl: EqControl): Promise<EqBand[]> {
 
 // Read an EQ 1-knob's ON / TYPE / LEVEL from the device (first instance; linked
 // L/R stay in sync). Level is raw 0..100 %, type the shared preset enum.
-async function readEqOneKnob(ctrl: EqOneKnobControl): Promise<EqOneKnobParams> {
+async function readEqOneKnob(source: ParamSource, ctrl: EqOneKnobControl): Promise<EqOneKnobParams> {
+  const { vdGet } = readers(source);
   const inst = ctrl.instances[0];
   return {
     on: vdToBool(await vdGet(ctrl.on, 0, inst)),
@@ -832,7 +891,8 @@ function decodeDyn(encoding: ParamEncoding, raw: number): number {
 }
 
 // Read a GATE/COMP detail section's slider values from the device (mono channel).
-async function readDyn(fields: DynField[], y: number): Promise<Record<string, number>> {
+async function readDyn(source: ParamSource, fields: DynField[], y: number): Promise<Record<string, number>> {
+  const { vdGet } = readers(source);
   const vals: Record<string, number> = {};
   for (const f of fields) {
     const spec = PARAMS[f.name];
@@ -843,12 +903,14 @@ async function readDyn(fields: DynField[], y: number): Promise<Record<string, nu
 
 // Read one SSMCS EQ band's raw values (Low/High have no Q → q omitted).
 async function readSsmcsBand(
+  source: ParamSource,
   onId: number,
   qId: number | null,
   freqId: number,
   gainId: number,
   y: number,
 ): Promise<SsmcsBand> {
+  const { vdGet } = readers(source);
   const b: SsmcsBand = {
     on: vdToBool(await vdGet(onId, 0, y)),
     freq: await vdGet(freqId, 0, y),
@@ -860,7 +922,8 @@ async function readSsmcsBand(
 
 // Read an FX channel's EFFECT TYPE + parameter array (mirrors pushFxEffectCommands).
 // The type picks the family, then each family slot is read raw. fxIndex 0 / 1.
-async function readFxEffect(fxIndex: number): Promise<FxEffectParams> {
+async function readFxEffect(source: ParamSource, fxIndex: number): Promise<FxEffectParams> {
+  const { vdGet } = readers(source);
   const arrId = FX_EFFECT_ARRAY_PARAM[fxIndex];
   const type = await vdGet(FX_EFFECT_TYPE_PARAM[fxIndex], 0, 0);
   const params: Record<string, number> = {};
@@ -877,7 +940,8 @@ async function readFxEffect(fxIndex: number): Promise<FxEffectParams> {
 
 // Read the SSMCS morphing-strip raw values for a MONO IN channel (mirrors
 // pushSsmcsCommands). Sweet Spot Data (string param 91) is plan/UI-only.
-async function readSsmcs(y: number): Promise<SsmcsParams> {
+async function readSsmcs(source: ParamSource, y: number): Promise<SsmcsParams> {
+  const { vdGet } = readers(source);
   return {
     on: vdToBool(await vdGet(PARAMS.SSMCS_ON.id, 0, y)),
     compDrive: await vdGet(PARAMS.SSMCS_COMP_DRIVE.id, 0, y),
@@ -899,6 +963,7 @@ async function readSsmcs(y: number): Promise<SsmcsParams> {
     },
     eq: {
       low: await readSsmcsBand(
+        source,
         PARAMS.SSMCS_EQ_LOW_ON.id,
         null,
         PARAMS.SSMCS_EQ_LOW_FREQ.id,
@@ -906,6 +971,7 @@ async function readSsmcs(y: number): Promise<SsmcsParams> {
         y,
       ),
       mid: await readSsmcsBand(
+        source,
         PARAMS.SSMCS_EQ_MID_ON.id,
         PARAMS.SSMCS_EQ_MID_Q.id,
         PARAMS.SSMCS_EQ_MID_FREQ.id,
@@ -913,6 +979,7 @@ async function readSsmcs(y: number): Promise<SsmcsParams> {
         y,
       ),
       high: await readSsmcsBand(
+        source,
         PARAMS.SSMCS_EQ_HIGH_ON.id,
         null,
         PARAMS.SSMCS_EQ_HIGH_FREQ.id,
@@ -930,7 +997,7 @@ async function readSsmcs(y: number): Promise<SsmcsParams> {
  */
 export function formatReadbackReport(model: string, result: ReadbackResult): string {
   const lines: string[] = [];
-  lines.push(`# URX fetch report — ${model}`);
+  lines.push(`# URX readback report — ${model}`);
   lines.push("");
   lines.push(
     `- Groups read: ${result.applied}; read failures: ${result.errors.length}; nodes unconfirmed: ${result.unreadNodes.size}`,
@@ -942,7 +1009,7 @@ export function formatReadbackReport(model: string, result: ReadbackResult): str
   }
   if (result.unreadNodes.size) {
     lines.push("");
-    lines.push("## Nodes left at plan default (not confirmed from the device)");
+    lines.push("## Nodes left at plan default (not read)");
     for (const id of result.unreadNodes) lines.push(`- ${id}`);
   }
   lines.push("");
