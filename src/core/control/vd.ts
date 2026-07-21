@@ -5,7 +5,7 @@
 // the plan→command translation build on top of this. Language-agnostic.
 //
 // Encodings were established by reverse-engineering the broker's /vd/parameters
-// and /vd/table responses (see reference/.local/vd-protocol.md):
+// and /vd/table responses (see reference/work/vd/vd-protocol.md):
 //   level: signed int16 centi-dB (dB×100); -32768 is the -∞ (off) sentinel; max +1000 (+10 dB).
 //   pan:   signed ±63 (L63 … C=0 … R63).
 //   bool:  0 / 1.
@@ -126,7 +126,7 @@ export function vdToDelayTime(value: number): number {
 // SSMCS (Sweet Spot Morphing Channel Strip) RAW broker ranges and display curves.
 // Values are stored raw in the plan; these turn a raw integer into the human unit
 // the device LCD shows. Curves were established by live LCD calibration (anchor
-// points in reference/.local/ssmcs-spec.md). The shared EQ/SC curves:
+// points in reference/work/ssmcs-spec.md). The shared EQ/SC curves:
 //   freq: 20 × 10^((raw-4)/40)  (= 20 × 2^((raw-4)/12), 1/12-oct, 4=20 Hz..124=20 kHz)
 //   Q:    0.5 × 32^(raw/60)     (0=0.50 .. 60=16.0, logarithmic)
 //   gain: (raw-180)/10 dB       (0..360, 180 = 0 dB, ±18 dB)

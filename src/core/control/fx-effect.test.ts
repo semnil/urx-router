@@ -1,5 +1,5 @@
 // FX-channel effect catalog + encoding tests. Encoding anchors are the live LCD
-// calibration points (reference/.local/vd-params.md "FX channel EFFECT"); the
+// calibration points (reference/work/vd/vd-params.md "FX channel EFFECT"); the
 // translate / readback round-trip confirms the slot addressing and family layout.
 
 import { describe, expect, it, vi } from "vitest";

@@ -1,7 +1,7 @@
 // Catalog of confirmed URX44V control parameters. Each entry binds a semantic
 // name to the broker's numeric param_id, the instance axis its y index runs over,
 // and the value encoding (see vd.ts). Only parameters validated against the
-// broker dump (reference/.local/vd-params.md)
+// broker dump (reference/work/vd/vd-params.md)
 // are listed here; inferred-but-unconfirmed ids are deliberately omitted so live
 // control never writes a guessed address to hardware.
 
