@@ -120,7 +120,7 @@ export interface SelfTestReport {
 
 // Deep-negative dB that emit clamps to each level param's own minimum (-inf for
 // faders / sends, the floor for gain / monitor), so the written state is silent.
-const SILENCE_DB = -200;
+export const SILENCE_DB = -200;
 
 // Enum params swept across passes (key → legal option values, in device order).
 // COMP/EQ type is structural (it switches active GATE/COMP/EQ banks); sweeping it
@@ -199,27 +199,35 @@ function perturb(obj: Record<string, unknown>, pass: number): void {
   }
 }
 
-// Force the plan silent: floor every output fader, disable the oscillator
-// generator, and disable phantom power. Applied last so it overrides perturb.
-// Head-amp gain is floored to each channel's own minimum (not SILENCE_DB, which
-// would be re-clamped and break the round trip): a still-unverified gain param id
-// could write to an unintended address, and the channel minimum is the safest
-// value such a write can carry while still letting a correct id round-trip. The
-// oscillator level is left alone (the generator is already off).
-function makeSilent(model: DeviceModel, plan: Plan): void {
-  for (const [nodeId, np] of Object.entries(plan.nodeParams)) {
+// The shared silence core: floor every level (creating connection params if absent,
+// so a channel fader / send carries no signal even when the captured plan did not
+// set it explicitly — kinds with no level ignore it), and disable the oscillator
+// generator and phantom power. The audit-prep writer (prepare.ts) reuses this
+// verbatim so the "silent by construction" contract lives in one place: prepare
+// leaves its state on the device with no restore, so a drift here would ship a
+// non-silent (or +48V) write to hardware.
+export function floorSilent(plan: Plan): void {
+  for (const np of Object.values(plan.nodeParams)) {
     if (typeof np.level === "number") np.level = SILENCE_DB;
     if (np.phantom) np.phantom = false;
     if (np.osc) np.osc.on = false;
+  }
+  for (const c of plan.connections) c.params = { ...c.params, level: SILENCE_DB };
+}
+
+// Force the perturbed plan silent, applied last so it overrides perturb. Head-amp
+// gain is floored to each channel's own minimum (not SILENCE_DB, which would be
+// re-clamped and break the round trip): a still-unverified gain param id could
+// write to an unintended address, and the channel minimum is the safest value such
+// a write can carry while still letting a correct id round-trip.
+function makeSilent(model: DeviceModel, plan: Plan): void {
+  floorSilent(plan);
+  for (const [nodeId, np] of Object.entries(plan.nodeParams)) {
     if (typeof np.gain === "number") {
       const cc = channelControl(model, nodeId);
       if (cc?.gain) np.gain = cc.gain.minDb;
     }
   }
-  // Floor the level on every connection (creating params if absent), so a
-  // channel fader / send carries no signal even when the captured plan did not
-  // set it explicitly. Connection kinds with no level (source/patch/key/sendSwitch) ignore it.
-  for (const c of plan.connections) c.params = { ...c.params, level: SILENCE_DB };
 }
 
 // Sweep insert FX: one input channel and one output bus get this pass's option,
