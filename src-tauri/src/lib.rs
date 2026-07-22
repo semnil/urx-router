@@ -120,6 +120,14 @@ fn self_test_requested() -> bool {
     std::env::args().any(|a| a == "--self-test")
 }
 
+// True when launched with --prepare-modified: the frontend writes a distinctive,
+// silent, modified state to the device once on startup and leaves it (no restore),
+// so a scene SAVE/RECALL audit can save and diff it. Experimental / headless only.
+#[tauri::command]
+fn prepare_modified_requested() -> bool {
+    std::env::args().any(|a| a == "--prepare-modified")
+}
+
 // True when launched with --reset-storage: the frontend clears its localStorage
 // (theme / model / meter points / consent gate / …) once on startup before reading
 // any of it, then boots clean. The browser dev app uses the ?reset URL instead.
@@ -355,6 +363,7 @@ pub fn run() {
             write_binary_file,
             experimental_enabled,
             self_test_requested,
+            prepare_modified_requested,
             reset_storage_requested,
             third_party_licenses,
             vd_connect,

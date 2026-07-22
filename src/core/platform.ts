@@ -79,6 +79,16 @@ export function selfTestRequested(): Promise<boolean> {
 }
 
 /**
+ * Whether the app was launched with --prepare-modified: write a distinctive,
+ * silent, modified state to the device once on startup and leave it (no restore),
+ * for a scene SAVE/RECALL audit. Always false in a plain browser.
+ */
+export function prepareModifiedRequested(): Promise<boolean> {
+  if (!isTauri()) return Promise.resolve(false);
+  return invoke<boolean>("prepare_modified_requested");
+}
+
+/**
  * Whether the desktop app was launched with --reset-storage. The browser dev app
  * has no process args, so there it is always false — use the ?reset URL instead
  * (see resetStorageIfRequested in main.ts).

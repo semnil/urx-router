@@ -60,6 +60,7 @@ import {
   restartApp,
   experimentalEnabled,
   selfTestRequested,
+  prepareModifiedRequested,
   resetStorageRequested,
   thirdPartyLicenses,
   vdConnect,
@@ -100,6 +101,7 @@ import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
 import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
+import { runPrepareModified } from "./core/control/prepare";
 
 // Clear persisted UI state (theme / model / meter points / consent gate / recent
 // files / inspector sections) when the browser dev app is opened with ?reset (or
@@ -1970,6 +1972,24 @@ if (!DEMO) {
     // (no dialog), so it can be driven from the command line without the UI.
     void selfTestRequested().then((auto) => {
       if (auto) void runDeviceSelfTest();
+    });
+
+    // Headless trigger (audit): --prepare-modified writes a distinctive silent
+    // state to the device and leaves it (no restore), so a scene SAVE/RECALL audit
+    // can save and diff it. Reports go to the dev-server log like the self-test.
+    void prepareModifiedRequested().then(async (auto) => {
+      if (!auto) return;
+      setStatus(t().status.selfTestRunning);
+      try {
+        const report = await runPrepareModified(getModel(modelId));
+        console.warn(`[prepare-modified] ${report.aborted ? "CANCELLED" : "DONE"}`, JSON.stringify(report));
+        if (report.errors.length) console.warn("[prepare-modified] issues:", JSON.stringify(report.errors));
+        setStatus(`prepare-modified: wrote ${report.written}, residual ${report.residual}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[prepare-modified] ERROR", message);
+        showError(connectFailureStatus(err, t().status.selfTestError));
+      }
     });
   });
 }
