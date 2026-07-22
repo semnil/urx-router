@@ -165,3 +165,33 @@ warnings). The 8→2 down-mix, and whether a high-rate signal actually arrives i
 Multi Channels mode, still follow the incoming HDMI signal and are not determined
 by a saved plan either. The HDMI input stays a selectable channel source and the
 8→2 down-mix appears in the routing (see [device-model.md](device-model.md)).
+
+## The URX does not save device-wide settings in a scene
+
+This is a behavior of the URX itself, not of URX Router — noted here because it
+shapes what a URX Router plan can carry that a device scene cannot.
+
+A **scene** on the unit stores the **mixing** setup — input channel processing
+(HA, HPF, EQ, gate, comp), sends, fader levels and pan, MIX / FX bus settings,
+insert FX, mute / on and channel names — and a recall restores it exactly.
+
+The URX keeps the following as **device-wide settings, outside any scene**, so
+saving and recalling a scene on the unit leaves them as they are:
+
+- **MONITOR 1 / 2** source, level and mono
+- **PHONES** level
+- **Output** patch, **USB output** source and **microSD recording** source
+- **Streaming** output and the **oscillator**
+- **Sample rate**, and system settings (brightness, USER DEFINED keys, date / time)
+
+The **Monitor source** staying put after a recall is the most visible example.
+Yamaha's user guide states the same exclusions at a screen-category level: the
+SETUP, MONITOR, microSD and STREAMING settings are "not saved" to a scene.
+
+**Where URX Router helps.** The planner reads these settings from the unit and
+keeps them in its plan, so managing a setup as a URX Router plan (a saved file or a
+share link) carries the Monitor routing and levels, Phones, output and USB
+patching, microSD recording source, streaming output, oscillator and sample rate
+across — the settings a device scene leaves behind. A few device-utility settings
+(brightness, Language, Auto Power Off, and the USB clock Follow) stay outside the
+plan, as noted above.
