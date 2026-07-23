@@ -199,7 +199,9 @@ body {
   color: var(--text-dim);
 }
 
-select#model-picker {
+/* The rack select recipe, shared with the Preferences selects. */
+select#model-picker,
+.prefs-select {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--text);
@@ -298,7 +300,9 @@ button {
   cursor: pointer;
 }
 
-.tools button {
+/* The raised tool-button recipe, shared with the Preferences buttons. */
+.tools button,
+.prefs-btn {
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.06em;
@@ -311,15 +315,18 @@ button {
   box-shadow: var(--ctl-shadow);
 }
 
-.tools button:hover {
+.tools button:hover,
+.prefs-btn:hover {
   filter: brightness(1.12);
 }
 
-[data-theme="light"] .tools button:hover {
+[data-theme="light"] .tools button:hover,
+[data-theme="light"] .prefs-btn:hover {
   filter: brightness(0.97);
 }
 
-.tools button:active {
+.tools button:active,
+.prefs-btn:active {
   filter: brightness(0.9);
 }
 
@@ -1070,7 +1077,8 @@ select:focus-visible,
   gap: 6px;
 }
 
-#inspector .toggle button {
+#inspector .toggle button,
+.prefs-toggle button {
   flex: 1;
   margin-top: 0;
   font-family: var(--mono);
@@ -1084,7 +1092,8 @@ select:focus-visible,
   box-shadow: var(--ctl-shadow);
 }
 
-#inspector .toggle button.on {
+#inspector .toggle button.on,
+.prefs-toggle button.on {
   color: #14110d;
   background: var(--led);
   border-color: var(--led);
@@ -2716,6 +2725,114 @@ select:focus-visible,
   white-space: pre;
   user-select: text;
   color: var(--text);
+}
+
+/* ---- Preferences modal ---- */
+/* A wide consent-box (licenses width) holding two columns of sections. The box
+   itself scrolls (consent-box max-height), so a shrunken window height never
+   clips the content or the Close action out of reach. */
+.prefs-box {
+  width: min(920px, 100%);
+}
+.prefs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 32px;
+}
+@media (max-width: 860px) {
+  .prefs-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.prefs-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 26px 0 0;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+.prefs-col > .prefs-section:first-child h3 {
+  margin-top: 6px;
+}
+/* Rows and notes indent under the section header, so the nesting reads at a
+   glance; each row closes with the inspector's hairline. */
+.prefs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-left: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.prefs-row .lbl {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.prefs-row .lblc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.prefs-row .ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* "Desktop app only" tag: dashed like the unknown FOLLOW USB pill — present but
+   not applicable here. Kept at full opacity while its row dims. */
+.prefs-lock {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--text-dim) 75%, transparent);
+  border: 1px dashed var(--ctl-border);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+/* Faces and selects reuse the inspector-toggle / rack-select / tool-button
+   recipes above; only the width constraints are prefs-specific. */
+.prefs-toggle {
+  display: flex;
+  gap: 6px;
+  width: 220px;
+  flex-shrink: 0;
+}
+.prefs-toggle.narrow {
+  width: 132px;
+}
+.prefs-ver {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.prefs-note {
+  margin: 8px 0 0 14px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+/* A row that does not apply in this build (browser / demo): the label and the
+   control dim, the dashed tag stays readable, the control refuses input. */
+.prefs-row.locked > :not(.lblc),
+.prefs-row.locked .lblc > :not(.prefs-lock) {
+  opacity: 0.45;
+}
+.prefs-row.locked button,
+.prefs-row.locked select {
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 /* ---- MIDI learn (console) ---- */

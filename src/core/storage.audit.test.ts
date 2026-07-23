@@ -5,41 +5,14 @@
 // rememberRecent included (it now routes through saveJson). Comments tagged "AUDIT"
 // flag a divergence from the ideal contract (see the QA report).
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { baseName, loadJson, saveJson, loadRecent, rememberRecent, type RecentEntry } from "./storage";
+import { installMemoryStorage } from "./memory-storage.test-util";
 
-// Minimal spec-shaped localStorage over a Map. `throwOnWrite` simulates a browser
-// in private mode / at quota where setItem raises (the real failure mode the
-// guarded helpers are meant to absorb).
-class MemoryStorage {
-  private map = new Map<string, string>();
-  throwOnWrite = false;
-  getItem(key: string): string | null {
-    return this.map.has(key) ? this.map.get(key)! : null;
-  }
-  setItem(key: string, value: string): void {
-    if (this.throwOnWrite) throw new DOMException("quota", "QuotaExceededError");
-    this.map.set(key, value);
-  }
-  removeItem(key: string): void {
-    this.map.delete(key);
-  }
-  clear(): void {
-    this.map.clear();
-  }
-}
-
-let store: MemoryStorage;
-const g = globalThis as { localStorage?: Storage };
-
-beforeEach(() => {
-  store = new MemoryStorage();
-  g.localStorage = store as unknown as Storage;
-});
-
-afterEach(() => {
-  delete g.localStorage;
-});
+// The shared spec-shaped localStorage stub (memory-storage.test-util.ts);
+// `throwOnWrite` simulates a browser in private mode / at quota where setItem
+// raises (the real failure mode the guarded helpers are meant to absorb).
+const store = installMemoryStorage();
 
 describe("baseName (path tail, POSIX + Windows separators)", () => {
   it("takes the final segment regardless of separator style", () => {
@@ -71,12 +44,12 @@ describe("loadJson / saveJson round-trip and fallbacks", () => {
   });
 
   it("returns the fallback on a corrupt (non-JSON) stored value", () => {
-    store.setItem("k", "{ not json");
+    store().setItem("k", "{ not json");
     expect(loadJson("k", 42)).toBe(42);
   });
 
   it("saveJson swallows a throwing storage (disabled / quota) instead of surfacing it", () => {
-    store.throwOnWrite = true;
+    store().throwOnWrite = true;
     expect(() => saveJson("k", { a: 1 })).not.toThrow();
   });
 });
@@ -84,7 +57,7 @@ describe("loadJson / saveJson round-trip and fallbacks", () => {
 describe("loadRecent entry validation", () => {
   it("drops malformed entries, keeping only well-typed ones", () => {
     const good: RecentEntry = { path: "/p/a.urxplan", name: "a", modelId: "URX44" };
-    store.setItem(
+    store().setItem(
       "urx-recent",
       JSON.stringify([
         good,
@@ -98,9 +71,9 @@ describe("loadRecent entry validation", () => {
   });
 
   it("returns [] when the stored value is not an array or is corrupt", () => {
-    store.setItem("urx-recent", JSON.stringify({ not: "an array" }));
+    store().setItem("urx-recent", JSON.stringify({ not: "an array" }));
     expect(loadRecent()).toEqual([]);
-    store.setItem("urx-recent", "{ broken");
+    store().setItem("urx-recent", "{ broken");
     expect(loadRecent()).toEqual([]);
   });
 });
@@ -129,7 +102,7 @@ describe("rememberRecent de-dup, order and cap", () => {
     // quota failure is absorbed instead of surfacing as an unhandled throw (matching
     // saveJson / loadJson / loadRecent). It still returns the computed in-memory
     // list; only the persistence is skipped.
-    store.throwOnWrite = true;
+    store().throwOnWrite = true;
     let list: RecentEntry[] = [];
     expect(() => {
       list = rememberRecent(entry(1));

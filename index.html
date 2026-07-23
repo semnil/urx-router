@@ -171,6 +171,21 @@
           <span class="tool-sep"></span>
           <button id="btn-lang" class="icon-btn" type="button"></button>
           <button id="btn-theme" class="icon-btn" type="button"></button>
+          <button id="btn-prefs" class="icon-btn" type="button">
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <g fill="currentColor">
+                <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 .001 0zM8 6a2 2 0 1 1-.001 0z" />
+                <rect x="7.1" y="0.4" width="1.8" height="3" rx="0.6" />
+                <rect x="7.1" y="0.4" width="1.8" height="3" rx="0.6" transform="rotate(45 8 8)" />
+                <rect x="7.1" y="0.4" width="1.8" height="3" rx="0.6" transform="rotate(90 8 8)" />
+                <rect x="7.1" y="0.4" width="1.8" height="3" rx="0.6" transform="rotate(135 8 8)" />
+                <rect x="7.1" y="0.4" width="1.8" height="3" rx="0.6" transform="rotate(180 8 8)" />
+                <rect x="7.1" y="0.4" width="1.8" height="3" rx="0.6" transform="rotate(225 8 8)" />
+                <rect x="7.1" y="0.4" width="1.8" height="3" rx="0.6" transform="rotate(270 8 8)" />
+                <rect x="7.1" y="0.4" width="1.8" height="3" rx="0.6" transform="rotate(315 8 8)" />
+              </g>
+            </svg>
+          </button>
           <a
             id="btn-desktop"
             class="desktop-link"
@@ -243,6 +258,11 @@
           <button id="licenses-close" type="button" class="consent-btn-primary"></button>
         </div>
       </div>
+    </div>
+    <div id="prefs-modal" class="consent-scrim" role="dialog" aria-modal="true" aria-labelledby="prefs-title" hidden>
+      <!-- Content is rebuilt by ui/prefs.ts on every open, so it always reflects
+           the current language, live-sync lock, and stored preference values. -->
+      <div id="prefs-box" class="consent-box prefs-box"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -1,4 +1,6 @@
 // Tiny DOM builder shared by the UI modules.
+import { getSettings } from "../core/settings";
+
 export function el(tag: string, cls: string): HTMLElement {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -20,7 +22,10 @@ export function onWheelStep(el: HTMLElement, step: (dir: 1 | -1) => void, blocke
       const d = e.deltaY !== 0 ? e.deltaY : e.shiftKey ? e.deltaX : 0;
       if (d === 0 || blocked?.()) return;
       e.preventDefault();
-      step(d < 0 ? 1 : -1);
+      // The wheel-step preference multiplies detents per notch; each detent goes
+      // through `step` so every control keeps snapping to its own grid.
+      const dir = d < 0 ? 1 : -1;
+      for (let i = 0; i < getSettings().wheelSteps; i++) step(dir);
     },
     { passive: false },
   );

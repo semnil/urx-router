@@ -13,7 +13,7 @@ import { vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import type { ParamName, ParamSpec } from "./params";
 import { planToCommands, planToNameWrites } from "./translate";
-import type { VdCommand, NameWrite } from "./translate";
+import type { VdCommand, NameWrite, WriteScope } from "./translate";
 import { reachedAndFailed, sendConverging } from "./client";
 
 // Coalesce rapid edits (a slider drag fires per pixel) into one flush so the
@@ -52,6 +52,10 @@ export interface LiveSyncHooks {
   onError: (message: string) => void;
   /** A flush sent `count` writes — for an optional, quiet "→ device" status. */
   onSent: (count: number) => void;
+  /** Write scope for the session (see translate.ts WriteScope). Read at every
+   *  snapshot / flush, so the one planToCommands filter also scopes the notify
+   *  registration and echo detection. Absent = "all". */
+  getScope?: () => WriteScope;
 }
 
 export class LiveSync {
@@ -73,6 +77,10 @@ export class LiveSync {
 
   isActive(): boolean {
     return this.active;
+  }
+
+  private scope(): WriteScope {
+    return this.hooks.getScope?.() ?? "all";
   }
 
   /** Start syncing. Call right after a full readback, so the snapshot equals the device. */
@@ -144,7 +152,7 @@ export class LiveSync {
     const model = this.hooks.getModel();
     const plan = source ?? this.hooks.getPlan();
     const addrs: Array<[number, number, number]> = [];
-    for (const c of planToCommands(model, plan)) {
+    for (const c of planToCommands(model, plan, this.scope())) {
       const k = cmdKey(c);
       this.snapshot.set(k, c.vdValue);
       addrs.push([c.paramId, c.x, c.y]);
@@ -174,7 +182,7 @@ export class LiveSync {
       const plan = this.hooks.getPlan();
       let sent = 0;
       let sideEffect = false;
-      for (const c of planToCommands(model, plan)) {
+      for (const c of planToCommands(model, plan, this.scope())) {
         const k = cmdKey(c);
         if (this.snapshot.get(k) === c.vdValue) continue;
         await vdSet(c.paramId, c.x, c.y, c.vdValue);
@@ -197,7 +205,7 @@ export class LiveSync {
         // not get baked into the snapshot here as if already on the device (which
         // would silently drop it).
         const converged = structuredClone(plan);
-        const r = await sendConverging(model, converged);
+        const r = await sendConverging(model, converged, { scope: this.scope() });
         // sendConverging reports per-command failures instead of rejecting, so a
         // failed write here would otherwise be swallowed — and captureSnapshot
         // would then record the plan as device truth, leaving those parameters

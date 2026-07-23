@@ -8,7 +8,7 @@ import { mirrorBalPair, partnerChannel, validatePlan } from "./core/routing";
 import type { PlanProblem } from "./core/routing";
 import {
   decodePlanParam,
-  deserialize,
+  deserializeDocument,
   emptyPlan,
   encodePlanParam,
   ensureFixedConnections,
@@ -16,7 +16,9 @@ import {
   serialize,
   SSMCS_INITIAL,
 } from "./core/plan";
-import type { ConnParams, NodeParams, Plan } from "./core/plan";
+import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
+import { getSettings } from "./core/settings";
+import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import {
   baseName,
@@ -49,6 +51,7 @@ import { initDropzone } from "./ui/dropzone";
 import { initFineMode } from "./ui/fine";
 import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
+import { PrefsPanel } from "./ui/prefs";
 import { getLang, LANG_CODES, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
 import { DEMO } from "./core/env";
 import {
@@ -105,7 +108,7 @@ import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/con
 import { runPrepareModified } from "./core/control/prepare";
 
 // Clear persisted UI state (theme / model / meter points / consent gate / recent
-// files / inspector sections) when the browser dev app is opened with ?reset (or
+// files / inspector sections / user preferences) when the browser dev app is opened with ?reset (or
 // #reset) — done synchronously here, before anything below reads localStorage, and
 // the flag is stripped so a later manual reload doesn't clear again. The desktop
 // app uses the --reset-storage launch flag instead (handled async in boot()).
@@ -345,6 +348,10 @@ let writeAbort: AbortController | null = null;
 // The experimental read-only compare (device vs plan): same cancel-on-second-click
 // pattern as fetch, so its serial diff sweep can be stopped when the link stalls.
 let compareAbort: AbortController | null = null;
+// Whether the --experimental gate resolved on (set in the !DEMO block below); the
+// Preferences device-scope note names the diagnostics' coverage only when the
+// diagnostics themselves are reachable.
+let experimentalOn = false;
 const live = DEMO
   ? null
   : new LiveSync({
@@ -352,6 +359,9 @@ const live = DEMO
       getPlan: () => plan,
       onError: (message) => stopLiveOnError(message),
       onSent: (n) => setStatus(t().status.liveSynced(n)),
+      // One bidirectional scope for the session: the same filter shapes the
+      // snapshot, the flush, and the follow notify registration.
+      getScope: () => getSettings().deviceScope,
     });
 
 const graph = new Graph(graphHost, getModel(modelId), plan, {
@@ -499,7 +509,7 @@ const follow =
         },
         // Escalation / idle safety net: pull the whole device into the plan.
         reconcileAll: async () => {
-          const result = await applyDeviceState(getModel(modelId), plan);
+          const result = await applyDeviceStateScoped();
           plan.unreadNodes = result.unreadNodes;
           followFull = true;
           requestReflect();
@@ -562,6 +572,9 @@ function setLiveUi(on: boolean): void {
   // The badge stays live: toggling Follow USB only re-clocks when the host is on a
   // different rate, and measured on a URX44V the connection survived it.
   ratePicker.disabled = on;
+  // The Preferences device-scope control locks while the session is up; re-render
+  // the modal if it is open (a link loss can end the session behind the scrim).
+  prefs.refresh();
 }
 
 // Turn live sync off and release the connection. Used by the toggle, by a write
@@ -862,6 +875,10 @@ function applyStaticI18n(): void {
   // View menu trigger.
   $("lbl-view").textContent = m.toolbar.view;
   $("btn-view").title = m.toolbar.viewHint;
+  // Preferences gear (icon button; the glyph is an inline SVG).
+  const prefsBtn = $("btn-prefs");
+  prefsBtn.title = m.prefs.title;
+  prefsBtn.setAttribute("aria-label", m.prefs.title);
   applyThemeButton();
   // Language button: the current language code; the title names the switch target.
   const cur = getLang();
@@ -971,6 +988,19 @@ function rerenderPlan(): void {
   syncRateUi(); // also re-renders the CONSOLE strips (applyRateConstraints)
 }
 
+// Read the whole device into the plan, honoring the Preferences device scope:
+// the read itself stays full (reads are side-effect free on the device), but
+// under the "scene" scope the plan keeps its scene-external values. Shared by
+// fetch, the Live-sync starting read, and device-follow's full reconcile. On a
+// throw (abort / link loss) nothing is restored — the callers discard or keep
+// the plan wholesale.
+async function applyDeviceStateScoped(signal?: AbortSignal): Promise<ReadbackResult> {
+  const keep = getSettings().deviceScope === "scene" ? captureSceneExternal(plan) : null;
+  const result = await applyDeviceState(getModel(modelId), plan, signal);
+  if (keep) applySceneExternal(plan, keep);
+  return result;
+}
+
 // A fresh plan, opened at the rate this session last worked at. The model picker
 // already keeps the last model across New; the rate belongs to the same rig and
 // does not change because a new plan was started. newPlan itself stays at the
@@ -1021,11 +1051,17 @@ function buildPlanReport(model: string, problems: PlanProblem[]): string {
 // as a recent plan. Returns true on success; on failure sets the error status.
 function loadFromText(text: string, path?: string): boolean {
   try {
-    const next = deserialize(text);
+    const doc = deserializeDocument(text);
+    const next = doc.plan;
     if (!MODEL_IDS.includes(next.modelId)) {
       showError(t().status.loadError(t().error.unknownModel(next.modelId)));
       return false;
     }
+    // A scene-scoped file (Preferences > Plan files) omits the device-wide
+    // settings; keep the current plan's values for them — the same semantic as a
+    // scene recall on the unit. Only within the same model: another model's
+    // monitor / patch wiring would not validate on this one.
+    if (doc.sceneScoped && next.modelId === plan.modelId) applySceneExternal(next, captureSceneExternal(plan));
     // Reject a plan with illegal routing (e.g. a tool-generated plan): surface a
     // copyable report of every violation and leave the current plan untouched.
     const problems = validatePlan(getModel(next.modelId), next);
@@ -1035,7 +1071,7 @@ function loadFromText(text: string, path?: string): boolean {
     }
     loadPlan(next);
     if (path) {
-      recent = rememberRecent({ path, name: baseName(path), modelId });
+      recent = rememberRecent({ path, name: baseName(path), modelId }, getSettings().recentMax);
       refreshInspector();
       setStatus(t().status.openedFrom(baseName(path)));
     } else {
@@ -1081,6 +1117,9 @@ async function confirmFirmware(device: DeviceSummary): Promise<boolean> {
     return false;
   }
   if (!firmwareMismatch(device.firmware)) return true;
+  // Preference-suppressible (Preferences > Warnings): the mismatch becomes a
+  // silent proceed, but an unreadable version above stays a hard stop.
+  if (!getSettings().warnFirmware) return true;
   return confirmDialog(t().confirm.firmwareMismatch(device.firmware, SUPPORTED_SYSTEM_FIRMWARE));
 }
 
@@ -1153,7 +1192,7 @@ $("btn-save").addEventListener("click", async () => {
   // A failed write must keep the plan dirty and surface as a modal, like the
   // load paths do — a silent rejection would read as a successful save.
   try {
-    const res = await saveTextDocument(`${modelId}-plan.json`, serialize(plan), {
+    const res = await saveTextDocument(`${modelId}-plan.json`, serialize(plan, sceneSaveOpts()), {
       ext: "json",
       label: t().filter.plan,
     });
@@ -1163,7 +1202,7 @@ $("btn-save").addEventListener("click", async () => {
     }
     dirty = false;
     if (res.path) {
-      recent = rememberRecent({ path: res.path, name: baseName(res.path), modelId });
+      recent = rememberRecent({ path: res.path, name: baseName(res.path), modelId }, getSettings().recentMax);
       refreshInspector();
       setStatus(t().status.savedTo(baseName(res.path)));
     } else {
@@ -1186,7 +1225,7 @@ $("btn-share").addEventListener("click", async () => {
   // as a modal rather than silently copying nothing. A missing deflate-raw
   // codec arrives as the typed browser-floor PlanError, same as the decode path.
   try {
-    url.searchParams.set("plan", await encodePlanParam(plan));
+    url.searchParams.set("plan", await encodePlanParam(plan, sceneSaveOpts()));
   } catch (err) {
     showError(err instanceof PlanError ? t().error[err.code] : t().status.shareUrlError(String(err)));
     return;
@@ -1212,7 +1251,7 @@ $("btn-share").addEventListener("click", async () => {
 $("btn-download").addEventListener("click", () => {
   // The demo's stand-in for Save: the downloaded JSON matches a desktop save,
   // so File → Open on the desktop app loads it as-is.
-  downloadText(`${modelId}-plan.json`, serialize(plan));
+  downloadText(`${modelId}-plan.json`, serialize(plan, sceneSaveOpts()));
   dirty = false;
   setStatus(t().status.planDownloaded);
 });
@@ -1230,6 +1269,39 @@ $("btn-export-pdf").addEventListener("click", () => {
 $("btn-licenses").addEventListener("click", () => {
   thirdPartyLicenses().then(showLicenses, (e: unknown) => showError(t().licenses.error(String(e))));
 });
+
+// The plan-file save scope (Preferences > Plan files), shared by every
+// serialize call site: file save, demo JSON download, and the share URL.
+function sceneSaveOpts(): SerializeOptions {
+  return { sceneOnly: getSettings().saveScope === "scene" };
+}
+
+// Preferences modal (the toolbar gear): available in every build; rows that need
+// the desktop shell render locked with a tag instead (see ui/prefs.ts).
+const prefs = new PrefsPanel({
+  isLive: () => liveSessionUp,
+  onRecentChanged: (list) => {
+    recent = list;
+    refreshInspector();
+  },
+  onWarningsChanged: () => refreshInspector(),
+  // The FINE tag hint names the entry style at build time; rebuild both views so
+  // the hint follows a style change.
+  onFineChanged: () => {
+    refreshInspector();
+    consoleView.refresh();
+  },
+  onCheckUpdates: () => {
+    // DEMO folds statically, so the demo bundle keeps dropping the updater path.
+    if (DEMO) return;
+    // Close first: the outcome lands on the status line / a native dialog, and
+    // the status bar sits under the modal scrim.
+    prefs.close();
+    void checkForUpdates(true);
+  },
+  isExperimental: () => experimentalOn,
+});
+$("btn-prefs").addEventListener("click", () => prefs.open());
 
 $("btn-auto").addEventListener("click", () => {
   graph.autoLayout();
@@ -1405,7 +1477,7 @@ if (!DEMO) {
         const dirtyBeforeRead = dirty;
         let result: ReadbackResult;
         try {
-          result = await applyDeviceState(getModel(modelId), plan, controller.signal);
+          result = await applyDeviceStateScoped(controller.signal);
         } catch (e) {
           if (e instanceof DOMException && e.name === "AbortError") {
             plan = beforeRead;
@@ -1549,7 +1621,10 @@ if (!DEMO) {
             showError(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
             return;
           }
-          if (!(await settleSampleRate())) return;
+          // Scene scope drops SAMPLE_RATE from the write set, so there is no
+          // rate to settle — the device keeps running at its own.
+          const scope = getSettings().deviceScope;
+          if (scope !== "scene" && !(await settleSampleRate())) return;
           // One attempt of the whole diff → confirm → send sequence. Returns the
           // sent/not-sent split when the send stopped part-way (so the caller can
           // offer a retry), or null when there is nothing left to do.
@@ -1567,7 +1642,7 @@ if (!DEMO) {
             // A read failure leaves those parameters' device values unknown, so the
             // write stops on the first one — the rest of the sweep would only be
             // establishing values for a write that is already canceled.
-            const { diffs, errors } = await diffPlan(getModel(modelId), plan, signal, true);
+            const { diffs, errors } = await diffPlan(getModel(modelId), plan, { signal, stopOnError: true, scope });
             if (errors.length) {
               setStatus(t().status.writeReadFailed(errors.length));
               saveReport([], [], errors);
@@ -1595,7 +1670,7 @@ if (!DEMO) {
               outcomes,
               residual,
               readErrors: convergeErrors,
-            } = await sendConverging(getModel(modelId), plan, diffs, 3, 300, signal);
+            } = await sendConverging(getModel(modelId), plan, { initialDiffs: diffs, signal, scope });
             const skipped = outcomes.filter((o) => o.skipped).length;
             const failed: Array<{ name: string; error?: string }> = outcomes
               .filter(reachedAndFailed)
@@ -1697,7 +1772,9 @@ if (!DEMO) {
           }
           loadPlan(emptyPlan(device.model as ModelId));
         }
-        const result = await applyDeviceState(getModel(modelId), plan);
+        // live.begin() then snapshots through the same scope filter, so a kept
+        // scene-external value is neither written back nor tracked.
+        const result = await applyDeviceStateScoped();
         plan.unreadNodes = result.unreadNodes;
         rerenderPlan();
         // A partial read leaves the plan holding defaults where the device was not
@@ -1836,6 +1913,8 @@ if (!DEMO) {
 
   experimentalEnabled().then((enabled) => {
     if (!enabled) return;
+    experimentalOn = true;
+    prefs.refresh();
     for (const el of document.querySelectorAll<HTMLElement>("[data-experimental-only]")) el.hidden = false;
 
     // Arm the settings-file import: the File menu entry (revealed just above) and
@@ -2207,7 +2286,7 @@ async function boot(): Promise<void> {
   await resetStorageIfRequested();
   await requireConsent();
   if (!DEMO) {
-    await checkForUpdates();
+    if (getSettings().updateCheck) await checkForUpdates();
   }
 }
 
@@ -2262,17 +2341,24 @@ async function requireConsent(): Promise<void> {
   await exitApp();
 }
 
-async function checkForUpdates(): Promise<void> {
+async function checkForUpdates(manual = false): Promise<void> {
   try {
     const update = await checkUpdate();
-    if (!update) return;
+    if (!update) {
+      // The launch check stays silent; the Preferences "Check now" asked, so the
+      // no-news outcome is an answer worth stating.
+      if (manual) setStatus(t().prefs.upToDate);
+      return;
+    }
     if (!(await confirmDialog(t().confirm.update(update.version)))) return;
     setStatus(t().status.updateDownloading);
     await installUpdate(update.rid);
     // The new bundle is installed; relaunch into it. Nothing runs past here.
     await restartApp();
   } catch {
-    // Best-effort: stay silent when offline or no release is published yet.
+    // Best-effort: stay silent when offline or no release is published yet — but
+    // answer a manual check, which exists to produce a verdict.
+    if (manual) setStatus(t().prefs.updateCheckFailed);
   }
 }
 

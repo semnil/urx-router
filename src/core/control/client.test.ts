@@ -96,7 +96,7 @@ describe("diffPlan", () => {
     const plan = basePlan();
     vi.mocked(vdGet).mockRejectedValue(new Error("timeout"));
     const all = await diffPlan(model, plan);
-    const stopped = await diffPlan(model, plan, undefined, true);
+    const stopped = await diffPlan(model, plan, { stopOnError: true });
     expect(stopped.errors).toHaveLength(1);
     expect(all.errors.length).toBeGreaterThan(1);
   });
@@ -172,7 +172,7 @@ describe("sendConverging", () => {
 
   it("converges in one round when every write sticks", async () => {
     installDevice();
-    const r = await sendConverging(model, dirtyPlan(), undefined, 3, 0);
+    const r = await sendConverging(model, dirtyPlan(), { settleMs: 0 });
     expect(r.rounds).toBe(1);
     expect(r.residual).toEqual([]);
   });
@@ -180,14 +180,14 @@ describe("sendConverging", () => {
   it("re-sends and converges a param the device drops on the first write", async () => {
     // CH_ON (140:0:0) is accepted only on its second write.
     installDevice({ stuckKey: "140:0:0", stickAfter: 2 });
-    const r = await sendConverging(model, dirtyPlan(), undefined, 3, 0);
+    const r = await sendConverging(model, dirtyPlan(), { settleMs: 0 });
     expect(r.rounds).toBe(2);
     expect(r.residual).toEqual([]);
   });
 
   it("gives up after maxRounds and reports the residual for a stuck param", async () => {
     installDevice({ stuckKey: "140:0:0" }); // never sticks
-    const r = await sendConverging(model, dirtyPlan(), undefined, 3, 0);
+    const r = await sendConverging(model, dirtyPlan(), { settleMs: 0 });
     expect(r.rounds).toBe(3);
     expect(r.residual.some((d) => d.command.paramId === 140)).toBe(true);
   });
@@ -197,7 +197,7 @@ describe("sendConverging", () => {
   it("stops after a round that failed to send instead of retrying", async () => {
     installDevice();
     vi.mocked(vdSet).mockRejectedValue(new Error("link down"));
-    const r = await sendConverging(model, dirtyPlan(), undefined, 3, 0);
+    const r = await sendConverging(model, dirtyPlan(), { settleMs: 0 });
     expect(r.rounds).toBe(1);
     expect(r.outcomes.some((o) => !o.ok && !o.skipped)).toBe(true);
   });
@@ -213,7 +213,7 @@ describe("sendConverging", () => {
       if (++reads > 200 && id === 140) return Promise.reject(new Error("timeout"));
       return realGet(id, x, y);
     });
-    const r = await sendConverging(model, dirtyPlan(), undefined, 3, 0);
+    const r = await sendConverging(model, dirtyPlan(), { settleMs: 0 });
     expect(r.readErrors.length).toBeGreaterThan(0);
     expect(r.rounds).toBeLessThan(3);
   });
