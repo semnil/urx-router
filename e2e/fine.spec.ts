@@ -10,6 +10,10 @@ import { wheelOver } from "./graph-helpers";
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
+// Legend opacities, matching .fine-tag / its armed state in src/style.css.
+const DIM = "0.55";
+const LIT = "1";
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("urx-lang", "en");
@@ -50,18 +54,24 @@ test.describe("inspector sliders", () => {
     await expect(q.locator("input[type=range]")).not.toHaveAttribute("data-fine-step", /.+/);
   });
 
-  test("the FINE tag lights only while Shift is held over the control", async ({ page }) => {
+  test("the FINE legend is printed before any interaction and lights while Shift is held", async ({ page }) => {
     await node(page, "ch1").click();
     const row = page.locator("#inspector .eq-panel:not([hidden]) .param.has-fine");
     const tag = row.locator(".fine-tag");
-    await expect(tag).toBeHidden(); // quiet by default
-    await row.hover();
-    await expect(tag).toBeHidden(); // hover alone does not arm
-    await page.keyboard.down("Shift");
-    await expect(tag).toBeVisible();
+    await expect(tag).toBeVisible(); // printed — eligibility reads with no interaction
     await expect(tag).toHaveText("FINE");
+    await expect(tag).toHaveCSS("opacity", DIM);
+    await row.hover();
+    await expect(tag).toHaveCSS("opacity", DIM); // hover alone does not arm
+    await page.keyboard.down("Shift");
+    await expect(tag).toHaveCSS("opacity", LIT);
     await page.keyboard.up("Shift");
-    await expect(tag).toBeHidden();
+    await expect(tag).toHaveCSS("opacity", DIM);
+    // Label-pinned: a readout width change must not move the legend.
+    const before = await tag.boundingBox();
+    await wheelOver(page, row.locator("input[type=range]"), -100); // "0 dB" → "+0.5 dB"
+    await expect(row.locator(".param-val")).toHaveText("+0.5 dB");
+    expect(await tag.boundingBox()).toEqual(before);
   });
 });
 
@@ -71,15 +81,22 @@ test.describe("console view", () => {
     await expect(page.locator("#console-host")).toBeVisible();
   });
 
-  test("the TIME knob steps 0.02 ms while Shift is held, 1 ms otherwise", async ({ page }) => {
-    const time = strip(page, "STREAMING").locator(".con-knob[aria-label='TIME']");
-    const val = strip(page, "STREAMING").locator(".con-gain .val");
+  test("the TIME knob steps 0.02 ms while Shift is held, and its printed legend never moves", async ({ page }) => {
+    const s = strip(page, "STREAMING");
+    const time = s.locator(".con-knob[aria-label='TIME']");
+    const val = s.locator(".con-gain .val");
+    const tag = s.locator(".fine-tag");
+    await expect(tag).toBeVisible(); // printed legend, before any interaction
+    await expect(strip(page, "MONITOR 1").locator(".con-gain .fine-tag")).toHaveCount(0);
     await expect(val).toHaveText("1.0");
     await wheelOver(page, time, -100);
     await expect(val).toHaveText("2.0");
+    const before = await val.boundingBox();
     await page.keyboard.down("Shift");
     await wheelOver(page, time, -100);
     await expect(val).toHaveText("2.02");
+    await expect(tag).toHaveCSS("opacity", LIT); // lit —
+    expect(await val.boundingBox()).toEqual(before); // — and nothing moved
     await time.focus();
     await page.keyboard.press("ArrowUp"); // Shift still held
     await expect(val).toHaveText("2.04");

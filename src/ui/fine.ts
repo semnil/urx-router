@@ -17,7 +17,8 @@ export function fineActive(): boolean {
   return fine;
 }
 
-/** Build the FINE tag that lights while the mode is armed (shared by both views). */
+/** Build the FINE legend (shared by both views); printed / lit styling and
+ *  placement live in style.css (.fine-tag). */
 export function fineTag(): HTMLElement {
   const tag = el("span", "fine-tag");
   tag.textContent = t().inspector.fineTag;

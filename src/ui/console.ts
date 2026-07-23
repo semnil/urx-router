@@ -246,7 +246,10 @@ interface KnobSpec {
   max: number;
   step: number;
   /** Step while Shift is held (fine-tuning mode). Only params with a
-   *  device-verified fine grid set it (the STREAMING TIME knob, 0.02 ms). */
+   *  device-verified fine grid set it (the STREAMING TIME knob, 0.02 ms).
+   *  The printed legend sits in the whitespace above the knob (style.css
+   *  `.con-gain .fine-tag`) — a knob with content directly above (a stacked
+   *  PAN/BAL row) would need a new anchor before opting in. */
   fine?: number;
   format: (v: number) => string;
   reset: number;
@@ -2151,11 +2154,11 @@ export class Console {
     const info = el("div", "info");
     const lbl = el("span", "lbl");
     lbl.textContent = label;
-    // Fine-eligible knob: the FINE tag sits in the label line and lights while
-    // Shift is held over the control (.fine-mode + .has-fine, see style.css).
+    // Fine-eligible knob: printed FINE legend; placement + arming live in
+    // style.css (.con-gain .fine-tag / .fine-mode).
     if (k.fine !== undefined) {
       box.classList.add("has-fine");
-      lbl.append(fineTag());
+      box.append(fineTag());
     }
     const { knob, val } = this.buildKnob(k, label, id, "val", midiId);
     info.append(lbl, val);
