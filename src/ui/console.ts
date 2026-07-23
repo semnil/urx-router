@@ -64,7 +64,8 @@ import {
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
-import { el, onWheelStep, popTop } from "./dom";
+import { el, onWheelStep, popTop, scrubFloat } from "./dom";
+import { fineActive, fineTag } from "./fine";
 import { t } from "../i18n";
 
 // Full destination name (header readout + SEND PAN popover) and the short chip
@@ -244,6 +245,9 @@ interface KnobSpec {
   min: number;
   max: number;
   step: number;
+  /** Step while Shift is held (fine-tuning mode). Only params with a
+   *  device-verified fine grid set it (the STREAMING TIME knob, 0.02 ms). */
+  fine?: number;
   format: (v: number) => string;
   reset: number;
   /** Indicator angle (deg) for a value; default is a -135°..+135° sweep over the
@@ -1315,7 +1319,8 @@ export class Console {
     }
     // STREAMING: a DELAY on/off chip and a TIME knob (the delay time, 1…1000 ms).
     // Gives the otherwise-bare head controls so the strip reads as purposeful, and
-    // mirrors the OSCILLATOR's ON + LEVEL pairing. Finer time steps stay in the inspector.
+    // mirrors the OSCILLATOR's ON + LEVEL pairing. Finer time steps stay in the
+    // inspector; holding Shift steps the device's 0.02 ms fine grid (push-and-turn).
     if (m.isStream) {
       const chips = el("div", "con-chips");
       const delayOn = (): boolean => this.hooks.getPlan().nodeParams[m.id]?.delay?.on ?? false;
@@ -1340,7 +1345,10 @@ export class Console {
           min: DELAY_TIME_MIN_MS,
           max: DELAY_TIME_MAX_MS,
           step: 1, // whole-ms on the knob; the inspector keeps the 0.01 ms grid
-          format: (v) => (v < 100 ? v.toFixed(1) : String(Math.round(v))),
+          fine: 0.02, // device-verified fine grid (fixed, rate-independent)
+          // Digits by need: off-grid (fine / inspector-set) values get both
+          // decimals; whole values keep the original compact display.
+          format: (v) => v.toFixed(v % 1 ? 2 : v < 100 ? 1 : 0),
           reset: factory,
         },
         m.id,
@@ -2143,6 +2151,12 @@ export class Console {
     const info = el("div", "info");
     const lbl = el("span", "lbl");
     lbl.textContent = label;
+    // Fine-eligible knob: the FINE tag sits in the label line and lights while
+    // Shift is held over the control (.fine-mode + .has-fine, see style.css).
+    if (k.fine !== undefined) {
+      box.classList.add("has-fine");
+      lbl.append(fineTag());
+    }
     const { knob, val } = this.buildKnob(k, label, id, "val", midiId);
     info.append(lbl, val);
     box.append(info, knob);
@@ -2192,14 +2206,17 @@ export class Console {
     partnerSync = true,
   ): void {
     const angle = k.angle ?? ((v: number): number => -135 + ((v - k.min) / (k.max - k.min)) * 270);
+    // Step for an interaction: fine while Shift is held — the event's own modifier
+    // state OR the global tracker (covers Shift pressed away from the control).
+    const stepFor = (ev?: { shiftKey: boolean }): number =>
+      k.fine !== undefined && (ev?.shiftKey === true || fineActive()) ? k.fine : k.step;
     const show = (v: number): void => {
       val.textContent = k.format(v);
       knob.style.setProperty("--rot", angle(v) + "deg");
       knob.setAttribute("aria-valuenow", String(v));
     };
-    const apply = (raw: number): void => {
-      const snapped = Number((Math.round(raw / k.step) * k.step).toFixed(4));
-      const v = Math.max(k.min, Math.min(k.max, snapped));
+    const apply = (raw: number, st = k.step): void => {
+      const v = Math.max(k.min, Math.min(k.max, scrubFloat(Math.round(raw / st) * st)));
       k.set(v);
       show(v);
       this.commit(id);
@@ -2211,9 +2228,23 @@ export class Console {
       e.preventDefault();
       if (this.midiArm(midiId)) return;
       knob.setPointerCapture(e.pointerId);
-      const startY = e.clientY;
-      const start = k.get();
-      const move = (ev: PointerEvent): void => apply(start + ((startY - ev.clientY) / 150) * (k.max - k.min));
+      // Absolute drag mapping, with both anchors rebased whenever the Shift state
+      // flips, so entering or leaving fine mode mid-drag never jumps the value:
+      // each segment maps at its own rate — coarse = full range over 150px, fine =
+      // one fine step per pixel.
+      let startY = e.clientY;
+      let start = k.get();
+      let wasSt = stepFor(e);
+      const move = (ev: PointerEvent): void => {
+        const st = stepFor(ev);
+        if (st !== wasSt) {
+          start = k.get();
+          startY = ev.clientY;
+          wasSt = st;
+        }
+        const rate = st === k.step ? (k.max - k.min) / 150 : st;
+        apply(start + (startY - ev.clientY) * rate, st);
+      };
       const up = (): void => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
@@ -2224,8 +2255,9 @@ export class Console {
     });
     knob.addEventListener("keydown", (e) => {
       if (this.midiLearnKey(e, midiId)) return;
-      if (e.key === "ArrowUp" || e.key === "ArrowRight") apply(k.get() + k.step);
-      else if (e.key === "ArrowDown" || e.key === "ArrowLeft") apply(k.get() - k.step);
+      const st = stepFor(e);
+      if (e.key === "ArrowUp" || e.key === "ArrowRight") apply(k.get() + st, st);
+      else if (e.key === "ArrowDown" || e.key === "ArrowLeft") apply(k.get() - st, st);
       else return;
       e.preventDefault();
       if (partnerSync) this.syncPartnerStrip(id);
@@ -2240,7 +2272,8 @@ export class Console {
     onWheelStep(
       knob,
       (dir) => {
-        apply(k.get() + dir * k.step);
+        const st = stepFor();
+        apply(k.get() + dir * st, st);
         if (partnerSync) this.syncPartnerStrip(id);
       },
       () => this.hooks.midi?.learnActive(),

@@ -6,21 +6,31 @@ export function el(tag: string, cls: string): HTMLElement {
 }
 
 // Wire scroll-wheel stepping onto a control: a vertical notch steps by one detent
-// (`dir` = +1 up / −1 down). A pure-horizontal scroll (deltaY 0) is left alone, and
-// `preventDefault` (needs the non-passive listener) stops the page/panel scrolling
-// while the pointer is over the control. `blocked` short-circuits before any work
-// (e.g. while assigning MIDI). Shared by the console faders/knobs and the inspector
-// sliders so the passive/preventDefault contract lives in one place.
+// (`dir` = +1 up / −1 down). A pure-horizontal scroll (deltaY 0) is left alone —
+// except under Shift, where browsers remap the vertical wheel onto deltaX, so the
+// fine-tuning modifier still steps. `preventDefault` (needs the non-passive
+// listener) stops the page/panel scrolling while the pointer is over the control.
+// `blocked` short-circuits before any work (e.g. while assigning MIDI). Shared by
+// the console faders/knobs and the inspector sliders so the passive/preventDefault
+// contract lives in one place.
 export function onWheelStep(el: HTMLElement, step: (dir: 1 | -1) => void, blocked?: () => boolean | undefined): void {
   el.addEventListener(
     "wheel",
     (e) => {
-      if (e.deltaY === 0 || blocked?.()) return;
+      const d = e.deltaY !== 0 ? e.deltaY : e.shiftKey ? e.deltaX : 0;
+      if (d === 0 || blocked?.()) return;
       e.preventDefault();
-      step(e.deltaY < 0 ? 1 : -1);
+      step(d < 0 ? 1 : -1);
     },
     { passive: false },
   );
+}
+
+// Scrub binary float drift onto a ≤4-decimal grid, so stepped values stay clean
+// ("2.7", not 2.7000000000000002) across the 0.5 / 0.1 dB and 1 / 0.02 ms grids.
+// Shared by the inspector wheel stepping and the console knob snapping.
+export function scrubFloat(v: number): number {
+  return Number(v.toFixed(4));
 }
 
 // Vertical placement for a floating popover: `gap` px below the anchor rect,

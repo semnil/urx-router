@@ -161,7 +161,8 @@ import { loadJson, saveJson } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
 import { setLevelText } from "./glyph";
-import { onWheelStep } from "./dom";
+import { onWheelStep, scrubFloat } from "./dom";
+import { fineTag, optInFine } from "./fine";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 
@@ -1061,7 +1062,7 @@ function wheelStep(slider: HTMLInputElement): void {
     const step = Number(slider.step) || 1;
     const lo = Number(slider.min);
     const hi = Number(slider.max);
-    const next = Math.min(hi, Math.max(lo, Number(slider.value) + dir * step));
+    const next = Math.min(hi, Math.max(lo, scrubFloat(Number(slider.value) + dir * step)));
     if (next === Number(slider.value)) return;
     slider.value = String(next);
     slider.dispatchEvent(new Event("input"));
@@ -1071,6 +1072,9 @@ function wheelStep(slider: HTMLInputElement): void {
 // A labeled range slider that updates its value readout and reports the numeric
 // value on every input. Mutates in place (no re-render) so it keeps focus while
 // dragging. Shared by the connection (sliderControl) and node-level controls.
+// `fine` opts the slider into the Shift-held fine-tuning mode (only params with a
+// device-verified fine grid pass it): the fine tracker swaps the step attribute
+// via the data attributes, and the row grows the FINE tag CSS lights while armed.
 function rangeSlider(
   label: string,
   min: number,
@@ -1079,6 +1083,7 @@ function rangeSlider(
   cur: number,
   fmt: (v: number) => string,
   onInput: (v: number) => void,
+  fine?: number,
 ): HTMLElement {
   const { row, value } = paramBlock(label, fmt(cur));
   const slider = document.createElement("input");
@@ -1087,6 +1092,11 @@ function rangeSlider(
   slider.max = String(max);
   slider.step = String(step);
   slider.value = String(cur);
+  if (fine !== undefined) {
+    optInFine(slider, step, fine);
+    row.classList.add("has-fine");
+    value.before(fineTag());
+  }
   slider.addEventListener("input", () => {
     const v = Number(slider.value);
     setLevelText(value, fmt(v));
@@ -1174,6 +1184,10 @@ function eqOneKnobBlock(
   return frag;
 }
 
+// 0.1 dB fine grid shared by every gain-trim slider that has one on the device
+// (EQ band gain and COMP gain; verified push-and-turn steps).
+const FINE_GAIN_STEP_DB = 0.1;
+
 function eqBandBlock(
   nodeId: string,
   ctrl: EqControl,
@@ -1250,8 +1264,15 @@ function eqBandBlock(
     panel.append(eqFreqControl(bv.freq ?? EQ_BAND_DEFAULT_FREQ[band.index], (v) => setBand(band.index, { freq: v })));
     if (effType !== EQ_TYPE_PASS) {
       panel.append(
-        rangeSlider(m.inspector.eqGain, EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB, 0.5, bv.gain ?? 0, formatGainDb, (v) =>
-          setBand(band.index, { gain: v }),
+        rangeSlider(
+          m.inspector.eqGain,
+          EQ_GAIN_MIN_DB,
+          EQ_GAIN_MAX_DB,
+          0.5,
+          bv.gain ?? 0,
+          formatGainDb,
+          (v) => setBand(band.index, { gain: v }),
+          FINE_GAIN_STEP_DB,
         ),
       );
     }
@@ -1283,7 +1304,9 @@ function dynFieldSlider(
     f.name === "GATE_RANGE"
       ? (v: number) => (v <= GATE_RANGE_OFF_DB ? "-∞ dB" : formatDyn(v, f.unit))
       : (v: number) => formatDyn(v, f.unit);
-  return rangeSlider(label, f.min, f.max, f.step, cur ?? f.def, fmt, (v) => onSet(f.key, v));
+  // COMP gain is the only dyn param with a device-verified fine grid.
+  const fine = f.name === "COMP_GAIN" ? FINE_GAIN_STEP_DB : undefined;
+  return rangeSlider(label, f.min, f.max, f.step, cur ?? f.def, fmt, (v) => onSet(f.key, v), fine);
 }
 
 // Merge a patch into a node's FX effect object / its raw params map, reading the

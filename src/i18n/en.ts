@@ -212,6 +212,8 @@ export const en = {
     frequency: "Freq",
     q: "Q",
     eqGain: "Gain",
+    fineTag: "FINE",
+    fineHint: "Fine adjustment — hold Shift",
     eqBand: { low: "LOW", lowMid: "LOW MID", highMid: "HIGH MID", high: "HIGH" },
     dyn: {
       threshold: "Threshold",

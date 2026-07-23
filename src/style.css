@@ -920,6 +920,31 @@ select:focus-visible,
   color: var(--text);
 }
 
+/* Fine-tuning mode (hold Shift): a FINE tag lights on the hovered / focused
+   fine-eligible control — EQ band gain / COMP gain (0.1 dB) and the console TIME
+   knob (0.02 ms), the device's push-and-turn grids. Hidden until armed so the
+   panel stays quiet; ui/fine.ts drives the .fine-mode root class. */
+.fine-tag {
+  display: none;
+  font: 700 8px var(--mono);
+  letter-spacing: 1px;
+  color: var(--led);
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 1px 3px;
+}
+.param-label .fine-tag {
+  margin-left: auto; /* hug the readout at the row's right edge */
+  margin-right: 6px;
+}
+.con-gain .lbl .fine-tag {
+  margin-left: 5px;
+}
+:root.fine-mode .has-fine:hover .fine-tag,
+:root.fine-mode .has-fine:focus-within .fine-tag {
+  display: inline-block;
+}
+
 /* A read-only param row (a value the device drives and only reports back, e.g. the
    COMP ratio/gain while 1-Knob is on): the label + value with no control, dimmed. */
 .param.readonly {

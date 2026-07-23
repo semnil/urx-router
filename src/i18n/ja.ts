@@ -203,6 +203,8 @@ export const ja: Messages = {
     frequency: "周波数",
     q: "Q",
     eqGain: "ゲイン",
+    fineTag: "FINE",
+    fineHint: "微調整 — Shift を押しながら操作",
     eqBand: { low: "LOW", lowMid: "LOW MID", highMid: "HIGH MID", high: "HIGH" },
     dyn: {
       threshold: "スレッショルド",
