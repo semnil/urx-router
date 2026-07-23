@@ -42,12 +42,15 @@ flowchart TD
       platform[platform.ts<br/>Tauri bridge / fallbacks]
       meters[meters.ts<br/>live meters<br/>map/decode/store]
       midicore[midi/ external MIDI control<br/>message/mapping/controls/engine]
+      settings[settings.ts<br/>user preferences store]
+      scenescope[scene-scope.ts<br/>scene boundary on plan state]
     end
     subgraph ui[ui/ presentation]
       graphts[graph.ts<br/>SVG node graph<br/>theme-aware palette]
       inspector[inspector.ts<br/>selected-element editing]
       console[console.ts<br/>mixer-style level overview]
       midiui[midi.ts<br/>MIDI control panel]
+      prefsui[prefs.ts<br/>Preferences modal]
     end
     subgraph i18n[i18n/ localization]
       cat[en.ts / ja.ts<br/>message catalogs]
@@ -212,8 +215,9 @@ The connection and node colors live in both layers: wire colors as `--w-*` (CSS)
 > `--w-key` / `--w-record` CSS variables for the routing-list dots (`.dot-key` / `.dot-record`) alongside
 > their `PALETTES.wire` entries.
 
-PNG and PDF export (`core/storage.ts`) read `--canvas-bg` to paint the background, so the exported
-image follows the current theme too. The PDF is a hand-built single-page document embedding one
+PNG and PDF export (`core/storage.ts`) paint the background from the export palette — the active
+theme by default, or the fixed theme chosen in Preferences (the export clone renders under that
+palette; see the Preferences section). The PDF is a hand-built single-page document embedding one
 FlateDecode image (deflate via the platform `CompressionStream`), so no runtime dependency is added.
 
 ## CONSOLE view (mixer-style level overview)
@@ -790,6 +794,44 @@ PDF exports.
   by the nodes' actual heights (`nodeHeight`, expanded note included), so a note never overlaps the
   node below it.
 
+## Preferences
+
+The toolbar gear opens the Preferences modal (`ui/prefs.ts`), available in every build. It is the
+consent-box family (920 px, two columns), and at a shrunken window height the box scrolls inside
+itself, so the content and the Close action stay reachable. Every setting applies the moment it is
+changed and persists as one validated localStorage record (`urx-settings`, `core/settings.ts`,
+loaded lazily so the `?reset` clear runs first). Rows whose feature needs the desktop shell
+(device scope, update check, firmware warning, recent plans — plus the export rows in the demo)
+render disabled with a dashed "Desktop app only" tag instead of hiding, so the demo still shows
+what the desktop app offers.
+
+- **Device read / write scope** — one bidirectional scope for fetch, write and Live sync: "All
+  supported" (default) or "Scene only", which leaves the URX's device-wide settings untouched
+  (monitor / phones, output + USB / SD patches, streaming, oscillator, sample rate — the set a
+  device scene excludes; see known-issues.md). The boundary is deliberately encoded twice:
+  `sceneExternal` flags in `control/params.ts` filter the write side at the one `planToCommands`
+  chokepoint (so the diff, the live snapshot / flush and the follow notify registration all
+  inherit it), and `core/scene-scope.ts` names the same boundary in plan terms for the read / save
+  side; a contract test pins the two together. Reads stay full — a scoped fetch reads every
+  parameter (reads are side-effect free) and then restores the kept values
+  (`applyDeviceStateScoped` in `main.ts`). The diagnostics (compare / self-test / prepare) always
+  run at full scope, and the control locks while Live sync is up, since the scope is part of the
+  held session's snapshot and notify registration. A scene-only write also skips the sample-rate
+  settle: the rate is out of scope, so the device keeps its own clock.
+- **Plan-file save scope** — full plan (default) or scene only, applied to file save, the share
+  URL and the demo JSON download (see Persistence format below for the document shape and the
+  merge-on-load semantic).
+- **Application version** — the running version, the launch update-check toggle, and a manual
+  "Check now" (the modal closes first so the outcome is not hidden behind the scrim).
+- **Warnings** — visibility of the untested-firmware confirm and the sample-rate / Ducker-bypass
+  warning cards. Display-only: the behavior locks (rate-disabled nodes, the stereo-EQ force-off)
+  stay on regardless.
+- **Controls** — wheel steps per notch (each detent still snaps to the control's own grid), and
+  the fine-tuning entry style (hold Shift, or latch — each press flips the mode).
+- **Files & export** — the PNG / PDF raster scale, the export background (active theme or a fixed
+  one — the graph re-renders under the target palette just for the export clone and swaps back
+  within the same task, so the screen never shows it), and the recent-plans length / clear.
+
 ## Persistence format
 
 ```jsonc
@@ -834,6 +876,13 @@ corrupt input: every collection passes a type guard that drops a non-conforming 
 default (`positions` included, symmetrically), and `connections` is validated element-by-element so
 malformed wires (null, wrong-typed, unknown `kind`) are discarded — keeping garbled values from a
 hand edit or an older build out of the plan where they could break routing invariants.
+
+A scene-scoped save (Preferences > Plan files) additionally writes `"scope": "scene"`, omits
+`sampleRate`, and strips the scene-external state (the monitor / oscillator node params, the
+streaming delay and color, and every patch / record / monitor- or streaming-source / OSC-assign
+wire). Loading such a document keeps the current plan's values for that state when the model
+matches — the same semantic as a scene recall on the unit; an older build simply loads the absent
+fields at their defaults, since every field is optional on load.
 
 ## Opening files: drag & drop, and settings files
 
@@ -958,7 +1007,9 @@ are unaffected. `vite.config.ts`'s relative `base: "./"` lets assets resolve und
 
 ### Auto-update
 
-The desktop app checks for a newer release at startup. The Tauri updater / process plugins are registered
+The desktop app checks for a newer release at startup (Preferences can turn the launch check off,
+and offers a manual "Check now" that also reports the outcomes the launch check keeps silent — up
+to date, or check failed). The Tauri updater / process plugins are registered
 in `src-tauri/` on desktop only, and the frontend calls `plugin:updater|check` /
 `plugin:updater|download_and_install` / `plugin:process|restart` directly from `src/core/platform.ts`, the
 same way as the dialog calls (no added npm runtime dependency). When an update exists it shows a confirm

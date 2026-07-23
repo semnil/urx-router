@@ -194,4 +194,7 @@ share link) carries the Monitor routing and levels, Phones, output and USB
 patching, microSD recording source, streaming output, oscillator and sample rate
 across — the settings a device scene leaves behind. A few device-utility settings
 (brightness, Language, Auto Power Off, and the USB clock Follow) stay outside the
-plan, as noted above.
+plan, as noted above. Preferences can also draw the same boundary the other way:
+a "Scene only" device scope leaves those device-wide settings untouched on fetch,
+write and Live sync, and a scene-only plan save omits them so opening the file
+keeps the current values — the same semantic as a scene recall on the unit.
