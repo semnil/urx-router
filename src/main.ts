@@ -46,6 +46,7 @@ import { Console } from "./ui/console";
 import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
 import { initDropzone } from "./ui/dropzone";
+import { initFineMode } from "./ui/fine";
 import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
 import { getLang, LANG_CODES, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
@@ -1123,6 +1124,10 @@ $("btn-open").addEventListener("click", async () => {
     showError(t().status.loadError(String(err)));
   }
 });
+
+// Fine-tuning mode: holding Shift tightens the step of the controls whose device
+// parameter has a verified fine grid (see ui/fine.ts).
+initFineMode();
 
 // Drag & drop, the second way into File > Open. A dropped plan lands exactly as it
 // would from the dialog — same validation, same recent-list entry when the drop

@@ -920,6 +920,47 @@ select:focus-visible,
   color: var(--text);
 }
 
+/* Fine-tuning legend: a control with a device-verified fine grid — EQ band gain /
+   COMP gain (0.1 dB) and the console TIME knob (0.02 ms) — carries a printed FINE
+   tag at all times, silkscreen-dim, so eligibility reads before any interaction
+   and the tag can never shift the layout by appearing. While armed (Shift held,
+   ui/fine.ts drives the .fine-mode root class) the legend lights on the hovered /
+   focused control like an engaged LED. */
+.fine-tag {
+  font: 700 8px var(--mono);
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  opacity: 0.55;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 1px 3px;
+}
+/* Pin the legend beside the static label, not the readout — the readout's width
+   changes with the value's digits and sign while dragging, and a legend anchored
+   to it would jitter left and right. */
+.param-label .fine-tag {
+  margin-left: 8px;
+  margin-right: auto;
+}
+/* The knob legend is printed in the head whitespace just above the knob — the
+   narrow info column cannot host the tag without wrapping or overlap, and the
+   only fine knob (STREAMING TIME) has that whitespace by construction. Absolute,
+   so the legend can never move the label / value / knob geometry. */
+.con-gain.has-fine {
+  position: relative;
+}
+.con-gain .fine-tag {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 3px);
+}
+:root.fine-mode .has-fine:hover .fine-tag,
+:root.fine-mode .has-fine:focus-within .fine-tag {
+  color: var(--led);
+  opacity: 1;
+  box-shadow: 0 0 5px var(--led);
+}
+
 /* A read-only param row (a value the device drives and only reports back, e.g. the
    COMP ratio/gain while 1-Knob is on): the label + value with no control, dimmed. */
 .param.readonly {

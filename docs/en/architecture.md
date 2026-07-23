@@ -262,6 +262,21 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
 +90°): PHONES 2.0/8.0, A.Gain +8/+55, D.Gain -14/+15, OSCILLATOR LEVEL -50/-8. Double-clicking a fader cap or
 a knob resets it to the **factory value** (from `defaultPlan`).
 
+**Fine-tuning (hold Shift)** — the controls whose device parameter has a verified fine grid tighten their
+step while Shift is held, mirroring the hardware's (undocumented) push-and-turn fine mode: the inspector's
+EQ band Gain and COMP Gain sliders step 0.1 dB (coarse 0.5 dB), and the STREAMING TIME knob steps 0.02 ms
+(coarse 1 ms; the fine step is fixed — it does not follow the sample rate, matching the device). Every
+fine-eligible control carries a printed `FINE` legend at all times — silkscreen-dim, so eligibility reads
+before any interaction, and placed so it can never shift the control's layout by appearing (pinned
+beside the static label in the inspector's row — anchored to the value readout it would jitter with the
+value's digit count — and floated in the whitespace above the console knob); while armed it lights
+amber on the hovered / focused control. `ui/fine.ts` tracks the key globally:
+it toggles the `.fine-mode` root class (the tag CSS) and swaps the `step` attribute of every
+`input[data-fine-step]`, so native slider drag, arrow keys and the wheel all inherit the fine grid; the
+console knob reads the modifier per event (drag rebases when Shift flips mid-gesture, so entering or
+leaving fine never jumps the value). Faders, sends and every other parameter keep their normal grids — the
+device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set.
+
 - **Meter point (per-strip tap)** — a node exposes several observable meter tap points along its signal
   chain, and each strip picks which one its meter (and the live readout) shows. An amber badge — carrying a
   meter-bars glyph so it reads apart from the send-tap PRE/POST chip — above the
@@ -277,7 +292,8 @@ a knob resets it to the **factory value** (from `defaultPlan`).
   switched on); it carries a **LEVEL
   rotary knob** (−96…0 dB, the shared device level; its indicator's horizontal marks read -50 left / -8 right)
   in place of a fader; **STREAMING** carries a **DELAY on/off chip** (`delay.on`) and a **TIME knob** (the delay
-  time, 1…1000 ms; the inspector keeps the finer 0.01 ms grid) so the otherwise-bare head reads as a purposeful
+  time, 1…1000 ms; holding Shift steps the device's 0.02 ms fine grid, and the inspector keeps the full
+  0.01 ms grid) so the otherwise-bare head reads as a purposeful
   strip. The choice persists per model in
   `localStorage` (`urx-metertap`). The readout has two captioned cells: **FADER** (the set level, white) and
   **METER** (the selected tap's live value, amber); default tap = the most downstream point.

@@ -1,17 +1,10 @@
-import { test, expect, type Page, type Locator } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+import { wheelOver } from "./graph-helpers";
 
 // Mouse-wheel adjust on hover: every continuous control (inspector native-range
 // sliders + the console faders / knobs) nudges one detent per wheel notch, matching
 // the Arrow keys. deltaY < 0 = up. Guards: device-locked knobs and FIXED-bus send
 // faders take no input, and a pure horizontal scroll (deltaY 0) is left alone.
-
-// Hover the control's centre, then send one wheel notch there.
-async function wheelOver(page: Page, target: Locator, deltaY: number): Promise<void> {
-  const box = await target.boundingBox();
-  if (!box) throw new Error("target has no bounding box");
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.wheel(0, deltaY);
-}
 
 const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 const col = (page: Page, name: string, send: string) =>

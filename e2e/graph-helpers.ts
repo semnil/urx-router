@@ -29,3 +29,12 @@ export async function drag(page: Page, from: Locator, to: Locator): Promise<void
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 });
   await page.mouse.up();
 }
+
+/** Hover the control's centre, then send one wheel notch there. */
+export async function wheelOver(page: Page, target: Locator, deltaY: number): Promise<void> {
+  await target.scrollIntoViewIfNeeded();
+  const box = await target.boundingBox();
+  if (!box) throw new Error("target has no bounding box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, deltaY);
+}
