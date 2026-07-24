@@ -798,8 +798,10 @@ PDF exports.
 
 The toolbar gear opens the Preferences modal (`ui/prefs.ts`), available in every build. It is the
 consent-box family (920 px, two columns), and at a shrunken window height the box scrolls inside
-itself, so the content and the Close action stay reachable. Every setting applies the moment it is
-changed and persists as one validated localStorage record (`urx-settings`, `core/settings.ts`,
+itself, so the content and the Close action stay reachable. Since every setting applies the moment
+it is changed, a press outside the box or Escape dismisses the modal like the MIDI panel — the
+capture-phase wiring both share lives in `ui/dom.ts` (`wireDismiss`). Settings persist as one
+validated localStorage record (`urx-settings`, `core/settings.ts`,
 loaded lazily so the `?reset` clear runs first). Rows whose feature needs the desktop shell
 (device scope, update check, firmware warning, recent plans — plus the export rows in the demo)
 render disabled with a dashed "Desktop app only" tag instead of hiding, so the demo still shows
@@ -822,7 +824,11 @@ what the desktop app offers.
   URL and the demo JSON download (see Persistence format below for the document shape and the
   merge-on-load semantic).
 - **Application version** — the running version, the launch update-check toggle, and a manual
-  "Check now" (the modal closes first so the outcome is not hidden behind the scrim).
+  "Check now". The outcome lands inline beside the version — the modal stays open, so a "no
+  update" answer is seen where it was asked for — and while the check is in flight every
+  dismissal locks (Close disables, an outside press and Escape are inert), bounded by the
+  check's 10 s timeout. Only an accepted update closes the modal, since the scrim would hide
+  the download status.
 - **Warnings** — visibility of the untested-firmware confirm and the sample-rate / Ducker-bypass
   warning cards. Display-only: the behavior locks (rate-disabled nodes, the stereo-EQ force-off)
   stay on regardless.
@@ -869,7 +875,10 @@ endpoints in `connect-src` (dev additionally allows the Vite HMR websocket). Eve
 reached via `core/platform.ts` through `window.__TAURI_INTERNALS__.invoke`, so no Tauri npm package
 is bundled; when not running under Tauri it falls back to the browser path. A failed save or image
 export surfaces as a modal error dialog (`status.saveError` / `status.exportError`); a failed save
-keeps the plan dirty. The plan format is
+keeps the plan dirty. A recent-plans entry whose file no longer loads (moved / deleted /
+corrupted) is dropped from the list automatically — keeping it would only reproduce the same
+error — and the status line says so; declining the discard confirm attempts nothing and keeps
+the entry. The plan format is
 unchanged apart from the added `sampleRate`, `nodeNames`, `nodeColors`, `hidden`, `notes` and
 `noteCollapsed` fields (older files default them on load). Loading (`deserialize`) is tolerant of
 corrupt input: every collection passes a type guard that drops a non-conforming value to its empty
