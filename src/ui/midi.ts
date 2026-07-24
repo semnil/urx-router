@@ -27,7 +27,7 @@ import {
   type MidiMapping,
 } from "../core/midi/mapping";
 import { mirrorBalPair } from "../core/routing";
-import { el, popTop } from "./dom";
+import { el, popTop, wireDismiss } from "./dom";
 import { t } from "../i18n";
 
 export interface MidiHooks {
@@ -196,28 +196,26 @@ export class MidiControl {
       void this.refreshPorts();
       this.renderList();
       this.updateLearnUi();
-      // Capture phase, like the toolbar menus: console / graph handlers may
-      // stop propagation, but an outside press must still dismiss the panel.
-      document.addEventListener("pointerdown", this.onOutside, true);
+      this.dismiss.attach();
     } else {
       this.closePanel();
     }
   }
 
-  /** A press outside the panel dismisses it — except while learn is on
-   *  (arming clicks land on console controls outside the panel) and on the
-   *  menu entry itself (its click handler toggles; closing here would make
-   *  that toggle reopen the panel). */
-  private onOutside = (e: PointerEvent): void => {
-    const target = e.target as Node;
-    if (this.panel!.contains(target) || (target as Element).closest?.("#btn-midi")) return;
-    if (this.learnOn) return;
-    this.closePanel();
-  };
+  /** An outside press or Escape dismisses the panel — except while learn is on
+   *  (arming clicks land on console controls outside the panel, and leaving
+   *  learn is the Learn button's job, not a stray Escape's) and on the menu
+   *  entry itself (its click handler toggles; closing here would make that
+   *  toggle reopen the panel). */
+  private readonly dismiss = wireDismiss({
+    keep: (target) => this.panel!.contains(target) || !!(target as Element).closest?.("#btn-midi"),
+    inert: () => this.learnOn,
+    close: () => this.closePanel(),
+  });
 
   private closePanel(): void {
     if (!this.panel) return;
-    document.removeEventListener("pointerdown", this.onOutside, true);
+    this.dismiss.detach();
     this.panel.hidden = true;
     this.setLearn(false);
   }

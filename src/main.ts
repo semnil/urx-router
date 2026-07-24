@@ -53,6 +53,7 @@ import { initFineMode } from "./ui/fine";
 import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
+import type { UpdateCheckOutcome } from "./ui/prefs";
 import { getLang, LANG_CODES, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
 import { DEMO } from "./core/env";
 import {
@@ -1352,13 +1353,11 @@ const prefs = new PrefsPanel({
     refreshInspector();
     consoleView.refresh();
   },
-  onCheckUpdates: () => {
-    // DEMO folds statically, so the demo bundle keeps dropping the updater path.
-    if (DEMO) return;
-    // Close first: the outcome lands on the status line / a native dialog, and
-    // the status bar sits under the modal scrim.
-    prefs.close();
-    void checkForUpdates(true);
+  checkUpdates: () => {
+    // DEMO folds statically, so the demo bundle keeps dropping the updater path
+    // (the button is desktop-only anyway; this branch is unreachable).
+    if (DEMO) return Promise.resolve<UpdateCheckOutcome>({ kind: "failed" });
+    return checkForUpdates();
   },
   isExperimental: () => experimentalOn,
 });
@@ -2417,24 +2416,25 @@ async function requireConsent(): Promise<void> {
   await exitApp();
 }
 
-async function checkForUpdates(manual = false): Promise<void> {
+async function checkForUpdates(): Promise<UpdateCheckOutcome> {
   try {
     const update = await checkUpdate();
-    if (!update) {
-      // The launch check stays silent; the Preferences "Check now" asked, so the
-      // no-news outcome is an answer worth stating.
-      if (manual) setStatus(t().prefs.upToDate);
-      return;
+    if (!update) return { kind: "upToDate" };
+    if (!(await confirmDialog(t().confirm.update(update.version)))) {
+      return { kind: "declined", version: update.version };
     }
-    if (!(await confirmDialog(t().confirm.update(update.version)))) return;
+    // An accepted update is the one outcome that leaves the Preferences modal:
+    // the scrim would hide the download status. No-op at the launch check.
+    prefs.close();
     setStatus(t().status.updateDownloading);
     await installUpdate(update.rid);
     // The new bundle is installed; relaunch into it. Nothing runs past here.
     await restartApp();
+    return { kind: "installing" };
   } catch {
-    // Best-effort: stay silent when offline or no release is published yet — but
-    // answer a manual check, which exists to produce a verdict.
-    if (manual) setStatus(t().prefs.updateCheckFailed);
+    // Best-effort: offline, or no release published yet. The launch check stays
+    // silent; a manual check reports it through the Preferences inline note.
+    return { kind: "failed" };
   }
 }
 

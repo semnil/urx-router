@@ -2728,15 +2728,27 @@ select:focus-visible,
 
 /* ---- Preferences modal ---- */
 /* A wide consent-box (licenses width) holding two columns of sections. The box
-   itself scrolls (consent-box max-height), so a shrunken window height never
-   clips the content or the Close action out of reach. */
+   is a fixed column — title on top, the Close action pinned at the bottom — and
+   the grid between them is the scrolling region, so a shrunken window height
+   never hides Close behind a scroll. */
 .prefs-box {
+  display: flex;
+  flex-direction: column;
   width: min(920px, 100%);
+  overflow-y: hidden;
 }
 .prefs-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0 32px;
+  overflow-y: auto;
+  min-height: 0;
+}
+/* Footer separator: the grid scrolls beneath the pinned Close action. */
+.prefs-box .consent-actions {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
 }
 @media (max-width: 860px) {
   .prefs-grid {
@@ -2816,11 +2828,27 @@ select:focus-visible,
   font-size: 11px;
   color: var(--text-dim);
 }
+/* Inline outcome of the manual update check, beside the version. */
+.prefs-update-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.prefs-update-note.warn {
+  color: var(--warn);
+}
 .prefs-note {
   margin: 8px 0 0 14px;
   font-size: 11px;
   line-height: 1.55;
   color: var(--text-dim);
+}
+/* In-flight disable (the update check): same treatment as a disabled menu
+   item. Locked rows stay out — they already dim wholesale. */
+.prefs-row:not(.locked) .prefs-btn:disabled,
+.prefs-box .consent-btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 /* A row that does not apply in this build (browser / demo): the label and the
    control dim, the dashed tag stays readable, the control refuses input. */

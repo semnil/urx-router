@@ -38,6 +38,38 @@ export function scrubFloat(v: number): number {
   return Number(v.toFixed(4));
 }
 
+// Dismissal wiring for a transient overlay: a press outside it or Escape closes.
+// Capture phase, like the toolbar menus — console / graph handlers may stop
+// propagation, but a dismissal gesture must still reach the overlay. `keep`
+// names the press targets that must not dismiss (the overlay itself and its
+// toggle button); `inert` pauses dismissal without detaching (MIDI learn, an
+// update check in flight). Shared by the MIDI panel and the Preferences modal
+// so the phase/lifecycle contract lives in one place; attach on open, detach
+// on close.
+export function wireDismiss(opts: { keep: (target: Node) => boolean; inert?: () => boolean; close: () => void }): {
+  attach: () => void;
+  detach: () => void;
+} {
+  const onPointer = (e: PointerEvent): void => {
+    if (opts.inert?.() || opts.keep(e.target as Node)) return;
+    opts.close();
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key !== "Escape" || opts.inert?.()) return;
+    opts.close();
+  };
+  return {
+    attach: () => {
+      document.addEventListener("pointerdown", onPointer, true);
+      document.addEventListener("keydown", onKey, true);
+    },
+    detach: () => {
+      document.removeEventListener("pointerdown", onPointer, true);
+      document.removeEventListener("keydown", onKey, true);
+    },
+  };
+}
+
 // Vertical placement for a floating popover: `gap` px below the anchor rect,
 // flipped above it when the viewport bottom is too close, clamped to a 6px
 // viewport inset. Shared by the console popovers and the MIDI legend card so

@@ -427,11 +427,18 @@ export type DownloadEvent =
   | { event: "Progress"; data: { chunkLength: number } }
   | { event: "Finished" };
 
+/** How long an update check may take before it fails. The updater plugin sets
+ *  no default request timeout, and a check whose response is lost on the
+ *  network then never settles (measured: repeated checks against the release
+ *  endpoint intermittently hang forever without this) — which would leave any
+ *  await on it, and the UI state behind it, pending permanently. */
+const UPDATE_CHECK_TIMEOUT_MS = 10_000;
+
 /** Ask the updater for a newer release. Returns null in a plain browser or when
- * already up to date. */
+ * already up to date; rejects (within the timeout) instead of hanging. */
 export async function checkUpdate(): Promise<UpdateInfo | null> {
   if (!isTauri()) return null;
-  return invoke<UpdateInfo | null>("plugin:updater|check");
+  return invoke<UpdateInfo | null>("plugin:updater|check", { timeout: UPDATE_CHECK_TIMEOUT_MS });
 }
 
 /** Download and install a pending update, reporting progress. The app must be

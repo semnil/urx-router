@@ -9,7 +9,7 @@
 //   demo (Pages)   — those plus the export rows (the demo has no export)
 
 import { version } from "../../package.json";
-import { el } from "./dom";
+import { el, wireDismiss } from "./dom";
 import { t } from "../i18n";
 import {
   EXPORT_SCALE_CHOICES,
@@ -25,6 +25,11 @@ import { resetFine } from "./fine";
 import { trimRecent } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
 
+/** What a manual update check came to, for the inline note beside the version.
+ *  "installing" is nominal only — an accepted update restarts the app. */
+export type UpdateCheckOutcome =
+  { kind: "upToDate" } | { kind: "failed" } | { kind: "declined"; version: string } | { kind: "installing" };
+
 export interface PrefsHooks {
   /** Live sync is up: the device scope is part of the held session (snapshot +
    *  notify registration), so its control locks until the session ends. */
@@ -36,9 +41,10 @@ export interface PrefsHooks {
   /** The fine-tuning entry style changed; the shell rebuilds both views so the
    *  FINE tag hints name the new style. */
   onFineChanged: () => void;
-  /** Manual update check. The shell closes the modal first so the outcome
-   *  (status line or update dialog) is not hidden behind the scrim. */
-  onCheckUpdates: () => void;
+  /** Manual update check. The modal stays open and the resolved outcome lands
+   *  on the inline note; an accepted update closes the modal on the shell side
+   *  before the download status takes over. */
+  checkUpdates: () => Promise<UpdateCheckOutcome>;
   /** --experimental launch: the scope note also names the diagnostics' coverage. */
   isExperimental: () => boolean;
 }
@@ -46,6 +52,19 @@ export interface PrefsHooks {
 export class PrefsPanel {
   private readonly scrim: HTMLElement;
   private readonly box: HTMLElement;
+  // While a manual update check is in flight, every dismissal path locks (the
+  // Close button disables, outside press and Escape are ignored): the outcome
+  // has nowhere to land once the modal is gone, and the same lock is what makes
+  // a second press impossible. Bounded by the check's 10 s timeout.
+  private checking = false;
+  // Outside press / Escape dismissal (the MIDI panel's idiom — every setting
+  // applies immediately, so leaving this way loses nothing). `keep`: only a
+  // press that starts on the scrim itself dismisses, so a drag that starts
+  // inside the box and ends on the scrim must not close.
+  private readonly dismiss = wireDismiss({
+    keep: (target) => target !== this.scrim,
+    close: () => this.requestClose(),
+  });
 
   constructor(private readonly hooks: PrefsHooks) {
     this.scrim = document.getElementById("prefs-modal") as HTMLElement;
@@ -55,13 +74,21 @@ export class PrefsPanel {
   open(): void {
     this.render();
     this.scrim.hidden = false;
-    // preventScroll: at a shrunken window height the box scrolls, and focusing
-    // the (bottom) Close action would open the modal scrolled to its end.
-    this.box.scrollTop = 0;
+    this.dismiss.attach();
+    // preventScroll: the grid is the scrolling region (render() starts it at the
+    // top); focusing the fixed Close action must not scroll anything into view.
     this.box.querySelector<HTMLButtonElement>(".consent-btn-primary")?.focus({ preventScroll: true });
   }
 
+  /** The one user-facing close: every dismissal path (Close button, outside
+   *  press, Escape) funnels here so the in-flight lock is a single check.
+   *  `close` stays raw for the shell (an accepted update closes mid-check). */
+  requestClose(): void {
+    if (!this.checking) this.close();
+  }
+
   close(): void {
+    this.dismiss.detach();
     this.scrim.hidden = true;
   }
 
@@ -69,9 +96,11 @@ export class PrefsPanel {
     return !this.scrim.hidden;
   }
 
-  /** Re-render in place (a setting or the live-sync lock changed while open). */
+  /** Re-render in place (a setting or the live-sync lock changed while open).
+   *  Deferred while a check is in flight — a rebuild would lift the dismissal
+   *  lock and detach the row the outcome lands on. */
   refresh(): void {
-    if (this.isOpen()) this.render();
+    if (this.isOpen() && !this.checking) this.render();
   }
 
   private render(): void {
@@ -84,7 +113,7 @@ export class PrefsPanel {
     title.id = "prefs-title";
     title.textContent = m.title;
 
-    // Left column: the two scope settings and the version / update block.
+    // Left column: the two scope settings and the warnings.
     const left = el("div", "prefs-col");
     {
       const sec = this.section(m.deviceSection);
@@ -106,34 +135,11 @@ export class PrefsPanel {
         this.apply({ saveScope: full ? "full" : "scene" }),
       );
       saveToggle.id = "prefs-save-scope";
-      sec.append(this.row(m.saveScope, saveToggle), this.note(m.planNote));
+      // The share URL exists only in the demo build; the desktop note sticks to
+      // the file-save semantics.
+      sec.append(this.row(m.saveScope, saveToggle), this.note(DEMO ? `${m.planNoteShare} ${m.planNote}` : m.planNote));
       left.append(sec);
     }
-    {
-      const sec = this.section(m.versionSection);
-      sec.append(
-        this.row(
-          m.updateLaunch,
-          this.onOff(s.updateCheck, (on) => this.apply({ updateCheck: on })),
-          !desktop,
-        ),
-      );
-      const ver = el("span", "prefs-ver");
-      ver.id = "prefs-version";
-      ver.textContent = `URX Router ${version}`;
-      const verRow = el("div", "prefs-row");
-      verRow.append(ver);
-      if (desktop) {
-        const check = this.button(m.updateNow, () => this.hooks.onCheckUpdates());
-        check.id = "prefs-update-now";
-        verRow.append(check);
-      }
-      sec.append(verRow);
-      left.append(sec);
-    }
-
-    // Right column: warnings, controls, files & export.
-    const right = el("div", "prefs-col");
     {
       const sec = this.section(m.warnSection);
       sec.append(
@@ -158,8 +164,12 @@ export class PrefsPanel {
         ),
         this.note(m.warnNote),
       );
-      right.append(sec);
+      left.append(sec);
     }
+
+    // Right column: controls, files & export, and — last, as the one section
+    // that is information rather than a preference — the version block.
+    const right = el("div", "prefs-col");
     {
       const sec = this.section(m.controlsSection);
       const fineToggle = this.choice(m.fineHold, m.fineLatch, !s.fineLatch, (hold) => {
@@ -218,6 +228,33 @@ export class PrefsPanel {
       sec.append(this.row(m.recent, recentCtl, !desktop));
       right.append(sec);
     }
+    {
+      const sec = this.section(m.versionSection);
+      sec.append(
+        this.row(
+          m.updateLaunch,
+          this.onOff(s.updateCheck, (on) => this.apply({ updateCheck: on })),
+          !desktop,
+        ),
+      );
+      const ver = el("span", "prefs-ver");
+      ver.id = "prefs-version";
+      ver.textContent = `URX Router ${version}`;
+      const verRow = el("div", "prefs-row");
+      if (desktop) {
+        const wrap = el("span", "lblc");
+        const note = el("span", "prefs-update-note");
+        note.id = "prefs-update-note";
+        wrap.append(ver, note);
+        const check = this.button(m.updateNow, () => void this.runUpdateCheck(check, note));
+        check.id = "prefs-update-now";
+        verRow.append(wrap, check);
+      } else {
+        verRow.append(ver);
+      }
+      sec.append(verRow);
+      right.append(sec);
+    }
 
     const grid = el("div", "prefs-grid");
     grid.append(left, right);
@@ -226,10 +263,55 @@ export class PrefsPanel {
     const close = el("button", "consent-btn-primary") as HTMLButtonElement;
     close.type = "button";
     close.textContent = m.close;
-    close.addEventListener("click", () => this.close());
+    close.addEventListener("click", () => this.requestClose());
     actions.append(close);
 
     this.box.append(title, grid, actions);
+  }
+
+  // Manual update check, reported inline beside the version — the modal stays
+  // open, so a "no update" answer is seen where it was asked for instead of on
+  // a status line hidden behind the scrim. Only an accepted update leaves the
+  // modal (the shell closes it before the download status takes over).
+  private async runUpdateCheck(check: HTMLButtonElement, note: HTMLElement): Promise<void> {
+    const m = t().prefs;
+    // The Close button's disabled face makes the requestClose lock visible;
+    // refresh() is deferred while checking, so the node cannot be swapped
+    // out from under the flight.
+    const closeBtn = this.box.querySelector<HTMLButtonElement>(".consent-btn-primary")!;
+    this.checking = true;
+    closeBtn.disabled = true;
+    check.disabled = true;
+    note.classList.remove("warn");
+    note.textContent = m.checking;
+    // The hook resolves with an outcome for every expected path; a rejection
+    // (an unexpected throw) must still land on a defined state — never leave
+    // the row stuck on "Checking…" with a dead button.
+    let outcome: UpdateCheckOutcome;
+    try {
+      outcome = await this.hooks.checkUpdates();
+    } catch {
+      outcome = { kind: "failed" };
+    } finally {
+      this.checking = false;
+      closeBtn.disabled = false;
+    }
+    // The accepted-update path closes the modal mid-flight (the shell calls
+    // `close` before the download); a reopen there rebuilds the box and
+    // detaches these elements, and the fresh render starts the row clean, so
+    // a stale report has no home.
+    if (!note.isConnected) return;
+    check.disabled = false;
+    if (outcome.kind === "upToDate") {
+      note.textContent = m.upToDate;
+    } else if (outcome.kind === "declined") {
+      note.textContent = m.updateAvailable(outcome.version);
+    } else if (outcome.kind === "failed") {
+      note.classList.add("warn");
+      note.textContent = m.updateCheckFailed;
+    } else {
+      note.textContent = "";
+    }
   }
 
   private apply(patch: Partial<AppSettings>): void {
