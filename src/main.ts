@@ -53,8 +53,8 @@ import { initFineMode } from "./ui/fine";
 import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
-import type { UpdateCheckOutcome } from "./ui/prefs";
-import { getLang, LANG_CODES, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
+import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
+import { getLang, LANG_NAMES, onLangChange, t } from "./i18n";
 import { DEMO } from "./core/env";
 import {
   checkUpdate,
@@ -169,11 +169,9 @@ function setFollowUsbBadge(state: boolean | null): void {
   renderFollowUsbBadge();
 }
 
-// Theme mode mirrors the analyze tools: "light" | "dark" | "auto", where auto
-// follows the OS color scheme. A fresh install defaults to auto; an explicit
-// light/dark choice (including ones saved before auto existed) is honored.
-type ThemeMode = "light" | "dark" | "auto";
-
+// Theme mode (ThemeMode, ui/prefs.ts): auto follows the OS color scheme. A
+// fresh install defaults to auto; an explicit light/dark choice (including ones
+// saved before auto existed) is honored.
 function systemDark(): boolean {
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
@@ -826,14 +824,8 @@ try {
   // ignore (storage may be unavailable)
 }
 
-const themeBtn = $("btn-theme");
-const langBtn = $("btn-lang");
 const labelsBtn = $("btn-labels");
 const hideOffBtn = $("btn-hide-off");
-
-// Theme glyphs match the analyze tools: the icon shows the CURRENT mode
-// (sun = light, moon = dark, half-disc = auto), cycled on each click.
-const THEME_ICONS: Record<ThemeMode, string> = { light: "☀", dark: "☾", auto: "◐" };
 
 function applyStaticI18n(): void {
   const m = t();
@@ -881,12 +873,6 @@ function applyStaticI18n(): void {
   const prefsBtn = $("btn-prefs");
   prefsBtn.title = m.prefs.title;
   prefsBtn.setAttribute("aria-label", m.prefs.title);
-  applyThemeButton();
-  // Language button: the current language code; the title names the switch target.
-  const cur = getLang();
-  langBtn.textContent = LANG_CODES[cur];
-  langBtn.title = m.toolbar.langTitle[cur];
-  langBtn.setAttribute("aria-label", m.toolbar.language);
   // Labels toggle shows the source the canvas is currently using.
   labelsBtn.textContent = labelSource === "device" ? m.toolbar.labelsDevice : m.toolbar.labelsModel;
   labelsBtn.title = m.toolbar.labelsHint;
@@ -1366,6 +1352,8 @@ const prefs = new PrefsPanel({
     return checkForUpdates();
   },
   isExperimental: () => experimentalOn,
+  themeMode: () => themeMode,
+  onThemeMode: (mode) => setThemeMode(mode),
 });
 $("btn-prefs").addEventListener("click", () => prefs.open());
 
@@ -2164,25 +2152,13 @@ $("btn-view-console").addEventListener("click", () => setView("console"));
 // Restore the last selected view now that the console is wired up.
 setView(detectView());
 
-// Theme button face: a glyph for the current mode (light/dark/auto); the title
-// and aria-label name the mode and what a click switches to. Shared by the full
-// re-localize and the theme-only repaint so the latter need not redo the whole bar.
-function applyThemeButton(): void {
-  const m = t().toolbar;
-  themeBtn.textContent = THEME_ICONS[themeMode];
-  themeBtn.title = m.themeTitle[themeMode];
-  themeBtn.setAttribute("aria-label", m.themeAria[themeMode]);
-}
-
-// Re-resolve the active theme from the current mode and repaint what reads it: the
-// SVG graph and the theme button (the console is CSS-variable themed and follows
-// along). Only the theme button's text is locale-dependent, so it updates directly
-// rather than re-running the whole toolbar re-localization.
+// Re-resolve the active theme from the current mode and repaint what reads it:
+// the SVG graph (the console and the rest of the chrome are CSS-variable themed
+// and follow along).
 function applyResolvedTheme(): void {
   theme = resolveTheme(themeMode);
   document.documentElement.dataset.theme = theme;
   graph.setTheme(theme);
-  applyThemeButton();
 }
 
 function setThemeMode(mode: ThemeMode): void {
@@ -2193,19 +2169,9 @@ function setThemeMode(mode: ThemeMode): void {
   setStatus(mode === "auto" ? m.themeAuto : theme === "dark" ? m.themeDark : m.themeLight);
 }
 
-// Cycle light -> dark -> auto -> light, matching the analyze tools.
-themeBtn.addEventListener("click", () => {
-  const next: Record<ThemeMode, ThemeMode> = { light: "dark", dark: "auto", auto: "light" };
-  setThemeMode(next[themeMode]);
-});
-
 // Follow the OS color scheme live while in auto mode.
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   if (themeMode === "auto") applyResolvedTheme();
-});
-
-langBtn.addEventListener("click", () => {
-  setLang(getLang() === "en" ? "ja" : "en");
 });
 
 labelsBtn.addEventListener("click", () => {
@@ -2316,6 +2282,9 @@ onLangChange(() => {
   consoleView.refresh();
   graph.relocalizeChrome();
   midi?.relocalize();
+  // The language row lives in the Preferences modal, so the switch happens with
+  // the modal open — rebuild it in the new language.
+  prefs.refresh();
   setStatus(t().status.language(LANG_NAMES[getLang()]));
 });
 

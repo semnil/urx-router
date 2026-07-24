@@ -1,16 +1,18 @@
 // Preferences modal (the toolbar gear): every user preference in one place,
 // applied immediately on change (no OK/cancel — matching how the toolbar
-// toggles already behave) and persisted via core/settings. The content is
-// rebuilt on every open and on refresh(), so it always reflects the current
-// language, the live-sync lock, and the stored values. Rows that need the
-// desktop shell (device scope, updates, firmware warning, recent plans) render
-// disabled with a "Desktop app only" tag elsewhere, per build:
+// toggles already behave) and persisted via core/settings. Language and theme
+// are the exception: they keep their own stores (`urx-lang` in i18n, `urx-theme`
+// in the shell), read before settings load so the first paint is already right.
+// The content is rebuilt on every open and on refresh(), so it always reflects
+// the current language, the live-sync lock, and the stored values. Rows that
+// need the desktop shell (device scope, updates, firmware warning, recent
+// plans) render disabled with a "Desktop app only" tag elsewhere, per build:
 //   browser (E2E)  — device / update / firmware / recent rows locked
 //   demo (Pages)   — those plus the export rows (the demo has no export)
 
 import { version } from "../../package.json";
 import { el, wireDismiss } from "./dom";
-import { t } from "../i18n";
+import { getLang, LANG_NAMES, LANGS, setLang, t } from "../i18n";
 import {
   EXPORT_SCALE_CHOICES,
   getSettings,
@@ -24,6 +26,11 @@ import { isTauri } from "../core/platform";
 import { resetFine } from "./fine";
 import { trimRecent } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
+
+/** Theme mode, mirroring the analyze tools: an explicit palette, or `auto` =
+ *  follow the OS color scheme. The shell owns application and persistence
+ *  (`localStorage("urx-theme")`); the modal only reads and picks the mode. */
+export type ThemeMode = "light" | "dark" | "auto";
 
 /** What a manual update check came to, for the inline note beside the version.
  *  "installing" is nominal only — an accepted update restarts the app. */
@@ -47,6 +54,10 @@ export interface PrefsHooks {
   checkUpdates: () => Promise<UpdateCheckOutcome>;
   /** --experimental launch: the scope note also names the diagnostics' coverage. */
   isExperimental: () => boolean;
+  /** Current theme mode, read on every render. */
+  themeMode: () => ThemeMode;
+  /** A theme mode was picked; the shell resolves, applies and persists it. */
+  onThemeMode: (mode: ThemeMode) => void;
 }
 
 export class PrefsPanel {
@@ -113,8 +124,30 @@ export class PrefsPanel {
     title.id = "prefs-title";
     title.textContent = m.title;
 
-    // Left column: the two scope settings and the warnings.
+    // Left column: language & theme (moved off the toolbar), the two scope
+    // settings, and the warnings.
     const left = el("div", "prefs-col");
+    {
+      const sec = this.section(m.uiSection);
+      // Language: a dropdown over the registry (ready for more languages),
+      // labelled with native names so the row is readable whichever language is
+      // active. setLang() notifies the shell, whose listener re-renders this
+      // modal in the new language.
+      const langSel = this.select(LANGS, getLang(), (v) => LANG_NAMES[v], setLang);
+      langSel.id = "prefs-lang";
+      // Theme mode: same choice order as the export background below. No local
+      // refresh — the select already shows the pick, and the modal is
+      // CSS-variable themed, so the palette flip restyles it without DOM work.
+      const themeSel = this.select(
+        ["auto", "dark", "light"] as const,
+        this.hooks.themeMode(),
+        (v) => (v === "auto" ? m.themeAuto : v === "dark" ? m.themeDark : m.themeLight),
+        (v) => this.hooks.onThemeMode(v),
+      );
+      themeSel.id = "prefs-theme";
+      sec.append(this.row(m.language, langSel), this.row(m.theme, themeSel), this.note(m.uiNote));
+      left.append(sec);
+    }
     {
       const sec = this.section(m.deviceSection);
       const locked = !desktop || this.hooks.isLive();

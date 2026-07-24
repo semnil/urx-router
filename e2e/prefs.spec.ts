@@ -56,6 +56,22 @@ test.describe("plain browser", () => {
     await expect(page.locator("#prefs-save-scope button.on")).toHaveText("Scene only");
   });
 
+  test("the language dropdown switches the UI language and persists it", async ({ page }) => {
+    await page.click("#btn-prefs");
+    await expect(page.locator("#prefs-lang")).toHaveValue("en");
+    await page.selectOption("#prefs-lang", "ja");
+    // The open modal re-renders itself in the new language.
+    await expect(page.locator("#prefs-title")).toHaveText("環境設定");
+    expect(await page.evaluate(() => localStorage.getItem("urx-lang"))).toBe("ja");
+  });
+
+  test("the theme dropdown applies the palette immediately and persists the mode", async ({ page }) => {
+    await page.click("#btn-prefs");
+    await page.selectOption("#prefs-theme", "light");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    expect(await page.evaluate(() => localStorage.getItem("urx-theme"))).toBe("light");
+  });
+
   test("fine-tuning latch: Shift toggles instead of holding", async ({ page }) => {
     await page.click("#btn-prefs");
     await page.click('#prefs-fine button:has-text("Latch")');

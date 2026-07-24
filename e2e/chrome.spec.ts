@@ -1,14 +1,21 @@
 import { test, expect, type Page } from "@playwright/test";
 import { stubTauriBoot } from "./tauri-stub";
 
-// App-chrome behaviour: the theme and language toggles, the toolbar brand and
-// Device-menu grouping, and the canvas hit-test after a zoom. These cut across
-// the whole UI (toolbar + graph + console), which the per-feature specs do not
-// exercise. Each toggle button labels the state it switches TO, so its text
-// flips after a click.
+// App-chrome behaviour: the theme and language rows in the Preferences modal
+// (moved off the toolbar), the toolbar brand and Device-menu grouping, and the
+// canvas hit-test after a zoom. These cut across the whole UI (toolbar + graph
+// + console), which the per-feature specs do not exercise.
 
 const port = (page: Page, ref: string) => page.locator(`[data-ref="${ref}"]`);
 const wires = (page: Page) => page.locator("#graph-host .wire-hit");
+
+// Pick one Preferences dropdown value and close the modal again (the tests
+// that assert intermediate modal state keep the steps inline instead).
+async function pickPref(page: Page, selector: string, value: string): Promise<void> {
+  await page.click("#btn-prefs");
+  await page.selectOption(selector, value);
+  await page.click("#prefs-modal .consent-btn-primary");
+}
 
 async function connect(page: Page, fromRef: string, toRef: string): Promise<void> {
   const a = await port(page, fromRef).boundingBox();
@@ -30,65 +37,63 @@ test.describe("theme", () => {
     });
   });
 
-  test("the theme glyph cycles light → dark → auto and persists the chosen mode", async ({ page }) => {
+  test("the Preferences theme row applies each mode and persists the choice", async ({ page }) => {
     // Pin a dark OS so auto resolves predictably to dark.
     await page.emulateMedia({ colorScheme: "dark" });
     await page.goto("/");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 
     const html = page.locator("html");
-    const btn = page.locator("#btn-theme");
+    await page.click("#btn-prefs");
+    const sel = page.locator("#prefs-theme");
 
     // No saved choice → auto, which under a dark OS resolves to dark.
-    await expect(btn).toHaveText("◐");
+    await expect(sel).toHaveValue("auto");
     await expect(html).toHaveAttribute("data-theme", "dark");
 
-    // auto → light
-    await btn.click();
-    await expect(btn).toHaveText("☀");
+    // Each pick applies immediately behind the open modal.
+    await sel.selectOption("light");
     await expect(html).toHaveAttribute("data-theme", "light");
     await expect(page.locator("#statusbar")).toHaveText("Switched to light mode");
 
-    // light → dark
-    await btn.click();
-    await expect(btn).toHaveText("☾");
+    await sel.selectOption("dark");
     await expect(html).toHaveAttribute("data-theme", "dark");
 
-    // dark → auto (follows the OS again = dark here)
-    await btn.click();
-    await expect(btn).toHaveText("◐");
+    // Back to auto (follows the OS again = dark here).
+    await sel.selectOption("auto");
     await expect(html).toHaveAttribute("data-theme", "dark");
     await expect(page.locator("#statusbar")).toHaveText("Following the system theme");
 
-    // The chosen mode survives a reload: step to light, reload, expect light + sun.
-    await btn.click();
+    // The chosen mode survives a reload: pick light, reload, expect light again.
+    await sel.selectOption("light");
     await page.reload();
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
     await expect(html).toHaveAttribute("data-theme", "light");
-    await expect(page.locator("#btn-theme")).toHaveText("☀");
+    await page.click("#btn-prefs");
+    await expect(page.locator("#prefs-theme")).toHaveValue("light");
   });
 
   test("auto mode follows a live OS color-scheme change", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" });
     await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
     const html = page.locator("html");
     // Default (no saved choice) is auto; a light OS resolves to light.
-    await expect(page.locator("#btn-theme")).toHaveText("◐");
     await expect(html).toHaveAttribute("data-theme", "light");
 
-    // Flipping the OS preference repaints without a click while in auto.
+    // Flipping the OS preference repaints without any interaction while in auto.
     await page.emulateMedia({ colorScheme: "dark" });
     await expect(html).toHaveAttribute("data-theme", "dark");
   });
 
-  test("toggling theme inside the console view keeps the console rendered", async ({ page }) => {
+  test("changing the theme inside the console view keeps the console rendered", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
     await page.click("#btn-view-console");
     await expect(page.locator("#console-host")).toBeVisible();
     const strips = await page.locator(".con-strip").count();
 
-    await page.click("#btn-theme");
+    await pickPref(page, "#prefs-theme", "light");
 
     // The console is CSS-variable themed, so it must stay up with all strips intact
     // (no re-mount, no blank view) when the palette flips under it.
@@ -108,21 +113,24 @@ test.describe("language", () => {
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   });
 
-  test("switching to Japanese relocalizes the toolbar and the console group label live", async ({ page }) => {
+  test("switching to Japanese relocalizes the modal, the toolbar and the console live", async ({ page }) => {
     await expect(page.locator("#btn-view-graph")).toHaveText("Graph");
     await page.click("#btn-view-console");
     // The first strip-group label is INPUTS (the rack's SENDS label stays English).
     await expect(page.locator(".con-grouplabel").first()).toHaveText("INPUTS");
 
-    // The button shows the current language code; clicking it re-localizes both
-    // the toolbar (static i18n) and the already-rendered console (refresh()).
-    await expect(page.locator("#btn-lang")).toHaveText("EN");
-    await page.click("#btn-lang");
+    // The language dropdown lives in Preferences; picking 日本語 re-localizes the
+    // open modal itself, the toolbar (static i18n), and the rendered console.
+    await page.click("#btn-prefs");
+    await expect(page.locator("#prefs-lang")).toHaveValue("en");
+    await page.selectOption("#prefs-lang", "ja");
+    await expect(page.locator("#prefs-title")).toHaveText("環境設定");
+    await expect(page.locator("#prefs-lang")).toHaveValue("ja");
+    await page.click("#prefs-modal .consent-btn-primary");
 
     await expect(page.locator("#btn-view-graph")).toHaveText("グラフ");
     await expect(page.locator("#btn-hide-unused")).toHaveText("未接続を隠す");
     await expect(page.locator(".con-grouplabel").first()).toHaveText("入力");
-    await expect(page.locator("#btn-lang")).toHaveText("JA"); // now the current language
   });
 
   test("an open selection survives a language switch with the inspector intact", async ({ page }) => {
@@ -131,7 +139,7 @@ test.describe("language", () => {
     expect(params).toBeGreaterThan(0);
     await expect(page.locator("body")).toHaveClass(/has-selection/);
 
-    await page.click("#btn-lang");
+    await pickPref(page, "#prefs-lang", "ja");
 
     // The inspector re-renders in the new language but keeps the same selection
     // (param rows preserved, mobile bottom-sheet flag still set).

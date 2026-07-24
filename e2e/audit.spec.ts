@@ -10,6 +10,12 @@ const section = (page: Page, title: RegExp) =>
 // A console strip located by its scribble's exact node name (so "CH 1" never
 // matches "CH 11/12").
 const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
+// Language now switches from the Preferences modal (the toolbar button is gone).
+async function switchToJapanese(page: Page): Promise<void> {
+  await page.click("#btn-prefs");
+  await page.selectOption("#prefs-lang", "ja");
+  await page.click("#prefs-modal .consent-btn-primary");
+}
 
 test.describe("model switch clears the selection", () => {
   test.beforeEach(async ({ page }) => {
@@ -116,7 +122,7 @@ test.describe("language switch re-localizes the graph chrome", () => {
 
     // The shelf must repaint with the new messages immediately, not wait for the
     // next hide/restore to redraw it.
-    await page.click("#btn-lang");
+    await switchToJapanese(page);
     await expect(page.locator(".hidden-shelf .shelf-showall")).toHaveText("全て表示");
   });
 
@@ -128,7 +134,7 @@ test.describe("language switch re-localizes the graph chrome", () => {
     await expect(page.locator(".selbar-hide")).toHaveText("Hide 2");
     await expect(page.locator(".selbar-clear")).toHaveText("Clear");
 
-    await page.click("#btn-lang");
+    await switchToJapanese(page);
     await expect(page.locator(".selbar-hide")).toHaveText("2 件を非表示");
     await expect(page.locator(".selbar-clear")).toHaveText("選択解除");
   });

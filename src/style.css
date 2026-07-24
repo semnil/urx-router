@@ -347,8 +347,8 @@ button {
   margin: 0 3px;
 }
 
-/* Theme/language prefs are square icon buttons so they stay narrow at the end of
-   the rack; the glyph (☀/☾/◐ or "EN"/"JA") centers in the box. */
+/* The Preferences gear is a square icon button so it stays narrow at the end
+   of the rack; the glyph (an inline SVG) centers in the box. */
 .tools button.icon-btn {
   display: inline-flex;
   align-items: center;
@@ -356,13 +356,6 @@ button {
   width: 34px;
   padding: 7px 0;
   font-size: 13px;
-}
-
-/* The theme glyphs (U+2600/263E/25D0) render as thin line-art in the rack's mono
-   font; the language button keeps "EN"/"JA" in mono. Override only the theme glyph
-   to the system UI font so its filled sun/moon/half-disc match the analyze tools. */
-.tools button#btn-theme {
-  font-family: -apple-system, "Segoe UI", "Meiryo", system-ui, sans-serif;
 }
 
 /* Demo-only call to action that points visitors at the desktop app. Styled
