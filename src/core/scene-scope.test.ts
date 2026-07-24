@@ -8,10 +8,11 @@ import type { ParamSpec } from "./control/params";
 import { planToCommands } from "./control/translate";
 
 // The scene boundary measured by the scene recall audit (31 catalog names) plus
-// OSC_ON, which the .urxf format carries no descriptor for (format-derived; the
-// one entry still awaiting a one-item device check). This list is the contract:
-// params.ts flags (the write-side boundary) and scene-scope.ts (the plan-side
-// boundary) must both track it, so the two cannot drift apart silently.
+// OSC_ON, which the .urxf format carries no descriptor for and which a one-item
+// recall measurement confirmed scene-external (URX44V, 2026-07-24). This list is
+// the contract: params.ts flags (the write-side boundary) and scene-scope.ts
+// (the plan-side boundary) must both track it, so the two cannot drift apart
+// silently.
 const SCENE_EXTERNAL_NAMES = [
   "MONITOR_SRC_L",
   "MONITOR_SRC_R",

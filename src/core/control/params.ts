@@ -62,9 +62,10 @@ export interface ParamSpec {
    * (SETUP > SAVE/RECALL leaves it as-is; measured via the scene recall audit,
    * Standard Mode). planToCommands drops these under the "scene" write scope;
    * the plan-level mirror of the same boundary is core/scene-scope.ts, and the
-   * two are cross-checked by scene-scope.test.ts. OSC_ON is flagged from the
-   * .urxf format (it carries no descriptor for it), not from a recall
-   * measurement — the one entry still awaiting a one-item device check.
+   * two are cross-checked by scene-scope.test.ts. OSC_ON has no .urxf
+   * descriptor at all, so it was invisible to the file-diff audit; a one-item
+   * recall measurement (URX44V, 2026-07-24: an OSC left ON survived recalling
+   * an OSC-off scene) confirmed it is scene-external too.
    */
   sceneExternal?: true;
 }
