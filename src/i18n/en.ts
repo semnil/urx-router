@@ -427,6 +427,7 @@ export const en = {
     followUsbOff: "Follow USB off — the device now holds its own clock",
     newPlan: "Created a new plan",
     planLoaded: "Plan loaded",
+    recentRemoved: (name: string): string => `Removed ${name} from the recent plans`,
     planSaved: "Plan saved",
     savedTo: (name: string): string => `Saved to ${name}`,
     openedFrom: (name: string): string => `Opened ${name}`,

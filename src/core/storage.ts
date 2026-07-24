@@ -325,3 +325,11 @@ export function trimRecent(max: number): RecentEntry[] {
   saveJson(RECENT_KEY, next);
   return next;
 }
+
+/** Drop one path from the list — a recent entry whose file failed to load
+ *  (moved / deleted / corrupted) would only reproduce the same error. */
+export function removeRecent(path: string): RecentEntry[] {
+  const next = loadRecent().filter((e) => e.path !== path);
+  saveJson(RECENT_KEY, next);
+  return next;
+}

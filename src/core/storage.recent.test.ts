@@ -3,7 +3,7 @@
 // trimming to 0 empties it (the clear action).
 
 import { describe, it, expect } from "vitest";
-import { loadRecent, rememberRecent, trimRecent, type RecentEntry } from "./storage";
+import { loadRecent, rememberRecent, removeRecent, trimRecent, type RecentEntry } from "./storage";
 import { installMemoryStorage } from "./memory-storage.test-util";
 
 installMemoryStorage();
@@ -37,5 +37,20 @@ describe("trimRecent", () => {
     rememberRecent(entry(1), 8);
     expect(trimRecent(0)).toEqual([]);
     expect(loadRecent()).toEqual([]);
+  });
+});
+
+describe("removeRecent", () => {
+  it("drops exactly the failed path and keeps the rest", () => {
+    rememberRecent(entry(1), 8);
+    rememberRecent(entry(2), 8);
+    const next = removeRecent("/plans/p1.json");
+    expect(next.map((e) => e.path)).toEqual(["/plans/p2.json"]);
+    expect(loadRecent().map((e) => e.path)).toEqual(["/plans/p2.json"]);
+  });
+
+  it("is a no-op for a path not in the list", () => {
+    rememberRecent(entry(1), 8);
+    expect(removeRecent("/plans/other.json")).toHaveLength(1);
   });
 });

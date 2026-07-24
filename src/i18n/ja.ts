@@ -418,6 +418,7 @@ export const ja: Messages = {
     followUsbOff: "Follow USB OFF — デバイスは自身のクロックで動作します",
     newPlan: "新規計画を作成しました",
     planLoaded: "計画を読み込みました",
+    recentRemoved: (name: string): string => `${name} を最近使った計画から削除しました`,
     planSaved: "計画を保存しました",
     savedTo: (name: string): string => `${name} に保存しました`,
     openedFrom: (name: string): string => `${name} を開きました`,

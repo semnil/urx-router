@@ -29,6 +29,7 @@ import {
   openTextDocument,
   readTextByPath,
   rememberRecent,
+  removeRecent,
   saveJson,
   saveTextDocument,
 } from "./core/storage";
@@ -1106,7 +1107,15 @@ async function openPlanFrom(read: () => Promise<{ text: string; path?: string } 
 }
 
 async function openRecent(path: string): Promise<void> {
-  await openPlanFrom(async () => ({ text: await readTextByPath(path), path }));
+  const outcome = await openPlanFrom(async () => ({ text: await readTextByPath(path), path }));
+  // An entry whose file no longer loads (moved / deleted / corrupted) is
+  // dropped automatically — keeping it would only reproduce the same error —
+  // and the status line says so, since the mutation happened without a prompt.
+  if (outcome === false) {
+    recent = removeRecent(path);
+    refreshInspector();
+    setStatus(t().status.recentRemoved(baseName(path)));
+  }
 }
 
 async function confirmDiscard(): Promise<boolean> {
