@@ -118,6 +118,8 @@ export interface ExportOptions {
   width: number;
   height: number;
   scale?: number;
+  /** Raster background color. Absent = the active theme's --canvas-bg. */
+  background?: string;
 }
 
 export async function exportSvgToPng(
@@ -165,7 +167,8 @@ function rasterizeSvg(svg: SVGSVGElement, opts: ExportOptions): Promise<HTMLCanv
       const ctx = canvas.getContext("2d");
       URL.revokeObjectURL(svgUrl);
       if (!ctx) return reject(new Error("no 2d context"));
-      const bg = getComputedStyle(document.body).getPropertyValue("--canvas-bg").trim() || "#0f1115";
+      const bg =
+        opts.background ?? (getComputedStyle(document.body).getPropertyValue("--canvas-bg").trim() || "#0f1115");
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.scale(scale, scale);
@@ -309,8 +312,24 @@ export function loadRecent(): RecentEntry[] {
 }
 
 /** Record a just-used path at the front, de-duplicated and capped. */
-export function rememberRecent(entry: RecentEntry): RecentEntry[] {
-  const next = [entry, ...loadRecent().filter((e) => e.path !== entry.path)].slice(0, RECENT_MAX);
+export function rememberRecent(entry: RecentEntry, max = RECENT_MAX): RecentEntry[] {
+  const next = [entry, ...loadRecent().filter((e) => e.path !== entry.path)].slice(0, max);
+  saveJson(RECENT_KEY, next);
+  return next;
+}
+
+/** Re-cap the stored list (the recent-length preference changed; 0 = the
+ *  Preferences clear action). */
+export function trimRecent(max: number): RecentEntry[] {
+  const next = loadRecent().slice(0, max);
+  saveJson(RECENT_KEY, next);
+  return next;
+}
+
+/** Drop one path from the list — a recent entry whose file failed to load
+ *  (moved / deleted / corrupted) would only reproduce the same error. */
+export function removeRecent(path: string): RecentEntry[] {
+  const next = loadRecent().filter((e) => e.path !== path);
   saveJson(RECENT_KEY, next);
   return next;
 }

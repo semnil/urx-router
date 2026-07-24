@@ -1,4 +1,6 @@
 // Tiny DOM builder shared by the UI modules.
+import { getSettings } from "../core/settings";
+
 export function el(tag: string, cls: string): HTMLElement {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -20,7 +22,10 @@ export function onWheelStep(el: HTMLElement, step: (dir: 1 | -1) => void, blocke
       const d = e.deltaY !== 0 ? e.deltaY : e.shiftKey ? e.deltaX : 0;
       if (d === 0 || blocked?.()) return;
       e.preventDefault();
-      step(d < 0 ? 1 : -1);
+      // The wheel-step preference multiplies detents per notch; each detent goes
+      // through `step` so every control keeps snapping to its own grid.
+      const dir = d < 0 ? 1 : -1;
+      for (let i = 0; i < getSettings().wheelSteps; i++) step(dir);
     },
     { passive: false },
   );
@@ -31,6 +36,38 @@ export function onWheelStep(el: HTMLElement, step: (dir: 1 | -1) => void, blocke
 // Shared by the inspector wheel stepping and the console knob snapping.
 export function scrubFloat(v: number): number {
   return Number(v.toFixed(4));
+}
+
+// Dismissal wiring for a transient overlay: a press outside it or Escape closes.
+// Capture phase, like the toolbar menus — console / graph handlers may stop
+// propagation, but a dismissal gesture must still reach the overlay. `keep`
+// names the press targets that must not dismiss (the overlay itself and its
+// toggle button); `inert` pauses dismissal without detaching (MIDI learn, an
+// update check in flight). Shared by the MIDI panel and the Preferences modal
+// so the phase/lifecycle contract lives in one place; attach on open, detach
+// on close.
+export function wireDismiss(opts: { keep: (target: Node) => boolean; inert?: () => boolean; close: () => void }): {
+  attach: () => void;
+  detach: () => void;
+} {
+  const onPointer = (e: PointerEvent): void => {
+    if (opts.inert?.() || opts.keep(e.target as Node)) return;
+    opts.close();
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key !== "Escape" || opts.inert?.()) return;
+    opts.close();
+  };
+  return {
+    attach: () => {
+      document.addEventListener("pointerdown", onPointer, true);
+      document.addEventListener("keydown", onKey, true);
+    },
+    detach: () => {
+      document.removeEventListener("pointerdown", onPointer, true);
+      document.removeEventListener("keydown", onKey, true);
+    },
+  };
 }
 
 // Vertical placement for a floating popover: `gap` px below the anchor rect,

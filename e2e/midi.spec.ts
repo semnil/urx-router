@@ -149,6 +149,12 @@ test("the ✕ button closes the panel and drops learn mode", async ({ page }) =>
   await expect(page.locator("#midi-panel")).toBeVisible();
 });
 
+test("Escape dismisses the panel like an outside press", async ({ page }) => {
+  await openPanel(page);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#midi-panel")).toBeHidden();
+});
+
 test("a press outside the panel dismisses it, except while learn is on", async ({ page }) => {
   await openPanel(page);
   // Presses inside the panel keep it open.

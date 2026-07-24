@@ -157,6 +157,7 @@ import {
   GATE_RANGE_OFF_DB,
 } from "../core/control/vd";
 import { channelDuckerOn, channelEqUnavailable, duckerBypassWarnings, rateConstraints } from "../core/constraints";
+import { getSettings } from "../core/settings";
 import { loadJson, saveJson } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
@@ -229,8 +230,10 @@ export function renderInspector(
   // Mobile-only dismiss control (the bottom-sheet pull tab's close affordance);
   // hidden on the desktop side panel via CSS.
   host.append(closeButton(m.inspector.close, actions.onClose));
+  // Warning cards are display-only and preference-gated (Preferences > Warnings);
+  // the behavior locks they describe (rate-disabled nodes / stereo EQ) stay on.
   const constraints = rateConstraints(model, plan.sampleRate);
-  if (constraints.warnings.length)
+  if (getSettings().warnRate && constraints.warnings.length)
     host.append(
       warningBox(
         m.warning.title,
@@ -239,7 +242,7 @@ export function renderInspector(
     );
   // A live signal-flow caution (not rate-dependent): a channel with its Ducker on
   // that is also tapped straight to a USB / SD direct out never carries the duck.
-  const duckerBypass = duckerBypassWarnings(model, plan);
+  const duckerBypass = getSettings().warnDucker ? duckerBypassWarnings(model, plan) : [];
   if (duckerBypass.length)
     host.append(
       warningBox(

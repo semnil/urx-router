@@ -57,6 +57,17 @@ export interface ParamSpec {
    * so mode-gated, structural, and sideEffect params stay correct. See follow.ts.
    */
   follow?: "direct";
+  /**
+   * The device keeps this param as a device-wide setting, outside any scene
+   * (SETUP > SAVE/RECALL leaves it as-is; measured via the scene recall audit,
+   * Standard Mode). planToCommands drops these under the "scene" write scope;
+   * the plan-level mirror of the same boundary is core/scene-scope.ts, and the
+   * two are cross-checked by scene-scope.test.ts. OSC_ON has no .urxf
+   * descriptor at all, so it was invisible to the file-diff audit; a one-item
+   * recall measurement (URX44V, 2026-07-24: an OSC left ON survived recalling
+   * an OSC-off scene) confirmed it is scene-external too.
+   */
+  sceneExternal?: true;
 }
 
 // Confirmed anchors. Validated: their ids match both the original sniff and the
@@ -310,12 +321,12 @@ export const PARAMS = {
   EQ_ONE_KNOB_LEVEL: { id: 48, axis: "input", encoding: "raw", sideEffect: true },
   /** Monitor output ON (y = monitor 0..3). Confirmed by live snapshot-diff: the
    *  MONITOR screen [ON] button toggles 723 on the touched monitor's slot only. */
-  MONITOR_ON: { id: 723, axis: "global", encoding: "bool", follow: "direct" },
+  MONITOR_ON: { id: 723, axis: "global", encoding: "bool", follow: "direct", sceneExternal: true },
   /** Monitor level (y = monitor 0..3). Wider -96 dB floor than the fader. */
-  MONITOR_LEVEL: { id: 724, axis: "global", encoding: "level", follow: "direct" },
+  MONITOR_LEVEL: { id: 724, axis: "global", encoding: "level", follow: "direct", sceneExternal: true },
   /** PHONES output level (y0 = PHONES 1, y1 = PHONES 2): the unit-less 0.0..10.0
    *  scale of the Phones menu (NOT dB). Confirmed by live snapshot-diff. */
-  PHONES_LEVEL: { id: 725, axis: "global", encoding: "phonesLevel", follow: "direct" },
+  PHONES_LEVEL: { id: 725, axis: "global", encoding: "phonesLevel", follow: "direct", sceneExternal: true },
   /** STEREO master fader (y = 0, level down to -∞). */
   STEREO_MASTER_FADER: { id: 581, axis: "global", encoding: "level", follow: "direct" },
   /** STEREO master ON (y = 0). */
@@ -361,41 +372,41 @@ export const PARAMS = {
   /** Ducker key source (y = stereo index). Raw port ref: channel slot or bus. */
   DUCKER_SRC: { id: 259, axis: "global", encoding: "portRef" },
   /** Monitor source select L/R (y = monitor 0..1). Raw bus port ref. */
-  MONITOR_SRC_L: { id: 719, axis: "global", encoding: "portRef" },
-  MONITOR_SRC_R: { id: 720, axis: "global", encoding: "portRef" },
+  MONITOR_SRC_L: { id: 719, axis: "global", encoding: "portRef", sceneExternal: true },
+  MONITOR_SRC_R: { id: 720, axis: "global", encoding: "portRef", sceneExternal: true },
   /** Monitor CUE interrupt (default on) / MONO (default off), y = monitor 0..1. */
-  MONITOR_CUE_INTERRUPT: { id: 721, axis: "global", encoding: "bool" },
-  MONITOR_MONO: { id: 722, axis: "global", encoding: "bool" },
+  MONITOR_CUE_INTERRUPT: { id: 721, axis: "global", encoding: "bool", sceneExternal: true },
+  MONITOR_MONO: { id: 722, axis: "global", encoding: "bool", sceneExternal: true },
   /** Analog output patch source L/R (y = 0/1). Raw bus port ref. */
-  OUT_PATCH_MAIN: { id: 730, axis: "global", encoding: "portRef" },
-  OUT_PATCH_LINE: { id: 731, axis: "global", encoding: "portRef" },
+  OUT_PATCH_MAIN: { id: 730, axis: "global", encoding: "portRef", sceneExternal: true },
+  OUT_PATCH_LINE: { id: 731, axis: "global", encoding: "portRef", sceneExternal: true },
   /** Streaming source select L/R (y = 0). Tagged port ref (0x80000000 | port). */
-  STREAM_SRC_L: { id: 705, axis: "global", encoding: "portRefTagged" },
-  STREAM_SRC_R: { id: 706, axis: "global", encoding: "portRefTagged" },
+  STREAM_SRC_L: { id: 705, axis: "global", encoding: "portRefTagged", sceneExternal: true },
+  STREAM_SRC_R: { id: 706, axis: "global", encoding: "portRefTagged", sceneExternal: true },
   /** USB output source select (y = 0 and 1, the L/R pair). Raw port ref: one bus
    *  or channel per out. The device allocates 2 slots per selector and both are
    *  written (ROUTING_SELECTORS in translate.ts). */
-  USB_OUT_SRC_A: { id: 732, axis: "global", encoding: "portRef" },
-  USB_OUT_SRC_B: { id: 733, axis: "global", encoding: "portRef" },
-  USB_OUT_SRC_C: { id: 734, axis: "global", encoding: "portRef" },
-  USB_OUT_SRC_SUB: { id: 735, axis: "global", encoding: "portRef" },
+  USB_OUT_SRC_A: { id: 732, axis: "global", encoding: "portRef", sceneExternal: true },
+  USB_OUT_SRC_B: { id: 733, axis: "global", encoding: "portRef", sceneExternal: true },
+  USB_OUT_SRC_C: { id: 734, axis: "global", encoding: "portRef", sceneExternal: true },
+  USB_OUT_SRC_SUB: { id: 735, axis: "global", encoding: "portRef", sceneExternal: true },
   /** Oscillator generator (global). Level is centi-dB (-96..0); freq is Hz×10. */
-  OSC_ON: { id: 710, axis: "global", encoding: "bool", follow: "direct" },
-  OSC_LEVEL: { id: 711, axis: "global", encoding: "centiDb", follow: "direct" },
-  OSC_MODE: { id: 712, axis: "global", encoding: "enum" },
-  OSC_FREQ: { id: 713, axis: "global", encoding: "eqFreq" },
+  OSC_ON: { id: 710, axis: "global", encoding: "bool", follow: "direct", sceneExternal: true },
+  OSC_LEVEL: { id: 711, axis: "global", encoding: "centiDb", follow: "direct", sceneExternal: true },
+  OSC_MODE: { id: 712, axis: "global", encoding: "enum", sceneExternal: true },
+  OSC_FREQ: { id: 713, axis: "global", encoding: "eqFreq", sceneExternal: true },
   /** Oscillator Burst Noise width (length of noise; Burst mode only). Plan holds
    *  seconds 0.1..10, broker raw is ms (= seconds ×1000, 100..10000). Confirmed by
    *  live snapshot-diff (0.1 s → 0.2 s = 100 → 200). */
-  OSC_BURST_WIDTH: { id: 714, axis: "global", encoding: "burstWidth" },
+  OSC_BURST_WIDTH: { id: 714, axis: "global", encoding: "burstWidth", sceneExternal: true },
   /** Oscillator Burst Noise interval (noise cycle, seconds; Burst mode only). Raw
    *  1..30, no scaling. Confirmed by live snapshot-diff (1 → 2). */
-  OSC_BURST_INTERVAL: { id: 715, axis: "global", encoding: "raw" },
+  OSC_BURST_INTERVAL: { id: 715, axis: "global", encoding: "raw", sceneExternal: true },
   /** Oscillator → bus assign on/off (per output channel). STEREO 716[L0,R1],
    *  MIX 717[MIX1 L0/R1, MIX2 L2/R3], FX 718[FX1 0, FX2 1]. */
-  OSC_ASSIGN_STEREO: { id: 716, axis: "global", encoding: "bool" },
-  OSC_ASSIGN_MIX: { id: 717, axis: "global", encoding: "bool" },
-  OSC_ASSIGN_FX: { id: 718, axis: "global", encoding: "bool" },
+  OSC_ASSIGN_STEREO: { id: 716, axis: "global", encoding: "bool", sceneExternal: true },
+  OSC_ASSIGN_MIX: { id: 717, axis: "global", encoding: "bool", sceneExternal: true },
+  OSC_ASSIGN_FX: { id: 718, axis: "global", encoding: "bool", sceneExternal: true },
   // CH SETTING color (the node's top accent cap). The broker stores a palette
   // index (see COLOR_PALETTE), mirrored across separate params per node kind
   // (confirmed by live snapshot-diff). Input channels use param 20 at the input
@@ -414,12 +425,12 @@ export const PARAMS = {
   FX_COLOR: { id: 335, axis: "global", encoding: "raw" },
   /** STREAMING bus color (palette index). The device allocates 8 slots and mirrors
    *  the value across all of them; the app writes the L/R pair 0/1. */
-  STREAM_COLOR: { id: 704, axis: "global", encoding: "raw" },
+  STREAM_COLOR: { id: 704, axis: "global", encoding: "raw", sceneExternal: true },
   /** STREAMING DELAY (the bus.stream node, y = 0): on/off, time (ms×100,
    *  1.00..1000.00 ms), frame rate (enum 0..7). Confirmed by live snapshot-diff. */
-  STREAM_DELAY_ON: { id: 707, axis: "global", encoding: "bool" },
-  STREAM_DELAY_TIME: { id: 708, axis: "global", encoding: "delayTime" },
-  STREAM_DELAY_FRAME_RATE: { id: 830, axis: "global", encoding: "enum" },
+  STREAM_DELAY_ON: { id: 707, axis: "global", encoding: "bool", sceneExternal: true },
+  STREAM_DELAY_TIME: { id: 708, axis: "global", encoding: "delayTime", sceneExternal: true },
+  STREAM_DELAY_FRAME_RATE: { id: 830, axis: "global", encoding: "enum", sceneExternal: true },
   /** Mixer DSP / USB streaming sample rate (global, y0): raw Hz. Writing it
    *  re-clocks the hardware (confirmed by live write + host coreaudio + LCD).
    *  843 mirrors it read-only and auto-follows, so only 766 is written. Not in
@@ -427,7 +438,7 @@ export const PARAMS = {
    *  re-negotiates the USB audio stream (audio glitches), so this is an explicit
    *  edit, never perturbed by self-test (plan.sampleRate is a top-level scalar,
    *  outside the perturb walk over nodeParams/connections). */
-  SAMPLE_RATE: { id: 766, axis: "global", encoding: "raw" },
+  SAMPLE_RATE: { id: 766, axis: "global", encoding: "raw", sceneExternal: true },
   /** SETUP > Follow USB (global, y0): when ON the device slaves its clock to the
    *  USB host, so a 766 write is accepted and re-clocks but is dragged back to the
    *  host's rate ~0.4 s later (measured on URX44V; the LCD shows the switch, then
@@ -436,19 +447,19 @@ export const PARAMS = {
    *  device-side clock policy, not a routing choice, and emitting it would make
    *  every Live-sync flush re-assert it. The write path reads it as a pre-check and
    *  the badge writes it with a single vdSet. */
-  FOLLOW_USB: { id: 848, axis: "global", encoding: "bool" },
+  FOLLOW_USB: { id: 848, axis: "global", encoding: "bool", sceneExternal: true },
   /** microSD Rec per-track record-source assign (y = track 0..15). Raw port ref in
    *  the bus/channel namespace (CH n = its input slot, STEREO = 256/257, MIX1 =
    *  288/289, MIX2 = 290/291, none = the uint32 sentinel). Writable + readable.
    *  Each stereo pair fills two adjacent tracks (L then R). Confirmed by live
    *  snapshot-diff on URX44V. */
-  SD_REC_SOURCE: { id: 736, axis: "global", encoding: "portRef" },
+  SD_REC_SOURCE: { id: 736, axis: "global", encoding: "portRef", sceneExternal: true },
   /** microSD Rec Track Count (y = 0): how many tracks record, raw = tracks / 2
    *  (raw 1..8 = 2..16). READ-ONLY — the broker accepts a software write
    *  (response 200) but ignores it; only the device front panel changes it, so
    *  live sync reads it back but never emits it. The dump mislabels it onoff /
    *  max 1; the live value (e.g. 5 = 10 tracks) is authoritative. */
-  SD_REC_TRACK_COUNT: { id: 839, axis: "global", encoding: "raw" },
+  SD_REC_TRACK_COUNT: { id: 839, axis: "global", encoding: "raw", sceneExternal: true },
 } as const satisfies Record<string, ParamSpec>;
 
 export type ParamName = keyof typeof PARAMS;

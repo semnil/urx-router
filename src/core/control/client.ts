@@ -8,7 +8,7 @@ import type { Plan } from "../plan";
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import { planToCommands, planToNameWrites } from "./translate";
-import type { NameWrite, VdCommand } from "./translate";
+import type { NameWrite, VdCommand, WriteScope } from "./translate";
 
 /** The device's clock state: whether it slaves to the USB host, and the rate it
  *  is running at right now. Read together as the pre-check a write needs. */
@@ -102,15 +102,20 @@ export interface DiffResult {
  * out rather than fails fast makes those hundreds of doomed round-trips minutes
  * of waiting for an answer already decided.
  */
-export async function diffPlan(
-  model: DeviceModel,
-  plan: Plan,
-  signal?: AbortSignal,
-  stopOnError = false,
-): Promise<DiffResult> {
+export interface DiffOptions {
+  signal?: AbortSignal;
+  /** Return at the first read failure (a caller that aborts on any failure has
+   *  nothing to gain from the rest of the sweep). */
+  stopOnError?: boolean;
+  /** Write scope (see translate.ts). Diagnostics leave it at "all". */
+  scope?: WriteScope;
+}
+
+export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions = {}): Promise<DiffResult> {
+  const { signal, stopOnError = false, scope = "all" } = opts;
   const diffs: CommandDiff[] = [];
   const errors: string[] = [];
-  for (const command of planToCommands(model, plan)) {
+  for (const command of planToCommands(model, plan, scope)) {
     signal?.throwIfAborted();
     try {
       const current = await vdGet(command.paramId, command.x, command.y);
@@ -240,19 +245,27 @@ export interface ConvergeResult {
  * another round — re-sending the whole plan over a link that just failed would
  * re-trigger the side-effect resets this loop exists to settle.
  */
+export interface ConvergeOptions {
+  /** A diff already in hand (the write path's confirmed set); absent = seed one. */
+  initialDiffs?: CommandDiff[];
+  maxRounds?: number;
+  settleMs?: number;
+  signal?: AbortSignal;
+  /** Write scope (see translate.ts). Diagnostics leave it at "all". */
+  scope?: WriteScope;
+}
+
 export async function sendConverging(
   model: DeviceModel,
   plan: Plan,
-  initialDiffs?: CommandDiff[],
-  maxRounds = 3,
-  settleMs = 300,
-  signal?: AbortSignal,
+  opts: ConvergeOptions = {},
 ): Promise<ConvergeResult> {
+  const { initialDiffs, maxRounds = 3, settleMs = 300, signal, scope = "all" } = opts;
   const outcomes: SendOutcome[] = [];
   const readErrors: string[] = [];
   let residual = initialDiffs;
   if (!residual) {
-    const seed = await diffPlan(model, plan, signal);
+    const seed = await diffPlan(model, plan, { signal, scope });
     readErrors.push(...seed.errors);
     residual = seed.diffs;
   }
@@ -272,7 +285,7 @@ export async function sendConverging(
     // racing a reset still in flight. (settleMs = 0 in tests, where the mock has
     // no async reset.)
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
-    const next = await diffPlan(model, plan, signal);
+    const next = await diffPlan(model, plan, { signal, scope });
     readErrors.push(...next.errors);
     residual = next.diffs;
   }

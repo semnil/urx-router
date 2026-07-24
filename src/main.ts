@@ -8,7 +8,7 @@ import { mirrorBalPair, partnerChannel, validatePlan } from "./core/routing";
 import type { PlanProblem } from "./core/routing";
 import {
   decodePlanParam,
-  deserialize,
+  deserializeDocument,
   emptyPlan,
   encodePlanParam,
   ensureFixedConnections,
@@ -16,7 +16,9 @@ import {
   serialize,
   SSMCS_INITIAL,
 } from "./core/plan";
-import type { ConnParams, NodeParams, Plan } from "./core/plan";
+import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
+import { getSettings } from "./core/settings";
+import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import {
   baseName,
@@ -27,6 +29,7 @@ import {
   openTextDocument,
   readTextByPath,
   rememberRecent,
+  removeRecent,
   saveJson,
   saveTextDocument,
 } from "./core/storage";
@@ -49,7 +52,9 @@ import { initDropzone } from "./ui/dropzone";
 import { initFineMode } from "./ui/fine";
 import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
-import { getLang, LANG_CODES, LANG_NAMES, onLangChange, setLang, t } from "./i18n";
+import { PrefsPanel } from "./ui/prefs";
+import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
+import { getLang, LANG_NAMES, onLangChange, t } from "./i18n";
 import { DEMO } from "./core/env";
 import {
   checkUpdate,
@@ -105,7 +110,7 @@ import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/con
 import { runPrepareModified } from "./core/control/prepare";
 
 // Clear persisted UI state (theme / model / meter points / consent gate / recent
-// files / inspector sections) when the browser dev app is opened with ?reset (or
+// files / inspector sections / user preferences) when the browser dev app is opened with ?reset (or
 // #reset) — done synchronously here, before anything below reads localStorage, and
 // the flag is stripped so a later manual reload doesn't clear again. The desktop
 // app uses the --reset-storage launch flag instead (handled async in boot()).
@@ -164,11 +169,9 @@ function setFollowUsbBadge(state: boolean | null): void {
   renderFollowUsbBadge();
 }
 
-// Theme mode mirrors the analyze tools: "light" | "dark" | "auto", where auto
-// follows the OS color scheme. A fresh install defaults to auto; an explicit
-// light/dark choice (including ones saved before auto existed) is honored.
-type ThemeMode = "light" | "dark" | "auto";
-
+// Theme mode (ThemeMode, ui/prefs.ts): auto follows the OS color scheme. A
+// fresh install defaults to auto; an explicit light/dark choice (including ones
+// saved before auto existed) is honored.
 function systemDark(): boolean {
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
@@ -345,6 +348,10 @@ let writeAbort: AbortController | null = null;
 // The experimental read-only compare (device vs plan): same cancel-on-second-click
 // pattern as fetch, so its serial diff sweep can be stopped when the link stalls.
 let compareAbort: AbortController | null = null;
+// Whether the --experimental gate resolved on (set in the !DEMO block below); the
+// Preferences device-scope note names the diagnostics' coverage only when the
+// diagnostics themselves are reachable.
+let experimentalOn = false;
 const live = DEMO
   ? null
   : new LiveSync({
@@ -352,6 +359,9 @@ const live = DEMO
       getPlan: () => plan,
       onError: (message) => stopLiveOnError(message),
       onSent: (n) => setStatus(t().status.liveSynced(n)),
+      // One bidirectional scope for the session: the same filter shapes the
+      // snapshot, the flush, and the follow notify registration.
+      getScope: () => getSettings().deviceScope,
     });
 
 const graph = new Graph(graphHost, getModel(modelId), plan, {
@@ -499,7 +509,7 @@ const follow =
         },
         // Escalation / idle safety net: pull the whole device into the plan.
         reconcileAll: async () => {
-          const result = await applyDeviceState(getModel(modelId), plan);
+          const result = await applyDeviceStateScoped();
           plan.unreadNodes = result.unreadNodes;
           followFull = true;
           requestReflect();
@@ -562,6 +572,9 @@ function setLiveUi(on: boolean): void {
   // The badge stays live: toggling Follow USB only re-clocks when the host is on a
   // different rate, and measured on a URX44V the connection survived it.
   ratePicker.disabled = on;
+  // The Preferences device-scope control locks while the session is up; re-render
+  // the modal if it is open (a link loss can end the session behind the scrim).
+  prefs.refresh();
 }
 
 // Turn live sync off and release the connection. Used by the toggle, by a write
@@ -811,14 +824,8 @@ try {
   // ignore (storage may be unavailable)
 }
 
-const themeBtn = $("btn-theme");
-const langBtn = $("btn-lang");
 const labelsBtn = $("btn-labels");
 const hideOffBtn = $("btn-hide-off");
-
-// Theme glyphs match the analyze tools: the icon shows the CURRENT mode
-// (sun = light, moon = dark, half-disc = auto), cycled on each click.
-const THEME_ICONS: Record<ThemeMode, string> = { light: "☀", dark: "☾", auto: "◐" };
 
 function applyStaticI18n(): void {
   const m = t();
@@ -862,12 +869,10 @@ function applyStaticI18n(): void {
   // View menu trigger.
   $("lbl-view").textContent = m.toolbar.view;
   $("btn-view").title = m.toolbar.viewHint;
-  applyThemeButton();
-  // Language button: the current language code; the title names the switch target.
-  const cur = getLang();
-  langBtn.textContent = LANG_CODES[cur];
-  langBtn.title = m.toolbar.langTitle[cur];
-  langBtn.setAttribute("aria-label", m.toolbar.language);
+  // Preferences gear (icon button; the glyph is an inline SVG).
+  const prefsBtn = $("btn-prefs");
+  prefsBtn.title = m.prefs.title;
+  prefsBtn.setAttribute("aria-label", m.prefs.title);
   // Labels toggle shows the source the canvas is currently using.
   labelsBtn.textContent = labelSource === "device" ? m.toolbar.labelsDevice : m.toolbar.labelsModel;
   labelsBtn.title = m.toolbar.labelsHint;
@@ -971,6 +976,19 @@ function rerenderPlan(): void {
   syncRateUi(); // also re-renders the CONSOLE strips (applyRateConstraints)
 }
 
+// Read the whole device into the plan, honoring the Preferences device scope:
+// the read itself stays full (reads are side-effect free on the device), but
+// under the "scene" scope the plan keeps its scene-external values. Shared by
+// fetch, the Live-sync starting read, and device-follow's full reconcile. On a
+// throw (abort / link loss) nothing is restored — the callers discard or keep
+// the plan wholesale.
+async function applyDeviceStateScoped(signal?: AbortSignal): Promise<ReadbackResult> {
+  const keep = getSettings().deviceScope === "scene" ? captureSceneExternal(plan) : null;
+  const result = await applyDeviceState(getModel(modelId), plan, signal);
+  if (keep) applySceneExternal(plan, keep);
+  return result;
+}
+
 // A fresh plan, opened at the rate this session last worked at. The model picker
 // already keeps the last model across New; the rate belongs to the same rig and
 // does not change because a new plan was started. newPlan itself stays at the
@@ -1021,11 +1039,17 @@ function buildPlanReport(model: string, problems: PlanProblem[]): string {
 // as a recent plan. Returns true on success; on failure sets the error status.
 function loadFromText(text: string, path?: string): boolean {
   try {
-    const next = deserialize(text);
+    const doc = deserializeDocument(text);
+    const next = doc.plan;
     if (!MODEL_IDS.includes(next.modelId)) {
       showError(t().status.loadError(t().error.unknownModel(next.modelId)));
       return false;
     }
+    // A scene-scoped file (Preferences > Plan files) omits the device-wide
+    // settings; keep the current plan's values for them — the same semantic as a
+    // scene recall on the unit. Only within the same model: another model's
+    // monitor / patch wiring would not validate on this one.
+    if (doc.sceneScoped && next.modelId === plan.modelId) applySceneExternal(next, captureSceneExternal(plan));
     // Reject a plan with illegal routing (e.g. a tool-generated plan): surface a
     // copyable report of every violation and leave the current plan untouched.
     const problems = validatePlan(getModel(next.modelId), next);
@@ -1035,7 +1059,7 @@ function loadFromText(text: string, path?: string): boolean {
     }
     loadPlan(next);
     if (path) {
-      recent = rememberRecent({ path, name: baseName(path), modelId });
+      recent = rememberRecent({ path, name: baseName(path), modelId }, getSettings().recentMax);
       refreshInspector();
       setStatus(t().status.openedFrom(baseName(path)));
     } else {
@@ -1049,25 +1073,73 @@ function loadFromText(text: string, path?: string): boolean {
   }
 }
 
-// Open a plan from wherever its text comes from — a recent path, a dropped file —
-// with the one discard prompt and the one failure surface both share. `path` is
-// what the plan is remembered by, so it is absent for a browser drop.
-async function openPlanFrom(read: () => Promise<string>, path?: string): Promise<void> {
-  if (!(await confirmDiscard())) return;
-  try {
-    loadFromText(await read(), path);
-  } catch (err) {
-    showError(t().status.loadError(String(err)));
-  }
+// Open a plan from wherever its document comes from — the Open dialog, a recent
+// path, a dropped file — with the one discard prompt and the one failure surface
+// all three share. `read` resolves null when its dialog was canceled; `path` is
+// what the plan is remembered by, so it is absent for a browser pick or drop.
+// Resolves true on success, false when the load was attempted and failed, and
+// null when nothing was attempted (canceled, or another file flow in flight).
+async function openPlanFrom(read: () => Promise<{ text: string; path?: string } | null>): Promise<boolean | null> {
+  return fileFlow(async () => {
+    if (!(await confirmDiscard())) return null;
+    try {
+      const doc = await read();
+      if (!doc) return null;
+      return loadFromText(doc.text, doc.path);
+    } catch (err) {
+      showError(t().status.loadError(String(err)));
+      return false;
+    }
+  });
 }
 
-function openRecent(path: string): Promise<void> {
-  return openPlanFrom(() => readTextByPath(path), path);
+async function openRecent(path: string): Promise<void> {
+  const outcome = await openPlanFrom(async () => ({ text: await readTextByPath(path), path }));
+  // An entry whose file no longer loads (moved / deleted / corrupted) is
+  // dropped automatically — keeping it would only reproduce the same error —
+  // and the status line says so, since the mutation happened without a prompt.
+  if (outcome === false) {
+    recent = removeRecent(path);
+    refreshInspector();
+    setStatus(t().status.recentRemoved(baseName(path)));
+  }
 }
 
 async function confirmDiscard(): Promise<boolean> {
   if (!dirty) return true;
   return confirmDialog(t().confirm.discard);
+}
+
+// Rapid-repeat guard for click handlers whose action opens dialogs or runs a
+// one-shot async flow: re-entry while the action is in flight is ignored, so a
+// double click cannot stack native dialogs or start the work twice. (The
+// device actions fetch / write / compare / self-test stay outside this — their
+// second click deliberately means cancel.)
+function singleFlight(run: () => Promise<void>): () => void {
+  let busy = false;
+  return () => {
+    if (busy) return;
+    busy = true;
+    void run().finally(() => {
+      busy = false;
+    });
+  };
+}
+
+// One plan/settings file flow at a time across every entry point (File > New /
+// Open / Save, a recent row, a window drop, the .urxf import): each latch above
+// is private to its handler, so this shared one is what keeps rapid repeat
+// across any two of them from stacking discard confirms and file dialogs.
+// Resolves null when another flow holds the latch.
+let fileFlowBusy = false;
+async function fileFlow<T>(run: () => Promise<T>): Promise<T | null> {
+  if (fileFlowBusy) return null;
+  fileFlowBusy = true;
+  try {
+    return await run();
+  } finally {
+    fileFlowBusy = false;
+  }
 }
 
 // Warn before touching a unit whose System firmware differs from the version this
@@ -1081,6 +1153,9 @@ async function confirmFirmware(device: DeviceSummary): Promise<boolean> {
     return false;
   }
   if (!firmwareMismatch(device.firmware)) return true;
+  // Preference-suppressible (Preferences > Warnings): the mismatch becomes a
+  // silent proceed, but an unreadable version above stays a hard stop.
+  if (!getSettings().warnFirmware) return true;
   return confirmDialog(t().confirm.firmwareMismatch(device.firmware, SUPPORTED_SYSTEM_FIRMWARE));
 }
 
@@ -1108,22 +1183,20 @@ ratePicker.addEventListener("change", () => {
   setStatus(t().status.sampleRate(formatRate(plan.sampleRate)));
 });
 
-$("btn-new").addEventListener("click", async () => {
-  if (!(await confirmDiscard())) return;
-  loadPlan(newPlanAtLastRate(modelId));
-  setStatus(t().status.newPlan);
-});
+$("btn-new").addEventListener(
+  "click",
+  () =>
+    void fileFlow(async () => {
+      if (!(await confirmDiscard())) return;
+      loadPlan(newPlanAtLastRate(modelId));
+      setStatus(t().status.newPlan);
+    }),
+);
 
-$("btn-open").addEventListener("click", async () => {
-  if (!(await confirmDiscard())) return;
-  try {
-    const doc = await openTextDocument({ ext: "json", label: t().filter.plan });
-    if (!doc) return;
-    loadFromText(doc.text, doc.path);
-  } catch (err) {
-    showError(t().status.loadError(String(err)));
-  }
-});
+$("btn-open").addEventListener(
+  "click",
+  () => void openPlanFrom(() => openTextDocument({ ext: "json", label: t().filter.plan })),
+);
 
 // Fine-tuning mode: holding Shift tightens the step of the controls whose device
 // parameter has a verified fine grid (see ui/fine.ts).
@@ -1147,89 +1220,142 @@ const dropzone = initDropzone({
     );
   },
 });
-dropzone.register("json", (file) => openPlanFrom(() => file.text(), file.path));
+dropzone.register("json", (file) => void openPlanFrom(async () => ({ text: await file.text(), path: file.path })));
 
-$("btn-save").addEventListener("click", async () => {
-  // A failed write must keep the plan dirty and surface as a modal, like the
-  // load paths do — a silent rejection would read as a successful save.
-  try {
-    const res = await saveTextDocument(`${modelId}-plan.json`, serialize(plan), {
-      ext: "json",
-      label: t().filter.plan,
-    });
-    if (!res.saved) {
-      setStatus(t().status.canceled);
-      return;
-    }
-    dirty = false;
-    if (res.path) {
-      recent = rememberRecent({ path: res.path, name: baseName(res.path), modelId });
-      refreshInspector();
-      setStatus(t().status.savedTo(baseName(res.path)));
-    } else {
-      setStatus(t().status.planSaved);
-    }
-  } catch (err) {
-    showError(t().status.saveError(String(err)));
-  }
-});
+$("btn-save").addEventListener(
+  "click",
+  () =>
+    void fileFlow(async () => {
+      // A failed write must keep the plan dirty and surface as a modal, like the
+      // load paths do — a silent rejection would read as a successful save.
+      try {
+        const res = await saveTextDocument(`${modelId}-plan.json`, serialize(plan, sceneSaveOpts()), {
+          ext: "json",
+          label: t().filter.plan,
+        });
+        if (!res.saved) {
+          setStatus(t().status.canceled);
+          return;
+        }
+        dirty = false;
+        if (res.path) {
+          recent = rememberRecent({ path: res.path, name: baseName(res.path), modelId }, getSettings().recentMax);
+          refreshInspector();
+          setStatus(t().status.savedTo(baseName(res.path)));
+        } else {
+          setStatus(t().status.planSaved);
+        }
+      } catch (err) {
+        showError(t().status.saveError(String(err)));
+      }
+    }),
+);
 
 // Demo-only sharing (the buttons stay hidden outside the demo build, but are
 // wired unconditionally so the dev-server E2E can drive them): the demo has no
 // file IO, so the plan travels as a ?plan= deep link — the same encoding
 // loadPlanFromUrl reads — or as a JSON download the desktop app opens.
-$("btn-share").addEventListener("click", async () => {
-  const url = new URL(location.href);
-  url.search = "";
-  url.hash = "";
-  // Encoding compresses via the platform CompressionStream; surface a failure
-  // as a modal rather than silently copying nothing. A missing deflate-raw
-  // codec arrives as the typed browser-floor PlanError, same as the decode path.
-  try {
-    url.searchParams.set("plan", await encodePlanParam(plan));
-  } catch (err) {
-    showError(err instanceof PlanError ? t().error[err.code] : t().status.shareUrlError(String(err)));
-    return;
-  }
-  const link = url.toString();
-  // Put the link in the address bar first, so it stays copyable by hand when
-  // the clipboard is unavailable (insecure context) or rejects the write.
-  try {
-    history.replaceState(null, "", link);
-  } catch {
-    // ignore (history unavailable)
-  }
-  if (navigator.clipboard?.writeText) {
-    void navigator.clipboard.writeText(link).then(
-      () => setStatus(t().status.shareUrlCopied),
-      () => setStatus(t().status.shareUrlInBar),
-    );
-  } else {
-    setStatus(t().status.shareUrlInBar);
-  }
-});
+$("btn-share").addEventListener(
+  "click",
+  singleFlight(async () => {
+    const url = new URL(location.href);
+    url.search = "";
+    url.hash = "";
+    // Encoding compresses via the platform CompressionStream; surface a failure
+    // as a modal rather than silently copying nothing. A missing deflate-raw
+    // codec arrives as the typed browser-floor PlanError, same as the decode path.
+    try {
+      url.searchParams.set("plan", await encodePlanParam(plan, sceneSaveOpts()));
+    } catch (err) {
+      showError(err instanceof PlanError ? t().error[err.code] : t().status.shareUrlError(String(err)));
+      return;
+    }
+    const link = url.toString();
+    // Put the link in the address bar first, so it stays copyable by hand when
+    // the clipboard is unavailable (insecure context) or rejects the write.
+    try {
+      history.replaceState(null, "", link);
+    } catch {
+      // ignore (history unavailable)
+    }
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(link).then(
+        () => setStatus(t().status.shareUrlCopied),
+        () => setStatus(t().status.shareUrlInBar),
+      );
+    } else {
+      setStatus(t().status.shareUrlInBar);
+    }
+  }),
+);
 
 $("btn-download").addEventListener("click", () => {
   // The demo's stand-in for Save: the downloaded JSON matches a desktop save,
   // so File → Open on the desktop app loads it as-is.
-  downloadText(`${modelId}-plan.json`, serialize(plan));
+  downloadText(`${modelId}-plan.json`, serialize(plan, sceneSaveOpts()));
   dirty = false;
   setStatus(t().status.planDownloaded);
 });
 
-$("btn-export").addEventListener("click", () => {
-  graph.exportPng(`${modelId}-routing.png`).catch((err: unknown) => showError(t().status.exportError(String(err))));
-});
+$("btn-export").addEventListener(
+  "click",
+  singleFlight(() =>
+    graph.exportPng(`${modelId}-routing.png`).catch((err: unknown) => showError(t().status.exportError(String(err)))),
+  ),
+);
 
-$("btn-export-pdf").addEventListener("click", () => {
-  graph.exportPdf(`${modelId}-routing.pdf`).catch((err: unknown) => showError(t().status.exportError(String(err))));
-});
+$("btn-export-pdf").addEventListener(
+  "click",
+  singleFlight(() =>
+    graph.exportPdf(`${modelId}-routing.pdf`).catch((err: unknown) => showError(t().status.exportError(String(err)))),
+  ),
+);
 
 // Third-party license notice (desktop only): the cargo-about page bundled as a
-// Tauri resource, shown in a sandboxed frame so its styles stay self-contained.
-$("btn-licenses").addEventListener("click", () => {
-  thirdPartyLicenses().then(showLicenses, (e: unknown) => showError(t().licenses.error(String(e))));
+// Tauri resource, parsed and rendered as app DOM (ui/licenses.ts).
+$("btn-licenses").addEventListener(
+  "click",
+  // .catch (not a rejection handler on .then): a notice that reads fine but
+  // fails to parse in showLicenses must land in the same error dialog.
+  singleFlight(() =>
+    thirdPartyLicenses()
+      .then(showLicenses)
+      .catch((e: unknown) => showError(t().licenses.error(String(e)))),
+  ),
+);
+
+// The plan-file save scope (Preferences > Plan files), shared by every
+// serialize call site: file save, demo JSON download, and the share URL.
+function sceneSaveOpts(): SerializeOptions {
+  return { sceneOnly: getSettings().saveScope === "scene" };
+}
+
+// Preferences modal (the toolbar gear): available in every build; rows that need
+// the desktop shell render locked with a tag instead (see ui/prefs.ts).
+const prefs = new PrefsPanel({
+  isLive: () => liveSessionUp,
+  onRecentChanged: (list) => {
+    recent = list;
+    refreshInspector();
+  },
+  onWarningsChanged: () => refreshInspector(),
+  // The FINE tag hint names the entry style at build time; rebuild both views so
+  // the hint follows a style change.
+  onFineChanged: () => {
+    refreshInspector();
+    consoleView.refresh();
+  },
+  checkUpdates: () => {
+    // DEMO folds statically, so the demo bundle keeps dropping the updater path
+    // (the button is desktop-only anyway; this branch is unreachable).
+    if (DEMO) return Promise.resolve<UpdateCheckOutcome>({ kind: "failed" });
+    return checkForUpdates();
+  },
+  isExperimental: () => experimentalOn,
+  themeMode: () => themeMode,
+  onThemeMode: (mode) => setThemeMode(mode),
 });
+$("btn-prefs").addEventListener("click", () => prefs.open());
 
 $("btn-auto").addEventListener("click", () => {
   graph.autoLayout();
@@ -1326,38 +1452,41 @@ if (!DEMO) {
   // already agree nothing happens at all, which is why it is a confirm rather than a
   // refusal. Turning it OFF changes nothing immediately; it only makes the rate
   // picker authoritative again.
-  followUsbBadge.addEventListener("click", async () => {
-    // Unknown: the click reads the device rather than toggling it. Toggling from
-    // unknown would have to guess which way, and the operator's first question here
-    // is "what is it?", not "change it".
-    if (followUsbState === null) {
-      // Not refreshFollowUsbBadge: that one swallows a read failure back to unknown
-      // because nothing depends on it. Here the read IS the requested action, so let
-      // it throw and be reported.
-      await withDevice(t().status.writeConnecting, t().status.writeError, async () => {
-        setFollowUsbBadge(await readFollowUsb());
-      });
-      return;
-    }
-    const next = !followUsbState;
-    if (next && !(await confirmDialog(t().confirm.followUsbOn))) return;
-    const apply = async (): Promise<void> => {
-      await setFollowUsb(next);
-      setFollowUsbBadge(next);
-      setStatus(next ? t().status.followUsbOn : t().status.followUsbOff);
-    };
-    // While live the connection is already held for the session; opening a second
-    // one would fight it. Otherwise connect just for this write.
-    if (liveSessionUp) {
-      try {
-        await apply();
-      } catch (err) {
-        stopLiveOnError(String(err));
+  followUsbBadge.addEventListener(
+    "click",
+    singleFlight(async () => {
+      // Unknown: the click reads the device rather than toggling it. Toggling from
+      // unknown would have to guess which way, and the operator's first question here
+      // is "what is it?", not "change it".
+      if (followUsbState === null) {
+        // Not refreshFollowUsbBadge: that one swallows a read failure back to unknown
+        // because nothing depends on it. Here the read IS the requested action, so let
+        // it throw and be reported.
+        await withDevice(t().status.writeConnecting, t().status.writeError, async () => {
+          setFollowUsbBadge(await readFollowUsb());
+        });
+        return;
       }
-      return;
-    }
-    await withDevice(t().status.writeConnecting, t().status.writeError, apply);
-  });
+      const next = !followUsbState;
+      if (next && !(await confirmDialog(t().confirm.followUsbOn))) return;
+      const apply = async (): Promise<void> => {
+        await setFollowUsb(next);
+        setFollowUsbBadge(next);
+        setStatus(next ? t().status.followUsbOn : t().status.followUsbOff);
+      };
+      // While live the connection is already held for the session; opening a second
+      // one would fight it. Otherwise connect just for this write.
+      if (liveSessionUp) {
+        try {
+          await apply();
+        } catch (err) {
+          stopLiveOnError(String(err));
+        }
+        return;
+      }
+      await withDevice(t().status.writeConnecting, t().status.writeError, apply);
+    }),
+  );
 
   const fetchBtn = $<HTMLButtonElement>("btn-fetch");
   // A click cancels an in-flight fetch; otherwise it starts one. The whole-device
@@ -1405,7 +1534,7 @@ if (!DEMO) {
         const dirtyBeforeRead = dirty;
         let result: ReadbackResult;
         try {
-          result = await applyDeviceState(getModel(modelId), plan, controller.signal);
+          result = await applyDeviceStateScoped(controller.signal);
         } catch (e) {
           if (e instanceof DOMException && e.name === "AbortError") {
             plan = beforeRead;
@@ -1549,7 +1678,10 @@ if (!DEMO) {
             showError(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
             return;
           }
-          if (!(await settleSampleRate())) return;
+          // Scene scope drops SAMPLE_RATE from the write set, so there is no
+          // rate to settle — the device keeps running at its own.
+          const scope = getSettings().deviceScope;
+          if (scope !== "scene" && !(await settleSampleRate())) return;
           // One attempt of the whole diff → confirm → send sequence. Returns the
           // sent/not-sent split when the send stopped part-way (so the caller can
           // offer a retry), or null when there is nothing left to do.
@@ -1567,7 +1699,7 @@ if (!DEMO) {
             // A read failure leaves those parameters' device values unknown, so the
             // write stops on the first one — the rest of the sweep would only be
             // establishing values for a write that is already canceled.
-            const { diffs, errors } = await diffPlan(getModel(modelId), plan, signal, true);
+            const { diffs, errors } = await diffPlan(getModel(modelId), plan, { signal, stopOnError: true, scope });
             if (errors.length) {
               setStatus(t().status.writeReadFailed(errors.length));
               saveReport([], [], errors);
@@ -1595,7 +1727,7 @@ if (!DEMO) {
               outcomes,
               residual,
               readErrors: convergeErrors,
-            } = await sendConverging(getModel(modelId), plan, diffs, 3, 300, signal);
+            } = await sendConverging(getModel(modelId), plan, { initialDiffs: diffs, signal, scope });
             const skipped = outcomes.filter((o) => o.skipped).length;
             const failed: Array<{ name: string; error?: string }> = outcomes
               .filter(reachedAndFailed)
@@ -1697,7 +1829,9 @@ if (!DEMO) {
           }
           loadPlan(emptyPlan(device.model as ModelId));
         }
-        const result = await applyDeviceState(getModel(modelId), plan);
+        // live.begin() then snapshots through the same scope filter, so a kept
+        // scene-external value is neither written back nor tracked.
+        const result = await applyDeviceStateScoped();
         plan.unreadNodes = result.unreadNodes;
         rerenderPlan();
         // A partial read leaves the plan holding defaults where the device was not
@@ -1738,9 +1872,15 @@ if (!DEMO) {
 
     const liveBtn = $<HTMLButtonElement>("btn-live");
     liveBtn.hidden = false;
+    // Rapid repeat: an activation is a long async flow (connect / confirms /
+    // full read) during which the toggle is neither on nor off — a second click
+    // there must not start a second concurrent session. Deactivation is
+    // synchronous and stays outside the latch, so an active session always
+    // turns off immediately.
+    const startLive = singleFlight(() => activateLive());
     liveBtn.addEventListener("click", () => {
       if (live?.isActive()) deactivateLive(t().status.liveOff);
-      else void activateLive();
+      else startLive();
     });
   }
 
@@ -1781,6 +1921,12 @@ if (!DEMO) {
   // that returns null was canceled). Reading and parsing share one failure
   // surface, so neither entry point below carries its own catch.
   async function importSettings(load: () => Promise<{ bytes: Uint8Array; name: string } | null>): Promise<void> {
+    // Same latch as the plan-open flows: the import shares their dialog chain
+    // (confirms + a file dialog), so rapid repeat across entry points is ignored.
+    await fileFlow(() => importSettingsFlow(load));
+  }
+
+  async function importSettingsFlow(load: () => Promise<{ bytes: Uint8Array; name: string } | null>): Promise<void> {
     // Replacing every value at once is what Live sync cannot follow, so the import
     // is refused while a session is up — the same rule fetch and write follow, which
     // setLiveUi enforces on the menu entry. The drop target needs it stated here.
@@ -1836,6 +1982,8 @@ if (!DEMO) {
 
   experimentalEnabled().then((enabled) => {
     if (!enabled) return;
+    experimentalOn = true;
+    prefs.refresh();
     for (const el of document.querySelectorAll<HTMLElement>("[data-experimental-only]")) el.hidden = false;
 
     // Arm the settings-file import: the File menu entry (revealed just above) and
@@ -2004,25 +2152,13 @@ $("btn-view-console").addEventListener("click", () => setView("console"));
 // Restore the last selected view now that the console is wired up.
 setView(detectView());
 
-// Theme button face: a glyph for the current mode (light/dark/auto); the title
-// and aria-label name the mode and what a click switches to. Shared by the full
-// re-localize and the theme-only repaint so the latter need not redo the whole bar.
-function applyThemeButton(): void {
-  const m = t().toolbar;
-  themeBtn.textContent = THEME_ICONS[themeMode];
-  themeBtn.title = m.themeTitle[themeMode];
-  themeBtn.setAttribute("aria-label", m.themeAria[themeMode]);
-}
-
-// Re-resolve the active theme from the current mode and repaint what reads it: the
-// SVG graph and the theme button (the console is CSS-variable themed and follows
-// along). Only the theme button's text is locale-dependent, so it updates directly
-// rather than re-running the whole toolbar re-localization.
+// Re-resolve the active theme from the current mode and repaint what reads it:
+// the SVG graph (the console and the rest of the chrome are CSS-variable themed
+// and follow along).
 function applyResolvedTheme(): void {
   theme = resolveTheme(themeMode);
   document.documentElement.dataset.theme = theme;
   graph.setTheme(theme);
-  applyThemeButton();
 }
 
 function setThemeMode(mode: ThemeMode): void {
@@ -2033,19 +2169,9 @@ function setThemeMode(mode: ThemeMode): void {
   setStatus(mode === "auto" ? m.themeAuto : theme === "dark" ? m.themeDark : m.themeLight);
 }
 
-// Cycle light -> dark -> auto -> light, matching the analyze tools.
-themeBtn.addEventListener("click", () => {
-  const next: Record<ThemeMode, ThemeMode> = { light: "dark", dark: "auto", auto: "light" };
-  setThemeMode(next[themeMode]);
-});
-
 // Follow the OS color scheme live while in auto mode.
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   if (themeMode === "auto") applyResolvedTheme();
-});
-
-langBtn.addEventListener("click", () => {
-  setLang(getLang() === "en" ? "ja" : "en");
 });
 
 labelsBtn.addEventListener("click", () => {
@@ -2156,6 +2282,9 @@ onLangChange(() => {
   consoleView.refresh();
   graph.relocalizeChrome();
   midi?.relocalize();
+  // The language row lives in the Preferences modal, so the switch happens with
+  // the modal open — rebuild it in the new language.
+  prefs.refresh();
   setStatus(t().status.language(LANG_NAMES[getLang()]));
 });
 
@@ -2207,7 +2336,7 @@ async function boot(): Promise<void> {
   await resetStorageIfRequested();
   await requireConsent();
   if (!DEMO) {
-    await checkForUpdates();
+    if (getSettings().updateCheck) await checkForUpdates();
   }
 }
 
@@ -2262,17 +2391,25 @@ async function requireConsent(): Promise<void> {
   await exitApp();
 }
 
-async function checkForUpdates(): Promise<void> {
+async function checkForUpdates(): Promise<UpdateCheckOutcome> {
   try {
     const update = await checkUpdate();
-    if (!update) return;
-    if (!(await confirmDialog(t().confirm.update(update.version)))) return;
+    if (!update) return { kind: "upToDate" };
+    if (!(await confirmDialog(t().confirm.update(update.version)))) {
+      return { kind: "declined", version: update.version };
+    }
+    // An accepted update is the one outcome that leaves the Preferences modal:
+    // the scrim would hide the download status. No-op at the launch check.
+    prefs.close();
     setStatus(t().status.updateDownloading);
     await installUpdate(update.rid);
     // The new bundle is installed; relaunch into it. Nothing runs past here.
     await restartApp();
+    return { kind: "installing" };
   } catch {
-    // Best-effort: stay silent when offline or no release is published yet.
+    // Best-effort: offline, or no release published yet. The launch check stays
+    // silent; a manual check reports it through the Preferences inline note.
+    return { kind: "failed" };
   }
 }
 

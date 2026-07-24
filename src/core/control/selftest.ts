@@ -429,7 +429,7 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300, signal?: A
     for (let pass = 0; pass < passes; pass++) {
       const plan = perturbedPlan(model, original, pass, suppress);
       report.phase = "write";
-      const result = await phaseStep(sendConverging(model, plan, undefined, 3, settleMs, signal));
+      const result = await phaseStep(sendConverging(model, plan, { settleMs, signal }));
       if (!result) break;
       const { outcomes, residual } = result;
       report.written += outcomes.length;
@@ -471,7 +471,7 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300, signal?: A
     // restore would only re-run the round-trips the user just cancelled.
     if (!report.aborted) {
       report.phase = "restore";
-      const back = await phaseStep(sendConverging(model, original, undefined, 3, settleMs, signal));
+      const back = await phaseStep(sendConverging(model, original, { settleMs, signal }));
       if (back) {
         report.restoreResidual = back.residual.length;
         report.restored = back.residual.length === 0;

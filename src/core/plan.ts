@@ -5,6 +5,7 @@
 import type { ConnectionKind, DeviceModel, ModelId } from "../models/types";
 import { parseRef, ref } from "../models/types";
 import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES } from "./constraints";
+import { stripSceneExternal } from "./scene-scope";
 
 // LEVEL fader / send range in dB (the device level_gain table, shared by every
 // fader, send and the monitor — UG "Range: -∞ dB to +10.00 dB"). The slider's
@@ -361,28 +362,52 @@ export function emptyPlan(modelId: ModelId): Plan {
   };
 }
 
-export function serialize(plan: Plan): string {
+export interface SerializeOptions {
+  /** Scene-scoped save: strip the URX's device-wide (scene-external) state, omit
+   *  the sample rate, and mark the document, so a load keeps the current values
+   *  of everything outside the scene (see scene-scope.ts). An unmarked document
+   *  loads unchanged, and an older build reading a marked one simply falls back
+   *  to defaults for the absent fields. */
+  sceneOnly?: boolean;
+}
+
+export function serialize(plan: Plan, opts?: SerializeOptions): string {
+  const scene = opts?.sceneOnly === true;
+  const p = scene ? stripSceneExternal(plan) : plan;
   return JSON.stringify(
     {
       format: PLAN_FORMAT,
       version: PLAN_VERSION,
-      modelId: plan.modelId,
-      sampleRate: plan.sampleRate,
-      positions: plan.positions,
-      connections: plan.connections,
-      nodeParams: plan.nodeParams,
-      nodeNames: plan.nodeNames,
-      nodeColors: plan.nodeColors,
-      hidden: plan.hidden,
-      notes: plan.notes,
-      noteCollapsed: plan.noteCollapsed,
+      ...(scene ? { scope: "scene" } : {}),
+      modelId: p.modelId,
+      ...(scene ? {} : { sampleRate: p.sampleRate }),
+      positions: p.positions,
+      connections: p.connections,
+      nodeParams: p.nodeParams,
+      nodeNames: p.nodeNames,
+      nodeColors: p.nodeColors,
+      hidden: p.hidden,
+      notes: p.notes,
+      noteCollapsed: p.noteCollapsed,
     },
     null,
     2,
   );
 }
 
+export interface PlanDocument {
+  plan: Plan;
+  /** True when the document was saved scene-scoped (serialize `sceneOnly`): the
+   *  loader should keep the current plan's scene-external values instead of the
+   *  defaults deserialize filled in for the absent fields. */
+  sceneScoped: boolean;
+}
+
 export function deserialize(text: string): Plan {
+  return deserializeDocument(text).plan;
+}
+
+export function deserializeDocument(text: string): PlanDocument {
   const data = JSON.parse(text) as Record<string, unknown>;
   if (data.format !== PLAN_FORMAT) {
     throw new PlanError("notPlanFile");
@@ -399,7 +424,7 @@ export function deserialize(text: string): Plan {
   if (typeof data.modelId !== "string") {
     throw new PlanError("missingModel");
   }
-  return {
+  const plan: Plan = {
     modelId: data.modelId as ModelId,
     sampleRate: SAMPLE_RATES.includes(data.sampleRate as number) ? (data.sampleRate as number) : DEFAULT_SAMPLE_RATE,
     positions: isStringRecord(data.positions) ? (data.positions as unknown as Record<string, NodePos>) : {},
@@ -411,6 +436,7 @@ export function deserialize(text: string): Plan {
     notes: isStringRecord(data.notes) ? data.notes : {},
     noteCollapsed: Array.isArray(data.noteCollapsed) ? (data.noteCollapsed as string[]) : [],
   };
+  return { plan, sceneScoped: data.scope === "scene" };
 }
 
 // Encode a plan for the `?plan=` deep link: "z" + URL-safe base64 of the
@@ -418,8 +444,8 @@ export function deserialize(text: string): Plan {
 // viewer opens. Compression is what keeps real plans inside GitHub Pages'
 // ~8 KB URL limit (a factory-seeded plan already encodes to ~36k chars
 // uncompressed, ~2.6k compressed). Inverse of decodePlanParam.
-export async function encodePlanParam(plan: Plan): Promise<string> {
-  const json = new TextEncoder().encode(serialize(plan));
+export async function encodePlanParam(plan: Plan, opts?: SerializeOptions): Promise<string> {
+  const json = new TextEncoder().encode(serialize(plan, opts));
   return "z" + toBase64Url(await pipeBytes(json, deflateRawStream()));
 }
 

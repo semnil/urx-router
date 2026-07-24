@@ -1141,12 +1141,27 @@ export function insertFxControl(model: DeviceModel, nodeId: string): InsertFxCon
   return null;
 }
 
+/** Which parameters a device write / diff covers: everything the plan implies,
+ *  or only what the device stores in a scene ("scene" drops the sceneExternal
+ *  catalog entries — see params.ts and core/scene-scope.ts). Diagnostics
+ *  (compare / self-test / prepare) always run "all". */
+export type WriteScope = "all" | "scene";
+
 /**
  * Translate a plan into the list of vd value-set commands it currently implies.
  * Deterministic and side-effect free; the same plan always yields the same list,
- * so callers can diff it for a confirm-before-send preview.
+ * so callers can diff it for a confirm-before-send preview. `scope` filters the
+ * finished list by ParamName, so the scene boundary cannot drift from the
+ * catalog flags — and the same filter scopes every consumer (write diff, live
+ * snapshot / flush, follow notify registration) at this one chokepoint.
  */
-export function planToCommands(model: DeviceModel, plan: Plan): VdCommand[] {
+export function planToCommands(model: DeviceModel, plan: Plan, scope: WriteScope = "all"): VdCommand[] {
+  const commands = buildCommands(model, plan);
+  if (scope === "all") return commands;
+  return commands.filter((c) => (PARAMS[c.name] as ParamSpec).sceneExternal !== true);
+}
+
+function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   const out: VdCommand[] = [];
   // Owner-node stamping for the device-follow index: own(id) attributes every
   // command pushed since the last own() call to `id`. `mark` auto-advances, so a

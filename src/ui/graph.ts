@@ -22,7 +22,8 @@ import {
   upstreamNodes,
 } from "../core/routing";
 import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
-import type { SaveResult } from "../core/storage";
+import { getSettings } from "../core/settings";
+import type { ExportOptions, SaveResult } from "../core/storage";
 import { oscAssign } from "../core/control/translate";
 import { SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
 import { t } from "../i18n";
@@ -124,6 +125,11 @@ export type ThemeName = "dark" | "light";
 export type LabelSource = "model" | "device";
 
 interface Palette {
+  /** Page background behind the graph — must stay in sync with the matching
+   *  --canvas-bg value in style.css (the theme-parity rule). Used as the raster
+   *  background when exporting under a fixed theme, where the live CSS variable
+   *  may belong to the other theme. */
+  canvasBg: string;
   /** Single brushed-metal node fill; the kind is shown by the rail color. */
   nodeFill: string;
   nodeStroke: string;
@@ -154,6 +160,7 @@ interface Palette {
 
 const PALETTES: Record<ThemeName, Palette> = {
   dark: {
+    canvasBg: "#14110d",
     nodeFill: "#221b12",
     nodeStroke: "#4a3d27",
     nodeHi: "rgba(255,255,255,0.05)",
@@ -181,6 +188,7 @@ const PALETTES: Record<ThemeName, Palette> = {
     noteInk: "#e9ddc3",
   },
   light: {
+    canvasBg: "#e8e3d8",
     nodeFill: "#f4efe5",
     nodeStroke: "#b7a884",
     nodeHi: "rgba(255,255,255,0.92)",
@@ -2377,16 +2385,35 @@ export class Graph {
     return { svg: clone, w, h };
   }
 
+  // Export scale and theme come from the preferences. A fixed export theme swaps
+  // the palette, re-renders, clones, and swaps back — all synchronously in one
+  // task, so the on-screen graph never paints the intermediate state.
+  private cloneForExportOpts(): { svg: SVGSVGElement; opts: ExportOptions } {
+    const { exportScale, exportTheme } = getSettings();
+    const target = exportTheme === "active" ? this.themeName : exportTheme;
+    const background = PALETTES[target].canvasBg;
+    if (target === this.themeName) {
+      const { svg, w, h } = this.cloneForExport();
+      return { svg, opts: { width: w, height: h, scale: exportScale, background } };
+    }
+    const prev = this.themeName;
+    this.setTheme(target);
+    try {
+      const { svg, w, h } = this.cloneForExport();
+      return { svg, opts: { width: w, height: h, scale: exportScale, background } };
+    } finally {
+      this.setTheme(prev);
+    }
+  }
+
   async exportPng(filename: string): Promise<void> {
-    const { svg, w, h } = this.cloneForExport();
-    const opts = { width: w, height: h, scale: 2 };
+    const { svg, opts } = this.cloneForExportOpts();
     const res = await exportSvgToPng(svg, filename, opts, { ext: "png", label: t().filter.png });
     this.cb.onStatus(exportStatus(res, t().status.pngExported));
   }
 
   async exportPdf(filename: string): Promise<void> {
-    const { svg, w, h } = this.cloneForExport();
-    const opts = { width: w, height: h, scale: 2 };
+    const { svg, opts } = this.cloneForExportOpts();
     const res = await exportSvgToPdf(svg, filename, opts, { ext: "pdf", label: t().filter.pdf });
     this.cb.onStatus(exportStatus(res, t().status.pdfExported));
   }

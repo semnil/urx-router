@@ -42,12 +42,15 @@ flowchart TD
       platform[platform.ts<br/>Tauri bridge / fallbacks]
       meters[meters.ts<br/>live meters<br/>map/decode/store]
       midicore[midi/ external MIDI control<br/>message/mapping/controls/engine]
+      settings[settings.ts<br/>user preferences store]
+      scenescope[scene-scope.ts<br/>scene boundary on plan state]
     end
     subgraph ui[ui/ presentation]
       graphts[graph.ts<br/>SVG node graph<br/>theme-aware palette]
       inspector[inspector.ts<br/>selected-element editing]
       console[console.ts<br/>mixer-style level overview]
       midiui[midi.ts<br/>MIDI control panel]
+      prefsui[prefs.ts<br/>Preferences modal]
     end
     subgraph i18n[i18n/ localization]
       cat[en.ts / ja.ts<br/>message catalogs]
@@ -175,9 +178,9 @@ in-house module `src/i18n/`:
 > UI maps them to text (`t().error[code]`). This keeps `core/` and `models/` free of i18n, so the
 > Node smoke test runs without browser APIs.
 
-The language button in the toolbar's right-hand cluster switches languages (its face shows the
-current code, `EN` / `JA`); `setLang()` notifies listeners, which re-render the static labels and the
-inspector.
+The language is switched from the Preferences modal (a dropdown of native names in the
+"Language & theme" section); `setLang()` notifies listeners, which re-render the static labels,
+the inspector, and the open modal itself.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
 > `Ducker`, `Bus send`, `Send (ON/OFF)`, `Pre-fader send`. The visible canvas element is a **node**;
@@ -189,9 +192,9 @@ inspector.
 The UI has a studio-rack aesthetic modeled on pro-audio gear, with two palettes (dark and light)
 selected by a three-way theme **mode**: `light`, `dark`, or `auto`. The mode persists to
 `localStorage("urx-theme")`; a fresh install defaults to `auto`, which resolves to a palette from the
-OS color scheme (`prefers-color-scheme`) and re-resolves live when the OS scheme changes. The glyph
-button at the right end of the toolbar cycles `light → dark → auto` (icons ☀ / ☾ / ◐ show the current
-mode); `resolveTheme()` maps the mode to the applied palette and `applyThemeButton()` refreshes the face.
+OS color scheme (`prefers-color-scheme`) and re-resolves live when the OS scheme changes. The mode
+is picked in the Preferences modal (the "Language & theme" section); `resolveTheme()` maps the mode
+to the applied palette.
 
 The palette is split into two layers, kept in correspondence per theme:
 
@@ -212,8 +215,9 @@ The connection and node colors live in both layers: wire colors as `--w-*` (CSS)
 > `--w-key` / `--w-record` CSS variables for the routing-list dots (`.dot-key` / `.dot-record`) alongside
 > their `PALETTES.wire` entries.
 
-PNG and PDF export (`core/storage.ts`) read `--canvas-bg` to paint the background, so the exported
-image follows the current theme too. The PDF is a hand-built single-page document embedding one
+PNG and PDF export (`core/storage.ts`) paint the background from the export palette — the active
+theme by default, or the fixed theme chosen in Preferences (the export clone renders under that
+palette; see the Preferences section). The PDF is a hand-built single-page document embedding one
 FlateDecode image (deflate via the platform `CompressionStream`), so no runtime dependency is added.
 
 ## CONSOLE view (mixer-style level overview)
@@ -790,6 +794,56 @@ PDF exports.
   by the nodes' actual heights (`nodeHeight`, expanded note included), so a note never overlaps the
   node below it.
 
+## Preferences
+
+The toolbar gear opens the Preferences modal (`ui/prefs.ts`), available in every build. It is the
+consent-box family (920 px, two columns), and at a shrunken window height the box scrolls inside
+itself, so the content and the Close action stay reachable. Since every setting applies the moment
+it is changed, a press outside the box or Escape dismisses the modal like the MIDI panel and the
+licenses modal — the capture-phase wiring all three share lives in `ui/dom.ts` (`wireDismiss`).
+Settings persist as one
+validated localStorage record (`urx-settings`, `core/settings.ts`,
+loaded lazily so the `?reset` clear runs first). Language and theme are the exception: they keep
+their pre-existing stores (`urx-lang` / `urx-theme`), read before settings load so the first paint
+is already localized and themed. Rows whose feature needs the desktop shell
+(device scope, update check, firmware warning, recent plans — plus the export rows in the demo)
+render disabled with a dashed "Desktop app only" tag instead of hiding, so the demo still shows
+what the desktop app offers.
+
+- **Language & theme** — the UI language (a dropdown of native names, ready for more languages)
+  and the three-way theme mode (auto / dark / light; see Display themes). Both rows moved off the
+  toolbar, which was overflowing into a horizontal scrollbar at narrow widths.
+- **Device read / write scope** — one bidirectional scope for fetch, write and Live sync: "All
+  supported" (default) or "Scene only", which leaves the URX's device-wide settings untouched
+  (monitor / phones, output + USB / SD patches, streaming, oscillator, sample rate — the set a
+  device scene excludes; see known-issues.md). The boundary is deliberately encoded twice:
+  `sceneExternal` flags in `control/params.ts` filter the write side at the one `planToCommands`
+  chokepoint (so the diff, the live snapshot / flush and the follow notify registration all
+  inherit it), and `core/scene-scope.ts` names the same boundary in plan terms for the read / save
+  side; a contract test pins the two together. Reads stay full — a scoped fetch reads every
+  parameter (reads are side-effect free) and then restores the kept values
+  (`applyDeviceStateScoped` in `main.ts`). The diagnostics (compare / self-test / prepare) always
+  run at full scope, and the control locks while Live sync is up, since the scope is part of the
+  held session's snapshot and notify registration. A scene-only write also skips the sample-rate
+  settle: the rate is out of scope, so the device keeps its own clock.
+- **Plan-file save scope** — full plan (default) or scene only, applied to file save, the share
+  URL and the demo JSON download (see Persistence format below for the document shape and the
+  merge-on-load semantic).
+- **Application version** — the running version, the launch update-check toggle, and a manual
+  "Check now". The outcome lands inline beside the version — the modal stays open, so a "no
+  update" answer is seen where it was asked for — and while the check is in flight every
+  dismissal locks (Close disables, an outside press and Escape are inert), bounded by the
+  check's 10 s timeout. Only an accepted update closes the modal, since the scrim would hide
+  the download status.
+- **Warnings** — visibility of the untested-firmware confirm and the sample-rate / Ducker-bypass
+  warning cards. Display-only: the behavior locks (rate-disabled nodes, the stereo-EQ force-off)
+  stay on regardless.
+- **Controls** — wheel steps per notch (each detent still snaps to the control's own grid), and
+  the fine-tuning entry style (hold Shift, or latch — each press flips the mode).
+- **Files & export** — the PNG / PDF raster scale, the export background (active theme or a fixed
+  one — the graph re-renders under the target palette just for the export clone and swaps back
+  within the same task, so the screen never shows it), and the recent-plans length / clear.
+
 ## Persistence format
 
 ```jsonc
@@ -821,19 +875,29 @@ write binary: `png` / `pdf`).
 `write_binary_file` receives the PNG/PDF bytes as the raw IPC request body — not a JSON number
 array — with the destination path in a percent-encoded `x-file-path` request header. The webview
 itself runs under a strict CSP (`security.csp` + `devCsp` in `tauri.conf.json`): scripts from
-`'self'` only, inline styles allowed (the sandboxed licenses page inherits the page CSP),
+`'self'` only, inline styles allowed,
 `blob:` / `data:` images for the export rasterizer and the noise texture, and the Tauri IPC
 endpoints in `connect-src` (dev additionally allows the Vite HMR websocket). Everything is
 reached via `core/platform.ts` through `window.__TAURI_INTERNALS__.invoke`, so no Tauri npm package
 is bundled; when not running under Tauri it falls back to the browser path. A failed save or image
 export surfaces as a modal error dialog (`status.saveError` / `status.exportError`); a failed save
-keeps the plan dirty. The plan format is
+keeps the plan dirty. A recent-plans entry whose file no longer loads (moved / deleted /
+corrupted) is dropped from the list automatically — keeping it would only reproduce the same
+error — and the status line says so; declining the discard confirm attempts nothing and keeps
+the entry. The plan format is
 unchanged apart from the added `sampleRate`, `nodeNames`, `nodeColors`, `hidden`, `notes` and
 `noteCollapsed` fields (older files default them on load). Loading (`deserialize`) is tolerant of
 corrupt input: every collection passes a type guard that drops a non-conforming value to its empty
 default (`positions` included, symmetrically), and `connections` is validated element-by-element so
 malformed wires (null, wrong-typed, unknown `kind`) are discarded — keeping garbled values from a
 hand edit or an older build out of the plan where they could break routing invariants.
+
+A scene-scoped save (Preferences > Plan files) additionally writes `"scope": "scene"`, omits
+`sampleRate`, and strips the scene-external state (the monitor / oscillator node params, the
+streaming delay and color, and every patch / record / monitor- or streaming-source / OSC-assign
+wire). Loading such a document keeps the current plan's values for that state when the model
+matches — the same semantic as a scene recall on the unit; an older build simply loads the absent
+fields at their defaults, since every field is optional on load.
 
 ## Opening files: drag & drop, and settings files
 
@@ -958,7 +1022,9 @@ are unaffected. `vite.config.ts`'s relative `base: "./"` lets assets resolve und
 
 ### Auto-update
 
-The desktop app checks for a newer release at startup. The Tauri updater / process plugins are registered
+The desktop app checks for a newer release at startup (Preferences can turn the launch check off,
+and offers a manual "Check now" that also reports the outcomes the launch check keeps silent — up
+to date, or check failed). The Tauri updater / process plugins are registered
 in `src-tauri/` on desktop only, and the frontend calls `plugin:updater|check` /
 `plugin:updater|download_and_install` / `plugin:process|restart` directly from `src/core/platform.ts`, the
 same way as the dialog calls (no added npm runtime dependency). When an update exists it shows a confirm
@@ -1019,4 +1085,16 @@ carries a license outside `about.toml`), so a dependency change can't silently d
 also ships inside the desktop app: `bundle.resources` packages it as a Tauri resource (`release.yml`
 runs the same generate before packaging, and a local `tauri build` needs the file present), the
 `third_party_licenses` command reads it from the resource dir, and File → "Third-party licenses"
-shows it in a sandboxed frame (the entry is desktop-only; a plain browser and the demo hide it).
+renders it as app DOM (the entry is desktop-only; a plain browser and the demo hide it):
+`ui/licenses.ts` parses the page with DOMParser — an inert document, nothing executes — into
+license families (name → text variants → their used-by crates) and rebuilds it with text nodes
+only as a collapsed family index — one header row per family, each unfolding its texts — released
+again on close.
+Deliberately no iframe: measured on the real engine (WKWebView), a sandboxed subframe scrolls
+through a separate scroller code path that reserves an unpainted classic-scrollbar gutter, draws
+only a paint-only indicator with no thumb dragging, and colors that indicator by the app scheme
+rather than the page it indicates. Rendered natively, the notice scrolls as part of the main frame
+like every other surface and follows the app theme. The modal is informational, so a press outside
+the box or Escape dismisses it through the shared `ui/dom.ts` wiring. The generated page keeps its
+own paper colors and `color-scheme` declaration for standalone uses (the CI artifact, a direct
+open); the app only reads it as data.

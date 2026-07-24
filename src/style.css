@@ -199,7 +199,9 @@ body {
   color: var(--text-dim);
 }
 
-select#model-picker {
+/* The rack select recipe, shared with the Preferences selects. */
+select#model-picker,
+.prefs-select {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--text);
@@ -298,7 +300,9 @@ button {
   cursor: pointer;
 }
 
-.tools button {
+/* The raised tool-button recipe, shared with the Preferences buttons. */
+.tools button,
+.prefs-btn {
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.06em;
@@ -311,15 +315,18 @@ button {
   box-shadow: var(--ctl-shadow);
 }
 
-.tools button:hover {
+.tools button:hover,
+.prefs-btn:hover {
   filter: brightness(1.12);
 }
 
-[data-theme="light"] .tools button:hover {
+[data-theme="light"] .tools button:hover,
+[data-theme="light"] .prefs-btn:hover {
   filter: brightness(0.97);
 }
 
-.tools button:active {
+.tools button:active,
+.prefs-btn:active {
   filter: brightness(0.9);
 }
 
@@ -340,8 +347,8 @@ button {
   margin: 0 3px;
 }
 
-/* Theme/language prefs are square icon buttons so they stay narrow at the end of
-   the rack; the glyph (☀/☾/◐ or "EN"/"JA") centers in the box. */
+/* The Preferences gear is a square icon button so it stays narrow at the end
+   of the rack; the glyph (an inline SVG) centers in the box. */
 .tools button.icon-btn {
   display: inline-flex;
   align-items: center;
@@ -349,13 +356,6 @@ button {
   width: 34px;
   padding: 7px 0;
   font-size: 13px;
-}
-
-/* The theme glyphs (U+2600/263E/25D0) render as thin line-art in the rack's mono
-   font; the language button keeps "EN"/"JA" in mono. Override only the theme glyph
-   to the system UI font so its filled sun/moon/half-disc match the analyze tools. */
-.tools button#btn-theme {
-  font-family: -apple-system, "Segoe UI", "Meiryo", system-ui, sans-serif;
 }
 
 /* Demo-only call to action that points visitors at the desktop app. Styled
@@ -1070,7 +1070,8 @@ select:focus-visible,
   gap: 6px;
 }
 
-#inspector .toggle button {
+#inspector .toggle button,
+.prefs-toggle button {
   flex: 1;
   margin-top: 0;
   font-family: var(--mono);
@@ -1084,7 +1085,8 @@ select:focus-visible,
   box-shadow: var(--ctl-shadow);
 }
 
-#inspector .toggle button.on {
+#inspector .toggle button.on,
+.prefs-toggle button.on {
   color: #14110d;
   background: var(--led);
   border-color: var(--led);
@@ -2674,27 +2676,82 @@ select:focus-visible,
   background: var(--ctl-bg);
   color: var(--text-dim);
 }
+/* Amber ink is dark in both themes, matching the toggle faces (the light
+   amber #e8920f carries ~7.6:1 contrast with #14110d vs ~2.5:1 with white). */
 .consent-btn-primary {
   background: var(--led);
   border-color: var(--led);
   color: #14110d;
   font-weight: 600;
 }
-[data-theme="light"] .consent-btn-primary {
-  color: #fff;
+/* Third-party license notice, rendered as app DOM (ui/licenses.ts parses the
+   bundled cargo-about page). No iframe: WKWebView scrolls subframes through a
+   separate scroller code path (an unpainted classic-scrollbar gutter plus a
+   paint-only indicator, measured on the real engine), so the notice scrolls as
+   part of the main frame like every other surface. The box and its footer
+   separator share the prefs-box pinned-column recipe (see the Preferences
+   modal rules): title on top, Close pinned at the bottom, the body between
+   them is the scrolling region. */
+.lic-body {
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 8px;
 }
-/* Third-party license notice: the cargo-about page is a self-contained light
-   document, so the frame keeps a white background in both themes. */
-.licenses-box {
-  width: min(920px, 100%);
+/* Collapsed family headers double as the index (no separate chip row). */
+.lic-sec {
+  margin: 0 0 14px;
 }
-.licenses-frame {
-  display: block;
-  width: 100%;
-  height: min(560px, 62vh);
+.lic-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.lic-toggle {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.lic-arrow {
+  display: inline-block;
+  width: 16px;
+  color: var(--text-dim);
+}
+.lic-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.lic-variant {
+  margin: 0 0 12px 16px;
+}
+.lic-used {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  margin: 0 0 8px;
+}
+.lic-text {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--ctl-bg);
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
+  padding: 12px 14px;
+  margin: 0;
+  white-space: pre-wrap;
 }
 .load-report-intro {
   margin: 0 0 12px;
@@ -2716,6 +2773,144 @@ select:focus-visible,
   white-space: pre;
   user-select: text;
   color: var(--text);
+}
+
+/* ---- Preferences modal ---- */
+/* A wide consent-box holding two columns of sections. The box is a fixed
+   column — title on top, the Close action pinned at the bottom — and the grid
+   between them is the scrolling region, so a shrunken window height never
+   hides Close behind a scroll. The licenses box shares the recipe. */
+.prefs-box,
+.licenses-box {
+  display: flex;
+  flex-direction: column;
+  width: min(920px, 100%);
+  overflow-y: hidden;
+}
+.prefs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 32px;
+  overflow-y: auto;
+  min-height: 0;
+}
+/* Footer separator: the body scrolls beneath the pinned Close action. */
+.prefs-box .consent-actions,
+.licenses-box .consent-actions {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 860px) {
+  .prefs-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.prefs-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 26px 0 0;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+.prefs-col > .prefs-section:first-child h3 {
+  margin-top: 6px;
+}
+/* Rows and notes indent under the section header, so the nesting reads at a
+   glance; each row closes with the inspector's hairline. */
+.prefs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-left: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.prefs-row .lbl {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.prefs-row .lblc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.prefs-row .ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* "Desktop app only" tag: dashed like the unknown FOLLOW USB pill — present but
+   not applicable here. Kept at full opacity while its row dims. */
+.prefs-lock {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--text-dim) 75%, transparent);
+  border: 1px dashed var(--ctl-border);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+/* Faces and selects reuse the inspector-toggle / rack-select / tool-button
+   recipes above; only the width constraints are prefs-specific. */
+.prefs-toggle {
+  display: flex;
+  gap: 6px;
+  width: 220px;
+  flex-shrink: 0;
+}
+.prefs-toggle.narrow {
+  width: 132px;
+}
+.prefs-ver {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+/* Inline outcome of the manual update check, beside the version. */
+.prefs-update-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.prefs-update-note.warn {
+  color: var(--warn);
+}
+.prefs-note {
+  margin: 8px 0 0 14px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+/* In-flight disable (the update check): same treatment as a disabled menu
+   item. Locked rows stay out — they already dim wholesale. */
+.prefs-row:not(.locked) .prefs-btn:disabled,
+.prefs-box .consent-btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* A row that does not apply in this build (browser / demo): the label and the
+   control dim, the dashed tag stays readable, the control refuses input. */
+.prefs-row.locked > :not(.lblc),
+.prefs-row.locked .lblc > :not(.prefs-lock) {
+  opacity: 0.45;
+}
+.prefs-row.locked button,
+.prefs-row.locked select {
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 /* ---- MIDI learn (console) ---- */
