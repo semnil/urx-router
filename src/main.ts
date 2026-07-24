@@ -1085,25 +1085,65 @@ function loadFromText(text: string, path?: string): boolean {
   }
 }
 
-// Open a plan from wherever its text comes from — a recent path, a dropped file —
-// with the one discard prompt and the one failure surface both share. `path` is
-// what the plan is remembered by, so it is absent for a browser drop.
-async function openPlanFrom(read: () => Promise<string>, path?: string): Promise<void> {
-  if (!(await confirmDiscard())) return;
-  try {
-    loadFromText(await read(), path);
-  } catch (err) {
-    showError(t().status.loadError(String(err)));
-  }
+// Open a plan from wherever its document comes from — the Open dialog, a recent
+// path, a dropped file — with the one discard prompt and the one failure surface
+// all three share. `read` resolves null when its dialog was canceled; `path` is
+// what the plan is remembered by, so it is absent for a browser pick or drop.
+// Resolves true on success, false when the load was attempted and failed, and
+// null when nothing was attempted (canceled, or another file flow in flight).
+async function openPlanFrom(read: () => Promise<{ text: string; path?: string } | null>): Promise<boolean | null> {
+  return fileFlow(async () => {
+    if (!(await confirmDiscard())) return null;
+    try {
+      const doc = await read();
+      if (!doc) return null;
+      return loadFromText(doc.text, doc.path);
+    } catch (err) {
+      showError(t().status.loadError(String(err)));
+      return false;
+    }
+  });
 }
 
-function openRecent(path: string): Promise<void> {
-  return openPlanFrom(() => readTextByPath(path), path);
+async function openRecent(path: string): Promise<void> {
+  await openPlanFrom(async () => ({ text: await readTextByPath(path), path }));
 }
 
 async function confirmDiscard(): Promise<boolean> {
   if (!dirty) return true;
   return confirmDialog(t().confirm.discard);
+}
+
+// Rapid-repeat guard for click handlers whose action opens dialogs or runs a
+// one-shot async flow: re-entry while the action is in flight is ignored, so a
+// double click cannot stack native dialogs or start the work twice. (The
+// device actions fetch / write / compare / self-test stay outside this — their
+// second click deliberately means cancel.)
+function singleFlight(run: () => Promise<void>): () => void {
+  let busy = false;
+  return () => {
+    if (busy) return;
+    busy = true;
+    void run().finally(() => {
+      busy = false;
+    });
+  };
+}
+
+// One plan/settings file flow at a time across every entry point (File > New /
+// Open / Save, a recent row, a window drop, the .urxf import): each latch above
+// is private to its handler, so this shared one is what keeps rapid repeat
+// across any two of them from stacking discard confirms and file dialogs.
+// Resolves null when another flow holds the latch.
+let fileFlowBusy = false;
+async function fileFlow<T>(run: () => Promise<T>): Promise<T | null> {
+  if (fileFlowBusy) return null;
+  fileFlowBusy = true;
+  try {
+    return await run();
+  } finally {
+    fileFlowBusy = false;
+  }
 }
 
 // Warn before touching a unit whose System firmware differs from the version this
@@ -1147,22 +1187,20 @@ ratePicker.addEventListener("change", () => {
   setStatus(t().status.sampleRate(formatRate(plan.sampleRate)));
 });
 
-$("btn-new").addEventListener("click", async () => {
-  if (!(await confirmDiscard())) return;
-  loadPlan(newPlanAtLastRate(modelId));
-  setStatus(t().status.newPlan);
-});
+$("btn-new").addEventListener(
+  "click",
+  () =>
+    void fileFlow(async () => {
+      if (!(await confirmDiscard())) return;
+      loadPlan(newPlanAtLastRate(modelId));
+      setStatus(t().status.newPlan);
+    }),
+);
 
-$("btn-open").addEventListener("click", async () => {
-  if (!(await confirmDiscard())) return;
-  try {
-    const doc = await openTextDocument({ ext: "json", label: t().filter.plan });
-    if (!doc) return;
-    loadFromText(doc.text, doc.path);
-  } catch (err) {
-    showError(t().status.loadError(String(err)));
-  }
-});
+$("btn-open").addEventListener(
+  "click",
+  () => void openPlanFrom(() => openTextDocument({ ext: "json", label: t().filter.plan })),
+);
 
 // Fine-tuning mode: holding Shift tightens the step of the controls whose device
 // parameter has a verified fine grid (see ui/fine.ts).
@@ -1186,67 +1224,74 @@ const dropzone = initDropzone({
     );
   },
 });
-dropzone.register("json", (file) => openPlanFrom(() => file.text(), file.path));
+dropzone.register("json", (file) => void openPlanFrom(async () => ({ text: await file.text(), path: file.path })));
 
-$("btn-save").addEventListener("click", async () => {
-  // A failed write must keep the plan dirty and surface as a modal, like the
-  // load paths do — a silent rejection would read as a successful save.
-  try {
-    const res = await saveTextDocument(`${modelId}-plan.json`, serialize(plan, sceneSaveOpts()), {
-      ext: "json",
-      label: t().filter.plan,
-    });
-    if (!res.saved) {
-      setStatus(t().status.canceled);
-      return;
-    }
-    dirty = false;
-    if (res.path) {
-      recent = rememberRecent({ path: res.path, name: baseName(res.path), modelId }, getSettings().recentMax);
-      refreshInspector();
-      setStatus(t().status.savedTo(baseName(res.path)));
-    } else {
-      setStatus(t().status.planSaved);
-    }
-  } catch (err) {
-    showError(t().status.saveError(String(err)));
-  }
-});
+$("btn-save").addEventListener(
+  "click",
+  () =>
+    void fileFlow(async () => {
+      // A failed write must keep the plan dirty and surface as a modal, like the
+      // load paths do — a silent rejection would read as a successful save.
+      try {
+        const res = await saveTextDocument(`${modelId}-plan.json`, serialize(plan, sceneSaveOpts()), {
+          ext: "json",
+          label: t().filter.plan,
+        });
+        if (!res.saved) {
+          setStatus(t().status.canceled);
+          return;
+        }
+        dirty = false;
+        if (res.path) {
+          recent = rememberRecent({ path: res.path, name: baseName(res.path), modelId }, getSettings().recentMax);
+          refreshInspector();
+          setStatus(t().status.savedTo(baseName(res.path)));
+        } else {
+          setStatus(t().status.planSaved);
+        }
+      } catch (err) {
+        showError(t().status.saveError(String(err)));
+      }
+    }),
+);
 
 // Demo-only sharing (the buttons stay hidden outside the demo build, but are
 // wired unconditionally so the dev-server E2E can drive them): the demo has no
 // file IO, so the plan travels as a ?plan= deep link — the same encoding
 // loadPlanFromUrl reads — or as a JSON download the desktop app opens.
-$("btn-share").addEventListener("click", async () => {
-  const url = new URL(location.href);
-  url.search = "";
-  url.hash = "";
-  // Encoding compresses via the platform CompressionStream; surface a failure
-  // as a modal rather than silently copying nothing. A missing deflate-raw
-  // codec arrives as the typed browser-floor PlanError, same as the decode path.
-  try {
-    url.searchParams.set("plan", await encodePlanParam(plan, sceneSaveOpts()));
-  } catch (err) {
-    showError(err instanceof PlanError ? t().error[err.code] : t().status.shareUrlError(String(err)));
-    return;
-  }
-  const link = url.toString();
-  // Put the link in the address bar first, so it stays copyable by hand when
-  // the clipboard is unavailable (insecure context) or rejects the write.
-  try {
-    history.replaceState(null, "", link);
-  } catch {
-    // ignore (history unavailable)
-  }
-  if (navigator.clipboard?.writeText) {
-    void navigator.clipboard.writeText(link).then(
-      () => setStatus(t().status.shareUrlCopied),
-      () => setStatus(t().status.shareUrlInBar),
-    );
-  } else {
-    setStatus(t().status.shareUrlInBar);
-  }
-});
+$("btn-share").addEventListener(
+  "click",
+  singleFlight(async () => {
+    const url = new URL(location.href);
+    url.search = "";
+    url.hash = "";
+    // Encoding compresses via the platform CompressionStream; surface a failure
+    // as a modal rather than silently copying nothing. A missing deflate-raw
+    // codec arrives as the typed browser-floor PlanError, same as the decode path.
+    try {
+      url.searchParams.set("plan", await encodePlanParam(plan, sceneSaveOpts()));
+    } catch (err) {
+      showError(err instanceof PlanError ? t().error[err.code] : t().status.shareUrlError(String(err)));
+      return;
+    }
+    const link = url.toString();
+    // Put the link in the address bar first, so it stays copyable by hand when
+    // the clipboard is unavailable (insecure context) or rejects the write.
+    try {
+      history.replaceState(null, "", link);
+    } catch {
+      // ignore (history unavailable)
+    }
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(link).then(
+        () => setStatus(t().status.shareUrlCopied),
+        () => setStatus(t().status.shareUrlInBar),
+      );
+    } else {
+      setStatus(t().status.shareUrlInBar);
+    }
+  }),
+);
 
 $("btn-download").addEventListener("click", () => {
   // The demo's stand-in for Save: the downloaded JSON matches a desktop save,
@@ -1256,19 +1301,26 @@ $("btn-download").addEventListener("click", () => {
   setStatus(t().status.planDownloaded);
 });
 
-$("btn-export").addEventListener("click", () => {
-  graph.exportPng(`${modelId}-routing.png`).catch((err: unknown) => showError(t().status.exportError(String(err))));
-});
+$("btn-export").addEventListener(
+  "click",
+  singleFlight(() =>
+    graph.exportPng(`${modelId}-routing.png`).catch((err: unknown) => showError(t().status.exportError(String(err)))),
+  ),
+);
 
-$("btn-export-pdf").addEventListener("click", () => {
-  graph.exportPdf(`${modelId}-routing.pdf`).catch((err: unknown) => showError(t().status.exportError(String(err))));
-});
+$("btn-export-pdf").addEventListener(
+  "click",
+  singleFlight(() =>
+    graph.exportPdf(`${modelId}-routing.pdf`).catch((err: unknown) => showError(t().status.exportError(String(err)))),
+  ),
+);
 
 // Third-party license notice (desktop only): the cargo-about page bundled as a
 // Tauri resource, shown in a sandboxed frame so its styles stay self-contained.
-$("btn-licenses").addEventListener("click", () => {
-  thirdPartyLicenses().then(showLicenses, (e: unknown) => showError(t().licenses.error(String(e))));
-});
+$("btn-licenses").addEventListener(
+  "click",
+  singleFlight(() => thirdPartyLicenses().then(showLicenses, (e: unknown) => showError(t().licenses.error(String(e))))),
+);
 
 // The plan-file save scope (Preferences > Plan files), shared by every
 // serialize call site: file save, demo JSON download, and the share URL.
@@ -1398,38 +1450,41 @@ if (!DEMO) {
   // already agree nothing happens at all, which is why it is a confirm rather than a
   // refusal. Turning it OFF changes nothing immediately; it only makes the rate
   // picker authoritative again.
-  followUsbBadge.addEventListener("click", async () => {
-    // Unknown: the click reads the device rather than toggling it. Toggling from
-    // unknown would have to guess which way, and the operator's first question here
-    // is "what is it?", not "change it".
-    if (followUsbState === null) {
-      // Not refreshFollowUsbBadge: that one swallows a read failure back to unknown
-      // because nothing depends on it. Here the read IS the requested action, so let
-      // it throw and be reported.
-      await withDevice(t().status.writeConnecting, t().status.writeError, async () => {
-        setFollowUsbBadge(await readFollowUsb());
-      });
-      return;
-    }
-    const next = !followUsbState;
-    if (next && !(await confirmDialog(t().confirm.followUsbOn))) return;
-    const apply = async (): Promise<void> => {
-      await setFollowUsb(next);
-      setFollowUsbBadge(next);
-      setStatus(next ? t().status.followUsbOn : t().status.followUsbOff);
-    };
-    // While live the connection is already held for the session; opening a second
-    // one would fight it. Otherwise connect just for this write.
-    if (liveSessionUp) {
-      try {
-        await apply();
-      } catch (err) {
-        stopLiveOnError(String(err));
+  followUsbBadge.addEventListener(
+    "click",
+    singleFlight(async () => {
+      // Unknown: the click reads the device rather than toggling it. Toggling from
+      // unknown would have to guess which way, and the operator's first question here
+      // is "what is it?", not "change it".
+      if (followUsbState === null) {
+        // Not refreshFollowUsbBadge: that one swallows a read failure back to unknown
+        // because nothing depends on it. Here the read IS the requested action, so let
+        // it throw and be reported.
+        await withDevice(t().status.writeConnecting, t().status.writeError, async () => {
+          setFollowUsbBadge(await readFollowUsb());
+        });
+        return;
       }
-      return;
-    }
-    await withDevice(t().status.writeConnecting, t().status.writeError, apply);
-  });
+      const next = !followUsbState;
+      if (next && !(await confirmDialog(t().confirm.followUsbOn))) return;
+      const apply = async (): Promise<void> => {
+        await setFollowUsb(next);
+        setFollowUsbBadge(next);
+        setStatus(next ? t().status.followUsbOn : t().status.followUsbOff);
+      };
+      // While live the connection is already held for the session; opening a second
+      // one would fight it. Otherwise connect just for this write.
+      if (liveSessionUp) {
+        try {
+          await apply();
+        } catch (err) {
+          stopLiveOnError(String(err));
+        }
+        return;
+      }
+      await withDevice(t().status.writeConnecting, t().status.writeError, apply);
+    }),
+  );
 
   const fetchBtn = $<HTMLButtonElement>("btn-fetch");
   // A click cancels an in-flight fetch; otherwise it starts one. The whole-device
@@ -1815,9 +1870,15 @@ if (!DEMO) {
 
     const liveBtn = $<HTMLButtonElement>("btn-live");
     liveBtn.hidden = false;
+    // Rapid repeat: an activation is a long async flow (connect / confirms /
+    // full read) during which the toggle is neither on nor off — a second click
+    // there must not start a second concurrent session. Deactivation is
+    // synchronous and stays outside the latch, so an active session always
+    // turns off immediately.
+    const startLive = singleFlight(() => activateLive());
     liveBtn.addEventListener("click", () => {
       if (live?.isActive()) deactivateLive(t().status.liveOff);
-      else void activateLive();
+      else startLive();
     });
   }
 
@@ -1858,6 +1919,12 @@ if (!DEMO) {
   // that returns null was canceled). Reading and parsing share one failure
   // surface, so neither entry point below carries its own catch.
   async function importSettings(load: () => Promise<{ bytes: Uint8Array; name: string } | null>): Promise<void> {
+    // Same latch as the plan-open flows: the import shares their dialog chain
+    // (confirms + a file dialog), so rapid repeat across entry points is ignored.
+    await fileFlow(() => importSettingsFlow(load));
+  }
+
+  async function importSettingsFlow(load: () => Promise<{ bytes: Uint8Array; name: string } | null>): Promise<void> {
     // Replacing every value at once is what Live sync cannot follow, so the import
     // is refused while a session is up — the same rule fetch and write follow, which
     // setLiveUi enforces on the menu entry. The drop target needs it stated here.
