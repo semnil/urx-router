@@ -2683,14 +2683,13 @@ select:focus-visible,
   background: var(--ctl-bg);
   color: var(--text-dim);
 }
+/* Amber ink is dark in both themes, matching the toggle faces (the light
+   amber #e8920f carries ~7.6:1 contrast with #14110d vs ~2.5:1 with white). */
 .consent-btn-primary {
   background: var(--led);
   border-color: var(--led);
   color: #14110d;
   font-weight: 600;
-}
-[data-theme="light"] .consent-btn-primary {
-  color: #fff;
 }
 /* Third-party license notice: the cargo-about page is a self-contained light
    document, so the frame keeps a white background in both themes. */
