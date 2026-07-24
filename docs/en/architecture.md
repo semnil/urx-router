@@ -799,8 +799,9 @@ PDF exports.
 The toolbar gear opens the Preferences modal (`ui/prefs.ts`), available in every build. It is the
 consent-box family (920 px, two columns), and at a shrunken window height the box scrolls inside
 itself, so the content and the Close action stay reachable. Since every setting applies the moment
-it is changed, a press outside the box or Escape dismisses the modal like the MIDI panel — the
-capture-phase wiring both share lives in `ui/dom.ts` (`wireDismiss`). Settings persist as one
+it is changed, a press outside the box or Escape dismisses the modal like the MIDI panel and the
+licenses modal — the capture-phase wiring all three share lives in `ui/dom.ts` (`wireDismiss`).
+Settings persist as one
 validated localStorage record (`urx-settings`, `core/settings.ts`,
 loaded lazily so the `?reset` clear runs first). Rows whose feature needs the desktop shell
 (device scope, update check, firmware warning, recent plans — plus the export rows in the demo)
@@ -869,7 +870,7 @@ write binary: `png` / `pdf`).
 `write_binary_file` receives the PNG/PDF bytes as the raw IPC request body — not a JSON number
 array — with the destination path in a percent-encoded `x-file-path` request header. The webview
 itself runs under a strict CSP (`security.csp` + `devCsp` in `tauri.conf.json`): scripts from
-`'self'` only, inline styles allowed (the sandboxed licenses page inherits the page CSP),
+`'self'` only, inline styles allowed,
 `blob:` / `data:` images for the export rasterizer and the noise texture, and the Tauri IPC
 endpoints in `connect-src` (dev additionally allows the Vite HMR websocket). Everything is
 reached via `core/platform.ts` through `window.__TAURI_INTERNALS__.invoke`, so no Tauri npm package
@@ -1079,4 +1080,16 @@ carries a license outside `about.toml`), so a dependency change can't silently d
 also ships inside the desktop app: `bundle.resources` packages it as a Tauri resource (`release.yml`
 runs the same generate before packaging, and a local `tauri build` needs the file present), the
 `third_party_licenses` command reads it from the resource dir, and File → "Third-party licenses"
-shows it in a sandboxed frame (the entry is desktop-only; a plain browser and the demo hide it).
+renders it as app DOM (the entry is desktop-only; a plain browser and the demo hide it):
+`ui/licenses.ts` parses the page with DOMParser — an inert document, nothing executes — into
+license families (name → text variants → their used-by crates) and rebuilds it with text nodes
+only as a collapsed family index — one header row per family, each unfolding its texts — released
+again on close.
+Deliberately no iframe: measured on the real engine (WKWebView), a sandboxed subframe scrolls
+through a separate scroller code path that reserves an unpainted classic-scrollbar gutter, draws
+only a paint-only indicator with no thumb dragging, and colors that indicator by the app scheme
+rather than the page it indicates. Rendered natively, the notice scrolls as part of the main frame
+like every other surface and follows the app theme. The modal is informational, so a press outside
+the box or Escape dismisses it through the shared `ui/dom.ts` wiring. The generated page keeps its
+own paper colors and `color-scheme` declaration for standalone uses (the CI artifact, a direct
+open); the app only reads it as data.
