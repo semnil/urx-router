@@ -178,9 +178,9 @@ in-house module `src/i18n/`:
 > UI maps them to text (`t().error[code]`). This keeps `core/` and `models/` free of i18n, so the
 > Node smoke test runs without browser APIs.
 
-The language button in the toolbar's right-hand cluster switches languages (its face shows the
-current code, `EN` / `JA`); `setLang()` notifies listeners, which re-render the static labels and the
-inspector.
+The language is switched from the Preferences modal (a dropdown of native names in the
+"Language & theme" section); `setLang()` notifies listeners, which re-render the static labels,
+the inspector, and the open modal itself.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
 > `Ducker`, `Bus send`, `Send (ON/OFF)`, `Pre-fader send`. The visible canvas element is a **node**;
@@ -192,9 +192,9 @@ inspector.
 The UI has a studio-rack aesthetic modeled on pro-audio gear, with two palettes (dark and light)
 selected by a three-way theme **mode**: `light`, `dark`, or `auto`. The mode persists to
 `localStorage("urx-theme")`; a fresh install defaults to `auto`, which resolves to a palette from the
-OS color scheme (`prefers-color-scheme`) and re-resolves live when the OS scheme changes. The glyph
-button at the right end of the toolbar cycles `light → dark → auto` (icons ☀ / ☾ / ◐ show the current
-mode); `resolveTheme()` maps the mode to the applied palette and `applyThemeButton()` refreshes the face.
+OS color scheme (`prefers-color-scheme`) and re-resolves live when the OS scheme changes. The mode
+is picked in the Preferences modal (the "Language & theme" section); `resolveTheme()` maps the mode
+to the applied palette.
 
 The palette is split into two layers, kept in correspondence per theme:
 
@@ -803,11 +803,16 @@ it is changed, a press outside the box or Escape dismisses the modal like the MI
 licenses modal — the capture-phase wiring all three share lives in `ui/dom.ts` (`wireDismiss`).
 Settings persist as one
 validated localStorage record (`urx-settings`, `core/settings.ts`,
-loaded lazily so the `?reset` clear runs first). Rows whose feature needs the desktop shell
+loaded lazily so the `?reset` clear runs first). Language and theme are the exception: they keep
+their pre-existing stores (`urx-lang` / `urx-theme`), read before settings load so the first paint
+is already localized and themed. Rows whose feature needs the desktop shell
 (device scope, update check, firmware warning, recent plans — plus the export rows in the demo)
 render disabled with a dashed "Desktop app only" tag instead of hiding, so the demo still shows
 what the desktop app offers.
 
+- **Language & theme** — the UI language (a dropdown of native names, ready for more languages)
+  and the three-way theme mode (auto / dark / light; see Display themes). Both rows moved off the
+  toolbar, which was overflowing into a horizontal scrollbar at narrow widths.
 - **Device read / write scope** — one bidirectional scope for fetch, write and Live sync: "All
   supported" (default) or "Scene only", which leaves the URX's device-wide settings untouched
   (monitor / phones, output + USB / SD patches, streaming, oscillator, sample rate — the set a
