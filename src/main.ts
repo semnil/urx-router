@@ -1326,10 +1326,16 @@ $("btn-export-pdf").addEventListener(
 );
 
 // Third-party license notice (desktop only): the cargo-about page bundled as a
-// Tauri resource, shown in a sandboxed frame so its styles stay self-contained.
+// Tauri resource, parsed and rendered as app DOM (ui/licenses.ts).
 $("btn-licenses").addEventListener(
   "click",
-  singleFlight(() => thirdPartyLicenses().then(showLicenses, (e: unknown) => showError(t().licenses.error(String(e))))),
+  // .catch (not a rejection handler on .then): a notice that reads fine but
+  // fails to parse in showLicenses must land in the same error dialog.
+  singleFlight(() =>
+    thirdPartyLicenses()
+      .then(showLicenses)
+      .catch((e: unknown) => showError(t().licenses.error(String(e)))),
+  ),
 );
 
 // The plan-file save scope (Preferences > Plan files), shared by every

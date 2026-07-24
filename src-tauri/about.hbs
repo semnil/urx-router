@@ -4,6 +4,19 @@
     <meta charset="utf-8">
     <title>urx-router — Third-Party Licenses</title>
     <style>
+        /* Declare the scheme the media query below implements, so the document
+           computes dark while rendering the dark palette (it otherwise computes
+           light). */
+        :root {
+            color-scheme: light dark;
+        }
+        /* Explicit paper color, paired with the dark override below. The app
+           itself parses this document and re-renders it natively
+           (src/ui/licenses.ts) rather than embedding it; these styles serve the
+           standalone page (the CI artifact, a direct open). */
+        body {
+            background: #fff;
+        }
         @media (prefers-color-scheme: dark) {
             body {
                 background: #333;

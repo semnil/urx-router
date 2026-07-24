@@ -571,6 +571,8 @@ export const en = {
     title: "Third-party licenses",
     close: "Close",
     error: (message: string): string => `Could not load the license notice: ${message}`,
+    familyMeta: (crates: number, texts: number): string =>
+      `${crates} ${crates === 1 ? "crate" : "crates"} · ${texts} ${texts === 1 ? "text" : "texts"}`,
   },
   prefs: {
     title: "Preferences",

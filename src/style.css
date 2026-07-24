@@ -2691,18 +2691,74 @@ select:focus-visible,
   color: #14110d;
   font-weight: 600;
 }
-/* Third-party license notice: the cargo-about page is a self-contained light
-   document, so the frame keeps a white background in both themes. */
-.licenses-box {
-  width: min(920px, 100%);
+/* Third-party license notice, rendered as app DOM (ui/licenses.ts parses the
+   bundled cargo-about page). No iframe: WKWebView scrolls subframes through a
+   separate scroller code path (an unpainted classic-scrollbar gutter plus a
+   paint-only indicator, measured on the real engine), so the notice scrolls as
+   part of the main frame like every other surface. The box and its footer
+   separator share the prefs-box pinned-column recipe (see the Preferences
+   modal rules): title on top, Close pinned at the bottom, the body between
+   them is the scrolling region. */
+.lic-body {
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 8px;
 }
-.licenses-frame {
-  display: block;
-  width: 100%;
-  height: min(560px, 62vh);
+/* Collapsed family headers double as the index (no separate chip row). */
+.lic-sec {
+  margin: 0 0 14px;
+}
+.lic-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.lic-toggle {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.lic-arrow {
+  display: inline-block;
+  width: 16px;
+  color: var(--text-dim);
+}
+.lic-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.lic-variant {
+  margin: 0 0 12px 16px;
+}
+.lic-used {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  margin: 0 0 8px;
+}
+.lic-text {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--ctl-bg);
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
+  padding: 12px 14px;
+  margin: 0;
+  white-space: pre-wrap;
 }
 .load-report-intro {
   margin: 0 0 12px;
@@ -2727,11 +2783,12 @@ select:focus-visible,
 }
 
 /* ---- Preferences modal ---- */
-/* A wide consent-box (licenses width) holding two columns of sections. The box
-   is a fixed column — title on top, the Close action pinned at the bottom — and
-   the grid between them is the scrolling region, so a shrunken window height
-   never hides Close behind a scroll. */
-.prefs-box {
+/* A wide consent-box holding two columns of sections. The box is a fixed
+   column — title on top, the Close action pinned at the bottom — and the grid
+   between them is the scrolling region, so a shrunken window height never
+   hides Close behind a scroll. The licenses box shares the recipe. */
+.prefs-box,
+.licenses-box {
   display: flex;
   flex-direction: column;
   width: min(920px, 100%);
@@ -2744,8 +2801,9 @@ select:focus-visible,
   overflow-y: auto;
   min-height: 0;
 }
-/* Footer separator: the grid scrolls beneath the pinned Close action. */
-.prefs-box .consent-actions {
+/* Footer separator: the body scrolls beneath the pinned Close action. */
+.prefs-box .consent-actions,
+.licenses-box .consent-actions {
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--line);

@@ -557,6 +557,7 @@ export const ja: Messages = {
     title: "サードパーティライセンス",
     close: "閉じる",
     error: (message: string): string => `ライセンス情報を読み込めませんでした: ${message}`,
+    familyMeta: (crates: number, texts: number): string => `${crates} クレート · 本文 ${texts} 種`,
   },
   prefs: {
     title: "環境設定",
