@@ -121,7 +121,7 @@ export interface SelfTestReport {
 
 // Deep-negative dB that emit clamps to each level param's own minimum (-inf for
 // faders / sends, the floor for gain / monitor), so the written state is silent.
-export const SILENCE_DB = -200;
+const SILENCE_DB = -200;
 
 // Enum params swept across passes (key → legal option values, in device order).
 // COMP/EQ type is structural (it switches active GATE/COMP/EQ banks); sweeping it

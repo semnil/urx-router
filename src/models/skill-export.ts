@@ -19,7 +19,7 @@ export interface SkillModel {
   rules: [string, string, ConnectionKind, boolean][];
 }
 
-export function skillModel(model: DeviceModel): SkillModel {
+function skillModel(model: DeviceModel): SkillModel {
   const nodes: SkillModel["nodes"] = {};
   for (const n of model.nodes) nodes[n.id] = { kind: n.kind, label: fullLabel(n) };
   return {

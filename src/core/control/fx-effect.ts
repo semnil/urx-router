@@ -38,14 +38,14 @@ export interface FxEffectTypeOption {
 // Per-FX EFFECT TYPE menus (fx1_insert_fx / fx2_insert_fx tables). FX1 reverbs are
 // Rev-X (up to 192 kHz), FX2 reverbs are Rev.R3 (up to 96 kHz); both share the two
 // delays. Within each FX channel only one effect is active (1-of-N, the selector).
-export const FX1_EFFECT_TYPES: FxEffectTypeOption[] = [
+const FX1_EFFECT_TYPES: FxEffectTypeOption[] = [
   { value: 0, label: "Rev-X Hall", family: "revx" },
   { value: 1, label: "Rev-X Room", family: "revx" },
   { value: 2, label: "Rev-X Plate", family: "revx" },
   { value: 1024, label: "Mono Delay", family: "delay" },
   { value: 1025, label: "Ping Pong", family: "delay" },
 ];
-export const FX2_EFFECT_TYPES: FxEffectTypeOption[] = [
+const FX2_EFFECT_TYPES: FxEffectTypeOption[] = [
   { value: 768, label: "Rev.R3 Hall", family: "revr3" },
   { value: 769, label: "Rev.R3 Room", family: "revr3" },
   { value: 770, label: "Rev.R3 Plate", family: "revr3" },
@@ -138,7 +138,7 @@ export function revxTimeSec(raw: number, roomSizeRaw: number): number {
 }
 
 // Tempo-sync Note values (raw 0..14, short → long; 0 = off). Standard Yamaha list.
-export const FX_NOTE_OPTIONS = [
+const FX_NOTE_OPTIONS = [
   { value: 0, label: "---" },
   { value: 1, label: "1/32T" },
   { value: 2, label: "1/16T" },
@@ -505,7 +505,7 @@ export const DELAY_PARAMS: FxParamDesc[] = [
 
 // Ping Pong shares the delay layout but its delay-time slot has its own law and
 // range (see pingPongDelayMs); every other slot is identical to Mono Delay.
-export const PINGPONG_DELAY_PARAMS: FxParamDesc[] = DELAY_PARAMS.map((d) =>
+const PINGPONG_DELAY_PARAMS: FxParamDesc[] = DELAY_PARAMS.map((d) =>
   d.key === "delay"
     ? {
         ...d, // Mono delay slot (def 5000 = 500 ms here) with the Ping Pong law and range.
@@ -518,7 +518,7 @@ export const PINGPONG_DELAY_PARAMS: FxParamDesc[] = DELAY_PARAMS.map((d) =>
 );
 
 /** EFFECT TYPE value for Ping Pong Delay (shared by both FX channels). */
-export const PINGPONG_TYPE = 1025;
+const PINGPONG_TYPE = 1025;
 
 /** Parameter descriptors for an EFFECT TYPE. Delay splits by type because Mono
  *  and Ping Pong encode the delay time differently (see PINGPONG_DELAY_PARAMS). */
