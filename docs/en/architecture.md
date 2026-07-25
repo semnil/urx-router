@@ -490,7 +490,10 @@ and list-timeout shapes all collapse to this single code, since the user's remed
 `control-worker-gone` (the Rust worker thread died or stopped responding — the handshake, command send, and
 reply-wait failures all collapse to this code). The frontend's `connectFailureStatus` maps those codes to
 localized messages (`error.brokerUnreachable` / `error.noDevice` / `error.controlWorkerGone`);
-any other connect-stage fault falls back to the action's own error formatter. Because the connect doubles as a
+any other connect-stage fault falls back to the action's own error formatter. The MIDI bridge (midi.rs) exposes
+its own disjoint code (`midi-port-not-found`); the MIDI panel's `midiErrorStatus` is the peer of
+`connectFailureStatus` for it, localizing to `error.midiPortNotFound` and otherwise falling back to the
+input/output error formatter. Because the connect doubles as a
 pre-check, fetch and live sync connect *before* prompting to discard edits, so a no-device state is reported
 plainly without first disturbing the plan.
 

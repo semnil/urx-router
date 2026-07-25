@@ -624,6 +624,7 @@ export const ja: Messages = {
     controlWorkerGone:
       "デバイス制御の接続が中断されました。再接続してください。繰り返す場合はアプリを再起動してください。",
     linkLost: "デバイスとの接続が切断されました (USB 抜去または Device Center 終了)",
+    midiPortNotFound: "その MIDI ポートは使用できません。デバイスを接続し直して選び直してください。",
     firmwareUnread:
       "デバイスのファームウェアバージョンを読み取れず、このビルドのパラメーターマッピングが実機に適合するか確認できません。接続し直してからやり直してください。",
     liveReadIncomplete: (n: number): string =>
