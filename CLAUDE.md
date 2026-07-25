@@ -47,7 +47,7 @@ pnpm build        # tsc --noEmit + vite build
 pnpm build:demo   # browser demo build (VITE_DEMO=1; excludes save/image export)
 pnpm preview      # serve the built dist/ at http://localhost:4173 (browser check of a build:demo bundle)
 pnpm e2e:serve    # vite build + preview on 4173 — what playwright.config.ts launches as its webServer
-pnpm test         # vitest (core: routing/constraints/plan/levels/meters/midi, control: vd/translate/readback/live/follow/fx/insert-fx/firmware etc., models, ui: console)
+pnpm test         # vitest (core: routing/constraints/plan/levels/meters/midi, control: vd/translate/readback/live/follow/fx/insert-fx/firmware etc., models, ui: console/fine/licenses)
 pnpm typecheck:e2e # tsc -p tsconfig.e2e.json — type-checks e2e/ + the root config .ts (playwright/vite/vitest); the src build's tsconfig only includes "src"
 pnpm test:e2e     # Playwright E2E (e2e/*.spec.ts: routing/hide/notes/multiselect/bustype/signaltype/insertfx/midi etc.). CI runs this post-merge
 pnpm format       # Prettier --write on the TS sources (src/e2e/scripts + root *.ts; config = package.json "prettier", printWidth 120)
