@@ -74,6 +74,56 @@ export const ja: Messages = {
     groupBus: "BUS / FX",
     groupMon: "モニター",
   },
+  // 本体の SETUP > GENERAL。節名・コントロール名は日本語版ユーザーガイドでも英語のままなので
+  // 訳さず、説明文だけを日本語にする。本体の表記と一致していることが、画面の行を
+  // ハードウェアのメニューへ読み替えられる根拠になる。
+  deviceSetup: {
+    menuItem: "本体設定",
+    title: "本体設定",
+    close: "閉じる",
+    apply: "本体へ適用",
+    pending: (n: number): string => `未適用の変更 ${n} 件`,
+    standingNote: "変更は「本体へ適用」を押すまで本体に書き込まれません。計画ファイルには含まれません。",
+    onlyOn: (models: string): string => `${models} のみ`,
+    languageSection: "Language",
+    displayLanguage: "表示言語",
+    languageNote:
+      "書き込んだ値は保持されますが、本体画面への反映は本体で Language を一度切り替えるまで遅れることがあります。",
+    brightnessSection: "Brightness",
+    screen: "Screen",
+    powerSection: "Power Management",
+    autoPowerOff: "Auto Power Off",
+    enable: "Enable",
+    time: "Time",
+    minutes: (n: number): string => `${n} 分`,
+    dateTimeSection: "Date/Time",
+    timeZone: "Time Zone",
+    displayFormat: "Display Format",
+    date: "Date",
+    clockNote:
+      "本体の時計は microSD 録音の日時に使われます。時計そのものは本体のパネルからのみ設定でき、USB 接続したコンピューターの時刻にも同期しません。",
+    timeZoneNote:
+      "都市の一覧は本体を部分的に観測して再現したものです。項目が実際と異なる可能性があるため、適用後に本体の表示を確認してください。",
+    noDateTime: "URX22 は microSD を持たないため、本体に Date/Time メニューがありません。",
+    peripheralSection: "Peripheral",
+    usbMain: "USB Main",
+    usbSuppression: "Generic Driver Audio Channel Suppression",
+    usbNote:
+      "iPad / iPhone などの標準ドライバーで接続したホストに提供するチャンネル数の制限です。2 Channels で 2 IN / 2 OUT に制限されます。",
+    hdmi: "HDMI",
+    hdcp: "HDCP",
+    hdmiChannels: "Input Audio Channels",
+    hdmiNote:
+      "2 Channels は常に 2 チャンネル (最大 48 kHz)、Multi Channels は最大 192 kHz / 8 チャンネルまで対応し、ミキサー内部でステレオへダウンミックスされます。",
+    hdmiOnly: "HDMI は URX44V のみの装備です。",
+    knobsSection: "User Defined Knobs",
+    bank: (n: number): string => `BANK ${n}`,
+    function: "Function",
+    param1: "Parameter 1",
+    param2: "Parameter 2",
+    knobsNote: "BANK は本体のバンク切替と同じ単位です。",
+    unset: "—",
+  },
   midi: {
     menuItem: "MIDI コントロール",
     title: "MIDI コントロール",
@@ -447,6 +497,10 @@ export const ja: Messages = {
     writeResidual: (n: number): string => `書き込みましたが ${n} 件が反映されませんでした (コンソール参照)`,
     writeReadFailed: (n: number): string => `書き込みを中止しました: ${n} 件の設定をデバイスから読み取れません`,
     writeError: (message: string): string => `デバイスへの書き込みに失敗しました: ${message}`,
+    deviceSetupReading: "本体の設定を読み込んでいます…",
+    deviceSetupRead: "本体の設定を読み込みました",
+    deviceSetupApplying: "本体へ設定を適用しています…",
+    deviceSetupApplied: (n: number): string => `${n} 件の設定を本体へ適用しました`,
     selfTestRunning: "デバイスのセルフテストを実行中… 切断しないでください (メニューから中止できます)",
     selfTestCancelled: "セルフテストを中止しました — デバイスは無音状態です。元に戻すには再度取得してください",
     selfTestPass: (n: number): string => `セルフテスト合格: ${n} 件のパラメータを書き込み、同一に読み戻しました`,
@@ -486,6 +540,7 @@ export const ja: Messages = {
   },
   confirm: {
     discard: "保存していない変更があります。破棄してよろしいですか?",
+    deviceSetupDiscard: "本体設定に適用していない変更があります。破棄してよろしいですか?",
     update: (version: string): string => `バージョン ${version} が利用可能です。今すぐ更新しますか?`,
     switchModel: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。${device} に切り替えて (現在の計画は破棄) 取得しますか?`,
@@ -612,6 +667,8 @@ export const ja: Messages = {
     errorReport: "デバイスエラーレポート",
   },
   error: {
+    deviceSetupRead: (message: string): string => `本体の設定を読み込めませんでした: ${message}`,
+    deviceSetupWrite: (message: string): string => `設定を適用できませんでした: ${message}`,
     noRule: "この経路は接続できません",
     duplicate: "すでに接続済みです",
     singleInput: "この入力は1系統のみです (既存の接続を外してください)",

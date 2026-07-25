@@ -632,6 +632,64 @@ INS FX chips, `rateConstraints` dims FX2), because those features genuinely do n
 `SAMPLE_RATE` is emitted **first** so the rest of the write lands on a device already clocked the way the plan
 says. Confirmed on hardware: a rate-changing write completes, with the commands after the re-clock all arriving.
 
+
+## Device setup (the unit's SETUP > GENERAL)
+
+`Device > Device setup` opens the settings that belong to the **unit** rather than to a routing plan:
+`Brightness`, `Power Management` (Auto Power Off enable and time), `Date/Time` (time zone and the date
+and time display formats), `Language`, `Peripheral` (USB Main's generic-driver channel suppression, and
+the URX44V's HDMI HDCP and Input Audio Channels), and the 16 `User Defined Knobs` assignments.
+
+Section and control names come from the unit's own menu and stay in English in both app languages — the
+Japanese user guide keeps them in English too — so a row here reads as the row on the hardware. Only the
+explanatory notes are translated.
+
+**Outside the plan, deliberately.** `core/control/params.ts` catalogs the addresses (it is the one place
+an address may be written down) and flags them **`planExternal`** — no `translate.ts` group emits them and
+no `readback.ts` group reads them, so `sceneExternal`'s write-scope filter is inert for them. The flag is
+what the contract test derives its "never emitted" guarantee from, rather than a hand-copied name list
+that fails nothing when someone forgets to extend it; Follow USB (848) carries it too.
+`core/control/device-setup.ts` is their whole surface, in the shape Follow USB already established: bare
+`vdGet` / `vdSet`, no diff engine, no snapshot. The reason is that a plan travels — as
+a saved file, a recent-files entry and a `?plan=` link — and `planToCommands` writes absolute state, so
+carrying these would push one operator's screen brightness, menu language, power-off timer and knob
+assignments onto another operator's hardware. Two smaller consequences fall out of the same choice: the
+self-test's perturbation walk (which nudges scalars by +1) never reaches values like brightness 10 or a
+20-minute power-off timer, and `scene-scope.ts` needs no new branch.
+
+**Batch, not live.** Unlike Preferences, which applies each change immediately, this screen is read →
+edit → apply:
+
+1. Opening connects, confirms the firmware, refuses a model mismatch, reads the whole set, and
+   disconnects. A read failure leaves the screen **unopened** — a half-established baseline would invite
+   applying a diff against values that were never read (see "Aborting on failure").
+2. Edits accumulate in the modal. A row whose value differs from what the device reported takes the
+   accent dot, and the footer counts the pending settings.
+3. `Apply to device` connects, sends **only the differences**, and disconnects. Only a clean apply moves
+   the baseline; after a failure the draft still differs from what the device holds, which is what a
+   retry needs.
+
+Closing with unapplied edits asks first. The entry disables while Live sync holds the connection, on the
+same list as Fetch / Write / Compare.
+
+**Model gating.** The URX22 has no `Date/Time` menu (it has no microSD recorder for the clock to stamp)
+and the `HDMI` sub-page is URX44V only. Those rows render **locked with a dashed model tag** rather than
+disappearing, the idiom Preferences uses for a desktop-only row, and they are neither read nor written.
+
+**What the screen cannot do.** The unit's clock is not settable from a computer and does not follow a USB
+host's clock, so there is no clock row and no readout of one — only the formats and the time zone. The
+`Time Zone` value is an index into a list of city names held in the unit; `core/control/timezones.ts`
+reproduces that list, checked against hardware at a few points only, so an entry may name the wrong city
+(the unit shows the city it actually selected — pick again). The array is fixed data: it is **not**
+strictly alphabetical (`La Paz (Mexico)` precedes `La Paz (Bolivia)`), so sorting it shifts every index
+from 76 onward.
+
+**User Defined Knobs.** Banks 1–4 × knobs A–D are one flat `y = 0..15`. Each assignment is a triple of
+free-form strings (`Function` / `Parameter 1` / `Parameter 2`) that the device stores verbatim and never
+validates, so the app owns the exact user-guide spelling: picking a function re-seeds both parameter
+columns from the catalog, and all three are always written together. A partial write is not reconciled by
+the device — it would leave the unit showing a triple no menu could have produced.
+
 ## Responsive layout (mobile)
 
 The inspector — a fixed 300px column on desktop — becomes a bottom sheet (a rack drawer that slides up

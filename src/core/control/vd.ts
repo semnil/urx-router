@@ -86,7 +86,9 @@ export const PHONES_LEVEL_MIN = 0;
 export const PHONES_LEVEL_MAX = 10;
 export const PHONES_LEVEL_DEFAULT = 2;
 
-function clamp(v: number, lo: number, hi: number): number {
+/** Clamp into range. Exported for control/device-setup.ts, whose settings are
+ *  written outside the plan and so never pass through the encoders below. */
+export function clamp(v: number, lo: number, hi: number): number {
   // NaN comparisons are all false, so trap it explicitly to the low bound — a NaN
   // reaching vdSet would serialize to null (a malformed broker write).
   if (Number.isNaN(v)) return lo;

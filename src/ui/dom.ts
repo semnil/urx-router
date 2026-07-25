@@ -44,8 +44,8 @@ export function scrubFloat(v: number): number {
 // names the press targets that must not dismiss (the overlay itself and its
 // toggle button); `inert` pauses dismissal without detaching (MIDI learn). The
 // Preferences update-check lock instead rides its requestClose choke point, not
-// `inert`. Shared by the MIDI panel, the Preferences modal and the licenses
-// modal so the phase/lifecycle contract lives in one place; attach on open,
+// `inert`. Shared by the MIDI panel, the Preferences and Device setup
+// modals and the licenses modal so the phase/lifecycle contract lives in one place; attach on open,
 // detach on close.
 export function wireDismiss(opts: { keep: (target: Node) => boolean; inert?: () => boolean; close: () => void }): {
   attach: () => void;
@@ -80,4 +80,120 @@ export function popTop(anchor: DOMRect, height: number, gap: number): number {
   const below = anchor.bottom + gap;
   if (below + height <= window.innerHeight - 6) return below;
   return Math.max(6, anchor.top - height - gap);
+}
+
+// ---- settings-row builders ---------------------------------------------------
+// The label-left / control-right row idiom the Preferences and Device setup modals
+// both render. They emit the same `prefs-*` DOM (the class prefix is historical —
+// Preferences was the first screen to use it), so the recipe lives here rather than
+// in whichever modal a third screen happens to copy. The inspector deliberately
+// stays out: its controls wrap `paramBlock()`, a different row shape with its own
+// wheel and fine-mode hooks.
+
+/** A section heading, optionally carrying a dashed tag pill ("Desktop app only",
+ *  a model name) that stays readable while the rows below it dim. */
+export function settingsSection(titleText: string, tag?: string): HTMLElement {
+  const sec = el("section", "prefs-section");
+  const h = el("h3", "");
+  h.textContent = titleText;
+  if (tag) h.append(settingsPill(tag));
+  sec.append(h);
+  return sec;
+}
+
+export function settingsPill(text: string): HTMLElement {
+  const pill = el("span", "prefs-lock");
+  pill.textContent = text;
+  return pill;
+}
+
+export interface SettingsRowOptions {
+  /** Dashed tag beside the label (why the row does not apply here). */
+  tag?: string;
+  /** Not applicable in this build / on this model: dim the row and refuse input. */
+  locked?: boolean;
+  /** Extra classes, e.g. the Device setup screen's `sub` indent and `dirty` mark. */
+  cls?: string;
+}
+
+/** A label + control row. A locked row keeps its tag at full opacity while the rest
+ *  of it dims, and every control inside it is disabled — including `input`, which a
+ *  row holding a slider needs. */
+export function settingsRow(labelText: string, control: HTMLElement, opts: SettingsRowOptions = {}): HTMLElement {
+  const row = el("div", opts.cls ? `prefs-row ${opts.cls}` : "prefs-row");
+  const lblc = el("span", "lblc");
+  const lbl = el("span", "lbl");
+  lbl.textContent = labelText;
+  lblc.append(lbl);
+  if (opts.tag) lblc.append(settingsPill(opts.tag));
+  row.append(lblc, control);
+  if (opts.locked) {
+    row.classList.add("locked");
+    const controls = row.querySelectorAll<HTMLButtonElement | HTMLSelectElement | HTMLInputElement>(
+      "button, select, input",
+    );
+    for (const c of controls) c.disabled = true;
+  }
+  return row;
+}
+
+/** The explanatory paragraph under a row or section. */
+export function settingsNote(text: string): HTMLElement {
+  const p = el("p", "prefs-note");
+  p.textContent = text;
+  return p;
+}
+
+/** Segmented control over an index into `labels`; the active face lights. Two
+ *  labels is the common case (ON/OFF), but the shape is the same for three. */
+export function settingsChoice(
+  labels: readonly string[],
+  current: number,
+  pick: (index: number) => void,
+  narrow = false,
+): HTMLElement {
+  const wrap = el("div", narrow ? "prefs-toggle narrow" : "prefs-toggle");
+  for (const [i, label] of labels.entries()) {
+    const active = i === current;
+    const b = el("button", active ? "on" : "") as HTMLButtonElement;
+    b.type = "button";
+    b.textContent = label;
+    b.setAttribute("aria-pressed", String(active));
+    b.addEventListener("click", () => {
+      if (!active) pick(i);
+    });
+    wrap.append(b);
+  }
+  return wrap;
+}
+
+/** Dropdown over a fixed choice list. With no choices the control does not apply to
+ *  the current selection, so it shows `empty` and refuses input. */
+export function settingsSelect<T extends string | number>(
+  choices: readonly T[],
+  current: T,
+  label: (v: T) => string,
+  apply: (v: T) => void,
+  empty?: string,
+): HTMLSelectElement {
+  const sel = el("select", "prefs-select") as HTMLSelectElement;
+  if (choices.length === 0) {
+    const opt = document.createElement("option");
+    opt.textContent = empty ?? "";
+    sel.append(opt);
+    sel.disabled = true;
+    return sel;
+  }
+  for (const v of choices) {
+    const opt = document.createElement("option");
+    opt.value = String(v);
+    opt.textContent = label(v);
+    sel.append(opt);
+  }
+  sel.value = String(current);
+  sel.addEventListener("change", () => {
+    const v = choices.find((c) => String(c) === sel.value);
+    if (v !== undefined) apply(v);
+  });
+  return sel;
 }

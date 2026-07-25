@@ -81,6 +81,57 @@ export const en = {
     groupBus: "BUS / FX",
     groupMon: "MONITOR",
   },
+  // SETUP > GENERAL on the unit. Section and control names stay in English in the
+  // Japanese user guide too, so they are not translated in either language — only
+  // the explanatory notes are. Keeping the unit's own wording is what lets an
+  // operator map a row here onto the menu on the hardware.
+  deviceSetup: {
+    menuItem: "Device setup",
+    title: "Device setup",
+    close: "Close",
+    apply: "Apply to device",
+    pending: (n: number): string => `${n} unapplied change${n === 1 ? "" : "s"}`,
+    standingNote: "Changes are not written until you apply them, and are not part of the plan file.",
+    onlyOn: (models: string): string => `${models} only`,
+    languageSection: "Language",
+    displayLanguage: "Display language",
+    languageNote:
+      "The value sticks, but the unit's own screen may not repaint in the new language until you switch Language on the unit once.",
+    brightnessSection: "Brightness",
+    screen: "Screen",
+    powerSection: "Power Management",
+    autoPowerOff: "Auto Power Off",
+    enable: "Enable",
+    time: "Time",
+    minutes: (n: number): string => `${n} min`,
+    dateTimeSection: "Date/Time",
+    timeZone: "Time Zone",
+    displayFormat: "Display Format",
+    date: "Date",
+    clockNote:
+      "The unit's clock stamps microSD recordings. It can only be set on the unit itself — it does not follow the clock of a computer connected over USB.",
+    timeZoneNote:
+      "The city list is reproduced from partial observation of the unit, so an entry may name the wrong city. Check the unit after applying.",
+    noDateTime: "The URX22 has no Date/Time menu — it has no microSD recorder for the clock to stamp.",
+    peripheralSection: "Peripheral",
+    usbMain: "USB Main",
+    usbSuppression: "Generic Driver Audio Channel Suppression",
+    usbNote:
+      "Limits the channels offered to a host on a generic driver, such as an iPad or iPhone. 2 Channels restricts it to 2 in / 2 out.",
+    hdmi: "HDMI",
+    hdcp: "HDCP",
+    hdmiChannels: "Input Audio Channels",
+    hdmiNote:
+      "2 Channels is always two channels (48 kHz max). Multi Channels supports up to 192 kHz / 8 channels, down-mixed to stereo inside the mixer.",
+    hdmiOnly: "HDMI is fitted to the URX44V only.",
+    knobsSection: "User Defined Knobs",
+    bank: (n: number): string => `BANK ${n}`,
+    function: "Function",
+    param1: "Parameter 1",
+    param2: "Parameter 2",
+    knobsNote: "Banks match the unit's own bank switching.",
+    unset: "—",
+  },
   midi: {
     menuItem: "MIDI control",
     title: "MIDI CONTROL",
@@ -458,6 +509,10 @@ export const en = {
     writeReadFailed: (n: number): string =>
       `Write canceled: ${n} setting${n === 1 ? "" : "s"} could not be read from the device`,
     writeError: (message: string): string => `Device write failed: ${message}`,
+    deviceSetupReading: "Reading the device's settings…",
+    deviceSetupRead: "Read the device's settings",
+    deviceSetupApplying: "Applying settings to the device…",
+    deviceSetupApplied: (n: number): string => `Applied ${n} setting${n === 1 ? "" : "s"} to the device`,
     selfTestRunning: "Running device self-test… do not disconnect (use the menu again to cancel)",
     selfTestCancelled: "Self-test canceled — device left silent; fetch again to restore your state",
     selfTestPass: (n: number): string => `Self-test passed: ${n} params written and read back identically`,
@@ -499,6 +554,7 @@ export const en = {
   },
   confirm: {
     discard: "You have unsaved changes. Discard them?",
+    deviceSetupDiscard: "The device setup screen has changes you have not applied. Discard them?",
     update: (version: string): string => `Version ${version} is available. Update now?`,
     switchModel: (device: string, ui: string): string =>
       `The connected device is ${device}, but ${ui} is selected. Switch to ${device} (replacing the current plan) and fetch?`,
@@ -627,6 +683,8 @@ export const en = {
     errorReport: "Device error report",
   },
   error: {
+    deviceSetupRead: (message: string): string => `Could not read the device's settings: ${message}`,
+    deviceSetupWrite: (message: string): string => `Could not apply the settings: ${message}`,
     noRule: "This route cannot be connected",
     duplicate: "Already connected",
     singleInput: "This input accepts only one source (remove the existing connection first)",

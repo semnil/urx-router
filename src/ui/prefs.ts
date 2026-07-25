@@ -11,7 +11,7 @@
 //   demo (Pages)   — those plus the export rows (the demo has no export)
 
 import { version } from "../../package.json";
-import { el, wireDismiss } from "./dom";
+import { el, settingsChoice, settingsNote, settingsRow, settingsSection, settingsSelect, wireDismiss } from "./dom";
 import { getLang, LANG_NAMES, LANGS, setLang, t } from "../i18n";
 import {
   EXPORT_SCALE_CHOICES,
@@ -353,57 +353,24 @@ export class PrefsPanel {
   }
 
   private section(titleText: string): HTMLElement {
-    const sec = el("section", "prefs-section");
-    const h = el("h3", "");
-    h.textContent = titleText;
-    sec.append(h);
-    return sec;
+    return settingsSection(titleText);
   }
 
-  // A label + control row. `locked` disables the control (not applicable in this
-  // build / state); `tag` adds the dashed "Desktop app only" pill beside the
-  // label and defaults to the lock, since a locked row is desktop-gated at every
-  // site except the device scope (which also locks while live, without the tag).
+  // `locked` disables the control (not applicable in this build / state); `tag` adds
+  // the dashed "Desktop app only" pill and defaults to the lock, since a locked row
+  // is desktop-gated at every site except the device scope (which also locks while
+  // live, without the tag).
   private row(labelText: string, control: HTMLElement, locked = false, tag = locked): HTMLElement {
-    const row = el("div", "prefs-row");
-    const lblc = el("span", "lblc");
-    const lbl = el("span", "lbl");
-    lbl.textContent = labelText;
-    lblc.append(lbl);
-    if (tag) {
-      const pill = el("span", "prefs-lock");
-      pill.textContent = t().prefs.desktopOnly;
-      lblc.append(pill);
-    }
-    row.append(lblc, control);
-    if (locked) {
-      row.classList.add("locked");
-      for (const c of row.querySelectorAll<HTMLButtonElement | HTMLSelectElement>("button, select")) c.disabled = true;
-    }
-    return row;
+    return settingsRow(labelText, control, { locked, tag: tag ? t().prefs.desktopOnly : undefined });
   }
 
   private note(text: string): HTMLElement {
-    const p = el("p", "prefs-note");
-    p.textContent = text;
-    return p;
+    return settingsNote(text);
   }
 
   // Two-value toggle in the inspector's two-button idiom; the active face lights.
   private choice(aLabel: string, bLabel: string, aActive: boolean, pick: (a: boolean) => void): HTMLElement {
-    const wrap = el("div", "prefs-toggle");
-    const mk = (label: string, active: boolean, isA: boolean): HTMLButtonElement => {
-      const b = el("button", active ? "on" : "") as HTMLButtonElement;
-      b.type = "button";
-      b.textContent = label;
-      b.setAttribute("aria-pressed", String(active));
-      b.addEventListener("click", () => {
-        if (!active) pick(isA);
-      });
-      return b;
-    };
-    wrap.append(mk(aLabel, aActive, true), mk(bLabel, !aActive, false));
-    return wrap;
+    return settingsChoice([aLabel, bLabel], aActive ? 0 : 1, (i) => pick(i === 0));
   }
 
   private onOff(on: boolean, apply: (on: boolean) => void): HTMLElement {
@@ -420,19 +387,7 @@ export class PrefsPanel {
     label: (v: T) => string,
     apply: (v: T) => void,
   ): HTMLSelectElement {
-    const sel = el("select", "prefs-select") as HTMLSelectElement;
-    for (const v of choices) {
-      const opt = document.createElement("option");
-      opt.value = String(v);
-      opt.textContent = label(v);
-      sel.append(opt);
-    }
-    sel.value = String(current);
-    sel.addEventListener("change", () => {
-      const v = choices.find((c) => String(c) === sel.value);
-      if (v !== undefined) apply(v);
-    });
-    return sel;
+    return settingsSelect(choices, current, label, apply);
   }
 
   private button(labelText: string, onClick: () => void): HTMLButtonElement {

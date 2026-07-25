@@ -284,5 +284,5 @@ export function buildModel(p: ModelParams): DeviceModel {
     for (const s of duckerSources) r(ref(s, "out"), ref(`out.ducker${d}`, "in"), "key");
   }
 
-  return { id: p.id, name: p.name, nodes, rules, channelPairs };
+  return { id: p.id, name: p.name, nodes, rules, channelPairs, hasSD: p.hasSD, hasHDMI: p.hasHDMI };
 }

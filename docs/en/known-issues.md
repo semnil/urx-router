@@ -157,14 +157,48 @@ while **Multi Channels mode** goes up to 192 kHz with the multichannel audio
 down-mixed 8→2 into the stereo pair.
 
 This mode does not follow the incoming signal; it is a device setting configured
-and held on the unit (param 768, both readable and writable). The planner treats
-it like HDCP, Brightness, Language, and Auto Power Off — a device-utility setting
-that is known but kept out of the routing plan's scope — so it models neither the
-mode nor the mode-dependent rate ceiling (neither is reflected in the sample-rate
-warnings). The 8→2 down-mix, and whether a high-rate signal actually arrives in
-Multi Channels mode, still follow the incoming HDMI signal and are not determined
-by a saved plan either. The HDMI input stays a selectable channel source and the
+and held on the unit. The desktop app can read and write it on the **Device setup**
+screen (Device > Device setup), together with HDCP, Brightness, Language and Auto
+Power Off. It is deliberately **not** part of the routing plan, so the plan models
+neither the mode nor the mode-dependent rate ceiling, and neither is reflected in
+the sample-rate warnings. The 8→2 down-mix, and whether a high-rate signal actually
+arrives in Multi Channels mode, still follow the incoming HDMI signal and are not
+determined by a saved plan either. The HDMI input stays a selectable channel source and the
 8→2 down-mix appears in the routing (see [device-model.md](device-model.md)).
+
+
+## The unit's clock cannot be set from a computer
+
+The URX has a real-time clock, and it is what date-stamps microSD recordings. It
+can only be set on the unit itself (SETUP > Date/Time > the Date/Time popup).
+
+The unit does **not** take the time from a computer connected over USB, and there
+is no way to write it from the desktop app either — the clock is not exposed as a
+settable value, and writing to the fields that report it changes nothing. So a URX
+whose clock has drifted has to be corrected on its own screen, and a unit whose
+internal battery has run down (the display warns "Low Battery" or "No Battery")
+keeps stamping recordings incorrectly until the battery is replaced.
+
+The **Device setup** screen carries the date and time *formats* and the time zone,
+which are ordinary settings, but not the clock itself.
+
+## The Time Zone list may name a city wrongly
+
+The unit's Time Zone setting is an index into a fixed list of city names held in the
+unit. URX Router reproduces that list so the setting can be shown by name, but the
+reproduction was checked against hardware only at a few points, and an entry
+elsewhere in the list may name the wrong city.
+
+The consequence is visible and recoverable: after applying, the unit's own
+Date/Time screen shows the city it actually selected. If it differs from what was
+picked, pick again — nothing else depends on the value.
+
+## The URX22 has no Date/Time menu
+
+The URX22 has no microSD recorder, and the clock exists to date-stamp those
+recordings, so the unit has no Date/Time menu at all. The HDMI page is fitted to the
+URX44V only. The **Device setup** screen shows those rows for every model, marked
+with the models that have them, rather than hiding them.
 
 ## The URX does not save device-wide settings in a scene
 
@@ -182,7 +216,7 @@ saving and recalling a scene on the unit leaves them as they are:
 - **PHONES** level
 - **Output** patch, **USB output** source and **microSD recording** source
 - **Streaming** output and the **oscillator**
-- **Sample rate**, and system settings (brightness, USER DEFINED keys, date / time)
+- **Sample rate**, and system settings (brightness, USER DEFINED KNOBS, date / time)
 
 The **Monitor source** staying put after a recall is the most visible example.
 Yamaha's user guide states the same exclusions at a screen-category level: the
@@ -192,9 +226,11 @@ SETUP, MONITOR, microSD and STREAMING settings are "not saved" to a scene.
 keeps them in its plan, so managing a setup as a URX Router plan (a saved file or a
 share link) carries the Monitor routing and levels, Phones, output and USB
 patching, microSD recording source, streaming output, oscillator and sample rate
-across — the settings a device scene leaves behind. A few device-utility settings
-(brightness, Language, Auto Power Off, and the USB clock Follow) stay outside the
-plan, as noted above. Preferences can also draw the same boundary the other way:
+across — the settings a device scene leaves behind. The system settings (brightness,
+Language, Auto Power Off, the date / time formats and time zone, the HDMI and USB
+Main pages, and the USER DEFINED KNOBS assignments) stay outside the plan, because a
+plan travels between units and they belong to one unit; the desktop app reads and
+writes them on the **Device setup** screen instead. Preferences can also draw the same boundary the other way:
 a "Scene only" device scope leaves those device-wide settings untouched on fetch,
 write and Live sync, and a scene-only plan save omits them so opening the file
 keeps the current values — the same semantic as a scene recall on the unit.
