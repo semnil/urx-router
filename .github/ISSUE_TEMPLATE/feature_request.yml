@@ -1,0 +1,55 @@
+name: Feature request
+description: Suggest something URX Router should be able to do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English or Japanese are both fine — 日本語で構いません。
+
+        Requests that change routing rules or add device parameters need evidence from real
+        hardware; see [CONTRIBUTING.md](https://github.com/semnil/urx-router/blob/main/CONTRIBUTING.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The task or setup you are trying to reach, rather than the solution you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: How you would expect it to work
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - GRAPH view
+        - CONSOLE view
+        - Device control (read / write / Live sync)
+        - External MIDI control
+        - Preferences and app shell
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: model
+    attributes:
+      label: Device model this concerns
+      options:
+        - URX44V
+        - URX44
+        - URX22
+        - All models
+        - Not model-specific
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
+      description: The current workaround, if there is one — including doing it on the unit's touch screen.
