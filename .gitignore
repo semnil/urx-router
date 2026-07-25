@@ -39,3 +39,12 @@ src-tauri/icons/ios/
 # dumps, and their READMEs) live in a separate private repository. Excluded
 # from this public repo entirely.
 /reference/
+
+# Signing material for the desktop builds. Certificates and keys belong in CI
+# secrets, never in the repository; these patterns stop a stray local copy.
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.mobileprovision
