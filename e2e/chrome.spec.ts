@@ -1,12 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
 import { stubTauriBoot } from "./tauri-stub";
+import { drag, port } from "./graph-helpers";
 
 // App-chrome behaviour: the theme and language rows in the Preferences modal
 // (moved off the toolbar), the toolbar brand and Device-menu grouping, and the
 // canvas hit-test after a zoom. These cut across the whole UI (toolbar + graph
 // + console), which the per-feature specs do not exercise.
 
-const port = (page: Page, ref: string) => page.locator(`[data-ref="${ref}"]`);
 const wires = (page: Page) => page.locator("#graph-host .wire-hit");
 
 // Pick one Preferences dropdown value and close the modal again (the tests
@@ -17,15 +17,8 @@ async function pickPref(page: Page, selector: string, value: string): Promise<vo
   await page.click("#prefs-modal .consent-btn-primary");
 }
 
-async function connect(page: Page, fromRef: string, toRef: string): Promise<void> {
-  const a = await port(page, fromRef).boundingBox();
-  const b = await port(page, toRef).boundingBox();
-  if (!a || !b) throw new Error(`port not found: ${fromRef} -> ${toRef}`);
-  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 });
-  await page.mouse.up();
-}
+const connect = (page: Page, fromRef: string, toRef: string): Promise<void> =>
+  drag(page, port(page, fromRef), port(page, toRef));
 
 test.describe("theme", () => {
   test.beforeEach(async ({ page }) => {

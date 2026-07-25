@@ -8,18 +8,18 @@ import { ref } from "../../models/types";
 vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdGet, vdGetStr } from "../platform";
-import { COLOR_PALETTE } from "./params";
+import { COLOR_PALETTE, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { applyDeviceState, formatReadbackReport } from "./readback";
 import { planToCommands } from "./translate";
 
 const model = getModel("URX44V");
 
-// param_ids whose encoding is a port-ref. An address the emit pass never wrote
-// must read back as the broker's "nothing selected" sentinel (0xffffffff), so
-// the readback decodes it to null and leaves/clears the wire instead of decoding
-// raw 0 into a real port (which would wrongly fabricate a routing wire).
+// param_ids whose encoding is a port-ref (the catalog's canonical set). An address
+// the emit pass never wrote must read back as the broker's "nothing selected"
+// sentinel (0xffffffff), so the readback decodes it to null and leaves/clears the
+// wire instead of decoding raw 0 into a real port (which would wrongly fabricate a
+// routing wire — the stereo-source 209/210 and SD-rec 736 among them).
 const PORT_REF_NONE = 0xffffffff;
-const PORT_REF_PARAMS = new Set([22, 259, 705, 706, 719, 720, 730, 731, 732, 733, 734, 735]);
 
 // Build the device's "current state" table from what emit would write for a plan,
 // so vdGet returns exactly the values planToCommands produced. This is the heart
@@ -59,85 +59,88 @@ beforeEach(() => {
   vi.mocked(vdGetStr).mockResolvedValue("");
 });
 
+// A representative plan touching every readback group: channel strip, sends,
+// bus faders/EQ, insert FX, ducker, master/monitor, OSC + assign, and routing.
+// Shared by the round-trip and provenance blocks (one definition, so the two
+// cannot drift). Edits the seeded fixed sends in place rather than pushing
+// duplicate wires.
+function richPlan(): Plan {
+  const plan = emptyPlan("URX44V");
+  ensureFixedConnections(model, plan);
+
+  // Channel main path level/pan on the fixed CH→STEREO send.
+  const ch1Stereo = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in");
+  // Use pan extremes that survive the ±63 device quantization exactly.
+  ch1Stereo!.params = { level: -6, pan: 63 };
+
+  // Mono channel strip (CH1): on/gain/hpf/mic-strip/phase/comp-eq + GATE/COMP/EQ.
+  plan.nodeParams.ch1 = {
+    on: false,
+    gain: -8,
+    hpf: true,
+    hpfFreq: 120,
+    phantom: true,
+    clipSafe: true,
+    phase: true,
+    compEqType: 0,
+    gateOn: true,
+    compOn: true,
+    eqOn: true,
+    gate: { threshold: -40, range: -30, attack: 10, hold: 12, decay: 100 },
+    comp: { threshold: -30, ratio: 4, gain: 6, attack: 20, release: 200 },
+    eqBands: [
+      { on: true, freq: 100, q: 1, gain: 3 },
+      { on: false, freq: 1000, q: 2, gain: -3 },
+      { on: true, freq: 3000, q: 0.7, gain: 1 },
+      { on: true, freq: 8000, q: 1.5, gain: -2 },
+    ],
+  };
+
+  // Stereo channel (CH5/6): D.Gain + independent L/R phase.
+  plan.nodeParams.ch_5_6 = { gain: -12, phaseL: true, phaseR: false };
+
+  // CH1 → MIX1 send (level/pan/PRE tap) and CH1 → FX1 send (level only — CH → FX
+  // taps are read-only, so a tap cannot round-trip through a software write). Both
+  // are fixed (always-wired) sends seeded above, so set their params in place.
+  const ch1Mix1 = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in");
+  ch1Mix1!.params = { level: -3, pan: -63, tap: "pre" };
+  const ch1Fx1 = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.fx1:in");
+  ch1Fx1!.params = { level: -9 };
+
+  // Bus faders / EQ / insert FX.
+  plan.nodeParams["bus.stereo"] = { on: true, level: 2, eqOn: true, insertFx: 1793 };
+  plan.nodeParams["bus.mix1"] = { level: -4, insertFx: 1792 };
+
+  // Ducker on + detail (out.ducker1 → ch_5_6, stereo index 0).
+  plan.nodeParams["out.ducker1"] = {
+    duckerOn: true,
+    ducker: { threshold: -50, range: -20, attack: 25, decay: 1500 },
+  };
+
+  // Monitor buses + oscillator generator.
+  plan.nodeParams["bus.mon1"] = { level: -10, cueInterrupt: true, mono: true };
+  plan.nodeParams["bus.mon2"] = { level: -20, cueInterrupt: false, mono: false };
+  plan.nodeParams["bus.osc"] = { osc: { on: true, level: -12, mode: 0, freq: 1000 } };
+
+  // OSC → STEREO assign (L/R on).
+  plan.connections.push({
+    from: "bus.osc:out",
+    to: "bus.stereo:in",
+    kind: "sendSwitch",
+    params: { oscL: true, oscR: true },
+  });
+
+  // Routing selectors: streaming source + monitor1 source from a MIX bus; an
+  // input source on CH2; an output patch on out.main.
+  plan.connections.push({ from: "bus.mix1:out", to: "bus.stream:in", kind: "source" });
+  plan.connections.push({ from: "bus.mix2:out", to: "bus.mon1:in", kind: "source" });
+  plan.connections.push({ from: "in.aux:out", to: "ch2:in", kind: "source" });
+  plan.connections.push({ from: "bus.stereo:out", to: "out.main:in", kind: "patch" });
+
+  return plan;
+}
+
 describe("applyDeviceState round-trip", () => {
-  // A representative plan touching every readback group: channel strip, sends,
-  // bus faders/EQ, insert FX, ducker, master/monitor, OSC + assign, and routing.
-  function richPlan(): Plan {
-    const plan = emptyPlan("URX44V");
-    ensureFixedConnections(model, plan);
-
-    // Channel main path level/pan on the fixed CH→STEREO send.
-    const ch1Stereo = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in");
-    // Use pan extremes that survive the ±63 device quantization exactly.
-    ch1Stereo!.params = { level: -6, pan: 63 };
-
-    // Mono channel strip (CH1): on/gain/hpf/mic-strip/phase/comp-eq + GATE/COMP/EQ.
-    plan.nodeParams.ch1 = {
-      on: false,
-      gain: -8,
-      hpf: true,
-      hpfFreq: 120,
-      phantom: true,
-      clipSafe: true,
-      phase: true,
-      compEqType: 0,
-      gateOn: true,
-      compOn: true,
-      eqOn: true,
-      gate: { threshold: -40, range: -30, attack: 10, hold: 12, decay: 100 },
-      comp: { threshold: -30, ratio: 4, gain: 6, attack: 20, release: 200 },
-      eqBands: [
-        { on: true, freq: 100, q: 1, gain: 3 },
-        { on: false, freq: 1000, q: 2, gain: -3 },
-        { on: true, freq: 3000, q: 0.7, gain: 1 },
-        { on: true, freq: 8000, q: 1.5, gain: -2 },
-      ],
-    };
-
-    // Stereo channel (CH5/6): D.Gain + independent L/R phase.
-    plan.nodeParams.ch_5_6 = { gain: -12, phaseL: true, phaseR: false };
-
-    // CH1 → MIX1 send (level/pan/PRE tap) and CH1 → FX1 send (level only — CH → FX
-    // taps are read-only, so a tap cannot round-trip through a software write). Both
-    // are fixed (always-wired) sends seeded above, so set their params in place.
-    const ch1Mix1 = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in");
-    ch1Mix1!.params = { level: -3, pan: -63, tap: "pre" };
-    const ch1Fx1 = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.fx1:in");
-    ch1Fx1!.params = { level: -9 };
-
-    // Bus faders / EQ / insert FX.
-    plan.nodeParams["bus.stereo"] = { on: true, level: 2, eqOn: true, insertFx: 1793 };
-    plan.nodeParams["bus.mix1"] = { level: -4, insertFx: 1792 };
-
-    // Ducker on + detail (out.ducker1 → ch_5_6, stereo index 0).
-    plan.nodeParams["out.ducker1"] = {
-      duckerOn: true,
-      ducker: { threshold: -50, range: -20, attack: 25, decay: 1500 },
-    };
-
-    // Monitor buses + oscillator generator.
-    plan.nodeParams["bus.mon1"] = { level: -10, cueInterrupt: true, mono: true };
-    plan.nodeParams["bus.mon2"] = { level: -20, cueInterrupt: false, mono: false };
-    plan.nodeParams["bus.osc"] = { osc: { on: true, level: -12, mode: 0, freq: 1000 } };
-
-    // OSC → STEREO assign (L/R on).
-    plan.connections.push({
-      from: "bus.osc:out",
-      to: "bus.stereo:in",
-      kind: "sendSwitch",
-      params: { oscL: true, oscR: true },
-    });
-
-    // Routing selectors: streaming source + monitor1 source from a MIX bus; an
-    // input source on CH2; an output patch on out.main.
-    plan.connections.push({ from: "bus.mix1:out", to: "bus.stream:in", kind: "source" });
-    plan.connections.push({ from: "bus.mix2:out", to: "bus.mon1:in", kind: "source" });
-    plan.connections.push({ from: "in.aux:out", to: "ch2:in", kind: "source" });
-    plan.connections.push({ from: "bus.stereo:out", to: "out.main:in", kind: "patch" });
-
-    return plan;
-  }
-
   it("reconstructs the plan's node params from the device's emitted state", async () => {
     const source = richPlan();
     mockVdGetFrom(deviceTableFor(source));
@@ -388,64 +391,6 @@ describe("applyDeviceState round-trip", () => {
 });
 
 describe("applyDeviceState provenance (unreadNodes)", () => {
-  // Reuse the round-trip plan so readback walks every group; redeclared here so
-  // this block is self-contained (the round-trip describe owns its own copy).
-  function richPlan(): Plan {
-    const plan = emptyPlan("URX44V");
-    ensureFixedConnections(model, plan);
-    const ch1Stereo = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in");
-    ch1Stereo!.params = { level: -6, pan: 63 };
-    plan.nodeParams.ch1 = {
-      on: false,
-      gain: -8,
-      hpf: true,
-      hpfFreq: 120,
-      phantom: true,
-      clipSafe: true,
-      phase: true,
-      compEqType: 0,
-      gateOn: true,
-      compOn: true,
-      eqOn: true,
-      gate: { threshold: -40, range: -30, attack: 10, hold: 12, decay: 100 },
-      comp: { threshold: -30, ratio: 4, gain: 6, attack: 20, release: 200 },
-      eqBands: [
-        { on: true, freq: 100, q: 1, gain: 3 },
-        { on: false, freq: 1000, q: 2, gain: -3 },
-        { on: true, freq: 3000, q: 0.7, gain: 1 },
-        { on: true, freq: 8000, q: 1.5, gain: -2 },
-      ],
-    };
-    plan.nodeParams.ch_5_6 = { gain: -12, phaseL: true, phaseR: false };
-    plan.connections.push({
-      from: "ch1:out",
-      to: "bus.mix1:in",
-      kind: "send",
-      params: { level: -3, pan: -63, tap: "pre" },
-    });
-    plan.connections.push({ from: "ch1:out", to: "bus.fx1:in", kind: "send", params: { level: -9 } });
-    plan.nodeParams["bus.stereo"] = { on: true, level: 2, eqOn: true, insertFx: 1793 };
-    plan.nodeParams["bus.mix1"] = { level: -4, insertFx: 1792 };
-    plan.nodeParams["out.ducker1"] = {
-      duckerOn: true,
-      ducker: { threshold: -50, range: -20, attack: 25, decay: 1500 },
-    };
-    plan.nodeParams["bus.mon1"] = { level: -10, cueInterrupt: true, mono: true };
-    plan.nodeParams["bus.mon2"] = { level: -20, cueInterrupt: false, mono: false };
-    plan.nodeParams["bus.osc"] = { osc: { on: true, level: -12, mode: 0, freq: 1000 } };
-    plan.connections.push({
-      from: "bus.osc:out",
-      to: "bus.stereo:in",
-      kind: "sendSwitch",
-      params: { oscL: true, oscR: true },
-    });
-    plan.connections.push({ from: "bus.mix1:out", to: "bus.stream:in", kind: "source" });
-    plan.connections.push({ from: "bus.mix2:out", to: "bus.mon1:in", kind: "source" });
-    plan.connections.push({ from: "in.aux:out", to: "ch2:in", kind: "source" });
-    plan.connections.push({ from: "bus.stereo:out", to: "out.main:in", kind: "patch" });
-    return plan;
-  }
-
   // Param ids that gate a body group's try block (its first read). Rejecting one
   // throws the whole group for that node, so the node lands in unreadNodes.
   const DUCKER_ON = 258;
@@ -528,6 +473,29 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     expect(target.connections.some((c) => c.from === "ch1:out" && c.to === "bus.fx1:in")).toBe(true);
     // Other channels' bodies read fine, so they are not flagged.
     expect(result.unreadNodes.has("ch2")).toBe(false);
+  });
+
+  it("keeps a body-failed FX channel flagged even when its effect read succeeds", async () => {
+    // Fail only FX1's main-path read (its master fader 337 at y0); let every other
+    // read — including the FX-channel effect array — succeed. The successful effect
+    // read must not mask the FX channel's failed main-path read.
+    const FX1_MAIN_FADER = 337; // FX_CHANNEL_FADER, the FX1 → STEREO main-path fader
+    vi.mocked(vdGet).mockImplementation((paramId: number, _x: number, y: number) => {
+      if (paramId === FX1_MAIN_FADER && y === 0) return Promise.reject(new Error("read timeout"));
+      const table = deviceTableFor(richPlan());
+      const hit = table.get(`${paramId}:${_x}:${y}`);
+      if (hit !== undefined) return Promise.resolve(hit);
+      return Promise.resolve(PORT_REF_PARAMS.has(paramId) ? PORT_REF_NONE : 0);
+    });
+
+    const target = emptyPlan("URX44V");
+    const result = await applyDeviceState(model, target);
+
+    // FX1's main-path read failed, so it is flagged even though its effect read is fine.
+    expect(result.unreadNodes.has("bus.fx1")).toBe(true);
+    expect(result.errors.some((e) => e.includes("read timeout"))).toBe(true);
+    // FX2, whose reads all succeed, is not flagged.
+    expect(result.unreadNodes.has("bus.fx2")).toBe(false);
   });
 
   it("reads CH SETTING names back into nodeNames; empty clears to the default label", async () => {

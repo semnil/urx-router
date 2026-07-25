@@ -46,23 +46,23 @@ export type InsertFxFamily =
 
 /** Map an insert-FX selector enum value to its effect family (engine resolved by
  *  insertFxEngine, since the compander binds a different engine on input vs output). */
-export function insertFxFamilyOf(selectorValue: number): { family: InsertFxFamily } | null {
+export function insertFxFamilyOf(selectorValue: number): InsertFxFamily | null {
   switch (selectorValue) {
     case 256:
-      return { family: "guitar-clean" };
+      return "guitar-clean";
     case 257:
-      return { family: "guitar-crunch" };
+      return "guitar-crunch";
     case 258:
-      return { family: "guitar-lead" };
+      return "guitar-lead";
     case 259:
-      return { family: "guitar-drive" };
+      return "guitar-drive";
     case 512:
-      return { family: "pitch" };
+      return "pitch";
     case 1793:
     case 1794:
-      return { family: "compander" };
+      return "compander";
     case 1792:
-      return { family: "mbc" };
+      return "mbc";
     default:
       return null;
   }
@@ -339,6 +339,21 @@ export const MBC_GLOBAL = {
   release: 25, // MBC_RELEASE_MS index
   outGain: 26, // raw = dB + 64
 } as const;
+/** MBC 1-knob level raw range (0..48). */
+export const MBC_ONE_KNOB_LEVEL_MAX = 48;
+/** MBC Out Gain raw range (raw = dB + 64; ±12 dB → 52..76). */
+export const MBC_OUT_GAIN_RAW_MIN = 52;
+export const MBC_OUT_GAIN_RAW_MAX = 76;
+/** Calibrated raw bounds for the writable MBC global slots — the single source the
+ *  emit-path firewall (insertFxWritableSlots) and the inspector share. The two
+ *  device-managed bool flags (oneKnobOn / bypass) carry no range. */
+export const MBC_GLOBAL_BOUNDS: Partial<Record<keyof typeof MBC_GLOBAL, { rawMin: number; rawMax: number }>> = {
+  oneKnobLevel: { rawMin: 0, rawMax: MBC_ONE_KNOB_LEVEL_MAX },
+  xoverLowMid: { rawMin: MBC_XOVER_LM_RANGE.min, rawMax: MBC_XOVER_LM_RANGE.max },
+  xoverMidHigh: { rawMin: MBC_XOVER_MH_RANGE.min, rawMax: MBC_XOVER_MH_RANGE.max },
+  release: { rawMin: 0, rawMax: MBC_RELEASE_MS.length - 1 },
+  outGain: { rawMin: MBC_OUT_GAIN_RAW_MIN, rawMax: MBC_OUT_GAIN_RAW_MAX },
+};
 /** Per-band raw bounds + formatters (shared by all three bands). Iterate the
  *  bands' parameters via MBC_BAND_KEYS so every consumer sees the same set. */
 export const MBC_BAND_PARAM: Record<
@@ -600,7 +615,10 @@ export function insertFxWritableSlots(family: InsertFxFamily): InsertFxSlotSpec[
         out.push({ slot: b[key], rawMin: MBC_BAND_PARAM[key].rawMin, rawMax: MBC_BAND_PARAM[key].rawMax });
       }
     }
-    for (const slot of Object.values(MBC_GLOBAL)) out.push({ slot });
+    for (const [key, slot] of Object.entries(MBC_GLOBAL)) {
+      const b = MBC_GLOBAL_BOUNDS[key as keyof typeof MBC_GLOBAL];
+      out.push(b ? { slot, rawMin: b.rawMin, rawMax: b.rawMax } : { slot });
+    }
     cached = out;
   } else {
     const out: InsertFxSlotSpec[] = insertFxParams(family).map((d) => ({
@@ -610,7 +628,7 @@ export function insertFxWritableSlots(family: InsertFxFamily): InsertFxSlotSpec[
       rawMax: d.rawMax,
     }));
     if (family === "pitch") {
-      out.push({ slot: PITCH_SCALE_SLOT });
+      out.push({ slot: PITCH_SCALE_SLOT, rawMin: PITCH_SCALE_CUSTOM, rawMax: PITCH_SCALE_CHROMATIC });
       for (const slot of PITCH_NOTE_SLOTS) out.push({ slot });
       out.push({ slot: PITCH_MIDI_ENABLE_SLOT }, { slot: PITCH_MIDI_REALTIME_SLOT });
     }

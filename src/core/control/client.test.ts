@@ -15,7 +15,6 @@ import {
   formatWriteReport,
   sendCommands,
   sendConverging,
-  sendPlan,
 } from "./client";
 import { planToCommands, type VdCommand } from "./translate";
 import { PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
@@ -102,7 +101,7 @@ describe("diffPlan", () => {
   });
 });
 
-describe("sendCommands / sendPlan", () => {
+describe("sendCommands", () => {
   it("sends every command and reports each as ok", async () => {
     vi.mocked(vdSet).mockResolvedValue(undefined);
     const commands = planToCommands(model, basePlan());
@@ -128,13 +127,6 @@ describe("sendCommands / sendPlan", () => {
     expect(outcomes.slice(1).every((o) => !o.ok && o.skipped === true)).toBe(true);
     // Only the failing command reached the transport.
     expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
-  });
-
-  it("sendPlan sends the full plan command list", async () => {
-    vi.mocked(vdSet).mockResolvedValue(undefined);
-    const plan = basePlan();
-    const outcomes = await sendPlan(model, plan);
-    expect(outcomes).toHaveLength(planToCommands(model, plan).length);
   });
 });
 

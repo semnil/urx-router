@@ -83,9 +83,10 @@ const SEND_SHORT: Record<SendTarget, string> = {
   "bus.fx2": "F2",
 };
 
-// A fader scale. Each range owns how a dB maps to/from travel (toFrac/fromFrac),
-// how the keyboard steps it (step), and its ruler ticks — so the "which scale am
-// I" branch lives once, here, instead of being re-tested at every call site.
+// A fader scale: how a dB maps to/from travel (toFrac/fromFrac), how the keyboard
+// steps it (step), and its ruler ticks. NORMAL_RANGE is the only instance (the
+// level_gain grid); it is threaded through the level helpers so the scale is
+// defined in one place.
 interface LevelRange {
   min: number;
   max: number;
@@ -162,6 +163,17 @@ function readCap(text: string): HTMLElement {
   const cap = el("span", "cap2");
   cap.textContent = text;
   return cap;
+}
+
+// The live-meter readout cell (METER caption + dBFS value, reset to "—" until the
+// stream feeds it). Shared by both strip builders; the value element is returned so
+// the caller can store it as the strip's readMtr.
+function meterReadCell(): { cell: HTMLElement; value: HTMLElement } {
+  const cell = el("div", "rd mtr");
+  const value = el("div", "rv");
+  value.textContent = "—";
+  cell.append(readCap(t().console.readMeter), value);
+  return { cell, value };
 }
 
 interface StripModel {
@@ -417,8 +429,9 @@ export class Console {
     this.tapPop = el("div", "con-tappop");
     this.tapPop.hidden = true;
     this.host.append(this.tapPop);
-    // SEND PAN popover: one reused element, anchored below the strip's PAN ▾ button.
-    this.sendPanPop = el("div", "con-spop below");
+    // SEND PAN popover: one reused element, anchored below the strip's PAN ▾ button
+    // (the .below/.above caret class is set per open by placePopover's flip result).
+    this.sendPanPop = el("div", "con-spop");
     this.sendPanPop.hidden = true;
     this.host.append(this.sendPanPop);
     // Close either popover on any outside interaction (each trigger manages its own
@@ -429,7 +442,9 @@ export class Console {
       if (this.sendPanOpenFor && !this.sendPanPop.contains(tgt) && !tgt.closest(".con-panbtn")) this.closeSendPan();
     });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && this.sendPanOpenFor) this.closeSendPan();
+      if (e.key !== "Escape") return;
+      if (this.sendPanOpenFor) this.closeSendPan();
+      if (this.tapOpenFor) this.closeTapPop();
     });
   }
 
@@ -623,6 +638,7 @@ export class Console {
   // Open the floating meter-point popover for a node, anchored to its badge. The
   // chain lists the node's taps in signal order with the active one highlighted.
   private openTapPop(id: string, anchor: HTMLElement): void {
+    this.closeSendPan(); // single-popover invariant (symmetric with openSendPan)
     const cur = this.tapKeyOf(id);
     this.tapPop.replaceChildren();
     const ph = el("div", "ph");
@@ -757,7 +773,7 @@ export class Console {
     // instead of re-scanning plan.connections for every read/write. `pre`/`level`/`on`
     // are read off `c.params` live (reassigned in place).
     const c = sendConnection(this.hooks.getPlan(), m.id, target);
-    const isMix = target === "bus.mix1" || target === "bus.mix2";
+    const isMix = this.isMixBus(target);
     // FIXED BUS Type locks the MIX send level read-only (matching the graph inspector);
     // the PRE tap and enable chip stay editable.
     const busFixed = isMix && mixSendLocks(this.hooks.getPlan(), target).busFixed;
@@ -809,7 +825,7 @@ export class Console {
         return next;
       },
       tapReadonly
-        ? { cls: "con-slp", readonlyTitle: t().inspector.prePostLcdOnly, title: t().console.preHint }
+        ? { cls: "con-slp", readonlyTitle: t().inspector.prePostLcdOnly }
         : { cls: "con-slp", midiId: isMix ? controlId(m.id, "tap", target) : undefined, title: t().console.preHint },
     );
 
@@ -984,7 +1000,7 @@ export class Console {
     ph.append(cat, who);
     const grid = el("div", "pcols");
     for (const target of this.sendSlots()) {
-      if ((target !== "bus.mix1" && target !== "bus.mix2") || !this.hasSend(stripId, target)) continue;
+      if (!this.isMixBus(target) || !this.hasSend(stripId, target)) continue;
       const pcol = el("div", "pcol");
       const capEl = el("span", "cap");
       capEl.textContent = SEND_LABEL[target];
@@ -1048,7 +1064,13 @@ export class Console {
     let left = align === "center" ? r.left + r.width / 2 - pw / 2 : r.right - pw;
     left = Math.max(6, Math.min(left, window.innerWidth - pw - 6));
     pop.style.left = left + "px";
-    pop.style.top = popTop(r, pop.offsetHeight, gap) + "px";
+    const top = popTop(r, pop.offsetHeight, gap);
+    pop.style.top = top + "px";
+    // Caret side follows the flip: `.below` when it opened below the anchor, `.above`
+    // when bottom overflow flipped it above (the SEND PAN popover styles the caret).
+    const below = top >= r.bottom;
+    pop.classList.toggle("below", below);
+    pop.classList.toggle("above", !below);
   }
 
   // ---- MIDI learn ----
@@ -1375,10 +1397,7 @@ export class Console {
 
     // readout: live meter value only (no fader set-level cell).
     const readout = el("div", "con-readout");
-    const mtrCell = el("div", "rd mtr");
-    const mtrEl = el("div", "rv");
-    mtrEl.textContent = "—";
-    mtrCell.append(readCap(t().console.readMeter), mtrEl);
+    const { cell: mtrCell, value: mtrEl } = meterReadCell();
     readout.append(mtrCell);
     strip.append(readout);
 
@@ -1693,9 +1712,7 @@ export class Console {
 
     // Meter column: the ladder shares the fader ruler, topping out at the 0 dB mark
     // with the OVER clip window above it. Stereo taps split into independent L/R bars.
-    const tap = hasMeter(m.id, this.hooks.getModel().id)
-      ? (tapFor(m.id, tapKey, this.hooks.getModel().id) ?? null)
-      : null;
+    const tap = tapFor(m.id, tapKey, this.hooks.getModel().id) ?? null;
     const { meter, lanes } = this.buildMeterColumn(m.range, isStereoTap(tap));
 
     zrow.append(fader, this.buildScale(m.range), meter);
@@ -1710,12 +1727,15 @@ export class Console {
     const dbEl = el("div", "rv");
     faderCell.append(readCap(t().console.readFader), dbEl);
     readout.append(faderCell);
-    const mtrEl = el("div", "rv");
+    // Only metered strips build the meter readout cell; a fader-only strip keeps a
+    // bare detached value element as its readMtr (never appended, never updated).
+    let mtrEl: HTMLElement;
     if (hasMeter(m.id, this.hooks.getModel().id)) {
-      const mtrCell = el("div", "rd mtr");
-      mtrEl.textContent = "—";
-      mtrCell.append(readCap(t().console.readMeter), mtrEl);
-      readout.append(mtrCell);
+      const rc = meterReadCell();
+      readout.append(rc.cell);
+      mtrEl = rc.value;
+    } else {
+      mtrEl = el("div", "rv");
     }
     strip.append(readout);
 

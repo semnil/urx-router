@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { drag, port } from "./graph-helpers";
 
 // Ctrl/Cmd-click multi-selects nodes; the floating action bar then batch-shelves
 // the shelvable ones. The app reads ctrlKey || metaKey, so Control works on every
@@ -6,21 +7,13 @@ import { test, expect, type Page } from "@playwright/test";
 const nodes = (page: Page) => page.locator("#graph-host g.node");
 const chips = (page: Page) => page.locator(".hidden-shelf .chip");
 const bar = (page: Page) => page.locator(".sel-bar");
-const port = (page: Page, ref: string) => page.locator(`[data-ref="${ref}"]`);
 
 async function ctrlClick(page: Page, id: string): Promise<void> {
   await page.locator(`g.node[data-id="${id}"]`).click({ modifiers: ["Control"] });
 }
 
-async function connect(page: Page, fromRef: string, toRef: string): Promise<void> {
-  const a = await port(page, fromRef).boundingBox();
-  const b = await port(page, toRef).boundingBox();
-  if (!a || !b) throw new Error(`port not found: ${fromRef} -> ${toRef}`);
-  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 });
-  await page.mouse.up();
-}
+const connect = (page: Page, fromRef: string, toRef: string): Promise<void> =>
+  drag(page, port(page, fromRef), port(page, toRef));
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {

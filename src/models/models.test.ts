@@ -91,12 +91,7 @@ describe("model structural invariants", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it.each(MODEL_IDS)("%s: no duplicate (from,to) routing rule", (id) => {
-    // findRule / ruleKind return the first match, so a repeated from->to pair would
-    // make the second rule (possibly a different kind) unreachable and ambiguous.
-    const keys = MODELS[id].rules.map((r) => `${r.from} ${r.to}`);
-    expect(new Set(keys).size).toBe(keys.length);
-  });
+  // The "no duplicate (from,to) routing rule" invariant is pinned in routing.audit.test.ts.
 
   it.each(MODEL_IDS)("%s: every rule.from is an out port and every rule.to is an in port", (id) => {
     // A wire is directional; a rule endpoint pointing at the wrong port direction

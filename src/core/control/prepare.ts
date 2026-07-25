@@ -19,11 +19,9 @@
 
 import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
-import { emptyPlan } from "../plan";
 import { vdConnect, vdDisconnect } from "../platform";
 import { dryRun, reachedAndFailed, sendCommands } from "./client";
-import { applyDeviceState } from "./readback";
-import { floorSilent } from "./selftest";
+import { captureDeviceState, floorSilent } from "./selftest";
 import {
   A_GAIN_MIN_DB,
   D_GAIN_MAX_DB,
@@ -45,6 +43,8 @@ import {
   EQ_Q_MIN,
   PAN_MAX,
   PAN_MIN,
+  PHONES_LEVEL_MAX,
+  PHONES_LEVEL_MIN,
   SSMCS_ATTACK_RAW_MAX,
   SSMCS_ATTACK_RAW_MIN,
   SSMCS_COMP_DRIVE_MAX,
@@ -89,6 +89,10 @@ const FRACTIONS = [0.13, 0.61, 0.37, 0.83, 0.29, 0.71, 0.47, 0.91, 0.19, 0.53];
 // bounds clamp them tighter upstream, and the readback shows where they landed).
 const RANGES: Record<string, [number, number]> = {
   "conn.pan": [PAN_MIN, PAN_MAX],
+  // Node-level master balance (STEREO / MIX) and PHONES level (0..10 scale) —
+  // both are writable scalars that had no range, so they fell through unspread.
+  pan: [PAN_MIN, PAN_MAX],
+  phonesLevel: [PHONES_LEVEL_MIN, PHONES_LEVEL_MAX],
   // Head-amp gain: the intersection of the analog A.Gain and digital D.Gain ranges,
   // so one value is legal on both — a value above the digital max (fine for analog)
   // is rejected by a digital channel (broker 400).
@@ -161,8 +165,9 @@ const SKIP = new Set([
 
 // Toggles that are ON by factory default: set these off, every other toggle on,
 // so the target is non-default AND capture-independent (a re-run converges to the
-// same state — the pick* helpers already ignore the captured value).
-const ON_BY_DEFAULT = new Set(["on", "eqOn"]);
+// same state — the pick* helpers already ignore the captured value). Monitor CUE
+// interrupt ships ON, so it belongs here or it lands back on its factory default.
+const ON_BY_DEFAULT = new Set(["on", "eqOn", "cueInterrupt"]);
 
 // Collapse a band index (low/mid/high) so the three SSMCS EQ bands share one range key.
 const normalizeBand = (path: string): string => path.replace(/\.(low|mid|high)\./g, ".band.");
@@ -182,12 +187,22 @@ function spread(obj: Record<string, unknown>, path: string, ctr: { n: number }):
       obj[k] = k === "phantom" ? false : !ON_BY_DEFAULT.has(k); // phantom off for safety
       continue;
     }
+    // The PRE/POST tap is a string, not a number/toggle: set it to the non-default
+    // PRE so a send tap becomes distinctive too (a read-only CH → FX tap is simply
+    // never emitted by planToCommands, so setting it here is harmless).
+    if (typeof v === "string") {
+      if (k === "tap") obj[k] = "pre";
+      continue;
+    }
+    // The accumulated dotted path for this field (band low/mid/high collapse to `band`).
+    const fieldPath = normalizeBand(path ? `${path}.${k}` : k);
     if (Array.isArray(v)) {
-      for (const el of v) if (el && typeof el === "object") spread(el as Record<string, unknown>, k, ctr);
+      // Recurse with the accumulated prefix, not the bare key, so a nested array's
+      // elements still resolve their range keys (today only eqBands is top-level).
+      for (const el of v) if (el && typeof el === "object") spread(el as Record<string, unknown>, fieldPath, ctr);
       continue;
     }
     // Only numbers and nested objects key into the range/option tables.
-    const fieldPath = normalizeBand(path ? `${path}.${k}` : k);
     if (typeof v === "number") {
       const opts = OPTIONS[fieldPath];
       if (opts) obj[k] = opts[ctr.n++ % opts.length];
@@ -225,16 +240,13 @@ export async function runPrepareModified(model: DeviceModel, signal?: AbortSigna
   const device = await vdConnect();
   report.device = device.model;
   try {
-    if (device.model !== model.id) {
-      report.errors.push(`connected device is ${device.model}, not ${model.id}`);
-      return report;
-    }
-    const captured = emptyPlan(model.id);
-    const r0 = await applyDeviceState(model, captured, signal);
-    report.applied = r0.applied;
-    report.errors.push(...r0.errors);
+    // Connect prologue shared with the self-test: model check + device capture.
+    const cap = await captureDeviceState(model, device.model, signal);
+    report.applied = cap.applied;
+    report.errors.push(...cap.errors);
+    if (!cap.ok) return report;
 
-    const plan = buildModifiedPlan(captured);
+    const plan = buildModifiedPlan(cap.plan);
     // Write the whole modified plan (dryRun = planToCommands): the values are
     // deliberately distinctive, so almost everything differs from the device anyway
     // — a diffPlan pre-read would re-read the entire device to filter almost nothing.

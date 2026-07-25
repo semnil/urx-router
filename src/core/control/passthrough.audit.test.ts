@@ -17,8 +17,14 @@ import { emptyPlan } from "../plan";
 import { planToCommands } from "./translate";
 import { ENGINE_COMPANDER_INPUT } from "./insert-fx-effect";
 import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_DEFAULT, FX_EFFECT_TYPE_PARAM } from "./fx-effect";
-import { INSERT_FX_NONE, denormalizeInsertFx } from "./params";
-import { PORT_REF_NONE, tagPortRef, vdToPortRef } from "./vd";
+import {
+  BUS_TYPE_VARI,
+  DELAY_FRAME_RATE_DEFAULT,
+  INSERT_FX_NONE,
+  REC_POINT_DEFAULT,
+  denormalizeInsertFx,
+} from "./params";
+import { PORT_REF_NONE, SSMCS_MORPHING_MAX, tagPortRef, vdToPortRef } from "./vd";
 
 const model = getModel("URX44V");
 
@@ -69,6 +75,36 @@ describe("FX / Insert-FX raw emit path is bounded to the calibrated catalog rang
     plan.nodeParams["ch1"] = { insertFx: 4242 };
     const cmd = planToCommands(model, plan).find((c) => c.name === "INSERT_FX" && c.y === 0);
     expect(cmd?.vdValue).toBe(denormalizeInsertFx(INSERT_FX_NONE));
+  });
+
+  it("clamps an over-range SSMCS raw (Morphing is 0..120)", () => {
+    // SSMCS morphing (param 93) is a passthrough "raw" whose range lives in vd.ts,
+    // not the encoder — a hand-edited plan must not write past it.
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["ch1"] = { compEqType: 1, ssmcs: { morphing: 9999 } };
+    const cmd = planToCommands(model, plan).find((c) => c.name === "SSMCS_MORPHING" && c.y === 0);
+    expect(cmd?.vdValue).toBe(SSMCS_MORPHING_MAX);
+  });
+
+  it("coerces an off-menu Rec Point enum back to the default", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["ch1"] = { recPoint: 99 };
+    const cmd = planToCommands(model, plan).find((c) => c.name === "REC_POINT" && c.y === 0);
+    expect(cmd?.vdValue).toBe(REC_POINT_DEFAULT);
+  });
+
+  it("coerces an off-menu BUS Type enum back to VARI", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = { busType: 42 };
+    const cmd = planToCommands(model, plan).find((c) => c.name === "BUS_TYPE");
+    expect(cmd?.vdValue).toBe(BUS_TYPE_VARI);
+  });
+
+  it("coerces an off-menu STREAMING DELAY frame rate back to the default", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.stream"] = { delay: { frameRate: 42 } };
+    const cmd = planToCommands(model, plan).find((c) => c.name === "STREAM_DELAY_FRAME_RATE");
+    expect(cmd?.vdValue).toBe(DELAY_FRAME_RATE_DEFAULT);
   });
 });
 

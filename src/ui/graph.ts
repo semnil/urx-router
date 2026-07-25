@@ -427,7 +427,7 @@ export class Graph {
    *  a handful of node elements instead of every one, as render() would. */
   repaintDirtyNodes(ids: string[]): void {
     for (const id of ids) this.repaintNode(id);
-    this.refreshPortStates();
+    // redrawWires ends with refreshPortStates, so the port glow is restored there.
     this.redrawWires();
     this.highlightSelectedNode();
   }
@@ -457,7 +457,9 @@ export class Graph {
       if (this.collapsed.delete(id)) this.plan.noteCollapsed = [...this.collapsed];
     }
     this.renderNodes();
-    this.refreshPortStates();
+    // A note panel resizing shifts any hung children (a ducker, the SD Rec slots),
+    // so redraw the wires (which ends with refreshPortStates) to reattach them.
+    this.redrawWires();
     this.highlightSelectedNode();
   }
 
@@ -472,7 +474,7 @@ export class Graph {
       this.closeNoteEditor();
     } else {
       this.renderNodes();
-      this.refreshPortStates();
+      this.redrawWires();
       this.highlightSelectedNode();
     }
     this.cb.onChange();
@@ -496,7 +498,7 @@ export class Graph {
     this.noteEditor = { id, el: ta };
     // Re-render so the panel's text is hidden behind the editor.
     this.renderNodes();
-    this.refreshPortStates();
+    this.redrawWires();
     this.highlightSelectedNode();
     this.positionNoteEditor();
     ta.focus();
@@ -534,7 +536,7 @@ export class Graph {
     ed.el.remove();
     // Restore the panel text now that its editor is gone.
     this.renderNodes();
-    this.refreshPortStates();
+    this.redrawWires();
     this.highlightSelectedNode();
   }
 
@@ -555,10 +557,6 @@ export class Graph {
     // baseline the ResizeObserver keeps in sync until the user pans or zooms.
     this.autoFit = true;
     this.applyTransform();
-  }
-
-  getPlan(): Plan {
-    return this.plan;
   }
 
   // --- scaffold ------------------------------------------------------------
@@ -709,17 +707,22 @@ export class Graph {
     for (const node of this.model.nodes) this.nodeById.set(node.id, node);
     this.applyTransform();
     this.renderNodes();
-    this.refreshPortStates();
+    // redrawWires ends with refreshPortStates, so the port glow is restored there.
     this.redrawWires();
     this.renderShelf();
     this.highlightSelectedNode();
     this.renderSelBar();
   }
 
-  /** Repaint the shelf and multi-select bar with the current i18n messages,
-   *  leaving the hidden set and selection untouched (called on a language switch). */
+  /** Repaint the i18n-bearing chrome with the current messages, leaving the hidden
+   *  set and selection untouched (called on a language switch): the shelf and multi-
+   *  select bar, plus the node/wire layers, whose SVG tooltips and wire <title>s
+   *  bake the language in at paint time. */
   relocalizeChrome(): void {
+    this.renderNodes();
+    this.redrawWires();
     this.renderShelf();
+    this.highlightSelectedNode();
     this.renderSelBar();
   }
 
@@ -881,7 +884,8 @@ export class Graph {
     return isNodeInactive(this.plan, node);
   }
 
-  // Resting opacity of a node's faceplate, by the same precedence makeNode dims it
+  // Resting opacity of a node's faceplate, applied by highlightSelectedNode (the
+  // single source) by the same precedence makeNode badges a node's state
   // (rate-disabled > inactive > unread > plain). A path trace fades the off-path
   // nodes to a fraction of this, so the dim stays derived from state, not stored.
   private restingOpacity(node: DeviceNode): number {
@@ -898,9 +902,10 @@ export class Graph {
     return this.labelSource === "device" ? this.plan.nodeNames?.[id]?.trim() || undefined : undefined;
   }
 
-  /** Full display name (both label tiers) for status lines and the shelf. In
-   *  device mode the CH SETTING name wins over the model's label; in model mode
-   *  the planner label always shows. */
+  /** Full display name (both label tiers) for status lines. In device mode the
+   *  CH SETTING name wins over the model's label; in model mode the planner label
+   *  always shows. (The shelf builds its chips from fullLabel directly, so those
+   *  ignore device-name mode.) */
   private labelOf(id: string): string {
     const custom = this.deviceName(id);
     if (custom) return custom;
@@ -1022,10 +1027,6 @@ export class Graph {
     // a feature unusable at this rate dominates a user mute, which dominates a
     // mere provenance warning.
     if (this.disabledNodes.has(node.id)) {
-      g.setAttribute("opacity", "0.62");
-      rect.setAttribute("stroke", p.warn);
-      rect.setAttribute("stroke-width", "1.5");
-      rect.setAttribute("stroke-dasharray", "4 3");
       g.append(svgRect(NODE_W - 34, -8, 30, 15, 3, p.warn));
       const badge = document.createElementNS(SVGNS, "text");
       badge.setAttribute("x", String(NODE_W - 19));
@@ -1041,9 +1042,8 @@ export class Graph {
       g.append(badge);
     } else if (this.isNodeInactive(node)) {
       // A muted node (CH_ON off) / bypassed ducker (duckerOn off) / oscillator off
-      // (osc.on): dim the whole node and tag it MUTE (a mute) or OFF (a ducker /
-      // the oscillator, whose resting state is off, not muted).
-      g.setAttribute("opacity", "0.4");
+      // (osc.on): tag it MUTE (a mute) or OFF (a ducker / the oscillator, whose
+      // resting state is off, not muted). highlightSelectedNode does the dimming.
       const tag = svgRect(NODE_W - 40, -8, 36, 15, 3, p.nodeStroke);
       g.append(tag);
       const tagText = document.createElementNS(SVGNS, "text");
@@ -1065,10 +1065,6 @@ export class Graph {
     // Ranks below MUTE and DISABLED (the else-if keeps it from stacking), so the
     // badge sits alone in the top-left, never colliding with their top-right tags.
     else if (this.unreadNodes.has(node.id)) {
-      g.setAttribute("opacity", "0.7");
-      rect.setAttribute("stroke", p.warn);
-      rect.setAttribute("stroke-width", "1.2");
-      rect.setAttribute("stroke-dasharray", "2 3");
       g.append(svgRect(8, -8, 16, 15, 3, p.warn));
       const badge = document.createElementNS(SVGNS, "text");
       badge.setAttribute("x", "16");
@@ -1530,12 +1526,6 @@ export class Graph {
     this.redrawWires();
   }
 
-  private updateNodeWires(nodeId: string): void {
-    // Cheap enough to redraw all wires when a node moves.
-    void nodeId;
-    this.redrawWires();
-  }
-
   // --- selection -----------------------------------------------------------
 
   private select(sel: Selection): void {
@@ -1653,9 +1643,10 @@ export class Graph {
       }
     }
     const isSel = this.selection?.type === "conn" && this.selection.from === from && this.selection.to === to;
+    // Both paths redraw the wires (select via its own redraw), which ends with
+    // refreshPortStates, so the port glow is restored without a second call.
     if (isSel) this.select(null);
     else this.redrawWires();
-    this.refreshPortStates();
     this.cb.onChange();
     this.cb.onStatus(t().status.connectionDeleted);
   }
@@ -1826,13 +1817,12 @@ export class Graph {
       // crash the drag with an uncaught TypeError.
       this.nodeEls.get(this.dragNode.id)?.setAttribute("transform", `translate(${pos.x} ${pos.y})`);
       // Hung descendants follow: their positions derive from the parent (a single
-      // ducker, or the SD Rec track-slot chain), so move each element and redraw
-      // its wires.
+      // ducker, or the SD Rec track-slot chain), so move each element. Their wires
+      // are redrawn once with the rest, after every move below.
       for (const descId of this.attachedDescendants(this.dragNode.id)) {
         if (this.isHidden(descId)) continue;
         const cpos = this.posOf(descId);
         this.nodeEls.get(descId)?.setAttribute("transform", `translate(${cpos.x} ${cpos.y})`);
-        this.updateNodeWires(descId);
       }
       // A STEREO-linked partner moves by the captured offset (its own position),
       // and the heart tie is redrawn to track the pair.
@@ -1841,10 +1831,11 @@ export class Graph {
         const fp = { x: pos.x + link.dx, y: pos.y + link.dy };
         this.plan.positions[link.partner] = fp;
         this.nodeEls.get(link.partner)?.setAttribute("transform", `translate(${fp.x} ${fp.y})`);
-        this.updateNodeWires(link.partner);
         this.redrawStereoLink(link.pair[0], link.pair[1]);
       }
-      this.updateNodeWires(this.dragNode.id);
+      // Every moved element's position is written above, so one redraw repaints all
+      // affected wires; per-node redraws would rebuild identical DOM discarded pre-paint.
+      this.redrawWires();
       return;
     }
     if (this.connect) {
@@ -2089,8 +2080,8 @@ export class Graph {
     // canConnect rejects a route with no rule, so reaching here means kind is set.
     this.plan.connections.push({ from: out, to: into, kind: kind! });
     if (kind === "source") this.mirrorPairSource(out, into);
+    // redrawWires ends with refreshPortStates, so the port glow is restored there.
     this.redrawWires();
-    this.refreshPortStates();
     this.cb.onChange();
     this.cb.onStatus(t().status.connected);
   }
@@ -2214,6 +2205,10 @@ export class Graph {
   }
 
   private dropSelectionIfHidden(): void {
+    // Drop any now-hidden id from the multi-selection too, in step with the anchor:
+    // a stale hidden id left in selectedNodes keeps redrawWires fading every wire
+    // with nothing visibly selected.
+    for (const id of [...this.selectedNodes]) if (this.isHidden(id)) this.selectedNodes.delete(id);
     if (this.selection?.type === "node" && this.isHidden(this.selection.id)) {
       this.selection = null;
       this.cb.onSelect(null);

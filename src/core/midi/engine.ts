@@ -283,7 +283,10 @@ export class MidiEngine {
   // button, which would otherwise miss every second press). Take-in modes don't
   // apply.
   private toggleTarget(mapping: MidiMapping, ev: MidiEvent, current: number): number | null {
-    if (ev.type === "pitchbend") return null;
+    // A toggle only meaningfully binds to a note or a plain 7-bit CC. A pitchbend
+    // has no discrete press, and a cc14 arrives as two 7-bit halves that would each
+    // flip it (≥ 64) — leave both misbindings inert, like the pitchbend one.
+    if (mapping.addr.type === "pitchbend" || mapping.addr.type === "cc14") return null;
     if (mapping.button === "state") {
       const target = ev.type === "note" ? (ev.on ? 1 : 0) : ev.value >= 64 ? 1 : 0;
       return target === current ? null : target;

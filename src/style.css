@@ -767,11 +767,6 @@ select:focus-visible,
   opacity: 0.5;
 }
 
-#inspector .eq-tab:focus-visible {
-  outline: 2px solid var(--led);
-  outline-offset: 2px;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .insp-section > summary::after {
     transition: none;
@@ -1159,6 +1154,10 @@ select:focus-visible,
   filter: brightness(1.1);
 }
 
+[data-theme="light"] #inspector button.danger:hover {
+  filter: brightness(0.97);
+}
+
 /* Dismiss control for the mobile bottom sheet; the desktop side panel never
    shows it (revealed in the narrow-viewport block below). */
 #inspector .inspector-close {
@@ -1406,19 +1405,14 @@ select:focus-visible,
   background: linear-gradient(180deg, var(--ctl-bg2), var(--ctl-bg));
 }
 
-.selbar-hide:hover:not(:disabled),
+.selbar-hide:hover,
 .selbar-clear:hover {
   filter: brightness(1.1);
 }
 
-[data-theme="light"] .selbar-hide:hover:not(:disabled),
+[data-theme="light"] .selbar-hide:hover,
 [data-theme="light"] .selbar-clear:hover {
   filter: brightness(0.97);
-}
-
-.selbar-hide:disabled {
-  opacity: 0.45;
-  cursor: default;
 }
 
 .selbar-hide:focus-visible,
@@ -2185,7 +2179,8 @@ select:focus-visible,
 }
 /* Real-console fader slot: a thin recessed groove the cap rides in (no level
    bar — the cap position alone shows the setting). */
-.con-fader .track {
+.con-fader .track,
+.con-vfad .track {
   position: absolute;
   left: 50%;
   top: 6px;
@@ -2285,6 +2280,9 @@ select:focus-visible,
 }
 [data-theme="light"] .con-readout .mtr .rv {
   color: #a06a08;
+}
+[data-theme="light"] .con-readout .mtr .rv.off {
+  color: var(--text-dim);
 }
 
 .con-wrap {
@@ -2448,17 +2446,6 @@ select:focus-visible,
   cursor: ns-resize;
   touch-action: none;
 }
-.con-vfad .track {
-  position: absolute;
-  left: 50%;
-  top: 6px;
-  bottom: 6px;
-  width: 4px;
-  transform: translateX(-50%);
-  border-radius: 2px;
-  background: var(--groove);
-  box-shadow: inset 0 0 2px rgba(0, 0, 0, 0.7);
-}
 .con-vfad .zero {
   position: absolute;
   left: 2px;
@@ -2561,6 +2548,15 @@ select:focus-visible,
   transform: translateX(-50%);
   border: 4px solid transparent;
   border-bottom-color: var(--ctl-border);
+}
+.con-spop.above::before {
+  content: "";
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--ctl-border);
 }
 .con-spop .pcols {
   display: flex;
@@ -3104,7 +3100,6 @@ select:focus-visible,
 }
 .midi-panel .mp-row.linked .mp-addr {
   font-style: italic;
-  text-transform: none;
 }
 .midi-panel .mp-mode,
 .midi-panel .mp-btn {

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { drag, port } from "./graph-helpers";
 
 // A ducker is bypassed (duckerOn off) on a fresh board, so its key wire reads as
 // an off send: dimmed and finely dotted. Turning the ducker on must update both
@@ -7,21 +8,13 @@ const DUCKER = "out.ducker1";
 const KEY_FROM = "bus.mix1:out";
 const KEY_TO = "out.ducker1:in";
 
-const port = (page: Page, ref: string) => page.locator(`[data-ref="${ref}"]`);
 const duckerNode = (page: Page) => page.locator(`#graph-host g.node[data-id="${DUCKER}"]`);
 // The painted wire path lives beside the transparent .wire-hit band in the same g.
 const keyWire = (page: Page) =>
   page.locator(`#graph-host g:has(> .wire-hit[data-from="${KEY_FROM}"][data-to="${KEY_TO}"]) path:not(.wire-hit)`);
 
-async function connect(page: Page, fromRef: string, toRef: string): Promise<void> {
-  const a = await port(page, fromRef).boundingBox();
-  const b = await port(page, toRef).boundingBox();
-  if (!a || !b) throw new Error(`port not found: ${fromRef} -> ${toRef}`);
-  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 });
-  await page.mouse.up();
-}
+const connect = (page: Page, fromRef: string, toRef: string): Promise<void> =>
+  drag(page, port(page, fromRef), port(page, toRef));
 
 // Select the ducker, expand its section and switch the on/off toggle.
 async function setDuckerOn(page: Page, on: boolean): Promise<void> {

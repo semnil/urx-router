@@ -40,11 +40,14 @@ With the Device Center software (included in Yamaha's TOOLS for MGX / URX) runni
 builds can **read** the connected interface's current mixer settings into the plan
 (**Device → Fetch from device**) and **write** a plan back to it (**Device → Write to device** /
 **Live sync**, which mirrors each edit as you make it). The parameter mapping is verified on
-hardware **only for URX44V**; **URX44** is assumed identical and **URX22** is inferred from it —
-neither is verified on hardware yet. Writing overwrites the device's current settings; see the
+hardware **only for URX44V**; **URX44** is assumed identical and **URX22** is inferred from it.
+The exception is the **URX22** console live-meter routing, which has been confirmed on real
+hardware; its control (write) map and factory-initial plan remain unverified. Writing overwrites
+the device's current settings; see the
 [Disclaimer](#disclaimer). External MIDI controllers can be mapped to the console controls
-(**Device → MIDI control**). The `--experimental` flag additionally reveals a
-destructive-then-restored self-test diagnostic.
+(**Device → MIDI control**). The `--experimental` flag additionally unlocks a
+destructive-then-restored self-test diagnostic, importing a URX `.urxf` settings file, and a
+read-only **Compare with device**.
 
 The console view shows the same plan as a mixer surface — per-strip faders, mutes, EQ,
 dynamics, and sends. Edits made here live-sync to the device the same way, and live meters
@@ -77,7 +80,7 @@ The skill's routing data is generated from the same device model the app uses
 - **TypeScript + Vite** (frontend, zero runtime third-party dependencies)
 - Rendering is plain SVG (no node-graph library)
 - English-first UI with Japanese localization, switchable at runtime
-- Studio-rack aesthetic with dark and light themes (follows your OS color scheme, dark by default)
+- Studio-rack aesthetic with dark and light themes (auto-follows your OS color scheme by default)
   ([docs/en/architecture.md](docs/en/architecture.md#display-themes))
 
 ## Development
@@ -98,7 +101,8 @@ locally (what <https://urx-router.semnil.com> serves), use `pnpm build:demo` the
 The full command list (unit/e2e tests, formatting, cache cleaning) and development notes live in
 [CLAUDE.md](CLAUDE.md).
 
-Pass `--experimental` to enable the hidden-by-default on-device self-test diagnostic:
+Pass `--experimental` to enable the hidden-by-default diagnostics — the on-device self-test,
+`.urxf` settings-file import, and read-only **Compare with device**:
 
 ```sh
 pnpm tauri dev -- -- --experimental          # dev

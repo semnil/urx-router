@@ -198,3 +198,5 @@ plan, as noted above. Preferences can also draw the same boundary the other way:
 a "Scene only" device scope leaves those device-wide settings untouched on fetch,
 write and Live sync, and a scene-only plan save omits them so opening the file
 keeps the current values — the same semantic as a scene recall on the unit.
+
+> Confirmed by comparing the unit's scene and live state.

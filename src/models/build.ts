@@ -1,6 +1,7 @@
 // Generates a DeviceModel from per-model parameters. The node set and the
-// routing rules below are a direct transcription of the official V1.2 block
-// diagram (see docs/device-model.md). Keep the two in sync.
+// routing rules below are a direct transcription of the official MWEM-C0 block
+// diagram (see docs/en/device-model.md and docs/ja/device-model.md). Keep the
+// two in sync.
 
 import { ref } from "./types";
 import type { ConnectionKind, DeviceModel, DeviceNode, ModelId, NodeKind, Port, RoutingRule } from "./types";

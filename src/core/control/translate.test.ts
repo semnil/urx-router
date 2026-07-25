@@ -3,7 +3,13 @@ import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections } from "../plan";
 import { COLOR_OFF_INDEX, COLOR_PALETTE, EQ_TYPE_PASS, colorIndexToHex, hexToColorIndex } from "./params";
 import { nameControl, planToCommands, planToNameWrites } from "./translate";
+import type { VdCommand } from "./translate";
 import { GATE_RANGE_OFF_DB, VD_LEVEL_OFF } from "./vd";
+
+// The broker REST uri a command addresses ("/vd/parameters/{id}:{x}:{y}?operation=value").
+// The transport addresses hardware by paramId/x/y, so the uri is derived here for
+// the address assertions rather than carried on every VdCommand.
+const uri = (c: VdCommand): string => `/vd/parameters/${c.paramId}:${c.x}:${c.y}?operation=value`;
 
 describe("planToCommands", () => {
   const model = getModel("URX44V");
@@ -26,9 +32,9 @@ describe("planToCommands", () => {
     const fader = cmds.find((c) => c.name === "CH_FADER" && c.y === 0);
     const pan = cmds.find((c) => c.name === "CH_PAN" && c.y === 0);
     expect(fader!.vdValue).toBe(-600);
-    expect(fader!.request.uri).toBe("/vd/parameters/139:0:0?operation=value");
+    expect(uri(fader!)).toBe("/vd/parameters/139:0:0?operation=value");
     expect(pan!.vdValue).toBe(63);
-    expect(pan!.request.uri).toBe("/vd/parameters/141:0:0?operation=value");
+    expect(uri(pan!)).toBe("/vd/parameters/141:0:0?operation=value");
   });
 
   it("emits a STEREO-assign ON per channel + FX, defaulting ON, independent of CH_ON", () => {
@@ -40,9 +46,9 @@ describe("planToCommands", () => {
     expect(assign).toHaveLength(10);
     expect(assign.every((c) => c.vdValue === 1)).toBe(true);
     // Mono CH1 = 142, stereo CH5/6 = 269, FX1 = 340 — distinct from CH_ON (140).
-    expect(assign.some((c) => c.request.uri === "/vd/parameters/142:0:0?operation=value")).toBe(true);
-    expect(assign.some((c) => c.request.uri === "/vd/parameters/269:0:0?operation=value")).toBe(true);
-    expect(assign.some((c) => c.request.uri === "/vd/parameters/340:0:0?operation=value")).toBe(true);
+    expect(assign.some((c) => uri(c) === "/vd/parameters/142:0:0?operation=value")).toBe(true);
+    expect(assign.some((c) => uri(c) === "/vd/parameters/269:0:0?operation=value")).toBe(true);
+    expect(assign.some((c) => uri(c) === "/vd/parameters/340:0:0?operation=value")).toBe(true);
   });
 
   it("STEREO-assign ON follows the main-path connection's on, not the channel master", () => {
@@ -73,11 +79,11 @@ describe("planToCommands", () => {
     const hpf = cmds.find((c) => c.name === "HPF_ON" && c.y === 0);
     const gain = cmds.find((c) => c.name === "HA_GAIN" && c.y === 0);
     expect(on!.vdValue).toBe(0);
-    expect(on!.request.uri).toBe("/vd/parameters/140:0:0?operation=value");
+    expect(uri(on!)).toBe("/vd/parameters/140:0:0?operation=value");
     expect(hpf!.vdValue).toBe(1);
-    expect(hpf!.request.uri).toBe("/vd/parameters/25:0:0?operation=value");
+    expect(uri(hpf!)).toBe("/vd/parameters/25:0:0?operation=value");
     expect(gain!.vdValue).toBe(-800);
-    expect(gain!.request.uri).toBe("/vd/parameters/1:0:0?operation=value");
+    expect(uri(gain!)).toBe("/vd/parameters/1:0:0?operation=value");
   });
 
   it("maps stereo D.Gain to its dedicated param on both L/R instances", () => {
@@ -86,7 +92,7 @@ describe("planToCommands", () => {
     plan.nodeParams.ch_5_6 = { gain: -24 };
     const cmds = planToCommands(model, plan).filter((c) => c.paramId === 9);
     // CH5/6 D.Gain = param 9, written to y0 and y1 (linked), -24 dB = -2400.
-    expect(cmds.map((c) => c.request.uri)).toEqual([
+    expect(cmds.map((c) => uri(c))).toEqual([
       "/vd/parameters/9:0:0?operation=value",
       "/vd/parameters/9:0:1?operation=value",
     ]);
@@ -106,10 +112,10 @@ describe("planToCommands", () => {
     const pan = cmds.find((c) => c.name === "CH_PAN" && c.paramId === 268);
     const on = cmds.find((c) => c.name === "CH_ON" && c.paramId === 267);
     // CH5/6 is stereo index 0; mono params 139/140/141 must not be used.
-    expect(fader!.request.uri).toBe("/vd/parameters/266:0:0?operation=value");
+    expect(uri(fader!)).toBe("/vd/parameters/266:0:0?operation=value");
     expect(fader!.vdValue).toBe(-600);
-    expect(pan!.request.uri).toBe("/vd/parameters/268:0:0?operation=value");
-    expect(on!.request.uri).toBe("/vd/parameters/267:0:0?operation=value");
+    expect(uri(pan!)).toBe("/vd/parameters/268:0:0?operation=value");
+    expect(uri(on!)).toBe("/vd/parameters/267:0:0?operation=value");
     expect(on!.vdValue).toBe(0);
   });
 
@@ -122,7 +128,7 @@ describe("planToCommands", () => {
     const freq = cmds.find((c) => c.name === "HPF_FREQ");
     // 120 Hz = broker 1200 at param 26:0:0; stereo channels have no HPF.
     expect(freq!.vdValue).toBe(1200);
-    expect(freq!.request.uri).toBe("/vd/parameters/26:0:0?operation=value");
+    expect(uri(freq!)).toBe("/vd/parameters/26:0:0?operation=value");
     expect(cmds.filter((c) => c.name === "HPF_FREQ")).toHaveLength(1);
   });
 
@@ -144,9 +150,9 @@ describe("planToCommands", () => {
     const phase = cmds.find((c) => c.name === "PHASE");
     const clip = cmds.find((c) => c.name === "CLIP_SAFE");
     // Mono CH1: +48V=param 0, phase=24, Clip Safe=5, all at y0.
-    expect(phantom!.request.uri).toBe("/vd/parameters/0:0:0?operation=value");
-    expect(phase!.request.uri).toBe("/vd/parameters/24:0:0?operation=value");
-    expect(clip!.request.uri).toBe("/vd/parameters/5:0:0?operation=value");
+    expect(uri(phantom!)).toBe("/vd/parameters/0:0:0?operation=value");
+    expect(uri(phase!)).toBe("/vd/parameters/24:0:0?operation=value");
+    expect(uri(clip!)).toBe("/vd/parameters/5:0:0?operation=value");
     // Stereo channels have neither +48V nor Clip Safe.
     expect(cmds.some((c) => ["PHANTOM", "CLIP_SAFE"].includes(c.name) && c.y !== 0)).toBe(false);
     expect(cmds.filter((c) => ["PHANTOM", "PHASE", "CLIP_SAFE"].includes(c.name))).toHaveLength(3);
@@ -161,9 +167,9 @@ describe("planToCommands", () => {
     const r = cmds.find((c) => c.name === "PHASE_R");
     // CH5/6 = stereo index 0: L=211:0:0, R=212:0:0, independent.
     expect(l!.vdValue).toBe(1);
-    expect(l!.request.uri).toBe("/vd/parameters/211:0:0?operation=value");
+    expect(uri(l!)).toBe("/vd/parameters/211:0:0?operation=value");
     expect(r!.vdValue).toBe(0);
-    expect(r!.request.uri).toBe("/vd/parameters/212:0:0?operation=value");
+    expect(uri(r!)).toBe("/vd/parameters/212:0:0?operation=value");
   });
 
   it("emits Insert FX on mono channels but not stereo", () => {
@@ -175,7 +181,7 @@ describe("planToCommands", () => {
     // Mono CH1 = param 135 at y0, raw enum value 257; stereo has no insert FX.
     expect(cmds).toHaveLength(1);
     expect(cmds[0].vdValue).toBe(257);
-    expect(cmds[0].request.uri).toBe("/vd/parameters/135:0:0?operation=value");
+    expect(uri(cmds[0])).toBe("/vd/parameters/135:0:0?operation=value");
   });
 
   it("emits output insert FX on STEREO (single) and MIX (L/R-linked)", () => {
@@ -187,9 +193,9 @@ describe("planToCommands", () => {
     const stereo = cmds.filter((c) => c.paramId === 578);
     const mix = cmds.filter((c) => c.paramId === 671);
     // STEREO = 578 single; MIX1 = 671 at y0 and y1 (linked).
-    expect(stereo.map((c) => c.request.uri)).toEqual(["/vd/parameters/578:0:0?operation=value"]);
+    expect(stereo.map((c) => uri(c))).toEqual(["/vd/parameters/578:0:0?operation=value"]);
     expect(stereo[0].vdValue).toBe(1793);
-    expect(mix.map((c) => c.request.uri)).toEqual([
+    expect(mix.map((c) => uri(c))).toEqual([
       "/vd/parameters/671:0:0?operation=value",
       "/vd/parameters/671:0:1?operation=value",
     ]);
@@ -205,7 +211,7 @@ describe("planToCommands", () => {
     // Mono CH1 = param 21 at y0, value 1 (SSMCS); stereo channels have none.
     expect(cmds).toHaveLength(1);
     expect(cmds[0].vdValue).toBe(1);
-    expect(cmds[0].request.uri).toBe("/vd/parameters/21:0:0?operation=value");
+    expect(uri(cmds[0])).toBe("/vd/parameters/21:0:0?operation=value");
   });
 
   it("emits channel-strip section ON, swapping COMP/EQ bank by type", () => {
@@ -220,12 +226,12 @@ describe("planToCommands", () => {
     // CH1 (y0): GATE on = 1, COMP on = 1, EQ off = 0 (off is the on-complement).
     expect(at("GATE_ON", 0)!.vdValue).toBe(1);
     expect(at("COMP_ON", 0)!.vdValue).toBe(1);
-    expect(at("EQ_ON", 0)!.request.uri).toBe("/vd/parameters/44:0:0?operation=value");
+    expect(uri(at("EQ_ON", 0)!)).toBe("/vd/parameters/44:0:0?operation=value");
     expect(at("EQ_ON", 0)!.vdValue).toBe(0);
     // CH2 (y1) SSMCS: COMP/EQ use the inverted 94/106 bank, on = 0.
-    expect(at("SSMCS_COMP_ON", 1)!.request.uri).toBe("/vd/parameters/94:0:1?operation=value");
+    expect(uri(at("SSMCS_COMP_ON", 1)!)).toBe("/vd/parameters/94:0:1?operation=value");
     expect(at("SSMCS_COMP_ON", 1)!.vdValue).toBe(0);
-    expect(at("SSMCS_EQ_ON", 1)!.request.uri).toBe("/vd/parameters/106:0:1?operation=value");
+    expect(uri(at("SSMCS_EQ_ON", 1)!)).toBe("/vd/parameters/106:0:1?operation=value");
     expect(at("SSMCS_EQ_ON", 1)!.vdValue).toBe(0);
   });
 
@@ -236,7 +242,7 @@ describe("planToCommands", () => {
     const cmds = planToCommands(model, plan);
     const eq = cmds.filter((c) => c.name === "STEREO_CH_EQ_ON");
     // Stereo EQ = 213 at stereo index 0, normal polarity: off = 0.
-    expect(eq.map((c) => c.request.uri)).toEqual(["/vd/parameters/213:0:0?operation=value"]);
+    expect(eq.map((c) => uri(c))).toEqual(["/vd/parameters/213:0:0?operation=value"]);
     expect(eq[0].vdValue).toBe(0);
     // No GATE/COMP on a stereo channel even though the params were set.
     expect(cmds.some((c) => ["GATE_ON", "COMP_ON", "SSMCS_COMP_ON"].includes(c.name))).toBe(false);
@@ -250,7 +256,7 @@ describe("planToCommands", () => {
     const cmds = planToCommands(model, plan).filter((c) => c.name === "HI_Z");
     // CH3 = param 6 at y2; CH1 has no Hi-Z so it is dropped.
     expect(cmds).toHaveLength(1);
-    expect(cmds[0].request.uri).toBe("/vd/parameters/6:0:2?operation=value");
+    expect(uri(cmds[0])).toBe("/vd/parameters/6:0:2?operation=value");
   });
 
   it("emits STEREO_MASTER_ON from the stereo bus node param", () => {
@@ -260,7 +266,7 @@ describe("planToCommands", () => {
     const cmds = planToCommands(model, plan);
     const master = cmds.find((c) => c.name === "STEREO_MASTER_ON");
     expect(master!.vdValue).toBe(0);
-    expect(master!.request.uri).toBe("/vd/parameters/582:0:0?operation=value");
+    expect(uri(master!)).toBe("/vd/parameters/582:0:0?operation=value");
   });
 
   it("emits master balance for STEREO (583 single) and MIX (676 L/R-linked)", () => {
@@ -271,9 +277,9 @@ describe("planToCommands", () => {
     const cmds = planToCommands(model, plan);
     const st = cmds.find((c) => c.name === "STEREO_MASTER_BAL");
     expect(st!.vdValue).toBe(-20);
-    expect(st!.request.uri).toBe("/vd/parameters/583:0:0?operation=value");
+    expect(uri(st!)).toBe("/vd/parameters/583:0:0?operation=value");
     const mix = cmds.filter((c) => c.name === "OUT_MASTER_BAL");
-    expect(mix.map((c) => `${c.request.uri}=${c.vdValue}`)).toEqual([
+    expect(mix.map((c) => `${uri(c)}=${c.vdValue}`)).toEqual([
       "/vd/parameters/676:0:0?operation=value=30",
       "/vd/parameters/676:0:1?operation=value=30",
     ]);
@@ -287,7 +293,7 @@ describe("planToCommands", () => {
     const c2 = plan.connections.find((c) => c.from === "bus.mix2:out" && c.to === "bus.stereo:in")!;
     c2.params = { on: false };
     const cmds = planToCommands(model, plan).filter((c) => c.name === "TO_ST");
-    expect(cmds.map((c) => `${c.request.uri}=${c.vdValue}`)).toEqual([
+    expect(cmds.map((c) => `${uri(c)}=${c.vdValue}`)).toEqual([
       "/vd/parameters/677:0:0?operation=value=1",
       "/vd/parameters/677:0:2?operation=value=0",
     ]);
@@ -299,7 +305,7 @@ describe("planToCommands", () => {
     plan.nodeParams["bus.mix1"] = { panLink: true };
     plan.nodeParams["bus.mix2"] = { panLink: false };
     const cmds = planToCommands(model, plan).filter((c) => c.name === "PAN_LINK");
-    expect(cmds.map((c) => `${c.request.uri}=${c.vdValue}`)).toEqual([
+    expect(cmds.map((c) => `${uri(c)}=${c.vdValue}`)).toEqual([
       "/vd/parameters/589:0:0?operation=value=1",
       "/vd/parameters/589:0:2?operation=value=0",
     ]);
@@ -310,13 +316,13 @@ describe("planToCommands", () => {
     ensureFixedConnections(model, plan);
     plan.nodeParams["ch1"] = { stereoLink: true, panBal: 1 };
     const sig = planToCommands(model, plan).filter((c) => c.name === "SIGNAL_TYPE");
-    expect(sig.map((c) => c.request.uri)).toEqual([
+    expect(sig.map((c) => uri(c))).toEqual([
       "/vd/parameters/23:0:0?operation=value",
       "/vd/parameters/23:0:1?operation=value",
     ]);
     const pb = planToCommands(model, plan).filter((c) => c.name === "PAN_BAL");
     expect(pb).toHaveLength(1);
-    expect(pb[0].request.uri).toBe("/vd/parameters/891:0:0?operation=value");
+    expect(uri(pb[0])).toBe("/vd/parameters/891:0:0?operation=value");
     expect(pb[0].vdValue).toBe(1);
   });
 
@@ -342,7 +348,7 @@ describe("planToCommands", () => {
     // to y0 to isolate ch1 from the other channels' also-seeded MIX1 sends.
     const lvl = cmds.filter((c) => c.name === "SEND_LEVEL" && c.y === 0 && [146, 152].includes(c.paramId));
     // MIX1 mono = base 146: level at 146 and 152 (L/R), both 5 dB = 500.
-    expect(lvl.map((c) => c.request.uri)).toEqual([
+    expect(lvl.map((c) => uri(c))).toEqual([
       "/vd/parameters/146:0:0?operation=value",
       "/vd/parameters/152:0:0?operation=value",
     ]);
@@ -355,7 +361,7 @@ describe("planToCommands", () => {
     const tap = cmds.find((c) => c.name === "SEND_TAP");
     // PRE = 1, single param at base+5 = 151.
     expect(tap!.vdValue).toBe(1);
-    expect(tap!.request.uri).toBe("/vd/parameters/151:0:0?operation=value");
+    expect(uri(tap!)).toBe("/vd/parameters/151:0:0?operation=value");
   });
 
   it("emits a stereo CH → MIX send from the 273-based block", () => {
@@ -369,7 +375,7 @@ describe("planToCommands", () => {
       (c) => c.name === "SEND_LEVEL" && c.y === 0 && [285, 291].includes(c.paramId),
     );
     // Stereo MIX2 = base 273 + 12 = 285: level at 285 and 291, stereo index y0.
-    expect(cmds.map((c) => c.request.uri)).toEqual([
+    expect(cmds.map((c) => uri(c))).toEqual([
       "/vd/parameters/285:0:0?operation=value",
       "/vd/parameters/291:0:0?operation=value",
     ]);
@@ -457,9 +463,9 @@ describe("planToCommands", () => {
     const cmds = planToCommands(model, plan);
     const stereo = cmds.filter((c) => c.name === "STEREO_EQ_ON");
     const mix = cmds.filter((c) => c.name === "OUT_EQ_ON");
-    expect(stereo.map((c) => c.request.uri)).toEqual(["/vd/parameters/498:0:0?operation=value"]);
+    expect(stereo.map((c) => uri(c))).toEqual(["/vd/parameters/498:0:0?operation=value"]);
     expect(stereo[0].vdValue).toBe(0);
-    expect(mix.map((c) => c.request.uri)).toEqual([
+    expect(mix.map((c) => uri(c))).toEqual([
       "/vd/parameters/591:0:0?operation=value",
       "/vd/parameters/591:0:1?operation=value",
     ]);
@@ -475,14 +481,14 @@ describe("planToCommands", () => {
     const cmds = planToCommands(model, plan);
     // STEREO band1 block base = 498 + 5 = 503; type 504, freq 506, gain 507, single y0.
     const sType = cmds.find((c) => c.name === "EQ_BAND_TYPE" && c.paramId === 504);
-    expect(sType!.request.uri).toBe("/vd/parameters/504:0:0?operation=value");
+    expect(uri(sType!)).toBe("/vd/parameters/504:0:0?operation=value");
     expect(sType!.vdValue).toBe(EQ_TYPE_PASS);
     expect(cmds.find((c) => c.paramId === 506)!.vdValue).toBe(2000); // 200 Hz × 10
     expect(cmds.find((c) => c.paramId === 507)!.vdValue).toBe(600); // +6 dB centi
     // A pass filter still writes freq/type; gain was set so it is emitted too.
     // MIX1 band3 (HIGH-MID) Q = param 596 + 10 + 2 = 608, both L/R instances.
     const mq = cmds.filter((c) => c.name === "EQ_BAND_Q" && c.paramId === 608);
-    expect(mq.map((c) => c.request.uri)).toEqual([
+    expect(mq.map((c) => uri(c))).toEqual([
       "/vd/parameters/608:0:0?operation=value",
       "/vd/parameters/608:0:1?operation=value",
     ]);
@@ -509,7 +515,7 @@ describe("planToCommands", () => {
     plan.nodeParams.ch2 = { compEqType: 1, eqBands: [{ gain: 6 }] };
     const cmds = planToCommands(model, plan);
     const ch1 = cmds.find((c) => c.name === "EQ_BAND_GAIN" && c.y === 0);
-    expect(ch1!.request.uri).toBe("/vd/parameters/53:0:0?operation=value");
+    expect(uri(ch1!)).toBe("/vd/parameters/53:0:0?operation=value");
     expect(ch1!.vdValue).toBe(1200);
     // CH2 (y1) in SSMCS emits no band gain (no PEQ there).
     expect(cmds.some((c) => c.name === "EQ_BAND_GAIN" && c.y === 1)).toBe(false);
@@ -522,7 +528,7 @@ describe("planToCommands", () => {
     plan.nodeParams.ch_5_6 = { eqBands: [{}, {}, {}, { gain: -3 }] };
     const cmds = planToCommands(model, plan);
     const eq = cmds.find((c) => c.name === "EQ_BAND_GAIN" && c.paramId === 237);
-    expect(eq!.request.uri).toBe("/vd/parameters/237:0:0?operation=value");
+    expect(uri(eq!)).toBe("/vd/parameters/237:0:0?operation=value");
     expect(eq!.vdValue).toBe(-300);
   });
 
@@ -534,7 +540,7 @@ describe("planToCommands", () => {
     expect(cmds.find((c) => c.name === "EQ_ONE_KNOB_ON" && c.paramId === 46)!.vdValue).toBe(1);
     expect(cmds.find((c) => c.name === "EQ_ONE_KNOB_TYPE" && c.paramId === 47)!.vdValue).toBe(1); // Vocal
     expect(cmds.find((c) => c.name === "EQ_ONE_KNOB_LEVEL" && c.paramId === 48)!.vdValue).toBe(80);
-    expect(cmds.find((c) => c.name === "EQ_ONE_KNOB_LEVEL")!.request.uri).toBe("/vd/parameters/48:0:0?operation=value");
+    expect(uri(cmds.find((c) => c.name === "EQ_ONE_KNOB_LEVEL")!)).toBe("/vd/parameters/48:0:0?operation=value");
   });
 
   it("skips the 4-band PEQ commands when 1-knob is on (device drives the bands)", () => {
@@ -590,12 +596,12 @@ describe("planToCommands", () => {
     ensureFixedConnections(model, plan);
     plan.nodeParams.ch1 = { comp: { autoMakeup: true, oneKnob: true, oneKnobLevel: 50 } };
     const cmds = planToCommands(model, plan);
-    expect(cmds.find((c) => c.name === "COMP_AUTO_MAKEUP")!.request.uri).toBe("/vd/parameters/41:0:0?operation=value");
+    expect(uri(cmds.find((c) => c.name === "COMP_AUTO_MAKEUP")!)).toBe("/vd/parameters/41:0:0?operation=value");
     expect(cmds.find((c) => c.name === "COMP_AUTO_MAKEUP")!.vdValue).toBe(1);
     expect(cmds.find((c) => c.name === "COMP_ONE_KNOB")!.vdValue).toBe(1);
     // 1-knob level is a raw 0-100 value (param 43).
     const lvl = cmds.find((c) => c.name === "COMP_ONE_KNOB_LEVEL")!;
-    expect(lvl.request.uri).toBe("/vd/parameters/43:0:0?operation=value");
+    expect(uri(lvl)).toBe("/vd/parameters/43:0:0?operation=value");
     expect(lvl.vdValue).toBe(50);
   });
 
@@ -630,15 +636,15 @@ describe("planToCommands", () => {
     const cmds = planToCommands(model, plan);
     const at = (name: string) => cmds.find((c) => c.name === name && c.y === 0);
     // Master ON (89), Comp Drive (95), Morphing (93), Out Gain (117) — raw, y0.
-    expect(at("SSMCS_ON")!.request.uri).toBe("/vd/parameters/89:0:0?operation=value");
+    expect(uri(at("SSMCS_ON")!)).toBe("/vd/parameters/89:0:0?operation=value");
     expect(at("SSMCS_COMP_DRIVE")!.vdValue).toBe(100);
-    expect(at("SSMCS_MORPHING")!.request.uri).toBe("/vd/parameters/93:0:0?operation=value");
+    expect(uri(at("SSMCS_MORPHING")!)).toBe("/vd/parameters/93:0:0?operation=value");
     expect(at("SSMCS_OUT_GAIN")!.vdValue).toBe(180);
     // Comp detail raw, Mid Q (111), High freq (115).
     expect(at("SSMCS_COMP_RATIO")!.vdValue).toBe(60);
     expect(at("SSMCS_COMP_THRESHOLD")!.vdValue).toBe(100);
     expect(at("SSMCS_SC_FREQ")!.vdValue).toBe(30);
-    expect(at("SSMCS_EQ_MID_Q")!.request.uri).toBe("/vd/parameters/111:0:0?operation=value");
+    expect(uri(at("SSMCS_EQ_MID_Q")!)).toBe("/vd/parameters/111:0:0?operation=value");
     expect(at("SSMCS_EQ_HIGH_FREQ")!.vdValue).toBe(112);
     // Low/High bands carry no Q.
     expect(cmds.some((c) => c.name === ("SSMCS_EQ_LOW_Q" as never))).toBe(false);
@@ -667,7 +673,7 @@ describe("planToCommands", () => {
     plan.nodeParams["out.ducker1"] = { duckerOn: true };
     const cmds = planToCommands(model, plan);
     const d = cmds.find((c) => c.name === "DUCKER_ON");
-    expect(d!.request.uri).toBe("/vd/parameters/258:0:0?operation=value");
+    expect(uri(d!)).toBe("/vd/parameters/258:0:0?operation=value");
     expect(d!.vdValue).toBe(1);
   });
 
@@ -683,7 +689,7 @@ describe("planToCommands", () => {
     expect(v("DUCKER_ATTACK").vdValue).toBe(25630);
     // 1500 ms × 10 = 15000 (within the widened release clamp, not truncated).
     expect(v("DUCKER_DECAY").vdValue).toBe(15000);
-    expect(v("DUCKER_DECAY").request.uri).toBe("/vd/parameters/263:0:0?operation=value");
+    expect(uri(v("DUCKER_DECAY"))).toBe("/vd/parameters/263:0:0?operation=value");
   });
 
   it("emits the STEREO master fader on its single instance", () => {
@@ -694,7 +700,7 @@ describe("planToCommands", () => {
     const fader = cmds.filter((c) => c.name === "STEREO_MASTER_FADER");
     expect(fader).toHaveLength(1);
     expect(fader[0].vdValue).toBe(200);
-    expect(fader[0].request.uri).toBe("/vd/parameters/581:0:0?operation=value");
+    expect(uri(fader[0])).toBe("/vd/parameters/581:0:0?operation=value");
   });
 
   it("emits the MIX output fader on both L/R instances", () => {
@@ -703,7 +709,7 @@ describe("planToCommands", () => {
     plan.nodeParams["bus.mix2"] = { level: 1.2 };
     const cmds = planToCommands(model, plan).filter((c) => c.name === "OUT_FADER");
     // MIX2 = param 674 at y2 and y3 (linked), 1.2 dB = 120.
-    expect(cmds.map((c) => c.request.uri)).toEqual([
+    expect(cmds.map((c) => uri(c))).toEqual([
       "/vd/parameters/674:0:2?operation=value",
       "/vd/parameters/674:0:3?operation=value",
     ]);
@@ -719,9 +725,9 @@ describe("planToCommands", () => {
     const m1 = cmds.find((c) => c.name === "MONITOR_LEVEL" && c.y === 0);
     const m2 = cmds.find((c) => c.name === "MONITOR_LEVEL" && c.y === 1);
     expect(m1!.vdValue).toBe(-600);
-    expect(m1!.request.uri).toBe("/vd/parameters/724:0:0?operation=value");
+    expect(uri(m1!)).toBe("/vd/parameters/724:0:0?operation=value");
     expect(m2!.vdValue).toBe(0);
-    expect(m2!.request.uri).toBe("/vd/parameters/724:0:1?operation=value");
+    expect(uri(m2!)).toBe("/vd/parameters/724:0:1?operation=value");
   });
 
   it("emits PHONES level per monitor (PHONES 1 ↔ mon1 = y0, PHONES 2 ↔ mon2 = y1)", () => {
@@ -732,9 +738,9 @@ describe("planToCommands", () => {
     const p1 = cmds.find((c) => c.name === "PHONES_LEVEL" && c.y === 0);
     const p2 = cmds.find((c) => c.name === "PHONES_LEVEL" && c.y === 1);
     expect(p1!.vdValue).toBe(100); // 10.0 = raw 100
-    expect(p1!.request.uri).toBe("/vd/parameters/725:0:0?operation=value");
+    expect(uri(p1!)).toBe("/vd/parameters/725:0:0?operation=value");
     expect(p2!.vdValue).toBe(0); // 0.0 = raw 0
-    expect(p2!.request.uri).toBe("/vd/parameters/725:0:1?operation=value");
+    expect(uri(p2!)).toBe("/vd/parameters/725:0:1?operation=value");
   });
 
   it("emits monitor CUE-interrupt / MONO toggles per monitor", () => {
@@ -744,9 +750,9 @@ describe("planToCommands", () => {
     const cue = cmds.find((c) => c.name === "MONITOR_CUE_INTERRUPT" && c.y === 0);
     const mono = cmds.find((c) => c.name === "MONITOR_MONO" && c.y === 0);
     expect(cue!.vdValue).toBe(0);
-    expect(cue!.request.uri).toBe("/vd/parameters/721:0:0?operation=value");
+    expect(uri(cue!)).toBe("/vd/parameters/721:0:0?operation=value");
     expect(mono!.vdValue).toBe(1);
-    expect(mono!.request.uri).toBe("/vd/parameters/722:0:0?operation=value");
+    expect(uri(mono!)).toBe("/vd/parameters/722:0:0?operation=value");
   });
 
   it("emits oscillator generator params from the bus.osc node", () => {
@@ -756,7 +762,7 @@ describe("planToCommands", () => {
     expect(cmds.find((c) => c.name === "OSC_ON")!.vdValue).toBe(1);
     expect(cmds.find((c) => c.name === "OSC_LEVEL")!.vdValue).toBe(-2000);
     expect(cmds.find((c) => c.name === "OSC_FREQ")!.vdValue).toBe(20000);
-    expect(cmds.find((c) => c.name === "OSC_ON")!.request.uri).toBe("/vd/parameters/710:0:0?operation=value");
+    expect(uri(cmds.find((c) => c.name === "OSC_ON")!)).toBe("/vd/parameters/710:0:0?operation=value");
   });
 
   it("emits STREAMING DELAY params from the bus.stream node", () => {
@@ -766,13 +772,9 @@ describe("planToCommands", () => {
     expect(cmds.find((c) => c.name === "STREAM_DELAY_ON")!.vdValue).toBe(1);
     expect(cmds.find((c) => c.name === "STREAM_DELAY_TIME")!.vdValue).toBe(10000); // 100.00 ms = ms×100
     expect(cmds.find((c) => c.name === "STREAM_DELAY_FRAME_RATE")!.vdValue).toBe(7); // 120 fps index
-    expect(cmds.find((c) => c.name === "STREAM_DELAY_ON")!.request.uri).toBe("/vd/parameters/707:0:0?operation=value");
-    expect(cmds.find((c) => c.name === "STREAM_DELAY_TIME")!.request.uri).toBe(
-      "/vd/parameters/708:0:0?operation=value",
-    );
-    expect(cmds.find((c) => c.name === "STREAM_DELAY_FRAME_RATE")!.request.uri).toBe(
-      "/vd/parameters/830:0:0?operation=value",
-    );
+    expect(uri(cmds.find((c) => c.name === "STREAM_DELAY_ON")!)).toBe("/vd/parameters/707:0:0?operation=value");
+    expect(uri(cmds.find((c) => c.name === "STREAM_DELAY_TIME")!)).toBe("/vd/parameters/708:0:0?operation=value");
+    expect(uri(cmds.find((c) => c.name === "STREAM_DELAY_FRAME_RATE")!)).toBe("/vd/parameters/830:0:0?operation=value");
   });
 
   it("omits STREAMING DELAY commands when the bus.stream node has no delay", () => {
@@ -821,7 +823,7 @@ describe("planToCommands", () => {
     const c1 = cmds.find((c) => c.name === "INPUT_SOURCE" && c.y === 0);
     const c2 = cmds.find((c) => c.name === "INPUT_SOURCE" && c.y === 1);
     expect(c1!.vdValue).toBe(256);
-    expect(c1!.request.uri).toBe("/vd/parameters/22:0:0?operation=value");
+    expect(uri(c1!)).toBe("/vd/parameters/22:0:0?operation=value");
     expect(c2!.vdValue).toBe(257);
   });
 
@@ -834,9 +836,9 @@ describe("planToCommands", () => {
     const l = cmds.find((c) => c.name === "STEREO_INPUT_SOURCE_L");
     const r = cmds.find((c) => c.name === "STEREO_INPUT_SOURCE_R");
     expect(l!.vdValue).toBe(548);
-    expect(l!.request.uri).toBe("/vd/parameters/209:0:0?operation=value");
+    expect(uri(l!)).toBe("/vd/parameters/209:0:0?operation=value");
     expect(r!.vdValue).toBe(549);
-    expect(r!.request.uri).toBe("/vd/parameters/210:0:0?operation=value");
+    expect(uri(r!)).toBe("/vd/parameters/210:0:0?operation=value");
     // No param 22 write touches a stereo slot.
     expect(cmds.some((c) => c.name === "INPUT_SOURCE" && c.y >= 4)).toBe(false);
   });
@@ -848,7 +850,7 @@ describe("planToCommands", () => {
     const l = cmds.find((c) => c.name === "STREAM_SRC_L");
     const r = cmds.find((c) => c.name === "STREAM_SRC_R");
     expect(l!.vdValue).toBe((0x80000000 | 288) >>> 0);
-    expect(l!.request.uri).toBe("/vd/parameters/705:0:0?operation=value");
+    expect(uri(l!)).toBe("/vd/parameters/705:0:0?operation=value");
     expect(r!.vdValue).toBe((0x80000000 | 289) >>> 0);
   });
 
@@ -872,7 +874,7 @@ describe("planToCommands", () => {
     // L=MIX1 but R stayed on STEREO until the device panel rewrote both slots).
     const usbOut = (name: string) => [0, 1].map((y) => cmds.find((c) => c.name === name && c.y === y)!);
     expect(usbOut("USB_OUT_SRC_A").map((c) => c.vdValue)).toEqual([290, 291]);
-    expect(usbOut("USB_OUT_SRC_A").map((c) => c.request.uri)).toEqual([
+    expect(usbOut("USB_OUT_SRC_A").map((c) => uri(c))).toEqual([
       "/vd/parameters/732:0:0?operation=value",
       "/vd/parameters/732:0:1?operation=value",
     ]);

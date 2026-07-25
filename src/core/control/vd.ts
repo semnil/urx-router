@@ -1,6 +1,6 @@
 // vd protocol value layer: address building and value encoding for the URX
 // Device Center broker. This is the pure, device-independent backbone of live
-// control — it turns plan-domain values (dB, pan -100..+100, on/off) into the
+// control — it turns plan-domain values (dB, pan ±63, on/off) into the
 // integers the broker expects, and back. Transport (the WebSocket client) and
 // the plan→command translation build on top of this. Language-agnostic.
 //
@@ -420,23 +420,4 @@ export function tagPortRef(port: number): number {
 export function vdToPortRef(value: number): number | null {
   if (value === PORT_REF_NONE) return null;
   return value & PORT_REF_TAG ? value & 0x7fffffff : value;
-}
-
-/** Build a parameter address "{param_id}:{x}:{y}". x is 0 outside EQ bands. */
-export function vdAddr(paramId: number, y: number, x = 0): string {
-  return `${paramId}:${x}:${y}`;
-}
-
-/** A single value-set request: the broker REST-style uri plus its payload. */
-export interface VdSetRequest {
-  uri: string;
-  data: { current_value: number };
-}
-
-/** Build a value-set request for a parameter instance. */
-export function vdSet(paramId: number, y: number, value: number, x = 0): VdSetRequest {
-  return {
-    uri: `/vd/parameters/${vdAddr(paramId, y, x)}?operation=value`,
-    data: { current_value: value },
-  };
 }

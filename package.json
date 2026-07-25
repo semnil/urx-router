@@ -13,6 +13,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "build:demo": "tsc --noEmit && vite build --mode demo",
+    "typecheck:e2e": "tsc -p tsconfig.e2e.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "format": "prettier --write \"src/**/*.ts\" \"e2e/**/*.ts\" \"scripts/**/*.mjs\" \"*.ts\"",

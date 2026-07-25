@@ -48,7 +48,7 @@ export interface DeviceStubOptions {
 
 /**
  * Stub a connected device. Answers `vd_connect` / `vd_get` / `vd_set` and the
- * subscription commands, records every write and every dialog message, and
+ * constant boot-time queries, records every write and every dialog message, and
  * declines every confirm — a spec that reaches one has usually already failed to
  * abort, so agreeing would mask the thing under test. Use `writesOf` / `dialogsOf`
  * to read the record back.
@@ -73,11 +73,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         reset_storage_requested: false,
         "plugin:updater|check": null,
         vd_disconnect: null,
-        vd_set_str: null,
         vd_get_str: "",
-        vd_params_subscribe: null,
-        vd_params_unsubscribe: null,
-        vd_watch_link: null,
         ...(o.commands ?? {}),
       };
       const dialogs: string[] = [];

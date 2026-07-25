@@ -39,7 +39,7 @@ describe("sample rate — translate", () => {
     expect(sr).toHaveLength(1);
     expect(sr[0]!.vdValue).toBe(DEFAULT_SAMPLE_RATE);
     expect(sr[0]!.y).toBe(0);
-    expect(sr[0]!.request.uri).toBe(`/vd/parameters/${SAMPLE_RATE_ID}:0:0?operation=value`);
+    expect(sr[0]!.paramId).toBe(SAMPLE_RATE_ID);
   });
 
   it("emits the chosen rate as a raw Hz value for every selectable rate", () => {

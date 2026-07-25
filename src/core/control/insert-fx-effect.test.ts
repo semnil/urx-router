@@ -34,9 +34,7 @@ import {
 const model = getModel("URX44V");
 
 // First mono input channel that exposes the input insert FX (param 135).
-const monoInput =
-  model.nodes.find((n) => n.id === "ch_1" || n.id === "ch1" || n.id.startsWith("ch_1"))?.id ??
-  model.nodes.find((n) => n.kind === "channel")!.id;
+const monoInput = model.nodes.find((n) => n.id === "ch1")?.id ?? model.nodes.find((n) => n.kind === "channel")!.id;
 
 function engineWrites(cmds: VdCommand[], engine: number): Map<number, number> {
   const m = new Map<number, number>();
@@ -109,12 +107,12 @@ describe("insert-fx encodings (live calibration anchors)", () => {
 
 describe("insert-fx family / engine / slot mapping", () => {
   it("maps each selector enum to its family (unknown → null)", () => {
-    expect(insertFxFamilyOf(256)?.family).toBe("guitar-clean");
-    expect(insertFxFamilyOf(259)?.family).toBe("guitar-drive");
-    expect(insertFxFamilyOf(512)?.family).toBe("pitch");
-    expect(insertFxFamilyOf(1792)?.family).toBe("mbc");
-    expect(insertFxFamilyOf(1793)?.family).toBe("compander");
-    expect(insertFxFamilyOf(1794)?.family).toBe("compander");
+    expect(insertFxFamilyOf(256)).toBe("guitar-clean");
+    expect(insertFxFamilyOf(259)).toBe("guitar-drive");
+    expect(insertFxFamilyOf(512)).toBe("pitch");
+    expect(insertFxFamilyOf(1792)).toBe("mbc");
+    expect(insertFxFamilyOf(1793)).toBe("compander");
+    expect(insertFxFamilyOf(1794)).toBe("compander");
     expect(insertFxFamilyOf(999)).toBeNull();
   });
   it("compander binds 689 on input, 693 on output; others are fixed", () => {
@@ -176,7 +174,7 @@ describe("insert-fx effect emission", () => {
 
   it("MBC on STEREO master: writes to output engine 693", () => {
     const plan = emptyPlan("URX44V");
-    const stereo = model.nodes.find((n) => n.id === "stereo")?.id ?? model.nodes.find((n) => n.kind === "bus")!.id;
+    const stereo = model.nodes.find((n) => n.id === "bus.stereo")?.id ?? model.nodes.find((n) => n.kind === "bus")!.id;
     plan.nodeParams[stereo] = { insertFx: 1792, insertFxParams: { "9": 100 } }; // LOW threshold
     const cmds = planToCommands(model, plan);
     expect(engineWrites(cmds, ENGINE_OUTPUT).get(9)).toBe(100);
@@ -250,7 +248,7 @@ describe("insert-fx effect round-trip (emit∘readback fixed point)", () => {
   });
 
   it("MBC on the STEREO master round-trips per-band + global engine 693 slots", async () => {
-    const stereo = model.nodes.find((n) => n.id === "stereo")?.id ?? model.nodes.find((n) => n.kind === "bus")!.id;
+    const stereo = model.nodes.find((n) => n.id === "bus.stereo")?.id ?? model.nodes.find((n) => n.kind === "bus")!.id;
     const ctrl = (await import("./translate")).insertFxControl(model, stereo)!;
     const table = new Map<string, number>();
     table.set(`${ctrl.param}:0:${ctrl.instances[0]}`, 1792); // MBC selector on the STEREO bus

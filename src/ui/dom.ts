@@ -42,10 +42,11 @@ export function scrubFloat(v: number): number {
 // Capture phase, like the toolbar menus — console / graph handlers may stop
 // propagation, but a dismissal gesture must still reach the overlay. `keep`
 // names the press targets that must not dismiss (the overlay itself and its
-// toggle button); `inert` pauses dismissal without detaching (MIDI learn, an
-// update check in flight). Shared by the MIDI panel and the Preferences modal
-// so the phase/lifecycle contract lives in one place; attach on open, detach
-// on close.
+// toggle button); `inert` pauses dismissal without detaching (MIDI learn). The
+// Preferences update-check lock instead rides its requestClose choke point, not
+// `inert`. Shared by the MIDI panel, the Preferences modal and the licenses
+// modal so the phase/lifecycle contract lives in one place; attach on open,
+// detach on close.
 export function wireDismiss(opts: { keep: (target: Node) => boolean; inert?: () => boolean; close: () => void }): {
   attach: () => void;
   detach: () => void;

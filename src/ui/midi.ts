@@ -64,7 +64,7 @@ export class MidiControl {
   // Dev diagnostic: set `localStorage["urx-midi-log"] = "1"` (reload to apply) to
   // trace every rx/tx byte string and the engine's per-message decision to the
   // console — the ground truth for "this press did not land" reports.
-  private traceLog = localStorage.getItem("urx-midi-log") ? (msg: string) => console.debug("[midi]", msg) : undefined;
+  private traceLog = traceEnabled() ? (msg: string) => console.debug("[midi]", msg) : undefined;
   private learnOn = false;
   private armed: string | null = null;
   private closeInput: (() => void) | null = null;
@@ -514,7 +514,7 @@ export class MidiControl {
           () => ({ title: t().midi.modeTitle, who: label, label: t().midi.mode, desc: t().midi.modeDesc }),
           (mode) => this.patchMapping(mapping, { mode }),
         );
-      } else if (control?.kind === "toggle" && mapping.addr.type !== "pitchbend") {
+      } else if (control?.kind === "toggle" && mapping.addr.type !== "pitchbend" && mapping.addr.type !== "cc14") {
         // Button behavior, named after the sender's button type: Momentary
         // (edge, the default — flip per press) or Toggle (state — the value is
         // the state, for alternating senders like Stream Deck toggle buttons).
@@ -637,6 +637,16 @@ export class MidiControl {
   private hideInfo(): void {
     this.infoEl.hidden = true;
     this.infoEl.replaceChildren();
+  }
+}
+
+// Reading localStorage can throw where storage is blocked (private mode); the
+// trace flag is a dev diagnostic, so a failure just means "off".
+function traceEnabled(): boolean {
+  try {
+    return !!localStorage.getItem("urx-midi-log");
+  } catch {
+    return false;
   }
 }
 

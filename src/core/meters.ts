@@ -195,11 +195,6 @@ export class MeterStore {
       stereo: tap.r !== undefined,
     };
   }
-
-  /** Decoded reading for a node's tap by key (resolves the tap, then decodes). */
-  reading(nodeId: string, tapKey: string, modelId?: string): MeterReading | null {
-    return this.readingTap(tapFor(nodeId, tapKey, modelId) ?? null);
-  }
 }
 
 /** Distinct meter addresses ([meterId, x]) for the given taps. Used to scope the

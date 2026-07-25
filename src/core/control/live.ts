@@ -118,7 +118,7 @@ export class LiveSync {
    *  device-side change. An address we do not track returns false (treat as a
    *  change worth reconciling). */
   isEcho(paramId: number, x: number, y: number, value: number): boolean {
-    return this.snapshot.get(`${paramId}:${x}:${y}`) === value;
+    return this.snapshot.get(addrKey(paramId, x, y)) === value;
   }
 
   /** Stop syncing and cancel any pending flush. Does not touch the connection. */
