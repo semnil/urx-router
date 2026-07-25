@@ -6,7 +6,10 @@ dist/
 
 # Local editor / preview tooling (keep contents out of git, but track published
 # skills under .claude/skills/<name>/; their eval workspaces stay ignored).
+# settings.json is tracked so its hooks reach every clone — personal permissions
+# belong in the untracked settings.local.json.
 .claude/*
+!.claude/settings.json
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/urx-routing-planner/
