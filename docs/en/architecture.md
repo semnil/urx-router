@@ -497,6 +497,25 @@ input/output error formatter. Because the connect doubles as a
 pre-check, fetch and live sync connect *before* prompting to discard edits, so a no-device state is reported
 plainly without first disturbing the plan.
 
+### What the app models, and what it leaves to the unit
+
+Two kinds of device-side change are handled differently, and the distinction decides whether any code is
+written at all:
+
+- **The unit switches what a value reflects.** A meter that follows the output patch, the engine array an
+  insert-FX selector rebinds, the 4-band EQ the unit recomputes while 1-knob EQ is on. The app subscribes or
+  reads and does **not** model the switch: two copies of the same switching logic drift apart, and the unit is
+  the one that is right. So `insertFxParams` addresses the engine by effect family and lets the unit move the
+  pointer, and the EQ band commands are simply not emitted while 1-knob is on.
+- **The unit changes actual state.** Selecting an insert effect turns its ON switch on by itself. Here the
+  write model's contract applies instead — `planToCommands` writes absolute state, so the plan has to win: the
+  ON parameter is emitted *after* the selector to put the unit back where the plan says. Leaving this one to
+  the unit would silently make an effect the user switched off audible again.
+
+Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
+unit and the *other* parameters and readouts are observed — especially those downstream of the one being
+operated — before either behavior is implemented.
+
 ### Connection generations
 
 Only one connection is installed at a time (`VdState`), but the lifecycle of two actions can overlap: replacing the
