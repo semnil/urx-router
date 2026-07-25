@@ -141,6 +141,14 @@ English documentation lives under [docs/en/](docs/en/); the Japanese translation
 - [docs/en/console-sends.md](docs/en/console-sends.md) — the CONSOLE view's per-strip SENDS rack design
 - [docs/en/known-issues.md](docs/en/known-issues.md) — current limitations
 
+## Contributing
+
+Bug reports, feature requests, and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md). Verification on a URX22 or URX44 is especially valuable,
+since most parameters were confirmed on a URX44V. Security problems go through
+[SECURITY.md](SECURITY.md), and participation follows the
+[code of conduct](CODE_OF_CONDUCT.md).
+
 ## License
 
 [MIT](LICENSE) © semnil
