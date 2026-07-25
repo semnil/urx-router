@@ -1,0 +1,27 @@
+name: Docs
+
+# ci.yml deliberately skips Markdown-only changes, so documentation structure is
+# verified here instead. Runs on external PRs too, which the local Claude Code
+# hook cannot cover.
+on:
+  pull_request:
+    paths:
+      - '**/*.md'
+      - 'scripts/check-md-tables.mjs'
+      - '.github/workflows/docs.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**/*.md'
+      - 'scripts/check-md-tables.mjs'
+      - '.github/workflows/docs.yml'
+
+jobs:
+  markdown:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: node scripts/check-md-tables.mjs

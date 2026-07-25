@@ -16,6 +16,7 @@
     "typecheck:e2e": "tsc -p tsconfig.e2e.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "check:md": "node scripts/check-md-tables.mjs",
     "format": "prettier --write \"src/**/*.ts\" \"e2e/**/*.ts\" \"scripts/**/*.mjs\" \"*.ts\"",
     "preview": "vite preview --port 4173 --strictPort",
     "e2e:serve": "vite build && pnpm preview",
