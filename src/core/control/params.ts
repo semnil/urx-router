@@ -58,6 +58,18 @@ export interface ParamSpec {
    * an OSC-off scene) confirmed it is scene-external too.
    */
   sceneExternal?: true;
+  /**
+   * The parameter is not part of the plan at all: `planToCommands` never emits it
+   * and no `readback.ts` group reads it, so `sceneExternal`'s write-scope filter is
+   * inert for it. Its whole surface is a direct read/write pair — Follow USB in
+   * `client.ts`, the SETUP > GENERAL settings in `device-setup.ts`. The flag is what
+   * `device-setup.test.ts` derives its "never emitted" guarantee from, instead of a
+   * hand-copied list that fails nothing when someone forgets to extend it.
+   *
+   * Every plan-external param is also scene-external (the device holds it outside
+   * any scene), but not the reverse: SAMPLE_RATE is scene-external and emitted.
+   */
+  planExternal?: true;
 }
 
 // Confirmed anchors. Validated: their ids match both the original sniff and the
@@ -438,7 +450,7 @@ export const PARAMS = {
    *  device-side clock policy, not a routing choice, and emitting it would make
    *  every Live-sync flush re-assert it. The write path reads it as a pre-check and
    *  the badge writes it with a single vdSet. */
-  FOLLOW_USB: { id: 848, encoding: "bool", sceneExternal: true },
+  FOLLOW_USB: { id: 848, encoding: "bool", sceneExternal: true, planExternal: true },
   /** microSD Rec per-track record-source assign (y = track 0..15). Raw port ref in
    *  the bus/channel namespace (CH n = its input slot, STEREO = 256/257, MIX1 =
    *  288/289, MIX2 = 290/291, none = the uint32 sentinel). Writable + readable.
@@ -451,6 +463,62 @@ export const PARAMS = {
    *  live sync reads it back but never emits it. The dump mislabels it onoff /
    *  max 1; the live value (e.g. 5 = 10 tracks) is authoritative. */
   SD_REC_TRACK_COUNT: { id: 839, encoding: "raw", sceneExternal: true },
+
+  // ---- SETUP > GENERAL: device-wide utility settings -----------------------
+  // These are catalogued here because PARAMS is the one place an address may be
+  // written down, but NONE of them is emitted by planToCommands or read by
+  // readback. They belong to the unit, not to a routing plan: a plan travels
+  // between units as a file, a recent-files entry and a share URL, and writing
+  // one absolutely would push the author's screen brightness, menu language,
+  // power-off timer and knob assignments onto someone else's hardware. They also
+  // sit outside the self-test's perturbation walk, which nudges scalars by +1 —
+  // brightness 10 and the auto-power-off timer are exactly the values that must
+  // not be nudged. core/control/device-setup.ts owns reading and writing them,
+  // through the Follow USB (848) shape: bare vdGet / vdSet, no diff engine.
+  /** SETUP > Brightness > Screen (global, y0): raw 1..10, 1:1 with the readout.
+   *  The dump's min is 0, which the unit's own range never offers; the app clamps
+   *  to 1 rather than testing what a 0 does to a screen it cannot un-blank. */
+  BRIGHTNESS: { id: 758, encoding: "raw", sceneExternal: true, planExternal: true },
+  /** SETUP > Power Management > Auto Power Off [Enable] (global, y0). Factory ON;
+   *  the dump's default_value 0 is wrong (measured against a factory-init file). */
+  AUTO_POWER_OFF: { id: 760, encoding: "bool", sceneExternal: true, planExternal: true },
+  /** Auto Power Off [Time] (global, y0): raw minutes, 2..20, default 20. The dump's
+   *  max is 255, which the unit's own knob never reaches. */
+  AUTO_POWER_OFF_TIME: { id: 761, encoding: "raw", sceneExternal: true, planExternal: true },
+  /** SETUP > Peripheral > HDMI > HDCP [Enable] (global, y0). URX44V only. */
+  HDMI_HDCP: { id: 767, encoding: "bool", sceneExternal: true, planExternal: true },
+  /** SETUP > Peripheral > HDMI > [Input Audio Channels] (global, y0):
+   *  0 = 2 Channels (48 kHz ceiling), 1 = Multi Channels (up to 192 kHz / 8 ch,
+   *  down-mixed to stereo inside the mixer). URX44V only. This setting — not the
+   *  incoming signal — is what moves the HDMI rate ceiling. */
+  HDMI_INPUT_CHANNELS: { id: 768, encoding: "enum", sceneExternal: true, planExternal: true },
+  /** SETUP > User Defined Knobs (y = bank 0..3 × knob A..D, i.e. 0..15): the
+   *  Function / Parameter 1 / Parameter 2 triple, as strings. The device performs
+   *  no validation — it stores whatever is written, verbatim — so the writer owns
+   *  the exact user-guide spelling, and the three are always written together. */
+  UDK_FUNCTION: { id: 770, encoding: "raw", sceneExternal: true, planExternal: true },
+  UDK_PARAM1: { id: 771, encoding: "raw", sceneExternal: true, planExternal: true },
+  UDK_PARAM2: { id: 772, encoding: "raw", sceneExternal: true, planExternal: true },
+  /** SETUP > Date/Time > [Display Format] Date (global, y0): 0 = MM/DD/YYYY,
+   *  1 = DD/MM/YYYY, 2 = YYYY/MM/DD. URX44V and URX44 (the URX22 has no
+   *  Date/Time menu — it has no microSD recorder for the clock to stamp). */
+  DATE_FORMAT: { id: 787, encoding: "enum", sceneExternal: true, planExternal: true },
+  /** [Display Format] Time (global, y0): 0 = 24h, 1 = 12h. */
+  TIME_FORMAT: { id: 788, encoding: "enum", sceneExternal: true, planExternal: true },
+  /** SETUP > Date/Time > [Time Zone] (global, y0): an index into the unit's city
+   *  list (see control/timezones.ts). The broker stores an out-of-range index
+   *  verbatim instead of clamping, so the app is what keeps the value in range.
+   *  785 holds the city name for the panel but is a display mirror the panel alone
+   *  updates — never write it, and never read it back to confirm a write. */
+  TIME_ZONE: { id: 831, encoding: "raw", sceneExternal: true, planExternal: true },
+  /** SETUP > Language (global, y0): 0 = English, 1 = Japanese, 2 = Chinese
+   *  (Simplified). The value sticks immediately, but the unit's own screen may not
+   *  repaint in the new language until Language is touched on the panel once. */
+  DEVICE_LANGUAGE: { id: 795, encoding: "enum", sceneExternal: true, planExternal: true },
+  /** SETUP > Peripheral > USB Main > [Generic Driver Audio Channel Suppression]
+   *  (global, y0): 0 = None, 1 = 2 Channels (limits a generic-driver host such as
+   *  an iPad to 2 in / 2 out). */
+  USB_SUPPRESSION: { id: 812, encoding: "enum", sceneExternal: true, planExternal: true },
 } as const satisfies Record<string, ParamSpec>;
 
 export type ParamName = keyof typeof PARAMS;

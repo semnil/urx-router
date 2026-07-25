@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "../src/core/control/firmware";
+import type { ModelId } from "../src/models/types";
 
 /**
  * Boot-time Tauri IPC stub for desktop-only UI: seeds the language / model /
@@ -36,6 +37,10 @@ export async function stubTauriBoot(page: Page, commands: Record<string, unknown
 /** A device-connected Tauri stub: the boot half above, plus a vd link whose reads
  *  the spec supplies and whose writes and dialogs it can inspect afterwards. */
 export interface DeviceStubOptions {
+  /** The model both halves report: the stored UI selection and what vd_connect
+   *  answers. One option for both — a mismatch is refused before any read, so a
+   *  spec wanting one sets `urx-model` itself in its own init script. */
+  model?: ModelId;
   /** null = the firmware read did not land. Omitted = the verified version. */
   firmware?: string | null;
   /** Broker reads, by param id. Returning undefined falls through to `get`. */
@@ -64,7 +69,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
   await page.addInitScript(
     (o: DeviceStubOptions) => {
       localStorage.setItem("urx-lang", "en");
-      localStorage.setItem("urx-model", "URX44V");
+      localStorage.setItem("urx-model", o.model ?? "URX44V");
       localStorage.setItem("urx-rate", "48000");
       localStorage.setItem("urx-disclaimer-accepted", "1"); // skip the consent gate
       const constants: Record<string, unknown> = {
@@ -78,9 +83,15 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       };
       const dialogs: string[] = [];
       const writes: Array<[number, number]> = [];
-      const w = window as unknown as { __urxDialogs: string[]; __urxWrites: Array<[number, number]> };
+      const strWrites: Array<[number, number, string]> = [];
+      const w = window as unknown as {
+        __urxDialogs: string[];
+        __urxWrites: Array<[number, number]>;
+        __urxStrWrites: Array<[number, number, string]>;
+      };
       w.__urxDialogs = dialogs;
       w.__urxWrites = writes;
+      w.__urxStrWrites = strWrites;
       (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
         Channel: class {
           onmessage: (data: unknown) => void = () => {};
@@ -91,9 +102,10 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
             return Promise.resolve("Cancel");
           }
           if (cmd === "vd_connect") {
+            const model = o.model ?? "URX44V";
             return Promise.resolve({
-              model: "URX44V",
-              label: "URX44V",
+              model,
+              label: model,
               firmware: o.firmware,
               epoch: 1,
             });
@@ -105,6 +117,13 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
           }
           if (cmd === "vd_set") {
             writes.push([Number(args?.paramId), Number(args?.value)]);
+            return Promise.resolve(null);
+          }
+          // Recorded with its y: the string params that need it (CH SETTING names,
+          // the user-defined knob triples) are addressed per instance, so a spec
+          // asserting on them needs to see which slot was written.
+          if (cmd === "vd_set_str") {
+            strWrites.push([Number(args?.paramId), Number(args?.y), String(args?.value ?? "")]);
             return Promise.resolve(null);
           }
           return cmd in constants
@@ -120,6 +139,10 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
 /** Dialog messages the stub was asked to show, in order. */
 export const dialogsOf = (page: Page): Promise<string[]> =>
   page.evaluate(() => (window as unknown as { __urxDialogs: string[] }).__urxDialogs);
+
+/** Every vd_set_str the stub received, as [paramId, y, value]. */
+export const strWritesOf = (page: Page): Promise<Array<[number, number, string]>> =>
+  page.evaluate(() => (window as unknown as { __urxStrWrites: Array<[number, number, string]> }).__urxStrWrites);
 
 /** Every vd_set the stub received, as [paramId, value]. */
 export const writesOf = (page: Page): Promise<Array<[number, number]>> =>

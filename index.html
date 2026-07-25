@@ -129,6 +129,8 @@
               <button id="btn-write" class="menu-item" type="button" role="menuitem" disabled>Write to device</button>
               <span class="menu-sep" role="separator"></span>
               <button id="btn-midi" class="menu-item" type="button" role="menuitem">MIDI control</button>
+              <span class="menu-sep" role="separator"></span>
+              <button id="btn-device-setup" class="menu-item" type="button" role="menuitem">Device setup</button>
               <span class="menu-sep" role="separator" data-experimental-only hidden></span>
               <button id="btn-compare" class="menu-item" type="button" role="menuitem" data-experimental-only hidden>
                 Compare with device (experimental)
@@ -256,6 +258,19 @@
           <button id="licenses-close" type="button" class="consent-btn-primary"></button>
         </div>
       </div>
+    </div>
+    <div
+      id="device-setup-modal"
+      class="consent-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="device-setup-title"
+      hidden
+    >
+      <!-- Content is rebuilt by ui/device-setup.ts on every open, so it always
+           reflects the current language, the selected model's gating, and the
+           values just read from the device. -->
+      <div id="device-setup-box" class="consent-box prefs-box"></div>
     </div>
     <div id="prefs-modal" class="consent-scrim" role="dialog" aria-modal="true" aria-labelledby="prefs-title" hidden>
       <!-- Content is rebuilt by ui/prefs.ts on every open, so it always reflects

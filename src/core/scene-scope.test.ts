@@ -7,13 +7,15 @@ import { PARAMS } from "./control/params";
 import type { ParamSpec } from "./control/params";
 import { planToCommands } from "./control/translate";
 
-// The scene boundary measured by the scene recall audit (31 catalog names) plus
+// The scene boundary, in two groups so a reader can tell what is hardware-measured
+// from what is asserted. Together they are the contract: params.ts flags (the
+// write-side boundary) and scene-scope.ts (the plan-side boundary) must both track
+// them, so the two cannot drift apart silently.
+//
+// Measured by the scene recall audit (31 catalog names, URX44V, Standard Mode) plus
 // OSC_ON, which the .urxf format carries no descriptor for and which a one-item
-// recall measurement confirmed scene-external (URX44V, 2026-07-24). This list is
-// the contract: params.ts flags (the write-side boundary) and scene-scope.ts
-// (the plan-side boundary) must both track it, so the two cannot drift apart
-// silently.
-const SCENE_EXTERNAL_NAMES = [
+// recall measurement confirmed scene-external (URX44V, 2026-07-24).
+const AUDITED_SCENE_EXTERNAL = [
   "MONITOR_SRC_L",
   "MONITOR_SRC_R",
   "MONITOR_CUE_INTERRUPT",
@@ -47,6 +49,28 @@ const SCENE_EXTERNAL_NAMES = [
   "SAMPLE_RATE",
   "FOLLOW_USB",
 ].sort();
+
+// SETUP > GENERAL, grounded on the user guide's screen-category exclusion ("Settings
+// for the SETUP screen … are not saved" to a scene) rather than on the recall audit,
+// and never emitted by planToCommands either — see the planExternal flag, whose own
+// contract is pinned in control/device-setup.test.ts.
+const SETUP_SCENE_EXTERNAL = [
+  "BRIGHTNESS",
+  "AUTO_POWER_OFF",
+  "AUTO_POWER_OFF_TIME",
+  "HDMI_HDCP",
+  "HDMI_INPUT_CHANNELS",
+  "UDK_FUNCTION",
+  "UDK_PARAM1",
+  "UDK_PARAM2",
+  "DATE_FORMAT",
+  "TIME_FORMAT",
+  "TIME_ZONE",
+  "DEVICE_LANGUAGE",
+  "USB_SUPPRESSION",
+].sort();
+
+const SCENE_EXTERNAL_NAMES = [...AUDITED_SCENE_EXTERNAL, ...SETUP_SCENE_EXTERNAL].sort();
 
 describe("scene boundary contract", () => {
   it("params.ts flags exactly the audited scene-external set", () => {

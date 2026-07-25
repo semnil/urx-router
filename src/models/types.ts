@@ -83,6 +83,13 @@ export interface DeviceModel {
   rules: RoutingRule[];
   /** Mono-channel pairs (CH1/2, CH3/4) that share one input source selection. */
   channelPairs: [string, string][];
+  /** Hardware the model is fitted with. The routing graph expresses most model
+   *  differences as node presence, but these two also gate device settings that
+   *  have no node at all (the HDMI page, and the Date/Time menu — the clock exists
+   *  to date-stamp microSD recordings, so a model without the recorder has no such
+   *  menu), so they are carried here rather than restated per consumer. */
+  hasSD: boolean;
+  hasHDMI: boolean;
 }
 
 export function ref(nodeId: string, portId: string): string {

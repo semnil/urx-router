@@ -108,6 +108,9 @@ import { DeviceFollow } from "./core/control/follow";
 import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
 import { runPrepareModified } from "./core/control/prepare";
+import { DeviceSetupPanel } from "./ui/device-setup";
+import { readDeviceSetup, sendDeviceSetup } from "./core/control/device-setup";
+import type { DeviceSetup } from "./core/control/device-setup";
 
 // Clear persisted UI state (theme / model / meter points / consent gate / recent
 // files / inspector sections / user preferences) when the browser dev app is opened with ?reset (or
@@ -385,6 +388,10 @@ const graph = new Graph(graphHost, getModel(modelId), plan, {
 // Declared before the console so its learn hooks can close over the variable.
 let midi: MidiControl | null = null;
 
+// Device setup modal (the unit's SETUP > GENERAL). Desktop only, assigned in the
+// !DEMO block below; the language listener re-renders it through this handle.
+let deviceSetup: DeviceSetupPanel | null = null;
+
 // Mixer-style CONSOLE view: an alternate view of the same plan. Its edits go
 // through the same change funnel (markChanged) so Live sync mirrors them. The
 // live signal meters stream only while Live sync is on (consoleView.setLive).
@@ -560,7 +567,7 @@ function setLiveUi(on: boolean): void {
     tally.hidden = !on;
     if (on) tally.textContent = `${t().toolbar.liveTag} · ${liveDeviceLabel}`;
   }
-  for (const id of ["btn-fetch", "btn-write", "btn-selftest", "btn-open-settings", "btn-compare"]) {
+  for (const id of ["btn-fetch", "btn-write", "btn-selftest", "btn-open-settings", "btn-compare", "btn-device-setup"]) {
     const el = document.getElementById(id) as HTMLButtonElement | null;
     if (el) el.disabled = on;
   }
@@ -865,6 +872,7 @@ function applyStaticI18n(): void {
   $("btn-fetch").textContent = fetchAbort ? m.toolbar.fetchCancel : m.toolbar.fetchDevice;
   $("btn-write").textContent = writeAbort ? m.toolbar.writeCancel : m.toolbar.writeDevice;
   $("btn-midi").textContent = m.midi.menuItem;
+  $("btn-device-setup").textContent = m.deviceSetup.menuItem;
   $("btn-compare").textContent = compareAbort ? m.toolbar.compareCancel : m.toolbar.compare;
   $("btn-selftest").textContent = selfTestAbort ? m.toolbar.selfTestCancel : m.toolbar.selfTest;
   // Live-sync toggle keeps a static label; aria-pressed and the on-air tally
@@ -1464,6 +1472,26 @@ async function withDevice(
   }
 }
 
+// The pre-flight every device action that acts on the *current plan* runs: connect,
+// confirm an untested firmware, and refuse a device that is not the model on screen.
+// Fetch and Live sync deliberately stay out — they offer to switch the model instead
+// of refusing. Wraps withDevice so the three cannot drift apart across the four call
+// sites (write, compare, device setup read, device setup apply).
+async function withCheckedDevice(
+  connecting: string,
+  onError: (message: string) => string,
+  action: (device: DeviceSummary) => Promise<void>,
+): Promise<void> {
+  await withDevice(connecting, onError, async (device) => {
+    if (!(await confirmFirmware(device))) {
+      setStatus(t().status.canceled);
+      return;
+    }
+    if (!refuseModelMismatch(device, onError)) return;
+    await action(device);
+  });
+}
+
 // A failure report a device action produced (built while connected) but offers to
 // save after the connection is released — so the user's confirm + native save
 // dialog do not hold the broker connection open. Null when nothing failed.
@@ -1730,12 +1758,7 @@ if (!DEMO) {
       writeBtn.textContent = t().toolbar.writeCancel;
       let report: ErrorReport = null;
       try {
-        await withDevice(t().status.writeConnecting, t().status.writeError, async (device) => {
-          if (!(await confirmFirmware(device))) {
-            setStatus(t().status.canceled);
-            return;
-          }
-          if (!refuseModelMismatch(device, t().status.writeError)) return;
+        await withCheckedDevice(t().status.writeConnecting, t().status.writeError, async (device) => {
           // Scene scope drops SAMPLE_RATE from the write set, so there is no
           // rate to settle — the device keeps running at its own.
           const scope = getSettings().deviceScope;
@@ -1972,6 +1995,64 @@ if (!DEMO) {
   });
   $("btn-midi").addEventListener("click", () => midi?.togglePanel());
 
+  // Device setup: the unit's SETUP > GENERAL settings — brightness, auto power off,
+  // the date/time formats and time zone, the HDMI and USB Main pages, the menu
+  // language, and the user-defined knob assignments. None of them is represented by
+  // a node on the graph or a strip on the console, and none belongs to the plan: a
+  // plan travels between units as a file and a link, and writing one absolutely
+  // would push this operator's screen brightness and knob assignments onto someone
+  // else's hardware.
+  //
+  // Batch, not live: the screen opens on values just read, edits accumulate in the
+  // modal, and Apply sends only the differences. The read happens here rather than
+  // inside the panel because a failed read must leave the screen unopened — showing
+  // a half-established baseline invites applying a diff against values that were
+  // never read, which is what the standing device-link rule forbids.
+  //
+  // No faceplate readout of the unit's clock: the URX exposes no writable clock and
+  // does not take the time from a USB host either, so displaying a clock nobody can
+  // correct earns nothing. If a way to set it turns up, that readout is also what
+  // would make the Time Zone and Display Format rows tangible.
+  deviceSetup = new DeviceSetupPanel({
+    model: () => getModel(modelId),
+    confirmDiscard: () => confirmDialog(t().confirm.deviceSetupDiscard),
+    apply: async (writes, changed) => {
+      let applied = false;
+      await withCheckedDevice(
+        t().status.deviceSetupApplying,
+        (message) => t().error.deviceSetupWrite(message),
+        async () => {
+          await sendDeviceSetup(writes);
+          applied = true;
+          setStatus(t().status.deviceSetupApplied(changed));
+        },
+      );
+      return applied;
+    },
+  });
+
+  $("btn-device-setup").addEventListener("click", async () => {
+    // A live session holds the one connection, and these settings are outside the
+    // plan that session mirrors — so the menu entry is disabled while live
+    // (setLiveUi), and this is the belt for any path that reaches here anyway.
+    if (liveSessionUp) {
+      showError(t().error.notWhileLive);
+      return;
+    }
+    let setup: DeviceSetup | null = null;
+    await withCheckedDevice(
+      t().status.deviceSetupReading,
+      (message) => t().error.deviceSetupRead(message),
+      async () => {
+        setup = await readDeviceSetup(getModel(modelId));
+      },
+    );
+    if (setup) {
+      setStatus(t().status.deviceSetupRead);
+      deviceSetup?.open(setup);
+    }
+  });
+
   // Experimental-only menu group (its separator + the self-test): the self-test
   // is a diagnostic that briefly overwrites every parameter, so it stays behind
   // the flag — MIDI control, write, and live sync do not.
@@ -2090,12 +2171,7 @@ if (!DEMO) {
       // reports, so an indefinite modal does not hold the broker connection open.
       let report: string | null = null;
       try {
-        await withDevice(t().status.compareConnecting, t().status.compareError, async (device) => {
-          if (!(await confirmFirmware(device))) {
-            setStatus(t().status.canceled);
-            return;
-          }
-          if (!refuseModelMismatch(device, t().status.compareError)) return;
+        await withCheckedDevice(t().status.compareConnecting, t().status.compareError, async (device) => {
           const model = getModel(modelId);
           const startedAt = performance.now();
           const { entries, errors } = await comparePlan(model, plan, signal);
@@ -2357,13 +2433,16 @@ onLangChange(() => {
   graph.relocalizeChrome();
   midi?.relocalize();
   // The language row lives in the Preferences modal, so the switch happens with
-  // the modal open — rebuild it in the new language.
+  // the modal open — rebuild it in the new language. Device setup can be open at
+  // the same time (its notes are translated even though its labels are not).
   prefs.refresh();
+  deviceSetup?.refresh();
   setStatus(t().status.language(LANG_NAMES[getLang()]));
 });
 
 // True while any modal overlay is up: the consent-scrim dialogs (consent, load
-// report, rate choice, licenses, Preferences, and the drag overlay) share the class
+// report, rate choice, licenses, Preferences, Device setup, and the drag overlay)
+// share the class
 // and toggle [hidden], and the MIDI panel is the one non-scrim overlay.
 function modalOpen(): boolean {
   if (document.querySelector(".consent-scrim:not([hidden])")) return true;
