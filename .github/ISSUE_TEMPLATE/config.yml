@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Security vulnerability
-    url: https://github.com/semnil/urx-router/security/advisories/new
-    about: Report it privately through GitHub instead of opening an issue.
+  - name: Feedback without a GitHub account / GitHub アカウント不要の窓口
+    url: https://github.com/semnil/urx-router/issues/7
+    about: Send a report or question through a form — no sign-in required. ログイン不要のフォームです。
   - name: Documentation
     url: https://github.com/semnil/urx-router/tree/main/docs/en
     about: Architecture, the device routing model, the CONSOLE sends design, and current known issues.
