@@ -128,6 +128,13 @@ URX Router を使用することで、このリスクを受諾したものとす
 - [docs/ja/console-sends.md](docs/ja/console-sends.md) — CONSOLE ビューのストリップ内センドラック設計
 - [docs/ja/known-issues.md](docs/ja/known-issues.md) — 現時点の制限事項
 
+## コントリビューション
+
+バグ報告・機能要望・プルリクエストを歓迎する — [CONTRIBUTING.ja.md](CONTRIBUTING.ja.md) を参照。
+パラメータの大半は URX44V で確認したものであるため、URX22 / URX44 での検証は特に価値がある。
+セキュリティ上の問題は [SECURITY.ja.md](SECURITY.ja.md) の手順で報告すること。参加にあたっては
+[行動規範](CODE_OF_CONDUCT.ja.md)に従う。
+
 ## ライセンス
 
 [MIT](LICENSE) © semnil

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/semnil/urx-router/security/advisories/new
+    about: Report it privately through GitHub instead of opening an issue.
+  - name: Documentation
+    url: https://github.com/semnil/urx-router/tree/main/docs/en
+    about: Architecture, the device routing model, the CONSOLE sends design, and current known issues.
+  - name: Browser demo
+    url: https://urx-router.semnil.com
+    about: Reproduce or try something out without installing anything.

@@ -1,0 +1,87 @@
+name: Bug report
+description: Something in URX Router behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. English or Japanese are both fine — 日本語で構いません。
+
+        **Security problems** go through the [security policy](https://github.com/semnil/urx-router/security/policy)
+        instead, not this form.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a new URX44V plan
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: Build
+      options:
+        - Desktop app (Windows 11)
+        - Desktop app (macOS, Apple silicon)
+        - Browser demo (urx-router.semnil.com)
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: URX Router version
+      description: Shown at the bottom of the Preferences modal, behind the toolbar gear.
+    validations:
+      required: true
+  - type: dropdown
+    id: model
+    attributes:
+      label: Device model
+      options:
+        - URX44V
+        - URX44
+        - URX22
+        - Not model-specific
+    validations:
+      required: true
+  - type: dropdown
+    id: link
+    attributes:
+      label: Device connection at the time
+      options:
+        - No device connected (planning only)
+        - Connected, read from device
+        - Connected, wrote a plan
+        - Connected, Live sync active
+        - Connected, external MIDI control active
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: System firmware version
+      description: Only if a device was connected. URX Router warns on connect when it differs from the validated version.
+  - type: textarea
+    id: plan
+    attributes:
+      label: Plan that reproduces it
+      description: A share URL, or the plan JSON attached as a file. Optional, but it usually saves a round trip.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues
+          required: true
+        - label: I checked the [known issues](https://github.com/semnil/urx-router/blob/main/docs/en/known-issues.md)
+          required: true
