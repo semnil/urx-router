@@ -28,6 +28,9 @@ import {
   MBC_XOVER_LM_RANGE,
   MBC_XOVER_MH_RANGE,
   MBC_RELEASE_MS,
+  MBC_ONE_KNOB_LEVEL_MAX,
+  MBC_OUT_GAIN_RAW_MIN,
+  MBC_OUT_GAIN_RAW_MAX,
   SEMITONE_NAMES,
   PITCH_NOTE_SLOTS,
   PITCH_SCALE_SLOT,
@@ -41,7 +44,6 @@ import {
   PITCH_SCALE_PENTATONIC,
   PITCH_MIDI_ENABLE_SLOT,
   PITCH_MIDI_REALTIME_SLOT,
-  type InsertFxFamily,
   type InsertFxParamDesc,
   type MbcBandKey,
 } from "../core/control/insert-fx-effect";
@@ -59,7 +61,6 @@ import {
 import type { DynField, EqControl } from "../core/control/translate";
 import {
   busBalance,
-  busEqOn,
   busFader,
   busMasterOn,
   channelControl,
@@ -465,11 +466,8 @@ export function renderInspector(
       // selector only declares the new type here.
       if (cc?.hasMicStrip) {
         input.append(
-          selectControl(
-            m.inspector.compEqType,
-            COMP_EQ_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
-            String(compEqType),
-            (v) => actions.onUpdateNodeParams(node.id, { compEqType: Number(v) }),
+          enumSelect(m.inspector.compEqType, COMP_EQ_OPTIONS, compEqType, (v) =>
+            actions.onUpdateNodeParams(node.id, { compEqType: v }),
           ),
         );
       }
@@ -564,9 +562,8 @@ export function renderInspector(
       const oeq = outputEq(node.id);
       if (oeq) {
         const on = np.eqOn ?? true;
-        const hasEqToggle = busEqOn(node.id);
-        const { el, body } = section(m.inspector.eqOn, hasEqToggle ? { open: on, on, key: "eqOn" } : { key: "eqOn" });
-        if (hasEqToggle) body.append(sectionToggle(node.id, "eqOn", on, actions));
+        const { el, body } = section(m.inspector.eqOn, { open: on, on, key: "eqOn" });
+        body.append(sectionToggle(node.id, "eqOn", on, actions));
         body.append(eqOneKnobBlock(node.id, false, np, plan, actions, m));
         if (!np.eqOneKnob?.on) body.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
         host.append(el);
@@ -635,12 +632,7 @@ export function renderInspector(
       // Frequency / Level row (Frequency shows only in Sine Wave mode).
       const ps = section(m.inspector.parameters, { key: "params" });
       ps.body.append(
-        selectControl(
-          m.inspector.oscMode,
-          OSC_MODE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
-          String(osc.mode ?? OSC_MODE_SINE),
-          (v) => setOsc({ mode: Number(v) }),
-        ),
+        enumSelect(m.inspector.oscMode, OSC_MODE_OPTIONS, osc.mode ?? OSC_MODE_SINE, (v) => setOsc({ mode: v })),
       );
       ps.body.append(boolToggle(m.inspector.oscOn, osc.on ?? false, (v) => setOsc({ on: v })));
       const oscMode = osc.mode ?? OSC_MODE_SINE;
@@ -1054,7 +1046,7 @@ function paramControl(
   if (field === "tap") return tapControl(conn, onUpdate, tapEditable);
   return field === "level"
     ? levelSlider(t().inspector.level, conn.params?.level ?? 0, (v) => onUpdate(conn.from, conn.to, { level: v }))
-    : sliderControl(conn, onUpdate, "pan", panLabel, PAN_MIN, PAN_MAX, 1, 0, formatPan);
+    : panSlider(conn, onUpdate, panLabel);
 }
 
 // Native <input type=range> ignores the scroll wheel, so wire it up via onWheelStep:
@@ -1074,7 +1066,7 @@ function wheelStep(slider: HTMLInputElement): void {
 
 // A labeled range slider that updates its value readout and reports the numeric
 // value on every input. Mutates in place (no re-render) so it keeps focus while
-// dragging. Shared by the connection (sliderControl) and node-level controls.
+// dragging. Shared by the connection (panSlider) and node-level controls.
 // `fine` opts the slider into the Shift-held fine-tuning mode (only params with a
 // device-verified fine grid pass it): the fine tracker swaps the step attribute
 // via the data attributes, and the row grows the FINE tag CSS lights while armed.
@@ -1110,19 +1102,11 @@ function rangeSlider(
   return row;
 }
 
-function sliderControl(
-  conn: PlanConnection,
-  onUpdate: UpdateParams,
-  key: "level" | "pan",
-  label: string,
-  min: number,
-  max: number,
-  step: number,
-  fallback: number,
-  fmt: (v: number) => string,
-): HTMLElement {
-  return rangeSlider(label, min, max, step, conn.params?.[key] ?? fallback, fmt, (v) =>
-    onUpdate(conn.from, conn.to, { [key]: v }),
+// The connection PAN / BALANCE slider (the only per-send slider besides LEVEL):
+// signed ±63, center-0 default, formatted L / C / R.
+function panSlider(conn: PlanConnection, onUpdate: UpdateParams, label: string): HTMLElement {
+  return rangeSlider(label, PAN_MIN, PAN_MAX, 1, conn.params?.pan ?? 0, formatPan, (v) =>
+    onUpdate(conn.from, conn.to, { pan: v }),
   );
 }
 
@@ -1240,14 +1224,7 @@ function eqBandBlock(
     if (band.type !== null) {
       effType = bv.type ?? EQ_TYPE_SHELVING;
       const opts = band.name === "low" ? EQ_TYPE_LOW_OPTIONS : EQ_TYPE_HIGH_OPTIONS;
-      panel.append(
-        selectControl(
-          m.inspector.filterType,
-          opts.map((o) => ({ value: String(o.value), label: o.label })),
-          String(effType),
-          (v) => setBand(band.index, { type: Number(v) }),
-        ),
-      );
+      panel.append(enumSelect(m.inspector.filterType, opts, effType, (v) => setBand(band.index, { type: v })));
     }
     // Device EQ screen reads each band's values Q, Freq, Gain (left → right); Q is
     // shown only for a peaking band, gain only when the band is not a pass filter.
@@ -1339,12 +1316,7 @@ function fxEffectSection(
   const { el, body } = section(t.title, { key: "fxEffect" });
 
   body.append(
-    selectControl(
-      t.effectType,
-      fxEffectTypes(fxIndex).map((o) => ({ value: String(o.value), label: o.label })),
-      String(type),
-      (v) => mergeFxEffect(actions, plan, nodeId, { type: Number(v) }),
-    ),
+    enumSelect(t.effectType, fxEffectTypes(fxIndex), type, (v) => mergeFxEffect(actions, plan, nodeId, { type: v })),
   );
   body.append(boolToggle(t.effectOn, fx.on ?? true, (v) => mergeFxEffect(actions, plan, nodeId, { on: v })));
   body.append(
@@ -1369,14 +1341,7 @@ function fxEffectSection(
     if (d.control === "toggle") {
       body.append(boolToggle(label, cur !== 0, (v) => mergeFxParam(actions, plan, nodeId, d.key, v ? 1 : 0)));
     } else if (d.control === "select") {
-      body.append(
-        selectControl(
-          label,
-          (d.options ?? []).map((o) => ({ value: String(o.value), label: o.label })),
-          String(cur),
-          (v) => mergeFxParam(actions, plan, nodeId, d.key, Number(v)),
-        ),
-      );
+      body.append(enumSelect(label, d.options ?? [], cur, (v) => mergeFxParam(actions, plan, nodeId, d.key, v)));
     } else {
       body.append(
         rangeSlider(
@@ -1386,7 +1351,12 @@ function fxEffectSection(
           d.rawStep ?? 1,
           cur,
           (r) => (d.format ? d.format(r, ctx) : String(r)),
-          (v) => mergeFxParam(actions, plan, nodeId, d.key, v),
+          (v) => {
+            // Keep the sibling snapshot live so another param's readout (e.g. the
+            // REV-X Reverb Time folding in Room Size) reflects this edit at once.
+            ctx[d.key] = v;
+            mergeFxParam(actions, plan, nodeId, d.key, v);
+          },
         ),
       );
     }
@@ -1430,14 +1400,7 @@ function appendInsertFxDesc(
   if (desc.control === "toggle") {
     body.append(boolToggle(label, cur !== 0, (v) => set(v ? 1 : 0)));
   } else if (desc.control === "select") {
-    body.append(
-      selectControl(
-        label,
-        (desc.options ?? []).map((o) => ({ value: String(o.value), label: o.label })),
-        String(cur),
-        (v) => set(Number(v)),
-      ),
-    );
+    body.append(enumSelect(label, desc.options ?? [], cur, set));
   } else {
     body.append(
       rangeSlider(
@@ -1474,14 +1437,14 @@ function insertFxEffectSection(
   const t = m.inspector.insertFxEffect;
   const { el, body } = section(t.title, { key: "insertFxEffect" });
 
-  if (fam.family === "mbc") {
+  if (fam === "mbc") {
     renderMbc(body, nodeId, plan, actions, t);
-  } else if (fam.family === "pitch") {
+  } else if (fam === "pitch") {
     for (const d of insertFxParams("pitch")) appendInsertFxDesc(body, d, nodeId, plan, actions, t);
     renderPitchScale(body, nodeId, plan, actions, t);
     renderPitchMidi(body, nodeId, plan, actions, t);
   } else {
-    for (const d of insertFxParams(fam.family as InsertFxFamily)) appendInsertFxDesc(body, d, nodeId, plan, actions, t);
+    for (const d of insertFxParams(fam)) appendInsertFxDesc(body, d, nodeId, plan, actions, t);
   }
   return el;
 }
@@ -1504,7 +1467,7 @@ function renderMbc(
     rangeSlider(
       t.params.oneKnobLevel,
       0,
-      48,
+      MBC_ONE_KNOB_LEVEL_MAX,
       1,
       insertFxVal(plan, nodeId, MBC_GLOBAL.oneKnobLevel, 0),
       (r) => String(r),
@@ -1574,8 +1537,14 @@ function renderMbc(
     ),
   );
   body.append(
-    rangeSlider(t.params.outGain, 52, 76, 1, insertFxVal(plan, nodeId, MBC_GLOBAL.outGain, 68), mbcOutGainLabel, (v) =>
-      set(MBC_GLOBAL.outGain, v),
+    rangeSlider(
+      t.params.outGain,
+      MBC_OUT_GAIN_RAW_MIN,
+      MBC_OUT_GAIN_RAW_MAX,
+      1,
+      insertFxVal(plan, nodeId, MBC_GLOBAL.outGain, 68),
+      mbcOutGainLabel,
+      (v) => set(MBC_GLOBAL.outGain, v),
     ),
   );
 }
@@ -1759,11 +1728,11 @@ function ssmcsMasterBlock(
   const frag = document.createDocumentFragment();
   const s = np.ssmcs ?? SSMCS_INITIAL;
   frag.append(
-    selectControl(
+    enumSelect(
       m.inspector.ssmcs.sweetSpotData,
-      SWEET_SPOT_DATA_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
-      String(s.sweetSpotData ?? SSMCS_INITIAL.sweetSpotData),
-      (v) => mergeSsmcs(actions, plan, nodeId, { sweetSpotData: Number(v) }),
+      SWEET_SPOT_DATA_OPTIONS,
+      s.sweetSpotData ?? SSMCS_INITIAL.sweetSpotData,
+      (v) => mergeSsmcs(actions, plan, nodeId, { sweetSpotData: v }),
     ),
   );
   frag.append(
@@ -1848,14 +1817,7 @@ function ssmcsCompBlock(
       (v) => setComp({ ratio: v }),
     ),
   );
-  frag.append(
-    selectControl(
-      m.inspector.dyn.knee,
-      COMP_KNEE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
-      String(c.knee ?? ci.knee),
-      (v) => setComp({ knee: Number(v) }),
-    ),
-  );
+  frag.append(enumSelect(m.inspector.dyn.knee, COMP_KNEE_OPTIONS, c.knee ?? ci.knee, (v) => setComp({ knee: v })));
   const si = SSMCS_INITIAL.sc;
   const sc = np.ssmcs?.sc ?? si;
   const setSc = (patch: Record<string, number | boolean>): void => mergeSsmcsSub(actions, plan, nodeId, "sc", patch);
@@ -1965,12 +1927,7 @@ function compDetailBlock(
     frag.append(dynFieldSlider(f, m, compVals[f.key], (key, v) => setComp({ [key]: v })));
   }
   frag.append(
-    selectControl(
-      m.inspector.dyn.knee,
-      COMP_KNEE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
-      String(comp.knee ?? COMP_KNEE_DEFAULT),
-      (v) => setComp({ knee: Number(v) }),
-    ),
+    enumSelect(m.inspector.dyn.knee, COMP_KNEE_OPTIONS, comp.knee ?? COMP_KNEE_DEFAULT, (v) => setComp({ knee: v })),
   );
   return frag;
 }

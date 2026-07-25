@@ -39,6 +39,7 @@ import { canConnect, partnerChannel } from "../routing";
 import { vdConnect, vdDisconnect } from "../platform";
 import {
   BUS_TYPE_OPTIONS,
+  DELAY_FRAME_RATE_OPTIONS,
   EQ_ONE_KNOB_TYPE_MONO_OPTIONS,
   EQ_ONE_KNOB_TYPE_WIDE_OPTIONS,
   INSERT_FX_NONE,
@@ -136,6 +137,7 @@ const ENUM_SWEEP: Record<string, number[]> = {
   type: [0, 1, 2],
   busType: BUS_TYPE_OPTIONS.map((o) => o.value),
   recPoint: REC_POINT_OPTIONS.map((o) => o.value),
+  frameRate: DELAY_FRAME_RATE_OPTIONS.map((o) => o.value),
 };
 // fxEffect / insertFxParams are skipped wholesale: their values are raw engine-
 // array slots holding bounded enums and index tables (SP Type, Ratio index, Amp
@@ -152,7 +154,18 @@ const ENUM_SWEEP: Record<string, number[]> = {
 // toggling it resets the secondary channel and rejects independent writes to it
 // while linked — and panBal is a 0/1 enum only meaningful while linked, so the
 // generic "+1" perturb drives it out of range. Both round-trip in value-coverage.
-const SKIP = new Set(["insertFx", "insertFxParams", "autoMakeup", "oneKnob", "fxEffect", "stereoLink", "panBal"]);
+// comp.oneKnobLevel is a bounded 0..100 raw (not a small enum), so the "+1" nudge
+// runs it past 100 when captured at max; skip it (its round-trip is value-covered).
+const SKIP = new Set([
+  "insertFx",
+  "insertFxParams",
+  "autoMakeup",
+  "oneKnob",
+  "oneKnobLevel",
+  "fxEffect",
+  "stereoLink",
+  "panBal",
+]);
 
 // Enum-sweep floor: the max option-list length across every swept enum (today
 // the 8 input insert-FX options), so every option of every swept enum is written
@@ -356,6 +369,27 @@ export function perturbedPlan(model: DeviceModel, original: Plan, pass: number, 
 }
 
 /**
+ * The connect-time capture shared by the self-test and the audit-prep writer
+ * (prepare.ts): verify the just-connected device matches `model`, then read its
+ * current state into a fresh plan. Returns whether the model matched (`ok`), the
+ * captured plan, and the read's applied count / errors — the model-mismatch
+ * message is already in `errors`. The caller owns connect + disconnect and its own
+ * cancel handling: a cancel throws out of applyDeviceState and propagates.
+ */
+export async function captureDeviceState(
+  model: DeviceModel,
+  deviceModel: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; plan: Plan; applied: number; errors: string[] }> {
+  const plan = emptyPlan(model.id);
+  if (deviceModel !== model.id) {
+    return { ok: false, plan, applied: 0, errors: [`connected device is ${deviceModel}, not ${model.id}`] };
+  }
+  const r = await applyDeviceState(model, plan, signal);
+  return { ok: true, plan, applied: r.applied, errors: r.errors };
+}
+
+/**
  * Run the device round-trip self-test. Connects, captures the device state, then
  * for each sweep pass writes a (silent) perturbed copy and verifies the device
  * matches it; finally restores the original — always disconnecting. Read/send
@@ -409,17 +443,14 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300, signal?: A
   const device = await vdConnect();
   report.device = device.model;
   try {
-    if (device.model !== model.id) {
-      report.errors.push(`connected device is ${device.model}, not ${model.id}`);
-      return report;
-    }
-    // 1. Capture the current device state.
+    // 1. Capture the current device state (the connect prologue shared with prepare.ts).
     report.phase = "readback";
-    const original = emptyPlan(model.id);
-    const r0 = await phaseStep(applyDeviceState(model, original, signal));
-    if (!r0) return report;
-    report.applied = r0.applied;
-    report.errors.push(...r0.errors);
+    const cap = await phaseStep(captureDeviceState(model, device.model, signal));
+    if (!cap) return report; // cancelled during capture
+    report.applied = cap.applied;
+    report.errors.push(...cap.errors);
+    if (!cap.ok) return report; // connected device is not this model
+    const original = cap.plan;
 
     // 2. Sweep: each pass writes a silent perturbed plan (converging, so params
     // the device resets as a side effect of a mode change are re-sent) and the

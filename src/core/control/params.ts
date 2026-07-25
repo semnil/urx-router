@@ -1,17 +1,8 @@
 // Catalog of confirmed URX44V control parameters. Each entry binds a semantic
-// name to the broker's numeric param_id, the instance axis its y index runs over,
-// and the value encoding (see vd.ts). Only parameters validated against the
-// broker dump (reference/work/vd/vd-params.md)
+// name to the broker's numeric param_id and the value encoding (see vd.ts). Only
+// parameters validated against the broker dump (reference/work/vd/vd-params.md)
 // are listed here; inferred-but-unconfirmed ids are deliberately omitted so live
 // control never writes a guessed address to hardware.
-
-/**
- * Instance dimension a parameter's y index addresses:
- *   input  — mixer input channel, y = 0..11
- *   output — mixer output, y = 0..7
- *   global — a single fixed slot or small fixed set (e.g. monitor y = 0..3)
- */
-export type ParamAxis = "input" | "output" | "global";
 
 /** Value encoding, mapping to the converters in vd.ts. */
 export type ParamEncoding =
@@ -41,7 +32,6 @@ export type ParamEncoding =
 export interface ParamSpec {
   /** Broker param_id (first field of the "{id}:{x}:{y}" address). */
   id: number;
-  axis: ParamAxis;
   encoding: ParamEncoding;
   /**
    * Writing this param makes the device reset dependent params as a side effect
@@ -74,239 +64,240 @@ export interface ParamSpec {
 // /vd/parameters descriptor (table_id + min/max/default).
 export const PARAMS = {
   /** Input channel main fader → STEREO (level_gain, default 0 dB). */
-  CH_FADER: { id: 139, axis: "input", encoding: "level", follow: "direct" },
+  CH_FADER: { id: 139, encoding: "level", follow: "direct" },
   /** Input channel ON / mute (default ON). */
-  CH_ON: { id: 140, axis: "input", encoding: "bool", follow: "direct" },
+  CH_ON: { id: 140, encoding: "bool", follow: "direct" },
   /** Input channel → STEREO bus assign ON, post-fader (default ON). Independent of
    *  CH_ON (the channel master): this only gates the send into the STEREO main mix.
    *  Mono id 142; stereo channels use 269, FX channels 340 — all emitted under this
    *  one name (the id comes from channelControl / FX_STEREO_ASSIGN_ON). Added by
    *  firmware V1.3 (SEND TO STEREO [ON]); confirmed on URX44V (2026-06-30, LCD toggle
    *  → 142/269/340 track 1↔0; max=1 def=1, software write lands). */
-  STEREO_ASSIGN_ON: { id: 142, axis: "input", encoding: "bool", follow: "direct" },
+  STEREO_ASSIGN_ON: { id: 142, encoding: "bool", follow: "direct" },
   /** Input channel PAN/BAL (±63). */
-  CH_PAN: { id: 141, axis: "input", encoding: "pan", follow: "direct" },
+  CH_PAN: { id: 141, encoding: "pan", follow: "direct" },
   /** Input channel HPF ON. */
-  HPF_ON: { id: 25, axis: "input", encoding: "bool" },
+  HPF_ON: { id: 25, encoding: "bool" },
   /** Input channel HPF cutoff frequency (40 … 120 Hz). Confirmed by live scan. */
-  HPF_FREQ: { id: 26, axis: "input", encoding: "freq" },
+  HPF_FREQ: { id: 26, encoding: "freq" },
   /** Input channel COMP/EQ type: COMP->EQ vs SSMCS (MONO IN channels only). */
-  COMP_EQ_TYPE: { id: 21, axis: "input", encoding: "enum", sideEffect: true },
+  COMP_EQ_TYPE: { id: 21, encoding: "enum", sideEffect: true },
   // Channel-strip section ON toggles. GATE is MONO IN only and type-independent;
   // COMP/EQ are MONO IN only and SWAP param banks with the COMP/EQ type (the SSMCS
   // bank uses different ids and inverted polarity). EQ also exists on every stereo
   // channel. Polarity is mixed (verified by live scan), so the resolver carries
   // each toggle's onValue. (channelSections() picks the bank from the type.)
   /** MONO IN gate ON (1 = on; type-independent). */
-  GATE_ON: { id: 28, axis: "input", encoding: "bool" },
+  GATE_ON: { id: 28, encoding: "bool" },
   /** MONO IN compressor ON, COMP->EQ bank (1 = on). */
-  COMP_ON: { id: 34, axis: "input", encoding: "bool" },
+  COMP_ON: { id: 34, encoding: "bool" },
   /** MONO IN EQ ON, COMP->EQ bank (1 = on). */
-  EQ_ON: { id: 44, axis: "input", encoding: "bool" },
+  EQ_ON: { id: 44, encoding: "bool" },
   /** MONO IN compressor ON, SSMCS bank (0 = on, inverted). */
-  SSMCS_COMP_ON: { id: 94, axis: "input", encoding: "bool" },
+  SSMCS_COMP_ON: { id: 94, encoding: "bool" },
   /** MONO IN EQ ON, SSMCS bank (0 = on, inverted). */
-  SSMCS_EQ_ON: { id: 106, axis: "input", encoding: "bool" },
+  SSMCS_EQ_ON: { id: 106, encoding: "bool" },
   /** Stereo channel EQ ON (1 = on), indexed by stereo position. */
-  STEREO_CH_EQ_ON: { id: 213, axis: "global", encoding: "bool" },
+  STEREO_CH_EQ_ON: { id: 213, encoding: "bool" },
   // SSMCS (Sweet Spot Morphing Channel Strip) bank, MONO IN only — active when
   // COMP_EQ_TYPE = SSMCS. Confirmed + calibrated by live LCD readback. The comp/EQ
   // section ON toggles reuse SSMCS_COMP_ON (94, inverted) / SSMCS_EQ_ON (106,
   // inverted) above. All continuous values are RAW broker integers (the device
   // curves are non-linear; vd.ts holds the display formatters). Sweet Spot Data
-  // (param 91) is a string preset index the numeric IPC cannot carry, so it is
-  // modeled in the plan/UI but deliberately NOT in this write catalog.
+  // (param 91, SWEET_SPOT_DATA below) is a string preset index the numeric IPC
+  // cannot carry, so it has a catalog entry but rides the string-write path
+  // (planToNameWrites / vd_set_str), not the numeric VdCommand path.
   /** SSMCS section ON (1 = on). */
-  SSMCS_ON: { id: 89, axis: "input", encoding: "bool" },
+  SSMCS_ON: { id: 89, encoding: "bool" },
   /** SSMCS Comp Drive (raw 0..200; display = raw/20). */
-  SSMCS_COMP_DRIVE: { id: 95, axis: "input", encoding: "raw" },
+  SSMCS_COMP_DRIVE: { id: 95, encoding: "raw" },
   /** SSMCS Morphing position (raw 0..120). */
-  SSMCS_MORPHING: { id: 93, axis: "input", encoding: "raw" },
+  SSMCS_MORPHING: { id: 93, encoding: "raw" },
   /** SSMCS Out Gain (raw 0..360; 180 = 0 dB). */
-  SSMCS_OUT_GAIN: { id: 117, axis: "input", encoding: "raw" },
+  SSMCS_OUT_GAIN: { id: 117, encoding: "raw" },
   /** SSMCS comp attack (raw 57..283; logarithmic 0.092..80 ms). */
-  SSMCS_COMP_ATTACK: { id: 96, axis: "input", encoding: "raw" },
+  SSMCS_COMP_ATTACK: { id: 96, encoding: "raw" },
   /** SSMCS comp release (raw 24..300; logarithmic 9.3..999 ms). */
-  SSMCS_COMP_RELEASE: { id: 97, axis: "input", encoding: "raw" },
+  SSMCS_COMP_RELEASE: { id: 97, encoding: "raw" },
   /** SSMCS comp ratio (raw 0..120; non-linear 1.0..∞:1). */
-  SSMCS_COMP_RATIO: { id: 98, axis: "input", encoding: "raw" },
+  SSMCS_COMP_RATIO: { id: 98, encoding: "raw" },
   /** SSMCS comp knee (0 = Soft / 1 = Medium / 2 = Hard). */
-  SSMCS_COMP_KNEE: { id: 99, axis: "input", encoding: "enum" },
+  SSMCS_COMP_KNEE: { id: 99, encoding: "enum" },
   /** SSMCS comp threshold (raw 0..200; device-internal, not on the LCD). */
-  SSMCS_COMP_THRESHOLD: { id: 100, axis: "input", encoding: "raw" },
+  SSMCS_COMP_THRESHOLD: { id: 100, encoding: "raw" },
   /** SSMCS comp makeup (raw 0..200; device-internal, not on the LCD). */
-  SSMCS_COMP_MAKEUP: { id: 101, axis: "input", encoding: "raw" },
+  SSMCS_COMP_MAKEUP: { id: 101, encoding: "raw" },
   /** SSMCS comp side-chain ON (1 = on). */
-  SSMCS_SC_ON: { id: 102, axis: "input", encoding: "bool" },
+  SSMCS_SC_ON: { id: 102, encoding: "bool" },
   /** SSMCS comp side-chain Q (raw 0..60). */
-  SSMCS_SC_Q: { id: 103, axis: "input", encoding: "raw" },
+  SSMCS_SC_Q: { id: 103, encoding: "raw" },
   /** SSMCS comp side-chain frequency (raw 4..124). */
-  SSMCS_SC_FREQ: { id: 104, axis: "input", encoding: "raw" },
+  SSMCS_SC_FREQ: { id: 104, encoding: "raw" },
   /** SSMCS comp side-chain gain (raw 0..360; 180 = 0 dB). */
-  SSMCS_SC_GAIN: { id: 105, axis: "input", encoding: "raw" },
+  SSMCS_SC_GAIN: { id: 105, encoding: "raw" },
   /** SSMCS EQ Low band: ON / freq / gain (Low is shelving, no Q). */
-  SSMCS_EQ_LOW_ON: { id: 107, axis: "input", encoding: "bool" },
-  SSMCS_EQ_LOW_FREQ: { id: 108, axis: "input", encoding: "raw" },
-  SSMCS_EQ_LOW_GAIN: { id: 109, axis: "input", encoding: "raw" },
+  SSMCS_EQ_LOW_ON: { id: 107, encoding: "bool" },
+  SSMCS_EQ_LOW_FREQ: { id: 108, encoding: "raw" },
+  SSMCS_EQ_LOW_GAIN: { id: 109, encoding: "raw" },
   /** SSMCS EQ Mid band: ON / Q / freq / gain (Mid is peaking). */
-  SSMCS_EQ_MID_ON: { id: 110, axis: "input", encoding: "bool" },
-  SSMCS_EQ_MID_Q: { id: 111, axis: "input", encoding: "raw" },
-  SSMCS_EQ_MID_FREQ: { id: 112, axis: "input", encoding: "raw" },
-  SSMCS_EQ_MID_GAIN: { id: 113, axis: "input", encoding: "raw" },
+  SSMCS_EQ_MID_ON: { id: 110, encoding: "bool" },
+  SSMCS_EQ_MID_Q: { id: 111, encoding: "raw" },
+  SSMCS_EQ_MID_FREQ: { id: 112, encoding: "raw" },
+  SSMCS_EQ_MID_GAIN: { id: 113, encoding: "raw" },
   /** SSMCS EQ High band: ON / freq / gain (High is shelving, no Q). */
-  SSMCS_EQ_HIGH_ON: { id: 114, axis: "input", encoding: "bool" },
-  SSMCS_EQ_HIGH_FREQ: { id: 115, axis: "input", encoding: "raw" },
-  SSMCS_EQ_HIGH_GAIN: { id: 116, axis: "input", encoding: "raw" },
+  SSMCS_EQ_HIGH_ON: { id: 114, encoding: "bool" },
+  SSMCS_EQ_HIGH_FREQ: { id: 115, encoding: "raw" },
+  SSMCS_EQ_HIGH_GAIN: { id: 116, encoding: "raw" },
   // Input GATE / COMP detail values (MONO IN channels; COMP is the COMP->EQ bank,
   // type-independent GATE). Verified by live scan (research §12.26).
   /** GATE threshold (dB). */
-  GATE_THRESHOLD: { id: 29, axis: "input", encoding: "centiDb" },
+  GATE_THRESHOLD: { id: 29, encoding: "centiDb" },
   /** GATE range / attenuation depth (dB). */
-  GATE_RANGE: { id: 30, axis: "input", encoding: "gateRange" },
+  GATE_RANGE: { id: 30, encoding: "gateRange" },
   /** GATE attack time (ms). */
-  GATE_ATTACK: { id: 31, axis: "input", encoding: "attackTime" },
+  GATE_ATTACK: { id: 31, encoding: "attackTime" },
   /** GATE hold time (ms). */
-  GATE_HOLD: { id: 32, axis: "input", encoding: "holdTime" },
+  GATE_HOLD: { id: 32, encoding: "holdTime" },
   /** GATE decay time (ms). */
-  GATE_DECAY: { id: 33, axis: "input", encoding: "releaseTime" },
+  GATE_DECAY: { id: 33, encoding: "releaseTime" },
   /** COMP threshold (dB). */
-  COMP_THRESHOLD: { id: 35, axis: "input", encoding: "centiDb" },
+  COMP_THRESHOLD: { id: 35, encoding: "centiDb" },
   /** COMP ratio (N:1). */
-  COMP_RATIO: { id: 36, axis: "input", encoding: "ratio" },
+  COMP_RATIO: { id: 36, encoding: "ratio" },
   /** COMP knee (0 = Soft / 1 = Medium / 2 = Hard). */
-  COMP_KNEE: { id: 37, axis: "input", encoding: "enum" },
+  COMP_KNEE: { id: 37, encoding: "enum" },
   /** COMP makeup gain (dB). */
-  COMP_GAIN: { id: 38, axis: "input", encoding: "centiDb" },
+  COMP_GAIN: { id: 38, encoding: "centiDb" },
   /** COMP attack time (ms). */
-  COMP_ATTACK: { id: 39, axis: "input", encoding: "attackTime" },
+  COMP_ATTACK: { id: 39, encoding: "attackTime" },
   /** COMP release time (ms). */
-  COMP_RELEASE: { id: 40, axis: "input", encoding: "releaseTime" },
+  COMP_RELEASE: { id: 40, encoding: "releaseTime" },
   /** COMP Auto Makeup ON (auto-drives the makeup gain). */
-  COMP_AUTO_MAKEUP: { id: 41, axis: "input", encoding: "bool" },
+  COMP_AUTO_MAKEUP: { id: 41, encoding: "bool" },
   /** COMP 1-knob ON (drives all comp params from the 1-knob level). */
-  COMP_ONE_KNOB: { id: 42, axis: "input", encoding: "bool" },
+  COMP_ONE_KNOB: { id: 42, encoding: "bool" },
   /** COMP 1-knob level (0 … 100, raw). */
-  COMP_ONE_KNOB_LEVEL: { id: 43, axis: "input", encoding: "enum" },
+  COMP_ONE_KNOB_LEVEL: { id: 43, encoding: "enum" },
   /** Ducker ON (sidechain; one per stereo channel, indexed by stereo position). */
-  DUCKER_ON: { id: 258, axis: "global", encoding: "bool" },
+  DUCKER_ON: { id: 258, encoding: "bool" },
   /** Ducker threshold (dB). */
-  DUCKER_THRESHOLD: { id: 260, axis: "global", encoding: "centiDb" },
+  DUCKER_THRESHOLD: { id: 260, encoding: "centiDb" },
   /** Ducker range / attenuation depth (dB). */
-  DUCKER_RANGE: { id: 261, axis: "global", encoding: "centiDb" },
+  DUCKER_RANGE: { id: 261, encoding: "centiDb" },
   /** Ducker attack time (ms). */
-  DUCKER_ATTACK: { id: 262, axis: "global", encoding: "attackTime" },
+  DUCKER_ATTACK: { id: 262, encoding: "attackTime" },
   /** Ducker decay time (ms). */
-  DUCKER_DECAY: { id: 263, axis: "global", encoding: "releaseTime" },
+  DUCKER_DECAY: { id: 263, encoding: "releaseTime" },
   /** Input channel insert FX (MONO IN channels only). Enum from input_insert_fx.
    *  sideEffect: selecting an effect (re)binds + repopulates its engine parameter
    *  array on the device, so live must converge (re-read then re-apply the plan's
    *  effect params). See control/insert-fx-effect.ts. */
-  INSERT_FX: { id: 135, axis: "input", encoding: "insertFx", sideEffect: true },
+  INSERT_FX: { id: 135, encoding: "insertFx", sideEffect: true },
   /** Input channel insert FX ON/OFF (bypass) — independent of the selector (135).
    *  The device auto-engages it whenever an effect is (re)selected, so translate
    *  emits it after the selector to enforce the plan's state. Confirmed by notify
    *  reverse-lookup (LCD INS FX button). */
-  INSERT_FX_ON: { id: 134, axis: "input", encoding: "bool" },
+  INSERT_FX_ON: { id: 134, encoding: "bool" },
   /** Input channel Rec Point: the signal-path tap fed to the recording / direct
    *  out (enum 0..4, PRE GATE..PRE FADER). Confirmed by live snapshot-diff
    *  (MONO CH1 4 → 0). MONO IN channels, on the input slot y. */
-  REC_POINT: { id: 137, axis: "input", encoding: "enum" },
+  REC_POINT: { id: 137, encoding: "enum" },
   /** Stereo channel Rec Point (same enum as 137), indexed by stereo position —
    *  part of the 264-268 block parallel to mono 137-141. Confirmed by notify
    *  reverse-lookup (LCD CH5/6 PRE FADER → PRE EQ fired 264:0:0 = 4 ↔ 2). */
-  REC_POINT_STEREO: { id: 264, axis: "global", encoding: "enum" },
+  REC_POINT_STEREO: { id: 264, encoding: "enum" },
   /** STEREO master insert FX (single). Enum from output_insert_fx. sideEffect:
    *  rebinds + repopulates the output engine array (see INSERT_FX). */
-  OUTPUT_INSERT_FX_STEREO: { id: 578, axis: "global", encoding: "insertFx", sideEffect: true },
+  OUTPUT_INSERT_FX_STEREO: { id: 578, encoding: "insertFx", sideEffect: true },
   /** STEREO master insert FX ON/OFF (single; bypass, auto-engaged on selection — see INSERT_FX_ON). */
-  OUTPUT_INSERT_FX_ON_STEREO: { id: 577, axis: "global", encoding: "bool" },
+  OUTPUT_INSERT_FX_ON_STEREO: { id: 577, encoding: "bool" },
   /** MIX bus insert FX (L/R-linked). Enum from output_insert_fx. sideEffect: as above. */
-  OUTPUT_INSERT_FX_MIX: { id: 671, axis: "output", encoding: "insertFx", sideEffect: true },
+  OUTPUT_INSERT_FX_MIX: { id: 671, encoding: "insertFx", sideEffect: true },
   /** MIX bus insert FX ON/OFF (L/R-linked; bypass, auto-engaged on selection — see INSERT_FX_ON). */
-  OUTPUT_INSERT_FX_ON_MIX: { id: 670, axis: "output", encoding: "bool" },
+  OUTPUT_INSERT_FX_ON_MIX: { id: 670, encoding: "bool" },
   // Analog mic-strip toggles (CH1-4 only). Confirmed by live scan.
   /** Input channel +48V phantom power. */
-  PHANTOM: { id: 0, axis: "input", encoding: "bool" },
+  PHANTOM: { id: 0, encoding: "bool" },
   /** Input channel phase / polarity invert (Ø), mono mic channels. */
-  PHASE: { id: 24, axis: "input", encoding: "bool" },
+  PHASE: { id: 24, encoding: "bool" },
   // Stereo channels invert L/R independently, indexed by stereo position.
   /** Stereo channel L-side polarity invert. */
-  PHASE_L: { id: 211, axis: "global", encoding: "bool" },
+  PHASE_L: { id: 211, encoding: "bool" },
   /** Stereo channel R-side polarity invert. */
-  PHASE_R: { id: 212, axis: "global", encoding: "bool" },
+  PHASE_R: { id: 212, encoding: "bool" },
   /** Input channel Clip Safe (auto head-amp clip protection). */
-  CLIP_SAFE: { id: 5, axis: "input", encoding: "bool" },
+  CLIP_SAFE: { id: 5, encoding: "bool" },
   /** Input channel Hi-Z (high-impedance instrument input; CH3/CH4 only). */
-  HI_Z: { id: 6, axis: "input", encoding: "bool" },
+  HI_Z: { id: 6, encoding: "bool" },
   /** Input channel head-amp (HA) gain (-8 … +70 dB). */
-  HA_GAIN: { id: 1, axis: "input", encoding: "gain", follow: "direct" },
+  HA_GAIN: { id: 1, encoding: "gain", follow: "direct" },
   /** Output (mix) fader level. */
-  OUT_FADER: { id: 674, axis: "output", encoding: "level", follow: "direct" },
+  OUT_FADER: { id: 674, encoding: "level", follow: "direct" },
   /** MIX bus master balance (676, fader+2, parallel to STEREO_MASTER_BAL 583). The
    *  bus output's L/R balance; ±63, default 0. L/R-linked per stereo MIX (MIX1 [0,1]
    *  / MIX2 [2,3]). Confirmed live (snapshot-diff: MIX1 balance → 676:0:0/0:1, and
    *  the device keeps the BALANCE label even under Pan Link). */
-  OUT_MASTER_BAL: { id: 676, axis: "output", encoding: "pan", follow: "direct" },
+  OUT_MASTER_BAL: { id: 676, encoding: "pan", follow: "direct" },
   /** MIX bus BUS Type: 0 = VARI (variable per-send level) / 1 = FIXED. L/R-linked
    *  (written to both out instances). Confirmed by live snapshot-diff (MIX1 0 → 1). */
-  BUS_TYPE: { id: 587, axis: "output", encoding: "enum" },
+  BUS_TYPE: { id: 587, encoding: "enum" },
   /** MIX bus master ON (675, fader+1, parallel to STEREO_MASTER_ON 582). L/R-linked
    *  per stereo MIX (MIX1 [0,1] / MIX2 [2,3]); default 1. Independent of the MIX →
    *  STEREO "TO ST" send. Confirmed by live readback (device-side MIX2 OFF → 675). */
-  OUT_MASTER_ON: { id: 675, axis: "output", encoding: "bool", follow: "direct" },
+  OUT_MASTER_ON: { id: 675, encoding: "bool", follow: "direct" },
   /** MIX 1/2 → STEREO "TO ST" send ON/OFF. Per stereo MIX, addressed at the bus's
    *  L instance (MIX1 = 0, MIX2 = 2); not L/R-linked. Default 0 (off). Confirmed by
    *  live param-notify (device-side MIX1 OFF → ON fired 677:0:0 = 1, MIX2 → 677:0:2).
    *  Held in the MIX → STEREO connection's params.on, not a node param. */
-  TO_ST: { id: 677, axis: "output", encoding: "bool", follow: "direct" },
+  TO_ST: { id: 677, encoding: "bool", follow: "direct" },
   /** MIX bus Pan Link (VARI only): each send's pan follows the source channel PAN.
    *  Per stereo MIX, at the bus's L instance (MIX1 = 0, MIX2 = 2). Default 0 (off).
    *  Confirmed by live param-notify (MIX1 OFF → ON fired 589:0:0 = 1, MIX2 → 589:0:2). */
-  PAN_LINK: { id: 589, axis: "output", encoding: "bool", follow: "direct" },
+  PAN_LINK: { id: 589, encoding: "bool", follow: "direct" },
   /** Signal Type stereo link for a MONO IN pair (1 = STEREO, 0 = MONO x2). Written
    *  to BOTH channels of the pair at their input indices. Enabling it resets the
    *  secondary channel's whole state on the device (it is copied from the primary),
    *  so live must converge. Confirmed by live param-notify (CH1 MONO x2 ↔ STEREO
    *  fired 23:0:0 and 23:0:1 together). */
-  SIGNAL_TYPE: { id: 23, axis: "input", encoding: "bool", sideEffect: true },
+  SIGNAL_TYPE: { id: 23, encoding: "bool", sideEffect: true },
   /** PAN / BAL mode for a STEREO-linked MONO IN pair (0 = PAN, 1 = BAL), at the
    *  pair's primary channel input index. Switching mode rewrites the pair's pan
    *  values on the device, so live must converge. Confirmed by live param-notify
    *  (CH1/CH2 pair BAL → PAN fired 891:0:0 = 0). */
-  PAN_BAL: { id: 891, axis: "input", encoding: "enum", sideEffect: true },
+  PAN_BAL: { id: 891, encoding: "enum", sideEffect: true },
   /** SSMCS Sweet Spot Data preset index (MONO IN, SSMCS mode), at the channel input
    *  index. A 4-digit zero-padded STRING ("0001".."0034"; "0035"+ clamps to "0001"),
    *  so it rides the string-write path (vd_set_str / vd_get_str), not the numeric
    *  catalog. Confirmed by live read (91:0:0 = "0001"). */
-  SWEET_SPOT_DATA: { id: 91, axis: "input", encoding: "raw" },
+  SWEET_SPOT_DATA: { id: 91, encoding: "raw" },
   // CH → MIX/FX bus send. The actual ids are computed per channel/bus in
   // translate.ts; these anchors are the MIX1 mono slot and only name the command
   // + encoding.
   /** CH → bus send level. */
-  SEND_LEVEL: { id: 146, axis: "input", encoding: "level" },
+  SEND_LEVEL: { id: 146, encoding: "level" },
   /** CH → bus send pan (MIX only). */
-  SEND_PAN: { id: 147, axis: "input", encoding: "pan" },
+  SEND_PAN: { id: 147, encoding: "pan" },
   /** CH → bus send ON. */
-  SEND_ON: { id: 148, axis: "input", encoding: "bool" },
+  SEND_ON: { id: 148, encoding: "bool" },
   /** CH → MIX send PRE/POST tap (single; 1 = PRE). */
-  SEND_TAP: { id: 151, axis: "input", encoding: "bool" },
+  SEND_TAP: { id: 151, encoding: "bool" },
   /** Output (mix) EQ ON. */
-  OUT_EQ_ON: { id: 591, axis: "output", encoding: "bool" },
+  OUT_EQ_ON: { id: 591, encoding: "bool" },
   /** STEREO master EQ ON (single). */
-  STEREO_EQ_ON: { id: 498, axis: "global", encoding: "bool" },
+  STEREO_EQ_ON: { id: 498, encoding: "bool" },
   // Output 4-band PEQ band values. The per-band/per-bus ids are computed in
   // translate.ts (outputEq); these anchors are the STEREO LOW band and only name
   // the command + encoding.
   /** Output PEQ band ON. */
-  EQ_BAND_ON: { id: 503, axis: "global", encoding: "bool" },
+  EQ_BAND_ON: { id: 503, encoding: "bool" },
   /** Output PEQ band filter type (LOW / HIGH bands only). */
-  EQ_BAND_TYPE: { id: 504, axis: "global", encoding: "enum", sideEffect: true },
+  EQ_BAND_TYPE: { id: 504, encoding: "enum", sideEffect: true },
   /** Output PEQ band Q. */
-  EQ_BAND_Q: { id: 505, axis: "global", encoding: "q" },
+  EQ_BAND_Q: { id: 505, encoding: "q" },
   /** Output PEQ band frequency. */
-  EQ_BAND_FREQ: { id: 506, axis: "global", encoding: "eqFreq" },
+  EQ_BAND_FREQ: { id: 506, encoding: "eqFreq" },
   /** Output PEQ band gain. */
-  EQ_BAND_GAIN: { id: 507, axis: "global", encoding: "eqGain" },
+  EQ_BAND_GAIN: { id: 507, encoding: "eqGain" },
   // EQ 1-knob: ON / TYPE / LEVEL sit 2 / 3 / 4 params after each EQ-ON anchor
   // (mono 44, stereo 213, output STEREO 498, output MIX 591); the per-instance ids
   // are computed in translate.ts (eqOneKnob). These mono anchors only name the
@@ -314,123 +305,123 @@ export const PARAMS = {
   // All three recompute the 4-band PEQ on the device, so each is a sideEffect
   // (the live sync re-reads the snapshot after sending one).
   /** EQ 1-knob ON (1 = on). */
-  EQ_ONE_KNOB_ON: { id: 46, axis: "input", encoding: "bool", sideEffect: true },
+  EQ_ONE_KNOB_ON: { id: 46, encoding: "bool", sideEffect: true },
   /** EQ 1-knob preset type (0 Intensity / 1 Vocal / 2 Loudness). */
-  EQ_ONE_KNOB_TYPE: { id: 47, axis: "input", encoding: "enum", sideEffect: true },
+  EQ_ONE_KNOB_TYPE: { id: 47, encoding: "enum", sideEffect: true },
   /** EQ 1-knob effect depth (0 … 100 %, raw). */
-  EQ_ONE_KNOB_LEVEL: { id: 48, axis: "input", encoding: "raw", sideEffect: true },
+  EQ_ONE_KNOB_LEVEL: { id: 48, encoding: "raw", sideEffect: true },
   /** Monitor output ON (y = monitor 0..3). Confirmed by live snapshot-diff: the
    *  MONITOR screen [ON] button toggles 723 on the touched monitor's slot only. */
-  MONITOR_ON: { id: 723, axis: "global", encoding: "bool", follow: "direct", sceneExternal: true },
+  MONITOR_ON: { id: 723, encoding: "bool", follow: "direct", sceneExternal: true },
   /** Monitor level (y = monitor 0..3). Wider -96 dB floor than the fader. */
-  MONITOR_LEVEL: { id: 724, axis: "global", encoding: "level", follow: "direct", sceneExternal: true },
+  MONITOR_LEVEL: { id: 724, encoding: "level", follow: "direct", sceneExternal: true },
   /** PHONES output level (y0 = PHONES 1, y1 = PHONES 2): the unit-less 0.0..10.0
    *  scale of the Phones menu (NOT dB). Confirmed by live snapshot-diff. */
-  PHONES_LEVEL: { id: 725, axis: "global", encoding: "phonesLevel", follow: "direct", sceneExternal: true },
+  PHONES_LEVEL: { id: 725, encoding: "phonesLevel", follow: "direct", sceneExternal: true },
   /** STEREO master fader (y = 0, level down to -∞). */
-  STEREO_MASTER_FADER: { id: 581, axis: "global", encoding: "level", follow: "direct" },
+  STEREO_MASTER_FADER: { id: 581, encoding: "level", follow: "direct" },
   /** STEREO master ON (y = 0). */
-  STEREO_MASTER_ON: { id: 582, axis: "global", encoding: "bool", follow: "direct" },
+  STEREO_MASTER_ON: { id: 582, encoding: "bool", follow: "direct" },
   /** STEREO master balance (y = 0): the STEREO output's L/R balance, ±63, default 0.
    *  Parallel to the fader (581) / ON (582) block. Confirmed live (snapshot-diff:
    *  STEREO balance → 583:0:0, positive = R). */
-  STEREO_MASTER_BAL: { id: 583, axis: "global", encoding: "pan", follow: "direct" },
+  STEREO_MASTER_BAL: { id: 583, encoding: "pan", follow: "direct" },
   /** FX channel ON (y = FX1 0 / FX2 1). The FX channel reuses the input
    *  channel-strip layout one block earlier (139 fader / 140 ON / 141 pan ↔
    *  337 / 338 / 339); confirmed by live read (FX1/FX2 hold independent states). */
-  FX_CHANNEL_ON: { id: 338, axis: "global", encoding: "bool", follow: "direct" },
+  FX_CHANNEL_ON: { id: 338, encoding: "bool", follow: "direct" },
   /** FX channel master fader = the fixed FX channel → STEREO send level (the FX
    *  channel's main path, mirroring CH_FADER for channels). y = FX1 0 / FX2 1. */
-  FX_CHANNEL_FADER: { id: 337, axis: "global", encoding: "level", follow: "direct" },
+  FX_CHANNEL_FADER: { id: 337, encoding: "level", follow: "direct" },
   /** FX channel balance = the fixed FX channel → STEREO send pan. y = FX1 0 / FX2 1. */
-  FX_CHANNEL_BAL: { id: 339, axis: "global", encoding: "pan", follow: "direct" },
+  FX_CHANNEL_BAL: { id: 339, encoding: "pan", follow: "direct" },
   /** FX channel EFFECT TYPE selector (anchor = FX1 679; FX2 683). Writing it makes
    *  the device repopulate the effect parameter array with that effect's defaults,
    *  so it is a sideEffect (live converges + re-reads). Per-FX id resolved in
    *  translate.ts; values are the fx1_insert_fx / fx2_insert_fx enums. */
-  FX_EFFECT_TYPE: { id: 679, axis: "global", encoding: "enum", sideEffect: true },
+  FX_EFFECT_TYPE: { id: 679, encoding: "enum", sideEffect: true },
   /** FX channel effect parameter array (anchor = FX1 681; FX2 685). Addressed by
    *  SLOT on the y axis (not an instance); slot meaning depends on the effect type.
    *  Raw broker integers (see control/fx-effect.ts). Per-FX id + slot resolved in
    *  translate.ts. */
-  FX_EFFECT_PARAM: { id: 681, axis: "global", encoding: "raw" },
+  FX_EFFECT_PARAM: { id: 681, encoding: "raw" },
   /** Insert-FX effect parameter array (anchor = Guitar engine 697; the actual
    *  engine 689/693/697/701 is resolved per effect family in translate.ts).
    *  Addressed by SLOT on the y axis; raw broker integers (see
    *  control/insert-fx-effect.ts). Calibrated on a factory URX44V. */
-  INSERT_FX_EFFECT: { id: 697, axis: "global", encoding: "raw" },
+  INSERT_FX_EFFECT: { id: 697, encoding: "raw" },
   /** Input source select for MONO CH1-4 (y = physical input slot 0..3). Raw input
    *  port ref. Param 22 only covers the mono slots; the device returns NONE for
    *  slots 4..11, so stereo channels use the separate 209/210 pair below. */
-  INPUT_SOURCE: { id: 22, axis: "input", encoding: "portRef" },
+  INPUT_SOURCE: { id: 22, encoding: "portRef" },
   /** Stereo channel input source L / R (y = stereo pair index 0..3). Raw input
    *  port ref in the same physical-input namespace as param 22. Confirmed on
    *  URX44V by live snapshot (CH5/6 = AUX 256/257, CH7/8 = USB MAIN A 512/513,
    *  CH9/10 = USB MAIN B 514/515, CH11/12 = USB MAIN C 516/517). */
-  STEREO_INPUT_SOURCE_L: { id: 209, axis: "global", encoding: "portRef" },
-  STEREO_INPUT_SOURCE_R: { id: 210, axis: "global", encoding: "portRef" },
+  STEREO_INPUT_SOURCE_L: { id: 209, encoding: "portRef" },
+  STEREO_INPUT_SOURCE_R: { id: 210, encoding: "portRef" },
   /** Ducker key source (y = stereo index). Raw port ref: channel slot or bus. */
-  DUCKER_SRC: { id: 259, axis: "global", encoding: "portRef" },
+  DUCKER_SRC: { id: 259, encoding: "portRef" },
   /** Monitor source select L/R (y = monitor 0..1). Raw bus port ref. */
-  MONITOR_SRC_L: { id: 719, axis: "global", encoding: "portRef", sceneExternal: true },
-  MONITOR_SRC_R: { id: 720, axis: "global", encoding: "portRef", sceneExternal: true },
+  MONITOR_SRC_L: { id: 719, encoding: "portRef", sceneExternal: true },
+  MONITOR_SRC_R: { id: 720, encoding: "portRef", sceneExternal: true },
   /** Monitor CUE interrupt (default on) / MONO (default off), y = monitor 0..1. */
-  MONITOR_CUE_INTERRUPT: { id: 721, axis: "global", encoding: "bool", sceneExternal: true },
-  MONITOR_MONO: { id: 722, axis: "global", encoding: "bool", sceneExternal: true },
+  MONITOR_CUE_INTERRUPT: { id: 721, encoding: "bool", sceneExternal: true },
+  MONITOR_MONO: { id: 722, encoding: "bool", sceneExternal: true },
   /** Analog output patch source L/R (y = 0/1). Raw bus port ref. */
-  OUT_PATCH_MAIN: { id: 730, axis: "global", encoding: "portRef", sceneExternal: true },
-  OUT_PATCH_LINE: { id: 731, axis: "global", encoding: "portRef", sceneExternal: true },
+  OUT_PATCH_MAIN: { id: 730, encoding: "portRef", sceneExternal: true },
+  OUT_PATCH_LINE: { id: 731, encoding: "portRef", sceneExternal: true },
   /** Streaming source select L/R (y = 0). Tagged port ref (0x80000000 | port). */
-  STREAM_SRC_L: { id: 705, axis: "global", encoding: "portRefTagged", sceneExternal: true },
-  STREAM_SRC_R: { id: 706, axis: "global", encoding: "portRefTagged", sceneExternal: true },
+  STREAM_SRC_L: { id: 705, encoding: "portRefTagged", sceneExternal: true },
+  STREAM_SRC_R: { id: 706, encoding: "portRefTagged", sceneExternal: true },
   /** USB output source select (y = 0 and 1, the L/R pair). Raw port ref: one bus
    *  or channel per out. The device allocates 2 slots per selector and both are
    *  written (ROUTING_SELECTORS in translate.ts). */
-  USB_OUT_SRC_A: { id: 732, axis: "global", encoding: "portRef", sceneExternal: true },
-  USB_OUT_SRC_B: { id: 733, axis: "global", encoding: "portRef", sceneExternal: true },
-  USB_OUT_SRC_C: { id: 734, axis: "global", encoding: "portRef", sceneExternal: true },
-  USB_OUT_SRC_SUB: { id: 735, axis: "global", encoding: "portRef", sceneExternal: true },
+  USB_OUT_SRC_A: { id: 732, encoding: "portRef", sceneExternal: true },
+  USB_OUT_SRC_B: { id: 733, encoding: "portRef", sceneExternal: true },
+  USB_OUT_SRC_C: { id: 734, encoding: "portRef", sceneExternal: true },
+  USB_OUT_SRC_SUB: { id: 735, encoding: "portRef", sceneExternal: true },
   /** Oscillator generator (global). Level is centi-dB (-96..0); freq is Hz×10. */
-  OSC_ON: { id: 710, axis: "global", encoding: "bool", follow: "direct", sceneExternal: true },
-  OSC_LEVEL: { id: 711, axis: "global", encoding: "centiDb", follow: "direct", sceneExternal: true },
-  OSC_MODE: { id: 712, axis: "global", encoding: "enum", sceneExternal: true },
-  OSC_FREQ: { id: 713, axis: "global", encoding: "eqFreq", sceneExternal: true },
+  OSC_ON: { id: 710, encoding: "bool", follow: "direct", sceneExternal: true },
+  OSC_LEVEL: { id: 711, encoding: "centiDb", follow: "direct", sceneExternal: true },
+  OSC_MODE: { id: 712, encoding: "enum", sceneExternal: true },
+  OSC_FREQ: { id: 713, encoding: "eqFreq", sceneExternal: true },
   /** Oscillator Burst Noise width (length of noise; Burst mode only). Plan holds
    *  seconds 0.1..10, broker raw is ms (= seconds ×1000, 100..10000). Confirmed by
    *  live snapshot-diff (0.1 s → 0.2 s = 100 → 200). */
-  OSC_BURST_WIDTH: { id: 714, axis: "global", encoding: "burstWidth", sceneExternal: true },
+  OSC_BURST_WIDTH: { id: 714, encoding: "burstWidth", sceneExternal: true },
   /** Oscillator Burst Noise interval (noise cycle, seconds; Burst mode only). Raw
    *  1..30, no scaling. Confirmed by live snapshot-diff (1 → 2). */
-  OSC_BURST_INTERVAL: { id: 715, axis: "global", encoding: "raw", sceneExternal: true },
+  OSC_BURST_INTERVAL: { id: 715, encoding: "raw", sceneExternal: true },
   /** Oscillator → bus assign on/off (per output channel). STEREO 716[L0,R1],
    *  MIX 717[MIX1 L0/R1, MIX2 L2/R3], FX 718[FX1 0, FX2 1]. */
-  OSC_ASSIGN_STEREO: { id: 716, axis: "global", encoding: "bool", sceneExternal: true },
-  OSC_ASSIGN_MIX: { id: 717, axis: "global", encoding: "bool", sceneExternal: true },
-  OSC_ASSIGN_FX: { id: 718, axis: "global", encoding: "bool", sceneExternal: true },
+  OSC_ASSIGN_STEREO: { id: 716, encoding: "bool", sceneExternal: true },
+  OSC_ASSIGN_MIX: { id: 717, encoding: "bool", sceneExternal: true },
+  OSC_ASSIGN_FX: { id: 718, encoding: "bool", sceneExternal: true },
   // CH SETTING color (the node's top accent cap). The broker stores a palette
   // index (see COLOR_PALETTE), mirrored across separate params per node kind
   // (confirmed by live snapshot-diff). Input channels use param 20 at the input
   // slot index; the MIX/STEREO buses their own params at the fixed instances in
   // translate.ts (colorControl). raw = pass the palette index straight through.
   /** Mono input channel color (palette index), y = physical input slot 0..3. */
-  CH_COLOR: { id: 20, axis: "input", encoding: "raw" },
+  CH_COLOR: { id: 20, encoding: "raw" },
   /** Stereo input channel color (palette index), y = stereo index 0..3. Stereo
    *  channels carry their CH SETTING on the stereo block, not the input slot. */
-  STEREO_CH_COLOR: { id: 208, axis: "global", encoding: "raw" },
+  STEREO_CH_COLOR: { id: 208, encoding: "raw" },
   /** MIX bus color (palette index), y = L/R-linked out instances. */
-  MIX_COLOR: { id: 586, axis: "output", encoding: "raw" },
+  MIX_COLOR: { id: 586, encoding: "raw" },
   /** STEREO master color (palette index), y = 0. */
-  STEREO_COLOR: { id: 496, axis: "global", encoding: "raw" },
+  STEREO_COLOR: { id: 496, encoding: "raw" },
   /** FX bus color (palette index): FX1 = y0, FX2 = y1 (mono, no L/R mirror). */
-  FX_COLOR: { id: 335, axis: "global", encoding: "raw" },
+  FX_COLOR: { id: 335, encoding: "raw" },
   /** STREAMING bus color (palette index). The device allocates 8 slots and mirrors
    *  the value across all of them; the app writes the L/R pair 0/1. */
-  STREAM_COLOR: { id: 704, axis: "global", encoding: "raw", sceneExternal: true },
+  STREAM_COLOR: { id: 704, encoding: "raw", sceneExternal: true },
   /** STREAMING DELAY (the bus.stream node, y = 0): on/off, time (ms×100,
    *  1.00..1000.00 ms), frame rate (enum 0..7). Confirmed by live snapshot-diff. */
-  STREAM_DELAY_ON: { id: 707, axis: "global", encoding: "bool", sceneExternal: true },
-  STREAM_DELAY_TIME: { id: 708, axis: "global", encoding: "delayTime", sceneExternal: true },
-  STREAM_DELAY_FRAME_RATE: { id: 830, axis: "global", encoding: "enum", sceneExternal: true },
+  STREAM_DELAY_ON: { id: 707, encoding: "bool", sceneExternal: true },
+  STREAM_DELAY_TIME: { id: 708, encoding: "delayTime", sceneExternal: true },
+  STREAM_DELAY_FRAME_RATE: { id: 830, encoding: "enum", sceneExternal: true },
   /** Mixer DSP / USB streaming sample rate (global, y0): raw Hz. Writing it
    *  re-clocks the hardware (confirmed by live write + host coreaudio + LCD).
    *  843 mirrors it read-only and auto-follows, so only 766 is written. Not in
@@ -438,7 +429,7 @@ export const PARAMS = {
    *  re-negotiates the USB audio stream (audio glitches), so this is an explicit
    *  edit, never perturbed by self-test (plan.sampleRate is a top-level scalar,
    *  outside the perturb walk over nodeParams/connections). */
-  SAMPLE_RATE: { id: 766, axis: "global", encoding: "raw", sceneExternal: true },
+  SAMPLE_RATE: { id: 766, encoding: "raw", sceneExternal: true },
   /** SETUP > Follow USB (global, y0): when ON the device slaves its clock to the
    *  USB host, so a 766 write is accepted and re-clocks but is dragged back to the
    *  host's rate ~0.4 s later (measured on URX44V; the LCD shows the switch, then
@@ -447,19 +438,19 @@ export const PARAMS = {
    *  device-side clock policy, not a routing choice, and emitting it would make
    *  every Live-sync flush re-assert it. The write path reads it as a pre-check and
    *  the badge writes it with a single vdSet. */
-  FOLLOW_USB: { id: 848, axis: "global", encoding: "bool", sceneExternal: true },
+  FOLLOW_USB: { id: 848, encoding: "bool", sceneExternal: true },
   /** microSD Rec per-track record-source assign (y = track 0..15). Raw port ref in
    *  the bus/channel namespace (CH n = its input slot, STEREO = 256/257, MIX1 =
    *  288/289, MIX2 = 290/291, none = the uint32 sentinel). Writable + readable.
    *  Each stereo pair fills two adjacent tracks (L then R). Confirmed by live
    *  snapshot-diff on URX44V. */
-  SD_REC_SOURCE: { id: 736, axis: "global", encoding: "portRef", sceneExternal: true },
+  SD_REC_SOURCE: { id: 736, encoding: "portRef", sceneExternal: true },
   /** microSD Rec Track Count (y = 0): how many tracks record, raw = tracks / 2
    *  (raw 1..8 = 2..16). READ-ONLY — the broker accepts a software write
    *  (response 200) but ignores it; only the device front panel changes it, so
    *  live sync reads it back but never emits it. The dump mislabels it onoff /
    *  max 1; the live value (e.g. 5 = 10 tracks) is authoritative. */
-  SD_REC_TRACK_COUNT: { id: 839, axis: "global", encoding: "raw", sceneExternal: true },
+  SD_REC_TRACK_COUNT: { id: 839, encoding: "raw", sceneExternal: true },
 } as const satisfies Record<string, ParamSpec>;
 
 export type ParamName = keyof typeof PARAMS;
@@ -591,9 +582,8 @@ export const COMP_EQ_OPTIONS = [
 // from the device: 6 generic 1-knob morph types + 28 artist / use-case presets.
 // Labels are the device strings (the ".ssd" suffix the first two carry is dropped
 // for display). Default is preset 1 (Basic). The index is written to the device
-// as the zero-padded string "0001".."0034" — outside the numeric write catalog
-// (see PARAMS), so this drives the plan/UI only.
-export const SWEET_SPOT_DATA_DEFAULT = 1;
+// as the zero-padded string "0001".."0034" — via the string-write path, not the
+// numeric write catalog (see SWEET_SPOT_DATA in PARAMS).
 export const SWEET_SPOT_DATA_OPTIONS = [
   { value: 1, label: "01 Basic" },
   { value: 2, label: "02 Color" },
@@ -630,11 +620,6 @@ export const SWEET_SPOT_DATA_OPTIONS = [
   { value: 33, label: "27 ZK Master" },
   { value: 34, label: "28 ZK Filter" },
 ];
-
-/** Format the Sweet Spot Data index as the device's zero-padded string ("0001"). */
-export function sweetSpotDataAddr(index: number): string {
-  return String(index).padStart(4, "0");
-}
 
 // Rec Point: the per-channel signal-path tap fed to the channel's recording /
 // direct out (block diagram: "Rec Point" selector -> CH OUT). Labels are the

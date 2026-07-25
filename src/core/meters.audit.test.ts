@@ -16,6 +16,12 @@ import {
   tapFor,
 } from "./meters";
 
+// MeterStore.reading() was removed (no production consumer — console.ts reads via
+// readingTap). These pins exercise the same decode path through the public
+// readingTap + tapFor pair.
+const reading = (store: MeterStore, nodeId: string, tapKey: string, modelId?: string) =>
+  store.readingTap(tapFor(nodeId, tapKey, modelId) ?? null);
+
 describe("decodeMeterDb boundaries", () => {
   it("maps only the exact OVER sentinel to the ladder top", () => {
     expect(decodeMeterDb(METER_OVER_RAW)).toBe(METER_TOP_DB);
@@ -45,11 +51,11 @@ describe("decodeMeterDb boundaries", () => {
   });
 });
 
-describe("MeterStore.reading resolution", () => {
+describe("MeterStore reading resolution (readingTap + tapFor)", () => {
   it("treats the OVER sentinel on the silent default as not-over (no false clip at rest)", () => {
     // Resting raw is the silence sentinel, never the OVER sentinel, so a fresh
     // store must report over=false even though decode maps both to a number.
-    const r = new MeterStore().reading("bus.stereo", "preeq")!;
+    const r = reading(new MeterStore(), "bus.stereo", "preeq")!;
     expect(r.overL).toBe(false);
     expect(r.overR).toBe(false);
     expect(r.l).toBe(-128);
@@ -61,7 +67,7 @@ describe("MeterStore.reading resolution", () => {
     const store = new MeterStore();
     store.apply({ meterId: 104, x: 0, value: METER_OVER_RAW }); // STEREO PRE EQ L clips
     store.apply({ meterId: 104, x: 1, value: -123 }); // STEREO PRE EQ R real
-    const r = store.reading("bus.stereo", "preeq")!;
+    const r = reading(store, "bus.stereo", "preeq")!;
     expect(r.overL).toBe(true);
     expect(r.l).toBe(METER_TOP_DB);
     expect(r.overR).toBe(false);
@@ -71,7 +77,7 @@ describe("MeterStore.reading resolution", () => {
   it("mono node mirrors L's over flag onto R (R reads from L)", () => {
     const store = new MeterStore();
     store.apply({ meterId: 100, x: 0, value: METER_OVER_RAW }); // ch1 INPUT (mono) clips
-    const r = store.reading("ch1", "input")!;
+    const r = reading(store, "ch1", "input")!;
     expect(r.stereo).toBe(false);
     expect(r.overL).toBe(true);
     // R derives from the L raw for a mono node, so it clips too.
@@ -83,27 +89,27 @@ describe("MeterStore.reading resolution", () => {
     const store = new MeterStore();
     store.apply({ meterId: 100, x: 0, value: -200 }); // ch1 INPUT
     store.apply({ meterId: 115, x: 0, value: METER_OVER_RAW }); // ch1 POST clips
-    expect(store.reading("ch1", "input")!.overL).toBe(false);
-    expect(store.reading("ch1", "input")!.l).toBe(-20);
-    expect(store.reading("ch1", "post")!.overL).toBe(true);
+    expect(reading(store, "ch1", "input")!.overL).toBe(false);
+    expect(reading(store, "ch1", "input")!.l).toBe(-20);
+    expect(reading(store, "ch1", "post")!.overL).toBe(true);
   });
 
   it("a stale OVER reading persists until clear() (store holds last value)", () => {
     const store = new MeterStore();
     store.apply({ meterId: 100, x: 0, value: METER_OVER_RAW });
-    expect(store.reading("ch1", "input")!.overL).toBe(true);
+    expect(reading(store, "ch1", "input")!.overL).toBe(true);
     // No decay in the store itself; the UI is responsible for hold/release.
-    expect(store.reading("ch1", "input")!.overL).toBe(true);
+    expect(reading(store, "ch1", "input")!.overL).toBe(true);
     store.clear();
-    expect(store.reading("ch1", "input")!.overL).toBe(false);
+    expect(reading(store, "ch1", "input")!.overL).toBe(false);
   });
 
   it("the packed stereo bus addresses (126:0/1 vs 126:2/3) do not bleed between MIX1 and MIX2", () => {
     const store = new MeterStore();
     store.apply({ meterId: 126, x: 0, value: -60 }); // MIX1 POST L
     store.apply({ meterId: 126, x: 3, value: METER_OVER_RAW }); // MIX2 POST R
-    const mix1 = store.reading("bus.mix1", "post")!;
-    const mix2 = store.reading("bus.mix2", "post")!;
+    const mix1 = reading(store, "bus.mix1", "post")!;
+    const mix2 = reading(store, "bus.mix2", "post")!;
     expect(mix1.l).toBe(-6);
     expect(mix1.overR).toBe(false); // MIX1 R (126:1) never set -> silence
     expect(mix2.overR).toBe(true); // MIX2 R (126:3) is the one that clipped
@@ -152,7 +158,7 @@ describe("tapAddrs → apply → reading pipeline (subscription set is sufficien
     // Drive each subscribed address to a distinct, recoverable raw value.
     addrs.forEach(([meterId, x], i) => store.apply({ meterId, x, value: -(i + 1) * 10 }));
     for (const id of nodes) {
-      const r = store.reading(id, defaultTapKey(id))!;
+      const r = reading(store, id, defaultTapKey(id))!;
       // A driven address decodes to a real (non-silence) reading; mono mirrors L→R.
       expect(r.l, id).toBeGreaterThan(METER_FLOOR_DB - 100); // not the -128 silence floor
       expect(r.l, id).not.toBe(-128);
@@ -165,8 +171,8 @@ describe("tapAddrs → apply → reading pipeline (subscription set is sufficien
     const store = new MeterStore();
     store.apply({ meterId: 126, x: 0, value: METER_OVER_RAW - 1 }); // MIX1 POST L
     store.apply({ meterId: 126, x: 3, value: METER_OVER_RAW }); // MIX2 POST R clips
-    const mix1 = store.reading("bus.mix1", "post")!;
-    const mix2 = store.reading("bus.mix2", "post")!;
+    const mix1 = reading(store, "bus.mix1", "post")!;
+    const mix2 = reading(store, "bus.mix2", "post")!;
     expect(mix1.overL).toBe(false);
     expect(mix1.l).toBeCloseTo((METER_OVER_RAW - 1) / 10, 5);
     expect(mix2.overR).toBe(true);

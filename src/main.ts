@@ -177,8 +177,12 @@ function systemDark(): boolean {
 }
 
 function detectThemeMode(): ThemeMode {
-  const saved = localStorage.getItem("urx-theme");
-  return saved === "light" || saved === "dark" || saved === "auto" ? saved : "auto";
+  try {
+    const saved = localStorage.getItem("urx-theme");
+    return saved === "light" || saved === "dark" || saved === "auto" ? saved : "auto";
+  } catch {
+    return "auto";
+  }
 }
 
 function resolveTheme(mode: ThemeMode): ThemeName {
@@ -764,6 +768,12 @@ const inspectorActions = {
     // EQ 1-knob ON toggles between the 1-knob controls and the band tabs, so it
     // re-renders; the type select self-updates and the level slider keeps focus.
     const eqOneKnobRelayout = patch.eqOneKnob !== undefined && patch.eqOneKnob.on !== prev?.eqOneKnob?.on;
+    // An FX EFFECT type change swaps the whole parameter editor (each effect keeps
+    // its own controls under the shared fxEffect keys), so it must re-render — else
+    // the previous effect's editor stays live and writes wrong-scale raws. The
+    // effect's own value sliders / ON toggle share the key but leave type unchanged,
+    // so match the type flip specifically and keep them mutating in place (focus).
+    const fxEffectRelayout = patch.fxEffect !== undefined && patch.fxEffect.type !== prev?.fxEffect?.type;
     // Toggles re-render to update the active button; sliders (gain/level) mutate
     // in place so they keep focus while dragging.
     if (
@@ -791,7 +801,8 @@ const inspectorActions = {
       compRelayout ||
       oscRelayout ||
       ssmcsRelayout ||
-      eqOneKnobRelayout
+      eqOneKnobRelayout ||
+      fxEffectRelayout
     )
       refreshInspector();
   },
@@ -1001,6 +1012,11 @@ function newPlanAtLastRate(id: ModelId): Plan {
 }
 
 function loadPlan(next: Plan): void {
+  // A device read (fetch / Live-sync start) is mutating the module `plan` in place;
+  // replacing it now would corrupt the read (see deviceReadInFlight). Every external
+  // entry point is already blocked at fileFlow / the model picker, so this is the
+  // backstop. The reads' own internal model-switch loadPlan runs before the latch.
+  if (deviceReadInFlight) return;
   // Replacing the whole plan invalidates the live snapshot; leave sync first.
   // (Live's own enable path calls loadPlan before begin(), so this is a no-op there.)
   deactivateLive();
@@ -1130,10 +1146,20 @@ function singleFlight(run: () => Promise<void>): () => void {
 // Open / Save, a recent row, a window drop, the .urxf import): each latch above
 // is private to its handler, so this shared one is what keeps rapid repeat
 // across any two of them from stacking discard confirms and file dialogs.
-// Resolves null when another flow holds the latch.
+// Resolves null when another flow holds the latch (or while a device read is in
+// flight — see deviceReadInFlight).
 let fileFlowBusy = false;
+// A device read (fetch / Live-sync start) passes the module `plan` by reference into
+// applyDeviceState, which mutates it across many awaited round-trips, and its
+// epilogue re-reads the module `plan`. Nothing disables the file / model entry
+// points during that seconds-long window, so a New / Open / drop / recent / .urxf or
+// a model switch mid-read would swap `plan` out from under the read — corrupting it,
+// or (on Live start) snapshotting the swapped-in plan as device truth. The two reads
+// raise this latch and clear it in their finally; every wholesale plan replacement
+// checks it. The internal model-switch loadPlan runs before the latch is raised.
+let deviceReadInFlight = false;
 async function fileFlow<T>(run: () => Promise<T>): Promise<T | null> {
-  if (fileFlowBusy) return null;
+  if (fileFlowBusy || deviceReadInFlight) return null;
   fileFlowBusy = true;
   try {
     return await run();
@@ -1159,18 +1185,50 @@ async function confirmFirmware(device: DeviceSummary): Promise<boolean> {
   return confirmDialog(t().confirm.firmwareMismatch(device.firmware, SUPPORTED_SYSTEM_FIRMWARE));
 }
 
+// The connected device may be a different model than the one selected. Fetch and
+// Live sync offer to switch the UI to a fresh plan of the device's model so the
+// device values map onto the right channels; write and compare refuse instead (they
+// act on the current plan — see refuseModelMismatch). Returns "ready" to proceed
+// (same model, or switched), "unknown" for a model this build does not know, and
+// "canceled" when the switch was declined; the caller formats its own message for
+// the two stops. The loadPlan here runs before any device-read latch is raised.
+async function offerModelSwitch(device: DeviceSummary): Promise<"ready" | "unknown" | "canceled"> {
+  if (device.model === modelId) return "ready";
+  if (!MODEL_IDS.includes(device.model as ModelId)) return "unknown";
+  if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) return "canceled";
+  loadPlan(emptyPlan(device.model as ModelId));
+  return "ready";
+}
+
+// Refuse to act on a device whose model differs from the plan's — the plan's
+// channels would map onto the wrong hardware. Shared by write and compare, which
+// (unlike fetch / Live sync) cannot offer to switch: they act on the plan as it is.
+// `wrap` builds the action-specific error message from the mismatch text. Returns
+// true to proceed, false when it refused (having surfaced the error).
+function refuseModelMismatch(device: DeviceSummary, wrap: (message: string) => string): boolean {
+  if (device.model === modelId) return true;
+  showError(wrap(t().error.modelMismatch(device.model, modelId)));
+  return false;
+}
+
 picker.addEventListener("change", async () => {
   const next = picker.value as ModelId;
   if (next === modelId) return;
-  if (!(await confirmDiscard())) {
-    picker.value = modelId;
-    return;
-  }
-  loadPlan(newPlanAtLastRate(next));
-  // A different model is plausibly a different unit, so what was read from the last
-  // one is no longer a claim we can make.
-  setFollowUsbBadge(null);
-  setStatus(t().status.switchedModel(next));
+  // The same shared latch File > New / Open / drop / recent use: the switch runs the
+  // one discard confirm + a wholesale plan replacement, so it must not stack with
+  // another file flow, and it is refused while a device read holds the plan.
+  const switched = await fileFlow(async () => {
+    if (!(await confirmDiscard())) return false;
+    loadPlan(newPlanAtLastRate(next));
+    // A different model is plausibly a different unit, so what was read from the last
+    // one is no longer a claim we can make.
+    setFollowUsbBadge(null);
+    setStatus(t().status.switchedModel(next));
+    return true;
+  });
+  // Declined discard, another file flow held the latch (null), or a device read
+  // refused it: restore the picker to the model still on screen.
+  if (!switched) picker.value = modelId;
 });
 
 ratePicker.addEventListener("change", () => {
@@ -1514,17 +1572,19 @@ if (!DEMO) {
         // The connected device may be a different model than the one selected.
         // Offer to switch the UI to the device's model (a fresh plan) so the
         // fetched values map onto the right channels; otherwise abort.
-        if (device.model !== modelId) {
-          if (!MODEL_IDS.includes(device.model as ModelId)) {
-            showError(t().status.fetchError(t().error.unknownModel(device.model)));
-            return;
-          }
-          if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) {
-            setStatus(t().status.canceled);
-            return;
-          }
-          loadPlan(emptyPlan(device.model as ModelId));
+        const sw = await offerModelSwitch(device);
+        if (sw === "unknown") {
+          showError(t().status.fetchError(t().error.unknownModel(device.model)));
+          return;
         }
+        if (sw === "canceled") {
+          setStatus(t().status.canceled);
+          return;
+        }
+        // Hold off every wholesale plan replacement for the duration of the read and
+        // its epilogue (cleared in the finally below); the read mutates `plan` in
+        // place, so a New/Open/switch mid-read would corrupt it.
+        deviceReadInFlight = true;
         // A cancel lands mid-read, leaving the plan a mix of device values and the
         // ones they replaced, with nothing to mark which is which — unreadNodes is
         // never set, dirty never moves, so a later New/Open discards it without
@@ -1569,6 +1629,7 @@ if (!DEMO) {
         }
       });
     } finally {
+      deviceReadInFlight = false;
       fetchAbort = null;
       fetchBtn.textContent = t().toolbar.fetchDevice;
       // In the finally: even a canceled read may have applied part of the device state.
@@ -1674,10 +1735,7 @@ if (!DEMO) {
             setStatus(t().status.canceled);
             return;
           }
-          if (device.model !== modelId) {
-            showError(t().status.writeError(t().error.modelMismatch(device.model, modelId)));
-            return;
-          }
+          if (!refuseModelMismatch(device, t().status.writeError)) return;
           // Scene scope drops SAMPLE_RATE from the write set, so there is no
           // rate to settle — the device keeps running at its own.
           const scope = getSettings().deviceScope;
@@ -1812,6 +1870,14 @@ if (!DEMO) {
         setStatus(status);
       };
       const failLive = async (message: string): Promise<void> => {
+        // live.begin() flips LiveSync.active before the awaited follow.begin() /
+        // vdWatchLink; if one of those throws we land here with a half-started
+        // session, so tear those down too. Otherwise live.isActive() stays true
+        // while liveSessionUp stays false, and every later toggle click routes into
+        // deactivateLive's early return — a dead toggle. Safe before begin() too:
+        // both end()s no-op when nothing was started.
+        follow?.end();
+        live?.end();
         await vdDisconnect(device.epoch);
         showError(message);
       };
@@ -1820,15 +1886,14 @@ if (!DEMO) {
       try {
         // A device of a different model maps onto the wrong channels; offer to
         // switch the UI to a fresh plan of the device's model (mirrors fetch).
-        if (device.model !== modelId) {
-          if (!MODEL_IDS.includes(device.model as ModelId)) {
-            return await failLive(t().status.liveError(t().error.unknownModel(device.model)));
-          }
-          if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) {
-            return await abort(t().status.canceled);
-          }
-          loadPlan(emptyPlan(device.model as ModelId));
-        }
+        const sw = await offerModelSwitch(device);
+        if (sw === "unknown") return await failLive(t().status.liveError(t().error.unknownModel(device.model)));
+        if (sw === "canceled") return await abort(t().status.canceled);
+        // Hold off every wholesale plan replacement until the session is established
+        // (cleared in the finally below). The read mutates `plan` in place and
+        // live.begin() snapshots it as device truth, so a New/Open/switch landing in
+        // between would either corrupt the read or enshrine the swapped-in plan.
+        deviceReadInFlight = true;
         // live.begin() then snapshots through the same scope filter, so a kept
         // scene-external value is neither written back nor tracked.
         const result = await applyDeviceStateScoped();
@@ -1865,6 +1930,7 @@ if (!DEMO) {
       } catch (err) {
         await failLive(t().status.liveError(err instanceof Error ? err.message : String(err)));
       } finally {
+        deviceReadInFlight = false;
         // In the finally: a partially failed readback still applied device values.
         planReadFromDevice();
       }
@@ -2029,10 +2095,7 @@ if (!DEMO) {
             setStatus(t().status.canceled);
             return;
           }
-          if (device.model !== modelId) {
-            showError(t().status.compareError(t().error.modelMismatch(device.model, modelId)));
-            return;
-          }
+          if (!refuseModelMismatch(device, t().status.compareError)) return;
           const model = getModel(modelId);
           const startedAt = performance.now();
           const { entries, errors } = await comparePlan(model, plan, signal);
@@ -2097,10 +2160,17 @@ if (!DEMO) {
         // Confirmation workflow: when the model has unverified guesses (URX22/44),
         // offer to save the human-readable report so the owner can send it back.
         if (!report.aborted && report.unverified.length && (await confirmDialog(t().confirm.selfTestExport))) {
-          await saveTextDocument(`${modelId}-self-test.md`, formatSelfTestReport(report), {
-            ext: "md",
-            label: t().filter.report,
-          });
+          // The run itself succeeded; a failed report write surfaces like a failed
+          // plan save (the fetch/write reports do the same via offerErrorReport), not
+          // as a self-test error the outer catch would misreport.
+          try {
+            await saveTextDocument(`${modelId}-self-test.md`, formatSelfTestReport(report), {
+              ext: "md",
+              label: t().filter.report,
+            });
+          } catch (err) {
+            showError(t().status.saveError(String(err)));
+          }
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -2163,7 +2233,11 @@ function applyResolvedTheme(): void {
 
 function setThemeMode(mode: ThemeMode): void {
   themeMode = mode;
-  localStorage.setItem("urx-theme", mode);
+  try {
+    localStorage.setItem("urx-theme", mode);
+  } catch {
+    // ignore (storage may be unavailable)
+  }
   applyResolvedTheme();
   const m = t().status;
   setStatus(mode === "auto" ? m.themeAuto : theme === "dark" ? m.themeDark : m.themeLight);
@@ -2288,10 +2362,23 @@ onLangChange(() => {
   setStatus(t().status.language(LANG_NAMES[getLang()]));
 });
 
+// True while any modal overlay is up: the consent-scrim dialogs (consent, load
+// report, rate choice, licenses, Preferences, and the drag overlay) share the class
+// and toggle [hidden], and the MIDI panel is the one non-scrim overlay.
+function modalOpen(): boolean {
+  if (document.querySelector(".consent-scrim:not([hidden])")) return true;
+  const midiPanel = document.getElementById("midi-panel");
+  return !!midiPanel && !midiPanel.hidden;
+}
+
 window.addEventListener("keydown", (e) => {
   const typing = ["INPUT", "TEXTAREA", "SELECT"].includes((e.target as Element)?.tagName);
   if (typing) return;
   if (e.key === "Delete" || e.key === "Backspace") {
+    // Deletion acts on the graph's selection, so it must not fire from the CONSOLE
+    // view (graph hidden, and the console renders no deletable kinds) or reach past
+    // an open modal overlay to the graph behind it.
+    if (graphHost.hidden || modalOpen()) return;
     e.preventDefault();
     graph.deleteSelection();
   } else if (e.key === "Escape") {
@@ -2392,12 +2479,14 @@ async function requireConsent(): Promise<void> {
 }
 
 async function checkForUpdates(): Promise<UpdateCheckOutcome> {
+  let accepted = false;
   try {
     const update = await checkUpdate();
     if (!update) return { kind: "upToDate" };
     if (!(await confirmDialog(t().confirm.update(update.version)))) {
       return { kind: "declined", version: update.version };
     }
+    accepted = true;
     // An accepted update is the one outcome that leaves the Preferences modal:
     // the scrim would hide the download status. No-op at the launch check.
     prefs.close();
@@ -2407,8 +2496,12 @@ async function checkForUpdates(): Promise<UpdateCheckOutcome> {
     await restartApp();
     return { kind: "installing" };
   } catch {
-    // Best-effort: offline, or no release published yet. The launch check stays
-    // silent; a manual check reports it through the Preferences inline note.
+    // Before the accept this is best-effort — offline, or no release published yet:
+    // the launch check stays silent and a manual check reports it through the
+    // Preferences inline note. But once accepted, "Downloading update…" is on screen
+    // with the modal closed, so a download/install failure has to clear that stuck
+    // status and surface — otherwise it reads as a download that never ends.
+    if (accepted) showError(t().prefs.updateCheckFailed);
     return { kind: "failed" };
   }
 }

@@ -28,8 +28,8 @@ export interface OpenResult {
   path?: string;
 }
 
-export function downloadText(filename: string, text: string, mime = "application/json"): void {
-  const blob = new Blob([text], { type: mime });
+export function downloadText(filename: string, text: string): void {
+  const blob = new Blob([text], { type: "application/json" });
   triggerDownload(blob, filename);
 }
 
@@ -99,8 +99,12 @@ export function pickTextFile(): Promise<string | null> {
   return new Promise((resolve) => {
     const input = document.getElementById("file-input") as HTMLInputElement | null;
     if (!input) return resolve(null);
-    const onChange = (): void => {
+    const cleanup = (): void => {
       input.removeEventListener("change", onChange);
+      input.removeEventListener("cancel", onCancel);
+    };
+    const onChange = (): void => {
+      cleanup();
       const file = input.files?.[0];
       input.value = "";
       if (!file) return resolve(null);
@@ -109,7 +113,16 @@ export function pickTextFile(): Promise<string | null> {
       reader.onerror = () => resolve(null);
       reader.readAsText(file);
     };
+    // Canceling the picker fires "cancel", never "change", so without this the
+    // promise never settles and the shared file latch wedges. Resolve to null,
+    // matching the "read resolves null on cancel" contract of the native path.
+    const onCancel = (): void => {
+      cleanup();
+      input.value = "";
+      resolve(null);
+    };
     input.addEventListener("change", onChange);
+    input.addEventListener("cancel", onCancel);
     input.click();
   });
 }
@@ -145,7 +158,10 @@ export async function exportSvgToPdf(
 ): Promise<SaveResult> {
   const canvas = await rasterizeSvg(svg, opts);
   const ctx = canvas.getContext("2d");
-  if (!ctx) return { saved: false };
+  // saved:false is the "user canceled the dialog" signal (see exportSvgToPng). A
+  // missing context is an internal failure, so throw rather than mis-signal it as
+  // a cancel — rasterizeSvg already obtained one, so this is unreachable anyway.
+  if (!ctx) throw new Error("no 2d context");
   const px = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const deflated = await deflate(dropAlpha(px.data));
   const blob = buildImagePdf(deflated, canvas.width, canvas.height, opts.width, opts.height);
@@ -298,17 +314,12 @@ export function baseName(path: string): string {
 }
 
 export function loadRecent(): RecentEntry[] {
-  try {
-    const raw = localStorage.getItem(RECENT_KEY);
-    const list = raw ? (JSON.parse(raw) as unknown) : [];
-    if (!Array.isArray(list)) return [];
-    return list.filter(
-      (e): e is RecentEntry =>
-        !!e && typeof e.path === "string" && typeof e.name === "string" && typeof e.modelId === "string",
-    );
-  } catch {
-    return [];
-  }
+  const list = loadJson<unknown>(RECENT_KEY, []);
+  if (!Array.isArray(list)) return [];
+  return list.filter(
+    (e): e is RecentEntry =>
+      !!e && typeof e.path === "string" && typeof e.name === "string" && typeof e.modelId === "string",
+  );
 }
 
 /** Record a just-used path at the front, de-duplicated and capped. */

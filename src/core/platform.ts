@@ -59,14 +59,20 @@ export function invoke<T>(
   return fn(cmd, args ?? {}, options) as Promise<T>;
 }
 
+// Read a boolean launch-flag command. Always false in a plain browser / the demo,
+// which has no process args to read the flag from.
+function launchFlag(cmd: string): Promise<boolean> {
+  if (!isTauri()) return Promise.resolve(false);
+  return invoke<boolean>(cmd);
+}
+
 /**
  * Whether experimental features are enabled — the desktop app was launched with
  * --experimental. Always false in a plain browser / the demo, where the gated
  * features (live device write) cannot run anyway.
  */
 export function experimentalEnabled(): Promise<boolean> {
-  if (!isTauri()) return Promise.resolve(false);
-  return invoke<boolean>("experimental_enabled");
+  return launchFlag("experimental_enabled");
 }
 
 /**
@@ -74,8 +80,7 @@ export function experimentalEnabled(): Promise<boolean> {
  * on startup, headless (no UI interaction). Always false in a plain browser.
  */
 export function selfTestRequested(): Promise<boolean> {
-  if (!isTauri()) return Promise.resolve(false);
-  return invoke<boolean>("self_test_requested");
+  return launchFlag("self_test_requested");
 }
 
 /**
@@ -84,8 +89,7 @@ export function selfTestRequested(): Promise<boolean> {
  * for a scene SAVE/RECALL audit. Always false in a plain browser.
  */
 export function prepareModifiedRequested(): Promise<boolean> {
-  if (!isTauri()) return Promise.resolve(false);
-  return invoke<boolean>("prepare_modified_requested");
+  return launchFlag("prepare_modified_requested");
 }
 
 /**
@@ -94,8 +98,7 @@ export function prepareModifiedRequested(): Promise<boolean> {
  * (see resetStorageIfRequested in main.ts).
  */
 export function resetStorageRequested(): Promise<boolean> {
-  if (!isTauri()) return Promise.resolve(false);
-  return invoke<boolean>("reset_storage_requested");
+  return launchFlag("reset_storage_requested");
 }
 
 /**
@@ -225,11 +228,6 @@ export interface Connection extends DeviceSummary {
 /** Connect to the URX via the broker; resolves with the connected device + epoch. */
 export function vdConnect(): Promise<Connection> {
   return invoke<Connection>("vd_connect");
-}
-
-/** The currently connected device (rejects if not connected). */
-export function vdInfo(): Promise<DeviceSummary> {
-  return invoke<DeviceSummary>("vd_info");
 }
 
 /** Set one parameter instance to an absolute broker value. */

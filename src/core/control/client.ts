@@ -168,11 +168,6 @@ export async function sendCommands(commands: VdCommand[], signal?: AbortSignal):
  *  Both are ok:false, so every reader of an outcome list needs the distinction. */
 export const reachedAndFailed = (o: SendOutcome): boolean => !o.ok && !o.skipped;
 
-/** Send every command a plan implies (no diff) — the full-write path. */
-export function sendPlan(model: DeviceModel, plan: Plan): Promise<SendOutcome[]> {
-  return sendCommands(planToCommands(model, plan));
-}
-
 export interface NameOutcome {
   write: NameWrite;
   ok: boolean;

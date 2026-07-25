@@ -37,15 +37,15 @@ const browser = await chromium.launch();
 for (const lang of ["en", "ja"]) {
   const context = await browser.newContext({ viewport: VIEWPORT, colorScheme: "dark" });
   // Pin the state the shots depend on before the app boots. Init scripts run in
-  // every frame, including the static sandboxed licenses-frame where
-  // localStorage access throws — guard it.
+  // every frame, so guard the localStorage writes: a restricted / opaque-origin
+  // frame would throw (the licenses notice renders as app DOM now, no iframe).
   await context.addInitScript((l) => {
     try {
       localStorage.setItem("urx-lang", l);
       localStorage.setItem("urx-theme", "dark");
       localStorage.setItem("urx-model", "URX44V");
     } catch {
-      /* sandboxed frame */
+      /* restricted-origin frame */
     }
   }, lang);
   const page = await context.newPage();

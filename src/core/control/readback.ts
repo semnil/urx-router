@@ -131,6 +131,13 @@ export interface ReadbackResult {
   unreadNodes: Set<string>;
 }
 
+/** A node's fixed main path into STEREO — the send connection carrying its
+ *  CH_FADER / CH_PAN (or FX channel fader / balance). The canonical lookup shared
+ *  by the channel and FX readback groups and the direct-apply fader/pan placement. */
+function mainSendConn(plan: Plan, nodeId: string): PlanConnection | undefined {
+  return plan.connections.find((c) => c.from === ref(nodeId, "out") && c.to === ref("bus.stereo", "in"));
+}
+
 /**
  * Pull the connected device's channel levels and pans into the plan, mutating it
  * in place. The caller must have connected first (platform.vdConnect) and should
@@ -145,13 +152,6 @@ export interface ReadbackResult {
  * The returned unreadNodes set is `attempted ∩ failed`, so the UI flags exactly
  * the nodes still showing a plan default rather than the live value.
  */
-/** A node's fixed main path into STEREO — the send connection carrying its
- *  CH_FADER / CH_PAN (or FX channel fader / balance). The canonical lookup shared
- *  by the channel and FX readback groups and the direct-apply fader/pan placement. */
-function mainSendConn(plan: Plan, nodeId: string): PlanConnection | undefined {
-  return plan.connections.find((c) => c.from === ref(nodeId, "out") && c.to === ref("bus.stereo", "in"));
-}
-
 export async function applyDeviceState(
   model: DeviceModel,
   plan: Plan,
@@ -348,6 +348,9 @@ async function readPass(
       conn.params = { ...conn.params, level, pan, on };
       applied++;
     } catch (e) {
+      // Mirror the channel main path: a failed main-path read flags the FX node as
+      // unread, so a partial fetch never shows it at plan defaults with no badge.
+      failed.add(node.id);
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
@@ -434,9 +437,9 @@ async function readPass(
       const fam = insertFxFamilyOf(insertFx);
       let insertFxParams: Record<string, number> | undefined;
       if (fam) {
-        const engine = insertFxEngine(fam.family, ifx.isOutput);
+        const engine = insertFxEngine(fam, ifx.isOutput);
         insertFxParams = {};
-        for (const s of insertFxWritableSlots(fam.family)) {
+        for (const s of insertFxWritableSlots(fam)) {
           insertFxParams[String(s.slot)] = await vdGet(engine, 0, s.slot);
         }
       }

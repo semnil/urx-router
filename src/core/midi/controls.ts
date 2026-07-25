@@ -107,6 +107,10 @@ export function listControls(model: DeviceModel, plan: Plan): ControlDesc[] {
 export function bindControl(model: DeviceModel, plan: Plan, id: string): BoundControl | null {
   const parsed = parseControlId(id);
   if (!parsed) return null;
+  // Only console-catalog nodes carry controls. Without this, nodeControls' generic
+  // fader/chOn branch would mint working level/chOn controls on any model node —
+  // an input, output patch or SD rec the console never draws.
+  if (!controlNodes(model).includes(parsed.node)) return null;
   return nodeControls(model, plan, parsed.node).find((c) => c.id === id) ?? null;
 }
 

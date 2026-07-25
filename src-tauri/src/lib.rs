@@ -61,7 +61,12 @@ async fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> 
 /// atomic on the same filesystem, which a sibling temp guarantees.
 fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
     let tmp = format!("{path}.tmp");
-    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    if let Err(e) = fs::write(&tmp, bytes) {
+        // A partial write can still leave a stray temp file behind (a full disk
+        // truncates mid-write); remove it so the failure strands nothing.
+        let _ = fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
     if let Err(e) = fs::rename(&tmp, path) {
         let _ = fs::remove_file(&tmp);
         return Err(e.to_string());
@@ -105,9 +110,11 @@ async fn write_binary_file(request: tauri::ipc::Request<'_>) -> Result<(), Strin
         .map_err(|e| e.to_string())?
 }
 
-// True when the app was launched with the --experimental flag, gating
-// not-yet-stable features (currently live device write) behind an explicit
-// opt-in. Read straight from the process args so no CLI plugin is needed.
+// True when the app was launched with the --experimental flag. Device writes and
+// Live sync are always on (covered by the first-launch consent gate); the flag
+// only gates the round-trip diagnostics (self-test), the .urxf settings-file
+// import, and the read-only "Compare with device". Read straight from the process
+// args so no CLI plugin is needed.
 #[tauri::command]
 fn experimental_enabled() -> bool {
     std::env::args().any(|a| a == "--experimental")
@@ -169,14 +176,6 @@ async fn vd_connect(state: State<'_, vd::VdState>) -> Result<vd::Connection, Str
     // vd_disconnect so a delayed teardown of an earlier session cannot close it.
     let epoch = state.install(tx);
     Ok(vd::Connection { device, epoch })
-}
-
-#[tauri::command]
-async fn vd_info(state: State<'_, vd::VdState>) -> Result<vd::DeviceSummary, String> {
-    let tx = vd::sender(&state)?;
-    tauri::async_runtime::spawn_blocking(move || vd::info(tx))
-        .await
-        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -367,7 +366,6 @@ pub fn run() {
             reset_storage_requested,
             third_party_licenses,
             vd_connect,
-            vd_info,
             vd_set,
             vd_get,
             vd_set_str,

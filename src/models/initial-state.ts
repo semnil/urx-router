@@ -8,7 +8,7 @@ import { URX22_CONNECTIONS, URX22_NODE_COLORS, URX22_NODE_NAMES, URX22_NODE_PARA
 import { URX44V_CONNECTIONS, URX44V_NODE_COLORS, URX44V_NODE_NAMES, URX44V_NODE_PARAMS } from "./initial-urx44v";
 import type { ModelId } from "./types";
 
-const INITIAL: Partial<Record<ModelId, Pick<Plan, "nodeParams" | "connections" | "nodeColors" | "nodeNames">>> = {
+const INITIAL: Record<ModelId, Pick<Plan, "nodeParams" | "connections" | "nodeColors" | "nodeNames">> = {
   URX22: {
     nodeParams: URX22_NODE_PARAMS,
     connections: URX22_CONNECTIONS,
@@ -33,15 +33,13 @@ const INITIAL: Partial<Record<ModelId, Pick<Plan, "nodeParams" | "connections" |
 
 // Build the starting plan for a new document: an empty plan seeded with the
 // model's captured initial node parameters and routing, deep-cloned so edits do
-// not mutate the shared defaults. Models without a capture return as emptyPlan.
+// not mutate the shared defaults.
 export function defaultPlan(modelId: ModelId): Plan {
   const plan = emptyPlan(modelId);
   const initial = INITIAL[modelId];
-  if (initial) {
-    plan.nodeParams = structuredClone(initial.nodeParams);
-    plan.connections = structuredClone(initial.connections);
-    plan.nodeColors = structuredClone(initial.nodeColors);
-    plan.nodeNames = structuredClone(initial.nodeNames);
-  }
+  plan.nodeParams = structuredClone(initial.nodeParams);
+  plan.connections = structuredClone(initial.connections);
+  plan.nodeColors = structuredClone(initial.nodeColors);
+  plan.nodeNames = structuredClone(initial.nodeNames);
   return plan;
 }

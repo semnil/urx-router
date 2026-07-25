@@ -21,8 +21,6 @@ import {
   panToVd,
   qToVd,
   tagPortRef,
-  vdAddr,
-  vdSet,
   vdToEqFreq,
   vdToEqGain,
   vdToGain,
@@ -128,23 +126,10 @@ describe("HA gain encoding", () => {
   });
 });
 
-describe("bool + address", () => {
+describe("bool", () => {
   it("encodes on/off", () => {
     expect(boolToVd(true)).toBe(1);
     expect(boolToVd(false)).toBe(0);
-  });
-
-  it("builds addresses with x defaulting to 0", () => {
-    expect(vdAddr(139, 0)).toBe("139:0:0");
-    expect(vdAddr(140, 3)).toBe("140:0:3");
-    expect(vdAddr(638, 7, 12)).toBe("638:12:7");
-  });
-
-  it("builds a value-set request", () => {
-    expect(vdSet(140, 2, 1)).toEqual({
-      uri: "/vd/parameters/140:0:2?operation=value",
-      data: { current_value: 1 },
-    });
   });
 });
 

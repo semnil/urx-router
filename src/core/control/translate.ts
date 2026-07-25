@@ -34,8 +34,15 @@ import { insertFxEngine, insertFxFamilyOf, insertFxWritableSlots } from "./inser
 import { isFixedConnection, sendTapWritable } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
+  BUS_TYPE_OPTIONS,
+  BUS_TYPE_VARI,
   COMP_EQ_COMP_FIRST,
+  COMP_EQ_OPTIONS,
   COMP_EQ_SSMCS,
+  COMP_KNEE_DEFAULT,
+  COMP_KNEE_OPTIONS,
+  DELAY_FRAME_RATE_DEFAULT,
+  DELAY_FRAME_RATE_OPTIONS,
   dGainParam,
   denormalizeInsertFx,
   EQ_ONE_KNOB_LEVEL_MAX,
@@ -48,9 +55,15 @@ import {
   hexToColorIndex,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
+  OSC_MODE_OPTIONS,
+  OSC_MODE_SINE,
   OUTPUT_INSERT_FX_OPTIONS,
+  PAN_BAL_OPTIONS,
+  PAN_BAL_PAN,
   paramNameForId,
   PARAMS,
+  REC_POINT_DEFAULT,
+  REC_POINT_OPTIONS,
   FX_STEREO_ASSIGN_ON,
   STEREO_ASSIGN_ON_STEREO,
   STEREO_FADER,
@@ -90,11 +103,29 @@ import {
   qToVd,
   ratioToVd,
   releaseToVd,
+  SSMCS_ATTACK_RAW_MAX,
+  SSMCS_ATTACK_RAW_MIN,
+  SSMCS_COMP_DRIVE_MAX,
+  SSMCS_COMP_DRIVE_MIN,
+  SSMCS_COMP_INTERNAL_MAX,
+  SSMCS_COMP_INTERNAL_MIN,
+  SSMCS_EQ_HIGH_FREQ_RAW_MIN,
+  SSMCS_EQ_LOW_FREQ_RAW_MAX,
+  SSMCS_FREQ_RAW_MAX,
+  SSMCS_FREQ_RAW_MIN,
+  SSMCS_GAIN_MAX,
+  SSMCS_GAIN_MIN,
+  SSMCS_MORPHING_MAX,
+  SSMCS_MORPHING_MIN,
+  SSMCS_Q_RAW_MAX,
+  SSMCS_Q_RAW_MIN,
+  SSMCS_RATIO_RAW_MAX,
+  SSMCS_RATIO_RAW_MIN,
+  SSMCS_RELEASE_RAW_MAX,
+  SSMCS_RELEASE_RAW_MIN,
   sweetSpotDataToStr,
   tagPortRef,
-  vdSet,
 } from "./vd";
-import type { VdSetRequest } from "./vd";
 
 export interface VdCommand {
   /** Catalog parameter this command sets. */
@@ -105,11 +136,10 @@ export interface VdCommand {
   x: number;
   /** Instance index (the address y field). */
   y: number;
-  /** Plan-domain value before encoding (dB, pan -100..100, or 0/1). */
+  /** Plan-domain value before encoding (dB, pan ±63, or 0/1). */
   planValue: number;
   /** Encoded broker value. */
   vdValue: number;
-  request: VdSetRequest;
   /**
    * Owner node id this command's address belongs to (the node a scoped readback
    * would re-read, or whose plan slot a direct-apply writes). Stamped by
@@ -178,7 +208,7 @@ function rawCommand(
   planValue: number,
 ): VdCommand {
   const vdValue = encodeValue(encoding, planValue);
-  return { name, paramId, x: 0, y, planValue, vdValue, request: vdSet(paramId, y, vdValue) };
+  return { name, paramId, x: 0, y, planValue, vdValue };
 }
 
 function command(name: ParamName, y: number, planValue: number): VdCommand {
@@ -770,12 +800,14 @@ function pushSsmcsBand(
   qName: ParamName | null,
   freqName: ParamName,
   gainName: ParamName,
+  freqMin: number,
+  freqMax: number,
 ): void {
   if (!b) return;
   if (b.on !== undefined) out.push(command(onName, y, b.on ? 1 : 0));
-  if (qName && b.q !== undefined) out.push(command(qName, y, b.q));
-  if (b.freq !== undefined) out.push(command(freqName, y, b.freq));
-  if (b.gain !== undefined) out.push(command(gainName, y, b.gain));
+  if (qName && b.q !== undefined) out.push(command(qName, y, boundRaw(b.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX)));
+  if (b.freq !== undefined) out.push(command(freqName, y, boundRaw(b.freq, freqMin, freqMax)));
+  if (b.gain !== undefined) out.push(command(gainName, y, boundRaw(b.gain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
 }
 
 // FX-channel effect: the EFFECT TYPE selector (679/683 at y0) plus the effect
@@ -856,31 +888,77 @@ function pushInsertFxEffectCommands(
 
 function pushSsmcsCommands(out: VdCommand[], y: number, s: SsmcsParams | undefined): void {
   if (!s) return;
+  // Every continuous value is a passthrough "raw" (or the knee "enum"), so it
+  // carries the same firewall as the FX / DynFields paths: a hand-edited / ?plan=
+  // raw is bounded to the calibrated vd.ts range before it reaches the device.
   if (s.on !== undefined) out.push(command("SSMCS_ON", y, s.on ? 1 : 0));
-  if (s.compDrive !== undefined) out.push(command("SSMCS_COMP_DRIVE", y, s.compDrive));
-  if (s.morphing !== undefined) out.push(command("SSMCS_MORPHING", y, s.morphing));
-  if (s.outGain !== undefined) out.push(command("SSMCS_OUT_GAIN", y, s.outGain));
+  if (s.compDrive !== undefined)
+    out.push(command("SSMCS_COMP_DRIVE", y, boundRaw(s.compDrive, SSMCS_COMP_DRIVE_MIN, SSMCS_COMP_DRIVE_MAX)));
+  if (s.morphing !== undefined)
+    out.push(command("SSMCS_MORPHING", y, boundRaw(s.morphing, SSMCS_MORPHING_MIN, SSMCS_MORPHING_MAX)));
+  if (s.outGain !== undefined)
+    out.push(command("SSMCS_OUT_GAIN", y, boundRaw(s.outGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
   const c = s.comp;
   if (c) {
-    if (c.attack !== undefined) out.push(command("SSMCS_COMP_ATTACK", y, c.attack));
-    if (c.release !== undefined) out.push(command("SSMCS_COMP_RELEASE", y, c.release));
-    if (c.ratio !== undefined) out.push(command("SSMCS_COMP_RATIO", y, c.ratio));
-    if (c.knee !== undefined) out.push(command("SSMCS_COMP_KNEE", y, c.knee));
-    if (c.threshold !== undefined) out.push(command("SSMCS_COMP_THRESHOLD", y, c.threshold));
-    if (c.makeup !== undefined) out.push(command("SSMCS_COMP_MAKEUP", y, c.makeup));
+    if (c.attack !== undefined)
+      out.push(command("SSMCS_COMP_ATTACK", y, boundRaw(c.attack, SSMCS_ATTACK_RAW_MIN, SSMCS_ATTACK_RAW_MAX)));
+    if (c.release !== undefined)
+      out.push(command("SSMCS_COMP_RELEASE", y, boundRaw(c.release, SSMCS_RELEASE_RAW_MIN, SSMCS_RELEASE_RAW_MAX)));
+    if (c.ratio !== undefined)
+      out.push(command("SSMCS_COMP_RATIO", y, boundRaw(c.ratio, SSMCS_RATIO_RAW_MIN, SSMCS_RATIO_RAW_MAX)));
+    if (c.knee !== undefined)
+      out.push(command("SSMCS_COMP_KNEE", y, boundEnum(c.knee, COMP_KNEE_OPTIONS, COMP_KNEE_DEFAULT)));
+    if (c.threshold !== undefined)
+      out.push(
+        command("SSMCS_COMP_THRESHOLD", y, boundRaw(c.threshold, SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)),
+      );
+    if (c.makeup !== undefined)
+      out.push(command("SSMCS_COMP_MAKEUP", y, boundRaw(c.makeup, SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)));
   }
   const sc = s.sc;
   if (sc) {
     if (sc.on !== undefined) out.push(command("SSMCS_SC_ON", y, sc.on ? 1 : 0));
-    if (sc.q !== undefined) out.push(command("SSMCS_SC_Q", y, sc.q));
-    if (sc.freq !== undefined) out.push(command("SSMCS_SC_FREQ", y, sc.freq));
-    if (sc.gain !== undefined) out.push(command("SSMCS_SC_GAIN", y, sc.gain));
+    if (sc.q !== undefined) out.push(command("SSMCS_SC_Q", y, boundRaw(sc.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX)));
+    if (sc.freq !== undefined)
+      out.push(command("SSMCS_SC_FREQ", y, boundRaw(sc.freq, SSMCS_FREQ_RAW_MIN, SSMCS_FREQ_RAW_MAX)));
+    if (sc.gain !== undefined) out.push(command("SSMCS_SC_GAIN", y, boundRaw(sc.gain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
   }
   const eq = s.eq;
   if (eq) {
-    pushSsmcsBand(out, y, eq.low, "SSMCS_EQ_LOW_ON", null, "SSMCS_EQ_LOW_FREQ", "SSMCS_EQ_LOW_GAIN");
-    pushSsmcsBand(out, y, eq.mid, "SSMCS_EQ_MID_ON", "SSMCS_EQ_MID_Q", "SSMCS_EQ_MID_FREQ", "SSMCS_EQ_MID_GAIN");
-    pushSsmcsBand(out, y, eq.high, "SSMCS_EQ_HIGH_ON", null, "SSMCS_EQ_HIGH_FREQ", "SSMCS_EQ_HIGH_GAIN");
+    // Per-band freq sub-ranges: Low caps low, High floors high, Mid spans all.
+    pushSsmcsBand(
+      out,
+      y,
+      eq.low,
+      "SSMCS_EQ_LOW_ON",
+      null,
+      "SSMCS_EQ_LOW_FREQ",
+      "SSMCS_EQ_LOW_GAIN",
+      SSMCS_FREQ_RAW_MIN,
+      SSMCS_EQ_LOW_FREQ_RAW_MAX,
+    );
+    pushSsmcsBand(
+      out,
+      y,
+      eq.mid,
+      "SSMCS_EQ_MID_ON",
+      "SSMCS_EQ_MID_Q",
+      "SSMCS_EQ_MID_FREQ",
+      "SSMCS_EQ_MID_GAIN",
+      SSMCS_FREQ_RAW_MIN,
+      SSMCS_FREQ_RAW_MAX,
+    );
+    pushSsmcsBand(
+      out,
+      y,
+      eq.high,
+      "SSMCS_EQ_HIGH_ON",
+      null,
+      "SSMCS_EQ_HIGH_FREQ",
+      "SSMCS_EQ_HIGH_GAIN",
+      SSMCS_EQ_HIGH_FREQ_RAW_MIN,
+      SSMCS_FREQ_RAW_MAX,
+    );
   }
 }
 
@@ -1044,12 +1122,13 @@ export function inputNodeForPort(port: number): string | null {
 }
 
 // Exclusive routing selectors driven by one incoming wire whose source resolves
-// to a bus/channel port: [destNode, kind, paramL, paramR (null = L only), yL, yR].
+// to a bus/channel port: [destNode, kind, paramL, paramR, yL, yR]. Every selector
+// has both an L and an R slot (some reuse one param id at two y instances).
 // `sourcePorts` maps the wire's source to its L/R port; the param's own encoding
 // applies the tag (streaming) or not. Drives both emit and readback so the two
 // directions cannot drift. (Input source and ducker key are bespoke — different
 // namespace / per-instance shape — and stay separate below.)
-export const ROUTING_SELECTORS: [string, ConnectionKind, ParamName, ParamName | null, number, number][] = [
+export const ROUTING_SELECTORS: [string, ConnectionKind, ParamName, ParamName, number, number][] = [
   ["bus.stream", "source", "STREAM_SRC_L", "STREAM_SRC_R", 0, 0],
   ["out.usbmain_a", "patch", "USB_OUT_SRC_A", "USB_OUT_SRC_A", 0, 1],
   ["out.usbmain_b", "patch", "USB_OUT_SRC_B", "USB_OUT_SRC_B", 0, 1],
@@ -1261,10 +1340,20 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     }
     if (cc.hasHiZ && np.hiZ !== undefined) out.push(command("HI_Z", cc.y, np.hiZ ? 1 : 0));
     // COMP/EQ type (COMP->EQ vs SSMCS) is a MONO IN channel feature (= mic strip).
-    if (cc.hasMicStrip && np.compEqType !== undefined) out.push(command("COMP_EQ_TYPE", cc.y, np.compEqType));
+    if (cc.hasMicStrip && np.compEqType !== undefined)
+      out.push(command("COMP_EQ_TYPE", cc.y, boundEnum(np.compEqType, COMP_EQ_OPTIONS, COMP_EQ_COMP_FIRST)));
     // Rec Point: per-channel record / direct-out tap (cc.recPoint = mono 137 /
     // stereo 264, resolved by channelControl like fader/on/pan).
-    if (np.recPoint !== undefined) out.push(rawCommand("REC_POINT", cc.recPoint, "enum", cc.y, np.recPoint));
+    if (np.recPoint !== undefined)
+      out.push(
+        rawCommand(
+          "REC_POINT",
+          cc.recPoint,
+          "enum",
+          cc.y,
+          boundEnum(np.recPoint, REC_POINT_OPTIONS, REC_POINT_DEFAULT),
+        ),
+      );
     // Channel-strip section ON (GATE/COMP/EQ). The active COMP/EQ bank follows the
     // type; polarity per toggle. Stereo channels expose only EQ.
     for (const sec of channelSections(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST)) {
@@ -1284,10 +1373,13 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       if (np.gate) pushDynCommands(out, dyn.gate, dyn.y, np.gate as Record<string, number | undefined>);
       if (dyn.comp && np.comp) {
         pushDynCommands(out, dyn.comp, dyn.y, np.comp as Record<string, number | undefined>);
-        if (np.comp.knee !== undefined) out.push(command("COMP_KNEE", dyn.y, np.comp.knee));
+        if (np.comp.knee !== undefined)
+          out.push(command("COMP_KNEE", dyn.y, boundEnum(np.comp.knee, COMP_KNEE_OPTIONS, COMP_KNEE_DEFAULT)));
         if (np.comp.autoMakeup !== undefined) out.push(command("COMP_AUTO_MAKEUP", dyn.y, np.comp.autoMakeup ? 1 : 0));
         if (np.comp.oneKnob !== undefined) out.push(command("COMP_ONE_KNOB", dyn.y, np.comp.oneKnob ? 1 : 0));
-        if (np.comp.oneKnobLevel !== undefined) out.push(command("COMP_ONE_KNOB_LEVEL", dyn.y, np.comp.oneKnobLevel));
+        // COMP 1-knob level is a passthrough 0..100 raw (enum encoding), bounded here.
+        if (np.comp.oneKnobLevel !== undefined)
+          out.push(command("COMP_ONE_KNOB_LEVEL", dyn.y, boundRaw(np.comp.oneKnobLevel, 0, 100)));
       }
       // SSMCS detail (MONO IN, SSMCS mode). Comp/EQ section ON are emitted above
       // via channelSections (compOn/eqOn). Sweet Spot Data is a string param, so it
@@ -1319,7 +1411,7 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       out.push(command("SIGNAL_TYPE", py, np.stereoLink ? 1 : 0));
       out.push(command("SIGNAL_TYPE", sy, np.stereoLink ? 1 : 0));
     }
-    if (np.panBal !== undefined) out.push(command("PAN_BAL", py, np.panBal));
+    if (np.panBal !== undefined) out.push(command("PAN_BAL", py, boundEnum(np.panBal, PAN_BAL_OPTIONS, PAN_BAL_PAN)));
     own(primary);
   }
 
@@ -1375,7 +1467,7 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
       }
     }
     const fam = insertFxFamilyOf(v);
-    if (fam) pushInsertFxEffectCommands(out, insertFxEngine(fam.family, ifx.isOutput), fam.family, np.insertFxParams);
+    if (fam) pushInsertFxEffectCommands(out, insertFxEngine(fam, ifx.isOutput), fam, np.insertFxParams);
     own(node.id);
   }
 
@@ -1467,7 +1559,7 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     // A wire to a source that does not resolve to a port is left untouched.
     if (conn && !p) continue;
     out.push(command(pl, yl, p ? p.l : PORT_REF_NONE));
-    if (pr) out.push(command(pr, yr, p ? p.r : PORT_REF_NONE));
+    out.push(command(pr, yr, p ? p.r : PORT_REF_NONE));
     own(to);
   }
 
@@ -1505,7 +1597,9 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     const mix = MIX_FADER_INSTANCES[node.id];
     if (!mix) continue;
     const np = plan.nodeParams[node.id];
-    if (np?.busType !== undefined) for (const inst of mix) out.push(command("BUS_TYPE", inst, np.busType));
+    if (np?.busType !== undefined)
+      for (const inst of mix)
+        out.push(command("BUS_TYPE", inst, boundEnum(np.busType, BUS_TYPE_OPTIONS, BUS_TYPE_VARI)));
     if (np?.panLink !== undefined) out.push(command("PAN_LINK", mix[0], np.panLink ? 1 : 0));
     own(node.id);
   }
@@ -1529,12 +1623,13 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   const osc = plan.nodeParams["bus.osc"]?.osc;
   if (osc?.on !== undefined) out.push(command("OSC_ON", 0, osc.on ? 1 : 0));
   if (osc?.level !== undefined) out.push(command("OSC_LEVEL", 0, osc.level));
-  if (osc?.mode !== undefined) out.push(command("OSC_MODE", 0, osc.mode));
+  if (osc?.mode !== undefined) out.push(command("OSC_MODE", 0, boundEnum(osc.mode, OSC_MODE_OPTIONS, OSC_MODE_SINE)));
   if (osc?.freq !== undefined) out.push(command("OSC_FREQ", 0, osc.freq));
   // Burst Noise width (seconds → ms ×1000) / interval (seconds, raw). Burst mode
-  // only on the device, but emitted whenever present (like freq for Sine).
+  // only on the device, but emitted whenever present (like freq for Sine). The
+  // interval is a passthrough raw (1..30 s), so it carries the emit-path firewall.
   if (osc?.width !== undefined) out.push(command("OSC_BURST_WIDTH", 0, osc.width));
-  if (osc?.interval !== undefined) out.push(command("OSC_BURST_INTERVAL", 0, osc.interval));
+  if (osc?.interval !== undefined) out.push(command("OSC_BURST_INTERVAL", 0, boundRaw(osc.interval, 1, 30)));
   own("bus.osc");
 
   // STREAMING DELAY (bus.stream node, global y = 0): on / time / frame rate.
@@ -1543,7 +1638,14 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   const delay = plan.nodeParams["bus.stream"]?.delay;
   if (delay?.on !== undefined) out.push(command("STREAM_DELAY_ON", 0, delay.on ? 1 : 0));
   if (delay?.time !== undefined) out.push(command("STREAM_DELAY_TIME", 0, delay.time));
-  if (delay?.frameRate !== undefined) out.push(command("STREAM_DELAY_FRAME_RATE", 0, delay.frameRate));
+  if (delay?.frameRate !== undefined)
+    out.push(
+      command(
+        "STREAM_DELAY_FRAME_RATE",
+        0,
+        boundEnum(delay.frameRate, DELAY_FRAME_RATE_OPTIONS, DELAY_FRAME_RATE_DEFAULT),
+      ),
+    );
   own("bus.stream");
 
   // OSC → bus assign — absolute over every OSC-assignable bus. A wire turns the

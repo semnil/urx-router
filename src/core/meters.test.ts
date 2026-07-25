@@ -12,6 +12,12 @@ import {
 } from "./meters";
 import { MODELS, MODEL_IDS } from "../models/index";
 
+// MeterStore.reading() was removed (no production consumer — console.ts reads via
+// readingTap). These pins exercise the same decode path through the public
+// readingTap + tapFor pair.
+const reading = (store: MeterStore, nodeId: string, tapKey: string, modelId?: string) =>
+  store.readingTap(tapFor(nodeId, tapKey, modelId) ?? null);
+
 describe("decodeMeterDb", () => {
   it("scales the raw deci-dBFS value by 1/10", () => {
     expect(decodeMeterDb(0)).toBe(0);
@@ -100,13 +106,13 @@ describe("tap points", () => {
   });
 });
 
-describe("MeterStore.reading", () => {
+describe("MeterStore reading (readingTap + tapFor)", () => {
   it("returns null for an unmapped node", () => {
-    expect(new MeterStore().reading("out.main", "post")).toBeNull();
+    expect(reading(new MeterStore(), "out.main", "post")).toBeNull();
   });
 
   it("rests at the silence floor before any reading arrives", () => {
-    const r = new MeterStore().reading("ch1", "input")!;
+    const r = reading(new MeterStore(), "ch1", "input")!;
     expect(r.l).toBe(-128);
     expect(r.r).toBe(-128);
     expect(r.overL).toBe(false);
@@ -117,16 +123,16 @@ describe("MeterStore.reading", () => {
     const store = new MeterStore();
     store.apply({ meterId: 100, x: 0, value: -120 }); // ch1 INPUT
     store.apply({ meterId: 115, x: 0, value: -60 }); // ch1 POST
-    expect(store.reading("ch1", "input")!.l).toBe(-12);
-    expect(store.reading("ch1", "post")!.l).toBe(-6);
-    expect(store.reading("ch1", "input")!.stereo).toBe(false);
+    expect(reading(store, "ch1", "input")!.l).toBe(-12);
+    expect(reading(store, "ch1", "post")!.l).toBe(-6);
+    expect(reading(store, "ch1", "input")!.stereo).toBe(false);
   });
 
   it("decodes independent L/R for a stereo tap and flags OVER per side", () => {
     const store = new MeterStore();
     store.apply({ meterId: 104, x: 0, value: -60 }); // STEREO PRE EQ L
     store.apply({ meterId: 104, x: 1, value: METER_OVER_RAW }); // STEREO PRE EQ R clips
-    const r = store.reading("bus.stereo", "preeq")!;
+    const r = reading(store, "bus.stereo", "preeq")!;
     expect(r.l).toBe(-6);
     expect(r.r).toBe(METER_TOP_DB);
     expect(r.overL).toBe(false);
@@ -138,7 +144,7 @@ describe("MeterStore.reading", () => {
     const store = new MeterStore();
     store.apply({ meterId: 100, x: 0, value: 0 });
     store.clear();
-    expect(store.reading("ch1", "input")!.l).toBe(-128);
+    expect(reading(store, "ch1", "input")!.l).toBe(-128);
   });
 });
 

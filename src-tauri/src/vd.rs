@@ -6,14 +6,20 @@
 // A dedicated worker thread owns the socket so the broker's continuous meter
 // notifications are drained without blocking command latency, and so the device
 // GUID (dev_uid) stays inside Rust — the frontend addresses parameters by
-// (param_id, x, y) and never sees the instance secret. Desktop-only: mobile
-// builds compile the command surface but every entry point returns an error.
+// (param_id, x, y) and never sees the instance secret. Desktop-only: the broker
+// transport (tungstenite) and the MIDI bridge (midir) are desktop-only crates,
+// so mobile targets do not build the hardware control surface at all.
 
 use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::ipc::Channel;
+
+/// Stable error code raised when the worker thread is gone (its command channel or
+/// reply channel is closed). The frontend exact-matches this code, so its value
+/// must not change.
+const CONTROL_WORKER_GONE: &str = "control-worker-gone";
 
 /// Device identity exposed to the frontend (no dev_uid / serial). `firmware` is the
 /// unit's System firmware version (from /vd/device); empty when the device reports
@@ -95,13 +101,11 @@ pub enum Cmd {
         y: i64,
         reply: Sender<Result<String, String>>,
     },
-    Info {
-        reply: Sender<DeviceSummary>,
-    },
     /// Subscribe to a set of level meters (meter_id, x) and stream their readings
     /// through `channel`. Replaces any prior meter subscription. The reply carries
-    /// the first registration failure, so the caller learns the stream never
-    /// started instead of reading floor-stuck bars as silence.
+    /// the first registration *send* failure only (a socket transmit error): the
+    /// broker's registration reply is drained by the pump, never read, so a broker
+    /// refusal does not surface — only a failure to put the request on the wire.
     /// Each `send` carries a whole pump cycle's readings (the broker streams ~250/s
     /// across the set), so the IPC boundary is crossed ~30×/s instead of per reading.
     MetersSubscribe {
@@ -113,9 +117,9 @@ pub enum Cmd {
     MetersUnsubscribe,
     /// Subscribe to a set of parameter addresses (param_id, x, y) and stream their
     /// `notify` frames through `channel`. Replaces any prior parameter subscription.
-    /// The reply carries the first registration failure: without the notify stream
-    /// the app cannot see device-side edits, and the next converge would write the
-    /// plan's stale values back over them.
+    /// The reply carries the first registration *send* failure only (a socket
+    /// transmit error): the broker's registration reply is drained by the pump,
+    /// never read, so a broker refusal does not surface.
     ParamsSubscribe {
         addrs: Vec<(u32, i64, i64)>,
         channel: Channel<Vec<ParamUpdate>>,
@@ -153,20 +157,13 @@ pub struct VdState {
 /// into VdState. Kept free of VdState so a Tauri command can run it on a
 /// blocking task — the handshake waits up to seconds and must not stall the UI.
 pub fn open() -> Result<(Sender<Cmd>, DeviceSummary), String> {
-    #[cfg(not(desktop))]
-    {
-        Err("hardware control is available on desktop only".into())
-    }
-    #[cfg(desktop)]
-    {
-        let (tx, rx) = mpsc::channel::<Cmd>();
-        let (ready_tx, ready_rx) = mpsc::channel::<Result<DeviceSummary, String>>();
-        std::thread::spawn(move || imp::worker(rx, ready_tx));
-        let summary = ready_rx
-            .recv()
-            .map_err(|_| "control-worker-gone".to_string())??;
-        Ok((tx, summary))
-    }
+    let (tx, rx) = mpsc::channel::<Cmd>();
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<DeviceSummary, String>>();
+    std::thread::spawn(move || imp::worker(rx, ready_tx));
+    let summary = ready_rx
+        .recv()
+        .map_err(|_| CONTROL_WORKER_GONE.to_string())??;
+    Ok((tx, summary))
 }
 
 impl VdState {
@@ -209,8 +206,8 @@ pub fn set(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64, value: i64) -> Result
         value,
         reply,
     })
-    .map_err(|_| "control-worker-gone".to_string())?;
-    wait.recv().map_err(|_| "control-worker-gone".to_string())?
+    .map_err(|_| CONTROL_WORKER_GONE.to_string())?;
+    wait.recv().map_err(|_| CONTROL_WORKER_GONE.to_string())?
 }
 
 /// Read one parameter instance's current absolute value.
@@ -222,8 +219,8 @@ pub fn get(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64) -> Result<i64, String
         y,
         reply,
     })
-    .map_err(|_| "control-worker-gone".to_string())?;
-    wait.recv().map_err(|_| "control-worker-gone".to_string())?
+    .map_err(|_| CONTROL_WORKER_GONE.to_string())?;
+    wait.recv().map_err(|_| CONTROL_WORKER_GONE.to_string())?
 }
 
 /// Set one string-valued parameter instance (e.g. a CH SETTING name).
@@ -242,8 +239,8 @@ pub fn set_str(
         value,
         reply,
     })
-    .map_err(|_| "control-worker-gone".to_string())?;
-    wait.recv().map_err(|_| "control-worker-gone".to_string())?
+    .map_err(|_| CONTROL_WORKER_GONE.to_string())?;
+    wait.recv().map_err(|_| CONTROL_WORKER_GONE.to_string())?
 }
 
 /// Read one string-valued parameter instance's current value.
@@ -255,21 +252,14 @@ pub fn get_str(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64) -> Result<String,
         y,
         reply,
     })
-    .map_err(|_| "control-worker-gone".to_string())?;
-    wait.recv().map_err(|_| "control-worker-gone".to_string())?
-}
-
-/// The currently connected device, or an error if not connected.
-pub fn info(tx: Sender<Cmd>) -> Result<DeviceSummary, String> {
-    let (reply, wait) = mpsc::channel();
-    tx.send(Cmd::Info { reply })
-        .map_err(|_| "control-worker-gone".to_string())?;
-    wait.recv().map_err(|_| "control-worker-gone".to_string())
+    .map_err(|_| CONTROL_WORKER_GONE.to_string())?;
+    wait.recv().map_err(|_| CONTROL_WORKER_GONE.to_string())?
 }
 
 /// Subscribe to live level meters; readings stream through `channel`. Replaces
-/// any prior subscription. Blocks until the worker has registered every address,
-/// so a refused registration reaches the caller rather than showing as silence.
+/// any prior subscription. Blocks until the worker has sent every registration;
+/// the reply carries only a socket transmit failure, not a broker refusal (the
+/// registration reply is never read).
 pub fn meters_subscribe(
     tx: Sender<Cmd>,
     addrs: Vec<(u32, i64)>,
@@ -281,20 +271,20 @@ pub fn meters_subscribe(
         channel,
         reply,
     })
-    .map_err(|_| "control-worker-gone".to_string())?;
-    rx.recv().map_err(|_| "control-worker-gone".to_string())?
+    .map_err(|_| CONTROL_WORKER_GONE.to_string())?;
+    rx.recv().map_err(|_| CONTROL_WORKER_GONE.to_string())?
 }
 
 /// Drop the current meter subscription.
 pub fn meters_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
     tx.send(Cmd::MetersUnsubscribe)
-        .map_err(|_| "control-worker-gone".to_string())
+        .map_err(|_| CONTROL_WORKER_GONE.to_string())
 }
 
 /// Subscribe to device-side parameter changes; notifies stream through `channel`.
-/// Replaces any prior subscription. Blocks until the worker has registered every
-/// address, so a refused registration reaches the caller rather than leaving the
-/// app blind to edits made on the device.
+/// Replaces any prior subscription. Blocks until the worker has sent every
+/// registration; the reply carries only a socket transmit failure, not a broker
+/// refusal (the registration reply is never read).
 pub fn params_subscribe(
     tx: Sender<Cmd>,
     addrs: Vec<(u32, i64, i64)>,
@@ -306,20 +296,20 @@ pub fn params_subscribe(
         channel,
         reply,
     })
-    .map_err(|_| "control-worker-gone".to_string())?;
-    rx.recv().map_err(|_| "control-worker-gone".to_string())?
+    .map_err(|_| CONTROL_WORKER_GONE.to_string())?;
+    rx.recv().map_err(|_| CONTROL_WORKER_GONE.to_string())?
 }
 
 /// Drop the current parameter subscription.
 pub fn params_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
     tx.send(Cmd::ParamsUnsubscribe)
-        .map_err(|_| "control-worker-gone".to_string())
+        .map_err(|_| CONTROL_WORKER_GONE.to_string())
 }
 
 /// Register a channel to receive the link-lost event. Replaces any prior watch.
 pub fn watch_link(tx: Sender<Cmd>, channel: Channel<LinkEvent>) -> Result<(), String> {
     tx.send(Cmd::WatchLink { channel })
-        .map_err(|_| "control-worker-gone".to_string())
+        .map_err(|_| CONTROL_WORKER_GONE.to_string())
 }
 
 /// Close the connection of generation `epoch`. A no-op if the current connection
@@ -484,9 +474,6 @@ mod imp {
             };
             match rx.recv_timeout(wait) {
                 Ok(Cmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
-                Ok(Cmd::Info { reply }) => {
-                    let _ = reply.send(summary.clone());
-                }
                 Ok(Cmd::Set {
                     param_id,
                     x,
