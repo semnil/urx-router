@@ -639,6 +639,8 @@ export const en = {
     noDevice: "Device Center is running, but no URX is connected. Connect the unit, then try again.",
     controlWorkerGone: "The control connection was interrupted. Reconnect, and restart the app if it keeps happening.",
     linkLost: "the device link dropped (USB unplugged or Device Center quit)",
+    // MIDI port-open failure code from the Rust midi bridge (midi.rs), localized here.
+    midiPortNotFound: "That MIDI port is no longer available. Reconnect the device and pick it again.",
     firmwareUnread:
       "The device's firmware version could not be read, so this build cannot check that its parameter mappings apply to your unit. Reconnect and try again.",
     liveReadIncomplete: (n: number): string =>

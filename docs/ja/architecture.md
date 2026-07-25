@@ -391,7 +391,7 @@ per-mapping セレクト (取り込みモード / ボタン動作) は、ホバ�
 取るべき対処が同一 (実機を接続する) のため単一コードに集約)、`control-worker-gone` (Rust ワーカースレッドが
 異常終了または無応答 — ハンドシェイク・コマンド送信・応答待ちの各失敗を 1 コードに集約) のいずれか。フロントの
 `connectFailureStatus` がこれらのコードをローカライズ済みメッセージ (`error.brokerUnreachable` / `error.noDevice` /
-`error.controlWorkerGone`) へ写像し、それ以外の接続段階の障害は各操作のエラー整形にフォールバックする。接続が事前チェックを兼ねるため、取得と Live sync は**破棄確認の前に**接続し、
+`error.controlWorkerGone`) へ写像し、それ以外の接続段階の障害は各操作のエラー整形にフォールバックする。MIDI ブリッジ (midi.rs) は独立したコード (`midi-port-not-found`) を持ち、MIDI パネルの `midiErrorStatus` がその `connectFailureStatus` 相当として `error.midiPortNotFound` へローカライズし、それ以外は入出力エラー整形にフォールバックする。接続が事前チェックを兼ねるため、取得と Live sync は**破棄確認の前に**接続し、
 未接続状態は plan を乱す前に明示する。
 
 ### 接続世代 (generation)

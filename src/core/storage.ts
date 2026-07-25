@@ -95,7 +95,7 @@ async function saveBlob(defaultName: string, blob: Blob, filter: FileFilter): Pr
   return { saved: true };
 }
 
-export function pickTextFile(): Promise<string | null> {
+function pickTextFile(): Promise<string | null> {
   return new Promise((resolve) => {
     const input = document.getElementById("file-input") as HTMLInputElement | null;
     if (!input) return resolve(null);

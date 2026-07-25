@@ -105,7 +105,7 @@ function isAddr(v: unknown): v is MidiAddr {
 }
 
 /** Validate one persisted mapping (localStorage may hold anything). */
-export function isMapping(v: unknown): v is MidiMapping {
+function isMapping(v: unknown): v is MidiMapping {
   if (typeof v !== "object" || v === null) return false;
   const m = v as Record<string, unknown>;
   if (typeof m.control !== "string" || !m.control) return false;

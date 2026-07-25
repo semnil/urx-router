@@ -2076,7 +2076,7 @@ function enumSelect(
 // palette so a chosen color maps 1:1 to the on-device color (and reads back to
 // the same swatch). Order follows the device step list (COLOR_PALETTE); the
 // "none" swatch is the device "Off" state (no cap).
-export const NODE_COLORS = COLOR_PALETTE.map((c) => c.hex);
+const NODE_COLORS = COLOR_PALETTE.map((c) => c.hex);
 
 // A row of color swatches plus a "none" clear option. The active color (or none)
 // is ringed. Selecting toggles: clicking the active color clears it.

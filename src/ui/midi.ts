@@ -246,7 +246,7 @@ export class MidiControl {
     } catch (err) {
       this.closeInput = null;
       this.inputPort = null;
-      this.hooks.onStatus(t().midi.inputError(err instanceof Error ? err.message : String(err)));
+      this.hooks.onStatus(midiErrorStatus(err, t().midi.inputError));
     }
   }
 
@@ -257,7 +257,7 @@ export class MidiControl {
       this.runFeedback(true); // align motor faders / LEDs with the plan at once
     } catch (err) {
       this.outputPort = null;
-      this.hooks.onStatus(t().midi.outputError(err instanceof Error ? err.message : String(err)));
+      this.hooks.onStatus(midiErrorStatus(err, t().midi.outputError));
     }
   }
 
@@ -638,6 +638,15 @@ export class MidiControl {
     this.infoEl.hidden = true;
     this.infoEl.replaceChildren();
   }
+}
+
+// A MIDI bridge failure surfaces its stable code (midi.rs); localize the known
+// ones, and wrap anything else with the given input/output error prefix — the
+// parallel of connectFailureStatus for the vd worker codes.
+function midiErrorStatus(err: unknown, wrap: (message: string) => string): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message === "midi-port-not-found") return t().error.midiPortNotFound;
+  return wrap(message);
 }
 
 // Reading localStorage can throw where storage is blocked (private mode); the

@@ -1030,7 +1030,7 @@ const BUS_PORTS: Record<string, { l: number; r: number }> = {
 };
 
 /** Resolve a routing source node to its port ids (a channel uses its input slots). */
-export function sourcePorts(model: DeviceModel, nodeId: string): { l: number; r: number } | null {
+function sourcePorts(model: DeviceModel, nodeId: string): { l: number; r: number } | null {
   const bus = BUS_PORTS[nodeId];
   if (bus) return bus;
   const slots = channelInputSlots(model, nodeId);
@@ -1065,7 +1065,7 @@ export function recordSlots(model: DeviceModel): { id: string; trackL: number; t
 /** Record-source port refs (L/R) for a node feeding an SD Rec track pair: a
  *  STEREO/MIX bus, a stereo channel (its two input slots), or a mono channel pair
  *  (its primary's slot L, the partner's slot R = L+1). Null if not a record source. */
-export function recordSourcePorts(model: DeviceModel, nodeId: string): { l: number; r: number } | null {
+function recordSourcePorts(model: DeviceModel, nodeId: string): { l: number; r: number } | null {
   const bus = BUS_PORTS[nodeId];
   if (bus) return bus;
   const slots = channelInputSlots(model, nodeId);
