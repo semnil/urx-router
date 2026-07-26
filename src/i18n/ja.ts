@@ -645,9 +645,9 @@ export const ja: Messages = {
     fineLatch: "ラッチ",
     controlsNote: "ラッチでは Shift を押すたびにファインチューニングが切り替わります。",
     sleepSection: "コンピューターのスリープ",
-    preventSleep: "スリープを抑止",
+    preventSleep: "ライブ同期中は抑止",
     sleepNote:
-      "ON の間、URX Router を開いているコンピューターとディスプレイがスリープせず、自動ロックもかかりません。ふたを閉じる操作や手動スリープは通常どおり動作します。",
+      "ON にすると、ライブ同期の実行中だけコンピューターとディスプレイがスリープしません。自動ロックも同時に抑止されます。同期していない間は通常どおりスリープ・ロックします。",
     sleepFailed: (message: string): string => `スリープ設定を変更できませんでした: ${message}`,
     filesSection: "ファイルと出力",
     exportScale: "出力スケール",

@@ -948,12 +948,14 @@ what the desktop app offers.
   stay on regardless.
 - **Controls** — wheel steps per notch (each detent still snaps to the control's own grid), and
   the fine-tuning entry style (hold Shift, or latch — each press flips the mode).
-- **Computer sleep** — hold off the computer's idle sleep, system and display, while the app is
-  open (off by default; desktop only). This is the one preference the OS can refuse, so the OS
-  decides: `set_keep_awake` (`src-tauri/src/keepawake.rs`) has to succeed before the setting is
-  stored, and a refusal leaves the row where it was with the reason under it. The hold is
-  process-scoped and dies with the app, so `boot()` re-takes it at every launch through the same
-  call and reports a refusal there too.
+- **Computer sleep** — hold off the computer's idle sleep, system and display, for as long as
+  Live sync is running (off by default; desktop only). The scope is the session, not the app:
+  editing a plan does not need the machine awake, and holding the idle screen lock off for every
+  launch is a cost no editing session earns. `setLiveUi` drives it, so the toggle, a write
+  failure and a link loss all release it, and the OS releases whatever is left when the process
+  exits. The OS can also refuse the hold, so while a session is up the preference is stored only
+  after `set_keep_awake` (`src-tauri/src/keepawake.rs`) succeeds and a refusal leaves the row
+  where it was, explained under it; off-line the toggle only stores.
 - **Files & export** — the PNG / PDF raster scale, the export background (active theme or a fixed
   one — the graph re-renders under the target palette just for the export clone and swaps back
   within the same task, so the screen never shows it), and the recent-plans length / clear.

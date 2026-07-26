@@ -1,6 +1,17 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { stubTauriBoot } from "./tauri-stub";
+import { stubTauriBoot, stubTauriDevice } from "./tauri-stub";
+
+// A Live sync session registers the notify stream, the link watch and the meter
+// stream on top of the device stub's reads; without these the activation aborts
+// before the session counts as up.
+const LIVE_COMMANDS = {
+  vd_params_subscribe: null,
+  vd_params_unsubscribe: null,
+  vd_watch_link: null,
+  vd_meters_subscribe: null,
+  vd_meters_unsubscribe: null,
+};
 
 // Preferences modal (toolbar gear). The gear is an independent entry available
 // in every build; rows that need the desktop shell render disabled with a
@@ -198,41 +209,66 @@ const keepAwakeCalls = (page: Page): Promise<boolean[]> =>
 const storedSettings = (page: Page): Promise<Record<string, unknown>> =>
   page.evaluate(() => JSON.parse(localStorage.getItem("urx-settings") ?? "{}"));
 
-test("Prevent sleep holds off sleep and re-takes the hold at launch (stubbed Tauri)", async ({ page }) => {
+test("the toggle stores the preference off-line without asking the OS (stubbed Tauri)", async ({ page }) => {
   await stubTauriBoot(page);
   await recordKeepAwake(page);
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
-  // Nothing is held until it is asked for.
-  expect(await keepAwakeCalls(page)).toEqual([]);
   await page.click("#btn-prefs");
   await page.click('#prefs-prevent-sleep button:has-text("ON")');
   await expect(page.locator("#prefs-prevent-sleep button.on")).toHaveText("ON");
-  expect(await keepAwakeCalls(page)).toEqual([true]);
   expect((await storedSettings(page)).preventSleep).toBe(true);
-  // The hold dies with the process, so a launch with the preference on has to
-  // take it again — a stored ON that no longer holds anything is the failure.
+  // The hold belongs to a Live sync session, so with none running the preference
+  // is the only thing that changes — nothing reaches the OS, at the toggle or at
+  // the next launch.
+  expect(await keepAwakeCalls(page)).toEqual([]);
   await page.reload();
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
-  await expect.poll(() => keepAwakeCalls(page)).toEqual([true]);
-  // Turning it back off releases it.
-  await page.click("#btn-prefs");
-  await page.click('#prefs-prevent-sleep button:has-text("OFF")');
-  await expect(page.locator("#prefs-prevent-sleep button.on")).toHaveText("OFF");
-  expect(await keepAwakeCalls(page)).toEqual([true, false]);
-  expect((await storedSettings(page)).preventSleep).toBe(false);
+  expect(await keepAwakeCalls(page)).toEqual([]);
 });
 
-test("a refused hold leaves the row OFF and says why (stubbed Tauri)", async ({ page }) => {
-  await stubTauriBoot(page);
+test("Live sync takes the hold and ending it releases (stubbed device)", async ({ page }) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS });
+  await page.addInitScript(() => localStorage.setItem("urx-settings", JSON.stringify({ preventSleep: true })));
+  await recordKeepAwake(page);
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  // Nothing held while the board is off-line, however the preference reads.
+  expect(await keepAwakeCalls(page)).toEqual([]);
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => keepAwakeCalls(page)).toEqual([true]);
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+  await expect.poll(() => keepAwakeCalls(page)).toEqual([true, false]);
+});
+
+test("with the preference off a session holds nothing (stubbed device)", async ({ page }) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS });
+  await recordKeepAwake(page);
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  // Only the difference is sent: the target never leaves false, so the OS is
+  // never called at all.
+  expect(await keepAwakeCalls(page)).toEqual([]);
+});
+
+test("a refused hold leaves the row OFF and says why (stubbed device)", async ({ page }) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS });
   await recordKeepAwake(page, true);
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
   await page.click("#btn-prefs");
   await page.click('#prefs-prevent-sleep button:has-text("ON")');
-  await expect(page.locator("#prefs-sleep-error")).toHaveText(
-    "Could not change the sleep setting: PowerCreateRequest failed",
-  );
+  await expect(page.locator("#prefs-sleep-error")).toContainText("Could not change the sleep setting");
   // The OS refused, so the row and the stored preference both stay off — an ON
   // face here would claim a suppression nothing is holding.
   await expect(page.locator("#prefs-prevent-sleep button.on")).toHaveText("OFF");

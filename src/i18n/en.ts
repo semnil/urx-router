@@ -661,9 +661,9 @@ export const en = {
     fineLatch: "Latch",
     controlsNote: "Latch flips fine-tuning on each Shift press instead of holding.",
     sleepSection: "Computer sleep",
-    preventSleep: "Prevent sleep",
+    preventSleep: "Prevent sleep while live",
     sleepNote:
-      "ON keeps this computer and its display awake while URX Router is open, so the idle screen lock stays away too. Closing the lid or sleeping manually still works.",
+      "ON keeps this computer and its display awake for as long as Live sync is running, so watching the meters does not end in a sleeping machine. The idle screen lock is held off with them; outside a session the computer sleeps and locks as usual.",
     sleepFailed: (message: string): string => `Could not change the sleep setting: ${message}`,
     filesSection: "Files & export",
     exportScale: "Export scale",

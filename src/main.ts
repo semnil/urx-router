@@ -580,6 +580,11 @@ function setLiveUi(on: boolean): void {
   // The Preferences device-scope control locks while the session is up; re-render
   // the modal if it is open (a link loss can end the session behind the scrim).
   prefs.refresh();
+  // The sleep hold lives and dies with the session, so every way in and out of one
+  // — the toggle, a write failure, a link loss — passes through here.
+  void syncSleepHold(on && getSettings().preventSleep).then((failed) => {
+    if (failed) showError(failed);
+  });
 }
 
 // Turn live sync off and release the connection. Used by the toggle, by a write
@@ -609,6 +614,38 @@ function stopLiveOnError(message: string): void {
   // hardware that may no longer be attached.
   setFollowUsbBadge(null);
   showError(t().status.liveError(message));
+}
+
+// Whether the computer's idle sleep is currently held off, and the queue that
+// keeps the OS calls in order — an off/on across two session transitions must not
+// land reversed. Only the difference is sent, so a repeated target costs nothing.
+let sleepHeld = false;
+let sleepHoldChain: Promise<string | null> = Promise.resolve(null);
+
+/** Drive the idle-sleep hold to `want`. Resolves with null once the OS agreed, or
+ *  the refusal text — the caller decides where that lands (a status dialog for a
+ *  session transition, the Preferences note for a toggle). */
+function syncSleepHold(want: boolean): Promise<string | null> {
+  sleepHoldChain = sleepHoldChain.then(async () => {
+    if (want === sleepHeld) return null;
+    const failed = await applyPreventSleep(want);
+    // A refusal leaves sleepHeld alone: the OS did not move, so neither does the
+    // app's idea of what it is holding.
+    if (!failed) sleepHeld = want;
+    return failed;
+  });
+  return sleepHoldChain;
+}
+
+// The one call that takes or releases the hold. Resolves with null once the OS
+// took it, or the refusal text.
+async function applyPreventSleep(on: boolean): Promise<string | null> {
+  try {
+    await setKeepAwake(on);
+    return null;
+  } catch (err) {
+    return t().prefs.sleepFailed(err instanceof Error ? err.message : String(err));
+  }
 }
 
 // An edit changed the plan: flag it unsaved and (when live) mirror it to the
@@ -1396,7 +1433,10 @@ const prefs = new PrefsPanel({
     if (DEMO) return Promise.resolve<UpdateCheckOutcome>({ kind: "failed" });
     return checkForUpdates();
   },
-  setPreventSleep: applyPreventSleep,
+  // Off-line there is nothing to take: the preference is stored on its own and
+  // the hold is taken when a session starts. While live it applies at once, so a
+  // refusal reaches the row that asked for it.
+  setPreventSleep: (on) => (liveSessionUp ? syncSleepHold(on) : Promise.resolve(null)),
   isExperimental: () => experimentalOn,
   themeMode: () => themeMode,
   onThemeMode: (mode) => setThemeMode(mode),
@@ -2482,26 +2522,7 @@ async function boot(): Promise<void> {
   await resetStorageIfRequested();
   await requireConsent();
   if (!DEMO) {
-    // The hold dies with the process, so the stored preference is re-taken at
-    // every launch — and a refusal is reported rather than leaving a preference
-    // that reads ON while the computer sleeps mid-session.
-    if (isTauri() && getSettings().preventSleep) {
-      const failed = await applyPreventSleep(true);
-      if (failed) showError(failed);
-    }
     if (getSettings().updateCheck) await checkForUpdates();
-  }
-}
-
-// The one place the idle-sleep hold is taken or released: the Preferences toggle
-// and the launch re-take share it, so both report a refusal the same way.
-// Resolves with null once the OS took it, or the refusal text.
-async function applyPreventSleep(on: boolean): Promise<string | null> {
-  try {
-    await setKeepAwake(on);
-    return null;
-  } catch (err) {
-    return t().prefs.sleepFailed(err instanceof Error ? err.message : String(err));
   }
 }
 
