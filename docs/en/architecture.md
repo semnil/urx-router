@@ -305,6 +305,18 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   funnel as the graph and inspector (`markChanged` → `live.schedule()`), so live device sync mirrors a
   CONSOLE edit through the same snapshot diff. CONSOLE re-renders only the edited strip itself, avoiding a
   full rebuild mid-drag; returning to GRAPH reflects the edits via `graph.repaint*`.
+- **A re-render keeps what the DOM was carrying** — a full render (`render()`) replaces every strip element,
+  and some edits still take it (the power LED's per-strip dim, a BAL-linked partner) as does every device-follow
+  read-back. The transient state those elements held is carried across the rebuild rather than lost with them:
+  each strip's meter ballistics move onto the fresh lanes when it still meters the same tap (`carryMeterState`,
+  shared with `refreshStrip`), the strip area's scroll offset is restored, and keyboard focus is handed back to
+  the same control (`markFocus` / `restoreFocus`, matched by strip id + index + class, dropped when the rebuild
+  changed that strip's shape). The rebuilt meters are then redrawn in the same task (`redrawMeters`, narrowed
+  to the one strip on the single-strip path), so no frame ever draws them undrawn — bars at the floor,
+  readout "—". The redraw writes the state the meter already holds without advancing its ballistics
+  (`paintStrip(…, step: false)`); only the animation loop ages them, on its own clock. The single-strip path
+  needs it most: the numeric readout is throttled to every few frames (~1/6 s) while a device-side sweep
+  rebuilds the strip at up to 20 Hz, so without a redraw the value flickers against "—" for the whole sweep.
 - **Levels only (no routing)** — CONSOLE adjusts the levels of existing sends / paths; it never adds or
   removes connections (routing stays in the graph). The SENDS-rack mini-fader only mutates an existing
   connection's `params.level`, so lowering a send to -∞ keeps the wire (the strip stays). INS FX has no
@@ -354,7 +366,9 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   `transform: scaleY` / `translateY` from typed (`@property`) 0..1 custom properties rather than an animated
   `height` / `bottom`, so a moving meter never triggers per-frame style-recalc / layout / paint. Only the numeric
   readout text is throttled to every few frames (a text change forces layout), and `will-change` is applied only
-  to strips with signal (`.live`) so idle strips drop their compositor layers. Subscriptions are scoped to the
+  to strips with signal (`.live`) so idle strips drop their compositor layers. A tap that has streamed nothing
+  yet resolves to no reading at all (`readingTap` → null) and its cell holds "—": a stream that has not started
+  is not a measurement of silence, and printing the resting floor would claim one. Subscriptions are scoped to the
   on-screen strips that have a meter in the current model (`startMeters` collects each visible strip's
   selected tap and passes it through `tapAddrs` / `subscribeMeters`). Meter ids were confirmed on a real
   URX44V; models without a mapping show no meter.
@@ -378,7 +392,13 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
 - **Device follow** — the reverse of live sync. The same drain path also carries device-side parameter
   changes: `ParamsSubscribe`/`parse_param` (sharing the `notify_frame` envelope parse with the meter path)
   register every writable address and forward each `notify` (batched per drain, like the meter path). A notify carries the changed address **and its
-  new value**, so detection is free and exact. While Live sync is on, `core/control/follow.ts` `DeviceFollow`
+  new value**, so detection is free and exact. The broker sends a notify to **every** connected client, not just
+  the one that registered the address, so both forwarders drop what this session did not register (the worker
+  keeps its registered sets in `Subs` for exactly this, alongside the unregister-on-replace they already served).
+  Without that filter another broker client's registrations ride in, and so does the unit's own clock — one push
+  every 10 s, which resolves to no node and escalates to a full readback every 10 s for the whole session. The
+  address-less bulk-change sentinel below is the one exemption: it belongs to no address by design.
+  While Live sync is on, `core/control/follow.ts` `DeviceFollow`
   classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
   scalar (fader / pan / on / level, flagged `follow: "direct"` in the catalog) is decoded straight into the plan
   with no read-back (`applyDirect`), and its single snapshot entry is patched to the device value in place

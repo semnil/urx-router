@@ -52,10 +52,19 @@ describe("decodeMeterDb boundaries", () => {
 });
 
 describe("MeterStore reading resolution (readingTap + tapFor)", () => {
-  it("treats the OVER sentinel on the silent default as not-over (no false clip at rest)", () => {
-    // Resting raw is the silence sentinel, never the OVER sentinel, so a fresh
-    // store must report over=false even though decode maps both to a number.
-    const r = reading(new MeterStore(), "bus.stereo", "preeq")!;
+  it("reports no reading at all before the stream starts (not a silent one)", () => {
+    // A tap that has reported nothing resolves to null, so the console can hold its
+    // "—" readout: a stream that has not started is not a measurement of silence,
+    // and printing the resting floor would claim one. (Until the console's re-render
+    // had to repaint meters in the same frame, this rested at the silence sentinel —
+    // over=false, -128 dBFS — which read as measured silence one frame after every
+    // subscribe.)
+    expect(reading(new MeterStore(), "bus.stereo", "preeq")).toBeNull();
+    // One side in hand is a reading: the other rests at the silence floor, and
+    // neither side is OVER (the resting raw is the silence sentinel, never OVER).
+    const store = new MeterStore();
+    store.apply({ meterId: 104, x: 0, value: -1280 }); // STEREO PRE EQ L at rest
+    const r = reading(store, "bus.stereo", "preeq")!;
     expect(r.overL).toBe(false);
     expect(r.overR).toBe(false);
     expect(r.l).toBe(-128);
@@ -100,8 +109,10 @@ describe("MeterStore reading resolution (readingTap + tapFor)", () => {
     expect(reading(store, "ch1", "input")!.overL).toBe(true);
     // No decay in the store itself; the UI is responsible for hold/release.
     expect(reading(store, "ch1", "input")!.overL).toBe(true);
+    // clear() drops the address entirely, so the tap reads as no-stream again
+    // (it used to fall back to the silence sentinel = a not-over reading).
     store.clear();
-    expect(reading(store, "ch1", "input")!.overL).toBe(false);
+    expect(reading(store, "ch1", "input")).toBeNull();
   });
 
   it("the packed stereo bus addresses (126:0/1 vs 126:2/3) do not bleed between MIX1 and MIX2", () => {

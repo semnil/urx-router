@@ -182,11 +182,18 @@ export class MeterStore {
   }
 
   /** Decoded reading for an already-resolved tap (the hot path: callers resolve the
-   *  tap once per render and pass it each frame, avoiding a lookup per frame). */
+   *  tap once per render and pass it each frame, avoiding a lookup per frame), or
+   *  null when the tap has reported nothing yet — a stream that has not started
+   *  (just subscribed / re-scoped) is not silence, and a caller that printed it as
+   *  -∞ would claim a measurement it never took. A stereo tap with only one side in
+   *  hand still reads, with the missing side at the silence floor. */
   readingTap(tap: MeterTap | null): MeterReading | null {
     if (!tap) return null;
-    const lRaw = this.raw.get(addrKey(tap.l[0], tap.l[1])) ?? METER_SILENCE_RAW;
-    const rRaw = tap.r ? (this.raw.get(addrKey(tap.r[0], tap.r[1])) ?? METER_SILENCE_RAW) : lRaw;
+    const l = this.raw.get(addrKey(tap.l[0], tap.l[1]));
+    const r = tap.r ? this.raw.get(addrKey(tap.r[0], tap.r[1])) : l;
+    if (l === undefined && r === undefined) return null;
+    const lRaw = l ?? METER_SILENCE_RAW;
+    const rRaw = r ?? METER_SILENCE_RAW;
     return {
       l: decodeMeterDb(lRaw),
       r: decodeMeterDb(rRaw),

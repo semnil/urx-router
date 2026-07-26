@@ -111,12 +111,18 @@ describe("MeterStore reading (readingTap + tapFor)", () => {
     expect(reading(new MeterStore(), "out.main", "post")).toBeNull();
   });
 
-  it("rests at the silence floor before any reading arrives", () => {
-    const r = reading(new MeterStore(), "ch1", "input")!;
-    expect(r.l).toBe(-128);
+  it("returns null before any reading arrives (no stream yet is not silence)", () => {
+    expect(reading(new MeterStore(), "ch1", "input")).toBeNull();
+    expect(reading(new MeterStore(), "bus.stereo", "preeq")).toBeNull();
+  });
+
+  it("rests the missing side of a stereo tap at the silence floor", () => {
+    const store = new MeterStore();
+    store.apply({ meterId: 104, x: 0, value: -60 }); // STEREO PRE EQ L only
+    const r = reading(store, "bus.stereo", "preeq")!;
+    expect(r.l).toBe(-6);
     expect(r.r).toBe(-128);
-    expect(r.overL).toBe(false);
-    expect(r.stereo).toBe(false);
+    expect(r.stereo).toBe(true);
   });
 
   it("reads the address of the selected tap (mono, L mirrored onto R)", () => {
@@ -140,11 +146,11 @@ describe("MeterStore reading (readingTap + tapFor)", () => {
     expect(r.stereo).toBe(true);
   });
 
-  it("clear() drops all readings back to silence", () => {
+  it("clear() drops every reading back to no-stream", () => {
     const store = new MeterStore();
     store.apply({ meterId: 100, x: 0, value: 0 });
     store.clear();
-    expect(reading(store, "ch1", "input")!.l).toBe(-128);
+    expect(reading(store, "ch1", "input")).toBeNull();
   });
 });
 

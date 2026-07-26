@@ -339,6 +339,26 @@ test("the scribble power LED toggles the node master and dims the strip", async 
   await expect(pre).toHaveAttribute("aria-pressed", "true");
 });
 
+test("a re-render keeps the strip scroll offset and the focused control", async ({ page }) => {
+  // The power LED re-renders every strip (the dim state is per strip), replacing the
+  // DOM under the operator: the strip area used to snap back to the left edge and
+  // focus fell to the body. Device follow takes the same re-render on every device-side
+  // edit while Live sync is on, where it read as the console blinking on its own.
+  const strips = page.locator(".con-strips");
+  await strips.evaluate((el) => {
+    el.scrollLeft = el.scrollWidth;
+  });
+  const scrolled = await strips.evaluate((el) => el.scrollLeft);
+  expect(scrolled).toBeGreaterThan(0); // the strips overflow at this viewport
+  // The rightmost strip carrying a power LED — on screen at this offset, so the click
+  // itself never scrolls.
+  const power = page.locator(".con-strip .con-scribble.power").last();
+  await power.click();
+  await expect(power).toHaveAttribute("aria-pressed", "false");
+  await expect(power).toBeFocused();
+  expect(await strips.evaluate((el) => el.scrollLeft)).toBe(scrolled);
+});
+
 test("muting the channel master in the inspector dims the console strip", async ({ page }) => {
   await muteMasterViaInspector(page, "ch1"); // leaves the view on the console
   const ch = strip(page, "CH 1");
