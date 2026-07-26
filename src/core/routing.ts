@@ -4,9 +4,9 @@
 
 import { isSingleInput, parseRef, ref } from "../models/types";
 import type { DeviceModel, NodeKind, RoutingRule } from "../models/types";
-import type { Plan, PlanConnection } from "./plan";
+import type { NodeParams, Plan, PlanConnection } from "./plan";
 import { hasConnection } from "./plan";
-import { BUS_TYPE_FIXED, BUS_TYPE_VARI, PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
+import { BUS_TYPE_FIXED, BUS_TYPE_VARI, PAN_BAL_BAL, PAN_BAL_PAN, STEREO_PAN_DEFAULT } from "./control/params";
 
 // Language-agnostic failure codes. The UI maps these to localized messages so
 // core stays free of any i18n dependency.
@@ -177,6 +177,29 @@ export function isBalLinkedPair(model: DeviceModel, plan: Plan, id: string): boo
   if (!primary) return false;
   const np = plan.nodeParams[primary];
   return np?.stereoLink === true && (np.panBal ?? PAN_BAL_PAN) === PAN_BAL_BAL;
+}
+
+/** Apply what the unit does to a MONO IN pair's pan positions when its Signal Type
+ *  or PAN/BAL changes (`primary` names the pair; `patch` is the edit that landed).
+ *  Measured on the unit: linking leaves the pair in BAL and an unlinked pair reads
+ *  PAN, and each of the three transitions slams CH_PAN and every bus send's pan
+ *  together — PAN hard-pans the odd channel left and the even one right, BAL and
+ *  unlinking centre both. A channel's CH_PAN is the pan of its fixed send into
+ *  STEREO, so the send loop covers it; the SD Rec assign is a `sendSwitch` and has
+ *  no pan. Call it before `mirrorBalPair` so the mirror copies settled values. */
+export function applyPairTransition(model: DeviceModel, plan: Plan, primary: string, patch: NodeParams): void {
+  const pair = model.channelPairs.find(([a]) => a === primary);
+  if (!pair) return;
+  if (patch.stereoLink !== undefined) {
+    const np = plan.nodeParams[primary];
+    plan.nodeParams[primary] = { ...np, panBal: patch.stereoLink ? PAN_BAL_BAL : PAN_BAL_PAN };
+  }
+  const centre = plan.nodeParams[primary]?.stereoLink !== true || isBalLinkedPair(model, plan, primary);
+  pair.forEach((ch, idx) => {
+    const pan = centre ? 0 : idx === 0 ? -STEREO_PAN_DEFAULT : STEREO_PAN_DEFAULT;
+    for (const c of plan.connections)
+      if (c.from === ref(ch, "out") && c.kind === "send") c.params = { ...c.params, pan };
+  });
 }
 
 /** Mirror `id`'s mixer state onto its linked partner when the pair is in BAL mode,

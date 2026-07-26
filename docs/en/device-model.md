@@ -335,11 +335,13 @@ Source selection for the analog outputs (MAIN / LINE).
   (CH1/2, CH3/4) carries a **Signal Type** (CH SETTING): STEREO links the two adjacent channels,
   MONO × 2 keeps them independent (the default). The tool keeps both nodes and stores the flag on the
   pair's primary (odd) channel — it does not merge them into one node — and draws a heart tie between
-  the pair when linked. STEREO adds a **PAN / BAL** mode. Switching the mode (or entering STEREO)
-  re-initializes the pan of **every bus send** (STEREO / MIX 1–2 / FX 1–2) from both pair members:
-  PAN hard-pans the odd channel left (L63 = −63) and the even one right (R63 = +63); BAL centres both
-  (C = 0) and the send pan then reads as a BALANCE (as a native stereo channel does — shown identically in
-  both GRAPH and CONSOLE). **In BAL mode only**, the pair behaves as one stereo channel: an edit to either
+  the pair when linked. STEREO adds a **PAN / BAL** mode, and **entering STEREO lands in BAL**, as it does
+  on the unit. Switching the mode — or entering STEREO, or leaving it — re-initializes the pan of **every
+  bus send** (STEREO / MIX 1–2 / FX 1–2) from both pair members, matching what the unit moves on the same
+  transitions (a channel's CH PAN is the pan of its fixed send into STEREO, so it moves with them):
+  PAN hard-pans the odd channel left (L63 = −63) and the even one right (R63 = +63); BAL and leaving STEREO
+  centre both (C = 0), and the send pan then reads as a BALANCE (as a native stereo channel does — shown
+  identically in both GRAPH and CONSOLE). **In BAL mode only**, the pair behaves as one stereo channel: an edit to either
   channel is auto-mirrored to the other (node params in general plus each send's LEVEL / PRE-POST / ON and
   the pan). In BAL mode the pan is the pair's single shared balance, so both channels read the same value
   (the re-init above seeds it centred); the Signal Type / PAN-BAL flags live on the primary alone. In PAN

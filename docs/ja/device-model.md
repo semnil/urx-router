@@ -323,10 +323,12 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
 - モノ CH とステレオ CH の構成は固定 (機種で本数のみ変化)。MONO IN ペア (CH1/2, CH3/4) は
   **Signal Type** (CH SETTING) を持つ: STEREO は隣接 2 ch をリンク、MONO × 2 は独立 (既定)。
   ツールは 2 ノードを維持しフラグをペアの primary (奇数 ch) に保持する (1 ノードに統合しない)。
-  リンク時はペア間に ♥ タイを描く。STEREO は **PAN / BAL** モードを追加。モード切替時 (および STEREO
-  化時) に、ペア両 ch の**全 bus send** (STEREO / MIX 1–2 / FX 1–2) の pan を初期化する: PAN は奇数 ch を
-  左 (L63 = −63)・偶数 ch を右 (R63 = +63) にハードパン、BAL は両方中央 (C = 0) にし Send pan は
-  ネイティブのステレオ ch 同様 BALANCE 表示になる (GRAPH/CONSOLE 双方で同一表示)。
+  リンク時はペア間に ♥ タイを描く。STEREO は **PAN / BAL** モードを追加し、**STEREO 化時は実機と同じく
+  BAL で入る**。モード切替時・STEREO 化時・STEREO 解除時に、ペア両 ch の**全 bus send**
+  (STEREO / MIX 1–2 / FX 1–2) の pan を、実機が同じ遷移で動かすのと同様に初期化する (各 ch の CH PAN は
+  STEREO への固定 Send の pan なので一緒に動く): PAN は奇数 ch を左 (L63 = −63)・偶数 ch を右
+  (R63 = +63) にハードパン、BAL と STEREO 解除は両方中央 (C = 0) にし、Send pan はネイティブのステレオ ch
+  同様 BALANCE 表示になる (GRAPH/CONSOLE 双方で同一表示)。
   **BAL モード時のみ**、ペアは 1 つのステレオ ch として動作し、片 ch への編集をもう一方へ自動ミラーする
   (ノードパラメーター全般 + 各 Send の LEVEL/PRE-POST/ON、および pan)。pan は BAL モードではペア共有の
   バランス 1 値なので両 ch で一致する (上記の初期化が中央を起点として与える)。Signal Type / PAN-BAL
