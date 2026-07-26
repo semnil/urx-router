@@ -407,6 +407,13 @@ export function midiSend(bytes: number[]): Promise<void> {
   return invoke<void>("midi_send", { bytes });
 }
 
+/** Hold off (or release) the computer's idle sleep — system and display. Rejects
+ * when the OS refuses, and outside Tauri, so the caller can keep the stored
+ * preference and the actual hold in step. */
+export function setKeepAwake(on: boolean): Promise<void> {
+  return invoke<void>("set_keep_awake", { on });
+}
+
 // Auto-update (desktop only, via the updater/process plugins). These mirror the
 // official @tauri-apps/plugin-updater bindings but call invoke directly so the
 // frontend keeps zero npm runtime dependencies, like the dialog calls above.

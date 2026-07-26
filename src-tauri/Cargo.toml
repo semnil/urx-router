@@ -34,3 +34,16 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tungstenite = "0.30"
 midir = "0.11"
+
+# Power-management bindings for the idle-sleep hold (keepawake.rs). Both are
+# already in their platform's tree (core-foundation via midir -> coremidi,
+# windows-sys via tokio and muda), so neither adds a crate to the build.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Power",
+  "Win32_System_Threading",
+] }

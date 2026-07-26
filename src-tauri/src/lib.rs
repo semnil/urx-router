@@ -7,6 +7,7 @@
 use std::fs;
 use tauri::State;
 
+mod keepawake;
 mod midi;
 mod vd;
 
@@ -340,12 +341,20 @@ fn midi_send(state: State<midi::MidiState>, bytes: Vec<u8>) -> Result<(), String
     midi::send(&state, bytes)
 }
 
+// Take or release the idle-sleep hold (Preferences > Computer sleep). A local OS
+// call with no round-trip, so it stays synchronous like the MIDI bridge.
+#[tauri::command]
+fn set_keep_awake(state: State<keepawake::KeepAwakeState>, on: bool) -> Result<(), String> {
+    keepawake::set(&state, on)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(vd::VdState::default())
-        .manage(midi::MidiState::default());
+        .manage(midi::MidiState::default())
+        .manage(keepawake::KeepAwakeState::default());
 
     // The updater/process plugins exist on desktop only; the frontend checks for
     // updates at startup and restarts the app once a new bundle is installed.
@@ -382,7 +391,8 @@ pub fn run() {
             midi_close_input,
             midi_open_output,
             midi_close_output,
-            midi_send
+            midi_send,
+            set_keep_awake
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
