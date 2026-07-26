@@ -334,6 +334,11 @@ export class Console {
     private hooks: ConsoleHooks,
   ) {
     this.build();
+    // Dev-only handle for the meter bench (scripts/meter-bench.mjs): it drives this
+    // view's own paint loop from a synthetic reading feed, so the meters' render cost
+    // is measurable without a device and comparable across revisions. The branch is
+    // statically dropped from a production build.
+    if (import.meta.env.DEV) (window as unknown as { __urxConsole?: Console }).__urxConsole = this;
   }
 
   // ---- public API ----
