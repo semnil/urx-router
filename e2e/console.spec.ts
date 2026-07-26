@@ -339,24 +339,64 @@ test("the scribble power LED toggles the node master and dims the strip", async 
   await expect(pre).toHaveAttribute("aria-pressed", "true");
 });
 
-test("a re-render keeps the strip scroll offset and the focused control", async ({ page }) => {
-  // The power LED re-renders every strip (the dim state is per strip), replacing the
-  // DOM under the operator: the strip area used to snap back to the left edge and
-  // focus fell to the body. Device follow takes the same re-render on every device-side
-  // edit while Live sync is on, where it read as the console blinking on its own.
+// Scroll the strip rack to its right end and return where it landed, asserting it
+// actually overflows at this viewport — otherwise a "the offset survived" assertion
+// would pass on a rack that never moved.
+const scrollStripsToEnd = async (page: Page): Promise<number> => {
   const strips = page.locator(".con-strips");
   await strips.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
   });
   const scrolled = await strips.evaluate((el) => el.scrollLeft);
-  expect(scrolled).toBeGreaterThan(0); // the strips overflow at this viewport
+  expect(scrolled).toBeGreaterThan(0);
+  return scrolled;
+};
+const stripsScroll = (page: Page): Promise<number> => page.locator(".con-strips").evaluate((el) => el.scrollLeft);
+
+test("a re-render keeps the strip scroll offset and the focused control", async ({ page }) => {
+  // The power LED re-renders every strip (the dim state is per strip), replacing the
+  // DOM under the operator: the strip area used to snap back to the left edge and
+  // focus fell to the body. Device follow takes the same re-render on every device-side
+  // edit while Live sync is on, where it read as the console blinking on its own.
+  const scrolled = await scrollStripsToEnd(page);
   // The rightmost strip carrying a power LED — on screen at this offset, so the click
   // itself never scrolls.
   const power = page.locator(".con-strip .con-scribble.power").last();
   await power.click();
   await expect(power).toHaveAttribute("aria-pressed", "false");
   await expect(power).toBeFocused();
-  expect(await strips.evaluate((el) => el.scrollLeft)).toBe(scrolled);
+  expect(await stripsScroll(page)).toBe(scrolled);
+});
+
+// The scroll offset survives a rebuild on its own: `render()` clears and refills the
+// rack in one task, so the empty rack is never laid out and the offset is never
+// clipped. Saving and rewriting it around the rebuild instead forces a synchronous
+// layout of the whole rack — measured at ~25 ms per render on WKWebView, against ~6 ms
+// without — on a path Live sync takes for every device read-back. These two pin the
+// offset so that cost cannot come back as the fix for a regression they would catch.
+test("a re-render with nothing focused keeps the strip scroll offset", async ({ page }) => {
+  const scrolled = await scrollStripsToEnd(page);
+  // A rate change re-renders every strip (applyRateConstraints), with focus on the
+  // picker — outside the rack, so nothing is restored into it.
+  await page.locator("#rate-picker").selectOption("192000");
+  await expect(strip(page, "CH 5/6").locator(".con-chip", { hasText: "EQ" }).first()).toHaveClass(/readonly/);
+  expect(await stripsScroll(page)).toBe(scrolled);
+});
+
+test("a re-render keeps the offset when the focused control is scrolled out of view", async ({ page }) => {
+  // Restoring focus is what could move the rack: the control is off screen, so the
+  // browser would scroll it into view if the restore did not pass preventScroll. Pinned
+  // here for Chromium; the same check runs against WKWebView on every bench run
+  // (scrollCheck in scripts/meter-bench.mjs), since this is engine behaviour.
+  // Driven from the keyboard: a pointer would move focus to whatever it pressed, and
+  // the point here is a control that keeps focus while sitting off screen.
+  const power = strip(page, "CH 1").locator(".con-scribble.power");
+  await power.focus();
+  const scrolled = await scrollStripsToEnd(page);
+  await page.keyboard.press("Enter"); // the per-strip dim re-renders every strip
+  await expect(strip(page, "CH 1")).toHaveClass(/inactive/);
+  expect(await stripsScroll(page)).toBe(scrolled);
+  await expect(strip(page, "CH 1").locator(".con-scribble.power")).toBeFocused();
 });
 
 test("muting the channel master in the inspector dims the console strip", async ({ page }) => {

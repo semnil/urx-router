@@ -309,9 +309,17 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   and some edits still take it (the power LED's per-strip dim, a BAL-linked partner) as does every device-follow
   read-back. The transient state those elements held is carried across the rebuild rather than lost with them:
   each strip's meter ballistics move onto the fresh lanes when it still meters the same tap (`carryMeterState`,
-  shared with `refreshStrip`), the strip area's scroll offset is restored, and keyboard focus is handed back to
-  the same control (`markFocus` / `restoreFocus`, matched by strip id + index + class, dropped when the rebuild
-  changed that strip's shape). The rebuilt meters are then redrawn in the same task (`redrawMeters`, narrowed
+  shared with `refreshStrip`), and keyboard focus is handed back to the same control (`markFocus` /
+  `restoreFocus`, matched by strip id + index + class, dropped when the rebuild changed that strip's shape).
+  The strip rack's scroll offset carries itself and is deliberately not saved and restored: the clear and the
+  refill are one task, so the empty rack is never laid out and the offset is never clipped, and the restored
+  focus passes `preventScroll` so it does not drag an off-screen control into view. Rewriting the offset around
+  the rebuild instead reads and writes `scrollLeft` against a dirty tree, forcing a synchronous layout of the
+  whole rack — measured at ~25 ms per render on WKWebView (against ~2 ms on WebView2) where a full render is
+  ~6 ms without it — on the path Live sync takes for every read-back reflect. Both halves are engine behaviour
+  rather than app logic, so the bench's `scrollCheck` (`scripts/meter-bench.mjs`) re-checks them on WKWebView
+  each run; the E2E suite pins the same contract in Chromium. The rebuilt meters are then redrawn in the same
+  task (`redrawMeters`, narrowed
   to the one strip on the single-strip path), so no frame ever draws them undrawn — bars at the floor,
   readout "—". The redraw writes the state the meter already holds without advancing its ballistics
   (`paintStrip(…, step: false)`); only the animation loop ages them, on its own clock. The single-strip path
