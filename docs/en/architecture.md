@@ -58,7 +58,7 @@ flowchart TD
     end
   end
   subgraph shell[Tauri shell src-tauri/]
-    rust[main.rs / lib.rs<br/>webview host<br/>dialog plugin + file IO<br/>hardware-control vd_* / MIDI midi_* commands]
+    rust[main.rs / lib.rs<br/>webview host<br/>dialog plugin + file IO<br/>hardware-control vd_* / MIDI midi_* commands<br/>idle-sleep hold set_keep_awake]
   end
 
   main --> models & core & ui & i18n
@@ -914,7 +914,7 @@ validated localStorage record (`urx-settings`, `core/settings.ts`,
 loaded lazily so the `?reset` clear runs first). Language and theme are the exception: they keep
 their pre-existing stores (`urx-lang` / `urx-theme`), read before settings load so the first paint
 is already localized and themed. Rows whose feature needs the desktop shell
-(device scope, update check, firmware warning, recent plans — plus the export rows in the demo)
+(device scope, update check, firmware warning, computer sleep, recent plans — plus the export rows in the demo)
 render disabled with a dashed "Desktop app only" tag instead of hiding, so the demo still shows
 what the desktop app offers.
 
@@ -948,6 +948,12 @@ what the desktop app offers.
   stay on regardless.
 - **Controls** — wheel steps per notch (each detent still snaps to the control's own grid), and
   the fine-tuning entry style (hold Shift, or latch — each press flips the mode).
+- **Computer sleep** — hold off the computer's idle sleep, system and display, while the app is
+  open (off by default; desktop only). This is the one preference the OS can refuse, so the OS
+  decides: `set_keep_awake` (`src-tauri/src/keepawake.rs`) has to succeed before the setting is
+  stored, and a refusal leaves the row where it was with the reason under it. The hold is
+  process-scoped and dies with the app, so `boot()` re-takes it at every launch through the same
+  call and reports a refusal there too.
 - **Files & export** — the PNG / PDF raster scale, the export background (active theme or a fixed
   one — the graph re-renders under the target palette just for the export clone and swaps back
   within the same task, so the screen never shows it), and the recent-plans length / clear.
