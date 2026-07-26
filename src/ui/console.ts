@@ -1422,14 +1422,17 @@ export class Console {
     this.closeSendPan();
     this.host.classList.toggle("midi-learn", this.hooks.midi?.learnActive() ?? false);
     // A render replaces every strip element, so the transient state those elements
-    // carried goes with them: the live meters' ballistics, the strip area's scroll
-    // offset, and keyboard focus. During Live sync this path runs on every device-side
-    // edit that needs a read-back (and on its idle safety net), so dropping that state
-    // reads as the console blinking under the operator's hands. Carry it across the
-    // rebuild — the old refs stay in hand until the new ones are built.
+    // carried goes with them: the live meters' ballistics and keyboard focus. During
+    // Live sync this path runs on every device-side edit that needs a read-back (and on
+    // its idle safety net), so dropping that state reads as the console blinking under
+    // the operator's hands. Carry it across the rebuild — the old refs stay in hand
+    // until the new ones are built. The strip rack's scroll offset carries itself: the
+    // clear and the refill are one task, so the empty rack is never laid out and the
+    // offset is never clipped. Saving and rewriting it around the rebuild instead reads
+    // and writes scrollLeft against a dirty tree, which forces a synchronous layout of
+    // the whole rack — ~25 ms per render on WKWebView against ~6 ms without, on the path
+    // Live sync takes for every device read-back reflect.
     const prev = this.refs;
-    const scrollX = this.stripsHost.scrollLeft;
-    const scrollY = this.stripsHost.scrollTop;
     const focus = this.markFocus();
     this.refs = new Map();
     const { groups, master } = this.stripModels();
@@ -1453,10 +1456,6 @@ export class Console {
     // of the window height (the SENDS rack between them has its own fixed height).
     this.host.style.setProperty("--head-h", this.mainHeadHeight() + "px");
     for (const [id, r] of this.refs) this.carryMeterState(prev.get(id), r);
-    // Restore the scroll offset before focus: focus({ preventScroll }) leaves it
-    // alone, so the pair cannot fight over where the strips sit.
-    this.stripsHost.scrollLeft = scrollX;
-    this.stripsHost.scrollTop = scrollY;
     this.restoreFocus(focus);
     this.startMeters(); // rescope the meter subscription to the rebuilt strips
     this.redrawMeters();
@@ -1500,6 +1499,9 @@ export class Console {
     const root = this.refs.get(mark.id)?.root;
     if (!root) return;
     const target = this.focusables(root)[mark.idx];
+    // preventScroll keeps the rack where the operator left it when the restored control
+    // sits off screen (measured honoured on both engines — scripts/meter-bench.mjs's
+    // scrollCheck holds it against WKWebView on every bench run).
     if (target?.className === mark.cls) target.focus({ preventScroll: true });
   }
 
