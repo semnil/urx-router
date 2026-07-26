@@ -374,9 +374,10 @@ export class Console {
 
   /** Rebuild just one strip in place after a device-follow direct change, instead
    *  of re-rendering the whole console. No-op when hidden or when the node has no
-   *  strip in the current view (mode-filtered). The strip's live-meter ballistics
-   *  carry across so the meter (and its peak-hold bar) doesn't jump, and the meter
-   *  subscription is untouched (same tap address). */
+   *  strip in the current view (mode-filtered). The strip's live-meter ballistics and
+   *  keyboard focus carry across, and the meter is redrawn in the same task, so
+   *  neither the meter (nor its peak-hold bar or readout) blinks nor the operator's
+   *  focused control is dropped; the meter subscription is untouched (same tap). */
   refreshStrip(id: string): void {
     if (!this.visible) return;
     // A hung node (a ducker) has no strip of its own — its chip lives on the
@@ -386,21 +387,14 @@ export class Console {
     const stripId = this.hooks.getModel().nodes.find((n) => n.id === id)?.attachTo ?? id;
     const old = this.refs.get(stripId);
     if (!old) return;
+    // Mark focus while the strip being replaced is still the one in refs.
+    const focus = this.markFocus();
     const fresh = this.buildStrip(this.toStripModel(stripId));
-    // buildStrip re-registered refs.get(stripId) with fresh meter elements. Carry the
-    // per-lane ballistics (v/pk/over) so the level + peak-hold + clip latch don't reset,
-    // but leave the last-written trackers (lv/lpk/lov/lmtr) at their fresh sentinels —
-    // the new elements are undrawn, so paintMeters must repaint them, not skip as
-    // unchanged. Lane count is stable across a refresh (same tap), so carry by index.
-    this.refs.get(stripId)!.lanes.forEach((ln, i) => {
-      const o = old.lanes[i];
-      if (o) {
-        ln.v = o.v;
-        ln.pk = o.pk;
-        ln.over = o.over;
-      }
-    });
+    // buildStrip re-registered refs.get(stripId) with fresh meter elements; carry the
+    // ballistics onto them so the meter (and its peak-hold bar) doesn't jump.
+    this.carryMeterState(old, this.refs.get(stripId));
     old.root.replaceWith(fresh);
+    this.redrawMeters(stripId);
     // The SEND PAN popover floats free of its strip, so the rebuild above left an
     // open one anchored to the detached PAN button with stale knob values. Re-open
     // it against the fresh strip's button: openSendPan re-reads the plan for the
@@ -411,6 +405,7 @@ export class Console {
       if (btn) this.openSendPan(stripId, btn);
       else this.closeSendPan();
     }
+    this.restoreFocus(focus);
   }
 
   // ---- build / render ----
@@ -1421,7 +1416,17 @@ export class Console {
     this.closeTapPop();
     this.closeSendPan();
     this.host.classList.toggle("midi-learn", this.hooks.midi?.learnActive() ?? false);
-    this.refs.clear();
+    // A render replaces every strip element, so the transient state those elements
+    // carried goes with them: the live meters' ballistics, the strip area's scroll
+    // offset, and keyboard focus. During Live sync this path runs on every device-side
+    // edit that needs a read-back (and on its idle safety net), so dropping that state
+    // reads as the console blinking under the operator's hands. Carry it across the
+    // rebuild — the old refs stay in hand until the new ones are built.
+    const prev = this.refs;
+    const scrollX = this.stripsHost.scrollLeft;
+    const scrollY = this.stripsHost.scrollTop;
+    const focus = this.markFocus();
+    this.refs = new Map();
     const { groups, master } = this.stripModels();
     this.stripsHost.replaceChildren();
     for (const g of groups) {
@@ -1442,7 +1447,75 @@ export class Console {
     // is uniform across all channels; the fader/meter zone (flex: 1) takes the rest
     // of the window height (the SENDS rack between them has its own fixed height).
     this.host.style.setProperty("--head-h", this.mainHeadHeight() + "px");
+    for (const [id, r] of this.refs) this.carryMeterState(prev.get(id), r);
+    // Restore the scroll offset before focus: focus({ preventScroll }) leaves it
+    // alone, so the pair cannot fight over where the strips sit.
+    this.stripsHost.scrollLeft = scrollX;
+    this.stripsHost.scrollTop = scrollY;
+    this.restoreFocus(focus);
     this.startMeters(); // rescope the meter subscription to the rebuilt strips
+    this.redrawMeters();
+  }
+
+  // Carry a strip's live meter ballistics over from the elements it is replacing, so
+  // a rebuild doesn't drop the bars to the floor and re-attack. Only when the strip
+  // still meters the same tap — the tap objects are the table's own singletons, so
+  // identity means the same addresses and the same lane count. The last-written
+  // trackers (lv/lpk/lov/lmtr) stay at their fresh sentinels: the new elements are
+  // undrawn, so the next paint must write them, not skip them as unchanged.
+  private carryMeterState(from: StripRef | undefined, to: StripRef | undefined): void {
+    if (!from || !to || from.tap !== to.tap) return;
+    to.lanes.forEach((ln, i) => {
+      const o = from.lanes[i];
+      if (!o) return;
+      ln.v = o.v;
+      ln.pk = o.pk;
+      ln.over = o.over;
+    });
+  }
+
+  // Where keyboard focus sits inside the strips, as (strip id, index among that
+  // strip's focusable elements, class). A rebuild derives the same strips from the
+  // same plan, so the index addresses the same control; the class is the check that
+  // it really did — when the rebuild changed a strip's shape (a chip appeared, the
+  // strip is gone), focus is dropped rather than handed to some other control.
+  private markFocus(): { id: string; idx: number; cls: string } | null {
+    const active = document.activeElement as HTMLElement | null;
+    if (!active || !this.stripsHost.contains(active)) return null;
+    for (const [id, r] of this.refs) {
+      if (!r.root.contains(active)) continue;
+      const idx = this.focusables(r.root).indexOf(active);
+      return idx < 0 ? null : { id, idx, cls: active.className };
+    }
+    return null;
+  }
+
+  private restoreFocus(mark: { id: string; idx: number; cls: string } | null): void {
+    if (!mark) return;
+    const root = this.refs.get(mark.id)?.root;
+    if (!root) return;
+    const target = this.focusables(root)[mark.idx];
+    if (target?.className === mark.cls) target.focus({ preventScroll: true });
+  }
+
+  // Every focusable control a strip builds: the custom ones (fader / knob / chip /
+  // scribble) carry tabIndex 0, the SEND PAN trigger is a real button.
+  private focusables(root: HTMLElement): HTMLElement[] {
+    return [...root.querySelectorAll<HTMLElement>('[tabindex="0"], button')];
+  }
+
+  // Draw the meters onto freshly built elements in the same task as the rebuild. They
+  // start undrawn — bars at the floor, readout "—" — and the paint loop would not
+  // write the numeric readout until its next throttled frame (~1/6 s), so the reset
+  // state would be on screen until then. A device-side sweep rebuilds the strip faster
+  // than that (the follow reflect runs at up to 20 Hz), which is exactly the readout
+  // flickering between "—" and the value. A strip whose tap has not streamed yet is
+  // skipped and keeps its "—". `only` narrows the pass to the one strip a single-strip
+  // rebuild replaced.
+  private redrawMeters(only?: string): void {
+    if (!this.live || !this.visible) return;
+    const strips = only === undefined ? this.refs.values() : [this.refs.get(only)];
+    for (const r of strips) if (r) this.paintStrip(r, true, false);
   }
 
   // The tallest head (a mono channel carries the most chips + two knobs) sets the
@@ -1936,60 +2009,67 @@ export class Console {
     // change relayouts/repaints the cell, so doing it every frame on every strip is
     // a needless per-frame cost the animated bars don't share.
     const showReadout = this.paintN++ % READOUT_EVERY === 0;
-    for (const r of this.refs.values()) {
-      if (!r.tap) continue;
-      const reading = this.store.readingTap(r.tap);
-      if (!reading) continue;
-      const s = r.sig;
-      // Numeric meter readout (selected tap, peak of L/R), -∞ below the floor.
-      const peakDb = Math.max(reading.l, reading.r);
-      const mtr = peakDb <= METER_FLOOR_DB ? -999 : Math.round(peakDb * 10);
-      if (showReadout && mtr !== s.lmtr) {
-        setLevelText(r.readMtr, mtr === -999 ? "-∞" : (mtr / 10).toFixed(1));
-        r.readMtr.classList.toggle("off", mtr === -999);
-        s.lmtr = mtr;
-      }
-      // Drive each lane from its own channel — lane 0 = L, lane 1 = R. A mono strip has
-      // only lane 0, and readingTap mirrors R onto L there, so lane 0 meters its true
-      // level either way (no peak-fold; the peak-of-L/R fold is only for the readout).
-      for (let i = 0; i < r.lanes.length; i++) {
-        const ln = r.lanes[i];
-        const chDb = i === 0 ? reading.l : reading.r;
-        const chOver = i === 0 ? reading.overL : reading.overR;
-        const target = meterFrac(chDb, r.m.range);
+    for (const r of this.refs.values()) this.paintStrip(r, showReadout, true);
+  }
+
+  // One strip's meter. `step` advances the ballistics (the animation loop); a redraw
+  // onto freshly built elements passes false, so a rebuild writes the state the meter
+  // already holds instead of aging it — the animation keeps its own clock.
+  private paintStrip(r: StripRef, showReadout: boolean, step: boolean): void {
+    if (!r.tap) return;
+    const reading = this.store.readingTap(r.tap);
+    if (!reading) return;
+    const s = r.sig;
+    // Numeric meter readout (selected tap, peak of L/R), -∞ below the floor.
+    const peakDb = Math.max(reading.l, reading.r);
+    const mtr = peakDb <= METER_FLOOR_DB ? -999 : Math.round(peakDb * 10);
+    if (showReadout && mtr !== s.lmtr) {
+      setLevelText(r.readMtr, mtr === -999 ? "-∞" : (mtr / 10).toFixed(1));
+      r.readMtr.classList.toggle("off", mtr === -999);
+      s.lmtr = mtr;
+    }
+    // Drive each lane from its own channel — lane 0 = L, lane 1 = R. A mono strip has
+    // only lane 0, and readingTap mirrors R onto L there, so lane 0 meters its true
+    // level either way (no peak-fold; the peak-of-L/R fold is only for the readout).
+    for (let i = 0; i < r.lanes.length; i++) {
+      const ln = r.lanes[i];
+      const chDb = i === 0 ? reading.l : reading.r;
+      const chOver = i === 0 ? reading.overL : reading.overR;
+      const target = meterFrac(chDb, r.m.range);
+      if (step) {
         // Fast attack, slow release for a meter-like response; peak hold decays slowly.
         ln.v = target > ln.v ? target : ln.v + (target - ln.v) * 0.3;
         ln.pk = Math.max(ln.pk * 0.985, ln.v);
         // OVER clip cap: latch full on a clip in this channel, then fade so a brief
         // over lingers.
         ln.over = chOver ? 1 : ln.over * 0.95;
-        // Write only the values that actually changed (idle meters rest, so most
-        // frames skip every write) — at integer-percent resolution.
-        const v = Math.round(ln.v * 100);
-        const pk = Math.round(ln.pk * 100);
-        const over = ln.over > 0.02 ? Math.round(ln.over * 100) : 0;
-        // --lvl / --pk are fractions (0..1) driving compositor-only transforms
-        // (scaleY / translateY) on the shade and peak — no layout/paint per frame.
-        if (v !== ln.lv) {
-          ln.shade.style.setProperty("--lvl", v / 100 + "");
-          ln.lv = v;
-        }
-        if (pk !== ln.lpk) {
-          ln.peak.style.setProperty("--pk", pk / 100 + "");
-          ln.lpk = pk;
-        }
-        if (over !== ln.lov) {
-          ln.clip.style.setProperty("--clip", over / 100 + "");
-          ln.lov = over;
-        }
-        // Promote the shade/peak to compositor layers (via `.live`) only while the lane
-        // is actually animating; an idle lane (at the floor, no clip) drops its layers,
-        // so a mostly-quiet console isn't compositing a layer per silent meter.
-        const active = v > 0 || pk > 0 || over > 0;
-        if (active !== ln.live) {
-          ln.col.classList.toggle("live", active);
-          ln.live = active;
-        }
+      }
+      // Write only the values that actually changed (idle meters rest, so most
+      // frames skip every write) — at integer-percent resolution.
+      const v = Math.round(ln.v * 100);
+      const pk = Math.round(ln.pk * 100);
+      const over = ln.over > 0.02 ? Math.round(ln.over * 100) : 0;
+      // --lvl / --pk are fractions (0..1) driving compositor-only transforms
+      // (scaleY / translateY) on the shade and peak — no layout/paint per frame.
+      if (v !== ln.lv) {
+        ln.shade.style.setProperty("--lvl", v / 100 + "");
+        ln.lv = v;
+      }
+      if (pk !== ln.lpk) {
+        ln.peak.style.setProperty("--pk", pk / 100 + "");
+        ln.lpk = pk;
+      }
+      if (over !== ln.lov) {
+        ln.clip.style.setProperty("--clip", over / 100 + "");
+        ln.lov = over;
+      }
+      // Promote the shade/peak to compositor layers (via `.live`) only while the lane
+      // is actually animating; an idle lane (at the floor, no clip) drops its layers,
+      // so a mostly-quiet console isn't compositing a layer per silent meter.
+      const active = v > 0 || pk > 0 || over > 0;
+      if (active !== ln.live) {
+        ln.col.classList.toggle("live", active);
+        ln.live = active;
       }
     }
   }
