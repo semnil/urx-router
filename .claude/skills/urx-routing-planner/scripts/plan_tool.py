@@ -2,8 +2,13 @@
 """Validate a URX Router plan and turn it into a shareable ?plan= URL.
 
 This mirrors the app exactly so that "the script says OK" implies "URX Router
-loads it without the validation modal":
+loads the plan as authored":
 
+- the document gate matches core/plan.ts `deserializeDocument` plus the model
+  check the app runs right after it: a file refused there never reaches the
+  routing check (notPlanFile / planVersionUnsupported / unknownModel), and a
+  malformed wire or node-param value is silently DROPPED rather than refused, so
+  those are reported as warnings — the plan loads, just not as written,
 - validation matches core/routing.ts `validatePlan` (noRule / singleInput /
   duplicate), and
 - the URL encoding matches core/plan.ts `encodePlanParam` ("z" + URL-safe base64
@@ -19,13 +24,15 @@ Usage:
   python plan_tool.py url <plan.json> [--base https://urx-router.semnil.com/]
 
 Exit code is non-zero when the plan has hard validation problems, so the skill
-can branch on it. Stability warnings (raw-encoded advanced params) are advisory
-and never fail the plan.
+can branch on it. Warnings (a dropped wire or value, a misplaced Ducker param,
+raw-encoded params, a destructive effect selector) are advisory and never fail
+the plan — but they all mean something worth telling the user.
 """
 
 import argparse
 import base64
 import json
+import math
 import os
 import sys
 import zlib
@@ -33,6 +40,8 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODELS_PATH = os.path.join(HERE, "models.json")
 DEFAULT_BASE = "https://urx-router.semnil.com/"
+PLAN_FORMAT = "urx-router-plan"
+PLAN_VERSION = 1
 
 SINGLE_INPUT_KINDS = {"source", "patch", "key", "record"}
 KNOWN_KINDS = {"source", "patch", "send", "sendSwitch", "key", "record"}
@@ -51,11 +60,50 @@ def rule_index(model):
     return by_pair
 
 
+def is_number(v):
+    """A finite JSON number. Booleans are JSON numbers to Python, not to the app."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def wire_dropped(conn):
+    """Why the app's loader would drop this wire, or None when it keeps it. It
+    trusts only string from/to, a known kind and well-typed params; a dropped wire
+    loads as if it had never been authored, so the routing silently misses it."""
+    if not isinstance(conn.get("from"), str) or not isinstance(conn.get("to"), str):
+        return "from / to must be strings"
+    if conn.get("kind") not in KNOWN_KINDS:
+        return f"unknown kind {conn.get('kind')!r}"
+    params = conn.get("params")
+    if params is None:
+        return None
+    if not isinstance(params, dict):
+        return "params must be an object"
+    for key in ("level", "pan"):
+        if key in params and not is_number(params[key]):
+            return f"{key} must be a number"
+    if "tap" in params and params["tap"] not in ("pre", "post"):
+        return 'tap must be "pre" or "post"'
+    for key in ("on", "oscL", "oscR"):
+        if key in params and not isinstance(params[key], bool):
+            return f"{key} must be true or false"
+    return None
+
+
 def validate(plan, models):
     """Return (problems, warnings). problems are hard (block load); warnings are
     advisory. problems entries are (reason, from, to)."""
     problems = []
     warnings = []
+
+    if not isinstance(plan, dict):
+        return [("notPlanFile", "the document is not a JSON object", "")], warnings
+
+    # Document gate: the app refuses these before it ever looks at the routing.
+    if plan.get("format") != PLAN_FORMAT:
+        problems.append(("notPlanFile", f"format {plan.get('format')!r} (expected {PLAN_FORMAT!r})", ""))
+    version = plan.get("version")
+    if is_number(version) and version > PLAN_VERSION:
+        problems.append(("planVersionUnsupported", f"version {version} (this build reads {PLAN_VERSION})", ""))
 
     model_id = plan.get("modelId")
     if model_id not in models:
@@ -65,44 +113,66 @@ def validate(plan, models):
     by_pair = rule_index(model)
     nodes = model["nodes"]
 
-    conns = plan.get("connections", [])
+    conns = plan.get("connections")
+    if conns is not None and not isinstance(conns, list):
+        warnings.append("connections is not an array — the app loads the plan with no wires at all")
+    # The loader filters the wire list before the routing check runs, so a wire it
+    # drops is warned about and then left out of the checks below, exactly as the
+    # app sees it (a dropped wire is missing routing, not illegal routing).
+    kept = []
+    for c in conns if isinstance(conns, list) else []:
+        dropped = wire_dropped(c) if isinstance(c, dict) else "a connections entry must be an object"
+        if dropped is None:
+            kept.append(c)
+        else:
+            label = f"{c.get('from')} -> {c.get('to')}" if isinstance(c, dict) else repr(c)
+            warnings.append(f"connection {label}: the app drops this wire on load — {dropped}")
+
     incoming = {}
-    for c in conns:
-        incoming[c.get("to")] = incoming.get(c.get("to"), 0) + 1
+    for c in kept:
+        incoming[c["to"]] = incoming.get(c["to"], 0) + 1
 
     seen = set()
-    for c in conns:
-        frm, to, kind = c.get("from"), c.get("to"), c.get("kind")
+    for c in kept:
+        frm, to, kind = c["from"], c["to"], c["kind"]
         rule_kind = by_pair.get((frm, to))
         if rule_kind is None:
             problems.append(("noRule", frm, to))
         elif rule_kind in SINGLE_INPUT_KINDS and incoming.get(to, 0) > 1:
             problems.append(("singleInput", frm, to))
-        else:
+        elif kind != rule_kind:
             # Same from/to is legal, but the wrong kind misbehaves in the app even
             # though it would pass the app's structural check. Surface it so the
             # skill can correct the kind.
-            if kind not in KNOWN_KINDS:
-                warnings.append(f"connection {frm} -> {to}: unknown kind {kind!r} (use {rule_kind!r})")
-            elif kind != rule_kind:
-                warnings.append(f"connection {frm} -> {to}: kind {kind!r} should be {rule_kind!r}")
+            warnings.append(f"connection {frm} -> {to}: kind {kind!r} should be {rule_kind!r}")
         key = (frm, to)
         if key in seen:
             problems.append(("duplicate", frm, to))
         seen.add(key)
 
-    warnings.extend(stability_warnings(plan, nodes))
+    warnings.extend(node_param_warnings(plan, nodes))
     return problems, warnings
 
 
-# Node-param sections whose on-wire values are RAW broker integers whose encoding
-# is not publicly verified. Authoring exact values risks landing on the wrong
-# device setting; recommend leaving them out (the device keeps its own value) or
-# verifying on hardware. Routing and human-readable scalars are unaffected.
+# Node-param sections carrying the DEVICE's own internal units — what the app
+# captures when it reads a unit, not a scale a value can be authored on. A
+# hand-written number lands wherever that raw value sits on the device curve;
+# recommend leaving them out (the device keeps its own value) or dialing the effect
+# in on the unit and fetching. Routing and human-readable scalars are unaffected.
 RAW_PARAM_KEYS = {
-    "ssmcs": "SSMCS channel strip (raw curve values; encoding not public)",
-    "fxEffect": "FX bus effect parameters (raw per-effect values)",
+    "ssmcs": "SSMCS channel strip (raw curve values)",
+    "fxEffect": "FX bus effect parameters (raw per-effect slot values)",
     "insertFxParams": "insert-FX engine parameters (raw slot values)",
+}
+
+
+# Effect type selectors. Writing one makes the device refill that effect's whole
+# parameter array with the new type's factory defaults, and selecting the previous
+# type back only refills it with that type's defaults — the user's values are gone.
+# Author one only when the user asked to change the effect.
+SELECTOR_KEYS = {
+    "insertFx": "selecting an insert effect",
+    "fxEffect.type": "selecting an FX type",
 }
 
 
@@ -112,20 +182,53 @@ RAW_PARAM_KEYS = {
 DUCKER_KEYS = ("duckerOn", "ducker")
 
 
-def stability_warnings(plan, nodes):
+def dropped_values(value, path, out):
+    """Collect the node-param values the app's loader drops (path, why). Every leaf
+    it keeps is a boolean or a finite number, and one malformed element drops the
+    whole array — a dropped value silently falls back to the device default."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            dropped_values(v, f"{path}.{k}", out)
+    elif isinstance(value, list):
+        if all(isinstance(el, dict) for el in value):
+            for i, el in enumerate(value):
+                dropped_values(el, f"{path}[{i}]", out)
+        else:
+            out.append((path, "an array element is not an object, which drops the whole array"))
+    elif not isinstance(value, bool) and not is_number(value):
+        out.append((path, f"{value!r} is neither a boolean nor a finite number"))
+
+
+def node_param_warnings(plan, nodes):
+    """Everything the app would quietly change about the plan's node params: values
+    it drops on load, Ducker settings on the wrong node, and the params that need
+    care on real hardware (raw units, effect selectors)."""
     out = []
-    for node_id, params in (plan.get("nodeParams") or {}).items():
+    node_params = plan.get("nodeParams")
+    if node_params is not None and not isinstance(node_params, dict):
+        return ["nodeParams is not an object — the app loads the plan with no node params at all"]
+    for node_id, params in (node_params or {}).items():
         if not isinstance(params, dict):
+            out.append(f"node {node_id}: the app drops this node's params on load — nodeParams entries must be objects")
             continue
+        dropped = []
+        dropped_values(params, node_id, dropped)
+        for path, why in dropped:
+            out.append(f"node param {path}: the app drops this value on load — {why}")
         if any(k in params for k in DUCKER_KEYS) and nodes.get(node_id, {}).get("kind") != "ducker":
             duckers = ", ".join(i for i, n in nodes.items() if n.get("kind") == "ducker")
             out.append(
                 f"node {node_id}: duckerOn/ducker have no effect here — set them on the channel's own ducker node ({duckers})"
             )
+        if "insertFx" in params:
+            out.append(f"node {node_id}: {SELECTOR_KEYS['insertFx']} resets that effect's parameters on the device")
+        if isinstance(params.get("fxEffect"), dict) and "type" in params["fxEffect"]:
+            out.append(f"node {node_id}: {SELECTOR_KEYS['fxEffect.type']} resets that effect's parameters on the device")
         for key, note in RAW_PARAM_KEYS.items():
             if key not in params:
                 continue
-            # fxEffect.type / on / level are stable; only its raw `params` map is not.
+            # fxEffect's on / level are plain values and its type is warned about
+            # above; only the raw `params` map belongs to this class.
             if key == "fxEffect":
                 fx = params.get("fxEffect") or {}
                 if not isinstance(fx, dict) or not fx.get("params"):
@@ -137,11 +240,13 @@ def stability_warnings(plan, nodes):
 def format_report(plan, problems):
     lines = [
         "URX Router plan validation failed",
-        f"model: {plan.get('modelId')}",
+        f"model: {plan.get('modelId') if isinstance(plan, dict) else None}",
         f"problems: {len(problems)}",
         "",
     ]
-    lines += [f"[{reason}] {frm} -> {to}" for reason, frm, to in problems]
+    # Routing problems name both endpoints; a document-level one (the format tag,
+    # the version, the model) has no wire to point at, so it prints on its own.
+    lines += [f"[{reason}] {frm} -> {to}" if to else f"[{reason}] {frm}" for reason, frm, to in problems]
     return "\n".join(lines)
 
 
