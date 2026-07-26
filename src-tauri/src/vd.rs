@@ -65,13 +65,25 @@ pub struct LinkEvent {
 /// a registered `/vd/parameters/{id}:{x}:{y}` address. `value` is the same raw
 /// broker integer vd_get returns, decoded on the JS side. Lets the UI follow
 /// edits made on the device itself (LCD / physical controls).
-#[derive(Clone, Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
 pub struct ParamUpdate {
     pub param_id: u32,
     pub x: i64,
     pub y: i64,
     pub value: i64,
 }
+
+/// The broker's bulk-change push (a namespace-level notify with no address) as one
+/// update. Its negative coordinates cannot collide with a real address — catalog x/y
+/// are never negative — so the follow layer's unknown-address path escalates it to the
+/// full readback a scene recall needs. It belongs to no registered address, so it is
+/// also the one update that bypasses the registered-set filter.
+pub const BULK_CHANGE: ParamUpdate = ParamUpdate {
+    param_id: 0,
+    x: -1,
+    y: -1,
+    value: 0,
+};
 
 /// A request handed to the worker thread, each carrying a one-shot reply channel.
 pub enum Cmd {
@@ -327,7 +339,8 @@ pub fn disconnect(state: &VdState, epoch: u64) {
 
 #[cfg(desktop)]
 mod imp {
-    use super::{Cmd, DeviceSummary, LinkEvent, MeterUpdate, ParamUpdate};
+    use super::{Cmd, DeviceSummary, LinkEvent, MeterUpdate, ParamUpdate, BULK_CHANGE};
+    use std::collections::HashSet;
     use std::net::TcpStream;
     use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
     use std::time::{Duration, Instant};
@@ -352,6 +365,17 @@ mod imp {
     struct Subs {
         meter_ch: Option<Channel<Vec<MeterUpdate>>>,
         param_ch: Option<Channel<Vec<ParamUpdate>>>,
+        /// The addresses this session registered with the broker. They serve two
+        /// jobs: unregistering the previous set when a subscription is replaced,
+        /// and filtering the inbound feed. A notify reaches **every** connected
+        /// client, not just the one that registered the address, so what arrives
+        /// here also carries another client's registrations and the unit's own
+        /// clock, which pushes a notify every 10 s for as long as the link is up.
+        /// Forwarding those hands the follow layer addresses outside the plan's
+        /// writable set, which it (correctly) escalates to a full device readback —
+        /// a full readback every 10 s, all session.
+        meter_addrs: HashSet<(u32, i64)>,
+        param_addrs: HashSet<(u32, i64, i64)>,
         meters: Vec<MeterUpdate>,
         params: Vec<ParamUpdate>,
         last_flush: Instant,
@@ -362,6 +386,8 @@ mod imp {
             Subs {
                 meter_ch: None,
                 param_ch: None,
+                meter_addrs: HashSet::new(),
+                param_addrs: HashSet::new(),
                 meters: Vec::new(),
                 params: Vec::new(),
                 last_flush: Instant::now(),
@@ -374,20 +400,27 @@ mod imp {
         }
 
         /// Collect a subscribed meter / parameter notify into its pending batch,
-        /// flushing on the pump cadence. Returns true when the frame was consumed
+        /// flushing on the pump cadence. Only addresses this session registered are
+        /// forwarded (see the address sets above); a notify for any other address is
+        /// still consumed — it is a notify frame, never a command reply — just
+        /// dropped rather than passed on. Returns true when the frame was consumed
         /// (callers skip further matching).
         fn absorb(&mut self, msg: &Value) -> bool {
             if self.meter_ch.is_some() {
                 if let Some(m) = parse_meter(msg) {
-                    self.meters.push(m);
-                    self.flush_due();
+                    if self.meter_addrs.contains(&(m.meter_id, m.x)) {
+                        self.meters.push(m);
+                        self.flush_due();
+                    }
                     return true;
                 }
             }
             if self.param_ch.is_some() {
                 if let Some(p) = parse_param(msg) {
-                    self.params.push(p);
-                    self.flush_due();
+                    if p == BULK_CHANGE || self.param_addrs.contains(&(p.param_id, p.x, p.y)) {
+                        self.params.push(p);
+                        self.flush_due();
+                    }
                     return true;
                 }
             }
@@ -446,12 +479,9 @@ mod imp {
             return; // caller gave up
         }
 
-        // Subscribed meter / parameter channels and their pending notify batches
-        // (see Subs); the address lists registered with the broker stay local so
-        // a replaced subscription can unregister its old set.
+        // Subscribed meter / parameter channels, the addresses registered with the
+        // broker, and the pending notify batches (see Subs).
         let mut subs = Subs::new();
-        let mut meter_addrs: Vec<(u32, i64)> = Vec::new();
-        let mut param_addrs: Vec<(u32, i64, i64)> = Vec::new();
         // Channel to push the one-shot link-lost event on, if the frontend is
         // watching: a held-open live session is dropped instead of freezing when
         // the broker link goes away while idle.
@@ -524,7 +554,7 @@ mod imp {
                     // Replace any prior subscription: unregister the old set, then
                     // register the new one address by address (never a bulk post on
                     // /vd/meters — that has been seen to crash Device Center).
-                    for &(id, x) in &meter_addrs {
+                    for &(id, x) in &subs.meter_addrs {
                         let _ = reg_meter(&mut ws, &dev_uid, id, x, "unregist");
                     }
                     let mut first = Ok(());
@@ -534,16 +564,16 @@ mod imp {
                             first = r;
                         }
                     }
-                    meter_addrs = addrs;
+                    subs.meter_addrs = addrs.into_iter().collect();
                     subs.meters.clear();
                     subs.meter_ch = Some(channel);
                     let _ = reply.send(first);
                 }
                 Ok(Cmd::MetersUnsubscribe) => {
-                    for &(id, x) in &meter_addrs {
+                    for &(id, x) in &subs.meter_addrs {
                         let _ = reg_meter(&mut ws, &dev_uid, id, x, "unregist");
                     }
-                    meter_addrs.clear();
+                    subs.meter_addrs.clear();
                     subs.meters.clear();
                     subs.meter_ch = None;
                 }
@@ -555,7 +585,7 @@ mod imp {
                     // Replace any prior subscription: unregister the old set, then
                     // register the new one address by address (per-address regist
                     // only, mirroring meters — a bulk post has crashed Device Center).
-                    for &(id, x, y) in &param_addrs {
+                    for &(id, x, y) in &subs.param_addrs {
                         let _ = reg_param(&mut ws, &dev_uid, id, x, y, "unregist");
                     }
                     let mut first = Ok(());
@@ -567,16 +597,16 @@ mod imp {
                             first = r;
                         }
                     }
-                    param_addrs = addrs;
+                    subs.param_addrs = addrs.into_iter().collect();
                     subs.params.clear();
                     subs.param_ch = Some(channel);
                     let _ = reply.send(first);
                 }
                 Ok(Cmd::ParamsUnsubscribe) => {
-                    for &(id, x, y) in &param_addrs {
+                    for &(id, x, y) in &subs.param_addrs {
                         let _ = reg_param(&mut ws, &dev_uid, id, x, y, "unregist");
                     }
-                    param_addrs.clear();
+                    subs.param_addrs.clear();
                     subs.params.clear();
                     subs.param_ch = None;
                 }
@@ -1036,16 +1066,9 @@ mod imp {
         // A namespace-level notify — `/vd/parameters` with no address and no value —
         // is the broker's bulk-change push: a scene recall on the unit emits only
         // this single frame (confirmed by capture; the changed parameters get no
-        // per-address notifies). Forward it as a sentinel no real address can
-        // collide with (catalog x/y are never negative), so the follow layer's
-        // unknown-address path escalates it to a full readback.
+        // per-address notifies). Forward it as the sentinel (see BULK_CHANGE).
         if notify_frame(msg, "/vd/parameters").is_some_and(|(_, rest)| rest.is_empty()) {
-            return Some(ParamUpdate {
-                param_id: 0,
-                x: -1,
-                y: -1,
-                value: 0,
-            });
+            return Some(BULK_CHANGE);
         }
         let (vdp, addr) = notify_frame(msg, "/vd/parameters/")?;
         let mut parts = addr.split(':');
@@ -1179,6 +1202,16 @@ mod imp {
         use std::time::Instant;
         use tauri::ipc::{Channel, InvokeResponseBody};
 
+        // A subscription whose registered sets hold exactly the addresses a test
+        // drives, mirroring what MetersSubscribe / ParamsSubscribe record: absorb
+        // forwards a notify only for an address this session registered.
+        fn subs_with(meters: &[(u32, i64)], params: &[(u32, i64, i64)]) -> Subs {
+            let mut subs = Subs::new();
+            subs.meter_addrs = meters.iter().copied().collect();
+            subs.param_addrs = params.iter().copied().collect();
+            subs
+        }
+
         // A broker notify frame as the read loops see it (already-parsed JSON).
         fn notify(uri: String, value: i64) -> Value {
             json!({
@@ -1206,7 +1239,7 @@ mod imp {
 
         #[test]
         fn absorb_batches_subscribed_notifies_until_flush() {
-            let mut subs = Subs::new();
+            let mut subs = subs_with(&[(115, 0), (115, 1)], &[]);
             let (meter_ch, meters_seen) = capture();
             subs.meter_ch = Some(meter_ch);
 
@@ -1241,7 +1274,9 @@ mod imp {
 
         #[test]
         fn absorb_leaves_command_replies_for_the_await_loops() {
-            let mut subs = Subs::new();
+            // The address is registered, so only the frame's method keeps the reply
+            // out of the batch — not the registered-set filter.
+            let mut subs = subs_with(&[], &[(142, 0, 0)]);
             let (meter_ch, _) = capture();
             let (param_ch, _) = capture();
             subs.meter_ch = Some(meter_ch);
@@ -1263,7 +1298,7 @@ mod imp {
 
         #[test]
         fn absorb_flushes_on_the_pump_cadence() {
-            let mut subs = Subs::new();
+            let mut subs = subs_with(&[(100, 2), (100, 3)], &[]);
             let (meter_ch, meters_seen) = capture();
             subs.meter_ch = Some(meter_ch);
 
@@ -1288,7 +1323,7 @@ mod imp {
 
         #[test]
         fn absorb_forwards_the_bulk_change_notify_as_the_sentinel() {
-            let mut subs = Subs::new();
+            let mut subs = subs_with(&[], &[(142, 0, 0)]);
             let (param_ch, params_seen) = capture();
             subs.param_ch = Some(param_ch);
 
@@ -1314,6 +1349,38 @@ mod imp {
                     { "param_id": 0, "x": -1, "y": -1, "value": 0 },
                     { "param_id": 142, "x": 0, "y": 0, "value": 1 }
                 ])
+            );
+        }
+
+        #[test]
+        fn absorb_drops_notifies_for_addresses_this_session_did_not_register() {
+            let mut subs = subs_with(&[(115, 0)], &[(142, 0, 0)]);
+            let (meter_ch, meters_seen) = capture();
+            let (param_ch, params_seen) = capture();
+            subs.meter_ch = Some(meter_ch);
+            subs.param_ch = Some(param_ch);
+
+            // The broker broadcasts every notify to every connected client, so the
+            // unit's own clock (a push every 10 s) and another client's meter
+            // registrations land here too. Both are consumed — they are notify
+            // frames — but neither reaches the frontend: an unregistered parameter
+            // resolves to no node in the follow layer, which escalates it to a full
+            // device readback, so the clock alone would fire one every 10 s for the
+            // whole session.
+            subs.last_flush = Instant::now();
+            assert!(subs.absorb(&notify("/vd/parameters/142:0:1".into(), 35)));
+            assert!(subs.absorb(&notify("/vd/meters/115:1".into(), -274)));
+            assert!(subs.absorb(&notify("/vd/parameters/142:0:0".into(), 1)));
+            assert!(subs.absorb(&notify("/vd/meters/115:0".into(), -183)));
+
+            subs.flush();
+            assert_eq!(
+                *params_seen.lock().unwrap(),
+                vec![json!([{ "param_id": 142, "x": 0, "y": 0, "value": 1 }])]
+            );
+            assert_eq!(
+                *meters_seen.lock().unwrap(),
+                vec![json!([{ "meter_id": 115, "x": 0, "value": -183 }])]
             );
         }
     }

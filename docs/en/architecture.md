@@ -378,7 +378,13 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
 - **Device follow** — the reverse of live sync. The same drain path also carries device-side parameter
   changes: `ParamsSubscribe`/`parse_param` (sharing the `notify_frame` envelope parse with the meter path)
   register every writable address and forward each `notify` (batched per drain, like the meter path). A notify carries the changed address **and its
-  new value**, so detection is free and exact. While Live sync is on, `core/control/follow.ts` `DeviceFollow`
+  new value**, so detection is free and exact. The broker sends a notify to **every** connected client, not just
+  the one that registered the address, so both forwarders drop what this session did not register (the worker
+  keeps its registered sets in `Subs` for exactly this, alongside the unregister-on-replace they already served).
+  Without that filter another broker client's registrations ride in, and so does the unit's own clock — one push
+  every 10 s, which resolves to no node and escalates to a full readback every 10 s for the whole session. The
+  address-less bulk-change sentinel below is the one exemption: it belongs to no address by design.
+  While Live sync is on, `core/control/follow.ts` `DeviceFollow`
   classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
   scalar (fader / pan / on / level, flagged `follow: "direct"` in the catalog) is decoded straight into the plan
   with no read-back (`applyDirect`), and its single snapshot entry is patched to the device value in place
