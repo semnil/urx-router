@@ -35,3 +35,48 @@ jobs:
 
   licenses:
     uses: ./.github/workflows/licenses.yml
+
+  # Populates the platform Rust caches on the default branch. A release runs on
+  # a tag ref, and a run can only restore caches from its own ref or the default
+  # branch — caches a tag run writes are unreachable from the next tag, so
+  # without this every release compiles the whole dependency tree from scratch.
+  # Builds the binary only (no bundling or signing). Runs on every merge rather
+  # than on src-tauri changes alone: a restore refreshes the cache's eviction
+  # clock, and a tag can follow any merge. A miss is silent — it only shows up
+  # as a slow release — so the matrix and the shared-key below have to stay
+  # identical to release.yml's build job.
+  warm-cache:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            args: --target aarch64-apple-darwin
+            rustTargets: aarch64-apple-darwin
+          - platform: windows-latest
+            args: ''
+            rustTargets: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rustTargets }}
+      - uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: src-tauri
+          shared-key: release
+      - run: pnpm install --frozen-lockfile
+      # tauri-build reads the frontend output and copies bundle.resources at
+      # compile time, so both have to exist. This job never bundles, so the
+      # notice is a placeholder rather than the generated one.
+      - run: pnpm build
+      - run: echo "" > src-tauri/THIRD_PARTY_LICENSES.html
+      - run: cargo build --release ${{ matrix.args }}
+        working-directory: src-tauri

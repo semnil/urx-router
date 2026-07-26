@@ -110,9 +110,16 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.rustTargets }}
+      # shared-key, not the default job-derived one: post-merge.yml's warm-cache
+      # job fills this cache on main, which is the only scope a tag run can
+      # restore from — its matrix and this key have to stay identical, since a
+      # mismatch only shows up as a slow release. Read-only for the same reason:
+      # a cache saved here lands in the tag's own scope, where nothing reads it.
       - uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: src-tauri
+          shared-key: release
+          save-if: false
       - run: pnpm install --frozen-lockfile
       # bundle.resources; generated once by the licenses job above.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
