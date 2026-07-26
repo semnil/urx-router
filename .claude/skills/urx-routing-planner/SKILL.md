@@ -123,7 +123,9 @@ first, then a plan"). Default to URX44V only if the user clearly has one.
 grouped by kind — this is also your feasibility oracle: a route that isn't listed
 isn't possible on that model. **Author only routes that appear there**, copying
 the exact `from`/`to` refs and the route's `kind`. Read `references/plan-schema.md`
-for the JSON shape and parameter ranges.
+for the JSON shape and parameter ranges — including what a plan the user hands you
+carrying `"scope": "scene"` deliberately leaves out (its output patches are not
+missing, they are outside the scene).
 
 **3. Map the request to wires.** For each thing the user wants routed, find the
 matching legal route and add a connection. Set parameters the user asked for
@@ -134,7 +136,9 @@ not deliberately setting. Remember:
      wire only.
    - **Fixed sends** (marked `(fixed)` in the reference: CH/FX → STEREO, CH →
      MIX/FX, MIX → STEREO) always exist. You don't list them to keep them; you
-     list them with `params` to set level/pan or turn them `on`.
+     list them with `params` to set level/pan or turn them `on` — and listing one
+     without a `level` sets it to unity rather than keeping its seeded -∞, so
+     always give the level you mean.
    - Use the right `kind` for the route — `send` into a bus, `source` into a
      channel, `patch` into an output, etc.
 
@@ -146,9 +150,11 @@ python scripts/plan_tool.py validate plan.json
 ```
 
 It prints `OK` (the app will load it without complaint) or a problem report. It
-also prints `WARNING:` lines to stderr for wrong-`kind` wires, for Ducker params
-placed on a non-ducker node (move them to the channel's `out.duckerN` id), and
-for raw-encoded params (see step 6).
+also prints `WARNING:` lines to stderr — always read them: for a wire or value the
+app's loader would silently **drop** (an unknown `kind`, a mistyped `params` /
+node param — the plan loads, just without that piece), for wrong-`kind` wires, for
+Ducker params placed on a non-ducker node (move them to the channel's `out.duckerN`
+id), and for the parameters that need care on hardware (see step 6).
 
 **5. Self-correct from the report.** If validation fails, the report lists each
 illegal wire in the same format the app's viewer shows — so a report pasted back
@@ -168,15 +174,25 @@ Reason codes:
    - `singleInput` — more than one wire into a single-input destination. Remove
      the extra(s); a channel/output/ducker/record slot takes one source.
    - `duplicate` — the same `from -> to` is listed twice. Drop the repeat.
+   - `notPlanFile` / `planVersionUnsupported` / `unknownModel` — the document
+     itself is refused, before the routing is even looked at: `format` must be
+     exactly `urx-router-plan`, `version` must not exceed `1`, and `modelId` must
+     be one of the three models.
 
 Fix and re-validate until `OK`.
 
-**6. Flag unstable parameters.** If the plan sets `ssmcs`, `fxEffect.params`, or
-`insertFxParams` (raw broker-encoded values whose encoding is not publicly
-verified), the validator warns. Surface this to the user: those exact values may
-not land correctly on the device, so prefer omitting them (the unit keeps its own
-value) or have the user verify on hardware. Routing and the human-readable params
-(levels, pan, gain, HPF, mute, EQ in dB/Hz) are unaffected.
+**6. Flag the parameters that need care.** Two classes the validator warns about;
+`plan-schema.md` carries the detail, and both are worth surfacing to the user:
+   - **Raw-encoded** — `ssmcs`, `fxEffect.params`, `insertFxParams` hold the
+     device's own internal units, not an authorable scale. Prefer omitting them
+     (the unit keeps its current values).
+   - **Effect selectors** — writing `insertFx` or `fxEffect.type` makes the device
+     refill that effect's parameters with the new type's defaults, and selecting
+     the old type back does **not** bring them back. Author a selector only when
+     the user asked to change the effect, and say so when you deliver the plan.
+
+Routing and the human-readable params (levels, pan, gain, HPF, mute, EQ in dB/Hz)
+are unaffected by either.
 
 **7. Deliver.** Present the plan JSON, then the deep link:
 
@@ -210,7 +226,8 @@ opens via File → Open — the no-copy-paste route onto hardware.
    URX Router and use Device → Write to device / Live sync (point to
    `references/device-apply.md`). The JSON file can come straight from the
    opened link via its Download JSON button.
-5. Any **stability warnings** from step 6.
+5. Any **warnings** from step 6 (raw-encoded values, an effect selector that
+   resets the unit's effect parameters).
 
 ## Output language
 
@@ -227,7 +244,8 @@ app and tooling parse, not prose:
   except `nodeNames`, which is a user-facing label and may be in any language
   (e.g. `"ch1": "ボーカル"`) and round-trips fine as UTF-8,
 - the `?plan=` deep link,
-- the validator's reason codes (`noRule`, `singleInput`, `duplicate`).
+- the validator's reason codes (`noRule`, `singleInput`, `duplicate`, and the
+  document-level ones in step 5).
 
 The desktop app's menu labels follow whatever UI language the user has selected,
 so name a menu in the user's language and you may add the English label in

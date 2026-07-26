@@ -30,12 +30,24 @@ is just those four keys plus the wires you want. Prefer minimal plans: omit
 `positions` (the app auto-arranges) and any param you are not deliberately
 setting.
 
-- `format` — always the string `"urx-router-plan"`.
-- `version` — always `1`.
-- `modelId` — `"URX22"`, `"URX44"`, or `"URX44V"`.
+- `format` — always the string `"urx-router-plan"`. Anything else and the app
+  refuses the document before it looks at the routing.
+- `version` — always `1`. A document tagged newer than the app's version is
+  refused; an absent one reads as current.
+- `modelId` — `"URX22"`, `"URX44"`, or `"URX44V"`. Any other string is refused.
 - `sampleRate` — Hz, one of `44100, 48000, 88200, 96000, 176400, 192000`
   (default `48000`). Some features (insert FX, FX2, stereo-channel EQ) warn/disable
   above 96 kHz — the app shows those notes; the plan still loads.
+- `scope` — **never author it**; it appears only on a plan the user saved
+  scene-scoped (Preferences → *Plan files* → *Save scope*, which also applies to
+  the share URL and the JSON download). Such a document carries `"scope": "scene"`
+  and deliberately omits `sampleRate` plus everything the URX keeps outside a
+  scene: the output / USB / microSD patches (`patch` and `record` wires), the
+  monitor and streaming source selects, the oscillator bus assigns, the monitor /
+  oscillator node params, the streaming delay and the microSD track count. So a
+  user-supplied scene plan is not missing its output patches — they are out of
+  scope. Opening one keeps the current plan's values for all of that (the scene-
+  recall semantic), and only when the model matches. Emit full plans yourself.
 
 ## connections
 
@@ -66,8 +78,11 @@ most one incoming wire. Two wires into the same `:in` of that kind is the
 `(fixed)` — the channel/FX main paths into STEREO, the CH→MIX/FX sends, and
 MIX→STEREO. They are always present (the app seeds them into every plan) and
 cannot be removed; you only set their `params` (e.g. raise a send `level`, or
-turn a `sendSwitch` `on`). You do not need to list a fixed wire just to keep it,
-but listing it with params is how you set its level/pan/on.
+turn a `sendSwitch` `on`). A fixed wire you leave out keeps the app's seed: unity
+for a channel's main path into STEREO, `-96.5` (off / -∞) for every other fixed
+send, and off for MIX→STEREO. **Listing one is not the same as leaving it out** —
+a listed wire with no `level` writes 0 dB (unity), so list a fixed send only with
+the params you mean.
 
 ### connection params (ConnParams)
 
@@ -95,6 +110,8 @@ the device default. The full set:
 - `gain` — head-amp input gain in dB (-8 … +70), analog mic channels.
 - `phantom`, `phase`, `phaseL`, `phaseR`, `clipSafe`, `hiZ` (bool).
 - `level` — a node-level fader in dB (e.g. monitor level).
+- `pan` — output-bus master balance (STEREO / MIX), `-63` … `0` … `+63`. Absent =
+  center. Distinct from a send's `pan`, which is a connection param.
 - `eqOn` (bool); `eqBands` — array of up to 4 `{ on, type, freq, q, gain }`
   (freq Hz, q 0.50–16.00, gain ±18 dB; `type` is the filter-type enum on the
   LOW/HIGH bands only).
@@ -118,7 +135,14 @@ the device default. The full set:
   width, interval (s) }`.
 - `cueInterrupt`, `mono` (bool, monitor buses); `phonesLevel` (0.0–10.0).
 - `delay` — STREAMING bus: `{ on, time (ms, 1–1000), frameRate (enum 0–7) }`.
-- `insertFx` — insert-effect selector enum (-1 = none). Selecting one is stable.
+- `insertFx` — insert-effect selector enum (-1 = none). **Writing a selector is
+  destructive and cannot be undone:** the device refills that effect engine's
+  whole parameter array with the new type's factory defaults, and selecting the
+  previous type back only refills it with *that* type's defaults — whatever the
+  user had set is gone. The engine is shared working area, so it can also discard
+  settings belonging to another channel using it. Author `insertFx` only when the
+  user asked to change the insert effect; omit it to leave the unit's effect
+  alone. `fxEffect.type` below carries the same rule.
 - `insertFxOn` — insert-effect ON/OFF (bypass), `true`/`false`. The device
   re-engages it whenever an effect is (re)selected; it only applies (and is only
   written) while an effect is selected.
@@ -129,14 +153,18 @@ the device default. The full set:
 **Raw-encoded — author with caution (see warnings):**
 - `ssmcs` — the SSMCS channel-strip values are RAW broker integers on a non-public
   curve.
-- `fxEffect.params` — FX bus per-effect parameters are raw (its `type`, `on`,
-  `level` are stable, but the `params` map is raw).
+- `fxEffect` — the FX bus effect. Its `type` (the EFFECT TYPE selector), `on` and
+  `level` (0–100) are plain values, but the `params` map holds raw per-effect
+  values keyed by the device's array slot.
 - `insertFxParams` — insert-FX engine values are raw slot integers.
 
-For these three, the numeric encoding is **not publicly verified**. Setting exact
-values risks landing on the wrong device setting. Prefer to omit them (the device
-keeps its own value) or set only the stable selector and have the user verify on
-hardware. `scripts/plan_tool.py` emits a WARNING whenever a plan carries these.
+These three are the device's own internal units — what URX Router captures when it
+reads a unit, not a scale you can author a value on. A hand-written number lands
+wherever that raw value happens to sit on the device's curve, so prefer to omit
+them (the unit keeps its current value) or have the user dial the effect in on the
+device and fetch it back. `scripts/plan_tool.py` emits a WARNING whenever a plan
+carries them, and another whenever it carries an effect selector (`insertFx` /
+`fxEffect.type`), whose write resets that effect's parameters as described above.
 
 ## nodeNames / nodeColors / notes
 
