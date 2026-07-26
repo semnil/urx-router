@@ -61,6 +61,7 @@ import {
   selfTestRequested,
   prepareModifiedRequested,
   resetStorageRequested,
+  setKeepAwake,
   thirdPartyLicenses,
   vdConnect,
   vdDisconnect,
@@ -1395,6 +1396,7 @@ const prefs = new PrefsPanel({
     if (DEMO) return Promise.resolve<UpdateCheckOutcome>({ kind: "failed" });
     return checkForUpdates();
   },
+  setPreventSleep: applyPreventSleep,
   isExperimental: () => experimentalOn,
   themeMode: () => themeMode,
   onThemeMode: (mode) => setThemeMode(mode),
@@ -2480,7 +2482,26 @@ async function boot(): Promise<void> {
   await resetStorageIfRequested();
   await requireConsent();
   if (!DEMO) {
+    // The hold dies with the process, so the stored preference is re-taken at
+    // every launch — and a refusal is reported rather than leaving a preference
+    // that reads ON while the computer sleeps mid-session.
+    if (isTauri() && getSettings().preventSleep) {
+      const failed = await applyPreventSleep(true);
+      if (failed) showError(failed);
+    }
     if (getSettings().updateCheck) await checkForUpdates();
+  }
+}
+
+// The one place the idle-sleep hold is taken or released: the Preferences toggle
+// and the launch re-take share it, so both report a refusal the same way.
+// Resolves with null once the OS took it, or the refusal text.
+async function applyPreventSleep(on: boolean): Promise<string | null> {
+  try {
+    await setKeepAwake(on);
+    return null;
+  } catch (err) {
+    return t().prefs.sleepFailed(err instanceof Error ? err.message : String(err));
   }
 }
 

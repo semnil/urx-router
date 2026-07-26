@@ -2893,14 +2893,20 @@ select:focus-visible,
   font-size: 11px;
   color: var(--text-dim);
 }
-.prefs-update-note.warn {
-  color: var(--warn);
-}
 .prefs-note {
   margin: 8px 0 0 14px;
   font-size: 11px;
   line-height: 1.55;
   color: var(--text-dim);
+}
+/* A note reporting a refusal (the update check, the OS declining a sleep hold).
+   Both stay in the DOM to be written into, so an unreported one collapses. */
+.prefs-update-note.warn,
+.prefs-note.warn {
+  color: var(--warn);
+}
+.prefs-note:empty {
+  display: none;
 }
 /* In-flight disable (the update check): same treatment as a disabled menu
    item. Locked rows stay out — they already dim wholesale. */

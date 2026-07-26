@@ -29,6 +29,9 @@ export interface AppSettings {
   wheelSteps: number;
   /** Fine-tuning modifier: false = hold Shift, true = Shift latches. */
   fineLatch: boolean;
+  /** Hold off the computer's idle sleep (system + display) while the app is open
+   *  (desktop only). Stored only once the OS took the hold. */
+  preventSleep: boolean;
   /** PNG / PDF raster scale, as a multiple of the graph's 1:1 size. */
   exportScale: number;
   /** PNG / PDF background + palette: the active theme or a fixed one. */
@@ -46,6 +49,7 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   warnDucker: true,
   wheelSteps: 1,
   fineLatch: false,
+  preventSleep: false,
   exportScale: 2,
   exportTheme: "active",
   recentMax: 8,
@@ -75,6 +79,7 @@ function sanitize(raw: unknown): AppSettings {
     warnDucker: bool(r.warnDucker, d.warnDucker),
     wheelSteps: pick(r.wheelSteps, WHEEL_STEP_CHOICES, d.wheelSteps),
     fineLatch: bool(r.fineLatch, d.fineLatch),
+    preventSleep: bool(r.preventSleep, d.preventSleep),
     exportScale: pick(r.exportScale, EXPORT_SCALE_CHOICES, d.exportScale),
     exportTheme: pick(r.exportTheme, ["active", "dark", "light"], d.exportTheme),
     recentMax: pick(r.recentMax, RECENT_MAX_CHOICES, d.recentMax),

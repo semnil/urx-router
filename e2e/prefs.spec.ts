@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { stubTauriBoot } from "./tauri-stub";
 
 // Preferences modal (toolbar gear). The gear is an independent entry available
@@ -22,6 +23,11 @@ test.describe("plain browser", () => {
     await expect(scopeRow).toHaveClass(/locked/);
     await expect(scopeRow.locator(".prefs-lock")).toHaveText("Desktop app only");
     await expect(page.locator("#prefs-device-scope button").first()).toBeDisabled();
+    // Sleep suppression needs the shell to reach the OS, so it locks the same way.
+    const sleepRow = page.locator("#prefs-prevent-sleep").locator("..");
+    await expect(sleepRow).toHaveClass(/locked/);
+    await expect(sleepRow.locator(".prefs-lock")).toHaveText("Desktop app only");
+    await expect(page.locator("#prefs-prevent-sleep button").first()).toBeDisabled();
     // Save scope applies in every build.
     await expect(page.locator("#prefs-save-scope button").first()).toBeEnabled();
     // Version shows; the manual update check needs the desktop shell.
@@ -163,4 +169,76 @@ test("Check now reports 'up to date' inline and keeps the modal open (stubbed Ta
   await expect(page.locator("#prefs-update-note")).toHaveText("Already up to date.");
   await expect(page.locator("#prefs-modal")).toBeVisible();
   await expect(page.locator("#prefs-update-now")).toBeEnabled();
+});
+
+/** Record every set_keep_awake the shell is asked for, and optionally refuse it —
+ *  the point of the setting is what reaches the OS, which a constant stub cannot
+ *  show. Registered after stubTauriBoot so it wraps that stub's invoke. */
+async function recordKeepAwake(page: Page, refuse = false): Promise<void> {
+  await page.addInitScript((deny: boolean) => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
+      }
+    ).__TAURI_INTERNALS__;
+    const invoke = internals.invoke.bind(internals);
+    const calls: boolean[] = [];
+    (window as unknown as { __urxKeepAwake: boolean[] }).__urxKeepAwake = calls;
+    internals.invoke = (cmd: string, ...rest: unknown[]) => {
+      if (cmd !== "set_keep_awake") return (invoke as (...a: unknown[]) => Promise<unknown>)(cmd, ...rest);
+      calls.push(Boolean((rest[0] as { on?: boolean })?.on));
+      return deny ? Promise.reject(new Error("PowerCreateRequest failed")) : Promise.resolve(null);
+    };
+  }, refuse);
+}
+
+const keepAwakeCalls = (page: Page): Promise<boolean[]> =>
+  page.evaluate(() => (window as unknown as { __urxKeepAwake: boolean[] }).__urxKeepAwake);
+
+const storedSettings = (page: Page): Promise<Record<string, unknown>> =>
+  page.evaluate(() => JSON.parse(localStorage.getItem("urx-settings") ?? "{}"));
+
+test("Prevent sleep holds off sleep and re-takes the hold at launch (stubbed Tauri)", async ({ page }) => {
+  await stubTauriBoot(page);
+  await recordKeepAwake(page);
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  // Nothing is held until it is asked for.
+  expect(await keepAwakeCalls(page)).toEqual([]);
+  await page.click("#btn-prefs");
+  await page.click('#prefs-prevent-sleep button:has-text("ON")');
+  await expect(page.locator("#prefs-prevent-sleep button.on")).toHaveText("ON");
+  expect(await keepAwakeCalls(page)).toEqual([true]);
+  expect((await storedSettings(page)).preventSleep).toBe(true);
+  // The hold dies with the process, so a launch with the preference on has to
+  // take it again — a stored ON that no longer holds anything is the failure.
+  await page.reload();
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await expect.poll(() => keepAwakeCalls(page)).toEqual([true]);
+  // Turning it back off releases it.
+  await page.click("#btn-prefs");
+  await page.click('#prefs-prevent-sleep button:has-text("OFF")');
+  await expect(page.locator("#prefs-prevent-sleep button.on")).toHaveText("OFF");
+  expect(await keepAwakeCalls(page)).toEqual([true, false]);
+  expect((await storedSettings(page)).preventSleep).toBe(false);
+});
+
+test("a refused hold leaves the row OFF and says why (stubbed Tauri)", async ({ page }) => {
+  await stubTauriBoot(page);
+  await recordKeepAwake(page, true);
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-prefs");
+  await page.click('#prefs-prevent-sleep button:has-text("ON")');
+  await expect(page.locator("#prefs-sleep-error")).toHaveText(
+    "Could not change the sleep setting: PowerCreateRequest failed",
+  );
+  // The OS refused, so the row and the stored preference both stay off — an ON
+  // face here would claim a suppression nothing is holding.
+  await expect(page.locator("#prefs-prevent-sleep button.on")).toHaveText("OFF");
+  expect((await storedSettings(page)).preventSleep).toBeFalsy();
+  // Reopening drops the explanation rather than re-reporting a stale failure.
+  await page.keyboard.press("Escape");
+  await page.click("#btn-prefs");
+  await expect(page.locator("#prefs-sleep-error")).toBeEmpty();
 });

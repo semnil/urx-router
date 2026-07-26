@@ -5,9 +5,10 @@
 // in the shell), read before settings load so the first paint is already right.
 // The content is rebuilt on every open and on refresh(), so it always reflects
 // the current language, the live-sync lock, and the stored values. Rows that
-// need the desktop shell (device scope, updates, firmware warning, recent
-// plans) render disabled with a "Desktop app only" tag elsewhere, per build:
-//   browser (E2E)  — device / update / firmware / recent rows locked
+// need the desktop shell (device scope, updates, firmware warning, computer
+// sleep, recent plans) render disabled with a "Desktop app only" tag elsewhere,
+// per build:
+//   browser (E2E)  — device / update / firmware / sleep / recent rows locked
 //   demo (Pages)   — those plus the export rows (the demo has no export)
 
 import { version } from "../../package.json";
@@ -52,6 +53,10 @@ export interface PrefsHooks {
    *  on the inline note; an accepted update closes the modal on the shell side
    *  before the download status takes over. */
   checkUpdates: () => Promise<UpdateCheckOutcome>;
+  /** Take or release the computer's idle-sleep hold — the one setting the OS can
+   *  refuse. Resolves with null once it took, or the refusal text for the inline
+   *  note; the shell owns the call so the launch re-take shares it. */
+  setPreventSleep: (on: boolean) => Promise<string | null>;
   /** --experimental launch: the scope note also names the diagnostics' coverage. */
   isExperimental: () => boolean;
   /** Current theme mode, read on every render. */
@@ -221,6 +226,18 @@ export class PrefsPanel {
       right.append(sec);
     }
     {
+      const sec = this.section(m.sleepSection);
+      // A refusal lands on a note that is always in the DOM (empty notes collapse),
+      // the update check's idiom: reporting must not depend on a render pass.
+      const failed = this.note("");
+      failed.classList.add("warn");
+      failed.id = "prefs-sleep-error";
+      const sleepToggle = this.onOff(s.preventSleep, (on) => void this.applyKeepAwake(on, failed));
+      sleepToggle.id = "prefs-prevent-sleep";
+      sec.append(this.row(m.preventSleep, sleepToggle, !desktop), this.note(m.sleepNote), failed);
+      right.append(sec);
+    }
+    {
       const sec = this.section(m.filesSection);
       sec.append(
         this.row(
@@ -345,6 +362,15 @@ export class PrefsPanel {
     } else {
       note.textContent = "";
     }
+  }
+
+  // The OS decides: the setting is stored only once the hold took, so an ON face
+  // never claims a suppression nothing is keeping — and the launch re-take never
+  // restores that claim. A refusal leaves the row where it was, explained below it.
+  private async applyKeepAwake(on: boolean, note: HTMLElement): Promise<void> {
+    const failed = await this.hooks.setPreventSleep(on);
+    note.textContent = failed ?? "";
+    if (!failed) this.apply({ preventSleep: on });
   }
 
   private apply(patch: Partial<AppSettings>): void {

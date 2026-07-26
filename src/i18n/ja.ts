@@ -644,6 +644,11 @@ export const ja: Messages = {
     fineHold: "Shift 長押し",
     fineLatch: "ラッチ",
     controlsNote: "ラッチでは Shift を押すたびにファインチューニングが切り替わります。",
+    sleepSection: "コンピューターのスリープ",
+    preventSleep: "スリープを抑止",
+    sleepNote:
+      "ON の間、URX Router を開いているコンピューターとディスプレイがスリープせず、自動ロックもかかりません。ふたを閉じる操作や手動スリープは通常どおり動作します。",
+    sleepFailed: (message: string): string => `スリープ設定を変更できませんでした: ${message}`,
     filesSection: "ファイルと出力",
     exportScale: "出力スケール",
     exportNote: "PNG / PDF の解像度 — グラフの等倍サイズに対する倍率です (ズームには依存しません)。",

@@ -660,6 +660,11 @@ export const en = {
     fineHold: "Hold Shift",
     fineLatch: "Latch",
     controlsNote: "Latch flips fine-tuning on each Shift press instead of holding.",
+    sleepSection: "Computer sleep",
+    preventSleep: "Prevent sleep",
+    sleepNote:
+      "ON keeps this computer and its display awake while URX Router is open, so the idle screen lock stays away too. Closing the lid or sleeping manually still works.",
+    sleepFailed: (message: string): string => `Could not change the sleep setting: ${message}`,
     filesSection: "Files & export",
     exportScale: "Export scale",
     exportNote: "PNG / PDF resolution, as a multiple of the graph's 1:1 size (zoom independent).",
