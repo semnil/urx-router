@@ -76,11 +76,16 @@ jobs:
             })
             return data.id
 
+  # bundle.resources, generated once here instead of on every runner.
+  licenses:
+    uses: ./.github/workflows/licenses.yml
+
   build:
-    needs: [check-tag, create-release]
+    needs: [check-tag, create-release, licenses]
     # Run even when create-release is skipped (manual dispatch), as long as the
-    # tag check itself succeeded.
-    if: always() && needs.check-tag.result == 'success'
+    # tag check itself succeeded. The notice is a bundle input, so its job has
+    # to have succeeded; always() would otherwise let a failed one through.
+    if: always() && needs.check-tag.result == 'success' && needs.licenses.result == 'success'
     strategy:
       fail-fast: false
       matrix:
@@ -109,14 +114,11 @@ jobs:
         with:
           workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
-      # Generate the third-party license notice bundled as an app resource
-      # (bundle.resources). Same tool pinning as the post-merge licenses job.
-      - uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+      # bundle.resources; generated once by the licenses job above.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          tool: cargo-about@0.9.1
-          features: cli
-      - run: cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
-        working-directory: src-tauri
+          name: third-party-licenses
+          path: src-tauri
       - id: tauri
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
