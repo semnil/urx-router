@@ -11,21 +11,23 @@ const sigSelect = (page: Page) => param(page, "Signal Type").locator("select");
 const panBalSelect = (page: Page) => param(page, "PAN / BAL").locator("select");
 const link = (page: Page) => page.locator("#graph-host text", { hasText: "♥" });
 
-// Save the plan and return the pan of a from->to connection.
-async function panOf(
-  page: Page,
-  testInfo: { outputPath: (n: string) => string },
-  from: string,
-  to: string,
-): Promise<number | undefined> {
+// Save the plan and parse it back. The pan readers below are pure selectors over
+// the result, so one save covers every assertion about the same board state.
+async function savedPlan(page: Page, testInfo: { outputPath: (n: string) => string }) {
   await page.click("#btn-file");
   const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
   const file = testInfo.outputPath("plan.json");
   await download.saveAs(file);
-  const plan = JSON.parse(readFileSync(file, "utf8"));
-  const c = plan.connections.find((x: { from: string; to: string }) => x.from === from && x.to === to);
-  return c?.params?.pan;
+  return JSON.parse(readFileSync(file, "utf8"));
 }
+
+// The pan of a from->to connection in a saved plan. A channel's CH_PAN is the pan
+// of its fixed send into STEREO.
+const panOf = (
+  plan: { connections: { from: string; to: string; params?: { pan?: number } }[] },
+  from: string,
+  to: string,
+) => plan.connections.find((c) => c.from === from && c.to === to)?.params?.pan;
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -46,6 +48,8 @@ test("mono pair gets a Signal Type select; STEREO reveals PAN/BAL and a heart li
 
   await sigSelect(page).selectOption("1"); // STEREO
   await expect(param(page, "PAN / BAL")).toHaveCount(1);
+  // Linking lands in BAL, as it does on the unit.
+  await expect(panBalSelect(page)).toHaveValue("1");
   await expect(link(page)).toHaveCount(1); // heart tie on the canvas
 
   // The partner channel shows the same Signal Type (stored on the primary).
@@ -182,33 +186,53 @@ test("a MONO x 2 pair does not drag together", async ({ page }) => {
 
 test("PAN/BAL re-inits the pan of the STEREO and MIX sends for both pair members", async ({ page }, testInfo) => {
   // CH1/CH2 → MIX1 are fixed (always-wired) sends seeded on the board.
-  // Enter STEREO -> PAN mode: odd hard-left (-63), even hard-right (+63), on the
-  // fixed CH->STEREO send and the fixed MIX 1 sends alike.
+  // Entering STEREO lands in BAL: both centre (0), on the fixed CH->STEREO send
+  // and the fixed MIX 1 sends alike.
   await node(page, "ch1").click();
   await sigSelect(page).selectOption("1");
-  expect(await panOf(page, testInfo, "ch1:out", "bus.stereo:in")).toBe(-63);
-  expect(await panOf(page, testInfo, "ch2:out", "bus.stereo:in")).toBe(63);
-  expect(await panOf(page, testInfo, "ch1:out", "bus.mix1:in")).toBe(-63);
-  expect(await panOf(page, testInfo, "ch2:out", "bus.mix1:in")).toBe(63);
+  let plan = await savedPlan(page, testInfo);
+  expect(panOf(plan, "ch1:out", "bus.stereo:in")).toBe(0);
+  expect(panOf(plan, "ch2:out", "bus.stereo:in")).toBe(0);
+  expect(panOf(plan, "ch1:out", "bus.mix1:in")).toBe(0);
+  expect(panOf(plan, "ch2:out", "bus.mix1:in")).toBe(0);
 
-  // BAL mode: both centre (0) everywhere (toggle from the partner member).
+  // PAN mode: odd hard-left (-63), even hard-right (+63) (toggle from the partner
+  // member — the flag lives on the primary).
   await node(page, "ch2").click();
-  await panBalSelect(page).selectOption("1");
-  expect(await panOf(page, testInfo, "ch1:out", "bus.stereo:in")).toBe(0);
-  expect(await panOf(page, testInfo, "ch1:out", "bus.mix1:in")).toBe(0);
-  expect(await panOf(page, testInfo, "ch2:out", "bus.mix1:in")).toBe(0);
-
-  // Back to PAN: re-inits to L/R again.
-  await node(page, "ch1").click();
   await panBalSelect(page).selectOption("0");
-  expect(await panOf(page, testInfo, "ch1:out", "bus.mix1:in")).toBe(-63);
-  expect(await panOf(page, testInfo, "ch2:out", "bus.mix1:in")).toBe(63);
+  plan = await savedPlan(page, testInfo);
+  expect(panOf(plan, "ch1:out", "bus.stereo:in")).toBe(-63);
+  expect(panOf(plan, "ch1:out", "bus.mix1:in")).toBe(-63);
+  expect(panOf(plan, "ch2:out", "bus.mix1:in")).toBe(63);
+
+  // Back to BAL: centres again.
+  await node(page, "ch1").click();
+  await panBalSelect(page).selectOption("1");
+  plan = await savedPlan(page, testInfo);
+  expect(panOf(plan, "ch1:out", "bus.mix1:in")).toBe(0);
+  expect(panOf(plan, "ch2:out", "bus.mix1:in")).toBe(0);
+});
+
+test("leaving STEREO centres the pair's pans, as the unit does", async ({ page }, testInfo) => {
+  // Link, hard-pan the pair through PAN mode, then unlink: the unit centres CH_PAN
+  // (the STEREO send's pan) and every other bus send's pan, so the plan does too.
+  await node(page, "ch1").click();
+  await sigSelect(page).selectOption("1");
+  await panBalSelect(page).selectOption("0"); // PAN: -63 / +63
+  expect(panOf(await savedPlan(page, testInfo), "ch1:out", "bus.mix1:in")).toBe(-63);
+
+  await sigSelect(page).selectOption("0"); // MONO x 2
+  const plan = await savedPlan(page, testInfo);
+  expect(panOf(plan, "ch1:out", "bus.stereo:in")).toBe(0);
+  expect(panOf(plan, "ch2:out", "bus.stereo:in")).toBe(0);
+  expect(panOf(plan, "ch1:out", "bus.mix1:in")).toBe(0);
+  expect(panOf(plan, "ch2:out", "bus.mix1:in")).toBe(0);
 });
 
 test("MONO x 2 (unlinked) leaves send pans untouched", async ({ page }, testInfo) => {
   // No Signal Type change: the seeded CH1 → MIX1 send keeps its default pan (unset),
   // never the STEREO hard-pan, confirming the re-init does not run while unlinked.
-  expect(await panOf(page, testInfo, "ch1:out", "bus.mix1:in")).toBeUndefined();
+  expect(panOf(await savedPlan(page, testInfo), "ch1:out", "bus.mix1:in")).toBeUndefined();
 });
 
 // A console strip located by its scribble's node name (exact).
@@ -323,7 +347,8 @@ test("BAL mode edits a MIX send pan without closing the SEND PAN popover", async
 
 test("PAN mode keeps the two channels' faders independent in the CONSOLE", async ({ page }) => {
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1"); // STEREO, default PAN mode
+  await sigSelect(page).selectOption("1"); // STEREO (lands in BAL)
+  await panBalSelect(page).selectOption("0"); // PAN
 
   await page.click("#btn-view-console");
   const ch1 = cstrip(page, "CH 1").locator(".con-readout .rd:not(.mtr) .rv");

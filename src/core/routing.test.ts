@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
 import {
+  applyPairTransition,
   canConnect,
   duckerKeySource,
   isBalLinkedPair,
@@ -223,6 +224,52 @@ describe("partnerChannel", () => {
     expect(partnerChannel(u44, "ch2")).toBe("ch1");
     expect(partnerChannel(u44, "ch3")).toBe("ch4");
     expect(partnerChannel(u44, "ch_5_6")).toBeUndefined();
+  });
+});
+
+describe("applyPairTransition", () => {
+  let plan: Plan;
+  // A channel's CH_PAN is the pan of its fixed send into STEREO; the MIX send is a
+  // second pan-carrying send, so the two together cover what the unit moves.
+  const pans = (id: string) =>
+    (["bus.stereo", "bus.mix1"] as const).map(
+      (dest) => plan.connections.find((c) => c.from === ref(id, "out") && c.to === ref(dest, "in"))?.params?.pan,
+    );
+
+  beforeEach(() => {
+    plan = defaultPlan("URX44");
+  });
+
+  it("links into BAL and centres both channels, as the unit does", () => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true };
+    applyPairTransition(u44, plan, "ch1", { stereoLink: true });
+    expect(plan.nodeParams.ch1?.panBal).toBe(PAN_BAL_BAL);
+    expect(pans("ch1")).toEqual([0, 0]);
+    expect(pans("ch2")).toEqual([0, 0]);
+  });
+
+  it("hard-pans odd left and even right in PAN mode", () => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_PAN };
+    applyPairTransition(u44, plan, "ch1", { panBal: PAN_BAL_PAN });
+    expect(pans("ch1")).toEqual([-63, -63]);
+    expect(pans("ch2")).toEqual([63, 63]);
+  });
+
+  it("centres both channels and returns to PAN when the pair is unlinked", () => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_PAN };
+    applyPairTransition(u44, plan, "ch1", { panBal: PAN_BAL_PAN });
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: false };
+    applyPairTransition(u44, plan, "ch1", { stereoLink: false });
+    expect(plan.nodeParams.ch1?.panBal).toBe(PAN_BAL_PAN);
+    expect(pans("ch1")).toEqual([0, 0]);
+    expect(pans("ch2")).toEqual([0, 0]);
+  });
+
+  it("leaves a node that is not a pair primary alone", () => {
+    const before = JSON.stringify(plan.connections);
+    applyPairTransition(u44, plan, "ch2", { stereoLink: true }); // partner, not primary
+    applyPairTransition(u44, plan, "bus.mix1", { stereoLink: true });
+    expect(JSON.stringify(plan.connections)).toBe(before);
   });
 });
 

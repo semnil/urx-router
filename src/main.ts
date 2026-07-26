@@ -4,7 +4,7 @@ import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
-import { mirrorBalPair, partnerChannel, validatePlan } from "./core/routing";
+import { applyPairTransition, mirrorBalPair, partnerChannel, validatePlan } from "./core/routing";
 import type { PlanProblem } from "./core/routing";
 import {
   decodePlanParam,
@@ -34,14 +34,7 @@ import {
   saveTextDocument,
 } from "./core/storage";
 import type { RecentEntry } from "./core/storage";
-import {
-  COMP_EQ_SSMCS,
-  PAN_BAL_BAL,
-  PAN_BAL_PAN,
-  REC_POINT_PRE_COMP,
-  REC_POINT_PRE_EQ,
-  STEREO_PAN_DEFAULT,
-} from "./core/control/params";
+import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { renderInspector } from "./ui/inspector";
@@ -635,23 +628,6 @@ function planReadFromDevice(): void {
   midi?.scheduleFeedback();
 }
 
-// Re-initialize every bus send's pan for a STEREO-linked pair (named by its
-// primary id): PAN mode hard-pans the odd channel left and the even one right,
-// BAL mode centres both. The pan-carrying sends are exactly the channel's
-// `send` connections (STEREO / MIX / FX); the SD Rec assign is a `sendSwitch`.
-// No-op when the pair is not linked.
-function resetStereoSendPans(primary: string): void {
-  const np = plan.nodeParams[primary];
-  if (!np?.stereoLink) return;
-  const pair = getModel(modelId).channelPairs.find(([a]) => a === primary);
-  if (!pair) return;
-  const bal = (np.panBal ?? PAN_BAL_PAN) === PAN_BAL_BAL;
-  pair.forEach((ch, idx) => {
-    const pan = bal ? 0 : idx === 0 ? -STEREO_PAN_DEFAULT : STEREO_PAN_DEFAULT;
-    for (const c of plan.connections) if (c.from === `${ch}:out` && c.kind === "send") c.params = { ...c.params, pan };
-  });
-}
-
 // SSMCS and COMP->EQ are exclusive on a MONO IN channel and share the DSP: on the
 // device, switching COMP_EQ_TYPE loads the destination chain's factory values (the
 // previous chain's edits are not carried across, so re-entering a chain always
@@ -718,6 +694,11 @@ const inspectorActions = {
   onUpdateNodeParams: (id: string, patch: NodeParams) => {
     const prev = plan.nodeParams[id];
     plan.nodeParams[id] = { ...prev, ...patch };
+    // Signal Type / PAN-BAL move the pair's pans — and PAN-BAL itself on a link —
+    // the way the unit does. Applied before the BAL mirror below, so the mirror
+    // copies the settled values onto the partner.
+    if (patch.stereoLink !== undefined || patch.panBal !== undefined)
+      applyPairTransition(getModel(modelId), plan, id, patch);
     // A STEREO-linked pair in BAL mode moves as one: copy this channel's params to
     // the partner (the pair-level Signal Type / PAN-BAL fields stay on the primary).
     const mirrored = mirrorBalPair(getModel(modelId), plan, id);
@@ -741,9 +722,6 @@ const inspectorActions = {
     // re-render adds / removes the slot nodes (and their wires) on the canvas.
     if (patch.sdRecTrackCount !== undefined) graph.render();
     if (mirrored) consoleView.refresh();
-    // Toggling PAN/BAL (or entering STEREO) re-initializes every bus send's pan
-    // for the linked pair: PAN hard-pans odd/even L/R, BAL centres them.
-    if (patch.panBal !== undefined || patch.stereoLink === true) resetStereoSendPans(id);
     // Switching COMP/EQ type resets the destination chain to factory (the device
     // does the same — the SSMCS ⇄ COMP->EQ banks are exclusive and not preserved).
     if (patch.compEqType !== undefined && patch.compEqType !== prev?.compEqType) resetCompEqBank(id, patch.compEqType);
