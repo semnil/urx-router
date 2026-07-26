@@ -1078,13 +1078,21 @@ version is pinned at `0.0.0` because the crate is never published, so a version 
 | Windows | `.msi` + `.exe` (NSIS) | built on a Windows host or in CI; cross-compiling from macOS is unsupported |
 
 Releases are automated by `.github/workflows/release.yml`. Pushing a `vX.Y.Z`
-tag (or `vX.Y.Z-{alpha,beta,rc}*` for a prerelease) runs three jobs: `check-tag`
-validates the tag, `create-release` opens a **draft** GitHub Release, and a
+tag (or `vX.Y.Z-{alpha,beta,rc}*` for a prerelease) runs four jobs: `check-tag`
+validates the tag, `create-release` opens a **draft** GitHub Release, `licenses`
+generates the bundled notice once (see "Third-party licenses" below), and a
 `build` matrix (`macos-14` / `windows-latest`) packages each platform with
 [`tauri-action`](https://github.com/tauri-apps/tauri-action) and attaches the
 bundles to the draft. The draft is left for manual review before publishing. A
 manual `workflow_dispatch` run builds without creating a release, uploading the
 bundles as job artifacts only (to verify the packaging pipeline).
+
+The `build` matrix restores its Rust cache read-only: a run can restore caches from its own ref or the
+default branch only, and every tag is its own scope, so a cache saved during a release is unreachable
+from the next one. `post-merge.yml`'s `warm-cache` job fills it — and the platform pnpm caches — by
+building the same targets on `main` instead, which is what keeps a release from recompiling the whole
+dependency tree. Both sides pass the same rust-cache `shared-key`, which the action otherwise derives
+from the job name.
 
 macOS signing and notarization are optional: when the signing secrets (`MACOS_SIGNING_CERT` /
 `MACOS_SIGNING_CERT_PASSWORD` / `MACOS_SIGNING_IDENTITY`) and notarization secrets
@@ -1180,10 +1188,15 @@ cd src-tauri && cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
 
 `src-tauri/about.toml` lists the accepted SPDX ids, `src-tauri/about.hbs` is the output template, and
 the generated `THIRD_PARTY_LICENSES.html` is git-ignored — regenerated for distribution. It is already
-wired into CI (the post-merge `licenses` job runs `cargo about generate` and fails if a dependency
-carries a license outside `about.toml`), so a dependency change can't silently drop a notice. The page
-also ships inside the desktop app: `bundle.resources` packages it as a Tauri resource (`release.yml`
-runs the same generate before packaging, and a local `tauri build` needs the file present), the
+wired into CI as the reusable `licenses.yml` workflow, which runs `cargo about generate` and fails if a
+dependency carries a license outside `about.toml`, so a dependency change can't silently drop a notice.
+`post-merge.yml` calls it as that gate; `release.yml` calls it once and hands the result to both platform
+builds as an artifact. Generating it once is safe because the output is host-independent — `about.toml`
+declares no `targets`, so cargo-about keeps every target's crates whatever the runner is — and it avoids
+building cargo-about from source on each one. The page
+also ships inside the desktop app: `bundle.resources` packages it as a Tauri resource — and `tauri-build`
+copies that resource at compile time, so even a bare `cargo build` of the crate needs the file present
+(which is why the `warm-cache` job, which never bundles, writes a placeholder). The
 `third_party_licenses` command reads it from the resource dir, and File → "Third-party licenses"
 renders it as app DOM (the entry is desktop-only; a plain browser and the demo hide it):
 `ui/licenses.ts` parses the page with DOMParser — an inert document, nothing executes — into

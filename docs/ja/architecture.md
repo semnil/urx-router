@@ -920,11 +920,18 @@ JSON の数値配列ではなく IPC の生レスポンスボディとして返�
 | Windows | `.msi` + `.exe` (NSIS) | Windows ホストまたは CI でビルド。macOS からのクロスコンパイルは非対応 |
 
 リリースは `.github/workflows/release.yml` で自動化する。`vX.Y.Z` タグ (プレリリースは
-`vX.Y.Z-{alpha,beta,rc}*`) を push すると 3 ジョブが走る: `check-tag` がタグを検証し、
-`create-release` が **draft** の GitHub Release を作り、`build` マトリクス (`macos-14` /
+`vX.Y.Z-{alpha,beta,rc}*`) を push すると 4 ジョブが走る: `check-tag` がタグを検証し、
+`create-release` が **draft** の GitHub Release を作り、`licenses` が同梱する通知を 1 回だけ生成し
+(後述の「サードパーティライセンス」)、`build` マトリクス (`macos-14` /
 `windows-latest`) が各プラットフォームを [`tauri-action`](https://github.com/tauri-apps/tauri-action)
 でパッケージし draft に添付する。draft は公開前に手動レビューする。手動 `workflow_dispatch`
 実行ではリリースを作らず、成果物を job artifact としてのみ残す (パッケージ検証用)。
+
+`build` マトリクスは Rust キャッシュを復元専用で使う: 復元できるのは自分の ref かデフォルトブランチの
+キャッシュだけで、タグはそれぞれ別スコープになるため、リリース中に保存したキャッシュは次のリリース
+から読めない。代わりに `post-merge.yml` の `warm-cache` ジョブが `main` 上で同じターゲットをビルドして
+Rust とプラットフォーム版 pnpm のキャッシュを温める — これがリリースの依存ツリー全体の再コンパイルを
+防いでいる。rust-cache のキーは既定でジョブ名から導出されるため、両者で同じ `shared-key` を渡す。
 
 macOS の署名・公証は任意で、署名 secret (`MACOS_SIGNING_CERT` / `MACOS_SIGNING_CERT_PASSWORD` /
 `MACOS_SIGNING_IDENTITY`) と公証 secret (`MACOS_NOTARIZATION_USERNAME` / `MACOS_NOTARIZATION_PASSWORD` /
@@ -1012,11 +1019,16 @@ cd src-tauri && cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
 ```
 
 `src-tauri/about.toml` が受容する SPDX id を列挙し、`src-tauri/about.hbs` が出力テンプレート。
-生成物 `THIRD_PARTY_LICENSES.html` は git 管理外で、配布時に再生成する。CI には組み込み済みで
-(post-merge の `licenses` ジョブが `cargo about generate` を実行し、依存変更で受容外ライセンスが
-混入すると失敗する)、依存変更で通知が欠落しない。このページはデスクトップアプリにも同梱される:
-`bundle.resources` が Tauri リソースとしてパッケージし (`release.yml` がパッケージ前に同じ generate を
-実行する。ローカルの `tauri build` はファイルの存在が必要)、`third_party_licenses` コマンドがリソース
+生成物 `THIRD_PARTY_LICENSES.html` は git 管理外で、配布時に再生成する。CI には再利用ワークフロー
+`licenses.yml` として組み込み済みで、`cargo about generate` を実行し依存変更で受容外ライセンスが
+混入すると失敗するため、通知が欠落しない。`post-merge.yml` はこれをそのゲートとして呼び、
+`release.yml` は 1 回だけ呼んで結果を artifact として両プラットフォームのビルドに渡す。1 回の生成で
+足りるのは出力がホスト非依存だからで (`about.toml` が `targets` を宣言しないため、cargo-about は
+ランナーに関係なく全ターゲットのクレートを残す)、ランナーごとに cargo-about をソースビルドせずに済む。
+このページはデスクトップアプリにも同梱される:
+`bundle.resources` が Tauri リソースとしてパッケージする。このリソースは `tauri-build` が
+コンパイル時にコピーするため、素の `cargo build` でもファイルの存在が必要になる (バンドルを
+行わない `warm-cache` ジョブがプレースホルダを書くのはこのため)。`third_party_licenses` コマンドがリソース
 ディレクトリから読み、File メニュー →「サードパーティライセンス」がアプリ本体の DOM として
 描画する (項目はデスクトップのみ。素のブラウザとデモでは非表示)。`ui/licenses.ts` が DOMParser
 (スクリプトを実行しない不活性文書) でページをライセンスファミリ (名前 → 本文の変種 → 各変種の
