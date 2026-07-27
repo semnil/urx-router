@@ -1117,7 +1117,21 @@ version is pinned at `0.0.0` because the crate is never published, so a version 
 | Platform | Output | Notes |
 | --- | --- | --- |
 | macOS (Apple silicon) | `.dmg` + `.app` (`src-tauri/target/release/bundle/`) | arm64 only; a local build is ad-hoc signed (Gatekeeper warning) — CI release builds are Developer ID signed and notarized (see below) |
-| Windows | `.msi` + `.exe` (NSIS) | built on a Windows host or in CI; cross-compiling from macOS is unsupported |
+| Windows | `.exe` (NSIS) | built on a Windows host or in CI; cross-compiling from macOS is unsupported |
+
+Windows ships NSIS only; no MSI (WiX) is built. WiX points the Start Menu shortcut's icon at
+`%WINDIR%\Installer\{ProductCode}\ProductIcon`, and the ProductCode is regenerated on every build while the
+major upgrade deletes the old ProductCode's cache — so every update leaves a pinned taskbar shortcut aimed at
+a path that no longer exists, which the shell draws as a blank icon. An NSIS shortcut targets
+`$INSTDIR\urx-router.exe` directly, so it cannot happen. An existing MSI install is detected by the NSIS
+installer (matching `DisplayName` + `Publisher`) and uninstalled first — this runs even under the updater's
+passive mode — but the install location moves to `%LOCALAPPDATA%\URX Router`, so that one migration prompts
+for the MSI uninstall and elevation, and an existing pin has to be re-pinned.
+
+`bundle.windows.nsis.languages` carries English + Japanese, and the installer **picks one from the OS
+language** (falling back to the first entry, English). The language selector (`displayLanguageSelector`) is
+deliberately off: it is `MUI_LANGDLL_DISPLAY` in `.onInit`, which — unlike a page — is not skipped in passive
+mode, so it would pop a dialog mid-auto-update. The `LICENSE.txt` on the agreement page stays English.
 
 Releases are automated by `.github/workflows/release.yml`. Pushing a `vX.Y.Z`
 tag (or `vX.Y.Z-{alpha,beta,rc}*` for a prerelease) runs four jobs: `check-tag`
@@ -1206,8 +1220,8 @@ gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 Because the desktop app can write settings to a connected URX — overwriting its current state — consent to
 that risk is collected in two places. The **installer** shows a license-agreement page from
 `bundle.licenseFile` in `tauri.conf.json` (`src-tauri/LICENSE.txt`, which folds the device-control safety
-notice, the trademark statement, and the full MIT text into one file); on Windows the WiX installer renders
-the plain text as RTF and the user must accept it to proceed. The macOS `.dmg` is a drag-install with no
+notice, the trademark statement, and the full MIT text into one file); on Windows the NSIS installer renders
+the plain text as is and the user must accept it to proceed. The macOS `.dmg` is a drag-install with no
 agreement page, so a **first-run consent gate** covers it: `src/ui/consent.ts` shows the same disclaimer in
 a full-screen modal and, once accepted, records it in `localStorage` (`urx-disclaimer-accepted`) so it is
 never shown again (no re-consent after an auto-update). Declining quits the app (`plugin:process|exit`). The
