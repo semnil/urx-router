@@ -1,4 +1,6 @@
-// Keep the computer awake while the app is open (Preferences > Computer sleep).
+// Hold off the computer's idle sleep on request (Preferences > Computer sleep).
+// The scope belongs to the caller, which holds it for a Live sync session, so this
+// module only takes and releases what it is asked for.
 // Both platforms suppress only the *idle* timer — a lid close or an explicit
 // Sleep still works — and both holds are process-scoped, so quitting or crashing
 // releases them.
@@ -46,7 +48,7 @@ mod imp {
     // both, so it asserts both — each shows under its own name in
     // `pmset -g assertions`.
     const TYPES: [&str; 2] = ["PreventUserIdleSystemSleep", "PreventUserIdleDisplaySleep"];
-    const NAME: &str = "URX Router is open";
+    const NAME: &str = "URX Router Live sync is running";
 
     #[link(name = "IOKit", kind = "framework")]
     extern "C" {
@@ -112,7 +114,7 @@ mod imp {
         [PowerRequestSystemRequired, PowerRequestDisplayRequired];
 
     // The reason shown beside the request in `powercfg /requests`.
-    const REASON: &str = "URX Router is open";
+    const REASON: &str = "URX Router Live sync is running";
 
     /// The power request handle, carried as a usize so the state stays Send.
     pub struct Hold(usize);

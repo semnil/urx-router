@@ -364,9 +364,10 @@ export class PrefsPanel {
     }
   }
 
-  // The OS decides: the setting is stored only once the hold took, so an ON face
-  // never claims a suppression nothing is keeping — and the launch re-take never
-  // restores that claim. A refusal leaves the row where it was, explained below it.
+  // The OS decides: during a session the setting is stored only once the hold took,
+  // so an ON face never claims a suppression nothing is keeping. Off-line there is
+  // nothing to take, so the toggle only stores and the hold waits for the next
+  // session. A refusal leaves the row where it was, explained below it.
   private async applyKeepAwake(on: boolean, note: HTMLElement): Promise<void> {
     const failed = await this.hooks.setPreventSleep(on);
     note.textContent = failed ?? "";

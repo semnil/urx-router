@@ -29,8 +29,9 @@ export interface AppSettings {
   wheelSteps: number;
   /** Fine-tuning modifier: false = hold Shift, true = Shift latches. */
   fineLatch: boolean;
-  /** Hold off the computer's idle sleep (system + display) while the app is open
-   *  (desktop only). Stored only once the OS took the hold. */
+  /** Hold off the computer's idle sleep (system + display) for as long as Live sync
+   *  runs (desktop only). A toggle made during a session is stored only once the OS
+   *  took the hold; off-line it is stored on its own, nothing having been taken. */
   preventSleep: boolean;
   /** PNG / PDF raster scale, as a multiple of the graph's 1:1 size. */
   exportScale: number;
