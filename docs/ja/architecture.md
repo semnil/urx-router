@@ -958,7 +958,20 @@ JSON の数値配列ではなく IPC の生レスポンスボディとして返�
 | プラットフォーム | 成果物 | 備考 |
 | --- | --- | --- |
 | macOS (Apple silicon) | `.dmg` + `.app` (`src-tauri/target/release/bundle/`) | arm64 のみ。ローカルビルドは ad-hoc 署名 (Gatekeeper 警告) — CI のリリースビルドは Developer ID 署名 + 公証 (後述) |
-| Windows | `.msi` + `.exe` (NSIS) | Windows ホストまたは CI でビルド。macOS からのクロスコンパイルは非対応 |
+| Windows | `.exe` (NSIS) | Windows ホストまたは CI でビルド。macOS からのクロスコンパイルは非対応 |
+
+Windows は NSIS だけを生成し、MSI (WiX) は作らない。WiX はスタートメニューのショートカットのアイコンを
+`%WINDIR%\Installer\{ProductCode}\ProductIcon` に向けるが、ProductCode はビルドごとに再生成され、
+メジャーアップグレードが旧 ProductCode のキャッシュを消すため、更新のたびにタスクバーのピンが参照先を
+失って白紙アイコンになる。NSIS のショートカットは `$INSTDIR\urx-router.exe` を直接指すのでこれが起きない。
+既存の MSI インストールは NSIS 側が `DisplayName` + `Publisher` の一致で検出して先にアンインストールする
+(アップデーターのパッシブ実行でも動く) が、インストール先が `%LOCALAPPDATA%\URX Router` へ移るため、
+この移行の 1 回だけ MSI のアンインストール確認と昇格のプロンプトが出て、既存のピンは貼り直しになる。
+
+インストーラーの表示言語は `bundle.windows.nsis.languages` に English + Japanese を積み、**OS の言語で
+自動選択**させる (一致しなければ配列先頭の English)。言語選択ダイアログ (`displayLanguageSelector`) は
+使わない — これは `.onInit` の `MUI_LANGDLL_DISPLAY` で、ページと違いパッシブ実行では飛ばされないため、
+自動更新の途中でダイアログが出てしまう。同意ページに出す `LICENSE.txt` は英語のままで、翻訳しない。
 
 リリースは `.github/workflows/release.yml` で自動化する。`vX.Y.Z` タグ (プレリリースは
 `vX.Y.Z-{alpha,beta,rc}*`) を push すると 4 ジョブが走る: `check-tag` がタグを検証し、
@@ -1039,7 +1052,7 @@ gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 デスクトップ版は接続中の URX に設定を書き込めるため、書き込みが実機の現在の設定を上書きするリスクへの
 同意導線を 2 段で持つ。**インストーラー**は `tauri.conf.json` の `bundle.licenseFile`
 (`src-tauri/LICENSE.txt` — デバイス制御の注意書き・商標表記・MIT 全文を 1 ファイルに統合) を
-ライセンス同意ページに表示する (Windows の WiX。プレーンテキストを RTF として表示し、同意しないと進めない)。
+ライセンス同意ページに表示する (Windows の NSIS。プレーンテキストのまま表示し、同意しないと進めない)。
 macOS の `.dmg` はドラッグインストールで同意ページを持たないため、**初回起動時の同意ゲート**で補う:
 `src/ui/consent.ts` が全画面モーダルで同じ免責文を表示し、同意すると `localStorage`
 (`urx-disclaimer-accepted`) に記録して以後は表示しない (自動更新後も再同意は不要)。拒否するとアプリを
