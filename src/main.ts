@@ -47,7 +47,7 @@ import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
 import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
-import { getLang, LANG_NAMES, onLangChange, t } from "./i18n";
+import { errorCode, errorText, getLang, LANG_NAMES, onLangChange, t } from "./i18n";
 import { DEMO } from "./core/env";
 import {
   checkUpdate,
@@ -358,7 +358,7 @@ const live = DEMO
   : new LiveSync({
       getModel: () => getModel(modelId),
       getPlan: () => plan,
-      onError: (message) => stopLiveOnError(message),
+      onError: (message) => stopLiveOnError(errorText(message)),
       onSent: (n) => setStatus(t().status.liveSynced(n)),
       // One bidirectional scope for the session: the same filter shapes the
       // snapshot, the flush, and the follow notify registration.
@@ -398,7 +398,7 @@ const consoleView = new Console(consoleHost, {
   onChange: () => markChanged(),
   // The meter stream failed to register. Floor-stuck bars read as "no signal",
   // so end the session rather than let the operator trust a dead display.
-  onMeterError: (message) => stopLiveOnError(message),
+  onMeterError: (message) => stopLiveOnError(errorText(message)),
   // MIDI learn: while the panel's learn mode is on, console controls arm for
   // binding instead of editing (no-ops while midi is absent — browser / demo).
   midi: {
@@ -522,7 +522,7 @@ const follow =
           setStatus(t().status.liveFollowed(result.applied));
         },
         onFollow: () => setStatus(t().status.liveFollowing),
-        onError: (message) => stopLiveOnError(message),
+        onError: (message) => stopLiveOnError(errorText(message)),
       });
 
 type ViewName = "graph" | "console";
@@ -644,7 +644,7 @@ async function applyPreventSleep(on: boolean): Promise<string | null> {
     await setKeepAwake(on);
     return null;
   } catch (err) {
-    return t().prefs.sleepFailed(err instanceof Error ? err.message : String(err));
+    return t().prefs.sleepFailed(errorText(err));
   }
 }
 
@@ -1107,7 +1107,7 @@ function loadFromText(text: string, path?: string): boolean {
     }
     return true;
   } catch (err) {
-    const message = err instanceof PlanError ? t().error[err.code] : String(err);
+    const message = err instanceof PlanError ? t().error[err.code] : errorText(err);
     showError(t().status.loadError(message));
     return false;
   }
@@ -1127,7 +1127,7 @@ async function openPlanFrom(read: () => Promise<{ text: string; path?: string } 
       if (!doc) return null;
       return loadFromText(doc.text, doc.path);
     } catch (err) {
-      showError(t().status.loadError(String(err)));
+      showError(t().status.loadError(errorText(err)));
       return false;
     }
   });
@@ -1328,7 +1328,7 @@ $("btn-save").addEventListener(
           setStatus(t().status.planSaved);
         }
       } catch (err) {
-        showError(t().status.saveError(String(err)));
+        showError(t().status.saveError(errorText(err)));
       }
     }),
 );
@@ -1349,7 +1349,7 @@ $("btn-share").addEventListener(
     try {
       url.searchParams.set("plan", await encodePlanParam(plan, sceneSaveOpts()));
     } catch (err) {
-      showError(err instanceof PlanError ? t().error[err.code] : t().status.shareUrlError(String(err)));
+      showError(err instanceof PlanError ? t().error[err.code] : t().status.shareUrlError(errorText(err)));
       return;
     }
     const link = url.toString();
@@ -1382,14 +1382,18 @@ $("btn-download").addEventListener("click", () => {
 $("btn-export").addEventListener(
   "click",
   singleFlight(() =>
-    graph.exportPng(`${modelId}-routing.png`).catch((err: unknown) => showError(t().status.exportError(String(err)))),
+    graph
+      .exportPng(`${modelId}-routing.png`)
+      .catch((err: unknown) => showError(t().status.exportError(errorText(err)))),
   ),
 );
 
 $("btn-export-pdf").addEventListener(
   "click",
   singleFlight(() =>
-    graph.exportPdf(`${modelId}-routing.pdf`).catch((err: unknown) => showError(t().status.exportError(String(err)))),
+    graph
+      .exportPdf(`${modelId}-routing.pdf`)
+      .catch((err: unknown) => showError(t().status.exportError(errorText(err)))),
   ),
 );
 
@@ -1402,7 +1406,7 @@ $("btn-licenses").addEventListener(
   singleFlight(() =>
     thirdPartyLicenses()
       .then(showLicenses)
-      .catch((e: unknown) => showError(t().licenses.error(String(e)))),
+      .catch((e: unknown) => showError(t().licenses.error(errorText(e)))),
   ),
 );
 
@@ -1451,18 +1455,16 @@ $("btn-hide-unused").addEventListener("click", () => {
   graph.hideUnused();
 });
 
-// Turn a connect-time failure into a clear, localized status. The Rust vd worker
-// (vd.rs) returns stable kebab-case codes for the states worth a plain message —
-// Device Center not running, running with no URX attached, or the control worker
-// dying / going unresponsive — instead of the raw error wrapped in "<action>
-// failed: …". Anything else (a broker-side action failure, an unexpected error)
-// falls back to onError.
+// Turn a connect-time failure into a clear, localized status. Three of the Rust vd
+// worker's codes (vd.rs) name a state the user can act on directly — Device Center
+// not running, running with no URX attached, or the control worker dying / going
+// unresponsive — so they replace the "<action> failed: …" frame instead of filling
+// it. Anything else (a broker-side action failure, an unexpected error) goes into
+// onError, localized by errorText like every other embedded cause.
 function connectFailureStatus(err: unknown, onError: (message: string) => string): string {
-  const message = err instanceof Error ? err.message : String(err);
-  if (message === "broker-unreachable") return t().error.brokerUnreachable;
-  if (message === "no-device") return t().error.noDevice;
-  if (message === "control-worker-gone") return t().error.controlWorkerGone;
-  return onError(message);
+  const code = errorCode(err);
+  const standalone = code === "broker-unreachable" || code === "no-device" || code === "control-worker-gone";
+  return standalone ? errorText(err) : onError(errorText(err));
 }
 
 // Connect, run an action with the connected device, then always disconnect. The
@@ -1527,7 +1529,7 @@ async function offerErrorReport(report: ErrorReport): Promise<void> {
     try {
       await saveTextDocument(report.filename, report.markdown, { ext: "md", label: t().filter.errorReport });
     } catch (err) {
-      showError(t().status.saveError(String(err)));
+      showError(t().status.saveError(errorText(err)));
     }
   }
 }
@@ -1586,7 +1588,7 @@ if (!DEMO) {
         try {
           await apply();
         } catch (err) {
-          stopLiveOnError(String(err));
+          stopLiveOnError(errorText(err));
         }
         return;
       }
@@ -1705,7 +1707,7 @@ if (!DEMO) {
     try {
       clock = await readClockState();
     } catch (err) {
-      showError(t().status.writeError(t().error.clockUnread(String(err))));
+      showError(t().status.writeError(t().error.clockUnread(errorText(err))));
       return false;
     }
     // The read just told us what the badge is for; show it whether or not there is
@@ -1747,7 +1749,7 @@ if (!DEMO) {
     try {
       await setFollowUsb(false);
     } catch (err) {
-      showError(t().status.writeError(t().error.followUsbWrite(String(err))));
+      showError(t().status.writeError(t().error.followUsbWrite(errorText(err))));
       return false;
     }
     setFollowUsbBadge(false);
@@ -1962,7 +1964,7 @@ if (!DEMO) {
         // drop freezes the session instead of ending it. Either failure throws to
         // failLive rather than starting a session that cannot do its job.
         await follow?.begin();
-        await vdWatchLink(() => stopLiveOnError(t().error.linkLost));
+        await vdWatchLink(() => stopLiveOnError(t().error.shell.deviceLost));
         // Remember which generation the session holds, so deactivateLive releases
         // exactly this one even when its disconnect lands after a later connect.
         liveEpoch = device.epoch;
@@ -1971,7 +1973,7 @@ if (!DEMO) {
         consoleView.setLive(true);
         setStatus(t().status.liveOn(device.model, result.applied));
       } catch (err) {
-        await failLive(t().status.liveError(err instanceof Error ? err.message : String(err)));
+        await failLive(t().status.liveError(errorText(err)));
       } finally {
         deviceReadInFlight = false;
         // In the finally: a partially failed readback still applied device values.
@@ -2112,7 +2114,7 @@ if (!DEMO) {
       current = parseUrxf(doc.bytes).chunks.find((chunk) => chunk.name === "CURRENT");
       if (!current) throw new UrxfError("noCurrent");
     } catch (err) {
-      showError(t().status.settingsError(err instanceof UrxfError ? t().error.urxf[err.code] : String(err)));
+      showError(t().status.settingsError(err instanceof UrxfError ? t().error.urxf[err.code] : errorText(err)));
       return;
     }
     if (!(await confirmDiscard())) return;
@@ -2124,7 +2126,7 @@ if (!DEMO) {
     try {
       result = await applySourceState(getModel(modelId), plan, paramSourceOf(current));
     } catch (err) {
-      showError(t().status.settingsError(String(err)));
+      showError(t().status.settingsError(errorText(err)));
       return;
     }
     if (result.errors.length) console.warn("settings import issues:", result.errors);
@@ -2265,7 +2267,7 @@ if (!DEMO) {
               label: t().filter.report,
             });
           } catch (err) {
-            showError(t().status.saveError(String(err)));
+            showError(t().status.saveError(errorText(err)));
           }
         }
       } catch (err) {

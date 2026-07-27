@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { vdConnect, vdDisconnect, vdSet } from "../platform";
 
 // End-to-end (JS boundary) reproduction of the connection-lifecycle race that
-// produced a full URX44V write report of "not connected" / "unreadable": a live
+// produced a full URX44V write report of "not connected" / "unreadable" (the
+// sender() failure now returns the stable code "not-connected"): a live
 // session is torn down (its disconnect is fire-and-forget), a later write
 // connects, and the stale teardown lands after the new connect. These drive the
 // REAL platform.ts wrappers against a faithful in-memory model of the Rust
@@ -31,7 +32,7 @@ function makeBroker(opts: { guardEpoch: boolean }) {
         return undefined;
       }
       case "vd_set": {
-        if (!state.tx) throw "not connected"; // sender() == None on the Rust side
+        if (!state.tx) throw "not-connected"; // sender() == None on the Rust side
         return undefined;
       }
       default:
@@ -67,7 +68,7 @@ describe("connection lifecycle race", () => {
     // awaiting). It targets the OLD generation, so it must be a no-op.
     await vdDisconnect(live.epoch);
 
-    // The write streams its parameters: none may see "not connected".
+    // The write streams its parameters: none may see "not-connected".
     await expect(vdSet(140, 0, 0, 1)).resolves.toBeUndefined();
 
     // withDevice releases exactly its own connection afterwards.
@@ -77,7 +78,7 @@ describe("connection lifecycle race", () => {
 
   // Same interleaving against a broker that ignores the epoch (the pre-fix blind
   // disconnect): the stale teardown nulls the write's connection and every set
-  // fails with the exact "not connected" of the field report — proving the test
+  // fails with the exact code behind the field report — proving the test
   // discriminates and that the epoch is what closes the race.
   it("without the epoch guard the same sequence reproduces the failure", async () => {
     const broker = makeBroker({ guardEpoch: false });
@@ -87,7 +88,7 @@ describe("connection lifecycle race", () => {
     await vdConnect(); // the write installs a newer generation
     await vdDisconnect(live.epoch); // blindly nulls the write's connection
 
-    await expect(vdSet(140, 0, 0, 1)).rejects.toBe("not connected");
+    await expect(vdSet(140, 0, 0, 1)).rejects.toBe("not-connected");
   });
 
   // The wire contract the Rust guard depends on: vdDisconnect must send the epoch

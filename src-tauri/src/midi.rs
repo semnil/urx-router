@@ -5,6 +5,11 @@
 // back out. Every call is a local OS-API round-trip (no network), so the
 // commands stay synchronous — unlike the vd broker commands, nothing here can
 // stall on a remote peer.
+//
+// Every error returned is a stable kebab-case code, optionally followed by ": "
+// and the midir message as a detail, so the frontend can localize it (src/i18n
+// error.shell). Codes: midi-port-not-found, midi-output-not-open,
+// midi-init-failed, midi-open-failed, midi-send-failed.
 
 use std::sync::mpsc;
 use std::sync::Mutex;
@@ -34,7 +39,7 @@ const CLIENT: &str = "urx-router";
 /// settings UI sees hot-plugged devices (midir has no hot-plug notification);
 /// the name doubles as the port id when opening.
 pub fn list_inputs() -> Result<Vec<String>, String> {
-    let midi_in = MidiInput::new(CLIENT).map_err(|e| e.to_string())?;
+    let midi_in = MidiInput::new(CLIENT).map_err(|e| format!("midi-init-failed: {e}"))?;
     Ok(midi_in
         .ports()
         .iter()
@@ -43,7 +48,7 @@ pub fn list_inputs() -> Result<Vec<String>, String> {
 }
 
 pub fn list_outputs() -> Result<Vec<String>, String> {
-    let midi_out = MidiOutput::new(CLIENT).map_err(|e| e.to_string())?;
+    let midi_out = MidiOutput::new(CLIENT).map_err(|e| format!("midi-init-failed: {e}"))?;
     Ok(midi_out
         .ports()
         .iter()
@@ -65,7 +70,7 @@ pub fn open_input(
     // Drop the previous connection first: its callback sender dies with it,
     // which ends the old forwarder thread through the closed mpsc receiver.
     *slot = None;
-    let midi_in = MidiInput::new(CLIENT).map_err(|e| e.to_string())?;
+    let midi_in = MidiInput::new(CLIENT).map_err(|e| format!("midi-init-failed: {e}"))?;
     let target = midi_in
         .ports()
         .into_iter()
@@ -92,7 +97,7 @@ pub fn open_input(
             },
             (),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("midi-open-failed: {e}"))?;
     *slot = Some(conn);
     Ok(())
 }
@@ -106,7 +111,7 @@ pub fn close_input(state: &MidiState) {
 pub fn open_output(state: &MidiState, port: String) -> Result<(), String> {
     let mut slot = state.output.lock().unwrap();
     *slot = None;
-    let midi_out = MidiOutput::new(CLIENT).map_err(|e| e.to_string())?;
+    let midi_out = MidiOutput::new(CLIENT).map_err(|e| format!("midi-init-failed: {e}"))?;
     let target = midi_out
         .ports()
         .into_iter()
@@ -114,7 +119,7 @@ pub fn open_output(state: &MidiState, port: String) -> Result<(), String> {
         .ok_or("midi-port-not-found")?;
     let conn = midi_out
         .connect(&target, "urx-router-output")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("midi-open-failed: {e}"))?;
     *slot = Some(conn);
     Ok(())
 }
@@ -127,7 +132,9 @@ pub fn close_output(state: &MidiState) {
 /// motor faders / LEDs following the plan).
 pub fn send(state: &MidiState, bytes: Vec<u8>) -> Result<(), String> {
     match state.output.lock().unwrap().as_mut() {
-        Some(conn) => conn.send(&bytes).map_err(|e| e.to_string()),
+        Some(conn) => conn
+            .send(&bytes)
+            .map_err(|e| format!("midi-send-failed: {e}")),
         None => Err("midi-output-not-open".into()),
     }
 }

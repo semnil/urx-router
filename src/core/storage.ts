@@ -2,6 +2,10 @@
 // and real file paths; in a plain browser they fall back to <a download> and
 // <input type=file>. PDF export is hand-built (a single FlateDecode image) so no
 // runtime dependency is needed; deflate comes from the platform CompressionStream.
+//
+// Export failures throw an Error whose message is a stable code (png-encode /
+// canvas-unavailable), matching what the Rust shell returns: core stays
+// language-independent and the UI localizes the code (src/i18n error.shell).
 
 import {
   isTauri,
@@ -146,7 +150,7 @@ export async function exportSvgToPng(
   // saved:false is the signal for "the user canceled the dialog". A null blob is
   // an encode failure, so throwing keeps it out of that signal and lets the
   // caller show it as the failure it is.
-  if (!blob) throw new Error("PNG encoding failed");
+  if (!blob) throw new Error("png-encode");
   return saveBlob(filename, blob, filter);
 }
 
@@ -161,7 +165,7 @@ export async function exportSvgToPdf(
   // saved:false is the "user canceled the dialog" signal (see exportSvgToPng). A
   // missing context is an internal failure, so throw rather than mis-signal it as
   // a cancel — rasterizeSvg already obtained one, so this is unreachable anyway.
-  if (!ctx) throw new Error("no 2d context");
+  if (!ctx) throw new Error("canvas-unavailable");
   const px = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const deflated = await deflate(dropAlpha(px.data));
   const blob = buildImagePdf(deflated, canvas.width, canvas.height, opts.width, opts.height);
@@ -182,7 +186,7 @@ function rasterizeSvg(svg: SVGSVGElement, opts: ExportOptions): Promise<HTMLCanv
       canvas.height = Math.max(1, Math.round(height * scale));
       const ctx = canvas.getContext("2d");
       URL.revokeObjectURL(svgUrl);
-      if (!ctx) return reject(new Error("no 2d context"));
+      if (!ctx) return reject(new Error("canvas-unavailable"));
       const bg =
         opts.background ?? (getComputedStyle(document.body).getPropertyValue("--canvas-bg").trim() || "#0f1115");
       ctx.fillStyle = bg;

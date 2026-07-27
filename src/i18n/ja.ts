@@ -681,12 +681,32 @@ export const ja: Messages = {
     recPointRequired: "USB 出力・microSD Rec はチャンネル上辺の Rec Point タップから配線してください",
     recPointTargets:
       "Rec Point タップの接続先は USB 出力・microSD Rec のみです。他はチャンネルの出力から配線してください",
-    brokerUnreachable: "Device Center が起動していません。起動して URX を接続してから再度お試しください。",
-    noDevice: "Device Center は起動していますが、URX が接続されていません。本体を接続してから再度お試しください。",
-    controlWorkerGone:
-      "デバイス制御の接続が中断されました。再接続してください。繰り返す場合はアプリを再起動してください。",
-    linkLost: "デバイスとの接続が切断されました (USB 抜去または Device Center 終了)",
-    midiPortNotFound: "その MIDI ポートは使用できません。デバイスを接続し直して選び直してください。",
+    shell: {
+      brokerUnreachable: "Device Center が起動していません。起動して URX を接続してから再度お試しください。",
+      noDevice: "Device Center は起動していますが、URX が接続されていません。本体を接続してから再度お試しください。",
+      controlWorkerGone:
+        "デバイス制御の接続が中断されました。再接続してください。繰り返す場合はアプリを再起動してください。",
+      deviceLost: "デバイスとの接続が切断されました (USB 抜去または Device Center 終了)",
+      brokerClosed: "Device Center が制御接続を閉じました。起動し直してから再度お試しください。",
+      notConnected: "デバイスに接続していません",
+      brokerTimeout: (detail: string): string => `Device Center から応答がありませんでした (${detail})`,
+      brokerRejected: (detail: string): string => `デバイスが書き込みを拒否しました (${detail})`,
+      brokerBadResponse: (detail: string): string => `Device Center から想定外の応答が返りました (${detail})`,
+      brokerIo: (detail: string): string => `Device Center との通信に失敗しました (${detail})`,
+      fileNotFound: "そのパスにファイルがありません",
+      fileDenied: "ファイルへのアクセスが拒否されました",
+      fileIo: (detail: string): string => `ファイルの読み書きに失敗しました (${detail})`,
+      fileBadExtension: (detail: string): string => `対応していない拡張子です (この操作で扱えるのは ${detail})`,
+      pngEncode: "画像を PNG に変換できませんでした",
+      canvasUnavailable: "描画キャンバスを利用できないため画像を生成できませんでした",
+      midiPortNotFound: "その MIDI ポートは使用できません。デバイスを接続し直して選び直してください。",
+      midiOutputNotOpen: "MIDI 出力ポートが開いていません",
+      midiInitFailed: (detail: string): string => `MIDI サブシステムを開始できませんでした (${detail})`,
+      midiOpenFailed: (detail: string): string => `MIDI ポートを開けませんでした (${detail})`,
+      midiSendFailed: (detail: string): string => `MIDI メッセージを送信できませんでした (${detail})`,
+      keepAwakeFailed: (detail: string): string => `OS に拒否されました (${detail})`,
+      keepAwakeUnsupported: "このプラットフォームではスリープ抑止に対応していません",
+    },
     firmwareUnread:
       "デバイスのファームウェアバージョンを読み取れず、このビルドのパラメーターマッピングが実機に適合するか確認できません。接続し直してからやり直してください。",
     liveReadIncomplete: (n: number): string =>

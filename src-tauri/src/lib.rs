@@ -11,6 +11,30 @@ mod keepawake;
 mod midi;
 mod vd;
 
+// Every error a command returns is a stable kebab-case code, optionally followed
+// by ": " and a technical detail (an OS message, a path, an address). The frontend
+// localizes the code and shows the detail as-is (src/i18n error.shell) — a raw
+// message would reach a Japanese dialog in English. Codes here: file-not-found,
+// file-denied, file-io, file-bad-extension; vd.rs and midi.rs carry their own.
+
+// The catch-all file IO code, carrying whatever the failure could say for itself.
+// Every site that cannot name a cause goes through this, so the prefix is written
+// once rather than at each `map_err`.
+fn file_io(e: impl std::fmt::Display) -> String {
+    format!("file-io: {e}")
+}
+
+// Classify a file IO failure so the frontend can name the cause. Only the two
+// kinds worth their own wording are separated; everything else keeps the OS text
+// as the detail, which is the only information it carries.
+fn io_error(e: &std::io::Error) -> String {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => "file-not-found".to_string(),
+        std::io::ErrorKind::PermissionDenied => "file-denied".to_string(),
+        _ => file_io(e),
+    }
+}
+
 // Reject a path whose extension (case-insensitive) is outside the command's
 // allowlist, so each file IO command only touches the file kinds its native
 // dialog offers.
@@ -21,10 +45,7 @@ fn check_extension(path: &str, allowed: &[&str]) -> Result<(), String> {
         .map(|e| e.to_ascii_lowercase());
     match ext {
         Some(e) if allowed.contains(&e.as_str()) => Ok(()),
-        _ => Err(format!(
-            "unexpected file extension (allowed: {})",
-            allowed.join(", ")
-        )),
+        _ => Err(format!("file-bad-extension: {}", allowed.join(", "))),
     }
 }
 
@@ -35,10 +56,10 @@ fn check_extension(path: &str, allowed: &[&str]) -> Result<(), String> {
 async fn read_text_file(path: String) -> Result<String, String> {
     check_extension(&path, &["json"])?;
     tauri::async_runtime::spawn_blocking(move || {
-        fs::read_to_string(&path).map_err(|e| e.to_string())
+        fs::read_to_string(&path).map_err(|e| io_error(&e))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(file_io)?
 }
 
 // Read a URX microSD settings file (.urxf). The bytes travel back as the raw IPC
@@ -48,9 +69,9 @@ async fn read_text_file(path: String) -> Result<String, String> {
 async fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> {
     check_extension(&path, &["urxf"])?;
     let bytes =
-        tauri::async_runtime::spawn_blocking(move || fs::read(&path).map_err(|e| e.to_string()))
+        tauri::async_runtime::spawn_blocking(move || fs::read(&path).map_err(|e| io_error(&e)))
             .await
-            .map_err(|e| e.to_string())??;
+            .map_err(file_io)??;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -66,11 +87,11 @@ fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
         // A partial write can still leave a stray temp file behind (a full disk
         // truncates mid-write); remove it so the failure strands nothing.
         let _ = fs::remove_file(&tmp);
-        return Err(e.to_string());
+        return Err(io_error(&e));
     }
     if let Err(e) = fs::rename(&tmp, path) {
         let _ = fs::remove_file(&tmp);
-        return Err(e.to_string());
+        return Err(io_error(&e));
     }
     Ok(())
 }
@@ -80,7 +101,7 @@ async fn write_text_file(path: String, contents: String) -> Result<(), String> {
     check_extension(&path, &["json", "md"])?;
     tauri::async_runtime::spawn_blocking(move || write_atomic(&path, contents.as_bytes()))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(file_io)?
 }
 
 // Image export (PNG / PDF). The payload travels as the raw IPC request body — a
@@ -89,7 +110,7 @@ async fn write_text_file(path: String, contents: String) -> Result<(), String> {
 #[tauri::command]
 async fn write_binary_file(request: tauri::ipc::Request<'_>) -> Result<(), String> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err("expected a raw request body".to_string());
+        return Err("file-io: expected a raw request body".to_string());
     };
     // The frontend sends the path encodeURIComponent-ed, because raw header
     // values must stay ASCII while paths can hold non-ASCII characters.
@@ -97,18 +118,18 @@ async fn write_binary_file(request: tauri::ipc::Request<'_>) -> Result<(), Strin
         request
             .headers()
             .get("x-file-path")
-            .ok_or("missing x-file-path header")?
+            .ok_or("file-io: missing x-file-path header")?
             .to_str()
-            .map_err(|e| e.to_string())?,
+            .map_err(file_io)?,
     )
     .decode_utf8()
-    .map_err(|e| e.to_string())?
+    .map_err(file_io)?
     .into_owned();
     check_extension(&path, &["png", "pdf"])?;
     let bytes = bytes.clone();
     tauri::async_runtime::spawn_blocking(move || write_atomic(&path, &bytes))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(file_io)?
 }
 
 // True when the app was launched with the --experimental flag. Device writes and
@@ -156,8 +177,8 @@ fn third_party_licenses(app: tauri::AppHandle) -> Result<String, String> {
             "THIRD_PARTY_LICENSES.html",
             tauri::path::BaseDirectory::Resource,
         )
-        .map_err(|e| e.to_string())?;
-    fs::read_to_string(&path).map_err(|e| e.to_string())
+        .map_err(file_io)?;
+    fs::read_to_string(&path).map_err(|e| io_error(&e))
 }
 
 // Live control: connect to / set parameters on / disconnect from the URX via the
@@ -172,7 +193,7 @@ fn third_party_licenses(app: tauri::AppHandle) -> Result<String, String> {
 async fn vd_connect(state: State<'_, vd::VdState>) -> Result<vd::Connection, String> {
     let (tx, device) = tauri::async_runtime::spawn_blocking(vd::open)
         .await
-        .map_err(|e| e.to_string())??;
+        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())??;
     // The epoch identifies this connection: the frontend hands it back to
     // vd_disconnect so a delayed teardown of an earlier session cannot close it.
     let epoch = state.install(tx);
@@ -190,7 +211,7 @@ async fn vd_set(
     let tx = vd::sender(&state)?;
     tauri::async_runtime::spawn_blocking(move || vd::set(tx, param_id, x, y, value))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
 }
 
 #[tauri::command]
@@ -203,7 +224,7 @@ async fn vd_get(
     let tx = vd::sender(&state)?;
     tauri::async_runtime::spawn_blocking(move || vd::get(tx, param_id, x, y))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
 }
 
 // String-valued parameters (e.g. CH SETTING names) the numeric vd_set/vd_get
@@ -219,7 +240,7 @@ async fn vd_set_str(
     let tx = vd::sender(&state)?;
     tauri::async_runtime::spawn_blocking(move || vd::set_str(tx, param_id, x, y, value))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
 }
 
 #[tauri::command]
@@ -232,7 +253,7 @@ async fn vd_get_str(
     let tx = vd::sender(&state)?;
     tauri::async_runtime::spawn_blocking(move || vd::get_str(tx, param_id, x, y))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
 }
 
 // Subscribe to live level meters: the worker registers each (meter_id, x) with
@@ -248,7 +269,7 @@ async fn vd_meters_subscribe(
     let tx = vd::sender(&state)?;
     tauri::async_runtime::spawn_blocking(move || vd::meters_subscribe(tx, addrs, channel))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
 }
 
 #[tauri::command]
@@ -270,7 +291,7 @@ async fn vd_params_subscribe(
     let tx = vd::sender(&state)?;
     tauri::async_runtime::spawn_blocking(move || vd::params_subscribe(tx, addrs, channel))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
 }
 
 #[tauri::command]

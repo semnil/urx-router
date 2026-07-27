@@ -5,6 +5,10 @@
 //
 // The calls are local OS APIs with no round-trip, so the command stays
 // synchronous, like the MIDI bridge.
+//
+// A refusal returns a stable kebab-case code the frontend localizes (src/i18n
+// error.shell): keep-awake-failed (with the failing OS call as the detail) or
+// keep-awake-unsupported.
 
 use std::sync::Mutex;
 
@@ -83,7 +87,9 @@ mod imp {
             // Dropping `hold` on the way out releases whatever was already
             // taken, so a partial acquire never survives as a half hold.
             if rc != SUCCESS {
-                return Err(format!("IOPMAssertionCreateWithName failed ({rc})"));
+                return Err(format!(
+                    "keep-awake-failed: IOPMAssertionCreateWithName {rc}"
+                ));
             }
             hold.0.push(id);
         }
@@ -135,13 +141,13 @@ mod imp {
         };
         let handle = unsafe { PowerCreateRequest(&context) };
         if handle.is_null() || handle as isize == -1 {
-            return Err("PowerCreateRequest failed".into());
+            return Err("keep-awake-failed: PowerCreateRequest".into());
         }
         let hold = Hold(handle as usize);
         for request_type in TYPES {
             // `hold` drops on the way out, clearing and closing the request.
             if unsafe { PowerSetRequest(handle, request_type) } == 0 {
-                return Err("PowerSetRequest failed".into());
+                return Err("keep-awake-failed: PowerSetRequest".into());
             }
         }
         Ok(hold)
@@ -155,6 +161,6 @@ mod imp {
     pub struct Hold;
 
     pub fn acquire() -> Result<Hold, String> {
-        Err("keeping the computer awake is not supported on this platform".into())
+        Err("keep-awake-unsupported".into())
     }
 }

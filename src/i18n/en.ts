@@ -697,13 +697,40 @@ export const en = {
     recPointRequired: "Connect USB outputs and microSD Rec from the Rec Point tap — the jack on top of the channel",
     recPointTargets:
       "The Rec Point tap reaches only USB outputs and microSD Rec — use the channel's output for the rest",
-    // Connect-time failure codes from the Rust vd worker (vd.rs), localized here.
-    brokerUnreachable: "Device Center isn't running. Start it, connect the URX, then try again.",
-    noDevice: "Device Center is running, but no URX is connected. Connect the unit, then try again.",
-    controlWorkerGone: "The control connection was interrupted. Reconnect, and restart the app if it keeps happening.",
-    linkLost: "the device link dropped (USB unplugged or Device Center quit)",
-    // MIDI port-open failure code from the Rust midi bridge (midi.rs), localized here.
-    midiPortNotFound: "That MIDI port is no longer available. Reconnect the device and pick it again.",
+    /**
+     * Stable error codes raised outside the UI layer — the Rust shell (lib.rs file
+     * IO, vd.rs broker link, midi.rs bridge, keepawake.rs) and core's export path —
+     * resolved by `errorText` in i18n/index.ts. A code either stands alone or is
+     * followed by ": " and a technical detail (an address, a URI, an OS message),
+     * which the entry takes as its argument. Most of these are embedded after a
+     * "<action> failed: " frame, so they read as lower-case fragments.
+     */
+    shell: {
+      brokerUnreachable: "Device Center isn't running. Start it, connect the URX, then try again.",
+      noDevice: "Device Center is running, but no URX is connected. Connect the unit, then try again.",
+      controlWorkerGone:
+        "The control connection was interrupted. Reconnect, and restart the app if it keeps happening.",
+      deviceLost: "the device link dropped (USB unplugged or Device Center quit)",
+      brokerClosed: "Device Center closed the control connection. Start it again, then retry.",
+      notConnected: "not connected to the device",
+      brokerTimeout: (detail: string): string => `Device Center did not answer in time (${detail})`,
+      brokerRejected: (detail: string): string => `the device refused the write (${detail})`,
+      brokerBadResponse: (detail: string): string => `Device Center sent an unexpected response (${detail})`,
+      brokerIo: (detail: string): string => `the connection to Device Center failed (${detail})`,
+      fileNotFound: "the file no longer exists at that path",
+      fileDenied: "access to the file was denied",
+      fileIo: (detail: string): string => `the file could not be read or written (${detail})`,
+      fileBadExtension: (detail: string): string => `unsupported file extension (this action takes: ${detail})`,
+      pngEncode: "the image could not be encoded as PNG",
+      canvasUnavailable: "the drawing canvas is unavailable, so the image could not be rendered",
+      midiPortNotFound: "That MIDI port is no longer available. Reconnect the device and pick it again.",
+      midiOutputNotOpen: "no MIDI output port is open",
+      midiInitFailed: (detail: string): string => `the MIDI subsystem could not be started (${detail})`,
+      midiOpenFailed: (detail: string): string => `the MIDI port could not be opened (${detail})`,
+      midiSendFailed: (detail: string): string => `the MIDI message could not be sent (${detail})`,
+      keepAwakeFailed: (detail: string): string => `the OS refused it (${detail})`,
+      keepAwakeUnsupported: "keeping the computer awake is not supported on this platform",
+    },
     firmwareUnread:
       "The device's firmware version could not be read, so this build cannot check that its parameter mappings apply to your unit. Reconnect and try again.",
     liveReadIncomplete: (n: number): string =>

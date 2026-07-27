@@ -61,3 +61,73 @@ export function onLangChange(fn: () => void): void {
 export function t(): Messages {
   return CATALOGS[current];
 }
+
+/**
+ * The stable error codes raised outside the UI layer, mapped to their catalog
+ * entry. The Rust shell (file IO, the vd broker link, the MIDI bridge) and core's
+ * export path return these instead of prose, so a failure never reaches a
+ * localized dialog in English. Keep in step with the code lists in
+ * `src-tauri/src/{lib,vd,midi,keepawake}.rs` and `core/storage.ts`.
+ */
+export const SHELL_CODES: Record<string, keyof Messages["error"]["shell"]> = {
+  "broker-unreachable": "brokerUnreachable",
+  "no-device": "noDevice",
+  "control-worker-gone": "controlWorkerGone",
+  "device-lost": "deviceLost",
+  "broker-closed": "brokerClosed",
+  "not-connected": "notConnected",
+  "broker-timeout": "brokerTimeout",
+  "broker-rejected": "brokerRejected",
+  "broker-bad-response": "brokerBadResponse",
+  "broker-io": "brokerIo",
+  "file-not-found": "fileNotFound",
+  "file-denied": "fileDenied",
+  "file-io": "fileIo",
+  "file-bad-extension": "fileBadExtension",
+  "png-encode": "pngEncode",
+  "canvas-unavailable": "canvasUnavailable",
+  "midi-port-not-found": "midiPortNotFound",
+  "midi-output-not-open": "midiOutputNotOpen",
+  "midi-init-failed": "midiInitFailed",
+  "midi-open-failed": "midiOpenFailed",
+  "midi-send-failed": "midiSendFailed",
+  "keep-awake-failed": "keepAwakeFailed",
+  "keep-awake-unsupported": "keepAwakeUnsupported",
+};
+
+/** Split an error into its stable code and technical detail. A message is either a
+ *  bare code or `"<code>: <detail>"`; anything else yields no code, and the whole
+ *  message is the caller's to pass through. */
+function split(err: unknown): { message: string; code: string; detail: string } {
+  const message = err instanceof Error ? err.message : String(err);
+  const sep = message.indexOf(": ");
+  if (sep === -1) return { message, code: message, detail: "" };
+  return { message, code: message.slice(0, sep), detail: message.slice(sep + 2) };
+}
+
+/** The stable code an error carries, for a caller that branches on it rather than
+ *  showing it (see connectFailureStatus / midiErrorStatus). Empty-ish for anything
+ *  that is not a code, which matches no branch. */
+export function errorCode(err: unknown): string {
+  return split(err).code;
+}
+
+/**
+ * Localized text for an error raised outside the UI layer. The detail is the
+ * technical part only an English source can supply (an OS message, a parameter
+ * address, a broker URI) — entries that take one show it in parentheses, the rest
+ * drop it. Anything that is not a known code (a plain JS error, a DOMException)
+ * falls through unchanged: the caller's frame is still localized, and an unexpected
+ * failure is never swallowed.
+ */
+export function errorText(err: unknown): string {
+  const { message, code, detail } = split(err);
+  const key = SHELL_CODES[code];
+  if (!key) return message;
+  const entry = t().error.shell[key];
+  if (typeof entry !== "function") return entry;
+  // A code whose entry takes a detail is always raised with one, so a bare one here
+  // is a malformed message: let it through like any unrecognized message rather
+  // than render the entry around an empty detail.
+  return detail ? entry(detail) : message;
+}
