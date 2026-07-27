@@ -1,6 +1,6 @@
 name: Release
 
-# Builds desktop installers (macOS .dmg/.app, Windows .msi/.exe) with
+# Builds desktop installers (macOS .dmg/.app, Windows .exe NSIS setup) with
 # tauri-action and attaches them to a draft GitHub Release. Push a vX.Y.Z tag
 # to cut a release; the draft is left for manual review before publishing.
 # A manual workflow_dispatch run only builds and uploads the bundles as job
@@ -155,5 +155,4 @@ jobs:
           path: |
             src-tauri/target/**/bundle/dmg/*.dmg
             src-tauri/target/**/bundle/nsis/*.exe
-            src-tauri/target/**/bundle/msi/*.msi
           if-no-files-found: error
