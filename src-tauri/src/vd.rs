@@ -16,10 +16,18 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::ipc::Channel;
 
+// Every error this module returns is a stable kebab-case code, optionally followed
+// by ": " and a technical detail (an address, a URI, an OS message). The frontend
+// localizes the code and shows the detail as-is (src/i18n error.shell) — a raw
+// message would reach a Japanese dialog in English. Codes: broker-unreachable,
+// no-device, control-worker-gone, not-connected, device-lost, broker-closed,
+// broker-timeout, broker-rejected, broker-bad-response, broker-io.
+
 /// Stable error code raised when the worker thread is gone (its command channel or
 /// reply channel is closed). The frontend exact-matches this code, so its value
-/// must not change.
-const CONTROL_WORKER_GONE: &str = "control-worker-gone";
+/// must not change. `lib.rs` raises the same code when a worker task panics: from
+/// the frontend's side the control worker is equally unavailable either way.
+pub(crate) const CONTROL_WORKER_GONE: &str = "control-worker-gone";
 
 /// Device identity exposed to the frontend (no dev_uid / serial). `firmware` is the
 /// unit's System firmware version (from /vd/device); empty when the device reports
@@ -203,7 +211,7 @@ pub fn sender(state: &VdState) -> Result<Sender<Cmd>, String> {
         .tx
         .as_ref()
         .cloned()
-        .ok_or_else(|| "not connected".to_string())
+        .ok_or_else(|| "not-connected".to_string())
 }
 
 /// Set one parameter instance to an absolute value. Blocks on the reply, so
@@ -463,7 +471,9 @@ mod imp {
         // can only escape by quitting. Refuse the session instead.
         if let MaybeTlsStream::Plain(s) = ws.get_ref() {
             if let Err(e) = s.set_read_timeout(Some(Duration::from_millis(200))) {
-                let _ = ready.send(Err(format!("could not set the socket read timeout: {e}")));
+                let _ = ready.send(Err(format!(
+                    "broker-io: could not set the socket read timeout: {e}"
+                )));
                 return;
             }
         }
@@ -634,7 +644,7 @@ mod imp {
 
     fn send_json(ws: &mut Ws, v: Value) -> Result<(), String> {
         ws.send(Message::Text(v.to_string().into()))
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("broker-io: {e}"))
     }
 
     /// Read one text message, or None on read timeout. Errors on a closed or
@@ -643,10 +653,10 @@ mod imp {
     fn read_text(ws: &mut Ws) -> Result<Option<String>, String> {
         match ws.read() {
             Ok(Message::Text(t)) => Ok(Some(t.to_string())),
-            Ok(Message::Close(_)) => Err("Device Center closed the control connection".into()),
+            Ok(Message::Close(_)) => Err("broker-closed".into()),
             // The vd protocol is JSON text only; a binary frame means the link is
             // out of sync, so fail the awaiting command rather than swallow it.
-            Ok(Message::Binary(_)) => Err("unexpected binary frame from broker".into()),
+            Ok(Message::Binary(_)) => Err("broker-bad-response: binary frame".into()),
             Ok(_) => Ok(None), // ping/pong — ignore
             Err(tungstenite::Error::Io(e))
                 if matches!(
@@ -656,7 +666,7 @@ mod imp {
             {
                 Ok(None)
             }
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(format!("broker-io: {e}")),
         }
     }
 
@@ -697,7 +707,7 @@ mod imp {
                 firmware: Some(String::new()),
             };
             if dev_uid.is_empty() {
-                return Err("device list entry had no identifier".into());
+                return Err("broker-bad-response: device list entry had no identifier".into());
             }
             // The list entry persists after the unit is unplugged, so confirm the
             // live link before claiming a device: "online" means a URX is actually
@@ -760,9 +770,9 @@ mod imp {
             return vdp
                 .and_then(|v| v.get("data"))
                 .cloned()
-                .ok_or_else(|| format!("vd response had no data for {base}"));
+                .ok_or_else(|| format!("broker-bad-response: no data for {base}"));
         }
-        Err(format!("timed out waiting for {base}"))
+        Err(format!("broker-timeout: {base}"))
     }
 
     /// Query the unit's live link state via /vd/synchronize: "online" means a URX
@@ -774,7 +784,7 @@ mod imp {
             .pointer("/sync_status")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| "synchronize response had no sync_status".to_string())
+            .ok_or_else(|| "broker-bad-response: no sync_status".to_string())
     }
 
     /// The unit's System firmware version, from /vd/device's firm_list. `Some("")`
@@ -855,14 +865,12 @@ mod imp {
                 Ok(())
             } else {
                 Err(format!(
-                    "broker rejected the write at {param_id}:{x}:{y} (response_code {code})"
+                    "broker-rejected: {param_id}:{x}:{y} (response_code {code})"
                 ))
             };
         }
         drain_late_reply(ws, subs, &base);
-        Err(format!(
-            "timed out waiting for the broker to confirm the write at {param_id}:{x}:{y}"
-        ))
+        Err(format!("broker-timeout: write at {param_id}:{x}:{y}"))
     }
 
     /// A command that timed out may still have its reply in flight. The vd protocol
@@ -947,13 +955,11 @@ mod imp {
                 continue;
             };
             return vdp.pointer("/data/current_value").cloned().ok_or_else(|| {
-                format!("broker response had no current_value at {param_id}:{x}:{y}")
+                format!("broker-bad-response: no current_value at {param_id}:{x}:{y}")
             });
         }
         drain_late_reply(ws, subs, &base);
-        Err(format!(
-            "timed out waiting for the parameter value at {param_id}:{x}:{y}"
-        ))
+        Err(format!("broker-timeout: value at {param_id}:{x}:{y}"))
     }
 
     fn do_get(
@@ -966,7 +972,7 @@ mod imp {
     ) -> Result<i64, String> {
         do_get_value(ws, subs, dev_uid, param_id, x, y)?
             .as_i64()
-            .ok_or_else(|| "parameter value was not an integer".to_string())
+            .ok_or_else(|| "broker-bad-response: value was not an integer".to_string())
     }
 
     // The broker returns a name as a preset index (number) until one is typed,
@@ -1105,12 +1111,12 @@ mod imp {
         if status == "online" {
             return None;
         }
-        Some(format!("{DEVICE_LOST_PREFIX} (sync_status {status})"))
+        Some(format!("{DEVICE_LOST_PREFIX}: sync_status {status}"))
     }
 
     /// Prefix every device-lost error carries, so the worker can recognise one of
     /// its own and latch the session as dead rather than re-deriving the state.
-    pub(super) const DEVICE_LOST_PREFIX: &str = "device disconnected";
+    pub(super) const DEVICE_LOST_PREFIX: &str = "device-lost";
 
     /// Fail a command outright once the session is known dead, latching the reason
     /// the first time one surfaces it. The device-lost push arrives exactly once,
@@ -1167,9 +1173,7 @@ mod imp {
                     }
                     subs.absorb(&msg);
                 }
-                Ok(Message::Close(_)) => {
-                    return Err("Device Center closed the control connection".into())
-                }
+                Ok(Message::Close(_)) => return Err("broker-closed".into()),
                 Ok(_) => {} // ping/pong/binary — discard, keep going
                 Err(tungstenite::Error::Io(e))
                     if matches!(
@@ -1179,7 +1183,7 @@ mod imp {
                 {
                     break; // socket drained — fall through to flush the batch
                 }
-                Err(_) => return Err("Device Center closed the control connection".into()),
+                Err(_) => return Err("broker-closed".into()),
             }
             // Yield the worker once the budget is spent so a pending command (and the
             // accumulated batch below) is serviced without waiting out the stream.

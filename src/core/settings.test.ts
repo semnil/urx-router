@@ -22,13 +22,22 @@ describe("getSettings", () => {
   it("degrades a garbage record per field, not wholesale", () => {
     store().setItem(
       "urx-settings",
-      JSON.stringify({ deviceScope: "scene", wheelSteps: 3, exportScale: "big", updateCheck: "yes" }),
+      JSON.stringify({
+        deviceScope: "scene",
+        wheelSteps: 3,
+        exportScale: "big",
+        updateCheck: "yes",
+        preventSleep: 1,
+      }),
     );
     const s = getSettings();
     expect(s.deviceScope).toBe("scene"); // the valid field survives
     expect(s.wheelSteps).toBe(SETTINGS_DEFAULTS.wheelSteps); // 3 is not a choice
     expect(s.exportScale).toBe(SETTINGS_DEFAULTS.exportScale);
     expect(s.updateCheck).toBe(SETTINGS_DEFAULTS.updateCheck); // strings are not booleans
+    // The sleep hold is re-taken at launch, so a truthy non-boolean must not
+    // read as ON: nothing would hold it, and the row would claim it does.
+    expect(s.preventSleep).toBe(false);
   });
 
   it("survives a non-JSON record", () => {

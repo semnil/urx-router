@@ -4305,6 +4305,7 @@ dependencies = [
 name = "urx-router"
 version = "0.0.0"
 dependencies = [
+ "core-foundation",
  "midir",
  "percent-encoding",
  "serde",
@@ -4315,6 +4316,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-updater",
  "tungstenite",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

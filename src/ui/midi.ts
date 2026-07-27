@@ -28,7 +28,7 @@ import {
 } from "../core/midi/mapping";
 import { mirrorBalPair } from "../core/routing";
 import { el, popTop, wireDismiss } from "./dom";
-import { t } from "../i18n";
+import { errorCode, errorText, t } from "../i18n";
 
 export interface MidiHooks {
   getModel: () => DeviceModel;
@@ -640,13 +640,13 @@ export class MidiControl {
   }
 }
 
-// A MIDI bridge failure surfaces its stable code (midi.rs); localize the known
-// ones, and wrap anything else with the given input/output error prefix — the
-// parallel of connectFailureStatus for the vd worker codes.
+// A MIDI bridge failure surfaces its stable code (midi.rs). A missing port names a
+// state the user can act on, so it replaces the frame; everything else fills the
+// given input/output error prefix — the parallel of connectFailureStatus for the vd
+// worker codes.
 function midiErrorStatus(err: unknown, wrap: (message: string) => string): string {
-  const message = err instanceof Error ? err.message : String(err);
-  if (message === "midi-port-not-found") return t().error.midiPortNotFound;
-  return wrap(message);
+  if (errorCode(err) === "midi-port-not-found") return t().error.shell.midiPortNotFound;
+  return wrap(errorText(err));
 }
 
 // Reading localStorage can throw where storage is blocked (private mode); the

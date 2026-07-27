@@ -56,7 +56,7 @@ flowchart TD
     end
   end
   subgraph shell[Tauri シェル src-tauri/]
-    rust[main.rs / lib.rs<br/>webview ホスト<br/>dialog プラグイン + ファイル IO<br/>実機制御 vd_* / MIDI midi_* command]
+    rust[main.rs / lib.rs<br/>webview ホスト<br/>dialog プラグイン + ファイル IO<br/>実機制御 vd_* / MIDI midi_* command<br/>スリープ抑止 set_keep_awake]
   end
 
   main --> models & core & ui & i18n
@@ -124,9 +124,31 @@ UI は英語を基本とし、日本語ローカライズに対応する。実�
 言語は環境設定モーダル (「言語とテーマ」節のドロップダウン — 各言語のネイティブ名で表示) から切り替え、`setLang()` がリスナーへ通知して静的ラベル・インスペクタ・開いているモーダル自身を再描画する。
 
 > **用語の統一**。製品/業界用語は日本語 UI でも英語表記を保つ: `Bus` / `Ducker` / `Bus send` /
-> `Send (ON/OFF)` / `Pre-fader send`。キャンバス上の可視要素は **ノード (node)** と呼び、
+> `Send (ON/OFF)` / `Pre-fader send`。実機ラベルの略号を展開するツールチップも本体の表記のまま
+> (`C.INT` → `Cue Interrupt`)、MIDI の取り込みモード名 (`Absolute` / `Pickup`) も同様 — ボタン動作の
+> ラベルと同じくコントローラー側の挙動を指す名前であるため。キャンバス上の可視要素は **ノード (node)** と呼び、
 > `モジュール (module)` はソフトウェアモジュール (`src/i18n/` 等) に限定する。凡例は配線種別を
 > 「接続の種類」、ノード種別を「ノード」でグループ化する。
+
+### エラーコード
+
+同じ原則をアプリの境界の外側にも適用する。UI 層の外で発生した失敗は散文ではなく**安定した kebab-case の
+コード**を返す。メッセージはコード単体か `"<コード>: <詳細>"` の形で、詳細はその発生源にしか出せない技術情報
+(OS のメッセージ・パラメーターアドレス・broker の URI) に限る。シェルの各面が次のコードを返す:
+
+| 発生源                             | コード                                                                                                                                                                            |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src-tauri/src/lib.rs` (ファイル IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`                                                                                                                  |
+| `src-tauri/src/vd.rs` (broker)     | `broker-unreachable`, `no-device`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-rejected`, `broker-bad-response`, `broker-io` |
+| `src-tauri/src/midi.rs`            | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                         |
+| `src-tauri/src/keepawake.rs`       | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                     |
+| `core/storage.ts` (画像出力)       | `png-encode`, `canvas-unavailable`                                                                                                                                                |
+
+`errorText` (`i18n/index.ts`) がコードを `error.shell` で解決し、詳細を受け取るエントリにはそれを渡す。未知の
+メッセージはそのまま通すため、想定外の JS エラーを握り潰さない。ローカライズ済みの枠に原因を差し込む箇所は
+すべてこれを通す — さもないと日本語 UI で「保存エラー: …」の末尾が英文になる。`core/control/*` が Markdown
+レポート用に集約するエラー配列はコードのまま保持する。あれは診断用の成果物であり、散文よりも安定したコードの
+方が情報量が多いため。
 
 ## 表示テーマ
 
@@ -411,13 +433,18 @@ per-mapping セレクト (取り込みモード / ボタン動作) は、ホバ�
 と照合し、異なる場合は取得・書込み・Live sync の開始時に警告する (続行/中断はユーザーが選択)。読み取りはベストエフォートで、
 取得できない場合はフィールドが空となり、警告を出さず操作を続行する。
 
-接続失敗は生の英語文字列ではなく安定した機械可読コードで返す: `broker-unreachable` (Device Center 未起動)、
+UI 層の外で発生した失敗はすべて、生の英語文字列ではなく安定した機械可読コードで返す (仕組みは
+[エラーコード](#エラーコード) を参照)。broker リンクのコードは `broker-unreachable` (Device Center 未起動)、
 `no-device` (起動済みだが URX 未接続 — 空リスト・`sync_status != online`・リストタイムアウトの各形は、ユーザーの
 取るべき対処が同一 (実機を接続する) のため単一コードに集約)、`control-worker-gone` (Rust ワーカースレッドが
-異常終了または無応答 — ハンドシェイク・コマンド送信・応答待ちの各失敗を 1 コードに集約) のいずれか。フロントの
-`connectFailureStatus` がこれらのコードをローカライズ済みメッセージ (`error.brokerUnreachable` / `error.noDevice` /
-`error.controlWorkerGone`) へ写像し、それ以外の接続段階の障害は各操作のエラー整形にフォールバックする。MIDI ブリッジ (midi.rs) は独立したコード (`midi-port-not-found`) を持ち、MIDI パネルの `midiErrorStatus` がその `connectFailureStatus` 相当として `error.midiPortNotFound` へローカライズし、それ以外は入出力エラー整形にフォールバックする。接続が事前チェックを兼ねるため、取得と Live sync は**破棄確認の前に**接続し、
-未接続状態は plan を乱す前に明示する。
+異常終了・無応答・パニック — ハンドシェイク・コマンド送信・応答待ち・タスク join の各失敗を 1 コードに集約)、
+`not-connected`、`device-lost`、`broker-closed`、`broker-timeout`、`broker-rejected`、`broker-bad-response`、
+`broker-io`。
+
+このうち先頭 3 つはユーザーが直接対処できる状態を指すため、`connectFailureStatus` は「<操作>に失敗しました: …」
+の枠を埋めるのではなく**枠ごと置き換える**。それ以外のコードは他の原因と同様に枠へローカライズして差し込む。
+MIDI パネルの `midiErrorStatus` が同じ役回りで、`midi-port-not-found` を同様に扱う。接続が事前チェックを
+兼ねるため、取得と Live sync は**破棄確認の前に**接続し、未接続状態は plan を乱す前に明示する。
 
 ### アプリがモデル化するもの・実機に任せるもの
 
@@ -770,7 +797,7 @@ localStorage レコード (`urx-settings`、`core/settings.ts`。`?reset` のク
 遅延ロード) に永続化される。言語とテーマだけは例外で、従来からの独立キー (`urx-lang` /
 `urx-theme`) を保つ — 設定のロードより先に読まれるため、初回描画から言語もテーマも反映される。
 デスクトップシェルが必要な行 (デバイス入出力範囲・更新確認・
-ファームウェア警告・最近使った計画 — デモでは出力行も) は隠さず、破線の「デスクトップ版のみ」
+ファームウェア警告・コンピューターのスリープ・最近使った計画 — デモでは出力行も) は隠さず、破線の「デスクトップ版のみ」
 タグ付きの無効化表示にする — デモからもデスクトップ版の機能が見えるようにするため。
 
 - **言語とテーマ** — UI 言語 (ネイティブ名のドロップダウン。言語の追加に備える) と 3 値の
@@ -801,6 +828,13 @@ localStorage レコード (`urx-settings`、`core/settings.ts`。`?reset` のク
   常に効く。
 - **操作** — ホイール 1 ノッチあたりのステップ数 (各 detent は従来どおり各コントロールの
   グリッドにスナップ) と、ファインチューニングの方式 (Shift 長押し / ラッチ = 押すたび切替)。
+- **コンピューターのスリープ** — ライブ同期の実行中だけ、システムとディスプレイのアイドルスリープ
+  を抑止する (既定 OFF・デスクトップ版のみ)。範囲はアプリではなく**セッション**: 計画の編集中に
+  マシンを起こしておく必要はなく、起動しているだけで自動ロックが効かなくなるのは編集作業が
+  引き受ける理由のないコストのため。駆動は `setLiveUi` なので、トグル・書き込み失敗・リンク切断の
+  いずれで抜けても解放される (残ったものはプロセス終了時に OS が解放する)。OS は抑止を拒否
+  できるので、セッション中のトグルは `set_keep_awake` (`src-tauri/src/keepawake.rs`) の成功後に
+  のみ設定を保存し、拒否時は行を据え置いて理由を下に出す。オフラインのトグルは保存のみ。
 - **ファイルと出力** — PNG / PDF のスケール、出力背景 (現在のテーマまたは固定テーマ — 固定時
   は出力用クローンの間だけ対象パレットで再描画し同一タスク内で戻すため、画面には現れない)、
   最近使った計画の上限とクリア。

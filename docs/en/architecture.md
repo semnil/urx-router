@@ -58,7 +58,7 @@ flowchart TD
     end
   end
   subgraph shell[Tauri shell src-tauri/]
-    rust[main.rs / lib.rs<br/>webview host<br/>dialog plugin + file IO<br/>hardware-control vd_* / MIDI midi_* commands]
+    rust[main.rs / lib.rs<br/>webview host<br/>dialog plugin + file IO<br/>hardware-control vd_* / MIDI midi_* commands<br/>idle-sleep hold set_keep_awake]
   end
 
   main --> models & core & ui & i18n
@@ -183,9 +183,34 @@ The language is switched from the Preferences modal (a dropdown of native names 
 the inspector, and the open modal itself.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
-> `Ducker`, `Bus send`, `Send (ON/OFF)`, `Pre-fader send`. The visible canvas element is a **node**;
-> reserve "module" for software modules (`src/i18n/` etc.). The legend groups the wire kinds under
-> "Connection types" and the node kinds under "Nodes".
+> `Ducker`, `Bus send`, `Send (ON/OFF)`, `Pre-fader send`. A tooltip that spells out a device
+> abbreviation keeps the unit's own wording (`C.INT` → `Cue Interrupt`), and so do the MIDI takeover
+> mode names (`Absolute` / `Pickup`), which name a controller behavior the same way the button
+> behaviors do. The visible canvas element is a **node**; reserve "module" for software modules
+> (`src/i18n/` etc.). The legend groups the wire kinds under "Connection types" and the node kinds
+> under "Nodes".
+
+### Error codes
+
+The same rule applies past the app's own edges: a failure raised outside the UI layer carries a
+**stable kebab-case code**, not prose. The message is either the bare code or `"<code>: <detail>"`,
+where the detail is the technical part only the source can supply — an OS message, a parameter
+address, a broker URI. Both sides of the shell raise them:
+
+| Source                          | Codes                                                                                                                                                                                  |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src-tauri/src/lib.rs` (file IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`                                                                                                                       |
+| `src-tauri/src/vd.rs` (broker)  | `broker-unreachable`, `no-device`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-rejected`, `broker-bad-response`, `broker-io`      |
+| `src-tauri/src/midi.rs`         | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                              |
+| `src-tauri/src/keepawake.rs`    | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                          |
+| `core/storage.ts` (export)      | `png-encode`, `canvas-unavailable`                                                                                                                                                     |
+
+`errorText` (`i18n/index.ts`) resolves a code against `error.shell` and hands the detail to the
+entries that take one; an unrecognized message passes through unchanged, so an unexpected JS error
+is still reported rather than swallowed. Every site that embeds a cause in a localized frame goes
+through it — otherwise "Save failed: …" would end in an English sentence in the Japanese UI. The
+aggregated error lists `core/control/*` builds for its Markdown reports keep the codes verbatim:
+those reports are diagnostics, where a stable code carries more than prose would.
 
 ## Display themes
 
@@ -512,18 +537,19 @@ compares it against the validated `SUPPORTED_SYSTEM_FIRMWARE` (`core/control/fir
 start of fetch / write / live sync when it differs, letting the user continue or stop. The read is best-effort:
 an unreadable firmware leaves the field empty, which disables the warning rather than blocking the operation.
 
-A failed connect returns a stable, machine-readable code rather than a raw English string: `broker-unreachable`
-(Device Center not running), `no-device` (running, but no URX attached — the empty-list, `sync_status != online`,
-and list-timeout shapes all collapse to this single code, since the user's remedy is the same), or
-`control-worker-gone` (the Rust worker thread died or stopped responding — the handshake, command send, and
-reply-wait failures all collapse to this code). The frontend's `connectFailureStatus` maps those codes to
-localized messages (`error.brokerUnreachable` / `error.noDevice` / `error.controlWorkerGone`);
-any other connect-stage fault falls back to the action's own error formatter. The MIDI bridge (midi.rs) exposes
-its own disjoint code (`midi-port-not-found`); the MIDI panel's `midiErrorStatus` is the peer of
-`connectFailureStatus` for it, localizing to `error.midiPortNotFound` and otherwise falling back to the
-input/output error formatter. Because the connect doubles as a
-pre-check, fetch and live sync connect *before* prompting to discard edits, so a no-device state is reported
-plainly without first disturbing the plan.
+Every failure raised outside the UI layer returns a stable, machine-readable code rather than a raw English
+string — see [Error codes](#error-codes) for the scheme. The broker link's are `broker-unreachable` (Device
+Center not running), `no-device` (running, but no URX attached — the empty-list, `sync_status != online`, and
+list-timeout shapes all collapse to this single code, since the user's remedy is the same),
+`control-worker-gone` (the Rust worker thread died, stopped responding, or panicked — handshake, command send,
+reply-wait, and task-join failures all collapse to this code), `not-connected`, `device-lost`, `broker-closed`,
+`broker-timeout`, `broker-rejected`, `broker-bad-response`, and `broker-io`.
+
+The first three name a state the user can act on directly, so `connectFailureStatus` lets them **replace** the
+"<action> failed: …" frame instead of filling it; every other code fills the frame, localized like any other
+embedded cause. The MIDI panel's `midiErrorStatus` is its peer, treating `midi-port-not-found` the same way.
+Because the connect doubles as a pre-check, fetch and live sync connect *before* prompting to discard edits, so
+a no-device state is reported plainly without first disturbing the plan.
 
 ### What the app models, and what it leaves to the unit
 
@@ -914,7 +940,7 @@ validated localStorage record (`urx-settings`, `core/settings.ts`,
 loaded lazily so the `?reset` clear runs first). Language and theme are the exception: they keep
 their pre-existing stores (`urx-lang` / `urx-theme`), read before settings load so the first paint
 is already localized and themed. Rows whose feature needs the desktop shell
-(device scope, update check, firmware warning, recent plans — plus the export rows in the demo)
+(device scope, update check, firmware warning, computer sleep, recent plans — plus the export rows in the demo)
 render disabled with a dashed "Desktop app only" tag instead of hiding, so the demo still shows
 what the desktop app offers.
 
@@ -948,6 +974,14 @@ what the desktop app offers.
   stay on regardless.
 - **Controls** — wheel steps per notch (each detent still snaps to the control's own grid), and
   the fine-tuning entry style (hold Shift, or latch — each press flips the mode).
+- **Computer sleep** — hold off the computer's idle sleep, system and display, for as long as
+  Live sync is running (off by default; desktop only). The scope is the session, not the app:
+  editing a plan does not need the machine awake, and holding the idle screen lock off for every
+  launch is a cost no editing session earns. `setLiveUi` drives it, so the toggle, a write
+  failure and a link loss all release it, and the OS releases whatever is left when the process
+  exits. The OS can also refuse the hold, so while a session is up the preference is stored only
+  after `set_keep_awake` (`src-tauri/src/keepawake.rs`) succeeds and a refusal leaves the row
+  where it was, explained under it; off-line the toggle only stores.
 - **Files & export** — the PNG / PDF raster scale, the export background (active theme or a fixed
   one — the graph re-renders under the target palette just for the export clone and swaps back
   within the same task, so the screen never shows it), and the recent-plans length / clear.
