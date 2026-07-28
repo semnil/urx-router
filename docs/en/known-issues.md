@@ -23,10 +23,11 @@ device as usual.
 ## The CH SETTING Icon is not modeled
 
 The device's CH SETTING offers an **Icon** alongside its name and color, but the
-planner intentionally does not model it. The mono channels (CH1–4) do not expose
-the icon over the broker, so it would only work on stereo channels and buses — an
-asymmetric feature. The name (`nodeNames`) and color (`nodeColors`) are supported
-because they can be read and written for every node.
+planner intentionally does not model it. Every node kind — mono channels included
+— exposes the icon over the broker, and the value is a bare glyph id that carries
+no hint of which picture it selects, so supporting it means calibrating the whole
+glyph set against the unit's screen first. The name (`nodeNames`) and color
+(`nodeColors`) are supported because their values are self-describing.
 
 ## CUE (solo/monitor interrupt) assignment cannot be controlled
 

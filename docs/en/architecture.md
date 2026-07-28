@@ -84,8 +84,8 @@ flowchart TD
   (`nodeColors`, the device CH SETTING color, drawn as a thin top accent cap; the picker offers the
   device's fixed palette so a chosen color is read and written 1:1 to hardware — input channels,
   MIX, STEREO, FX and STREAMING; the CH SETTING **Icon**, a sibling of name and color, is
-  intentionally not modeled — mono channels CH1–4 do not expose it over the broker, so it would
-  only work on stereo channels and buses), hidden nodes (`hidden`),
+  intentionally not modeled — every node kind exposes it, but its value is a bare glyph id that
+  would have to be calibrated against the unit's screen first), hidden nodes (`hidden`),
   and per-node notes (`notes`) with their minimized state (`noteCollapsed`). It serializes to JSON.
   A new plan comes from `defaultPlan(modelId)` in `models/initial-state.ts`, which seeds every model
   with a factory initial state (node parameters + routing + CH SETTING colors and names). Only URX44V is captured from real
