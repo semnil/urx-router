@@ -65,7 +65,7 @@ describe("coerceDeviceSetup", () => {
     expect(wild.timeZone).toBe(TIME_ZONE_CITIES.length - 1);
     expect(wild.language).toBe(2);
     expect(wild.dateFormat).toBe(0);
-    expect(coerceDeviceSetup(setup({ brightness: 0 })).brightness).toBe(BRIGHTNESS_MIN);
+    expect(coerceDeviceSetup(setup({ brightness: -3 })).brightness).toBe(BRIGHTNESS_MIN);
     expect(coerceDeviceSetup(setup({ autoPowerOffTime: 999 })).autoPowerOffTime).toBe(AUTO_POWER_OFF_MAX);
   });
 });

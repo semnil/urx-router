@@ -47,6 +47,32 @@ test("opens on the values read from the device and writes nothing", async ({ pag
   expect(await strWritesOf(page)).toEqual([]);
 });
 
+// Brightness 0 is the unit's own floor, not a dump artefact (hardware: the LCD
+// stays readable there). With the floor at 1 the screen coerced the value it read
+// on open, so a unit sitting at 0 was reported as 1 and 0 could never be sent back.
+test("a device reporting brightness 0 shows 0 on both the slider and the readout", async ({ page }) => {
+  await stubTauriDevice(page, { values: { ...DEVICE_VALUES, [BRIGHTNESS]: 0 } });
+  await page.goto("/");
+  await openSetup(page);
+
+  await expect(page.locator("#device-setup-brightness")).toHaveValue("0");
+  await expect(page.locator(".dev-slider .param-val")).toHaveText("0");
+  await expect(page.locator("#device-setup-apply")).toBeDisabled();
+  expect(await writesOf(page)).toEqual([]);
+});
+
+test("brightness 0 can be applied to a device that is brighter", async ({ page }) => {
+  await stubTauriDevice(page, { values: DEVICE_VALUES }); // brightness 4
+  await page.goto("/");
+  await openSetup(page);
+
+  await page.locator("#device-setup-brightness").fill("0");
+  await page.locator("#device-setup-brightness").dispatchEvent("change");
+  await page.click("#device-setup-apply");
+
+  expect(await writesOf(page)).toEqual([[BRIGHTNESS, 0]]);
+});
+
 test("an edit is pending until Apply, which sends only what changed", async ({ page }) => {
   await stubTauriDevice(page, { values: DEVICE_VALUES });
   await page.goto("/");
