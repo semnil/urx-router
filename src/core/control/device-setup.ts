@@ -21,10 +21,10 @@ import type { ParamName } from "./params";
 import { clamp } from "./vd";
 import { TIME_ZONE_CITIES } from "./timezones";
 
-/** Screen brightness, as the unit's own menu offers it. The dump's minimum is 0,
- *  which the unit never shows; 0 is untested and the screen is the only way back
- *  from a dark screen, so the app's floor is the menu's floor. */
-export const BRIGHTNESS_MIN = 1;
+/** Screen brightness, as the unit's own menu offers it. 0 is a real setting, not a
+ *  dump artefact: the unit holds it and its LCD stays readable there rather than
+ *  going dark (measured on a URX44V). */
+export const BRIGHTNESS_MIN = 0;
 export const BRIGHTNESS_MAX = 10;
 
 /** Auto Power Off idle time, in minutes ("2–20 minutes in one-minute increments,
