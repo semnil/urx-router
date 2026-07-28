@@ -99,9 +99,10 @@ This applies to the URX44 / URX44V only (the URX22 has no microSD recording).
 
 The block diagram shows two meters on the STREAMING channel — one before the
 DELAY and one after it. Only the **post-DELAY** meter is exposed by the device
-broker; the **pre-DELAY** meter returns no data in any state (verified on a real
-URX44V). The CONSOLE STREAMING strip therefore shows the post-DELAY (output)
-meter only, with no meter-point selector. The pre/post readings do differ in
+broker; the **pre-DELAY** meter has no address at all (verified on a real
+URX44V — the address once taken for it turned out to be the CUE bus's meter).
+The CONSOLE STREAMING strip therefore shows the post-DELAY (output) meter only,
+with no meter-point selector. The pre/post readings do differ in
 timing once a delay is set, but the device offers no pre-DELAY reading to show —
 the source bus's own meter (STEREO / MIX, whichever feeds STREAMING) is the
 closest equivalent for the pre-DELAY level.
