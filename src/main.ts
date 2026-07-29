@@ -599,6 +599,7 @@ function deactivateLive(status?: string): void {
   void vdDisconnect(liveEpoch);
   setLiveUi(false);
   consoleView.setLive(false);
+  gateTuning.setLive(false);
   // A CH → FX tap shown read-only while live becomes editable again off-line.
   refreshInspector();
   if (status) setStatus(status);
@@ -1997,6 +1998,9 @@ if (!DEMO) {
         liveSessionUp = true;
         setLiveUi(true);
         consoleView.setLive(true);
+        // The gate screen holds the meter slot while open, so nothing else will
+        // re-establish its stream for it.
+        gateTuning.setLive(true);
         setStatus(t().status.liveOn(device.model, result.applied));
       } catch (err) {
         await failLive(t().status.liveError(errorText(err)));

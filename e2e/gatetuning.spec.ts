@@ -11,6 +11,9 @@ declare global {
   interface Window {
     __gateTest: {
       meterChannel: { onmessage: (batch: Array<{ meter_id: number; x: number; value: number }>) => void } | null;
+      paramChannel: {
+        onmessage: (batch: Array<{ param_id: number; x: number; y: number; value: number }>) => void;
+      } | null;
       meterAddrs: Array<[number, number]>;
       subscribes: number;
       unsubscribes: number;
@@ -26,6 +29,13 @@ const section = (page: Page, title: RegExp) =>
 const box = (page: Page) => page.locator("#gate-tuning-box");
 const readout = (page: Page, label: string) => box(page).locator(".gt-ro", { hasText: label });
 const paramRow = (page: Page, label: string) => box(page).locator(".prefs-row", { hasText: label });
+
+/** Push a device-side parameter change, the way turning a knob on the unit does. */
+const pushParam = (page: Page, paramId: number, x: number, y: number, value: number) =>
+  page.evaluate(
+    ([id, xx, yy, v]) => window.__gateTest.paramChannel?.onmessage([{ param_id: id, x: xx, y: yy, value: v }]),
+    [paramId, x, y, value],
+  );
 
 /** Deliver one batch of meter readings through the captured channel. */
 const pushMeters = (page: Page, ...frames: Array<[number, number, number]>) =>
@@ -51,6 +61,7 @@ test.beforeEach(async ({ page }) => {
     localStorage.setItem("urx-disclaimer-accepted", "1"); // skip the consent gate
     const state: Window["__gateTest"] = {
       meterChannel: null,
+      paramChannel: null,
       meterAddrs: [],
       subscribes: 0,
       unsubscribes: 0,
@@ -85,6 +96,8 @@ test.beforeEach(async ({ page }) => {
             return Promise.resolve();
           // Live sync needs exactly these two beyond the reads.
           case "vd_params_subscribe":
+            state.paramChannel = args.channel as Window["__gateTest"]["paramChannel"];
+            return Promise.resolve();
           case "vd_params_unsubscribe":
           case "vd_watch_link":
             return Promise.resolve();
@@ -263,5 +276,38 @@ test.describe("with a live session", () => {
     await pushMeters(page, [107, 0, 32767]);
     await expect(readout(page, "Gate GR").locator(".v")).toHaveText("0.0");
     await expect(readout(page, "Gate GR").locator(".p")).toHaveText("pk -40.0");
+  });
+
+  test("keeps its meters when the device is operated under it", async ({ page }) => {
+    // Opened from the CONSOLE, so that view is visible behind the modal. Turning a
+    // knob on the unit arrives as a param notify; follow applies it and, once the
+    // device goes quiet, runs a full reconcile as its missed-notify safety net.
+    // That reconcile re-renders the console, and a console render re-subscribes —
+    // which would take the meter slot back out from under this screen.
+    await page.click("#btn-view-console");
+    await page.locator(".con-strip").nth(0).locator(".con-chip-open").click();
+    await expect(box(page)).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => window.__gateTest.meterAddrs))
+      .toEqual([
+        [106, 0],
+        [107, 0],
+        [108, 0],
+      ]);
+
+    await pushParam(page, 1, 0, 0, 300); // HA_GAIN on CH1 — a direct-follow scalar
+    // IDLE_FULL_MS is 900 ms; wait past it for the safety-net reconcile.
+    await page.waitForTimeout(1800);
+
+    // The screen still owns its three addresses, so its meters keep updating.
+    await expect
+      .poll(() => page.evaluate(() => window.__gateTest.meterAddrs))
+      .toEqual([
+        [106, 0],
+        [107, 0],
+        [108, 0],
+      ]);
+    await pushMeters(page, [107, 0, -239]);
+    await expect(readout(page, "Gate GR").locator(".v")).toHaveText("-23.9");
   });
 });

@@ -147,6 +147,17 @@ export class GateTuningModal {
     if (this.isOpen()) this.render();
   }
 
+  /** Live sync turned on/off while this screen is open. It holds the meter slot
+   *  for as long as it is open, so nothing else will re-establish the stream for
+   *  it: without this a session that drops and returns leaves the screen dark
+   *  until it is closed and reopened. The readouts already fall back to "—" on
+   *  their own, since every paint reads the live state. */
+  setLive(active: boolean): void {
+    if (!this.isOpen()) return;
+    if (active) this.startMeters();
+    else this.stopMeters();
+  }
+
   // ---------------------------------------------------------------- meters
 
   private addrs(): Array<[number, number]> {

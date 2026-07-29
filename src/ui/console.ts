@@ -310,6 +310,12 @@ export class Console {
   private store = new MeterStore();
   private unsub: (() => void) | null = null;
   private subSig = ""; // signature of the currently subscribed address set
+  // The one meter slot is lent to another screen. Every render() ends in
+  // startMeters(), and renders happen for reasons that have nothing to do with
+  // this view being looked at — a device-follow reconcile re-renders the console
+  // behind a modal — so without this the borrower's stream is taken back out from
+  // under it, silently, and its display just stops.
+  private metersLent = false;
   private subPending = false; // a registration is in flight (see startMeters)
   private raf = 0;
   private live = false;
@@ -367,6 +373,7 @@ export class Console {
    *  that wants its own addresses has to say so rather than let this view keep
    *  believing it still has a stream. */
   releaseMeters(): void {
+    this.metersLent = true;
     this.stopMeters();
   }
 
@@ -374,6 +381,7 @@ export class Console {
    *  from the GRAPH inspector, the console may be hidden, and its stream is then
    *  re-established by the render() that the next show() runs. */
   regainMeters(): void {
+    this.metersLent = false;
     this.startMeters();
   }
 
@@ -1978,7 +1986,7 @@ export class Console {
   }
 
   private startMeters(): void {
-    if (!this.live || !this.visible) return;
+    if (!this.live || !this.visible || this.metersLent) return;
     const taps: MeterTap[] = [];
     for (const r of this.refs.values()) if (r.tap) taps.push(r.tap);
     const addrs = tapAddrs(taps);
