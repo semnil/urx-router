@@ -34,7 +34,7 @@ reference notes; the parts that constrain this design:
 
 | Fact | Consequence for the screen |
 | --- | --- |
-| The notify period is 100.0 ms exactly, and every tick is sent whether or not the value changed | Painting faster than 10 Hz shows nothing new; no interpolation is applied between frames |
+| The notify period is 100.0 ms exactly, and every tick is sent whether or not the value changed | Painting faster than 10 Hz shows nothing new; no interpolation is applied between frames, so most frames carry nothing and write nothing — the lane writes are quantized and skipped when unchanged, and the readout text is throttled to ~6 Hz like the console's |
 | Each frame is an **instantaneous sample**, not a window extreme | An event shorter than 100 ms is missed with probability (1 − width / 100 ms) |
 | The **level** meters (106 / 108) are peak detectors with a release of about 30 dB/s | They hold transients themselves. An app-side release would double what the device already does, so none is added; the peak hold on those lanes is cosmetic |
 | The **GR** meter (107) has no ballistics at all — it carries the applied gain | Its peak hold is the only thing that makes a caught gate action readable, and it cannot recover one that was never sampled |
@@ -112,10 +112,24 @@ previous registration and `vd_meters_unsubscribe` takes no address. The replacem
 the CONSOLE does not self-heal, so an unannounced takeover would leave its bars frozen on the floor
 — indistinguishable from silence.
 
-The screen therefore takes the slot explicitly (`Console.releaseMeters()`) before subscribing to its
-three addresses, and gives it back on close (`Console.regainMeters()`). `regainMeters` is a no-op
-unless the console is live and on screen; opened from the GRAPH inspector the console may be hidden,
-and its stream is then re-established by the `render()` that the next `show()` already runs.
+Two mechanisms keep that from biting:
+
+- **A generation stamp on the subscription itself** (`subscribeMeters`). The unsubscribe handle a
+  caller holds looks per-subscription and is not, so a stale one cancels whoever owns the stream
+  *now* — reachable when a console registration is still in flight as the screen takes over, or when
+  the screen closes faster than its own subscribe round-trip. A release only unsubscribes if its
+  generation is still current, and a late frame from a superseded registration is dropped rather
+  than written into the new owner's store.
+- **An explicit borrow** (`Console.releaseMeters()` / `regainMeters()`, guarded by `metersLent`).
+  The screen takes the slot before subscribing and gives it back on close; while it is lent, a
+  console `render()` — which happens for reasons unrelated to the console being looked at, such as a
+  device-follow reconcile — does not re-subscribe. `regainMeters` is a no-op unless the console is
+  live and on screen; opened from the GRAPH inspector the console may be hidden, and its stream is
+  then re-established by the `render()` that the next `show()` already runs.
+
+Live state reaches both surfaces from `setLiveUi`, the funnel every way in and out of a session
+already passes through. The order is load-bearing — the console subscribes, then the screen takes
+the slot back off it — and lives there rather than at each call site.
 
 The GR peak folds in the subscription callback, not from `MeterStore`: the store is last-write-win
 per address, so a batch carrying more than one frame for an address keeps only the last.
@@ -140,6 +154,21 @@ The screen opens in every build and in every state. The parameters are plan valu
 editable with no device (the browser build included); the meters sit at the floor with their
 readouts printing `—`. Nothing is locked or hidden, because nothing here needs the desktop shell to
 be *edited* — only to be *observed*.
+
+## Implementation notes
+
+The screen is built out of the shared recipes rather than its own: `settingsRow` / `settingsSection`
+for the rows and headings, `.udk-banks` for the mode tabs, `setLevelText` for the -∞ readout,
+`wheelStep` for the sliders, and the console's registered `--lvl` / `--pk` rules for the meter shade
+and peak. The GR lane adds only its inversion (it hangs from the top and is the bar rather than the
+cover over one) and its hatch. `formatDyn` and the range -∞ notch (`dynValueText`) live in
+`translate.ts` beside the field table that defines them, so this screen and the inspector cannot
+disagree about how a gate value prints.
+
+The curve is drawn as a cached static layer plus a live dot: everything but the dot depends only on
+threshold, range, size and theme. Canvas size is measured on open and refresh, and the theme tokens
+are read on render — both are forced reads that would otherwise land in the frame loop straight
+after its own DOM writes.
 
 ## Rejected alternatives (do not re-litigate without new evidence)
 
