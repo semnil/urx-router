@@ -46,6 +46,7 @@ import { initFineMode } from "./ui/fine";
 import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
+import { GateTuningModal } from "./ui/gate-tuning";
 import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
 import { errorCode, errorText, getLang, LANG_NAMES, onLangChange, t } from "./i18n";
 import { DEMO } from "./core/env";
@@ -848,6 +849,9 @@ const inspectorActions = {
   },
   onOpenRecent: (path: string) => void openRecent(path),
   onHideNode: (id: string) => graph.hideNode(id),
+  // Declared here but bound below: the gate screen's hooks reach back into these
+  // actions, so it cannot be constructed until they exist.
+  onOpenGateScreen: (id: string) => gateTuning.open(id),
   onClose: () => graph.clearSelection(),
 };
 graph.setTheme(theme);
@@ -1446,6 +1450,27 @@ const prefs = new PrefsPanel({
   onThemeMode: (mode) => setThemeMode(mode),
 });
 $("btn-prefs").addEventListener("click", () => prefs.open());
+
+// GATE tuning screen. Opened per MONO IN channel from the inspector's GATE
+// section and from the CONSOLE strip; it owns the broker's one meter slot while
+// open, which is why the console is told to release and regain it rather than
+// discovering the swap from frozen bars.
+const gateTuning = new GateTuningModal({
+  getModel: () => getModel(modelId),
+  getPlan: () => plan,
+  isLive: () => liveSessionUp,
+  onUpdateNodeParams: (id, patch) => inspectorActions.onUpdateNodeParams(id, patch),
+  releaseMeters: () => consoleView.releaseMeters(),
+  regainMeters: () => consoleView.regainMeters(),
+  onMeterError: (message) => stopLiveOnError(errorText(message)),
+  // Both surfaces print gate values, and the inspector's sliders are built from a
+  // snapshot taken at render time, so they would keep writing back stale values
+  // after the screen moved them.
+  onClosed: () => {
+    refreshInspector();
+    consoleView.refresh();
+  },
+});
 
 $("btn-auto").addEventListener("click", () => {
   graph.autoLayout();

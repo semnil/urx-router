@@ -176,6 +176,8 @@ export interface InspectorActions {
   onRecolorNode: (id: string, color: string | null) => void;
   onOpenRecent: (path: string) => void;
   onHideNode: (id: string) => void;
+  /** Open the GATE tuning screen for a MONO IN channel. */
+  onOpenGateScreen: (id: string) => void;
   onClose: () => void;
 }
 
@@ -510,7 +512,7 @@ export function renderInspector(
         const on = locked ? false : (np[sec.key] ?? sec.key === "eqOn");
         const { el, body } = section(m.inspector[sec.key], { open: on, on, key: sec.key });
         body.append(sectionToggle(node.id, sec.key, on, actions, locked ? m.inspector.eqRateLocked : undefined));
-        if (sec.key === "gateOn" && dyn) body.append(gateDetailBlock(node.id, dyn.gate, np, plan, actions, m));
+        if (sec.key === "gateOn" && dyn) body.append(gateLauncher(node.id, actions, m));
         else if (sec.key === "compOn" && ssmcs) body.append(ssmcsCompBlock(node.id, np, plan, actions, m));
         else if (sec.key === "compOn" && dyn?.comp)
           body.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
@@ -1653,25 +1655,21 @@ function duckerBlock(nodeId: string, np: NodeParams, plan: Plan, actions: Inspec
   return el;
 }
 
-// GATE detail sliders (threshold/range/attack/hold/decay) for a MONO IN channel.
-// The section's GATE ON toggle precedes this block (see renderInspector), so it
-// reads like the device's GATE screen — the GATE button heads its parameters.
-// Sliders mutate in place (no value drives a layout change), so none re-render.
-function gateDetailBlock(
-  nodeId: string,
-  fields: DynField[],
-  np: NodeParams,
-  plan: Plan,
-  actions: InspectorActions,
-  m: Messages,
-): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  const gate = (np.gate ?? {}) as Record<string, number | undefined>;
-  for (const f of fields)
-    frag.append(
-      dynFieldSlider(f, m, gate[f.key], (key, v) => mergeSection(actions, plan, nodeId, "gate", { [key]: v })),
-    );
-  return frag;
+// GATE section body for a MONO IN channel: the ON toggle (added by the caller)
+// and the control that opens the gate tuning screen. The five detail sliders used
+// to live here; they moved to that screen, which can show them beside the meters
+// that say what they are doing. Keeping a second copy here would not just
+// duplicate them — `dynFieldSlider` reads the params snapshot captured at render
+// time and never re-renders on a value change, so after the screen moved the
+// threshold these sliders would sit at the old position and write it back on the
+// next drag.
+function gateLauncher(nodeId: string, actions: InspectorActions, m: Messages): HTMLElement {
+  const btn = document.createElement("button");
+  btn.className = "gate-open";
+  btn.id = "btn-gate-screen";
+  btn.textContent = m.gateTuning.open;
+  btn.addEventListener("click", () => actions.onOpenGateScreen(nodeId));
+  return btn;
 }
 
 // COMP detail editor (MONO IN channels, COMP->EQ mode). Follows the COMP ON toggle
