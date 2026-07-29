@@ -170,7 +170,23 @@ test("switches between the ladder and the curve, replacing one with the other", 
 
   await box(page).locator("#gate-mode-ladder").click();
   await expect(box(page).locator(".gt-ladders")).toBeVisible();
-  await expect(box(page).locator(".gt-note")).toHaveCount(0);
+  await expect(box(page).locator(".gt-note")).toBeEmpty();
+});
+
+test("does not change height when the display mode is switched", async ({ page }) => {
+  // The hint belongs to CURVE alone, but its box is reserved in both modes: adding
+  // it on the switch grew the modal, moving the Close action and the parameter rows
+  // out from under the pointer. A hint that grew to two lines would bring that back,
+  // so this pins the equality rather than the reservation.
+  await openFromInspector(page, "ch1");
+  const height = async () => (await box(page).boundingBox())?.height ?? 0;
+  const ladder = await height();
+  await box(page).locator("#gate-mode-curve").click();
+  await expect(box(page).locator("#gate-curve")).toBeVisible();
+  expect(await height()).toBe(ladder);
+  await box(page).locator("#gate-mode-ladder").click();
+  await expect(box(page).locator(".gt-ladders")).toBeVisible();
+  expect(await height()).toBe(ladder);
 });
 
 test("the threshold cap moves with the value and shares its ruler", async ({ page }) => {

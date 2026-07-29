@@ -394,11 +394,16 @@ export class GateTuningModal {
     h.append(seg);
     sec.append(h);
     col.append(sec, this.mode === "ladder" ? this.ladderBox(g) : this.curveBox(g));
-    if (this.mode === "curve") {
-      const hint = el("p", "gt-note");
-      hint.textContent = g.curveHint;
-      col.append(hint);
-    }
+    // The hint is CURVE's alone — a fader cap on a meter explains itself, dragging
+    // a curve's knee does not — but its box is reserved in both modes. Adding it
+    // only in CURVE made the modal grow by its height on every switch, which moves
+    // the Close action and the parameter rows under the pointer. The reservation is
+    // exactly one line; `gt-note`'s fixed height keeps a longer string from silently
+    // reintroducing the jump (the E2E pins the two modes to equal height).
+    const hint = el("p", "gt-note");
+    if (this.mode === "curve") hint.textContent = g.curveHint;
+    else hint.setAttribute("aria-hidden", "true");
+    col.append(hint);
     return col;
   }
 

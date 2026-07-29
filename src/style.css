@@ -3604,10 +3604,16 @@ select:focus-visible,
   height: 1px;
   background: var(--plot-line);
 }
+/* Reserved in both display modes, filled only in CURVE: adding it on the switch
+   grew the modal by its height, moving the Close action and the parameter rows
+   under the pointer. One line exactly — a hint that wraps would bring the jump
+   back, which is why the height is fixed rather than a minimum. */
 .gt-note {
   margin: 10px 0 0 14px;
   font-size: 11.5px;
   line-height: 1.6;
+  height: 1.6em;
+  overflow: hidden;
   color: var(--text-faint);
 }
 
