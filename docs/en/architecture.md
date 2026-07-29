@@ -771,6 +771,10 @@ from the foot of the screen) on narrow viewports (≤720px). For nodes whose ins
 while the parameters group into collapsible rack-module sections (ROUTING / INPUT / GATE / COMP / EQ /
 Parameters) built on `<details>` (`section()` in `inspector.ts`). GATE / COMP / EQ / Ducker light their
 header led from each section's ON state and an off section folds itself away; ROUTING defaults collapsed.
+The GATE section holds its ON toggle and a control that opens the **gate tuning screen** — a modal that
+puts the five gate parameters beside the three meter taps showing their effect (spec:
+[dynamics-tuning.md](dynamics-tuning.md)); the CONSOLE's mono strips open the same screen from a chip
+beside their GATE chip. The screen owns the broker's single meter subscription slot while open.
 A node's ON/OFF (channel ON, each master, FX, MONITOR, Ducker, OSC) always leads its parameters, mirroring
 the canvas OFF display.
 A hand-folded section persists its open/closed state per section kind to `localStorage`

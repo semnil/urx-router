@@ -646,7 +646,11 @@ Follow USB (848) にも同じフラグが付いています。`core/control/devi
 ボトムシート (ラックの引き出し) に切り替わる。インスペクタが縦に伸びるノード (チャンネル等) では、選択ノードの
 同一性 (見出し・名前・色) を sticky ヘッダとして固定したまま、パラメータを `<details>` ベースの折りたたみ可能な
 ラック調モジュール (ROUTING / INPUT / GATE / COMP / EQ / Parameters) にグルーピングする (`inspector.ts` の
-`section()`)。GATE / COMP / EQ / Ducker は各セクションの ON 状態でヘッダの LED を点灯させ、OFF のセクションは
+`section()`)。GATE セクションは ON トグルと、**ゲート調整画面**を開くコントロールを持つ — 5 つの GATE
+パラメーターを、その効果を映す 3 つのメータータップの隣に置くモーダル (仕様:
+[dynamics-tuning.md](dynamics-tuning.md))。CONSOLE の mono ストリップも GATE チップ横のチップから同じ
+画面を開く。開いている間、この画面がブローカーの唯一のメーター購読スロットを持つ。
+GATE / COMP / EQ / Ducker は各セクションの ON 状態でヘッダの LED を点灯させ、OFF のセクションは
 自動で畳む。ROUTING は既定で畳む。ノードの ON/OFF (チャンネル ON・各マスター・FX・MONITOR・Ducker・OSC) は
 全種別でパラメータ群の先頭に置き、盤面の OFF 表示と対応させる。手動で開閉したセクションはセクション種別ごとに `localStorage`
 (`urx-inspector-sections`) へ永続化し、再描画・リロードをまたいで保持する。セクションの ON 値をトグルすると
