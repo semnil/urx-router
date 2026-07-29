@@ -1249,7 +1249,7 @@ export class Console {
     mute: boolean,
     on: boolean,
     toggle: () => boolean,
-    opts?: { readonlyTitle?: string; midiId?: string; title?: string; cls?: string },
+    opts?: { readonlyTitle?: string; midiId?: string; title?: string },
   ): void {
     parent.append(this.buildChip(id, label, on, toggle, { ...opts, mute }));
   }
@@ -1630,14 +1630,7 @@ export class Console {
       | "cueInterrupt"
       | "mono";
     const planOf = (): NodeParams => this.hooks.getPlan().nodeParams[m.id] ?? {};
-    const boolChip = (
-      parent: HTMLElement,
-      label: string,
-      key: BoolKey,
-      def: boolean,
-      title?: string,
-      cls?: string,
-    ): void => {
+    const boolChip = (parent: HTMLElement, label: string, key: BoolKey, def: boolean, title?: string): void => {
       this.makeChip(
         m.id,
         parent,
@@ -1649,7 +1642,7 @@ export class Console {
           this.nodeParamsOf(m.id)[key] = next;
           return next;
         },
-        { midiId: controlId(m.id, key), title, cls },
+        { midiId: controlId(m.id, key), title },
       );
     };
 
@@ -1707,7 +1700,7 @@ export class Console {
       // double-click is already the factory-value reset for the faders and knobs
       // here. It costs a slot in the two-per-row grid, so the processing chips
       // take a third row.
-      boolChip(proc, "GATE", "gateOn", false, undefined, "con-chip con-chip-3q");
+      boolChip(proc, "GATE", "gateOn", false);
       proc.append(this.gateOpenChip(m.id));
     }
     if (m.isMono) boolChip(proc, "COMP", "compOn", false);

@@ -44,6 +44,22 @@ const pushMeters = (page: Page, ...frames: Array<[number, number, number]>) =>
     frames,
   );
 
+/** The three taps this screen streams, in signal order. */
+const GATE_TAPS = [
+  [106, 0],
+  [107, 0],
+  [108, 0],
+];
+const expectGateTaps = (page: Page) =>
+  expect.poll(() => page.evaluate(() => window.__gateTest.meterAddrs)).toEqual(GATE_TAPS);
+
+/** Open the screen from the CONSOLE strip (the entry that leaves the console visible). */
+const openFromConsole = async (page: Page) => {
+  await page.click("#btn-view-console");
+  await page.locator(".con-strip").nth(0).locator(".con-chip-open").click();
+  await expect(box(page)).toBeVisible();
+};
+
 /** Open the screen from the inspector's GATE section (the GRAPH-side entry).
  *  The disclosure starts folded (GATE ships off) but its state persists per
  *  section kind, so this unfolds only when it is actually closed — a second call
@@ -208,7 +224,7 @@ test("remembers the display mode across opens and reloads", async ({ page }) => 
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await openFromInspector(page, "ch1");
   await expect(box(page).locator("#gate-curve")).toBeVisible();
-  await expect(box(page).locator("#gate-mode-curve")).toHaveAttribute("aria-selected", "true");
+  await expect(box(page).locator("#gate-mode-curve")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("the threshold cap moves with the value and shares its ruler", async ({ page }) => {
@@ -255,13 +271,7 @@ test.describe("with a live session", () => {
   test("subscribes to exactly the three taps of the opened channel", async ({ page }) => {
     await openFromInspector(page, "ch1");
     // 106 PRE GATE / 107 GATE GR / 108 PRE COMP, all on CH1's x0.
-    await expect
-      .poll(() => page.evaluate(() => window.__gateTest.meterAddrs))
-      .toEqual([
-        [106, 0],
-        [107, 0],
-        [108, 0],
-      ]);
+    await expectGateTaps(page);
   });
 
   test("hands the meter slot back when it closes", async ({ page }) => {
@@ -322,29 +332,15 @@ test.describe("with a live session", () => {
     // device goes quiet, runs a full reconcile as its missed-notify safety net.
     // That reconcile re-renders the console, and a console render re-subscribes —
     // which would take the meter slot back out from under this screen.
-    await page.click("#btn-view-console");
-    await page.locator(".con-strip").nth(0).locator(".con-chip-open").click();
-    await expect(box(page)).toBeVisible();
-    await expect
-      .poll(() => page.evaluate(() => window.__gateTest.meterAddrs))
-      .toEqual([
-        [106, 0],
-        [107, 0],
-        [108, 0],
-      ]);
+    await openFromConsole(page);
+    await expectGateTaps(page);
 
     await pushParam(page, 1, 0, 0, 300); // HA_GAIN on CH1 — a direct-follow scalar
     // IDLE_FULL_MS is 900 ms; wait past it for the safety-net reconcile.
     await page.waitForTimeout(1800);
 
     // The screen still owns its three addresses, so its meters keep updating.
-    await expect
-      .poll(() => page.evaluate(() => window.__gateTest.meterAddrs))
-      .toEqual([
-        [106, 0],
-        [107, 0],
-        [108, 0],
-      ]);
+    await expectGateTaps(page);
     await pushMeters(page, [107, 0, -239]);
     await expect(readout(page, "Gate GR").locator(".v")).toHaveText("-23.9");
   });

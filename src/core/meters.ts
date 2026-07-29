@@ -135,11 +135,7 @@ const getTapsMap = (modelId?: string): Record<string, MeterTap[]> => {
 //
 // GATE is a MONO IN feature, so only mono channels appear; x is the mono channel
 // index, the same axis as 106 / 108 (confirmed on URX44V at x0).
-const GR_TAPS_URX22: Record<string, readonly [number, number]> = {
-  ch1: [107, 0],
-  ch2: [107, 1],
-};
-const GR_TAPS_URX44: Record<string, readonly [number, number]> = {
+const GATE_GR_TAPS: Record<string, readonly [number, number]> = {
   ch1: [107, 0],
   ch2: [107, 1],
   ch3: [107, 2],
@@ -147,9 +143,11 @@ const GR_TAPS_URX44: Record<string, readonly [number, number]> = {
 };
 
 /** The GATE gain-reduction meter address for a node, or undefined when the node
- *  has no gate (every channel but MONO IN). */
+ *  has no gate (every channel but MONO IN). Which mono channels a model has is
+ *  already stated once in the level tables, so this defers to them rather than
+ *  restating the topology — URX22 has no ch3/ch4 there either. */
 export function gateGrAddr(nodeId: string, modelId?: string): readonly [number, number] | undefined {
-  return (modelId === "URX22" ? GR_TAPS_URX22 : GR_TAPS_URX44)[nodeId];
+  return getTapsMap(modelId)[nodeId] ? GATE_GR_TAPS[nodeId] : undefined;
 }
 
 const addrKey = (meterId: number, x: number): string => `${meterId}:${x}`;
@@ -284,13 +282,35 @@ export function tapAddrs(taps: Iterable<MeterTap>): Array<[number, number]> {
  * address keeps only the last. Anything folding across frames — a peak hold on a
  * meter the device does not hold itself — has to run here.
  */
+// The broker has ONE meter registration process-wide: `vd_meters_subscribe`
+// replaces whatever was registered, and `vd_meters_unsubscribe` takes no address.
+// The unsubscribe handle a caller holds is therefore a global operation wearing
+// the shape of a per-subscription one — a stale handle cancels whoever owns the
+// stream now, not the caller's own long-gone registration. Two such windows are
+// reachable with two consumers (a registration still in flight when the other
+// side takes over; a screen closing faster than its own subscribe round-trip),
+// and both surface as bars frozen on the floor, which reads as silence.
+//
+// Stamping each subscription with a generation closes them without asking the
+// consumers to coordinate: a release only unsubscribes if its generation is still
+// the current one. Ownership stays where the resource is, not in one of the
+// consumers.
+let meterGeneration = 0;
+
 export function subscribeMeters(
   store: MeterStore,
   addrs: Array<[number, number]>,
   onUpdate?: (m: MeterUpdate) => void,
 ): Promise<() => void> {
+  const generation = ++meterGeneration;
   return vdMetersSubscribe(addrs, (m) => {
+    // A late frame from a superseded registration must not reach the new owner's
+    // store — it would be a reading from an address it never asked for.
+    if (generation !== meterGeneration) return;
     store.apply(m);
     onUpdate?.(m);
+  }).then((unsub) => () => {
+    if (generation !== meterGeneration) return;
+    unsub();
   });
 }

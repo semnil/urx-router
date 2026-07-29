@@ -71,6 +71,23 @@ export function wireDismiss(opts: { keep: (target: Node) => boolean; inert?: () 
   };
 }
 
+// Native <input type=range> ignores the scroll wheel, so wire it up via onWheelStep:
+// a notch nudges the value one step and fires 'input' so the row's own listener
+// updates the readout and reports the change. Shared by the inspector's sliders,
+// the Device setup brightness row and the gate screen's parameter rows — every
+// range input in the app steps by the wheel-step preference, or none should.
+export function wheelStep(slider: HTMLInputElement): void {
+  onWheelStep(slider, (dir) => {
+    const step = Number(slider.step) || 1;
+    const lo = Number(slider.min);
+    const hi = Number(slider.max);
+    const next = Math.min(hi, Math.max(lo, scrubFloat(Number(slider.value) + dir * step)));
+    if (next === Number(slider.value)) return;
+    slider.value = String(next);
+    slider.dispatchEvent(new Event("input"));
+  });
+}
+
 // Vertical placement for a floating popover: `gap` px below the anchor rect,
 // flipped above it when the viewport bottom is too close, clamped to a 6px
 // viewport inset. Shared by the console popovers and the MIDI legend card so

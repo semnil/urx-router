@@ -436,6 +436,7 @@ function reflectFollow(): void {
     if (graphHost.hidden) graphDirty = true;
     else graph.refresh();
     syncRateUi(); // also refreshes the console (applyRateConstraints)
+    gateTuning.refresh();
     live?.resync();
   } else {
     // Direct-only: repaint just the changed nodes / strips. The snapshot is already
@@ -443,6 +444,9 @@ function reflectFollow(): void {
     if (graphHost.hidden) graphDirty = true;
     else graph.repaintDirtyNodes(ids);
     for (const id of ids) consoleView.refreshStrip(id);
+    // The gate screen shows a snapshot of the same node params, so a device-side
+    // gate edit under it would otherwise leave stale slider positions on screen.
+    gateTuning.refresh();
   }
 }
 // A reconcile read that fails loses the device-side change it was called for —
@@ -582,6 +586,12 @@ function setLiveUi(on: boolean): void {
   // The Preferences device-scope control locks while the session is up; re-render
   // the modal if it is open (a link loss can end the session behind the scrim).
   prefs.refresh();
+  // The surfaces that stream meters. Ordering is load-bearing and lives here for
+  // that reason: the console subscribes, then the gate screen (if open) takes the
+  // one broker slot back off it. Every way in and out of a session already passes
+  // through this function, so a new path cannot desync them by forgetting a call.
+  consoleView.setLive(on);
+  gateTuning.setLive(on);
   // The sleep hold lives and dies with the session, so every way in and out of one
   // — the toggle, a write failure, a link loss — passes through here.
   void syncSleepHold(on && getSettings().preventSleep).then((failed) => {
@@ -598,8 +608,6 @@ function deactivateLive(status?: string): void {
   live?.end();
   void vdDisconnect(liveEpoch);
   setLiveUi(false);
-  consoleView.setLive(false);
-  gateTuning.setLive(false);
   // A CH → FX tap shown read-only while live becomes editable again off-line.
   refreshInspector();
   if (status) setStatus(status);
@@ -1997,10 +2005,6 @@ if (!DEMO) {
         liveEpoch = device.epoch;
         liveSessionUp = true;
         setLiveUi(true);
-        consoleView.setLive(true);
-        // The gate screen holds the meter slot while open, so nothing else will
-        // re-establish its stream for it.
-        gateTuning.setLive(true);
         setStatus(t().status.liveOn(device.model, result.applied));
       } catch (err) {
         await failLive(t().status.liveError(errorText(err)));
@@ -2489,6 +2493,7 @@ onLangChange(() => {
   // the same time (its notes are translated even though its labels are not).
   prefs.refresh();
   deviceSetup?.refresh();
+  gateTuning.refresh();
   setStatus(t().status.language(LANG_NAMES[getLang()]));
 });
 

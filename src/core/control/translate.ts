@@ -753,6 +753,23 @@ export const DUCKER_FIELDS: DynField[] = [
   { key: "threshold", name: "DUCKER_THRESHOLD", min: -60, max: 0, step: 1, def: -40, unit: "db" },
 ];
 
+/** Format one dynamics value for display, by its unit. The single source for the
+ *  inspector, the gate screen and anything else that prints a DynField. */
+export function formatDyn(v: number, unit: DynField["unit"]): string {
+  if (unit === "db") return `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
+  if (unit === "ratio") return `${v.toFixed(1)}:1`;
+  return v < 1 ? `${v.toFixed(3)} ms` : `${v.toFixed(1)} ms`;
+}
+
+/** The display text for a field's current value, including GATE range's -∞ notch
+ *  (one step below its -72 dB floor = fully closed). Keyed off the field itself so
+ *  the two surfaces that print it cannot disagree on which field owns the notch —
+ *  they previously tested `name === "GATE_RANGE"` and `key === "range"`. */
+export function dynValueText(f: DynField, v: number): string {
+  if (f.name === "GATE_RANGE" && v <= GATE_RANGE_OFF_DB) return "-∞ dB";
+  return formatDyn(v, f.unit);
+}
+
 /** GATE/COMP detail controls for a channel: the slider fields and the instance index. */
 export interface ChannelDynamics {
   y: number;

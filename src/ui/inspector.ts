@@ -60,6 +60,7 @@ import {
 } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
+  DUCKER_FIELDS,
   busBalance,
   busFader,
   busMasterOn,
@@ -67,8 +68,9 @@ import {
   channelDynamics,
   channelSections,
   colorControl,
-  DUCKER_FIELDS,
   duckerControl,
+  dynValueText,
+  formatDyn,
   fxChannelIndex,
   inputEq,
   insertFxControl,
@@ -155,7 +157,6 @@ import {
   PHONES_LEVEL_MIN,
   PHONES_LEVEL_MAX,
   PHONES_LEVEL_DEFAULT,
-  GATE_RANGE_OFF_DB,
 } from "../core/control/vd";
 import { channelDuckerOn, channelEqUnavailable, duckerBypassWarnings, rateConstraints } from "../core/constraints";
 import { getSettings } from "../core/settings";
@@ -163,7 +164,7 @@ import { loadJson, saveJson } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
 import { setLevelText } from "./glyph";
-import { onWheelStep, scrubFloat } from "./dom";
+import { wheelStep } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
@@ -1051,21 +1052,6 @@ function paramControl(
     : panSlider(conn, onUpdate, panLabel);
 }
 
-// Native <input type=range> ignores the scroll wheel, so wire it up via onWheelStep:
-// a notch nudges the value one step and fires 'input' so the row's own listener updates
-// the readout and reports the change. Shared by rangeSlider and snappedSlider.
-function wheelStep(slider: HTMLInputElement): void {
-  onWheelStep(slider, (dir) => {
-    const step = Number(slider.step) || 1;
-    const lo = Number(slider.min);
-    const hi = Number(slider.max);
-    const next = Math.min(hi, Math.max(lo, scrubFloat(Number(slider.value) + dir * step)));
-    if (next === Number(slider.value)) return;
-    slider.value = String(next);
-    slider.dispatchEvent(new Event("input"));
-  });
-}
-
 // A labeled range slider that updates its value readout and reports the numeric
 // value on every input. Mutates in place (no re-render) so it keeps focus while
 // dragging. Shared by the connection (panSlider) and node-level controls.
@@ -1265,12 +1251,6 @@ function eqBandBlock(
   return frag;
 }
 
-function formatDyn(v: number, unit: DynField["unit"]): string {
-  if (unit === "db") return `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
-  if (unit === "ratio") return `${v.toFixed(1)}:1`;
-  return v < 1 ? `${v.toFixed(3)} ms` : `${v.toFixed(1)} ms`;
-}
-
 // One GATE/COMP/ducker detail slider, labeled and formatted by its unit. The dyn
 // labels cover all slider field keys (a subset of the DynField.key union, which
 // also spans the comp toggle keys), so index them via a string view.
@@ -1281,11 +1261,7 @@ function dynFieldSlider(
   onSet: (key: DynField["key"], v: number) => void,
 ): HTMLElement {
   const label = (m.inspector.dyn as Record<string, string>)[f.key];
-  // GATE range has a -∞ notch (one step below its -72 dB floor = fully closed).
-  const fmt =
-    f.name === "GATE_RANGE"
-      ? (v: number) => (v <= GATE_RANGE_OFF_DB ? "-∞ dB" : formatDyn(v, f.unit))
-      : (v: number) => formatDyn(v, f.unit);
+  const fmt = (v: number): string => dynValueText(f, v);
   // COMP gain is the only dyn param with a device-verified fine grid.
   const fine = f.name === "COMP_GAIN" ? FINE_GAIN_STEP_DB : undefined;
   return rangeSlider(label, f.min, f.max, f.step, cur ?? f.def, fmt, (v) => onSet(f.key, v), fine);

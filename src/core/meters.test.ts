@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import * as platform from "./platform";
 import {
   decodeGrDb,
   decodeMeterDb,
@@ -9,11 +10,14 @@ import {
   MeterStore,
   METER_OVER_RAW,
   METER_TOP_DB,
+  subscribeMeters,
   tapAddrs,
   tapFor,
   tapsFor,
 } from "./meters";
 import { MODELS, MODEL_IDS } from "../models/index";
+
+afterEach(() => vi.restoreAllMocks());
 
 // MeterStore.reading() was removed (no production consumer — console.ts reads via
 // readingTap). These pins exercise the same decode path through the public
@@ -248,5 +252,46 @@ describe("meter address table has no collisions", () => {
       expect(owner.size, modelId).toBeGreaterThan(10);
       expect(collisions).toEqual([]);
     }
+  });
+});
+
+describe("meter subscription ownership", () => {
+  // The broker has one registration process-wide and its unsubscribe takes no
+  // address, so a handle held past a takeover would cancel the new owner's stream.
+  it("ignores a release from a superseded subscription", async () => {
+    const calls: string[] = [];
+    vi.spyOn(platform, "vdMetersSubscribe").mockImplementation((addrs) => {
+      const tag = addrs.map((a) => a.join(":")).join(",");
+      calls.push(`sub ${tag}`);
+      return Promise.resolve(() => calls.push(`unsub ${tag}`));
+    });
+
+    const first = new MeterStore();
+    const second = new MeterStore();
+    const releaseFirst = await subscribeMeters(first, [[106, 0]]);
+    const releaseSecond = await subscribeMeters(second, [[107, 0]]);
+
+    releaseFirst(); // the displaced consumer catching up — must not cancel #2
+    expect(calls).toEqual(["sub 106:0", "sub 107:0"]);
+
+    releaseSecond();
+    expect(calls).toEqual(["sub 106:0", "sub 107:0", "unsub 107:0"]);
+  });
+
+  it("drops frames from a superseded subscription", async () => {
+    let deliver: ((m: { meterId: number; x: number; value: number }) => void) | null = null;
+    vi.spyOn(platform, "vdMetersSubscribe").mockImplementation((_addrs, onUpdate) => {
+      deliver = onUpdate;
+      return Promise.resolve(() => {});
+    });
+
+    const stale = new MeterStore();
+    await subscribeMeters(stale, [[106, 0]]);
+    const staleDeliver = deliver!;
+    await subscribeMeters(new MeterStore(), [[107, 0]]);
+
+    // A frame still in flight for the old registration reaches its callback.
+    staleDeliver({ meterId: 106, x: 0, value: -200 });
+    expect(stale.readingTap({ key: "pregate", label: "PRE GATE", l: [106, 0] })).toBeNull();
   });
 });
