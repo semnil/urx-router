@@ -58,21 +58,42 @@ describe("LiveSync flush cadence", () => {
     expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
   });
 
-  it("coalesces a continuous drag into a single device write", async () => {
+  it("tracks a continuous drag instead of waiting for it to stop", async () => {
     const plan = basePlan();
     const live = liveFor(plan);
     live.begin();
-    // 30 input events ~16ms apart (a smooth ~480ms drag), each below the 120ms
-    // debounce, so the trailing timer keeps resetting and nothing is sent yet.
+    // 30 input events ~16ms apart (a smooth ~480ms drag), every one of them inside
+    // the 120ms window. A window that re-armed on each event never elapsed at all,
+    // so the device heard nothing until the pointer stopped; the throttle flushes
+    // at the end of each window instead.
     for (let i = 1; i <= 30; i++) {
       setCh1Fader(plan, -i);
       live.schedule();
       await vi.advanceTimersByTimeAsync(16);
     }
+    expect(vi.mocked(vdSet).mock.calls.length).toBeGreaterThanOrEqual(3);
+    // And the drag's final value still lands once it settles.
+    await vi.advanceTimersByTimeAsync(120);
+    const last = vi.mocked(vdSet).mock.calls.at(-1);
+    expect(last?.[3]).toBe(-3000); // -30 dB in centi-dB
+  });
+
+  it("coalesces the events inside one window into a single write", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    // Five events well inside one window: they reach the device as one write
+    // carrying the last value, because the flush diffs the plan rather than
+    // replaying the edits.
+    for (let i = 1; i <= 5; i++) {
+      setCh1Fader(plan, -i);
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(10);
+    }
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
-    // The drag ends; the debounce settles and flushes once with the final value.
     await vi.advanceTimersByTimeAsync(120);
     expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(vdSet).mock.calls[0][3]).toBe(-500); // -5 dB, the last of the five
   });
 
   it("sends each step when the drag pauses longer than the debounce", async () => {
@@ -108,6 +129,54 @@ function setCh1CompEqType(plan: Plan, type: number): void {
 }
 
 describe("LiveSync sideEffect converge", () => {
+  it("goes back to waiting for quiet while flushes are converging", async () => {
+    // A converge re-reads the whole write scope and settles between rounds, so
+    // flushing once per window would chain converge rounds for as long as the drag
+    // lasts. The EQ 1-knob level is exactly this case: a dragged slider on a
+    // sideEffect param. After a converging flush the window re-arms again, which
+    // is the pre-throttle behaviour, until a flush goes out without one.
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000); // let the converge finish
+    const afterConverge = vi.mocked(vdSet).mock.calls.length;
+
+    // Now a continuous stream on the same sideEffect param: nothing may go out
+    // while it is in motion.
+    for (let i = 0; i < 10; i++) {
+      setCh1CompEqType(plan, i % 2);
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(16);
+    }
+    expect(vi.mocked(vdSet).mock.calls.length).toBe(afterConverge);
+  });
+
+  it("does not silence an ordinary drag that merely follows a converge", async () => {
+    // The back-off asks the pending diff, not "did the last flush converge". A
+    // latch on history alone would put the next gesture — a plain fader drag after
+    // flipping an insert FX or a signal type — back on the re-arming window and
+    // send nothing until the pointer stopped, which is the behaviour the throttle
+    // exists to remove.
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000); // the converge finishes
+    const afterConverge = vi.mocked(vdSet).mock.calls.length;
+
+    for (let i = 1; i <= 30; i++) {
+      setCh1Fader(plan, -i);
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(16);
+    }
+    expect(vi.mocked(vdSet).mock.calls.length).toBeGreaterThan(afterConverge + 2);
+  });
+
   it("does not drop an edit that arrives during a sideEffect converge", async () => {
     const plan = basePlan();
     const live = liveFor(plan);
