@@ -43,6 +43,7 @@ import { GATE_RANGE_OFF_DB } from "../core/control/vd";
 import type { DynField } from "../core/control/translate";
 import type { DeviceModel } from "../models/types";
 import type { NodeParams, Plan } from "../core/plan";
+import { loadJson, saveJson } from "../core/storage";
 
 /** The screen's vertical ruler: the exact domain a GATE threshold can occupy, so
  *  a cap position maps to a threshold value linearly. */
@@ -75,6 +76,10 @@ const PEAK_HOLD_FRAMES = 12;
  *  the screen, since no interpolation is applied between frames. */
 const FRAME_MS = 1000 / 30;
 
+/** Persisted display mode. Its own key, like `urx-sends-open` and
+ *  `urx-metertap`: this is per-surface UI state, not a Preferences setting. */
+const MODE_STORE = "urx-gate-display";
+
 type Mode = "ladder" | "curve";
 
 export interface GateTuningHooks {
@@ -103,7 +108,10 @@ export class GateTuningModal {
   private readonly scrim: HTMLElement;
   private readonly box: HTMLElement;
   private nodeId = "";
-  private mode: Mode = "ladder";
+  // Which display the operator last worked in, kept across opens and sessions the
+  // way the SENDS collapse and the meter point are. Not model-scoped like the
+  // meter point: this picks a way of reading a gate, not a per-device mapping.
+  private mode: Mode = loadJson<Mode>(MODE_STORE, "ladder") === "curve" ? "curve" : "ladder";
 
   private readonly store = new MeterStore();
   private unsub: (() => void) | null = null;
@@ -402,6 +410,7 @@ export class GateTuningModal {
       b.addEventListener("click", () => {
         if (this.mode === mode) return;
         this.mode = mode;
+        saveJson(MODE_STORE, mode);
         this.render();
       });
       return b;

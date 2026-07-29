@@ -44,11 +44,14 @@ const pushMeters = (page: Page, ...frames: Array<[number, number, number]>) =>
     frames,
   );
 
-/** Open the screen from the inspector's GATE section (the GRAPH-side entry). */
+/** Open the screen from the inspector's GATE section (the GRAPH-side entry).
+ *  The disclosure starts folded (GATE ships off) but its state persists per
+ *  section kind, so this unfolds only when it is actually closed — a second call
+ *  in the same session would otherwise fold it again and hide the launcher. */
 const openFromInspector = async (page: Page, id: string) => {
   await node(page, id).click();
   const gate = section(page, /^GATE$/);
-  await gate.locator("summary").click(); // GATE folds off by default
+  if (!(await gate.evaluate((el) => (el as HTMLDetailsElement).open))) await gate.locator("summary").click();
   await gate.locator("#btn-gate-screen").click();
   await expect(box(page)).toBeVisible();
 };
@@ -187,6 +190,25 @@ test("does not change height when the display mode is switched", async ({ page }
   await box(page).locator("#gate-mode-ladder").click();
   await expect(box(page).locator(".gt-ladders")).toBeVisible();
   expect(await height()).toBe(ladder);
+});
+
+test("remembers the display mode across opens and reloads", async ({ page }) => {
+  await openFromInspector(page, "ch1");
+  await box(page).locator("#gate-mode-curve").click();
+  await expect(box(page).locator("#gate-curve")).toBeVisible();
+  await box(page).locator(".consent-btn-primary").click();
+
+  // Same session, reopened: still CURVE.
+  await openFromInspector(page, "ch1");
+  await expect(box(page).locator("#gate-curve")).toBeVisible();
+  await box(page).locator(".consent-btn-primary").click();
+
+  // And across a reload — the pick is stored, not just held in the instance.
+  await page.reload();
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await openFromInspector(page, "ch1");
+  await expect(box(page).locator("#gate-curve")).toBeVisible();
+  await expect(box(page).locator("#gate-mode-curve")).toHaveAttribute("aria-selected", "true");
 });
 
 test("the threshold cap moves with the value and shares its ruler", async ({ page }) => {
