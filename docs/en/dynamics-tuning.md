@@ -74,8 +74,11 @@ shrink to make room for the other.
   threshold's exact domain, so the cap's position and its value stay proportional. This is why it
   does not reuse the CONSOLE's ruler, which is spaced by detent index.
 - **CURVE** — the static in/out transfer plot, where the threshold is the knee and the range is the
-  drop below it. With any usual range the closed shelf lands below the plot floor, so it is clamped
-  to the floor and labelled; an amber line that merely stopped would read as a broken render.
+  drop below it. Its **output axis is not the input axis**: it runs to the GR floor (-128 dB) while
+  the input spans -72..0. The closed shelf sits at threshold + range, which for most of the range
+  domain falls below -72 dB — at the factory settings -50 + -56 = -106 dB — so a shared floor pinned
+  every range past -22 dB to the same line and range was invisible. Only a -∞ range now reaches the
+  axis floor, and the drop is labelled with the range it represents.
 
 The explanatory note under the display appears in CURVE only: a fader cap on a meter explains
 itself, dragging a curve's knee does not.
@@ -142,6 +145,10 @@ be *edited* — only to be *observed*.
 
 | Rejected | Why |
 | --- | --- |
+| Sharing the input's -72 dB floor for the curve's output axis | At the factory threshold, 70% of the range domain put the shelf off scale: moving range from -30 to -56 dB moved the drawing by 0% of the plot height |
+| A log-compressed output axis | dB is already a log unit, and compressing it again squeezes precisely the deep region range occupies. Measured at 8.5% for the same -30 → -56 step, against 20% for simply extending the axis |
+| Plotting gain (out − in) instead of output | The most legible of the four measured (35.6%), and its axis is exactly what meter 107 reports — but it is a gain curve, not a transfer curve, so the 1:1 region flattens to a line at 0 dB and the plugin convention is lost |
+| Auto-scaling the output axis to fit the shelf | The shelf stays visible, but dragging range then moves the tick labels instead of the line, so nothing reads as changing |
 | GR as an eighth entry in `monoTaps` | `tapsFor` is the CONSOLE meter-point selector's contract; GR would become a selectable strip meter drawn on the dBFS ladder with signal color zones. Also breaks two pinning tests |
 | GR on a fixed 0..-30 dB full scale | Saturates at the factory range (-56 dB) — it stops carrying information exactly when the gate is working |
 | GR on a range-following full scale | Fixes the saturation but puts a second scale under the shared tick column: it looks readable against the neighbouring ticks and is not |

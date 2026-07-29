@@ -50,6 +50,22 @@ const LO_DB = -72;
 const HI_DB = 0;
 const SPAN_DB = HI_DB - LO_DB;
 
+// The curve's output axis, which is deliberately NOT the input axis. The closed
+// shelf sits at threshold + range, and for most of the range domain that falls
+// below the -72 dB the input spans — at the factory settings -50 + -56 = -106 dB.
+// Sharing the input's floor pinned every range past -22 dB to the same line, so
+// at the factory threshold 70% of the range domain drew an identical picture and
+// range was invisible. Running the output axis to the GR floor puts the shelf on
+// scale: moving range from -30 to -56 shifts it by 20% of the plot height, from
+// 0% before. A log-compressed axis was measured too and is worse (8.5%) — dB is
+// already a log unit, and compressing it again squeezes exactly the deep region
+// range lives in.
+const OUT_LO_DB = -128;
+const OUT_SPAN_DB = HI_DB - OUT_LO_DB;
+/** Output-axis gridlines. Coarser than the input's 12 dB step: the axis is 1.8×
+ *  longer and the region below -72 dB is context, not something to read off. */
+const OUT_TICKS = [0, -24, -48, -72, -96, -128];
+
 /** Peak hold, in notify frames (100 ms each). Nothing on the device sets this —
  *  the level meters hold in hardware and GR holds not at all — so it is a UI
  *  choice: long enough to read a value that arrived while looking elsewhere. */
@@ -644,27 +660,37 @@ export class GateTuningModal {
     const gr = tok("--gr");
 
     const px = (db: number): number => CURVE_PAD.l + ((db - LO_DB) / SPAN_DB) * (w - CURVE_PAD.l - CURVE_PAD.r);
-    const py = (db: number): number => h - CURVE_PAD.b - ((db - LO_DB) / SPAN_DB) * (h - CURVE_PAD.t - CURVE_PAD.b);
+    const py = (db: number): number =>
+      h - CURVE_PAD.b - ((db - OUT_LO_DB) / OUT_SPAN_DB) * (h - CURVE_PAD.t - CURVE_PAD.b);
 
     c.font = '9.5px "SF Mono", Menlo, Consolas, monospace';
     c.strokeStyle = line;
     c.lineWidth = 1;
     c.fillStyle = faint;
+    c.textAlign = "center";
     for (let db = LO_DB; db <= HI_DB; db += 12) {
       c.beginPath();
       c.moveTo(px(db) + 0.5, CURVE_PAD.t);
       c.lineTo(px(db) + 0.5, h - CURVE_PAD.b);
+      c.stroke();
+      c.fillText(String(db), px(db), h - CURVE_PAD.b + 13);
+    }
+    c.textAlign = "right";
+    for (const db of OUT_TICKS) {
+      c.beginPath();
       c.moveTo(CURVE_PAD.l, py(db) + 0.5);
       c.lineTo(w - CURVE_PAD.r, py(db) + 0.5);
       c.stroke();
-      c.textAlign = "center";
-      c.fillText(String(db), px(db), h - CURVE_PAD.b + 13);
-      c.textAlign = "right";
       c.fillText(String(db), CURVE_PAD.l - 6, py(db) + 3);
     }
     c.fillStyle = dim;
     c.textAlign = "left";
     c.fillText("IN dBFS", w - CURVE_PAD.r - 58, h - CURVE_PAD.b + 24);
+    c.save();
+    c.translate(13, h - CURVE_PAD.b - 2);
+    c.rotate(-Math.PI / 2);
+    c.fillText("OUT dBFS", 0, 0);
+    c.restore();
 
     // Unity reference, so the shelf's drop reads against something.
     c.strokeStyle = faint;
@@ -683,7 +709,7 @@ export class GateTuningModal {
     const rangeDb = vals.range ?? rangeField?.def ?? -56;
     // range at its -∞ notch closes completely; the shelf then sits at the floor.
     const drop = rangeDb <= GATE_RANGE_OFF_DB ? GR_FLOOR_DB : rangeDb;
-    const clampY = (db: number): number => py(Math.max(db, LO_DB));
+    const clampY = (db: number): number => py(Math.max(db, OUT_LO_DB));
 
     c.strokeStyle = led;
     c.lineWidth = 2;
@@ -696,9 +722,9 @@ export class GateTuningModal {
     c.lineTo(px(HI_DB), py(HI_DB));
     c.stroke();
 
-    // The knee's drop. With any usual range the shelf lands below the plot floor,
-    // so it is clamped and labelled — an amber line that merely stops reads as a
-    // broken render rather than as "fully closed".
+    // The knee's drop, labelled with the range it represents. Only a -∞ range now
+    // reaches the axis floor; every finite range lands on scale, which is the
+    // point of running the output axis past the input's.
     c.strokeStyle = gr;
     c.setLineDash([3, 3]);
     c.beginPath();
@@ -706,12 +732,11 @@ export class GateTuningModal {
     c.lineTo(px(thr), clampY(thr + drop));
     c.stroke();
     c.setLineDash([]);
-    if (thr + drop < LO_DB) {
-      c.fillStyle = gr;
-      c.textAlign = "right";
-      const shown = rangeDb <= GATE_RANGE_OFF_DB ? "-∞" : formatDyn(drop, "db");
-      c.fillText(shown, w - CURVE_PAD.r - 4, py(LO_DB) - 7);
-    }
+    c.fillStyle = gr;
+    c.textAlign = px(thr) > w - CURVE_PAD.r - 80 ? "right" : "left";
+    const shown = rangeDb <= GATE_RANGE_OFF_DB ? "-∞" : formatDyn(rangeDb, "db");
+    const shelfY = clampY(thr + drop);
+    c.fillText(shown, px(thr) + (c.textAlign === "right" ? -6 : 6), Math.min(shelfY - 6, h - CURVE_PAD.b - 4));
 
     c.strokeStyle = led;
     c.globalAlpha = 0.35;
