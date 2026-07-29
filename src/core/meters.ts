@@ -126,6 +126,32 @@ const getTapsMap = (modelId?: string): Record<string, MeterTap[]> => {
   return NODE_TAPS_URX44V;
 };
 
+// Gain-reduction meters, kept in their own table rather than as an eighth entry in
+// `monoTaps`. `tapsFor` is also the CONSOLE meter-point selector's contract, and a
+// reduction is not a signal level: listed there it would be selectable as a strip
+// meter and drawn on the dBFS ladder with its color zones. Separate tables also
+// leave room for the other confirmed GR meters (COMP 110 / DUCKER 119 / insert FX
+// 132, 133) without touching the level chain.
+//
+// GATE is a MONO IN feature, so only mono channels appear; x is the mono channel
+// index, the same axis as 106 / 108 (confirmed on URX44V at x0).
+const GR_TAPS_URX22: Record<string, readonly [number, number]> = {
+  ch1: [107, 0],
+  ch2: [107, 1],
+};
+const GR_TAPS_URX44: Record<string, readonly [number, number]> = {
+  ch1: [107, 0],
+  ch2: [107, 1],
+  ch3: [107, 2],
+  ch4: [107, 3],
+};
+
+/** The GATE gain-reduction meter address for a node, or undefined when the node
+ *  has no gate (every channel but MONO IN). */
+export function gateGrAddr(nodeId: string, modelId?: string): readonly [number, number] | undefined {
+  return (modelId === "URX22" ? GR_TAPS_URX22 : GR_TAPS_URX44)[nodeId];
+}
+
 const addrKey = (meterId: number, x: number): string => `${meterId}:${x}`;
 
 /** Decode a raw broker meter value to dBFS. OVER and the silence floor both
@@ -133,6 +159,23 @@ const addrKey = (meterId: number, x: number): string => `${meterId}:${x}`;
 export function decodeMeterDb(raw: number): number {
   if (raw === METER_OVER_RAW) return METER_TOP_DB;
   return raw / 10;
+}
+
+/** Deepest reduction a GR meter reports: raw -1280, the same floor the level
+ *  meters rest at, reached when the gate closes with range at -∞. */
+export const GR_FLOOR_DB = -128;
+
+/**
+ * Decode a raw GR meter value to gain reduction in dB (≤ 0). This cannot reuse
+ * `decodeMeterDb`: a GR meter idles at *two* values — measured on a URX44V, the
+ * gate reports 0 while switched off and the OVER sentinel 32767 while switched on
+ * and open — and `decodeMeterDb` maps the sentinel to 0 dBFS while `readingTap`
+ * separately raises its `over` flag, which would light a clip indicator for a gate
+ * that is simply passing signal. Both idle values mean "no reduction" here.
+ */
+export function decodeGrDb(raw: number): number {
+  if (raw === METER_OVER_RAW || raw >= 0) return 0;
+  return Math.max(raw / 10, GR_FLOOR_DB);
 }
 
 /** The tap points a node exposes (signal order), or [] when it has no meter. */
@@ -201,6 +244,16 @@ export class MeterStore {
       overR: rRaw === METER_OVER_RAW,
       stereo: tap.r !== undefined,
     };
+  }
+
+  /** Latest gain reduction in dB (≤ 0) for a GR meter address, or null when the
+   *  address has reported nothing yet — same contract as `readingTap`, so a
+   *  screen that has just subscribed prints "—" rather than claiming 0 dB of
+   *  reduction, which would read as "the gate is passing everything". */
+  readGr(addr: readonly [number, number] | undefined): number | null {
+    if (!addr) return null;
+    const raw = this.raw.get(addrKey(addr[0], addr[1]));
+    return raw === undefined ? null : decodeGrDb(raw);
   }
 }
 
