@@ -292,6 +292,8 @@ export interface ConsoleHooks {
    *  indistinguishable from silence, so the host surfaces this rather than
    *  leaving a live session that quietly shows nothing. */
   onMeterError?: (message: string) => void;
+  /** Open the GATE tuning screen for a MONO IN channel. */
+  onOpenGateScreen?: (id: string) => void;
   midi?: ConsoleMidiHooks;
 }
 
@@ -1239,9 +1241,24 @@ export class Console {
     mute: boolean,
     on: boolean,
     toggle: () => boolean,
-    opts?: { readonlyTitle?: string; midiId?: string; title?: string },
+    opts?: { readonlyTitle?: string; midiId?: string; title?: string; cls?: string },
   ): void {
     parent.append(this.buildChip(id, label, on, toggle, { ...opts, mute }));
+  }
+
+  /** The narrow chip beside GATE that opens the tuning screen. Momentary, so it
+   *  deliberately skips `buildChip`: that runs `commit()` after its toggle, and
+   *  this button changes nothing to commit. `wireActivate` still gives it the
+   *  keyboard activation and the MIDI-learn guard the chips have — with no
+   *  `midiId`, since a screen is not a device parameter to map. */
+  private gateOpenChip(id: string): HTMLElement {
+    const chip = el("div", "con-chip con-chip-open");
+    chip.textContent = "▸";
+    chip.setAttribute("role", "button");
+    chip.title = t().gateTuning.open;
+    chip.setAttribute("aria-label", t().gateTuning.open);
+    this.wireActivate(chip, undefined, () => this.hooks.onOpenGateScreen?.(id));
+    return chip;
   }
 
   // The chip primitive, returning the element. `cls` picks the base class (con-chip
@@ -1605,7 +1622,14 @@ export class Console {
       | "cueInterrupt"
       | "mono";
     const planOf = (): NodeParams => this.hooks.getPlan().nodeParams[m.id] ?? {};
-    const boolChip = (parent: HTMLElement, label: string, key: BoolKey, def: boolean, title?: string): void => {
+    const boolChip = (
+      parent: HTMLElement,
+      label: string,
+      key: BoolKey,
+      def: boolean,
+      title?: string,
+      cls?: string,
+    ): void => {
       this.makeChip(
         m.id,
         parent,
@@ -1617,7 +1641,7 @@ export class Console {
           this.nodeParamsOf(m.id)[key] = next;
           return next;
         },
-        { midiId: controlId(m.id, key), title },
+        { midiId: controlId(m.id, key), title, cls },
       );
     };
 
@@ -1667,7 +1691,17 @@ export class Console {
 
     // processing group (GATE / COMP / EQ / INS FX / DUCKER)
     const proc = el("div", "con-chips");
-    if (m.isMono) boolChip(proc, "GATE", "gateOn", false);
+    if (m.isMono) {
+      // GATE keeps its chip (the ON toggle) and gains a narrow neighbour that
+      // opens the tuning screen. A separate chip rather than a gesture on the
+      // existing one: `wireActivate` binds click and Space/Enter with no `detail`
+      // guard, so a double-click would toggle the gate twice and write twice, and
+      // double-click is already the factory-value reset for the faders and knobs
+      // here. It costs a slot in the two-per-row grid, so the processing chips
+      // take a third row.
+      boolChip(proc, "GATE", "gateOn", false, undefined, "con-chip con-chip-3q");
+      proc.append(this.gateOpenChip(m.id));
+    }
     if (m.isMono) boolChip(proc, "COMP", "compOn", false);
     const rate = this.hooks.getPlan().sampleRate;
     if (m.hasEq) {

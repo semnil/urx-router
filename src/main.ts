@@ -400,6 +400,7 @@ const consoleView = new Console(consoleHost, {
   // The meter stream failed to register. Floor-stuck bars read as "no signal",
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
+  onOpenGateScreen: (id) => gateTuning.open(id),
   // MIDI learn: while the panel's learn mode is on, console controls arm for
   // binding instead of editing (no-ops while midi is absent — browser / demo).
   midi: {

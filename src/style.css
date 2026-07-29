@@ -1790,6 +1790,17 @@ select:focus-visible,
   cursor: pointer;
   user-select: none;
 }
+/* GATE splits its slot: the chip keeps toggling the gate, the narrow neighbour
+   opens the tuning screen. Together they fill one row of the two-per-row grid,
+   so the processing chips run to a third row. */
+.con-chip-3q {
+  flex: 0 0 calc(75% - 3px);
+}
+.con-chip-open {
+  flex: 0 0 calc(25% - 3px);
+  font-size: 8px;
+  line-height: 1.5;
+}
 /* Filler to keep an odd group's last chip at half width (never full-width). */
 .con-chip.spacer {
   visibility: hidden;
