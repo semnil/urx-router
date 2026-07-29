@@ -129,25 +129,29 @@ const getTapsMap = (modelId?: string): Record<string, MeterTap[]> => {
 // Gain-reduction meters, kept in their own table rather than as an eighth entry in
 // `monoTaps`. `tapsFor` is also the CONSOLE meter-point selector's contract, and a
 // reduction is not a signal level: listed there it would be selectable as a strip
-// meter and drawn on the dBFS ladder with its color zones. Separate tables also
-// leave room for the other confirmed GR meters (COMP 110 / DUCKER 119 / insert FX
-// 132, 133) without touching the level chain.
+// meter and drawn on the dBFS ladder with its color zones. A separate table also
+// leaves room for the remaining confirmed GR meters (DUCKER 119 / insert FX 132,
+// 133) without touching the level chain.
 //
-// GATE is a MONO IN feature, so only mono channels appear; x is the mono channel
-// index, the same axis as 106 / 108 (confirmed on URX44V at x0).
-const GATE_GR_TAPS: Record<string, readonly [number, number]> = {
-  ch1: [107, 0],
-  ch2: [107, 1],
-  ch3: [107, 2],
-  ch4: [107, 3],
-};
+// GATE and COMP are both MONO IN features, so only mono channels appear; x is the
+// mono channel index, the same axis as 106 / 108 (confirmed on URX44V at x0).
+// Note the axis is NOT shared across the family — DUCKER (119) is indexed by
+// stereo pair and the output insert FX (133) by effect band, so each one added
+// here has to bring its own measured axis.
+const GR_METER_ID: Record<GrKind, number> = { gate: 107, comp: 110 };
+const GR_CHANNEL_X: Record<string, number> = { ch1: 0, ch2: 1, ch3: 2, ch4: 3 };
 
-/** The GATE gain-reduction meter address for a node, or undefined when the node
- *  has no gate (every channel but MONO IN). Which mono channels a model has is
- *  already stated once in the level tables, so this defers to them rather than
- *  restating the topology — URX22 has no ch3/ch4 there either. */
-export function gateGrAddr(nodeId: string, modelId?: string): readonly [number, number] | undefined {
-  return getTapsMap(modelId)[nodeId] ? GATE_GR_TAPS[nodeId] : undefined;
+/** Which processor's reduction to meter. */
+export type GrKind = "gate" | "comp";
+
+/** The gain-reduction meter address for one processor on a node, or undefined when
+ *  the node has neither (every channel but MONO IN). Which mono channels a model
+ *  has is already stated once in the level tables, so this defers to them rather
+ *  than restating the topology — URX22 has no ch3/ch4 there either. */
+export function grAddr(kind: GrKind, nodeId: string, modelId?: string): readonly [number, number] | undefined {
+  const x = GR_CHANNEL_X[nodeId];
+  if (x === undefined || !getTapsMap(modelId)[nodeId]) return undefined;
+  return [GR_METER_ID[kind], x];
 }
 
 const addrKey = (meterId: number, x: number): string => `${meterId}:${x}`;
@@ -165,11 +169,18 @@ export const GR_FLOOR_DB = -128;
 
 /**
  * Decode a raw GR meter value to gain reduction in dB (≤ 0). This cannot reuse
- * `decodeMeterDb`: a GR meter idles at *two* values — measured on a URX44V, the
- * gate reports 0 while switched off and the OVER sentinel 32767 while switched on
- * and open — and `decodeMeterDb` maps the sentinel to 0 dBFS while `readingTap`
- * separately raises its `over` flag, which would light a clip indicator for a gate
- * that is simply passing signal. Both idle values mean "no reduction" here.
+ * `decodeMeterDb`: a GR meter idles at *two* values, and `decodeMeterDb` maps the
+ * OVER sentinel to 0 dBFS while `readingTap` separately raises its `over` flag,
+ * which would light a clip indicator for a processor that is simply passing signal.
+ *
+ * Which idle value appears is not arbitrary — measured on a URX44V (2026-07-29):
+ * `0` means the processor is not engaged (COMP off, gate off) and the sentinel
+ * 32767 means it is engaged with no reduction to report. Both mean "no reduction"
+ * to a reader, which is all this decode claims.
+ *
+ * The reported figure is the reduction alone: sweeping the COMP makeup gain from 0
+ * to +18 dB moved the downstream level tap by exactly 18 dB and left the GR meter
+ * where it was, so a lane drawn from this stays readable at any makeup setting.
  */
 export function decodeGrDb(raw: number): number {
   if (raw === METER_OVER_RAW || raw >= 0) return 0;

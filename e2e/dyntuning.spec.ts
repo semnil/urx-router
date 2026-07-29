@@ -1,15 +1,17 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// GATE tuning screen. The meter half needs a live session, which is desktop-only,
-// so this spec stubs the Tauri IPC bridge before boot — and unlike the other
-// specs it keeps the meter channel, so it can push readings in and assert what
-// the screen makes of them. That is the only way to cover the parts the
+// Dynamics tuning screens (GATE / COMP). The meter half needs a live session,
+// which is desktop-only, so this spec stubs the Tauri IPC bridge before boot — and
+// unlike the other specs it keeps the meter channel, so it can push readings in and
+// assert what the screen makes of them. That is the only way to cover the parts the
 // measurements decided: GR's two idle values, and "no frame yet" printing "—"
 // rather than a number.
+//
+// Both processors run on one host, so the two halves below share every helper.
 
 declare global {
   interface Window {
-    __gateTest: {
+    __dynTest: {
       meterChannel: { onmessage: (batch: Array<{ meter_id: number; x: number; value: number }>) => void } | null;
       paramChannel: {
         onmessage: (batch: Array<{ param_id: number; x: number; y: number; value: number }>) => void;
@@ -26,21 +28,21 @@ const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-i
 const section = (page: Page, title: RegExp) =>
   page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: title }) });
 
-const box = (page: Page) => page.locator("#gate-tuning-box");
+const box = (page: Page) => page.locator("#dyn-screen-box");
 const readout = (page: Page, label: string) => box(page).locator(".gt-ro", { hasText: label });
 const paramRow = (page: Page, label: string) => box(page).locator(".prefs-row", { hasText: label });
 
 /** Push a device-side parameter change, the way turning a knob on the unit does. */
 const pushParam = (page: Page, paramId: number, x: number, y: number, value: number) =>
   page.evaluate(
-    ([id, xx, yy, v]) => window.__gateTest.paramChannel?.onmessage([{ param_id: id, x: xx, y: yy, value: v }]),
+    ([id, xx, yy, v]) => window.__dynTest.paramChannel?.onmessage([{ param_id: id, x: xx, y: yy, value: v }]),
     [paramId, x, y, value],
   );
 
 /** Deliver one batch of meter readings through the captured channel. */
 const pushMeters = (page: Page, ...frames: Array<[number, number, number]>) =>
   page.evaluate(
-    (list) => window.__gateTest.meterChannel?.onmessage(list.map(([meter_id, x, value]) => ({ meter_id, x, value }))),
+    (list) => window.__dynTest.meterChannel?.onmessage(list.map(([meter_id, x, value]) => ({ meter_id, x, value }))),
     frames,
   );
 
@@ -51,24 +53,25 @@ const GATE_TAPS = [
   [108, 0],
 ];
 const expectGateTaps = (page: Page) =>
-  expect.poll(() => page.evaluate(() => window.__gateTest.meterAddrs)).toEqual(GATE_TAPS);
+  expect.poll(() => page.evaluate(() => window.__dynTest.meterAddrs)).toEqual(GATE_TAPS);
 
-/** Open the screen from the CONSOLE strip (the entry that leaves the console visible). */
-const openFromConsole = async (page: Page) => {
+/** Open a screen from the CONSOLE strip (the entry that leaves the console visible).
+ *  A mono strip carries one opener per processor, in chip order: GATE then COMP. */
+const openFromConsole = async (page: Page, which = 0) => {
   await page.click("#btn-view-console");
-  await page.locator(".con-strip").nth(0).locator(".con-chip-open").click();
+  await page.locator(".con-strip").nth(0).locator(".con-chip-open").nth(which).click();
   await expect(box(page)).toBeVisible();
 };
 
-/** Open the screen from the inspector's GATE section (the GRAPH-side entry).
- *  The disclosure starts folded (GATE ships off) but its state persists per
- *  section kind, so this unfolds only when it is actually closed — a second call
- *  in the same session would otherwise fold it again and hide the launcher. */
-const openFromInspector = async (page: Page, id: string) => {
+/** Open a screen from the inspector's matching section (the GRAPH-side entry).
+ *  The disclosure starts folded (both processors ship off) but its state persists
+ *  per section kind, so this unfolds only when it is actually closed — a second
+ *  call in the same session would otherwise fold it again and hide the launcher. */
+const openFromInspector = async (page: Page, id: string, kind: "gate" | "comp" = "gate") => {
   await node(page, id).click();
-  const gate = section(page, /^GATE$/);
-  if (!(await gate.evaluate((el) => (el as HTMLDetailsElement).open))) await gate.locator("summary").click();
-  await gate.locator("#btn-gate-screen").click();
+  const sec = section(page, kind === "gate" ? /^GATE$/ : /^COMP$/);
+  if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
+  await sec.locator(`#btn-${kind}-screen`).click();
   await expect(box(page)).toBeVisible();
 };
 
@@ -78,7 +81,7 @@ test.beforeEach(async ({ page }) => {
     localStorage.setItem("urx-theme", "dark");
     localStorage.setItem("urx-model", "URX44V");
     localStorage.setItem("urx-disclaimer-accepted", "1"); // skip the consent gate
-    const state: Window["__gateTest"] = {
+    const state: Window["__dynTest"] = {
       meterChannel: null,
       paramChannel: null,
       meterAddrs: [],
@@ -86,7 +89,7 @@ test.beforeEach(async ({ page }) => {
       unsubscribes: 0,
       sets: [],
     };
-    window.__gateTest = state;
+    window.__dynTest = state;
     class Channel {
       onmessage: (data: unknown) => void = () => {};
     }
@@ -115,7 +118,7 @@ test.beforeEach(async ({ page }) => {
             return Promise.resolve();
           // Live sync needs exactly these two beyond the reads.
           case "vd_params_subscribe":
-            state.paramChannel = args.channel as Window["__gateTest"]["paramChannel"];
+            state.paramChannel = args.channel as Window["__dynTest"]["paramChannel"];
             return Promise.resolve();
           case "vd_params_unsubscribe":
           case "vd_watch_link":
@@ -123,7 +126,7 @@ test.beforeEach(async ({ page }) => {
           case "vd_meters_subscribe":
             state.subscribes++;
             state.meterAddrs = args.addrs as Array<[number, number]>;
-            state.meterChannel = args.channel as Window["__gateTest"]["meterChannel"];
+            state.meterChannel = args.channel as Window["__dynTest"]["meterChannel"];
             return Promise.resolve();
           case "vd_meters_unsubscribe":
             state.unsubscribes++;
@@ -140,7 +143,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 });
 
-test("opens from the inspector for a mono channel, scoped to that channel", async ({ page }) => {
+test("gate: opens from the inspector for a mono channel, scoped to that channel", async ({ page }) => {
   await openFromInspector(page, "ch1");
   await expect(box(page).locator(".gt-ch")).toHaveText("CH 1");
   // No in-screen channel switch: the scope is fixed by where it was opened from.
@@ -158,10 +161,10 @@ test("has no launcher on a stereo channel, which has no gate", async ({ page }) 
 test("opens from the CONSOLE strip, and only on mono strips", async ({ page }) => {
   await page.click("#btn-view-console");
   const strips = page.locator(".con-strip");
-  // CH1-4 carry the opener beside their GATE chip; CH5/6 onward have no gate.
-  await expect(strips.nth(0).locator(".con-chip-open")).toHaveCount(1);
+  // CH1-4 carry one opener per processor; CH5/6 onward have neither.
+  await expect(strips.nth(0).locator(".con-chip-open")).toHaveCount(2);
   await expect(strips.nth(4).locator(".con-chip-open")).toHaveCount(0);
-  await strips.nth(0).locator(".con-chip-open").click();
+  await strips.nth(0).locator(".con-chip-open").first().click();
   await expect(box(page)).toBeVisible();
   await expect(box(page).locator(".gt-ch")).toHaveText("CH 1");
 });
@@ -170,7 +173,7 @@ test("the opener does not toggle the gate it sits beside", async ({ page }) => {
   await page.click("#btn-view-console");
   const gateChip = page.locator(".con-strip").nth(0).locator(".con-chip", { hasText: "GATE" });
   const before = await gateChip.getAttribute("aria-pressed");
-  await page.locator(".con-strip").nth(0).locator(".con-chip-open").click();
+  await page.locator(".con-strip").nth(0).locator(".con-chip-open").first().click();
   await expect(box(page)).toBeVisible();
   await box(page).locator(".consent-btn-primary").click();
   await expect(gateChip).toHaveAttribute("aria-pressed", before ?? "false");
@@ -179,15 +182,15 @@ test("the opener does not toggle the gate it sits beside", async ({ page }) => {
 test("switches between the ladder and the curve, replacing one with the other", async ({ page }) => {
   await openFromInspector(page, "ch1");
   await expect(box(page).locator(".gt-ladders")).toBeVisible();
-  await expect(box(page).locator("#gate-curve")).toHaveCount(0);
+  await expect(box(page).locator("#dyn-curve")).toHaveCount(0);
 
-  await box(page).locator("#gate-mode-curve").click();
-  await expect(box(page).locator("#gate-curve")).toBeVisible();
+  await box(page).locator("#dyn-mode-curve").click();
+  await expect(box(page).locator("#dyn-curve")).toBeVisible();
   await expect(box(page).locator(".gt-ladders")).toHaveCount(0);
   // The hint earns its place only where the gesture is not self-evident.
   await expect(box(page).locator(".gt-note")).toBeVisible();
 
-  await box(page).locator("#gate-mode-ladder").click();
+  await box(page).locator("#dyn-mode-ladder").click();
   await expect(box(page).locator(".gt-ladders")).toBeVisible();
   await expect(box(page).locator(".gt-note")).toBeEmpty();
 });
@@ -200,40 +203,40 @@ test("does not change height when the display mode is switched", async ({ page }
   await openFromInspector(page, "ch1");
   const height = async () => (await box(page).boundingBox())?.height ?? 0;
   const ladder = await height();
-  await box(page).locator("#gate-mode-curve").click();
-  await expect(box(page).locator("#gate-curve")).toBeVisible();
+  await box(page).locator("#dyn-mode-curve").click();
+  await expect(box(page).locator("#dyn-curve")).toBeVisible();
   expect(await height()).toBe(ladder);
-  await box(page).locator("#gate-mode-ladder").click();
+  await box(page).locator("#dyn-mode-ladder").click();
   await expect(box(page).locator(".gt-ladders")).toBeVisible();
   expect(await height()).toBe(ladder);
 });
 
 test("remembers the display mode across opens and reloads", async ({ page }) => {
   await openFromInspector(page, "ch1");
-  await box(page).locator("#gate-mode-curve").click();
-  await expect(box(page).locator("#gate-curve")).toBeVisible();
+  await box(page).locator("#dyn-mode-curve").click();
+  await expect(box(page).locator("#dyn-curve")).toBeVisible();
   await box(page).locator(".consent-btn-primary").click();
 
   // Same session, reopened: still CURVE.
   await openFromInspector(page, "ch1");
-  await expect(box(page).locator("#gate-curve")).toBeVisible();
+  await expect(box(page).locator("#dyn-curve")).toBeVisible();
   await box(page).locator(".consent-btn-primary").click();
 
   // And across a reload — the pick is stored, not just held in the instance.
   await page.reload();
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await openFromInspector(page, "ch1");
-  await expect(box(page).locator("#gate-curve")).toBeVisible();
-  await expect(box(page).locator("#gate-mode-curve")).toHaveAttribute("aria-pressed", "true");
+  await expect(box(page).locator("#dyn-curve")).toBeVisible();
+  await expect(box(page).locator("#dyn-mode-curve")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("the threshold cap moves with the value and shares its ruler", async ({ page }) => {
   await openFromInspector(page, "ch1");
-  const cap = box(page).locator("#gate-threshold-cap");
+  const cap = box(page).locator("#dyn-threshold-cap");
   const slider = paramRow(page, "Threshold").locator("input[type=range]");
 
   const capPos = () =>
-    page.evaluate(() => document.getElementById("gate-threshold-cap")?.style.getPropertyValue("--pos"));
+    page.evaluate(() => document.getElementById("dyn-threshold-cap")?.style.getPropertyValue("--pos"));
 
   // -50 dB on a -72..0 ruler sits 22/72 up from the floor, i.e. 69.44% down.
   // The ruler is linear in dB precisely so this stays proportional.
@@ -276,19 +279,19 @@ test.describe("with a live session", () => {
 
   test("hands the meter slot back when it closes", async ({ page }) => {
     await page.click("#btn-view-console");
-    const before = await page.evaluate(() => window.__gateTest.subscribes);
-    await page.locator(".con-strip").nth(0).locator(".con-chip-open").click();
+    const before = await page.evaluate(() => window.__dynTest.subscribes);
+    await page.locator(".con-strip").nth(0).locator(".con-chip-open").first().click();
     await expect(box(page)).toBeVisible();
     // Taking the slot: the console released, this screen registered its three.
-    await expect.poll(() => page.evaluate(() => window.__gateTest.unsubscribes)).toBeGreaterThan(0);
-    await expect.poll(() => page.evaluate(() => window.__gateTest.subscribes)).toBeGreaterThan(before);
+    await expect.poll(() => page.evaluate(() => window.__dynTest.unsubscribes)).toBeGreaterThan(0);
+    await expect.poll(() => page.evaluate(() => window.__dynTest.subscribes)).toBeGreaterThan(before);
 
-    const taken = await page.evaluate(() => window.__gateTest.subscribes);
+    const taken = await page.evaluate(() => window.__dynTest.subscribes);
     await box(page).locator(".consent-btn-primary").click();
     await expect(box(page)).toBeHidden();
     // Giving it back: the console re-registers its own set.
-    await expect.poll(() => page.evaluate(() => window.__gateTest.subscribes)).toBeGreaterThan(taken);
-    await expect.poll(() => page.evaluate(() => window.__gateTest.meterAddrs.length)).toBeGreaterThan(3);
+    await expect.poll(() => page.evaluate(() => window.__dynTest.subscribes)).toBeGreaterThan(taken);
+    await expect.poll(() => page.evaluate(() => window.__dynTest.meterAddrs.length)).toBeGreaterThan(3);
   });
 
   test("reads both GR idle values as no reduction, and a reduction as itself", async ({ page }) => {
@@ -343,5 +346,135 @@ test.describe("with a live session", () => {
     await expectGateTaps(page);
     await pushMeters(page, [107, 0, -239]);
     await expect(readout(page, "Gate GR").locator(".v")).toHaveText("-23.9");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COMP. Same host, same machinery; what differs is what the device says about a
+// compressor — the reduction it reports, who owns the values, and the fact that
+// SSMCS replaces the compressor outright.
+
+test.describe("comp", () => {
+  test("opens from the inspector and from the CONSOLE, scoped to that channel", async ({ page }) => {
+    await openFromInspector(page, "ch1", "comp");
+    await expect(box(page).locator(".gt-ch")).toHaveText("CH 1");
+    await expect(box(page).locator("h2")).toContainText("Comp");
+    await box(page).locator(".consent-btn-primary").click();
+
+    // The strip's second opener is COMP's, in chip order.
+    await openFromConsole(page, 1);
+    await expect(box(page).locator("h2")).toContainText("Comp");
+  });
+
+  test("has no launcher where the channel has no compressor", async ({ page }) => {
+    // Stereo channels have no COMP section at all.
+    await node(page, "ch_5_6").click();
+    await expect(page.locator("#btn-comp-screen")).toHaveCount(0);
+    // Nor does a mono channel switched to SSMCS, where the morphing strip replaces
+    // the compressor — the section stays, but its own controls do.
+    await node(page, "ch1").click();
+    const type = page.locator("#inspector .param", { hasText: "COMP/EQ Type" }).locator("select");
+    await type.selectOption({ label: "SSMCS" });
+    await expect(page.locator("#btn-comp-screen")).toHaveCount(0);
+    await page.click("#btn-view-console");
+    await expect(page.locator(".con-strip").nth(0).locator(".con-chip-open")).toHaveCount(1);
+  });
+
+  test("carries the compressor's own ladder domain", async ({ page }) => {
+    await openFromInspector(page, "ch1", "comp");
+    const cap = box(page).locator("#dyn-threshold-cap");
+    // -18 dB on the -54..0 ruler the COMP threshold actually spans sits two thirds
+    // up, i.e. 33.33% down. On the gate's -72..0 ruler the same value would be 25%.
+    await expect(cap).toHaveAttribute("aria-valuenow", "-18");
+    await expect
+      .poll(() => page.evaluate(() => document.getElementById("dyn-threshold-cap")?.style.getPropertyValue("--pos")))
+      .toBe("33.33%");
+    await expect(cap).toHaveAttribute("aria-valuemin", "-54");
+  });
+
+  test("gives the reduction a scale of its own, which the gate does not", async ({ page }) => {
+    // A compressor's reduction is a few dB of a 54 dB ruler, so its lane is
+    // labelled separately rather than read off the level lanes' ticks.
+    await openFromInspector(page, "ch1", "comp");
+    await expect(box(page).locator(".gt-grwrap.own .gt-scale")).toHaveCount(1);
+    await box(page).locator(".consent-btn-primary").click();
+
+    await openFromInspector(page, "ch1", "gate");
+    await expect(box(page).locator(".gt-grwrap.own")).toHaveCount(0);
+  });
+
+  test("remembers a display mode per processor", async ({ page }) => {
+    await openFromInspector(page, "ch1", "comp");
+    await box(page).locator("#dyn-mode-curve").click();
+    await expect(box(page).locator("#dyn-curve")).toBeVisible();
+    await box(page).locator(".consent-btn-primary").click();
+
+    // The gate's own pick is untouched by the compressor's.
+    await openFromInspector(page, "ch1", "gate");
+    await expect(box(page).locator(".gt-ladders")).toBeVisible();
+    await box(page).locator(".consent-btn-primary").click();
+
+    await openFromInspector(page, "ch1", "comp");
+    await expect(box(page).locator("#dyn-curve")).toBeVisible();
+  });
+
+  test("hands the values the device drives back to it, read-only", async ({ page }) => {
+    await openFromInspector(page, "ch1", "comp");
+    const thr = paramRow(page, "Threshold").locator("input[type=range]");
+    await expect(thr).toBeEnabled();
+
+    // 1-knob on: the device computes threshold / ratio / gain from one level and
+    // announces each recomputation, so they stay on screen and stop being editable.
+    await paramRow(page, "1-Knob").locator("button", { hasText: "On" }).click();
+    await expect(paramRow(page, "1-Knob Level")).toBeVisible();
+    for (const label of ["Threshold", "Ratio", "Gain"]) {
+      await expect(paramRow(page, label).locator("input[type=range]")).toBeDisabled();
+    }
+    // Auto Makeup cannot be operated while 1-knob is on, so its row is gone.
+    await expect(paramRow(page, "Auto Makeup")).toHaveCount(0);
+
+    await paramRow(page, "1-Knob").locator("button", { hasText: "Off" }).click();
+    await expect(paramRow(page, "Threshold").locator("input[type=range]")).toBeEnabled();
+
+    // Auto Makeup drives the makeup gain alone.
+    await paramRow(page, "Auto Makeup").locator("button", { hasText: "On" }).click();
+    await expect(paramRow(page, "Gain").locator("input[type=range]")).toBeDisabled();
+    await expect(paramRow(page, "Threshold").locator("input[type=range]")).toBeEnabled();
+  });
+
+  test.describe("with a live session", () => {
+    test.beforeEach(async ({ page }) => {
+      await page.click("#btn-device");
+      await page.click("#btn-live");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+    });
+
+    test("subscribes to the compressor's own three taps", async ({ page }) => {
+      await openFromInspector(page, "ch1", "comp");
+      // 108 PRE COMP / 110 COMP GR / 111 PRE EQ, all on CH1's x0.
+      await expect
+        .poll(() => page.evaluate(() => window.__dynTest.meterAddrs))
+        .toEqual([
+          [108, 0],
+          [110, 0],
+          [111, 0],
+        ]);
+    });
+
+    test("reads the reduction, and both idle values as none", async ({ page }) => {
+      await openFromInspector(page, "ch1", "comp");
+      const gr = readout(page, "Comp GR").locator(".v");
+      // Measured: 0 while the compressor is off, the OVER sentinel while it is on
+      // with nothing to reduce. Neither is a clip, and neither is a reduction.
+      await pushMeters(page, [110, 0, 0]);
+      await expect(gr).toHaveText("0.0");
+      await pushMeters(page, [110, 0, 32767]);
+      await expect(gr).toHaveText("0.0");
+      await pushMeters(page, [110, 0, -80]);
+      await expect(gr).toHaveText("-8.0");
+      // The makeup gain is not in this figure — measured by sweeping it against a
+      // held compression — so the lane reads the same at any makeup setting.
+      await expect(readout(page, "Pre EQ").locator(".v")).toHaveText("—");
+    });
   });
 });

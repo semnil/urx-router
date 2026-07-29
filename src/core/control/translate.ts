@@ -675,6 +675,11 @@ export interface DynField {
   /** Device default in plan units, shown before a fetch. */
   def: number;
   unit: "db" | "ms" | "ratio";
+  /** Step the device's push-and-turn fine mode uses for this value, when it has
+   *  one. Confirmed for exactly one dynamics parameter (see the COMP gain row);
+   *  every other GATE/COMP/DUCKER value is a measured negative, so this is not a
+   *  class rule and must not be inferred from the unit. */
+  fineStep?: number;
 }
 
 // GATE detail (29-33) and COMP detail (35-40, the COMP->EQ comp bank). Ranges and
@@ -706,7 +711,7 @@ const GATE_FIELDS: DynField[] = [
 const COMP_FIELDS: DynField[] = [
   { key: "threshold", name: "COMP_THRESHOLD", min: -54, max: 0, step: 1, def: -18, unit: "db" },
   { key: "ratio", name: "COMP_RATIO", min: DYN_RATIO_MIN, max: 20, step: 0.1, def: 3, unit: "ratio" },
-  { key: "gain", name: "COMP_GAIN", min: 0, max: 18, step: 0.5, def: 2, unit: "db" },
+  { key: "gain", name: "COMP_GAIN", min: 0, max: 18, step: 0.5, def: 2, unit: "db", fineStep: 0.1 },
   {
     key: "attack",
     name: "COMP_ATTACK",

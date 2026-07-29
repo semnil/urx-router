@@ -34,6 +34,7 @@ import {
   type MeterTap,
 } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
+import { COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
 import { channelEqUnavailable } from "../core/constraints";
 import { busBalance, channelControl, insertFxControl } from "../core/control/translate";
 import {
@@ -293,7 +294,7 @@ export interface ConsoleHooks {
    *  leaving a live session that quietly shows nothing. */
   onMeterError?: (message: string) => void;
   /** Open the GATE tuning screen for a MONO IN channel. */
-  onOpenGateScreen?: (id: string) => void;
+  onOpenDynScreen?: (kind: "gate" | "comp", id: string) => void;
   midi?: ConsoleMidiHooks;
 }
 
@@ -1254,18 +1255,18 @@ export class Console {
     parent.append(this.buildChip(id, label, on, toggle, { ...opts, mute }));
   }
 
-  /** The narrow chip beside GATE that opens the tuning screen. Momentary, so it
-   *  deliberately skips `buildChip`: that runs `commit()` after its toggle, and
-   *  this button changes nothing to commit. `wireActivate` still gives it the
-   *  keyboard activation and the MIDI-learn guard the chips have — with no
-   *  `midiId`, since a screen is not a device parameter to map. */
-  private gateOpenChip(id: string): HTMLElement {
+  /** The narrow chip beside GATE / COMP that opens that processor's tuning screen.
+   *  Momentary, so it deliberately skips `buildChip`: that runs `commit()` after
+   *  its toggle, and this button changes nothing to commit. `wireActivate` still
+   *  gives it the keyboard activation and the MIDI-learn guard the chips have —
+   *  with no `midiId`, since a screen is not a device parameter to map. */
+  private dynOpenChip(kind: "gate" | "comp", id: string): HTMLElement {
     const chip = el("div", "con-chip con-chip-open");
     chip.textContent = "▸";
     chip.setAttribute("role", "button");
-    chip.title = t().gateTuning.open;
-    chip.setAttribute("aria-label", t().gateTuning.open);
-    this.wireActivate(chip, undefined, () => this.hooks.onOpenGateScreen?.(id));
+    chip.title = t().dynTuning[kind].open;
+    chip.setAttribute("aria-label", t().dynTuning[kind].open);
+    this.wireActivate(chip, undefined, () => this.hooks.onOpenDynScreen?.(kind, id));
     return chip;
   }
 
@@ -1701,9 +1702,13 @@ export class Console {
       // here. It costs a slot in the two-per-row grid, so the processing chips
       // take a third row.
       boolChip(proc, "GATE", "gateOn", false);
-      proc.append(this.gateOpenChip(m.id));
+      proc.append(this.dynOpenChip("gate", m.id));
+      boolChip(proc, "COMP", "compOn", false);
+      // No COMP screen in SSMCS: the morphing strip replaces the compressor, and
+      // its own controls stay in the inspector.
+      if ((this.hooks.getPlan().nodeParams[m.id]?.compEqType ?? COMP_EQ_COMP_FIRST) !== COMP_EQ_SSMCS)
+        proc.append(this.dynOpenChip("comp", m.id));
     }
-    if (m.isMono) boolChip(proc, "COMP", "compOn", false);
     const rate = this.hooks.getPlan().sampleRate;
     if (m.hasEq) {
       // Stereo-channel EQ is inert at 176.4 / 192 kHz: show the chip forced off and

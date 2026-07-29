@@ -432,24 +432,35 @@ export const en = {
       recPoint: "Rec Point tap",
     },
   },
-  // GATE tuning screen. The meter captions carry the device's own tap vocabulary
-  // and stay English in every language, like the CONSOLE meter-point badges they
-  // name the same points as.
-  gateTuning: {
-    title: "Gate",
-    open: "Gate screen…",
+  // Dynamics tuning screens (GATE / COMP). The meter captions carry the device's
+  // own tap vocabulary and stay English in every language, like the CONSOLE
+  // meter-point badges that name the same points.
+  dynTuning: {
     close: "Close",
     display: "Display",
     modeLadder: "Ladder",
     modeCurve: "Curve",
     parameters: "Parameters",
     readouts: "Readouts",
-    tapIn: "Pre Gate",
-    tapGr: "Gate GR",
-    tapOut: "Pre Comp",
     peakPrefix: "pk",
     noReading: "—",
-    curveHint: "Drag the curve's knee to set the threshold.",
+    driven: "Device-driven",
+    gate: {
+      title: "Gate",
+      open: "Gate screen…",
+      tapIn: "Pre Gate",
+      tapGr: "Gate GR",
+      tapOut: "Pre Comp",
+      curveHint: "Drag the curve's knee to set the threshold.",
+    },
+    comp: {
+      title: "Comp",
+      open: "Comp screen…",
+      tapIn: "Pre Comp",
+      tapGr: "Comp GR",
+      tapOut: "Pre EQ",
+      curveHint: "Drag T (threshold), R (ratio) and G (gain) on the curve.",
+    },
   },
   shelf: {
     title: "Hidden",
