@@ -422,6 +422,24 @@ export const ja: Messages = {
       recPoint: "Rec Point タップ",
     },
   },
+  // メーターのキャプションと表示モード名は実機のタップ語彙なので ja でも英語のまま
+  // (CONSOLE のメーターポイントバッジと同じ点を指すため表記を揃える)。
+  gateTuning: {
+    title: "Gate",
+    open: "Gate 画面…",
+    close: "閉じる",
+    display: "Display",
+    modeLadder: "Ladder",
+    modeCurve: "Curve",
+    parameters: "パラメーター",
+    readouts: "読み値",
+    tapIn: "Pre Gate",
+    tapGr: "Gate GR",
+    tapOut: "Pre Comp",
+    peakPrefix: "pk",
+    noReading: "—",
+    curveHint: "曲線のニーを左右にドラッグしてしきい値を設定します。",
+  },
   shelf: {
     title: "非表示",
     showAll: "全て表示",
