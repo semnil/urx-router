@@ -10,17 +10,32 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 });
 
+// The GATE detail sliders live in the gate tuning screen now, so the notch is
+// asserted where it is actually edited. The inspector's GATE section keeps only
+// the ON toggle and the launcher.
 test("GATE range has a -∞ notch one step below the -72 dB floor", async ({ page }) => {
   await node(page, "ch1").click();
   const gate = section(page, /^GATE$/);
   await gate.locator("summary").click(); // GATE folds off by default
-  const range = gate.locator(".param", { hasText: "Range" });
+  await gate.locator("#btn-gate-screen").click();
+
+  const range = page.locator("#gate-tuning-box .prefs-row", { hasText: "Range" });
   const slider = range.locator("input[type=range]");
   await expect(slider).toHaveAttribute("min", "-73"); // -73 = the -∞ notch
   await slider.fill("-73");
-  await expect(range.locator(".param-val")).toHaveText("-∞ dB");
+  await expect(range.locator(".gt-val")).toHaveText("-∞ dB");
   await slider.fill("-72");
-  await expect(range.locator(".param-val")).toHaveText("-72.0 dB"); // deepest finite step
+  await expect(range.locator(".gt-val")).toHaveText("-72.0 dB"); // deepest finite step
+});
+
+test("the inspector's GATE section keeps the toggle and the launcher only", async ({ page }) => {
+  await node(page, "ch1").click();
+  const gate = section(page, /^GATE$/);
+  await gate.locator("summary").click();
+  // One .param row: the ON/OFF toggle. The five detail sliders moved to the screen.
+  await expect(gate.locator(".sec-body > .param")).toHaveCount(1);
+  await expect(gate.locator("input[type=range]")).toHaveCount(0);
+  await expect(gate.locator("#btn-gate-screen")).toHaveCount(1);
 });
 
 test("COMP 1-Knob shows ratio/gain read-only in place of the manual sliders", async ({ page }) => {
