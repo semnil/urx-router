@@ -165,6 +165,7 @@ import type { Selection } from "./graph";
 import { setLevelText } from "./glyph";
 import { wheelStep } from "./dom";
 import { fineTag, optInFine } from "./fine";
+import type { DynKind } from "./dyn-registry";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 
@@ -177,7 +178,7 @@ export interface InspectorActions {
   onOpenRecent: (path: string) => void;
   onHideNode: (id: string) => void;
   /** Open the GATE tuning screen for a MONO IN channel. */
-  onOpenDynScreen: (kind: "gate" | "comp", id: string) => void;
+  onOpenDynScreen: (kind: DynKind, id: string) => void;
   onClose: () => void;
 }
 
@@ -1637,7 +1638,7 @@ function duckerBlock(nodeId: string, np: NodeParams, plan: Plan, actions: Inspec
 // render time and never re-renders on a value change, so after the screen moved
 // the threshold these sliders would sit at the old position and write it back on
 // the next drag.
-function dynLauncher(kind: "gate" | "comp", nodeId: string, actions: InspectorActions, m: Messages): HTMLElement {
+function dynLauncher(kind: DynKind, nodeId: string, actions: InspectorActions, m: Messages): HTMLElement {
   const btn = document.createElement("button");
   btn.className = "gate-open";
   btn.id = `btn-${kind}-screen`;

@@ -106,10 +106,13 @@ the floor would claim silence that was never measured.
 The same three-tap shape one stage downstream — PRE COMP (108) in, COMP GR (110), PRE EQ (111) out —
 and the same two modes. What the compressor changes:
 
-**The unit itself edits this one on the graph.** Its COMP screen (user guide p.104) puts T
-(threshold), R (ratio) and G (gain) on the transfer curve and lets you drag them, with the GR meter
-beside it. CURVE is that screen, so it carries the same three grips; the gate's curve has one (its
-threshold), which is the same gesture with fewer values to place.
+**The curve is read, not dragged.** The unit's own COMP screen (user guide p.104) puts T
+(threshold), R (ratio) and G (gain) on the transfer curve and lets you drag them. That was built and
+removed: three grips on one plot means a press has to guess which value was meant, and a press that
+missed one fell through to the threshold drag underneath — so pressing the gain grip moved the
+threshold. The sliders beside the plot are the editing path; the curve answers what the settings are
+doing to the signal. The gate's curve keeps its press-to-set-threshold, because it carries one
+editable value and the gesture cannot be misread.
 
 **The reduction gets a scale of its own.** A gate's reduction runs the whole ruler — range reaches
 -∞ — so it reads off the shared tick column. A compressor's occupies a few dB of a 54 dB ruler: at
@@ -120,8 +123,7 @@ the gate below, which was a second *unlabelled* scale under the *shared* ticks.
 **Some values belong to the device while it drives them.** With 1-knob on, the unit computes
 threshold / ratio / gain from a single level; with Auto Makeup on, it computes the gain. Each
 recomputation is announced per address (measured), so those rows stay on screen and keep updating —
-tagged, dimmed and read-only, with their curve grips withdrawn — rather than being hidden or
-recomputed here. Auto Makeup cannot be operated while 1-knob is on, so that row goes.
+tagged, dimmed and read-only — rather than being hidden or recomputed here. Auto Makeup cannot be operated while 1-knob is on, so that row goes.
 
 **The knee is drawn, and its width was measured.** Soft / Medium / Hard publish no widths, so the
 curve would either invent a curvature or leave the selector changing nothing on screen. Measured by
@@ -206,9 +208,9 @@ be *edited* — only to be *observed*.
 ## Implementation notes
 
 `DynScreen` owns everything that does not depend on which processor is open — the modal, the ladder,
-the meter feed and its peaks, the slot borrow, the curve's frame and grips, the persisted mode. A
-`DynProcessor` supplies the rest: its taps, its axes, its fields, its extra rows, its grips and its
-transfer curve. Adding DUCKER or an insert-FX dynamics screen means writing one of those, not
+the meter feed and its peaks, the slot borrow, the curve's frame, the persisted mode. A
+`DynProcessor` supplies the rest: its taps, its axes, its fields, its extra rows, its transfer curve,
+and whether a press on that curve sets the threshold. Adding DUCKER or an insert-FX dynamics screen means writing one of those, not
 another screen.
 
 The screen is built out of the shared recipes rather than its own: `settingsRow` / `settingsSection`
@@ -253,6 +255,7 @@ capture.
 | Sharing the level lanes' dB per pixel for the COMP GR lane | A gate's reduction runs the whole ruler; a compressor's is a few dB of it, and reads as a lane that never moves |
 | Leaving the COMP knee out of the curve | The selector would change nothing on screen — the same failure the gate's output axis already cost us. Measuring the widths was cheaper than shipping a control with no feedback |
 | A second instance of the screen for COMP | Both would bind the same modal host and the same single meter slot; the processor is chosen per open instead |
+| T / R / G grips dragged on the COMP curve, as the unit does it | Built, then removed. A press that missed a grip fell through to the threshold drag beneath it, so pressing the gain grip moved the threshold; and the grips were drawn clamped inside the plot while hit-tested at their true position, which put the two ~13 px apart at the axis ends. Underneath both defects, three grips on one plot cannot tell which value a press meant |
 
 ## Accepted trade-offs / watch items
 

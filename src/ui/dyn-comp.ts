@@ -1,9 +1,13 @@
 // The COMP processor for the dynamics tuning screen.
 //
-// The unit's own COMP screen (user guide p.104) is edited on the graph: T
-// (threshold), R (ratio) and G (gain) are dragged on the transfer curve, with the
-// GR meter beside it and the knee / attack / release as boxes. The CURVE mode here
-// is that screen; LADDER is the same three-tap ruler the gate screen uses.
+// CURVE is the compressor's input/output response — the picture the unit's own
+// COMP screen draws (user guide p.104), with the live level travelling it. The
+// unit lets you drag T / R / G grips on that graph; this screen deliberately does
+// not. Three grips on one plot means a press has to guess which value was meant,
+// and one that missed fell through to the threshold, so pressing the gain grip
+// moved the threshold. The sliders beside the plot are the editing path, and the
+// curve answers "what is this doing to my signal". LADDER is the same three-tap
+// ruler the gate screen uses.
 //
 // Two device facts shape it, both measured on a URX44V (2026-07-29):
 //   - COMP GR (110) reports the reduction alone. Sweeping the makeup gain 0 →
@@ -13,7 +17,7 @@
 //     GR lane carries a scale of its own rather than the level lanes' dB per pixel
 //     (a -8 dB reduction is 15% of the shared ruler — visible, but not readable).
 
-import { settingsChoice, settingsRow } from "./dom";
+import { onOff, settingsChoice, settingsRow, sliderRow } from "./dom";
 import { COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS } from "../core/control/params";
 import { HI_DB } from "./dyn-screen";
 import type { DynProcessor, DynValues } from "./dyn-screen";
@@ -26,6 +30,7 @@ const LO_DB = -54;
 // makeup setting past the point where the curve reaches the ceiling.
 const OUT_LO_DB = -54;
 const OUT_TICKS = [18, 6, -6, -18, -30, -42, -54];
+const OUT_HI = Math.max(...OUT_TICKS);
 
 /**
  * Knee width in dB by selector value (0 Soft / 1 Medium / 2 Hard), from the
@@ -43,17 +48,19 @@ const KNEE_WIDTH_DB = [40, 16, 0];
 
 const kneeWidth = (knee: number): number => KNEE_WIDTH_DB[knee] ?? KNEE_WIDTH_DB[COMP_KNEE_DEFAULT];
 
-/** Static transfer response for one input level, makeup included. */
-function outFor(v: DynValues, knee: number, inDb: number): number {
+/** The compressor's response as a function of input level, makeup included. Built
+ *  once per redraw rather than read per sample point: the curve evaluates it ~120
+ *  times, and each `v.get` walks the plan. */
+function responseOf(v: DynValues): (inDb: number) => number {
   const thr = v.get("threshold");
   const ratio = Math.max(1, v.get("ratio"));
-  const w = kneeWidth(knee);
-  const d = inDb - thr;
-  let out: number;
-  if (w > 0 && Math.abs(d) <= w / 2) out = inDb + ((1 / ratio - 1) * (d + w / 2) ** 2) / (2 * w);
-  else if (d <= 0) out = inDb;
-  else out = thr + d / ratio;
-  return out + v.get("gain");
+  const gain = v.get("gain");
+  const w = kneeWidth(Math.round(v.get("knee")));
+  return (inDb) => {
+    const d = inDb - thr;
+    if (w > 0 && Math.abs(d) <= w / 2) return inDb + ((1 / ratio - 1) * (d + w / 2) ** 2) / (2 * w) + gain;
+    return (d <= 0 ? inDb : thr + d / ratio) + gain;
+  };
 }
 
 export const COMP_DYN: DynProcessor = {
@@ -79,7 +86,7 @@ export const COMP_DYN: DynProcessor = {
     return set;
   },
 
-  rows: ({ m, vals, set }) => {
+  rows: ({ m, vals, driven, set, setValue }) => {
     const one = vals.oneKnob === true;
     const lead = [];
     // Auto Makeup cannot be operated while 1-knob is on (user guide), and the
@@ -88,41 +95,31 @@ export const COMP_DYN: DynProcessor = {
       lead.push(
         settingsRow(
           m.inspector.autoMakeup,
-          settingsChoice(
-            [m.inspector.on, m.inspector.off],
-            vals.autoMakeup ? 0 : 1,
-            (i) => set({ autoMakeup: i === 0 }),
-            true,
-          ),
+          onOff(vals.autoMakeup === true, (on) => set({ autoMakeup: on })),
         ),
       );
     }
     lead.push(
       settingsRow(
         m.inspector.oneKnob,
-        settingsChoice([m.inspector.on, m.inspector.off], one ? 0 : 1, (i) => set({ oneKnob: i === 0 }), true),
+        onOff(one, (on) => set({ oneKnob: on })),
       ),
     );
     if (one) {
-      const ctl = document.createElement("span");
-      ctl.className = "ctl dev-slider";
-      const input = document.createElement("input");
-      input.type = "range";
-      input.min = "0";
-      input.max = "100";
-      input.step = "1";
-      input.value = String(typeof vals.oneKnobLevel === "number" ? vals.oneKnobLevel : 0);
-      input.id = "dyn-oneknob-level";
-      input.setAttribute("aria-label", m.inspector.oneKnobLevel);
-      const val = document.createElement("span");
-      val.className = "param-val gt-val";
-      val.textContent = `${input.value} %`;
-      input.addEventListener("input", () => {
-        val.textContent = `${input.value} %`;
-        set({ oneKnobLevel: Number(input.value) });
-      });
-      ctl.append(input, val);
-      lead.push(settingsRow(m.inspector.oneKnobLevel, ctl));
+      // setValue, not set: this slider changes only itself, and a rebuild on its
+      // own input event would take the element out from under the pointer.
+      lead.push(
+        sliderRow({
+          label: m.inspector.oneKnobLevel,
+          id: "dyn-oneknob-level",
+          min: 0,
+          max: 100,
+          step: 1,
+          value: typeof vals.oneKnobLevel === "number" ? vals.oneKnobLevel : 0,
+          format: (v) => `${v} %`,
+          onInput: (v) => setValue({ oneKnobLevel: v }),
+        }),
+      );
     }
 
     const knee = typeof vals.knee === "number" ? vals.knee : COMP_KNEE_DEFAULT;
@@ -134,56 +131,20 @@ export const COMP_DYN: DynProcessor = {
           knee,
           (i) => set({ knee: COMP_KNEE_OPTIONS[i].value }),
         ),
-        one ? { tag: m.dynTuning.driven, locked: true } : {},
+        driven.has("knee") ? { tag: m.dynTuning.driven, locked: true } : {},
       ),
     ];
     return { lead, tail };
   },
 
-  // The unit's three grips, in its own positions: T on the knee, R at the top of
-  // the curve, G at its foot.
-  handles: (v) => [
-    {
-      id: "threshold",
-      label: "T",
-      x: v.get("threshold"),
-      y: outFor(v, COMP_KNEE_DEFAULT, v.get("threshold")),
-      drag: (inDb) => ({ threshold: Math.round(v.clamp("threshold", inDb)) }),
-    },
-    {
-      id: "ratio",
-      label: "R",
-      x: HI_DB,
-      y: outFor(v, COMP_KNEE_DEFAULT, HI_DB),
-      // Above the threshold the curve is out = thr + (in - thr)/ratio + gain, so a
-      // grip dragged to `outDb` at full scale pins the ratio directly. Pulling it
-      // down steepens; at or above the unity point the ratio bottoms out at 1:1.
-      drag: (_inDb, outDb) => {
-        const thr = v.get("threshold");
-        const span = outDb - v.get("gain") - thr;
-        if (span <= 0) return { ratio: v.clamp("ratio", Number.MAX_SAFE_INTEGER) };
-        return { ratio: Number(v.clamp("ratio", (HI_DB - thr) / span).toFixed(1)) };
-      },
-    },
-    {
-      id: "gain",
-      label: "G",
-      x: LO_DB,
-      y: outFor(v, COMP_KNEE_DEFAULT, LO_DB),
-      // Below the threshold the curve is unity plus the makeup, so the grip's
-      // height above the input floor is the makeup gain.
-      drag: (_inDb, outDb) => ({ gain: Number((Math.round(v.clamp("gain", outDb - LO_DB) * 2) / 2).toFixed(1)) }),
-    },
-  ],
-
   drawCurve: (c, g, v, tok) => {
-    const knee = Math.round(v.get("knee"));
+    const out = responseOf(v);
     c.strokeStyle = tok["--led"];
     c.lineWidth = 2;
     c.beginPath();
     for (let i = 0; i <= 120; i++) {
       const x = LO_DB + ((HI_DB - LO_DB) * i) / 120;
-      const y = Math.min(Math.max(outFor(v, knee, x), OUT_LO_DB), Math.max(...OUT_TICKS));
+      const y = Math.min(Math.max(out(x), OUT_LO_DB), OUT_HI);
       if (i) c.lineTo(g.px(x), g.py(y));
       else c.moveTo(g.px(x), g.py(y));
     }
@@ -191,7 +152,7 @@ export const COMP_DYN: DynProcessor = {
 
     // The reduction at full scale, which is what the ratio buys: the gap between
     // the curve and unity at 0 dBFS, labelled where it is widest.
-    const top = outFor(v, knee, HI_DB) - v.get("gain");
+    const top = out(HI_DB) - v.get("gain");
     if (top < -0.05) {
       c.strokeStyle = tok["--gr"];
       c.setLineDash([3, 3]);
@@ -202,7 +163,7 @@ export const COMP_DYN: DynProcessor = {
       c.setLineDash([]);
       c.fillStyle = tok["--gr"];
       c.textAlign = "right";
-      // Clear of the R grip, which sits on the same edge at the curve's end.
+      // Inset from the axis so the label does not sit on the frame.
       c.fillText(`${top.toFixed(1)} dB`, g.px(HI_DB) - 22, g.py((HI_DB + top) / 2) + 3);
     }
   },

@@ -47,8 +47,8 @@ import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
 import { DynScreen } from "./ui/dyn-screen";
-import { GATE_DYN } from "./ui/dyn-gate";
-import { COMP_DYN } from "./ui/dyn-comp";
+import { DYN_PROCESSORS } from "./ui/dyn-registry";
+import type { DynKind } from "./ui/dyn-registry";
 import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
 import { errorCode, errorText, getLang, LANG_NAMES, onLangChange, t } from "./i18n";
 import { DEMO } from "./core/env";
@@ -402,7 +402,7 @@ const consoleView = new Console(consoleHost, {
   // The meter stream failed to register. Floor-stuck bars read as "no signal",
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
-  onOpenDynScreen: (kind, id) => dynScreen.open(kind === "comp" ? COMP_DYN : GATE_DYN, id),
+  onOpenDynScreen: (kind, id) => dynScreen.open(DYN_PROCESSORS[kind], id),
   // MIDI learn: while the panel's learn mode is on, console controls arm for
   // binding instead of editing (no-ops while midi is absent — browser / demo).
   midi: {
@@ -863,7 +863,7 @@ const inspectorActions = {
   onHideNode: (id: string) => graph.hideNode(id),
   // Declared here but bound below: the dynamics screen's hooks reach back into
   // these actions, so it cannot be constructed until they exist.
-  onOpenDynScreen: (kind: "gate" | "comp", id: string) => dynScreen.open(kind === "comp" ? COMP_DYN : GATE_DYN, id),
+  onOpenDynScreen: (kind: DynKind, id: string) => dynScreen.open(DYN_PROCESSORS[kind], id),
   onClose: () => graph.clearSelection(),
 };
 graph.setTheme(theme);

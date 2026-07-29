@@ -34,9 +34,10 @@ import {
   type MeterTap,
 } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
-import { COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
+import { COMP_EQ_COMP_FIRST } from "../core/control/params";
+import type { DynKind } from "./dyn-registry";
 import { channelEqUnavailable } from "../core/constraints";
-import { busBalance, channelControl, insertFxControl } from "../core/control/translate";
+import { busBalance, channelControl, channelDynamics, insertFxControl } from "../core/control/translate";
 import {
   isBalLinkedPair,
   isNodeInactive,
@@ -294,7 +295,7 @@ export interface ConsoleHooks {
    *  leaving a live session that quietly shows nothing. */
   onMeterError?: (message: string) => void;
   /** Open the GATE tuning screen for a MONO IN channel. */
-  onOpenDynScreen?: (kind: "gate" | "comp", id: string) => void;
+  onOpenDynScreen?: (kind: DynKind, id: string) => void;
   midi?: ConsoleMidiHooks;
 }
 
@@ -1260,7 +1261,7 @@ export class Console {
    *  its toggle, and this button changes nothing to commit. `wireActivate` still
    *  gives it the keyboard activation and the MIDI-learn guard the chips have —
    *  with no `midiId`, since a screen is not a device parameter to map. */
-  private dynOpenChip(kind: "gate" | "comp", id: string): HTMLElement {
+  private dynOpenChip(kind: DynKind, id: string): HTMLElement {
     const chip = el("div", "con-chip con-chip-open");
     chip.textContent = "▸";
     chip.setAttribute("role", "button");
@@ -1704,10 +1705,12 @@ export class Console {
       boolChip(proc, "GATE", "gateOn", false);
       proc.append(this.dynOpenChip("gate", m.id));
       boolChip(proc, "COMP", "compOn", false);
-      // No COMP screen in SSMCS: the morphing strip replaces the compressor, and
-      // its own controls stay in the inspector.
-      if ((this.hooks.getPlan().nodeParams[m.id]?.compEqType ?? COMP_EQ_COMP_FIRST) !== COMP_EQ_SSMCS)
-        proc.append(this.dynOpenChip("comp", m.id));
+      // No COMP screen in SSMCS: the morphing strip replaces the compressor. Asked
+      // of channelDynamics rather than re-derived here, so the opener cannot appear
+      // for a screen that would refuse to open.
+      const plan = this.hooks.getPlan();
+      const dyn = channelDynamics(this.hooks.getModel(), m.id, plan.nodeParams[m.id]?.compEqType ?? COMP_EQ_COMP_FIRST);
+      if (dyn?.comp) proc.append(this.dynOpenChip("comp", m.id));
     }
     const rate = this.hooks.getPlan().sampleRate;
     if (m.hasEq) {

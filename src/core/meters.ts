@@ -133,25 +133,27 @@ const getTapsMap = (modelId?: string): Record<string, MeterTap[]> => {
 // leaves room for the remaining confirmed GR meters (DUCKER 119 / insert FX 132,
 // 133) without touching the level chain.
 //
-// GATE and COMP are both MONO IN features, so only mono channels appear; x is the
-// mono channel index, the same axis as 106 / 108 (confirmed on URX44V at x0).
-// Note the axis is NOT shared across the family — DUCKER (119) is indexed by
-// stereo pair and the output insert FX (133) by effect band, so each one added
-// here has to bring its own measured axis.
-const GR_METER_ID: Record<GrKind, number> = { gate: 107, comp: 110 };
-const GR_CHANNEL_X: Record<string, number> = { ch1: 0, ch2: 1, ch3: 2, ch4: 3 };
+// One table per processor, node id → full address. The x axis is deliberately NOT
+// factored out and shared: it is measured per meter, and the family disagrees —
+// GATE (107) and COMP (110) are indexed by mono channel, DUCKER (119) by stereo
+// pair, the output insert FX (133) by effect band. A shared node→x map would let
+// `grAddr("gate", "ch_5_6")` answer with a plausible mono address the moment a
+// stereo node was listed for the ducker; a table per kind cannot pair a processor
+// with a node it was never measured on.
+const GR_TAPS: Record<GrKind, Record<string, readonly [number, number]>> = {
+  gate: { ch1: [107, 0], ch2: [107, 1], ch3: [107, 2], ch4: [107, 3] },
+  comp: { ch1: [110, 0], ch2: [110, 1], ch3: [110, 2], ch4: [110, 3] },
+};
 
 /** Which processor's reduction to meter. */
 export type GrKind = "gate" | "comp";
 
 /** The gain-reduction meter address for one processor on a node, or undefined when
- *  the node has neither (every channel but MONO IN). Which mono channels a model
- *  has is already stated once in the level tables, so this defers to them rather
- *  than restating the topology — URX22 has no ch3/ch4 there either. */
+ *  the node has none (every channel but MONO IN, for these two). Which channels a
+ *  model has is already stated once in the level tables, so this defers to them
+ *  rather than restating the topology — URX22 has no ch3/ch4 there either. */
 export function grAddr(kind: GrKind, nodeId: string, modelId?: string): readonly [number, number] | undefined {
-  const x = GR_CHANNEL_X[nodeId];
-  if (x === undefined || !getTapsMap(modelId)[nodeId]) return undefined;
-  return [GR_METER_ID[kind], x];
+  return getTapsMap(modelId)[nodeId] ? GR_TAPS[kind][nodeId] : undefined;
 }
 
 const addrKey = (meterId: number, x: number): string => `${meterId}:${x}`;

@@ -7,7 +7,8 @@
 
 import { formatDyn } from "../core/control/translate";
 import { GATE_RANGE_OFF_DB } from "../core/control/vd";
-import { GR_FLOOR_DB, HI_DB } from "./dyn-screen";
+import { GR_FLOOR_DB } from "../core/meters";
+import { HI_DB } from "./dyn-screen";
 import type { DynProcessor } from "./dyn-screen";
 
 /** Input axis: the exact domain a GATE threshold can occupy, so a cap position
@@ -40,18 +41,10 @@ export const GATE_DYN: DynProcessor = {
   outTapKey: "precomp",
   // No grFullDb: a gate's reduction runs the whole ruler (range reaches -∞), so
   // the shared tick column reads for it — a GR bar down to the -56 tick is 56 dB.
+  // The curve carries one editable value, so a press on it is unambiguous.
+  curveDragsThreshold: true,
   text: (m) => m.dynTuning.gate,
   fields: (dyn) => dyn.gate,
-
-  handles: (v) => [
-    {
-      id: "threshold",
-      label: "T",
-      x: v.get("threshold"),
-      y: v.get("threshold"),
-      drag: (inDb) => ({ threshold: Math.round(v.clamp("threshold", inDb)) }),
-    },
-  ],
 
   drawCurve: (c, g, v, tok) => {
     const thr = v.get("threshold");

@@ -17,6 +17,7 @@ declare global {
         onmessage: (batch: Array<{ param_id: number; x: number; y: number; value: number }>) => void;
       } | null;
       meterAddrs: Array<[number, number]>;
+      mem: Record<string, number>;
       subscribes: number;
       unsubscribes: number;
       sets: Array<{ id: number; value: number }>;
@@ -85,6 +86,7 @@ test.beforeEach(async ({ page }) => {
       meterChannel: null,
       paramChannel: null,
       meterAddrs: [],
+      mem: {},
       subscribes: 0,
       unsubscribes: 0,
       sets: [],
@@ -108,11 +110,15 @@ test.beforeEach(async ({ page }) => {
           case "vd_disconnect":
             return Promise.resolve();
           case "vd_get":
-            return Promise.resolve(0);
+            // Answer reads with what was written: a blanket 0 would let a scoped
+            // readback undo the state the test just set (1-knob back off, and its
+            // level row out from under the pointer).
+            return Promise.resolve(state.mem[`${args.paramId}:${args.x}:${args.y}`] ?? 0);
           case "vd_get_str":
             return Promise.resolve("");
           case "vd_set":
-            state.sets.push({ id: args.id as number, value: args.value as number });
+            state.mem[`${args.paramId}:${args.x}:${args.y}`] = args.value as number;
+            state.sets.push({ id: args.paramId as number, value: args.value as number });
             return Promise.resolve();
           case "vd_set_str":
             return Promise.resolve();
@@ -476,5 +482,39 @@ test.describe("comp", () => {
       // held compression — so the lane reads the same at any makeup setting.
       await expect(readout(page, "Pre EQ").locator(".v")).toHaveText("—");
     });
+  });
+});
+
+test.describe("comp, dragging while the device follows", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.click("#btn-device");
+    await page.click("#btn-live");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("the 1-knob level survives its own edit and the follow it provokes", async ({ page }) => {
+    // The unit answers every level change by recomputing threshold / ratio / gain
+    // and announcing all four addresses, which arrives back here as a refresh.
+    // Rebuilding the column then — or on the slider's own input event — replaces
+    // the element under the pointer, and the drag ends after two or three steps.
+    await openFromInspector(page, "ch1", "comp");
+    await paramRow(page, "1-Knob").locator("button", { hasText: "On" }).click();
+    const slider = page.locator("#dyn-oneknob-level");
+    const box = (await slider.boundingBox()) as { x: number; y: number; width: number; height: number };
+
+    await page.mouse.move(box.x + 4, box.y + box.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 10; i++) {
+      await page.mouse.move(box.x + 4 + (box.width - 8) * (i / 10) * 0.8, box.y + box.height / 2);
+      if (i % 3 === 0) {
+        await pushParam(page, 43, 0, 0, 40);
+        await pushParam(page, 35, 0, 0, -3200);
+      }
+    }
+    await page.mouse.up();
+
+    // A drag across 80% of the track lands near 80, not at the two or three steps
+    // a rebuild-per-input allows.
+    await expect.poll(async () => Number(await slider.inputValue())).toBeGreaterThan(60);
   });
 });

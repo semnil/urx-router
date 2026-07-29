@@ -4,9 +4,9 @@
 // same shape (see docs/{en,ja}/dynamics-tuning.md).
 //
 // What varies between processors lives in a `DynProcessor` — its taps, its
-// parameter fields, its transfer plot and the handles on it — and is selected per
-// open() rather than per instance, because both screens share one modal host and
-// two instances would fight over its DOM.
+// parameter fields and its transfer plot — and is selected per open() rather than
+// per instance, because both screens share one modal host and two instances would
+// fight over its DOM.
 //
 // Two display modes over one control set. LADDER is the three taps on a shared
 // dB ruler — linear in dB over exactly the threshold's domain, so a cap's position
@@ -37,7 +37,6 @@ import type { Messages } from "../i18n/en";
 import {
   decodeGrDb,
   grAddr,
-  GR_FLOOR_DB,
   METER_GREEN_TOP_DB,
   METER_YELLOW_TOP_DB,
   MeterStore,
@@ -55,7 +54,7 @@ import { loadJson, saveJson } from "../core/storage";
 /** Top of both axes: a channel meter cannot read above 0 dBFS. */
 export const HI_DB = 0;
 
-export const CURVE_PAD = { l: 44, r: 14, t: 14, b: 28 };
+const CURVE_PAD = { l: 44, r: 14, t: 14, b: 28 };
 
 /** Plot coordinates for a processor's transfer curve. The input axis spans the
  *  threshold's own domain; the output axis is the processor's to choose, because
@@ -68,33 +67,24 @@ export interface DynCurveGeo {
   py: (db: number) => number;
 }
 
-/** Read a parameter (falling back to the field table's own default) and clamp a
- *  candidate value to that field's range. Handed to the processor so a curve and
- *  its handles cannot disagree with the sliders about either. */
+/** Read a parameter, falling back to the field table's own default — so a curve and
+ *  the sliders beside it cannot disagree about what "unset" means. */
 export interface DynValues {
   get: (key: string) => number;
-  clamp: (key: string, v: number) => number;
-}
-
-/** A grip on the transfer curve. The device's own COMP screen is edited this way
- *  (T / R / G dragged on the graph), and the gate's threshold is the same gesture
- *  with one grip. Positions are in dB, so hit-testing happens in plot space. */
-export interface DynHandle {
-  id: string;
-  label: string;
-  /** Input-axis position. */
-  x: number;
-  /** Output-axis position. */
-  y: number;
-  /** Values for a drag to (inDb, outDb); null when this pointer position sets
-   *  nothing (out of range for the grip). */
-  drag: (inDb: number, outDb: number) => Record<string, number> | null;
 }
 
 export interface DynRowCtx {
   m: Messages;
   vals: Record<string, unknown>;
+  /** The keys `driven` reported, resolved — so a row that is not a slider reads the
+   *  same answer the sliders do instead of restating the rule. */
+  driven: ReadonlySet<string>;
+  /** Set a value that decides which other rows exist or are editable (COMP's
+   *  1-knob and Auto Makeup): rebuilds the control column. */
   set: (patch: Record<string, number | boolean>) => void;
+  /** Set a value that only changes itself. No rebuild — a control being dragged
+   *  must survive its own edit, and rebuilding drops the pointer capture. */
+  setValue: (patch: Record<string, number | boolean>) => void;
 }
 
 /** Extra rows a processor renders beside its sliders, in the device's own read
@@ -123,11 +113,14 @@ export interface DynProcessor {
   text: (m: Messages) => DynText;
   /** The processor's slider fields for a channel, or null when it has none there. */
   fields: (dyn: ChannelDynamics) => DynField[] | null;
-  /** Keys the device is driving right now: rendered read-only, grips locked. */
+  /** Keys the device is driving right now: rendered read-only. */
   driven?: (vals: Record<string, unknown>) => ReadonlySet<string>;
   rows?: (ctx: DynRowCtx) => DynRows;
-  handles?: (v: DynValues) => DynHandle[];
-  /** The static transfer plot, minus the grips and the live dot. */
+  /** Whether a press anywhere on the curve sets the threshold. True where the
+   *  curve carries one editable value and the gesture is unambiguous; false where
+   *  it carries several, since a press then has to guess which one was meant. */
+  curveDragsThreshold?: boolean;
+  /** The static transfer plot, minus the live dot the screen puts on it. */
   drawCurve: (c: CanvasRenderingContext2D, geo: DynCurveGeo, v: DynValues, tok: Record<string, string>) => void;
 }
 
@@ -158,9 +151,6 @@ const READOUT_EVERY = 5;
 /** Persisted display mode, per processor. Its own key, like `urx-sends-open` and
  *  `urx-metertap`: this is per-surface UI state, not a Preferences setting. */
 const MODE_STORE = "urx-dyn-display";
-
-/** Grab radius for a curve grip, in px. */
-const GRIP_R = 13;
 
 type Mode = "ladder" | "curve";
 
@@ -201,6 +191,9 @@ const LANES: readonly Lane[] = ["in", "gr", "out"];
 
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
+/** Shared empty set for a processor with nothing device-driven. */
+const NO_KEYS: ReadonlySet<string> = new Set<string>();
+
 export class DynScreen {
   private readonly scrim: HTMLElement;
   private readonly box: HTMLElement;
@@ -225,6 +218,7 @@ export class DynScreen {
   private dotOut: number | null = null;
   private plotDirty = true;
   private plotSize = { w: 0, h: 0 };
+  private geoCache: DynCurveGeo | null = null;
   /** Theme tokens the curve draws with. Read once per render, not per frame:
    *  getComputedStyle after the frame's DOM writes is a forced style recalc. */
   private plotTokens: Record<string, string> = {};
@@ -245,6 +239,8 @@ export class DynScreen {
 
   private ladders: Partial<Record<Lane, LadderRefs>> = {};
   private cap: HTMLElement | null = null;
+  /** Last threshold written to the DOM; NaN forces the next write (a rebuild). */
+  private syncedThreshold = Number.NaN;
   // The threshold row's controls, cached at build: syncThreshold runs at pointer
   // rate and was re-querying the subtree for both of them on every move.
   private thrSlider: HTMLInputElement | null = null;
@@ -257,18 +253,40 @@ export class DynScreen {
     close: () => this.close(),
   });
 
+  /** A pointer is down on this screen, so nothing may rebuild its DOM: the control
+   *  under the pointer would be replaced and the drag would end there. */
+  private grabbed = false;
+  /** A refresh arrived while grabbed and still has to happen. */
+  private refreshPending = false;
+
   constructor(private readonly hooks: DynScreenHooks) {
     this.scrim = document.getElementById("dyn-screen-modal") as HTMLElement;
     this.box = document.getElementById("dyn-screen-box") as HTMLElement;
+    // The box itself outlives every rebuild, so one listener covers whatever it
+    // holds. Release is watched on the window because a drag routinely ends with
+    // the pointer outside the control, and outside the modal.
+    this.box.addEventListener("pointerdown", () => {
+      this.grabbed = true;
+    });
+    const release = (): void => {
+      if (!this.grabbed) return;
+      this.grabbed = false;
+      if (!this.refreshPending) return;
+      this.refreshPending = false;
+      this.refresh();
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
   }
 
   isOpen(): boolean {
     return !this.scrim.hidden;
   }
 
-  /** Which processor is on screen, or "" when nothing is. */
-  openKey(): string {
-    return this.isOpen() ? (this.proc?.key ?? "") : "";
+  /** The open processor. Every path below runs between open() and close(), where it
+   *  is set; the alternative was a gate-specific fallback in ten places. */
+  private p(): DynProcessor {
+    return this.proc as DynProcessor;
   }
 
   private mode(): Mode {
@@ -314,8 +332,10 @@ export class DynScreen {
    *  follow can move these very parameters while it is open. */
   refresh(): void {
     if (!this.isOpen()) return;
-    // A follow can also switch the channel's COMP/EQ bank out from under the
-    // screen, which takes the processor away entirely.
+    // A follow can switch the channel's COMP/EQ bank out from under the screen,
+    // which takes the processor away entirely. That verdict is not deferrable —
+    // a screen left open on a bank the plan no longer emits would keep writing
+    // into it — so it is decided before anything else.
     const dyn = this.dynamicsOf(this.hooks.getModel(), this.nodeId);
     const fields = dyn && this.proc?.fields(dyn);
     if (!fields) {
@@ -323,8 +343,37 @@ export class DynScreen {
       return;
     }
     this.fields = fields;
+    // Device follow runs on its own clock, and under COMP 1-knob it runs on every
+    // step of a drag — the unit recomputes threshold / ratio / gain and announces
+    // them, which comes back here. Rebuilding then would replace the control being
+    // dragged, so the operator got two or three steps and no more. The values still
+    // have to land, or the rows the screen advertises as device-driven would sit
+    // frozen through the one gesture that drives them, so they go in place and only
+    // the rebuild waits — the same split the CONSOLE draws between updating a strip
+    // and re-creating it.
+    if (this.grabbed) {
+      this.refreshPending = true;
+      this.syncValues();
+      return;
+    }
     this.render();
     this.measure();
+  }
+
+  /** Write the current parameter values into the rows already on screen. Covers a
+   *  device-side change arriving mid-gesture; anything structural (which rows exist,
+   *  which are read-only) waits for the rebuild. */
+  private syncValues(): void {
+    for (const input of this.box.querySelectorAll<HTMLInputElement>("input[data-dyn]")) {
+      const key = input.dataset.dyn;
+      const f = key && this.fields.find((x) => x.key === key);
+      if (!f) continue;
+      const v = this.val(f.key);
+      if (Number(input.value) !== v) input.value = String(v);
+      const out = this.box.querySelector<HTMLElement>(`[data-dyn-val="${f.key}"]`);
+      if (out) setLevelText(out, dynValueText(f, v));
+    }
+    this.syncThreshold();
   }
 
   /** Live sync turned on/off while this screen is open. It holds the meter slot
@@ -406,7 +455,7 @@ export class DynScreen {
 
   /** Fraction of the ladder a level occupies (0 at the floor, 1 at 0 dBFS). */
   private frac(db: number): number {
-    const lo = this.proc?.loDb ?? -72;
+    const lo = this.p().loDb;
     return clamp01((db - lo) / (HI_DB - lo));
   }
 
@@ -416,8 +465,8 @@ export class DynScreen {
    *  would sit invisible on a 54 dB ruler — its lane is labelled separately). */
   private laneFrac(lane: Lane, db: number): number {
     if (lane !== "gr") return this.frac(db);
-    const lo = this.proc?.loDb ?? -72;
-    return clamp01(Math.abs(db) / (this.proc?.grFullDb ?? HI_DB - lo));
+    const p = this.p();
+    return clamp01(Math.abs(db) / (p.grFullDb ?? HI_DB - p.loDb));
   }
 
   // ---------------------------------------------------------------- painting
@@ -501,12 +550,12 @@ export class DynScreen {
   // ---------------------------------------------------------------- plan I/O
 
   private vals(): Record<string, unknown> {
-    const key = this.proc?.key ?? "gate";
+    const key = this.p().key;
     return (this.hooks.getPlan().nodeParams[this.nodeId]?.[key] ?? {}) as Record<string, unknown>;
   }
 
   private setVals(patch: Record<string, number | boolean>): void {
-    const key = this.proc?.key ?? "gate";
+    const key = this.p().key;
     const plan = this.hooks.getPlan();
     this.hooks.onUpdateNodeParams(this.nodeId, {
       [key]: { ...(plan.nodeParams[this.nodeId]?.[key] ?? {}), ...patch },
@@ -520,26 +569,20 @@ export class DynScreen {
     return typeof v === "number" ? v : (this.fields.find((f) => f.key === key)?.def ?? 0);
   }
 
-  private clampField(key: string, v: number): number {
-    const f = this.fields.find((x) => x.key === key);
-    if (!f) return v;
-    return Math.min(f.max, Math.max(f.min, v));
-  }
-
   private values(): DynValues {
-    return { get: (k) => this.val(k), clamp: (k, v) => this.clampField(k, v) };
+    return { get: (k) => this.val(k) };
   }
 
   /** Keys the device is driving right now (COMP 1-knob / Auto Makeup). They stay
    *  visible and keep updating — the device announces every recomputation — but
-   *  they are not editable here, matching the unit's own screen. */
-  private driven(): ReadonlySet<string> {
-    return this.proc?.driven?.(this.vals()) ?? new Set<string>();
-  }
+   *  they are not editable here, matching the unit's own screen. Resolved once per
+   *  render: it can only change through a path that re-renders, and the pointer
+   *  handlers below consult it on every move. */
+  private driven: ReadonlySet<string> = NO_KEYS;
 
   private setThresholdFromFrac(f: number): void {
-    if (this.driven().has("threshold")) return;
-    const lo = this.proc?.loDb ?? -72;
+    if (this.driven.has("threshold")) return;
+    const lo = this.p().loDb;
     const db = Math.round(lo + clamp01(f) * (HI_DB - lo));
     if (db !== this.vals().threshold) this.setVals({ threshold: db });
     this.syncThreshold();
@@ -547,6 +590,12 @@ export class DynScreen {
 
   private syncThreshold(): void {
     const db = this.val("threshold");
+    // The ladder spans 54-72 dB over the slot height, so most consecutive moves
+    // resolve to the same rounded value. `--pos` drives `top` (unregistered, so it
+    // dirties layout) and the readout writes textContent, which relayouts its cell
+    // whether or not the string changed — the same reason paint() throttles its own.
+    if (db === this.syncedThreshold) return;
+    this.syncedThreshold = db;
     if (this.cap) {
       this.cap.style.setProperty("--pos", ((1 - this.frac(db)) * 100).toFixed(2) + "%");
       this.cap.setAttribute("aria-valuenow", String(db));
@@ -586,6 +635,8 @@ export class DynScreen {
     // on a skipped frame (every mode switch, since render() paints once) left them
     // blank until the next feed tick, or forever with no session.
     this.paintN = 0;
+    this.syncedThreshold = Number.NaN;
+    this.driven = proc.driven?.(this.vals()) ?? NO_KEYS;
 
     const title = el("h2", "");
     title.id = "dyn-screen-title";
@@ -631,8 +682,8 @@ export class DynScreen {
     seg.append(mk("ladder", g.modeLadder), mk("curve", g.modeCurve));
     h.append(seg);
     col.append(sec, this.mode() === "ladder" ? this.ladderBox(px) : this.curveBox(px));
-    // The hint is CURVE's alone — a fader cap on a meter explains itself, dragging
-    // a curve's grip does not — but its box is reserved in both modes. Adding it
+    // The hint is CURVE's alone — a fader cap on a meter explains itself, a plot
+    // does not say what it is showing — but its box is reserved in both modes. Adding it
     // only in CURVE made the modal grow by its height on every switch, which moves
     // the Close action and the parameter rows under the pointer. The reservation is
     // exactly one line; `gt-note`'s fixed height keeps a longer string from silently
@@ -645,7 +696,7 @@ export class DynScreen {
   }
 
   private ladderBox(px: DynText): HTMLElement {
-    const proc = this.proc as DynProcessor;
+    const proc = this.p();
     const box = el("div", "gt-ladderbox");
     const row = el("div", "gt-ladders");
 
@@ -722,18 +773,23 @@ export class DynScreen {
     cap.tabIndex = 0;
     cap.setAttribute("role", "slider");
     cap.setAttribute("aria-label", t().inspector.dyn.threshold);
-    cap.setAttribute("aria-valuemin", String(this.proc?.loDb ?? -72));
+    cap.setAttribute("aria-valuemin", String(this.p().loDb));
     cap.setAttribute("aria-valuemax", String(HI_DB));
-    if (this.driven().has("threshold")) cap.classList.add("locked");
+    if (this.driven.has("threshold")) cap.classList.add("locked");
     this.cap = cap;
 
+    // The slot's rect is read once per gesture: reading it per move is a forced
+    // layout in the subtree the 30 fps meter loop is writing to, and the modal can
+    // neither scroll nor resize while a pointer is down.
+    let rect: DOMRect | null = null;
     const fromY = (clientY: number): void => {
-      const r = slot.getBoundingClientRect();
+      const r = (rect ??= slot.getBoundingClientRect());
       this.setThresholdFromFrac(1 - (clientY - r.top) / r.height);
     };
     let dragging = false;
     cap.addEventListener("pointerdown", (e) => {
       cap.setPointerCapture(e.pointerId);
+      rect = slot.getBoundingClientRect();
       dragging = true;
       e.preventDefault();
     });
@@ -742,19 +798,22 @@ export class DynScreen {
     });
     const end = (): void => {
       dragging = false;
+      rect = null;
     };
     cap.addEventListener("pointerup", end);
     cap.addEventListener("pointercancel", end);
     // A press on the track jumps the cap, matching the console faders.
     slot.addEventListener("pointerdown", (e) => {
-      if (e.target !== cap) fromY(e.clientY);
+      if (e.target === cap) return;
+      rect = slot.getBoundingClientRect();
+      fromY(e.clientY);
     });
     cap.addEventListener("keydown", (e) => {
       const step =
         e.key === "PageUp" ? 6 : e.key === "PageDown" ? -6 : e.key === "ArrowUp" ? 1 : e.key === "ArrowDown" ? -1 : 0;
-      if (!step || this.driven().has("threshold")) return;
+      if (!step || this.driven.has("threshold")) return;
       e.preventDefault();
-      const lo = this.proc?.loDb ?? -72;
+      const lo = this.p().loDb;
       const next = Math.min(HI_DB, Math.max(lo, this.val("threshold") + step));
       this.setVals({ threshold: next });
       this.syncThreshold();
@@ -783,49 +842,18 @@ export class DynScreen {
     this.canvas = cv;
     box.append(cv);
 
-    // Grips are grabbed by proximity; a press anywhere else drags the threshold,
-    // which is what the gate's whole curve did before there were several.
-    let grip: DynHandle | null = null;
-    const geo = (): DynCurveGeo | null => {
-      const { w, h } = this.plotSize;
-      return w && h ? this.geo(w, h) : null;
-    };
-    const pick = (e: PointerEvent): DynHandle | null => {
-      const g = geo();
-      const hs = this.handles();
-      if (!g || !hs.length) return null;
-      let best: DynHandle | null = null;
-      let bestD = GRIP_R * GRIP_R;
-      for (const h of hs) {
-        const dx = g.px(h.x) - e.offsetX;
-        const dy = g.py(h.y) - e.offsetY;
-        const d = dx * dx + dy * dy;
-        if (d <= bestD) {
-          bestD = d;
-          best = h;
-        }
-      }
-      return best;
-    };
+    // A press anywhere on the plot sets the threshold, for the processors that opt
+    // in. Grips labelled T / R / G on the curve were tried and removed: they read
+    // as the unit's own screen, and a press that missed one fell through to this
+    // same threshold drag, so pressing the gain grip moved the threshold instead.
+    if (!this.proc?.curveDragsThreshold) return box;
     const apply = (e: PointerEvent): void => {
-      const g = geo();
-      if (!g) return;
-      if (!grip) {
-        this.setThresholdFromFrac((e.offsetX - CURVE_PAD.l) / (g.w - CURVE_PAD.l - CURVE_PAD.r));
-        return;
-      }
-      // Re-resolve the grip each move: its own drag closure captured the values it
-      // was built with, and the plot is rebuilt from the plan on every change.
-      const live = this.handles().find((h) => h.id === grip?.id) ?? grip;
-      const patch = live.drag(this.unPx(e.offsetX, g), this.unPy(e.offsetY, g));
-      if (!patch) return;
-      this.setVals(patch);
-      if ("threshold" in patch) this.syncThreshold();
-      else this.markPlotDirty();
+      const w = this.plotSize.w;
+      if (!w) return;
+      this.setThresholdFromFrac((e.offsetX - CURVE_PAD.l) / (w - CURVE_PAD.l - CURVE_PAD.r));
     };
     cv.addEventListener("pointerdown", (e) => {
       cv.setPointerCapture(e.pointerId);
-      grip = pick(e);
       apply(e);
     });
     cv.addEventListener("pointermove", (e) => {
@@ -833,7 +861,6 @@ export class DynScreen {
     });
     const end = (e: PointerEvent): void => {
       if (cv.hasPointerCapture(e.pointerId)) cv.releasePointerCapture(e.pointerId);
-      grip = null;
     };
     cv.addEventListener("pointerup", end);
     cv.addEventListener("pointercancel", end);
@@ -842,7 +869,7 @@ export class DynScreen {
 
   private controlColumn(m: Messages, g: Messages["dynTuning"]): HTMLElement {
     const col = el("div", "prefs-col");
-    const proc = this.proc as DynProcessor;
+    const proc = this.p();
 
     const params = settingsSection(g.parameters);
     const labels = m.inspector.dyn as Record<string, string>;
@@ -854,16 +881,17 @@ export class DynScreen {
     const extra = proc.rows?.({
       m,
       vals,
+      driven: this.driven,
       set: (patch) => {
         this.setVals(patch);
         this.render();
         this.measure();
       },
+      setValue: (patch) => this.setVals(patch),
     });
-    const driven = this.driven();
     if (extra?.lead) params.append(...extra.lead);
     for (const f of this.fields) {
-      params.append(this.paramRow(f, labels[f.key] ?? f.key, this.val(f.key), driven.has(f.key), g));
+      params.append(this.paramRow(f, labels[f.key] ?? f.key, this.val(f.key), this.driven.has(f.key), g));
     }
     if (extra?.tail) params.append(...extra.tail);
 
@@ -891,7 +919,6 @@ export class DynScreen {
     input.value = String(value);
     input.dataset.dyn = f.key;
     input.setAttribute("aria-label", label);
-    input.disabled = driven;
     const val = el("span", "param-val gt-val");
     val.dataset.dynVal = f.key;
     if (f.key === "threshold") {
@@ -951,36 +978,22 @@ export class DynScreen {
     this.plotDirty = true;
   }
 
+  /** Plot coordinates for the current size. Cached: it depends only on the size and
+   *  the processor, and the alternative was two fresh closures plus a spread on
+   *  every frame of the loop this file otherwise keeps allocation-free. */
   private geo(w: number, h: number): DynCurveGeo {
-    const proc = this.proc as DynProcessor;
+    if (this.geoCache && this.geoCache.w === w && this.geoCache.h === h) return this.geoCache;
+    const proc = this.p();
     const lo = proc.loDb;
     const outLo = proc.outLoDb;
     const outHi = Math.max(HI_DB, ...proc.outTicks);
-    return {
+    this.geoCache = {
       w,
       h,
       px: (db) => CURVE_PAD.l + ((db - lo) / (HI_DB - lo)) * (w - CURVE_PAD.l - CURVE_PAD.r),
       py: (db) => h - CURVE_PAD.b - ((db - outLo) / (outHi - outLo)) * (h - CURVE_PAD.t - CURVE_PAD.b),
     };
-  }
-
-  private unPx(x: number, g: DynCurveGeo): number {
-    const lo = (this.proc as DynProcessor).loDb;
-    return lo + ((x - CURVE_PAD.l) / (g.w - CURVE_PAD.l - CURVE_PAD.r)) * (HI_DB - lo);
-  }
-
-  private unPy(y: number, g: DynCurveGeo): number {
-    const proc = this.proc as DynProcessor;
-    const outLo = proc.outLoDb;
-    const outHi = Math.max(HI_DB, ...proc.outTicks);
-    return outLo + ((g.h - CURVE_PAD.b - y) / (g.h - CURVE_PAD.t - CURVE_PAD.b)) * (outHi - outLo);
-  }
-
-  private handles(): DynHandle[] {
-    const driven = this.driven();
-    const all = this.proc?.handles?.(this.values()) ?? [];
-    // A grip whose value the device owns is not draggable, and is drawn hollow.
-    return all.filter((h) => !driven.has(h.id));
+    return this.geoCache;
   }
 
   /** Split into a cached static layer and a live dot. Everything but the dot
@@ -1016,7 +1029,7 @@ export class DynScreen {
     const inDb = this.dotIn;
     const outDb = this.dotOut;
     if (inDb === null || outDb === null) return;
-    const proc = this.proc as DynProcessor;
+    const proc = this.p();
     const g = this.geo(w, h);
     const tok = this.plotTokens;
     const x = g.px(Math.max(inDb, proc.loDb));
@@ -1032,10 +1045,9 @@ export class DynScreen {
   }
 
   /** The static plot, rendered once per parameter / size / theme change: the frame
-   *  and axes here, the processor's own transfer curve in between, the grips on
-   *  top. */
+   *  and axes here, the processor's own transfer curve on top. */
   private drawPlotLayer(w: number, h: number, dpr: number): HTMLCanvasElement {
-    const proc = this.proc as DynProcessor;
+    const proc = this.p();
     const layer = this.plotLayer ?? document.createElement("canvas");
     layer.width = Math.round(w * dpr);
     layer.height = Math.round(h * dpr);
@@ -1090,35 +1102,17 @@ export class DynScreen {
 
     proc.drawCurve(c, g, this.values(), tok);
 
-    for (const hnd of this.handles()) {
-      const cx = Math.min(Math.max(g.px(hnd.x), CURVE_PAD.l + GRIP_R), w - CURVE_PAD.r - GRIP_R);
-      const cy = Math.min(Math.max(g.py(hnd.y), CURVE_PAD.t + GRIP_R), h - CURVE_PAD.b - GRIP_R);
-      c.beginPath();
-      c.arc(cx, cy, GRIP_R - 2, 0, Math.PI * 2);
-      c.fillStyle = tok["--plot-grip"];
-      c.fill();
-      c.lineWidth = 2;
-      c.strokeStyle = hnd.id === "threshold" ? tok["--led"] : dim;
-      c.stroke();
-      c.fillStyle = hnd.id === "threshold" ? tok["--led"] : dim;
-      c.font = PLOT_FONT_BOLD;
-      c.textAlign = "center";
-      c.fillText(hnd.label, cx, cy + 4);
-      c.font = PLOT_FONT;
-    }
     return layer;
   }
 }
 
 const PLOT_FONT = '9.5px "SF Mono", Menlo, Consolas, monospace';
-const PLOT_FONT_BOLD = 'bold 11px "SF Mono", Menlo, Consolas, monospace';
 
 const PLOT_TOKENS = [
   "--plot-line",
   "--plot-faint",
   "--plot-dim",
   "--plot-ink",
-  "--plot-grip",
   "--led",
   "--gr",
   "--m-green",
@@ -1140,5 +1134,3 @@ function capLabel(label: string, meterId: number | undefined): HTMLElement {
   cap.append(sub);
   return cap;
 }
-
-export { GR_FLOOR_DB };

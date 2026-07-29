@@ -258,7 +258,6 @@ export const ja: Messages = {
     autoMakeup: "Auto Makeup",
     oneKnob: "1-Knob",
     oneKnobLevel: "1-Knob レベル",
-    oneKnobDriven: "1-Knob により自動設定 (読み取り専用)",
     ssmcs: {
       title: "SSMCS",
       sweetSpotData: "Sweet Spot Data",
@@ -448,7 +447,7 @@ export const ja: Messages = {
       tapIn: "Pre Comp",
       tapGr: "Comp GR",
       tapOut: "Pre EQ",
-      curveHint: "曲線上の T (threshold) / R (ratio) / G (gain) をドラッグします。",
+      curveHint: "曲線はスライダーが信号に与える変化、点はライブのレベルです。",
     },
   },
   shelf: {

@@ -1,5 +1,7 @@
 // Tiny DOM builder shared by the UI modules.
 import { getSettings } from "../core/settings";
+import { setLevelText } from "./glyph";
+import { t } from "../i18n";
 
 export function el(tag: string, cls: string): HTMLElement {
   const e = document.createElement(tag);
@@ -182,6 +184,52 @@ export function settingsChoice(
     wrap.append(b);
   }
   return wrap;
+}
+
+/** The ON/OFF pair, in the order every settings surface prints it. Three screens
+ *  wrote this expression out, each with its own note about borrowing the
+ *  inspector's strings; the recipe belongs beside `settingsChoice` like the rest. */
+export function onOff(on: boolean, apply: (on: boolean) => void): HTMLElement {
+  return settingsChoice([t().inspector.on, t().inspector.off], on ? 0 : 1, (i) => apply(i === 0), true);
+}
+
+/** A labelled range slider row with a readout, the shape every parameter row on the
+ *  dynamics screens takes. Carries the wheel-step contract `onWheelStep` documents,
+ *  which a hand-built row silently drops. */
+export function sliderRow(opts: {
+  label: string;
+  id?: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  format: (v: number) => string;
+  onInput: (v: number) => void;
+  row?: SettingsRowOptions;
+}): HTMLElement {
+  const ctl = el("span", "ctl dev-slider");
+  const input = document.createElement("input");
+  input.type = "range";
+  if (opts.id) input.id = opts.id;
+  input.min = String(opts.min);
+  input.max = String(opts.max);
+  input.step = String(opts.step);
+  input.value = String(opts.value);
+  input.setAttribute("aria-label", opts.label);
+  const val = el("span", "param-val gt-val");
+  const show = (v: number): void => {
+    setLevelText(val, opts.format(v));
+    input.setAttribute("aria-valuetext", opts.format(v));
+  };
+  show(opts.value);
+  input.addEventListener("input", () => {
+    const v = Number(input.value);
+    show(v);
+    opts.onInput(v);
+  });
+  wheelStep(input);
+  ctl.append(input, val);
+  return settingsRow(opts.label, ctl, opts.row);
 }
 
 /** Dropdown over a fixed choice list. With no choices the control does not apply to
