@@ -359,6 +359,22 @@ export class Console {
     this.stopPaint();
   }
 
+  /** Hand the broker's meter subscription to another screen. There is one slot
+   *  process-wide — a subscribe replaces the previous registration and the
+   *  unsubscribe takes no address — and the replacement is silent, so a screen
+   *  that wants its own addresses has to say so rather than let this view keep
+   *  believing it still has a stream. */
+  releaseMeters(): void {
+    this.stopMeters();
+  }
+
+  /** Take the slot back. A no-op unless this view is live and on screen: opened
+   *  from the GRAPH inspector, the console may be hidden, and its stream is then
+   *  re-established by the render() that the next show() runs. */
+  regainMeters(): void {
+    this.startMeters();
+  }
+
   /** Live sync turned on/off: gate the signal meter lanes and their stream. */
   setLive(active: boolean): void {
     this.live = active;

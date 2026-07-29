@@ -278,7 +278,19 @@ export function tapAddrs(taps: Iterable<MeterTap>): Array<[number, number]> {
  * Subscribe to the given meter addresses, routing readings into `store`. Returns
  * an unsubscribe function. No-op (returns a noop) outside Tauri / when not
  * connected.
+ *
+ * `onUpdate` sees every frame, which the store cannot offer: the store is
+ * last-write-win per address, so a batch carrying more than one frame for an
+ * address keeps only the last. Anything folding across frames — a peak hold on a
+ * meter the device does not hold itself — has to run here.
  */
-export function subscribeMeters(store: MeterStore, addrs: Array<[number, number]>): Promise<() => void> {
-  return vdMetersSubscribe(addrs, (m) => store.apply(m));
+export function subscribeMeters(
+  store: MeterStore,
+  addrs: Array<[number, number]>,
+  onUpdate?: (m: MeterUpdate) => void,
+): Promise<() => void> {
+  return vdMetersSubscribe(addrs, (m) => {
+    store.apply(m);
+    onUpdate?.(m);
+  });
 }
