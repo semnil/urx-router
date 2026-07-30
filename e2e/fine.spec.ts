@@ -24,11 +24,21 @@ test.beforeEach(async ({ page }) => {
   await page.locator("#model-picker").waitFor();
 });
 
-test.describe("inspector sliders", () => {
+// Both fine-eligible dB values live on a tuning screen now (the inspector keeps the ON
+// toggle and a launcher), and the eligibility travels with the field rather than with
+// whichever surface renders it.
+const openScreen = async (page: Page, section: RegExp, button: string): Promise<void> => {
+  await node(page, "ch1").click();
+  const sec = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: section }) });
+  if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
+  await sec.locator(button).click();
+  await expect(page.locator("#dyn-screen-box")).toBeVisible();
+};
+
+test.describe("tuning-screen sliders", () => {
   test("EQ gain steps 0.1 dB while Shift is held, 0.5 dB otherwise", async ({ page }) => {
-    await node(page, "ch1").click();
-    // The active band panel carries the only visible fine-eligible EQ slider.
-    const row = page.locator("#inspector .eq-panel:not([hidden]) .param.has-fine");
+    await openScreen(page, /^EQ$/, "#btn-eq-screen");
+    const row = page.locator("#dyn-screen-box .prefs-row.has-fine");
     const slider = row.locator("input[type=range]");
     const readout = row.locator(".param-val");
     await expect(slider).toHaveAttribute("step", "0.5");
@@ -42,13 +52,8 @@ test.describe("inspector sliders", () => {
     await expect(slider).toHaveAttribute("step", "0.5");
   });
 
-  test("COMP gain is fine-eligible; threshold and Q are not", async ({ page }) => {
-    await node(page, "ch1").click();
-    // COMP gain lives on the dynamics screen now, and the eligibility travels with
-    // the field rather than with whichever surface renders it.
-    const comp = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^COMP$/ }) });
-    await comp.locator("summary").click(); // COMP folds off by default
-    await comp.locator("#btn-comp-screen").click();
+  test("COMP gain is fine-eligible; threshold and the EQ's Q are not", async ({ page }) => {
+    await openScreen(page, /^COMP$/, "#btn-comp-screen");
     const box = page.locator("#dyn-screen-box");
     const gainRow = box.locator(".prefs-row", { hasText: "Gain" });
     await expect(gainRow.locator("input[type=range]")).toHaveAttribute("data-fine-step", "0.1");
@@ -57,14 +62,16 @@ test.describe("inspector sliders", () => {
     const threshold = box.locator(".prefs-row", { hasText: "Threshold" });
     await expect(threshold.locator("input[type=range]")).not.toHaveAttribute("data-fine-step", /.+/);
     await box.locator(".consent-btn-primary").click();
-    // Nor does Q (0.1 native) in the inspector.
-    const q = page.locator("#inspector .eq-panel:not([hidden]) .param", { hasText: "Q" }).first();
+    // Nor does Q (0.1 native), on the EQ screen where it lives.
+    await openScreen(page, /^EQ$/, "#btn-eq-screen");
+    await box.locator("#dyn-band-lowmid").click(); // a peaking band, so Q is offered
+    const q = box.locator(".prefs-row", { hasText: "Q" }).first();
     await expect(q.locator("input[type=range]")).not.toHaveAttribute("data-fine-step", /.+/);
   });
 
   test("the FINE legend is printed before any interaction and lights while Shift is held", async ({ page }) => {
-    await node(page, "ch1").click();
-    const row = page.locator("#inspector .eq-panel:not([hidden]) .param.has-fine");
+    await openScreen(page, /^EQ$/, "#btn-eq-screen");
+    const row = page.locator("#dyn-screen-box .prefs-row.has-fine");
     const tag = row.locator(".fine-tag");
     await expect(tag).toBeVisible(); // printed — eligibility reads with no interaction
     await expect(tag).toHaveText("FINE");

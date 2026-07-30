@@ -36,21 +36,16 @@ test("a folded section survives a re-render and a reload", async ({ page }) => {
   await expect(section(page, /^Input$/)).toHaveJSProperty("open", false);
 });
 
-test("EQ bands are tabs; the active band shows alone and survives a relayout", async ({ page }) => {
+test("the EQ section is its ON toggle plus a launcher, with no band editor", async ({ page }) => {
   await node(page, "ch1").click();
 
-  // EQ is on (open) by default; four band tabs, one band's controls visible.
+  // The band editor moved to the tuning screen, for the reason GATE's and COMP's did:
+  // a second copy of the sliders reads a render-time snapshot and writes stale values
+  // back on the next drag. What is left is the section's own ON toggle and the opener.
   const eq = section(page, /^EQ$/);
-  await expect(eq.locator(".eq-tab")).toHaveCount(4);
-  await expect(eq.locator(".eq-panel:not([hidden])")).toHaveCount(1);
-
-  await eq.locator(".eq-tab", { hasText: "HIGH MID" }).click();
-  await expect(eq.locator(".eq-tab.active")).toHaveText("HIGH MID");
-
-  // Toggling the band off re-renders the inspector; the tab must stay on HIGH MID.
-  await eq.locator(".eq-panel:not([hidden]) .param", { hasText: "Band" }).locator("button", { hasText: "OFF" }).click();
-  await expect(section(page, /^EQ$/).locator(".eq-tab.active")).toHaveText("HIGH MID");
-  await expect(section(page, /^EQ$/).locator(".eq-panel:not([hidden])")).toHaveCount(1);
+  await expect(eq.locator(".eq-tab")).toHaveCount(0);
+  await expect(eq.locator("#btn-eq-screen")).toHaveCount(1);
+  await expect(eq.locator(".param")).toHaveCount(1); // the ON toggle
 });
 
 test("OSC slider edits merge — a Frequency edit keeps a prior Level edit", async ({ page }) => {

@@ -1,4 +1,4 @@
-// The COMP processor for the dynamics tuning screen.
+// The COMP processor for the channel tuning screen.
 //
 // CURVE is the compressor's input/output response — the picture the unit's own
 // COMP screen draws (user guide p.104), with the live level travelling it. The
@@ -18,7 +18,10 @@
 //     (a -8 dB reduction is 15% of the shared ruler — visible, but not readable).
 
 import { onOff, settingsChoice, settingsRow, sliderRow } from "./dom";
+import type { SettingsRowOptions } from "./dom";
 import { COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS } from "../core/control/params";
+import { bindChannelStrip, displayBar, subObjectIo } from "./dyn-chan";
+import { transferPlot } from "./dyn-plot";
 import { HI_DB } from "./dyn-screen";
 import type { DynProcessor, DynValues } from "./dyn-screen";
 
@@ -30,7 +33,6 @@ const LO_DB = -54;
 // makeup setting past the point where the curve reaches the ceiling.
 const OUT_LO_DB = -54;
 const OUT_TICKS = [18, 6, -6, -18, -30, -42, -54];
-const OUT_HI = Math.max(...OUT_TICKS);
 
 /**
  * Knee width in dB by selector value (0 Soft / 1 Medium / 2 Hard), from the
@@ -63,30 +65,38 @@ function responseOf(v: DynValues): (inDb: number) => number {
   };
 }
 
+const io = subObjectIo("comp");
+
 export const COMP_DYN: DynProcessor = {
   key: "comp",
-  grKind: "comp",
   loDb: LO_DB,
   tickStep: 6,
-  outLoDb: OUT_LO_DB,
-  outTicks: OUT_TICKS,
-  inTapKey: "precomp",
-  outTapKey: "preeq",
-  grFullDb: 24,
-  text: (m) => m.dynTuning.comp,
-  fields: (dyn) => dyn.comp,
+  title: (m) => m.dynTuning.comp.title,
+  bind: (ctx) =>
+    bindChannelStrip(ctx, {
+      fields: (dyn) => dyn.comp,
+      grKind: "comp",
+      inTapKey: "precomp",
+      outTapKey: "preeq",
+      grFullDb: 24,
+    }),
+  bar: displayBar,
+  ...transferPlot({ loDb: LO_DB, outLoDb: OUT_LO_DB, outTicks: OUT_TICKS, hint: (m) => m.dynTuning.comp.curveHint }),
+  persistSel: true,
+  read: io.read,
+  patch: io.patch,
 
   // The device drives these while 1-knob / Auto Makeup are on, and announces each
   // recomputation per address — so they keep updating on screen, read-only, rather
   // than being hidden or recomputed here.
-  driven: (vals) => {
-    const set = new Set<string>();
-    if (vals.oneKnob) for (const k of ["threshold", "ratio", "gain", "knee"]) set.add(k);
-    else if (vals.autoMakeup) set.add("gain");
-    return set;
+  rowStates: (ctx, vals) => {
+    const out = new Map<string, SettingsRowOptions>();
+    const driven = vals.oneKnob ? ["threshold", "ratio", "gain", "knee"] : vals.autoMakeup ? ["gain"] : [];
+    for (const k of driven) out.set(k, { tag: ctx.m.dynTuning.driven, locked: true });
+    return out.size ? out : null;
   },
 
-  rows: ({ m, vals, driven, set, setValue }) => {
+  rows: ({ m, vals, states, set, setValue }) => {
     const one = vals.oneKnob === true;
     const lead = [];
     // Auto Makeup cannot be operated while 1-knob is on (user guide), and the
@@ -131,7 +141,7 @@ export const COMP_DYN: DynProcessor = {
           knee,
           (i) => set({ knee: COMP_KNEE_OPTIONS[i].value }),
         ),
-        driven.has("knee") ? { tag: m.dynTuning.driven, locked: true } : {},
+        states.get("knee"),
       ),
     ];
     return { lead, tail };
@@ -142,11 +152,14 @@ export const COMP_DYN: DynProcessor = {
     c.strokeStyle = tok["--led"];
     c.lineWidth = 2;
     c.beginPath();
+    // No clamp: the axes were chosen to contain the whole response (makeup gain only adds,
+    // and the knee interpolation only subtracts, so out(x) stays inside -54…+18 for every
+    // setting), and the host clips the plot area anyway — so a response that did leave the
+    // frame would leave it rather than being flattened onto the edge.
     for (let i = 0; i <= 120; i++) {
       const x = LO_DB + ((HI_DB - LO_DB) * i) / 120;
-      const y = Math.min(Math.max(out(x), OUT_LO_DB), OUT_HI);
-      if (i) c.lineTo(g.px(x), g.py(y));
-      else c.moveTo(g.px(x), g.py(y));
+      if (i) c.lineTo(g.px(x), g.py(out(x)));
+      else c.moveTo(g.px(x), g.py(out(x)));
     }
     c.stroke();
 

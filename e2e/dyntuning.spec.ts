@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// Dynamics tuning screens (GATE / COMP). The meter half needs a live session,
+// Channel tuning screens (GATE / COMP / EQ). The meter half needs a live session,
 // which is desktop-only, so this spec stubs the Tauri IPC bridge before boot — and
 // unlike the other specs it keeps the meter channel, so it can push readings in and
 // assert what the screen makes of them. That is the only way to cover the parts the
@@ -68,9 +68,10 @@ const openFromConsole = async (page: Page, which = 0) => {
  *  The disclosure starts folded (both processors ship off) but its state persists
  *  per section kind, so this unfolds only when it is actually closed — a second
  *  call in the same session would otherwise fold it again and hide the launcher. */
-const openFromInspector = async (page: Page, id: string, kind: "gate" | "comp" = "gate") => {
+const SECTION_OF = { gate: /^GATE$/, comp: /^COMP$/, eq: /^EQ$/ };
+const openFromInspector = async (page: Page, id: string, kind: "gate" | "comp" | "eq" = "gate") => {
   await node(page, id).click();
-  const sec = section(page, kind === "gate" ? /^GATE$/ : /^COMP$/);
+  const sec = section(page, SECTION_OF[kind]);
   if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
   await sec.locator(`#btn-${kind}-screen`).click();
   await expect(box(page)).toBeVisible();
@@ -164,12 +165,16 @@ test("has no launcher on a stereo channel, which has no gate", async ({ page }) 
   await expect(page.locator("#btn-gate-screen")).toHaveCount(0);
 });
 
-test("opens from the CONSOLE strip, and only on mono strips", async ({ page }) => {
+test("opens from the CONSOLE strip, one opener per processor the strip actually has", async ({ page }) => {
   await page.click("#btn-view-console");
   const strips = page.locator(".con-strip");
-  // CH1-4 carry one opener per processor; CH5/6 onward have neither.
-  await expect(strips.nth(0).locator(".con-chip-open")).toHaveCount(2);
-  await expect(strips.nth(4).locator(".con-chip-open")).toHaveCount(0);
+  // A mono channel has all three (GATE / COMP / EQ); a stereo channel has neither gate
+  // nor compressor, so only its EQ opener; a MONITOR bus has no processor at all.
+  await expect(strips.nth(0).locator(".con-chip-open")).toHaveCount(3);
+  await expect(strips.nth(4).locator(".con-chip-open")).toHaveCount(1);
+  await expect(
+    page.locator(".con-strip", { has: page.getByText("MONITOR 1", { exact: true }) }).locator(".con-chip-open"),
+  ).toHaveCount(0);
   await strips.nth(0).locator(".con-chip-open").first().click();
   await expect(box(page)).toBeVisible();
   await expect(box(page).locator(".gt-ch")).toHaveText("CH 1");
@@ -516,5 +521,151 @@ test.describe("comp, dragging while the device follows", () => {
     // A drag across 80% of the track lands near 80, not at the two or three steps
     // a rebuild-per-input allows.
     await expect.poll(async () => Number(await slider.inputValue())).toBeGreaterThan(60);
+  });
+});
+
+// The EQ is the same host arranged differently: no display-mode choice (its response and
+// its levels are not alternatives, so both are on screen), the segmented bar selects a
+// band instead, and it exists on four kinds of node rather than only a mono channel.
+const params = (page: Page) => box(page).locator(".prefs-section", { hasText: "Parameters" });
+const bandRow = (page: Page, label: string) =>
+  params(page)
+    .locator(".prefs-row")
+    .filter({ has: page.getByText(label, { exact: true }) });
+/** The band pill on the Parameters heading. Scoped to the heading, since the locked rows
+ *  below carry the same tag element. */
+const bandPill = (page: Page) => params(page).locator("h3 .prefs-lock");
+
+test.describe("eq", () => {
+  test("shows the response and the levels at once, with the bar selecting a band", async ({ page }) => {
+    await openFromInspector(page, "ch1", "eq");
+    await expect(box(page).locator("#dyn-curve")).toBeVisible();
+    await expect(box(page).locator(".gt-ladders")).toBeVisible();
+    // Nothing to switch between, so the display-mode buttons do not exist.
+    await expect(box(page).locator("#dyn-mode-ladder")).toHaveCount(0);
+    await expect(box(page).locator("#dyn-band-low")).toHaveAttribute("aria-pressed", "true");
+    await expect(bandPill(page)).toHaveText("LOW");
+  });
+
+  test("says which values the filter type does not read, and never drops their rows", async ({ page }) => {
+    await openFromInspector(page, "ch1", "eq");
+    // Band / Type / Q / Freq / Gain, whatever is selected. A row that disappeared would
+    // take the panel's height with it and move every row below under the pointer, which
+    // is the same reason the 1-knob's own rows stay when 1-knob is off.
+    const rows = ["Band", "Type", "Q", "Freq", "Gain"];
+    for (const r of rows) await expect(bandRow(page, r)).toHaveCount(1);
+
+    // A shelf reads no Q; the LOW band ships as one.
+    await expect(bandRow(page, "Q")).toHaveClass(/locked/);
+    await expect(bandRow(page, "Q").locator(".prefs-lock")).toHaveText("Unused by this type");
+    await expect(bandRow(page, "Gain").locator("input[type=range]")).toBeEnabled();
+
+    // A pass filter reads neither Q nor gain (measured: Q 0.71 and Q 4.00 draw an
+    // identical high-pass), so both lock — and both rows stay.
+    await bandRow(page, "Type").locator("select").selectOption("2");
+    for (const r of rows) await expect(bandRow(page, r)).toHaveCount(1);
+    await expect(bandRow(page, "Gain")).toHaveClass(/locked/);
+    await expect(bandRow(page, "Freq").locator("input[type=range]")).toBeEnabled();
+
+    // Peaking reads all three.
+    await bandRow(page, "Type").locator("select").selectOption("0");
+    await expect(bandRow(page, "Q").locator("input[type=range]")).toBeEnabled();
+    await expect(bandRow(page, "Gain").locator("input[type=range]")).toBeEnabled();
+
+    // The two mid bands have no filter type at all — the device rejects the write — so
+    // the row offers that one value, locked.
+    await box(page).locator("#dyn-band-lowmid").click();
+    await expect(bandRow(page, "Type")).toHaveClass(/locked/);
+    await expect(bandRow(page, "Type").locator(".prefs-lock")).toHaveText("Fixed on this band");
+    await expect(bandRow(page, "Type").locator("option")).toHaveText(["Peaking"]);
+    await expect(bandRow(page, "Q").locator("input[type=range]")).toBeEnabled();
+  });
+
+  test("keeps the panel exactly as tall through every band and every type", async ({ page }) => {
+    await openFromInspector(page, "ch1", "eq");
+    const height = async (): Promise<number> => Math.round((await box(page).boundingBox())?.height ?? 0);
+    const first = await height();
+    for (const band of ["low", "lowmid", "highmid", "high"]) {
+      await box(page).locator(`#dyn-band-${band}`).click();
+      expect(await height(), `band ${band}`).toBe(first);
+    }
+    await box(page).locator("#dyn-band-low").click();
+    for (const type of ["0", "1", "2"]) {
+      await bandRow(page, "Type").locator("select").selectOption(type);
+      expect(await height(), `LOW type ${type}`).toBe(first);
+    }
+    // Including the state where the whole band block is reserved out of sight.
+    // By heading: the reserved note in the Parameters section names the 1-knob too.
+    const oneKnob = box(page)
+      .locator(".prefs-section")
+      .filter({ has: page.locator("h3", { hasText: "1-knob" }) });
+    await oneKnob.locator("button", { hasText: "ON" }).click();
+    expect(await height(), "1-knob on").toBe(first);
+    await oneKnob.locator("button", { hasText: "OFF" }).click();
+    expect(await height(), "1-knob off again").toBe(first);
+  });
+
+  test("the selected band survives a row that rebuilds the screen", async ({ page }) => {
+    await openFromInspector(page, "ch1", "eq");
+    await box(page).locator("#dyn-band-highmid").click();
+    // Band ON changes which rows exist, so it rebuilds — the band must not snap back.
+    await bandRow(page, "Band").locator("button", { hasText: "OFF" }).click();
+    await expect(box(page).locator("#dyn-band-highmid")).toHaveAttribute("aria-pressed", "true");
+    await expect(bandPill(page)).toHaveText("HIGH MID");
+  });
+
+  test("reopens on LOW, where a display mode is remembered instead", async ({ page }) => {
+    await openFromInspector(page, "ch1", "eq");
+    await box(page).locator("#dyn-band-high").click();
+    await box(page).locator(".consent-btn-primary").click();
+    await openFromInspector(page, "ch1", "eq");
+    // The bar is a cursor into the parameters, not a way of reading the processor: it
+    // resets, where GATE's and COMP's LADDER/CURVE choice persists.
+    await expect(box(page).locator("#dyn-band-low")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("carries the taps that bracket the EQ on this kind of node", async ({ page }) => {
+    // Mono channel: PRE EQ (111) -> PRE INS FX (112), one bar each.
+    await openFromInspector(page, "ch1", "eq");
+    await expect(box(page).locator(".gt-cap-label .sub")).toHaveText(["111", "112"]);
+    await expect(box(page).locator(".gt-slot.stereo")).toHaveCount(0);
+    await box(page).locator(".consent-btn-primary").click();
+
+    // Stereo channel: its INPUT tap (101) is the pre-EQ point, PRE FADER (114) the post,
+    // and both carry L and R — two bars in one lane, under one caption.
+    await openFromInspector(page, "ch_5_6", "eq");
+    await expect(box(page).locator(".gt-cap-label .sub")).toHaveText(["101", "114"]);
+    await expect(box(page).locator(".gt-slot.stereo")).toHaveCount(2);
+    await expect(box(page).locator(".gt-slot.stereo").first().locator(".gt-side")).toHaveCount(2);
+    await box(page).locator(".consent-btn-primary").click();
+
+    // An output bus: the sum (104) and post-EQ (121) taps of the STEREO master.
+    await openFromInspector(page, "bus.stereo", "eq");
+    await expect(box(page).locator(".gt-cap-label .sub")).toHaveText(["104", "121"]);
+  });
+
+  test("has no gain-reduction lane, because an EQ has no reduction to meter", async ({ page }) => {
+    await openFromInspector(page, "ch1", "eq");
+    await expect(box(page).locator(".gt-slot-gr")).toHaveCount(0);
+    await expect(box(page).locator(".gt-ro")).toHaveCount(2);
+  });
+
+  test.describe("with a live session", () => {
+    test.beforeEach(async ({ page }) => {
+      await page.click("#btn-device");
+      await page.click("#btn-live");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+    });
+
+    test("subscribes to both sides of a stereo node's EQ, L and R", async ({ page }) => {
+      await openFromInspector(page, "ch_5_6", "eq");
+      const addrs = await page.evaluate(() => window.__dynTest.meterAddrs);
+      expect(addrs).toEqual([
+        [101, 0],
+        [101, 1],
+        [114, 0],
+        [114, 1],
+      ]);
+    });
   });
 });

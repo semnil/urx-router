@@ -37,7 +37,7 @@ import { loadJson, saveJson } from "../core/storage";
 import { COMP_EQ_COMP_FIRST } from "../core/control/params";
 import type { DynKind } from "./dyn-registry";
 import { channelEqUnavailable } from "../core/constraints";
-import { busBalance, channelControl, channelDynamics, insertFxControl } from "../core/control/translate";
+import { busBalance, channelControl, channelDynamics, hasEq, insertFxControl } from "../core/control/translate";
 import {
   isBalLinkedPair,
   isNodeInactive,
@@ -1720,7 +1720,16 @@ export class Console {
         this.makeChip(m.id, proc, t().console.eq, false, false, () => false, {
           readonlyTitle: t().inspector.eqRateLocked,
         });
-      else boolChip(proc, t().console.eq, "eqOn", true);
+      else {
+        boolChip(proc, t().console.eq, "eqOn", true);
+        // The tuning screen's opener, as GATE and COMP have. Not offered where the
+        // rate has the EQ forced off (the toggle beside it is read-only there), nor in
+        // SSMCS mode, where the EQ chip is the morphing strip's and there is no 4-band
+        // PEQ to open. It costs a slot in the two-per-row grid, so the processing chips
+        // take a fourth row and `--head-h` carries it.
+        const eqType = this.hooks.getPlan().nodeParams[m.id]?.compEqType ?? COMP_EQ_COMP_FIRST;
+        if (hasEq(model, m.id, eqType)) proc.append(this.dynOpenChip("eq", m.id));
+      }
     }
     const ifx = insertFxControl(model, m.id);
     if (ifx) {

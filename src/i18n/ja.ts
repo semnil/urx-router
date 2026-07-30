@@ -449,6 +449,15 @@ export const ja: Messages = {
       tapOut: "Pre EQ",
       curveHint: "曲線はスライダーが信号に与える変化、点はライブのレベルです。",
     },
+    eq: {
+      title: "EQ",
+      open: "EQ 画面…",
+      band: "バンド",
+      unusedByType: "この型では無効",
+      fixedBand: "このバンドは固定",
+      oneKnobDrives: "4 バンドは 1-knob のレベルからデバイスが計算します。カーブが追従するのはライブ同期中のみです。",
+      plotHint: "曲線は EQ の周波数特性、各マーカーは各バンドの周波数を示します。",
+    },
   },
   shelf: {
     title: "非表示",

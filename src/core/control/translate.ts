@@ -29,6 +29,7 @@ import {
   FX_SLOT_ON,
   isFxEffectType,
   fxParams,
+  formatHz,
 } from "./fx-effect";
 import { insertFxEngine, insertFxFamilyOf, insertFxWritableSlots } from "./insert-fx-effect";
 import { isFixedConnection, sendTapWritable } from "../routing";
@@ -43,15 +44,18 @@ import {
   COMP_KNEE_OPTIONS,
   DELAY_FRAME_RATE_DEFAULT,
   DELAY_FRAME_RATE_OPTIONS,
-  dGainParam,
   denormalizeInsertFx,
+  dGainParam,
+  EQ_BAND_DEFAULT_FREQ_HZ,
   EQ_ONE_KNOB_LEVEL_MAX,
   EQ_ONE_KNOB_LEVEL_MIN,
   EQ_ONE_KNOB_TYPE_ALL_OPTIONS,
   EQ_ONE_KNOB_TYPE_DEFAULT,
+  EQ_Q_DEFAULT,
   EQ_TYPE_HIGH_OPTIONS,
   EQ_TYPE_LOW_OPTIONS,
   EQ_TYPE_SHELVING,
+  FX_STEREO_ASSIGN_ON,
   hexToColorIndex,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
@@ -64,25 +68,21 @@ import {
   PARAMS,
   REC_POINT_DEFAULT,
   REC_POINT_OPTIONS,
-  FX_STEREO_ASSIGN_ON,
   STEREO_ASSIGN_ON_STEREO,
   STEREO_FADER,
   STEREO_ON,
   STEREO_PAN,
 } from "./params";
 import {
-  A_GAIN_MIN_DB,
   A_GAIN_MAX_DB,
+  A_GAIN_MIN_DB,
   attackToVd,
   boolToVd,
   burstWidthToVd,
   centiDbToVd,
-  gateRangeToVd,
-  GATE_RANGE_OFF_DB,
-  delayTimeToVd,
-  phonesLevelToVd,
-  D_GAIN_MIN_DB,
   D_GAIN_MAX_DB,
+  D_GAIN_MIN_DB,
+  delayTimeToVd,
   DUCKER_DECAY_MAX_MS,
   DUCKER_DECAY_MIN_MS,
   DYN_ATTACK_MAX_MS,
@@ -92,13 +92,22 @@ import {
   DYN_RATIO_MIN,
   DYN_RELEASE_MAX_MS,
   DYN_RELEASE_MIN_MS,
+  EQ_FREQ_MAX_HZ,
+  EQ_FREQ_MIN_HZ,
+  EQ_GAIN_MAX_DB,
+  EQ_GAIN_MIN_DB,
+  EQ_Q_MAX,
+  EQ_Q_MIN,
   eqFreqToVd,
   eqGainToVd,
   freqToVd,
   gainToVd,
+  GATE_RANGE_OFF_DB,
+  gateRangeToVd,
   holdToVd,
   levelToVd,
   panToVd,
+  phonesLevelToVd,
   PORT_REF_NONE,
   qToVd,
   ratioToVd,
@@ -596,7 +605,12 @@ export interface EqControl {
   instances: number[];
 }
 
-const EQ_BAND_NAMES = ["low", "lowMid", "highMid", "high"] as const;
+/** The four bands, in device order. Exported because every surface that shows a band needs
+ *  the same names and the same "which of them carry a filter type" rule. */
+export const EQ_BAND_NAMES = ["low", "lowMid", "highMid", "high"] as const;
+/** Only LOW and HIGH carry a selectable filter type; the two mid bands are fixed peaking
+ *  and the device rejects a type write to them (measured, response_code 400). */
+export const eqBandHasType = (index: number): boolean => index === 0 || index === 3;
 // Each PEQ band is a 5-param block (on / type / Q / freq / gain) and the first
 // band sits 5 params after the EQ-ON anchor. Only the LOW and HIGH bands carry a
 // selectable filter type; the two mid bands are fixed peaking.
@@ -608,8 +622,7 @@ function eqBandsFrom(eqOnParam: number, instances: number[]): EqControl {
   const base = eqOnParam + EQ_BAND_BASE_OFFSET;
   const bands = EQ_BAND_NAMES.map((name, i): EqBandControl => {
     const b = base + EQ_BAND_STRIDE * i;
-    const hasType = i === 0 || i === 3;
-    return { index: i, name, on: b, type: hasType ? b + 1 : null, q: b + 2, freq: b + 3, gain: b + 4 };
+    return { index: i, name, on: b, type: eqBandHasType(i) ? b + 1 : null, q: b + 2, freq: b + 3, gain: b + 4 };
   });
   return { bands, instances };
 }
@@ -640,6 +653,13 @@ export function inputEq(model: DeviceModel, nodeId: string, compEqType: number):
   return eqSec ? eqBandsFrom(eqSec.param, [eqSec.y]) : null;
 }
 
+/** Whether this node has a 4-band PEQ at all. Distinct from the CONSOLE's `hasEq`, which is
+ *  also true for a mono channel in SSMCS mode — that EQ is the morphing strip's, not this
+ *  one. `inputEq`/`outputEq` already answer per node kind; this is the pair of them. */
+export function hasEq(model: DeviceModel, nodeId: string, compEqType: number): boolean {
+  return (inputEq(model, nodeId, compEqType) ?? outputEq(nodeId)) !== null;
+}
+
 /** EQ 1-knob params for an EQ (input channel or output bus): ON / TYPE / LEVEL sit
  *  2 / 3 / 4 params after the EQ-ON anchor. */
 export interface EqOneKnobControl {
@@ -664,17 +684,23 @@ export function eqOneKnob(model: DeviceModel, nodeId: string, compEqType: number
   return eqSec ? eqOneKnobFrom(eqSec.param, [eqSec.y]) : null;
 }
 
-/** One slider value of the GATE/COMP detail: its catalog name + plan-domain range. */
+/** One slider value of a tuning screen's parameters: its catalog name + plan-domain
+ *  range. GATE/COMP/DUCKER details and the 4-band PEQ's per-band values all take this
+ *  shape, so the screens render them the same way. */
 export interface DynField {
-  /** The GateParams / CompParams sub-field this controls. */
-  key: keyof GateParams | keyof CompParams;
+  /** The GateParams / CompParams / EqBand sub-field this controls. */
+  key: keyof GateParams | keyof CompParams | keyof EqBand;
   name: ParamName;
   min: number;
   max: number;
   step: number;
   /** Device default in plan units, shown before a fetch. */
   def: number;
-  unit: "db" | "ms" | "ratio";
+  unit: "db" | "ms" | "ratio" | "hz" | "q";
+  /** Slider positions for a value the device sweeps logarithmically (an EQ band
+   *  frequency spans three decades, which a linear slider cannot resolve at the
+   *  bottom). Absent = the slider carries the value itself. */
+  logSteps?: number;
   /** Step the device's push-and-turn fine mode uses for this value, when it has
    *  one. Confirmed for exactly one dynamics parameter (see the COMP gain row);
    *  every other GATE/COMP/DUCKER value is a measured negative, so this is not a
@@ -733,6 +759,41 @@ const COMP_FIELDS: DynField[] = [
 ];
 // Ducker detail (260-263, stereo channel sidechain). Same shapes as GATE but no
 // hold; decay shares the ×10 release scale with a wider range. Ordered as the
+/**
+ * One band of the 4-band PEQ, in the order the unit's own screen reads it (Q, Freq, Gain).
+ * The set depends on the filter type only in which of them the device reads — a pass filter
+ * reads neither Q nor gain (measured: Q 0.71 and Q 4.00 draw an identical high-pass) and a
+ * shelf reads no Q — so every band offers all three and the screen locks the rest. The gain
+ * carries the 0.1 dB push-and-turn fine grid, one of the two values on the unit confirmed to
+ * have one.
+ */
+export function eqBandFields(index: number): DynField[] {
+  return [
+    { key: "q", name: "EQ_BAND_Q", min: EQ_Q_MIN, max: EQ_Q_MAX, step: 0.1, def: EQ_Q_DEFAULT, unit: "q" },
+    {
+      key: "freq",
+      name: "EQ_BAND_FREQ",
+      min: EQ_FREQ_MIN_HZ,
+      max: EQ_FREQ_MAX_HZ,
+      step: 1,
+      def: EQ_BAND_DEFAULT_FREQ_HZ[index],
+      unit: "hz",
+      // Three decades: a linear slider resolves nothing at the bottom of them.
+      logSteps: 1000,
+    },
+    {
+      key: "gain",
+      name: "EQ_BAND_GAIN",
+      min: EQ_GAIN_MIN_DB,
+      max: EQ_GAIN_MAX_DB,
+      step: 0.5,
+      def: 0,
+      unit: "db",
+      fineStep: 0.1,
+    },
+  ];
+}
+
 // device DUCKER screen reads them (Range / Attack / Decay graph handles, then the
 // Threshold box); each field carries its own param name, so order is display-only.
 export const DUCKER_FIELDS: DynField[] = [
@@ -763,6 +824,8 @@ export const DUCKER_FIELDS: DynField[] = [
 export function formatDyn(v: number, unit: DynField["unit"]): string {
   if (unit === "db") return `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
   if (unit === "ratio") return `${v.toFixed(1)}:1`;
+  if (unit === "hz") return formatHz(v);
+  if (unit === "q") return v.toFixed(2);
   return v < 1 ? `${v.toFixed(3)} ms` : `${v.toFixed(1)} ms`;
 }
 

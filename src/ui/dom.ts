@@ -109,13 +109,19 @@ export function popTop(anchor: DOMRect, height: number, gap: number): number {
 // stays out: its controls wrap `paramBlock()`, a different row shape with its own
 // wheel and fine-mode hooks.
 
-/** A section heading, optionally carrying a dashed tag pill ("Desktop app only",
- *  a model name) that stays readable while the rows below it dim. */
-export function settingsSection(titleText: string, tag?: string): HTMLElement {
+/** A section heading, optionally carrying a dashed tag pill ("Desktop app only", a model
+ *  name) that stays readable while the rows below it dim. `{ text, shown: false }` keeps the
+ *  pill and hides it, which holds the heading's height — a pill makes it taller, so dropping
+ *  one shortens the panel (the tuning screens reserve rows the same way). */
+export function settingsSection(titleText: string, tag?: string | { text: string; shown: boolean }): HTMLElement {
   const sec = el("section", "prefs-section");
   const h = el("h3", "");
   h.textContent = titleText;
-  if (tag) h.append(settingsPill(tag));
+  if (tag) {
+    const pill = settingsPill(typeof tag === "string" ? tag : tag.text);
+    if (typeof tag !== "string" && !tag.shown) pill.classList.add("gt-reserved");
+    h.append(pill);
+  }
   sec.append(h);
   return sec;
 }

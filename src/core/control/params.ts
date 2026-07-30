@@ -762,6 +762,11 @@ export const EQ_TYPE_HIGH_OPTIONS = [
   { value: EQ_TYPE_SHELVING, label: "Shelving" },
   { value: EQ_TYPE_PASS, label: "LPF" },
 ];
+/** Band defaults, shown before a fetch and used wherever a slot is unset. In the catalog
+ *  because they are the device's, and because `eqBandFields` (translate.ts) builds the
+ *  band's field table from them beside the GATE/COMP/DUCKER tables. */
+export const EQ_BAND_DEFAULT_FREQ_HZ = [125, 1000, 4000, 10000];
+export const EQ_Q_DEFAULT = 0.71;
 
 // EQ 1-knob preset type (param at EQ-ON+3): a shared enum across every EQ instance,
 // and every instance offers all three. This was previously recorded as a per-screen

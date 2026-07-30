@@ -567,3 +567,27 @@ test("a very short window keeps a usable fader instead of crushing it", async ({
   expect(m.bodyVOver).toBe(0);
   expect(m.stripsVOver).toBeGreaterThan(0);
 });
+
+test("every strip's head holds its own contents, so --head-h is not hand-measured", async ({ page }) => {
+  // `--head-h` is one fixed height for every strip, so the tallest head sets it — and it has
+  // been re-measured by hand each time a chip row was added. Nothing caught the previous
+  // value having 0.9 px of slack; this does. Overflow is invisible on screen (the head does
+  // not scroll), which is exactly why it needs asserting rather than looking at.
+  const overflow = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>(".con-strip")].map((strip) => {
+      const head = strip.querySelector(".con-head") as HTMLElement;
+      const cs = getComputedStyle(head);
+      const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+      const gap = parseFloat(cs.rowGap || cs.gap) || 0;
+      const kids = [...head.children];
+      const used =
+        kids.reduce((sum, k) => sum + k.getBoundingClientRect().height, 0) + gap * Math.max(0, kids.length - 1);
+      return {
+        name: strip.querySelector(".con-scribble-name")?.textContent?.trim() ?? "?",
+        over: +(used + pad - head.getBoundingClientRect().height).toFixed(1),
+      };
+    }),
+  );
+  expect(overflow.length).toBeGreaterThan(10);
+  expect(overflow.filter((s) => s.over > 0)).toEqual([]);
+});
