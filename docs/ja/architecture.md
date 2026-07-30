@@ -646,17 +646,17 @@ Follow USB (848) にも同じフラグが付いています。`core/control/devi
 ボトムシート (ラックの引き出し) に切り替わる。インスペクタが縦に伸びるノード (チャンネル等) では、選択ノードの
 同一性 (見出し・名前・色) を sticky ヘッダとして固定したまま、パラメータを `<details>` ベースの折りたたみ可能な
 ラック調モジュール (ROUTING / INPUT / GATE / COMP / EQ / Parameters) にグルーピングする (`inspector.ts` の
-`section()`)。GATE セクションは ON トグルと、**ゲート調整画面**を開くコントロールを持つ — 5 つの GATE
-パラメーターを、その効果を映す 3 つのメータータップの隣に置くモーダル (仕様:
-[dynamics-tuning.md](dynamics-tuning.md))。CONSOLE の mono ストリップも GATE チップ横のチップから同じ
-画面を開く。開いている間、この画面がブローカーの唯一のメーター購読スロットを持つ。
+`section()`)。GATE / COMP / EQ の各セクションは ON トグルと、その処理の**チャンネル調整画面**を開く
+コントロールを持つ — そのパラメーターを、効果を映すメータータップの隣に置くモーダル (仕様:
+[channel-tuning.md](channel-tuning.md))。CONSOLE のストリップも各処理チップ横のチップから同じ画面を
+開く。開いている間、この画面がブローカーの唯一のメーター購読スロットを持つ。
 GATE / COMP / EQ / Ducker は各セクションの ON 状態でヘッダの LED を点灯させ、OFF のセクションは
 自動で畳む。ROUTING は既定で畳む。ノードの ON/OFF (チャンネル ON・各マスター・FX・MONITOR・Ducker・OSC) は
 全種別でパラメータ群の先頭に置き、盤面の OFF 表示と対応させる。手動で開閉したセクションはセクション種別ごとに `localStorage`
 (`urx-inspector-sections`) へ永続化し、再描画・リロードをまたいで保持する。セクションの ON 値をトグルすると
-その上書きは解除され、開閉は ON 状態に追従する状態へ戻る。セクション内では、EQ バンド編集は 4 タブ
-(LOW / LOW MID / HIGH MID / HIGH) で 1 バンドずつ表示し (選択バンドは再描画をまたいで保持)、INPUT の
-トグルは 2 カラムで並べる。表示状態は CSS のみで完結する: `main.ts` が選択の有無に
+その上書きは解除され、開閉は ON 状態に追従する状態へ戻る。セクション内では INPUT のトグルを 2 カラムで
+並べる。EQ のバンド編集はここには無い — GATE / COMP のスライダーと同じ理由 (写しが render 時の
+スナップショットを読み、古い値を書き戻す) で調整画面へ移した。表示状態は CSS のみで完結する: `main.ts` が選択の有無に
 応じて `<body>` へ `has-selection` クラスを単一トグルし、`body.has-selection #inspector` が
 `transform: translateY(0)` でシートを上げる (未選択時は画面外 `translateY(105%)`)。閉じる導線は見出しの
 ✕ ボタン (`onClose` → `graph.clearSelection()` で既存の選択解除経路を再利用) と空キャンバスのタップ。
