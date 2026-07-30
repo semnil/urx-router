@@ -32,6 +32,18 @@ const section = (page: Page, title: RegExp) =>
 const box = (page: Page) => page.locator("#dyn-screen-box");
 const readout = (page: Page, label: string) => box(page).locator(".gt-ro", { hasText: label });
 const paramRow = (page: Page, label: string) => box(page).locator(".prefs-row", { hasText: label });
+/** A row by its exact label. `paramRow` matches on a substring, so "1-Knob" also picks up
+ *  "1-Knob Level" — and a pin that asserts a row did *not* move would keep passing while
+ *  silently measuring the other one. */
+const exactRow = (page: Page, label: string) =>
+  box(page)
+    .locator(".prefs-row")
+    .filter({ has: page.getByText(label, { exact: true }) });
+
+/** The panel's height. Three tests pin it, so they read it the same strict way: a
+ *  `boundingBox()?.height ?? 0` would compare 0 to 0 — and pass — if `#dyn-screen-box`
+ *  ever stopped resolving, which is exactly what these tests exist to catch. */
+const panelHeight = (page: Page) => box(page).evaluate((el) => el.getBoundingClientRect().height);
 
 /** Push a device-side parameter change, the way turning a knob on the unit does. */
 const pushParam = (page: Page, paramId: number, x: number, y: number, value: number) =>
@@ -223,7 +235,7 @@ test("does not change height when the display mode is switched", async ({ page }
   // out from under the pointer. A hint that grew to two lines would bring that back,
   // so this pins the equality rather than the reservation.
   await openFromInspector(page, "ch1");
-  const height = async () => (await box(page).boundingBox())?.height ?? 0;
+  const height = () => panelHeight(page);
   const ladder = await height();
   await box(page).locator("#dyn-mode-curve").click();
   await expect(box(page).locator("#dyn-curve")).toBeVisible();
@@ -445,15 +457,19 @@ test.describe("comp", () => {
     const thr = paramRow(page, "Threshold").locator("input[type=range]");
     await expect(thr).toBeEnabled();
 
+    // 1-knob off: the level it would drive is on screen but not editable.
+    await expect(page.locator("#dyn-oneknob-level")).toBeDisabled();
+
     // 1-knob on: the device computes threshold / ratio / gain from one level and
     // announces each recomputation, so they stay on screen and stop being editable.
     await paramRow(page, "1-Knob").locator("button", { hasText: "On" }).click();
-    await expect(paramRow(page, "1-Knob Level")).toBeVisible();
+    await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
     for (const label of ["Threshold", "Ratio", "Gain"]) {
       await expect(paramRow(page, label).locator("input[type=range]")).toBeDisabled();
     }
-    // Auto Makeup cannot be operated while 1-knob is on, so its row is gone.
-    await expect(paramRow(page, "Auto Makeup")).toHaveCount(0);
+    // Auto Makeup cannot be operated while 1-knob is on. Its row keeps its place
+    // rather than going, so nothing below it moves; it only stops being editable.
+    await expect(paramRow(page, "Auto Makeup")).toHaveClass(/locked/);
 
     await paramRow(page, "1-Knob").locator("button", { hasText: "Off" }).click();
     await expect(paramRow(page, "Threshold").locator("input[type=range]")).toBeEnabled();
@@ -462,6 +478,28 @@ test.describe("comp", () => {
     await paramRow(page, "Auto Makeup").locator("button", { hasText: "On" }).click();
     await expect(paramRow(page, "Gain").locator("input[type=range]")).toBeDisabled();
     await expect(paramRow(page, "Threshold").locator("input[type=range]")).toBeEnabled();
+  });
+
+  test("does not move under the pointer that toggles 1-knob", async ({ page }) => {
+    await openFromInspector(page, "ch1", "comp");
+    // Exact label: the toggle's own row, never the "1-Knob Level" row below it.
+    const knob = exactRow(page, "1-Knob");
+    const geo = async () => ({
+      panel: await panelHeight(page),
+      knobTop: await knob.evaluate((el) => el.getBoundingClientRect().top),
+    });
+    const before = await geo();
+
+    // Auto Makeup and 1-Knob Level are alternatives of different shapes — a toggle row
+    // against a slider row — so swapping them in and out both shortened the panel and
+    // lifted the row being clicked. Both stay, so neither figure moves.
+    await knob.locator("button", { hasText: "On" }).click();
+    await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
+    expect(await geo()).toEqual(before);
+
+    await knob.locator("button", { hasText: "Off" }).click();
+    await expect(page.locator("#dyn-oneknob-level")).toBeDisabled();
+    expect(await geo()).toEqual(before);
   });
 
   test.describe("with a live session", () => {
@@ -594,7 +632,7 @@ test.describe("eq", () => {
 
   test("keeps the panel exactly as tall through every band and every type", async ({ page }) => {
     await openFromInspector(page, "ch1", "eq");
-    const height = async (): Promise<number> => Math.round((await box(page).boundingBox())?.height ?? 0);
+    const height = () => panelHeight(page);
     const first = await height();
     for (const band of ["low", "lowmid", "highmid", "high"]) {
       await box(page).locator(`#dyn-band-${band}`).click();

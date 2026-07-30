@@ -17,12 +17,12 @@
 //     GR lane carries a scale of its own rather than the level lanes' dB per pixel
 //     (a -8 dB reduction is 15% of the shared ruler — visible, but not readable).
 
-import { onOff, settingsChoice, settingsRow, sliderRow } from "./dom";
+import { onOff, settingsChoice, settingsRow } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS } from "../core/control/params";
 import { bindChannelStrip, displayBar, subObjectIo } from "./dyn-chan";
 import { transferPlot } from "./dyn-plot";
-import { HI_DB } from "./dyn-screen";
+import { HI_DB, oneKnobLevelRow } from "./dyn-screen";
 import type { DynProcessor, DynValues } from "./dyn-screen";
 
 /** Input axis = the threshold's own domain (-54…0 dB). Ticks every 6 dB. */
@@ -86,51 +86,43 @@ export const COMP_DYN: DynProcessor = {
   read: io.read,
   patch: io.patch,
 
-  // The device drives these while 1-knob / Auto Makeup are on, and announces each
-  // recomputation per address — so they keep updating on screen, read-only, rather
-  // than being hidden or recomputed here.
+  // The device drives threshold / ratio / gain / knee while 1-knob / Auto Makeup are on,
+  // and announces each recomputation per address — so those rows keep updating on screen,
+  // read-only, rather than being hidden or recomputed here.
+  //
+  // 1-knob also decides which of the two rows around it applies: Auto Makeup cannot be
+  // operated while it is on (user guide), and the level does nothing while it is off. That
+  // is a lock, declared here with the rest, and not a swap in `rows` — a swap would break
+  // the host's "no row is ever removed" invariant, and it did: a toggle row and a slider
+  // row are not the same height, so the panel moved, and dropping Auto Makeup lifted the
+  // 1-knob row a full row up, out from under the pointer that had just clicked it.
   rowStates: (ctx, vals) => {
     const out = new Map<string, SettingsRowOptions>();
-    const driven = vals.oneKnob ? ["threshold", "ratio", "gain", "knee"] : vals.autoMakeup ? ["gain"] : [];
+    const one = vals.oneKnob === true;
+    const driven = one ? ["threshold", "ratio", "gain", "knee"] : vals.autoMakeup ? ["gain"] : [];
     for (const k of driven) out.set(k, { tag: ctx.m.dynTuning.driven, locked: true });
-    return out.size ? out : null;
+    out.set(one ? "autoMakeup" : "oneKnobLevel", { locked: true });
+    return out;
   },
 
   rows: ({ m, vals, states, set, setValue }) => {
-    const one = vals.oneKnob === true;
-    const lead = [];
-    // Auto Makeup cannot be operated while 1-knob is on (user guide), and the
-    // inspector drops the row entirely there rather than showing a dead control.
-    if (!one) {
-      lead.push(
-        settingsRow(
-          m.inspector.autoMakeup,
-          onOff(vals.autoMakeup === true, (on) => set({ autoMakeup: on })),
-        ),
-      );
-    }
-    lead.push(
+    const lead = [
+      settingsRow(
+        m.inspector.autoMakeup,
+        onOff(vals.autoMakeup === true, (on) => set({ autoMakeup: on })),
+        states.get("autoMakeup"),
+      ),
       settingsRow(
         m.inspector.oneKnob,
-        onOff(one, (on) => set({ oneKnob: on })),
+        onOff(vals.oneKnob === true, (on) => set({ oneKnob: on })),
       ),
-    );
-    if (one) {
-      // setValue, not set: this slider changes only itself, and a rebuild on its
-      // own input event would take the element out from under the pointer.
-      lead.push(
-        sliderRow({
-          label: m.inspector.oneKnobLevel,
-          id: "dyn-oneknob-level",
-          min: 0,
-          max: 100,
-          step: 1,
-          value: typeof vals.oneKnobLevel === "number" ? vals.oneKnobLevel : 0,
-          format: (v) => `${v} %`,
-          onInput: (v) => setValue({ oneKnobLevel: v }),
-        }),
-      );
-    }
+      oneKnobLevelRow({
+        label: m.inspector.oneKnobLevel,
+        value: vals.oneKnobLevel,
+        onInput: (v) => setValue({ oneKnobLevel: v }),
+        row: states.get("oneKnobLevel"),
+      }),
+    ];
 
     const knee = typeof vals.knee === "number" ? vals.knee : COMP_KNEE_DEFAULT;
     const tail = [
