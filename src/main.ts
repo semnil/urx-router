@@ -2386,6 +2386,10 @@ function applyResolvedTheme(): void {
   theme = resolveTheme(themeMode);
   document.documentElement.dataset.theme = theme;
   graph.setTheme(theme);
+  // The funnel for surfaces CSS variables cannot repaint on their own. The graph is SVG
+  // built from a palette; a tuning screen's plot is a canvas whose theme tokens are read
+  // once per render — and auto mode can flip underneath an open one with no press at all.
+  dynScreen.refresh();
 }
 
 function setThemeMode(mode: ThemeMode): void {
