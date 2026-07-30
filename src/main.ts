@@ -46,6 +46,7 @@ import { initDropzone } from "./ui/dropzone";
 import { initFineMode } from "./ui/fine";
 import { installEditMenu } from "./ui/edit-menu";
 import { PlanHistory } from "./ui/history";
+import { installKeyProbe } from "./ui/keyprobe";
 import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
@@ -2653,6 +2654,11 @@ window.addEventListener("keydown", (e) => {
 
 applyRateConstraints();
 setStatus(t().status.loaded(modelId));
+
+// Keyboard measurement harness (ui/keyprobe.ts), dev builds only. Installed here,
+// after the keydown handler above, so its chord log can report whether the app had
+// already claimed the chord. The branch is statically dropped from a production build.
+if (import.meta.env.DEV) installKeyProbe({ onReport: setStatus });
 
 // Deep-link entry: a `?plan=<base64url-json>` parameter loads a plan straight
 // into the viewer (a generator emits a shareable URL). A decode failure or a
