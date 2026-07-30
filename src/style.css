@@ -2612,12 +2612,11 @@ select:focus-visible,
   font: 700 11px var(--mono);
 }
 
-/* Drag & drop target: the shared full-window scrim below, plus two overrides.
-   It sits above the modals so a drag over one is still legible, and its pointer
-   events stay off so the overlay cannot swallow the drop it is advertising (the
-   browser path listens on the window). */
+/* Drag & drop target: the shared full-window scrim below, plus two overrides — its
+   pointer events stay off so the overlay cannot swallow the drop it is advertising (the
+   browser path listens on the window), and its z-index is in the ladder below, because
+   set here it lost to .consent-scrim's at equal specificity and never applied. */
 .dropzone {
-  z-index: 120;
   pointer-events: none;
 }
 .dropzone-box {
@@ -2630,6 +2629,15 @@ select:focus-visible,
   font: 600 14px -apple-system, "Segoe UI", "Meiryo", system-ui, sans-serif;
 }
 
+/* Overlay ladder, so a new one lands in the right place rather than wherever the
+   document happens to put it (every scrim below shares one z-index, which makes DOM
+   order the tiebreak — that is how the load report ended up behind the tuning screen):
+     40  toolbar dropdown menus
+     60  popovers anchored to a control (console taps / sends, the MIDI legend)
+    100  tool modals — Preferences, Device setup, channel tuning, licenses
+    120  the drag & drop advert, legible over any of them (pointer-events: none)
+    130  decision gates — consent, load report, rate choice. Each asks a question that
+         has to be answerable whatever else is open, so they sit above everything. */
 /* First-run consent gate: a full-screen modal shown once on desktop before the
    app is usable (the Windows installer shows the same notice, but macOS
    drag-install and auto-updates bypass it). */
@@ -2642,6 +2650,12 @@ select:focus-visible,
   justify-content: center;
   padding: 24px;
   background: var(--vignette);
+}
+.dropzone {
+  z-index: 120;
+}
+.gate-scrim {
+  z-index: 130;
 }
 .consent-box {
   width: min(560px, 100%);

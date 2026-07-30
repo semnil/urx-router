@@ -1090,6 +1090,11 @@ function loadPlan(next: Plan): void {
   graph.setModel(getModel(modelId), plan);
   dirty = false;
   syncRateUi(); // picker + persisted rate + constraints (also refreshes the console)
+  // A channel tuning screen can be open over this: it reads the plan through a closure,
+  // so its values are already the new ones — but nothing had told it to redraw, and it
+  // sat showing the plan that was just replaced. Refresh re-resolves the binding too, so
+  // a screen whose node or processor the new plan does not have closes itself.
+  dynScreen.refresh();
   // Reload the (per-model) MIDI mappings and resync the controller to the new plan.
   midi?.onModelChanged();
 }
