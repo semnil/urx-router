@@ -189,6 +189,22 @@ export async function listenEvent<T>(event: string, handler: (payload: T) => voi
   await invoke<number>("plugin:event|listen", { event, target: { kind: "Any" }, handler: id });
 }
 
+/** The event a macOS Edit menu click arrives on; the payload is the item id. */
+export const EDIT_MENU_EVENT = "menu://edit";
+export const EDIT_UNDO_ID = "edit-undo";
+export const EDIT_REDO_ID = "edit-redo";
+
+/** Reflect the undo / redo depth onto the application menu's Undo / Redo items. A
+ *  no-op where there is no menu (every platform but macOS). */
+export function setEditMenuState(canUndo: boolean, canRedo: boolean): Promise<void> {
+  return invoke<void>("set_edit_menu_state", { canUndo, canRedo });
+}
+
+/** Label those items, so they follow the app's language like the rest of the UI. */
+export function setEditMenuLabels(undo: string, redo: string): Promise<void> {
+  return invoke<void>("set_edit_menu_labels", { undo, redo });
+}
+
 export function nativeWriteText(path: string, contents: string): Promise<void> {
   return invoke<void>("write_text_file", { path, contents });
 }

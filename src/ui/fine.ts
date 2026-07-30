@@ -10,6 +10,7 @@
 // change (resetFine) or a page hide clears it deliberately.
 
 import { el } from "./dom";
+import { isChord } from "./keys";
 import { t } from "../i18n";
 import { getSettings } from "../core/settings";
 
@@ -58,7 +59,12 @@ function setFine(on: boolean): void {
 /** Install the global Shift tracker (once, at startup). */
 export function initFineMode(): void {
   window.addEventListener("keydown", (e) => {
-    if (e.key !== "Shift") return;
+    // A Shift that arrives inside a chord (the redo shortcut, say) is not a fine-mode
+    // press: entering here would leave latch mode flipped for good. Asked of the
+    // shared predicate rather than by listing today's modifiers, so the next chord
+    // is not a bug in this file. The keyup below stays unfiltered, so a hold that did
+    // enter always leaves — even when Shift is released with Cmd still down.
+    if (e.key !== "Shift" || isChord(e)) return;
     // Latch: one flip per physical press (keydown auto-repeats while held).
     if (getSettings().fineLatch) {
       if (!e.repeat) setFine(!fine);

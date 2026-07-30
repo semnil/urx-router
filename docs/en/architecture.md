@@ -87,6 +87,9 @@ flowchart TD
   intentionally not modeled — every node kind exposes it, but its value is a bare glyph id that
   would have to be calibrated against the unit's screen first), hidden nodes (`hidden`),
   and per-node notes (`notes`) with their minimized state (`noteCollapsed`). It serializes to JSON.
+  These fields are also the unit of undo: `core/plan-history.ts` diffs them into a reversible patch
+  ([below](#undo--redo)). The transient `unreadNodes` provenance is excluded, being neither serialized
+  nor reachable through an edit.
   A new plan comes from `defaultPlan(modelId)` in `models/initial-state.ts`, which seeds every model
   with a factory initial state (node parameters + routing + CH SETTING colors and names). Only URX44V is captured from real
   hardware; URX44 reuses that capture verbatim (it differs only by URX44V's HDMI input, which no
@@ -644,6 +647,11 @@ start the session, and a reconcile that cannot read stops following instead of l
 stale value back over the operator's own edit on the device. A cancelled fetch restores the plan it started from, so
 a cancel means nothing happened rather than leaving an unlabelled mixture of old and device values.
 
+An undo whose write fails is not a special case: the flush's failure ends the session as any edit's
+would. The plan keeps the undone state and the entry stays **consumed** — re-pushing it would make the
+stack a claim about hardware. The remedy is re-arming Live sync, whose starting read clears the history
+anyway ([above](#undo--redo)).
+
 The live session's two registrations — the device-side notify stream and the link watch — are awaited before the
 session counts as started, and the worker replies only once every address is registered with the broker, so a
 refused registration ends the attempt rather than starting a session that cannot do its job.
@@ -821,7 +829,9 @@ an export) as rail-colored chips; clicking a chip restores that one, and "Show a
   map); `newPlan` restores that model's entry on startup, model switch and new plan, so the layout
   survives an app restart for the live device-control workflow. A loaded file's `hidden` still wins
   (overriding the current state as before), and `loadPlan` re-records it into `urx-hidden` so the current
-  state and localStorage stay in sync.
+  state and localStorage stay in sync. An undo of a hide re-records the mirror too, before the repaints
+  — the graph keeps its own copy of the set and writes it back on the next commit, so a stale one would
+  resurrect what was just undone ([below](#undo--redo)).
 - The bulk "hide" and "show all" re-fit the diagram to reclaim space; while the shelf is open `fitView`
   frames the content above it, and a single restored node is parked at the viewport center.
 
@@ -931,6 +941,162 @@ PDF exports.
   `plan.noteCollapsed`, both pure view state (the live hardware reflection ignores them). `Arrange` stacks each column
   by the nodes' actual heights (`nodeHeight`, expanded note included), so a note never overlaps the
   node below it.
+
+## Undo / redo
+
+`Ctrl+Z` (`Cmd+Z` on macOS) undoes the last edit; `Ctrl/Cmd+Shift+Z` and `Ctrl/Cmd+Y` redo it. Both
+platforms accept both redo chords. On macOS the application menu's **Edit ▸ Undo / Redo** are the same
+two operations ([below](#the-macos-edit-menu)); in the app's own chrome the keyboard is the only entry
+point, and `ui/history.ts` exposes `canUndo` / `canRedo` / `undo` / `redo` / `menuUndo` / `menuRedo` so
+a toolbar affordance can be added without touching the mechanism.
+
+### What an entry is
+
+One entry spans from the first edit after the previous commit to the first **gesture boundary**, and
+the diff is taken at the commit rather than at the edit. That order is load-bearing: several funnels
+mutate the plan *further* after calling `markChanged()` — switching a channel's COMP/EQ type resets
+the destination chain to factory, and linking a STEREO pair moves the partner's position — and taking
+the diff at the boundary is what puts those in the same entry as the edit that caused them.
+
+The boundaries are global and observational (capture phase, never preventing or stopping anything).
+Per-control begin/end bracketing was rejected: it would be twenty places to remember, and a missed
+one is an edit that silently cannot be undone.
+
+| Boundary | Ends | Timing |
+| --- | --- | --- |
+| `pointerup` / `pointercancel` | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks |
+| `keyup` of an Arrow / Page / Home / End / Enter / Space key, outside a text field | Keyboard stepping on a fader or knob, which autorepeats one edit per repeat with no other terminator | At once. Nothing is dispatched after a keyup on the gesture's behalf, and the next press is a new gesture — deferring would let an autorepeat outrun the macrotask and merge two presses |
+| `focusout` | The node-name field and the in-frame note editor, which edit the plan on every keystroke | At once |
+| 300 ms idle, re-arming | A wheel-notch burst and an incoming MIDI sweep, which produce no DOM gesture at all | Only armed for edits with no boundary of their own: suppressed while a pointer is down, and while a text field has focus (its `focusout` is the boundary, so a name typed with a pause between letters must not cost an entry per letter) |
+
+The 300 ms matches `RECENT_MS` in `core/midi/engine.ts`, the repo's existing definition of "messages
+from this control have stopped arriving". The timer re-arms on every edit, the opposite of `live.ts`'s
+deliberately non-re-arming debounce — live sync cannot let a drag go unsent, whereas the values are
+already in the plan here and the entry only has to close before the next `Ctrl+Z`.
+
+Character keyups inside a text field are deliberately **not** boundaries: the name field edits the
+plan per keystroke, so committing there would cost one `Ctrl+Z` per letter.
+
+A gesture that moved no value diffs to nothing and records no entry, so a mis-grab costs no `Ctrl+Z`
+and leaves the redo stack alone.
+
+### The patch
+
+`core/plan-history.ts` holds the reversible patch: a **diff, not a snapshot**, keyed as finely as the
+funnels write — per top-level `NodeParams` key, per wire (by `from`/`to`), per record entry, with a
+whole-array fallback for the unreachable case of two wires sharing one key. Wires carry the index they
+held, so undoing a delete puts one back where it was rather than at the tail.
+
+That granularity is the design's load-bearing choice, not tidiness. While Live sync is up, device-side
+operations land in the same plan object outside any edit funnel (follow's `applyDirect`). A whole-plan
+restore would rewind a channel the operator had just moved on the hardware, and the next live flush
+would write that stale value back over them — the failure this document forbids by name in
+[Aborting on failure](#aborting-on-failure). An inverse patch only ever writes the keys the app authored.
+
+Presence is a state of its own: a slot carries a `present` tag rather than `value: undefined`, because
+an explicit undefined key survives `structuredClone` while `JSON.stringify` drops it, and a
+`nodeParams` entry left empty is deleted rather than kept as a husk — absence is the documented "use
+the device default" state, and a husk changes what a scene-scoped save writes.
+
+`plan.unreadNodes` is excluded by name: it is transient device provenance, never serialized, and only
+ever enters the plan through a readback.
+
+The file is a second encoding of the `Plan` interface, so two guards keep it honest: `HISTORY_FIELDS`
+is a mapped type over `keyof Plan` (tsc fails on a new field), and `plan-history.contract.test.ts`
+drives one real mutation per table entry through diff → apply → invert (so a field the differ does not
+actually read fails too).
+
+### Applying
+
+The plan object is never replaced — the graph, the console strips, the inspector closures and the MIDI
+bindings all hold the reference they were built with. An undo patches in place, then re-derives the
+view state held *outside* the plan and repaints: `graph.refresh()` (which re-derives the shelved and
+note-collapse sets — `commitHidden` writes them back, so a stale set would resurrect the undone state
+— and re-validates the selection), the persisted hidden mirror, the channel tuning screen, and then
+either the rate UI or the inspector + console (the rate path repaints both through
+`applyRateConstraints`, so stacking them cost a second full strip rebuild). `graph.setModel` is
+deliberately not used: it refits the viewport, and an undo must not reframe the canvas.
+
+Convergence to the device goes through `markChanged()` alone, last, so the live diff measures the
+settled plan. `live.resync()` is **not** called — it would re-base the snapshot to the plan and
+suppress the very write the undo needs. If that write fails, the session ends by the usual rule; the
+plan keeps the undone state and the entry stays consumed (see [Aborting on failure](#aborting-on-failure)).
+
+### Refusals
+
+An undo is refused, with the reason on the status line and **without spending the entry**, while:
+
+- a device read (fetch / Live-sync start) or a file flow holds the plan — both mutate or replace it
+  across awaits, so patching under either acts on a premise that is still moving;
+- a **drag** is in progress (a press that has moved), because it holds start values and element
+  references in its own closures that the repaint would rebuild from under it;
+- a modal is open — none of them edits the plan, except the channel tuning screen, which is exactly
+  what its sliders do, so an undo taken with that one open belongs to the plan behind it;
+- the patch touches `sampleRate` while a live session is up, which is why the rate picker is locked
+  for the same reason.
+
+### History clear points
+
+Both stacks are dropped, and the baseline re-taken, when no earlier entry describes a state the plan
+can return to: a **new document** (`loadPlan` — New / Open / a drop / a recent row / the model picker
+/ the `?plan=` deep link), and a **device readback of any breadth** (`rerenderPlan`, covering fetch,
+the cancelled-fetch restore, Live-sync start and the `.urxf` import; plus device-follow's full
+reconcile). A one-node follow readback only re-takes the baseline, keeping the entries already
+recorded.
+
+The depth cap is 100 entries, oldest dropped. The unsaved flag is untouched: undo and redo set it
+through the same funnel as any edit, so undoing back to the last-saved state still counts as
+modified — the same false positive any round-trip edit already produces.
+
+### The macOS Edit menu
+
+Tauri installs a default macOS menu whenever the app sets none, and its Edit submenu carries
+`PredefinedMenuItem::undo` / `::redo`. Those send the AppKit `undo:` selector, which **never reaches the
+page**: measured, a click ran WebKit's own text-field undo — on the last edited field, *even after focus
+had left it*, re-focusing that field — while the plan's undo did nothing and nothing was reported. Since
+the field edits the plan on every keystroke, that silently changed the plan by a path the operator did
+not choose. Nothing on the page can intercept or even observe it (muda emits a menu event only for
+items the app created), and a predefined item cannot be enabled or disabled at runtime.
+
+So the pair is replaced by app-owned items (`src-tauri/src/lib.rs` `build_menu`, macOS only — no other
+platform installs a menu). `Menu::default()` is rebuilt and only those two items are swapped, located by
+the predefined items' own text rather than by position; a miss leaves the default menu untouched and
+says so on stderr. A click arrives as a menu event the frontend routes into `menuUndo` / `menuRedo`,
+which hand a **focused text surface its own undo instead** (`document.execCommand`, deprecated but the
+only way to reach WebKit's field undo from script; measured working in WKWebView, a typing burst being
+one unit as it is for the chord). That is what makes the menu agree with the chord instead of meaning
+something different.
+
+Their enabled state and labels are pushed from the frontend (`set_edit_menu_state` /
+`set_edit_menu_labels`), so they grey out with the history and follow the app's language — the rest of
+that bar is AppKit's and stays in its own wording. The menu is built before the frontend loads, so the
+items start disabled and in English until the first push. The accelerators are **shown, not claimed**:
+measured, the page receives the chord and the item's key equivalent never fires, so they are set only so
+the menu prints the shortcut the operator actually uses. A push failure is logged rather than surfaced —
+the menu is a nicety, and a dialog for it would interrupt work it is not part of.
+
+The depth is reported only on a real transition (`notifyDepth`): `note()` fires on every edit, dozens
+per drag, and each report crosses the IPC boundary to set a native item's state.
+
+### Keyboard bindings
+
+| Keys | Effect |
+| --- | --- |
+| `Ctrl/Cmd+Z` | Undo (macOS: also Edit ▸ Undo) |
+| `Ctrl/Cmd+Shift+Z`, `Ctrl/Cmd+Y` | Redo (macOS: also Edit ▸ Redo) |
+| `Delete`, `Backspace` | Delete the graph's selection (GRAPH view only, and not past a modal) |
+| `Escape` | Clear the graph's selection; dismiss a dismissable overlay; close the note editor |
+| `Shift` (hold, or latch) | Fine-tuning mode ([above](#node-notes) — `ui/fine.ts`) |
+
+The undo branch runs before the `Delete` / `Escape` handling and applies its own target test, because
+that handler's broader "focus is in a field" bail is wrong for the shortcut: a focused range slider or
+the model picker owns no undo stack of its own, and bailing there would make `Ctrl+Z` quietly do
+nothing right after a slider drag. Conversely a text field, a textarea and a `contenteditable` region
+**do** own one, so the shortcut is left to them and `preventDefault` is not called — measured on
+macOS: the page receives `Cmd+Z` even with the native Edit menu installed, and calling
+`preventDefault` is what suppresses WebKit's own field undo. The listener is registered in the bubble
+phase like the rest of that handler, which is what lets the note editor's `stopPropagation` shield an
+in-progress note from the shortcut.
 
 ## Preferences
 

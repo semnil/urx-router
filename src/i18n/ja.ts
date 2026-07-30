@@ -3,6 +3,10 @@
 import type { Messages } from "./en";
 
 export const ja: Messages = {
+  appMenu: {
+    undo: "元に戻す",
+    redo: "やり直す",
+  },
   toolbar: {
     model: "機種",
     rate: "レート",
@@ -566,6 +570,16 @@ export const ja: Messages = {
     shownAll: "全ノードを表示しました",
     pathTraced: (label: string, n: number): string => `${label} への信号経路を表示中 — ${n} ノード`,
     pathNone: (label: string): string => `${label} に流れる信号経路はありません`,
+    undone: "元に戻しました",
+    undoneNode: (label: string): string => `${label} の変更を元に戻しました`,
+    redone: "やり直しました",
+    redoneNode: (label: string): string => `${label} の変更をやり直しました`,
+    nothingToUndo: "元に戻せる操作はありません",
+    nothingToRedo: "やり直せる操作はありません",
+    undoBusyDrag: "ドラッグを終えてから元に戻してください",
+    undoDeviceBusy: "本体との通信中です — 完了するまで元に戻せません",
+    undoModal: "開いているダイアログを閉じてから元に戻してください",
+    undoRateLive: "ライブ同期中のサンプルレートは本体に追従します — ここでは元に戻せません",
     themeDark: "ダークモードに切り替えました",
     themeLight: "ライトモードに切り替えました",
     themeAuto: "システム設定に追従します",

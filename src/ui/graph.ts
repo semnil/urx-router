@@ -348,10 +348,8 @@ export class Graph {
   constructor(host: HTMLElement, model: DeviceModel, plan: Plan, cb: GraphCallbacks) {
     this.model = model;
     this.plan = plan;
-    this.hidden = new Set(plan.hidden);
-    this.collapsed = new Set(plan.noteCollapsed);
     this.cb = cb;
-    this.syncUnread();
+    this.adoptPlanState();
     this.buildScaffold(host);
     this.render();
     this.fitView();
@@ -360,27 +358,33 @@ export class Graph {
   setModel(model: DeviceModel, plan: Plan): void {
     this.model = model;
     this.plan = plan;
-    this.hidden = new Set(plan.hidden);
-    this.collapsed = new Set(plan.noteCollapsed);
     this.selection = null;
     this.selectedNodes.clear();
-    this.syncUnread();
+    this.adoptPlanState();
     this.render();
     this.fitView();
   }
 
-  /** Re-render the current (same-reference) plan after it was mutated in place —
-   *  e.g. a device-follow readback. Unlike setModel this keeps the selection and
-   *  viewport, so reflecting a device-side change does not disturb the user. */
+  /** Re-render the current (same-reference) plan after it was mutated in place — a
+   *  device-follow readback, or an undo. Unlike setModel this keeps the viewport, so
+   *  reflecting a change does not disturb the user. It re-derives the plan-backed view
+   *  state and re-validates the selection unconditionally, because the caller cannot
+   *  tell which of those a given mutation moved — and the sets are write-back caches
+   *  (commitHidden pushes this.hidden into the plan), so a stale one would resurrect
+   *  the state that was just undone. */
   refresh(): void {
-    this.syncUnread();
+    this.adoptPlanState();
+    this.dropSelectionIfHidden();
     this.render();
   }
 
-  // Mirror the plan's device provenance: plan.unreadNodes holds exactly the nodes
-  // whose body read failed. No provenance (a plan never fetched) means nothing is
-  // flagged.
-  private syncUnread(): void {
+  // The view state mirrored out of the plan: the shelved set, the note-collapse set,
+  // and the device provenance (plan.unreadNodes holds exactly the nodes whose body read
+  // failed; no provenance — a plan never fetched — means nothing is flagged). Every
+  // place that adopts a plan goes through here so none of the three is forgotten.
+  private adoptPlanState(): void {
+    this.hidden = new Set(this.plan.hidden);
+    this.collapsed = new Set(this.plan.noteCollapsed);
     this.unreadNodes = new Set(this.plan.unreadNodes ?? []);
   }
 
@@ -911,8 +915,9 @@ export class Graph {
   /** Full display name (both label tiers) for status lines. In device mode the
    *  CH SETTING name wins over the model's label; in model mode the planner label
    *  always shows. (The shelf builds its chips from fullLabel directly, so those
-   *  ignore device-name mode.) */
-  private labelOf(id: string): string {
+   *  ignore device-name mode.) Public so every status line that names a node — the
+   *  graph's own and the undo history's — prints what the canvas prints. */
+  labelOf(id: string): string {
     const custom = this.deviceName(id);
     if (custom) return custom;
     const node = this.nodeById.get(id);
@@ -2210,13 +2215,31 @@ export class Graph {
     this.cb.onHiddenChange(this.plan.hidden);
   }
 
+  /** Whether the anchor selection no longer exists on the canvas: a shelved node, a
+   *  wire the plan no longer has, or a wire with a shelved endpoint (which stops being
+   *  drawn). One predicate, because the inspector renders from the selection and every
+   *  path that can invalidate it — hiding, an undo, a device readback — needs the same
+   *  answer. */
+  private selectionIsStale(): boolean {
+    const sel = this.selection;
+    if (!sel) return false;
+    if (sel.type === "node") return this.isHidden(sel.id);
+    return (
+      !hasConnection(this.plan, sel.from, sel.to) ||
+      this.isHidden(parseRef(sel.from).nodeId) ||
+      this.isHidden(parseRef(sel.to).nodeId)
+    );
+  }
+
+  // Callers render afterwards, so this only settles the state.
   private dropSelectionIfHidden(): void {
     // Drop any now-hidden id from the multi-selection too, in step with the anchor:
     // a stale hidden id left in selectedNodes keeps redrawWires fading every wire
     // with nothing visibly selected.
     for (const id of [...this.selectedNodes]) if (this.isHidden(id)) this.selectedNodes.delete(id);
-    if (this.selection?.type === "node" && this.isHidden(this.selection.id)) {
+    if (this.selectionIsStale()) {
       this.selection = null;
+      this.pathNodes.clear();
       this.cb.onSelect(null);
     }
   }
