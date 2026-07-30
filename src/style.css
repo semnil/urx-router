@@ -74,6 +74,12 @@
   --grain-op: 0.05;
   --vignette: rgba(0, 0, 0, 0.7);
   --ctl-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.5);
+  /* The two dims that have to compose: a printed legend's own silkscreen level, and how
+     far a row that does not apply falls. `opacity` on one element cascades rather than
+     multiplying, so the composed value is written as their product (see .fine-tag) —
+     named here so it cannot be a stale copy of either. Neither varies by theme. */
+  --fine-dim: 0.55;
+  --row-lock-dim: 0.45;
 
   color-scheme: dark;
 }
@@ -902,7 +908,7 @@ select:focus-visible,
   font: 700 8px var(--mono);
   letter-spacing: 1px;
   color: var(--text-dim);
-  opacity: 0.55;
+  opacity: var(--fine-dim);
   border: 1px solid currentColor;
   border-radius: 3px;
   padding: 1px 3px;
@@ -926,8 +932,12 @@ select:focus-visible,
   right: 0;
   bottom: calc(100% + 3px);
 }
-:root.fine-mode .has-fine:hover .fine-tag,
-:root.fine-mode .has-fine:focus-within .fine-tag {
+/* A locked control refuses the gesture the legend describes, so the legend stays printed
+   there but never lights. Gated here rather than by withholding `has-fine`: its absence
+   already means "the surface forgot to wire the legend up", which is a bug this project
+   has shipped once. */
+:root.fine-mode .has-fine:not(.locked):hover .fine-tag,
+:root.fine-mode .has-fine:not(.locked):focus-within .fine-tag {
   color: var(--led);
   opacity: 1;
   box-shadow: 0 0 5px var(--led);
@@ -2954,8 +2964,17 @@ select:focus-visible,
 /* A row that does not apply in this build (browser / demo): the label and the
    control dim, the dashed tag stays readable, the control refuses input. */
 .prefs-row.locked > :not(.lblc),
-.prefs-row.locked .lblc > :not(.prefs-lock) {
-  opacity: 0.45;
+.prefs-row.locked .lblc > :not(.prefs-lock, .fine-tag) {
+  opacity: var(--row-lock-dim);
+}
+/* The legend is excluded above rather than overridden here: it is printed dim already, so
+   the flat value would *replace* that dim instead of composing with it (`opacity` on one
+   element cascades) and the legend came out heavier than the label it annotates — measured
+   on the COMP makeup gain at 1.56x the label's ink, against 0.90x while both are live.
+   Excluding it means this rule wins on the selector, not on source order, so it survives
+   being moved up beside the other .fine-tag rules. */
+.prefs-row.locked .lblc > .fine-tag {
+  opacity: calc(var(--fine-dim) * var(--row-lock-dim));
 }
 .prefs-row.locked button,
 .prefs-row.locked select {

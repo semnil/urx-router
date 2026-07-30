@@ -1179,18 +1179,23 @@ export class DynScreen {
     });
     wheelStep(input);
     ctl.append(input, val);
-    const row = settingsRow(label, ctl, opts ?? {});
     // The device's push-and-turn fine grid is confirmed for a few values only (the
     // COMP makeup gain, the EQ band gains), so the field table says which (see
-    // reference/work/vd/vd-params.md). The legend pins beside the static label,
-    // never the readout — the readout's width changes with the value's digits.
-    if (f.fineStep !== undefined && !opts?.locked) {
-      optInFine(input, f.step, f.fineStep);
-      // `has-fine` is what lights the legend on hover/focus while fine mode is armed.
-      // The screens printed the tag without it, so the legend sat dim through every
-      // gesture it describes — the inspector's own rows have carried it all along.
+    // reference/work/vd/vd-params.md). The legend goes in as the row's `legend`, which
+    // pins it beside the static label rather than the readout — the readout's width
+    // changes with the value's digits — and orders it ahead of the row's own tag pill,
+    // so a row the device takes over prints `Gain FINE Device-driven` and the legend
+    // never comes and goes (which would move the label block it sits in).
+    const fine = f.fineStep !== undefined;
+    const row = settingsRow(label, ctl, { ...opts, legend: fine ? fineTag() : undefined });
+    if (fine) {
+      // `has-fine` stays unconditional so "legend printed" and "legend can light" are
+      // one fact — the screens once printed the tag without it and the legend sat dim
+      // through every gesture it describes. A locked row is excluded by the lighting
+      // rules themselves (`.has-fine:not(.locked)` in style.css); only *arming* is
+      // gated here, since a disabled slider must not carry the fine grid.
       row.classList.add("has-fine");
-      row.querySelector(".lblc")?.append(fineTag());
+      if (!opts?.locked) optInFine(input, f.step, f.fineStep as number);
     }
     return row;
   }

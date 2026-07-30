@@ -139,6 +139,11 @@ export interface SettingsRowOptions {
   locked?: boolean;
   /** Extra classes, e.g. the Device setup screen's `sub` indent and `dirty` mark. */
   cls?: string;
+  /** A legend printed on the label itself — what the *parameter* is (the FINE grid),
+   *  as against `tag`, which says what state the row is in. Ordering it against the tag
+   *  is this function's business: a caller that inserted it by querying for the tag
+   *  pill would be reading a layout only this file decides. */
+  legend?: HTMLElement;
 }
 
 /** A label + control row. A locked row keeps its tag at full opacity while the rest
@@ -150,6 +155,7 @@ export function settingsRow(labelText: string, control: HTMLElement, opts: Setti
   const lbl = el("span", "lbl");
   lbl.textContent = labelText;
   lblc.append(lbl);
+  if (opts.legend) lblc.append(opts.legend);
   if (opts.tag) lblc.append(settingsPill(opts.tag));
   row.append(lblc, control);
   if (opts.locked) {
