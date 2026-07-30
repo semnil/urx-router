@@ -30,7 +30,7 @@
 // the previous one and the unsubscribe takes no address), so this screen takes the slot
 // for its lanes' addresses while open and hands it back on close.
 
-import { el, settingsRow, settingsSection, wheelStep, wireDismiss } from "./dom";
+import { el, settingsRow, settingsSection, sliderRow, wheelStep, wireDismiss } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import { setLevelText } from "./glyph";
@@ -283,6 +283,31 @@ const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
 /** Shared empty map for a processor with every row plainly editable. */
 const NO_STATES: ReadonlyMap<string, SettingsRowOptions> = new Map<string, SettingsRowOptions>();
+
+/** The 1-knob level row, which COMP and the EQ each own one of. Shared because the two
+ *  are the same control on the same scale — including the element id, which the E2E
+ *  suite addresses and which works only because one screen is open at a time; spelling
+ *  that twice let the range, the `%` format and that id drift per processor. `setValue`,
+ *  not `set`: this slider changes only itself, and a rebuild on its own input event
+ *  would take the element out from under the pointer. */
+export function oneKnobLevelRow(opts: {
+  label: string;
+  value: unknown;
+  onInput: (v: number) => void;
+  row?: SettingsRowOptions;
+}): HTMLElement {
+  return sliderRow({
+    label: opts.label,
+    id: "dyn-oneknob-level",
+    min: 0,
+    max: 100,
+    step: 1,
+    value: typeof opts.value === "number" ? opts.value : 0,
+    format: (v) => `${v} %`,
+    onInput: opts.onInput,
+    row: opts.row,
+  });
+}
 
 /** How many bars a lane draws: a stereo tap's L and R, or one. */
 const laneSideCount = (lane: DynLane): number => (lane.tap?.r ? 2 : 1);
