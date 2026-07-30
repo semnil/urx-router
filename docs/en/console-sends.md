@@ -41,8 +41,10 @@ A fixed-height section between the strip head and the fader zone:
 ```
 
 Expanded height ≈ 156 px, collapsed ≈ 24 px (header only). Orientation, groove, cap, and the
-0 dB line reuse the main fader's grammar exactly; the four per-column ticks visually fuse into one
-0 dB reference line, so a strip's send distribution reads like a bar chart.
+0 dB line reuse the main fader's grammar, with one deviation: the groove runs the cap centre's
+full travel rather than sitting inset like the main fader's, because the smaller cap cannot cover
+that inset and would read as slipped out of its slot at the limits. The four per-column ticks
+visually fuse into one 0 dB reference line, so a strip's send distribution reads like a bar chart.
 
 ## Behavior
 

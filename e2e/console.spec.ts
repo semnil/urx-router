@@ -211,6 +211,26 @@ test("a send column fader edits the send level and drives the header readout", a
   await expect(s.locator(".con-sh")).not.toHaveClass(/readout/); // reverts to SENDS
 });
 
+test("a send column's groove runs the cap's full travel, so the cap never leaves its slot", async ({ page }) => {
+  const fader = col(page, "CH 1", "M1").locator(".con-vfad");
+  const centre = async () => {
+    const cap = await fader.locator(".cap").boundingBox();
+    return cap!.y + cap!.height / 2;
+  };
+  await fader.focus();
+  for (const [key, edge] of [
+    ["Home", "y"],
+    ["End", "bottom"],
+  ] as const) {
+    await page.keyboard.press(key); // top / bottom of travel
+    const track = (await fader.locator(".track").boundingBox())!;
+    const end = edge === "y" ? track.y : track.y + track.height;
+    // The groove ends on the cap centre at each limit: any shortfall shows as a gap
+    // between the cap and the slot it rides in.
+    expect(Math.abs((await centre()) - end)).toBeLessThan(1);
+  }
+});
+
 test("the global collapse folds every rack and shows active-send dots; it persists", async ({ page }) => {
   const host = page.locator("#console-host");
   await expect(host).not.toHaveClass(/sends-collapsed/);
