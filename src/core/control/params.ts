@@ -302,8 +302,12 @@ export const PARAMS = {
   // the command + encoding.
   /** Output PEQ band ON. */
   EQ_BAND_ON: { id: 503, encoding: "bool" },
-  /** Output PEQ band filter type (LOW / HIGH bands only). */
-  EQ_BAND_TYPE: { id: 504, encoding: "enum", sideEffect: true },
+  /** Output PEQ band filter type (LOW / HIGH bands only). Not a sideEffect: measured
+   *  on all four EQ instances (mono CH 44, stereo CH 213, MIX 591, STEREO 498), on both
+   *  bands that own a type slot, cycling all three values over a curve authored to be
+   *  distinctive in every slot — nothing but the type param itself ever moved. It was
+   *  flagged on the assumption that retyping a band resets its other slots. */
+  EQ_BAND_TYPE: { id: 504, encoding: "enum" },
   /** Output PEQ band Q. */
   EQ_BAND_Q: { id: 505, encoding: "q" },
   /** Output PEQ band frequency. */
