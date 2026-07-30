@@ -29,14 +29,17 @@ import { reachedAndFailed, sendConverging } from "./client";
 // window rather than per gesture is 0.2% of a core.
 const DEBOUNCE_MS = 120;
 
-// Params whose write makes the device reset dependents (the catalog flags these
-// with sideEffect). After sending one, the snapshot no longer reflects the
-// device, so a flush that touched one reconciles via a converge round.
-const SIDE_EFFECT = new Set(
-  Object.entries(PARAMS as Record<string, ParamSpec>)
-    .filter(([, spec]) => spec.sideEffect)
-    .map(([name]) => name),
-);
+// Params whose write makes the device move other values (the catalog flags these with
+// sideEffect), split by who owns what moved. CONVERGE = the device reset values the plan
+// authors, so they are pushed back; REFETCH = the device wrote values the plan only
+// mirrors (the EQ 1-knob's four bands), so the owner node is read instead — pushing
+// would fight it. See ParamSpec.sideEffect.
+const CONVERGE = new Set<string>();
+const REFETCH = new Set<string>();
+for (const [name, spec] of Object.entries(PARAMS as Record<string, ParamSpec>)) {
+  if (spec.sideEffect === "converge") CONVERGE.add(name);
+  else if (spec.sideEffect === "refetch") REFETCH.add(name);
+}
 
 const addrKey = (paramId: number, x: number, y: number): string => `${paramId}:${x}:${y}`;
 const cmdKey = (c: VdCommand): string => addrKey(c.paramId, c.x, c.y);
@@ -64,6 +67,12 @@ export interface LiveSyncHooks {
    *  snapshot / flush, so the one planToCommands filter also scopes the notify
    *  registration and echo detection. Absent = "all". */
   getScope?: () => WriteScope;
+  /** Read these nodes back from the device and apply them to the plan — the repair a
+   *  "refetch" sideEffect needs. Supplied by the caller rather than called here, so
+   *  this module keeps its one direction of travel (plan → device) and the device→plan
+   *  inverse stays in the one place that owns it. Absent = no refetch (the browser
+   *  build, and the tests that do not exercise it). */
+  refetchNodes?: (nodes: ReadonlySet<string>) => Promise<void>;
 }
 
 export class LiveSync {
@@ -172,7 +181,7 @@ export class LiveSync {
     const model = this.hooks.getModel();
     const plan = this.hooks.getPlan();
     for (const c of planToCommands(model, plan, this.scope())) {
-      if (SIDE_EFFECT.has(c.name) && this.snapshot.get(cmdKey(c)) !== c.vdValue) return true;
+      if (CONVERGE.has(c.name) && this.snapshot.get(cmdKey(c)) !== c.vdValue) return true;
     }
     return false;
   }
@@ -218,13 +227,15 @@ export class LiveSync {
       const plan = this.hooks.getPlan();
       let sent = 0;
       let sideEffect = false;
+      const refetch = new Set<string>();
       for (const c of planToCommands(model, plan, this.scope())) {
         const k = cmdKey(c);
         if (this.snapshot.get(k) === c.vdValue) continue;
         await vdSet(c.paramId, c.x, c.y, c.vdValue);
         this.snapshot.set(k, c.vdValue);
         sent++;
-        if (SIDE_EFFECT.has(c.name)) sideEffect = true;
+        if (CONVERGE.has(c.name)) sideEffect = true;
+        else if (REFETCH.has(c.name) && c.node) refetch.add(c.node);
       }
       for (const w of planToNameWrites(model, plan)) {
         const k = nameKey(w);
@@ -253,6 +264,15 @@ export class LiveSync {
           throw new Error(failed?.error ?? r.readErrors[0] ?? "converge failed");
         }
         this.captureSnapshot(converged);
+      }
+      // A refetch after the converge, if both happened: converge rebuilds the snapshot
+      // from the plan, and the read that follows is what makes the plan right.
+      if (refetch.size && this.hooks.refetchNodes) {
+        await this.hooks.refetchNodes(refetch);
+        // The plan now holds what the device computed, so the next outgoing diff has to
+        // measure from there — otherwise every one of those band values reads as a
+        // pending edit and gets written straight back over the device's own work.
+        this.captureSnapshot();
       }
       if (sent) this.hooks.onSent(sent);
     } catch (e) {

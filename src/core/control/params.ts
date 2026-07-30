@@ -34,11 +34,20 @@ export interface ParamSpec {
   id: number;
   encoding: ParamEncoding;
   /**
-   * Writing this param makes the device reset dependent params as a side effect
-   * (e.g. changing the COMP/EQ type clears the channel-strip section toggles).
-   * A single write does not stick; callers must converge or re-read afterwards.
+   * Writing this param makes the device change other params as a side effect, so a
+   * single write does not leave the snapshot equal to the device. Which repair is
+   * needed depends on who owns the values the device just moved:
+   *
+   *   "converge" — the device reset values the PLAN authors (changing the COMP/EQ type
+   *     clears the channel-strip toggles), so they have to be pushed back. The live
+   *     sync runs a converge round over the write scope.
+   *   "refetch"  — the device wrote values the plan only MIRRORS (the EQ 1-knob
+   *     recomputes all four bands). Pushing would fight the device; the owner node is
+   *     read back instead, so the plan — and the curve drawn from it — follows what the
+   *     unit computed. A device-side change of the same parameter already takes this
+   *     path through follow.ts; this is the same repair for our own write.
    */
-  sideEffect?: true;
+  sideEffect?: "converge" | "refetch";
   /**
    * Device-follow application strategy. "direct" marks a node-local scalar whose
    * incoming notify value can be decoded and written straight into the plan with
@@ -93,7 +102,7 @@ export const PARAMS = {
   /** Input channel HPF cutoff frequency (40 … 120 Hz). Confirmed by live scan. */
   HPF_FREQ: { id: 26, encoding: "freq" },
   /** Input channel COMP/EQ type: COMP->EQ vs SSMCS (MONO IN channels only). */
-  COMP_EQ_TYPE: { id: 21, encoding: "enum", sideEffect: true },
+  COMP_EQ_TYPE: { id: 21, encoding: "enum", sideEffect: "converge" },
   // Channel-strip section ON toggles. GATE is MONO IN only and type-independent;
   // COMP/EQ are MONO IN only and SWAP param banks with the COMP/EQ type (the SSMCS
   // bank uses different ids and inverted polarity). EQ also exists on every stereo
@@ -204,7 +213,7 @@ export const PARAMS = {
    *  sideEffect: selecting an effect (re)binds + repopulates its engine parameter
    *  array on the device, so live must converge (re-read then re-apply the plan's
    *  effect params). See control/insert-fx-effect.ts. */
-  INSERT_FX: { id: 135, encoding: "insertFx", sideEffect: true },
+  INSERT_FX: { id: 135, encoding: "insertFx", sideEffect: "converge" },
   /** Input channel insert FX ON/OFF (bypass) — independent of the selector (135).
    *  The device auto-engages it whenever an effect is (re)selected, so translate
    *  emits it after the selector to enforce the plan's state. Confirmed by notify
@@ -220,11 +229,11 @@ export const PARAMS = {
   REC_POINT_STEREO: { id: 264, encoding: "enum" },
   /** STEREO master insert FX (single). Enum from output_insert_fx. sideEffect:
    *  rebinds + repopulates the output engine array (see INSERT_FX). */
-  OUTPUT_INSERT_FX_STEREO: { id: 578, encoding: "insertFx", sideEffect: true },
+  OUTPUT_INSERT_FX_STEREO: { id: 578, encoding: "insertFx", sideEffect: "converge" },
   /** STEREO master insert FX ON/OFF (single; bypass, auto-engaged on selection — see INSERT_FX_ON). */
   OUTPUT_INSERT_FX_ON_STEREO: { id: 577, encoding: "bool" },
   /** MIX bus insert FX (L/R-linked). Enum from output_insert_fx. sideEffect: as above. */
-  OUTPUT_INSERT_FX_MIX: { id: 671, encoding: "insertFx", sideEffect: true },
+  OUTPUT_INSERT_FX_MIX: { id: 671, encoding: "insertFx", sideEffect: "converge" },
   /** MIX bus insert FX ON/OFF (L/R-linked; bypass, auto-engaged on selection — see INSERT_FX_ON). */
   OUTPUT_INSERT_FX_ON_MIX: { id: 670, encoding: "bool" },
   // Analog mic-strip toggles (CH1-4 only). Confirmed by live scan.
@@ -271,12 +280,12 @@ export const PARAMS = {
    *  secondary channel's whole state on the device (it is copied from the primary),
    *  so live must converge. Confirmed by live param-notify (CH1 MONO x2 ↔ STEREO
    *  fired 23:0:0 and 23:0:1 together). */
-  SIGNAL_TYPE: { id: 23, encoding: "bool", sideEffect: true },
+  SIGNAL_TYPE: { id: 23, encoding: "bool", sideEffect: "converge" },
   /** PAN / BAL mode for a STEREO-linked MONO IN pair (0 = PAN, 1 = BAL), at the
    *  pair's primary channel input index. Switching mode rewrites the pair's pan
    *  values on the device, so live must converge. Confirmed by live param-notify
    *  (CH1/CH2 pair BAL → PAN fired 891:0:0 = 0). */
-  PAN_BAL: { id: 891, encoding: "enum", sideEffect: true },
+  PAN_BAL: { id: 891, encoding: "enum", sideEffect: "converge" },
   /** SSMCS Sweet Spot Data preset index (MONO IN, SSMCS mode), at the channel input
    *  index. A 4-digit zero-padded STRING ("0001".."0034"; "0035"+ clamps to "0001"),
    *  so it rides the string-write path (vd_set_str / vd_get_str), not the numeric
@@ -318,14 +327,18 @@ export const PARAMS = {
   // (mono 44, stereo 213, output STEREO 498, output MIX 591); the per-instance ids
   // are computed in translate.ts (eqOneKnob). These mono anchors only name the
   // command + encoding. Confirmed by live snapshot-diff.
-  // All three recompute the 4-band PEQ on the device, so each is a sideEffect
-  // (the live sync re-reads the snapshot after sending one).
+  // All three recompute the 4-band PEQ on the device. That is a "refetch", not a
+  // "converge": the plan does not author those band values while 1-knob is on (translate
+  // skips them), so there is nothing to push back — what is needed is to read what the
+  // unit computed, or the response curve drawn from the plan stays on the manual curve
+  // the operator last authored. The band addresses are not in the notify registration
+  // either (the plan stops emitting them), so nothing announces the recomputation.
   /** EQ 1-knob ON (1 = on). */
-  EQ_ONE_KNOB_ON: { id: 46, encoding: "bool", sideEffect: true },
+  EQ_ONE_KNOB_ON: { id: 46, encoding: "bool", sideEffect: "refetch" },
   /** EQ 1-knob preset type (0 Intensity / 1 Vocal / 2 Loudness). */
-  EQ_ONE_KNOB_TYPE: { id: 47, encoding: "enum", sideEffect: true },
+  EQ_ONE_KNOB_TYPE: { id: 47, encoding: "enum", sideEffect: "refetch" },
   /** EQ 1-knob effect depth (0 … 100 %, raw). */
-  EQ_ONE_KNOB_LEVEL: { id: 48, encoding: "raw", sideEffect: true },
+  EQ_ONE_KNOB_LEVEL: { id: 48, encoding: "raw", sideEffect: "refetch" },
   /** Monitor output ON (y = monitor 0..3). Confirmed by live snapshot-diff: the
    *  MONITOR screen [ON] button toggles 723 on the touched monitor's slot only. */
   MONITOR_ON: { id: 723, encoding: "bool", follow: "direct", sceneExternal: true },
@@ -355,7 +368,7 @@ export const PARAMS = {
    *  the device repopulate the effect parameter array with that effect's defaults,
    *  so it is a sideEffect (live converges + re-reads). Per-FX id resolved in
    *  translate.ts; values are the fx1_insert_fx / fx2_insert_fx enums. */
-  FX_EFFECT_TYPE: { id: 679, encoding: "enum", sideEffect: true },
+  FX_EFFECT_TYPE: { id: 679, encoding: "enum", sideEffect: "converge" },
   /** FX channel effect parameter array (anchor = FX1 681; FX2 685). Addressed by
    *  SLOT on the y axis (not an instance); slot meaning depends on the effect type.
    *  Raw broker integers (see control/fx-effect.ts). Per-FX id + slot resolved in

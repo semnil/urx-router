@@ -366,6 +366,23 @@ const live = DEMO
       // One bidirectional scope for the session: the same filter shapes the
       // snapshot, the flush, and the follow notify registration.
       getScope: () => getSettings().deviceScope,
+      // A "refetch" sideEffect went out (the EQ 1-knob): the device has just recomputed
+      // values the plan only mirrors, so read the owner node back rather than pushing.
+      // Scoped, not full: the nodes are known, and live.ts has already re-based its own
+      // snapshot — a full reflect would re-translate the whole plan a second time and
+      // rebuild the console on every flush of a 1-knob drag.
+      // Scoped rather than the full reflect `reconcileNodes` takes: the nodes are known and
+      // the change is node-local (the recomputed bands), and live.ts has already re-based
+      // its own snapshot — a full reflect would re-translate the whole plan a second time
+      // and rebuild the console on every flush of a 1-knob drag. The abort rule is the
+      // shared one: a read that cannot complete leaves the plan claiming values the device
+      // does not hold.
+      refetchNodes: async (nodeIds) => {
+        const result = await applyNodeState(getModel(modelId), plan, nodeIds);
+        for (const id of nodeIds) followDirtyNodes.add(id);
+        requestReflect();
+        assertReadComplete(result, "1-knob readback issues:");
+      },
     });
 
 const graph = new Graph(graphHost, getModel(modelId), plan, {
