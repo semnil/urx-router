@@ -193,11 +193,16 @@ describe("enum options round-trip", () => {
     }
   });
 
-  it("EQ 1-knob type — mono (Intensity/Vocal) and output (Intensity/Loudness) round-trip", async () => {
+  // Every EQ instance offers all three presets — the per-screen subset this test
+  // once pinned (mono Intensity/Vocal, output Intensity/Loudness) was measured to be
+  // wrong, so both node kinds now sweep all three.
+  it("EQ 1-knob type — all three presets round-trip on a channel and on an output bus", async () => {
     for (const [id, type] of [
       ["ch1", 0],
       ["ch1", 1],
+      ["ch1", 2],
       ["bus.stereo", 0],
+      ["bus.stereo", 1],
       ["bus.stereo", 2],
     ] as const) {
       const plan = base();

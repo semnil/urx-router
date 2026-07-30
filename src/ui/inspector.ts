@@ -106,8 +106,7 @@ import {
   COLOR_PALETTE,
   DELAY_FRAME_RATE_OPTIONS,
   DELAY_FRAME_RATE_DEFAULT,
-  EQ_ONE_KNOB_TYPE_MONO_OPTIONS,
-  EQ_ONE_KNOB_TYPE_WIDE_OPTIONS,
+  EQ_ONE_KNOB_TYPE_OPTIONS,
   EQ_ONE_KNOB_TYPE_DEFAULT,
   insertFxAvailable,
   insertFxEngaged,
@@ -518,7 +517,7 @@ export function renderInspector(
         else if (sec.key === "compOn" && dyn?.comp) body.append(dynLauncher("comp", node.id, actions, m));
         else if (sec.key === "eqOn" && ssmcs) body.append(ssmcsEqBlock(node.id, np, plan, actions, m));
         else if (sec.key === "eqOn" && ieq && !locked) {
-          body.append(eqOneKnobBlock(node.id, !isStereoChannel(node.id), np, plan, actions, m));
+          body.append(eqOneKnobBlock(node.id, np, plan, actions, m));
           if (!np.eqOneKnob?.on) body.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
         }
         host.append(el);
@@ -566,7 +565,7 @@ export function renderInspector(
         const on = np.eqOn ?? true;
         const { el, body } = section(m.inspector.eqOn, { open: on, on, key: "eqOn" });
         body.append(sectionToggle(node.id, "eqOn", on, actions));
-        body.append(eqOneKnobBlock(node.id, false, np, plan, actions, m));
+        body.append(eqOneKnobBlock(node.id, np, plan, actions, m));
         if (!np.eqOneKnob?.on) body.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
         host.append(el);
       }
@@ -1123,11 +1122,10 @@ const eqActiveBand = new Map<string, number>();
 // — matching the device's filter-type behavior. Edits merge into nodeParams.eqBands.
 // EQ 1-knob controls: the ON toggle plus (when on) the preset type and the
 // 0..100 % effect-depth slider. When on, the caller hides the 4-band tabs — the
-// device drives the bands from the 1-knob, so they are not editable. `mono` picks
-// the type dropdown subset (mono input = Intensity/Vocal, else Intensity/Loudness).
+// device drives the bands from the 1-knob, so they are not editable. Every EQ
+// instance offers all three preset types (measured).
 function eqOneKnobBlock(
   nodeId: string,
-  mono: boolean,
   np: NodeParams,
   plan: Plan,
   actions: InspectorActions,
@@ -1139,9 +1137,10 @@ function eqOneKnobBlock(
     actions.onUpdateNodeParams(nodeId, { eqOneKnob: { ...(plan.nodeParams[nodeId]?.eqOneKnob ?? {}), ...patch } });
   frag.append(boolToggle(m.inspector.eqOneKnob, ok.on ?? false, (v) => setOk({ on: v })));
   if (ok.on) {
-    const opts = mono ? EQ_ONE_KNOB_TYPE_MONO_OPTIONS : EQ_ONE_KNOB_TYPE_WIDE_OPTIONS;
     frag.append(
-      enumSelect(m.inspector.eqOneKnobType, opts, ok.type ?? EQ_ONE_KNOB_TYPE_DEFAULT, (v) => setOk({ type: v })),
+      enumSelect(m.inspector.eqOneKnobType, EQ_ONE_KNOB_TYPE_OPTIONS, ok.type ?? EQ_ONE_KNOB_TYPE_DEFAULT, (v) =>
+        setOk({ type: v }),
+      ),
     );
     frag.append(
       rangeSlider(

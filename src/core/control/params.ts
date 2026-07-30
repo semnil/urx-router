@@ -759,26 +759,24 @@ export const EQ_TYPE_HIGH_OPTIONS = [
   { value: EQ_TYPE_PASS, label: "LPF" },
 ];
 
-// EQ 1-knob preset type (param at EQ-ON+3). The value is a shared enum across all
-// EQ instances (0 = Intensity, 1 = Vocal, 2 = Loudness, confirmed by live
-// snapshot-diff), but each screen exposes only the applicable subset: mono input
-// channels offer Intensity / Vocal, stereo channels and output buses offer
-// Intensity / Loudness. Default Intensity (0).
+// EQ 1-knob preset type (param at EQ-ON+3): a shared enum across every EQ instance,
+// and every instance offers all three. This was previously recorded as a per-screen
+// subset (mono = Intensity/Vocal, stereo and output = Intensity/Loudness); that was
+// wrong. The unit's own mono EQ screen lists all three, confirmed on a URX44V with
+// the current value at Intensity so the list was not merely showing an out-of-menu
+// value, and the user guide's mono EQ page says as much ("changing the 1-knob type to
+// [Vocal] or [Loudness]"). The claim came from misreading a level reset: writing any
+// TYPE forces LEVEL to that type's neutral point (Intensity 50 = unity, the presets
+// 0 = flat), which an earlier probe read as the device refusing the preset.
 export const EQ_ONE_KNOB_TYPE_DEFAULT = 0;
-export const EQ_ONE_KNOB_TYPE_MONO_OPTIONS = [
+export const EQ_ONE_KNOB_TYPE_OPTIONS = [
   { value: 0, label: "Intensity" },
   { value: 1, label: "Vocal" },
-];
-export const EQ_ONE_KNOB_TYPE_WIDE_OPTIONS = [
-  { value: 0, label: "Intensity" },
   { value: 2, label: "Loudness" },
 ];
-/** Every legal preset value (the union of the two screens' subsets) — the menu the
- *  emit path validates against, since the device enum itself is shared. */
-export const EQ_ONE_KNOB_TYPE_ALL_OPTIONS = [
-  ...EQ_ONE_KNOB_TYPE_MONO_OPTIONS,
-  ...EQ_ONE_KNOB_TYPE_WIDE_OPTIONS.filter((o) => !EQ_ONE_KNOB_TYPE_MONO_OPTIONS.some((m) => m.value === o.value)),
-];
+/** Alias kept for the emit path's enum validation, which reads as "every legal
+ *  value" at its call site. */
+export const EQ_ONE_KNOB_TYPE_ALL_OPTIONS = EQ_ONE_KNOB_TYPE_OPTIONS;
 /** EQ 1-knob LEVEL raw range (%). */
 export const EQ_ONE_KNOB_LEVEL_MIN = 0;
 export const EQ_ONE_KNOB_LEVEL_MAX = 100;

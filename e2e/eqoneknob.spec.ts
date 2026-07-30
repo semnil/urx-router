@@ -17,23 +17,29 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 });
 
-test("mono channel EQ 1-knob shows Intensity/Vocal and hides the band tabs when on", async ({ page }) => {
+// Every EQ instance offers all three preset types, measured on a URX44V: the catalog
+// used to carry two subsets (mono = Intensity/Vocal, else Intensity/Loudness) and both
+// halves were wrong. The mono and the output path are separate branches in the
+// inspector, so each is pinned.
+const ALL_TYPES = ["Intensity", "Vocal", "Loudness"];
+
+test("mono channel EQ 1-knob offers every type and hides the band tabs when on", async ({ page }) => {
   await node(page, "ch1").click();
   // Off by default: band tabs visible, no type/level.
   await expect(page.locator("#inspector .eq-tabs")).toHaveCount(1);
   await expect(param(page, "1-knob Type")).toHaveCount(0);
 
   await oneKnobToggle(page).locator("button", { hasText: "ON" }).click();
-  await expect(typeSelect(page).locator("option")).toHaveText(["Intensity", "Vocal"]);
+  await expect(typeSelect(page).locator("option")).toHaveText(ALL_TYPES);
   await expect(param(page, "1-knob Level")).toHaveCount(1);
   // Bands are device-driven while 1-knob is on, so the tabs are hidden.
   await expect(page.locator("#inspector .eq-tabs")).toHaveCount(0);
 });
 
-test("output bus EQ 1-knob offers Intensity/Loudness", async ({ page }) => {
+test("output bus EQ 1-knob offers every type", async ({ page }) => {
   await node(page, "bus.stereo").click();
   await oneKnobToggle(page).locator("button", { hasText: "ON" }).click();
-  await expect(typeSelect(page).locator("option")).toHaveText(["Intensity", "Loudness"]);
+  await expect(typeSelect(page).locator("option")).toHaveText(ALL_TYPES);
 });
 
 test("EQ 1-knob on/level persists after reselecting the channel", async ({ page }) => {

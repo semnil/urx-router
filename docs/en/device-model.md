@@ -327,8 +327,10 @@ Source selection for the analog outputs (MAIN / LINE).
   SSMCS initial values are read from a real MONO IN SSMCS bank with the default "01 Basic" preset loaded.
 - Every EQ (input channels and output STEREO / MIX buses) has a **1-knob** mode where one knob drives
   the whole 4-band PEQ: an **on/off**, a preset **type**, and a **level** (effect depth 0–100 %). The
-  type is a shared preset whose dropdown shows only the applicable subset — **Intensity / Vocal** on
-  MONO IN channels, **Intensity / Loudness** on stereo channels and output buses. When 1-knob is on
+  type is a shared preset and **every EQ instance offers all three** — Intensity / Vocal / Loudness.
+  (This was recorded as a per-screen subset until it was measured: the unit's own MONO IN EQ screen
+  lists all three, and writing any type forces the 1-knob level to that type's neutral point, which an
+  earlier probe misread as the device refusing the preset.) When 1-knob is on
   the device recomputes the 4-band PEQ from the knob, so the tool does **not** author the band values
   (they are device-driven); the inspector hides the band tabs and the write skips the band commands.
 - The mono CH and stereo CH structure is fixed (only the count varies per model). A MONO IN pair
