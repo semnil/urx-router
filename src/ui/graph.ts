@@ -456,6 +456,9 @@ export class Graph {
       // A note-less node has nothing to collapse; drop any stale collapse flag.
       if (this.collapsed.delete(id)) this.plan.noteCollapsed = [...this.collapsed];
     }
+    // The plan write and its funnel are paired here rather than at the call site,
+    // so a second caller cannot mutate the plan without reporting the change.
+    this.cb.onChange();
     this.renderNodes();
     // A note panel resizing shifts any hung children (a ducker, the SD Rec slots),
     // so redraw the wires (which ends with refreshPortStates) to reattach them.
@@ -487,8 +490,14 @@ export class Graph {
   private openNoteEditor(id: string): void {
     this.closeNoteEditor();
     this.select({ type: "node", id });
-    // Editing always shows the panel, so un-collapse first.
-    if (this.collapsed.delete(id)) this.plan.noteCollapsed = [...this.collapsed];
+    // Editing always shows the panel, so un-collapse first. That drops the flag
+    // from the plan whether or not the edit that follows changes the text, so it
+    // reports the change itself — otherwise opening and closing a collapsed note
+    // leaves the plan un-collapsed with nothing marked as edited.
+    if (this.collapsed.delete(id)) {
+      this.plan.noteCollapsed = [...this.collapsed];
+      this.cb.onChange();
+    }
     const ta = document.createElement("textarea");
     ta.className = "note-edit-overlay";
     ta.value = this.plan.notes?.[id] ?? "";
@@ -504,10 +513,7 @@ export class Graph {
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
 
-    ta.addEventListener("input", () => {
-      this.setNote(id, ta.value);
-      this.cb.onChange();
-    });
+    ta.addEventListener("input", () => this.setNote(id, ta.value));
     ta.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
