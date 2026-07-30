@@ -1773,7 +1773,9 @@ select:focus-visible,
   flex: 0 0 calc(75% - 3px);
 }
 .con-chip-open {
-  flex: 0 0 calc(25% - 3px);
+  /* The pair's gap comes out of the wider chip alone, so the two bases plus the gap
+     span the row exactly and this chip's right edge lines up with the two-per-row ones. */
+  flex: 0 0 25%;
   font-size: 8px;
   line-height: 1.5;
 }

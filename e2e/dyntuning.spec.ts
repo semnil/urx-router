@@ -180,6 +180,17 @@ test("opens from the CONSOLE strip, one opener per processor the strip actually 
   await expect(box(page).locator(".gt-ch")).toHaveText("CH 1");
 });
 
+test("an opener line ends flush with the two-per-row chips above it", async ({ page }) => {
+  await page.click("#btn-view-console");
+  const strip = page.locator(".con-strip").nth(0);
+  // The opener takes a quarter of the row and the pair's gap comes out of its wider
+  // neighbour alone, so a GATE + opener line reaches the same right edge as a MUTE / +48
+  // one. Subtracting the gap from both bases instead leaves the openers short by it.
+  const pair = await strip.locator(".con-chip", { hasText: "+48" }).boundingBox();
+  const opener = await strip.locator(".con-chip-open").first().boundingBox();
+  expect(Math.abs(pair!.x + pair!.width - (opener!.x + opener!.width))).toBeLessThan(1);
+});
+
 test("the opener does not toggle the gate it sits beside", async ({ page }) => {
   await page.click("#btn-view-console");
   const gateChip = page.locator(".con-strip").nth(0).locator(".con-chip", { hasText: "GATE" });
