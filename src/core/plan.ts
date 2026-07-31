@@ -5,6 +5,7 @@
 import type { ConnectionKind, DeviceModel, ModelId } from "../models/types";
 import { parseRef, ref } from "../models/types";
 import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES } from "./constraints";
+import { migrateFxEffectParams } from "./control/fx-effect";
 import { stripSceneExternal } from "./scene-scope";
 
 // LEVEL fader / send range in dB (the device level_gain table, shared by every
@@ -335,7 +336,12 @@ export interface Plan {
 }
 
 export const PLAN_FORMAT = "urx-router-plan";
-export const PLAN_VERSION = 1;
+// 2: the FX-channel parameters that several effect families shared under one bare
+// name (hpf / lpf / hiRatio …) are stored under family-qualified names. A document
+// this build writes carries only the qualified names, which an older build reads as
+// absent — so it is tagged 2 and refused there rather than silently loading factory
+// defaults for those parameters and writing them at the unit.
+export const PLAN_VERSION = 2;
 
 // Language-agnostic load failures. The UI maps the code to a localized message.
 export type PlanErrorCode = "notPlanFile" | "missingModel" | "planUrlUnsupported" | "planVersionUnsupported";
@@ -415,8 +421,9 @@ export function deserializeDocument(text: string): PlanDocument {
   // Version gate. A document tagged NEWER than this build is refused rather than
   // half-read: its fields may carry semantics this build would misinterpret, and
   // a plan drives writes to real hardware. An absent / non-numeric version is
-  // treated as current, so a hand-authored plan that omits it still loads. Older
-  // versions load as-is today — when a breaking change lands, migrate here.
+  // treated as current, so a hand-authored plan that omits it still loads. An older
+  // version is migrated forward here — today that is the version-1 FX parameter
+  // re-keying, run from sanitizeNodeParams.
   const version = Number.isFinite(data.version) ? (data.version as number) : PLAN_VERSION;
   if (version > PLAN_VERSION) {
     throw new PlanError("planVersionUnsupported");
@@ -429,7 +436,7 @@ export function deserializeDocument(text: string): PlanDocument {
     sampleRate: SAMPLE_RATES.includes(data.sampleRate as number) ? (data.sampleRate as number) : DEFAULT_SAMPLE_RATE,
     positions: isStringRecord(data.positions) ? (data.positions as unknown as Record<string, NodePos>) : {},
     connections: Array.isArray(data.connections) ? data.connections.filter(isPlanConnection) : [],
-    nodeParams: sanitizeNodeParams(data.nodeParams),
+    nodeParams: sanitizeNodeParams(data.nodeParams, version),
     nodeNames: isStringRecord(data.nodeNames) ? (data.nodeNames as Record<string, string>) : {},
     nodeColors: isStringRecord(data.nodeColors) ? (data.nodeColors as Record<string, string>) : {},
     hidden: Array.isArray(data.hidden) ? (data.hidden as string[]) : [],
@@ -573,12 +580,20 @@ function sanitizeParamRecord(rec: Record<string, unknown>): Record<string, unkno
   return out;
 }
 
-function sanitizeNodeParams(v: unknown): Record<string, NodeParams> {
+function sanitizeNodeParams(v: unknown, version: number): Record<string, NodeParams> {
   if (!isStringRecord(v)) return {};
   const out: Record<string, NodeParams> = {};
   for (const [nodeId, np] of Object.entries(v)) {
     // A non-record entry carries nothing recoverable — drop the node outright.
-    if (isStringRecord(np)) out[nodeId] = sanitizeParamRecord(np) as NodeParams;
+    if (!isStringRecord(np)) continue;
+    const clean = sanitizeParamRecord(np) as NodeParams;
+    // Every load path (file open, recent files, ?plan= deep link, drop) reaches
+    // deserialize, so this is where a plan written with the pre-family FX parameter
+    // keys is re-keyed onto the family that saved it. Version 1 only: from 2 on a
+    // bare key is not a legacy value, and rewriting it would move a parameter the
+    // document meant to leave alone.
+    if (version < 2 && clean.fxEffect) migrateFxEffectParams(clean.fxEffect);
+    out[nodeId] = clean;
   }
   return out;
 }
