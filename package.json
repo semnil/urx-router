@@ -13,6 +13,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "build:demo": "tsc --noEmit && vite build --mode demo",
+    "build:trace": "tsc --noEmit && vite build --mode trace --outDir dist-trace",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
@@ -21,9 +22,10 @@
     "format": "prettier --write \"src/**/*.ts\" \"e2e/**/*.ts\" \"scripts/**/*.mjs\" \"*.ts\"",
     "preview": "vite preview --port 4173 --strictPort",
     "e2e:serve": "vite build && pnpm preview",
+    "e2e:serve:trace": "vite build --mode trace --outDir dist-trace && vite preview --outDir dist-trace --port 4174 --strictPort",
     "reset:storage": "node scripts/reset-storage.mjs",
     "tauri": "tauri",
-    "clean": "rm -rf node_modules/.vite dist && cargo clean --manifest-path src-tauri/Cargo.toml"
+    "clean": "rm -rf node_modules/.vite dist dist-trace && cargo clean --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0",

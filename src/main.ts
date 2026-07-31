@@ -55,7 +55,9 @@ import { DYN_PROCESSORS } from "./ui/dyn-registry";
 import type { DynKind } from "./ui/dyn-registry";
 import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
 import { errorCode, errorText, getLang, LANG_NAMES, onLangChange, t } from "./i18n";
-import { DEMO } from "./core/env";
+import { DEMO, TRACE } from "./core/env";
+import { installTraceProbe } from "./ui/trace-probe";
+import type { WriteSource } from "./ui/trace-probe";
 import {
   checkUpdate,
   confirmDialog,
@@ -528,6 +530,7 @@ const follow =
         applyDirect: (node, name, value) => {
           const ok = applyDirect(plan, node, name, value);
           if (ok) {
+            traceProbe?.sample("follow-direct");
             followDirtyNodes.add(node);
             // The coalesced reflect re-takes the history baseline a moment later
             // (REFLECT_MIN_MS); do it now too, so an app edit inside that window
@@ -704,22 +707,35 @@ let planHistory: PlanHistory | null = null;
 // LED) follows edits made anywhere in the UI. The undo history opens its entry
 // here too, and closes it at the next gesture boundary — which is why the diff is
 // taken then and not now: several funnels mutate the plan further after calling.
-function markChanged(): void {
+function markChanged(source: WriteSource = "ui"): void {
   dirty = true;
+  // Attribute the write before the funnel's own side effects run: note() may commit an
+  // entry, and the ledger has to say who authored the keys that entry carries.
+  traceProbe?.sample(source);
   live?.schedule();
   midi?.scheduleFeedback();
   planHistory?.note();
 }
 
-// Device values entered the plan without an edit (follow reflect, fetch, the
-// initial readback at Live-sync start): no dirty flag or live mirroring, but a
-// mapped MIDI controller must still follow the values now in the plan. Every
-// readback path funnels through here so the next one cannot forget it. The
-// history re-takes its baseline for the same reason: a device-authored value must
-// not ride along in the next entry, or undoing an app edit would push it back
-// over the operator's own move on the hardware.
-function planReadFromDevice(): void {
+// Values entered the plan from somewhere other than an edit funnel (a device read, a
+// follow notify, an external controller): no dirty flag and no live mirroring, but a
+// mapped MIDI controller must still follow what the plan now holds, and the ledger must
+// attribute the keys. Every such path funnels through here so the next one cannot
+// forget it.
+function planValuesChanged(): void {
+  traceProbe?.sample("device-action");
   midi?.scheduleFeedback();
+}
+
+// A device readback of any breadth settled the plan (fetch, Live-sync start, the .urxf
+// import). The history re-takes its whole baseline: a device-authored value must not
+// ride along in the next entry, or undoing an app edit would push it back over the
+// operator's own move on the hardware. The follow-side writers do NOT come through here
+// — each settles the history at its own site, where what the device authored is known:
+// a notify's node (applyDirect), a refetch's patch (refetchNodes → absorb), a
+// reconcile's reset (reflectFollow's full branch).
+function planReadFromDevice(): void {
+  planValuesChanged();
   planHistory?.rebase();
 }
 
@@ -1081,6 +1097,10 @@ function rerenderPlan(): void {
 // replaced, so nothing needs re-pointing; what needs doing is re-deriving the view
 // state held outside the plan and repainting.
 function reflectHistory(touch: PatchTouch): void {
+  // The patch is already applied by the time the reflect runs, so the ledger is taken
+  // here — an undo is a writer like any other, and attributing its keys to "ui" would
+  // make a restored value indistinguishable from a fresh edit.
+  traceProbe?.sample("undo");
   // Before the repaints: commitHidden writes the graph's own set back to the plan,
   // so the persisted mirror has to move first or a later commit would undo the undo.
   if (touch.fields.has("hidden")) rememberHidden(modelId, plan.hidden);
@@ -1600,6 +1620,18 @@ planHistory = new PlanHistory({
   onDepthChange: () => editMenu.pushState(),
 });
 planHistory.install();
+
+// Trace build only: the read-only probe over the plan-key write ledger and the live
+// snapshot (src/ui/trace-probe.ts). TRACE folds to a constant, so a plain build
+// evaluates this to null and the module is dropped entirely — the same way DEMO drops
+// the control layer. Declared after planHistory because it reads the settled depth.
+const traceProbe = TRACE
+  ? installTraceProbe({
+      getPlan: () => plan,
+      liveSnapshot: () => live?.snapshotEntries() ?? null,
+      depth: () => planHistory?.depth() ?? { undo: 0, redo: 0 },
+    })
+  : null;
 
 $("btn-auto").addEventListener("click", () => {
   graph.autoLayout();
@@ -2156,7 +2188,7 @@ if (!DEMO) {
     getModel: () => getModel(modelId),
     getPlan: () => plan,
     onApplied: (control, mirrored) => {
-      markChanged();
+      markChanged("midi");
       followDirtyNodes.add(control.node);
       const partner = mirrored ? partnerChannel(getModel(modelId), control.node) : undefined;
       if (partner) followDirtyNodes.add(partner);

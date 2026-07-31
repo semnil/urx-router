@@ -135,6 +135,16 @@ export class LiveSync {
     return this.writableAddrList;
   }
 
+  /** What the snapshot currently holds, as "paramId:x:y" → value. A copy, and the
+   *  packed keys are rendered back to the published string form: the caller is the
+   *  trace probe, and a poisoned snapshot is only detectable by comparing what it
+   *  records against what was actually sent (see src/ui/trace-probe.ts). */
+  snapshotEntries(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const [k, v] of this.snapshot) out[k] = v;
+    return out;
+  }
+
   /** Whether an incoming device notify equals the snapshotted device truth — i.e.
    *  it is the echo of a value we just wrote (or already knew), not a fresh
    *  device-side change. An address we do not track returns false (treat as a

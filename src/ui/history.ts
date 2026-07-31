@@ -190,6 +190,13 @@ export class PlanHistory {
     return this.stack.canRedo();
   }
 
+  /** Committed entry counts. `canUndo` deliberately answers true for an entry that is
+   *  still open, which is what a menu needs; this is the settled depth instead, so a
+   *  caller counting gestures is not off by the one in progress. */
+  depth(): { undo: number; redo: number } {
+    return this.stack.depth();
+  }
+
   /** Report a depth change only when what a menu would render actually moved. note()
    *  fires on every edit — dozens per drag — and each report crosses the IPC boundary
    *  to push a native menu item's enabled state, so an unguarded call would spend one
