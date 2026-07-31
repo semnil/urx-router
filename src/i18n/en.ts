@@ -3,6 +3,12 @@
 // adding a key here makes TypeScript require a translation everywhere.
 
 export const en = {
+  // The macOS application menu (desktop only). Only the two items this app owns are
+  // here; everything else in that bar is AppKit's and stays in its own wording.
+  appMenu: {
+    undo: "Undo",
+    redo: "Redo",
+  },
   toolbar: {
     model: "Model",
     rate: "Rate",
@@ -582,6 +588,16 @@ export const en = {
     pathTraced: (label: string, n: number): string =>
       `Tracing the signal path into ${label} — ${n} node${n === 1 ? "" : "s"}`,
     pathNone: (label: string): string => `No live signal path feeds ${label}`,
+    undone: "Undone",
+    undoneNode: (label: string): string => `Undid the change to ${label}`,
+    redone: "Redone",
+    redoneNode: (label: string): string => `Redid the change to ${label}`,
+    nothingToUndo: "Nothing to undo",
+    nothingToRedo: "Nothing to redo",
+    undoBusyDrag: "Finish the current drag before undoing",
+    undoDeviceBusy: "Busy with the device — undo is unavailable until it finishes",
+    undoModal: "Close the open dialog before undoing",
+    undoRateLive: "The sample rate follows the device while Live sync is on — it cannot be undone here",
     themeDark: "Switched to dark mode",
     themeLight: "Switched to light mode",
     themeAuto: "Following the system theme",

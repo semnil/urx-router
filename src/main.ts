@@ -19,6 +19,7 @@ import {
 import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
 import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
+import type { PatchTouch } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import {
   baseName,
@@ -43,6 +44,9 @@ import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
 import { initDropzone } from "./ui/dropzone";
 import { initFineMode } from "./ui/fine";
+import { installEditMenu } from "./ui/edit-menu";
+import { PlanHistory } from "./ui/history";
+import { installKeyProbe } from "./ui/keyprobe";
 import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
@@ -380,6 +384,9 @@ const live = DEMO
       refetchNodes: async (nodeIds) => {
         const result = await applyNodeState(getModel(modelId), plan, nodeIds);
         for (const id of nodeIds) followDirtyNodes.add(id);
+        // The device recomputed values the plan only mirrors (the 1-knob bands), so
+        // they are its authorship, not an edit: keep them out of the next entry.
+        planHistory?.rebase();
         requestReflect();
         assertReadComplete(result, "1-knob readback issues:");
       },
@@ -456,6 +463,9 @@ function reflectFollow(): void {
     else graph.refresh();
     syncRateUi(); // also refreshes the console (applyRateConstraints)
     dynScreen.refresh();
+    // A readback of any breadth re-authored the plan's values from the device, so
+    // no earlier entry describes a state it can return to.
+    planHistory?.reset();
     live?.resync();
   } else {
     // Direct-only: repaint just the changed nodes / strips. The snapshot is already
@@ -517,7 +527,13 @@ const follow =
         // repaints just it. The reflect is scheduled by flushDirect.
         applyDirect: (node, name, value) => {
           const ok = applyDirect(plan, node, name, value);
-          if (ok) followDirtyNodes.add(node);
+          if (ok) {
+            followDirtyNodes.add(node);
+            // The coalesced reflect re-takes the history baseline a moment later
+            // (REFLECT_MIN_MS); do it now too, so an app edit inside that window
+            // cannot close an entry with this device-authored value inside it.
+            planHistory?.rebase();
+          }
           return ok;
         },
         noteDirect: (paramId, x, y, value) => live?.noteDirect(paramId, x, y, value),
@@ -563,8 +579,8 @@ function setView(next: ViewName): void {
     consoleView.show();
   } else {
     consoleView.hide();
-    // Reflect any console edits back onto the graph. If a device-follow reflect
-    // landed while the graph was hidden, do the deferred full refresh instead.
+    // Reflect any console edits back onto the graph. If a device-follow reflect or an
+    // undo landed while the graph was hidden, do the deferred full refresh instead.
     if (graphDirty) {
       graphDirty = false;
       graph.refresh();
@@ -678,22 +694,33 @@ async function applyPreventSleep(on: boolean): Promise<string | null> {
   }
 }
 
+// Undo / redo over the plan. Assigned below (after the views it re-renders exist),
+// so every funnel reaches it optionally — the same shape as live / midi.
+let planHistory: PlanHistory | null = null;
+
 // An edit changed the plan: flag it unsaved and (when live) mirror it to the
 // device. Every edit funnel routes through here so neither concern is forgotten.
 // MIDI feedback also hangs off this funnel, so a mapped controller (motor fader /
-// LED) follows edits made anywhere in the UI.
+// LED) follows edits made anywhere in the UI. The undo history opens its entry
+// here too, and closes it at the next gesture boundary — which is why the diff is
+// taken then and not now: several funnels mutate the plan further after calling.
 function markChanged(): void {
   dirty = true;
   live?.schedule();
   midi?.scheduleFeedback();
+  planHistory?.note();
 }
 
 // Device values entered the plan without an edit (follow reflect, fetch, the
 // initial readback at Live-sync start): no dirty flag or live mirroring, but a
 // mapped MIDI controller must still follow the values now in the plan. Every
-// readback path funnels through here so the next one cannot forget it.
+// readback path funnels through here so the next one cannot forget it. The
+// history re-takes its baseline for the same reason: a device-authored value must
+// not ride along in the next entry, or undoing an app edit would push it back
+// over the operator's own move on the hardware.
 function planReadFromDevice(): void {
   midi?.scheduleFeedback();
+  planHistory?.rebase();
 }
 
 // SSMCS and COMP->EQ are exclusive on a MONO IN channel and share the DSP: on the
@@ -1042,6 +1069,37 @@ function rerenderPlan(): void {
   graph.setModel(getModel(modelId), plan);
   selection = null;
   syncRateUi(); // also re-renders the CONSOLE strips (applyRateConstraints)
+  // Every value here was re-authored — by the device, or by the pre-read clone a
+  // cancelled read restores — so the entries recorded against the old contents
+  // describe states this plan cannot return to.
+  planHistory?.reset();
+}
+
+// Reflect an undo / redo whose patch is already applied to the plan. Modelled on
+// reflectFollow's fine-grained path rather than rerenderPlan, whose setModel refits
+// the viewport — an undo must not reframe the canvas. The plan object is never
+// replaced, so nothing needs re-pointing; what needs doing is re-deriving the view
+// state held outside the plan and repainting.
+function reflectHistory(touch: PatchTouch): void {
+  // Before the repaints: commitHidden writes the graph's own set back to the plan,
+  // so the persisted mirror has to move first or a later commit would undo the undo.
+  if (touch.fields.has("hidden")) rememberHidden(modelId, plan.hidden);
+  if (graphHost.hidden) graphDirty = true;
+  else graph.refresh();
+  dynScreen.refresh();
+  // syncRateUi already repaints both through applyRateConstraints, so the two are
+  // exclusive — stacking them cost a second full strip rebuild (~9 ms on WebKit).
+  if (touch.fields.has("sampleRate")) {
+    syncRateUi();
+  } else {
+    refreshInspector();
+    consoleView.refresh();
+  }
+  // Last, so the live diff measures the settled plan. This is also what carries the
+  // change to the device: live.ts diffs its snapshot, so only the undone keys go
+  // out. resync() must NOT be called — it would re-base the snapshot to the plan
+  // and suppress the very write the undo needs.
+  markChanged();
 }
 
 // Read the whole device into the plan, honoring the Preferences device scope:
@@ -1095,6 +1153,10 @@ function loadPlan(next: Plan): void {
   // sat showing the plan that was just replaced. Refresh re-resolves the binding too, so
   // a screen whose node or processor the new plan does not have closes itself.
   dynScreen.refresh();
+  // A new document: the model can differ (so an entry's node ids may not exist
+  // here), `plan` is a different object, and the operator already confirmed the
+  // discard. Reset rather than rebase.
+  planHistory?.reset();
   // Reload the (per-model) MIDI mappings and resync the controller to the new plan.
   midi?.onModelChanged();
 }
@@ -1506,6 +1568,38 @@ const dynScreen = new DynScreen({
     consoleView.refresh();
   },
 });
+
+// The macOS Edit menu, built first so the history's depth hook can push into it. Its
+// own hooks read `planHistory` lazily, which is still null at this point.
+const editMenu = installEditMenu({
+  canUndo: () => planHistory?.canUndo() ?? false,
+  canRedo: () => planHistory?.canRedo() ?? false,
+  run: (kind) => planHistory?.menu(kind),
+});
+
+// Undo / redo. Built after the views it repaints, and after the two busy latches it
+// reads, so every hook body closes over something already initialized.
+planHistory = new PlanHistory({
+  getPlan: () => plan,
+  reflect: (touch) => reflectHistory(touch),
+  labelOf: (id) => graph.labelOf(id),
+  onStatus: (msg) => setStatus(msg),
+  // A device read mutates `plan` in place across many awaits and re-reads it in its
+  // epilogue, and a file flow can replace the plan outright: patching under either
+  // acts on a premise that is still moving. A modal is refused because none of them
+  // edits the plan — except the channel tuning screen, which is exactly what its
+  // sliders do, so an undo taken with it open belongs to the plan behind it.
+  blocked: () =>
+    deviceReadInFlight || fileFlowBusy
+      ? t().status.undoDeviceBusy
+      : modalOpen() && !dynScreen.isOpen()
+        ? t().status.undoModal
+        : null,
+  rateLocked: () => liveSessionUp,
+  // The macOS application menu's Undo / Redo render this state (a no-op elsewhere).
+  onDepthChange: () => editMenu.pushState(),
+});
+planHistory.install();
 
 $("btn-auto").addEventListener("click", () => {
   graph.autoLayout();
@@ -2537,6 +2631,13 @@ function modalOpen(): boolean {
 }
 
 window.addEventListener("keydown", (e) => {
+  // Undo / redo first, and with its own target test: `typing` below is too broad
+  // for it (a focused range slider or the model picker owns no undo stack of its
+  // own, so bailing there would make Ctrl+Z quietly do nothing right after a slider
+  // drag). Its modal and busy refusals live in the hooks, not here. Registered in
+  // the bubble phase like the rest of this handler, which is what lets the note
+  // editor's stopPropagation shield an in-progress note from the shortcut.
+  if (planHistory?.handleKey(e)) return;
   const typing = ["INPUT", "TEXTAREA", "SELECT"].includes((e.target as Element)?.tagName);
   if (typing) return;
   if (e.key === "Delete" || e.key === "Backspace") {
@@ -2553,6 +2654,11 @@ window.addEventListener("keydown", (e) => {
 
 applyRateConstraints();
 setStatus(t().status.loaded(modelId));
+
+// Keyboard measurement harness (ui/keyprobe.ts), dev builds only. Installed here,
+// after the keydown handler above, so its chord log can report whether the app had
+// already claimed the chord. The branch is statically dropped from a production build.
+if (import.meta.env.DEV) installKeyProbe({ onReport: setStatus });
 
 // Deep-link entry: a `?plan=<base64url-json>` parameter loads a plan straight
 // into the viewer (a generator emits a shareable URL). A decode failure or a

@@ -35,14 +35,16 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      # The meter bench reaches the console through a handle that only exists in a
-      # dev build (import.meta.env.DEV, src/ui/console.ts). The build drops it
-      # statically; this is the guard that it stays dropped. Emitted code only — the
-      # source map carries the original text of the dropped branch by design. The
-      # other half of that contract — that the handle still carries what the bench
-      # drives — is pinned in src/ui/meter-bench.contract.test.ts.
+      # Two handles exist only in a dev build (import.meta.env.DEV): the meter bench's
+      # console handle (src/ui/console.ts) and the keyboard measurement harness
+      # (src/ui/keyprobe.ts, installed from src/main.ts). The build drops both
+      # statically; this is the guard that they stay dropped. Emitted code only — the
+      # source map carries the original text of the dropped branch by design. The other
+      # half of each contract — that the handle still carries what its driver uses — is
+      # pinned in src/ui/meter-bench.contract.test.ts and src/ui/keyprobe.test.ts.
       - name: Dev-only hooks stay out of the bundle
         run: |
           ! grep -rl --include='*.js' --include='*.html' "__urxConsole" dist
+          ! grep -rl --include='*.js' --include='*.html' "__urxKeyProbe" dist
       - run: pnpm typecheck:e2e
       - run: pnpm test

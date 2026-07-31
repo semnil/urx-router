@@ -16,6 +16,8 @@ mod vd;
 // localizes the code and shows the detail as-is (src/i18n error.shell) — a raw
 // message would reach a Japanese dialog in English. Codes here: file-not-found,
 // file-denied, file-io, file-bad-extension; vd.rs and midi.rs carry their own.
+// menu-absent / menu-io are the exception: the Edit menu is a nicety, so its caller
+// logs them and they are deliberately absent from the localized set.
 
 // The catch-all file IO code, carrying whatever the failure could say for itself.
 // Every site that cannot name a cause goes through this, so the prefix is written
@@ -369,6 +371,144 @@ fn set_keep_awake(state: State<keepawake::KeepAwakeState>, on: bool) -> Result<(
     keepawake::set(&state, on)
 }
 
+// The macOS Edit menu's Undo / Redo, owned by the app instead of AppKit.
+//
+// Tauri installs a default macOS menu whenever the app sets none, and its Edit submenu
+// carries PredefinedMenuItem::undo / ::redo. Those send the AppKit `undo:` selector,
+// which never reaches the page: a click ran WebKit's own text-field undo — on the last
+// edited field, even after focus had left it — while the plan's undo did nothing, and
+// nothing was reported. Predefined items also cannot be enabled or disabled at runtime.
+// So the pair is replaced by app-owned items: a click arrives as a menu event the
+// frontend routes (ui/edit-menu.ts), and their enabled state and labels are pushed from
+// there. macOS only — no other platform installs a menu.
+#[cfg(target_os = "macos")]
+struct EditMenu {
+    undo: tauri::menu::MenuItem<tauri::Wry>,
+    redo: tauri::menu::MenuItem<tauri::Wry>,
+}
+
+// The catch-all code for a menu update that the platform refused, written once here for
+// the same reason file_io is (see the header).
+#[cfg(target_os = "macos")]
+fn menu_io(e: impl std::fmt::Display) -> String {
+    format!("menu-io: {e}")
+}
+
+// Apply an update to both Edit menu items, or report that there is no menu to update.
+// The two commands below differ only in the setter, so the state they share — the
+// lookup, the error mapping, and the non-macOS no-op — lives here.
+#[cfg(target_os = "macos")]
+fn with_edit_menu<T>(
+    app: &tauri::AppHandle,
+    values: (T, T),
+    set: impl Fn(&tauri::menu::MenuItem<tauri::Wry>, T) -> tauri::Result<()>,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let menu = app.try_state::<EditMenu>().ok_or("menu-absent")?;
+    set(&menu.undo, values.0).map_err(menu_io)?;
+    set(&menu.redo, values.1).map_err(menu_io)
+}
+
+/// Reflect the undo / redo depth onto the application menu. A no-op where there is no
+/// menu (every platform but macOS), so the frontend calls it unconditionally.
+#[tauri::command]
+fn set_edit_menu_state(
+    app: tauri::AppHandle,
+    can_undo: bool,
+    can_redo: bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return with_edit_menu(&app, (can_undo, can_redo), |item, on| item.set_enabled(on));
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, can_undo, can_redo);
+        Ok(())
+    }
+}
+
+/// Set the menu items' labels. The menu is built before the frontend loads, so the
+/// initial text is English like the rest of the default bar; this is how a language
+/// switch reaches it.
+#[tauri::command]
+fn set_edit_menu_labels(app: tauri::AppHandle, undo: String, redo: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return with_edit_menu(&app, (undo, redo), |item, text| item.set_text(text));
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, undo, redo);
+        Ok(())
+    }
+}
+
+// Swap the default Edit submenu's predefined Undo / Redo for app-owned items, keeping
+// everything else in the bar. Located by the predefined items' own text rather than by
+// position, so a Tauri upgrade that reorders the submenu is a miss rather than a
+// mis-removal. A miss leaves the default menu untouched and says so: the app is still
+// usable, with the divergence this replaces.
+#[cfg(target_os = "macos")]
+fn build_menu(handle: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::Manager;
+
+    let menu = Menu::default(handle)?;
+    let Some(edit) = menu
+        .items()?
+        .iter()
+        .filter_map(|kind| kind.as_submenu().cloned())
+        .find(|sub| sub.text().map(|t| t == "Edit").unwrap_or(false))
+    else {
+        eprintln!("edit menu: no Edit submenu in the default menu; leaving it as built");
+        return Ok(menu);
+    };
+    let items = edit.items()?;
+    let position = items.iter().position(|kind| {
+        kind.as_predefined_menuitem()
+            .and_then(|item| item.text().ok())
+            .map(|t| t == "Undo")
+            .unwrap_or(false)
+    });
+    let Some(at) = position else {
+        eprintln!("edit menu: no predefined Undo to replace; leaving it as built");
+        return Ok(menu);
+    };
+    let redo_follows = items
+        .get(at + 1)
+        .and_then(|kind| kind.as_predefined_menuitem())
+        .and_then(|item| item.text().ok())
+        .map(|t| t == "Redo")
+        .unwrap_or(false);
+    if !redo_follows {
+        eprintln!("edit menu: predefined Redo does not follow Undo; leaving it as built");
+        return Ok(menu);
+    }
+    edit.remove_at(at)?;
+    edit.remove_at(at)?;
+    // The accelerators are shown, not claimed: measured on this stack, the page
+    // receives the chord and the menu's key equivalent never fires. They are set so the
+    // menu prints the shortcut the operator actually uses.
+    let undo = MenuItem::with_id(handle, EDIT_UNDO_ID, "Undo", false, Some("CmdOrCtrl+Z"))?;
+    let redo = MenuItem::with_id(
+        handle,
+        EDIT_REDO_ID,
+        "Redo",
+        false,
+        Some("Shift+CmdOrCtrl+Z"),
+    )?;
+    edit.insert(&undo, at)?;
+    edit.insert(&redo, at + 1)?;
+    handle.manage(EditMenu { undo, redo });
+    Ok(menu)
+}
+
+// Shared with the frontend through the emitted event's payload.
+#[cfg(target_os = "macos")]
+const EDIT_UNDO_ID: &str = "edit-undo";
+#[cfg(target_os = "macos")]
+const EDIT_REDO_ID: &str = "edit-redo";
+/// The event an Edit menu click is delivered on; the payload is the item id.
+#[cfg(target_os = "macos")]
+const EDIT_MENU_EVENT: &str = "menu://edit";
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -383,6 +523,22 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());
+
+    // App-owned Edit > Undo / Redo (see build_menu). The click is forwarded to the
+    // frontend, which is the only side that knows what an undo means here.
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(build_menu).on_menu_event(|app, event| {
+        use tauri::Emitter;
+        let id = event.id().0.as_str();
+        if id != EDIT_UNDO_ID && id != EDIT_REDO_ID {
+            return;
+        }
+        // The menu is a nicety, not a device operation: a failed emit leaves the
+        // click undone, and there is nothing further to salvage.
+        if let Err(e) = app.emit(EDIT_MENU_EVENT, id) {
+            eprintln!("edit menu: could not deliver {id}: {e}");
+        }
+    });
 
     builder
         .invoke_handler(tauri::generate_handler![
@@ -413,7 +569,9 @@ pub fn run() {
             midi_open_output,
             midi_close_output,
             midi_send,
-            set_keep_awake
+            set_keep_awake,
+            set_edit_menu_state,
+            set_edit_menu_labels
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
