@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { planParamZ } from "./plan-param";
+import { dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
 
 // Insert-FX effect editing: selecting an insert effect (guitar amp / pitch fix /
 // compander / multi-band comp) reveals its parameter editor, and the values
@@ -10,6 +11,8 @@ const insertSelect = (page: Page) => page.locator("#inspector .param", { hasText
 const paramSelect = (page: Page, label: string) =>
   page.locator("#inspector .param", { hasText: label }).locator("select");
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
+// COMPANDER_PARAMS writable slots: threshold / ratio / attack / release / outGain / width.
+const COMPANDER_SLOT_COUNT = 6;
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -275,4 +278,49 @@ test("the console INS FX chip bypasses without clearing the selection", async ({
   await page.click("#btn-view-graph");
   await node(page, "ch1").click();
   await expect(insertSelect(page)).toHaveValue("1794");
+});
+
+// Two nodes holding the same insert-FX family write ONE engine array (addressed
+// engine:0:slot, no channel axis), so the emitted set collapses the repeated
+// address to its last command and the loser's values never reach the unit. The
+// inspector cannot author that plan (insertFxMenu locks a slot another node holds)
+// and a file carrying one only opens past the loader's warning, so a device readback
+// is the shortest route in — which is why this case fetches instead of editing.
+test("a write says which node's insert-FX values reach the device", async ({ page }) => {
+  // vd_get answers by paramId with no y axis, so every MONO IN reports Compander-H
+  // (135) and every engine slot the same raw (689) — exactly the coherent, agreeing
+  // strip a real readback of a two-owner unit produces.
+  await stubTauriDevice(page, {
+    values: { 135: 1793, 689: -1000, 766: 48000, 848: 0 },
+    confirm: "Ok",
+  });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-device");
+  await page.click("#btn-fetch");
+  await expect(page.locator("#statusbar")).toContainText("Fetched", { timeout: 20000 });
+
+  await node(page, "ch1").click();
+  // CH 1 is the FIRST owner in model order, so its command is the one dropped.
+  const threshold = param(page, "Threshold").locator('input[type="range"]');
+  await threshold.focus();
+  await page.keyboard.press("ArrowUp");
+  // A second, unshared edit so the write has something of its own to confirm — the
+  // dropped owner's own change is on no address and would report "no changes".
+  await param(page, "HPF").getByRole("button", { name: "ON", exact: true }).click();
+
+  await page.click("#btn-device");
+  await page.click("#btn-write");
+  await expect
+    .poll(() => dialogsOf(page))
+    .toContainEqual(
+      expect.stringContaining("CH 1 shares device settings with CH 4 — only CH 4's values reach the device"),
+    );
+  // Prefixed, not substituted: the question the operator answers is unchanged.
+  await expect.poll(() => dialogsOf(page)).toContainEqual(expect.stringContaining("to the device?"));
+  // And the write still went out, carrying the engine array ONCE per slot rather
+  // than once per owner (four MONO IN channels hold the same compander here).
+  const engine = (await writesOf(page)).filter(([id]) => id === 689);
+  expect(engine.length).toBeGreaterThan(0);
+  expect(engine.length).toBeLessThanOrEqual(COMPANDER_SLOT_COUNT);
 });

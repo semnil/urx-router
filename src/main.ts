@@ -4,8 +4,7 @@ import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
-import { applyPairTransition, mirrorBalPair, partnerChannel, validatePlan } from "./core/routing";
-import type { PlanProblem } from "./core/routing";
+import { applyPairTransition, mirrorBalPair, mixSendLocks, partnerChannel } from "./core/routing";
 import {
   decodePlanParam,
   deserializeDocument,
@@ -21,6 +20,8 @@ import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
 import type { PatchTouch } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
+import { planProblems } from "./core/plan-validate";
+import type { LoadProblem } from "./core/plan-validate";
 import {
   baseName,
   downloadText,
@@ -38,7 +39,9 @@ import type { RecentEntry } from "./core/storage";
 import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
-import { renderInspector } from "./ui/inspector";
+import { inspectorNodes, renderInspector } from "./ui/inspector";
+import { focusables, preserveFocus } from "./ui/dom";
+import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
 import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
@@ -55,7 +58,9 @@ import { DYN_PROCESSORS } from "./ui/dyn-registry";
 import type { DynKind } from "./ui/dyn-registry";
 import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
 import { errorCode, errorText, getLang, LANG_NAMES, onLangChange, t } from "./i18n";
-import { DEMO } from "./core/env";
+import { DEMO, TRACE } from "./core/env";
+import { installTraceProbe } from "./ui/trace-probe";
+import type { WriteSource } from "./ui/trace-probe";
 import {
   checkUpdate,
   confirmDialog,
@@ -82,8 +87,9 @@ import {
   applyNodeState,
   applySourceState,
   formatReadbackReport,
+  readIntoPlan,
 } from "./core/control/readback";
-import type { ReadbackResult } from "./core/control/readback";
+import type { MergedRead, ReadbackResult } from "./core/control/readback";
 import { parseUrxf, paramSourceOf, UrxfError } from "./core/control/urxf";
 import {
   compareCounts,
@@ -91,6 +97,7 @@ import {
   comparePlan,
   diffNames,
   diffPlan,
+  dryRun,
   formatCompareReport,
   formatWriteReport,
   FOLLOW_USB_ADDR,
@@ -104,6 +111,8 @@ import {
   type CommandDiff,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
+import { collisionOwners } from "./core/control/translate";
+import type { SharedOwners } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
 import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
@@ -360,6 +369,16 @@ let compareAbort: AbortController | null = null;
 // Preferences device-scope note names the diagnostics' coverage only when the
 // diagnostics themselves are reachable.
 let experimentalOn = false;
+// Name the collapse the way the canvas names a node, and count the rest. Several
+// surfaces print this (the live status line, the write confirm, the "no changes"
+// status), so the label/count rule lives here once. The first group's first
+// dropped owner is the one named — the complete list goes to the console warning
+// the collapse already logs.
+function sharedSettingText(owners: SharedOwners[]): string {
+  const first = owners[0];
+  const more = owners.reduce((n, o) => n + o.dropped.length, 0) - 1;
+  return t().status.sharedSetting(graph.labelOf(first.dropped[0]), graph.labelOf(first.kept ?? ""), more);
+}
 const live = DEMO
   ? null
   : new LiveSync({
@@ -367,14 +386,12 @@ const live = DEMO
       getPlan: () => plan,
       onError: (message) => stopLiveOnError(errorText(message)),
       onSent: (n) => setStatus(t().status.liveSynced(n)),
+      onCollapsed: (owners) => setStatus(sharedSettingText(owners)),
       // One bidirectional scope for the session: the same filter shapes the
       // snapshot, the flush, and the follow notify registration.
       getScope: () => getSettings().deviceScope,
       // A "refetch" sideEffect went out (the EQ 1-knob): the device has just recomputed
       // values the plan only mirrors, so read the owner node back rather than pushing.
-      // Scoped, not full: the nodes are known, and live.ts has already re-based its own
-      // snapshot — a full reflect would re-translate the whole plan a second time and
-      // rebuild the console on every flush of a 1-knob drag.
       // Scoped rather than the full reflect `reconcileNodes` takes: the nodes are known and
       // the change is node-local (the recomputed bands), and live.ts has already re-based
       // its own snapshot — a full reflect would re-translate the whole plan a second time
@@ -382,13 +399,24 @@ const live = DEMO
       // shared one: a read that cannot complete leaves the plan claiming values the device
       // does not hold.
       refetchNodes: async (nodeIds) => {
-        const result = await applyNodeState(getModel(modelId), plan, nodeIds);
+        const merged = await followRead("1-knob readback", (into, signal) =>
+          applyNodeState(getModel(modelId), into, nodeIds, signal),
+        );
+        // The plan this read was issued for is gone (a file flow replaced it): its
+        // values belong to a document nothing shows, and no snapshot can describe it.
+        if (!merged) return null;
+        traceProbe?.sample("refetch");
+        noteMergeConflicts(merged);
         for (const id of nodeIds) followDirtyNodes.add(id);
-        // The device recomputed values the plan only mirrors (the 1-knob bands), so
-        // they are its authorship, not an edit: keep them out of the next entry.
-        planHistory?.rebase();
+        // The device recomputed values the plan only mirrors (the 1-knob bands), so they
+        // are its authorship, not an edit: take exactly those keys into the history
+        // baseline. A whole-plan re-base takes the drag's own moves with them and drops
+        // the entry it has open, which is what made one 1-knob level drag undo as 0
+        // entries or as 1 describing only its tail.
+        planHistory?.absorb(merged.devicePatch);
         requestReflect();
-        assertReadComplete(result, "1-knob readback issues:");
+        assertReadComplete(merged, "1-knob readback issues:");
+        return merged.deviceView;
       },
     });
 
@@ -456,7 +484,10 @@ let followFull = false;
 function reflectFollow(): void {
   const ids = [...followDirtyNodes];
   followDirtyNodes.clear();
-  planReadFromDevice();
+  // Not planReadFromDevice: this funnel is coalesced across producers, so it cannot know
+  // what the device authored and a whole-plan re-base here takes the operator's open
+  // gesture with it. Each producer settles the history at its own site instead.
+  planValuesChanged();
   if (followFull) {
     followFull = false;
     if (graphHost.hidden) graphDirty = true;
@@ -464,15 +495,24 @@ function reflectFollow(): void {
     syncRateUi(); // also refreshes the console (applyRateConstraints)
     dynScreen.refresh();
     // A readback of any breadth re-authored the plan's values from the device, so
-    // no earlier entry describes a state it can return to.
+    // no earlier entry describes a state it can return to. The snapshot is NOT
+    // re-based here: only the private copy the read ran against says what the device
+    // holds, and the reconcile hooks re-base from it the moment their read resolves.
     planHistory?.reset();
-    live?.resync();
   } else {
     // Direct-only: repaint just the changed nodes / strips. The snapshot is already
     // current from noteDirect, so no full re-translate. Only one view is visible.
     if (graphHost.hidden) graphDirty = true;
     else graph.repaintDirtyNodes(ids);
     for (const id of ids) consoleView.refreshStrip(id);
+    // The inspector renders ONE selection, and which controls it renders is read off
+    // that selection's endpoint nodes: a device-side Pan Link ON removes the send PAN
+    // (mixSendLocks), and an unrefreshed panel leaves the removed control on screen and
+    // live, writing the very address the MIDI catalog is refusing at the same instant.
+    // Scoped to the nodes the panel reads, so a device sweep of an unselected node does
+    // not rebuild the panel at this branch's ~20 Hz.
+    const shown = inspectorNodes(selection);
+    if (ids.some((id) => shown.includes(id))) refreshInspector();
     // The dynamics screen shows a snapshot of the same node params, so a
     // device-side edit under it would otherwise leave stale sliders on screen.
     dynScreen.refresh();
@@ -488,6 +528,13 @@ function assertReadComplete(result: ReadbackResult, label: string): void {
   if (!result.errors.length) return;
   console.warn(label, result.errors);
   throw new Error(t().error.followReadIncomplete(result.errors.length));
+}
+// A merged device read could not place part of its result: a wire the operator removed
+// while it was in flight, or an edit a device-side routing change left nowhere to land.
+// What could be applied was; the rest is reported rather than dropped in silence — the
+// same rule the history's own apply follows. Not a link failure, so it does not abort.
+function noteMergeConflicts(merged: MergedRead): void {
+  if (merged.unplaced.length) console.warn("device read: merge targets no longer in the plan", merged.unplaced);
 }
 // Single funnel for every device-follow reflect (direct notifies and the scoped /
 // full read-backs alike): a knob sweep delivers notifies in ~30/s IPC batches, any
@@ -507,6 +554,65 @@ function requestReflect(): void {
     reflectFollow();
   }, wait);
 }
+// A follow-side device read (the two reconciles, the 1-knob refetch) hands the module
+// `plan` to the readback by reference and comes back hundreds of round trips later.
+// Nothing raises deviceReadInFlight for these — the Fetch button raises it for its own
+// read — so File > New / Open / a drop / a model switch lands mid-read and the read goes
+// on filling a document that is no longer open.
+//
+// Both halves below are needed. The abort stops round trips that are now for nothing;
+// but the readback checks the signal at group boundaries, so a read can still resolve
+// after it, and readIntoPlan's own identity guard is what keeps the merge — and the
+// epilogue behind it — off the plan that replaced the one it read. The set doubles as
+// the "a follow read is in flight" predicate the history refuses under: an undo taken
+// inside one patches values the read is about to merge over, and unlike a file flow it
+// is refused rather than lost. Membership rather than a separate count, so that
+// abandonFollowWork's clear also ends the refusal — a read bound to a discarded plan
+// provably cannot touch the open one, so it must not keep undo shut.
+const followReads = new Set<AbortController>();
+
+// Everything device-follow has in flight for a plan that is being replaced. Called at
+// each wholesale reassignment of `plan`, and deliberately not from deactivateLive: with
+// the document still on screen, a read stopped half way leaves it a mix of device and
+// plan values with nothing marking which is which (the hazard the Fetch cancel restores
+// a pre-read clone to avoid), so a session that merely ends lets its read finish. A
+// queued reflect goes too — it names nodes in the outgoing plan and its full path resets
+// the history of whatever replaced it; loadPlan re-renders the new plan whole anyway.
+function abandonFollowWork(): void {
+  for (const c of followReads) c.abort();
+  followReads.clear();
+  if (reflectTimer) {
+    clearTimeout(reflectTimer);
+    reflectTimer = 0;
+  }
+  followDirtyNodes.clear();
+  followFull = false;
+}
+
+/** Run a follow-side device read as a merged read (readback.readIntoPlan), carrying the
+ *  abort handle that makes it abandonable. Null means the plan it was issued for is no
+ *  longer the open document — every caller returns without its epilogue, which is what
+ *  keeps a status line, a provenance stamp and a history reset off a document the read
+ *  never touched. The drop reaches the console only: the replacement that discarded the
+ *  plan ended the session and printed its own line. */
+async function followRead(
+  label: string,
+  read: (into: Plan, signal: AbortSignal) => Promise<ReadbackResult>,
+): Promise<MergedRead | null> {
+  const controller = new AbortController();
+  followReads.add(controller);
+  try {
+    const merged = await readIntoPlan(
+      () => plan,
+      (into) => read(into, controller.signal),
+    );
+    if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
+    return merged;
+  } finally {
+    followReads.delete(controller);
+  }
+}
+
 const follow =
   DEMO || !live
     ? null
@@ -528,6 +634,7 @@ const follow =
         applyDirect: (node, name, value) => {
           const ok = applyDirect(plan, node, name, value);
           if (ok) {
+            traceProbe?.sample("follow-direct");
             followDirtyNodes.add(node);
             // The coalesced reflect re-takes the history baseline a moment later
             // (REFLECT_MIN_MS); do it now too, so an app edit inside that window
@@ -547,20 +654,36 @@ const follow =
         // operator's own edit on the hardware. Reject so DeviceFollow takes its
         // stop-following path, the same one a rejected reconcile already took.
         reconcileNodes: async (nodeIds) => {
-          const result = await applyNodeState(getModel(modelId), plan, nodeIds);
+          const merged = await followRead("device-follow scoped readback", (into, signal) =>
+            applyNodeState(getModel(modelId), into, nodeIds, signal),
+          );
+          if (!merged) return;
+          traceProbe?.sample("follow-scoped");
+          noteMergeConflicts(merged);
+          // Re-based here rather than in the coalesced reflect: only the copy this read
+          // ran against says what the device holds, it is not reachable from there, and
+          // the reflect's delay is a window in which an undo would diff against a
+          // snapshot that still describes the pre-read plan.
+          live?.resync(merged.deviceView);
           followFull = true;
           requestReflect();
-          assertReadComplete(result, "device-follow scoped readback issues:");
-          setStatus(t().status.liveFollowed(result.applied));
+          assertReadComplete(merged, "device-follow scoped readback issues:");
+          setStatus(t().status.liveFollowed(merged.applied));
         },
         // Escalation / idle safety net: pull the whole device into the plan.
         reconcileAll: async () => {
-          const result = await applyDeviceStateScoped();
-          plan.unreadNodes = result.unreadNodes;
+          const merged = await followRead("device-follow readback", (into, signal) =>
+            applyDeviceStateScoped(into, signal),
+          );
+          if (!merged) return;
+          traceProbe?.sample("follow-full");
+          noteMergeConflicts(merged);
+          plan.unreadNodes = merged.unreadNodes;
+          live?.resync(merged.deviceView);
           followFull = true;
           requestReflect();
-          assertReadComplete(result, "device-follow readback issues:");
-          setStatus(t().status.liveFollowed(result.applied));
+          assertReadComplete(merged, "device-follow readback issues:");
+          setStatus(t().status.liveFollowed(merged.applied));
         },
         onFollow: () => setStatus(t().status.liveFollowing),
         onError: (message) => stopLiveOnError(errorText(message)),
@@ -704,22 +827,35 @@ let planHistory: PlanHistory | null = null;
 // LED) follows edits made anywhere in the UI. The undo history opens its entry
 // here too, and closes it at the next gesture boundary — which is why the diff is
 // taken then and not now: several funnels mutate the plan further after calling.
-function markChanged(): void {
+function markChanged(source: WriteSource = "ui"): void {
   dirty = true;
+  // Attribute the write before the funnel's own side effects run: note() may commit an
+  // entry, and the ledger has to say who authored the keys that entry carries.
+  traceProbe?.sample(source);
   live?.schedule();
   midi?.scheduleFeedback();
   planHistory?.note();
 }
 
-// Device values entered the plan without an edit (follow reflect, fetch, the
-// initial readback at Live-sync start): no dirty flag or live mirroring, but a
-// mapped MIDI controller must still follow the values now in the plan. Every
-// readback path funnels through here so the next one cannot forget it. The
-// history re-takes its baseline for the same reason: a device-authored value must
-// not ride along in the next entry, or undoing an app edit would push it back
-// over the operator's own move on the hardware.
-function planReadFromDevice(): void {
+// Values entered the plan from somewhere other than an edit funnel (a device read, a
+// follow notify, an external controller): no dirty flag and no live mirroring, but a
+// mapped MIDI controller must still follow what the plan now holds, and the ledger must
+// attribute the keys. Every such path funnels through here so the next one cannot
+// forget it.
+function planValuesChanged(): void {
+  traceProbe?.sample("device-action");
   midi?.scheduleFeedback();
+}
+
+// A device readback of any breadth settled the plan (fetch, Live-sync start, the .urxf
+// import). The history re-takes its whole baseline: a device-authored value must not
+// ride along in the next entry, or undoing an app edit would push it back over the
+// operator's own move on the hardware. The follow-side writers do NOT come through here
+// — each settles the history at its own site, where what the device authored is known:
+// a notify's node (applyDirect), a refetch's patch (refetchNodes → absorb), a
+// reconcile's reset (reflectFollow's full branch).
+function planReadFromDevice(): void {
+  planValuesChanged();
   planHistory?.rebase();
 }
 
@@ -767,6 +903,25 @@ const inspectorActions = {
   onUpdateParams: (from: string, to: string, patch: ConnParams) => {
     const conn = plan.connections.find((c) => c.from === from && c.to === to);
     if (!conn) return;
+    // The destination bus's locks are what decide these controls exist at all
+    // (mixSendLocks: the inspector drops the gated one, the console renders it
+    // read-only, core/midi/controls.ts swallows the message). A device-side flip lands
+    // in the plan a reflect before the panel is rebuilt, so a control the lock already
+    // removed can still be on screen and live. Refuse its write rather than let a
+    // phantom control author a value the next flush puts on the wire — name the lock
+    // that refused it, and rebuild the panel so the control goes away now.
+    const { busFixed, panLinked } = mixSendLocks(plan, parseRef(to).nodeId);
+    const refusal =
+      busFixed && patch.level !== undefined
+        ? t().inspector.busFixedLevel
+        : panLinked && patch.pan !== undefined
+          ? t().inspector.panLinked
+          : null;
+    if (refusal) {
+      setStatus(refusal);
+      refreshInspector();
+      return;
+    }
     conn.params = { ...conn.params, ...patch };
     // A STEREO-linked pair in BAL mode moves as one: copy the same send change to
     // the partner channel, pan included — in BAL mode the pan is the pair's one
@@ -1025,10 +1180,57 @@ function showError(message: string): void {
   void errorDialog(message);
 }
 
+/** A focused inspector control, keyed by what NAMES it on screen rather than by
+ *  position. The panel's sliders are bare `input[type=range]` with no class, so an
+ *  index key would hand focus to whatever control moved into the slot when a lock
+ *  removed the focused one — the case this restore exists for. The parameter row's
+ *  label is the discriminator (Pan vs Level), taken from the `data-param-label`
+ *  paramBlock stamps while building the row rather than searched for again here: this
+ *  runs once per candidate control on a path that repeats at ~20 Hz during device
+ *  follow. No match on the rebuilt panel = focus is dropped, which is the wanted
+ *  outcome. */
+function inspectorFocusKey(el: HTMLElement): string {
+  const label = el.closest<HTMLElement>(".param")?.dataset.paramLabel ?? "";
+  const type = el instanceof HTMLInputElement ? el.type : "";
+  return [label, el.tagName, type, el.className, el.textContent?.slice(0, 24) ?? ""].join("|");
+}
+
+// The scroll offset a rebuild has to carry over. Tracked from the element's own scroll
+// event instead of read back at rebuild time: the reflect that rebuilds this panel has
+// just dirtied layout (repaintDirtyNodes / refreshStrip), so a read there flushes it
+// synchronously, and that path repeats at ~20 Hz while device follow is running — a
+// forced layout costs several times more in WebKit than in Chromium. Passive, so it
+// never holds up the scroll it is observing.
+let inspectorScrollTop = 0;
+inspectorHost.addEventListener(
+  "scroll",
+  () => {
+    inspectorScrollTop = inspectorHost.scrollTop;
+  },
+  { passive: true },
+);
+
 function refreshInspector(): void {
   // On mobile the inspector is a bottom sheet that slides up only while something
   // is selected; this flag drives that state (no effect on the desktop panel).
   document.body.classList.toggle("has-selection", selection !== null);
+  // A device-follow reflect rebuilds this panel while the operator may be inside it,
+  // and replaceChildren drops both the scroll offset and keyboard focus. Carry them
+  // over (preserveFocus, the shared capture/restore the console rebuild uses too); a
+  // text surface also carries its caret, since the plan already holds every keystroke
+  // and the rebuilt field would otherwise jump to the end. Held on an object rather
+  // than in a plain local so the value the capture writes survives to the restore.
+  const carried: { caret: readonly [number | null, number | null] | null } = { caret: null };
+  const restoreFocus = preserveFocus(
+    inspectorHost,
+    (active) => {
+      if (ownsNativeUndo(active) && active instanceof HTMLInputElement)
+        carried.caret = [active.selectionStart, active.selectionEnd];
+      return inspectorFocusKey(active);
+    },
+    (key) => focusables(inspectorHost).find((el) => inspectorFocusKey(el) === key),
+    () => inspectorScrollTop,
+  );
   renderInspector(
     inspectorHost,
     getModel(modelId),
@@ -1038,6 +1240,9 @@ function refreshInspector(): void {
     recent,
     live?.isActive() ?? false,
   );
+  const focused = restoreFocus();
+  if (carried.caret && focused instanceof HTMLInputElement)
+    focused.setSelectionRange(carried.caret[0], carried.caret[1]);
 }
 
 // Recompute the sample-rate constraints and reflect them in the graph badges, the
@@ -1081,6 +1286,10 @@ function rerenderPlan(): void {
 // replaced, so nothing needs re-pointing; what needs doing is re-deriving the view
 // state held outside the plan and repainting.
 function reflectHistory(touch: PatchTouch): void {
+  // The patch is already applied by the time the reflect runs, so the ledger is taken
+  // here — an undo is a writer like any other, and attributing its keys to "ui" would
+  // make a restored value indistinguishable from a fresh edit.
+  traceProbe?.sample("undo");
   // Before the repaints: commitHidden writes the graph's own set back to the plan,
   // so the persisted mirror has to move first or a later commit would undo the undo.
   if (touch.fields.has("hidden")) rememberHidden(modelId, plan.hidden);
@@ -1107,11 +1316,13 @@ function reflectHistory(touch: PatchTouch): void {
 // under the "scene" scope the plan keeps its scene-external values. Shared by
 // fetch, the Live-sync starting read, and device-follow's full reconcile. On a
 // throw (abort / link loss) nothing is restored — the callers discard or keep
-// the plan wholesale.
-async function applyDeviceStateScoped(signal?: AbortSignal): Promise<ReadbackResult> {
-  const keep = getSettings().deviceScope === "scene" ? captureSceneExternal(plan) : null;
-  const result = await applyDeviceState(getModel(modelId), plan, signal);
-  if (keep) applySceneExternal(plan, keep);
+// the plan wholesale. The plan is a parameter rather than the module one because the
+// read spans seconds: re-reading it after the await would apply the outgoing document's
+// scene-external values to whatever replaced it.
+async function applyDeviceStateScoped(target: Plan, signal?: AbortSignal): Promise<ReadbackResult> {
+  const keep = getSettings().deviceScope === "scene" ? captureSceneExternal(target) : null;
+  const result = await applyDeviceState(getModel(modelId), target, signal);
+  if (keep) applySceneExternal(target, keep);
   return result;
 }
 
@@ -1126,18 +1337,30 @@ function newPlanAtLastRate(id: ModelId): Plan {
   return next;
 }
 
-function loadPlan(next: Plan): void {
-  // A device read (fetch / Live-sync start) is mutating the module `plan` in place;
-  // replacing it now would corrupt the read (see deviceReadInFlight). Every external
+/** Replace the open document. Returns false when a device read holds the plan and the
+ *  replacement was refused — the caller must not then report the load as having
+ *  happened. */
+function loadPlan(next: Plan): boolean {
+  // A device read (fetch / Live-sync start) is merging into the module `plan`;
+  // replacing it now would strand the merge (see deviceReadInFlight). Every external
   // entry point is already blocked at fileFlow / the model picker, so this is the
-  // backstop. The reads' own internal model-switch loadPlan runs before the latch.
-  if (deviceReadInFlight) return;
+  // backstop — and it says so, because its one reachable caller went on to announce a
+  // load that never happened.
+  if (deviceReadInFlight) {
+    setStatus(t().status.busyDeviceRead);
+    return false;
+  }
   // Replacing the whole plan invalidates the live snapshot; leave sync first.
   // (Live's own enable path calls loadPlan before begin(), so this is a no-op there.)
   deactivateLive();
+  // deactivateLive drops the subscription and the timers, but a reconcile / refetch
+  // already awaiting the device is not reachable from there — the read itself is what
+  // still points at the plan being replaced.
+  abandonFollowWork();
   modelId = next.modelId;
   rememberModel(modelId);
   plan = next;
+  traceProbe?.sample("load");
   // Keep the persisted hidden layout in step with the plan now on screen, whether
   // it came from a file (its hidden wins) or a fresh new/switch plan (already
   // seeded from the same store, so this is a no-op).
@@ -1159,25 +1382,34 @@ function loadPlan(next: Plan): void {
   planHistory?.reset();
   // Reload the (per-model) MIDI mappings and resync the controller to the new plan.
   midi?.onModelChanged();
+  return true;
 }
 
-// Build a copyable, language-stable report of a plan's routing violations, so it
-// can be pasted back to the tool that generated the plan. One line per problem:
-// "[reason] from -> to", using the routing ConnectError codes and the plan's
-// "nodeId:portId" refs.
-function buildPlanReport(model: string, problems: PlanProblem[]): string {
+// Build a copyable, language-stable report of a plan's violations, so it can be
+// pasted back to the tool that generated the plan. One line per problem, keyed by
+// its code: a wire prints "[reason] from -> to" (the routing ConnectError codes
+// and the plan's "nodeId:portId" refs), an insert-FX slot collision the contended
+// slot and every node claiming it — it has no endpoints to name.
+function buildPlanReport(model: string, problems: LoadProblem[]): string {
   return [
     "URX Router plan validation failed",
     `model: ${model}`,
     `problems: ${problems.length}`,
     "",
-    ...problems.map((p) => `[${p.reason}] ${p.from} -> ${p.to}`),
+    ...problems.map((p) =>
+      p.reason === "insertFxSlot"
+        ? `[${p.reason}] ${p.slot}: ${p.nodes.join(", ")}`
+        : `[${p.reason}] ${p.from} -> ${p.to}`,
+    ),
   ].join("\n");
 }
 
 // Parse text into a plan, load it, and (when it came from a real path) record it
-// as a recent plan. Returns true on success; on failure sets the error status.
-function loadFromText(text: string, path?: string): boolean {
+// as a recent plan. Returns true on success and false on failure (which sets the
+// error status); null when the plan carries a problem the operator has been asked
+// about — nothing has loaded and nothing has failed, and the load runs from the
+// report modal if they proceed.
+function loadFromText(text: string, path?: string): boolean | null {
   try {
     const doc = deserializeDocument(text);
     const next = doc.plan;
@@ -1190,22 +1422,45 @@ function loadFromText(text: string, path?: string): boolean {
     // scene recall on the unit. Only within the same model: another model's
     // monitor / patch wiring would not validate on this one.
     if (doc.sceneScoped && next.modelId === plan.modelId) applySceneExternal(next, captureSceneExternal(plan));
-    // Reject a plan with illegal routing (e.g. a tool-generated plan): surface a
-    // copyable report of every violation and leave the current plan untouched.
-    const problems = validatePlan(getModel(next.modelId), next);
-    if (problems.length > 0) {
-      showLoadReport(buildPlanReport(next.modelId, problems));
+    // Surface every violation as a copyable report. A device readback runs neither
+    // check — the unit is the authority for what it is actually running — which is
+    // what splits the two classes: illegal routing is a plan this app cannot
+    // represent and stays a refusal, while two nodes on one device-wide insert-FX
+    // slot is a plan the app itself writes after a readback, so refusing it made
+    // Fetch → Save → reopen impossible for its own document. That one warns and
+    // offers to open anyway.
+    const problems = planProblems(getModel(next.modelId), next);
+    const refusals = problems.filter((p) => p.reason !== "insertFxSlot");
+    if (refusals.length > 0) {
+      showLoadReport(buildPlanReport(next.modelId, refusals));
       return false;
     }
-    loadPlan(next);
-    if (path) {
-      recent = rememberRecent({ path, name: baseName(path), modelId }, getSettings().recentMax);
-      refreshInspector();
-      setStatus(t().status.openedFrom(baseName(path)));
-    } else {
-      setStatus(t().status.planLoaded);
+    const finishLoad = (): boolean => {
+      // Refused (a device read holds the plan): loadPlan said so, and the caller must
+      // not go on to remember a recent path and announce a document that never opened.
+      if (!loadPlan(next)) return false;
+      if (path) {
+        recent = rememberRecent({ path, name: baseName(path), modelId }, getSettings().recentMax);
+        refreshInspector();
+        setStatus(t().status.openedFrom(baseName(path)));
+      } else {
+        setStatus(t().status.planLoaded);
+      }
+      return true;
+    };
+    if (problems.length > 0) {
+      const m = t().loadReport;
+      showLoadReport(buildPlanReport(next.modelId, problems), {
+        title: m.slotTitle,
+        intro: m.slotIntro,
+        proceed: { label: m.loadAnyway, run: () => void finishLoad() },
+      });
+      // Neither loaded nor failed: the decision is on screen. Null rather than false,
+      // so a recent entry pointing at a file that opens perfectly well is not dropped
+      // as unloadable while its report is still up.
+      return null;
     }
-    return true;
+    return finishLoad();
   } catch (err) {
     const message = err instanceof PlanError ? t().error[err.code] : errorText(err);
     showError(t().status.loadError(message));
@@ -1218,7 +1473,8 @@ function loadFromText(text: string, path?: string): boolean {
 // all three share. `read` resolves null when its dialog was canceled; `path` is
 // what the plan is remembered by, so it is absent for a browser pick or drop.
 // Resolves true on success, false when the load was attempted and failed, and
-// null when nothing was attempted (canceled, or another file flow in flight).
+// null when nothing was attempted (canceled, another file flow in flight, or the
+// plan's problem is on screen for the operator to decide on).
 async function openPlanFrom(read: () => Promise<{ text: string; path?: string } | null>): Promise<boolean | null> {
   return fileFlow(async () => {
     if (!(await confirmDiscard())) return null;
@@ -1283,7 +1539,15 @@ let fileFlowBusy = false;
 // checks it. The internal model-switch loadPlan runs before the latch is raised.
 let deviceReadInFlight = false;
 async function fileFlow<T>(run: () => Promise<T>): Promise<T | null> {
-  if (fileFlowBusy || deviceReadInFlight) return null;
+  // Refused, and said so: the flow the operator picked simply does not happen, and the
+  // status line is showing the read's own progress rather than an answer to that click.
+  // A second file flow stays silent — its own native dialog is already on screen, and
+  // the second click is a rapid-repeat guard rather than a request that went unanswered.
+  if (deviceReadInFlight) {
+    setStatus(t().status.busyDeviceRead);
+    return null;
+  }
+  if (fileFlowBusy) return null;
   fileFlowBusy = true;
   try {
     return await run();
@@ -1584,13 +1848,21 @@ planHistory = new PlanHistory({
   reflect: (touch) => reflectHistory(touch),
   labelOf: (id) => graph.labelOf(id),
   onStatus: (msg) => setStatus(msg),
-  // A device read mutates `plan` in place across many awaits and re-reads it in its
-  // epilogue, and a file flow can replace the plan outright: patching under either
-  // acts on a premise that is still moving. A modal is refused because none of them
-  // edits the plan — except the channel tuning screen, which is exactly what its
-  // sliders do, so an undo taken with it open belongs to the plan behind it.
+  // A device read merges into `plan` across many awaits and re-bases the live snapshot
+  // from its own copy, and a file flow can replace the plan outright: patching under
+  // either acts on a premise that is still moving. Every read that RE-AUTHORS the plan
+  // counts — the operator's fetch and Live-sync start, and equally device follow's two
+  // reconciles and Live sync's 1-knob refetch. A converge round is not one of them: it
+  // reads the whole write scope but writes nothing back into the plan, so an undo
+  // during it is answerable. The press itself is never consumed (run() refuses before
+  // it commits the open entry, so a retry is exact), but the two reconciles reset the
+  // history in their reflect a moment later, so for those a refused press is an entry
+  // the operator loses — visibly, rather than an edit that may or may not have reached
+  // the unit. A modal is refused because none of them edits the plan — except the
+  // channel tuning screen, which is exactly what its sliders do, so an undo taken with
+  // it open belongs to the plan behind it.
   blocked: () =>
-    deviceReadInFlight || fileFlowBusy
+    deviceReadInFlight || followReads.size > 0 || fileFlowBusy
       ? t().status.undoDeviceBusy
       : modalOpen() && !dynScreen.isOpen()
         ? t().status.undoModal
@@ -1600,6 +1872,18 @@ planHistory = new PlanHistory({
   onDepthChange: () => editMenu.pushState(),
 });
 planHistory.install();
+
+// Trace build only: the read-only probe over the plan-key write ledger and the live
+// snapshot (src/ui/trace-probe.ts). TRACE folds to a constant, so a plain build
+// evaluates this to null and the module is dropped entirely — the same way DEMO drops
+// the control layer. Declared after planHistory because it reads the settled depth.
+const traceProbe = TRACE
+  ? installTraceProbe({
+      getPlan: () => plan,
+      liveSnapshot: () => live?.snapshotEntries() ?? null,
+      depth: () => planHistory?.depth() ?? { undo: 0, redo: 0 },
+    })
+  : null;
 
 $("btn-auto").addEventListener("click", () => {
   graph.autoLayout();
@@ -1789,47 +2073,44 @@ if (!DEMO) {
         // its epilogue (cleared in the finally below); the read mutates `plan` in
         // place, so a New/Open/switch mid-read would corrupt it.
         deviceReadInFlight = true;
-        // A cancel lands mid-read, leaving the plan a mix of device values and the
-        // ones they replaced, with nothing to mark which is which — unreadNodes is
-        // never set, dirty never moves, so a later New/Open discards it without
-        // asking and a later Write sends the mixture. Keep the pre-read plan so a
-        // cancel means nothing happened.
-        const beforeRead = structuredClone(plan);
-        const dirtyBeforeRead = dirty;
-        let result: ReadbackResult;
-        try {
-          result = await applyDeviceStateScoped(controller.signal);
-        } catch (e) {
-          if (e instanceof DOMException && e.name === "AbortError") {
-            plan = beforeRead;
-            dirty = dirtyBeforeRead;
-            rerenderPlan();
-          }
-          throw e;
+        // The read runs against a private copy, so a cancel throws out of it with the
+        // plan on screen untouched — "cancel means nothing happened" needs no restore,
+        // and the module plan object is never replaced (which is what used to leave
+        // every MIDI binding attached to a discarded Plan).
+        const merged = await readIntoPlan(
+          () => plan,
+          (into) => applyDeviceStateScoped(into, controller.signal),
+        );
+        // Unreachable while this handler holds deviceReadInFlight (loadPlan refuses
+        // under it), but the contract is stated rather than assumed.
+        if (!merged) {
+          setStatus(t().status.canceled);
+          return;
         }
-        if (result.errors.length) console.warn("device readback issues:", result.errors);
+        if (merged.errors.length) console.warn("device readback issues:", merged.errors);
+        noteMergeConflicts(merged);
         // Follow USB is outside the plan (see params.ts), so the readback does not
         // carry it — read it on the same connection so the badge matches the values
         // that just landed.
         await refreshFollowUsbBadge();
         // Per-node provenance: nodes whose body read failed still show their plan
         // default, so the graph/inspector flag them as not read from the device.
-        plan.unreadNodes = result.unreadNodes;
+        plan.unreadNodes = merged.unreadNodes;
         rerenderPlan();
         dirty = true;
         // Nodes the readback tried but could not confirm (left at their plan default).
-        const unread = result.unreadNodes.size;
+        const unread = merged.unreadNodes.size;
         setStatus(
-          result.errors.length
-            ? t().status.fetchPartial(result.applied, result.errors.length, unread)
+          merged.errors.length
+            ? t().status.fetchPartial(merged.applied, merged.errors.length, unread)
             : unread
-              ? t().status.fetchedUnread(device.model, result.applied, unread)
-              : t().status.fetchedDevice(device.model, result.applied),
+              ? t().status.fetchedUnread(device.model, merged.applied, unread)
+              : t().status.fetchedDevice(device.model, merged.applied),
         );
         // Read failures are otherwise console-only: capture a report to offer after
         // disconnect (below), so the per-group reasons are visible without the console.
-        if (result.errors.length) {
-          report = { filename: `${modelId}-fetch-errors.md`, markdown: formatReadbackReport(device.model, result) };
+        if (merged.errors.length) {
+          report = { filename: `${modelId}-fetch-errors.md`, markdown: formatReadbackReport(device.model, merged) };
         }
       });
     } finally {
@@ -1972,11 +2253,22 @@ if (!DEMO) {
               return null;
             }
             const total = diffs.length + nameWrites.length;
+            // From the EMITTED list, not from `diffs`: a survivor that already
+            // matches the device is not a diff, and the owner it displaced would
+            // then go unmentioned — including when the only pending change is that
+            // owner's, which reports "no changes to write".
+            const owners = collisionOwners(dryRun(getModel(modelId), plan));
+            const sharedNote = owners.length ? sharedSettingText(owners) : "";
             if (total === 0) {
-              setStatus(t().status.writeNoChanges);
+              setStatus(sharedNote ? `${t().status.writeNoChanges} ${sharedNote}` : t().status.writeNoChanges);
               return null;
             }
-            if (confirmFirst && !(await confirmDialog(t().confirm.write(total)))) {
+            if (
+              confirmFirst &&
+              !(await confirmDialog(
+                sharedNote ? `${sharedNote}\n\n${t().confirm.write(total)}` : t().confirm.write(total),
+              ))
+            ) {
               setStatus(t().status.canceled);
               return null;
             }
@@ -2095,23 +2387,30 @@ if (!DEMO) {
         deviceReadInFlight = true;
         // live.begin() then snapshots through the same scope filter, so a kept
         // scene-external value is neither written back nor tracked.
-        const result = await applyDeviceStateScoped();
-        plan.unreadNodes = result.unreadNodes;
+        const merged = await readIntoPlan(
+          () => plan,
+          (into) => applyDeviceStateScoped(into),
+        );
+        if (!merged) return await abort(t().status.canceled);
+        noteMergeConflicts(merged);
+        plan.unreadNodes = merged.unreadNodes;
         rerenderPlan();
         // A partial read leaves the plan holding defaults where the device was not
         // heard from, and the live snapshot would enshrine those as device truth —
         // the first sideEffect edit then converges the whole plan and writes them
         // over the real values. Live sync needs a complete read to start from.
-        if (result.errors.length) {
-          console.warn("live readback issues:", result.errors);
-          return await failLive(t().status.liveError(t().error.liveReadIncomplete(result.errors.length)));
+        if (merged.errors.length) {
+          console.warn("live readback issues:", merged.errors);
+          return await failLive(t().status.liveError(t().error.liveReadIncomplete(merged.errors.length)));
         }
         dirty = false;
         liveDeviceLabel = device.model;
         // Read before the session is up, so the badge is already right when the rate
         // picker locks — the badge is the only Follow USB control while live.
         await refreshFollowUsbBadge();
-        live.begin();
+        // The copy the starting read ran against: without it an edit made during the
+        // multi-second read is snapshotted as a value the device was already given.
+        live.begin(merged.deviceView);
         // Both registrations are awaited before the session counts as up. Without
         // the notify stream the app is blind to device-side edits and the next
         // converge writes the plan back over them; without the link watch an idle
@@ -2124,7 +2423,7 @@ if (!DEMO) {
         liveEpoch = device.epoch;
         liveSessionUp = true;
         setLiveUi(true);
-        setStatus(t().status.liveOn(device.model, result.applied));
+        setStatus(t().status.liveOn(device.model, merged.applied));
       } catch (err) {
         await failLive(t().status.liveError(errorText(err)));
       } finally {
@@ -2156,15 +2455,32 @@ if (!DEMO) {
     getModel: () => getModel(modelId),
     getPlan: () => plan,
     onApplied: (control, mirrored) => {
-      markChanged();
+      markChanged("midi");
       followDirtyNodes.add(control.node);
       const partner = mirrored ? partnerChannel(getModel(modelId), control.node) : undefined;
       if (partner) followDirtyNodes.add(partner);
       requestReflect();
+      // Kept exactly where the coalesced reflect used to make it, so moving that call
+      // out changes one behaviour and not two: a MIDI message inside the idle window
+      // drops the operator's open entry (pinned by T4's midi-rebase ladder). That is a
+      // defect of its own — a MIDI apply is an app edit through markChanged, not a
+      // device read — and removing it is a separate decision with its own cells.
+      planHistory?.rebase();
       // A toggle (mute / section ON) dims wires on the canvas; the reflect
       // repaints nodes only, so repaint the wires here (rare, toggle-rate).
       if (control.kind === "toggle" && !graphHost.hidden) graph.repaintWires();
     },
+    // The two operator-started latches, a strict subset of what the history refuses
+    // under: a Fetch or a Live-sync start holds the plan for seconds and the latter
+    // then snapshots it as device truth, and a file flow can replace the plan outright.
+    // The follow-side reads (followReads) are deliberately NOT here, unlike in
+    // PlanHistory.blocked: they recur once per flush window of a 1-knob drag, so
+    // refusing in them would make an external desk stutter continuously — and an edit
+    // made inside one now survives it (readback.readIntoPlan merges rather than
+    // assigns), which is what makes leaving them open safe. A modal is not here either:
+    // a MIDI desk is a second physical surface, and the panel that configures it is
+    // itself counted by modalOpen().
+    blocked: () => (deviceReadInFlight || fileFlowBusy ? t().status.midiBusy : null),
     onLearnChanged: () => consoleView.refresh(),
     onStatus: setStatus,
   });

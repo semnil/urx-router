@@ -441,11 +441,15 @@ export function formatCompareReport(
     `name @ ${e.write.param}:${e.write.y} — plan "${e.write.value}", device "${e.device}"`;
 
   const { compared, differ, numDiffs, nameDiffs } = compareCounts(entries, nameEntries);
+  // Addresses more than one plan node writes: the emitted set carries one command
+  // for them (last wins), so the compared count is short by the dropped owners.
+  const shared = entries.filter((e) => e.command.shadowed?.length);
   lines.push(`# URX compare report — ${model}`);
   lines.push("");
   lines.push(
     `- Compared ${compared} parameters: ${compared - differ} match, ${differ} differ` +
-      (errors.length ? `; ${errors.length} could not be read` : ""),
+      (errors.length ? `; ${errors.length} could not be read` : "") +
+      (shared.length ? `; ${shared.length} shared by more than one node` : ""),
   );
 
   if (numDiffs.length || nameDiffs.length) {
@@ -458,6 +462,16 @@ export function formatCompareReport(
     lines.push("");
     lines.push("## Could not be read (comparison incomplete)");
     for (const e of errors) lines.push(`- ${e}`);
+  }
+  if (shared.length) {
+    lines.push("");
+    lines.push("## Shared device settings (one address, more than one node)");
+    for (const { command: c } of shared) {
+      lines.push(`- ${c.name} @ ${c.paramId}:${c.x}:${c.y} — kept ${c.node ?? "?"}, dropped ${c.shadowed!.join(", ")}`);
+    }
+    lines.push(
+      "(Compared against the kept node's value only — the dropped nodes' plan values are on no address of their own.)",
+    );
   }
   // Full audit log: every parameter, matched or not, so the comparison can be
   // checked rather than trusted.

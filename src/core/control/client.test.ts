@@ -308,4 +308,23 @@ describe("formatCompareReport", () => {
     expect(md).toContain("## Could not be read (comparison incomplete)");
     expect(md).toContain("CH_PAN: timeout");
   });
+
+  // An address more than one node writes was compared against the surviving
+  // node's value only — the others' plan values are on no address of their own,
+  // so a "matches" there means less than it reads.
+  it("names the nodes a shared address dropped", () => {
+    const shared = entry("INSERT_FX_EFFECT", 689, -1500, -1500);
+    shared.command.node = "ch2";
+    shared.command.shadowed = ["ch1"];
+    const md = formatCompareReport("URX44V", [shared], []);
+    expect(md).toContain("1 match, 0 differ; 1 shared by more than one node");
+    expect(md).toContain("## Shared device settings (one address, more than one node)");
+    expect(md).toContain("- INSERT_FX_EFFECT @ 689:0:1 — kept ch2, dropped ch1");
+  });
+
+  it("omits the shared section when no address has more than one node", () => {
+    const md = formatCompareReport("URX44V", [entry("CH1 PAN", 140, 512, 512)], []);
+    expect(md).not.toContain("## Shared device settings");
+    expect(md).not.toContain("shared by more than one node");
+  });
 });

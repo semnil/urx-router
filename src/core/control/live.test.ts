@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
+import { clonePlanState } from "../plan-history";
 
 // LiveSync drives the device through platform.vdSet / vdSetStr and re-reads via
 // vdGet on a converge; mock those. The point of these tests is the flush cadence
 // (how many device writes a drag produces), so vdSet's call count is the metric.
 vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn() }));
 
-import { vdSet, vdGet } from "../platform";
+import { vdSet, vdSetStr, vdGet } from "../platform";
 import { planToCommands } from "./translate";
+import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
 
 const model = getModel("URX44V");
@@ -19,12 +21,16 @@ function basePlan(): Plan {
   return plan;
 }
 
-function liveFor(plan: Plan, refetchNodes?: (nodes: ReadonlySet<string>) => Promise<void>): LiveSync {
+// The refetch hook resolves the private copy its read ran against (readback.readIntoPlan)
+// — what the device holds as far as the read established it. Returning null stands for
+// "no re-base": either the plan it read into is gone, or the case does not exercise one.
+function liveFor(plan: Plan, refetchNodes?: (nodes: ReadonlySet<string>) => Promise<Plan | null>): LiveSync {
   return new LiveSync({
     getModel: () => model,
     getPlan: () => plan,
     onError: () => {},
     onSent: () => {},
+    onCollapsed: () => {},
     refetchNodes,
   });
 }
@@ -219,6 +225,7 @@ describe("LiveSync sideEffect converge", () => {
       getPlan: () => plan,
       onError: (m) => errors.push(m),
       onSent: () => {},
+      onCollapsed: () => {},
     });
     live.begin();
     setCh1CompEqType(plan, 1);
@@ -249,6 +256,7 @@ describe("LiveSync flush error", () => {
         activeAtError = live.isActive();
       },
       onSent: () => {},
+      onCollapsed: () => {},
     });
     vi.mocked(vdSet).mockRejectedValueOnce(new Error("device gone"));
     live.begin();
@@ -310,6 +318,7 @@ describe("LiveSync sideEffect refetch", () => {
     const refetched: string[][] = [];
     const live = liveFor(plan, async (nodes) => {
       refetched.push([...nodes]);
+      return null;
     });
     live.begin();
     setCh1OneKnob(plan, { on: true });
@@ -332,6 +341,9 @@ describe("LiveSync sideEffect refetch", () => {
         ...plan.nodeParams.ch1,
         eqBands: [{ on: true, type: 1, freq: 140, q: 0.71, gain: 0 }],
       };
+      // What readIntoPlan hands back: the copy the read ran against, carrying the read's
+      // own values. Nothing else moved here, so it equals the plan.
+      return clonePlanState(plan);
     });
     live.begin();
     setCh1OneKnob(plan, { on: true });
@@ -348,13 +360,95 @@ describe("LiveSync sideEffect refetch", () => {
     expect(vi.mocked(vdSet).mock.calls.length).toBe(afterRefetch);
   });
 
+  // The re-base takes VALUES from the copy the read ran against and SHAPE from the live
+  // plan. These three are the three things that split decides.
+  it("sends an edit made during the refetch, because the device view does not carry it", async () => {
+    const plan = basePlan();
+    setCh1Fader(plan, -20);
+    const live = liveFor(plan, async () => {
+      // What the read established: the device's own values, sampled before the gesture
+      // below exists. The 1-knob write happened, the fader is still where it was.
+      const view = clonePlanState(plan);
+      // The operator moves the fader while the read is in flight.
+      setCh1Fader(plan, 0);
+      return view;
+    });
+    live.begin();
+    setCh1OneKnob(plan, { on: true });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    const fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.y === 0)!;
+    vi.mocked(vdSet).mockClear();
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    // Snapshotting the LIVE plan would have recorded 0 dB as a value the device was
+    // given, and no later diff could ever see it again.
+    expect(vi.mocked(vdSet)).toHaveBeenCalledWith(fader.paramId, fader.x, fader.y, fader.vdValue);
+  });
+
+  it("treats an address that only exists in the live plan as a pending write, not device truth", async () => {
+    const plan = basePlan();
+    let view: Plan | null = null;
+    const live = liveFor(plan, async () => {
+      // The read's copy predates the insert-FX selection the operator makes below, and
+      // that selector is what binds the engine's parameter array — so the array's
+      // addresses exist in the live plan and not in the copy.
+      view = clonePlanState(plan);
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 3, insertFxOn: true };
+      return view;
+    });
+    live.begin();
+    setCh1OneKnob(plan, { on: true });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    const addrOf = (c: { paramId: number; x: number; y: number }): string => `${c.paramId}:${c.x}:${c.y}`;
+    const seen = new Set(planToCommands(model, view!).map(addrOf));
+    const grown = planToCommands(model, plan).filter((c) => !seen.has(addrOf(c)));
+    // The premise, stated rather than assumed: the gesture really did add addresses the
+    // read never saw. Without it the rest of this case would pass on nothing.
+    expect(grown.length).toBeGreaterThan(0);
+    // Registered for notifies (shape follows the live plan)…
+    expect(new Set(live.writableAddrs().map((a) => a.join(":"))).has(addrOf(grown[0]))).toBe(true);
+    // …and still owed to the device, because the read never saw it.
+    vi.mocked(vdSet).mockClear();
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const sent = new Set(vi.mocked(vdSet).mock.calls.map(([id, x, y]) => `${id}:${x}:${y}`));
+    expect(sent.has(addrOf(grown[0]))).toBe(true);
+  });
+
+  it("records a name the refetch read from the device instead of re-sending it", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan, async () => {
+      // A scoped read DOES carry names (nameControl is gated only by the node filter),
+      // so a device-side rename lands in the plan and in the view together.
+      plan.nodeNames = { ...plan.nodeNames, ch1: "VOX" };
+      return clonePlanState(plan);
+    });
+    live.begin();
+    setCh1OneKnob(plan, { on: true });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    vi.mocked(vdSetStr).mockClear();
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSetStr)).not.toHaveBeenCalled();
+  });
+
   it("keeps flushing on cadence through a 1-knob level drag", async () => {
     // A refetch is one read of one node, not a converge round over the write scope, so
     // the window does not have to back off — which is the whole point of the split: the
     // level is a dragged slider, and it was the case that made every drag on it wait for
     // the pointer to stop.
     const plan = basePlan();
-    const live = liveFor(plan, async () => {});
+    // Null: this case measures the flush cadence, not the re-base.
+    const live = liveFor(plan, async () => null);
     live.begin();
     setCh1OneKnob(plan, { on: true, level: 0 });
     live.schedule();
@@ -368,5 +462,121 @@ describe("LiveSync sideEffect refetch", () => {
       await vi.advanceTimersByTimeAsync(130);
     }
     expect(vi.mocked(vdSet).mock.calls.length).toBeGreaterThan(before + 5);
+  });
+});
+
+// Two nodes holding the same insert-FX family write ONE engine array (no channel
+// axis), so the emitted set collapses the repeated address to its last command.
+// The flush says so once per owner set — the loss is a salvage, and a silent
+// salvage is what the repo rule forbids.
+describe("LiveSync shared device address", () => {
+  const ENGINE = 689;
+  const SLOT = 6;
+  function setCompander(plan: Plan, nodeId: string, selector: number, threshold: number): void {
+    plan.nodeParams[nodeId] = { ...plan.nodeParams[nodeId], insertFx: selector, insertFxParams: { "6": threshold } };
+  }
+  function collidingLive(plan: Plan): { live: LiveSync; reports: SharedOwners[][] } {
+    const reports: SharedOwners[][] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: (owners) => reports.push(owners),
+    });
+    return { live, reports };
+  }
+  const engineWrites = (): number[] =>
+    vi
+      .mocked(vdSet)
+      .mock.calls.filter((c) => c[0] === ENGINE && c[2] === SLOT)
+      .map((c) => c[3]);
+
+  it("sends one write to the shared address and names the owners once", async () => {
+    const plan = basePlan();
+    // Both selectors already on the device (the only route into this state is a
+    // readback), so the flush below carries no selector and no converge round.
+    setCompander(plan, "ch1", 1793, -1000);
+    setCompander(plan, "ch2", 1794, -1500);
+    const { live, reports } = collidingLive(plan);
+    live.begin();
+
+    setCompander(plan, "ch2", 1794, -1600);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(engineWrites()).toEqual([-1600]);
+    expect(reports).toEqual([[{ kept: "ch2", dropped: ["ch1"] }]]);
+
+    // The same owners on the next flush: latched, so an unrelated edit does not
+    // repeat the sentence.
+    vi.mocked(vdSet).mockClear();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(engineWrites()).toEqual([]);
+    expect(reports).toHaveLength(1);
+  });
+
+  it("re-arms on a device re-base, which runs no flush of its own", async () => {
+    const plan = basePlan();
+    setCompander(plan, "ch1", 1793, -1000);
+    setCompander(plan, "ch2", 1794, -1500);
+    const { live, reports } = collidingLive(plan);
+    live.begin();
+    setCompander(plan, "ch2", 1794, -1600);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reports).toHaveLength(1);
+
+    // What device follow ACTUALLY does, as opposed to the case below: a reconcile reads
+    // the one shared address and assigns it to both owners, erasing the divergence, then
+    // re-bases through resync(). It runs no flush — the follow funnel is
+    // planValuesChanged, which unlike markChanged does not schedule one — so a latch that
+    // only clears inside flush() stays set, and the operator's next loss of this same
+    // pair is swallowed as already said.
+    setCompander(plan, "ch1", 1793, -1600);
+    live.resync(plan);
+    expect(reports).toHaveLength(1);
+
+    setCompander(plan, "ch1", 1793, -1200);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reports).toHaveLength(2);
+  });
+
+  it("re-arms once the two owners agree again", async () => {
+    const plan = basePlan();
+    setCompander(plan, "ch1", 1793, -1000);
+    setCompander(plan, "ch2", 1794, -1500);
+    const { live, reports } = collidingLive(plan);
+    live.begin();
+    setCompander(plan, "ch2", 1794, -1600);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reports).toHaveLength(1);
+
+    // What a reconcile leaves behind: both owners carrying the same value, so the
+    // duplicates agree and there is nothing to collapse.
+    setCompander(plan, "ch1", 1793, -1600);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reports).toHaveLength(1);
+
+    // A later divergence is a fresh report, not a swallowed one.
+    setCompander(plan, "ch1", 1793, -1200);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reports).toHaveLength(2);
+  });
+
+  it("says nothing for a plan with no shared address", async () => {
+    const plan = basePlan();
+    const { live, reports } = collidingLive(plan);
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+    expect(reports).toEqual([]);
   });
 });

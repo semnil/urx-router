@@ -101,6 +101,54 @@ export function popTop(anchor: DOMRect, height: number, gap: number): number {
   return Math.max(6, anchor.top - height - gap);
 }
 
+/** Every focusable control inside a rebuilt subtree, in DOM order. The custom controls
+ *  (fader / knob / chip / scribble) carry `tabindex="0"`; the rest are real form
+ *  controls. One enumeration, because a capture and its restore that disagreed about
+ *  what counts would hand focus to a different control than the one that had it. */
+export function focusables(root: HTMLElement): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>('input, select, button, [tabindex="0"]')];
+}
+
+/** Carry keyboard focus across a rebuild of `host`'s contents. Called BEFORE the
+ *  rebuild — it reads the focused element then — and returns the restore to run once
+ *  the new DOM is in place, which answers the element it focused (null when there was
+ *  nothing to carry, or the key names nothing in the rebuilt panel — dropping focus is
+ *  the wanted outcome there, not handing it to whatever moved into the slot).
+ *
+ *  How a control is keyed is the caller's: the console keys by strip + index, the
+ *  inspector by the row's label. What must not differ lives here — the containment
+ *  check, and `focus({ preventScroll: true })`, which keeps the surface where the
+ *  operator left it when the restored control sits off screen (measured honoured on
+ *  both engines; scripts/meter-bench.mjs's scrollCheck holds it against WKWebView on
+ *  every bench run, so a copy that dropped it would show up there).
+ *
+ *  `scrollTop` opts into restoring the host's scroll offset, and is a getter rather
+ *  than a read here because the console deliberately does NOT restore it: reading the
+ *  offset back at rebuild time forces a synchronous layout (~25 ms on WKWebView). */
+export function preserveFocus<K>(
+  host: HTMLElement,
+  capture: (active: HTMLElement) => K | null,
+  find: (key: K) => HTMLElement | null | undefined,
+  scrollTop?: () => number,
+): () => HTMLElement | null {
+  const active = document.activeElement as HTMLElement | null;
+  const key = active !== null && host.contains(active) ? capture(active) : null;
+  return () => {
+    if (scrollTop) {
+      // Skipped at the top, the common case: the write itself needs layout, which is
+      // the cost the caller's tracker exists to avoid. A rebuild too short for the
+      // offset is clamped by the browser.
+      const top = scrollTop();
+      if (top !== 0) host.scrollTop = top;
+    }
+    if (key === null) return null;
+    const target = find(key);
+    if (!target) return null;
+    target.focus({ preventScroll: true });
+    return target;
+  };
+}
+
 // ---- settings-row builders ---------------------------------------------------
 // The label-left / control-right row idiom the Preferences and Device setup modals
 // both render. They emit the same `prefs-*` DOM (the class prefix is historical —

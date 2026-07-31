@@ -233,6 +233,7 @@ export const en = {
     prePostLcdOnly: "CH → FX send Pre/Post is set on the device only (not writable from software).",
     eqRateLocked: "Stereo channel EQ is disabled at 176.4 / 192 kHz — forced off.",
     insFxRateLocked: "Insert FX is unavailable above 96 kHz — forced off.",
+    insFxSlotLocked: "Every insert effect is in use — each occupies one device-wide slot.",
     channelOn: "Channel",
     sendOn: "Send",
     toSt: "TO ST",
@@ -522,6 +523,7 @@ export const en = {
     pngExported: "PNG exported",
     pdfExported: "PDF exported",
     arranged: "Arranged to the default layout",
+    busyDeviceRead: "Reading from the device — try that again when it finishes",
     fetchConnecting: "Connecting to the device…",
     fetchedDevice: (model: string, n: number): string => `Fetched ${n} setting${n === 1 ? "" : "s"} from ${model}`,
     fetchedUnread: (model: string, n: number, unread: number): string =>
@@ -573,6 +575,8 @@ export const en = {
     liveSynced: (n: number): string => `→ device (${n})`,
     liveFollowing: "← device…",
     liveFollowed: (n: number): string => `← device (${n})`,
+    sharedSetting: (dropped: string, kept: string, more: number): string =>
+      `${dropped} shares device settings with ${kept}${more > 0 ? ` (+${more} more)` : ""} — only ${kept}'s values reach the device`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",
@@ -598,6 +602,9 @@ export const en = {
     undoDeviceBusy: "Busy with the device — undo is unavailable until it finishes",
     undoModal: "Close the open dialog before undoing",
     undoRateLive: "The sample rate follows the device while Live sync is on — it cannot be undone here",
+    undoRateLiveMixed:
+      "This step also changes the sample rate, which follows the device while Live sync is on — the whole step is held back, not lost; it works again with Live sync off",
+    midiBusy: "Busy with the device or a file — incoming MIDI is ignored until it finishes",
     themeDark: "Switched to dark mode",
     themeLight: "Switched to light mode",
     themeAuto: "Following the system theme",
@@ -659,6 +666,10 @@ export const en = {
     copy: "Copy",
     copied: "Copied",
     close: "Close",
+    slotTitle: "Plan has an insert-FX slot conflict",
+    slotIntro:
+      "Two nodes in this plan claim the same device-wide insert-FX slot. The app's own screens cannot author that, but a device readback does not check it, so a plan saved from the device can carry one — which is why this is a warning and not a refusal. Load it and resolve the conflict here, or close and fix it where the plan came from.",
+    loadAnyway: "Load anyway",
   },
   compareReport: {
     title: "Device comparison",

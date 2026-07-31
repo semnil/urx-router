@@ -455,7 +455,14 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   re-base (already patched by `noteDirect`). A hung node has no console strip of its own — its chip is drawn on the
   parent strip — so `refreshStrip` retargets a node with `attachTo` (a ducker) to that parent, else the chip stays
   stale until a full re-render; the graph needs no such retarget since a ducker is its own graph node. Only a scoped
-  / full read-back re-derives both views and re-bases the whole snapshot. Since only one view is ever visible the hidden view's rebuild is deferred until it is next shown.
+  / full read-back re-derives both views. Since only one view is ever visible the hidden view's rebuild is deferred until it is next shown.
+  **Every device read runs against a private copy of the plan** (`readback.readIntoPlan`) and merges back through the
+  undo differ — device truth first, the edits made while the read was in flight over the top — so a whole-node assign
+  cannot overwrite a gesture the operator made inside a window that is hundreds of milliseconds to tens of seconds
+  wide. The snapshot re-base is the other half of the same rule and happens at the read rather than in the coalesced
+  reflect: its VALUES come from that copy and its SHAPE from the live plan, so an edit made inside a read is neither
+  overwritten nor recorded as something the device was already given, and an address the plan only just grew is left
+  out of the snapshot entirely so the next diff sends it.
   Echoes of the app's own writes are filtered against the live snapshot, and the address set is re-registered only
   when a structural edit changed it.
 
@@ -521,6 +528,16 @@ the below/flip-above placement shared with the console popovers).
   feedback changes it, would otherwise flip an edge-mode toggle straight back; consuming the echo one-shot
   keeps an equal real press right after it alive). Setting `localStorage["urx-midi-log"]` traces every rx/tx
   byte string and the engine's per-message decision (drop/ignore/apply) to the console.
+- **Gating** — an incoming message is refused while a device read holds the plan (`deviceReadInFlight`:
+  Fetch, the Live-sync starting readback) or while a file flow does (`fileFlowBusy`: New / Open / Save /
+  drop / `.urxf` import). The refusal is decided in the engine, before any receive bookkeeping (the
+  receive timestamp, the pickup engagement, the 14-bit pair assembly), so it consumes no state: the
+  identical message applies once the window clears. It reaches the status line **once per window**, on the
+  first message that would actually have edited something — incoming MIDI is wire-rate, and every refused
+  message still reaches the trace log. Three windows are deliberately outside it: an open modal (the MIDI
+  panel itself is one, and a desk is a second physical surface), a live flush's converge / refetch await
+  (it recurs per flush of a 1-knob drag, and an edit made inside one now survives it, since the read merges
+  rather than assigns), and MIDI learn (it binds a control, it does not edit the plan).
 - **Applying edits** — an incoming edit runs the same funnel as a console edit: BAL pair mirror
   (`mirrorBalPair`) → `markChanged` (dirty + Live sync) → the ~20 Hz reflect shared with device follow
   (`requestReflect`) repaints the touched strips / nodes.
@@ -576,6 +593,55 @@ written at all:
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being
 operated — before either behavior is implemented.
+
+### One device address, more than one owner
+
+An insert effect's parameters live in **one engine array per effect family**, addressed `engine:0:slot` with no
+channel axis (`control/insert-fx-effect.ts`). Two nodes holding the same family therefore write the same
+addresses with their own values.
+
+**A conforming unit never gets into that state.** The user guide's Effect list gives each effect a "Number of
+simultaneous uses", and the compander's is "MONO IN channels: 1 slot; output channels: 1 slot", with the
+Supported-channels row adding that it "cannot be inserted into two mono channels". The 1-of slot rule in
+`control/params.ts` (`InsertFxSlot`) is that documented constraint, not an app policy, and the inspector and the
+console are defined over it (`insertFxMenu`). The plan loader warns about a file that carries the collision
+and opens it on the operator's word (`planProblems` in `core/plan-validate.ts`) — a refusal would make
+Fetch → Save → reopen impossible for the app's own document, since a **device readback** and a `.urxf`
+import deliberately do not validate; neither can produce it from a unit that honours its own spec.
+
+The collapse below is therefore not a repair of a state the hardware reports. It is an invariant on the app's
+own emission: `Plan` is free to hold two owners for one address — nothing in its type prevents it, and a
+hand-edited file or a future family that shares an engine would — and **a command list with two values for one
+address is never correct to send**, whatever put them there.
+
+The emitted set therefore collapses a repeated address to its **last** command, kept at its own position
+(`collapseSharedAddrs` in `control/translate.ts`):
+
+- **Last wins** is what an ordered send already leaves on the unit, so the device's final state is unchanged
+  by the collapse.
+- **At its own position**, never hoisted to the first occurrence's: a type selector repopulates the engine
+  array it binds with that type's defaults, so a hoisted survivor would be written *before* the later owner's
+  selector and erased by it — the unit would end up holding neither owner's value.
+- **Before the scope filter**, so the scene subset stays `all.filter(pred)`.
+
+Because one owner's values are dropped, the collapse is a salvage, and a silent salvage is what the abort rule
+forbids. It is reported on three surfaces: the **live status line** (once per distinct owner set, not once per
+flush — the identity is the owner set, so a drag does not re-report), the **Write confirm** (prefixed to the
+question, and appended to "nothing to write" when the losing owner's change was the only pending one), and the
+**Compare report** (a "Shared device settings" section naming kept and dropped nodes). A Fetch or a `.urxf`
+import authors no commands and so says nothing.
+
+The live line's latch re-arms in **`capture()`** — every device-truth re-base — and not only in a flush that
+finds no collision. A device-follow reconcile reads the shared address once and assigns it to both owners,
+erasing the divergence, then re-bases through `resync()` *without running a flush* (follow funnels through
+`planValuesChanged`, which unlike `markChanged` schedules none). Without the `capture()` clear, the operator's
+obvious next move — the value snapped back, so redo it — is a second loss reported nowhere. It is deliberately
+not re-armed by elapsed time: the emitted list carries a standing collision whatever is being edited, so a
+timed re-arm would repeat the sentence during unrelated work.
+
+The honest limit: the dropped owner's values are on **no address of their own**, so nothing can write them.
+Only changing one of the nodes' effect, or re-reading the unit (which makes both nodes report the same value),
+resolves it.
 
 ### Connection generations
 
@@ -711,7 +777,7 @@ send and effect type, and the insert FX selector (135). "The feature is unavaila
 is unwritable": only the DSP is gone, the stored value survives. So the write set is not gated by rate. Doing so
 was tried and reverted: it did not prevent a non-convergence (there was none to prevent), it only stopped the plan
 from reaching the device, which would leave settings the plan never asked for in place once the rate came back
-down. The UI still reflects the functional limits (`channelEqUnavailable` / `insertFxAvailable` lock the EQ and
+down. The UI still reflects the functional limits (`channelEqUnavailable` / `insertFxMenu` lock the EQ and
 INS FX chips, `rateConstraints` dims FX2), because those features genuinely do not run at those rates.
 
 `SAMPLE_RATE` is emitted **first** so the rest of the write lands on a device already clocked the way the plan
@@ -1012,8 +1078,14 @@ actually read fails too).
 
 ### Applying
 
-The plan object is never replaced — the graph, the console strips, the inspector closures and the MIDI
-bindings all hold the reference they were built with. An undo patches in place, then re-derives the
+The plan object is replaced on exactly one path — `loadPlan` (New / Open / drop / model switch / deep
+link). Every view resolves through its `getPlan()` hook per use and so follows it; the MIDI binding
+cache is the one holder that memoizes bound controls, and it drops the memo when the plan object it
+was bound against is no longer the one `main.ts` holds. (A cancelled Fetch used to be a second such
+path — it restored a pre-read clone by replacing the object, leaving every MIDI binding attached to a
+plan nothing else referenced. The read now works on a private copy, so a cancel leaves the plan on
+screen untouched and there is nothing to restore.) An undo never replaces the object: it patches in
+place, then re-derives the
 view state held *outside* the plan and repaints: `graph.refresh()` (which re-derives the shelved and
 note-collapse sets — `commitHidden` writes them back, so a stale set would resurrect the undone state
 — and re-validates the selection), the persisted hidden mirror, the channel tuning screen, and then
@@ -1030,14 +1102,28 @@ plan keeps the undone state and the entry stays consumed (see [Aborting on failu
 
 An undo is refused, with the reason on the status line and **without spending the entry**, while:
 
-- a device read (fetch / Live-sync start) or a file flow holds the plan — both mutate or replace it
-  across awaits, so patching under either acts on a premise that is still moving;
+- a device read or a file flow holds the plan — both re-author or replace it across awaits, so
+  patching under either acts on a premise that is still moving. Every read that re-authors the plan
+  counts, not only the two the operator starts (fetch / Live-sync start): device follow's scoped and
+  full reconciles and Live sync's 1-knob refetch do the same. A converge round is not one of them —
+  it reads the whole write scope but writes nothing back into the plan. The refusal is taken before
+  the open entry is **closed**, not merely before it is consumed, so the press is exact when it is
+  retried; note that the two reconciles reset the history in their reflect a moment later, so for
+  those the refused entry is one the operator loses — visibly, rather than as an edit that may or may
+  not have reached the unit. Those three deliberately do **not** refuse a file flow: they start on
+  their own and nothing on screen names them, so the plan-replacement side is handled at the read
+  instead (`loadPlan` ends the session and abandons the read; the read is bound to the plan it was
+  issued for and drops its result if that plan is gone);
 - a **drag** is in progress (a press that has moved), because it holds start values and element
   references in its own closures that the repaint would rebuild from under it;
 - a modal is open — none of them edits the plan, except the channel tuning screen, which is exactly
   what its sliders do, so an undo taken with that one open belongs to the plan behind it;
 - the patch touches `sampleRate` while a live session is up, which is why the rate picker is locked
-  for the same reason.
+  for the same reason. A patch is applied atomically, so the refusal takes the **whole** entry: when
+  the entry carries more than the rate, the status line says so (`undoRateLiveMixed`, chosen by
+  whether the entry's field set is nothing but `sampleRate`). Either way the entry is held back, not
+  lost — the refusal runs on a peeked entry and nothing consumes it, and leaving the session makes
+  the same press work.
 
 ### History clear points
 
@@ -1128,7 +1214,9 @@ what the desktop app offers.
   `sceneExternal` flags in `control/params.ts` filter the write side at the one `planToCommands`
   chokepoint (so the diff, the live snapshot / flush and the follow notify registration all
   inherit it), and `core/scene-scope.ts` names the same boundary in plan terms for the read / save
-  side; a contract test pins the two together. Reads stay full — a scoped fetch reads every
+  side; a contract test pins the two together. The same chokepoint also collapses a shared device
+  address (see "One device address, more than one owner"), and it does so **before** the scope
+  filter, so the scene subset stays the full list filtered by ParamName. Reads stay full — a scoped fetch reads every
   parameter (reads are side-effect free) and then restores the kept values
   (`applyDeviceStateScoped` in `main.ts`). The diagnostics (compare / self-test / prepare) always
   run at full scope, and the control locks while Live sync is up, since the scope is part of the

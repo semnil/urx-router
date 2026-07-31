@@ -36,6 +36,9 @@ export interface MidiHooks {
   /** An incoming MIDI message edited the plan through `control` (`mirrored` =
    *  the BAL-linked partner was updated too): dirty + live sync + repaint. */
   onApplied: (control: BoundControl, mirrored: boolean) => void;
+  /** A localized refusal, or null when an incoming message may edit the plan
+   *  (a device read mutating it across awaits, a file flow that can replace it). */
+  blocked: () => string | null;
   /** Learn mode / armed control / mappings changed: re-render the console. */
   onLearnChanged: () => void;
   onStatus: (msg: string) => void;
@@ -71,6 +74,8 @@ export class MidiControl {
   private inputPort: string | null = null;
   private outputPort: string | null = null;
   private bound = new Map<string, BoundControl>();
+  // The plan object every entry in `bound` was bound against.
+  private boundPlan: Plan | null = null;
   private feedbackTimer = 0;
   private settleTimer = 0;
   private learnFlushTimer = 0;
@@ -89,6 +94,9 @@ export class MidiControl {
   constructor(private hooks: MidiHooks) {
     this.engine = new MidiEngine({
       resolve: (id) => this.resolve(id),
+      gate: () => hooks.blocked(),
+      // Once per gated window — the engine decides that, so this is a plain status write.
+      refused: (reason) => hooks.onStatus(reason),
       applied: (control) => {
         // Same funnel as a console edit: mirror onto a BAL-linked partner, then
         // let the app flag dirty / schedule live sync / repaint.
@@ -118,14 +126,23 @@ export class MidiControl {
   }
 
   /** Resolve a control id, memoized: an incoming sweep resolves per message and
-   *  every fresh bind rebuilds the node's whole catalog. A bound control reads
-   *  the plan lazily, so in-place edits stay live; the cache only goes stale
-   *  when the plan object itself is replaced — onModelChanged clears it. Only
+   *  every fresh bind rebuilds the node's whole catalog. A bound control closes
+   *  over the plan object it was bound against and reads it lazily, so in-place
+   *  edits stay live — but a REPLACEMENT of that object leaves the whole cache
+   *  reading and writing a plan nothing else references. Identity, not the model,
+   *  is what makes it stale: a cancelled Fetch restores its pre-read clone
+   *  outside loadPlan (main.ts), so onModelChanged never runs for it. Every other
+   *  view resolves through getPlan() per use; this memo is the one holder. Only
    *  hits are cached, so a send wired up later still binds on demand. */
   private resolve(id: string): BoundControl | null {
+    const plan = this.hooks.getPlan();
+    if (plan !== this.boundPlan) {
+      this.bound.clear();
+      this.boundPlan = plan;
+    }
     const hit = this.bound.get(id);
     if (hit) return hit;
-    const control = bindControl(this.hooks.getModel(), this.hooks.getPlan(), id);
+    const control = bindControl(this.hooks.getModel(), plan, id);
     if (control) this.bound.set(id, control);
     return control;
   }
@@ -164,7 +181,10 @@ export class MidiControl {
     // An in-flight learn was armed against the old model; committing it now
     // would persist a mapping under the new model that may never bind.
     this.setLearn(false);
-    this.bound.clear(); // bound controls captured the old plan object
+    // Eager: resolve() also drops the cache on a plan-identity change, but a model
+    // switch changes what the ids themselves mean.
+    this.bound.clear();
+    this.boundPlan = null;
     this.engine.setMappings(this.loadMappings());
     if (this.panel && !this.panel.hidden) this.renderList();
     this.runFeedback(true);

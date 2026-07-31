@@ -1,0 +1,929 @@
+# Live-sync race diagnosis harness
+
+Design for the instrumentation harness that systematically detects the defects where, during Live
+sync, an operator's edit is overtaken by a device-originated readback, or is absorbed by a snapshot
+re-base and never sent.
+
+## Background — why not fix them one at a time
+
+While Live sync is up, eight independent writers mutate one shared, mutable `plan` object. There is
+no per-key ownership, no version stamp, and no record of who wrote last.
+
+```mermaid
+graph LR
+  UI["operator UI<br/>graph / console / inspector / tuning"] --> P[("plan")]
+  MIDI["external MIDI<br/>midi/controls.ts"] --> P
+  RF["live-sync refetch<br/>live.ts → readback"] --> P
+  FD["device follow, direct<br/>follow.ts"] --> P
+  FS["device follow, scoped / full<br/>follow.ts → readback"] --> P
+  DA["Fetch / Write / Compare"] --> P
+  UN["undo / redo<br/>plan-history.ts"] --> P
+  CN["constraints / integrity<br/>constraints / routing / scene-scope"] --> P
+```
+
+Three of those — refetch, follow and Fetch — have hundreds of milliseconds to seconds between the
+moment they start reading and the moment they write. `readback.ts` assigns a whole node at a time,
+so an operator edit landing mid-read is silently overwritten. When the snapshot is then re-captured,
+that edit is not even a diff any more: it never reaches the device.
+
+The same shape is not specific to the EQ 1-knob. It holds equally for the COMP 1-knob, `compEqType`,
+the insert-FX selector, MIDI pickup, and every call site of `captureSnapshot`. Fixing them one by one
+costs a hardware session each and leaves no proof that the fix holds.
+
+## Stages
+
+| Stage | Content |
+| --- | --- |
+| 1 | Trace bus + frontend taps + contract test + the `ci.yml` drop guard |
+| 2 | Offline analyzer + the invariants |
+| T-1 | The fake device, and its own conformance case |
+| 4 | Scripted-gesture driver + CI job |
+| 5 | Hardware calibration, and a fix per violation the analyzer reports |
+
+Skipping T-1 makes the T0 floor meaningless: the fake must be shown, by its own log, to produce the
+latency, notify behavior and refusals it was asked for.
+
+**Stage 3 (Rust-side timestamps and `performance.now()` / `Instant` clock alignment) was dropped.**
+No Rust runs anywhere in this harness's path — the fake replaces `window.__TAURI_INTERNALS__` outright,
+so a timestamp on `ParamUpdate` / `MeterUpdate` is reachable from no case and read by nothing. Worse,
+`ParamUpdate` derives `PartialEq` and that equality is what identifies `BULK_CHANGE`, so a time field
+would break the comparison's meaning. Where a real round trip spends its time belongs to the self-test
+/ Compare diagnostics, which already measure elapsed time. **Instrumentation only means something when
+it has something to measure**, so this stage is dropped rather than deferred.
+
+## Settled decisions
+
+- **Observability**: a `VITE_TRACE=1` build (the same build-flag mechanism as `VITE_DEMO`) produces a
+  production-shaped bundle that includes the probe, served only to the instrumented tier. The existing
+  production-served E2E suite is untouched, and since the normal build carries no probe the `ci.yml`
+  drop guard still holds
+- **Implement the Tauri event plugin in the fake** (`transformCallback` + `plugin:event|listen`).
+  Without it `dropzone.ts` registers no DOM handlers and `tauri://drag-drop` never arrives, so drag &
+  drop is unreachable from both directions and `menu://edit` never fires
+- **Clock control is barrier-first**: the fake blocks a specific `vd_get` / `vd_set` on a promise the
+  test releases, and the gesture is dispatched from inside the page at that instant. Any case whose
+  verdict is a window boundary is only defensible in this form. `page.clock` is used, stepped
+  deliberately, for the sub-50 ms windows that are not tied to an IPC
+- **Add a WebKit project scoped to three cases**. The precedent is `scripts/meter-bench-run.mjs`
+- **The model axis is URX44V and URX22**
+
+## Axes
+
+| Axis | Values |
+| --- | --- |
+| Gesture shape | single click / continuous drag / key autorepeat / wheel burst / text entry / modal open-close / synthetic pointerdown with no pointerup / multi-step flow |
+| Edit phase offset | 0-40 ms / 41-119 ms / 120-170 ms / 171-299 ms / 300±20 ms / 301-899 ms / 900 ms and beyond / 45-55 ms |
+| Device latency | 0 / 25 / 100 / 250 ms, deriving a 0.9-2 s node read and a 6-27 s whole-device read |
+| Notify behavior | silent / echo only / echo plus genuine / genuine only / burst above the concentration threshold / BULK_CHANGE / unregistered address |
+| Concurrent second operator | none / MIDI absolute / MIDI pickup / MIDI toggle with feedback / device panel sweep / undo / file flow |
+| Failure injection | none / write rejected / response code 400 / read rejected / accepted and ignored / link loss / device-lost latch / meter failure |
+| Writable-address-set shape | stable / bank swap / set shrink / engine rebind / wire-presence dependent / unresolvable hole / scene scope / string path / planExternal |
+| Surface state | GRAPH / CONSOLE / CONSOLE hidden / tuning screen / other modal / text field focused / MIDI panel |
+| Undo entry state | none open / an entry with no boundary of its own / under a press / under a drag / with a text field focused / applying |
+| Model | URX44V / URX22 |
+
+Each phase-offset value sits on the edge of one of these measured constants.
+
+| Constant | Value | Location |
+| --- | --- | --- |
+| `DEBOUNCE_MS` | 120 ms | `src/core/control/live.ts` |
+| `RECONCILE_DEBOUNCE_MS` | 300 ms | `src/core/control/follow.ts` |
+| `IDLE_FULL_MS` | 900 ms | `src/core/control/follow.ts` |
+| `MAX_CONCENTRATION` | 3 | `src/core/control/follow.ts` |
+| `REFLECT_MIN_MS` | 50 ms | `src/main.ts` |
+| `IDLE_COMMIT_MS` | 300 ms | `src/ui/history.ts` |
+| `RECENT_MS` / `ECHO_MS` | 300 ms | `src/core/midi/engine.ts` |
+
+### Three constants that are easy to read wrong
+
+- `armSettle()` and `armIdle()` are both armed, and the settle reconcile does not cancel the idle
+  timer. Every non-echo notify therefore produces both a scoped-or-forced reconcile 300 ms later and
+  a **whole-device** reconcile 900 ms later. There is no "scoped only" path in this code
+- `REFLECT_MIN_MS` is a leading-edge rate limit, not a 50 ms coalesce delay. With no reflect in the
+  previous 50 ms the wait is 0
+- `isEcho` has no time window, and the flush writes its snapshot entry **after** the ack. The
+  discriminating variable is whether an echo beats its own ack — there is no late echo here, only an
+  early one
+
+## Invariants
+
+The analyzer decides these mechanically and reports the record pair that violated each.
+
+| No. | Name | Content |
+| --- | --- | --- |
+| 1 | Stale-read overwrite | A device-authored write whose read started before a UI write to the same key |
+| 2 | Lost edit | A UI write with no matching command emitted before the next snapshot capture |
+| 3 | Snapshot poisoning | A capture that recorded a value which was never sent |
+| 4 | Interval overlap | Two or more of flush / refetch / scoped reconcile / full reconcile / Fetch / Write intersect in time |
+| 5 | Echo misclassification | A notify for an address just written with the same value classified as genuine, or the converse |
+| 6 | Stimulus reachability | The fake bridge refused a notify the case pushed, so the app never saw it (clause A); an address the plan emits that the session has not registered, so a device-side change to it is undeliverable (clause B, the grown window); behind them, the old registration-lag check as a harness self-check (clause C) |
+| 7 | Reflect latency | Plan write to paint exceeded the frame budget |
+| 8 | Send ordering | The emitted sequence honours the translate order (a selector precedes its array) |
+| 9 | Gesture-entry integrity | One operator gesture yields exactly one undo entry, or provably none |
+| 10 | Detached-target write | A write from a handler whose DOM target was replaced or which lost pointer capture |
+| 11 | Meter-slot exclusivity | Exactly one live registration; never unsubscribe a stream you do not own |
+| 12 | Address-set agreement | The emitted command set and the snapshot key set agree |
+| 13 | Authorship attribution | Every write in the ledger resolves to exactly one writer |
+| 14 | Orphan-plan write | A write into a `Plan` object `main.ts` no longer references |
+| 15 | Refusal integrity | A refusal consumes no state, and the identical retry succeeds once the condition clears |
+| 16 | Teardown quiescence | No plan write, IPC or timer callback after session end or plan replacement |
+
+Invariant 6 was originally phrased as "the registration agrees with the emitted set on every flush".
+It does not: follow calls `subscribe()` only at `begin()` and after a completed reconcile, so an
+app-side structural edit deliberately leaves the registration stale. That is designed behavior. Since
+the fake gained the bridge's registered-set filter it has two clauses, and the number is kept so the
+table, the analyzer and every case that cites it stay aligned:
+
+- **Clause A — stimulus reachability.** A `notify-drop` inside `registrationWindow`: the case pushed a
+  notify the bridge refused, so whatever it was meant to provoke never reached the app and any absence
+  verdict resting on it holds for free. This is the working subject of the invariant — it fires
+  exactly when a case is measuring nothing. A case whose SUBJECT is the refusal (the microSD Track
+  Count, the CH → FX tap, a scene-scope drop, a SETUP > GENERAL address) lists those addresses in
+  `expectedDrops`, and the clause subtracts them: otherwise the report names the assertion the case
+  just made, and "clean" stops meaning clean in exactly the cases the bridge filter created. Judged
+  with no `registration` in hand, unlike B and C — a dropped notify is unreachable whether or not the
+  case captured a registration, and gating it on one silently lost the check for every case that
+  captures none.
+- **Clause C — registration lag.** A DELIVERED notify outside the registration snapshot, sentinel
+  excluded. After the filter this can no longer be an observation about the app: the only ways to
+  reach it are the `BULK_CHANGE` sentinel (excluded, it belongs to no address) or a
+  `registrationWindow` scoped to the wrong instant. It is kept as a **harness self-check** on the
+  window the case supplied.
+
+- **Clause B — the grown window**. `emitted ∖ registered`: an address the app is actively writing
+  whose device-side change the bridge would drop, because `follow.subscribe()` re-posts only at
+  `begin()` and after a completed reconcile, so a structural edit leaves the window open until
+  something reconciles. The emitted set is read as the **live snapshot's key set** (`snapshot` in the
+  spec, from the trace probe) rather than from writes: invariant 12 already computes the write-based
+  form, and as a *state* reading it is wrong in both directions — it goes silent once the grow-flush
+  leaves the window while the window is still open, and keeps reporting a window a later `capture()`
+  has closed. Being a state predicate over two same-instant readings, `registrationWindow` does not
+  apply to it and `snapshot` must be passed beside `registration`.
+
+A clean clause B is **not** "the emitted set is inside the registration". It cannot see an address
+already in `planToCommands` but not yet flushed (that is invariant 2's subject), a window that has
+since closed, the string path (`vd_set_str` — channel names, Sweet Spot Data — which has neither a
+snapshot nor a registration entry), `planExternal` params, or anything at all with no session. The
+reverse difference is deliberately not judged: `FOLLOW_USB` (848) is appended to the registration by
+hand and is in no snapshot, which is the harmless direction.
+
+The `addrs` argument of `vd_params_subscribe` is the registration set, so all of this can be read
+mechanically.
+
+Because those three clauses share a number but not a kind of question, every `Finding` carries a
+**`class`** — `product` (the app misbehaved), `case` (the case may have measured nothing) or
+`harness` (the harness contradicted itself) — and `report()` groups by it before grouping by
+invariant number. It defaults to `product`, which every invariant but 6 is; within invariant 6,
+clause A is `case`, B is `product` and C is `harness`. The reader answers a different question for
+each group: fix the app, fix the case, fix the harness.
+
+## Tiers and cases
+
+Each tier's verdicts are only interpretable given the previous one. A red T1 with a red T0 is a
+harness bug, not an app bug.
+
+Per-case steps, fake-device profiles and assertions live in `e2e/race/cases/*.ts` as the single
+source of truth. This table states what each case measures.
+
+### T0 baseline — floor and reachability
+
+| id | Surface | What it measures |
+| --- | --- | --- |
+| `baseline-quiescent-floor` | mixed | That an idle live session produces no plan write and no readback. Every other verdict is a difference against this trace |
+| `baseline-single-edit-latency-ladder` | console | One edit at four latencies: the canonical timeline every phase offset is measured against, and how much lateness is the link |
+| `baseline-graph-surface-sweep` | graph | That every GRAPH gesture is reachable by the driver's vocabulary, and that gestures which should write nothing really do not |
+| `baseline-console-surface-sweep` | console | Every CONSOLE control, exercising the three separate fader-travel encodings back to back at known offsets |
+| `baseline-inspector-surface-sweep` | inspector | Every control on every node kind, pinning the "toggles re-render, sliders do not" rule per control |
+| `baseline-tuning-surface-sweep` | tuning | GATE / COMP / EQ screens, all three ways of closing, and the reach of the fine grid |
+| `baseline-shell-flows-sweep` | mixed | Consent, licenses, load report, rate choice, updater, dropzone, recent files and every Preferences row |
+| `baseline-view-locale-churn` | mixed | The only non-device path that forces a full rebuild mid-gesture |
+
+### T1 overtake — the core stale-read and lost-edit ladders
+
+| id | Surface | What it measures |
+| --- | --- | --- |
+| `overtake-scoped-readback-vs-edit-ladder` | console | The headline defect in its smallest form, laddered across the read window |
+| `overtake-full-reconcile-vs-edit-ladder` | mixed | Whether a multi-second whole-device read accepts edits, undo and a whole plan replacement |
+| `overtake-edit-during-flush-send-loop` | console | The flush's own re-entrancy: whether one pending slot collapses several edits |
+| `overtake-edit-during-converge-await` | inspector | The frozen-clone counter-example. Red here means the clone was lost |
+| `overtake-edit-during-refetch-await` | tuning | An edit absorbed by a snapshot taken from the live plan. The difference from the counter-example locates the defect |
+| `overtake-converge-and-refetch-one-flush` | mixed | Two repairs on one flush, the weaker one running last |
+| `overtake-converge-latch-starvation` | console | A liveness defect: whether sustained editing stops reaching the device entirely |
+| `overtake-notify-echo-vs-genuine-during-flush` | console | Phase and address held fixed while only the message's truth varies |
+| `overtake-reconcile-during-reconcile` | mixed | The reconcile queue's own re-entrancy, with no operator involved |
+| `overtake-direct-scoped-coalesce-boundary` | console | Whether a reconcile resolving inside the coalesce upgrades an unrelated direct reflect |
+| `overtake-drag-flush-backpressure` | console | A realistic gesture on a realistic link, and the convergence latency an operator perceives |
+
+### T2 shape-change — params that reshape the writable address set
+
+| id | Surface | What it measures |
+| --- | --- | --- |
+| `shape-comp-eq-type-bank-swap` | inspector | The only param that changes address identity and value polarity at once |
+| `shape-eq-oneknob-registration-blindspot` | tuning | The boolean that triggers a recomputation is the one that removes its notify addresses — the canonical dropped window |
+| `shape-eq-oneknob-level-refetch-storm` | tuning | A readback per flush window during a drag, rebasing the history throughout |
+| `shape-insert-fx-select-ordering` | inspector | The only case where correctness depends on the order of two commands, not their values |
+| `shape-insert-fx-engine-array-collision` | inspector | Two plan owners sharing one device address |
+| `shape-fx-effect-type-slot-family` | inspector | The slot set varies rather than the param id, and undo is incomplete by construction |
+| `shape-signal-type-pair-link` | inspector | The only param whose write resets an entire other node on the device |
+| `shape-pan-bal-mode-switch` | inspector | The device rewrites values on other connections, so the undo is itself a stale write |
+| `shape-bus-type-and-pan-link-locks` | mixed | A write on node A changes the observable state of controls on B and C without writing them |
+| `shape-sdrec-track-count-readonly` | mixed | The only param the device acknowledges and discards — and whose device-side change never arrives |
+| `shape-sample-rate-and-follow-usb` | mixed | The only scalar always first in the write set that the device can revert on its own |
+| `shape-scene-write-scope` | mixed | A non-plan setting reshaping the write diff, the snapshot and the registration at one chokepoint — and blinding follow to the addresses it drops |
+| `shape-routing-wire-selectors` | graph | The deliberate NONE sentinel and the accidental hole, side by side |
+| `shape-send-emission-wire-presence` | console | The most ordinary operator gesture that reshapes the address set without looking like a mode switch; the read-only FX tap is unfollowable |
+| `shape-refused-and-acked-writes` | mixed | All three refusal shapes, and whether an unclosable diff forms a flush loop |
+| `shape-string-path-writes` | mixed | The writes that bypass the diff engine entirely, benign case beside consequential one; a device-side rename is never delivered |
+| `shape-device-setup-plan-external` | mixed | The params never emitted, read back or registered — so never delivered — and the one intercept hook |
+| `shape-insert-fx-rate-and-slot-availability` | inspector | A constraint expressed as data rather than as an emit gate, and cross-node contention |
+
+### T3 undo — boundaries, chords, refusals, rebase and reset
+
+| id | Surface | What it measures |
+| --- | --- | --- |
+| `undo-pointer-boundary-ladder` | console | Deferred commit, pending landing and drag collapse, straddling the macrotask |
+| `undo-drag-latch-and-orphan-press` | mixed | A synthetic pointerdown with no pointerup suppressing the idle backstop indefinitely |
+| `undo-keyup-autorepeat-boundary` | console | Stepping keys are boundaries and character keys are not, in one run |
+| `undo-focusout-text-boundary` | graph | The only shape where the idle interval is deliberately exceeded without wanting a commit |
+| `undo-idle-backstop-wheel-ladder` | inspector | The only gesture with no DOM boundary of its own, laddered across the constant that defines it |
+| `undo-window-blur-mid-drag` | console | The only path where a gesture ends with no pointer event |
+| `undo-diff-at-commit-post-mutations` | inspector | The four sites where the funnel mutates the plan after `markChanged` |
+| `undo-empty-diff-and-redo-stack` | graph | The stack's own arithmetic and the transition-only depth reporting |
+| `undo-chord-ownership-matrix` | history | Seven focus targets by eight chord shapes: who owns a keystroke |
+| `undo-refusal-ladder` | history | Refusal order and non-consumption, including the deliberately permissive conditions |
+| `undo-apply-sequence-hidden-and-viewport` | graph | The order inside the apply, and that an undo's write reaches the device |
+| `undo-during-device-activity-ladder` | history | Five device activities by five offsets: whether the gates are per-flow or per-link |
+| `undo-rebase-dropped-by-device-sweep` | history | The rate at which app edits become silently un-undoable while the device is touched |
+| `undo-reset-paths-and-pending-commit` | history | All seven reset paths and the two races that outlive a reset |
+| `undo-macos-edit-menu-path` | history | The only native surface, and the only path whose refusal ordering differs from the chord's |
+
+### T4 midi — the second operator with no gate
+
+| id | Surface | What it measures |
+| --- | --- | --- |
+| `midi-vs-main-fader-absolute` | midi | A MIDI reflect replacing a strip under an active pointer capture |
+| `midi-vs-send-fader-relative-baseline` | midi | A relative drag erasing a MIDI write by arithmetic rather than overwriting it |
+| `midi-pickup-without-output-port` | midi | Pickup never disengaging when no output port is open |
+| `midi-toggle-echo-window-ladder` | midi | A one-shot guard that cannot tell a genuine press from a loopback |
+| `midi-gang-fanout-and-head-reelection` | midi | The only many-to-one writer, and an unrelated edit reassigning ownership |
+| `midi-learn-arm-during-rerender` | midi | The only case where the second operator's configuration races the device |
+| `midi-write-during-refetch-snapshot` | midi | An ungated writer combined with a snapshot re-base |
+| `midi-rebase-eats-ui-entry-ladder` | midi | The only writer classified two contradictory ways at once |
+| `midi-14bit-pair-and-cross-binding` | midi | Message-level decoding, including a binding that can never fire |
+| `midi-bal-mirror-clobbers-partner` | midi | The only collision between two app-side writers, mediated by a mirror |
+
+### T5 drop — failure injection
+
+| id | Surface | What it measures |
+| --- | --- | --- |
+| `drop-link-loss-mid-flush-ladder` | mixed | How many writes escape after the session is declared down |
+| `drop-link-loss-mid-reconcile` | mixed | A half-read plan reflected as authoritative, with the history reset against it |
+| `drop-write-reject-mid-send` | mixed | Whether the retry is built from a fresh diff and ordering survives an abort |
+| `drop-read-reject-mid-fetch` | mixed | The only path producing a plan object with a live writer still attached to its predecessor |
+| `drop-device-lost-latch` | mixed | The one disconnection shape that does not arrive as a link event |
+| `drop-bulk-change-sentinel-mid-drag` | console | The largest device-side event landing on the smallest app state |
+| `drop-unknown-address-notify-storm` | mixed | Three arms: unresolvable (the dropped window), resolvable, unregistered (refused) |
+| `drop-missed-notify-idle-net` | console | Whether the safety net has the same trigger as the thing it protects against |
+| `drop-concentration-threshold` | mixed | The only integer threshold in the follow layer, straddled exactly |
+
+### T6 teardown — session and plan lifetime
+
+| id | Surface | What it measures |
+| --- | --- | --- |
+| `teardown-plan-replacement-during-reconcile` | mixed | The guard that protects Fetch not protecting the identical read when follow starts it |
+| `teardown-model-switch-during-flush` | mixed | The address vocabulary itself changing under an in-flight operation |
+| `teardown-live-toggle-race` | mixed | The session lifecycle itself, and the only place the epoch guard is falsifiable |
+| `teardown-deactivate-with-armed-timers` | mixed | Whether module-level latches are session-scoped |
+| `teardown-dyn-screen-close-during-refresh` | tuning | A deferral mechanism added to protect drags becoming the hazard |
+| `teardown-flow-refusals` | mixed | The guarded and unguarded readbacks contrasted with an identical set of flows |
+
+### T7 meter — the single process-wide subscription
+
+| id | Surface | What it measures |
+| --- | --- | --- |
+| `meter-slot-handover` | mixed | The handover baseline the two failure cases are differenced against |
+| `meter-late-unsub-kills-console` | mixed | A stale unsub from a closed screen tearing down the console's new stream |
+| `meter-rescope-inside-subpending-ladder` | console | A re-scope arriving inside a pending registration being dropped entirely |
+| `meter-tap-change-resubscribe` | console | One strip's tap change silencing every strip, and the model-id resolution |
+| `meter-feed-paint-vs-follow-churn` | console | The only case measuring cost rather than correctness |
+| `meter-error-ends-session` | mixed | The difference between a reported failure and a silent one |
+
+### T8 stress — convergence, fuzz, jitter, leaks
+
+| id | Surface | What it measures |
+| --- | --- | --- |
+| `stress-three-operators-one-node` | mixed | Whether operator, MIDI and device panel driving one channel converge at all |
+| `stress-seeded-schedule-fuzz` | mixed | Three-way interleavings nobody hypothesised, reproducible from the seed |
+| `stress-latency-jitter-storm` | console | The one input that can reorder responses, with a fixed-latency comparison |
+| `stress-long-session-quiescence` | mixed | State that survives an operation rather than state produced by one |
+
+### Differential design
+
+Many cases are the same gesture laddered across phase offsets, or A/B pairs with one variable
+changed. **A detection in a non-differential case is a lead, not a finding**, until it reproduces in
+a ladder.
+
+The main pairs are converge-await against refetch-await, scene scope against full scope, sweep on
+against off, MIDI output port open against closed, churn on against off, jitter against fixed,
+registered against unregistered notify, CONSOLE visible against hidden, and guarded Fetch against
+unguarded reconcile.
+
+## The fake device's contract
+
+The current E2E stub resolves on the next microtask, so none of the windows above exists. The fake
+must provide the following.
+
+| Item | Requirement |
+| --- | --- |
+| a | Per-param configurable latency with optional jitter |
+| b | A real state map so a readback returns what was written, plus a divergence hook that answers X regardless |
+| c | A notify scheduler emitting echo, genuine, unregistered-address, BULK_CHANGE and silence at scripted times relative to an accepted write |
+| d | Refusal injection by command index and param id, distinguishing transport rejection, response code 400 and accepted-and-ignored |
+| e | A device-lost latch, after which every command fails identically |
+| f | Link-loss events on demand |
+| g | Meter and param channels with independently controllable subscribe latency and subscribe/unsubscribe counters |
+| h | An epoch incremented per connect, honoured by disconnect |
+| i | A MIDI bridge with scripted input bursts and a captured output byte log |
+| j | `menu://edit` emission and edit-menu state/label counters |
+| k | `transformCallback` and `plugin:event|listen` |
+| l | The bridge's notify filter: a param notify is forwarded only while a subscription is installed and only for an address this session registered, plus the `BULK_CHANGE` sentinel — mirroring `Subs::absorb`, per ENTRY inside a batch |
+| m | The same filter on the meter half: a reading is forwarded only while the meter channel is installed and only for a `(meter_id, x)` this session registered — no sentinel, since every reading carries an address |
+
+Plus a **barrier**: `blockAt({ cmd, nth })` holds a specific command, and `release()` lets it through.
+
+**Why the filter has to exist at all was measured, not assumed (2026-07-31).** A client that connects
+to the broker and registers NOTHING still receives the whole push stream — meter frames and the
+free-running RTC fields (`789`-`794`) arrived on a connection with no subscription of any kind. The
+broker broadcasts; `Subs::absorb` is the only thing standing between that stream and the app, which is
+why a fake that forwards unconditionally measures a device nobody ships.
+
+On (l): `vd_params_subscribe` replaces the registered set wholesale and `vd_params_unsubscribe` drops
+the channel, which is the load-bearing half of the Rust `param_ch = None`. It deliberately does NOT
+clear `paramAddrs`, unlike `param_addrs.clear()` on the Rust side: that field is the harness's
+"addresses the app **last** registered" observable, read by ~80 spec sites after a session ends. The
+driver helpers are `pushNotify` (returns one verdict per entry — `""` delivered, the reason refused),
+**`pushNotifyDelivered`** (pushes and throws naming any refused address — what a case whose subject is
+the app's RESPONSE must use), **`pushBulkChange`** (the sanctioned way to force one whole-device
+reconcile) and **`notifyDropsOf`** (for a case whose subject IS the refusal).
+
+Both subscriptions are installed **at the queue point**, like every other value the fake settles there,
+and for the same reason: `vd.rs`'s `ParamsSubscribe` / `MetersSubscribe` arms only *send* registrations
+(`reg_param` / `reg_meter` are fire-and-forget — the reply is drained later by `pump`), so the handler
+performs no socket read and `absorb` cannot run inside it. A notify arriving while a registration is in
+flight is therefore judged afterwards, by the NEW set and through the NEW channel. Installing at the
+resolve instead would judge it by the old set and deliver it to the old channel — wrong in both
+directions, and reachable through a barrier on the subscribe or a scripted `subscribe` latency. The
+install also sits ahead of the refusal and device-lost branches, because the Rust assignments run after
+the registration loop whatever it returned and the failure travels back through `reply` alone: a refused
+subscribe still replaces the subscription rather than leaving the previous one installed.
+
+The other channel-dropping path is the **connection generation**. `vd_connect` and an epoch-matching
+`vd_disconnect` both run a teardown that drops both channels and both registered sets, mirroring the
+whole `Subs` going away with the worker on `Cmd::Shutdown` (and `install()` shutting the prior worker
+down). Without it the fake's gate would be "the app called unsubscribe" where the bridge's is "the
+worker is alive" — and the app's unsubscribe is fire-and-forget, so the two differ by a real window.
+The two address sets survive the teardown, for the reason (l) gives above.
+
+On (m): the same three shapes, one layer down. `vd_meters_subscribe` replaces the registered set
+wholesale and `vd_meters_unsubscribe` drops the channel (`meter_ch = None` on the Rust side), while
+`meterAddrs` is deliberately left standing for the same reason `paramAddrs` is. The helpers are
+`pushMeters` (per-frame verdicts), **`pushMetersDelivered`** (throws at the push naming the refused
+address — what a case whose subject is the READOUT must use, since a refused frame is
+indistinguishable from a bar that was simply not repainted) and **`meterDropsOf`**. Only the refused
+frames are traced, as their own `meter-drop` kind: a real feed is continuous, one record per reading
+would bury the trace, and a separate kind keeps meter traffic out of invariant 6, which decides
+param-notify reachability. Before this the meter half was unfiltered and each spec pre-filtered its
+own pushes, so a frame the shipped app could never receive left nothing behind — the exact defect
+class (l) had already fixed on the param side.
+
+## Driver conventions
+
+- Where a value is the point, prefer focus plus key stepping over a synthetic drag. It is the most
+  robust path, and one press equals one undo entry
+- The wire-selection trick (a dispatched pointerdown with no pointerup) must be used deliberately and
+  its effect on press state recorded in the trace: it silently suppresses the idle backstop
+- Every step records **both the intended and the achieved offset**. A ladder is only interpretable
+  with the achieved values beside the intended ones
+
+## Implementation and running
+
+Implemented under `e2e/race/`. The harness is its own pair of Playwright projects — `race` in
+Chromium and `race-webkit` for the `@webkit`-tagged cases — both served a **trace build** from one
+server on port 4174. The ordinary E2E suite stays the `chromium` project, unchanged and at its
+former cost.
+
+| File | Role |
+| --- | --- |
+| `fake-device.ts` | the fake, its barrier, the trace, the MIDI bridge, the event plugin |
+| `analyze.ts` | invariants 1 / 2 / 3 / 4 / 6 / 8 / 12 / 13 / 16 and timeline rendering |
+| `t0`–`t8` plus `t0b`–`tzb` | the cases, by tier |
+| `t2c`–`t2f` | T2's remaining eight cases (the shape-changing params filled in later) |
+| `t9-probe.spec.ts` | the probe's own contract, and invariants 13 and 3 |
+
+All 88 catalog cases are present in a spec. Eight of them are unreachable or unfalsifiable, and each
+`test.skip` carries its reason (a fixed connection the UI cannot delete; no observable that separates
+the two branches; making the fake claim an `--experimental` launch mode would measure the harness
+rather than the app; and so on).
+
+```sh
+npx playwright test --project=chromium     # the ordinary suite (race is testIgnore'd out)
+npx playwright test --project=race         # the harness
+npx playwright test --project=race --shard=1/3   # split
+npx playwright test --project=race-webkit  # the three cases that run in WebKit (@webkit)
+```
+
+The `race` project raises the per-test timeout to **180 s**: one case holds a barrier across a converge
+round of ~800 sequential reads, and at the 30 s default a passing case turns into a timeout that reads
+like a defect.
+
+**`race-webkit`** runs the same harness in the engine the macOS build actually renders in, scoped to the
+**three cases whose verdict is about the engine rather than the app's logic**: a strip rack rebuilt under
+a live pointer capture, a whole-view rebuild under one, and the chord × focus-target matrix (WebKit owns a
+text field's own undo, and the app deliberately does not `preventDefault`). Anything else would only
+re-measure logic Chromium already covers, at minutes a run. Same precedent as
+`scripts/meter-bench-run.mjs`, which benches in WebKit for the same reason. Cases are selected by the
+**`@webkit` tag** rather than by path, so one cannot drift out of the set by being moved between files.
+
+| Condition | Wall clock |
+| --- | --- |
+| Whole suite at `--workers=4` | ~5.3 min |
+| The heaviest file (T2) alone | ~2.5 min |
+
+The slow cases are the ones that deliberately provoke several whole-device readbacks (~800 sequential
+reads each) — the cost of what is being measured, not overhead. Split with `--shard=1/3`, per file, or
+`--grep`. **Do not chain whole-suite runs in one command.**
+
+71 of the 87 catalog cases are covered; the 16 that are not carry their reason in a `test.skip`.
+**One is unreachable rather than undriven**: the unresolvable-source hole in
+`shape-routing-wire-selectors`. `sourcePorts()` returns null only for a node `models/build.ts` does
+not admit as a selector source, and authoring one into a plan does not reach it either — `validatePlan`
+rejects the wire before adoption, so what would be measured is the load report, not the selector.
+
+### Observables
+
+Invariants 1 / 2 / 4 / 8 / 12 / 16 are statements about IPC that either happened or did not, so they
+are decided entirely by what the fake device saw, plus the DOM and the status line. None of them needs
+to reach the app's module scope.
+
+The remaining two — 13 (authorship attribution) and the general form of 3 (snapshot poisoning) — need
+the probe. `src/ui/trace-probe.ts` exists only in the `VITE_TRACE=1` build (`.env.trace`,
+`vite build --mode trace`). **A plain build folds it away, and `ci.yml` greps the bundle to keep it
+out**, beside `__urxConsole` and `__urxKeyProbe`. It is a build flag rather than
+`import.meta.env.DEV` because the E2E suite serves a production build on purpose; running the
+instrumented tier on a dev bundle would be testing a different bundle.
+
+| Question | Helper |
+| --- | --- |
+| Which plan key did **who** write (13) | `ledgerOf(page)` |
+| What does the live snapshot **hold** (3) | `snapshotOf(page)` |
+| Committed undo / redo depth | `depthOf(page)` |
+
+The ledger reuses the differ the undo stack already uses (`clonePlanState` + `diffPlans`). A key that
+reaches the plan without reaching that differ is an edit the user cannot undo, so the ledger and the
+undo entries cannot disagree about what a gesture touched. Writers name themselves through
+`markChanged(source)` / `planReadFromDevice(source)` and the three device-follow paths, undo and load.
+
+Invariant 13 can never appear in the IPC log: **the losing write never becomes a command.**
+
+```
+[13] connParams[ch1:out bus.stereo:in].level was written by {ui, follow-scoped}
+     between 462 and 2810 ms; the last writer was "follow-scoped"
+```
+
+## Confirmed findings
+
+The floor being clean is what makes everything below something other than harness noise.
+
+**T0 — the floor**: four seconds of an idle live session cost **zero** device commands and fire nothing.
+One fader detent at 0 / 25 / 100 / 250 ms latency produces exactly one write each, plan and device in
+agreement, zero findings.
+
+**T1 — overtake**
+
+- **A scoped reconcile overtook an edit — fixed.** The read is issued before the gesture (444 ms), the
+  edit lands (451 ms), the write reaches the device (586 ms) — and the held read resolved with the
+  pre-edit value, so when the reconcile landed (3327 ms) **the screen went back**. The whole-device
+  sweep ~20 s later repaired it, but only because the earlier write had already landed. **The damage
+  was not a lost value: the plan asserted a value the device did not hold.** A read now runs against a
+  private copy and merges back, so the operator's value stands the moment the reconcile reports itself
+  done (`justAfter=+0.4`, where it used to revert to `0.0`)
+- **An edit during a converge await survives** (the counter-example), which is what established that
+  the refetch loss was not a consequence of a long await
+- **Converge-latch starvation**: with a converge param still in the diff and edits closer together
+  than 120 ms, **not one command leaves the app for five seconds**. Nothing is lost, but the unit plays
+  the old value for the whole gesture
+- **Echo versus ack**: a broker that echoes faster than it acks makes the app apply its own write as a
+  device-side change and escalate to a whole-device readback — several hundred reads per echoed write
+
+**T2 — address-set shape**
+
+- **The EQ 1-Knob blind spot**, isolated with a single-notify differential: one notify on a band
+  address that left the set costs **two** whole-device reconciles, one on an address still in the set
+  costs **one**. Neither can trip the concentration threshold. The registration is still 796 after the
+  ON flush and drops to 778 only after the first reconcile — exactly the 18 band addresses. **The
+  four-notify burst is confounded with the concentration cliff and discriminates nothing**
+- **1-Knob OFF writes all 18 band addresses to addresses the app is not registered for**
+- **The COMP/EQ bank swap** writes two new-bank addresses that are not yet registered; a notify on the
+  abandoned bank costs two reconciles against one on the live bank
+- **Scene write scope**, measured on two params of different follow kinds: two reconciles against one
+- **Signal Type = STEREO** writes both pair indices and **re-authors the partner node wholesale**; one
+  undo restores all of it. But the converge round is a **re-send, not a repair** — it keeps pushing the
+  app's value back at a channel the unit has reset
+- **String-path writes bypass the diff engine entirely.** A rename enters neither the snapshot nor the
+  registration, so a device-side rename cannot be classified: it escalates to two whole-device
+  reconciles, and the readback that repairs it **clears the name the operator just typed**.
+  SWEET_SPOT_DATA rides the same path, so it cannot carry a sideEffect flag — **no read is scheduled at
+  all** after it, against 1578 addresses for the numeric converge param used as the control
+- **Insert-FX ordering is clean** (selector 135 before bypass 134) — it works as the counter-example
+
+**T3 — undo**
+
+- **A dispatched pointerdown with no pointerup** (the standard e2e wire-selection trick) leaves the
+  press "down" for ever and suppresses the 300 ms idle backstop: **two wheel bursts 1.2 s apart collapse
+  into one entry**, where the control arm produces two (achieved gaps 121 ms)
+- An undo fired inside a held reconcile is applied, and the reconcile then wipes both stacks
+- The apply order is correct: the persisted mirror moves before any repaint, the viewport is untouched,
+  and `markChanged` runs last
+
+**T4 — MIDI**
+
+- **MIDI is not gated at all during a held read** — not by the device-read latch, the file-flow latch,
+  a modal or a drag — and its write is then absorbed by the snapshot
+- A MIDI-driven strip rebuild replaces the strip under an active pointer capture; screen and device
+  disagree and stay disagreeing
+- **The BAL mirror** deep-clones the whole source node onto its partner on every applied message,
+  destroying an unrelated UI edit made moments earlier
+- A relative drag recomputes an absolute value from a baseline frozen at pointerdown, so a MIDI write
+  mid-drag is **erased by arithmetic** rather than overwritten
+
+**T5 — failure injection**
+
+- **Writes escape the teardown** at every position in the send loop, and the count falls as the drop
+  lands later
+- A rejected write **aborts on the first rejection** — the rule holds
+- **The concentration cliff**: four pairs in one window escalate to a whole-device read; three stay scoped
+- **Five notifies on addresses that no longer RESOLVE cost a whole-device read that five registered ones
+  do not; five on addresses that were never REGISTERED cost nothing at all**
+
+**T6 / tzb — teardown**
+
+- **File > New during a follow reconcile is not refused** (`reconcileAll` does not raise the
+  device-read latch). The orphaned sweep's epilogue reports its follow on the status line of a dead
+  session, and its history reset **drops an entry made on the new plan**
+- The subscribe/unsubscribe call order shows the console's meter registration displaced by a call it
+  did not make
+- **A model switch that outlives its flush** leaves the in-flight commands aimed at the old model's
+  addresses
+- A rejected read during Fetch **commits a partial plan**, and MIDI's bound cache keeps a reference to
+  the discarded one
+- A Close press on a tuning screen can be **swallowed** between a deferred refresh and its own click
+
+**T2c–T2f — the eight cases filled in later** (all measured, all pinned)
+
+- **A 1-Knob LEVEL drag was not one undo entry — fixed.** Each refetch ran `planHistory.rebase()`,
+  re-cloning the whole plan, so the same drag ended as 0 entries (one Ctrl+Z reached past it into the
+  previous gesture) or as 1 entry describing only what followed the last re-base (75 of the gesture's
+  91 units unreachable). Which one occurred was a race between the pointer and a device round trip.
+  Measured after the fix: `1 entry / Ctrl+Z: 91 → 0 (where the press started) / 1-Knob still on`. The
+  storm itself is the design and stays (one node readback per flush window that carried the level); the
+  effective flush period goes 205 ms → 330 ms, each window paying ~67 `vd_get` plus a `vd_get_str`
+- **An FX effect-type undo is incomplete by construction — and measuring "incomplete" split it in
+  two.** Rev-X (12 slots) → Mono Delay (10): 3 arrive, 5 depart, 7 shared. **That the undo does not
+  restore the departing slots is not a defect**: the selector re-types the array, so an unselected
+  family's slots are not app state, and `681:0:6` carries the reverb's family-local sub-type index
+  under Rev-X (measured 0/1/2 across Hall/Room/Plate) — "restoring" it would push an out-of-range
+  sub-type into a live reverb. **The real defect was plan-side, and is fixed**: one FX channel's
+  families share a params map, and descriptors addressing DIFFERENT slots carried the same `key` —
+  `hpf`, `lpf`, `hiRatio`, `initialDelay`, `diffusion`, `feedback`, six of them. Rev-X's HPF is a
+  1/6-octave index from 20 Hz and the delay family's a 1/12-octave index from 15 Hz, so a shared key
+  wrote one family's index into the other's parameter. The keys are now family-qualified and a legacy
+  plan migrates onto the saved type's family (`reverbTime` stays shared — slot 7 in both reverb
+  families is one device parameter)
+- **A device-side Pan Link ON left a stale PAN slider in the inspector — fixed.** `reflectFollow`'s
+  direct branch never called `refreshInspector()`, so while `core/midi/controls.ts` was refusing the
+  identical control, the on-screen slider was still live: one ArrowRight put **`147:0:0 = 153:0:0 =
+  -42` on the wire**. The only one of the eight that put a wrong value on the wire
+- **A shared address made the live diff permanently non-empty — fixed.** What it was:
+  `writableAddrList` was not de-duplicated, so one address carried two commands against one snapshot
+  slot. Every flush for the rest of the session paid two extra writes, the unit's threshold
+  alternated between the two owners' values, and only a reconcile stopped it — by erasing one
+  channel's edit, not by repairing anything. What it is now: `planToCommands` emits **one command per
+  device address** (last wins, at its own position — `collapseSharedAddrs`), so the diff closes, the
+  registration has one entry per address, and the losing owner's edit is dropped **at emit** and said
+  out loud once per owner set (see architecture.md, "One device address, more than one owner")
+- **A notify on a SETUP > GENERAL address buys NOTHING — the notify never crosses the bridge.** The
+  Rust bridge's `Subs::absorb` (`src-tauri/src/vd.rs`) forwards a param notify to the frontend only
+  when it is in the registered set (`param_addrs`) or is `BULK_CHANGE`. The registration is the
+  writable address set, so **every address the plan never emits is undeliverable for the whole
+  session**, and the thirteen SETUP > GENERAL addresses are only the largest family: the string-path
+  addresses (`NAME`, `SWEET_SPOT`) are in it, the read-only addresses are in it (839 microSD Track
+  Count, 193 the CH → FX send tap), and under device scope `"scene"` so are the 64 addresses that
+  scope drops. The earlier "~1350 reads" figure was the fake answering a stimulus the shipped app
+  cannot receive. **The fake now mirrors `absorb`** — `pushNotify` filters per entry against the set
+  the session registered, traces a refusal as its own `notify-drop` kind, and only `pushBulkChange`
+  bypasses it — so those cases now measure the refusal instead. The consequence is worse than the
+  price it replaced: `DeviceFollow.armIdle()` is reachable only from inside `onNotify`, so a session
+  that receives no deliverable notify has no idle safety net either. The change is invisible with
+  nothing scheduled to discover it
+- **The registration lags a converge/refetch flush, and that window is the reachable "unknown address
+  escalates".** `live.ts` `capture()` builds the snapshot AND the address index, and runs at
+  `begin()` / `resync()` / after a converge / after a refetch; `follow.ts` `subscribe()` runs only at
+  `begin()` and after a reconcile. So a `sideEffect` edit's flush shrinks the index while the broker
+  keeps the larger registration: an address is still delivered and `live.lookup` no longer resolves
+  it, which is the genuine escalation to a whole-device readback. **An ORDINARY edit opens no such
+  window** — a wire removal re-runs neither `capture()` nor `subscribe()`, so the address still
+  resolves and follow applies it as usual. Three openers exist in the repo: EQ 1-Knob ON
+  (`sideEffect: "refetch"`, drops 18 PEQ band addresses), COMP/EQ Type (`converge`), and Insert FX
+  (`converge`, with the effect seeded before the session — otherwise the slots are a *grown* window
+  instead). The address-free alternative is the `BULK_CHANGE` sentinel, which bypasses the filter by
+  contract
+- **WITHDRAWN — "scene write scope doubles the cost of a device-side knob move".** The scene-scoped
+  session never registered the address, so its notify is refused: the cost is zero, not double. The
+  honest finding is that **the preference silently blinds device follow to the 64 addresses it drops**
+  — a MONITOR_LEVEL or OSC_MODE moved on the unit is never learned, for the rest of the session
+- **WITHDRAWN — "839 / 193 / a device-side rename are expensive to follow (2 full reconciles each)".**
+  All three are unfollowable, not expensive. In particular **a channel rename made on the unit is
+  never picked up**: no name address is ever in the registration (names ride the string path and have
+  no snapshot entry either), and the idle net only arms on a delivered notify. The repair still exists
+  — a whole-device reconcile's own `vd_get_str` — but nothing in the session schedules one
+- **A sample-rate undo refusal takes the whole entry with it**, and the status line names only the
+  rate: an ordinary edit that shared the gesture window is refused alongside it and nothing says so.
+  Refusing whole is correct — a partial undo would put the plan in a state no gesture produced, and
+  `reflectHistory`'s `markChanged()` would push it at the unit. "The entry is destroyed before it can
+  be retried" was overstated: `deactivateLive` does not reset the history, so leaving the session makes
+  the same press work. The refusal is a deferral, not a discard; the entry is only lost if the DEVICE
+  moves the rate first, which is the full reconcile's `reset()`, a separate question. **The wording gap
+  is now closed**: an entry carrying more than the rate gets its own string (`undoRateLiveMixed`, chosen
+  by whether the entry's field set is nothing but `sampleRate`), and both strings say the entry is held
+  back rather than lost
+
+**Against WebKit (`race-webkit`)**: the strip rebuild under a live pointer capture is
+**engine-independent**. Both engines agree on every load-bearing observable (after the rebuild the
+grabbed element is `connected=false` — detached — the screen shows the MIDI value `+5.0`, the detached
+element holds `-1.2`, and the device ends at `-120`). The only difference is the number of flushes one
+drag produces (Chromium 11–12, WebKit 9), which is the cost of a pointermove rather than a behaviour.
+
+**T7 — meters**: the handover baseline is clean and the generation stamp does suppress the late unsub.
+
+**T8 — convergence**: with three writers on one channel the plan, the device and the screen do agree
+once quiescent. But **invariant 4 (a write issued inside an in-flight read) fires in every run**, at
+22–32 overlaps per run.
+
+## The fixes this harness drove
+
+### 1. The snapshot side — the refetch epilogue (`live.ts`)
+
+The refetch epilogue re-based from the live plan, so **an edit made during the await on another node
+was recorded as device truth and never became a diff again**. Measured:
+`snapshot holds 139:0:1 = 40 / device holds undefined / screen shows +0.4` — the screen kept the
+operator's value and the unit was never given it.
+
+**Designing that check went wrong once, instructively**: the first version edited a node the refetch
+was scoped to, which measures the readback OVERWRITING the value — a different defect. Only an edit on
+a node outside the scope isolates poisoning proper, where the plan keeps the value and only the send
+fails to happen. The overwrite half stayed pinned in `t1-overtake.spec.ts` — and became the next fix.
+
+### 2. The plan side — merging a read (`readback.readIntoPlan`)
+
+A readback assigns whole nodes, and a read spans hundreds of milliseconds (one node) to tens of seconds
+(the whole device), so every value the operator moved inside that window was replaced by what the
+device held before the gesture existed. `readIntoPlan` runs the read against a **private copy** of the
+plan and applies two diffs through the undo differ: **device truth first, the edits made during the
+read over the top**. The order is the mechanism; written the other way round the defect survives intact.
+
+**The two must ship together.** The plan-side merge alone stops the readback overwriting an edit while
+leaving every snapshot capture measuring the live plan — which converts a visible, self-repairing
+revert into "the screen keeps a value the unit never got, permanently, and nothing can see it again",
+the worst outcome in the catalog. So the read RETURNS the copy it ran against, and `live.ts`'s two
+capture functions (`captureSnapshot` / `captureRefetched`) collapse into one that takes its **shape
+from the live plan and its values from that copy**. The owner-node split became unnecessary the moment
+the copy existed: the copy already *is* "what the device holds as far as this read established it".
+
+Three things fell out of it. A cancelled Fetch no longer needs its pre-read restore, which removes the
+second path that replaced the plan object — the one that left every MIDI binding attached to a
+discarded plan. A scoped read does carry names, so the old split **re-sent a name it had just read**.
+And an address the plan grew during a read used to be recorded from the live plan as device truth and
+so was never sent; it is now left out of the snapshot, and the next diff sends it.
+
+Regressions are pinned in `t1-overtake.spec.ts`, `t9-probe.spec.ts` and `t4-midi.spec.ts`, and at unit
+level in `read-merge.test.ts` and `live.test.ts`.
+
+### 3. Orphaned reads and the refusal gate (`main.ts`)
+
+A follow-side read (the two reconciles, the 1-knob refetch) is bound to the plan it was issued for and
+drops its whole result if that plan is no longer the open document; every wholesale replacement calls
+`abandonFollowWork()`, which aborts the read in flight. Undo now refuses during those three reads as
+well as the two the operator starts — and **the refusal is decided before the open entry is closed**,
+not merely before it is consumed: closing it would freeze the readback's own writes into the entry, and
+the retry the refusal invites would push them back at the unit.
+
+### 4. Scoping the inspector repaint to the selection's footprint (`main.ts` / `inspector.ts`)
+
+A device-side Pan Link ON is `follow: "direct"`, so it lands through the direct branch — which never
+called `refreshInspector()`. The panel renders a control whose OWNER is a different node, so the
+slider the lock had removed stayed on screen, and stayed live.
+
+A blanket call is not available: the direct branch runs at ~20 Hz and `renderInspector` opens with
+`replaceChildren`. So the repaint is scoped to the nodes the selection reads (`inspectorNodes()` in
+inspector.ts: a node selection reads that node, a wire reads BOTH endpoints, because the destination
+bus's BUS Type / Pan Link decide which send controls exist at all). The footprint belongs to the
+renderer, so it cannot rot as the param catalog grows. The repaint also carries focus and scroll.
+
+The residual window — the slider under the operator's finger before the rebuild — is closed at the
+write path: `onUpdateParams` asks the same `mixSendLocks` the MIDI catalog asks. Measured: an `input`
+on the detached slider emits nothing and names the lock on the status line.
+
+### 5. Making the readback's re-base per key (`plan-history.ts` / `main.ts`)
+
+`refetchNodes`'s `planHistory.rebase()` re-cloned the whole plan, taking the value under the pointer
+into the baseline with it and dropping the open entry. `readIntoPlan` already computes the device's
+authorship — `diffPlans(before, deviceView)` — so it returns it as `devicePatch`, and the baseline
+absorbs only the entries whose `before` side the baseline still holds (`applyPatchInContext`).
+
+Why the rule works: the dragged key was moved by the operator after the read was issued, so it never
+matches context and is always skipped; the `eqBands` the device recomputed do match and are taken. The
+outcome does not depend on whether the unit echoes the written value or quantises it — which is what
+keeps an unmeasured hardware fact out of the verdict.
+
+The coalesced reflect joins several producers and cannot know what the device authored, so
+`planReadFromDevice` splits into `planValuesChanged` (probe + MIDI feedback) and the history settle,
+and the reflect calls only the first. **The `rebase()` MIDI relied on was relocated verbatim** to its
+own site, so this change moves one behaviour and not two.
+
+### 6. Emitting the pair-level selectors before the pans (`translate.ts`)
+
+`buildCommands` emitted the two pan-carrying connection blocks (CH_PAN, SEND_PAN) BEFORE the pair-level
+CH SETTING block carrying `SIGNAL_TYPE` and `PAN_BAL`. Measured: a BAL→PAN switch put all ten of the
+pair's pan addresses on the wire ahead of `891:0:0`, and the undo repeated it.
+
+891 does not RE-TYPE the pan parameters — they are the same parameters under either mode, same ids,
+same ±63 encoding. What it does is a write SIDE EFFECT: BAL→PAN slams `141` and eight send pans to
+±63, PAN→BAL and unlink drive the same nine to 0 (measured by a whole-settings-file `.urxf` diff plus a
+targeted probe). So a pan written ahead of the selector is not misread — it is DISCARDED. The ordering
+rule is the one insert FX (135 → 134) and the FX effect type (679 → its 681 array) already keep.
+
+The fix is a relocation of the two blocks and nothing else: the command set, the values and the owner
+stamps are identical (sorting the added and removed diff lines leaves no difference). `PAN_BAL` keeps
+`sideEffect: "converge"` — with the order right it is now the NET rather than the repair. Measured:
+invariant 8 is clean over both the switch flush and the undo flush.
+
+### 7. One place that decides insert-FX availability (`constraints.ts`)
+
+The inspector computed the cross-node `taken` set; the console looked only at the rate. Measured: CH 3's
+chip re-took the effect CH 2 had claimed one gesture earlier, putting `135:0:2` + `134:0:2` on the wire
+while CH 3's own inspector was greying that option out.
+
+`constraints.ts` now owns `insertFxMenu(model, plan, nodeId)`, returning every option with the reason it
+is locked (`"rate" | "slot" | null`). The inspector renders it directly and the console's candidate list
+is defined over it (`insertFxFree`), so a third lock reason later reaches both surfaces without either
+UI file being edited. `params.ts` is pure data with zero imports, and `translate.ts` is the emit path —
+a UI-only availability rule beside it invites consulting it while emitting, which must never happen.
+
+Two sub-decisions. The bypass toggle at a rate that locks every effect is **locked and displayed OFF**,
+the idiom `channelEqUnavailable` already uses for the stereo CH EQ, and the write set does not move (a
+deliberate display/plan split). A plan that already puts two nodes on one slot is **warned about at
+load and opened on the operator's word** — on the file / `?plan=` / drop / recent paths ONLY; a device
+readback runs no such check, because the unit is the authority there and refusing would make Fetch
+fail. That asymmetry is also why it warns rather than refuses: the app itself writes such a plan after
+a readback, so refusing it made Fetch → Save → reopen impossible for its own document. An illegal wire
+stays a refusal — that is a plan this app cannot represent. `routing.ts` cannot import `constraints.ts`
+(cycle: constraints → translate → routing), so the loader's validation funnel lives in its own
+`plan-validate.ts`, which reads the same slot census `insertFxMenu` does (`insertFxCensus`).
+
+Taking a slot re-renders the whole console — every other strip's chip changes what it may do. Measured
+in WebKit at **8.8 ms** per render (p95 13, max 14) against a 16.7 ms frame, fired once per gesture; the
+bypass branch keeps its in-place update.
+
+### 8. One device address, one command (`translate.ts`)
+
+Two MONO IN channels holding a compander both write the input compander's engine array — `689:0:<slot>`,
+no channel axis — so `planToCommands` emitted the same six addresses twice with different values. The
+live snapshot is a Map keyed by address and can hold only one of them, so every flush for the rest of the
+session sent both commands and the unit's threshold alternated between the two owners' values. The diff
+never closed.
+
+`planToCommands` now collapses a repeated address to its **last** command, kept at its own position
+(`collapseSharedAddrs`). Last-wins is what an ordered send already leaves on the unit, so the device's
+final state does not change; keeping the survivor in place matters because a type selector repopulates
+the engine array it binds with that type's defaults, so a hoisted survivor would be written before the
+later owner's selector and erased by it. The collapse runs **before** the scope filter, so the scene
+subset stays `all.filter(pred)`.
+
+The drop is reported, not swallowed. A dropped command whose value the survivor already carries is no
+loss (the state every device readback produces), so only differing owners are stamped onto the survivor
+and the report is **value-keyed**: it fires on an actual loss, latched on the owner SET, so a standing
+collision is one sentence rather than one per flush. Three surfaces — the live status line, the Write
+confirm (prefixed, and appended to "nothing to write"), and the Compare report's "Shared device
+settings" section — and one deliberate silence: a Fetch or a `.urxf` import authors no commands. A
+colliding plan opened from a file is not silent, though: it is warned about at load (fix 7), and the
+collision it carries reaches these same three surfaces as soon as it is written.
+
+The latch clears in **`capture()`**, not only in the flush that finds no collision — the first draft
+did the latter and the review caught it. A reconcile reads the shared address once and assigns it to
+both owners, erasing the divergence, then re-bases through `resync()`; it runs **no flush**, because
+device follow funnels through `planValuesChanged`, which unlike `markChanged` schedules none. So the
+operator's obvious next move — the value visibly snapped back, redo it — produced a second loss that
+was swallowed as "already said", with zero writes and no sentence. Deliberately NOT re-armed by
+elapsed time either: the emitted list carries a standing collision whatever is being edited, so a
+timed re-arm would repeat it during unrelated work.
+
+Measured before → after: registration 2 → 1 entry per engine slot; a losing owner's edit 2 phantom
+writes per flush for the rest of the session → 0 writes plus one status line.
+
+## What the harness itself got wrong
+
+The audits found harness errors before they found app defects. They are recorded so the next tier does
+not repeat them.
+
+- **Silence is also true before anything has started.** `waitQuiet` called straight after a gesture
+  returns immediately and reports "nothing was sent". Any verdict that is an ABSENCE must use
+  `settleAfter`
+- **A filtered stimulus is the SECOND form of silence.** A notify the bridge refuses leaves the app in
+  exactly the state "nothing has happened yet" leaves it in, so an absence verdict passes for free and
+  a whole case can measure nothing while staying green. A case whose subject is the app's response
+  must assert DELIVERY (`pushNotifyDelivered`) as well as using `settleAfter`; a case that wants an
+  unknown-address escalation must either open the dropped window (a `sideEffect` edit's flush) or use
+  the `BULK_CHANGE` sentinel. Four reconcile-forcing sites were driving a sweep the shipped app would
+  never start (`9999:0:0` ×3, `758:0:0` ×3) before the filter landed
+- **Invariants 6 and 12 need their phases aligned.** The registration is a snapshot of one instant
+  while writes and notifies span the run; scope both with `registrationWindow`
+- **A barrier can satisfy its own assertion.** `blockAt` holds every subsequent matching command on the
+  same gate, so "X was issued before the held command resolved" is trivially true at release time
+- **Do not report properties of the fake as run results.** Seeded determinism, FIFO ordering under
+  equal delays, and the fake's `mem` holding the last write it accepted all say nothing about the app
+- **`paramAddrs` / `meterAddrs` are NOT proof of a live registration**, and a multi-session case is
+  where that bites. Both survive an unsubscribe and a teardown on purpose (they are the "last
+  registered" observable), so `expect.poll(() => meterAddrsOf(page)).toContain(X)` after a session
+  restart can be satisfied by the PREVIOUS session's set and pass before the new one has registered
+  anything. What the bridge actually decides from is the private registered set, which the teardown
+  DOES clear — so the proof is `pushMetersDelivered` / `pushNotifyDelivered`, which throw at the push
+  when the address is not live. Poll on the address set for readability if it helps; never let it be
+  the only gate
+- **A "cost = 0" assertion on a refused stimulus is a property of the filter, not of the app.** Once
+  the bridge drops the notify, no escalation is reachable, so "no reads, no reconcile" would hold even
+  if the app had regressed to sweeping the whole device on an unknown address. The app-facing half of
+  those cases is the registration-membership verdict (`why === ["unregistered"]`); keep it asserted and
+  keep the cost figures labelled as the consequence they are
+- **The predicate for "a write nobody reported" is `unreported > 0`, not
+  `reported === 0 && unreported > 0`.** The narrower one structurally cannot catch a gesture that
+  reports some of its keys and writes the rest behind the funnel — which is the shape actually found
+- **Invariant 8 (`spec.order`) keys on each address's FIRST write in the trace it is handed**, so an
+  ordering claim about ONE flush must be asked of a trace sliced to that flush. Both failure directions
+  were measured: over a whole run it reported an inversion between two unrelated gestures, and it
+  reported "clean" over a PAN/BAL flush that **is** inverted, because `891`'s first write belonged to a
+  STEREO link seconds earlier
+- **A converge round's `diffPlan` read pass IS the current writable address set** — a third observable
+  beside the subscription's `addrs` and the full-read counter, needing neither the probe nor a
+  reconcile (793–795 reads on the URX44V default plan)
+- **`writableAddrList` is not de-duplicated**, so an address's occurrence count in the registration is
+  a direct measure of how many plan owners write it — shared-address detection with no probe.
+  **This technique is now FALSE**: the emitted list is de-duplicated at the `planToCommands`
+  chokepoint (fix 8 above), so every registered address has exactly one entry. A shared address is
+  detected from the collapse report (`collisionOwners`) or the trace probe's plan-key ledger instead
+- **`divergeAt` on an address a converge round reads is a trap**: every round sees the same mismatch
+  and the converge never settles (measured: three consecutive 803-read rounds)
+- **A mousedown that also moves focus fires `focusout`, which is a history boundary**, so a synthetic
+  slider drag costs two undo entries — its first edit is committed on the spot
+- **An offline edit before `goLive` makes Live start ask the discard confirm**, which the fake declines
+  by default; `goLive` then times out on `#btn-live[aria-pressed="true"]` with no other symptom
+- **Do not print a verdict you did not check.** `analyze()` with an empty spec can only emit invariant
+  4, and an offline sweep has neither a read nor a write, so the line always says "clean"
+
+Across two audit rounds these accounted for **24 vacuous assertions and 28 over-stated claims**, all
+fixed or withdrawn.
+
+## Known gaps
+
+- `playwright.config.ts` serves a production build, so `import.meta.env.DEV` handles are statically
+  eliminated, and `addInitScript` can only patch globals — it cannot reach `main.ts`'s module scope.
+  The `VITE_TRACE=1` build is the answer to that constraint
+- The genuinely available observables are the DOM, the status line, `localStorage` and the IPC the
+  fake sees. Among those, the edit-menu state push is the only machine-readable undo-depth signal
+- The epoch guard is enforced in Rust, so a JavaScript fake implementing it would only test the fake.
+  Assert the epoch argument passed to disconnect, nothing more
+- The macOS native menu itself, real drag-and-drop path resolution and the OS-refusal semantics of the
+  sleep hold stay outside automation
+- The codebase has no test-id vocabulary, so every case depends on the current DOM ids and class names
+- **A plan EDIT never appears in the IPC trace** — only its write does, lagged by up to the 120 ms
+  flush window and continuing after the read has resolved. So no predicate over the trace can decide
+  "did an edit land inside the read's window", which became a load-bearing question once the readback
+  started merging. One case turns on it (`tzb`'s BULK_CHANGE sentinel: `-7.0`, the recalled scene,
+  running alone; `-14.0`, a value the drag passed through, under `--workers=4`). Deciding it needs the
+  edit placed on a barrier, but that case's variable is already where the recall falls inside the
+  gesture, so a barrier would replace the variable rather than add to it. Today the unconditional half
+  is asserted and the pointer's key is logged
+- The string path (`vd_set_str`: channel names, Sweet Spot Data) is outside every address-set
+  invariant — it has no snapshot entry and no registration entry — so clause B is silent on it by
+  construction. **Measured on hardware (2026-07-31)**: renaming a channel broadcasts exactly one
+  notify, `/vd/parameters/18:0:0`, and nothing else — no `BULK_CHANGE`, no pointer param — and the
+  broadcast is identical whether the rename is made on the unit's LCD or written by a client. Since
+  no name address is ever in the registration, the bridge drops it and **a rename is never followed**;
+  it is picked up by the next reconcile that covers that node, because `readPass` reads names through
+  `nameControl` under the same node filter. The device-side facts are recorded in the private param
+  ledger
+
+## Related
+
+- `docs/en/architecture.md` — Live sync and device follow design, keyboard bindings
+- `docs/en/channel-tuning.md` — the `sideEffect` converge / refetch split
+- `docs/en/known-issues.md` — limitations that cannot be reflected on the device

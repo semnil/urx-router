@@ -284,7 +284,11 @@ export const PARAMS = {
   /** PAN / BAL mode for a STEREO-linked MONO IN pair (0 = PAN, 1 = BAL), at the
    *  pair's primary channel input index. Switching mode rewrites the pair's pan
    *  values on the device, so live must converge. Confirmed by live param-notify
-   *  (CH1/CH2 pair BAL → PAN fired 891:0:0 = 0). */
+   *  (CH1/CH2 pair BAL → PAN fired 891:0:0 = 0).
+   *  translate.ts emits this ahead of CH_PAN and the send pans, so the same flush
+   *  already re-sends every pan the switch slammed: the converge is now a net for a
+   *  side effect reaching further than measured, not the repair the pans rely on. It
+   *  stays until the PAN-ward side effect is measured exhaustively. */
   PAN_BAL: { id: 891, encoding: "enum", sideEffect: "converge" },
   /** SSMCS Sweet Spot Data preset index (MONO IN, SSMCS mode), at the channel input
    *  index. A 4-digit zero-padded STRING ("0001".."0034"; "0035"+ clamps to "0001"),
@@ -601,8 +605,10 @@ export interface InsertFxOption {
   /** The 1-of-N device slot it occupies; absent = none (No Effect). */
   slot?: InsertFxSlot;
 }
-// Per-effect sample-rate ceilings (user guide p.180 Effect list): the guitar amps
-// and companders run up to 96 kHz, Pitch Fix only up to 48 kHz, No Effect always.
+// Per-effect sample-rate ceilings (user guide, Appendix > Effect list): the guitar amps
+// and companders run up to 96 kHz, Pitch Fix only up to 48 kHz, No Effect always. The
+// same table's "Number of simultaneous uses" row is what `slot` encodes. Cited by
+// section rather than page: the list moved from p.180 to p.184 between C0 and D0.
 export const INSERT_FX_OPTIONS: InsertFxOption[] = [
   { value: INSERT_FX_NONE, label: "No Effect" },
   { value: 256, label: "Clean", maxRate: 96000, slot: "amp" },

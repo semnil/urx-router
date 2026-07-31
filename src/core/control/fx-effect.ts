@@ -196,6 +196,16 @@ export interface FxParamDesc {
   options?: { value: number; label: string }[];
 }
 
+// An FX channel's families share ONE plan params map (nodeParams[id].fxEffect.params,
+// keyed by `key`), so a key two families both use is one storage slot: switching the
+// effect type hands whatever is stored there to the family that is now selected. Where
+// the two families address different device slots — or the same slot under a different
+// law (REV-X's HPF/LPF are a 1/6-octave index from 20 Hz, the delay family's a
+// 1/12-octave index from 15 Hz) — a shared key therefore writes one family's value into
+// the other's parameter, so those keys carry the family name. `reverbTime` is slot 7 in
+// both reverb families, one device parameter, and stays shared. `label` is what the UI
+// and i18n resolve, and is bare regardless.
+
 // REV-X (FX1 reverbs). Slots from live calibration. Reverb Time display needs the
 // Room Size sibling raw. Frequencies use the 1/6-oct table; ratios are raw/10.
 export const REVX_PARAMS: FxParamDesc[] = [
@@ -211,7 +221,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
     format: (r, c) => formatSec(revxTimeSec(r, c.roomSize ?? 31)),
   },
   {
-    key: "initialDelay",
+    key: "revxInitialDelay",
     slot: 9,
     label: "initialDelay",
     control: "slider",
@@ -244,7 +254,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
     format: (r) => String(r),
   },
   {
-    key: "diffusion",
+    key: "revxDiffusion",
     slot: 8,
     label: "diffusion",
     control: "slider",
@@ -255,7 +265,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
     format: (r) => String(r),
   },
   {
-    key: "hpf",
+    key: "revxHpf",
     slot: 10,
     label: "hpf",
     control: "slider",
@@ -266,7 +276,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
     format: (r) => formatHz(revxFreqHz(r)),
   },
   {
-    key: "lpf",
+    key: "revxLpf",
     slot: 11,
     label: "lpf",
     control: "slider",
@@ -277,7 +287,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
     format: (r) => formatHz(revxFreqHz(r)),
   },
   {
-    key: "hiRatio",
+    key: "revxHiRatio",
     slot: 13,
     label: "hiRatio",
     control: "slider",
@@ -325,7 +335,7 @@ export const REVR3_PARAMS: FxParamDesc[] = [
     format: (r) => formatSec(revR3TimeSec(r)),
   },
   {
-    key: "initialDelay",
+    key: "revr3InitialDelay",
     slot: 8,
     label: "initialDelay",
     control: "slider",
@@ -336,7 +346,7 @@ export const REVR3_PARAMS: FxParamDesc[] = [
     format: (r) => formatMs(initDelayMs(r)),
   },
   {
-    key: "hiRatio",
+    key: "revr3HiRatio",
     slot: 9,
     label: "hiRatio",
     control: "slider",
@@ -347,7 +357,7 @@ export const REVR3_PARAMS: FxParamDesc[] = [
     format: (r) => ratio10(r).toFixed(1),
   },
   {
-    key: "diffusion",
+    key: "revr3Diffusion",
     slot: 10,
     label: "diffusion",
     control: "slider",
@@ -369,7 +379,7 @@ export const REVR3_PARAMS: FxParamDesc[] = [
     format: (r) => String(r),
   },
   {
-    key: "feedback",
+    key: "revr3Feedback",
     slot: 12,
     label: "feedback",
     control: "slider",
@@ -402,7 +412,7 @@ export const REVR3_PARAMS: FxParamDesc[] = [
     format: (r) => balanceLabel(r),
   },
   {
-    key: "hpf",
+    key: "revr3Hpf",
     slot: 15,
     label: "hpf",
     control: "slider",
@@ -413,7 +423,7 @@ export const REVR3_PARAMS: FxParamDesc[] = [
     format: (r) => formatHz(fx2FreqHz(r)),
   },
   {
-    key: "lpf",
+    key: "revr3Lpf",
     slot: 16,
     label: "lpf",
     control: "slider",
@@ -445,7 +455,7 @@ export const DELAY_PARAMS: FxParamDesc[] = [
     format: (r) => formatMs(delayMs(r)),
   },
   {
-    key: "feedback",
+    key: "delayFeedback",
     slot: 7,
     label: "feedback",
     control: "slider",
@@ -456,7 +466,7 @@ export const DELAY_PARAMS: FxParamDesc[] = [
     format: (r) => `${r > 0 ? "+" : ""}${r}%`,
   },
   {
-    key: "hiRatio",
+    key: "delayHiRatio",
     slot: 8,
     label: "hiRatio",
     control: "slider",
@@ -467,7 +477,7 @@ export const DELAY_PARAMS: FxParamDesc[] = [
     format: (r) => ratio10(r).toFixed(1),
   },
   {
-    key: "hpf",
+    key: "delayHpf",
     slot: 9,
     label: "hpf",
     control: "slider",
@@ -478,7 +488,7 @@ export const DELAY_PARAMS: FxParamDesc[] = [
     format: (r) => formatHz(fx2FreqHz(r)),
   },
   {
-    key: "lpf",
+    key: "delayLpf",
     slot: 10,
     label: "lpf",
     control: "slider",
@@ -527,4 +537,34 @@ export function fxParams(type: number): FxParamDesc[] {
   if (family === "revx") return REVX_PARAMS;
   if (family === "revr3") return REVR3_PARAMS;
   return type === PINGPONG_TYPE ? PINGPONG_DELAY_PARAMS : DELAY_PARAMS;
+}
+
+/** The keys that were shared across families before they carried a family name. */
+const LEGACY_FX_PARAM_KEYS = ["initialDelay", "diffusion", "hpf", "lpf", "hiRatio", "feedback"] as const;
+
+/** Re-key an FX channel's stored parameters from the bare names to the family-qualified
+ *  ones, in place. Run on load for a version-1 document only (core/plan.ts
+ *  sanitizeNodeParams) — the family name is the family key itself.
+ *
+ *  A plan saved before the keys were qualified holds one value per bare name and does
+ *  not record which family wrote it. Assigning it to the SAVED type's family reproduces
+ *  exactly what the previous build emitted for that saved state, and differs only after
+ *  a family switch. There is no information in the file to do better, and dropping the
+ *  value is worse. A bare key the saved family does not have, and a plan with no type at
+ *  all, are left as they are. */
+export function migrateFxEffectParams(fx: { type?: number; params?: Record<string, number> }): void {
+  const params = fx.params;
+  if (typeof fx.type !== "number" || !params) return;
+  const prefix: string = fxFamilyOf(fx.type);
+  const owned = new Set(fxParams(fx.type).map((d) => d.key));
+  for (const legacy of LEGACY_FX_PARAM_KEYS) {
+    if (!(legacy in params)) continue;
+    const qualified = prefix + legacy[0].toUpperCase() + legacy.slice(1);
+    if (!owned.has(qualified)) continue;
+    // The bare key goes either way. It addresses nothing once the family owns a
+    // qualified name for that parameter, so leaving it would carry a value no build
+    // reads into every later save of the plan.
+    if (!(qualified in params)) params[qualified] = params[legacy];
+    delete params[legacy];
+  }
 }

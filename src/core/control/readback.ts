@@ -18,6 +18,8 @@ import type {
   SsmcsParams,
 } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
+import { applyPatchInContext, clonePlanState, diffPlans } from "../plan-history";
+import type { PlanPatch } from "../plan-history";
 import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, FX_STEREO_ASSIGN_ON, normalizeInsertFx, PARAMS } from "./params";
 import type { ParamName } from "./params";
@@ -772,6 +774,64 @@ export async function applyNodeState(
   signal?: AbortSignal,
 ): Promise<ReadbackResult> {
   return applyDeviceState(model, plan, signal, nodeIds);
+}
+
+/** What a merged device read produced. */
+export interface MergedRead extends ReadbackResult {
+  /** The private copy the read ran against: the plan as it stood when the read was
+   *  issued, carrying the read's own values and nothing the operator did meanwhile.
+   *  This is what the device holds as far as this read established it, so it — not the
+   *  plan on screen — is the baseline a live-sync snapshot must measure from. */
+  deviceView: Plan;
+  /** The keys this read authored: `diffPlans(before, deviceView)`, the patch that went
+   *  onto the plan before the operator's own edits went over it. The history baseline
+   *  absorbs exactly this (`ui/history.ts` `absorb`), which is what lets a gesture that
+   *  straddled the read still commit as one entry. Detached from both plans — diffPlans
+   *  clones into its slots and applyPatch clones on the way out. */
+  devicePatch: PlanPatch;
+  /** Everything the device patch did not write: an entry with nowhere to land (a wire
+   *  removed while the read was in flight), and every key the operator moved meanwhile,
+   *  which the merge deliberately leaves standing. Skipped rather than forced; the
+   *  caller reports them. */
+  unplaced: string[];
+}
+
+/**
+ * Run a device read against a private copy of the plan and merge the result back, so
+ * an edit made while the read was in flight is not overwritten by it.
+ *
+ * readPass assigns whole nodes, and a read spans hundreds of milliseconds (a node) to
+ * tens of seconds (the whole device). Pointed at the live plan, every value the
+ * operator moves inside that window is replaced by what the device held before the
+ * gesture — silently, since the value is on screen and the plan then asserts a state
+ * the unit does not hold. The copy turns the read's writes into a diff instead of an
+ * assignment, and the diff is applied IN CONTEXT: a key the plan still holds the
+ * pre-read value of takes device truth, and a key the operator moved meanwhile is left
+ * standing. That settles the contest in one pass — measuring the operator's edits as a
+ * second diff and re-applying them over the device patch reaches the same result the
+ * long way round, and only after writing values it is about to overwrite.
+ *
+ * `current` is re-read after the await, and must resolve the caller's live plan rather
+ * than a captured object — a read whose plan has been replaced (File > New, a model
+ * switch) has nothing to merge into, since its node ids may not exist in the document
+ * that replaced it and diffPlans across two models is empty by contract. It returns
+ * null and writes nothing.
+ *
+ * A read that throws propagates with the live plan untouched: the copy is discarded,
+ * so an aborted or link-lost read really is "nothing happened".
+ */
+export async function readIntoPlan(
+  current: () => Plan,
+  read: (into: Plan) => Promise<ReadbackResult>,
+): Promise<MergedRead | null> {
+  const plan = current();
+  const before = clonePlanState(plan);
+  const target = clonePlanState(plan);
+  const result = await read(target);
+  if (current() !== plan) return null;
+  const devicePatch = diffPlans(before, target);
+  const unplaced = applyPatchInContext(plan, devicePatch);
+  return { ...result, deviceView: target, devicePatch, unplaced };
 }
 
 /**

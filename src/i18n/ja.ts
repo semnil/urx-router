@@ -221,6 +221,7 @@ export const ja: Messages = {
     prePostLcdOnly: "CH → FX send の PRE/POST は本体でのみ設定可 (software から変更不可)。",
     eqRateLocked: "176.4 / 192 kHz ではステレオ ch の EQ は無効 — 強制的に OFF。",
     insFxRateLocked: "96 kHz 超では Insert FX は使用不可 — 強制的に OFF。",
+    insFxSlotLocked: "Insert FX はすべて使用中 — 各エフェクトは本体全体で 1 スロットを占有。",
     channelOn: "チャンネル",
     sendOn: "Send",
     toSt: "TO ST",
@@ -508,6 +509,7 @@ export const ja: Messages = {
     pngExported: "PNG を出力しました",
     pdfExported: "PDF を出力しました",
     arranged: "既定レイアウトに整列しました",
+    busyDeviceRead: "本体から読み取り中です — 完了してからもう一度お試しください",
     fetchConnecting: "デバイスに接続しています…",
     fetchedDevice: (model: string, n: number): string => `${model} から ${n} 件の設定を取得しました`,
     fetchedUnread: (model: string, n: number, unread: number): string =>
@@ -556,6 +558,8 @@ export const ja: Messages = {
     liveSynced: (n: number): string => `→ デバイス (${n})`,
     liveFollowing: "← デバイス…",
     liveFollowed: (n: number): string => `← デバイス (${n})`,
+    sharedSetting: (dropped: string, kept: string, more: number): string =>
+      `${dropped} は ${kept} と本体上の設定を共有しています${more > 0 ? ` (他 ${more} 件)` : ""} — 本体に届くのは ${kept} の値だけです`,
     liveError: (message: string): string => `ライブ同期を停止: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",
@@ -580,6 +584,9 @@ export const ja: Messages = {
     undoDeviceBusy: "本体との通信中です — 完了するまで元に戻せません",
     undoModal: "開いているダイアログを閉じてから元に戻してください",
     undoRateLive: "ライブ同期中のサンプルレートは本体に追従します — ここでは元に戻せません",
+    undoRateLiveMixed:
+      "この操作はサンプルレートの変更を含みます — ライブ同期中は本体に追従するため、操作全体を保留しました。破棄はしていません。ライブ同期をオフにすれば同じ操作が通ります",
+    midiBusy: "本体との通信中またはファイル操作中です — 完了するまで MIDI 入力は無視されます",
     themeDark: "ダークモードに切り替えました",
     themeLight: "ライトモードに切り替えました",
     themeAuto: "システム設定に追従します",
@@ -640,6 +647,10 @@ export const ja: Messages = {
     copy: "コピー",
     copied: "コピーしました",
     close: "閉じる",
+    slotTitle: "インサート FX スロットが競合しています",
+    slotIntro:
+      "この計画では 2 つのノードが本体で共有される同じインサート FX スロットを取り合っています。アプリの画面からはこの状態を作れませんが、実機からの読み取りではこの検査を行わないため、実機から保存した計画には含まれ得ます。そのため中止ではなく警告としています。読み込んでこのアプリで解消するか、閉じて計画の生成元で修正してください。",
+    loadAnyway: "このまま読み込む",
   },
   compareReport: {
     title: "デバイスとの照合",

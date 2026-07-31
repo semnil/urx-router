@@ -3,20 +3,24 @@
 // translate / readback round-trip confirms the slot addressing and family layout.
 
 import { describe, expect, it, vi } from "vitest";
-import { getModel } from "../../models";
-import { emptyPlan } from "../plan";
+import { getModel, MODEL_IDS } from "../../models";
+import { defaultPlan } from "../../models/initial-state";
+import { deserialize, emptyPlan, serialize } from "../plan";
 import {
   balanceLabel,
   delayMs,
   fx2FreqHz,
+  fxEffectTypes,
   fxFamilyOf,
   fxParams,
   initDelayMs,
+  migrateFxEffectParams,
   pingPongDelayMs,
   ratio10,
   revR3TimeSec,
   revxFreqHz,
   revxTimeSec,
+  type FxFamily,
 } from "./fx-effect";
 import { planToCommands } from "./translate";
 
@@ -86,7 +90,7 @@ describe("fx-effect translate", () => {
   it("emits the EFFECT TYPE (679/683) and the family's parameter slots", () => {
     const plan = emptyPlan("URX44V");
     plan.nodeParams["bus.fx1"] = {
-      fxEffect: { type: 0, on: true, level: 100, params: { reverbTime: 24, hpf: 9 } },
+      fxEffect: { type: 0, on: true, level: 100, params: { reverbTime: 24, revxHpf: 9 } },
     };
     plan.nodeParams["bus.fx2"] = {
       fxEffect: { type: 1024, on: true, params: { delay: 7563, note: 9 } },
@@ -111,6 +115,82 @@ describe("fx-effect translate", () => {
     const plan = emptyPlan("URX44V");
     const cmds = planToCommands(model, plan);
     expect(cmds.some((c) => c.paramId === 679 || c.paramId === 681)).toBe(false);
+  });
+});
+
+// The three families share one plan params map, so a key two of them use is one
+// storage slot: whatever the effect type is switched to reads what the previous type
+// left there. That is the intent for reverbTime (slot 7 in both reverb families, one
+// device parameter) and a defect for anything else.
+describe("fx-effect parameter keys", () => {
+  it("never gives two families the same key at different slots", () => {
+    // Walked out of the catalog rather than off a list of names — every EFFECT TYPE
+    // either menu offers, grouped by family — so a descriptor added later cannot
+    // re-open the hole by reusing a name.
+    const slotsByKey = new Map<string, Map<FxFamily, number>>();
+    for (const t of [...fxEffectTypes(0), ...fxEffectTypes(1)]) {
+      for (const d of fxParams(t.value)) {
+        const perFamily = slotsByKey.get(d.key) ?? new Map<FxFamily, number>();
+        perFamily.set(fxFamilyOf(t.value), d.slot);
+        slotsByKey.set(d.key, perFamily);
+      }
+    }
+    const offenders = [...slotsByKey]
+      .filter(([, per]) => new Set(per.values()).size > 1)
+      .map(([key, per]) => `${key} @ ${[...per].map(([f, s]) => `${f} ${s}`).join(", ")}`);
+    expect(offenders).toEqual([]);
+    // The one key two families deliberately share, at the slot that makes it one
+    // parameter: a Rev-X reverb time carried into Rev.R3 is the same device value.
+    expect([...(slotsByKey.get("reverbTime") ?? [])]).toEqual([
+      ["revx", 7],
+      ["revr3", 7],
+    ]);
+  });
+
+  it("re-keys a legacy plan's bare parameters onto the family that saved them", () => {
+    const revx = { type: 0, params: { reverbTime: 24, hpf: 9, lpf: 55, hiRatio: 6 } };
+    migrateFxEffectParams(revx);
+    expect(revx.params).toEqual({ reverbTime: 24, revxHpf: 9, revxLpf: 55, revxHiRatio: 6 });
+
+    const delay = { type: 1024, params: { delay: 7563, hpf: 9, lpf: 55, hiRatio: 6 } };
+    migrateFxEffectParams(delay);
+    expect(delay.params).toEqual({ delay: 7563, delayHpf: 9, delayLpf: 55, delayHiRatio: 6 });
+
+    // A plan with no saved type says nothing about which family wrote the value.
+    const untyped = { params: { hpf: 9 } };
+    migrateFxEffectParams(untyped);
+    expect(untyped.params).toEqual({ hpf: 9 });
+  });
+
+  it("runs on every load path (the deserialize funnel), for a version-1 document only", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0, params: { hpf: 9 } } };
+    const legacy = JSON.stringify({ ...JSON.parse(serialize(plan)), version: 1 });
+    expect(deserialize(legacy).nodeParams["bus.fx1"]?.fxEffect?.params).toEqual({ revxHpf: 9 });
+    // From version 2 on, the qualified names are what a document carries; a bare key
+    // in one is not a legacy value and re-keying it would move a parameter the
+    // document meant to leave alone.
+    expect(deserialize(serialize(plan)).nodeParams["bus.fx1"]?.fxEffect?.params).toEqual({ hpf: 9 });
+  });
+
+  it("keeps an already-qualified value and a key the saved family does not have", () => {
+    const fx = { type: 0, params: { hpf: 9, revxHpf: 4, feedback: 20 } };
+    migrateFxEffectParams(fx);
+    expect(fx.params.revxHpf).toBe(4); // Rev-X's own value wins over the bare one
+    expect(fx.params.feedback).toBe(20); // Rev-X has no Feedback Gain — left alone
+  });
+
+  it("seeds every default plan's FX parameters under its own family's keys", () => {
+    for (const modelId of MODEL_IDS) {
+      const plan = defaultPlan(modelId);
+      for (const [nodeId, np] of Object.entries(plan.nodeParams)) {
+        const fx = np.fxEffect;
+        if (!fx) continue;
+        const owned = new Set(fxParams(fx.type ?? 0).map((d) => d.key));
+        const stray = Object.keys(fx.params ?? {}).filter((k) => !owned.has(k));
+        expect([modelId, nodeId, stray]).toEqual([modelId, nodeId, []]);
+      }
+    }
   });
 });
 
