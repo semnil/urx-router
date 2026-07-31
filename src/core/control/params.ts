@@ -284,7 +284,11 @@ export const PARAMS = {
   /** PAN / BAL mode for a STEREO-linked MONO IN pair (0 = PAN, 1 = BAL), at the
    *  pair's primary channel input index. Switching mode rewrites the pair's pan
    *  values on the device, so live must converge. Confirmed by live param-notify
-   *  (CH1/CH2 pair BAL → PAN fired 891:0:0 = 0). */
+   *  (CH1/CH2 pair BAL → PAN fired 891:0:0 = 0).
+   *  translate.ts emits this ahead of CH_PAN and the send pans, so the same flush
+   *  already re-sends every pan the switch slammed: the converge is now a net for a
+   *  side effect reaching further than measured, not the repair the pans rely on. It
+   *  stays until the PAN-ward side effect is measured exhaustively. */
   PAN_BAL: { id: 891, encoding: "enum", sideEffect: "converge" },
   /** SSMCS Sweet Spot Data preset index (MONO IN, SSMCS mode), at the channel input
    *  index. A 4-digit zero-padded STRING ("0001".."0034"; "0035"+ clamps to "0001"),

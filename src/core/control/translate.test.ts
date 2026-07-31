@@ -326,6 +326,21 @@ describe("planToCommands", () => {
     expect(pb[0].vdValue).toBe(1);
   });
 
+  it("emits Signal Type / PAN-BAL before every pan the switch slams", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams["ch1"] = { stereoLink: true, panBal: 0 };
+    const cmds = planToCommands(model, plan);
+    const indices = (names: string[]): number[] => cmds.flatMap((c, i) => (names.includes(c.name) ? [i] : []));
+    const selectors = indices(["SIGNAL_TYPE", "PAN_BAL"]);
+    const pans = indices(["CH_PAN", "SEND_PAN"]);
+    expect(selectors.length).toBeGreaterThan(0);
+    expect(pans.length).toBeGreaterThan(0);
+    // Switching either selector makes the device slam the pair's CH_PAN and every
+    // send pan, so a pan sent ahead of the selector is discarded rather than misread.
+    expect(Math.max(...selectors)).toBeLessThan(Math.min(...pans));
+  });
+
   it("emits SSMCS Sweet Spot Data as a 4-digit string write", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

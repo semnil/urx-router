@@ -1349,62 +1349,6 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   // follow the re-clock all reaching the device.
   out.push(command("SAMPLE_RATE", 0, plan.sampleRate));
   own(undefined);
-  for (const conn of plan.connections) {
-    // Fixed main path into STEREO: the channel's CH_FADER / CH_PAN, or the FX
-    // channel's FX_CHANNEL_FADER / FX_CHANNEL_BAL — the source's main level / pan.
-    if (parseRef(conn.to).nodeId !== "bus.stereo" || !isFixedConnection(model, conn.from, conn.to)) continue;
-    const fromId = parseRef(conn.from).nodeId;
-    const cc = channelControl(model, fromId);
-    if (cc) {
-      out.push(rawCommand("CH_FADER", cc.fader, "level", cc.y, conn.params?.level ?? 0));
-      out.push(rawCommand("CH_PAN", cc.pan, "pan", cc.y, conn.params?.pan ?? 0));
-      // → STEREO bus assign ON (post-fader, firmware V1.3). Ships ON; distinct from
-      // the channel master CH_ON (emitted below from np.on).
-      out.push(rawCommand("STEREO_ASSIGN_ON", cc.stereoOn, "bool", cc.y, (conn.params?.on ?? true) ? 1 : 0));
-    } else {
-      const fxY = fxChannelIndex(fromId);
-      const mixL = MIX_FADER_INSTANCES[fromId]?.[0];
-      if (fxY !== null) {
-        out.push(rawCommand("FX_CHANNEL_FADER", PARAMS.FX_CHANNEL_FADER.id, "level", fxY, conn.params?.level ?? 0));
-        out.push(rawCommand("FX_CHANNEL_BAL", PARAMS.FX_CHANNEL_BAL.id, "pan", fxY, conn.params?.pan ?? 0));
-        out.push(rawCommand("STEREO_ASSIGN_ON", FX_STEREO_ASSIGN_ON, "bool", fxY, (conn.params?.on ?? true) ? 1 : 0));
-      } else if (mixL !== undefined) {
-        // MIX 1/2 → STEREO "TO ST": an ON/OFF switch at the MIX's L instance (off
-        // by default, factory). No level/pan — the send is fixed routing.
-        out.push(command("TO_ST", mixL, (conn.params?.on ?? false) ? 1 : 0));
-      }
-    }
-    own(fromId);
-  }
-
-  // CH / FX-channel → MIX/FX bus sends — written as absolute state over every
-  // send-capable pair. Every send is fixed (always wired), so its routing is a
-  // constant and its on/off lives in conn.params.on (SEND_ON = params.on ?? true);
-  // a pair the plan is missing a wire for (an old plan loaded without the fixed
-  // seed) is treated as off. Params: level / pan(BAL) / PRE-POST tap; MIX writes
-  // both linked L/R instances.
-  for (const node of model.nodes) {
-    if (node.kind !== "channel" && fxChannelIndex(node.id) === null) continue;
-    for (const bus of model.nodes) {
-      if (bus.kind !== "bus") continue;
-      const sc = sendControl(model, node.id, bus.id);
-      if (!sc) continue;
-      const conn = plan.connections.find((c) => c.from === ref(node.id, "out") && c.to === ref(bus.id, "in"));
-      if (!conn) {
-        for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, 0));
-        continue;
-      }
-      const on = (conn.params?.on ?? true) ? 1 : 0;
-      for (const p of sc.level) out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
-      for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
-      for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, on));
-      // CH -> FX taps are read-only (broker max_value=0 rejects a PRE write); they
-      // are read back but never written. Other taps are settable. See sendTapWritable.
-      if (sendTapWritable(model, conn.from, conn.to))
-        out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
-    }
-    own(node.id);
-  }
 
   // Channel node parameters: ON / HPF / gain.
   for (const node of model.nodes) {
@@ -1486,6 +1430,11 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   // input indices (1 = STEREO link / 0 = MONO x2); PAN/BAL (891) writes the primary's
   // index only (0 = PAN / 1 = BAL). Both reset dependent device state, so live must
   // converge. Commands are attributed to the primary node.
+  //
+  // Emitted BEFORE the two connection blocks below: switching either selector makes
+  // the unit slam the pair's CH_PAN and every bus send's pan (measured — BAL→PAN hard-
+  // pans to ±63, PAN→BAL and unlinking centre), so a pan written ahead of the selector
+  // is discarded by the device. The selector leads and the plan's pans land on top.
   for (const [primary, secondary] of model.channelPairs) {
     const np = plan.nodeParams[primary];
     if (!np) continue;
@@ -1498,6 +1447,63 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     }
     if (np.panBal !== undefined) out.push(command("PAN_BAL", py, boundEnum(np.panBal, PAN_BAL_OPTIONS, PAN_BAL_PAN)));
     own(primary);
+  }
+
+  for (const conn of plan.connections) {
+    // Fixed main path into STEREO: the channel's CH_FADER / CH_PAN, or the FX
+    // channel's FX_CHANNEL_FADER / FX_CHANNEL_BAL — the source's main level / pan.
+    if (parseRef(conn.to).nodeId !== "bus.stereo" || !isFixedConnection(model, conn.from, conn.to)) continue;
+    const fromId = parseRef(conn.from).nodeId;
+    const cc = channelControl(model, fromId);
+    if (cc) {
+      out.push(rawCommand("CH_FADER", cc.fader, "level", cc.y, conn.params?.level ?? 0));
+      out.push(rawCommand("CH_PAN", cc.pan, "pan", cc.y, conn.params?.pan ?? 0));
+      // → STEREO bus assign ON (post-fader, firmware V1.3). Ships ON; distinct from
+      // the channel master CH_ON (emitted above from np.on).
+      out.push(rawCommand("STEREO_ASSIGN_ON", cc.stereoOn, "bool", cc.y, (conn.params?.on ?? true) ? 1 : 0));
+    } else {
+      const fxY = fxChannelIndex(fromId);
+      const mixL = MIX_FADER_INSTANCES[fromId]?.[0];
+      if (fxY !== null) {
+        out.push(rawCommand("FX_CHANNEL_FADER", PARAMS.FX_CHANNEL_FADER.id, "level", fxY, conn.params?.level ?? 0));
+        out.push(rawCommand("FX_CHANNEL_BAL", PARAMS.FX_CHANNEL_BAL.id, "pan", fxY, conn.params?.pan ?? 0));
+        out.push(rawCommand("STEREO_ASSIGN_ON", FX_STEREO_ASSIGN_ON, "bool", fxY, (conn.params?.on ?? true) ? 1 : 0));
+      } else if (mixL !== undefined) {
+        // MIX 1/2 → STEREO "TO ST": an ON/OFF switch at the MIX's L instance (off
+        // by default, factory). No level/pan — the send is fixed routing.
+        out.push(command("TO_ST", mixL, (conn.params?.on ?? false) ? 1 : 0));
+      }
+    }
+    own(fromId);
+  }
+
+  // CH / FX-channel → MIX/FX bus sends — written as absolute state over every
+  // send-capable pair. Every send is fixed (always wired), so its routing is a
+  // constant and its on/off lives in conn.params.on (SEND_ON = params.on ?? true);
+  // a pair the plan is missing a wire for (an old plan loaded without the fixed
+  // seed) is treated as off. Params: level / pan(BAL) / PRE-POST tap; MIX writes
+  // both linked L/R instances.
+  for (const node of model.nodes) {
+    if (node.kind !== "channel" && fxChannelIndex(node.id) === null) continue;
+    for (const bus of model.nodes) {
+      if (bus.kind !== "bus") continue;
+      const sc = sendControl(model, node.id, bus.id);
+      if (!sc) continue;
+      const conn = plan.connections.find((c) => c.from === ref(node.id, "out") && c.to === ref(bus.id, "in"));
+      if (!conn) {
+        for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, 0));
+        continue;
+      }
+      const on = (conn.params?.on ?? true) ? 1 : 0;
+      for (const p of sc.level) out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
+      for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
+      for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, on));
+      // CH -> FX taps are read-only (broker max_value=0 rejects a PRE write); they
+      // are read back but never written. Other taps are settable. See sendTapWritable.
+      if (sendTapWritable(model, conn.from, conn.to))
+        out.push(rawCommand("SEND_TAP", sc.tap, "bool", sc.y, conn.params?.tap === "pre" ? 1 : 0));
+    }
+    own(node.id);
   }
 
   // Bus output faders: STEREO master (581, single) and MIX (674, L/R-linked).
