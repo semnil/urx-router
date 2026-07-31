@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 });
 
-// The GATE detail sliders live in the gate tuning screen now, so the notch is
+// The GATE detail sliders live in the dynamics tuning screen now, so the notch is
 // asserted where it is actually edited. The inspector's GATE section keeps only
 // the ON toggle and the launcher.
 test("GATE range has a -∞ notch one step below the -72 dB floor", async ({ page }) => {
@@ -19,7 +19,7 @@ test("GATE range has a -∞ notch one step below the -72 dB floor", async ({ pag
   await gate.locator("summary").click(); // GATE folds off by default
   await gate.locator("#btn-gate-screen").click();
 
-  const range = page.locator("#gate-tuning-box .prefs-row", { hasText: "Range" });
+  const range = page.locator("#dyn-screen-box .prefs-row", { hasText: "Range" });
   const slider = range.locator("input[type=range]");
   await expect(slider).toHaveAttribute("min", "-73"); // -73 = the -∞ notch
   await slider.fill("-73");
@@ -38,23 +38,15 @@ test("the inspector's GATE section keeps the toggle and the launcher only", asyn
   await expect(gate.locator("#btn-gate-screen")).toHaveCount(1);
 });
 
-test("COMP 1-Knob shows ratio/gain read-only in place of the manual sliders", async ({ page }) => {
+test("the inspector's COMP section is the ON toggle and the launcher", async ({ page }) => {
+  // The detail editor moved to the dynamics screen for the same reason the gate's
+  // did — a second copy here reads a render-time snapshot and would write stale
+  // values back. What 1-Knob and Auto Makeup do to those controls is pinned there
+  // (e2e/dyntuning.spec.ts), where they are.
   await node(page, "ch1").click();
   const comp = section(page, /^COMP$/);
   await comp.locator("summary").click(); // COMP folds off by default
-
-  // Off: Ratio is an editable slider.
-  await expect(comp.locator(".param", { hasText: "Ratio" }).locator("input[type=range]")).toHaveCount(1);
-
-  // Turn 1-Knob on: Ratio/Gain become read-only rows (no control), Level appears.
-  await comp
-    .locator(".param")
-    .filter({ has: page.getByText("1-Knob", { exact: true }) })
-    .locator("button", { hasText: "ON" })
-    .click();
-  await expect(comp.locator(".param", { hasText: "1-Knob Level" }).locator("input[type=range]")).toHaveCount(1);
-  const ratioRo = comp.locator(".param.readonly", { hasText: "Ratio" });
-  await expect(ratioRo).toHaveCount(1);
-  await expect(ratioRo.locator("input")).toHaveCount(0);
-  await expect(comp.locator(".param.readonly", { hasText: "Gain" })).toHaveCount(1);
+  await expect(comp.locator(".sec-body > .param")).toHaveCount(1);
+  await expect(comp.locator("input[type=range]")).toHaveCount(0);
+  await expect(comp.locator("#btn-comp-screen")).toHaveCount(1);
 });

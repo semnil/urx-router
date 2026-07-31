@@ -258,7 +258,6 @@ export const ja: Messages = {
     autoMakeup: "Auto Makeup",
     oneKnob: "1-Knob",
     oneKnobLevel: "1-Knob レベル",
-    oneKnobDriven: "1-Knob により自動設定 (読み取り専用)",
     ssmcs: {
       title: "SSMCS",
       sweetSpotData: "Sweet Spot Data",
@@ -424,21 +423,32 @@ export const ja: Messages = {
   },
   // メーターのキャプションと表示モード名は実機のタップ語彙なので ja でも英語のまま
   // (CONSOLE のメーターポイントバッジと同じ点を指すため表記を揃える)。
-  gateTuning: {
-    title: "Gate",
-    open: "Gate 画面…",
+  dynTuning: {
     close: "閉じる",
     display: "Display",
     modeLadder: "Ladder",
     modeCurve: "Curve",
     parameters: "パラメーター",
     readouts: "読み値",
-    tapIn: "Pre Gate",
-    tapGr: "Gate GR",
-    tapOut: "Pre Comp",
     peakPrefix: "pk",
     noReading: "—",
-    curveHint: "曲線のニーを左右にドラッグしてしきい値を設定します。",
+    driven: "本体が制御中",
+    gate: {
+      title: "Gate",
+      open: "Gate 画面…",
+      tapIn: "Pre Gate",
+      tapGr: "Gate GR",
+      tapOut: "Pre Comp",
+      curveHint: "曲線のニーを左右にドラッグしてしきい値を設定します。",
+    },
+    comp: {
+      title: "Comp",
+      open: "Comp 画面…",
+      tapIn: "Pre Comp",
+      tapGr: "Comp GR",
+      tapOut: "Pre EQ",
+      curveHint: "曲線はスライダーが信号に与える変化、点はライブのレベルです。",
+    },
   },
   shelf: {
     title: "非表示",

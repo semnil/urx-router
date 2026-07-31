@@ -15,6 +15,7 @@
 
 import {
   el,
+  onOff,
   onWheelStep,
   settingsChoice,
   settingsNote,
@@ -202,7 +203,7 @@ export class DeviceSetupPanel {
         this.sub(m.autoPowerOff),
         this.row(
           m.enable,
-          this.onOff(s.autoPowerOff, (on) => this.edit({ autoPowerOff: on })),
+          onOff(s.autoPowerOff, (on) => this.edit({ autoPowerOff: on })),
           "autoPowerOff",
         ),
         this.row(m.time, time, "autoPowerOffTime"),
@@ -249,7 +250,7 @@ export class DeviceSetupPanel {
         this.sub(m.hdmi, locked ? m.onlyOn("URX44V") : undefined),
         this.row(
           m.hdcp,
-          this.onOff(s.hdcp, (on) => this.edit({ hdcp: on })),
+          onOff(s.hdcp, (on) => this.edit({ hdcp: on })),
           "hdcp",
           locked,
         ),
@@ -326,12 +327,6 @@ export class DeviceSetupPanel {
 
   private note(text: string): HTMLElement {
     return settingsNote(text);
-  }
-
-  private onOff(on: boolean, apply: (on: boolean) => void): HTMLElement {
-    // ON/OFF faces reuse the inspector's strings, the cross-namespace read the rest
-    // of the app already makes.
-    return settingsChoice([t().inspector.on, t().inspector.off], on ? 0 : 1, (i) => apply(i === 0), true);
   }
 
   /** A select over an index into a label list — the shape every enum on this screen

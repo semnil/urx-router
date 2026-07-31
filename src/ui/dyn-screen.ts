@@ -1,14 +1,17 @@
-// GATE tuning screen: the five gate parameters beside the three meter taps that
-// show what they are doing — PRE GATE (106) in, GATE GR (107), PRE COMP (108) out.
-// A gate threshold in dB is directly comparable with the PRE GATE meter's dBFS
-// (measured: CH1's -54 dBFS noise floor sat below a -52 dB threshold and the gate
-// stayed shut), which is what earns the screen's one gesture: the threshold is a
-// fader cap dragged on the input meter itself.
+// Dynamics tuning screen: one processor's parameters beside the meter taps that
+// show what they are doing. GATE and COMP are the two built on it today; DUCKER
+// and the insert-FX dynamics have gain-reduction meters of their own and fit the
+// same shape (see docs/{en,ja}/dynamics-tuning.md).
+//
+// What varies between processors lives in a `DynProcessor` — its taps, its
+// parameter fields and its transfer plot — and is selected per open() rather than
+// per instance, because both screens share one modal host and two instances would
+// fight over its DOM.
 //
 // Two display modes over one control set. LADDER is the three taps on a shared
-// -72..0 dB ruler — linear in dB, so the cap's position and the threshold value
-// stay proportional. CURVE swaps in the static in/out transfer plot, where the
-// threshold is the knee. They are alternatives, not layers: each owns the column.
+// dB ruler — linear in dB over exactly the threshold's domain, so a cap's position
+// and the threshold value stay proportional. CURVE swaps in the static transfer
+// plot. They are alternatives, not layers: each owns the column.
 //
 // What the meters can and cannot show (measured on a URX44V, 2026-07-29 — see
 // reference/work/vd/vd-meters.md):
@@ -16,57 +19,120 @@
 //     window extreme, so nothing is gained by painting faster;
 //   - the level meters are peak detectors with a ~30 dB/s release, so they hold
 //     transients themselves — adding an app-side release here would double it;
-//   - the GR meter has no ballistics at all, so a gate action shorter than 100 ms
-//     is missed outright. The peak hold below is the only thing that makes a
-//     caught one readable, and it cannot recover one that was never sampled.
+//   - the GR meters have no ballistics at all, so an action shorter than 100 ms is
+//     missed outright. The peak hold below is the only thing that makes a caught
+//     one readable, and it cannot recover one that was never sampled;
+//   - a GR meter reports the reduction alone. Sweeping the COMP makeup gain moved
+//     the downstream level tap by the full amount and left the GR meter still.
 //
 // The broker has a single meter subscription slot process-wide (a subscribe
 // replaces the previous one and the unsubscribe takes no address), so this screen
 // takes the slot for its three addresses while open and hands it back on close.
 
 import { el, settingsRow, settingsSection, wheelStep, wireDismiss } from "./dom";
+import { fineTag, optInFine } from "./fine";
 import { setLevelText } from "./glyph";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 import {
   decodeGrDb,
-  gateGrAddr,
-  GR_FLOOR_DB,
+  grAddr,
   METER_GREEN_TOP_DB,
   METER_YELLOW_TOP_DB,
   MeterStore,
   subscribeMeters,
   tapFor,
 } from "../core/meters";
-import type { MeterTap } from "../core/meters";
+import type { GrKind, MeterTap } from "../core/meters";
 import { channelDynamics, dynValueText, formatDyn } from "../core/control/translate";
-import { GATE_RANGE_OFF_DB } from "../core/control/vd";
-import type { DynField } from "../core/control/translate";
+import type { ChannelDynamics, DynField } from "../core/control/translate";
+import { COMP_EQ_COMP_FIRST } from "../core/control/params";
 import type { DeviceModel } from "../models/types";
 import type { NodeParams, Plan } from "../core/plan";
 import { loadJson, saveJson } from "../core/storage";
 
-/** The screen's vertical ruler: the exact domain a GATE threshold can occupy, so
- *  a cap position maps to a threshold value linearly. */
-const LO_DB = -72;
-const HI_DB = 0;
-const SPAN_DB = HI_DB - LO_DB;
+/** Top of both axes: a channel meter cannot read above 0 dBFS. */
+export const HI_DB = 0;
 
-// The curve's output axis, which is deliberately NOT the input axis. The closed
-// shelf sits at threshold + range, and for most of the range domain that falls
-// below the -72 dB the input spans — at the factory settings -50 + -56 = -106 dB.
-// Sharing the input's floor pinned every range past -22 dB to the same line, so
-// at the factory threshold 70% of the range domain drew an identical picture and
-// range was invisible. Running the output axis to the GR floor puts the shelf on
-// scale: moving range from -30 to -56 shifts it by 20% of the plot height, from
-// 0% before. A log-compressed axis was measured too and is worse (8.5%) — dB is
-// already a log unit, and compressing it again squeezes exactly the deep region
-// range lives in.
-const OUT_LO_DB = -128;
-const OUT_SPAN_DB = HI_DB - OUT_LO_DB;
-/** Output-axis gridlines. Coarser than the input's 12 dB step: the axis is 1.8×
- *  longer and the region below -72 dB is context, not something to read off. */
-const OUT_TICKS = [0, -24, -48, -72, -96, -128];
+const CURVE_PAD = { l: 44, r: 14, t: 14, b: 28 };
+
+/** Plot coordinates for a processor's transfer curve. The input axis spans the
+ *  threshold's own domain; the output axis is the processor's to choose, because
+ *  what has to stay on scale differs (a gate's closed shelf runs far below the
+ *  input floor, a compressor's makeup runs above it). */
+export interface DynCurveGeo {
+  w: number;
+  h: number;
+  px: (db: number) => number;
+  py: (db: number) => number;
+}
+
+/** Read a parameter, falling back to the field table's own default — so a curve and
+ *  the sliders beside it cannot disagree about what "unset" means. */
+export interface DynValues {
+  get: (key: string) => number;
+}
+
+export interface DynRowCtx {
+  m: Messages;
+  vals: Record<string, unknown>;
+  /** The keys `driven` reported, resolved — so a row that is not a slider reads the
+   *  same answer the sliders do instead of restating the rule. */
+  driven: ReadonlySet<string>;
+  /** Set a value that decides which other rows exist or are editable (COMP's
+   *  1-knob and Auto Makeup): rebuilds the control column. */
+  set: (patch: Record<string, number | boolean>) => void;
+  /** Set a value that only changes itself. No rebuild — a control being dragged
+   *  must survive its own edit, and rebuilding drops the pointer capture. */
+  setValue: (patch: Record<string, number | boolean>) => void;
+}
+
+/** Extra rows a processor renders beside its sliders, in the device's own read
+ *  order: `lead` above them (the mode switches), `tail` below (the selectors). */
+export interface DynRows {
+  lead?: HTMLElement[];
+  tail?: HTMLElement[];
+}
+
+export interface DynProcessor {
+  /** `nodeParams` sub-object and per-processor display-mode key. */
+  key: "gate" | "comp";
+  grKind: GrKind;
+  /** Input axis floor = the threshold's own minimum, and the ruler's tick step. */
+  loDb: number;
+  tickStep: number;
+  /** Curve output axis. */
+  outLoDb: number;
+  outTicks: readonly number[];
+  /** Level taps either side of the processor. */
+  inTapKey: string;
+  outTapKey: string;
+  /** GR lane full scale in dB, when the reduction's own domain is far shallower
+   *  than the level ladder. Undefined shares the ladder's dB per pixel. */
+  grFullDb?: number;
+  text: (m: Messages) => DynText;
+  /** The processor's slider fields for a channel, or null when it has none there. */
+  fields: (dyn: ChannelDynamics) => DynField[] | null;
+  /** Keys the device is driving right now: rendered read-only. */
+  driven?: (vals: Record<string, unknown>) => ReadonlySet<string>;
+  rows?: (ctx: DynRowCtx) => DynRows;
+  /** Whether a press anywhere on the curve sets the threshold. True where the
+   *  curve carries one editable value and the gesture is unambiguous; false where
+   *  it carries several, since a press then has to guess which one was meant. */
+  curveDragsThreshold?: boolean;
+  /** The static transfer plot, minus the live dot the screen puts on it. */
+  drawCurve: (c: CanvasRenderingContext2D, geo: DynCurveGeo, v: DynValues, tok: Record<string, string>) => void;
+}
+
+/** The strings one processor's screen prints. */
+export interface DynText {
+  title: string;
+  open: string;
+  tapIn: string;
+  tapGr: string;
+  tapOut: string;
+  curveHint: string;
+}
 
 /** Peak hold, in notify frames (100 ms each). Nothing on the device sets this —
  *  the level meters hold in hardware and GR holds not at all — so it is a UI
@@ -82,13 +148,13 @@ const FRAME_MS = 1000 / 30;
  *  cannot deliver more than 10 new values a second anyway. */
 const READOUT_EVERY = 5;
 
-/** Persisted display mode. Its own key, like `urx-sends-open` and
+/** Persisted display mode, per processor. Its own key, like `urx-sends-open` and
  *  `urx-metertap`: this is per-surface UI state, not a Preferences setting. */
-const MODE_STORE = "urx-gate-display";
+const MODE_STORE = "urx-dyn-display";
 
 type Mode = "ladder" | "curve";
 
-export interface GateTuningHooks {
+export interface DynScreenHooks {
   getModel: () => DeviceModel;
   getPlan: () => Plan;
   isLive: () => boolean;
@@ -101,7 +167,7 @@ export interface GateTuningHooks {
   /** A meter registration failed. Bars stuck on the floor look exactly like
    *  silence, so this takes the same loud path a live error does. */
   onMeterError: (message: string) => void;
-  /** The screen closed: the surfaces that print gate values re-render. */
+  /** The screen closed: the surfaces that print these values re-render. */
   onClosed: () => void;
 }
 
@@ -123,26 +189,21 @@ const noPeak = (): PeakHold => ({ db: null, age: 0 });
 
 const LANES: readonly Lane[] = ["in", "gr", "out"];
 
-/** Fraction of the ladder a level occupies (0 at -72 dB, 1 at 0 dB). */
-function frac(db: number): number {
-  return Math.min(1, Math.max(0, (db - LO_DB) / SPAN_DB));
-}
+const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
-/** GR shares the level ladders' dB per pixel, so the one tick column reads for all
- *  three: a GR bar down to the -56 tick is 56 dB of reduction. It grows downward
- *  from 0, which is why it needs its own mapping and not its own scale. */
-function laneFrac(lane: Lane, db: number): number {
-  return lane === "gr" ? Math.min(1, Math.abs(db) / SPAN_DB) : frac(db);
-}
+/** Shared empty set for a processor with nothing device-driven. */
+const NO_KEYS: ReadonlySet<string> = new Set<string>();
 
-export class GateTuningModal {
+export class DynScreen {
   private readonly scrim: HTMLElement;
   private readonly box: HTMLElement;
   private nodeId = "";
+  private proc: DynProcessor | null = null;
   // Which display the operator last worked in, kept across opens and sessions the
-  // way the SENDS collapse and the meter point are. Not model-scoped like the
-  // meter point: this picks a way of reading a gate, not a per-device mapping.
-  private mode: Mode = loadJson<Mode>(MODE_STORE, "ladder") === "curve" ? "curve" : "ladder";
+  // way the SENDS collapse and the meter point are, and per processor: a gate and
+  // a compressor are not read the same way. Not model-scoped like the meter point —
+  // this picks a way of reading a processor, not a per-device mapping.
+  private modes: Record<string, Mode> = loadJson<Record<string, Mode>>(MODE_STORE, {});
 
   private readonly store = new MeterStore();
   private paintN = 0; // frame counter gating the throttled readout text
@@ -157,27 +218,29 @@ export class GateTuningModal {
   private dotOut: number | null = null;
   private plotDirty = true;
   private plotSize = { w: 0, h: 0 };
+  private geoCache: DynCurveGeo | null = null;
   /** Theme tokens the curve draws with. Read once per render, not per frame:
    *  getComputedStyle after the frame's DOM writes is a forced style recalc. */
   private plotTokens: Record<string, string> = {};
   /** The static plot (grid, axes, transfer curve) kept off-screen so a frame that
-   *  only moved the dot is one drawImage instead of ~13 stroked paths and ~13
-   *  fillText calls over the whole canvas. */
+   *  only moved the dot is one drawImage instead of a full repaint. */
   private plotLayer: HTMLCanvasElement | null = null;
-  /** The channel's GATE fields, resolved once in open() — `channelDynamics` runs a
+  /** The processor's fields, resolved once in open() — `channelDynamics` runs a
    *  regex and allocates on every call, and this is constant for the session. */
-  private gateFields: DynField[] = [];
+  private fields: DynField[] = [];
   private unsub: (() => void) | null = null;
   private raf = 0;
 
   // Live values, written by the subscription callback and read by the paint loop.
   private inTap: MeterTap | null = null;
   private outTap: MeterTap | null = null;
-  private grAddr: readonly [number, number] | undefined;
+  private gr: readonly [number, number] | undefined;
   private peaks: Record<Lane, PeakHold> = { in: noPeak(), gr: noPeak(), out: noPeak() };
 
   private ladders: Partial<Record<Lane, LadderRefs>> = {};
   private cap: HTMLElement | null = null;
+  /** Last threshold written to the DOM; NaN forces the next write (a rebuild). */
+  private syncedThreshold = Number.NaN;
   // The threshold row's controls, cached at build: syncThreshold runs at pointer
   // rate and was re-querying the subtree for both of them on every move.
   private thrSlider: HTMLInputElement | null = null;
@@ -190,30 +253,63 @@ export class GateTuningModal {
     close: () => this.close(),
   });
 
-  constructor(private readonly hooks: GateTuningHooks) {
-    this.scrim = document.getElementById("gate-tuning-modal") as HTMLElement;
-    this.box = document.getElementById("gate-tuning-box") as HTMLElement;
+  /** A pointer is down on this screen, so nothing may rebuild its DOM: the control
+   *  under the pointer would be replaced and the drag would end there. */
+  private grabbed = false;
+  /** A refresh arrived while grabbed and still has to happen. */
+  private refreshPending = false;
+
+  constructor(private readonly hooks: DynScreenHooks) {
+    this.scrim = document.getElementById("dyn-screen-modal") as HTMLElement;
+    this.box = document.getElementById("dyn-screen-box") as HTMLElement;
+    // The box itself outlives every rebuild, so one listener covers whatever it
+    // holds. Release is watched on the window because a drag routinely ends with
+    // the pointer outside the control, and outside the modal.
+    this.box.addEventListener("pointerdown", () => {
+      this.grabbed = true;
+    });
+    const release = (): void => {
+      if (!this.grabbed) return;
+      this.grabbed = false;
+      if (!this.refreshPending) return;
+      this.refreshPending = false;
+      this.refresh();
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
   }
 
   isOpen(): boolean {
     return !this.scrim.hidden;
   }
 
-  /** Open for one MONO IN channel. The screen is scoped to the channel it was
-   *  opened from and stays there — no in-screen channel switch, so the subscribed
-   *  address set is fixed for the whole session. */
-  open(nodeId: string): void {
+  /** The open processor. Every path below runs between open() and close(), where it
+   *  is set; the alternative was a gate-specific fallback in ten places. */
+  private p(): DynProcessor {
+    return this.proc as DynProcessor;
+  }
+
+  private mode(): Mode {
+    return this.modes[this.proc?.key ?? ""] === "curve" ? "curve" : "ladder";
+  }
+
+  /** Open one processor for one MONO IN channel. The screen is scoped to what it
+   *  was opened from and stays there — no in-screen channel or processor switch,
+   *  so the subscribed address set is fixed for the whole session. */
+  open(proc: DynProcessor, nodeId: string): void {
     const model = this.hooks.getModel();
-    const dyn = channelDynamics(model, nodeId, 0);
-    if (!dyn) return;
+    const dyn = this.dynamicsOf(model, nodeId);
+    const fields = dyn && proc.fields(dyn);
+    if (!fields) return;
+    this.proc = proc;
     this.nodeId = nodeId;
     // Fixed for the session, and needed by render() — which runs before any
     // subscription, so resolving them in startMeters() left the meter-id captions
     // blank for a whole off-line session.
-    this.gateFields = dyn.gate;
-    this.inTap = tapFor(nodeId, "pregate", model.id) ?? null;
-    this.outTap = tapFor(nodeId, "precomp", model.id) ?? null;
-    this.grAddr = gateGrAddr(nodeId, model.id);
+    this.fields = fields;
+    this.inTap = tapFor(nodeId, proc.inTapKey, model.id) ?? null;
+    this.outTap = tapFor(nodeId, proc.outTapKey, model.id) ?? null;
+    this.gr = grAddr(proc.grKind, nodeId, model.id);
     this.render();
     this.scrim.hidden = false;
     this.dismiss.attach();
@@ -236,8 +332,48 @@ export class GateTuningModal {
    *  follow can move these very parameters while it is open. */
   refresh(): void {
     if (!this.isOpen()) return;
+    // A follow can switch the channel's COMP/EQ bank out from under the screen,
+    // which takes the processor away entirely. That verdict is not deferrable —
+    // a screen left open on a bank the plan no longer emits would keep writing
+    // into it — so it is decided before anything else.
+    const dyn = this.dynamicsOf(this.hooks.getModel(), this.nodeId);
+    const fields = dyn && this.proc?.fields(dyn);
+    if (!fields) {
+      this.close();
+      return;
+    }
+    this.fields = fields;
+    // Device follow runs on its own clock, and under COMP 1-knob it runs on every
+    // step of a drag — the unit recomputes threshold / ratio / gain and announces
+    // them, which comes back here. Rebuilding then would replace the control being
+    // dragged, so the operator got two or three steps and no more. The values still
+    // have to land, or the rows the screen advertises as device-driven would sit
+    // frozen through the one gesture that drives them, so they go in place and only
+    // the rebuild waits — the same split the CONSOLE draws between updating a strip
+    // and re-creating it.
+    if (this.grabbed) {
+      this.refreshPending = true;
+      this.syncValues();
+      return;
+    }
     this.render();
     this.measure();
+  }
+
+  /** Write the current parameter values into the rows already on screen. Covers a
+   *  device-side change arriving mid-gesture; anything structural (which rows exist,
+   *  which are read-only) waits for the rebuild. */
+  private syncValues(): void {
+    for (const input of this.box.querySelectorAll<HTMLInputElement>("input[data-dyn]")) {
+      const key = input.dataset.dyn;
+      const f = key && this.fields.find((x) => x.key === key);
+      if (!f) continue;
+      const v = this.val(f.key);
+      if (Number(input.value) !== v) input.value = String(v);
+      const out = this.box.querySelector<HTMLElement>(`[data-dyn-val="${f.key}"]`);
+      if (out) setLevelText(out, dynValueText(f, v));
+    }
+    this.syncThreshold();
   }
 
   /** Live sync turned on/off while this screen is open. It holds the meter slot
@@ -251,13 +387,18 @@ export class GateTuningModal {
     else this.stopMeters();
   }
 
+  private dynamicsOf(model: DeviceModel, nodeId: string): ChannelDynamics | null {
+    const np = this.hooks.getPlan().nodeParams[nodeId];
+    return channelDynamics(model, nodeId, np?.compEqType ?? COMP_EQ_COMP_FIRST);
+  }
+
   // ---------------------------------------------------------------- meters
 
   /** The three addresses this screen streams, in signal order. Pure: the taps are
    *  resolved once in open(), since the channel is fixed for the session. */
   private addrs(): Array<[number, number]> {
     const out: Array<[number, number]> = [];
-    for (const a of [this.inTap?.l, this.grAddr, this.outTap?.l]) if (a) out.push([a[0], a[1]]);
+    for (const a of [this.inTap?.l, this.gr, this.outTap?.l]) if (a) out.push([a[0], a[1]]);
     return out;
   }
 
@@ -267,7 +408,7 @@ export class GateTuningModal {
     // registration silently, so the console must be told rather than discover it.
     this.hooks.releaseMeters();
     const addrs = this.addrs();
-    const gr = this.grAddr;
+    const gr = this.gr;
     void subscribeMeters(this.store, addrs, (m) => {
       // The GR peak folds here, not off the store: the store is last-write-win, so
       // a batch carrying more than one frame for an address would drop all but the
@@ -310,6 +451,24 @@ export class GateTuningModal {
     this.laneCache = { in: { v: -1, p: -1 }, gr: { v: -1, p: -1 }, out: { v: -1, p: -1 } };
   }
 
+  // ---------------------------------------------------------------- scales
+
+  /** Fraction of the ladder a level occupies (0 at the floor, 1 at 0 dBFS). */
+  private frac(db: number): number {
+    const lo = this.p().loDb;
+    return clamp01((db - lo) / (HI_DB - lo));
+  }
+
+  /** Fraction of a lane a reading fills. GR grows downward from 0, and reads
+   *  either on the level ladder's own dB per pixel (a gate's reduction runs the
+   *  whole ruler) or on a full scale of its own (a compressor's is a few dB, and
+   *  would sit invisible on a 54 dB ruler — its lane is labelled separately). */
+  private laneFrac(lane: Lane, db: number): number {
+    if (lane !== "gr") return this.frac(db);
+    const p = this.p();
+    return clamp01(Math.abs(db) / (p.grFullDb ?? HI_DB - p.loDb));
+  }
+
   // ---------------------------------------------------------------- painting
 
   /** One frame. The feed is 10 Hz and no interpolation is applied, so most frames
@@ -320,27 +479,30 @@ export class GateTuningModal {
     const live = this.hooks.isLive();
     const now: Record<Lane, number | null> = {
       in: live ? (this.store.readingTap(this.inTap)?.l ?? null) : null,
-      gr: live ? this.store.readGr(this.grAddr) : null,
+      gr: live ? this.store.readGr(this.gr) : null,
       out: live ? (this.store.readingTap(this.outTap)?.l ?? null) : null,
     };
 
     const showText = this.paintN++ % READOUT_EVERY === 0;
-    const m = t().gateTuning;
+    const m = t().dynTuning;
     for (const lane of LANES) {
       const db = now[lane];
       const p = this.peaks[lane];
       // Both rulers grow with the displayed magnitude, so "further along the lane"
       // is one comparison for all three — no level/reduction branch.
-      if (db !== null && (p.db === null || laneFrac(lane, db) > laneFrac(lane, p.db) || p.age > PEAK_HOLD_FRAMES)) {
+      if (
+        db !== null &&
+        (p.db === null || this.laneFrac(lane, db) > this.laneFrac(lane, p.db) || p.age > PEAK_HOLD_FRAMES)
+      ) {
         p.db = db;
         p.age = 0;
       } else if (db !== null) p.age++;
-      this.setLane(lane, db === null ? 0 : laneFrac(lane, db), p.db === null ? 0 : laneFrac(lane, p.db));
+      this.setLane(lane, db === null ? 0 : this.laneFrac(lane, db), p.db === null ? 0 : this.laneFrac(lane, p.db));
       if (showText) {
         this.setReadout(lane, db === null ? m.noReading : db.toFixed(1), p.db === null ? m.noReading : p.db.toFixed(1));
       }
     }
-    if (this.mode === "curve" && this.curveDirty(now.in, now.out)) this.drawCurve();
+    if (this.mode() === "curve" && this.curveDirty(now.in, now.out)) this.drawCurve();
   }
 
   /** Has anything the curve draws moved since the last frame? The plot is static
@@ -374,7 +536,7 @@ export class GateTuningModal {
   private setReadout(lane: Lane, value: string, peak: string): void {
     const r = this.readouts[lane];
     if (!r) return;
-    const peakText = `${t().gateTuning.peakPrefix} ${peak}`;
+    const peakText = `${t().dynTuning.peakPrefix} ${peak}`;
     if (r.lastV !== value) {
       r.lastV = value;
       setLevelText(r.v, value);
@@ -387,51 +549,77 @@ export class GateTuningModal {
 
   // ---------------------------------------------------------------- plan I/O
 
-  private gateVals(): Record<string, number | undefined> {
-    return (this.hooks.getPlan().nodeParams[this.nodeId]?.gate ?? {}) as Record<string, number | undefined>;
+  private vals(): Record<string, unknown> {
+    const key = this.p().key;
+    return (this.hooks.getPlan().nodeParams[this.nodeId]?.[key] ?? {}) as Record<string, unknown>;
   }
 
-  private setGate(patch: Record<string, number>): void {
+  private setVals(patch: Record<string, number | boolean>): void {
+    const key = this.p().key;
     const plan = this.hooks.getPlan();
     this.hooks.onUpdateNodeParams(this.nodeId, {
-      gate: { ...(plan.nodeParams[this.nodeId]?.gate ?? {}), ...patch },
+      [key]: { ...(plan.nodeParams[this.nodeId]?.[key] ?? {}), ...patch },
     });
   }
 
+  /** The value of one parameter, falling back to the catalog's own default — so the
+   *  screen and the field table cannot drift apart on what "unset" means. */
+  private val(key: string): number {
+    const v = this.vals()[key];
+    return typeof v === "number" ? v : (this.fields.find((f) => f.key === key)?.def ?? 0);
+  }
+
+  private values(): DynValues {
+    return { get: (k) => this.val(k) };
+  }
+
+  /** Keys the device is driving right now (COMP 1-knob / Auto Makeup). They stay
+   *  visible and keep updating — the device announces every recomputation — but
+   *  they are not editable here, matching the unit's own screen. Resolved once per
+   *  render: it can only change through a path that re-renders, and the pointer
+   *  handlers below consult it on every move. */
+  private driven: ReadonlySet<string> = NO_KEYS;
+
   private setThresholdFromFrac(f: number): void {
-    const db = Math.round(LO_DB + Math.min(1, Math.max(0, f)) * SPAN_DB);
-    if (db !== this.gateVals().threshold) this.setGate({ threshold: db });
+    if (this.driven.has("threshold")) return;
+    const lo = this.p().loDb;
+    const db = Math.round(lo + clamp01(f) * (HI_DB - lo));
+    if (db !== this.vals().threshold) this.setVals({ threshold: db });
     this.syncThreshold();
   }
 
   private syncThreshold(): void {
-    if (!this.cap) return;
-    const db = this.gateVal("threshold");
-    this.cap.style.setProperty("--pos", ((1 - frac(db)) * 100).toFixed(2) + "%");
-    this.cap.setAttribute("aria-valuenow", String(db));
-    this.cap.setAttribute("aria-valuetext", formatDyn(db, "db"));
+    const db = this.val("threshold");
+    // The ladder spans 54-72 dB over the slot height, so most consecutive moves
+    // resolve to the same rounded value. `--pos` drives `top` (unregistered, so it
+    // dirties layout) and the readout writes textContent, which relayouts its cell
+    // whether or not the string changed — the same reason paint() throttles its own.
+    if (db === this.syncedThreshold) return;
+    this.syncedThreshold = db;
+    if (this.cap) {
+      this.cap.style.setProperty("--pos", ((1 - this.frac(db)) * 100).toFixed(2) + "%");
+      this.cap.setAttribute("aria-valuenow", String(db));
+      this.cap.setAttribute("aria-valuetext", formatDyn(db, "db"));
+    }
     if (this.thrSlider && Number(this.thrSlider.value) !== db) this.thrSlider.value = String(db);
     if (this.thrVal) setLevelText(this.thrVal, formatDyn(db, "db"));
     this.markPlotDirty();
   }
 
-  /** The static half of the curve changed (threshold, range, size or theme), so the
-   *  next frame redraws it instead of only moving the dot. */
+  /** The static half of the curve changed (a parameter, size or theme), so the next
+   *  frame redraws it instead of only moving the dot. */
   private markPlotDirty(): void {
     this.plotDirty = true;
-  }
-
-  /** The value of one gate parameter, falling back to the catalog's own default —
-   *  so the screen and the field table cannot drift apart on what "unset" means. */
-  private gateVal(key: string): number {
-    return this.gateVals()[key] ?? this.gateFields.find((f) => f.key === key)?.def ?? 0;
   }
 
   // ---------------------------------------------------------------- rendering
 
   private render(): void {
     const m = t();
-    const g = m.gateTuning;
+    const proc = this.proc;
+    if (!proc) return;
+    const g = m.dynTuning;
+    const px = proc.text(m);
     this.readTokens();
     this.box.replaceChildren();
     this.ladders = {};
@@ -442,17 +630,24 @@ export class GateTuningModal {
     this.thrVal = null;
     this.plotDirty = true;
     this.plotSize = { w: 0, h: 0 };
+    // The readout cells are rebuilt empty, and the paint below is the only thing
+    // that fills them — without resetting the throttle counter a re-render landing
+    // on a skipped frame (every mode switch, since render() paints once) left them
+    // blank until the next feed tick, or forever with no session.
+    this.paintN = 0;
+    this.syncedThreshold = Number.NaN;
+    this.driven = proc.driven?.(this.vals()) ?? NO_KEYS;
 
     const title = el("h2", "");
-    title.id = "gate-tuning-title";
+    title.id = "dyn-screen-title";
     const ch = el("span", "gt-ch");
     ch.textContent = channelLabel(this.hooks.getModel(), this.nodeId);
     const name = el("span", "");
-    name.textContent = g.title;
+    name.textContent = px.title;
     title.append(ch, name);
 
     const grid = el("div", "prefs-grid");
-    grid.append(this.displayColumn(g), this.controlColumn(m));
+    grid.append(this.displayColumn(g, px), this.controlColumn(m, g));
 
     const actions = el("div", "consent-actions");
     const close = el("button", "consent-btn-primary");
@@ -465,73 +660,82 @@ export class GateTuningModal {
     this.paint();
   }
 
-  private displayColumn(g: Messages["gateTuning"]): HTMLElement {
+  private displayColumn(g: Messages["dynTuning"], px: DynText): HTMLElement {
     const col = el("div", "prefs-col");
     const sec = settingsSection(g.display);
     const h = sec.firstElementChild as HTMLElement;
     const seg = el("span", "udk-banks gt-modes");
     const mk = (mode: Mode, label: string): HTMLElement => {
       const b = el("button", "");
-      b.id = `gate-mode-${mode}`;
+      b.id = `dyn-mode-${mode}`;
       b.textContent = label;
-      b.setAttribute("aria-pressed", String(this.mode === mode));
+      b.setAttribute("aria-pressed", String(this.mode() === mode));
       b.addEventListener("click", () => {
-        if (this.mode === mode) return;
-        this.mode = mode;
-        saveJson(MODE_STORE, mode);
+        if (this.mode() === mode || !this.proc) return;
+        this.modes = { ...this.modes, [this.proc.key]: mode };
+        saveJson(MODE_STORE, this.modes);
         this.render();
+        this.measure();
       });
       return b;
     };
     seg.append(mk("ladder", g.modeLadder), mk("curve", g.modeCurve));
     h.append(seg);
-    col.append(sec, this.mode === "ladder" ? this.ladderBox(g) : this.curveBox(g));
-    // The hint is CURVE's alone — a fader cap on a meter explains itself, dragging
-    // a curve's knee does not — but its box is reserved in both modes. Adding it
+    col.append(sec, this.mode() === "ladder" ? this.ladderBox(px) : this.curveBox(px));
+    // The hint is CURVE's alone — a fader cap on a meter explains itself, a plot
+    // does not say what it is showing — but its box is reserved in both modes. Adding it
     // only in CURVE made the modal grow by its height on every switch, which moves
     // the Close action and the parameter rows under the pointer. The reservation is
     // exactly one line; `gt-note`'s fixed height keeps a longer string from silently
     // reintroducing the jump (the E2E pins the two modes to equal height).
     const hint = el("p", "gt-note");
-    if (this.mode === "curve") hint.textContent = g.curveHint;
+    if (this.mode() === "curve") hint.textContent = px.curveHint;
     else hint.setAttribute("aria-hidden", "true");
     col.append(hint);
     return col;
   }
 
-  private ladderBox(g: Messages["gateTuning"]): HTMLElement {
+  private ladderBox(px: DynText): HTMLElement {
+    const proc = this.p();
     const box = el("div", "gt-ladderbox");
     const row = el("div", "gt-ladders");
 
-    const scaleCol = el("div", "gt-lcol");
+    row.append(this.tickColumn(proc.loDb, proc.tickStep, (db) => this.frac(db)));
+    row.append(this.levelColumn("in", px.tapIn, this.inTap));
+    row.append(this.grColumn(px, proc));
+    row.append(this.levelColumn("out", px.tapOut, this.outTap));
+    box.append(row);
+    return box;
+  }
+
+  /** A tick column sharing the slots' grid row, so a tick and a level sit in one
+   *  coordinate space. `place` maps a value to its fraction up the column. */
+  private tickColumn(loDb: number, step: number, place: (db: number) => number): HTMLElement {
+    const col = el("div", "gt-lcol");
     const scale = el("div", "gt-scale");
-    for (let db = HI_DB; db >= LO_DB; db -= 5) {
+    // Stop one step short of the floor: a label centred on the bottom edge would
+    // hang into the caption row below it.
+    for (let db = HI_DB; db > loDb; db -= step) {
       const tick = el("span", "t");
       tick.textContent = String(db);
-      tick.style.bottom = (frac(db) * 100).toFixed(2) + "%";
+      tick.style.bottom = (place(db) * 100).toFixed(2) + "%";
       scale.append(tick);
     }
     // An empty caption of the same two-line height as its neighbours, so the tick
     // column's grid row matches the slots' and a tick lines up with a level.
     const spacer = el("span", "gt-cap-label");
     spacer.setAttribute("aria-hidden", "true");
-    spacer.append(document.createTextNode(" "), document.createElement("br"), document.createTextNode(" "));
-    scaleCol.append(scale, spacer);
-    row.append(scaleCol);
-
-    row.append(this.levelColumn("in", g.tapIn, this.inTap));
-    row.append(this.grColumn(g));
-    row.append(this.levelColumn("out", g.tapOut, this.outTap));
-    box.append(row);
-    return box;
+    spacer.append(document.createTextNode(" "), document.createElement("br"), document.createTextNode(" "));
+    col.append(scale, spacer);
+    return col;
   }
 
   private levelColumn(key: "in" | "out", label: string, tap: MeterTap | null): HTMLElement {
     const col = el("div", "gt-lcol");
     const slot = el("div", "gt-slot");
     const bar = el("div", "gt-bar");
-    bar.style.setProperty("--zy", (frac(METER_GREEN_TOP_DB) * 100).toFixed(2) + "%");
-    bar.style.setProperty("--zr", (frac(METER_YELLOW_TOP_DB) * 100).toFixed(2) + "%");
+    bar.style.setProperty("--zy", (this.frac(METER_GREEN_TOP_DB) * 100).toFixed(2) + "%");
+    bar.style.setProperty("--zr", (this.frac(METER_YELLOW_TOP_DB) * 100).toFixed(2) + "%");
     const shade = el("div", "gt-shade");
     const peak = el("div", "gt-peak off");
     slot.append(bar, shade, peak);
@@ -541,37 +745,51 @@ export class GateTuningModal {
     return col;
   }
 
-  private grColumn(g: Messages["gateTuning"]): HTMLElement {
+  private grColumn(px: DynText, proc: DynProcessor): HTMLElement {
+    const wrap = el("div", proc.grFullDb === undefined ? "gt-grwrap" : "gt-grwrap own");
     const col = el("div", "gt-lcol");
     const slot = el("div", "gt-slot gt-slot-gr");
     const shade = el("div", "gt-shade gr");
     const peak = el("div", "gt-peak gr off");
     slot.append(shade, peak);
     this.ladders.gr = { shade, peak };
-    col.append(slot, capLabel(g.tapGr, this.grAddr?.[0]));
-    return col;
+    col.append(slot, capLabel(px.tapGr, this.gr?.[0]));
+    // A reduction that runs the whole ruler (a gate's) reads off the shared tick
+    // column. One that occupies a few dB of it (a compressor's) would sit invisible
+    // there, so it gets a scale of its own — printed beside the lane and set apart
+    // from the level pair, never a second unlabelled scale under the shared ticks.
+    const full = proc.grFullDb;
+    if (full !== undefined) wrap.append(this.tickColumn(-full, full / 4, (db) => 1 - Math.abs(db) / full));
+    wrap.append(col);
+    return wrap;
   }
 
-  /** The threshold, as a fader cap on the input meter. The one gesture the screen
+  /** The threshold, as a fader cap on the input meter. The one gesture the ladder
    *  exists for — it works because the threshold's dB and the meter's dBFS are the
    *  same coordinate. */
   private thresholdCap(slot: HTMLElement): HTMLElement {
     const cap = el("div", "gt-cap");
-    cap.id = "gate-threshold-cap";
+    cap.id = "dyn-threshold-cap";
     cap.tabIndex = 0;
     cap.setAttribute("role", "slider");
     cap.setAttribute("aria-label", t().inspector.dyn.threshold);
-    cap.setAttribute("aria-valuemin", String(LO_DB));
+    cap.setAttribute("aria-valuemin", String(this.p().loDb));
     cap.setAttribute("aria-valuemax", String(HI_DB));
+    if (this.driven.has("threshold")) cap.classList.add("locked");
     this.cap = cap;
 
+    // The slot's rect is read once per gesture: reading it per move is a forced
+    // layout in the subtree the 30 fps meter loop is writing to, and the modal can
+    // neither scroll nor resize while a pointer is down.
+    let rect: DOMRect | null = null;
     const fromY = (clientY: number): void => {
-      const r = slot.getBoundingClientRect();
+      const r = (rect ??= slot.getBoundingClientRect());
       this.setThresholdFromFrac(1 - (clientY - r.top) / r.height);
     };
     let dragging = false;
     cap.addEventListener("pointerdown", (e) => {
       cap.setPointerCapture(e.pointerId);
+      rect = slot.getBoundingClientRect();
       dragging = true;
       e.preventDefault();
     });
@@ -580,20 +798,24 @@ export class GateTuningModal {
     });
     const end = (): void => {
       dragging = false;
+      rect = null;
     };
     cap.addEventListener("pointerup", end);
     cap.addEventListener("pointercancel", end);
     // A press on the track jumps the cap, matching the console faders.
     slot.addEventListener("pointerdown", (e) => {
-      if (e.target !== cap) fromY(e.clientY);
+      if (e.target === cap) return;
+      rect = slot.getBoundingClientRect();
+      fromY(e.clientY);
     });
     cap.addEventListener("keydown", (e) => {
       const step =
         e.key === "PageUp" ? 6 : e.key === "PageDown" ? -6 : e.key === "ArrowUp" ? 1 : e.key === "ArrowDown" ? -1 : 0;
-      if (!step) return;
+      if (!step || this.driven.has("threshold")) return;
       e.preventDefault();
-      const next = Math.min(HI_DB, Math.max(LO_DB, this.gateVal("threshold") + step));
-      this.setGate({ threshold: next });
+      const lo = this.p().loDb;
+      const next = Math.min(HI_DB, Math.max(lo, this.val("threshold") + step));
+      this.setVals({ threshold: next });
       this.syncThreshold();
     });
     return cap;
@@ -612,56 +834,82 @@ export class GateTuningModal {
     this.drawCurve();
   }
 
-  private curveBox(g: Messages["gateTuning"]): HTMLElement {
+  private curveBox(px: DynText): HTMLElement {
     const box = el("div", "gt-curvebox");
     const cv = document.createElement("canvas");
-    cv.id = "gate-curve";
-    cv.setAttribute("aria-label", g.modeCurve);
+    cv.id = "dyn-curve";
+    cv.setAttribute("aria-label", px.curveHint);
     this.canvas = cv;
     box.append(cv);
 
-    let dragging = false;
+    // A press anywhere on the plot sets the threshold, for the processors that opt
+    // in. Grips labelled T / R / G on the curve were tried and removed: they read
+    // as the unit's own screen, and a press that missed one fell through to this
+    // same threshold drag, so pressing the gain grip moved the threshold instead.
+    if (!this.proc?.curveDragsThreshold) return box;
     const apply = (e: PointerEvent): void => {
-      const w = this.plotSize.w || Math.max(240, cv.clientWidth);
+      const w = this.plotSize.w;
+      if (!w) return;
       this.setThresholdFromFrac((e.offsetX - CURVE_PAD.l) / (w - CURVE_PAD.l - CURVE_PAD.r));
     };
     cv.addEventListener("pointerdown", (e) => {
       cv.setPointerCapture(e.pointerId);
-      dragging = true;
       apply(e);
     });
     cv.addEventListener("pointermove", (e) => {
-      if (dragging) apply(e);
+      if (cv.hasPointerCapture(e.pointerId)) apply(e);
     });
-    const end = (): void => {
-      dragging = false;
+    const end = (e: PointerEvent): void => {
+      if (cv.hasPointerCapture(e.pointerId)) cv.releasePointerCapture(e.pointerId);
     };
     cv.addEventListener("pointerup", end);
     cv.addEventListener("pointercancel", end);
     return box;
   }
 
-  private controlColumn(m: Messages): HTMLElement {
-    const g = m.gateTuning;
+  private controlColumn(m: Messages, g: Messages["dynTuning"]): HTMLElement {
     const col = el("div", "prefs-col");
+    const proc = this.p();
 
     const params = settingsSection(g.parameters);
     const labels = m.inspector.dyn as Record<string, string>;
-    const vals = this.gateVals();
-    for (const f of this.gateFields) {
-      params.append(this.paramRow(f, labels[f.key] ?? f.key, vals[f.key] ?? f.def));
+    const vals = this.vals();
+    // These rows decide which other rows exist and which are read-only (COMP's
+    // 1-knob and Auto Makeup hand values over to the device), so each one rebuilds
+    // the column. The sliders deliberately do not — a rebuild mid-drag would drop
+    // the pointer capture.
+    const extra = proc.rows?.({
+      m,
+      vals,
+      driven: this.driven,
+      set: (patch) => {
+        this.setVals(patch);
+        this.render();
+        this.measure();
+      },
+      setValue: (patch) => this.setVals(patch),
+    });
+    if (extra?.lead) params.append(...extra.lead);
+    for (const f of this.fields) {
+      params.append(this.paramRow(f, labels[f.key] ?? f.key, this.val(f.key), this.driven.has(f.key), g));
     }
+    if (extra?.tail) params.append(...extra.tail);
 
     const ro = settingsSection(g.readouts);
     const cells = el("div", "gt-readouts");
-    cells.append(this.readoutCell("in", g.tapIn), this.readoutCell("gr", g.tapGr), this.readoutCell("out", g.tapOut));
+    const px = proc.text(m);
+    cells.append(
+      this.readoutCell("in", px.tapIn),
+      this.readoutCell("gr", px.tapGr),
+      this.readoutCell("out", px.tapOut),
+    );
     ro.append(cells);
 
     col.append(params, ro);
     return col;
   }
 
-  private paramRow(f: DynField, label: string, value: number): HTMLElement {
+  private paramRow(f: DynField, label: string, value: number, driven: boolean, g: Messages["dynTuning"]): HTMLElement {
     const ctl = el("span", "ctl dev-slider");
     const input = document.createElement("input");
     input.type = "range";
@@ -669,10 +917,10 @@ export class GateTuningModal {
     input.max = String(f.max);
     input.step = String(f.step);
     input.value = String(value);
-    input.dataset.gate = f.key;
+    input.dataset.dyn = f.key;
     input.setAttribute("aria-label", label);
     const val = el("span", "param-val gt-val");
-    val.dataset.gateVal = f.key;
+    val.dataset.dynVal = f.key;
     if (f.key === "threshold") {
       this.thrSlider = input;
       this.thrVal = val;
@@ -689,13 +937,22 @@ export class GateTuningModal {
     input.addEventListener("input", () => {
       const v = Number(input.value);
       show(v);
-      this.setGate({ [f.key]: v });
+      this.setVals({ [f.key]: v });
       if (f.key === "threshold") this.syncThreshold();
-      else if (f.key === "range") this.markPlotDirty();
+      else this.markPlotDirty();
     });
     wheelStep(input);
     ctl.append(input, val);
-    return settingsRow(label, ctl);
+    const row = settingsRow(label, ctl, driven ? { tag: g.driven, locked: true } : {});
+    // The device's push-and-turn fine grid is confirmed for exactly one dynamics
+    // value, the COMP makeup gain, so the field table says which (see
+    // reference/work/vd/vd-params.md). The legend pins beside the static label,
+    // never the readout — the readout's width changes with the value's digits.
+    if (f.fineStep !== undefined && !driven) {
+      optInFine(input, f.step, f.fineStep);
+      row.querySelector(".lblc")?.append(fineTag());
+    }
+    return row;
   }
 
   private readoutCell(lane: Lane, label: string): HTMLElement {
@@ -721,10 +978,28 @@ export class GateTuningModal {
     this.plotDirty = true;
   }
 
+  /** Plot coordinates for the current size. Cached: it depends only on the size and
+   *  the processor, and the alternative was two fresh closures plus a spread on
+   *  every frame of the loop this file otherwise keeps allocation-free. */
+  private geo(w: number, h: number): DynCurveGeo {
+    if (this.geoCache && this.geoCache.w === w && this.geoCache.h === h) return this.geoCache;
+    const proc = this.p();
+    const lo = proc.loDb;
+    const outLo = proc.outLoDb;
+    const outHi = Math.max(HI_DB, ...proc.outTicks);
+    this.geoCache = {
+      w,
+      h,
+      px: (db) => CURVE_PAD.l + ((db - lo) / (HI_DB - lo)) * (w - CURVE_PAD.l - CURVE_PAD.r),
+      py: (db) => h - CURVE_PAD.b - ((db - outLo) / (outHi - outLo)) * (h - CURVE_PAD.t - CURVE_PAD.b),
+    };
+    return this.geoCache;
+  }
+
   /** Split into a cached static layer and a live dot. Everything but the dot
-   *  depends only on threshold, range, size and theme, so at 30 fps against a
-   *  10 Hz feed redrawing it every frame was ~570 stroked paths and ~510 fillText
-   *  calls a second for at most 10 meaningful dot positions. */
+   *  depends only on the parameters, size and theme, so at 30 fps against a 10 Hz
+   *  feed redrawing it every frame was hundreds of stroked paths a second for at
+   *  most 10 meaningful dot positions. */
   private drawCurve(): void {
     const cv = this.canvas;
     if (!cv) return;
@@ -754,9 +1029,11 @@ export class GateTuningModal {
     const inDb = this.dotIn;
     const outDb = this.dotOut;
     if (inDb === null || outDb === null) return;
+    const proc = this.p();
+    const g = this.geo(w, h);
     const tok = this.plotTokens;
-    const x = px(Math.max(inDb, LO_DB), w);
-    const y = py(Math.max(outDb, OUT_LO_DB), h);
+    const x = g.px(Math.max(inDb, proc.loDb));
+    const y = g.py(Math.max(outDb, proc.outLoDb));
     c.fillStyle =
       inDb >= METER_YELLOW_TOP_DB ? tok["--m-red"] : inDb >= METER_GREEN_TOP_DB ? tok["--m-yellow"] : tok["--m-green"];
     c.beginPath();
@@ -767,8 +1044,10 @@ export class GateTuningModal {
     c.stroke();
   }
 
-  /** The static plot, rendered once per threshold / range / size / theme change. */
+  /** The static plot, rendered once per parameter / size / theme change: the frame
+   *  and axes here, the processor's own transfer curve on top. */
   private drawPlotLayer(w: number, h: number, dpr: number): HTMLCanvasElement {
+    const proc = this.p();
     const layer = this.plotLayer ?? document.createElement("canvas");
     layer.width = Math.round(w * dpr);
     layer.height = Math.round(h * dpr);
@@ -777,31 +1056,31 @@ export class GateTuningModal {
     c.clearRect(0, 0, w, h);
 
     const tok = this.plotTokens;
+    const g = this.geo(w, h);
     const line = tok["--plot-line"];
     const faint = tok["--plot-faint"];
     const dim = tok["--plot-dim"];
-    const led = tok["--led"];
-    const gr = tok["--gr"];
 
-    c.font = '9.5px "SF Mono", Menlo, Consolas, monospace';
+    c.font = PLOT_FONT;
     c.strokeStyle = line;
     c.lineWidth = 1;
     c.fillStyle = faint;
     c.textAlign = "center";
-    for (let db = LO_DB; db <= HI_DB; db += 12) {
+    const inStep = Math.round((HI_DB - proc.loDb) / 6);
+    for (let db = proc.loDb; db <= HI_DB; db += inStep) {
       c.beginPath();
-      c.moveTo(px(db, w) + 0.5, CURVE_PAD.t);
-      c.lineTo(px(db, w) + 0.5, h - CURVE_PAD.b);
+      c.moveTo(g.px(db) + 0.5, CURVE_PAD.t);
+      c.lineTo(g.px(db) + 0.5, h - CURVE_PAD.b);
       c.stroke();
-      c.fillText(String(db), px(db, w), h - CURVE_PAD.b + 13);
+      c.fillText(String(db), g.px(db), h - CURVE_PAD.b + 13);
     }
     c.textAlign = "right";
-    for (const db of OUT_TICKS) {
+    for (const db of proc.outTicks) {
       c.beginPath();
-      c.moveTo(CURVE_PAD.l, py(db, h) + 0.5);
-      c.lineTo(w - CURVE_PAD.r, py(db, h) + 0.5);
+      c.moveTo(CURVE_PAD.l, g.py(db) + 0.5);
+      c.lineTo(w - CURVE_PAD.r, g.py(db) + 0.5);
       c.stroke();
-      c.fillText(String(db), CURVE_PAD.l - 6, py(db, h) + 3);
+      c.fillText(String(db), CURVE_PAD.l - 6, g.py(db) + 3);
     }
     c.fillStyle = dim;
     c.textAlign = "left";
@@ -812,69 +1091,22 @@ export class GateTuningModal {
     c.fillText("OUT dBFS", 0, 0);
     c.restore();
 
-    // Unity reference, so the shelf's drop reads against something.
+    // Unity reference, so the curve's departure from it reads against something.
     c.strokeStyle = faint;
     c.setLineDash([2, 3]);
     c.beginPath();
-    c.moveTo(px(LO_DB, w), py(LO_DB, h));
-    c.lineTo(px(HI_DB, w), py(HI_DB, h));
+    c.moveTo(g.px(proc.loDb), g.py(proc.loDb));
+    c.lineTo(g.px(HI_DB), g.py(HI_DB));
     c.stroke();
     c.setLineDash([]);
 
-    const thr = this.gateVal("threshold");
-    const rangeDb = this.gateVal("range");
-    // range at its -∞ notch closes completely; the shelf then sits at the floor.
-    const drop = rangeDb <= GATE_RANGE_OFF_DB ? GR_FLOOR_DB : rangeDb;
-    const clampY = (db: number): number => py(Math.max(db, OUT_LO_DB), h);
+    proc.drawCurve(c, g, this.values(), tok);
 
-    c.strokeStyle = led;
-    c.lineWidth = 2;
-    c.beginPath();
-    c.moveTo(px(LO_DB, w), clampY(LO_DB + drop));
-    c.lineTo(px(thr, w), clampY(thr + drop));
-    c.stroke();
-    c.beginPath();
-    c.moveTo(px(thr, w), py(thr, h));
-    c.lineTo(px(HI_DB, w), py(HI_DB, h));
-    c.stroke();
-
-    // The knee's drop, labelled with the range it represents. Only a -∞ range
-    // reaches the axis floor; every finite range lands on scale, which is the
-    // point of running the output axis past the input's.
-    c.strokeStyle = gr;
-    c.setLineDash([3, 3]);
-    c.beginPath();
-    c.moveTo(px(thr, w), py(thr, h));
-    c.lineTo(px(thr, w), clampY(thr + drop));
-    c.stroke();
-    c.setLineDash([]);
-    c.fillStyle = gr;
-    const right = px(thr, w) > w - CURVE_PAD.r - 80;
-    c.textAlign = right ? "right" : "left";
-    const shown = rangeDb <= GATE_RANGE_OFF_DB ? "-∞" : formatDyn(rangeDb, "db");
-    c.fillText(shown, px(thr, w) + (right ? -6 : 6), Math.min(clampY(thr + drop) - 6, h - CURVE_PAD.b - 4));
-
-    c.strokeStyle = led;
-    c.globalAlpha = 0.35;
-    c.lineWidth = 1;
-    c.beginPath();
-    c.moveTo(px(thr, w) + 0.5, CURVE_PAD.t);
-    c.lineTo(px(thr, w) + 0.5, h - CURVE_PAD.b);
-    c.stroke();
-    c.globalAlpha = 1;
-    c.fillStyle = led;
-    c.textAlign = "left";
-    c.fillText(formatDyn(thr, "db"), Math.min(px(thr, w) + 5, w - CURVE_PAD.r - 60), CURVE_PAD.t + 11);
     return layer;
   }
 }
 
-const CURVE_PAD = { l: 44, r: 14, t: 14, b: 28 };
-/** Plot coordinates. The input axis spans the threshold's domain; the output axis
- *  runs past it to the GR floor (see OUT_LO_DB). */
-const px = (db: number, w: number): number => CURVE_PAD.l + ((db - LO_DB) / SPAN_DB) * (w - CURVE_PAD.l - CURVE_PAD.r);
-const py = (db: number, h: number): number =>
-  h - CURVE_PAD.b - ((db - OUT_LO_DB) / OUT_SPAN_DB) * (h - CURVE_PAD.t - CURVE_PAD.b);
+const PLOT_FONT = '9.5px "SF Mono", Menlo, Consolas, monospace';
 
 const PLOT_TOKENS = [
   "--plot-line",

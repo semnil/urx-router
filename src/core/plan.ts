@@ -54,9 +54,9 @@ export interface DelayParams {
 
 // EQ 1-knob (UG "1-knob EQ"): a simplified mode on every EQ (input channels and
 // output buses) where one knob drives the whole 4-band PEQ. `type` is a shared
-// preset enum (0 Intensity / 1 Vocal / 2 Loudness) whose dropdown shows only the
-// subset that applies — Intensity/Vocal on mono input channels, Intensity/Loudness
-// on stereo channels and output buses. `level` is the effect depth 0..100 %. When
+// preset enum (0 Intensity / 1 Vocal / 2 Loudness); every EQ instance offers all
+// three (measured — the per-screen subset this once recorded was wrong).
+// `level` is the effect depth 0..100 %. When
 // on, the device recomputes the 4-band PEQ, so the tool does not author the band
 // values (they are device-driven). All optional (absent = device default: off).
 export interface EqOneKnobParams {

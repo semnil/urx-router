@@ -19,6 +19,14 @@ import { reachedAndFailed, sendConverging } from "./client";
 // Coalesce rapid edits (a slider drag fires per pixel) into one flush so the
 // single-threaded device worker is not flooded; the snapshot diff means only the
 // final value of each address is sent.
+//
+// This is a trailing THROTTLE, not a debounce that re-arms: a window absorbs
+// whatever lands in it and then flushes. A re-arming debounce never fired at all
+// while a drag was in motion — measured, a 500 ms drag at 25 ms intervals sent
+// nothing until the pointer stopped, so the device only heard the end of every
+// move. One flush costs a whole-plan translate + diff, measured at 0.20 ms for
+// the URX44V default plan (782 commands) in both V8 and WebKit, so flushing per
+// window rather than per gesture is 0.2% of a core.
 const DEBOUNCE_MS = 120;
 
 // Params whose write makes the device reset dependents (the catalog flags these
@@ -72,6 +80,11 @@ export class LiveSync {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
   private pending = false;
+  // The last flush had to converge (a sideEffect param went out), which re-reads
+  // the whole write scope and settles between rounds — seconds, not milliseconds.
+  // That alone does not decide anything: it only says the next schedule() should
+  // ask the diff whether the same is about to happen again (convergePending).
+  private lastFlushConverged = false;
 
   constructor(private readonly hooks: LiveSyncHooks) {}
 
@@ -125,20 +138,43 @@ export class LiveSync {
   end(): void {
     this.active = false;
     this.pending = false;
+    this.lastFlushConverged = false;
     if (this.timer !== null) {
       clearTimeout(this.timer);
       this.timer = null;
     }
   }
 
-  /** Note a plan change; a flush runs after the debounce settles. No-op when inactive. */
+  /** Note a plan change; a flush runs at the end of the current window. No-op when
+   *  inactive. */
   schedule(): void {
     if (!this.active) return;
-    if (this.timer !== null) clearTimeout(this.timer);
+    if (this.timer !== null) {
+      // A window is already armed and will pick this change up with the rest —
+      // unless what is waiting in it would converge, in which case re-arm so a
+      // continuous stream waits for quiet rather than starting a converge round
+      // per window. Asking the diff, not "did the last flush converge": that
+      // latch alone would silence the first drag after any converge, whatever it
+      // touched, which is the behaviour the throttle exists to remove.
+      if (!this.lastFlushConverged || !this.convergePending()) return;
+      clearTimeout(this.timer);
+    }
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.flush();
     }, DEBOUNCE_MS);
+  }
+
+  /** Would flushing now send a sideEffect param? Runs the same whole-plan translate
+   *  the flush does (0.2 ms for a URX44V plan), so it is only consulted while the
+   *  previous flush converged — the state where the answer changes what happens. */
+  private convergePending(): boolean {
+    const model = this.hooks.getModel();
+    const plan = this.hooks.getPlan();
+    for (const c of planToCommands(model, plan, this.scope())) {
+      if (SIDE_EFFECT.has(c.name) && this.snapshot.get(cmdKey(c)) !== c.vdValue) return true;
+    }
+    return false;
   }
 
   // Rebuild the snapshot to the plan's current implied state — the device truth
@@ -197,6 +233,7 @@ export class LiveSync {
         this.nameSnapshot.set(k, w.value);
         sent++;
       }
+      this.lastFlushConverged = sideEffect;
       if (sideEffect) {
         // The device reset dependents; converge against its post-reset state and
         // rebuild the snapshot so the next diff measures from the device truth.

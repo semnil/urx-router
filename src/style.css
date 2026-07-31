@@ -1610,7 +1610,7 @@ select:focus-visible,
 /* ---- console view (mixer-style level overview) ---- */
 
 #console-host,
-#gate-tuning-box {
+#dyn-screen-box {
   --strip-w: 94px;
   --head-h: 252px;
   --groove: color-mix(in srgb, var(--canvas-bg) 55%, #000 45%);
@@ -1627,7 +1627,7 @@ select:focus-visible,
 /* Meters and fader slots read as LEDs on black: keep the groove dark in light
    mode too, so amber set fills and green/red signal lanes stay high-contrast. */
 [data-theme="light"] #console-host,
-[data-theme="light"] #gate-tuning-box {
+[data-theme="light"] #dyn-screen-box {
   --groove: #2a251d;
 }
 .con-strips {
@@ -3384,13 +3384,13 @@ select:focus-visible,
   color: var(--led);
 }
 
-/* ---- GATE tuning modal ---- */
-/* Shares the Preferences box, grid, section and row recipes; only what this
-   screen adds lives here. Its one new idea is that the threshold is a fader cap
-   on the input meter — which works because a GATE threshold in dB and the PRE
-   GATE meter's dBFS are the same coordinate — so the ladder is linear in dB over
-   exactly the threshold's domain (-72..0), not the console's detent ruler. */
-#gate-tuning-box h2 {
+/* ---- dynamics tuning modal (GATE / COMP) ---- */
+/* Shares the Preferences box, grid, section and row recipes; only what these
+   screens add lives here. Their one new idea is that the threshold is a fader cap
+   on the input meter — which works because a threshold in dB and the input meter's
+   dBFS are the same coordinate — so the ladder is linear in dB over exactly the
+   threshold's domain, not the console's detent ruler. */
+#dyn-screen-box h2 {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -3428,6 +3428,20 @@ select:focus-visible,
   justify-content: center;
   padding: 8px;
   height: 320px;
+}
+/* The GR lane and, when it carries a scale of its own, its tick column. The extra
+   gap sets the pair apart from the level lanes: two rulers side by side must not
+   read as one, which is why a second unlabelled scale under the shared ticks was
+   rejected for the gate. */
+.gt-grwrap {
+  display: flex;
+  gap: 4px;
+}
+.gt-grwrap.own {
+  margin: 0 6px;
+}
+.gt-grwrap.own .gt-scale {
+  width: 22px;
 }
 .gt-lcol {
   display: grid;
@@ -3495,6 +3509,11 @@ select:focus-visible,
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
   cursor: ns-resize;
   z-index: 2;
+}
+.gt-cap.locked {
+  filter: grayscale(1);
+  opacity: 0.5;
+  cursor: default;
 }
 .gt-cap::after {
   content: "";

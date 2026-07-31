@@ -273,16 +273,17 @@
       <div id="device-setup-box" class="consent-box prefs-box"></div>
     </div>
     <div
-      id="gate-tuning-modal"
+      id="dyn-screen-modal"
       class="consent-scrim"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="gate-tuning-title"
+      aria-labelledby="dyn-screen-title"
       hidden
     >
-      <!-- Content is rebuilt by ui/gate-tuning.ts on every open, so it always
-           reflects the current language, channel and gate values. -->
-      <div id="gate-tuning-box" class="consent-box prefs-box"></div>
+      <!-- One host for both dynamics screens (GATE / COMP): ui/dyn-screen.ts
+           rebuilds it on every open, so it always reflects the current language,
+           channel, processor and values. -->
+      <div id="dyn-screen-box" class="consent-box prefs-box"></div>
     </div>
     <div id="prefs-modal" class="consent-scrim" role="dialog" aria-modal="true" aria-labelledby="prefs-title" hidden>
       <!-- Content is rebuilt by ui/prefs.ts on every open, so it always reflects

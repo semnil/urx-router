@@ -81,7 +81,6 @@ import {
 import {
   COMP_EQ_COMP_FIRST,
   COMP_EQ_OPTIONS,
-  COMP_KNEE_DEFAULT,
   COMP_KNEE_OPTIONS,
   EQ_TYPE_HIGH_OPTIONS,
   EQ_TYPE_LOW_OPTIONS,
@@ -107,8 +106,7 @@ import {
   COLOR_PALETTE,
   DELAY_FRAME_RATE_OPTIONS,
   DELAY_FRAME_RATE_DEFAULT,
-  EQ_ONE_KNOB_TYPE_MONO_OPTIONS,
-  EQ_ONE_KNOB_TYPE_WIDE_OPTIONS,
+  EQ_ONE_KNOB_TYPE_OPTIONS,
   EQ_ONE_KNOB_TYPE_DEFAULT,
   insertFxAvailable,
   insertFxEngaged,
@@ -166,6 +164,7 @@ import type { Selection } from "./graph";
 import { setLevelText } from "./glyph";
 import { wheelStep } from "./dom";
 import { fineTag, optInFine } from "./fine";
+import type { DynKind } from "./dyn-registry";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 
@@ -178,7 +177,7 @@ export interface InspectorActions {
   onOpenRecent: (path: string) => void;
   onHideNode: (id: string) => void;
   /** Open the GATE tuning screen for a MONO IN channel. */
-  onOpenGateScreen: (id: string) => void;
+  onOpenDynScreen: (kind: DynKind, id: string) => void;
   onClose: () => void;
 }
 
@@ -513,13 +512,12 @@ export function renderInspector(
         const on = locked ? false : (np[sec.key] ?? sec.key === "eqOn");
         const { el, body } = section(m.inspector[sec.key], { open: on, on, key: sec.key });
         body.append(sectionToggle(node.id, sec.key, on, actions, locked ? m.inspector.eqRateLocked : undefined));
-        if (sec.key === "gateOn" && dyn) body.append(gateLauncher(node.id, actions, m));
+        if (sec.key === "gateOn" && dyn) body.append(dynLauncher("gate", node.id, actions, m));
         else if (sec.key === "compOn" && ssmcs) body.append(ssmcsCompBlock(node.id, np, plan, actions, m));
-        else if (sec.key === "compOn" && dyn?.comp)
-          body.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
+        else if (sec.key === "compOn" && dyn?.comp) body.append(dynLauncher("comp", node.id, actions, m));
         else if (sec.key === "eqOn" && ssmcs) body.append(ssmcsEqBlock(node.id, np, plan, actions, m));
         else if (sec.key === "eqOn" && ieq && !locked) {
-          body.append(eqOneKnobBlock(node.id, !isStereoChannel(node.id), np, plan, actions, m));
+          body.append(eqOneKnobBlock(node.id, np, plan, actions, m));
           if (!np.eqOneKnob?.on) body.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
         }
         host.append(el);
@@ -567,7 +565,7 @@ export function renderInspector(
         const on = np.eqOn ?? true;
         const { el, body } = section(m.inspector.eqOn, { open: on, on, key: "eqOn" });
         body.append(sectionToggle(node.id, "eqOn", on, actions));
-        body.append(eqOneKnobBlock(node.id, false, np, plan, actions, m));
+        body.append(eqOneKnobBlock(node.id, np, plan, actions, m));
         if (!np.eqOneKnob?.on) body.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
         host.append(el);
       }
@@ -1124,11 +1122,10 @@ const eqActiveBand = new Map<string, number>();
 // — matching the device's filter-type behavior. Edits merge into nodeParams.eqBands.
 // EQ 1-knob controls: the ON toggle plus (when on) the preset type and the
 // 0..100 % effect-depth slider. When on, the caller hides the 4-band tabs — the
-// device drives the bands from the 1-knob, so they are not editable. `mono` picks
-// the type dropdown subset (mono input = Intensity/Vocal, else Intensity/Loudness).
+// device drives the bands from the 1-knob, so they are not editable. Every EQ
+// instance offers all three preset types (measured).
 function eqOneKnobBlock(
   nodeId: string,
-  mono: boolean,
   np: NodeParams,
   plan: Plan,
   actions: InspectorActions,
@@ -1140,9 +1137,10 @@ function eqOneKnobBlock(
     actions.onUpdateNodeParams(nodeId, { eqOneKnob: { ...(plan.nodeParams[nodeId]?.eqOneKnob ?? {}), ...patch } });
   frag.append(boolToggle(m.inspector.eqOneKnob, ok.on ?? false, (v) => setOk({ on: v })));
   if (ok.on) {
-    const opts = mono ? EQ_ONE_KNOB_TYPE_MONO_OPTIONS : EQ_ONE_KNOB_TYPE_WIDE_OPTIONS;
     frag.append(
-      enumSelect(m.inspector.eqOneKnobType, opts, ok.type ?? EQ_ONE_KNOB_TYPE_DEFAULT, (v) => setOk({ type: v })),
+      enumSelect(m.inspector.eqOneKnobType, EQ_ONE_KNOB_TYPE_OPTIONS, ok.type ?? EQ_ONE_KNOB_TYPE_DEFAULT, (v) =>
+        setOk({ type: v }),
+      ),
     );
     frag.append(
       rangeSlider(
@@ -1631,28 +1629,23 @@ function duckerBlock(nodeId: string, np: NodeParams, plan: Plan, actions: Inspec
   return el;
 }
 
-// GATE section body for a MONO IN channel: the ON toggle (added by the caller)
-// and the control that opens the gate tuning screen. The five detail sliders used
-// to live here; they moved to that screen, which can show them beside the meters
-// that say what they are doing. Keeping a second copy here would not just
-// duplicate them — `dynFieldSlider` reads the params snapshot captured at render
-// time and never re-renders on a value change, so after the screen moved the
-// threshold these sliders would sit at the old position and write it back on the
-// next drag.
-function gateLauncher(nodeId: string, actions: InspectorActions, m: Messages): HTMLElement {
+// GATE / COMP section body for a MONO IN channel: the ON toggle (added by the
+// caller) and the control that opens that processor's tuning screen. The detail
+// sliders used to live here; they moved to that screen, which can show them beside
+// the meters that say what they are doing. Keeping a second copy here would not
+// just duplicate them — `dynFieldSlider` reads the params snapshot captured at
+// render time and never re-renders on a value change, so after the screen moved
+// the threshold these sliders would sit at the old position and write it back on
+// the next drag.
+function dynLauncher(kind: DynKind, nodeId: string, actions: InspectorActions, m: Messages): HTMLElement {
   const btn = document.createElement("button");
   btn.className = "gate-open";
-  btn.id = "btn-gate-screen";
-  btn.textContent = m.gateTuning.open;
-  btn.addEventListener("click", () => actions.onOpenGateScreen(nodeId));
+  btn.id = `btn-${kind}-screen`;
+  btn.textContent = m.dynTuning[kind].open;
+  btn.addEventListener("click", () => actions.onOpenDynScreen(kind, nodeId));
   return btn;
 }
 
-// COMP detail editor (MONO IN channels, COMP->EQ mode). Follows the COMP ON toggle
-// like the device's COMP screen: Auto Makeup then 1-knob (left → right), then the
-// threshold/ratio/gain/attack/release sliders and the knee dropdown. 1-knob drives
-// every param from a single level, so the rest — Auto Makeup included — hide while
-// it is on, and Auto Makeup auto-drives the gain, so its slider hides too.
 // SSMCS raw-value display formatters: ms (3-tier to match the device's variable
 // precision) and ratio (∞ at the top). Hz and dB reuse formatHz / formatDyn.
 function fmtSsmcsMs(ms: number): string {
@@ -1852,57 +1845,6 @@ function ssmcsEqBlock(
       ),
     );
   }
-  return frag;
-}
-
-function compDetailBlock(
-  nodeId: string,
-  fields: DynField[],
-  np: NodeParams,
-  plan: Plan,
-  actions: InspectorActions,
-  m: Messages,
-): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  const setComp = (patch: Record<string, number | boolean>): void => mergeSection(actions, plan, nodeId, "comp", patch);
-  const comp = np.comp ?? {};
-  const compVals = comp as Record<string, number | undefined>;
-  if (!comp.oneKnob) {
-    frag.append(boolToggle(m.inspector.autoMakeup, comp.autoMakeup ?? false, (v) => setComp({ autoMakeup: v })));
-  }
-  frag.append(boolToggle(m.inspector.oneKnob, comp.oneKnob ?? false, (v) => setComp({ oneKnob: v })));
-  if (comp.oneKnob) {
-    frag.append(
-      rangeSlider(
-        m.inspector.oneKnobLevel,
-        0,
-        100,
-        1,
-        comp.oneKnobLevel ?? 0,
-        (v) => `${v}%`,
-        (v) => setComp({ oneKnobLevel: v }),
-      ),
-    );
-    // The device drives ratio/gain from the 1-knob level and shows them read-only;
-    // mirror that (values come from readback, so they refresh on the next fetch).
-    const dyn = m.inspector.dyn as Record<string, string>;
-    for (const key of ["ratio", "gain"] as const) {
-      const f = fields.find((x) => x.key === key);
-      if (!f) continue;
-      const { row } = paramBlock(dyn[key], formatDyn(compVals[key] ?? f.def, f.unit));
-      row.classList.add("readonly");
-      row.title = m.inspector.oneKnobDriven;
-      frag.append(row);
-    }
-    return frag;
-  }
-  for (const f of fields) {
-    if (f.key === "gain" && comp.autoMakeup) continue;
-    frag.append(dynFieldSlider(f, m, compVals[f.key], (key, v) => setComp({ [key]: v })));
-  }
-  frag.append(
-    enumSelect(m.inspector.dyn.knee, COMP_KNEE_OPTIONS, comp.knee ?? COMP_KNEE_DEFAULT, (v) => setComp({ knee: v })),
-  );
   return frag;
 }
 

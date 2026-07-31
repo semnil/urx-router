@@ -4,7 +4,7 @@ import {
   decodeGrDb,
   decodeMeterDb,
   defaultTapKey,
-  gateGrAddr,
+  grAddr,
   GR_FLOOR_DB,
   hasMeter,
   MeterStore,
@@ -37,31 +37,37 @@ describe("decodeMeterDb", () => {
   });
 });
 
-describe("GATE gain-reduction meter", () => {
+describe("gain-reduction meters", () => {
   it("maps mono channels only, on the mono channel axis", () => {
-    expect(gateGrAddr("ch1")).toEqual([107, 0]);
-    expect(gateGrAddr("ch4")).toEqual([107, 3]);
-    // GATE is a MONO IN feature: no stereo channel, bus or output has one.
-    expect(gateGrAddr("ch_5_6")).toBeUndefined();
-    expect(gateGrAddr("bus.stereo")).toBeUndefined();
-    expect(gateGrAddr("out.main")).toBeUndefined();
+    expect(grAddr("gate", "ch1")).toEqual([107, 0]);
+    expect(grAddr("gate", "ch4")).toEqual([107, 3]);
+    expect(grAddr("comp", "ch1")).toEqual([110, 0]);
+    expect(grAddr("comp", "ch4")).toEqual([110, 3]);
+    // GATE and COMP are MONO IN features: no stereo channel, bus or output has one.
+    for (const kind of ["gate", "comp"] as const) {
+      expect(grAddr(kind, "ch_5_6")).toBeUndefined();
+      expect(grAddr(kind, "bus.stereo")).toBeUndefined();
+      expect(grAddr(kind, "out.main")).toBeUndefined();
+    }
   });
 
   it("stops at CH1-2 on URX22", () => {
-    expect(gateGrAddr("ch1", "URX22")).toEqual([107, 0]);
-    expect(gateGrAddr("ch2", "URX22")).toEqual([107, 1]);
-    expect(gateGrAddr("ch3", "URX22")).toBeUndefined();
+    expect(grAddr("gate", "ch1", "URX22")).toEqual([107, 0]);
+    expect(grAddr("gate", "ch2", "URX22")).toEqual([107, 1]);
+    expect(grAddr("gate", "ch3", "URX22")).toBeUndefined();
+    expect(grAddr("comp", "ch3", "URX22")).toBeUndefined();
   });
 
   it("stays off the level chain, so the meter-point selector never offers it", () => {
     const addrs = tapAddrs(tapsFor("ch1")).map(([id]) => id);
     expect(addrs).not.toContain(107);
+    expect(addrs).not.toContain(110);
   });
 
   it("reads both idle values as no reduction", () => {
-    // Measured on a URX44V: the gate reports 0 while switched off and the OVER
-    // sentinel while switched on and open. Neither is a reduction, and neither
-    // may raise a clip flag.
+    // Measured on a URX44V: 0 means the processor is not engaged (gate off, comp
+    // off) and the OVER sentinel means it is engaged with nothing to reduce.
+    // Neither is a reduction, and neither may raise a clip flag.
     expect(decodeGrDb(0)).toBe(0);
     expect(decodeGrDb(METER_OVER_RAW)).toBe(0);
   });
@@ -76,14 +82,14 @@ describe("GATE gain-reduction meter", () => {
     const store = new MeterStore();
     // A just-subscribed stream is not "0 dB of reduction" — that would read as a
     // gate passing everything.
-    expect(store.readGr(gateGrAddr("ch1"))).toBeNull();
+    expect(store.readGr(grAddr("gate", "ch1"))).toBeNull();
     store.apply({ meterId: 107, x: 0, value: -239 });
-    expect(store.readGr(gateGrAddr("ch1"))).toBeCloseTo(-23.9);
-    expect(store.readGr(gateGrAddr("ch2"))).toBeNull();
+    expect(store.readGr(grAddr("gate", "ch1"))).toBeCloseTo(-23.9);
+    expect(store.readGr(grAddr("gate", "ch2"))).toBeNull();
   });
 
   it("reports null for a node with no gate", () => {
-    expect(new MeterStore().readGr(gateGrAddr("bus.stereo"))).toBeNull();
+    expect(new MeterStore().readGr(grAddr("gate", "bus.stereo"))).toBeNull();
   });
 });
 

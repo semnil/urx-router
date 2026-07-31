@@ -40,8 +40,7 @@ import { vdConnect, vdDisconnect } from "../platform";
 import {
   BUS_TYPE_OPTIONS,
   DELAY_FRAME_RATE_OPTIONS,
-  EQ_ONE_KNOB_TYPE_MONO_OPTIONS,
-  EQ_ONE_KNOB_TYPE_WIDE_OPTIONS,
+  EQ_ONE_KNOB_TYPE_OPTIONS,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
   insertFxAvailable,
@@ -55,7 +54,6 @@ import {
   channelControl,
   inputPorts,
   insertFxControl,
-  isStereoChannel,
   UNVERIFIED_MAPPINGS,
   unverifiedAddresses,
 } from "./translate";
@@ -173,8 +171,7 @@ const SKIP = new Set([
 export const PASSES = Math.max(
   INSERT_FX_OPTIONS.length,
   OUTPUT_INSERT_FX_OPTIONS.length,
-  EQ_ONE_KNOB_TYPE_MONO_OPTIONS.length,
-  EQ_ONE_KNOB_TYPE_WIDE_OPTIONS.length,
+  EQ_ONE_KNOB_TYPE_OPTIONS.length,
   ...Object.values(ENUM_SWEEP).map((o) => o.length),
 );
 
@@ -332,24 +329,6 @@ function sweepInputSource(plan: Plan, pass: number, model: DeviceModel): void {
   });
 }
 
-// Sweep EQ 1-knob TYPE within each node's valid preset subset. The generic
-// perturb sweeps the shared "type" key across [0,1,2], but EQ_ONE_KNOB_TYPE
-// exposes only a screen-specific subset: mono input channels offer Intensity(0) /
-// Vocal(1), stereo channels and output buses offer Intensity(0) / Loudness(2).
-// Writing the out-of-subset value (Loudness to a mono channel) makes the device
-// reject the preset and floor the 1-knob LEVEL, so it never round-trips. Run after
-// perturb to overwrite that conflated value with one the node actually accepts;
-// the two subsets together still cover all three options over the node population.
-function sweepEqOneKnobType(plan: Plan, pass: number, model: DeviceModel): void {
-  for (const node of model.nodes) {
-    const ok = plan.nodeParams[node.id]?.eqOneKnob;
-    if (!ok || ok.type === undefined) continue;
-    const mono = node.kind === "channel" && !isStereoChannel(node.id);
-    const opts = mono ? EQ_ONE_KNOB_TYPE_MONO_OPTIONS : EQ_ONE_KNOB_TYPE_WIDE_OPTIONS;
-    ok.type = opts[pass % opts.length].value;
-  }
-}
-
 /**
  * Build the (silent) perturbed plan for a given sweep pass. `suppress` holds the
  * keys of colliding guesses to drop: each such mapping strips its own plan field
@@ -362,7 +341,6 @@ export function perturbedPlan(model: DeviceModel, original: Plan, pass: number, 
   for (const c of plan.connections) if (c.params) perturb(c.params as Record<string, unknown>, pass);
   sweepInsertFx(plan, pass, model);
   sweepInputSource(plan, pass, model);
-  sweepEqOneKnobType(plan, pass, model);
   if (suppress) for (const m of UNVERIFIED_MAPPINGS) if (suppress.has(m.key)) m.suppress?.(plan);
   makeSilent(model, plan);
   return plan;

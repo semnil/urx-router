@@ -44,12 +44,20 @@ test.describe("inspector sliders", () => {
 
   test("COMP gain is fine-eligible; threshold and Q are not", async ({ page }) => {
     await node(page, "ch1").click();
-    const comp = page.locator("#inspector .param.has-fine", { hasText: "Gain" }).last();
-    const slider = comp.locator("input[type=range]");
-    await expect(slider).toHaveAttribute("data-fine-step", "0.1");
-    // Threshold (1 dB grid) and Q (0.1 native) have no fine opt-in.
-    const threshold = page.locator("#inspector .param", { hasText: "Threshold" }).first();
+    // COMP gain lives on the dynamics screen now, and the eligibility travels with
+    // the field rather than with whichever surface renders it.
+    const comp = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^COMP$/ }) });
+    await comp.locator("summary").click(); // COMP folds off by default
+    await comp.locator("#btn-comp-screen").click();
+    const box = page.locator("#dyn-screen-box");
+    const gainRow = box.locator(".prefs-row", { hasText: "Gain" });
+    await expect(gainRow.locator("input[type=range]")).toHaveAttribute("data-fine-step", "0.1");
+    await expect(gainRow.locator(".fine-tag")).toBeVisible();
+    // Threshold (1 dB grid) has no fine opt-in, on the same screen.
+    const threshold = box.locator(".prefs-row", { hasText: "Threshold" });
     await expect(threshold.locator("input[type=range]")).not.toHaveAttribute("data-fine-step", /.+/);
+    await box.locator(".consent-btn-primary").click();
+    // Nor does Q (0.1 native) in the inspector.
     const q = page.locator("#inspector .eq-panel:not([hidden]) .param", { hasText: "Q" }).first();
     await expect(q.locator("input[type=range]")).not.toHaveAttribute("data-fine-step", /.+/);
   });
