@@ -66,7 +66,7 @@ import {
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
-import { el, onWheelStep, popTop, scrubFloat } from "./dom";
+import { el, focusables, onWheelStep, popTop, preserveFocus, scrubFloat } from "./dom";
 import { fineActive, fineTag } from "./fine";
 import { t } from "../i18n";
 
@@ -421,7 +421,7 @@ export class Console {
     const old = this.refs.get(stripId);
     if (!old) return;
     // Mark focus while the strip being replaced is still the one in refs.
-    const focus = this.markFocus();
+    const restoreFocus = this.captureFocus();
     const fresh = this.buildStrip(this.toStripModel(stripId));
     // buildStrip re-registered refs.get(stripId) with fresh meter elements; carry the
     // ballistics onto them so the meter (and its peak-hold bar) doesn't jump.
@@ -438,7 +438,7 @@ export class Console {
       if (btn) this.openSendPan(stripId, btn);
       else this.closeSendPan();
     }
-    this.restoreFocus(focus);
+    restoreFocus();
   }
 
   // ---- build / render ----
@@ -1476,7 +1476,7 @@ export class Console {
     // the whole rack — ~25 ms per render on WKWebView against ~6 ms without, on the path
     // Live sync takes for every device read-back reflect.
     const prev = this.refs;
-    const focus = this.markFocus();
+    const restoreFocus = this.captureFocus();
     this.refs = new Map();
     const { groups, master } = this.stripModels();
     this.stripsHost.replaceChildren();
@@ -1499,7 +1499,7 @@ export class Console {
     // of the window height (the SENDS rack between them has its own fixed height).
     this.host.style.setProperty("--head-h", this.mainHeadHeight() + "px");
     for (const [id, r] of this.refs) this.carryMeterState(prev.get(id), r);
-    this.restoreFocus(focus);
+    restoreFocus();
     this.startMeters(); // rescope the meter subscription to the rebuilt strips
     this.redrawMeters();
   }
@@ -1525,33 +1525,26 @@ export class Console {
   // strip's focusable elements, class). A rebuild derives the same strips from the
   // same plan, so the index addresses the same control; the class is the check that
   // it really did — when the rebuild changed a strip's shape (a chip appeared, the
-  // strip is gone), focus is dropped rather than handed to some other control.
-  private markFocus(): { id: string; idx: number; cls: string } | null {
-    const active = document.activeElement as HTMLElement | null;
-    if (!active || !this.stripsHost.contains(active)) return null;
-    for (const [id, r] of this.refs) {
-      if (!r.root.contains(active)) continue;
-      const idx = this.focusables(r.root).indexOf(active);
-      return idx < 0 ? null : { id, idx, cls: active.className };
-    }
-    return null;
-  }
-
-  private restoreFocus(mark: { id: string; idx: number; cls: string } | null): void {
-    if (!mark) return;
-    const root = this.refs.get(mark.id)?.root;
-    if (!root) return;
-    const target = this.focusables(root)[mark.idx];
-    // preventScroll keeps the rack where the operator left it when the restored control
-    // sits off screen (measured honoured on both engines — scripts/meter-bench.mjs's
-    // scrollCheck holds it against WKWebView on every bench run).
-    if (target?.className === mark.cls) target.focus({ preventScroll: true });
-  }
-
-  // Every focusable control a strip builds: the custom ones (fader / knob / chip /
-  // scribble) carry tabIndex 0, the SEND PAN trigger is a real button.
-  private focusables(root: HTMLElement): HTMLElement[] {
-    return [...root.querySelectorAll<HTMLElement>('[tabindex="0"], button')];
+  // strip is gone), focus is dropped rather than handed to some other control. The
+  // scroll offset is deliberately left out: the rack's is not restored (see
+  // preserveFocus), only focus is.
+  private captureFocus(): () => void {
+    return preserveFocus(
+      this.stripsHost,
+      (active) => {
+        for (const [id, r] of this.refs) {
+          if (!r.root.contains(active)) continue;
+          const idx = focusables(r.root).indexOf(active);
+          return idx < 0 ? null : { id, idx, cls: active.className };
+        }
+        return null;
+      },
+      (mark) => {
+        const root = this.refs.get(mark.id)?.root;
+        const target = root ? focusables(root)[mark.idx] : undefined;
+        return target?.className === mark.cls ? target : null;
+      },
+    );
   }
 
   // Draw the meters onto freshly built elements in the same task as the rebuild. They

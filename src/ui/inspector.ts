@@ -198,6 +198,17 @@ const LEVEL_MIN = LEVEL_MIN_DB;
 // set yet; matches the device's default head-amp gain.
 const HA_GAIN_DEFAULT_DB = -8;
 
+/** The nodes the panel's rendering for a selection is derived from. A node selection
+ *  reads that node's params; a connection reads BOTH endpoints' — the destination
+ *  bus's BUS Type / Pan Link decide which send controls exist at all (mixSendLocks),
+ *  and the source channel's Signal Type / Ducker decide the pan label and the notes.
+ *  Exported so a caller holding a changed node can ask whether the panel it is not
+ *  rendering has gone stale, instead of restating the footprint at the call site. */
+export function inspectorNodes(selection: Selection): string[] {
+  if (!selection) return [];
+  return selection.type === "node" ? [selection.id] : [parseRef(selection.from).nodeId, parseRef(selection.to).nodeId];
+}
+
 export function renderInspector(
   host: HTMLElement,
   model: DeviceModel,
@@ -1910,6 +1921,9 @@ function tapControl(conn: PlanConnection, onUpdate: UpdateParams, editable = tru
 function paramBlock(labelText: string, valueText: string): { row: HTMLElement; value: HTMLElement } {
   const row = document.createElement("div");
   row.className = "param";
+  // What main.ts keys a carried-over focus by, stamped while the row is being built so
+  // the restore does not search the row for its label element per candidate control.
+  row.dataset.paramLabel = labelText;
   const value = document.createElement("span");
   value.className = "param-val";
   setLevelText(value, valueText);

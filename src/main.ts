@@ -4,7 +4,7 @@ import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
-import { applyPairTransition, mirrorBalPair, partnerChannel, validatePlan } from "./core/routing";
+import { applyPairTransition, mirrorBalPair, mixSendLocks, partnerChannel, validatePlan } from "./core/routing";
 import type { PlanProblem } from "./core/routing";
 import {
   decodePlanParam,
@@ -38,7 +38,9 @@ import type { RecentEntry } from "./core/storage";
 import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
-import { renderInspector } from "./ui/inspector";
+import { inspectorNodes, renderInspector } from "./ui/inspector";
+import { focusables, preserveFocus } from "./ui/dom";
+import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
 import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
@@ -491,6 +493,14 @@ function reflectFollow(): void {
     if (graphHost.hidden) graphDirty = true;
     else graph.repaintDirtyNodes(ids);
     for (const id of ids) consoleView.refreshStrip(id);
+    // The inspector renders ONE selection, and which controls it renders is read off
+    // that selection's endpoint nodes: a device-side Pan Link ON removes the send PAN
+    // (mixSendLocks), and an unrefreshed panel leaves the removed control on screen and
+    // live, writing the very address the MIDI catalog is refusing at the same instant.
+    // Scoped to the nodes the panel reads, so a device sweep of an unselected node does
+    // not rebuild the panel at this branch's ~20 Hz.
+    const shown = inspectorNodes(selection);
+    if (ids.some((id) => shown.includes(id))) refreshInspector();
     // The dynamics screen shows a snapshot of the same node params, so a
     // device-side edit under it would otherwise leave stale sliders on screen.
     dynScreen.refresh();
@@ -881,6 +891,25 @@ const inspectorActions = {
   onUpdateParams: (from: string, to: string, patch: ConnParams) => {
     const conn = plan.connections.find((c) => c.from === from && c.to === to);
     if (!conn) return;
+    // The destination bus's locks are what decide these controls exist at all
+    // (mixSendLocks: the inspector drops the gated one, the console renders it
+    // read-only, core/midi/controls.ts swallows the message). A device-side flip lands
+    // in the plan a reflect before the panel is rebuilt, so a control the lock already
+    // removed can still be on screen and live. Refuse its write rather than let a
+    // phantom control author a value the next flush puts on the wire — name the lock
+    // that refused it, and rebuild the panel so the control goes away now.
+    const { busFixed, panLinked } = mixSendLocks(plan, parseRef(to).nodeId);
+    const refusal =
+      busFixed && patch.level !== undefined
+        ? t().inspector.busFixedLevel
+        : panLinked && patch.pan !== undefined
+          ? t().inspector.panLinked
+          : null;
+    if (refusal) {
+      setStatus(refusal);
+      refreshInspector();
+      return;
+    }
     conn.params = { ...conn.params, ...patch };
     // A STEREO-linked pair in BAL mode moves as one: copy the same send change to
     // the partner channel, pan included — in BAL mode the pan is the pair's one
@@ -1139,10 +1168,57 @@ function showError(message: string): void {
   void errorDialog(message);
 }
 
+/** A focused inspector control, keyed by what NAMES it on screen rather than by
+ *  position. The panel's sliders are bare `input[type=range]` with no class, so an
+ *  index key would hand focus to whatever control moved into the slot when a lock
+ *  removed the focused one — the case this restore exists for. The parameter row's
+ *  label is the discriminator (Pan vs Level), taken from the `data-param-label`
+ *  paramBlock stamps while building the row rather than searched for again here: this
+ *  runs once per candidate control on a path that repeats at ~20 Hz during device
+ *  follow. No match on the rebuilt panel = focus is dropped, which is the wanted
+ *  outcome. */
+function inspectorFocusKey(el: HTMLElement): string {
+  const label = el.closest<HTMLElement>(".param")?.dataset.paramLabel ?? "";
+  const type = el instanceof HTMLInputElement ? el.type : "";
+  return [label, el.tagName, type, el.className, el.textContent?.slice(0, 24) ?? ""].join("|");
+}
+
+// The scroll offset a rebuild has to carry over. Tracked from the element's own scroll
+// event instead of read back at rebuild time: the reflect that rebuilds this panel has
+// just dirtied layout (repaintDirtyNodes / refreshStrip), so a read there flushes it
+// synchronously, and that path repeats at ~20 Hz while device follow is running — a
+// forced layout costs several times more in WebKit than in Chromium. Passive, so it
+// never holds up the scroll it is observing.
+let inspectorScrollTop = 0;
+inspectorHost.addEventListener(
+  "scroll",
+  () => {
+    inspectorScrollTop = inspectorHost.scrollTop;
+  },
+  { passive: true },
+);
+
 function refreshInspector(): void {
   // On mobile the inspector is a bottom sheet that slides up only while something
   // is selected; this flag drives that state (no effect on the desktop panel).
   document.body.classList.toggle("has-selection", selection !== null);
+  // A device-follow reflect rebuilds this panel while the operator may be inside it,
+  // and replaceChildren drops both the scroll offset and keyboard focus. Carry them
+  // over (preserveFocus, the shared capture/restore the console rebuild uses too); a
+  // text surface also carries its caret, since the plan already holds every keystroke
+  // and the rebuilt field would otherwise jump to the end. Held on an object rather
+  // than in a plain local so the value the capture writes survives to the restore.
+  const carried: { caret: readonly [number | null, number | null] | null } = { caret: null };
+  const restoreFocus = preserveFocus(
+    inspectorHost,
+    (active) => {
+      if (ownsNativeUndo(active) && active instanceof HTMLInputElement)
+        carried.caret = [active.selectionStart, active.selectionEnd];
+      return inspectorFocusKey(active);
+    },
+    (key) => focusables(inspectorHost).find((el) => inspectorFocusKey(el) === key),
+    () => inspectorScrollTop,
+  );
   renderInspector(
     inspectorHost,
     getModel(modelId),
@@ -1152,6 +1228,9 @@ function refreshInspector(): void {
     recent,
     live?.isActive() ?? false,
   );
+  const focused = restoreFocus();
+  if (carried.caret && focused instanceof HTMLInputElement)
+    focused.setSelectionRange(carried.caret[0], carried.caret[1]);
 }
 
 // Recompute the sample-rate constraints and reflect them in the graph badges, the
