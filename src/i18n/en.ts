@@ -575,6 +575,8 @@ export const en = {
     liveSynced: (n: number): string => `→ device (${n})`,
     liveFollowing: "← device…",
     liveFollowed: (n: number): string => `← device (${n})`,
+    sharedSetting: (dropped: string, kept: string, more: number): string =>
+      `${dropped} shares device settings with ${kept}${more > 0 ? ` (+${more} more)` : ""} — only ${kept}'s values reach the device`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",

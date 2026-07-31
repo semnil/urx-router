@@ -146,7 +146,7 @@ function liveFor(
   onError: (message: string) => void = () => {},
   onSent: (n: number) => void = () => {},
 ): LiveSync {
-  return new LiveSync({ getModel: () => model, getPlan: () => plan, onError, onSent });
+  return new LiveSync({ getModel: () => model, getPlan: () => plan, onError, onSent, onCollapsed: () => {} });
 }
 
 function setCh1Fader(plan: Plan, db: number): void {

@@ -1,8 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { getModel } from "../../models";
+import { getModel, MODEL_IDS } from "../../models";
+import { defaultPlan } from "../../models/initial-state";
+import type { ModelId } from "../../models/types";
 import { emptyPlan, ensureFixedConnections } from "../plan";
-import { COLOR_OFF_INDEX, COLOR_PALETTE, EQ_TYPE_PASS, colorIndexToHex, hexToColorIndex } from "./params";
-import { nameControl, planToCommands, planToNameWrites } from "./translate";
+import type { Plan } from "../plan";
+import { COLOR_OFF_INDEX, COLOR_PALETTE, EQ_TYPE_PASS, PARAMS, colorIndexToHex, hexToColorIndex } from "./params";
+import type { ParamSpec } from "./params";
+import {
+  addrKey,
+  cmdAddr,
+  collisionKey,
+  collisionOwners,
+  formatAddrKey,
+  nameControl,
+  planToCommands,
+  planToCommandsUncollapsed,
+  planToNameWrites,
+} from "./translate";
 import type { VdCommand } from "./translate";
 import { GATE_RANGE_OFF_DB, VD_LEVEL_OFF } from "./vd";
 
@@ -1115,5 +1129,189 @@ describe("CH SETTING name", () => {
     ensureFixedConnections(model, plan);
     plan.nodeNames["bus.osc"] = "Tone"; // not nameable on the device
     expect(planToNameWrites(model, plan)).toEqual([]);
+  });
+});
+
+// An insert effect's parameters live in ONE engine array per effect family,
+// addressed engine:0:slot with no channel axis (insert-fx-effect.ts), so two nodes
+// holding the same family emit the same addresses with their own values. The
+// emitted set keeps the last (collapseSharedAddrs) and stamps the survivor with
+// the owners it displaced.
+describe("shared device addresses (last wins)", () => {
+  const model = getModel("URX44V");
+  const addr = (c: VdCommand): string => `${c.paramId}:${c.x}:${c.y}`;
+  const dupes = (cmds: VdCommand[]): string[] => {
+    const seen = new Set<string>();
+    return cmds.map(addr).filter((k) => (seen.has(k) ? true : (seen.add(k), false)));
+  };
+  // Compander slot 6 (Threshold): the one slot the input companders and the
+  // output MBC both carry, so it is where three owners can meet on engine 693.
+  const withCompander = (nodeId: string, selector: number, slot6: number) => (plan: Plan) => {
+    plan.nodeParams[nodeId] = { ...plan.nodeParams[nodeId], insertFx: selector, insertFxParams: { "6": slot6 } };
+  };
+  const planWith = (id: ModelId, ...edits: Array<(plan: Plan) => void>): Plan => {
+    const plan = defaultPlan(id);
+    for (const edit of edits) edit(plan);
+    return plan;
+  };
+
+  // Insert FX is the only family that shares an address today. The day a second one
+  // does, it fails here rather than on a unit — asked of the UNCOLLAPSED list, because
+  // the collapse makes the question trivially true of planToCommands' output whatever
+  // the plan holds. A default plan is the right subject: a family that shares an address
+  // does so at its factory values too, where the two owners AGREE and nothing is
+  // stamped `shadowed`, so a value-based check would not see it.
+  it("emits no repeated address for any model's default plan", () => {
+    for (const id of ["URX22", "URX44", "URX44V"] as ModelId[]) {
+      expect(dupes(planToCommandsUncollapsed(getModel(id), defaultPlan(id)))).toEqual([]);
+    }
+  });
+
+  it("collapses two owners of one engine slot to the last command", () => {
+    const cmds = planToCommands(
+      model,
+      planWith("URX44V", withCompander("ch1", 1793, -1000), withCompander("ch2", 1794, -1500)),
+    );
+    const engine = cmds.filter((c) => c.paramId === 689 && c.y === 6);
+    expect(engine).toHaveLength(1);
+    expect(engine[0].vdValue).toBe(-1500);
+    expect(engine[0].node).toBe("ch2");
+    expect(engine[0].shadowed).toEqual(["ch1"]);
+  });
+
+  // The survivor keeps its OWN index. Hoisted to the first occurrence's, it would
+  // be written before ch2's selector, which repopulates the engine array with that
+  // type's defaults — the device would end up holding neither owner's value.
+  it("keeps the survivor after the later owner's selector", () => {
+    const cmds = planToCommands(
+      model,
+      planWith("URX44V", withCompander("ch1", 1793, -1000), withCompander("ch2", 1794, -1500)),
+    );
+    const selector = cmds.findIndex((c) => c.name === "INSERT_FX" && c.paramId === 135 && c.y === 1);
+    const survivor = cmds.findIndex((c) => c.paramId === 689 && c.y === 6);
+    expect(selector).toBeGreaterThan(-1);
+    expect(survivor).toBeGreaterThan(selector);
+  });
+
+  // The state every device readback produces: both owners hold the same slot
+  // values, so the duplicates agree and the collapse discards nothing.
+  it("reports nothing when the owners agree", () => {
+    const cmds = planToCommands(
+      model,
+      planWith("URX44V", withCompander("ch1", 1793, -1000), withCompander("ch2", 1794, -1000)),
+    );
+    const engine = cmds.filter((c) => c.paramId === 689 && c.y === 6);
+    expect(engine).toHaveLength(1);
+    expect(engine[0].shadowed).toBeUndefined();
+    expect(collisionOwners(cmds)).toEqual([]);
+    expect(collisionKey(collisionOwners(cmds))).toBe("");
+  });
+
+  it("collapses three owners of the output engine to one command", () => {
+    const cmds = planToCommands(
+      model,
+      planWith(
+        "URX44V",
+        withCompander("bus.stereo", 1792, 5),
+        withCompander("bus.mix1", 1793, -1000),
+        withCompander("bus.mix2", 1794, -1500),
+      ),
+    );
+    const engine = cmds.filter((c) => c.paramId === 693 && c.y === 6);
+    expect(engine).toHaveLength(1);
+    expect(engine[0].node).toBe("bus.mix2");
+    expect(engine[0].shadowed).toEqual(["bus.stereo", "bus.mix1"]);
+    // The several slots one shared array carries read as ONE collision.
+    expect(collisionOwners(cmds)).toEqual([{ kept: "bus.mix2", dropped: ["bus.stereo", "bus.mix1"] }]);
+    expect(collisionKey(collisionOwners(cmds))).toBe("bus.mix2<bus.stereo+bus.mix1");
+  });
+
+  // The collapse runs before the scope filter. Collapsing after it would be the same
+  // function only while no address carries two ParamNames: the filter is per name, so a
+  // two-name address could drop the survivor and leave a scene-internal owner behind,
+  // and the scene subset would stop being the full list filtered. The premise is the
+  // load-bearing half and is asked of the UNCOLLAPSED list, where a second name on one
+  // address still exists to be seen; the identity is pinned over a COLLIDING plan, which
+  // scene-scope.test.ts's default-plan version cannot reach.
+  it("leaves the scene subset a filter of the full list, over a colliding plan", () => {
+    const plan = planWith("URX44V", withCompander("ch1", 1793, -1000), withCompander("ch2", 1794, -1500));
+    const all = planToCommands(model, plan);
+    const scene = planToCommands(model, plan, "scene");
+    expect(scene).toEqual(all.filter((c) => (PARAMS[c.name] as ParamSpec).sceneExternal !== true));
+    const names = new Map<string, string>();
+    let compared = 0;
+    for (const c of planToCommandsUncollapsed(model, plan)) {
+      const prev = names.get(addr(c));
+      if (prev !== undefined) compared++;
+      expect(prev === undefined || prev === c.name).toBe(true);
+      names.set(addr(c), c.name);
+    }
+    // The repeats this plan carries are what makes the loop above an assertion rather
+    // than a walk over unique keys — the shape the vacuous first draft of it had.
+    expect(compared).toBeGreaterThan(0);
+  });
+});
+
+// The packed address key decides WHICH COMMANDS COLLAPSE, and live.ts keys its
+// snapshot and follow index on the same packing. Two addresses that folded onto one
+// key would drop a write in silence, so the bit layout's headroom is pinned here
+// rather than trusted: the widths were chosen off these measured ranges.
+describe("addrKey packing", () => {
+  const triples = (): Array<[number, number, number]> => {
+    const out: Array<[number, number, number]> = [];
+    for (const id of MODEL_IDS) {
+      for (const c of planToCommandsUncollapsed(getModel(id), defaultPlan(id))) out.push([c.paramId, c.x, c.y]);
+    }
+    return out;
+  };
+
+  it("keeps every emitted address, and the whole catalog, inside the layout", () => {
+    const ids = Object.values(PARAMS).map((p) => (p as ParamSpec).id);
+    // paramId occupies the bits above 2 * 10, leaving 11 of a non-negative int32.
+    expect(Math.max(...ids)).toBeLessThan(1 << 11);
+    for (const [paramId, x, y] of triples()) {
+      expect(paramId).toBeLessThan(1 << 11);
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThan(1 << 10);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y).toBeLessThan(1 << 10);
+    }
+  });
+
+  it("is injective over every model's emitted addresses", () => {
+    const byKey = new Map<number, string>();
+    for (const [paramId, x, y] of triples()) {
+      const triple = `${paramId}:${x}:${y}`;
+      const prev = byKey.get(addrKey(paramId, x, y));
+      expect(prev === undefined || prev === triple, `${prev} and ${triple} pack to one key`).toBe(true);
+      byKey.set(addrKey(paramId, x, y), triple);
+    }
+    expect(byKey.size).toBeGreaterThan(0);
+  });
+
+  it("is injective at the corners of the layout, and stays a non-negative int32", () => {
+    const edge = [0, 1, 17, 18, 1023];
+    const seen = new Set<number>();
+    for (const paramId of [0, 1, 891, 2047]) {
+      for (const x of edge) {
+        for (const y of edge) {
+          const key = addrKey(paramId, x, y);
+          expect(key).toBeGreaterThanOrEqual(0);
+          expect(key).toBe(key | 0);
+          expect(seen.has(key), `${paramId}:${x}:${y} collides`).toBe(false);
+          seen.add(key);
+          // The published form the trace probe and the race harness read.
+          expect(formatAddrKey(key)).toBe(`${paramId}:${x}:${y}`);
+        }
+      }
+    }
+  });
+
+  it("packs a command exactly as its own address does", () => {
+    for (const id of MODEL_IDS) {
+      for (const c of planToCommandsUncollapsed(getModel(id), defaultPlan(id))) {
+        expect(cmdAddr(c)).toBe(addrKey(c.paramId, c.x, c.y));
+      }
+    }
   });
 });

@@ -10,6 +10,7 @@ vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn(
 
 import { vdSet, vdSetStr, vdGet } from "../platform";
 import { planToCommands } from "./translate";
+import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
 
 const model = getModel("URX44V");
@@ -29,6 +30,7 @@ function liveFor(plan: Plan, refetchNodes?: (nodes: ReadonlySet<string>) => Prom
     getPlan: () => plan,
     onError: () => {},
     onSent: () => {},
+    onCollapsed: () => {},
     refetchNodes,
   });
 }
@@ -223,6 +225,7 @@ describe("LiveSync sideEffect converge", () => {
       getPlan: () => plan,
       onError: (m) => errors.push(m),
       onSent: () => {},
+      onCollapsed: () => {},
     });
     live.begin();
     setCh1CompEqType(plan, 1);
@@ -253,6 +256,7 @@ describe("LiveSync flush error", () => {
         activeAtError = live.isActive();
       },
       onSent: () => {},
+      onCollapsed: () => {},
     });
     vi.mocked(vdSet).mockRejectedValueOnce(new Error("device gone"));
     live.begin();
@@ -458,5 +462,121 @@ describe("LiveSync sideEffect refetch", () => {
       await vi.advanceTimersByTimeAsync(130);
     }
     expect(vi.mocked(vdSet).mock.calls.length).toBeGreaterThan(before + 5);
+  });
+});
+
+// Two nodes holding the same insert-FX family write ONE engine array (no channel
+// axis), so the emitted set collapses the repeated address to its last command.
+// The flush says so once per owner set — the loss is a salvage, and a silent
+// salvage is what the repo rule forbids.
+describe("LiveSync shared device address", () => {
+  const ENGINE = 689;
+  const SLOT = 6;
+  function setCompander(plan: Plan, nodeId: string, selector: number, threshold: number): void {
+    plan.nodeParams[nodeId] = { ...plan.nodeParams[nodeId], insertFx: selector, insertFxParams: { "6": threshold } };
+  }
+  function collidingLive(plan: Plan): { live: LiveSync; reports: SharedOwners[][] } {
+    const reports: SharedOwners[][] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: (owners) => reports.push(owners),
+    });
+    return { live, reports };
+  }
+  const engineWrites = (): number[] =>
+    vi
+      .mocked(vdSet)
+      .mock.calls.filter((c) => c[0] === ENGINE && c[2] === SLOT)
+      .map((c) => c[3]);
+
+  it("sends one write to the shared address and names the owners once", async () => {
+    const plan = basePlan();
+    // Both selectors already on the device (the only route into this state is a
+    // readback), so the flush below carries no selector and no converge round.
+    setCompander(plan, "ch1", 1793, -1000);
+    setCompander(plan, "ch2", 1794, -1500);
+    const { live, reports } = collidingLive(plan);
+    live.begin();
+
+    setCompander(plan, "ch2", 1794, -1600);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(engineWrites()).toEqual([-1600]);
+    expect(reports).toEqual([[{ kept: "ch2", dropped: ["ch1"] }]]);
+
+    // The same owners on the next flush: latched, so an unrelated edit does not
+    // repeat the sentence.
+    vi.mocked(vdSet).mockClear();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(engineWrites()).toEqual([]);
+    expect(reports).toHaveLength(1);
+  });
+
+  it("re-arms on a device re-base, which runs no flush of its own", async () => {
+    const plan = basePlan();
+    setCompander(plan, "ch1", 1793, -1000);
+    setCompander(plan, "ch2", 1794, -1500);
+    const { live, reports } = collidingLive(plan);
+    live.begin();
+    setCompander(plan, "ch2", 1794, -1600);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reports).toHaveLength(1);
+
+    // What device follow ACTUALLY does, as opposed to the case below: a reconcile reads
+    // the one shared address and assigns it to both owners, erasing the divergence, then
+    // re-bases through resync(). It runs no flush — the follow funnel is
+    // planValuesChanged, which unlike markChanged does not schedule one — so a latch that
+    // only clears inside flush() stays set, and the operator's next loss of this same
+    // pair is swallowed as already said.
+    setCompander(plan, "ch1", 1793, -1600);
+    live.resync(plan);
+    expect(reports).toHaveLength(1);
+
+    setCompander(plan, "ch1", 1793, -1200);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reports).toHaveLength(2);
+  });
+
+  it("re-arms once the two owners agree again", async () => {
+    const plan = basePlan();
+    setCompander(plan, "ch1", 1793, -1000);
+    setCompander(plan, "ch2", 1794, -1500);
+    const { live, reports } = collidingLive(plan);
+    live.begin();
+    setCompander(plan, "ch2", 1794, -1600);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reports).toHaveLength(1);
+
+    // What a reconcile leaves behind: both owners carrying the same value, so the
+    // duplicates agree and there is nothing to collapse.
+    setCompander(plan, "ch1", 1793, -1600);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reports).toHaveLength(1);
+
+    // A later divergence is a fresh report, not a swallowed one.
+    setCompander(plan, "ch1", 1793, -1200);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reports).toHaveLength(2);
+  });
+
+  it("says nothing for a plan with no shared address", async () => {
+    const plan = basePlan();
+    const { live, reports } = collidingLive(plan);
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+    expect(reports).toEqual([]);
   });
 });

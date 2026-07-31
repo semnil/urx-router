@@ -97,6 +97,7 @@ import {
   comparePlan,
   diffNames,
   diffPlan,
+  dryRun,
   formatCompareReport,
   formatWriteReport,
   FOLLOW_USB_ADDR,
@@ -110,6 +111,8 @@ import {
   type CommandDiff,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
+import { collisionOwners } from "./core/control/translate";
+import type { SharedOwners } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
 import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
@@ -366,6 +369,16 @@ let compareAbort: AbortController | null = null;
 // Preferences device-scope note names the diagnostics' coverage only when the
 // diagnostics themselves are reachable.
 let experimentalOn = false;
+// Name the collapse the way the canvas names a node, and count the rest. Several
+// surfaces print this (the live status line, the write confirm, the "no changes"
+// status), so the label/count rule lives here once. The first group's first
+// dropped owner is the one named — the complete list goes to the console warning
+// the collapse already logs.
+function sharedSettingText(owners: SharedOwners[]): string {
+  const first = owners[0];
+  const more = owners.reduce((n, o) => n + o.dropped.length, 0) - 1;
+  return t().status.sharedSetting(graph.labelOf(first.dropped[0]), graph.labelOf(first.kept ?? ""), more);
+}
 const live = DEMO
   ? null
   : new LiveSync({
@@ -373,14 +386,12 @@ const live = DEMO
       getPlan: () => plan,
       onError: (message) => stopLiveOnError(errorText(message)),
       onSent: (n) => setStatus(t().status.liveSynced(n)),
+      onCollapsed: (owners) => setStatus(sharedSettingText(owners)),
       // One bidirectional scope for the session: the same filter shapes the
       // snapshot, the flush, and the follow notify registration.
       getScope: () => getSettings().deviceScope,
       // A "refetch" sideEffect went out (the EQ 1-knob): the device has just recomputed
       // values the plan only mirrors, so read the owner node back rather than pushing.
-      // Scoped, not full: the nodes are known, and live.ts has already re-based its own
-      // snapshot — a full reflect would re-translate the whole plan a second time and
-      // rebuild the console on every flush of a 1-knob drag.
       // Scoped rather than the full reflect `reconcileNodes` takes: the nodes are known and
       // the change is node-local (the recomputed bands), and live.ts has already re-based
       // its own snapshot — a full reflect would re-translate the whole plan a second time
@@ -2242,11 +2253,22 @@ if (!DEMO) {
               return null;
             }
             const total = diffs.length + nameWrites.length;
+            // From the EMITTED list, not from `diffs`: a survivor that already
+            // matches the device is not a diff, and the owner it displaced would
+            // then go unmentioned — including when the only pending change is that
+            // owner's, which reports "no changes to write".
+            const owners = collisionOwners(dryRun(getModel(modelId), plan));
+            const sharedNote = owners.length ? sharedSettingText(owners) : "";
             if (total === 0) {
-              setStatus(t().status.writeNoChanges);
+              setStatus(sharedNote ? `${t().status.writeNoChanges} ${sharedNote}` : t().status.writeNoChanges);
               return null;
             }
-            if (confirmFirst && !(await confirmDialog(t().confirm.write(total)))) {
+            if (
+              confirmFirst &&
+              !(await confirmDialog(
+                sharedNote ? `${sharedNote}\n\n${t().confirm.write(total)}` : t().confirm.write(total),
+              ))
+            ) {
               setStatus(t().status.canceled);
               return null;
             }

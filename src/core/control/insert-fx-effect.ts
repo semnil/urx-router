@@ -22,9 +22,16 @@
 // The engine array is a shared WORKING AREA, not storage: it is addressed by slot
 // with no channel axis, and it still held the previous effect's values while the
 // channel's selector read No Effect. So a selector write can overwrite settings
-// belonging to whatever else uses the same engine. (Whether the device even lets
-// two input channels hold companders at once is not measured; the output engine 693
-// is documented as exclusive — user guide p.180.)
+// belonging to whatever else uses the same engine.
+//
+// The unit does not let two channels reach one engine at the same time, which is what
+// makes the shared area safe in practice: the user guide's Effect list gives each
+// effect a "Number of simultaneous uses", and the compander's reads "MONO IN channels:
+// 1 slot; output channels: 1 slot", with the Supported-channels row adding that it
+// "cannot be inserted into two mono channels". That is the grounding for the 1-of slot
+// rule in params.ts (InsertFxSlot) — it is a documented device constraint, not an app
+// policy. Cited by section rather than page: the list moved from p.180 to p.184 between
+// the C0 and D0 revisions.
 //
 // planToCommands is safe here because it emits the selector and then immediately
 // overwrites the array with the plan's own values, so the device ends up matching

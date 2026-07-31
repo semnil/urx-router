@@ -558,6 +558,8 @@ export const ja: Messages = {
     liveSynced: (n: number): string => `→ デバイス (${n})`,
     liveFollowing: "← デバイス…",
     liveFollowed: (n: number): string => `← デバイス (${n})`,
+    sharedSetting: (dropped: string, kept: string, more: number): string =>
+      `${dropped} は ${kept} と本体上の設定を共有しています${more > 0 ? ` (他 ${more} 件)` : ""} — 本体に届くのは ${kept} の値だけです`,
     liveError: (message: string): string => `ライブ同期を停止: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",

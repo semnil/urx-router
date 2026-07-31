@@ -12,8 +12,16 @@ import type { Plan } from "../plan";
 import { vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import type { ParamName, ParamSpec } from "./params";
-import { planToCommands, planToNameWrites } from "./translate";
-import type { VdCommand, NameWrite, WriteScope } from "./translate";
+import {
+  addrKey,
+  cmdAddr,
+  collisionKey,
+  collisionOwners,
+  formatAddrKey,
+  planToCommands,
+  planToNameWrites,
+} from "./translate";
+import type { SharedOwners, NameWrite, WriteScope } from "./translate";
 import { reachedAndFailed, sendConverging } from "./client";
 
 // Coalesce rapid edits (a slider drag fires per pixel) into one flush so the
@@ -41,8 +49,9 @@ for (const [name, spec] of Object.entries(PARAMS as Record<string, ParamSpec>)) 
   else if (spec.sideEffect === "refetch") REFETCH.add(name);
 }
 
-const addrKey = (paramId: number, x: number, y: number): string => `${paramId}:${x}:${y}`;
-const cmdKey = (c: VdCommand): string => addrKey(c.paramId, c.x, c.y);
+// The address key comes from translate.ts, which uses the same one to decide which
+// commands collapse: a second spelling here would let a collapsed command miss its
+// snapshot entry.
 const nameKey = (w: NameWrite): string => `${w.param}:${w.y}`;
 
 /** What a writable address resolves to, for device-follow routing of a notify. */
@@ -63,6 +72,10 @@ export interface LiveSyncHooks {
   onError: (message: string) => void;
   /** A flush sent `count` writes — for an optional, quiet "→ device" status. */
   onSent: (count: number) => void;
+  /** Two or more plan owners resolved to one device address and the emitted set
+   *  kept the last; the rest carried a different value and were dropped. Reported
+   *  once per distinct owner set, not once per flush. */
+  onCollapsed: (owners: SharedOwners[]) => void;
   /** Write scope for the session (see translate.ts WriteScope). Read at every
    *  snapshot / flush, so the one planToCommands filter also scopes the notify
    *  registration and echo detection. Absent = "all". */
@@ -80,7 +93,7 @@ export interface LiveSyncHooks {
 
 export class LiveSync {
   private active = false;
-  private readonly snapshot = new Map<string, number>();
+  private readonly snapshot = new Map<number, number>();
   private readonly nameSnapshot = new Map<string, string>();
   // The snapshot's writable addresses as numeric [paramId, x, y] triples, built
   // alongside the snapshot so device-follow registration needs no key re-parse.
@@ -88,7 +101,7 @@ export class LiveSync {
   // Address → {name, owner node, direct?} for the writable parameter set, built
   // with the snapshot from the same planToCommands pass. Lets device-follow route
   // an incoming notify to a direct apply or a scoped readback with no key re-parse.
-  private readonly index = new Map<string, FollowAddr>();
+  private readonly index = new Map<number, FollowAddr>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
   private pending = false;
@@ -97,6 +110,15 @@ export class LiveSync {
   // That alone does not decide anything: it only says the next schedule() should
   // ask the diff whether the same is about to happen again (convergePending).
   private lastFlushConverged = false;
+  // Identity of the owner set the last collapse report named (collisionKey), so a
+  // standing collision is said once rather than once per flush — it is a structural
+  // condition ("these two nodes share one engine"), not a per-edit event, and a drag
+  // anywhere in the plan re-derives it every window. It re-arms on a flush that finds
+  // no collision at all AND on every capture(), because a capture re-bases from device
+  // truth and the collision it named may no longer be the plan's. Deliberately NOT
+  // re-armed by elapsed time: the emitted list carries a standing collision whatever
+  // the operator is editing, so a timed re-arm would repeat it during unrelated work.
+  private collapsedKey = "";
 
   constructor(private readonly hooks: LiveSyncHooks) {}
 
@@ -148,7 +170,7 @@ export class LiveSync {
    *  records against what was actually sent (see src/ui/trace-probe.ts). */
   snapshotEntries(): Record<string, number> {
     const out: Record<string, number> = {};
-    for (const [k, v] of this.snapshot) out[k] = v;
+    for (const [k, v] of this.snapshot) out[formatAddrKey(k)] = v;
     return out;
   }
 
@@ -165,6 +187,7 @@ export class LiveSync {
     this.active = false;
     this.pending = false;
     this.lastFlushConverged = false;
+    this.collapsedKey = "";
     if (this.timer !== null) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -198,7 +221,7 @@ export class LiveSync {
     const model = this.hooks.getModel();
     const plan = this.hooks.getPlan();
     for (const c of planToCommands(model, plan, this.scope())) {
-      if (CONVERGE.has(c.name) && this.snapshot.get(cmdKey(c)) !== c.vdValue) return true;
+      if (CONVERGE.has(c.name) && this.snapshot.get(cmdAddr(c)) !== c.vdValue) return true;
     }
     return false;
   }
@@ -221,20 +244,26 @@ export class LiveSync {
    * name dropped during the read leaves behind are never consulted.
    */
   private capture(deviceView?: Plan): void {
+    // A re-base re-authors the plan from the device, so a collision reported against the
+    // pre-read plan may already be gone — a reconcile reads the shared address once and
+    // assigns it to both owners, which erases the divergence. Nothing schedules a flush
+    // after a reconcile (planValuesChanged, unlike markChanged, does not), so the report
+    // latch has to clear here or the next genuine loss of that same pair is swallowed.
+    this.collapsedKey = "";
     const model = this.hooks.getModel();
     const scope = this.scope();
     const plan = this.hooks.getPlan();
     // Every caller passes a private copy (readback's clone, or the converge's own),
     // so a view is never the live plan itself.
     const device = deviceView
-      ? new Map(planToCommands(model, deviceView, scope).map((c) => [cmdKey(c), c.vdValue] as const))
+      ? new Map(planToCommands(model, deviceView, scope).map((c) => [cmdAddr(c), c.vdValue] as const))
       : null;
     this.snapshot.clear();
     this.nameSnapshot.clear();
     this.index.clear();
     const addrs: Array<[number, number, number]> = [];
     for (const c of planToCommands(model, plan, scope)) {
-      const k = cmdKey(c);
+      const k = cmdAddr(c);
       // An address the view does not carry grew after the read was issued (a structural
       // edit made during it). It is a pending write, not device truth, so it is left out
       // of the snapshot entirely and the next diff sends it.
@@ -268,8 +297,9 @@ export class LiveSync {
       let sent = 0;
       let sideEffect = false;
       const refetch = new Set<string>();
-      for (const c of planToCommands(model, plan, this.scope())) {
-        const k = cmdKey(c);
+      const commands = planToCommands(model, plan, this.scope());
+      for (const c of commands) {
+        const k = cmdAddr(c);
         if (this.snapshot.get(k) === c.vdValue) continue;
         await vdSet(c.paramId, c.x, c.y, c.vdValue);
         this.snapshot.set(k, c.vdValue);
@@ -316,6 +346,17 @@ export class LiveSync {
         if (deviceView) this.capture(deviceView);
       }
       if (sent) this.hooks.onSent(sent);
+      // After onSent because the status line is last-writer-wins, and never from
+      // capture(), whose report the session's own "live sync on" would overwrite.
+      const owners = collisionOwners(commands);
+      const key = collisionKey(owners);
+      if (key !== this.collapsedKey) {
+        this.collapsedKey = key;
+        if (owners.length) {
+          console.warn("live: one device address, more than one plan owner", owners);
+          this.hooks.onCollapsed(owners);
+        }
+      }
     } catch (e) {
       this.active = false;
       this.hooks.onError(e instanceof Error ? e.message : String(e));

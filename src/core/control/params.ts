@@ -605,8 +605,10 @@ export interface InsertFxOption {
   /** The 1-of-N device slot it occupies; absent = none (No Effect). */
   slot?: InsertFxSlot;
 }
-// Per-effect sample-rate ceilings (user guide p.180 Effect list): the guitar amps
-// and companders run up to 96 kHz, Pitch Fix only up to 48 kHz, No Effect always.
+// Per-effect sample-rate ceilings (user guide, Appendix > Effect list): the guitar amps
+// and companders run up to 96 kHz, Pitch Fix only up to 48 kHz, No Effect always. The
+// same table's "Number of simultaneous uses" row is what `slot` encodes. Cited by
+// section rather than page: the list moved from p.180 to p.184 between C0 and D0.
 export const INSERT_FX_OPTIONS: InsertFxOption[] = [
   { value: INSERT_FX_NONE, label: "No Effect" },
   { value: 256, label: "Clean", maxRate: 96000, slot: "amp" },

@@ -156,6 +156,13 @@ export interface VdCommand {
    * for global, non-node addresses (e.g. sample rate).
    */
   node?: string;
+  /**
+   * Owner nodes whose command for this SAME address carried a DIFFERENT value and
+   * was dropped in favour of this one (the last-wins collapse in
+   * collapseSharedAddrs). Absent on every command of a plan with no shared
+   * address, which is every plan the screens can author.
+   */
+  shadowed?: string[];
 }
 
 function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number {
@@ -1311,6 +1318,134 @@ export function insertFxControl(model: DeviceModel, nodeId: string): InsertFxCon
  *  (compare / self-test / prepare) always run "all". */
 export type WriteScope = "all" | "scene";
 
+/** Bit layout of a packed address key: y in the low ADDR_SHIFT bits, x above it,
+ *  paramId above that. The widths hold every address the app can emit with an order
+ *  of magnitude to spare (measured over the whole PARAMS catalog and all three
+ *  models' default plans: paramId <= 891, x == 0, y <= 18) and keep the key a
+ *  non-negative int32, which is what makes the Map lookup cheap. An address outside
+ *  them would fold onto another one and silently drop that command's write, so
+ *  translate.test.ts pins both the ranges and the injectivity. */
+const ADDR_SHIFT = 10;
+const ADDR_MASK = (1 << ADDR_SHIFT) - 1;
+
+/**
+ * A device address as a map key. Shared with live.ts, whose snapshot and follow
+ * index key on it: this decides WHICH COMMANDS COLLAPSE and that decides WHAT THE
+ * SNAPSHOT KEYS ON, so a second spelling would let a collapsed command miss its
+ * snapshot entry.
+ *
+ * Packed into one integer rather than a "paramId:x:y" string: measured, the string
+ * keying was the collapse's entire cost — +49 µs on a 101 µs buildCommands (782
+ * commands), where the packed key builds the same map 4.7x faster. The string form
+ * survives as the published one (LiveSync.snapshotEntries, read by the trace probe
+ * and the race harness), rendered by formatAddrKey off the cold path.
+ */
+export const addrKey = (paramId: number, x: number, y: number): number =>
+  (paramId << (ADDR_SHIFT * 2)) | (x << ADDR_SHIFT) | y;
+
+export const cmdAddr = (c: VdCommand): number => addrKey(c.paramId, c.x, c.y);
+
+/** A packed key back as "paramId:x:y" — the form the trace probe and the race
+ *  harness read off LiveSync.snapshotEntries(). Probe-only, so it stays out of
+ *  every hot path that builds or looks up a key. */
+export const formatAddrKey = (key: number): string =>
+  `${key >>> (ADDR_SHIFT * 2)}:${(key >>> ADDR_SHIFT) & ADDR_MASK}:${key & ADDR_MASK}`;
+
+/**
+ * Collapse a repeated device address down to ONE command, keeping the LAST.
+ *
+ * An insert effect's parameters live in one engine array per effect FAMILY,
+ * addressed `engine:0:slot` with no channel axis (see insert-fx-effect.ts), so
+ * two nodes holding the same family emit the same addresses carrying their own
+ * values. Last-wins matches what the device ends up holding either way: an
+ * ordered sendCommands (client.ts) applies the commands in list order, so the
+ * last one is the value left standing on the unit.
+ *
+ * The survivor stays at its OWN index rather than being hoisted to the first
+ * occurrence's: a type selector repopulates the engine array it binds with that
+ * type's defaults (insert-fx-effect.ts), so a hoisted survivor would be written
+ * before the later owner's selector and erased by it, leaving the unit holding
+ * neither owner's value.
+ *
+ * A dropped command whose value the survivor already carries is no loss (the
+ * state every device readback produces), so only differing ones are stamped onto
+ * the survivor as `shadowed` — what the surfaces report.
+ */
+export function collapseSharedAddrs(commands: VdCommand[]): VdCommand[] {
+  const keys = new Int32Array(commands.length);
+  const lastIndex = new Map<number, number>();
+  let repeated = false;
+  for (let i = 0; i < commands.length; i++) {
+    const key = cmdAddr(commands[i]);
+    keys[i] = key;
+    if (lastIndex.has(key)) repeated = true;
+    lastIndex.set(key, i);
+  }
+  if (!repeated) return commands;
+  const shadowed = new Map<number, string[]>();
+  const out: VdCommand[] = [];
+  // One forward pass: lastIndex holds the LAST index of an address, so every
+  // shadowed owner sits before its survivor and its list is complete by the time
+  // the survivor is reached.
+  for (let i = 0; i < commands.length; i++) {
+    const keep = lastIndex.get(keys[i])!;
+    if (keep !== i) {
+      if (commands[i].vdValue !== commands[keep].vdValue) {
+        // Emission order, duplicates kept as-is: a group whose owner repeats stays
+        // visible rather than being filtered into silence.
+        const owner = commands[i].node ?? "?";
+        const list = shadowed.get(keep);
+        if (list) list.push(owner);
+        else shadowed.set(keep, [owner]);
+      }
+      continue;
+    }
+    const dropped = shadowed.get(i);
+    out.push(dropped ? { ...commands[i], shadowed: dropped } : commands[i]);
+  }
+  return out;
+}
+
+/** One address's set of plan owners: the one whose value reaches the device, and
+ *  the ones whose differing values the collapse dropped. */
+export interface SharedOwners {
+  /** Owner node whose command survived (undefined for a global address). */
+  kept?: string;
+  /** Owner nodes whose commands were dropped, in emission order. */
+  dropped: string[];
+}
+
+/** Identity of one owner set. The grouping below and the report latch (collisionKey)
+ *  spell it here rather than each for itself: two spellings that drift make live.ts
+ *  group by one rule and compare by another, so a standing collision either
+ *  re-reports every flush or a new one is swallowed. */
+const ownerKey = (kept: string | undefined, dropped: readonly string[]): string => `${kept ?? ""}<${dropped.join("+")}`;
+
+/** The owner sets a collapsed command list reports, grouped so the several slots
+ *  one shared engine array carries read as ONE collision, in emission order.
+ *  A survivor with no owner node is a global address: nothing global collides
+ *  today, and one that did would want a message of its own rather than this
+ *  node-names-two-nodes one, so it is skipped instead of naming an empty node. */
+export function collisionOwners(commands: readonly VdCommand[]): SharedOwners[] {
+  const groups: SharedOwners[] = [];
+  const seen = new Set<string>();
+  for (const c of commands) {
+    if (!c.shadowed?.length || !c.node) continue;
+    const key = ownerKey(c.node, c.shadowed);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    groups.push({ kept: c.node, dropped: [...c.shadowed] });
+  }
+  return groups;
+}
+
+/** Language-independent identity of an owner set — what a report latches on.
+ *  Values are deliberately excluded, so a drag does not re-report while a change
+ *  of contenders does. Empty string when nothing collided. */
+export function collisionKey(owners: readonly SharedOwners[]): string {
+  return owners.map((o) => ownerKey(o.kept, o.dropped)).join(";");
+}
+
 /**
  * Translate a plan into the list of vd value-set commands it currently implies.
  * Deterministic and side-effect free; the same plan always yields the same list,
@@ -1318,11 +1453,29 @@ export type WriteScope = "all" | "scene";
  * finished list by ParamName, so the scene boundary cannot drift from the
  * catalog flags — and the same filter scopes every consumer (write diff, live
  * snapshot / flush, follow notify registration) at this one chokepoint.
+ *
+ * One device address yields exactly one command: a repeated address is collapsed
+ * to its last (collapseSharedAddrs), before the scope filter so the scene subset
+ * stays the full list filtered by ParamName. What that dropped is reported by the
+ * live status line, the write confirm and the compare report.
  */
 export function planToCommands(model: DeviceModel, plan: Plan, scope: WriteScope = "all"): VdCommand[] {
-  const commands = buildCommands(model, plan);
+  const commands = collapseSharedAddrs(buildCommands(model, plan));
   if (scope === "all") return commands;
   return commands.filter((c) => (PARAMS[c.name] as ParamSpec).sceneExternal !== true);
+}
+
+/**
+ * The commands a plan implies BEFORE the collapse — the only view in which a shared
+ * address is visible AS a repeat. Exported for the contract test that pins which
+ * families share one: asked of planToCommands, "no address repeats" and "one ParamName
+ * per address" are true by construction of the collapse and pin nothing.
+ *
+ * Nothing that talks to a device may use this: a repeated address sends the losing
+ * owner's value and then overwrites it, which is the defect the collapse removes.
+ */
+export function planToCommandsUncollapsed(model: DeviceModel, plan: Plan): VdCommand[] {
+  return buildCommands(model, plan);
 }
 
 function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
