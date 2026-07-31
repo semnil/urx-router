@@ -242,7 +242,7 @@ param、セッションが無い状態。逆向きの差は意図的に判定し
 | `undo-refusal-ladder` | history | 拒否の順序と、拒否が項目を消費しないこと。許容側も含む |
 | `undo-apply-sequence-hidden-and-viewport` | graph | 適用の順序そのものと、undo の書込がデバイスへ届くこと |
 | `undo-during-device-activity-ladder` | history | 5 つのデバイス動作 × 5 つの位相。門が経路ごとかリンクごとかを表にする |
-| `undo-rebase-dropped-by-device-sweep` | history | 実機を触っている間のアプリ編集が黙って undo 不能になる率 |
+| `undo-entry-survives-device-sweep` | history | 実機を触っている間のアプリ編集が 1 エントリとして残り、その下の既存エントリも残ること |
 | `undo-reset-paths-and-pending-commit` | history | 7 つのリセット経路と、リセットを生き延びる 2 つの競合 |
 | `undo-macos-edit-menu-path` | history | 唯一のネイティブ面。和音と拒否順序が異なる唯一の経路 |
 
@@ -517,6 +517,12 @@ settle も idle 網も張られない）。フェーダー 1 detent は遅延 0 
 - **pointerup を伴わない合成 pointerdown**（E2E がワイヤ選択に使う標準手口）が押下状態を永久に
   「down」のまま残し、300 ms の待機確定を封じる。**1.2 秒離れた 2 つのホイールバーストが 1 項目に
   融合**（対照は 2 項目、実測ギャップ 121 ms）
+- **実機を触っている間のアプリ側編集が黙ってアンドゥ不能だった — 修正済み。** direct 追従の notify が
+  毎回 `planHistory.rebase()` を呼び、開いているエントリを落として 300 ms の待機確定も取り消していた
+  ため、notify と notify の間に落ちたホイール編集は何も記録されず、Ctrl+Z はその下のエントリを消費した
+  (フェーダーは戻したかった値を**通り越して**跳ぶ)。direct 経路は notify が著したキーだけを吸収する
+  ようにした。修正後の実測は 100 ms の notify 間隔内の Δ = 5 / 40 / 95 ms いずれでも、編集は押し始めた
+  位置へ戻り、掃引前のエントリはその下に残る
 - 保留中の照合の中で撃った undo は適用されるが、その照合が両スタックを消す
 - 適用順序は正しい（永続ミラーが再描画より前、ビューポート不変、`markChanged` が最後）
 
@@ -707,6 +713,17 @@ follow 側の読み (リコンサイル 2 種と 1-knob 再取得) は発行時�
 `planReadFromDevice` を `planValuesChanged` (probe + MIDI フィードバック) と履歴の確定に分け、
 反映側は前者だけを呼ぶ。**MIDI が依存していた `rebase()` はその場へ逐語的に移設**したので、
 この変更が動かす挙動は 1 つだけになる。
+
+**direct 追従の適用**は、読み戻し以外で実機の値をプランへ書く唯一のもう 1 箇所であり、同じ規則が
+当てはまる。ここはプラン全体の `rebase()` のままだったが、掃引のケースがその代償を名指しした —
+実機を触っている間のアプリ側編集が黙ってアンドゥ不能になり、それを取り消すはずの Ctrl+Z は
+その下のエントリを消費していた。`applyDirect` は値を置けたかどうかしか返さず、書き込み先も
+1 箇所ではない (大半はノード param、フェーダー / パン / アサイン ON は接続 param) ため、
+呼び出しの前後でクローンを取って差分を出す。範囲を絞った差分器では、direct フラグが付いた新しい
+param が黙って漏れうるからである。プラン全体のクローン + 差分は URX44V の既定プランで 0.12 ms、
+notify は毎秒およそ 10 件。ケースも入れ替わり、`undo-rebase-dropped-by-device-sweep` は
+1 押し深い `undo-entry-survives-device-sweep` になった — 編集は押し始めた位置へ戻り、
+掃引前に確定したエントリはその下に残っている。
 
 ### 6. ペアレベルのセレクタを pan より先に出す (`translate.ts`)
 

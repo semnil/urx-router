@@ -18,7 +18,7 @@ import {
 import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
 import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
-import type { PatchTouch } from "./core/plan-history";
+import { clonePlanState, diffPlans, type PatchTouch } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import { planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
@@ -632,14 +632,24 @@ const follow =
         // the plan, no read-back, and record the node so the coalesced reflect
         // repaints just it. The reflect is scheduled by flushDirect.
         applyDirect: (node, name, value) => {
+          // The device authored these keys, so the history takes exactly them into its
+          // baseline — the per-key rule the refetch path runs on, at the one other site
+          // that writes device values into the plan outside a readback. A whole-plan
+          // rebase() here dropped the entry an app gesture had open, which made an edit
+          // taken while the unit was being touched silently un-undoable AND spent the
+          // entry beneath it on the Ctrl+Z that should have taken it back.
+          //
+          // Diffed from a clone taken here because applyDirect reports only whether it
+          // placed the value: where it lands is two places (a fader / pan / assign ON is
+          // a connection param, everything else a node param), and a scoped differ that
+          // missed one would silently stop absorbing. A whole-plan clone + diff measures
+          // 0.12 ms for the URX44V default plan against a stream of ~10 notifies/s.
+          const before = clonePlanState(plan);
           const ok = applyDirect(plan, node, name, value);
           if (ok) {
             traceProbe?.sample("follow-direct");
             followDirtyNodes.add(node);
-            // The coalesced reflect re-takes the history baseline a moment later
-            // (REFLECT_MIN_MS); do it now too, so an app edit inside that window
-            // cannot close an entry with this device-authored value inside it.
-            planHistory?.rebase();
+            planHistory?.absorb(diffPlans(before, plan));
           }
           return ok;
         },
@@ -852,8 +862,8 @@ function planValuesChanged(): void {
 // ride along in the next entry, or undoing an app edit would push it back over the
 // operator's own move on the hardware. The follow-side writers do NOT come through here
 // — each settles the history at its own site, where what the device authored is known:
-// a notify's node (applyDirect), a refetch's patch (refetchNodes → absorb), a
-// reconcile's reset (reflectFollow's full branch).
+// a notify's own keys (applyDirect → absorb), a refetch's patch (refetchNodes →
+// absorb), a reconcile's reset (reflectFollow's full branch).
 function planReadFromDevice(): void {
   planValuesChanged();
   planHistory?.rebase();
