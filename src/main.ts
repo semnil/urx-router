@@ -46,6 +46,7 @@ import { initFineMode } from "./ui/fine";
 import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
+import { GateTuningModal } from "./ui/gate-tuning";
 import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
 import { errorCode, errorText, getLang, LANG_NAMES, onLangChange, t } from "./i18n";
 import { DEMO } from "./core/env";
@@ -399,6 +400,7 @@ const consoleView = new Console(consoleHost, {
   // The meter stream failed to register. Floor-stuck bars read as "no signal",
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
+  onOpenGateScreen: (id) => gateTuning.open(id),
   // MIDI learn: while the panel's learn mode is on, console controls arm for
   // binding instead of editing (no-ops while midi is absent — browser / demo).
   midi: {
@@ -434,6 +436,7 @@ function reflectFollow(): void {
     if (graphHost.hidden) graphDirty = true;
     else graph.refresh();
     syncRateUi(); // also refreshes the console (applyRateConstraints)
+    gateTuning.refresh();
     live?.resync();
   } else {
     // Direct-only: repaint just the changed nodes / strips. The snapshot is already
@@ -441,6 +444,9 @@ function reflectFollow(): void {
     if (graphHost.hidden) graphDirty = true;
     else graph.repaintDirtyNodes(ids);
     for (const id of ids) consoleView.refreshStrip(id);
+    // The gate screen shows a snapshot of the same node params, so a device-side
+    // gate edit under it would otherwise leave stale slider positions on screen.
+    gateTuning.refresh();
   }
 }
 // A reconcile read that fails loses the device-side change it was called for —
@@ -580,6 +586,12 @@ function setLiveUi(on: boolean): void {
   // The Preferences device-scope control locks while the session is up; re-render
   // the modal if it is open (a link loss can end the session behind the scrim).
   prefs.refresh();
+  // The surfaces that stream meters. Ordering is load-bearing and lives here for
+  // that reason: the console subscribes, then the gate screen (if open) takes the
+  // one broker slot back off it. Every way in and out of a session already passes
+  // through this function, so a new path cannot desync them by forgetting a call.
+  consoleView.setLive(on);
+  gateTuning.setLive(on);
   // The sleep hold lives and dies with the session, so every way in and out of one
   // — the toggle, a write failure, a link loss — passes through here.
   void syncSleepHold(on && getSettings().preventSleep).then((failed) => {
@@ -596,7 +608,6 @@ function deactivateLive(status?: string): void {
   live?.end();
   void vdDisconnect(liveEpoch);
   setLiveUi(false);
-  consoleView.setLive(false);
   // A CH → FX tap shown read-only while live becomes editable again off-line.
   refreshInspector();
   if (status) setStatus(status);
@@ -848,6 +859,9 @@ const inspectorActions = {
   },
   onOpenRecent: (path: string) => void openRecent(path),
   onHideNode: (id: string) => graph.hideNode(id),
+  // Declared here but bound below: the gate screen's hooks reach back into these
+  // actions, so it cannot be constructed until they exist.
+  onOpenGateScreen: (id: string) => gateTuning.open(id),
   onClose: () => graph.clearSelection(),
 };
 graph.setTheme(theme);
@@ -1447,6 +1461,27 @@ const prefs = new PrefsPanel({
 });
 $("btn-prefs").addEventListener("click", () => prefs.open());
 
+// GATE tuning screen. Opened per MONO IN channel from the inspector's GATE
+// section and from the CONSOLE strip; it owns the broker's one meter slot while
+// open, which is why the console is told to release and regain it rather than
+// discovering the swap from frozen bars.
+const gateTuning = new GateTuningModal({
+  getModel: () => getModel(modelId),
+  getPlan: () => plan,
+  isLive: () => liveSessionUp,
+  onUpdateNodeParams: (id, patch) => inspectorActions.onUpdateNodeParams(id, patch),
+  releaseMeters: () => consoleView.releaseMeters(),
+  regainMeters: () => consoleView.regainMeters(),
+  onMeterError: (message) => stopLiveOnError(errorText(message)),
+  // Both surfaces print gate values, and the inspector's sliders are built from a
+  // snapshot taken at render time, so they would keep writing back stale values
+  // after the screen moved them.
+  onClosed: () => {
+    refreshInspector();
+    consoleView.refresh();
+  },
+});
+
 $("btn-auto").addEventListener("click", () => {
   graph.autoLayout();
 });
@@ -1970,7 +2005,6 @@ if (!DEMO) {
         liveEpoch = device.epoch;
         liveSessionUp = true;
         setLiveUi(true);
-        consoleView.setLive(true);
         setStatus(t().status.liveOn(device.model, result.applied));
       } catch (err) {
         await failLive(t().status.liveError(errorText(err)));
@@ -2459,6 +2493,7 @@ onLangChange(() => {
   // the same time (its notes are translated even though its labels are not).
   prefs.refresh();
   deviceSetup?.refresh();
+  gateTuning.refresh();
   setStatus(t().status.language(LANG_NAMES[getLang()]));
 });
 

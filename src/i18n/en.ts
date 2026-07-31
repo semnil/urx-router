@@ -432,6 +432,25 @@ export const en = {
       recPoint: "Rec Point tap",
     },
   },
+  // GATE tuning screen. The meter captions carry the device's own tap vocabulary
+  // and stay English in every language, like the CONSOLE meter-point badges they
+  // name the same points as.
+  gateTuning: {
+    title: "Gate",
+    open: "Gate screen…",
+    close: "Close",
+    display: "Display",
+    modeLadder: "Ladder",
+    modeCurve: "Curve",
+    parameters: "Parameters",
+    readouts: "Readouts",
+    tapIn: "Pre Gate",
+    tapGr: "Gate GR",
+    tapOut: "Pre Comp",
+    peakPrefix: "pk",
+    noReading: "—",
+    curveHint: "Drag the curve's knee to set the threshold.",
+  },
   shelf: {
     title: "Hidden",
     showAll: "Show all",

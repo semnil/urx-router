@@ -126,6 +126,30 @@ const getTapsMap = (modelId?: string): Record<string, MeterTap[]> => {
   return NODE_TAPS_URX44V;
 };
 
+// Gain-reduction meters, kept in their own table rather than as an eighth entry in
+// `monoTaps`. `tapsFor` is also the CONSOLE meter-point selector's contract, and a
+// reduction is not a signal level: listed there it would be selectable as a strip
+// meter and drawn on the dBFS ladder with its color zones. Separate tables also
+// leave room for the other confirmed GR meters (COMP 110 / DUCKER 119 / insert FX
+// 132, 133) without touching the level chain.
+//
+// GATE is a MONO IN feature, so only mono channels appear; x is the mono channel
+// index, the same axis as 106 / 108 (confirmed on URX44V at x0).
+const GATE_GR_TAPS: Record<string, readonly [number, number]> = {
+  ch1: [107, 0],
+  ch2: [107, 1],
+  ch3: [107, 2],
+  ch4: [107, 3],
+};
+
+/** The GATE gain-reduction meter address for a node, or undefined when the node
+ *  has no gate (every channel but MONO IN). Which mono channels a model has is
+ *  already stated once in the level tables, so this defers to them rather than
+ *  restating the topology — URX22 has no ch3/ch4 there either. */
+export function gateGrAddr(nodeId: string, modelId?: string): readonly [number, number] | undefined {
+  return getTapsMap(modelId)[nodeId] ? GATE_GR_TAPS[nodeId] : undefined;
+}
+
 const addrKey = (meterId: number, x: number): string => `${meterId}:${x}`;
 
 /** Decode a raw broker meter value to dBFS. OVER and the silence floor both
@@ -133,6 +157,23 @@ const addrKey = (meterId: number, x: number): string => `${meterId}:${x}`;
 export function decodeMeterDb(raw: number): number {
   if (raw === METER_OVER_RAW) return METER_TOP_DB;
   return raw / 10;
+}
+
+/** Deepest reduction a GR meter reports: raw -1280, the same floor the level
+ *  meters rest at, reached when the gate closes with range at -∞. */
+export const GR_FLOOR_DB = -128;
+
+/**
+ * Decode a raw GR meter value to gain reduction in dB (≤ 0). This cannot reuse
+ * `decodeMeterDb`: a GR meter idles at *two* values — measured on a URX44V, the
+ * gate reports 0 while switched off and the OVER sentinel 32767 while switched on
+ * and open — and `decodeMeterDb` maps the sentinel to 0 dBFS while `readingTap`
+ * separately raises its `over` flag, which would light a clip indicator for a gate
+ * that is simply passing signal. Both idle values mean "no reduction" here.
+ */
+export function decodeGrDb(raw: number): number {
+  if (raw === METER_OVER_RAW || raw >= 0) return 0;
+  return Math.max(raw / 10, GR_FLOOR_DB);
 }
 
 /** The tap points a node exposes (signal order), or [] when it has no meter. */
@@ -202,6 +243,16 @@ export class MeterStore {
       stereo: tap.r !== undefined,
     };
   }
+
+  /** Latest gain reduction in dB (≤ 0) for a GR meter address, or null when the
+   *  address has reported nothing yet — same contract as `readingTap`, so a
+   *  screen that has just subscribed prints "—" rather than claiming 0 dB of
+   *  reduction, which would read as "the gate is passing everything". */
+  readGr(addr: readonly [number, number] | undefined): number | null {
+    if (!addr) return null;
+    const raw = this.raw.get(addrKey(addr[0], addr[1]));
+    return raw === undefined ? null : decodeGrDb(raw);
+  }
 }
 
 /** Distinct meter addresses ([meterId, x]) for the given taps. Used to scope the
@@ -225,7 +276,41 @@ export function tapAddrs(taps: Iterable<MeterTap>): Array<[number, number]> {
  * Subscribe to the given meter addresses, routing readings into `store`. Returns
  * an unsubscribe function. No-op (returns a noop) outside Tauri / when not
  * connected.
+ *
+ * `onUpdate` sees every frame, which the store cannot offer: the store is
+ * last-write-win per address, so a batch carrying more than one frame for an
+ * address keeps only the last. Anything folding across frames — a peak hold on a
+ * meter the device does not hold itself — has to run here.
  */
-export function subscribeMeters(store: MeterStore, addrs: Array<[number, number]>): Promise<() => void> {
-  return vdMetersSubscribe(addrs, (m) => store.apply(m));
+// The broker has ONE meter registration process-wide: `vd_meters_subscribe`
+// replaces whatever was registered, and `vd_meters_unsubscribe` takes no address.
+// The unsubscribe handle a caller holds is therefore a global operation wearing
+// the shape of a per-subscription one — a stale handle cancels whoever owns the
+// stream now, not the caller's own long-gone registration. Two such windows are
+// reachable with two consumers (a registration still in flight when the other
+// side takes over; a screen closing faster than its own subscribe round-trip),
+// and both surface as bars frozen on the floor, which reads as silence.
+//
+// Stamping each subscription with a generation closes them without asking the
+// consumers to coordinate: a release only unsubscribes if its generation is still
+// the current one. Ownership stays where the resource is, not in one of the
+// consumers.
+let meterGeneration = 0;
+
+export function subscribeMeters(
+  store: MeterStore,
+  addrs: Array<[number, number]>,
+  onUpdate?: (m: MeterUpdate) => void,
+): Promise<() => void> {
+  const generation = ++meterGeneration;
+  return vdMetersSubscribe(addrs, (m) => {
+    // A late frame from a superseded registration must not reach the new owner's
+    // store — it would be a reading from an address it never asked for.
+    if (generation !== meterGeneration) return;
+    store.apply(m);
+    onUpdate?.(m);
+  }).then((unsub) => () => {
+    if (generation !== meterGeneration) return;
+    unsub();
+  });
 }

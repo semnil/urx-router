@@ -1,16 +1,23 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import * as platform from "./platform";
 import {
+  decodeGrDb,
   decodeMeterDb,
   defaultTapKey,
+  gateGrAddr,
+  GR_FLOOR_DB,
   hasMeter,
   MeterStore,
   METER_OVER_RAW,
   METER_TOP_DB,
+  subscribeMeters,
   tapAddrs,
   tapFor,
   tapsFor,
 } from "./meters";
 import { MODELS, MODEL_IDS } from "../models/index";
+
+afterEach(() => vi.restoreAllMocks());
 
 // MeterStore.reading() was removed (no production consumer — console.ts reads via
 // readingTap). These pins exercise the same decode path through the public
@@ -27,6 +34,56 @@ describe("decodeMeterDb", () => {
 
   it("maps the OVER sentinel to the ladder top", () => {
     expect(decodeMeterDb(METER_OVER_RAW)).toBe(METER_TOP_DB);
+  });
+});
+
+describe("GATE gain-reduction meter", () => {
+  it("maps mono channels only, on the mono channel axis", () => {
+    expect(gateGrAddr("ch1")).toEqual([107, 0]);
+    expect(gateGrAddr("ch4")).toEqual([107, 3]);
+    // GATE is a MONO IN feature: no stereo channel, bus or output has one.
+    expect(gateGrAddr("ch_5_6")).toBeUndefined();
+    expect(gateGrAddr("bus.stereo")).toBeUndefined();
+    expect(gateGrAddr("out.main")).toBeUndefined();
+  });
+
+  it("stops at CH1-2 on URX22", () => {
+    expect(gateGrAddr("ch1", "URX22")).toEqual([107, 0]);
+    expect(gateGrAddr("ch2", "URX22")).toEqual([107, 1]);
+    expect(gateGrAddr("ch3", "URX22")).toBeUndefined();
+  });
+
+  it("stays off the level chain, so the meter-point selector never offers it", () => {
+    const addrs = tapAddrs(tapsFor("ch1")).map(([id]) => id);
+    expect(addrs).not.toContain(107);
+  });
+
+  it("reads both idle values as no reduction", () => {
+    // Measured on a URX44V: the gate reports 0 while switched off and the OVER
+    // sentinel while switched on and open. Neither is a reduction, and neither
+    // may raise a clip flag.
+    expect(decodeGrDb(0)).toBe(0);
+    expect(decodeGrDb(METER_OVER_RAW)).toBe(0);
+  });
+
+  it("scales a reduction by 1/10 and clamps at the floor", () => {
+    expect(decodeGrDb(-239)).toBeCloseTo(-23.9);
+    expect(decodeGrDb(-1280)).toBe(GR_FLOOR_DB);
+    expect(decodeGrDb(-5000)).toBe(GR_FLOOR_DB);
+  });
+
+  it("reports null until the address has reported, then the reduction", () => {
+    const store = new MeterStore();
+    // A just-subscribed stream is not "0 dB of reduction" — that would read as a
+    // gate passing everything.
+    expect(store.readGr(gateGrAddr("ch1"))).toBeNull();
+    store.apply({ meterId: 107, x: 0, value: -239 });
+    expect(store.readGr(gateGrAddr("ch1"))).toBeCloseTo(-23.9);
+    expect(store.readGr(gateGrAddr("ch2"))).toBeNull();
+  });
+
+  it("reports null for a node with no gate", () => {
+    expect(new MeterStore().readGr(gateGrAddr("bus.stereo"))).toBeNull();
   });
 });
 
@@ -195,5 +252,46 @@ describe("meter address table has no collisions", () => {
       expect(owner.size, modelId).toBeGreaterThan(10);
       expect(collisions).toEqual([]);
     }
+  });
+});
+
+describe("meter subscription ownership", () => {
+  // The broker has one registration process-wide and its unsubscribe takes no
+  // address, so a handle held past a takeover would cancel the new owner's stream.
+  it("ignores a release from a superseded subscription", async () => {
+    const calls: string[] = [];
+    vi.spyOn(platform, "vdMetersSubscribe").mockImplementation((addrs) => {
+      const tag = addrs.map((a) => a.join(":")).join(",");
+      calls.push(`sub ${tag}`);
+      return Promise.resolve(() => calls.push(`unsub ${tag}`));
+    });
+
+    const first = new MeterStore();
+    const second = new MeterStore();
+    const releaseFirst = await subscribeMeters(first, [[106, 0]]);
+    const releaseSecond = await subscribeMeters(second, [[107, 0]]);
+
+    releaseFirst(); // the displaced consumer catching up — must not cancel #2
+    expect(calls).toEqual(["sub 106:0", "sub 107:0"]);
+
+    releaseSecond();
+    expect(calls).toEqual(["sub 106:0", "sub 107:0", "unsub 107:0"]);
+  });
+
+  it("drops frames from a superseded subscription", async () => {
+    let deliver: ((m: { meterId: number; x: number; value: number }) => void) | null = null;
+    vi.spyOn(platform, "vdMetersSubscribe").mockImplementation((_addrs, onUpdate) => {
+      deliver = onUpdate;
+      return Promise.resolve(() => {});
+    });
+
+    const stale = new MeterStore();
+    await subscribeMeters(stale, [[106, 0]]);
+    const staleDeliver = deliver!;
+    await subscribeMeters(new MeterStore(), [[107, 0]]);
+
+    // A frame still in flight for the old registration reaches its callback.
+    staleDeliver({ meterId: 106, x: 0, value: -200 });
+    expect(stale.readingTap({ key: "pregate", label: "PRE GATE", l: [106, 0] })).toBeNull();
   });
 });

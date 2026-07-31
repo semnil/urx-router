@@ -60,6 +60,7 @@ import {
 } from "../core/routing";
 import type { DynField, EqControl } from "../core/control/translate";
 import {
+  DUCKER_FIELDS,
   busBalance,
   busFader,
   busMasterOn,
@@ -67,8 +68,9 @@ import {
   channelDynamics,
   channelSections,
   colorControl,
-  DUCKER_FIELDS,
   duckerControl,
+  dynValueText,
+  formatDyn,
   fxChannelIndex,
   inputEq,
   insertFxControl,
@@ -155,7 +157,6 @@ import {
   PHONES_LEVEL_MIN,
   PHONES_LEVEL_MAX,
   PHONES_LEVEL_DEFAULT,
-  GATE_RANGE_OFF_DB,
 } from "../core/control/vd";
 import { channelDuckerOn, channelEqUnavailable, duckerBypassWarnings, rateConstraints } from "../core/constraints";
 import { getSettings } from "../core/settings";
@@ -163,7 +164,7 @@ import { loadJson, saveJson } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
 import { setLevelText } from "./glyph";
-import { onWheelStep, scrubFloat } from "./dom";
+import { wheelStep } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
@@ -176,6 +177,8 @@ export interface InspectorActions {
   onRecolorNode: (id: string, color: string | null) => void;
   onOpenRecent: (path: string) => void;
   onHideNode: (id: string) => void;
+  /** Open the GATE tuning screen for a MONO IN channel. */
+  onOpenGateScreen: (id: string) => void;
   onClose: () => void;
 }
 
@@ -510,7 +513,7 @@ export function renderInspector(
         const on = locked ? false : (np[sec.key] ?? sec.key === "eqOn");
         const { el, body } = section(m.inspector[sec.key], { open: on, on, key: sec.key });
         body.append(sectionToggle(node.id, sec.key, on, actions, locked ? m.inspector.eqRateLocked : undefined));
-        if (sec.key === "gateOn" && dyn) body.append(gateDetailBlock(node.id, dyn.gate, np, plan, actions, m));
+        if (sec.key === "gateOn" && dyn) body.append(gateLauncher(node.id, actions, m));
         else if (sec.key === "compOn" && ssmcs) body.append(ssmcsCompBlock(node.id, np, plan, actions, m));
         else if (sec.key === "compOn" && dyn?.comp)
           body.append(compDetailBlock(node.id, dyn.comp, np, plan, actions, m));
@@ -1049,21 +1052,6 @@ function paramControl(
     : panSlider(conn, onUpdate, panLabel);
 }
 
-// Native <input type=range> ignores the scroll wheel, so wire it up via onWheelStep:
-// a notch nudges the value one step and fires 'input' so the row's own listener updates
-// the readout and reports the change. Shared by rangeSlider and snappedSlider.
-function wheelStep(slider: HTMLInputElement): void {
-  onWheelStep(slider, (dir) => {
-    const step = Number(slider.step) || 1;
-    const lo = Number(slider.min);
-    const hi = Number(slider.max);
-    const next = Math.min(hi, Math.max(lo, scrubFloat(Number(slider.value) + dir * step)));
-    if (next === Number(slider.value)) return;
-    slider.value = String(next);
-    slider.dispatchEvent(new Event("input"));
-  });
-}
-
 // A labeled range slider that updates its value readout and reports the numeric
 // value on every input. Mutates in place (no re-render) so it keeps focus while
 // dragging. Shared by the connection (panSlider) and node-level controls.
@@ -1263,12 +1251,6 @@ function eqBandBlock(
   return frag;
 }
 
-function formatDyn(v: number, unit: DynField["unit"]): string {
-  if (unit === "db") return `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
-  if (unit === "ratio") return `${v.toFixed(1)}:1`;
-  return v < 1 ? `${v.toFixed(3)} ms` : `${v.toFixed(1)} ms`;
-}
-
 // One GATE/COMP/ducker detail slider, labeled and formatted by its unit. The dyn
 // labels cover all slider field keys (a subset of the DynField.key union, which
 // also spans the comp toggle keys), so index them via a string view.
@@ -1279,11 +1261,7 @@ function dynFieldSlider(
   onSet: (key: DynField["key"], v: number) => void,
 ): HTMLElement {
   const label = (m.inspector.dyn as Record<string, string>)[f.key];
-  // GATE range has a -∞ notch (one step below its -72 dB floor = fully closed).
-  const fmt =
-    f.name === "GATE_RANGE"
-      ? (v: number) => (v <= GATE_RANGE_OFF_DB ? "-∞ dB" : formatDyn(v, f.unit))
-      : (v: number) => formatDyn(v, f.unit);
+  const fmt = (v: number): string => dynValueText(f, v);
   // COMP gain is the only dyn param with a device-verified fine grid.
   const fine = f.name === "COMP_GAIN" ? FINE_GAIN_STEP_DB : undefined;
   return rangeSlider(label, f.min, f.max, f.step, cur ?? f.def, fmt, (v) => onSet(f.key, v), fine);
@@ -1653,25 +1631,21 @@ function duckerBlock(nodeId: string, np: NodeParams, plan: Plan, actions: Inspec
   return el;
 }
 
-// GATE detail sliders (threshold/range/attack/hold/decay) for a MONO IN channel.
-// The section's GATE ON toggle precedes this block (see renderInspector), so it
-// reads like the device's GATE screen — the GATE button heads its parameters.
-// Sliders mutate in place (no value drives a layout change), so none re-render.
-function gateDetailBlock(
-  nodeId: string,
-  fields: DynField[],
-  np: NodeParams,
-  plan: Plan,
-  actions: InspectorActions,
-  m: Messages,
-): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  const gate = (np.gate ?? {}) as Record<string, number | undefined>;
-  for (const f of fields)
-    frag.append(
-      dynFieldSlider(f, m, gate[f.key], (key, v) => mergeSection(actions, plan, nodeId, "gate", { [key]: v })),
-    );
-  return frag;
+// GATE section body for a MONO IN channel: the ON toggle (added by the caller)
+// and the control that opens the gate tuning screen. The five detail sliders used
+// to live here; they moved to that screen, which can show them beside the meters
+// that say what they are doing. Keeping a second copy here would not just
+// duplicate them — `dynFieldSlider` reads the params snapshot captured at render
+// time and never re-renders on a value change, so after the screen moved the
+// threshold these sliders would sit at the old position and write it back on the
+// next drag.
+function gateLauncher(nodeId: string, actions: InspectorActions, m: Messages): HTMLElement {
+  const btn = document.createElement("button");
+  btn.className = "gate-open";
+  btn.id = "btn-gate-screen";
+  btn.textContent = m.gateTuning.open;
+  btn.addEventListener("click", () => actions.onOpenGateScreen(nodeId));
+  return btn;
 }
 
 // COMP detail editor (MONO IN channels, COMP->EQ mode). Follows the COMP ON toggle

@@ -292,6 +292,8 @@ export interface ConsoleHooks {
    *  indistinguishable from silence, so the host surfaces this rather than
    *  leaving a live session that quietly shows nothing. */
   onMeterError?: (message: string) => void;
+  /** Open the GATE tuning screen for a MONO IN channel. */
+  onOpenGateScreen?: (id: string) => void;
   midi?: ConsoleMidiHooks;
 }
 
@@ -308,6 +310,12 @@ export class Console {
   private store = new MeterStore();
   private unsub: (() => void) | null = null;
   private subSig = ""; // signature of the currently subscribed address set
+  // The one meter slot is lent to another screen. Every render() ends in
+  // startMeters(), and renders happen for reasons that have nothing to do with
+  // this view being looked at — a device-follow reconcile re-renders the console
+  // behind a modal — so without this the borrower's stream is taken back out from
+  // under it, silently, and its display just stops.
+  private metersLent = false;
   private subPending = false; // a registration is in flight (see startMeters)
   private raf = 0;
   private live = false;
@@ -357,6 +365,24 @@ export class Console {
     // paint loop and leave the stream warm — it is torn down only when Live sync ends
     // (setLive(false) / stopMeters), so re-showing resumes from fresh data at once.
     this.stopPaint();
+  }
+
+  /** Hand the broker's meter subscription to another screen. There is one slot
+   *  process-wide — a subscribe replaces the previous registration and the
+   *  unsubscribe takes no address — and the replacement is silent, so a screen
+   *  that wants its own addresses has to say so rather than let this view keep
+   *  believing it still has a stream. */
+  releaseMeters(): void {
+    this.metersLent = true;
+    this.stopMeters();
+  }
+
+  /** Take the slot back. A no-op unless this view is live and on screen: opened
+   *  from the GRAPH inspector, the console may be hidden, and its stream is then
+   *  re-established by the render() that the next show() runs. */
+  regainMeters(): void {
+    this.metersLent = false;
+    this.startMeters();
   }
 
   /** Live sync turned on/off: gate the signal meter lanes and their stream. */
@@ -1228,6 +1254,21 @@ export class Console {
     parent.append(this.buildChip(id, label, on, toggle, { ...opts, mute }));
   }
 
+  /** The narrow chip beside GATE that opens the tuning screen. Momentary, so it
+   *  deliberately skips `buildChip`: that runs `commit()` after its toggle, and
+   *  this button changes nothing to commit. `wireActivate` still gives it the
+   *  keyboard activation and the MIDI-learn guard the chips have — with no
+   *  `midiId`, since a screen is not a device parameter to map. */
+  private gateOpenChip(id: string): HTMLElement {
+    const chip = el("div", "con-chip con-chip-open");
+    chip.textContent = "▸";
+    chip.setAttribute("role", "button");
+    chip.title = t().gateTuning.open;
+    chip.setAttribute("aria-label", t().gateTuning.open);
+    this.wireActivate(chip, undefined, () => this.hooks.onOpenGateScreen?.(id));
+    return chip;
+  }
+
   // The chip primitive, returning the element. `cls` picks the base class (con-chip
   // for the head chips, con-sl / con-slp for the rack's enable chip / PRE button);
   // opts.mute paints the MUTE colour, opts.after runs after the toggle (before commit),
@@ -1651,7 +1692,17 @@ export class Console {
 
     // processing group (GATE / COMP / EQ / INS FX / DUCKER)
     const proc = el("div", "con-chips");
-    if (m.isMono) boolChip(proc, "GATE", "gateOn", false);
+    if (m.isMono) {
+      // GATE keeps its chip (the ON toggle) and gains a narrow neighbour that
+      // opens the tuning screen. A separate chip rather than a gesture on the
+      // existing one: `wireActivate` binds click and Space/Enter with no `detail`
+      // guard, so a double-click would toggle the gate twice and write twice, and
+      // double-click is already the factory-value reset for the faders and knobs
+      // here. It costs a slot in the two-per-row grid, so the processing chips
+      // take a third row.
+      boolChip(proc, "GATE", "gateOn", false);
+      proc.append(this.gateOpenChip(m.id));
+    }
     if (m.isMono) boolChip(proc, "COMP", "compOn", false);
     const rate = this.hooks.getPlan().sampleRate;
     if (m.hasEq) {
@@ -1928,7 +1979,7 @@ export class Console {
   }
 
   private startMeters(): void {
-    if (!this.live || !this.visible) return;
+    if (!this.live || !this.visible || this.metersLent) return;
     const taps: MeterTap[] = [];
     for (const r of this.refs.values()) if (r.tap) taps.push(r.tap);
     const addrs = tapAddrs(taps);

@@ -58,6 +58,18 @@
   --m-green: #4fb96a;
   --m-yellow: #ffd36b;
   --m-red: #ff4d4d;
+  /* Gain reduction. A reduction is not a level, so it never borrows the three
+     signal zones above; rose is clear of them and of the amber accent, and sits
+     in the ducker rail's family — a ducker's GR is the same class of quantity. */
+  --gr: #e0788c;
+  /* Plot chrome for anything drawn on the groove (which stays dark in the light
+     theme too, so meters read as LEDs on black). These do NOT flip with the
+     theme: the light theme's own --line on a dark groove draws as bright white
+     rules. Only the meter colors follow the theme, as the console's meters do. */
+  --plot-line: #38301f;
+  --plot-faint: #6f6450;
+  --plot-dim: #ab9b7d;
+  --plot-ink: #f1e8d6;
   --grain-blend: overlay;
   --grain-op: 0.05;
   --vignette: rgba(0, 0, 0, 0.7);
@@ -115,6 +127,10 @@
   --m-green: #3f9e57;
   --m-yellow: #d99a2a;
   --m-red: #d32f2f;
+  /* Like the meter colors, GR is drawn on the pinned-dark groove, so it shifts
+     only enough to sit beside the light theme's reds — it does not darken the
+     way panel-borne colors do. --plot-* deliberately have no light override. */
+  --gr: #d9697f;
   --grain-blend: multiply;
   --grain-op: 0.045;
   --vignette: rgba(90, 75, 40, 0.22);
@@ -1018,7 +1034,8 @@ select:focus-visible,
   transform: rotate(-45deg);
 }
 
-/* Shared with the device setup screen's brightness slider. */
+/* Shared with the device setup screen's brightness slider and the gate screen's
+   parameter rows. */
 .param input[type="range"],
 .dev-slider input[type="range"] {
   -webkit-appearance: none;
@@ -1031,6 +1048,7 @@ select:focus-visible,
 }
 
 .param input[type="range"]::-webkit-slider-runnable-track,
+.gt-ctl input[type="range"]::-webkit-slider-runnable-track,
 .dev-slider input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 2px;
@@ -1039,6 +1057,7 @@ select:focus-visible,
 }
 
 .param input[type="range"]::-webkit-slider-thumb,
+.gt-ctl input[type="range"]::-webkit-slider-thumb,
 .dev-slider input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 13px;
@@ -1051,6 +1070,7 @@ select:focus-visible,
 }
 
 .param input[type="range"]::-moz-range-track,
+.gt-ctl input[type="range"]::-moz-range-track,
 .dev-slider input[type="range"]::-moz-range-track {
   height: 4px;
   border-radius: 2px;
@@ -1058,6 +1078,7 @@ select:focus-visible,
 }
 
 .param input[type="range"]::-moz-range-thumb,
+.gt-ctl input[type="range"]::-moz-range-thumb,
 .dev-slider input[type="range"]::-moz-range-thumb {
   width: 13px;
   height: 20px;
@@ -1549,7 +1570,8 @@ select:focus-visible,
 
 /* Joined segmented bar, shared with the Device setup screen's knob-bank switch. */
 .view-tabs,
-.udk-banks {
+.udk-banks,
+.gt-modes {
   display: flex;
   border: 1px solid var(--ctl-border);
   border-radius: 7px;
@@ -1557,7 +1579,8 @@ select:focus-visible,
   flex-shrink: 0;
 }
 .view-tabs button,
-.udk-banks button {
+.udk-banks button,
+.gt-modes button {
   font: 700 11px var(--mono);
   letter-spacing: 1.5px;
   padding: 7px 13px;
@@ -1569,7 +1592,8 @@ select:focus-visible,
   white-space: nowrap;
 }
 .view-tabs button:last-child,
-.udk-banks button:last-child {
+.udk-banks button:last-child,
+.gt-modes button:last-child {
   border-right: 0;
 }
 .view-tabs button[aria-pressed="true"] {
@@ -1577,14 +1601,16 @@ select:focus-visible,
   color: #fff;
 }
 .view-tabs button:focus-visible,
-.udk-banks button:focus-visible {
+.udk-banks button:focus-visible,
+.gt-modes button:focus-visible {
   outline: 2px solid var(--led);
   outline-offset: -2px;
 }
 
 /* ---- console view (mixer-style level overview) ---- */
 
-#console-host {
+#console-host,
+#gate-tuning-box {
   --strip-w: 94px;
   --head-h: 252px;
   --groove: color-mix(in srgb, var(--canvas-bg) 55%, #000 45%);
@@ -1600,7 +1626,8 @@ select:focus-visible,
 }
 /* Meters and fader slots read as LEDs on black: keep the groove dark in light
    mode too, so amber set fills and green/red signal lanes stay high-contrast. */
-[data-theme="light"] #console-host {
+[data-theme="light"] #console-host,
+[data-theme="light"] #gate-tuning-box {
   --groove: #2a251d;
 }
 .con-strips {
@@ -1767,6 +1794,19 @@ select:focus-visible,
   color: var(--text-dim);
   cursor: pointer;
   user-select: none;
+}
+/* GATE splits its slot: the chip keeps toggling the gate, the narrow neighbour
+   opens the tuning screen. Together they fill one row of the two-per-row grid, so
+   the processing chips run to a third row. Expressed here rather than threaded
+   through the chip builder — which slot a chip occupies is this strip's layout,
+   not something the shared chip API should carry. */
+.con-chip:has(+ .con-chip-open) {
+  flex: 0 0 calc(75% - 3px);
+}
+.con-chip-open {
+  flex: 0 0 calc(25% - 3px);
+  font-size: 8px;
+  line-height: 1.5;
 }
 /* Filler to keep an odd group's last chip at half width (never full-width). */
 .con-chip.spacer {
@@ -2093,6 +2133,7 @@ select:focus-visible,
   inherits: false;
   initial-value: 0;
 }
+.gt-shade,
 .con-ladder.sig .shade {
   position: absolute;
   left: 0;
@@ -2106,6 +2147,7 @@ select:focus-visible,
   transform-origin: top;
   background: var(--groove);
 }
+.gt-peak,
 .con-ladder.sig .peak {
   position: absolute;
   left: 0;
@@ -2125,6 +2167,7 @@ select:focus-visible,
 .con-ladder.sig .mtrcol.live .peak {
   will-change: transform;
 }
+.gt-peak::after,
 .con-ladder.sig .peak::after {
   content: "";
   position: absolute;
@@ -3320,4 +3363,235 @@ select:focus-visible,
 }
 .midi-panel .mp-info .ln.cur .nm {
   color: var(--led);
+}
+
+/* GATE section launcher (inspector). Takes the panel's default full-width button
+   shape; quieter than a primary action because it opens a screen rather than
+   changing anything. */
+.gate-open {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  padding: 7px 0;
+  border-radius: 4px;
+  border: 1px solid var(--ctl-border);
+  background: var(--ctl-bg2);
+  color: var(--ctl-text);
+  cursor: pointer;
+}
+.gate-open:hover {
+  border-color: var(--led);
+  color: var(--led);
+}
+
+/* ---- GATE tuning modal ---- */
+/* Shares the Preferences box, grid, section and row recipes; only what this
+   screen adds lives here. Its one new idea is that the threshold is a fader cap
+   on the input meter — which works because a GATE threshold in dB and the PRE
+   GATE meter's dBFS are the same coordinate — so the ladder is linear in dB over
+   exactly the threshold's domain (-72..0), not the console's detent ruler. */
+#gate-tuning-box h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.gt-ch {
+  font-size: 11px;
+  color: #14110d;
+  background: var(--led);
+  border-radius: 2px;
+  padding: 1px 7px;
+}
+
+/* The two modes are alternatives, so each gets the whole column and the frame
+   keeps the same edges either way — the ladders centre inside it rather than the
+   frame shrinking onto them. */
+.gt-ladderbox,
+.gt-curvebox {
+  position: relative;
+  margin-top: 10px;
+  background: var(--groove);
+  border: 1px solid var(--meter-frame);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.gt-curvebox canvas {
+  display: block;
+  width: 100%;
+  height: 320px;
+  touch-action: none;
+}
+.gt-ladders {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  justify-content: center;
+  padding: 8px;
+  height: 320px;
+}
+.gt-lcol {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 6px;
+  justify-items: center;
+}
+.gt-slot {
+  position: relative;
+  width: 46px;
+  height: 100%;
+  background: #0d0b08;
+  border: 1px solid var(--meter-frame);
+  border-radius: 1px;
+  overflow: hidden;
+}
+/* The level slots read as empty in --groove (their shade covers the bar); the GR
+   slot has no shade, so without this it sits a shade darker than its neighbours
+   and an idle gate looks like a dead element. */
+.gt-slot-gr {
+  background: var(--groove);
+}
+.gt-bar {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    var(--m-green) 0%,
+    var(--m-green) var(--zy),
+    var(--m-yellow) var(--zy),
+    var(--m-yellow) var(--zr),
+    var(--m-red) var(--zr),
+    var(--m-red) 100%
+  );
+}
+/* The GR lane hangs from the top and is the bar itself rather than the cover over
+   one, so it inverts the shade's scale (--lvl is the lit fraction either way) and
+   the peak's direction. Both still ride the registered --lvl / --pk on the
+   compositor, so a reduction costs no more to animate than a level. */
+.gt-shade.gr {
+  transform: scaleY(var(--lvl, 0));
+  transform-origin: top;
+  background: repeating-linear-gradient(-45deg, var(--gr) 0 3px, color-mix(in srgb, var(--gr) 55%, transparent) 3px 6px);
+}
+.gt-peak.gr {
+  transform: translateY(calc(var(--pk, 0) * 100%));
+}
+.gt-peak.gr::after {
+  bottom: auto;
+  top: -1px;
+}
+.gt-peak.off::after {
+  display: none;
+}
+.gt-cap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 8px;
+  top: var(--pos, 50%);
+  transform: translateY(-50%);
+  background: var(--seg);
+  border: 1px solid #7a5a1c;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  cursor: ns-resize;
+  z-index: 2;
+}
+.gt-cap::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 3px;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.45);
+}
+.gt-cap-label {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--plot-dim);
+  text-align: center;
+  line-height: 1.5;
+}
+.gt-cap-label .sub {
+  color: var(--plot-faint);
+}
+/* The tick column shares the slot's grid row, so a tick and a level sit in one
+   coordinate space; its own height would put the labels a few percent off —
+   enough to misread the threshold. */
+.gt-scale {
+  position: relative;
+  width: 34px;
+  height: 100%;
+  align-self: stretch;
+}
+.gt-scale .t {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--plot-faint);
+}
+.gt-scale .t::before {
+  content: "";
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  width: 4px;
+  height: 1px;
+  background: var(--plot-line);
+}
+
+/* Reserved in both display modes, filled only in CURVE: adding it on the switch
+   grew the modal by its height, moving the Close action and the parameter rows
+   under the pointer. One line exactly — a hint that wraps would bring the jump
+   back, which is why the height is fixed rather than a minimum. */
+.gt-note {
+  margin-left: 14px;
+  height: 1.55em;
+  overflow: hidden;
+}
+/* The Device setup brightness row's slider recipe, widened for "-72.0 dB". */
+.gt-val {
+  min-width: 76px;
+}
+.gt-readouts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 10px 0 0 14px;
+}
+.gt-ro {
+  display: grid;
+  gap: 1px;
+  padding: 6px 9px;
+  background: var(--ctl-bg);
+  border: 1px solid var(--ctl-border);
+  border-radius: 2px;
+}
+.gt-ro .k {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.gt-ro .v {
+  font-family: var(--mono);
+  font-size: 16px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.gt-ro.gr .v {
+  color: var(--gr);
+}
+.gt-ro .p {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
 }
