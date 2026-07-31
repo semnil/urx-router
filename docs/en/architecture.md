@@ -302,7 +302,11 @@ fine-eligible control carries a printed `FINE` legend at all times — silkscree
 before any interaction, and placed so it can never shift the control's layout by appearing (pinned
 beside the static label in the inspector's row — anchored to the value readout it would jitter with the
 value's digit count — and floated in the whitespace above the console knob); while armed it lights
-amber on the hovered / focused control. `ui/fine.ts` tracks the key globally:
+amber on the hovered / focused control. **At all times includes while the row is locked**: a value the
+device has taken over (`Device-driven`) keeps its legend, ahead of the tag that says so — the legend
+describes the parameter, not who is holding it, so it is not a lock indicator, and one that came and
+went with the lock would move the label block it sits in. There it dims with the row and never lights,
+since the slider refuses the gesture it describes. `ui/fine.ts` tracks the key globally:
 it toggles the `.fine-mode` root class (the tag CSS) and swaps the `step` attribute of every
 `input[data-fine-step]`, so native slider drag, arrow keys and the wheel all inherit the fine grid; the
 console knob reads the modifier per event (drag rebases when Shift flips mid-gesture, so entering or

@@ -10,9 +10,13 @@ import { wheelOver } from "./graph-helpers";
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
-// Legend opacities, matching .fine-tag / its armed state in src/style.css.
+// Legend opacities, matching .fine-tag / its armed state / a locked row in src/style.css.
+// LOCKED is DIM composed with the locked row's own 0.45, not that 0.45 alone: opacity on
+// one element cascades rather than multiplying, so the flat value printed the legend
+// heavier than the label it annotates (measured at 1.56x its ink, against 0.90x live).
 const DIM = "0.55";
 const LIT = "1";
+const LOCKED = "0.2475";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -87,6 +91,39 @@ test.describe("tuning-screen sliders", () => {
     await wheelOver(page, row.locator("input[type=range]"), -100); // "0 dB" → "+0.5 dB"
     await expect(row.locator(".param-val")).toHaveText("+0.5 dB");
     expect(await tag.boundingBox()).toEqual(before);
+  });
+
+  test("the legend survives the device taking the row, ahead of the tag that says so", async ({ page }) => {
+    await openScreen(page, /^COMP$/, "#btn-comp-screen");
+    const box = page.locator("#dyn-screen-box");
+    const gainRow = box.locator(".prefs-row", { hasText: "Gain" });
+    const tag = gainRow.locator(".fine-tag");
+    const before = await tag.boundingBox();
+
+    // 1-knob on: the device owns the makeup gain. The legend states what the parameter
+    // has rather than who is holding it, so it stays exactly where it was and the
+    // Device-driven pill lands after it — a legend that came and went would move the
+    // label block on every toggle.
+    await box
+      .locator(".prefs-row")
+      .filter({ has: page.getByText("1-Knob", { exact: true }) })
+      .locator("button", { hasText: "On" })
+      .click();
+    await expect(gainRow).toHaveClass(/locked/);
+    // A hidden element has no box, so this covers "still printed" too. The sibling
+    // combinator states the adjacency the placement is *for*, which a coordinate
+    // comparison only implies.
+    expect(await tag.boundingBox()).toEqual(before);
+    await expect(gainRow.locator(".fine-tag + .prefs-lock")).toHaveCount(1);
+
+    // The row's dimming composes with the legend's own printed dim rather than
+    // replacing it, so it stays lighter than the label. And it can never light: a
+    // locked slider refuses the gesture the legend describes.
+    await expect(tag).toHaveCSS("opacity", LOCKED);
+    await gainRow.hover();
+    await page.keyboard.down("Shift");
+    await expect(tag).toHaveCSS("opacity", LOCKED);
+    await page.keyboard.up("Shift");
   });
 });
 

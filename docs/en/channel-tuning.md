@@ -132,7 +132,15 @@ the gate below, which was a second *unlabelled* scale under the *shared* ticks.
 **Some values belong to the device while it drives them.** With 1-knob on, the unit computes
 threshold / ratio / gain from a single level; with Auto Makeup on, it computes the gain. Each
 recomputation is announced per address (measured), so those rows stay on screen and keep updating —
-tagged, dimmed and read-only — rather than being hidden or recomputed here. Auto Makeup cannot be operated while 1-knob is on, so that row goes.
+tagged, dimmed and read-only — rather than being hidden or recomputed here.
+
+**1-knob's own two rows are locked, not swapped.** Auto Makeup cannot be operated while 1-knob is
+on (user guide), and 1-Knob Level does nothing while it is off — so exactly one of the two applies
+at a time. Both stay on screen either way, locked when they do not apply, the way the EQ screen
+holds its 1-knob rows; the lock is declared in `rowStates` with every other one, not decided in the
+row builder. Swapping them in and out moved the panel — a toggle row and a slider row are not the
+same height — and dropping Auto Makeup lifted the 1-knob row itself a full row up, out from under
+the pointer that had just clicked it. `e2e/dyntuning.spec.ts` pins both figures.
 
 **The knee is drawn, and its width was measured.** Soft / Medium / Hard publish no widths, so the
 curve would either invent a curvature or leave the selector changing nothing on screen. Measured by
@@ -422,7 +430,7 @@ per-device mapping — so unlike the meter point it is not model-scoped.
 The curve is drawn as a cached static layer plus a live dot: everything but the dot depends only on
 the parameters, size and theme. Canvas size is measured on open and refresh, and the theme tokens
 are read on render — both are forced reads that would otherwise land in the frame loop straight
-after its own DOM writes. A row that changes which *other* rows exist (1-knob, Auto Makeup) rebuilds
+after its own DOM writes. A row that changes who owns the *other* rows (1-knob, Auto Makeup) rebuilds
 the control column; the sliders deliberately do not, since a rebuild mid-drag would drop the pointer
 capture.
 

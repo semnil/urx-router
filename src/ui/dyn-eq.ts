@@ -45,9 +45,9 @@ import { eqResponse } from "../core/eq-response";
 import type { EqBandState } from "../core/eq-response";
 import { tapFor } from "../core/meters";
 import type { EqBand, NodeParams } from "../core/plan";
-import { el, onOff, settingsRow, settingsSection, settingsSelect, sliderRow } from "./dom";
+import { el, onOff, settingsRow, settingsSection, settingsSelect } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { PLOT_FONT } from "./dyn-screen";
+import { PLOT_FONT, oneKnobLevelRow } from "./dyn-screen";
 import type { DynCtx, DynLane, DynPlotGeo, DynProcessor } from "./dyn-screen";
 
 /** Level-lane ruler. The stages either side of an EQ are programme level, so the ruler
@@ -263,16 +263,9 @@ export const EQ_DYN: DynProcessor = {
       ),
     );
     sec.append(
-      sliderRow({
+      oneKnobLevelRow({
         label: m.inspector.eqOneKnobLevel,
-        id: "dyn-oneknob-level",
-        min: 0,
-        max: 100,
-        step: 1,
-        value: typeof vals.oneKnobLevel === "number" ? vals.oneKnobLevel : 0,
-        format: (v) => `${v} %`,
-        // setValue, not set: this slider changes only itself, and a rebuild on its own
-        // input event would take the element out from under the pointer.
+        value: vals.oneKnobLevel,
         onInput: (v) => setValue({ oneKnobLevel: v }),
         row: off ? { ...states.get("oneKnobLevel"), locked: true } : {},
       }),

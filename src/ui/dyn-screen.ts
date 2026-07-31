@@ -30,7 +30,7 @@
 // the previous one and the unsubscribe takes no address), so this screen takes the slot
 // for its lanes' addresses while open and hands it back on close.
 
-import { el, settingsRow, settingsSection, wheelStep, wireDismiss } from "./dom";
+import { el, settingsRow, settingsSection, sliderRow, wheelStep, wireDismiss } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import { setLevelText } from "./glyph";
@@ -283,6 +283,31 @@ const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
 /** Shared empty map for a processor with every row plainly editable. */
 const NO_STATES: ReadonlyMap<string, SettingsRowOptions> = new Map<string, SettingsRowOptions>();
+
+/** The 1-knob level row, which COMP and the EQ each own one of. Shared because the two
+ *  are the same control on the same scale — including the element id, which the E2E
+ *  suite addresses and which works only because one screen is open at a time; spelling
+ *  that twice let the range, the `%` format and that id drift per processor. `setValue`,
+ *  not `set`: this slider changes only itself, and a rebuild on its own input event
+ *  would take the element out from under the pointer. */
+export function oneKnobLevelRow(opts: {
+  label: string;
+  value: unknown;
+  onInput: (v: number) => void;
+  row?: SettingsRowOptions;
+}): HTMLElement {
+  return sliderRow({
+    label: opts.label,
+    id: "dyn-oneknob-level",
+    min: 0,
+    max: 100,
+    step: 1,
+    value: typeof opts.value === "number" ? opts.value : 0,
+    format: (v) => `${v} %`,
+    onInput: opts.onInput,
+    row: opts.row,
+  });
+}
 
 /** How many bars a lane draws: a stereo tap's L and R, or one. */
 const laneSideCount = (lane: DynLane): number => (lane.tap?.r ? 2 : 1);
@@ -1154,18 +1179,23 @@ export class DynScreen {
     });
     wheelStep(input);
     ctl.append(input, val);
-    const row = settingsRow(label, ctl, opts ?? {});
     // The device's push-and-turn fine grid is confirmed for a few values only (the
     // COMP makeup gain, the EQ band gains), so the field table says which (see
-    // reference/work/vd/vd-params.md). The legend pins beside the static label,
-    // never the readout — the readout's width changes with the value's digits.
-    if (f.fineStep !== undefined && !opts?.locked) {
-      optInFine(input, f.step, f.fineStep);
-      // `has-fine` is what lights the legend on hover/focus while fine mode is armed.
-      // The screens printed the tag without it, so the legend sat dim through every
-      // gesture it describes — the inspector's own rows have carried it all along.
+    // reference/work/vd/vd-params.md). The legend goes in as the row's `legend`, which
+    // pins it beside the static label rather than the readout — the readout's width
+    // changes with the value's digits — and orders it ahead of the row's own tag pill,
+    // so a row the device takes over prints `Gain FINE Device-driven` and the legend
+    // never comes and goes (which would move the label block it sits in).
+    const fine = f.fineStep !== undefined;
+    const row = settingsRow(label, ctl, { ...opts, legend: fine ? fineTag() : undefined });
+    if (fine) {
+      // `has-fine` stays unconditional so "legend printed" and "legend can light" are
+      // one fact — the screens once printed the tag without it and the legend sat dim
+      // through every gesture it describes. A locked row is excluded by the lighting
+      // rules themselves (`.has-fine:not(.locked)` in style.css); only *arming* is
+      // gated here, since a disabled slider must not carry the fine grid.
       row.classList.add("has-fine");
-      row.querySelector(".lblc")?.append(fineTag());
+      if (!opts?.locked) optInFine(input, f.step, f.fineStep as number);
     }
     return row;
   }
