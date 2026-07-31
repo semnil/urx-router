@@ -6,7 +6,6 @@ import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
 import type {
   ConnParams,
-  EqBand,
   FxEffectParams,
   NodeParams,
   Plan,
@@ -58,7 +57,7 @@ import {
   sendHasTap,
   sendTapWritable,
 } from "../core/routing";
-import type { DynField, EqControl } from "../core/control/translate";
+import type { DynField } from "../core/control/translate";
 import {
   DUCKER_FIELDS,
   busBalance,
@@ -82,11 +81,6 @@ import {
   COMP_EQ_COMP_FIRST,
   COMP_EQ_OPTIONS,
   COMP_KNEE_OPTIONS,
-  EQ_TYPE_HIGH_OPTIONS,
-  EQ_TYPE_LOW_OPTIONS,
-  EQ_TYPE_PASS,
-  EQ_TYPE_PEAKING,
-  EQ_TYPE_SHELVING,
   INSERT_FX_NONE,
   OSC_MODE_BURST,
   OSC_MODE_OPTIONS,
@@ -106,8 +100,6 @@ import {
   COLOR_PALETTE,
   DELAY_FRAME_RATE_OPTIONS,
   DELAY_FRAME_RATE_DEFAULT,
-  EQ_ONE_KNOB_TYPE_OPTIONS,
-  EQ_ONE_KNOB_TYPE_DEFAULT,
   insertFxAvailable,
   insertFxEngaged,
 } from "../core/control/params";
@@ -115,10 +107,6 @@ import type { InsertFxSlot } from "../core/control/params";
 import {
   EQ_FREQ_MAX_HZ,
   EQ_FREQ_MIN_HZ,
-  EQ_GAIN_MAX_DB,
-  EQ_GAIN_MIN_DB,
-  EQ_Q_MAX,
-  EQ_Q_MIN,
   HPF_FREQ_DEFAULT_HZ,
   HPF_FREQ_MAX_HZ,
   HPF_FREQ_MIN_HZ,
@@ -516,10 +504,7 @@ export function renderInspector(
         else if (sec.key === "compOn" && ssmcs) body.append(ssmcsCompBlock(node.id, np, plan, actions, m));
         else if (sec.key === "compOn" && dyn?.comp) body.append(dynLauncher("comp", node.id, actions, m));
         else if (sec.key === "eqOn" && ssmcs) body.append(ssmcsEqBlock(node.id, np, plan, actions, m));
-        else if (sec.key === "eqOn" && ieq && !locked) {
-          body.append(eqOneKnobBlock(node.id, np, plan, actions, m));
-          if (!np.eqOneKnob?.on) body.append(eqBandBlock(node.id, ieq, np, plan, actions, m));
-        }
+        else if (sec.key === "eqOn" && ieq && !locked) body.append(dynLauncher("eq", node.id, actions, m));
         host.append(el);
         // Insert the SSMCS Main section right after GATE (before COMP).
         if (sec.key === "gateOn" && ssmcsMasterEl) host.append(ssmcsMasterEl);
@@ -565,8 +550,7 @@ export function renderInspector(
         const on = np.eqOn ?? true;
         const { el, body } = section(m.inspector.eqOn, { open: on, on, key: "eqOn" });
         body.append(sectionToggle(node.id, "eqOn", on, actions));
-        body.append(eqOneKnobBlock(node.id, np, plan, actions, m));
-        if (!np.eqOneKnob?.on) body.append(eqBandBlock(node.id, oeq, np, plan, actions, m));
+        body.append(dynLauncher("eq", node.id, actions, m));
         host.append(el);
       }
     }
@@ -1105,149 +1089,11 @@ function formatGainDb(v: number): string {
   return `${v > 0 ? "+" : ""}${v} dB`;
 }
 
-// Per-band default frequencies (Hz) and Q shown before a fetch, matching the
-// device defaults (LOW 125 / LOW-MID 1k / HIGH-MID 4k / HIGH 10k, Q 0.71).
-const EQ_BAND_DEFAULT_FREQ = [125, 1000, 4000, 10000];
-const EQ_Q_DEFAULT = 0.71;
-
-// The EQ band tab last viewed per node, so a re-render (a band type / on change)
-// keeps the same band open instead of snapping back to LOW. Ephemeral view state
-// (like the selection), not persisted.
-const eqActiveBand = new Map<string, number>();
-
-// 4-band PEQ editor (input channel or output bus). The four bands are tabs; only
-// the selected band's controls show, since stacking all four ran ~20 rows long.
-// Each band shows ON / filter type (LOW & HIGH bands only) / freq / Q / gain; Q
-// shows only for a peaking band and gain only when the band is not a pass filter
-// — matching the device's filter-type behavior. Edits merge into nodeParams.eqBands.
-// EQ 1-knob controls: the ON toggle plus (when on) the preset type and the
-// 0..100 % effect-depth slider. When on, the caller hides the 4-band tabs — the
-// device drives the bands from the 1-knob, so they are not editable. Every EQ
-// instance offers all three preset types (measured).
-function eqOneKnobBlock(
-  nodeId: string,
-  np: NodeParams,
-  plan: Plan,
-  actions: InspectorActions,
-  m: Messages,
-): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  const ok = np.eqOneKnob ?? {};
-  const setOk = (patch: Partial<typeof ok>): void =>
-    actions.onUpdateNodeParams(nodeId, { eqOneKnob: { ...(plan.nodeParams[nodeId]?.eqOneKnob ?? {}), ...patch } });
-  frag.append(boolToggle(m.inspector.eqOneKnob, ok.on ?? false, (v) => setOk({ on: v })));
-  if (ok.on) {
-    frag.append(
-      enumSelect(m.inspector.eqOneKnobType, EQ_ONE_KNOB_TYPE_OPTIONS, ok.type ?? EQ_ONE_KNOB_TYPE_DEFAULT, (v) =>
-        setOk({ type: v }),
-      ),
-    );
-    frag.append(
-      rangeSlider(
-        m.inspector.eqOneKnobLevel,
-        0,
-        100,
-        1,
-        ok.level ?? 0,
-        (v) => `${v}%`,
-        (v) => setOk({ level: v }),
-      ),
-    );
-  }
-  return frag;
-}
-
-// 0.1 dB fine grid shared by every gain-trim slider that has one on the device
-// (EQ band gain and COMP gain; verified push-and-turn steps).
+// 0.1 dB fine grid, for the one slider in this file that has one on the device: the COMP
+// makeup gain (verified push-and-turn steps). The EQ band gain has the same grid and left
+// with the band editor — it now carries `fineStep` on its field instead, which is where
+// this should end up too (`dynFieldSlider` still keys off the param name).
 const FINE_GAIN_STEP_DB = 0.1;
-
-function eqBandBlock(
-  nodeId: string,
-  ctrl: EqControl,
-  np: NodeParams,
-  plan: Plan,
-  actions: InspectorActions,
-  m: Messages,
-): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  const setBand = (i: number, patch: EqBand): void => {
-    const next = (plan.nodeParams[nodeId]?.eqBands ?? []).slice();
-    next[i] = { ...next[i], ...patch };
-    actions.onUpdateNodeParams(nodeId, { eqBands: next });
-  };
-  const tabs = document.createElement("div");
-  tabs.className = "eq-tabs";
-  const panels = document.createElement("div");
-
-  const indexes = ctrl.bands.map((b) => b.index);
-  let active = eqActiveBand.get(nodeId) ?? ctrl.bands[0].index;
-  if (!indexes.includes(active)) active = ctrl.bands[0].index;
-
-  const tabEls = new Map<number, HTMLElement>();
-  const panelEls = new Map<number, HTMLElement>();
-  // Switching tabs is pure DOM (no re-render), so a dragged slider keeps focus.
-  const show = (i: number): void => {
-    eqActiveBand.set(nodeId, i);
-    for (const [j, p] of panelEls) p.hidden = j !== i;
-    for (const [j, t] of tabEls) t.classList.toggle("active", j === i);
-  };
-
-  for (const band of ctrl.bands) {
-    const bv = np.eqBands?.[band.index] ?? {};
-    const tab = document.createElement("button");
-    tab.type = "button";
-    tab.className = "eq-tab" + (band.index === active ? " active" : "") + ((bv.on ?? true) ? "" : " off");
-    tab.textContent = m.inspector.eqBand[band.name];
-    tab.addEventListener("click", () => show(band.index));
-    tabs.append(tab);
-    tabEls.set(band.index, tab);
-
-    const panel = document.createElement("div");
-    panel.className = "eq-panel";
-    panel.hidden = band.index !== active;
-    panel.append(boolToggle(m.inspector.bandOn, bv.on ?? true, (v) => setBand(band.index, { on: v })));
-    let effType = EQ_TYPE_PEAKING;
-    if (band.type !== null) {
-      effType = bv.type ?? EQ_TYPE_SHELVING;
-      const opts = band.name === "low" ? EQ_TYPE_LOW_OPTIONS : EQ_TYPE_HIGH_OPTIONS;
-      panel.append(enumSelect(m.inspector.filterType, opts, effType, (v) => setBand(band.index, { type: v })));
-    }
-    // Device EQ screen reads each band's values Q, Freq, Gain (left → right); Q is
-    // shown only for a peaking band, gain only when the band is not a pass filter.
-    if (effType === EQ_TYPE_PEAKING) {
-      panel.append(
-        rangeSlider(
-          m.inspector.q,
-          EQ_Q_MIN,
-          EQ_Q_MAX,
-          0.1,
-          bv.q ?? EQ_Q_DEFAULT,
-          (v) => v.toFixed(2),
-          (v) => setBand(band.index, { q: v }),
-        ),
-      );
-    }
-    panel.append(eqFreqControl(bv.freq ?? EQ_BAND_DEFAULT_FREQ[band.index], (v) => setBand(band.index, { freq: v })));
-    if (effType !== EQ_TYPE_PASS) {
-      panel.append(
-        rangeSlider(
-          m.inspector.eqGain,
-          EQ_GAIN_MIN_DB,
-          EQ_GAIN_MAX_DB,
-          0.5,
-          bv.gain ?? 0,
-          formatGainDb,
-          (v) => setBand(band.index, { gain: v }),
-          FINE_GAIN_STEP_DB,
-        ),
-      );
-    }
-    panels.append(panel);
-    panelEls.set(band.index, panel);
-  }
-  frag.append(tabs, panels);
-  return frag;
-}
 
 // One GATE/COMP/ducker detail slider, labeled and formatted by its unit. The dyn
 // labels cover all slider field keys (a subset of the DynField.key union, which

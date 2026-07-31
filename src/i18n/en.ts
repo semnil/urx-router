@@ -460,6 +460,16 @@ export const en = {
       tapOut: "Pre EQ",
       curveHint: "The curve is what the sliders do to the signal; the dot is the live level.",
     },
+    eq: {
+      title: "EQ",
+      open: "EQ screen…",
+      band: "Band",
+      unusedByType: "Unused by this type",
+      fixedBand: "Fixed on this band",
+      oneKnobDrives:
+        "The device computes all four bands from the 1-knob level. The curve follows it only while Live sync is up.",
+      plotHint: "The curve is the EQ's response; each marker shows a band's frequency.",
+    },
   },
   shelf: {
     title: "Hidden",

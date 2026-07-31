@@ -771,17 +771,17 @@ from the foot of the screen) on narrow viewports (≤720px). For nodes whose ins
 while the parameters group into collapsible rack-module sections (ROUTING / INPUT / GATE / COMP / EQ /
 Parameters) built on `<details>` (`section()` in `inspector.ts`). GATE / COMP / EQ / Ducker light their
 header led from each section's ON state and an off section folds itself away; ROUTING defaults collapsed.
-The GATE section holds its ON toggle and a control that opens the **gate tuning screen** — a modal that
-puts the five gate parameters beside the three meter taps showing their effect (spec:
-[dynamics-tuning.md](dynamics-tuning.md)); the CONSOLE's mono strips open the same screen from a chip
-beside their GATE chip. The screen owns the broker's single meter subscription slot while open.
+The GATE, COMP and EQ sections each hold their ON toggle and a control that opens that processor's
+**channel tuning screen** — a modal that puts its parameters beside the meter taps showing their effect
+(spec: [channel-tuning.md](channel-tuning.md)); the CONSOLE strips open the same screens from a chip
+beside each processor chip. The screen owns the broker's single meter subscription slot while open.
 A node's ON/OFF (channel ON, each master, FX, MONITOR, Ducker, OSC) always leads its parameters, mirroring
 the canvas OFF display.
 A hand-folded section persists its open/closed state per section kind to `localStorage`
 (`urx-inspector-sections`), so it survives re-renders and reloads; toggling a section's ON value clears
-that override so the fold reverts to following the on-state. Within a section, the EQ band editor is a
-four-tab strip (LOW / LOW MID / HIGH MID / HIGH) showing one band at a time (the active band is kept
-across re-renders), and the INPUT toggles flow two-up. Its visibility is driven by CSS alone:
+that override so the fold reverts to following the on-state. Within a section, the INPUT toggles flow
+two-up; the EQ's band editor is not here at all — it moved to the tuning screen with GATE's and COMP's
+sliders, for the same reason (a second copy reads a render-time snapshot and writes stale values back). Its visibility is driven by CSS alone:
 `main.ts` toggles a single `has-selection` class on `<body>` from whether anything is selected, and
 `body.has-selection #inspector` raises the sheet with `transform: translateY(0)` (off-screen at
 `translateY(105%)` otherwise). It is dismissed by the heading's ✕ button (`onClose` →

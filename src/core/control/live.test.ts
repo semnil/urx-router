@@ -19,12 +19,13 @@ function basePlan(): Plan {
   return plan;
 }
 
-function liveFor(plan: Plan): LiveSync {
+function liveFor(plan: Plan, refetchNodes?: (nodes: ReadonlySet<string>) => Promise<void>): LiveSync {
   return new LiveSync({
     getModel: () => model,
     getPlan: () => plan,
     onError: () => {},
     onSent: () => {},
+    refetchNodes,
   });
 }
 
@@ -288,5 +289,84 @@ describe("LiveSync device-follow snapshot", () => {
     liveB.schedule();
     await vi.advanceTimersByTimeAsync(120);
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+});
+
+// The EQ 1-knob is the other kind of side effect: the device recomputes the four band
+// values, which the plan mirrors rather than authors. Pushing them back (a converge)
+// would write the operator's stale manual curve over the device's own work, so the owner
+// node is read instead — and the values the read brings in must not then read as pending
+// edits on the next diff.
+function setCh1OneKnob(plan: Plan, patch: { on?: boolean; level?: number }): void {
+  plan.nodeParams.ch1 = {
+    ...plan.nodeParams.ch1,
+    eqOneKnob: { ...plan.nodeParams.ch1?.eqOneKnob, ...patch },
+  };
+}
+
+describe("LiveSync sideEffect refetch", () => {
+  it("reads the owner node back instead of converging", async () => {
+    const plan = basePlan();
+    const refetched: string[][] = [];
+    const live = liveFor(plan, async (nodes) => {
+      refetched.push([...nodes]);
+    });
+    live.begin();
+    setCh1OneKnob(plan, { on: true });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(refetched).toEqual([["ch1"]]);
+    // A converge would have read the whole write scope through vdGet; a refetch reads
+    // through the caller's readback instead, so nothing here does.
+    expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
+  });
+
+  it("does not write the refetched values straight back", async () => {
+    const plan = basePlan();
+    // The readback stands in for the device recomputing the bands: it writes values into
+    // the plan that the app never asked for.
+    const live = liveFor(plan, async () => {
+      plan.nodeParams.ch1 = {
+        ...plan.nodeParams.ch1,
+        eqBands: [{ on: true, type: 1, freq: 140, q: 0.71, gain: 0 }],
+      };
+    });
+    live.begin();
+    setCh1OneKnob(plan, { on: true });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    const afterRefetch = vi.mocked(vdSet).mock.calls.length;
+
+    // Nothing has changed in the plan since, so the next flush must send nothing. Without
+    // re-basing the snapshot after the read, every band value the device computed would
+    // go out as an edit.
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet).mock.calls.length).toBe(afterRefetch);
+  });
+
+  it("keeps flushing on cadence through a 1-knob level drag", async () => {
+    // A refetch is one read of one node, not a converge round over the write scope, so
+    // the window does not have to back off — which is the whole point of the split: the
+    // level is a dragged slider, and it was the case that made every drag on it wait for
+    // the pointer to stop.
+    const plan = basePlan();
+    const live = liveFor(plan, async () => {});
+    live.begin();
+    setCh1OneKnob(plan, { on: true, level: 0 });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(500);
+    const before = vi.mocked(vdSet).mock.calls.length;
+
+    for (let i = 1; i <= 10; i++) {
+      setCh1OneKnob(plan, { level: i * 8 });
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(130);
+    }
+    expect(vi.mocked(vdSet).mock.calls.length).toBeGreaterThan(before + 5);
   });
 });

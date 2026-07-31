@@ -366,6 +366,23 @@ const live = DEMO
       // One bidirectional scope for the session: the same filter shapes the
       // snapshot, the flush, and the follow notify registration.
       getScope: () => getSettings().deviceScope,
+      // A "refetch" sideEffect went out (the EQ 1-knob): the device has just recomputed
+      // values the plan only mirrors, so read the owner node back rather than pushing.
+      // Scoped, not full: the nodes are known, and live.ts has already re-based its own
+      // snapshot — a full reflect would re-translate the whole plan a second time and
+      // rebuild the console on every flush of a 1-knob drag.
+      // Scoped rather than the full reflect `reconcileNodes` takes: the nodes are known and
+      // the change is node-local (the recomputed bands), and live.ts has already re-based
+      // its own snapshot — a full reflect would re-translate the whole plan a second time
+      // and rebuild the console on every flush of a 1-knob drag. The abort rule is the
+      // shared one: a read that cannot complete leaves the plan claiming values the device
+      // does not hold.
+      refetchNodes: async (nodeIds) => {
+        const result = await applyNodeState(getModel(modelId), plan, nodeIds);
+        for (const id of nodeIds) followDirtyNodes.add(id);
+        requestReflect();
+        assertReadComplete(result, "1-knob readback issues:");
+      },
     });
 
 const graph = new Graph(graphHost, getModel(modelId), plan, {
@@ -1073,6 +1090,11 @@ function loadPlan(next: Plan): void {
   graph.setModel(getModel(modelId), plan);
   dirty = false;
   syncRateUi(); // picker + persisted rate + constraints (also refreshes the console)
+  // A channel tuning screen can be open over this: it reads the plan through a closure,
+  // so its values are already the new ones — but nothing had told it to redraw, and it
+  // sat showing the plan that was just replaced. Refresh re-resolves the binding too, so
+  // a screen whose node or processor the new plan does not have closes itself.
+  dynScreen.refresh();
   // Reload the (per-model) MIDI mappings and resync the controller to the new plan.
   midi?.onModelChanged();
 }
@@ -2364,6 +2386,10 @@ function applyResolvedTheme(): void {
   theme = resolveTheme(themeMode);
   document.documentElement.dataset.theme = theme;
   graph.setTheme(theme);
+  // The funnel for surfaces CSS variables cannot repaint on their own. The graph is SVG
+  // built from a palette; a tuning screen's plot is a canvas whose theme tokens are read
+  // once per render — and auto mode can flip underneath an open one with no press at all.
+  dynScreen.refresh();
 }
 
 function setThemeMode(mode: ThemeMode): void {

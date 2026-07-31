@@ -743,45 +743,6 @@ select:focus-visible,
   grid-column: span 1;
 }
 
-/* EQ band tabs: one row of equal-width band selectors above the active band's
-   controls. The active tab is ringed in led; a bypassed band reads dimmed. */
-.eq-tabs {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 4px;
-  margin: 10px 0 6px;
-}
-
-#inspector .eq-tab {
-  margin: 0;
-  width: 100%;
-  padding: 6px 4px;
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  white-space: nowrap;
-  color: var(--text-dim);
-  background: var(--ctl-bg);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  cursor: pointer;
-}
-
-#inspector .eq-tab:hover {
-  color: var(--text);
-}
-
-#inspector .eq-tab.active {
-  color: var(--text);
-  border-color: var(--led);
-  background: linear-gradient(180deg, var(--ctl-bg2), var(--ctl-bg));
-}
-
-#inspector .eq-tab.off {
-  opacity: 0.5;
-}
 
 @media (prefers-reduced-motion: reduce) {
   .insp-section > summary::after {
@@ -1612,7 +1573,15 @@ select:focus-visible,
 #console-host,
 #dyn-screen-box {
   --strip-w: 94px;
-  --head-h: 252px;
+  /* Fixed for every strip, so the tallest head sets it. Four processing-chip rows on a
+     mono channel (GATE / COMP / EQ each with their tuning-screen opener, then INS FX)
+     is the tallest: measured at the old 252px, the head's inner box came to 254px (the
+     height is content-box, so the padding pair and the bottom border add to it), a chip
+     row costs 24px, and the CH3/CH4 strips — which carry a Hi-Z chip the others do not —
+     had 0.9px of slack. Raising it takes 24px from the fader zone on every strip,
+     including the ones with no chips at all. It is no longer hand-checked: an E2E asserts
+     no strip's head overflows its own contents (e2e/console.spec.ts). */
+  --head-h: 276px;
   --groove: color-mix(in srgb, var(--canvas-bg) 55%, #000 45%);
   flex: 1;
   display: flex;
@@ -2643,12 +2612,11 @@ select:focus-visible,
   font: 700 11px var(--mono);
 }
 
-/* Drag & drop target: the shared full-window scrim below, plus two overrides.
-   It sits above the modals so a drag over one is still legible, and its pointer
-   events stay off so the overlay cannot swallow the drop it is advertising (the
-   browser path listens on the window). */
+/* Drag & drop target: the shared full-window scrim below, plus two overrides — its
+   pointer events stay off so the overlay cannot swallow the drop it is advertising (the
+   browser path listens on the window), and its z-index is in the ladder below, because
+   set here it lost to .consent-scrim's at equal specificity and never applied. */
 .dropzone {
-  z-index: 120;
   pointer-events: none;
 }
 .dropzone-box {
@@ -2661,6 +2629,15 @@ select:focus-visible,
   font: 600 14px -apple-system, "Segoe UI", "Meiryo", system-ui, sans-serif;
 }
 
+/* Overlay ladder, so a new one lands in the right place rather than wherever the
+   document happens to put it (every scrim below shares one z-index, which makes DOM
+   order the tiebreak — that is how the load report ended up behind the tuning screen):
+     40  toolbar dropdown menus
+     60  popovers anchored to a control (console taps / sends, the MIDI legend)
+    100  tool modals — Preferences, Device setup, channel tuning, licenses
+    120  the drag & drop advert, legible over any of them (pointer-events: none)
+    130  decision gates — consent, load report, rate choice. Each asks a question that
+         has to be answerable whatever else is open, so they sit above everything. */
 /* First-run consent gate: a full-screen modal shown once on desktop before the
    app is usable (the Windows installer shows the same notice, but macOS
    drag-install and auto-updates bypass it). */
@@ -2673,6 +2650,12 @@ select:focus-visible,
   justify-content: center;
   padding: 24px;
   background: var(--vignette);
+}
+.dropzone {
+  z-index: 120;
+}
+.gate-scrim {
+  z-index: 130;
 }
 .consent-box {
   width: min(560px, 100%);
@@ -3421,6 +3404,55 @@ select:focus-visible,
   height: 320px;
   touch-action: none;
 }
+/* The EQ shows both at once: its response and its levels are not alternatives the way
+   a gate's threshold-on-a-meter and transfer curve are. The plot takes the width it can
+   get and the rack takes what its lanes need, in signal order left to right. */
+.gt-eqdisplay {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.gt-eqdisplay > .gt-curvebox {
+  flex: 1;
+  min-width: 0;
+}
+.gt-eqdisplay > .gt-ladderbox {
+  flex: 0 0 auto;
+}
+/* A row (or a heading's tag pill) whose values belong to the device: not shown, but still
+   occupying its place, so the panel keeps its height and nothing below it moves under the
+   pointer. `visibility` rather than `display: none` is the whole point — it also takes the
+   row's controls out of the tab order and the accessibility tree, which `opacity: 0`
+   would not. */
+.gt-reserved {
+  visibility: hidden;
+}
+/* The line printed over a reserved block. Absolutely positioned, so it costs no height;
+   inset past the section heading, which stays readable above it. The positioning context
+   goes on whichever section holds one, rather than on a class the host has to remember. */
+.prefs-section:has(> .gt-reserved-note) {
+  position: relative;
+}
+.gt-reserved-note {
+  position: absolute;
+  inset: 30px 12px 0;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  /* It is a label: it must never swallow a press meant for what it covers, and without
+     this it took the Close button's. */
+  pointer-events: none;
+}
+/* An inert segmented bar (the EQ's bands while 1-knob drives them): nothing selected and
+   nothing selectable. It keeps its space for the same reason the rows do — the heading it
+   sits in is taller than its own text. */
+.gt-modes.inert {
+  visibility: hidden;
+}
+
 .gt-ladders {
   display: flex;
   gap: 6px;
@@ -3449,15 +3481,35 @@ select:focus-visible,
   gap: 6px;
   justify-items: center;
 }
-.gt-slot {
+/* A meter slot: one bar column, or one side of a stereo pair. Only the sizing differs. */
+.gt-slot,
+.gt-side {
   position: relative;
-  width: 46px;
-  height: 100%;
   background: #0d0b08;
   border: 1px solid var(--meter-frame);
   border-radius: 1px;
   overflow: hidden;
 }
+.gt-slot {
+  width: 46px;
+  height: 100%;
+}
+/* A stereo node's tap carries L and R, so its lane splits into two bars inside the one
+   slot — the console's own treatment, and for the same reason: two half-width bars
+   under one caption read as one point metered in stereo, where two lanes would read as
+   two points in the signal path. */
+.gt-slot.stereo {
+  display: flex;
+  gap: 2px;
+  background: var(--groove);
+  border: 0;
+}
+.gt-side {
+  flex: 1;
+}
+/* The level slots read as empty in --groove (their shade covers the bar); the GR
+   slot has no shade, so without this it sits a shade darker than its neighbours
+   and an idle gate looks like a dead element. */
 /* The level slots read as empty in --groove (their shade covers the bar); the GR
    slot has no shade, so without this it sits a shade darker than its neighbours
    and an idle gate looks like a dead element. */

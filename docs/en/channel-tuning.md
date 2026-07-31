@@ -1,17 +1,26 @@
-# Dynamics tuning screens (design specification)
+# Channel tuning screens (design specification)
 
-> 日本語版: [../ja/dynamics-tuning.md](../ja/dynamics-tuning.md)
+> 日本語版: [../ja/channel-tuning.md](../ja/channel-tuning.md)
 
-**Status: GATE and COMP implemented (2026-07-29).** This document specifies the per-channel screens
-that put a dynamics processor's parameters beside the meters showing what they are doing. DUCKER and
+**Status: GATE, COMP and EQ implemented (EQ 2026-07-30).** This document specifies the per-node
+screens that put one processor's parameters beside the meters showing what they are doing. DUCKER and
 the insert-FX dynamics have gain-reduction meters of their own (see [Scope](#scope)) and belong here
-when they follow. Implemented in `src/ui/dyn-screen.ts` (the shared screen), `src/ui/dyn-gate.ts` /
-`src/ui/dyn-comp.ts` (what differs per processor), `src/core/meters.ts` (the GR table and decode),
-`src/style.css` (`.gt-*`), with coverage in `e2e/dyntuning.spec.ts`.
+when they follow. Implemented in `src/ui/dyn-screen.ts` (the shared host), `src/ui/dyn-gate.ts` /
+`src/ui/dyn-comp.ts` / `src/ui/dyn-eq.ts` (what differs per processor), `src/ui/dyn-chan.ts` (the
+binding the two channel-strip processors share), `src/ui/dyn-plot.ts` (the dB×dB transfer plot),
+`src/core/eq-response.ts` (the measured filter model), `src/core/meters.ts` (the GR table and
+decode), `src/style.css` (`.gt-*`), with coverage in `e2e/dyntuning.spec.ts` and
+`e2e/eqoneknob.spec.ts`.
 
-One host serves both screens and the processor is chosen per open, so opening either replaces
+One host serves all three and the processor is chosen per open, so opening any of them replaces
 whatever was on it. Two instances would fight over the same DOM, and the broker's single meter slot
 means two open at once could not both stream anyway.
+
+**Nothing in the host knows which processor it is showing.** A `DynProcessor` resolves what a node
+actually has (its fields and its meter lanes), reads and writes its own corner of the plan, and
+arranges its display column out of the parts the host offers. That division is why a processor with
+no gain-reduction meter, on nodes whose taps are stereo, whose values live in an array and whose
+segmented bar selects a band rather than a display mode, needed no special case in the host.
 
 ## Background
 
@@ -140,16 +149,178 @@ the parameter's effect has to stay on scale.
 **No screen in SSMCS.** The morphing strip replaces the compressor, `channelDynamics().comp` is
 null, and neither entry point renders.
 
+## EQ
+
+The 4-band PEQ, on the same host with three things arranged differently — each for a reason the EQ
+has and the two dynamics processors do not.
+
+**There is no display-mode choice.** A gate is read either as a threshold on a meter or as a transfer
+curve, and those are alternatives. An EQ's response and its levels are not: the curve says what it is
+doing to the spectrum, the meters say whether the stage is clipping, and neither answers the other.
+So both are on screen at once — the plot taking the width, the lane rack beside it in its own frame —
+and **the segmented bar in the tabs' place selects a band** instead. It resets to LOW on every open,
+because it is a cursor into the parameters rather than a way of reading the processor (the display
+mode persists per processor; this deliberately does not).
+
+**The plot's axes are frequency against gain**, so it carries no live dot and no press-to-set
+gesture. Each band gets a **marker** — a pill with its initials — because the operator needs to see
+where it sits; a marker and not a grip, since four grips on one plot cannot tell which value a press
+meant (the COMP screen established that with three), so the sliders stay the editing path. Off the
+scale is off the frame — see [Off the scale is off the frame](#off-the-scale-is-off-the-frame), which is
+the rule for every plot here; a high-pass passes the -18 dB floor within an octave of its corner, and
+the markers follow the same rule. Each marker sits at its band's own frequency and at the **composite**
+response there, so it is always on the curve: a pass filter has no gain to place it by, and two
+overlapping bands would otherwise plant their markers off the line being read.
+
+**It exists on four kinds of node** — mono channel, stereo channel, MIX, STEREO master — which is
+where the taps differ, since the EQ sits at a different point in each chain:
+
+| Node | In | Out |
+| --- | --- | --- |
+| Mono channel | PRE EQ (111) | PRE INS FX (112) |
+| Stereo channel | INPUT (101) — its pre-EQ point | PRE FADER (114) |
+| MIX / STEREO master | PRE EQ (sum) | PRE FADER (post-EQ) |
+
+A stereo node's taps carry L and R, which the rack draws as **two bars in one lane** under one
+caption — the console's own treatment, and for its reason: two half-width bars read as one point
+metered in stereo, where two lanes would read as two points in the signal path.
+
+**The mono channel's HPF is deliberately not drawn** on the response. It sits upstream of the
+compressor, whose gain varies with frequency content, so it does not add to this stage's curve in any
+way the plot could honestly show.
+
+### The response model
+
+Measured on a URX44V by driving the oscillator into MIX 1 and reading the difference between the two
+meters bracketing the EQ, then repeated on the STEREO master block and — with the host's USB output
+as the source — on a stereo channel. 19 datasets, 108 points, worst case **1.3 dB**, which is the
+resolution of a difference between two 1 dB-quantized peak meters. The filters are RBJ cookbook
+biquads with three corrections that only came out of measuring, each of which was drawing a visibly
+wrong curve before it did:
+
+| Shape | Correction |
+| --- | --- |
+| Peaking | **The unit's Q is twice the biquad Q.** A "Q 1.00" +12 dB bell measured +12/+10/+7/+3 dB at 1k/700/500/300 Hz — a biquad Q of 0.5. Taking the number at face value drew every bell half as wide as the device's. |
+| HPF / LPF | Fixed 2nd-order Butterworth: -3.0 dB exactly at the nominal frequency, 12 dB/octave beyond. **The band's Q slot is ignored** — Q 0.71 and Q 4.00 measured identical, with no corner resonance. Honouring it drew a +12 dB peak that is not there. |
+| Shelving | The S = 1 shape, but **the nominal frequency is the point 3 dB below the plateau**, not the midpoint: a +18 dB shelf at 1 kHz measured +15 dB there and reached +18 dB by 4 kHz. So the design frequency is solved for, and the search direction flips with the gain's sign — reusing the boost direction for a cut was 4.2 dB out. |
+
+Two further measurements bound what the model is worth: **bands sum in dB** (a LOW shelf +12 and a
+HIGH-MID peaking -9 measured together matched the sum of the two measured separately, within the
+meters' own ±2 dB), and **the sample rate moves a high bell by at most 2 dB** across 44.1 … 176.4
+kHz — so the drawing is computed at 48 kHz whatever the plan's rate, and says so rather than
+pretending otherwise. The model lives in `src/core/eq-response.ts` and every table above is a test
+in `src/core/eq-response.test.ts`, with a 2.0 dB tolerance: enough to leave the measurement its
+resolution, tight enough that each of the three corrections fails without it.
+
+### The panel keeps its height
+
+The Parameters section is **Band / Type / Q / Freq / Gain whatever is selected** — the same five rows
+on all four bands and under every filter type. What varies is which of them the device reads, and
+those rows lock and say why rather than disappearing:
+
+| Locked | Tag | Why |
+| --- | --- | --- |
+| Q, on a shelf or a pass filter | Unused by this type | Only a peaking band reads Q. For a pass filter that is measured — Q 0.71 and Q 4.00 draw an identical high-pass with no corner resonance |
+| Gain, on a pass filter | Unused by this type | A pass filter has no gain to apply |
+| Type, on LOW MID / HIGH MID | Fixed on this band | The two mid bands are fixed peaking: the device rejects the write (measured, response_code 400), so the row offers that one value |
+
+A row that disappears takes the panel's height with it and moves every row below under the pointer —
+including the Close action. Measured across all four bands and all three types, the modal stays at one
+height, which `e2e/dyntuning.spec.ts` pins.
+
+**While 1-knob is on the band block goes away entirely**, and still without changing the height. There
+is no band being edited then — the device computes all four from one level — so a band selector would
+be offering a choice with no effect: the rows are **reserved out of sight** (`visibility: hidden`,
+which also takes them out of the tab order, with their controls disabled as well), the band bar goes
+inert beside its heading, the band's name leaves the Parameters heading, and no marker on the plot is
+drawn as the selected one. The reserved space carries one line saying what owns those values, since a
+heading over five rows of nothing reads as a rendering fault — and because hiding the rows removes the
+only place that said the numbers are the device's. Reserving rather than removing is what holds the
+height: the rows keep their tags too, invisible, because a tag pill makes a row taller (measured:
+dropping them lost 3 px over the five, and the heading's own pill another 3).
+
+### 1-knob, and what the device owns
+
+The 1-knob is a section of its own above the band's parameters, because it decides whose the rows
+below are. Its Type and Level stay on screen with 1-knob off, **locked** — the section would
+otherwise shrink by two rows on every toggle, moving everything under it. The unit swaps that row for
+the band's filter type instead; this screen has that row of its own in Parameters, so there is
+nothing to swap for. Two device facts sit behind the lock: a TYPE written while 1-knob is off has no
+effect, and the OFF→ON transition resets TYPE to Intensity and LEVEL to 50 — so an editable Type
+there would offer a value the unit discards. The unit's own screen makes it unreachable by hiding the
+row; this one makes it unreachable by locking it, and shows what the value is.
+
+With 1-knob on, all four band rows are the device's: it recomputes them from one level. They are taken
+off the screen (see above) rather than shown read-only — a row of numbers nobody can act on is noise,
+and there is no band selected to show them for. The response curve stays, which is where the device's
+computation can still be read: with a live session the refetch below keeps it true to the unit, and
+without one it is the curve the plan last held.
+
+Every EQ instance offers all three preset types (Intensity / Vocal / Loudness), measured. The catalog
+used to carry two subsets and both halves were wrong; see the parameter notes for how a level reset
+was misread as a refusal.
+
+### Above 96 kHz
+
+A stereo channel's EQ is not merely locked in the app at 176.4 / 192 kHz: measured, a 1 kHz high-pass
+that cuts -13 dB at 500 Hz passes it untouched at both rates, while the parameters are still stored
+and returned. The rows lock with the rate's own sentence rather than the device-driven one, and the
+response is drawn sunk instead of left looking effective.
+
+## Off the scale is off the frame
+
+Every plot draws its curve at the **true** value, and the host **clips it to the plot area**. Clamping
+a value onto the axis instead draws a horizontal bar along the edge, which reads as a response the
+processor does not have:
+
+| Plot | What clamping did |
+| --- | --- |
+| EQ | A high-pass passes the -18 dB floor within an octave of its corner, so the curve lay along the bottom of the frame |
+| GATE | A closed shelf sits at threshold + range, which reaches -144 dB while the range is still finite (threshold -72 … -56 with the deepest ranges). Clamped to the -128 axis, it drew the same picture as a -∞ range: a gate that is not closed, looking closed |
+| Markers | Pinned to the floor, a marker named a frequency at a level the response never reaches there |
+| COMP | Nothing — the -54 … +18 axes contain the whole response (makeup gain only adds, the knee interpolation only subtracts), which `src/ui/dyn-plot.test.ts` checks at the extremes rather than assuming |
+
+The split is structural, not a convention each descriptor has to remember: `drawAxes` is called
+unclipped (its tick labels belong in the gutters `geo.pad` reserves) and `drawCurve` inside the clip.
+A new processor's plot inherits the rule by existing.
+
+Two deliberate exceptions, both stated where they are made:
+
+- **An annotation of a value may be clamped**, because it describes the value rather than being it —
+  the gate's range label stays readable at the bottom of the frame while the shelf it names has left
+  it. A leader line drawn *to* the annotation is part of the curve and is not clamped.
+- **The gate's -∞ range is pinned to the axis floor**, since the floor is what stands for -∞ there (it
+  is the GR meters' own floor, and the label prints "-∞"). That is a representation, not a clamp, and
+  it is what makes the finite case distinguishable now that the finite case leaves the frame.
+
 ## Scope
 
-GATE and COMP are MONO IN features, so the screens exist for CH1-4 (CH1-2 on URX22) only. The
-channel is fixed by where the screen was opened from — there is no in-screen channel switch, so the
-subscribed address set is constant for the whole session.
+GATE and COMP are MONO IN features, so those screens exist for CH1-4 (CH1-2 on URX22) only. The EQ
+exists wherever there is a 4-band PEQ: every mono channel outside SSMCS mode, every stereo channel,
+each MIX bus and the STEREO master. The node is fixed by where the screen was opened from — there is
+no in-screen node switch, so the subscribed address set is constant for the whole session.
 
 The remaining confirmed GR meters are DUCKER (119) and the insert FX (132 input / 133 output). Their
 axes are **not** the mono channel index the gate's and comp's share — the ducker's is the stereo
 pair, the output insert FX's is the effect band — so each one added has to bring its own measured
 axis rather than inherit `grAddr`'s.
+
+### The screen is not the frontmost thing on screen
+
+A plan can be loaded — dropped, opened, recalled from the recents — with a tuning screen open over it,
+so `loadPlan` refreshes the screen: it reads the plan through a closure and already held the new values,
+but nothing had told it to redraw. The refresh re-resolves the binding too, so a screen whose node or
+processor the new plan does not have closes itself instead of writing into something that is gone.
+
+The scrims all share one z-index, which made document order the tiebreak — and put the **load report**
+behind the tuning screen, where a report about the very drop that raised it could not be read. The
+**drag advert** was behind it too, for a second reason worth knowing: its `z-index: 120` sat in a rule
+*above* `.consent-scrim`'s `100`, and at equal specificity the later rule wins, so the advert had never
+actually been at 120 — the comment claiming it "sits above the modals" had been wrong since it was
+written. Both are now in one explicit ladder in `style.css`, placed after `.consent-scrim` so the
+cascade cannot quietly undo it (menus 40, control popovers 60, tool modals 100, the drag advert 120, the
+decision gates 130): consent, the load report and the rate choice each ask a question that has to be
+answerable whatever else is open.
 
 ## Meter subscription ownership
 
@@ -184,10 +355,10 @@ per address, so a batch carrying more than one frame for an address keeps only t
 
 | Where | Control |
 | --- | --- |
-| GRAPH inspector, GATE / COMP section | A full-width button below the ON/OFF toggle |
-| CONSOLE, mono strip | A narrow chip beside each of the GATE and COMP chips |
+| GRAPH inspector, GATE / COMP / EQ section | A full-width button below the ON/OFF toggle |
+| CONSOLE strip | A narrow chip beside each processor chip the strip has |
 
-Both sections are reduced to their ON toggle plus the launcher. A second copy of the sliders in the
+All three sections are reduced to their ON toggle plus the launcher. A second copy of the sliders in the
 inspector is not just duplication: `dynFieldSlider` reads the params snapshot captured at render
 time and never re-renders on a value change, so after the screen moved a value those sliders would
 sit at the old position and write it back on the next drag.
@@ -198,6 +369,13 @@ twice and write twice, and double-click is already the factory-value reset for t
 and knobs. Each pair fills one row of the two-per-row chip grid — head height is uniform by design
 so the SENDS racks, faders and meters stay aligned.
 
+The EQ's opener takes a fourth chip row on a mono channel, which the head has to carry: measured, its
+inner height is 254 px, a chip row costs 24 px, and the CH3/CH4 strips — the ones with a Hi-Z chip —
+had 0.9 px of slack at the old 252 px. `--head-h` is 276 px, which takes 24 px from the fader zone on
+every strip, including those with no chips at all. The opener is not offered where the rate has the
+EQ forced off (the toggle beside it is read-only there), nor in SSMCS mode, where the EQ chip belongs
+to the morphing strip and there is no 4-band PEQ to open.
+
 ## Without a device
 
 The screen opens in every build and in every state. The parameters are plan values and fully
@@ -207,11 +385,26 @@ be *edited* — only to be *observed*.
 
 ## Implementation notes
 
-`DynScreen` owns everything that does not depend on which processor is open — the modal, the ladder,
-the meter feed and its peaks, the slot borrow, the curve's frame, the persisted mode. A
-`DynProcessor` supplies the rest: its taps, its axes, its fields, its extra rows, its transfer curve,
-and whether a press on that curve sets the threshold. Adding DUCKER or an insert-FX dynamics screen means writing one of those, not
-another screen.
+`DynScreen` owns everything that does not depend on which processor is open — the modal, the lane
+rack, the meter feed and its peaks, the slot borrow, the canvas lifecycle, the persisted bar
+selection. A `DynProcessor` supplies the rest: what the node has (`bind`), its corner of the plan
+(`read` / `patch`), its bar, its rows and their states, its plot. Adding DUCKER or an insert-FX
+screen means writing one of those, not another screen.
+
+Where each piece lives follows from that:
+
+| Module | Holds |
+| --- | --- |
+| `src/ui/dyn-screen.ts` | the host: modal, lanes, meter feed, canvas, rows from a `DynField[]` |
+| `src/ui/dyn-chan.ts` | what GATE and COMP share as MONO IN channel-strip processors — their binding, their sub-object plan I/O, their display bar |
+| `src/ui/dyn-plot.ts` | the dB-in / dB-out transfer plot those two draw: `transferPlot()` returns the five hooks it answers, from three axis constants and a hint |
+| `src/ui/dyn-{gate,comp,eq}.ts` | the descriptors — only what differs |
+| `src/core/control/translate.ts` | every field table, including the EQ's (`eqBandFields`), so a measured fine grid or range sits beside the others rather than in a UI file |
+| `src/core/eq-response.ts` | the measured filter model, tested against the device sweeps |
+
+The EQ's reserved-block line is DOM the descriptor puts in its own `rows.tail`, not a host hook: it
+is absolutely positioned (so it costs no height) with `pointer-events: none` — a label that swallows
+the press meant for the Close button behind it is worse than no label.
 
 The screen is built out of the shared recipes rather than its own: `settingsRow` / `settingsSection`
 for the rows and headings, `.udk-banks` for the mode tabs, `setLevelText` for the -∞ readout,
@@ -271,7 +464,26 @@ capture.
 
 ## Edit → device data path
 
-Identical to the inspector's: `onUpdateNodeParams` merges the patch into `plan.nodeParams[id].gate`
-and calls `markChanged()`, which flags the plan dirty, schedules the live mirror and feeds MIDI
-feedback. A STEREO-linked pair in BAL mode mirrors the gate group to its partner like any other
-node parameter.
+Identical to the inspector's: `onUpdateNodeParams` merges the patch into the processor's own corner of
+`plan.nodeParams[id]` and calls `markChanged()`, which flags the plan dirty, schedules the live mirror
+and feeds MIDI feedback. A STEREO-linked pair in BAL mode mirrors the group to its partner like any
+other node parameter. Where those values live is the descriptor's business: GATE and COMP keep one
+sub-object each, the EQ spreads across `eqBands[i]` and `eqOneKnob` and routes a patch by key.
+
+**A 1-knob write comes back as a read.** `ParamSpec.sideEffect` distinguishes two repairs, because
+they differ in who owns what the device just moved:
+
+| Flag | The device moved | Repair |
+| --- | --- | --- |
+| `"converge"` | values the plan **authors** (a COMP/EQ type change clears the channel-strip toggles) | push them back — a converge round over the write scope |
+| `"refetch"` | values the plan only **mirrors** (the EQ 1-knob recomputes all four bands) | read the owner node back, and re-base the snapshot from it |
+
+The EQ 1-knob's three parameters are the refetch case. Converging them would write the operator's
+stale manual curve straight over the device's own computation, and nothing announces the
+recomputation: the notify registration is an address list, and the band addresses leave it while
+1-knob is on (the plan stops emitting them). So `live.ts` calls the same device→plan inverse the
+device-follow scoped path uses, then re-captures the snapshot — without which every value the read
+brought in would read as a pending edit on the next diff. A device-side turn of the same knob already
+took this path; this is the same repair for our own write. A refetch is also one read of one node
+rather than a converge round, so the flush window does not have to back off — which is what made a
+drag on the 1-knob level wait for the pointer to stop.
