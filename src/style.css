@@ -1773,7 +1773,9 @@ select:focus-visible,
   flex: 0 0 calc(75% - 3px);
 }
 .con-chip-open {
-  flex: 0 0 calc(25% - 3px);
+  /* The pair's gap comes out of the wider chip alone, so the two bases plus the gap
+     span the row exactly and this chip's right edge lines up with the two-per-row ones. */
+  flex: 0 0 25%;
   font-size: 8px;
   line-height: 1.5;
 }
@@ -2469,6 +2471,14 @@ select:focus-visible,
   position: relative;
   cursor: ns-resize;
   touch-action: none;
+}
+/* The groove runs the cap centre's full travel (0 %–100 %), not the main fader's
+   inset: the 9 px cap is shorter than that inset, so at either extreme the groove
+   ended clear of the cap and the cap read as slipped out of its slot. Ending on the
+   centre puts the groove's last pixels under the cap at the limits instead. */
+.con-vfad .track {
+  top: 0;
+  bottom: 0;
 }
 .con-vfad .zero {
   position: absolute;
