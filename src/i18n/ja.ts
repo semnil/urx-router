@@ -508,6 +508,7 @@ export const ja: Messages = {
     pngExported: "PNG を出力しました",
     pdfExported: "PDF を出力しました",
     arranged: "既定レイアウトに整列しました",
+    busyDeviceRead: "本体から読み取り中です — 完了してからもう一度お試しください",
     fetchConnecting: "デバイスに接続しています…",
     fetchedDevice: (model: string, n: number): string => `${model} から ${n} 件の設定を取得しました`,
     fetchedUnread: (model: string, n: number, unread: number): string =>
@@ -580,6 +581,7 @@ export const ja: Messages = {
     undoDeviceBusy: "本体との通信中です — 完了するまで元に戻せません",
     undoModal: "開いているダイアログを閉じてから元に戻してください",
     undoRateLive: "ライブ同期中のサンプルレートは本体に追従します — ここでは元に戻せません",
+    midiBusy: "本体との通信中またはファイル操作中です — 完了するまで MIDI 入力は無視されます",
     themeDark: "ダークモードに切り替えました",
     themeLight: "ライトモードに切り替えました",
     themeAuto: "システム設定に追従します",

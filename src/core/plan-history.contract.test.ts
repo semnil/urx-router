@@ -8,25 +8,44 @@
 //   1. every Plan field has a HISTORY_FIELDS entry (the mapped type already fails
 //      tsc, so this catches the reverse: a table entry for a field Plan dropped);
 //   2. every table entry is actually read by diffPlans — MUTATIONS drives one real
-//      mutation per field through diff -> apply -> invert.
+//      mutation per field through diff -> apply -> invert, and through the
+//      in-context apply (entryInContext is a fourth per-field switch, and tsc only
+//      catches a MISSING case there, never a wrong one).
 //
-// When a Plan field is added: give it a HISTORY_FIELDS strategy, teach diffPlans
-// and applyPatch, and add a MUTATIONS case. Do not weaken the assertions.
+// When a Plan field is added: give it a HISTORY_FIELDS strategy, teach diffPlans,
+// applyPatch and entryInContext, and add a MUTATIONS case. Do not weaken the
+// assertions.
 
 import { describe, expect, it } from "vitest";
-import { applyPatch, clonePlanState, diffPlans, HISTORY_FIELDS, invertPatch } from "./plan-history";
+import {
+  applyPatch,
+  applyPatchInContext,
+  clonePlanState,
+  diffPlans,
+  HISTORY_FIELDS,
+  invertPatch,
+} from "./plan-history";
 import { emptyPlan } from "./plan";
 import type { Plan } from "./plan";
 import { defaultPlan } from "../models/initial-state";
 import { MODEL_IDS } from "../models";
 
 /** One real mutation per Plan field, other than the field that identifies the
- *  document (a change there voids the history instead of being patched). */
-const MUTATIONS: Array<[Exclude<keyof Plan, "unreadNodes" | "modelId">, (p: Plan) => void]> = [
+ *  document (a change there voids the history instead of being patched).
+ *
+ *  `elsewhere` is a SECOND mutation of the very keys the first one touches, to a
+ *  third value: it stands for the edit someone else made while the patch was in
+ *  flight, and the in-context apply must leave it alone. It has to move every key
+ *  the patch carries, or the part it left standing lands and the assertion passes
+ *  for the wrong reason. */
+const MUTATIONS: Array<[Exclude<keyof Plan, "unreadNodes" | "modelId">, (p: Plan) => void, (p: Plan) => void]> = [
   [
     "sampleRate",
     (p) => {
       p.sampleRate = p.sampleRate === 48000 ? 96000 : 48000;
+    },
+    (p) => {
+      p.sampleRate = 176400;
     },
   ],
   [
@@ -34,11 +53,17 @@ const MUTATIONS: Array<[Exclude<keyof Plan, "unreadNodes" | "modelId">, (p: Plan
     (p) => {
       p.positions.ch1 = { x: 123, y: 456 };
     },
+    (p) => {
+      p.positions.ch1 = { x: 7, y: 8 };
+    },
   ],
   [
     "connections",
     (p) => {
       p.connections = [...p.connections, { from: "ch1:out", to: "bus.mix2:in", kind: "send", params: { level: -6 } }];
+    },
+    (p) => {
+      p.connections = [...p.connections, { from: "ch1:out", to: "bus.mix2:in", kind: "send", params: { level: -24 } }];
     },
   ],
   [
@@ -46,11 +71,17 @@ const MUTATIONS: Array<[Exclude<keyof Plan, "unreadNodes" | "modelId">, (p: Plan
     (p) => {
       p.nodeParams.ch1 = { ...p.nodeParams.ch1, hpf: true, hpfFreq: 120 };
     },
+    (p) => {
+      p.nodeParams.ch1 = { ...p.nodeParams.ch1, hpf: true, hpfFreq: 200 };
+    },
   ],
   [
     "nodeNames",
     (p) => {
       p.nodeNames.ch1 = "SNARE";
+    },
+    (p) => {
+      p.nodeNames.ch1 = "KICK";
     },
   ],
   [
@@ -58,11 +89,17 @@ const MUTATIONS: Array<[Exclude<keyof Plan, "unreadNodes" | "modelId">, (p: Plan
     (p) => {
       p.nodeColors.ch1 = "#33cc99";
     },
+    (p) => {
+      p.nodeColors.ch1 = "#ff8800";
+    },
   ],
   [
     "hidden",
     (p) => {
       p.hidden = [...p.hidden, "ch2"];
+    },
+    (p) => {
+      p.hidden = [...p.hidden, "ch3"];
     },
   ],
   [
@@ -70,12 +107,19 @@ const MUTATIONS: Array<[Exclude<keyof Plan, "unreadNodes" | "modelId">, (p: Plan
     (p) => {
       p.notes.ch1 = "kick in, gate on";
     },
+    (p) => {
+      p.notes.ch1 = "hats, gate off";
+    },
   ],
   [
     "noteCollapsed",
     (p) => {
       p.notes.ch1 = "kick in";
       p.noteCollapsed = [...p.noteCollapsed, "ch1"];
+    },
+    (p) => {
+      p.notes.ch1 = "hats";
+      p.noteCollapsed = [...p.noteCollapsed, "ch2"];
     },
   ],
 ];
@@ -114,6 +158,26 @@ describe("the history differ covers the whole Plan", () => {
     expect(plan, `${field} did not reach the after state`).toStrictEqual(after);
     applyPatch(plan, invertPatch(patch));
     expect(plan, `${field} did not come back`).toStrictEqual(clonePlanState(before));
+  });
+
+  it.each(MUTATIONS)("applies a %s patch only where its own before-state still stands", (field, mutate, elsewhere) => {
+    const before = defaultPlan("URX44V");
+    const after = clonePlanState(before);
+    mutate(after);
+    const patch = diffPlans(before, after);
+
+    // In context: the whole patch lands, exactly as applyPatch would have placed it.
+    const own = clonePlanState(before);
+    applyPatchInContext(own, patch);
+    expect(own, `${field} did not land against its own before-state`).toStrictEqual(after);
+
+    // Out of context: someone moved the same keys after the patch was taken, and
+    // that authorship is what must not be overwritten.
+    const moved = clonePlanState(before);
+    elsewhere(moved);
+    const untouched = clonePlanState(moved);
+    applyPatchInContext(moved, patch);
+    expect(moved, `${field} overwrote a value authored after the patch was taken`).toStrictEqual(untouched);
   });
 
   it("is deterministic for every model's factory plan", () => {

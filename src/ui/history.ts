@@ -171,6 +171,17 @@ export class PlanHistory {
     this.notifyDepth();
   }
 
+  /** A device read re-authored part of the plan, possibly inside an open entry: take
+   *  exactly the keys it authored into the baseline. The entry stays OPEN and its
+   *  boundaries are untouched, so a gesture that straddles the read still commits as one
+   *  entry — which rebase() cannot do, since a whole-plan baseline cannot tell the
+   *  device's values from the ones the gesture is putting there. Neither stack moves and
+   *  the depth cannot change, so nothing is reported (a report crosses IPC to a native
+   *  menu item, and this runs once per flush window of a drag). */
+  absorb(patch: PlanPatch): void {
+    this.stack.absorb(patch);
+  }
+
   /** A different document, or every value re-authored by the device: drop both
    *  stacks. No earlier entry describes a state this plan can return to. */
   reset(): void {
@@ -242,12 +253,10 @@ export class PlanHistory {
   }
 
   undo(): void {
-    this.commit();
     this.run("undo");
   }
 
   redo(): void {
-    this.commit();
     this.run("redo");
   }
 
@@ -258,12 +267,17 @@ export class PlanHistory {
       kind === "undo"
         ? { peek: () => this.stack.peekUndo(), take: () => this.stack.takeUndo(), none: s.nothingToUndo, done: s.undone, doneNode: s.undoneNode } // prettier-ignore
         : { peek: () => this.stack.peekRedo(), take: () => this.stack.takeRedo(), none: s.nothingToRedo, done: s.redone, doneNode: s.redoneNode }; // prettier-ignore
-    const pending = op.peek();
-    if (!pending) {
+    // Answered without committing when nothing is open: the stack is then already
+    // authoritative, and a refusal below would otherwise imply an entry the press
+    // could have lost.
+    if (!this.open && !op.peek()) {
       this.hooks.onStatus(op.none);
       return;
     }
-    // Refusals run before the entry is consumed, so a refused press can be retried.
+    // Refusals run before the open entry is CLOSED, not merely before it is consumed.
+    // commit() diffs the live plan, and under a device read that plan is mid-
+    // re-authoring: committing there would freeze the readback's own writes into the
+    // entry, and the retry the refusal invites would then push them back at the unit.
     const refusal = this.hooks.blocked();
     if (refusal) {
       this.hooks.onStatus(refusal);
@@ -271,6 +285,12 @@ export class PlanHistory {
     }
     if (this.press === "drag") {
       this.hooks.onStatus(s.undoBusyDrag);
+      return;
+    }
+    this.commit();
+    const pending = op.peek();
+    if (!pending) {
+      this.hooks.onStatus(op.none);
       return;
     }
     const touch = patchTouch(pending);

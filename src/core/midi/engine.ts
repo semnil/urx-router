@@ -13,6 +13,14 @@ export interface EngineHooks {
   resolve(id: string): BoundControl | null;
   /** An incoming message changed the plan through `control` (mirror + repaint). */
   applied(control: BoundControl): void;
+  /** A localized refusal, or null when incoming messages may edit the plan. The
+   *  engine never reads the value — it forwards it to `refused` and compares it
+   *  with the previous one to decide whether the gated window changed. */
+  gate?(): string | null;
+  /** The first message of a gated window that would actually have edited
+   *  something. Called once per window, never per message: a controller sweep is
+   *  dozens of messages a second and the status line is one line. */
+  refused?(reason: string): void;
   /** Send feedback bytes out (caller no-ops when no output port is open). */
   send(bytes: number[]): void;
   /** MIDI-learn resolved an address. */
@@ -60,6 +68,10 @@ export class MidiEngine {
   private lastRecv = new Map<string, number>(); // last receive time per address
   private lastFedAt = new Map<string, number>(); // toggle echo guard: last feedback send-time per address
   private learn: { pendingCc: CcEvent | null } | null = null;
+  // The reason the current gated window was already reported under; null when not
+  // gated. Cleared by the first message that is allowed through, so the next
+  // window reports again.
+  private gated: string | null = null;
 
   constructor(private hooks: EngineHooks) {}
 
@@ -175,6 +187,18 @@ export class MidiEngine {
       return;
     }
     const matched = this.matches(ev);
+    // Unmapped traffic (clock, another controller's CC) is not a refusal.
+    if (matched.length === 0) return;
+    // Refused BEFORE any receive bookkeeping: the receive timestamp, the pickup
+    // engagement and the 14-bit pair assembly are all state a refusal must not
+    // consume, or the identical message once the window clears would not behave
+    // the way it does with no window at all.
+    const refusal = this.hooks.gate?.() ?? null;
+    if (refusal !== null) {
+      this.reportRefusal(refusal, matched);
+      return;
+    }
+    this.gated = null;
     // Common case: a single mapping, no gang — apply it directly.
     if (matched.length === 1) {
       if (!this.dropEcho(matched[0], ev)) this.apply(matched[0], ev);
@@ -190,6 +214,18 @@ export class MidiEngine {
     for (const mapping of matched) {
       if (!echoed.has(addrKey(mapping.addr))) this.apply(mapping, ev);
     }
+  }
+
+  // One report per gated window, on the first message that would actually have
+  // changed something: an inert mapping (one saved for another model) edits
+  // nothing either way, so naming it would report a loss that did not happen. The
+  // per-message record goes to the trace log, which is where it belongs.
+  private reportRefusal(reason: string, matched: MidiMapping[]): void {
+    this.hooks.trace?.(`refuse ${matched.map((m) => m.control).join(",")} (${reason})`);
+    if (reason === this.gated) return;
+    if (!matched.some((m) => this.hooks.resolve(m.control))) return;
+    this.gated = reason;
+    this.hooks.refused?.(reason);
   }
 
   // The mappings an event addresses. A CC can hit a plain CC binding and either

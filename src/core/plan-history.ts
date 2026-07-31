@@ -400,6 +400,89 @@ function applySlots(rec: Record<string, unknown>, slots: KeySlots): void {
   }
 }
 
+/** Whether `rec[key]` is what the slot describes, presence included — one key's worth
+ *  of the context a patch was computed against. */
+function slotHolds(rec: AnyRecord, key: string, slot: Slot<unknown>): boolean {
+  const present = rec !== undefined && Object.hasOwn(rec, key);
+  if (!present || !slot.present) return present === slot.present;
+  return deepEqual(rec![key], slot.value);
+}
+
+/** The part of `e` whose `before` side `plan` still holds: the whole entry, a subset of
+ *  its keys, or nothing. Where the two disagree the plan's value was authored after the
+ *  patch was taken, and that authorship is what the caller must not overwrite. */
+function entryInContext(plan: Plan, e: PlanPatchEntry): PlanPatchEntry | null {
+  switch (e.field) {
+    case "sampleRate":
+      return plan.sampleRate === e.before ? e : null;
+    case "hidden":
+    case "noteCollapsed":
+      return sameStringSet(plan[e.field], e.before) ? e : null;
+    case "positions":
+    case "nodeNames":
+    case "nodeColors":
+    case "notes":
+      return slotHolds(plan[e.field] as AnyRecord, e.key, e.before) ? e : null;
+    case "nodeParams":
+    case "connParams": {
+      const rec = (
+        e.field === "nodeParams"
+          ? plan.nodeParams[e.key]
+          : plan.connections.find((c) => wireKey(c.from, c.to) === e.key)?.params
+      ) as AnyRecord;
+      const before: KeySlots = {};
+      const after: KeySlots = {};
+      let any = false;
+      // diffKeys writes both sides for every differing key, so `after` has whatever
+      // `before` has.
+      for (const [key, slot] of Object.entries(e.before)) {
+        if (!slotHolds(rec, key, slot)) continue;
+        before[key] = slot;
+        after[key] = e.after[key];
+        any = true;
+      }
+      return any ? ({ ...e, before, after } as PlanPatchEntry) : null;
+    }
+    case "connections": {
+      const hit = plan.connections.find((c) => wireKey(c.from, c.to) === e.key);
+      const holds = e.before.present ? hit !== undefined && deepEqual(hit, e.before.value) : hit === undefined;
+      return holds ? e : null;
+    }
+    case "connectionsAll":
+      return deepEqual(plan.connections, e.before) ? e : null;
+  }
+}
+
+/** The keys of `e` that `part` — its in-context subset, or null for none of it — left
+ *  out. nodeParams / connParams are named key by key, since they are the two fields
+ *  that narrow to a subset and a caller cannot otherwise tell a partly-applied entry
+ *  from a rejected one; every other field is all or nothing. */
+function outOfContextKeys(e: PlanPatchEntry, part: PlanPatchEntry | null): string[] {
+  const label = "key" in e ? `${e.field} ${e.key}` : e.field;
+  if (e.field !== "nodeParams" && e.field !== "connParams") return part ? [] : [label];
+  const kept = part ? (part as { before: KeySlots }).before : {};
+  return Object.keys(e.before)
+    .filter((k) => !(k in kept))
+    .map((k) => `${label}.${k}`);
+}
+
+/** Write only the keys of `patch` whose `before` side the target still holds, and
+ *  return what was not written: applyPatch's own report (a target that has since gone)
+ *  plus every key left alone because the plan no longer holds the `before` side the
+ *  patch was computed against. The latter is not a failure — preserving that later
+ *  authorship is what this function exists to do — but it IS the contest a device
+ *  read's caller reports, so it is named rather than swallowed. */
+export function applyPatchInContext(plan: Plan, patch: PlanPatch): string[] {
+  const scoped: PlanPatch = [];
+  const moved: string[] = [];
+  for (const e of patch) {
+    const part = entryInContext(plan, e);
+    if (part) scoped.push(part);
+    if (part !== e) moved.push(...outOfContextKeys(e, part));
+  }
+  return [...applyPatch(plan, scoped), ...moved];
+}
+
 /** The undo / redo stacks over a rolling baseline. Pure: no timers, no DOM, no
  *  device. The baseline is what a commit diffs against, and is re-taken by every
  *  operation that settles the plan — a device readback included, which is what
@@ -421,6 +504,17 @@ export class PlanHistoryStack {
    *  recorded still undo the edits they were taken for. */
   rebase(plan: Plan): void {
     this.baseline = clonePlanState(plan);
+  }
+
+  /** Take the keys a device read authored into the baseline and leave every other key
+   *  measuring from where it was. Unlike rebase() this keeps the caller's open entry: a
+   *  readback landing inside a gesture is not a boundary of it. The patch measures from
+   *  the plan as it stood when the read was ISSUED, so a key the baseline no longer
+   *  agrees with is one the app has moved since — the device is only echoing the app's
+   *  own write back on it — and that key is skipped. Both stacks stand. */
+  absorb(patch: PlanPatch): void {
+    if (!patch.length) return;
+    applyPatchInContext(this.baseline, patch);
   }
 
   /** Re-take the baseline and drop both stacks: a different document, or every

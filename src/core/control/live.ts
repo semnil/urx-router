@@ -71,8 +71,11 @@ export interface LiveSyncHooks {
    *  "refetch" sideEffect needs. Supplied by the caller rather than called here, so
    *  this module keeps its one direction of travel (plan → device) and the device→plan
    *  inverse stays in the one place that owns it. Absent = no refetch (the browser
-   *  build, and the tests that do not exercise it). */
-  refetchNodes?: (nodes: ReadonlySet<string>) => Promise<void>;
+   *  build, and the tests that do not exercise it). Resolves the private copy its read
+   *  ran against (readback.readIntoPlan) — that copy is what the device holds as far as
+   *  the read established it, and so what the snapshot re-base measures from. Null when
+   *  the plan it read into has been replaced: there is then nothing to re-base. */
+  refetchNodes?: (nodes: ReadonlySet<string>) => Promise<Plan | null>;
 }
 
 export class LiveSync {
@@ -105,18 +108,22 @@ export class LiveSync {
     return this.hooks.getScope?.() ?? "all";
   }
 
-  /** Start syncing. Call right after a full readback, so the snapshot equals the device. */
-  begin(): void {
-    this.captureSnapshot();
+  /** Start syncing. Call right after a full readback, passing the private copy that
+   *  read ran against — without it an edit made during the multi-second starting read
+   *  is enshrined as a value the device was already given. Omit it only where the plan
+   *  itself is device truth (no read spanned an await). */
+  begin(deviceView?: Plan): void {
+    this.capture(deviceView);
     this.active = true;
   }
 
-  /** Re-capture the device-truth snapshot from the plan's current implied state.
-   *  Call after a device-follow readback has pulled the plan into agreement with
-   *  the device, so the next outgoing diff measures from the device truth (and so
-   *  device-side notifies for the just-read values register as echoes). */
-  resync(): void {
-    this.captureSnapshot();
+  /** Re-capture the device-truth snapshot after a device-follow readback has pulled the
+   *  plan into agreement with the device, so the next outgoing diff measures from the
+   *  device truth (and so device-side notifies for the just-read values register as
+   *  echoes). Pass the copy the readback ran against, or an edit made during that read
+   *  is recorded as device truth and stops being a diff. */
+  resync(deviceView?: Plan): void {
+    this.capture(deviceView);
   }
 
   /** Patch one snapshot entry to a device-reported value (a direct follow notify),
@@ -196,26 +203,49 @@ export class LiveSync {
     return false;
   }
 
-  // Rebuild the snapshot to the plan's current implied state — the device truth
-  // right after a readback, or after a converge round has matched the device.
-  // `source` overrides the plan to snapshot (the frozen copy a sideEffect converge
-  // measured against); it defaults to the live plan for begin()/resync().
-  private captureSnapshot(source?: Plan): void {
+  /**
+   * Rebuild the device-truth snapshot. SHAPE comes from the live plan (which addresses
+   * exist at all, and so what is registered for notifies); VALUES come from
+   * `deviceView`, the private copy a readback ran against. Absent = the live plan is
+   * itself device truth, which is only so when nothing was read across an await.
+   *
+   * The split is the whole point: an address the operator moved during the read holds
+   * their value in the live plan and the device's in the view, so it stays a diff and
+   * the next flush sends it. Snapshotting the live plan instead records their edit as a
+   * value the device was given, and nothing ever retries it.
+   *
+   * The NAME snapshot takes both from `deviceView`, and needs no split: the flush
+   * iterates the live plan's name writes and sends any whose key the snapshot does not
+   * hold, so a name typed during the read is sent for exactly the reason an address the
+   * view does not carry is — absence from the snapshot IS the diff. The extra entries a
+   * name dropped during the read leaves behind are never consulted.
+   */
+  private capture(deviceView?: Plan): void {
+    const model = this.hooks.getModel();
+    const scope = this.scope();
+    const plan = this.hooks.getPlan();
+    // Every caller passes a private copy (readback's clone, or the converge's own),
+    // so a view is never the live plan itself.
+    const device = deviceView
+      ? new Map(planToCommands(model, deviceView, scope).map((c) => [cmdKey(c), c.vdValue] as const))
+      : null;
     this.snapshot.clear();
     this.nameSnapshot.clear();
     this.index.clear();
-    const model = this.hooks.getModel();
-    const plan = source ?? this.hooks.getPlan();
     const addrs: Array<[number, number, number]> = [];
-    for (const c of planToCommands(model, plan, this.scope())) {
+    for (const c of planToCommands(model, plan, scope)) {
       const k = cmdKey(c);
-      this.snapshot.set(k, c.vdValue);
+      // An address the view does not carry grew after the read was issued (a structural
+      // edit made during it). It is a pending write, not device truth, so it is left out
+      // of the snapshot entirely and the next diff sends it.
+      const known = device ? device.get(k) : c.vdValue;
+      if (known !== undefined) this.snapshot.set(k, known);
       addrs.push([c.paramId, c.x, c.y]);
       const direct = (PARAMS as Record<string, ParamSpec>)[c.name].follow === "direct";
       this.index.set(k, { name: c.name, node: c.node, direct });
     }
     this.writableAddrList = addrs;
-    for (const w of planToNameWrites(model, plan)) this.nameSnapshot.set(nameKey(w), w.value);
+    for (const w of planToNameWrites(model, deviceView ?? plan)) this.nameSnapshot.set(nameKey(w), w.value);
   }
 
   /** Resolve an incoming device notify address to its catalog name, owner node,
@@ -273,16 +303,17 @@ export class LiveSync {
         if (failed || r.readErrors.length) {
           throw new Error(failed?.error ?? r.readErrors[0] ?? "converge failed");
         }
-        this.captureSnapshot(converged);
+        this.capture(converged);
       }
       // A refetch after the converge, if both happened: converge rebuilds the snapshot
       // from the plan, and the read that follows is what makes the plan right.
       if (refetch.size && this.hooks.refetchNodes) {
-        await this.hooks.refetchNodes(refetch);
-        // The plan now holds what the device computed, so the next outgoing diff has to
-        // measure from there — otherwise every one of those band values reads as a
-        // pending edit and gets written straight back over the device's own work.
-        this.captureSnapshot();
+        const deviceView = await this.hooks.refetchNodes(refetch);
+        // The read ran against its own copy of the plan (readback.readIntoPlan), so the
+        // copy is what the device holds: re-base from it and an edit made during the
+        // await — on the read node or any other — stays a diff. Null = the plan it read
+        // into is gone, and there is nothing a snapshot could describe.
+        if (deviceView) this.capture(deviceView);
       }
       if (sent) this.hooks.onSent(sent);
     } catch (e) {

@@ -522,6 +522,7 @@ export const en = {
     pngExported: "PNG exported",
     pdfExported: "PDF exported",
     arranged: "Arranged to the default layout",
+    busyDeviceRead: "Reading from the device — try that again when it finishes",
     fetchConnecting: "Connecting to the device…",
     fetchedDevice: (model: string, n: number): string => `Fetched ${n} setting${n === 1 ? "" : "s"} from ${model}`,
     fetchedUnread: (model: string, n: number, unread: number): string =>
@@ -598,6 +599,7 @@ export const en = {
     undoDeviceBusy: "Busy with the device — undo is unavailable until it finishes",
     undoModal: "Close the open dialog before undoing",
     undoRateLive: "The sample rate follows the device while Live sync is on — it cannot be undone here",
+    midiBusy: "Busy with the device or a file — incoming MIDI is ignored until it finishes",
     themeDark: "Switched to dark mode",
     themeLight: "Switched to light mode",
     themeAuto: "Following the system theme",
