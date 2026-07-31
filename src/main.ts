@@ -4,8 +4,7 @@ import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
-import { applyPairTransition, mirrorBalPair, mixSendLocks, partnerChannel, validatePlan } from "./core/routing";
-import type { PlanProblem } from "./core/routing";
+import { applyPairTransition, mirrorBalPair, mixSendLocks, partnerChannel } from "./core/routing";
 import {
   decodePlanParam,
   deserializeDocument,
@@ -21,6 +20,8 @@ import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
 import type { PatchTouch } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
+import { planProblems } from "./core/plan-validate";
+import type { LoadProblem } from "./core/plan-validate";
 import {
   baseName,
   downloadText,
@@ -1373,23 +1374,31 @@ function loadPlan(next: Plan): boolean {
   return true;
 }
 
-// Build a copyable, language-stable report of a plan's routing violations, so it
-// can be pasted back to the tool that generated the plan. One line per problem:
-// "[reason] from -> to", using the routing ConnectError codes and the plan's
-// "nodeId:portId" refs.
-function buildPlanReport(model: string, problems: PlanProblem[]): string {
+// Build a copyable, language-stable report of a plan's violations, so it can be
+// pasted back to the tool that generated the plan. One line per problem, keyed by
+// its code: a wire prints "[reason] from -> to" (the routing ConnectError codes
+// and the plan's "nodeId:portId" refs), an insert-FX slot collision the contended
+// slot and every node claiming it — it has no endpoints to name.
+function buildPlanReport(model: string, problems: LoadProblem[]): string {
   return [
     "URX Router plan validation failed",
     `model: ${model}`,
     `problems: ${problems.length}`,
     "",
-    ...problems.map((p) => `[${p.reason}] ${p.from} -> ${p.to}`),
+    ...problems.map((p) =>
+      p.reason === "insertFxSlot"
+        ? `[${p.reason}] ${p.slot}: ${p.nodes.join(", ")}`
+        : `[${p.reason}] ${p.from} -> ${p.to}`,
+    ),
   ].join("\n");
 }
 
 // Parse text into a plan, load it, and (when it came from a real path) record it
-// as a recent plan. Returns true on success; on failure sets the error status.
-function loadFromText(text: string, path?: string): boolean {
+// as a recent plan. Returns true on success and false on failure (which sets the
+// error status); null when the plan carries a problem the operator has been asked
+// about — nothing has loaded and nothing has failed, and the load runs from the
+// report modal if they proceed.
+function loadFromText(text: string, path?: string): boolean | null {
   try {
     const doc = deserializeDocument(text);
     const next = doc.plan;
@@ -1402,22 +1411,45 @@ function loadFromText(text: string, path?: string): boolean {
     // scene recall on the unit. Only within the same model: another model's
     // monitor / patch wiring would not validate on this one.
     if (doc.sceneScoped && next.modelId === plan.modelId) applySceneExternal(next, captureSceneExternal(plan));
-    // Reject a plan with illegal routing (e.g. a tool-generated plan): surface a
-    // copyable report of every violation and leave the current plan untouched.
-    const problems = validatePlan(getModel(next.modelId), next);
-    if (problems.length > 0) {
-      showLoadReport(buildPlanReport(next.modelId, problems));
+    // Surface every violation as a copyable report. A device readback runs neither
+    // check — the unit is the authority for what it is actually running — which is
+    // what splits the two classes: illegal routing is a plan this app cannot
+    // represent and stays a refusal, while two nodes on one device-wide insert-FX
+    // slot is a plan the app itself writes after a readback, so refusing it made
+    // Fetch → Save → reopen impossible for its own document. That one warns and
+    // offers to open anyway.
+    const problems = planProblems(getModel(next.modelId), next);
+    const refusals = problems.filter((p) => p.reason !== "insertFxSlot");
+    if (refusals.length > 0) {
+      showLoadReport(buildPlanReport(next.modelId, refusals));
       return false;
     }
-    loadPlan(next);
-    if (path) {
-      recent = rememberRecent({ path, name: baseName(path), modelId }, getSettings().recentMax);
-      refreshInspector();
-      setStatus(t().status.openedFrom(baseName(path)));
-    } else {
-      setStatus(t().status.planLoaded);
+    const finishLoad = (): boolean => {
+      // Refused (a device read holds the plan): loadPlan said so, and the caller must
+      // not go on to remember a recent path and announce a document that never opened.
+      if (!loadPlan(next)) return false;
+      if (path) {
+        recent = rememberRecent({ path, name: baseName(path), modelId }, getSettings().recentMax);
+        refreshInspector();
+        setStatus(t().status.openedFrom(baseName(path)));
+      } else {
+        setStatus(t().status.planLoaded);
+      }
+      return true;
+    };
+    if (problems.length > 0) {
+      const m = t().loadReport;
+      showLoadReport(buildPlanReport(next.modelId, problems), {
+        title: m.slotTitle,
+        intro: m.slotIntro,
+        proceed: { label: m.loadAnyway, run: () => void finishLoad() },
+      });
+      // Neither loaded nor failed: the decision is on screen. Null rather than false,
+      // so a recent entry pointing at a file that opens perfectly well is not dropped
+      // as unloadable while its report is still up.
+      return null;
     }
-    return true;
+    return finishLoad();
   } catch (err) {
     const message = err instanceof PlanError ? t().error[err.code] : errorText(err);
     showError(t().status.loadError(message));

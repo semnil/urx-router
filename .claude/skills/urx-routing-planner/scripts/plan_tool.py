@@ -25,8 +25,9 @@ Usage:
 
 Exit code is non-zero when the plan has hard validation problems, so the skill
 can branch on it. Warnings (a dropped wire or value, a misplaced Ducker param,
-raw-encoded params, a destructive effect selector) are advisory and never fail
-the plan — but they all mean something worth telling the user.
+raw-encoded params, a destructive effect selector, a contended insert-FX slot)
+are advisory and never fail the plan — but they all mean something worth telling
+the user.
 """
 
 import argparse
@@ -34,6 +35,7 @@ import base64
 import json
 import math
 import os
+import re
 import sys
 import zlib
 
@@ -41,7 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MODELS_PATH = os.path.join(HERE, "models.json")
 DEFAULT_BASE = "https://urx-router.semnil.com/"
 PLAN_FORMAT = "urx-router-plan"
-PLAN_VERSION = 1
+PLAN_VERSION = 2
 
 SINGLE_INPUT_KINDS = {"source", "patch", "key", "record"}
 KNOWN_KINDS = {"source", "patch", "send", "sendSwitch", "key", "record"}
@@ -182,6 +184,45 @@ SELECTOR_KEYS = {
 DUCKER_KEYS = ("duckerOn", "ducker")
 
 
+# Insert-FX resource slots. The user guide's Effect list column "Number of
+# simultaneous uses" reads 1 slot per FAMILY, device-wide: the four guitar amps
+# share one slot across the MONO IN channels, Pitch Fix another, the two
+# companders a third ("cannot be inserted into two mono channels"), and on the
+# output side the Multi-Band Compressor and the companders share a single slot
+# across every MIX / STEREO output. Two nodes selecting into one slot is a plan
+# the device cannot run; the app warns about it on load.
+# Input effects belong to the MONO IN channels only (stereo channels have no
+# insert FX, so an insertFx there claims nothing); the output table applies to the
+# STEREO master and the two MIX buses. The compander values (1793 / 1794) appear
+# in both tables and land in a different slot depending on which side they are on.
+INSERT_FX_SLOTS = {
+    256: "guitar amp",
+    257: "guitar amp",
+    258: "guitar amp",
+    259: "guitar amp",
+    512: "Pitch Fix",
+    1793: "compander",
+    1794: "compander",
+}
+OUTPUT_INSERT_FX_SLOTS = {1792: "output dynamics", 1793: "output dynamics", 1794: "output dynamics"}
+OUTPUT_INSERT_FX_NODES = ("bus.stereo", "bus.mix1", "bus.mix2")
+STEREO_CHANNEL_RE = re.compile(r"^ch_\d+_\d+$")
+
+
+def insert_fx_slot(node_id, params, nodes):
+    """The device-wide 1-of slot this node's insert-FX selection claims, or None
+    when it claims nothing (No Effect, an off-menu value, or a node with no insert
+    FX at all)."""
+    value = params.get("insertFx")
+    if not is_number(value):
+        return None
+    if node_id in OUTPUT_INSERT_FX_NODES:
+        return OUTPUT_INSERT_FX_SLOTS.get(value)
+    if nodes.get(node_id, {}).get("kind") == "channel" and not STEREO_CHANNEL_RE.match(node_id):
+        return INSERT_FX_SLOTS.get(value)
+    return None
+
+
 def dropped_values(value, path, out):
     """Collect the node-param values the app's loader drops (path, why). Every leaf
     it keeps is a boolean or a finite number, and one malformed element drops the
@@ -201,9 +242,11 @@ def dropped_values(value, path, out):
 
 def node_param_warnings(plan, nodes):
     """Everything the app would quietly change about the plan's node params: values
-    it drops on load, Ducker settings on the wrong node, and the params that need
-    care on real hardware (raw units, effect selectors)."""
+    it drops on load, Ducker settings on the wrong node, the params that need care
+    on real hardware (raw units, effect selectors), and insert-FX slots two nodes
+    claim at once."""
     out = []
+    slot_holders = {}
     node_params = plan.get("nodeParams")
     if node_params is not None and not isinstance(node_params, dict):
         return ["nodeParams is not an object — the app loads the plan with no node params at all"]
@@ -222,6 +265,9 @@ def node_param_warnings(plan, nodes):
             )
         if "insertFx" in params:
             out.append(f"node {node_id}: {SELECTOR_KEYS['insertFx']} resets that effect's parameters on the device")
+        slot = insert_fx_slot(node_id, params, nodes)
+        if slot:
+            slot_holders.setdefault(slot, []).append(node_id)
         if isinstance(params.get("fxEffect"), dict) and "type" in params["fxEffect"]:
             out.append(f"node {node_id}: {SELECTOR_KEYS['fxEffect.type']} resets that effect's parameters on the device")
         for key, note in RAW_PARAM_KEYS.items():
@@ -234,6 +280,12 @@ def node_param_warnings(plan, nodes):
                 if not isinstance(fx, dict) or not fx.get("params"):
                     continue
             out.append(f"node {node_id}: {note} — verify on the device or omit to keep its current value")
+    for slot, ids in slot_holders.items():
+        if len(ids) > 1:
+            out.append(
+                f"insert FX: {', '.join(ids)} select into the one device-wide {slot} slot — "
+                "the unit runs only one at a time, so the app warns on load; give the effect to a single node"
+            )
     return out
 
 

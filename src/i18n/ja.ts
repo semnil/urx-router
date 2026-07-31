@@ -221,6 +221,7 @@ export const ja: Messages = {
     prePostLcdOnly: "CH → FX send の PRE/POST は本体でのみ設定可 (software から変更不可)。",
     eqRateLocked: "176.4 / 192 kHz ではステレオ ch の EQ は無効 — 強制的に OFF。",
     insFxRateLocked: "96 kHz 超では Insert FX は使用不可 — 強制的に OFF。",
+    insFxSlotLocked: "Insert FX はすべて使用中 — 各エフェクトは本体全体で 1 スロットを占有。",
     channelOn: "チャンネル",
     sendOn: "Send",
     toSt: "TO ST",
@@ -642,6 +643,10 @@ export const ja: Messages = {
     copy: "コピー",
     copied: "コピーしました",
     close: "閉じる",
+    slotTitle: "インサート FX スロットが競合しています",
+    slotIntro:
+      "この計画では 2 つのノードが本体で共有される同じインサート FX スロットを取り合っています。アプリの画面からはこの状態を作れませんが、実機からの読み取りではこの検査を行わないため、実機から保存した計画には含まれ得ます。そのため中止ではなく警告としています。読み込んでこのアプリで解消するか、閉じて計画の生成元で修正してください。",
+    loadAnyway: "このまま読み込む",
   },
   compareReport: {
     title: "デバイスとの照合",

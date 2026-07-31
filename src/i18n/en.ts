@@ -233,6 +233,7 @@ export const en = {
     prePostLcdOnly: "CH → FX send Pre/Post is set on the device only (not writable from software).",
     eqRateLocked: "Stereo channel EQ is disabled at 176.4 / 192 kHz — forced off.",
     insFxRateLocked: "Insert FX is unavailable above 96 kHz — forced off.",
+    insFxSlotLocked: "Every insert effect is in use — each occupies one device-wide slot.",
     channelOn: "Channel",
     sendOn: "Send",
     toSt: "TO ST",
@@ -661,6 +662,10 @@ export const en = {
     copy: "Copy",
     copied: "Copied",
     close: "Close",
+    slotTitle: "Plan has an insert-FX slot conflict",
+    slotIntro:
+      "Two nodes in this plan claim the same device-wide insert-FX slot. The app's own screens cannot author that, but a device readback does not check it, so a plan saved from the device can carry one — which is why this is a warning and not a refusal. Load it and resolve the conflict here, or close and fix it where the plan came from.",
+    loadAnyway: "Load anyway",
   },
   compareReport: {
     title: "Device comparison",

@@ -100,10 +100,8 @@ import {
   COLOR_PALETTE,
   DELAY_FRAME_RATE_OPTIONS,
   DELAY_FRAME_RATE_DEFAULT,
-  insertFxAvailable,
   insertFxEngaged,
 } from "../core/control/params";
-import type { InsertFxSlot } from "../core/control/params";
 import {
   EQ_FREQ_MAX_HZ,
   EQ_FREQ_MIN_HZ,
@@ -144,7 +142,14 @@ import {
   PHONES_LEVEL_MAX,
   PHONES_LEVEL_DEFAULT,
 } from "../core/control/vd";
-import { channelDuckerOn, channelEqUnavailable, duckerBypassWarnings, rateConstraints } from "../core/constraints";
+import {
+  channelDuckerOn,
+  channelEqUnavailable,
+  duckerBypassWarnings,
+  insertFxAllRateLocked,
+  insertFxMenu,
+  rateConstraints,
+} from "../core/constraints";
 import { getSettings } from "../core/settings";
 import { loadJson, saveJson } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
@@ -698,28 +703,21 @@ export function renderInspector(
 
     // Insert FX dropdown: MONO IN channels (input effects) and MIX/STEREO outputs
     // (output effects). An option is disabled when it exceeds the current sample
-    // rate's ceiling, or when its device-wide 1-of slot is taken by another node.
-    // Buses group it into their Parameters section (tailBody); channels show it
-    // loose below the EQ module.
+    // rate's ceiling, or when its device-wide 1-of slot is taken by another node —
+    // both asked of the one menu in core/constraints.ts the CONSOLE chip asks, so
+    // the two screens cannot disagree about what is available. Buses group it into
+    // their Parameters section (tailBody); channels show it loose below the EQ module.
     const ifx = insertFxControl(model, node.id);
     if (ifx) {
-      const taken = new Set<InsertFxSlot>();
-      for (const n of model.nodes) {
-        if (n.id === node.id) continue;
-        const other = insertFxControl(model, n.id);
-        const v = plan.nodeParams[n.id]?.insertFx;
-        if (!other || v === undefined) continue;
-        const slot = other.options.find((o) => o.value === v)?.slot;
-        if (slot) taken.add(slot);
-      }
+      const ifxMenu = insertFxMenu(model, plan, node.id);
       const ifxSel = plan.nodeParams[node.id]?.insertFx;
       (tailBody ?? host).append(
         selectControl(
           m.inspector.insertFx,
-          ifx.options.map((o) => ({
-            value: String(o.value),
-            label: o.label,
-            disabled: !insertFxAvailable(o, plan.sampleRate) || (o.slot !== undefined && taken.has(o.slot)),
+          ifxMenu.map((e) => ({
+            value: String(e.option.value),
+            label: e.option.label,
+            disabled: e.lock !== null,
           })),
           String(ifxSel ?? INSERT_FX_NONE),
           // Selecting an effect auto-engages it on the device, so mirror that in
@@ -735,10 +733,18 @@ export function renderInspector(
       );
       // ON/OFF (bypass) switch below the selector — hidden under No Effect (the
       // device ignores the switch then, and re-engages it on every selection).
+      // Above every effect's ceiling there is no DSP left to bypass: show it locked
+      // and OFF, the display/plan split the stereo CH EQ toggle already has. The
+      // plan keeps its value and translate.ts keeps emitting it, so the control
+      // shows what the operator may change, not what will be written.
       if (ifxSel !== undefined && ifxSel !== INSERT_FX_NONE) {
+        const ifxRateLocked = insertFxAllRateLocked(ifxMenu);
         (tailBody ?? host).append(
-          boolToggle(m.inspector.insertFxOn, insertFxEngaged(plan.nodeParams[node.id]), (v) =>
-            actions.onUpdateNodeParams(node.id, { insertFxOn: v }),
+          boolToggle(
+            m.inspector.insertFxOn,
+            !ifxRateLocked && insertFxEngaged(plan.nodeParams[node.id]),
+            (v) => actions.onUpdateNodeParams(node.id, { insertFxOn: v }),
+            ifxRateLocked ? m.inspector.insFxRateLocked : undefined,
           ),
         );
       }

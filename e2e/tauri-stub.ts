@@ -47,6 +47,10 @@ export interface DeviceStubOptions {
   values?: Record<number, number>;
   /** Reject every vd_get not covered by `values` (a dead/failing link). */
   failReads?: boolean;
+  /** What every confirm answers. Default "Cancel" — a spec that reaches one has
+   *  usually already failed to abort. "Ok" for the specs whose subject is what
+   *  happens AFTER the operator agrees. */
+  confirm?: "Ok" | "Cancel";
   /** Extra constant command responses, as stubTauriBoot's `commands`. */
   commands?: Record<string, unknown>;
 }
@@ -99,7 +103,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         invoke: (cmd: string, args?: Record<string, unknown>) => {
           if (cmd === "plugin:dialog|message") {
             dialogs.push(String(args?.message ?? ""));
-            return Promise.resolve("Cancel");
+            return Promise.resolve(o.confirm ?? "Cancel");
           }
           if (cmd === "vd_connect") {
             const model = o.model ?? "URX44V";

@@ -65,6 +65,17 @@ pre-fader/pre-Ducker tap as a direct out, so fading or muting the trigger channe
 never changes the ducking. When the trigger should follow a fader or mute, key
 from a STEREO/MIX bus instead — a bus key is post-fader.
 
+**An insert effect is a device-wide resource, one per family.** The user guide's
+Effect list gives each effect a "Number of simultaneous uses" of 1 slot: the four
+guitar amps share one slot across all the MONO IN channels, Pitch Fix another, and
+the two companders a third — a compander "cannot be inserted into two mono
+channels". On the output side the Multi-Band Compressor and the companders share a
+single slot across every MIX / STEREO output. So "compress CH1 and CH2" or "a
+multi-band on MIX 1 while STEREO runs a compander" is **not** possible: pick one
+node, or fall back to the node's own GATE / COMP / EQ, which are per-node and not
+shared. A plan that gives one slot to two nodes loads with a warning from the app,
+and `scripts/plan_tool.py` warns about it too.
+
 **High sample rates drop features.** Above 96 kHz (i.e. at 176.4 / 192 kHz) the
 insert FX and the FX2 bus are unavailable and the stereo channels' EQ is forced
 off. The plan still loads — the app warns and disables FX2 — but flag this when a
@@ -261,7 +272,7 @@ it, send it to the main mix at -3 dB, and also feed FX1 for reverb."
 ```json
 {
   "format": "urx-router-plan",
-  "version": 1,
+  "version": 2,
   "modelId": "URX44V",
   "connections": [
     { "from": "in.micline_1_2:out", "to": "ch1:in", "kind": "source" },
@@ -287,7 +298,7 @@ and give my streaming app the ducked mix on USB MAIN A."
 ```json
 {
   "format": "urx-router-plan",
-  "version": 1,
+  "version": 2,
   "modelId": "URX44V",
   "connections": [
     { "from": "in.micline_1_2:out", "to": "ch1:in", "kind": "source" },

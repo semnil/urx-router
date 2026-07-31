@@ -10,7 +10,7 @@ any private protocol knowledge.
 ```json
 {
   "format": "urx-router-plan",
-  "version": 1,
+  "version": 2,
   "modelId": "URX44V",
   "sampleRate": 48000,
   "connections": [ ... ],
@@ -32,8 +32,9 @@ setting.
 
 - `format` — always the string `"urx-router-plan"`. Anything else and the app
   refuses the document before it looks at the routing.
-- `version` — always `1`. A document tagged newer than the app's version is
-  refused; an absent one reads as current.
+- `version` — always `2` for a plan written today. A document tagged newer than
+  the app's version is refused; an older one is migrated forward on load, and an
+  absent one reads as current.
 - `modelId` — `"URX22"`, `"URX44"`, or `"URX44V"`. Any other string is refused.
 - `sampleRate` — Hz, one of `44100, 48000, 88200, 96000, 176400, 192000`
   (default `48000`). Some features (insert FX, FX2, stereo-channel EQ) warn/disable
@@ -143,6 +144,13 @@ the device default. The full set:
   settings belonging to another channel using it. Author `insertFx` only when the
   user asked to change the insert effect; omit it to leave the unit's effect
   alone. `fxEffect.type` below carries the same rule.
+  **One slot per effect family, device-wide** (user guide Effect list, "Number of
+  simultaneous uses: 1 slot"): the four guitar amps share one slot across the MONO
+  IN channels, Pitch Fix another, the two companders a third, and the Multi-Band
+  Compressor and companders share one slot across all MIX / STEREO outputs. Two
+  nodes selecting into the same slot is a plan the unit cannot run — the app warns
+  on load and `plan_tool.py` warns too. Stereo input channels have no insert FX at
+  all, so an `insertFx` on one is ignored.
 - `insertFxOn` — insert-effect ON/OFF (bypass), `true`/`false`. The device
   re-engages it whenever an effect is (re)selected; it only applies (and is only
   written) while an effect is selected.

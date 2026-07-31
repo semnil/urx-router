@@ -36,7 +36,14 @@ import {
 import { loadJson, saveJson } from "../core/storage";
 import { COMP_EQ_COMP_FIRST } from "../core/control/params";
 import type { DynKind } from "./dyn-registry";
-import { channelEqUnavailable } from "../core/constraints";
+import {
+  channelEqUnavailable,
+  insertFxAllRateLocked,
+  insertFxCensus,
+  insertFxFree,
+  insertFxMenu,
+  type InsertFxCensus,
+} from "../core/constraints";
 import { busBalance, channelControl, channelDynamics, hasEq, insertFxControl } from "../core/control/translate";
 import {
   isBalLinkedPair,
@@ -46,13 +53,7 @@ import {
   partnerChannel,
   sendTapWritable,
 } from "../core/routing";
-import {
-  INSERT_FX_NONE,
-  insertFxAvailable,
-  insertFxEngaged,
-  insertFxSelected,
-  type InsertFxOption,
-} from "../core/control/params";
+import { insertFxEngaged, insertFxSelected, type InsertFxOption } from "../core/control/params";
 import {
   DELAY_TIME_MAX_MS,
   DELAY_TIME_MIN_MS,
@@ -309,6 +310,13 @@ export class Console {
   private lastInsFx = new Map<string, number>(); // last non-none INS FX per node
   private factory: { id: string; plan: Plan } | null = null; // cached factory plan
   private headH = { key: "", px: 0 }; // cached MAIN-tab head height (key: model + hidden)
+  // The insert-FX slot census of the build pass in progress. It is a whole-model
+  // sweep and every strip's INS FX chip asks the same question of it, so it is taken
+  // once by whichever entry point starts the pass (render / refreshStrip — a render
+  // also builds every strip a second time in mainHeadHeight) and handed to
+  // insertFxMenu, rather than swept per strip. Null means no pass set one, and the
+  // menu falls back to sweeping for itself.
+  private ifxCensus: InsertFxCensus | null = null;
   private store = new MeterStore();
   private unsub: (() => void) | null = null;
   private subSig = ""; // signature of the currently subscribed address set
@@ -422,6 +430,7 @@ export class Console {
     if (!old) return;
     // Mark focus while the strip being replaced is still the one in refs.
     const restoreFocus = this.captureFocus();
+    this.ifxCensus = insertFxCensus(this.hooks.getModel(), this.hooks.getPlan());
     const fresh = this.buildStrip(this.toStripModel(stripId));
     // buildStrip re-registered refs.get(stripId) with fresh meter elements; carry the
     // ballistics onto them so the meter (and its peak-hold bar) doesn't jump.
@@ -1251,7 +1260,7 @@ export class Console {
     mute: boolean,
     on: boolean,
     toggle: () => boolean,
-    opts?: { readonlyTitle?: string; midiId?: string; title?: string },
+    opts?: { readonlyTitle?: string; midiId?: string; title?: string; rerender?: boolean },
   ): void {
     parent.append(this.buildChip(id, label, on, toggle, { ...opts, mute }));
   }
@@ -1274,7 +1283,8 @@ export class Console {
   // The chip primitive, returning the element. `cls` picks the base class (con-chip
   // for the head chips, con-sl / con-slp for the rack's enable chip / PRE button);
   // opts.mute paints the MUTE colour, opts.after runs after the toggle (before commit),
-  // opts.readonlyTitle renders it inert with a tooltip, opts.midiId arms MIDI learn.
+  // opts.readonlyTitle renders it inert with a tooltip, opts.midiId arms MIDI learn,
+  // opts.rerender rebuilds the whole view for a toggle whose effect reaches other strips.
   private buildChip(
     id: string,
     label: string,
@@ -1287,9 +1297,10 @@ export class Console {
       midiId?: string;
       title?: string;
       after?: (next: boolean) => void;
+      rerender?: boolean;
     },
   ): HTMLElement {
-    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after } = opts ?? {};
+    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender } = opts ?? {};
     const chip = el("div", cls + (mute ? " mute" : "") + (on ? " on" : "") + (readonlyTitle ? " readonly" : ""));
     chip.textContent = label;
     chip.setAttribute("role", "button");
@@ -1306,7 +1317,8 @@ export class Console {
       chip.classList.toggle("on", next);
       chip.setAttribute("aria-pressed", String(next));
       after?.(next);
-      if (this.commit(id)) this.render();
+      const mirrored = this.commit(id);
+      if (mirrored || rerender) this.render();
     });
     return chip;
   }
@@ -1477,6 +1489,7 @@ export class Console {
     // Live sync takes for every device read-back reflect.
     const prev = this.refs;
     const restoreFocus = this.captureFocus();
+    this.ifxCensus = insertFxCensus(model, this.hooks.getPlan());
     this.refs = new Map();
     const { groups, master } = this.stripModels();
     this.stripsHost.replaceChildren();
@@ -1724,18 +1737,30 @@ export class Console {
         if (hasEq(model, m.id, eqType)) proc.append(this.dynOpenChip("eq", m.id));
       }
     }
-    const ifx = insertFxControl(model, m.id);
-    if (ifx) {
-      // Every insert effect has a rate ceiling, so above 96 kHz none of them can
-      // run: show the chip forced off and read-only, the same treatment the stereo
-      // EQ gets. Below that the list still narrows (Pitch Fix stops at 48 kHz), so
-      // the toggle is offered only what the current rate can actually engage.
-      const legal = ifx.options.filter((o) => o.value !== INSERT_FX_NONE && insertFxAvailable(o, rate));
-      if (!legal.length)
+    if (insertFxControl(model, m.id)) {
+      // The chip has two duties, and its lock composes them off the one menu
+      // core/constraints.ts computes — the menu the inspector's selector renders,
+      // so the chip cannot hand a strip what that selector greys out. Holding an
+      // effect makes it a bypass, locked only where the rate rules every effect out
+      // (above 96 kHz none of them runs): forced off and read-only, the treatment
+      // the stereo EQ gets. Holding none makes it take a slot, locked when nothing
+      // is free — the tooltip naming which of the two reasons applies.
+      const menu = insertFxMenu(model, this.hooks.getPlan(), m.id, this.ifxCensus ?? undefined);
+      const free = insertFxFree(menu);
+      const rateLocked = insertFxAllRateLocked(menu);
+      const holds = insertFxSelected(planOf());
+      const locked = holds ? rateLocked : !free.length;
+      if (locked)
         this.makeChip(m.id, proc, "INS FX", false, false, () => false, {
-          readonlyTitle: t().inspector.insFxRateLocked,
+          readonlyTitle: rateLocked ? t().inspector.insFxRateLocked : t().inspector.insFxSlotLocked,
         });
-      else this.makeChip(m.id, proc, "INS FX", false, insertFxEngaged(planOf()), () => this.toggleInsFx(m.id, legal));
+      // Taking a slot removes it from every other strip's chip and menu, so that
+      // branch rebuilds the whole view; a bypass changes this strip alone and keeps
+      // the in-place chip update.
+      else
+        this.makeChip(m.id, proc, "INS FX", false, insertFxEngaged(planOf()), () => this.toggleInsFx(m.id, free), {
+          rerender: !holds,
+        });
     }
     // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
     // A shelved ducker drops its chip even while the parent strip stays.
@@ -2297,10 +2322,10 @@ export class Console {
   // effect selected, toggling flips insertFxOn and keeps the selection (absent =
   // on, matching the device's auto-engage). With No Effect, toggling on restores
   // the last chosen effect (else the first real option) and engages it. Returns
-  // the new on state. `options` is the non-empty set of real effects the current
-  // sample rate can run (the caller filters out No Effect and anything the rate
-  // rules out, and locks the chip when nothing is left), so a remembered effect the
-  // rate has since ruled out is not silently re-selected.
+  // the new on state. `options` is the non-empty free list off the shared menu (No
+  // Effect dropped, and everything the rate or another node's 1-of slot rules out;
+  // the caller locks the chip when nothing is left), so neither the first option nor
+  // a remembered one can be an effect this node may not take.
   private toggleInsFx(id: string, options: InsertFxOption[]): boolean {
     const np = this.nodeParamsOf(id);
     if (insertFxSelected(np)) {

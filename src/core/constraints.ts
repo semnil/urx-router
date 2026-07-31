@@ -6,7 +6,9 @@
 
 import { parseRef } from "../models/types";
 import type { DeviceModel } from "../models/types";
-import { isStereoChannel } from "./control/translate";
+import { insertFxControl, isStereoChannel } from "./control/translate";
+import { INSERT_FX_NONE, insertFxAvailable } from "./control/params";
+import type { InsertFxOption, InsertFxSlot } from "./control/params";
 import type { Plan } from "./plan";
 import { directOutTarget } from "./routing";
 
@@ -36,15 +38,33 @@ export function channelEqUnavailable(nodeId: string, sampleRate: number): boolea
   return isStereoChannel(nodeId) && sampleRate > HI_RATE_HZ;
 }
 
+/** True when the rate rules out every insert effect the model offers anywhere —
+ *  the plan-independent half of insertFxAllRateLocked, over the whole catalog of
+ *  controls instead of one node's menu. False for a model with no insert FX. */
+function insertFxRateLocked(model: DeviceModel, sampleRate: number): boolean {
+  let any = false;
+  for (const node of model.nodes) {
+    for (const option of insertFxControl(model, node.id)?.options ?? []) {
+      if (option.value === INSERT_FX_NONE) continue;
+      if (insertFxAvailable(option, sampleRate)) return false;
+      any = true;
+    }
+  }
+  return any;
+}
+
 export function rateConstraints(model: DeviceModel, sampleRate: number): RateConstraints {
   const warnings: RateWarning[] = [];
   const disabledNodes: string[] = [];
   const has = (id: string): boolean => model.nodes.some((n) => n.id === id);
 
-  // Above 96 kHz (i.e. 176.4 / 192 kHz) the insert FX, FX2 and stereo-channel EQ
-  // drop out.
+  // Insert FX: read off the effects' own ceilings rather than a threshold of its
+  // own, so this warning cannot contradict the per-node menu locks, which derive
+  // the same fact from the same maxRate (an effect reaching higher than 96 kHz
+  // would otherwise be warned about while its control stayed selectable).
+  if (insertFxRateLocked(model, sampleRate)) warnings.push("insFx");
+  // Above 96 kHz (i.e. 176.4 / 192 kHz) FX2 and the stereo-channel EQ drop out.
   if (sampleRate > HI_RATE_HZ) {
-    warnings.push("insFx");
     // The stereo channels' EQ goes inert (see channelEqUnavailable). The strip still
     // passes audio — only its EQ dies — so this is a text warning, not a dimmed node.
     if (model.nodes.some((n) => n.kind === "channel" && isStereoChannel(n.id))) warnings.push("stereoEq");
@@ -54,6 +74,85 @@ export function rateConstraints(model: DeviceModel, sampleRate: number): RateCon
     }
   }
   return { warnings, disabledNodes };
+}
+
+/** Why an insert-FX option cannot be chosen: the rate is above its ceiling, or
+ *  another node already holds the device-wide 1-of slot it needs. */
+export type InsertFxLock = "rate" | "slot";
+
+export interface InsertFxMenuEntry {
+  option: InsertFxOption;
+  /** Null when the option is selectable. */
+  lock: InsertFxLock | null;
+}
+
+/** The device-wide slot a node's current insert-FX selection claims, if any.
+ *  Shared with plan-validate.ts, whose slot-collision check censuses the same slots. */
+export function insertFxSlotOf(model: DeviceModel, plan: Plan, nodeId: string): InsertFxSlot | undefined {
+  const ifx = insertFxControl(model, nodeId);
+  const value = plan.nodeParams[nodeId]?.insertFx;
+  if (!ifx || value === undefined) return undefined;
+  return ifx.options.find((o) => o.value === value)?.slot;
+}
+
+/** Every node whose selection claims each device-wide slot, in model order. */
+export type InsertFxCensus = ReadonlyMap<InsertFxSlot, readonly string[]>;
+
+/** One sweep of the whole model for who claims which slot. Holders stay a LIST
+ *  rather than collapsing to one owner: a plan carrying a collision is loadable
+ *  (the loader warns and offers to open it), so a slot claimed by this node AND
+ *  another must still read as taken for this node's menu.
+ *  Shared with plan-validate.ts, whose slot-collision check reads the same census. */
+export function insertFxCensus(model: DeviceModel, plan: Plan): InsertFxCensus {
+  const holders = new Map<InsertFxSlot, string[]>();
+  for (const node of model.nodes) {
+    const slot = insertFxSlotOf(model, plan, node.id);
+    if (!slot) continue;
+    holders.set(slot, [...(holders.get(slot) ?? []), node.id]);
+  }
+  return holders;
+}
+
+// The insert-FX menu of one node: every option its own control offers, each with
+// the reason it is locked. Both reasons are UI-only — the write set is never
+// gated by either (see architecture.md), so this decides what the screens offer
+// and nothing about what is emitted. Empty for a node with no insert FX. The
+// slot census skips the node itself, so the value it already holds stays
+// selectable; No Effect has neither a ceiling nor a slot and is never locked.
+// A caller rendering many menus in one pass passes the census in so the sweep
+// runs once instead of per node.
+export function insertFxMenu(
+  model: DeviceModel,
+  plan: Plan,
+  nodeId: string,
+  census?: InsertFxCensus,
+): InsertFxMenuEntry[] {
+  const ifx = insertFxControl(model, nodeId);
+  if (!ifx) return [];
+  const taken = new Set<InsertFxSlot>();
+  for (const [slot, holders] of census ?? insertFxCensus(model, plan)) {
+    if (holders.some((h) => h !== nodeId)) taken.add(slot);
+  }
+  return ifx.options.map((option) => ({
+    option,
+    lock: !insertFxAvailable(option, plan.sampleRate)
+      ? "rate"
+      : option.slot !== undefined && taken.has(option.slot)
+        ? "slot"
+        : null,
+  }));
+}
+
+/** The effects a node may take right now: the menu minus every locked entry and
+ *  minus No Effect, which is the absence of an effect rather than a choice of one. */
+export function insertFxFree(menu: InsertFxMenuEntry[]): InsertFxOption[] {
+  return menu.filter((e) => e.lock === null && e.option.value !== INSERT_FX_NONE).map((e) => e.option);
+}
+
+/** True when the rate alone rules out every effect in the menu (above 96 kHz none
+ *  of them runs) — the case where a bypass switch has nothing left to bypass. */
+export function insertFxAllRateLocked(menu: InsertFxMenuEntry[]): boolean {
+  return menu.length > 0 && menu.every((e) => e.option.value === INSERT_FX_NONE || e.lock === "rate");
 }
 
 // True when `channelId` is a stereo channel whose Ducker is on. The Ducker sits
