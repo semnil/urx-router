@@ -602,6 +602,8 @@ export const en = {
     undoDeviceBusy: "Busy with the device — undo is unavailable until it finishes",
     undoModal: "Close the open dialog before undoing",
     undoRateLive: "The sample rate follows the device while Live sync is on — it cannot be undone here",
+    undoRateLiveMixed:
+      "This step also changes the sample rate, which follows the device while Live sync is on — the whole step is held back, not lost; it works again with Live sync off",
     midiBusy: "Busy with the device or a file — incoming MIDI is ignored until it finishes",
     themeDark: "Switched to dark mode",
     themeLight: "Switched to light mode",

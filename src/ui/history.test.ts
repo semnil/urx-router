@@ -459,6 +459,30 @@ describe("refusals", () => {
     expect(h.plan.sampleRate).not.toBe(96000);
   });
 
+  // The refusal takes the WHOLE entry, since a patch is applied atomically, so an
+  // entry carrying more than the rate says so — and says it is held back, not lost.
+  it("names the rest of the entry when the refused step carries more than the rate", () => {
+    const h = harness();
+    h.edit((p) => {
+      p.sampleRate = 96000;
+      p.nodeParams.ch1 = { hpf: true };
+    });
+    idle();
+    h.rateLocked = true;
+    h.history.undo();
+    expect(h.statuses.at(-1)).toBe(
+      "This step also changes the sample rate, which follows the device while Live sync is on — the whole step is held back, not lost; it works again with Live sync off",
+    );
+    expect(h.plan.sampleRate).toBe(96000);
+    expect(h.plan.nodeParams.ch1).toEqual({ hpf: true });
+    // Not consumed either: the same press works with the session off.
+    h.rateLocked = false;
+    h.history.undo();
+    settle();
+    expect(h.plan.sampleRate).not.toBe(96000);
+    expect(h.plan.nodeParams.ch1).toBeUndefined();
+  });
+
   it("allows an undo that does not touch the rate while live", () => {
     const h = harness();
     h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));

@@ -295,9 +295,13 @@ export class PlanHistory {
     }
     const touch = patchTouch(pending);
     // While a session is up the rate is the device's, settled at the write
-    // boundary; the picker is locked for the same reason.
+    // boundary; the picker is locked for the same reason. Refusing keeps the patch
+    // atomic, so an entry that moved something else too is refused whole — the
+    // wording says so, chosen by whether the entry is nothing but the rate. The
+    // entry is held back rather than lost: this runs on a peeked entry, before
+    // op.take(), and leaving the session makes the same press work.
     if (touch.fields.has("sampleRate") && this.hooks.rateLocked()) {
-      this.hooks.onStatus(s.undoRateLive);
+      this.hooks.onStatus(touch.fields.size === 1 ? s.undoRateLive : s.undoRateLiveMixed);
       return;
     }
     const patch = op.take();
