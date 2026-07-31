@@ -81,6 +81,47 @@ test("a node drag is one undo step, and redo puts it back", async ({ page }) => 
   await expect(node(page, "ch1")).toHaveAttribute("transform", moved);
 });
 
+// The two teardowns that are not a release. pointermove has already written the new
+// place into the plan by the time either lands, so a teardown that did not report it
+// would leave the move on screen with nothing able to take it back.
+test("a drag cancelled mid-gesture still records the move it already made", async ({ page }) => {
+  const before = (await node(page, "ch1").getAttribute("transform"))!;
+  const box = (await faceplate(page, "ch1").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 90, box.y + box.height / 2 + 40, { steps: 4 });
+  const moved = (await node(page, "ch1").getAttribute("transform"))!;
+  expect(moved).not.toBe(before);
+
+  // Pointer capture revoked: no pointerup ever reaches the handler that reports.
+  await page.locator("#graph-host svg").dispatchEvent("pointercancel");
+  await page.mouse.up();
+
+  await undo(page);
+  await expect(node(page, "ch1")).toHaveAttribute("transform", before);
+});
+
+test("a second finger landing mid-drag still records the move", async ({ page }) => {
+  const before = (await node(page, "ch1").getAttribute("transform"))!;
+  const box = (await faceplate(page, "ch1").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 90, box.y + box.height / 2, { steps: 4 });
+  const moved = (await node(page, "ch1").getAttribute("transform"))!;
+  expect(moved).not.toBe(before);
+
+  // A second pointer turns the drag into a pinch, which tears the drag down without
+  // a release. The synthetic finger gets its own pointerup: an id left in the graph's
+  // pointer map makes every later press read as a pinch.
+  const svg = page.locator("#graph-host svg");
+  await svg.dispatchEvent("pointerdown", { pointerId: 2, isPrimary: false, clientX: box.x, clientY: box.y });
+  await page.mouse.up();
+  await svg.dispatchEvent("pointerup", { pointerId: 2, isPrimary: false });
+
+  await undo(page);
+  await expect(node(page, "ch1")).toHaveAttribute("transform", before);
+});
+
 test("creating a wire is one step, and deleting it round-trips with Ctrl+Y", async ({ page }) => {
   const base = await wires(page).count();
   await connect(page);

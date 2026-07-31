@@ -1790,7 +1790,7 @@ export class Graph {
       this.longPress = null;
       // The hold won: drop the pending drag so a later move can't reposition the
       // node, then trace its signal path.
-      this.dragNode = null;
+      this.endNodeDrag();
       this.highlightPath(id);
     }, LONG_PRESS_MS);
     this.longPress = { id, timer, x, y };
@@ -1885,13 +1885,7 @@ export class Graph {
       }
       return;
     }
-    if (this.dragNode) {
-      const moved = this.dragNode.moved;
-      this.dragNode = null;
-      // A plain select-click leaves the node where it was; only a real drag
-      // persists a new position, so only that marks the plan dirty.
-      if (moved) this.cb.onChange();
-    }
+    this.endNodeDrag();
     if (this.connect) {
       const c = this.connect;
       this.connect = null;
@@ -1921,6 +1915,22 @@ export class Graph {
     }
   }
 
+  // End the in-flight node drag, reporting a moved one exactly once. Every path that
+  // drops a drag comes through here: a release, a pointer-capture revocation, and the
+  // second finger that turns the drag into a pinch. pointermove has already written
+  // the new place into the plan (the dragged node, plus a STEREO-linked partner's own
+  // position), so a teardown that skipped the report would leave the plan holding a
+  // position with no dirty flag, no live-sync schedule and no undo entry — a move the
+  // operator cannot take back.
+  private endNodeDrag(): void {
+    if (!this.dragNode) return;
+    const moved = this.dragNode.moved;
+    this.dragNode = null;
+    // A plain select-click leaves the node where it was; only a real drag
+    // persists a new position, so only that marks the plan dirty.
+    if (moved) this.cb.onChange();
+  }
+
   // Pointer capture can be revoked without a pointerup (touch-scroll gesture,
   // context menu, alert). Tear down any in-flight interaction so the rubber-band
   // wire and port highlights don't linger and dragNode/panning stop firing.
@@ -1931,9 +1941,12 @@ export class Graph {
       this.clearPortHighlights();
     }
     this.connect = null;
-    this.dragNode = null;
     this.panning = null;
     this.cancelLongPress();
+    // Last, so the change funnel (and the inspector rebuild behind it) runs with every
+    // other interaction already torn down. In the pinch branch this also puts the
+    // rebuild before beginPinch's own measurement rather than after it.
+    this.endNodeDrag();
   }
 
   private onPointerCancel(e: PointerEvent): void {

@@ -1,0 +1,911 @@
+import { test, expect, type Page } from "@playwright/test";
+import {
+  installFake,
+  goLive,
+  mark,
+  pushNotify,
+  pushMidi,
+  midiSentOf,
+  traceOf,
+  setLatency,
+  blockAt,
+  releaseBarrier,
+  memOf,
+  divergeAt,
+  waitQuiet,
+  settleAfter,
+  ledgerOf,
+  type InstallOptions,
+} from "./fake-device";
+import { analyze, report, timeline, markTime, setsOf, type LedgerEntry } from "./analyze";
+import { CH1_FADER, CH2_FADER, faderOf, faderReadout, graphNode, strip } from "./ui";
+
+// T4b midi — the six T4 cases t4-midi.spec.ts did not reach
+// (docs/{en,ja}/live-race-harness.md, catalog ids in the section headers below).
+//
+// The through-line of the tier is that an incoming MIDI message is the one plan
+// writer with no gate at all. These six add the shapes that are not about the gate:
+// one message driving SEVERAL plan keys (a gang), one message driving a key through
+// a MIRROR onto a channel nobody mapped, a guard that decides genuineness by value
+// alone, a decoder that keeps state across a port change, the second operator's
+// CONFIGURATION racing a device reconcile, and a relative drag whose arithmetic
+// predates the message it erases.
+//
+// Bindings are seeded through the persisted `urx-midi` store, as t4-midi does: learn
+// needs the panel open and an arming click on the very control a case then wants to
+// hold a barrier against, and sanitizeMappings validates a seeded mapping into
+// exactly the object learn would have produced. The one case that is ABOUT learn
+// (midi-learn-arm-during-rerender) drives the real learn flow instead.
+
+const CH1_GATE_THRESHOLD = "29:0:0"; // GATE_THRESHOLD, centi-dB
+const CH2_GATE_THRESHOLD = "29:0:1";
+const CC7 = { type: "cc", channel: 0, controller: 7 } as const;
+const CC14_7 = { type: "cc14", channel: 0, controller: 7 } as const; // MSB CC 7 / LSB CC 39
+const CC39 = { type: "cc", channel: 0, controller: 39 } as const;
+const PB = { type: "pitchbend", channel: 0 } as const;
+const CC14_10 = { type: "cc14", channel: 0, controller: 10 } as const;
+
+type Addr = typeof CC7 | typeof CC14_7 | typeof CC39 | typeof PB | typeof CC14_10;
+type Mapping = { control: string; addr: Addr; mode: "absolute" | "pickup"; button?: "edge" | "state" };
+
+/** Seed the persisted MIDI store: ports (reopened at boot by restorePorts, so the
+ *  fake owns the channel before the first gesture) + this model's bindings, in
+ *  first-learned order. */
+function midiStore(
+  mappings: Mapping[],
+  ports: { input?: string; output?: string } = { input: "Fake In" },
+): InstallOptions["storage"] {
+  return { "urx-midi": JSON.stringify({ ...ports, models: { URX44V: mappings } }) };
+}
+
+const sendFader = (page: Page, name: string, send: string) =>
+  strip(page, name).locator(`.con-vfad[aria-label="${send}"]`);
+const muteChip = (page: Page, name: string) => strip(page, name).locator(".con-chip.mute");
+const scribble = (page: Page, name: string) => strip(page, name).locator(".con-scribble");
+const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
+
+/** A CC message. The level codec is posToLevel(round(v/127 × 40)) over the
+ *  LEVEL_STEPS_DB grid, so the dB each raw value lands on is stated per use. */
+const cc = (controller: number, value: number): number[] => [0xb0, controller, value];
+const cc7 = (value: number): number[] => cc(7, value);
+
+/** Boot with a seeded store, in the console, model confirmed. Every offline case
+ *  starts here — no device link is involved in a message-level decision. */
+async function boot(page: Page, mappings: Mapping[], ports?: { input?: string; output?: string }): Promise<void> {
+  await installFake(page, { storage: midiStore(mappings, ports) });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-view-console");
+  await expect(faderReadout(page, "CH 1")).toBeVisible();
+}
+
+/** Every case prints its own evidence: the fake's ordered trace, the analyzer's
+ *  verdict, and the MIDI bytes that crossed the bridge in each direction. */
+async function dump(page: Page, title: string, from: string, spec: Parameters<typeof analyze>[1] = {}): Promise<void> {
+  const trace = await traceOf(page);
+  const at = markTime(trace, from);
+  console.log(timeline(trace, { from: at === undefined ? 0 : at - 50 }));
+  console.log(report(title, analyze(trace, spec)));
+  console.log(`midi tx: ${(await midiSentOf(page)).map((b) => b.join(" ")).join(" | ") || "(none)"}`);
+}
+
+/** Ledger rows for one plan key, oldest first — "who wrote this" (invariant 13). */
+const writersOf = (ledger: LedgerEntry[], field: string, key: string, sub: string): LedgerEntry[] =>
+  ledger.filter((l) => l.field === field && l.key === key && (l.subKeys ?? []).includes(sub));
+
+const WIRE = (from: string, to: string): string => `${from}\u0000${to}`; // plan-history wireKey
+
+test.describe("T4b midi", () => {
+  // ===========================================================================
+  // midi-gang-fanout-and-head-reelection — the only many-to-one writer in the
+  // app. One physical control drives a whole gang (mappings sharing an address),
+  // and exactly one member — the first that RESOLVES — owns the address' feedback
+  // and pickup state.
+  // ===========================================================================
+
+  test("one CC writes three plan keys, in first-learned order", async ({ page }) => {
+    // The gang is deliberately heterogeneous: a send-backed control (a wire's
+    // params) ahead of two node-backed main faders (a different wire each). Nothing
+    // else in the app turns one input event into three plan writes.
+    await boot(page, [
+      { control: "ch3/level@bus.mix1", addr: CC7, mode: "absolute" },
+      { control: "ch1/level", addr: CC7, mode: "absolute" },
+      { control: "ch2/level", addr: CC7, mode: "absolute" },
+    ]);
+    await expect(sendFader(page, "CH 3", "MIX 1")).toBeVisible();
+    expect(await faderReadout(page, "CH 1").textContent()).toBe("0.0");
+    expect(await sendFader(page, "CH 3", "MIX 1").getAttribute("aria-valuetext")).toBe("off (-∞)");
+
+    await mark(page, "cc");
+    await pushMidi(page, [cc7(114)]); // 114/127 × 40 → pos 36 → +5.0 dB
+
+    // All three land, from one message, on three different wires.
+    await expect(faderReadout(page, "CH 1")).toHaveText("+5.0");
+    await expect(faderReadout(page, "CH 2")).toHaveText("+5.0");
+    await expect(sendFader(page, "CH 3", "MIX 1")).toHaveAttribute("aria-valuetext", "+5.0 dB");
+
+    const ledger = await ledgerOf(page);
+    const fanout = ledger.filter((l) => l.source === "midi");
+    await dump(page, "gang fan-out", "cc", { ledger });
+    console.log(`ledger (midi): ${fanout.map((l) => `${l.field}[${l.key?.replace("\u0000", " → ")}]`).join(" ; ")}`);
+
+    // Three plan writes, attributed to the one writer, in the order the mappings
+    // were learned — matches() preserves byKey order and apply() runs the list.
+    expect(fanout).toHaveLength(3);
+    expect(fanout.map((l) => l.key)).toEqual([
+      WIRE("ch3:out", "bus.mix1:in"),
+      WIRE("ch1:out", "bus.stereo:in"),
+      WIRE("ch2:out", "bus.stereo:in"),
+    ]);
+    expect(fanout.every((l) => (l.subKeys ?? []).includes("level"))).toBe(true);
+  });
+
+  test("a device-locked head strands the whole gang's controller feedback", async ({ page }) => {
+    // The catalog asks for the head's backing wire to be DELETED so the head
+    // re-elects. That is unreachable: every channel → bus send is `fixed: true` in
+    // the model (build.ts §2), so no plan edit removes one, and MidiControl.resolve
+    // memoizes hits, so a control that bound once keeps binding. What IS reachable
+    // is the same ownership failure by another door — a MIX bus switched to FIXED
+    // makes the head's set() refuse, and a refused write returns before the head
+    // records what the controller was told.
+    await boot(
+      page,
+      [
+        { control: "ch1/level@bus.mix1", addr: CC7, mode: "absolute" },
+        { control: "ch1/level", addr: CC7, mode: "absolute" },
+        { control: "ch2/level", addr: CC7, mode: "absolute" },
+      ],
+      { input: "Fake In", output: "Fake Out" },
+    );
+    // The output port opens at boot and resyncs: the head's value goes out first.
+    await expect.poll(async () => (await midiSentOf(page)).length).toBeGreaterThan(0);
+    expect((await midiSentOf(page)).at(-1)).toEqual([0xb0, 7, 0]); // MIX 1 send ships off (-∞)
+
+    await mark(page, "cc-vari");
+    await pushMidi(page, [cc7(114)]); // +5.0 dB on all three
+    await expect(faderReadout(page, "CH 1")).toHaveText("+5.0");
+    await expect(sendFader(page, "CH 1", "MIX 1")).toHaveAttribute("aria-valuetext", "+5.0 dB");
+
+    // Switch MIX 1 to FIXED: the send LEVEL is device-locked from here on.
+    await page.click("#btn-view-graph");
+    await graphNode(page, "bus.mix1").click();
+    await param(page, "BUS Type").locator("select").selectOption("1");
+    await page.click("#btn-view-console");
+    await expect(faderReadout(page, "CH 1")).toBeVisible();
+    await page.waitForTimeout(600); // let any feedback the edit scheduled run + settle
+    const sentBefore = (await midiSentOf(page)).length;
+
+    await mark(page, "cc-fixed");
+    await pushMidi(page, [cc7(76)]); // 76/127 × 40 → pos 24 → -5.0 dB
+    await expect(faderReadout(page, "CH 1")).toHaveText("-5.0");
+    await expect(faderReadout(page, "CH 2")).toHaveText("-5.0");
+    // The head itself refused the write ("drop locked"), silently.
+    await expect(sendFader(page, "CH 1", "MIX 1")).toHaveAttribute("aria-valuetext", "+5.0 dB");
+
+    // …and feedback is computed from the HEAD alone, so nothing goes out: the
+    // physical control keeps showing +5.0 dB while two mapped faders sit at -5.0.
+    await page.waitForTimeout(800); // FEEDBACK_DEBOUNCE 120 + FEEDBACK_SETTLE 350, twice over
+    expect((await midiSentOf(page)).length).toBe(sentBefore);
+    // The decisive part is that the head's value is now unreachable: the console
+    // renders that column display-only, and the message path refuses it, so no
+    // writer is left that could ever move the value feedback reads.
+    await expect(sendFader(page, "CH 1", "MIX 1")).toHaveClass(/readonly/);
+    await expect(sendFader(page, "CH 1", "MIX 1")).toHaveAttribute("aria-disabled", "true");
+
+    // The same fact stated from the other side: moving a MEMBER in the UI emits
+    // nothing either, because the head's value is the only one feedback reads.
+    await mark(page, "ui-member");
+    await faderOf(page, "CH 1").focus();
+    await page.keyboard.press("ArrowUp");
+    await expect(faderReadout(page, "CH 1")).toHaveText("-4.0");
+    await page.waitForTimeout(800);
+    expect((await midiSentOf(page)).length).toBe(sentBefore);
+
+    await dump(page, "gang head ownership under a FIXED bus", "cc-vari", { ledger: await ledgerOf(page) });
+    console.log(`sends: boot..${sentBefore} then none across two 10 dB moves of two mapped controls`);
+  });
+
+  test("a pickup member behind an absolute head is swallowed forever", async ({ page }) => {
+    // Pickup engagement is keyed by ADDRESS and created only by the head, so a
+    // member in pickup mode behind an absolute head inherits a state that is never
+    // written: it can never engage, whatever the physical control does.
+    await boot(page, [
+      { control: "ch1/level", addr: CC7, mode: "absolute" },
+      { control: "ch2/level", addr: CC7, mode: "pickup" },
+    ]);
+    expect(await faderReadout(page, "CH 2").textContent()).toBe("0.0");
+
+    await mark(page, "sweep");
+    // A sweep that starts below the plan value, crosses it, and ends above it —
+    // every engagement condition pickup has, in one pass.
+    for (const v of [10, 40, 95, 96, 120, 127]) {
+      await pushMidi(page, [cc7(v)]);
+      await page.waitForTimeout(30);
+    }
+    await expect(faderReadout(page, "CH 1")).toHaveText("+10.0");
+
+    await dump(page, "gang pickup inheritance", "sweep", { ledger: await ledgerOf(page) });
+    const ch1 = await faderReadout(page, "CH 1").textContent();
+    const ch2 = await faderReadout(page, "CH 2").textContent();
+    console.log(`after a crossing sweep: CH 1 = ${ch1}, CH 2 = ${ch2}`);
+
+    // Pinned defect: the sweep crossed the member's own value (95 → 96 straddles its
+    // 0.75) and it still never took over. The gang is one physical control, so the
+    // operator has no way to engage it — the mode is a per-mapping setting whose
+    // state is not.
+    expect(await faderReadout(page, "CH 2").textContent()).toBe("0.0");
+    const level = writersOf(await ledgerOf(page), "connParams", WIRE("ch2:out", "bus.stereo:in"), "level");
+    expect(level).toHaveLength(0); // not "written back to the same value" — never written
+  });
+
+  // ===========================================================================
+  // midi-bal-mirror-clobbers-partner — the only collision mediated by a mirror.
+  // mirrorBalPair structuredClones the WHOLE source node's params onto the linked
+  // partner on every applied message, so a fader move on ch1 republishes every
+  // other parameter of ch2 as well.
+  // ===========================================================================
+
+  /** STEREO-link ch1/ch2 (which lands in BAL) and let the converge round settle. */
+  async function linkBalPair(page: Page): Promise<void> {
+    await graphNode(page, "ch1").click();
+    await param(page, "Signal Type").locator("select").selectOption("1");
+    await expect(param(page, "PAN / BAL").locator("select")).toHaveValue("1"); // BAL
+    await waitQuiet(page);
+  }
+
+  test("a MIDI fader move on ch1 republishes ch1's node params over what the device just reported for ch2", async ({
+    page,
+  }) => {
+    await installFake(page, { storage: midiStore([{ control: "ch1/level", addr: CC7, mode: "absolute" }]) });
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await goLive(page);
+    await linkBalPair(page);
+    await setLatency(page, { get: 8, set: 25 });
+
+    // The unit reports a GATE threshold change on ch2 alone — a device-side edit on
+    // the partner channel, applied by the scoped readback with no mirror (a
+    // device-authored value is not an app edit).
+    await divergeAt(page, CH2_GATE_THRESHOLD, -3000); // -30.00 dB
+    await mark(page, "notify");
+    await pushNotify(page, [[29, 0, 1, -3000]]);
+    await page.waitForSelector('#statusbar:text-matches("← device \\\\(\\\\d+\\\\)")', { timeout: 20_000 });
+    await waitQuiet(page);
+    const afterFollow = setsOf(await traceOf(page)).filter((s) => s.addr === CH2_GATE_THRESHOLD);
+    expect(afterFollow).toHaveLength(0); // the follow itself wrote nothing back
+
+    await page.click("#btn-view-console");
+    await expect(faderReadout(page, "CH 1")).toBeVisible();
+    await mark(page, "cc");
+    await pushMidi(page, [cc7(114)]); // ch1/level → +5.0 dB
+    await expect(faderReadout(page, "CH 1")).toHaveText("+5.0");
+    await settleAfter(page, "cc");
+
+    const trace = await traceOf(page);
+    const ccAt = markTime(trace, "cc")!;
+    const clobber = setsOf(trace).filter((s) => s.addr === CH2_GATE_THRESHOLD && s.start > ccAt);
+    await dump(page, "BAL mirror vs a device-authored partner value", "notify", {
+      edits: [{ label: "CC 7 = 114 on ch1/level", addr: CH1_FADER, at: ccAt, value: 500 }],
+      ledger: await ledgerOf(page),
+    });
+    console.log(
+      `after the CC: device ${CH2_GATE_THRESHOLD} = ${(await memOf(page))[CH2_GATE_THRESHOLD]}, ` +
+        `writes carrying it = ${clobber.map((s) => s.value).join(",") || "(none)"}; ` +
+        `CH 2 fader = ${await faderReadout(page, "CH 2").textContent()}`,
+    );
+
+    // Pinned defect. The operator moved one mapped fader; the app answered by
+    // writing a channel-strip parameter of a DIFFERENT channel — back to the value
+    // ch1 happened to hold — destroying what the unit had just reported.
+    expect(clobber.length).toBeGreaterThan(0);
+    expect(clobber[0].value).toBe(0); // ch1's threshold, not the device's -3000
+    expect((await memOf(page))[CH2_GATE_THRESHOLD]).toBe(0);
+    // The partner's fader moved too, which is the mirror working as designed — it
+    // is the same copy, and the same copy carries everything else with it.
+    await expect(faderReadout(page, "CH 2")).toHaveText("+5.0");
+    expect((await memOf(page))[CH2_FADER]).toBe(500);
+  });
+
+  test("a UI edit to the partner survives the same message — the app funnel mirrors it first", async ({ page }) => {
+    // The differential. The catalog's own wording has the destroyed value come from
+    // the tuning screen, and it does not: every app-side funnel calls mirrorBalPair
+    // itself, so a UI edit to ch2 is copied onto ch1 before the message arrives and
+    // the message's mirror finds the two already equal. What the mirror destroys is
+    // whatever did NOT go through a mirroring funnel — the run above.
+    await installFake(page, { storage: midiStore([{ control: "ch1/level", addr: CC7, mode: "absolute" }]) });
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await goLive(page);
+    await linkBalPair(page);
+    await setLatency(page, { get: 8, set: 25 });
+
+    // The operator edits ch2's GATE threshold on the tuning screen.
+    await graphNode(page, "ch2").click();
+    const gate = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^GATE$/ }) });
+    if (!(await gate.evaluate((el) => (el as HTMLDetailsElement).open))) await gate.locator("summary").click();
+    await gate.locator("#btn-gate-screen").click();
+    await expect(page.locator("#dyn-screen-box")).toBeVisible();
+    await mark(page, "ui-edit");
+    await page.locator("#dyn-screen-box .prefs-row", { hasText: "Threshold" }).locator("input[type=range]").fill("-40");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#dyn-screen-box")).toBeHidden();
+    await settleAfter(page, "ui-edit");
+
+    const midTrace = await traceOf(page);
+    const mirroredOut = setsOf(midTrace).filter((s) => s.addr === CH1_GATE_THRESHOLD);
+    expect(mirroredOut.length).toBeGreaterThan(0); // the UI funnel mirrored ch2 → ch1
+    expect(mirroredOut.at(-1)!.value).toBe(-4000);
+
+    await page.click("#btn-view-console");
+    await expect(faderReadout(page, "CH 1")).toBeVisible();
+    await mark(page, "cc");
+    await pushMidi(page, [cc7(114)]);
+    await expect(faderReadout(page, "CH 1")).toHaveText("+5.0");
+    await settleAfter(page, "cc");
+
+    const trace = await traceOf(page);
+    const ccAt = markTime(trace, "cc")!;
+    const after = setsOf(trace).filter((s) => s.addr === CH2_GATE_THRESHOLD && s.start > ccAt);
+    await dump(page, "BAL mirror vs a UI-authored partner value", "ui-edit", { ledger: await ledgerOf(page) });
+    console.log(`after the CC: writes to ${CH2_GATE_THRESHOLD} = ${after.map((s) => s.value).join(",") || "(none)"}`);
+
+    // Nothing rewrote ch2's threshold, and the unit still holds the operator's value.
+    expect(after).toHaveLength(0);
+    expect((await memOf(page))[CH2_GATE_THRESHOLD]).toBe(-4000);
+    expect((await memOf(page))[CH1_GATE_THRESHOLD]).toBe(-4000);
+  });
+
+  test("a linked pair deep-clones the source node once per applied message", async ({ page }) => {
+    // The cost half of the case: the mirror is a structuredClone of the whole node
+    // params, per message, and a controller sweep is dozens of messages a second.
+    // Measured as a differential (unlinked sweep vs linked sweep, same message
+    // sequence), so the probe's own clone per markChanged cancels out.
+    await installFake(page, { storage: midiStore([{ control: "ch1/level", addr: CC7, mode: "absolute" }]) });
+    await page.addInitScript(() => {
+      const w = window as unknown as { __clones: number };
+      w.__clones = 0;
+      const orig = structuredClone;
+      (window as unknown as { structuredClone: typeof structuredClone }).structuredClone = ((v: unknown) => {
+        w.__clones++;
+        return orig(v as never);
+      }) as typeof structuredClone;
+    });
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await page.click("#btn-view-console");
+    await expect(faderReadout(page, "CH 1")).toBeVisible();
+
+    const sweep = Array.from({ length: 60 }, (_, i) => cc7(2 + 2 * i)); // 60 distinct raw values
+    // "applied" is counted on the MAPPED key alone (the ch1 → STEREO send level):
+    // the total row count is not comparable across the two runs, because in the
+    // linked one every applied message also writes the partner — which is the other
+    // half of what this measures.
+    const runSweep = async (label: string): Promise<{ clones: number; applied: number; rows: number }> => {
+      await mark(page, label);
+      const before = await page.evaluate(() => (window as unknown as { __clones: number }).__clones);
+      const beforeLedger = (await ledgerOf(page)).filter((l) => l.source === "midi");
+      for (const msg of sweep) {
+        await pushMidi(page, [msg]);
+      }
+      await page.waitForTimeout(200);
+      const after = await page.evaluate(() => (window as unknown as { __clones: number }).__clones);
+      const afterLedger = (await ledgerOf(page)).filter((l) => l.source === "midi");
+      const mapped = (list: LedgerEntry[]): number =>
+        list.filter((l) => l.key === WIRE("ch1:out", "bus.stereo:in")).length;
+      return {
+        clones: after - before,
+        applied: mapped(afterLedger) - mapped(beforeLedger),
+        rows: afterLedger.length - beforeLedger.length,
+      };
+    };
+
+    const unlinked = await runSweep("sweep-unlinked");
+    await page.click("#btn-view-graph");
+    await linkBalPair(page);
+    await page.click("#btn-view-console");
+    await expect(faderReadout(page, "CH 1")).toBeVisible();
+    const linked = await runSweep("sweep-linked");
+
+    await dump(page, "BAL mirror sweep cost", "sweep-unlinked", { ledger: await ledgerOf(page) });
+    console.log(
+      `unlinked: ${unlinked.applied} applied messages, ${unlinked.rows} plan-key writes, ` +
+        `${unlinked.clones} structuredClone calls; ` +
+        `linked: ${linked.applied} applied, ${linked.rows} plan-key writes, ${linked.clones} clones`,
+    );
+
+    // The same message sequence changes the mapped value the same number of times
+    // either way. Linked, each of those messages writes a second plan key nobody
+    // mapped, and costs at least one extra whole-node deep copy — for a control
+    // that touched one number on one wire.
+    expect(unlinked.applied).toBeGreaterThan(30);
+    expect(linked.applied).toBe(unlinked.applied);
+    expect(unlinked.rows).toBe(unlinked.applied); // nothing but the mapped key
+    expect(linked.rows).toBeGreaterThanOrEqual(2 * linked.applied - 1); // …and its mirror
+    expect(linked.clones - unlinked.clones).toBeGreaterThanOrEqual(unlinked.applied);
+    // …and the partner's fader followed every step of a sweep nobody mapped to it.
+    await expect(faderReadout(page, "CH 2")).toHaveText((await faderReadout(page, "CH 1").textContent())!);
+  });
+
+  // ===========================================================================
+  // midi-14bit-pair-and-cross-binding — message-level decoding rather than
+  // value-level policy: pair state that outlives a port change, one physical
+  // message firing two address semantics, and bindings that can never fire.
+  // ===========================================================================
+
+  test("an MSB-only value combines with the last LSB seen, and the pair state outlives a port reopen", async ({
+    page,
+  }) => {
+    await boot(page, [{ control: "ch1/level", addr: CC14_7, mode: "absolute" }]);
+
+    // Fresh pair state: MSB 100, LSB 0 → 12800/16383 → pos 31 → +0.4 dB.
+    await mark(page, "msb-only");
+    await pushMidi(page, [cc7(100)]);
+    await expect(faderReadout(page, "CH 1")).toHaveText("+0.4");
+
+    // The LSB half alone re-combines and moves the fader by itself: 12927 → pos 32.
+    await pushMidi(page, [cc(39, 127)]);
+    await expect(faderReadout(page, "CH 1")).toHaveText("+1.2");
+
+    // A coarse MSB-only sweep now carries that sub-detent tail on every step.
+    await pushMidi(page, [cc7(110)]); // (110<<7)|127 = 14207 → pos 35 → +4.0
+    await expect(faderReadout(page, "CH 1")).toHaveText("+4.0");
+
+    // Close and reopen the input port through the panel — the operator unplugging
+    // and replugging a controller.
+    await page.click("#btn-device");
+    await page.click("#btn-midi");
+    await expect(page.locator("#midi-panel")).toBeVisible();
+    await page.locator("#midi-panel .mp-in").selectOption("");
+    await expect.poll(() => page.evaluate(() => window.__urxFake.midi.inPort)).toBeNull();
+    await page.locator("#midi-panel .mp-in").selectOption("Fake In");
+    await expect.poll(() => page.evaluate(() => window.__urxFake.midi.inPort)).toBe("Fake In");
+    await page.locator("#midi-panel .mp-close").click();
+    await expect(page.locator("#midi-panel")).toBeHidden();
+
+    await mark(page, "after-reopen");
+    await pushMidi(page, [cc7(100)]); // the SAME MSB as the very first message
+    await dump(page, "cc14 pair assembly", "msb-only", { ledger: await ledgerOf(page) });
+    console.log(`CH 1 after the reopened MSB-only 100: ${await faderReadout(page, "CH 1").textContent()}`);
+
+    // Pinned behaviour: identical physical message, different plan value — the LSB
+    // from before the port change is still attached, so the coarse sweep writes
+    // values with sub-detent garbage in them and a reconnect does not clear it.
+    await expect(faderReadout(page, "CH 1")).toHaveText("+1.2");
+  });
+
+  test("one CC 39 fires both a plain binding and a 14-bit binding, and the panel calls them unrelated", async ({
+    page,
+  }) => {
+    await boot(page, [
+      { control: "ch1/level", addr: CC14_7, mode: "absolute" }, // MSB 7 / LSB 39
+      { control: "ch2/level", addr: CC39, mode: "absolute" }, // plain CC 39
+    ]);
+    expect(await faderReadout(page, "CH 1").textContent()).toBe("0.0");
+    expect(await faderReadout(page, "CH 2").textContent()).toBe("0.0");
+
+    await mark(page, "cc39");
+    await pushMidi(page, [cc(39, 127)]);
+    // One physical message, two address semantics: CH 2 reads it as a 7-bit CC at
+    // full scale, CH 1 reads it as the LSB half of a 14-bit pair whose MSB is 0.
+    await expect(faderReadout(page, "CH 2")).toHaveText("+10.0");
+    await expect(faderReadout(page, "CH 1")).toHaveText("-∞");
+
+    await page.click("#btn-device");
+    await page.click("#btn-midi");
+    await expect(page.locator("#midi-panel")).toBeVisible();
+    const rows = page.locator("#midi-panel .mp-row");
+    await expect(rows).toHaveCount(2);
+    await dump(page, "cc14 cross-binding", "cc39", { ledger: await ledgerOf(page) });
+    console.log(`panel rows: ${(await rows.allTextContents()).join(" | ")}`);
+
+    // Neither row is tagged as linked — the two mappings have different address
+    // keys ("cc14:0:7" vs "cc:0:39"), so nothing in the panel says that moving one
+    // physical control drives both.
+    await expect(page.locator("#midi-panel .mp-row.linked")).toHaveCount(0);
+    await expect(page.locator('#midi-panel .mp-row[data-control="ch1/level"] .mp-addr')).toHaveText(
+      "CH 1 CC 7/39 (14bit)",
+    );
+    await expect(page.locator('#midi-panel .mp-row[data-control="ch2/level"] .mp-addr')).toHaveText("CH 1 CC 39");
+  });
+
+  test("a pitch bend and a 14-bit pair bound to toggles are accepted and permanently inert", async ({ page }) => {
+    await boot(page, [
+      { control: "ch1/chOn", addr: PB, mode: "absolute" },
+      { control: "ch2/chOn", addr: CC14_10, mode: "absolute" },
+    ]);
+    await expect(scribble(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
+    await expect(scribble(page, "CH 2")).toHaveAttribute("aria-pressed", "true");
+
+    await mark(page, "inert");
+    await pushMidi(page, [
+      [0xe0, 0x00, 0x7f], // pitch bend, full up
+      [0xe0, 0x00, 0x00], // pitch bend, full down
+      cc(10, 127), // cc14 MSB
+      cc(42, 127), // cc14 LSB
+    ]);
+    await page.waitForTimeout(200);
+
+    await page.click("#btn-device");
+    await page.click("#btn-midi");
+    await expect(page.locator("#midi-panel")).toBeVisible();
+    await dump(page, "inert toggle bindings", "inert", { ledger: await ledgerOf(page) });
+    console.log(
+      `panel rows: ${(await page.locator("#midi-panel .mp-row").allTextContents()).join(" | ")}; ` +
+        `plan writes: ${(await ledgerOf(page)).filter((l) => l.source === "midi").length}`,
+    );
+
+    // Pinned behaviour: both bindings exist, both are listed, neither can ever fire
+    // (toggleTarget refuses pitchbend and cc14), and no plan write was attempted.
+    await expect(page.locator("#midi-panel .mp-row")).toHaveCount(2);
+    await expect(scribble(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
+    await expect(scribble(page, "CH 2")).toHaveAttribute("aria-pressed", "true");
+    expect((await ledgerOf(page)).filter((l) => l.source === "midi")).toHaveLength(0);
+    // The rows carry no behaviour control at all — the take-in select is for
+    // continuous controls and the button-mode select is skipped for these two
+    // address types — so the panel shows nothing that would hint they are dead.
+    await expect(page.locator("#midi-panel .mp-mode")).toHaveCount(0);
+    await expect(page.locator("#midi-panel .mp-btn")).toHaveCount(0);
+  });
+
+  // ===========================================================================
+  // midi-toggle-echo-window-ladder — a one-shot guard, armed per ADDRESS when a
+  // toggle's feedback goes out, that decides genuineness by value and by a 300 ms
+  // window. It cannot tell a loopback from a press.
+  // ===========================================================================
+
+  /** Install a send-time stamp on the fake's outgoing byte log, so a phase can be
+   *  measured from the emit itself rather than from when the driver noticed it —
+   *  the ladder straddles 300 ms and a polling error would decide the verdict. */
+  const stampSends = (page: Page): Promise<void> =>
+    page.evaluate(() => {
+      const w = window as unknown as { __sendAt: number[] };
+      w.__sendAt = [];
+      const arr = window.__urxFake.midi.sent;
+      const push = Array.prototype.push;
+      arr.push = function (...args: number[][]): number {
+        w.__sendAt.push(performance.now());
+        return push.apply(this, args) as number;
+      };
+    });
+
+  /** Wait for the next outgoing message, then deliver `value` on the same address
+   *  exactly `d` ms after it left. Returns the achieved phase. */
+  const loopbackAfter = (page: Page, d: number, value: number): Promise<number> =>
+    page.evaluate(
+      async ([delay, v]) => {
+        const w = window as unknown as { __sendAt: number[] };
+        const f = window.__urxFake;
+        const n0 = f.midi.sent.length;
+        await new Promise<void>((res) => {
+          const tick = (): void => void (f.midi.sent.length > n0 ? res() : setTimeout(tick, 1));
+          tick();
+        });
+        const bytes = f.midi.sent[f.midi.sent.length - 1];
+        const at = w.__sendAt[w.__sendAt.length - 1];
+        await new Promise<void>((res) => setTimeout(res, Math.max(0, delay - (performance.now() - at))));
+        const achieved = performance.now() - at;
+        f.pushMidi([[bytes[0], bytes[1], v]]);
+        return achieved;
+      },
+      [d, value] as [number, number],
+    );
+
+  for (const d of [50, 250, 290, 310, 400]) {
+    const inWindow = d < 300;
+    const verb = inWindow ? "eaten" : "applied";
+    test(`a matching message ${d} ms after the feedback emit is ${verb}`, async ({ page }) => {
+      await boot(page, [{ control: "ch1/mute", addr: CC7, mode: "absolute" }], {
+        input: "Fake In",
+        output: "Fake Out",
+      });
+      // Boot resync sends the un-muted state (0). Only a 127 can flip an edge
+      // toggle, so the guard has to be armed by a feedback pass carrying one.
+      await expect.poll(async () => (await midiSentOf(page)).length).toBeGreaterThan(0);
+      await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "false");
+
+      await stampSends(page);
+      const armIdx = (await midiSentOf(page)).length;
+      await mark(page, "ui-mute");
+      await muteChip(page, "CH 1").click();
+      await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
+      const achieved = await loopbackAfter(page, d, 127);
+      await page.waitForTimeout(150);
+
+      const state = await muteChip(page, "CH 1").getAttribute("aria-pressed");
+      await dump(page, `toggle echo ladder D=${d}`, "ui-mute", { ledger: await ledgerOf(page) });
+      console.log(`D intended=${d} achieved=${achieved.toFixed(0)} ms; MUTE aria-pressed=${state}`);
+
+      // The phase is only interpretable if it landed on the intended side of the
+      // 300 ms guard window, measured from the emit itself.
+      expect(achieved < 300).toBe(inWindow);
+      // …and if the emit the phase is measured from is the one that armed the guard.
+      expect((await midiSentOf(page))[armIdx]).toEqual([0xb0, 7, 127]);
+
+      if (inWindow) {
+        // Pinned defect: the message is dropped on the strength of its value alone.
+        // Nothing here distinguishes a loopback from an operator's press — this run
+        // has no loopback at all, and the press was still eaten.
+        expect(state).toBe("true");
+      } else {
+        // Past the window the same bytes flip the toggle straight back, which is
+        // what a real echo does on a shared bus.
+        expect(state).toBe("false");
+      }
+    });
+  }
+
+  test("a value the guard does not recognise defeats it at the same phase", async ({ page }) => {
+    // The differential for the ladder's D=50 rung: one variable changed, the raw
+    // value. The guard compares against lastSent, so a controller that echoes at a
+    // different resolution (or a plugin that re-sends its own state) flips the
+    // toggle back inside the window the ladder shows as protected.
+    await boot(page, [{ control: "ch1/mute", addr: CC7, mode: "absolute" }], { input: "Fake In", output: "Fake Out" });
+    await expect.poll(async () => (await midiSentOf(page)).length).toBeGreaterThan(0);
+
+    await stampSends(page);
+    await mark(page, "ui-mute");
+    await muteChip(page, "CH 1").click();
+    await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
+    const achieved = await loopbackAfter(page, 50, 64); // ≥ 64 = an on-value, ≠ lastSent 127
+    await page.waitForTimeout(150);
+
+    const state = await muteChip(page, "CH 1").getAttribute("aria-pressed");
+    await dump(page, "toggle echo, mismatched value", "ui-mute", { ledger: await ledgerOf(page) });
+    console.log(`D achieved=${achieved.toFixed(0)} ms with value 64; MUTE aria-pressed=${state}`);
+
+    expect(achieved).toBeLessThan(300);
+    expect(state).toBe("false"); // flipped back — the guard did not fire
+  });
+
+  test("the guard is one-shot: the second matching message inside the window flips the toggle", async ({ page }) => {
+    // The other half of the same defect. The guard is consumed by whichever
+    // matching message arrives first, so an echo and a press inside one window are
+    // treated as one echo and one press — in whichever order they happen to land.
+    await boot(page, [{ control: "ch1/mute", addr: CC7, mode: "absolute" }], { input: "Fake In", output: "Fake Out" });
+    await expect.poll(async () => (await midiSentOf(page)).length).toBeGreaterThan(0);
+
+    await stampSends(page);
+    await mark(page, "ui-mute");
+    await muteChip(page, "CH 1").click();
+    await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
+    const achieved = await loopbackAfter(page, 50, 127);
+    await page.waitForTimeout(50);
+    const afterFirst = await muteChip(page, "CH 1").getAttribute("aria-pressed");
+    await pushMidi(page, [cc7(127)]); // still well inside the 300 ms window
+    await page.waitForTimeout(150);
+    const afterSecond = await muteChip(page, "CH 1").getAttribute("aria-pressed");
+
+    await dump(page, "toggle echo, one-shot guard", "ui-mute", { ledger: await ledgerOf(page) });
+    console.log(`D achieved=${achieved.toFixed(0)} ms; MUTE after first=${afterFirst} after second=${afterSecond}`);
+
+    expect(achieved).toBeLessThan(300);
+    expect(afterFirst).toBe("true"); // eaten
+    expect(afterSecond).toBe("false"); // applied — the guard was spent on the first
+  });
+
+  test.skip("Toggle (state) mode: a same-state message consumes the guard", async () => {
+    // Not falsifiable through any observable this harness has. In "state" mode the
+    // incoming value IS the state, so a same-state message is a no-op whether the
+    // echo guard ate it or the toggle target resolved to null — the plan, the chip,
+    // the ledger and the outgoing bytes are identical in both branches. The only
+    // difference is whether lastFedAt was consumed, which is engine-private, and
+    // probing the NEXT message cannot separate it either: the second same-state
+    // message is a no-op for the same two reasons.
+  });
+
+  // ===========================================================================
+  // midi-learn-arm-during-rerender — the only case where the second operator's
+  // CONFIGURATION races the device rather than its messages. Every learn-state
+  // change re-renders the whole console, and so does a reconcile's reflect.
+  // ===========================================================================
+
+  test("arming a control while a reconcile rebuilds the console binds the intended control and writes nothing", async ({
+    page,
+  }) => {
+    await installFake(page); // no seeded mappings: this case drives the real learn flow
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await goLive(page);
+    await page.click("#btn-view-console");
+    await expect(faderReadout(page, "CH 1")).toBeVisible();
+    await setLatency(page, { get: 8, set: 25 });
+    const ch1Before = (await faderReadout(page, "CH 1").textContent())!;
+    const ch2Before = (await faderReadout(page, "CH 2").textContent())!;
+
+    await page.click("#btn-device");
+    await page.click("#btn-midi");
+    await expect(page.locator("#midi-panel")).toBeVisible();
+    await page.locator("#midi-panel .mp-in").selectOption("Fake In");
+    await expect.poll(() => page.evaluate(() => window.__urxFake.midi.inPort)).toBe("Fake In");
+
+    // Entering learn mode re-renders the whole console: the element that was on
+    // screen a moment ago is out of the document.
+    const preLearn = (await faderOf(page, "CH 1").elementHandle())!;
+    await page.locator("#midi-panel .mp-learn-btn").click();
+    await expect(page.locator("#console-host")).toHaveClass(/midi-learn/);
+    expect(await preLearn.evaluate((el) => el.isConnected)).toBe(false);
+
+    // A device-side change to ch1 is reported; its scoped readback is held open so
+    // the arming click lands inside the reconcile.
+    await blockAt(page, "vd_get", 1);
+    await mark(page, "notify");
+    await pushNotify(page, [[26, 0, 0, 40]]); // HPF frequency: a scoped param on ch1
+    await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 15_000 });
+
+    await mark(page, "arm");
+    await faderOf(page, "CH 1").click();
+    await expect(faderOf(page, "CH 1")).toHaveClass(/midi-armed/);
+    const armed = (await faderOf(page, "CH 1").elementHandle())!;
+
+    await mark(page, "release");
+    await releaseBarrier(page);
+    await page.waitForSelector('#statusbar:text-matches("← device \\\\(\\\\d+\\\\)")', { timeout: 20_000 });
+    // The reconcile's reflect rebuilt the strip the armed control lives on: the
+    // element the operator armed is detached, while `armed` is engine state and is
+    // not.
+    const rebuilt = !(await armed.evaluate((el) => el.isConnected));
+
+    await mark(page, "learn");
+    await pushMidi(page, [cc7(100), cc7(101)]); // two of the same CC settle a plain binding
+    await expect(page.locator('#midi-panel .mp-row[data-control="ch1/level"]')).toBeVisible();
+
+    // Learn is still on: the wheel and dblclick handlers stay inert behind it.
+    await mark(page, "inert-gestures");
+    const box = (await faderOf(page, "CH 2").boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, -100);
+    await faderOf(page, "CH 2").dblclick();
+    await page.waitForTimeout(200);
+
+    const ledger = await ledgerOf(page);
+    const stored = JSON.parse((await page.evaluate(() => localStorage.getItem("urx-midi")))!);
+    await dump(page, "learn arming during a reconcile", "notify", { ledger });
+    console.log(
+      `armed element rebuilt by the reconcile = ${rebuilt}; stored = ${JSON.stringify(stored.models.URX44V)}; ` +
+        `CH 1 ${ch1Before} → ${await faderReadout(page, "CH 1").textContent()}, ` +
+        `CH 2 ${ch2Before} → ${await faderReadout(page, "CH 2").textContent()}`,
+    );
+
+    // The mapping is against the control that was armed, not the one the rebuild
+    // put in its place.
+    expect(stored.models.URX44V).toHaveLength(1);
+    expect(stored.models.URX44V[0].control).toBe("ch1/level");
+    expect(stored.models.URX44V[0].addr).toEqual({ type: "cc", channel: 0, controller: 7 });
+    expect(rebuilt).toBe(true);
+    // Nothing in this run was an operator edit: the arming click, the learned CC
+    // and the two inert gestures all left the plan alone.
+    expect(ledger.filter((l) => l.source === "ui" || l.source === "midi")).toHaveLength(0);
+    expect(await faderReadout(page, "CH 1").textContent()).toBe(ch1Before);
+    expect(await faderReadout(page, "CH 2").textContent()).toBe(ch2Before);
+  });
+
+  test.skip("arming an id the catalog cannot bind is refused silently", async () => {
+    // Unreachable from the UI in this build, so there is nothing to assert. arm()
+    // refuses an id bindControl returns null for, but every control the console
+    // DRAWS is drawn from the same catalog: the one strip with no controls
+    // (STREAMING) is built by the meter-only path and has no armable element, and
+    // every other control's backing wire is `fixed: true` in the model, so no plan
+    // edit can take one away. Reaching the branch would need a console control
+    // missing from controls.ts — i.e. the drift the branch exists to catch.
+  });
+
+  // ===========================================================================
+  // midi-vs-send-fader-relative-baseline — the differential against the main
+  // fader (t4-midi). A SENDS mini-fader drag captures startFrac at pointerdown and
+  // recomputes an absolute value from it on every move, so a MIDI write landing
+  // mid-drag is not overwritten by the next move — it is erased by arithmetic that
+  // predates it.
+  // ===========================================================================
+
+  test("a CC mid-drag is erased by the mini-fader's frozen baseline, not overwritten", async ({ page }) => {
+    await installFake(page, { storage: midiStore([{ control: "ch1/level@bus.mix1", addr: CC7, mode: "absolute" }]) });
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await goLive(page);
+    await page.click("#btn-view-console");
+    await expect(faderReadout(page, "CH 1")).toBeVisible();
+    await setLatency(page, { get: 8, set: 25 });
+
+    const fader = sendFader(page, "CH 1", "MIX 1");
+    await expect(fader).toBeVisible();
+    const handle = (await fader.elementHandle())!;
+    const box = (await fader.boundingBox())!;
+    console.log(`mini-fader box: h=${box.height} → travel=${box.height - 12} px for 41 detents`);
+    const x = box.x + box.width / 2;
+    const y0 = box.y + box.height / 2;
+    const valueOf = (el: { evaluate: (fn: (e: Element) => string | null) => Promise<string | null> }) =>
+      el.evaluate((e) => e.getAttribute("aria-valuenow"));
+
+    // Downwards: the session's readback put the send at 0.0 dB, which is three
+    // quarters of the way up the scale, so a downward drag has room for a long
+    // gesture where an upward one saturates within ten pixels.
+    let beforeBurst = 0;
+    let afterBurstVisible = 0;
+    await page.mouse.move(x, y0);
+    await mark(page, "drag-start");
+    await page.mouse.down();
+    await page.mouse.move(x, y0 + 5); // past the 3 px dead zone: the first write
+    for (let i = 1; i <= 25; i++) {
+      await page.mouse.move(x, y0 + 5 + i);
+      await page.waitForTimeout(25);
+      if (i !== 12) continue;
+      beforeBurst = Number(await valueOf(handle));
+      await mark(page, "midi-burst");
+      await pushMidi(page, [cc7(114)]); // → +5.0 dB, far above where the drag is
+      await page.waitForTimeout(120); // let the reflect coalesce and repaint
+      afterBurstVisible = Number(await valueOf(fader));
+    }
+    await mark(page, "drag-end");
+    await page.mouse.up();
+    await settleAfter(page, "drag-end");
+
+    const connected = await handle.evaluate((el) => el.isConnected);
+    const detachedFinal = Number(await valueOf(handle));
+    const visibleFinal = Number(await valueOf(fader));
+    const ledger = await ledgerOf(page);
+    const level = writersOf(ledger, "connParams", WIRE("ch1:out", "bus.mix1:in"), "level");
+
+    // The dragged control's own address (CH → MIX send level, L slot), not the main
+    // fader's: declaring the edit anywhere else would report a lost edit for an
+    // address this case never touches.
+    await dump(page, "MIDI vs a relative send-fader drag", "drag-start", {
+      edits: [
+        {
+          label: "CC 7 = 114 on the dragged send",
+          addr: "146:0:0",
+          at: markTime(await traceOf(page), "midi-burst")!,
+          value: 500,
+        },
+      ],
+      ledger,
+    });
+    console.log(
+      `beforeBurst=${beforeBurst} afterBurstVisible=${afterBurstVisible} ` +
+        `detachedFinal=${detachedFinal} visibleFinal=${visibleFinal} connected=${connected}`,
+    );
+    console.log(`ledger on the dragged send level: ${level.map((l) => l.source).join(" → ")}`);
+
+    // The message landed and was applied ungated, mid-gesture, on the very control
+    // under the pointer, and it moved the value far from where the drag had it.
+    expect(afterBurstVisible).toBe(5);
+    expect(beforeBurst).toBeLessThan(-10);
+
+    // Pinned defect, and the differential against the main fader: the remaining
+    // 13 px do not continue from +5.0 dB — they recompute an absolute value from
+    // the baseline captured at pointerdown, so the message is erased by arithmetic
+    // that predates it. A drag that had taken +5.0 dB as its baseline would have
+    // ended around -12 dB (13 px of a 43 px, 41-detent travel below +5.0); this one
+    // ends in the tail of the scale instead, exactly where the untouched gesture
+    // was always going to put it.
+    expect(detachedFinal).toBeLessThan(beforeBurst);
+    expect(detachedFinal).toBeLessThan(-50);
+    // …and the strip was rebuilt under the pointer capture (invariant 10), so the
+    // element the drag keeps writing into is out of the document while the one the
+    // operator can see froze at the value the rebuild captured.
+    expect(connected).toBe(false);
+    expect(visibleFinal).toBe(5);
+    expect(visibleFinal).not.toBe(detachedFinal);
+    // Both writers are on the one key, and the drag is last (invariant 13).
+    expect(level.map((l) => l.source)).toContain("midi");
+    expect(level.map((l) => l.source)).toContain("ui");
+    expect(level[level.length - 1].source).toBe("ui");
+    // The message is not a lost edit in the T1 sense — it did reach the unit, and
+    // the unit held it for one flush before the next move took it back. What the
+    // operator is left with is a device that briefly obeyed a control nobody
+    // touched, and a screen that still shows that moment.
+    const sent = setsOf(await traceOf(page)).filter((s) => s.addr === "146:0:0");
+    expect(sent.map((s) => s.value)).toContain(500);
+    expect(sent.at(-1)!.value).toBe(Math.round(detachedFinal) * 100);
+    expect((await memOf(page))["146:0:0"]).toBe(sent.at(-1)!.value);
+  });
+
+  test.skip("the orphan variant: the drag keeps writing into a deleted connection", async () => {
+    // Not reachable. The variant wants the dragged send's wire deleted mid-drag,
+    // but every channel → bus send is `fixed: true` in the model (build.ts §2) and
+    // Delete refuses it ("Fixed connection — cannot be removed"). The only surface
+    // that deletes a wire is the GRAPH, which cannot be reached while a console
+    // pointer capture is active without switching views mid-drag — and that switch
+    // destroys the strip under test, conflating the orphan write with the rebuild
+    // the case above already measures.
+  });
+});
