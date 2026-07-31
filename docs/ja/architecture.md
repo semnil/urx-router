@@ -485,6 +485,211 @@ MIDI パネルの `midiErrorStatus` が同じ役回りで、`midi-port-not-found
 どちらに当たるかは推測ではなく実測で決める。実機側で当該の変更を行い、**操作したものより後段にあるものを中心に、
 他のパラメータと表示値がどう動いたか**を観測してから、いずれかの振る舞いを実装する。
 
+### ライブ同期中のイベントとタイミング
+
+セッション中は 4 種類のイベントが値を動かし、それぞれ固有の待ち時間を持つ。**アプリ側の編集** (各ビュー・
+インスペクタ・調整画面・受信した MIDI メッセージ)、notify として届く**実機側の変更**、その 2 つが引き起こす
+**内部状態の取り直し**、そして結果を映す**表示更新**である。**何を送らないか・何をキューへ積まずに捨てるか**は
+送るものと同じだけ契約の一部であり、各図の後の説明と末尾の 2 つの表がその位置を示す。以下の時間はすべて
+ソース中の定数そのもの — `DEBOUNCE_MS` (`control/live.ts`)、`RECONCILE_DEBOUNCE_MS` / `IDLE_FULL_MS` /
+`MAX_CONCENTRATION` (`control/follow.ts`)、`REFLECT_MIN_MS` (`main.ts`)、`FEEDBACK_DEBOUNCE_MS`
+(`ui/midi.ts`)。このタイミング設計が防いでいる不具合と、それを計測するハーネスは
+[live-race-harness.md](live-race-harness.md) にある。
+
+#### アプリ側の編集 → 実機
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor OP as 操作者
+  participant V as ビュー<br/>グラフ・コンソール・インスペクタ
+  participant P as plan
+  participant L as LiveSync<br/>control/live.ts
+  participant D as 実機
+
+  OP->>V: フェーダードラッグの 1 ステップ目
+  V->>P: 値を書く
+  V->>L: markChanged から schedule
+  Note over L: 120 ms の窓を開く<br/>再アームする debounce ではなくトレーリングスロットル
+  OP->>V: 以降のステップ、およそ 25 ms 間隔
+  V->>P: 同じキーを上書き
+  V->>L: markChanged から schedule
+  Note over L: 窓はすでに開いている<br/>編集はその窓に乗り、再アームはしない
+  L->>L: flush がプラン全体を translate してスナップショットと差分を取る
+  loop スナップショットと値が異なるコマンドのみ
+    L->>D: vdSet paramId x y value
+    D-->>L: ack
+    L->>L: snapshot.set — このアドレスは実機真値になった
+  end
+  L->>D: 名前スナップショットが保持していない名前を vdSetStr
+  L->>V: onSent の件数をステータス行へ
+  Note over P,D: ドラッグ途中の値は窓が閉じる前に plan 上で上書きされており<br/>コマンドとして存在したことがない
+```
+
+編集の経路はすべて `markChanged` に集約されるため、グラフのドラッグ・コンソールのフェーダー・インスペクタの
+入力・割り当て済み MIDI コントロールはいずれもここへ入る (`WriteSource` 引数が変えるのはトレース台帳の帰属だけ)。
+同じ呼び出しが MIDI フィードバックのパス (120 ms、`FEEDBACK_DEBOUNCE_MS`) を予約し、アンドゥのエントリを開く。
+エントリが閉じるのはここではなく次のジェスチャ境界である ([アンドゥ / リドゥ](#アンドゥ--リドゥ))。
+
+1 回の窓のコストはプラン全体の translate と差分で、URX44V の既定プラン (782 コマンド) で 0.20 ms。ジェスチャ
+単位ではなく窓単位で流してもコアの 0.2% に収まる。再アームする debounce は、ドラッグ中に**一切送らない**ことが
+実測されている — 実機は動きの終端しか聞いていなかった。
+
+スナップショットのエントリは自分の `vdSet` が返ってから書かれるため、失敗で止まった flush は未送信のアドレスを
+差分のまま残す。失敗そのものはセッションを終了させる ([失敗時の中断](#失敗時の中断))。
+
+#### 実機側の変更 → アプリ
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant D as 実機
+  participant F as DeviceFollow<br/>control/follow.ts
+  participant L as LiveSync スナップショット
+  participant H as follow のフック<br/>main.ts
+  participant P as plan
+
+  D->>F: param notify、アドレスと値
+  alt Follow USB、アドレス 848
+    F->>H: intercept がバッジを更新して notify を消費する
+    Note over F: settle の窓を開かない — このアドレスはオーナーノードを持たず<br/>通すとあらゆる変更が全体再読み出しへ昇格してしまう
+  else 値がスナップショットと一致
+    F->>F: 自分の書き込みのエコー、破棄
+  else 実機側の新しい変更
+    F->>L: lookup が param 名・オーナーノード・follow 種別を返す
+    alt follow direct、ノードローカルなスカラー
+      F->>H: applyDirect
+      H->>P: 値をデコードして直接書く、読み戻しなし
+      H->>L: noteDirect が該当 1 エントリだけを更新
+      H->>H: 書いたキーを履歴ベースラインへ absorb してから requestReflect
+    else scoped: EQ・ダイナミクス・構造・sideEffect
+      F->>F: settle 用にオーナーノードを覚える
+    else 未知のアドレス、または 1 窓に 3 コントロール超
+      F->>F: 全体 reconcile を強制
+    end
+    Note over F: settle タイマーを 300 ms に再アーム<br/>idle タイマーを 900 ms に再アーム
+  end
+  Note over D,F: notify が 300 ms 途切れる
+  alt 読み出しが要る: 強制全体、または覚えたオーナーノード
+    F->>H: reconcileAll または reconcileNodes
+    H->>D: 実機全体、または該当ノードだけを private なクローンへ読む
+    D-->>H: 値
+    H->>P: マージ — 実機真値を土台に、読み出し中の編集を上へ重ねる
+    H->>L: 読み出しが走ったコピーから resync
+    F->>D: プランの形が変わっていれば書き込みアドレス集合を登録し直す
+  else 窓の中身が direct の notify だけ
+    F->>H: 値はすでに plan にあるので requestReflect のみ
+  end
+  Note over D,F: notify が 900 ms 途切れる: 取りこぼし対策の全体 reconcile を 1 回
+```
+
+どの枝を通るかは notify から推測するのではなく、カタログの `follow` フラグが決める。`direct` はノードローカルな
+スカラー (フェーダー・パン・ON・レベル) の集合で、それ以外は読み戻す — スコープ読み出しが全体読み出しから
+乖離しないようにするためである。`direct` と付いていても `applyDirect` が置き場所を持たない param は、破棄されず
+scoped 側へ落ちる。
+
+1 つの settle 窓に `MAX_CONCENTRATION` を超える数のコントロールが現れるのは、実機を触る 2 本の手ではなく
+シーン / プリセットのリコールであり、スコープ読み出しでは取りきれない — だから昇格する。読み出せなかった
+reconcile は、実機が持っていない値を plan に主張させたまま続けるのではなく**追従を止める**。notify はすでに
+発火済みで読み出しを再誘発するものがなく、そのままだと次の converge が実機上の操作者の変更へ古い値を
+書き戻してしまうためである。
+
+#### 内部状態の取り直し: スナップショットと履歴ベースライン
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant L as LiveSync<br/>control/live.ts
+  participant D as 実機
+  participant H as 読み出しフック<br/>main.ts
+  participant P as plan
+  participant HI as PlanHistory
+
+  L->>D: 実機が他の値も動かす param を vdSet
+  alt converge: プランが著者である値を実機がリセットした
+    L->>L: plan のクローンを固定する
+    L->>D: 書き込みスコープを読み直し、乖離分を再送、収束まで繰り返す
+    L->>L: その固定クローンから capture
+    Note over L: converge 中に届いた編集は差分のまま残る<br/>ここで取り込むと黙って落ちる
+  else refetch: プランが写しているだけの値を実機が書いた
+    L->>H: 対象オーナーノードの refetchNodes
+    H->>D: そのノードを private なクローンへ読む
+    D-->>H: 値
+    H->>P: マージ
+    H->>HI: 実機が著者であるキーだけを absorb
+    H-->>L: 読み出しが走ったクローン
+    L->>L: それを元に capture
+  end
+  Note over L: 次の schedule は同じことがまた起きるかを差分に問う<br/>起きる間は 120 ms の窓を発火させず再アームする
+```
+
+2 つの分かれ目は「動いた値の持ち主が誰か」である。**converge** はリセットした実機へプラン自身の値を押し戻し、
+**refetch** は実機の値を読む (EQ 1-knob の 4 バンド) — 押し戻せば実機と喧嘩になるからである。converge のラウンド
+内で失敗した書き込みは、通常の書き込み失敗と同じ停止経路へ回す。そうしないと次の `capture` が plan を実機真値として
+記録し、再試行できる差分を失ったまま当該パラメータが乖離し続ける。
+
+取り直しの値は常に**読み出しが走った private なクローン**から取り、ライブの plan からは取らない。一方
+スナップショットの**形**はライブの plan から取る — 読み出し中に操作者が動かしたアドレスは、plan 側に操作者の値・
+クローン側に実機の値を持つので差分のまま残り、次の flush が送る。読み出し発行後に増えたアドレスはクローンに
+存在しないため、同じ理由でスナップショットから除外される。
+
+| イベント | ライブスナップショット | 履歴ベースライン |
+| --- | --- | --- |
+| セッション開始 | 開始時読み出しのクローンから `begin` | `reset` |
+| アプリ側の編集 (`markChanged`) | アドレスごとに、その書き込みが返った時点 | エントリを開き、ジェスチャ境界で閉じる |
+| 実機 notify、direct | 該当 1 エントリのみ (`noteDirect`) | その notify が書いたキーだけ `absorb` (適用の前後で差分を取る)。操作者が開いているエントリは残る |
+| reconcile 読み出し (scoped / 全体) | 読み出しのクローンから `resync` | reflect 内で `reset` |
+| EQ 1-knob の refetch | 読み出しのクローンから `capture` | 実機が著者であるキーだけ `absorb` |
+| converge のラウンド | 固定クローンから `capture` | 触らない |
+
+#### 表示更新
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant S as follow direct・reconcile・refetch
+  participant R as requestReflect<br/>main.ts
+  participant G as グラフ
+  participant C as コンソール
+  participant I as インスペクタと調整画面
+  participant M as メーターストリーム
+
+  S->>R: requestReflect
+  Note over R: 1 本のタイマーへ合流させ、50 ms に 1 回まで<br/>ノブ掃引は毎秒およそ 10 notify を毎秒 30 回の IPC バッチで届ける
+  alt 窓の中で読み出しが着地した
+    R->>G: refresh、プラン由来の表示状態を再取得しビューポートは維持
+    R->>C: syncRateUi がレート制約を再適用し、ストリップを組み直す
+    R->>I: 同じ呼び出しがインスペクタも refresh し、調整画面も refresh される
+  else direct の notify だけ
+    R->>G: 触れたノードだけ再描画
+    R->>C: 触れたストリップだけ refresh
+    R->>I: インスペクタは選択が触れたノードを読む時だけ、調整画面は常に refresh
+  end
+  Note over G: グラフが非表示ビューの間は作業を遅延し<br/>戻った時に 1 回だけ実行する
+  M->>C: メーター読み値、アドレスあたり毎秒およそ 10
+  C->>C: 30 fps の描画ループ、バーはコンポジタ変換で駆動<br/>数値表示は 5 フレームに 1 回
+  Note over M,C: メーター読み値は plan に入らない<br/>書き戻し・アンドゥ・送信のいずれの対象にもならない
+```
+
+reflect は**生産者をまたいで**合流させるため、実機が何を著したかをここでは知り得ない。だから履歴の確定は
+生産者それぞれの現場で行い (上の表)、ここでは行わない。ただし全体側の枝は `PlanHistory.reset` を呼ぶ — 広さを
+問わず読み出しは plan の値を実機から書き直しており、それ以前のどのエントリも戻れる状態を記述していないからである。
+
+#### 何をどこで捨てるか
+
+| 対象 | 捨てる場所 | 理由 |
+| --- | --- | --- |
+| ドラッグ途中の値 | plan 自身 — 窓の中で次のステップが同じキーを上書きする | コマンドになるのはアドレスごとの最終値だけ |
+| 値がスナップショットと同じアドレス | flush の差分 | 実機はすでにその値を持っている |
+| 値がスナップショットと同じ notify | settle の窓より前の `isEcho` | 自分の書き込みが返ってきただけで変更ではない |
+| Follow USB (848) の notify | ノード解決より前の `intercept` | ホスト所有でプラン外。通すと全体再読み出しを強制する |
+| プランが差し替わった後に返った読み出し | 読み出し解決後の `readIntoPlan` の同一性ガード | どこにも表示されていない文書の値だから |
+| 実機読み出し中・ファイル操作中のアンドゥ | 開いているエントリを閉じる前の `PlanHistory.blocked` | 消費ではなく保留。だから再試行が正確になる |
+| ライブ中の `sampleRate` パッチ | エントリ丸ごと拒否 (文面は他も触れているかで選ぶ) | 部分的なアンドゥはどのジェスチャも作らない状態を残す |
+| 同じラッチ中に届いた MIDI メッセージ | 受信側の記録より前のエンジンのゲート | 拒否は pickup・受信時刻・14 bit ペアのどの状態も消費してはならない |
+| メーター読み値 | そもそも plan に入らない | 表示専用で、ストリームはセッションと共に止まる |
+| 実機が著したキーのうち、その後アプリが動かしたもの | `absorb` のキー単位の文脈判定 | プランはアプリ側の新しい値を保持しており、実機はアプリ自身の書込を返しているだけだから |
+
 ### 1 つの本体アドレスに複数のオーナー
 
 insert エフェクトのパラメータは**エフェクトファミリーごとに 1 本のエンジン配列**に置かれ、チャンネル軸を持たない
