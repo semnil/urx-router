@@ -22,16 +22,16 @@ import type {
 } from "../plan";
 import { incomingConnection } from "../plan";
 import {
+  FX_CHANNEL_NODE_INDEX,
   FX_EFFECT_ARRAY_PARAM,
-  FX_EFFECT_TYPE_DEFAULT,
   FX_EFFECT_TYPE_PARAM,
   FX_SLOT_LEVEL,
   FX_SLOT_ON,
-  isFxEffectType,
+  resolveFxEffectType,
   fxParams,
   formatHz,
 } from "./fx-effect";
-import { insertFxEngine, insertFxFamilyOf, insertFxWritableSlots } from "./insert-fx-effect";
+import { insertFxEngine, insertFxFamilyOf, insertFxParamKey, insertFxWritableSlots } from "./insert-fx-effect";
 import { isFixedConnection, sendTapWritable } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
@@ -422,7 +422,7 @@ const MIX_SEND_BUS_INDEX: Record<string, number> = { "bus.mix1": 0, "bus.mix2": 
 const FX_SEND_BASE_MONO = 193;
 const FX_SEND_BASE_STEREO = 320;
 const FX_SEND_STRIDE = 4;
-const FX_SEND_BUS_INDEX: Record<string, number> = { "bus.fx1": 0, "bus.fx2": 1 };
+const FX_SEND_BUS_INDEX = FX_CHANNEL_NODE_INDEX;
 
 // FX channel → MIX sends. Each MIX is a 10-param block (L slot + R slot, 5 params
 // each: PRE/POST tap / level / BAL / on at offsets 0/1/2/3, +4 unused). y = FX
@@ -937,11 +937,11 @@ function boundEnum(v: number, options: readonly { value: number }[], def: number
 function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectParams): void {
   const typeId = FX_EFFECT_TYPE_PARAM[fxIndex];
   const arrId = FX_EFFECT_ARRAY_PARAM[fxIndex];
-  // An off-menu type (hand-edited / ?plan= payload) falls back to the channel's
-  // factory type rather than being written verbatim: the device would take an
-  // unknown selector value, and fxFamilyOf would emit delay-family slots with it.
-  const planType = fx.type ?? FX_EFFECT_TYPE_DEFAULT[fxIndex];
-  const type = isFxEffectType(planType) ? planType : FX_EFFECT_TYPE_DEFAULT[fxIndex];
+  // A type this CHANNEL's menu does not offer (hand-edited / ?plan= payload) falls
+  // back to the channel's factory type rather than being written verbatim: the
+  // device would take an unknown selector value, and fxFamilyOf would emit
+  // delay-family slots with it.
+  const type = resolveFxEffectType(fxIndex, fx.type);
   out.push(rawCommand("FX_EFFECT_TYPE", typeId, "enum", 0, type));
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_ON, (fx.on ?? true) ? 1 : 0));
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_LEVEL, boundRaw(planRaw(fx.level, 100), 0, 100)));
@@ -960,6 +960,11 @@ function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectPar
 // params differ per type, so a single catalog default would clobber them). A
 // plan read back from the device carries every slot, so it still round-trips in
 // full.
+// A slot is read under the selected family's own key, then under the bare slot
+// number — the device-shaped namespace a readback writes, which is by construction
+// the family the selector named at the time. Anything the plan stored for ANOTHER
+// family stays behind its own key and is never emitted here: those raws mean a
+// different parameter under a different law.
 function pushInsertFxEffectCommands(
   out: VdCommand[],
   engine: number,
@@ -968,7 +973,7 @@ function pushInsertFxEffectCommands(
 ): void {
   if (!params) return;
   for (const s of insertFxWritableSlots(family)) {
-    const v = params[String(s.slot)];
+    const v = params[insertFxParamKey(family, s.slot)] ?? params[String(s.slot)];
     // No catalog default to fall back on here (an absent slot is left to the
     // device's per-type default), so a non-finite raw is dropped, not substituted.
     if (!Number.isFinite(v)) continue;
