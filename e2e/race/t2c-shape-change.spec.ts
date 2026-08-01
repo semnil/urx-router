@@ -146,8 +146,9 @@ test.describe("T2c shape-change", () => {
   // DRAGGED control whose parameter is flagged sideEffect "refetch" (params.ts 46/47/48),
   // so one gesture drives the flush window and a whole-NODE readback against each other
   // for its whole length: every window that carries the level triggers refetchNodes,
-  // and every one of those calls planHistory.rebase() (main.ts), which drops the entry
-  // the drag has open.
+  // and every one of those settles the history against what the read authored (main.ts
+  // refetchNodes) — where a whole-plan re-base used to drop the entry the drag has open,
+  // which is the fix step 3 below asserts.
   //
   // Laddered against a control on the same screen: the LOW band's Gain is a dragged
   // slider of the same shape with NO sideEffect, so everything the two arms do not

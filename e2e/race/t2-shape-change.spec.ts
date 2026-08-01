@@ -377,8 +377,8 @@ test.describe("T2 shape-change", () => {
     // One undo entry puts the whole bank back: the switch's own plan write plus the
     // bank reset the funnel performs AFTER markChanged (the diff is taken at the
     // commit, not at the edit). Taken here, before any device-side notify — a
-    // device-follow reflect rebases the history and would drop the entry, which is
-    // T3's `undo-rebase-dropped-by-device-sweep`, not this case.
+    // device-follow reconcile resets the history outright, and what the direct path
+    // does to an open entry is T3's `undo-entry-survives-device-sweep`, not this case.
     await mark(page, "undo");
     await page.keyboard.press("Control+z");
     await expect(param(page, "COMP/EQ Type").locator("select")).toHaveValue("0");
