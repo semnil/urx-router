@@ -36,6 +36,8 @@ import {
 import { loadJson, saveJson } from "../core/storage";
 import { COMP_EQ_COMP_FIRST } from "../core/control/params";
 import type { DynKind } from "./dyn-registry";
+import { markMidi } from "./midi-learn";
+import type { MidiLearnHooks } from "./midi-learn";
 import {
   channelEqUnavailable,
   insertFxAllRateLocked,
@@ -277,15 +279,10 @@ interface KnobSpec {
   readonlyTitle?: string;
 }
 
-/** MIDI-learn integration: while learn mode is active, activating an armable
- *  console control arms it for binding instead of editing it (the MIDI panel
- *  owns the mode / armed state and re-renders the console when they change). */
-export interface ConsoleMidiHooks {
-  learnActive: () => boolean;
-  armedId: () => string | null;
-  isMapped: (id: string) => boolean;
-  arm: (id: string) => void;
-}
+/** MIDI-learn integration. The contract is shared with the channel tuning screens
+ *  (ui/midi-learn.ts): the MIDI window owns the mode / armed state and re-renders
+ *  both surfaces when they change. */
+export type ConsoleMidiHooks = MidiLearnHooks;
 
 export interface ConsoleHooks {
   getModel: () => DeviceModel;
@@ -1134,14 +1131,10 @@ export class Console {
     return true;
   }
 
-  /** Learn-mode affordances on an armable element: target ring, armed pulse,
-   *  already-mapped dot. No-op outside learn mode (no visual noise). */
+  /** Learn-mode affordances plus the bound address as a tooltip — the shared
+   *  treatment, so a strip control and a tuning-screen control read the same. */
   private midiMark(el: HTMLElement, id: string | undefined): void {
-    const midi = this.hooks.midi;
-    if (!id || !midi?.learnActive()) return;
-    el.classList.add("midi-target");
-    if (midi.armedId() === id) el.classList.add("midi-armed");
-    if (midi.isMapped(id)) el.classList.add("midi-mapped");
+    markMidi(el, id, this.hooks.midi);
   }
 
   // Paint a scribble with the node's device CH SETTING colour (contrast-picked ink),

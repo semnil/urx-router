@@ -54,6 +54,7 @@ import { showLoadReport } from "./ui/load-report";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
 import { DynScreen } from "./ui/dyn-screen";
+import type { MidiLearnHooks } from "./ui/midi-learn";
 import { DYN_PROCESSORS } from "./ui/dyn-registry";
 import type { DynKind } from "./ui/dyn-registry";
 import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
@@ -444,6 +445,18 @@ const graph = new Graph(graphHost, getModel(modelId), plan, {
 // Declared before the console so its learn hooks can close over the variable.
 let midi: MidiControl | null = null;
 
+// MIDI-learn hooks, shared by every surface a control can be armed from: the
+// CONSOLE strips and the channel tuning screens. One object, so the two cannot
+// disagree about what is armed or what an assignment reads as. No-ops while midi
+// is absent (browser / demo), which is what keeps those builds untouched.
+const midiLearnHooks: MidiLearnHooks = {
+  learnActive: () => midi?.learnActive() ?? false,
+  armedId: () => midi?.armedId() ?? null,
+  isMapped: (id) => midi?.isMapped(id) ?? false,
+  addrOf: (id) => midi?.addrOf(id) ?? null,
+  arm: (id) => midi?.arm(id),
+};
+
 // Device setup modal (the unit's SETUP > GENERAL). Desktop only, assigned in the
 // !DEMO block below; the language listener re-renders it through this handle.
 let deviceSetup: DeviceSetupPanel | null = null;
@@ -462,14 +475,9 @@ const consoleView = new Console(consoleHost, {
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
   onOpenDynScreen: (kind, id) => dynScreen.open(DYN_PROCESSORS[kind], id),
-  // MIDI learn: while the panel's learn mode is on, console controls arm for
-  // binding instead of editing (no-ops while midi is absent — browser / demo).
-  midi: {
-    learnActive: () => midi?.learnActive() ?? false,
-    armedId: () => midi?.armedId() ?? null,
-    isMapped: (id) => midi?.isMapped(id) ?? false,
-    arm: (id) => midi?.arm(id),
-  },
+  // MIDI learn: while learn mode is on, console controls arm for binding instead
+  // of editing.
+  midi: midiLearnHooks,
 });
 
 // Device follow: the reverse of live sync. While live, parameter
@@ -1875,6 +1883,7 @@ const dynScreen = new DynScreen({
   releaseMeters: () => consoleView.releaseMeters(),
   regainMeters: () => consoleView.regainMeters(),
   onMeterError: (message) => stopLiveOnError(errorText(message)),
+  midi: midiLearnHooks,
   // Both surfaces print these values, and the inspector's sliders are built from a
   // snapshot taken at render time, so they would keep writing back stale values
   // after the screen moved them.
@@ -2542,7 +2551,13 @@ if (!DEMO) {
     // a MIDI desk is a second physical surface, and the panel that configures it is
     // itself counted by modalOpen().
     blocked: () => (deviceReadInFlight || fileFlowBusy ? t().status.midiBusy : null),
-    onLearnChanged: () => consoleView.refresh(),
+    // Both arming surfaces repaint: learn mode, the armed control and the mapping
+    // set all decide what they draw, and a tuning screen open over the console is
+    // the one the operator is looking at.
+    onLearnChanged: () => {
+      consoleView.refresh();
+      dynScreen.refresh();
+    },
     onStatus: setStatus,
   });
   $("btn-midi").addEventListener("click", () => midi?.togglePanel());

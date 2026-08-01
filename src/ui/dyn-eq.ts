@@ -43,6 +43,8 @@ import { eqBandFields, EQ_BAND_NAMES, eqBandHasType, hasEq, isStereoChannel } fr
 import { channelEqUnavailable } from "../core/constraints";
 import { eqResponse } from "../core/eq-response";
 import type { EqBandState } from "../core/eq-response";
+import { controlId, eqBandScope, EQ_SCOPE } from "../core/midi/controls";
+import type { ControlParam } from "../core/midi/controls";
 import { tapFor } from "../core/meters";
 import type { EqBand, NodeParams } from "../core/plan";
 import { el, onOff, settingsRow, settingsSection, settingsSelect } from "./dom";
@@ -235,17 +237,32 @@ export const EQ_DYN: DynProcessor = {
   // makeup gain rather than a band's.
   fieldLabel: (f, m) => ({ freq: m.inspector.frequency, q: m.inspector.q, gain: m.inspector.eqGain })[f.key as string],
 
+  // A band value binds to THAT band, not to whichever the bar has selected — a
+  // mapping has to keep working with this screen closed, and the bar resets to LOW
+  // on every open. The 1-knob is the processor's own, so it takes the bare `eq`
+  // scope; the two enum selectors have no control.
+  controlId: (ctx, key) => {
+    if (key === "type" || key === "oneKnobType") return null;
+    if (key === "oneKnobOn") return controlId(ctx.nodeId, "oneKnob", EQ_SCOPE);
+    if (key === "oneKnobLevel") return controlId(ctx.nodeId, "oneKnobLevel", EQ_SCOPE);
+    const param = key === "on" ? "bandOn" : (key as ControlParam);
+    return controlId(ctx.nodeId, param, eqBandScope(ctx.sel));
+  },
+
   // The 1-knob is a stage of its own, above the band's parameters: it decides whether
   // the band rows below are the operator's or the device's.
-  sections: ({ m, vals, states, set, setValue }) => {
+  sections: ({ m, vals, states, set, setValue, midi }) => {
     const on = vals.oneKnobOn === true;
     const rateLocked = states.has("oneKnobOn");
     const sec = settingsSection(m.inspector.eqOneKnob);
     sec.append(
-      settingsRow(
-        m.inspector.on,
-        onOff(on, (v) => set({ oneKnobOn: v })),
-        states.get("oneKnobOn"),
+      midi(
+        settingsRow(
+          m.inspector.on,
+          onOff(on, (v) => set({ oneKnobOn: v })),
+          states.get("oneKnobOn"),
+        ),
+        "oneKnobOn",
       ),
     );
     // Type and Level stay on screen with 1-knob off, locked: the section would
@@ -263,12 +280,15 @@ export const EQ_DYN: DynProcessor = {
       ),
     );
     sec.append(
-      oneKnobLevelRow({
-        label: m.inspector.eqOneKnobLevel,
-        value: vals.oneKnobLevel,
-        onInput: (v) => setValue({ oneKnobLevel: v }),
-        row: off ? { ...states.get("oneKnobLevel"), locked: true } : {},
-      }),
+      midi(
+        oneKnobLevelRow({
+          label: m.inspector.eqOneKnobLevel,
+          value: vals.oneKnobLevel,
+          onInput: (v) => setValue({ oneKnobLevel: v }),
+          row: off ? { ...states.get("oneKnobLevel"), locked: true } : {},
+        }),
+        "oneKnobLevel",
+      ),
     );
     return [sec];
   },
@@ -276,7 +296,7 @@ export const EQ_DYN: DynProcessor = {
   // The unit reads a band as Band / Type / Freq / Q / Gain top to bottom, so the two rows
   // that are not sliders lead the sliders rather than following them. Both change which
   // sliders the device reads, so both use `set` (which rebuilds).
-  rows: ({ m, vals, states, set, sel, nodeId, plan }) => {
+  rows: ({ m, vals, states, set, sel, nodeId, plan, midi }) => {
     // With 1-knob on, the rows below are reserved out of sight — and a heading over five
     // rows of empty space reads as a rendering fault, so the space says what owns those
     // values. Absolutely positioned (`.gt-reserved-note`), so it costs no height.
@@ -297,10 +317,13 @@ export const EQ_DYN: DynProcessor = {
     return {
       tail,
       lead: [
-        settingsRow(
-          m.inspector.bandOn,
-          onOff(vals.on === true, (v) => set({ on: v })),
-          states.get("on"),
+        midi(
+          settingsRow(
+            m.inspector.bandOn,
+            onOff(vals.on === true, (v) => set({ on: v })),
+            states.get("on"),
+          ),
+          "on",
         ),
         enumRow(m.inspector.filterType, options, type, (v) => set({ type: v }), states.get("type")),
       ],

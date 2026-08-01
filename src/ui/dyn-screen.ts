@@ -33,6 +33,8 @@
 import { el, settingsRow, settingsSection, sliderRow, wheelStep, wireDismiss } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { fineTag, optInFine } from "./fine";
+import { armOnActivate, markMidi } from "./midi-learn";
+import type { MidiLearnHooks } from "./midi-learn";
 import { setLevelText } from "./glyph";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
@@ -127,6 +129,12 @@ export interface DynBar {
 }
 
 export interface DynRowCtx extends DynCtx {
+  /** Make a row the descriptor built armable for MIDI learn, by the value key it
+   *  edits. The host resolves the key to a control id through `controlId` and marks
+   *  the row's own control — the descriptor never has to know what a control id
+   *  looks like, only which of its values a row carries. Returns the row, so it
+   *  wraps the `settingsRow(...)` call it decorates. */
+  midi: (row: HTMLElement, key: string) => HTMLElement;
   vals: Record<string, unknown>;
   /** What `rowStates` reported, resolved — so a row that is not a slider reads the same
    *  answer the sliders do instead of restating the rule. Absent for a key = editable. */
@@ -187,6 +195,11 @@ export interface DynProcessor {
   /** A label for a field whose key the shared `inspector.dyn` table does not name (or
    *  names differently — COMP's `gain` is a makeup gain, the EQ's is a band gain). */
   fieldLabel?: (f: DynField, m: Messages) => string | undefined;
+  /** The MIDI control id one of this processor's value keys is addressable by, or
+   *  null where there is none (the enum selectors are deliberately not mappable).
+   *  Which processor and which band a key belongs to is the descriptor's business —
+   *  the host only needs an id to arm and to mark. */
+  controlId?: (ctx: DynCtx, key: string) => string | null;
   /** The tag pill on the Parameters heading (which band the rows below belong to), and
    *  whether it is shown — `settingsSection` keeps a hidden pill so the heading's height
    *  does not change, the same reservation the rows themselves get. */
@@ -261,6 +274,9 @@ export interface DynScreenHooks {
   /** A meter registration failed. Bars stuck on the floor look exactly like
    *  silence, so this takes the same loud path a live error does. */
   onMeterError: (message: string) => void;
+  /** MIDI learn, when the desktop build has it: the same contract the CONSOLE
+   *  strips arm through. Absent in a browser build, where there is no MIDI. */
+  midi?: MidiLearnHooks;
   /** The screen closed: the surfaces that print these values re-render. */
   onClosed: () => void;
 }
@@ -1112,6 +1128,10 @@ export class DynScreen {
     // the pointer capture.
     const rowCtx: DynRowCtx = {
       ...ctx,
+      midi: (row, key) => {
+        this.armable(row.querySelector<HTMLElement>(".ctl, .prefs-toggle"), key, ctx);
+        return row;
+      },
       vals,
       states: this.states,
       set: (patch) => {
@@ -1132,6 +1152,25 @@ export class DynScreen {
 
     col.append(...(proc.sections?.(rowCtx) ?? []), params, ro);
     return col;
+  }
+
+  /**
+   * Mark one control as armable for MIDI learn and wire the arming. `key` is the
+   * descriptor's own value key; the id comes from the descriptor, so a locked or
+   * unmappable row (an enum selector, which answers null) is simply left alone —
+   * it neither rings nor arms, which is the same treatment the console gives a
+   * read-only chip.
+   */
+  private armable(control: HTMLElement | null, key: string, ctx: DynCtx): void {
+    const midi = this.hooks.midi;
+    if (!control || !midi) return;
+    // A locked row's control is disabled; arming it would bind a mapping whose
+    // writes the catalog refuses anyway.
+    if (this.states.get(key)?.locked) return;
+    const id = this.p().controlId?.(ctx, key);
+    if (!id) return;
+    markMidi(control, id, midi);
+    armOnActivate(control, id, midi);
   }
 
   /** Re-resolve and rebuild after a row that changes the shape of the screen. The
@@ -1177,8 +1216,11 @@ export class DynScreen {
       if (f.key === this.capKey) this.syncCap();
       else this.markPlotDirty();
     });
-    wheelStep(input);
+    // A wheel notch over an armed control would move the value the operator is
+    // about to bind, so the same gate the console's faders carry applies here.
+    wheelStep(input, () => this.hooks.midi?.learnActive());
     ctl.append(input, val);
+    this.armable(ctl, f.key, this.ctx());
     // The device's push-and-turn fine grid is confirmed for a few values only (the
     // COMP makeup gain, the EQ band gains), so the field table says which (see
     // reference/work/vd/vd-params.md). The legend goes in as the row's `legend`, which

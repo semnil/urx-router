@@ -20,6 +20,8 @@
 import { onOff, settingsChoice, settingsRow } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS } from "../core/control/params";
+import { COMP_SCOPE, controlId } from "../core/midi/controls";
+import type { ControlParam } from "../core/midi/controls";
 import { bindChannelStrip, displayBar, subObjectIo } from "./dyn-chan";
 import { transferPlot } from "./dyn-plot";
 import { HI_DB, oneKnobLevelRow } from "./dyn-screen";
@@ -85,6 +87,9 @@ export const COMP_DYN: DynProcessor = {
   persistSel: true,
   read: io.read,
   patch: io.patch,
+  // Knee is a three-value selector, which the catalog does not carry: a control
+  // that answers null neither rings nor arms.
+  controlId: (ctx, key) => (key === "knee" ? null : controlId(ctx.nodeId, key as ControlParam, COMP_SCOPE)),
 
   // The device drives threshold / ratio / gain / knee while 1-knob / Auto Makeup are on,
   // and announces each recomputation per address — so those rows keep updating on screen,
@@ -105,23 +110,32 @@ export const COMP_DYN: DynProcessor = {
     return out;
   },
 
-  rows: ({ m, vals, states, set, setValue }) => {
+  rows: ({ m, vals, states, set, setValue, midi }) => {
     const lead = [
-      settingsRow(
-        m.inspector.autoMakeup,
-        onOff(vals.autoMakeup === true, (on) => set({ autoMakeup: on })),
-        states.get("autoMakeup"),
+      midi(
+        settingsRow(
+          m.inspector.autoMakeup,
+          onOff(vals.autoMakeup === true, (on) => set({ autoMakeup: on })),
+          states.get("autoMakeup"),
+        ),
+        "autoMakeup",
       ),
-      settingsRow(
-        m.inspector.oneKnob,
-        onOff(vals.oneKnob === true, (on) => set({ oneKnob: on })),
+      midi(
+        settingsRow(
+          m.inspector.oneKnob,
+          onOff(vals.oneKnob === true, (on) => set({ oneKnob: on })),
+        ),
+        "oneKnob",
       ),
-      oneKnobLevelRow({
-        label: m.inspector.oneKnobLevel,
-        value: vals.oneKnobLevel,
-        onInput: (v) => setValue({ oneKnobLevel: v }),
-        row: states.get("oneKnobLevel"),
-      }),
+      midi(
+        oneKnobLevelRow({
+          label: m.inspector.oneKnobLevel,
+          value: vals.oneKnobLevel,
+          onInput: (v) => setValue({ oneKnobLevel: v }),
+          row: states.get("oneKnobLevel"),
+        }),
+        "oneKnobLevel",
+      ),
     ];
 
     const knee = typeof vals.knee === "number" ? vals.knee : COMP_KNEE_DEFAULT;
