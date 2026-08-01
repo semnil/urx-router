@@ -478,6 +478,27 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   Echoes of the app's own writes are filtered against the live snapshot, and the address set is re-registered only
   when a structural edit changed it.
 
+### The inspector repaint versus an IME composition
+
+That reflect rebuilds the inspector with `replaceChildren`, and a node name is typed into it. **Measured in the real
+WKWebView** with the panel repainted at the 20 Hz a knob sweep produces (`ui/keyprobe.ts`, the dev-only F2 / F3 / F4
+harness): typing `nihonngo` produced **`nいhおnngお`**, with **eight compositionstarts for eight keystrokes**. The
+romaji buffer that spans keystrokes goes with the removed element, so a consonant that has no vowel yet lands as
+literal ASCII. Focus and caret are not the problem — they are carried across the rebuild and every character landed
+in the right place; the composition alone is destroyed. Through the composition gate, at the same repaint rate: **one
+compositionstart, one compositionend, `日本語` intact**, 67 of 397 repaints deferred to the commit.
+
+Confirmed on the device path the synthetic repaint stands in for, with a URX attached and Live sync up: sweeping
+CH 1's A.Gain (`HA_GAIN`, a direct follow) with that channel selected repaints the panel **6 times**. With a
+composition open, **all 6 are held and exactly one runs, at the commit** — one compositionstart, one
+compositionend, the name whole.
+
+The same measurement corrected what the gate's own backstop is worth. Across 349 rebuilds that took the composing
+field away, **zero compositionend and zero focusout reached the host**. `focusout` backstops a field that loses
+focus, not one that is removed — so nothing releases the gate if the composing field disappears by some other path,
+and what makes that unreachable is that `renderInspector` has exactly **one** call site, behind the gate. A second
+one would latch the gate for the rest of the session and the panel would silently stop updating.
+
 ## External MIDI control
 
 The CONSOLE view's controls (faders / send levels / MUTE / PAN-BAL / GAIN / PHONES / the toggles) and every
@@ -708,6 +729,16 @@ flushing per window rather than per gesture is 0.2% of a core. A re-arming debou
 
 A snapshot entry is written after its own `vdSet` returned, so a flush that stops at a failure leaves every
 unsent address a diff. The failure itself ends the session ([Aborting on failure](#aborting-on-failure)).
+
+The command list is translated once, at the top of the flush, but the snapshot each command is diffed against
+is not frozen with it: the follow side writes into it from inside those awaits — `noteDirect` for a direct
+notify, `capture()` for a reconcile's whole re-base. Both bump a counter the loop checks between commands, and
+a flush that sees it move **re-takes the translate** and reads its remaining values from that. Without it the
+loop reached an address the device had just moved and sent the value the plan had stopped holding — the
+device's own previous one, back over the hand still on the knob, with the idle safety net then reading that
+reverted value into the plan. Only the values are re-taken: the order stays the flush's own (a type selector
+types the array after it), an address that grew during the flush stays out (it is an app edit, and its own
+`markChanged` scheduled the trailing flush that carries it), and one that left the plan is skipped.
 
 #### A device-side change → the app
 
