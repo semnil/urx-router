@@ -49,6 +49,7 @@ import {
   isBalLinkedPair,
   isNodeInactive,
   mirrorBalPair,
+  mirrorLinkedInsertFx,
   mixSendLocks,
   partnerChannel,
   sendTapWritable,
@@ -2242,12 +2243,14 @@ export class Console {
   }
 
   /** Apply a console edit to `id`: mirror it onto the linked partner when the pair
-   *  is in BAL mode, then run the shared change funnel. Returns whether it mirrored
-   *  (the caller rebuilds so the partner strip catches up). */
+   *  is in BAL mode — plus the insert FX, which the unit mirrors on Signal Type alone
+   *  (PAN mode included) — then run the shared change funnel. Returns whether it
+   *  mirrored (the caller rebuilds so the partner strip catches up). */
   private commit(id: string): boolean {
     const mirrored = mirrorBalPair(this.hooks.getModel(), this.hooks.getPlan(), id);
+    const insFxMirrored = mirrorLinkedInsertFx(this.hooks.getModel(), this.hooks.getPlan(), id);
     this.hooks.onChange();
-    return mirrored;
+    return mirrored || insFxMirrored;
   }
 
   /** Rebuild once after editing a BAL-linked strip so the mirrored partner strip

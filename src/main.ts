@@ -4,7 +4,7 @@ import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
-import { applyPairTransition, mirrorBalPair, mixSendLocks, partnerChannel } from "./core/routing";
+import { applyPairTransition, mirrorBalPair, mirrorLinkedInsertFx, mixSendLocks, partnerChannel } from "./core/routing";
 import {
   decodePlanParam,
   deserializeDocument,
@@ -962,6 +962,10 @@ const inspectorActions = {
     // A STEREO-linked pair in BAL mode moves as one: copy this channel's params to
     // the partner (the pair-level Signal Type / PAN-BAL fields stay on the primary).
     const mirrored = mirrorBalPair(getModel(modelId), plan, id);
+    // The insert FX mirrors on Signal Type alone, PAN mode included (measured), so it
+    // takes a pass of its own beside the BAL-gated mirror above. In BAL both run and
+    // write the same values.
+    const insFxMirrored = mirrorLinkedInsertFx(getModel(modelId), plan, id);
     markChanged();
     // CH_ON drives the on-canvas mute dimming; the STEREO link draws a pair
     // connector — both show on the canvas, so repaint nodes at once. A mirrored ON
@@ -981,7 +985,7 @@ const inspectorActions = {
     // Track Count gates how many SD Rec track-pair slots are drawn, so a full
     // re-render adds / removes the slot nodes (and their wires) on the canvas.
     if (patch.sdRecTrackCount !== undefined) graph.render();
-    if (mirrored) consoleView.refresh();
+    if (mirrored || insFxMirrored) consoleView.refresh();
     // Switching COMP/EQ type resets the destination chain to factory (the device
     // does the same — the SSMCS ⇄ COMP->EQ banks are exclusive and not preserved).
     if (patch.compEqType !== undefined && patch.compEqType !== prev?.compEqType) resetCompEqBank(id, patch.compEqType);

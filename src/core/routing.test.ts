@@ -8,9 +8,11 @@ import {
   isBalLinkedPair,
   isFixedConnection,
   isNodeInactive,
+  isStereoLinkedPair,
   legalSources,
   legalTargets,
   mirrorBalPair,
+  mirrorLinkedInsertFx,
   partnerChannel,
   possibleSources,
   possibleTargets,
@@ -22,9 +24,11 @@ import {
 } from "./routing";
 import { emptyPlan, type Plan, type PlanConnection } from "./plan";
 import { defaultPlan } from "../models/initial-state";
-import { PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
+import { INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
 
 const u44 = MODELS.URX44;
+// Any effect claiming a 1-of slot: the pair rules never read the value itself.
+const INSERT_FX = INSERT_FX_OPTIONS.find((o) => o.slot !== undefined)!.value;
 
 describe("canConnect on URX44", () => {
   let plan: Plan;
@@ -265,6 +269,55 @@ describe("applyPairTransition", () => {
     expect(pans("ch2")).toEqual([0, 0]);
   });
 
+  // Measured on the unit: the Signal Type transition clears the insert-FX selector and
+  // its ON on both members, in either direction and whichever member was holding one.
+  const heldInsertFx = (id: string) => [
+    plan.nodeParams[id]?.insertFx,
+    plan.nodeParams[id]?.insertFxOn,
+    plan.nodeParams[id]?.insertFxParams,
+  ];
+
+  it("clears both channels' insert FX when the pair is linked", () => {
+    // Held by the secondary: either member's effect goes.
+    plan.nodeParams.ch2 = {
+      ...plan.nodeParams.ch2,
+      insertFx: INSERT_FX,
+      insertFxOn: true,
+      insertFxParams: { "0": 12 },
+    };
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true };
+    applyPairTransition(u44, plan, "ch1", { stereoLink: true });
+    expect(heldInsertFx("ch1")).toEqual([undefined, undefined, undefined]);
+    expect(heldInsertFx("ch2")).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("clears both channels' insert FX when the pair is unlinked", () => {
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      stereoLink: true,
+      panBal: PAN_BAL_BAL,
+      insertFx: INSERT_FX,
+      insertFxOn: true,
+      insertFxParams: { "0": 12 },
+    };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX, insertFxOn: true };
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: false };
+    applyPairTransition(u44, plan, "ch1", { stereoLink: false });
+    expect(heldInsertFx("ch1")).toEqual([undefined, undefined, undefined]);
+    expect(heldInsertFx("ch2")).toEqual([undefined, undefined, undefined]);
+  });
+
+  // Measured: a PAN/BAL toggle on its own leaves the pair holding its effect — only a
+  // Signal Type transition clears it.
+  it("keeps the insert FX when only PAN/BAL switches", () => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_BAL, insertFx: INSERT_FX };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX, insertFxOn: true };
+    applyPairTransition(u44, plan, "ch1", { panBal: PAN_BAL_PAN });
+    expect(plan.nodeParams.ch1?.insertFx).toBe(INSERT_FX);
+    expect(plan.nodeParams.ch2?.insertFx).toBe(INSERT_FX);
+    expect(plan.nodeParams.ch2?.insertFxOn).toBe(true);
+  });
+
   it("leaves a node that is not a pair primary alone", () => {
     const before = JSON.stringify(plan.connections);
     applyPairTransition(u44, plan, "ch2", { stereoLink: true }); // partner, not primary
@@ -330,6 +383,76 @@ describe("isBalLinkedPair / mirrorBalPair", () => {
     expect(stereoSend("ch2")?.params?.tap).toBe("pre");
     expect(stereoSend("ch2")?.params?.on).toBe(false);
     expect(stereoSend("ch2")?.params?.pan).toBe(-40); // the BAL pan is one shared value
+  });
+});
+
+// Measured on the unit: the insert FX mirrors on Signal Type alone — a selector write on
+// either member reached the other in PAN mode as well as in BAL, both pointing at one
+// engine instance. Everything else the pair shares stays BAL-only (mirrorBalPair above).
+describe("isStereoLinkedPair / mirrorLinkedInsertFx", () => {
+  let plan: Plan;
+  const link = (panBal: number): void => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal };
+  };
+
+  beforeEach(() => {
+    plan = defaultPlan("URX44");
+  });
+
+  it("is true in PAN as well as BAL, and false once the pair is unlinked", () => {
+    expect(isStereoLinkedPair(u44, plan, "ch1")).toBe(false);
+    link(PAN_BAL_PAN);
+    expect(isStereoLinkedPair(u44, plan, "ch1")).toBe(true);
+    expect(isStereoLinkedPair(u44, plan, "ch2")).toBe(true); // the secondary reads the primary's flag
+    expect(isBalLinkedPair(u44, plan, "ch1")).toBe(false); // ... while the BAL gate is shut
+    link(PAN_BAL_BAL);
+    expect(isStereoLinkedPair(u44, plan, "ch1")).toBe(true);
+    expect(isStereoLinkedPair(u44, plan, "ch3")).toBe(false); // other pair untouched
+    expect(isStereoLinkedPair(u44, plan, "ch_5_6")).toBe(false); // not a pair at all
+  });
+
+  it("copies the selector, its ON and the engine values to the partner in PAN mode", () => {
+    link(PAN_BAL_PAN);
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      insertFx: INSERT_FX,
+      insertFxOn: true,
+      insertFxParams: { "0": 12 },
+    };
+    expect(mirrorLinkedInsertFx(u44, plan, "ch1")).toBe(true);
+    expect(plan.nodeParams.ch2?.insertFx).toBe(INSERT_FX);
+    expect(plan.nodeParams.ch2?.insertFxOn).toBe(true);
+    expect(plan.nodeParams.ch2?.insertFxParams).toEqual({ "0": 12 });
+    // Deep, so a later in-place edit to one member's engine values cannot bleed.
+    expect(plan.nodeParams.ch2?.insertFxParams).not.toBe(plan.nodeParams.ch1?.insertFxParams);
+  });
+
+  it("mirrors from the secondary, and drops a selection the source no longer holds", () => {
+    plan.nodeParams.ch1 = { stereoLink: true, panBal: PAN_BAL_PAN, insertFx: INSERT_FX, insertFxOn: true };
+    plan.nodeParams.ch2 = {}; // the source of this mirror holds nothing
+    expect(mirrorLinkedInsertFx(u44, plan, "ch2")).toBe(true);
+    expect(plan.nodeParams.ch1?.insertFx).toBeUndefined();
+    expect(plan.nodeParams.ch1?.insertFxOn).toBeUndefined();
+    expect("insertFx" in plan.nodeParams.ch1!).toBe(false); // absent, not held as undefined
+    // The pair-level flags are untouched by this mirror.
+    expect(plan.nodeParams.ch1?.stereoLink).toBe(true);
+  });
+
+  it("is a no-op for an unlinked pair and for a node outside one", () => {
+    plan.nodeParams.ch1 = { insertFx: INSERT_FX };
+    plan.nodeParams.ch2 = {};
+    expect(mirrorLinkedInsertFx(u44, plan, "ch1")).toBe(false);
+    expect(mirrorLinkedInsertFx(u44, plan, "bus.stereo")).toBe(false);
+    expect(plan.nodeParams.ch2?.insertFx).toBeUndefined();
+  });
+
+  it("agrees with the BAL mirror when both run", () => {
+    link(PAN_BAL_BAL);
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX, insertFxOn: false };
+    expect(mirrorBalPair(u44, plan, "ch1")).toBe(true);
+    const afterBal = structuredClone(plan.nodeParams.ch2);
+    expect(mirrorLinkedInsertFx(u44, plan, "ch1")).toBe(true);
+    expect(plan.nodeParams.ch2).toEqual(afterBal);
   });
 });
 

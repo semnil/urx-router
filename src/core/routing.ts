@@ -169,18 +169,28 @@ export function pairPrimary(model: DeviceModel, nodeId: string): string | null {
   return null;
 }
 
+/** True when `id` belongs to a MONO IN pair whose Signal Type is STEREO, whatever its
+ *  PAN/BAL mode (the flag lives on the primary, so it is read there). The insert FX is
+ *  the one piece of pair state that answers to Signal Type alone: measured in both PAN
+ *  and BAL, a linked pair mirrors the selector either way and its two members point at
+ *  one engine instance, and only a Signal Type transition clears it. Everything else
+ *  the pair shares is BAL-only — see isBalLinkedPair. */
+export function isStereoLinkedPair(model: DeviceModel, plan: Plan, id: string): boolean {
+  const primary = pairPrimary(model, id);
+  return primary !== null && plan.nodeParams[primary]?.stereoLink === true;
+}
+
 /** True when `id` belongs to a STEREO-linked MONO IN pair currently in BAL mode.
  *  Such a pair acts as one stereo channel, so its mixer parameters mirror across
  *  both channels; PAN mode instead keeps the two channels independent. */
 export function isBalLinkedPair(model: DeviceModel, plan: Plan, id: string): boolean {
   const primary = pairPrimary(model, id);
-  if (!primary) return false;
-  const np = plan.nodeParams[primary];
-  return np?.stereoLink === true && (np.panBal ?? PAN_BAL_PAN) === PAN_BAL_BAL;
+  if (!primary || !isStereoLinkedPair(model, plan, id)) return false;
+  return (plan.nodeParams[primary]?.panBal ?? PAN_BAL_PAN) === PAN_BAL_BAL;
 }
 
-/** Apply what the unit does to a MONO IN pair's pan positions when its Signal Type
- *  or PAN/BAL changes (`primary` names the pair; `patch` is the edit that landed).
+/** Apply what the unit does to a MONO IN pair's pan positions and insert FX when its
+ *  Signal Type or PAN/BAL changes (`primary` names the pair; `patch` is the edit that landed).
  *  Measured on the unit: linking leaves the pair in BAL and an unlinked pair reads
  *  PAN, and each of the three transitions slams CH_PAN and every bus send's pan
  *  together — PAN hard-pans the odd channel left and the even one right, BAL and
@@ -193,6 +203,18 @@ export function applyPairTransition(model: DeviceModel, plan: Plan, primary: str
   if (patch.stereoLink !== undefined) {
     const np = plan.nodeParams[primary];
     plan.nodeParams[primary] = { ...np, panBal: patch.stereoLink ? PAN_BAL_BAL : PAN_BAL_PAN };
+    // Measured: a Signal Type transition clears the insert-FX selector and its ON on BOTH
+    // members, in either direction and whichever member was holding the effect. Follow it —
+    // a selection left in the plan would make the next live converge re-select an effect the
+    // unit has just dropped. The stored engine values go with it: they are read through the
+    // selected family, so a cleared selector leaves them nothing to bind to.
+    for (const ch of pair) {
+      const cp = plan.nodeParams[ch];
+      if (!cp) continue;
+      delete cp.insertFx;
+      delete cp.insertFxOn;
+      delete cp.insertFxParams;
+    }
   }
   const centre = plan.nodeParams[primary]?.stereoLink !== true || isBalLinkedPair(model, plan, primary);
   pair.forEach((ch, idx) => {
@@ -218,6 +240,11 @@ export function mirrorBalPair(model: DeviceModel, plan: Plan, id: string): boole
   // / ssmcs / osc / eqOneKnob) between the two channels, so an in-place edit to one
   // would bleed into the other — and the alias would outlive the link, since it
   // persists until a replace-style edit or a JSON round-trip breaks it.
+  // The insert FX travels with them, as it does on the unit: while the pair is linked a
+  // selector write from either member mirrors to the other and both point at one engine
+  // instance, so a linked pair holds one insert effect between them (measured). It is
+  // carried here for a BAL pair and by mirrorLinkedInsertFx for a PAN one, to the same
+  // values — the unit mirrors it in both modes, this function only runs in BAL.
   const src = plan.nodeParams[id] ?? {};
   const { stereoLink, panBal } = plan.nodeParams[partner] ?? {};
   plan.nodeParams[partner] = { ...structuredClone(src), stereoLink, panBal };
@@ -230,6 +257,31 @@ export function mirrorBalPair(model: DeviceModel, plan: Plan, id: string): boole
     if (!pc) continue;
     pc.params = { ...pc.params, ...c.params };
   }
+  return true;
+}
+
+/** Mirror `id`'s insert FX onto its linked partner, so the pair's one effect reads the
+ *  same on both members. Gated on Signal Type alone (isStereoLinkedPair): the unit was
+ *  measured mirroring the selector in PAN as well as BAL, where mirrorBalPair does not
+ *  run — without this the plan would keep an effect on one member only and the next
+ *  flush would write NONE over what the unit holds on the other. Called beside
+ *  mirrorBalPair from every edit funnel, and in BAL the two write the same values.
+ *  The engine values are deep-copied for the aliasing reason mirrorBalPair documents.
+ *  Returns false — a no-op — unless the pair is STEREO-linked. */
+export function mirrorLinkedInsertFx(model: DeviceModel, plan: Plan, id: string): boolean {
+  if (!isStereoLinkedPair(model, plan, id)) return false;
+  const partner = partnerChannel(model, id);
+  if (!partner) return false;
+  const { insertFx, insertFxOn, insertFxParams } = plan.nodeParams[id] ?? {};
+  const dst = (plan.nodeParams[partner] ??= {});
+  // An absent key stays absent on the partner: a key held as undefined would outlive
+  // the copy through the history differ and the JSON round-trip.
+  delete dst.insertFx;
+  delete dst.insertFxOn;
+  delete dst.insertFxParams;
+  if (insertFx !== undefined) dst.insertFx = insertFx;
+  if (insertFxOn !== undefined) dst.insertFxOn = insertFxOn;
+  if (insertFxParams !== undefined) dst.insertFxParams = structuredClone(insertFxParams);
   return true;
 }
 
