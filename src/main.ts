@@ -2560,7 +2560,7 @@ if (!DEMO) {
     },
     onStatus: setStatus,
   });
-  $("btn-midi").addEventListener("click", () => midi?.togglePanel());
+  $("btn-midi").addEventListener("click", () => midi?.toggleWindow());
 
   // Device setup: the unit's SETUP > GENERAL settings — brightness, auto power off,
   // the date/time formats and time zone, the HDMI and USB Main pages, the menu
@@ -3014,12 +3014,11 @@ onLangChange(() => {
 
 // True while any modal overlay is up: the consent-scrim dialogs (consent, load
 // report, rate choice, licenses, Preferences, Device setup, and the drag overlay)
-// share the class
-// and toggle [hidden], and the MIDI panel is the one non-scrim overlay.
+// share the class and toggle [hidden]. MIDI control is not among them — it is a
+// window of its own, so it covers nothing here and holds nothing back: an undo
+// taken with it open belongs to the plan in this window.
 function modalOpen(): boolean {
-  if (document.querySelector(".consent-scrim:not([hidden])")) return true;
-  const midiPanel = document.getElementById("midi-panel");
-  return !!midiPanel && !midiPanel.hidden;
+  return !!document.querySelector(".consent-scrim:not([hidden])");
 }
 
 window.addEventListener("keydown", (e) => {

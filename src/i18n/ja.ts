@@ -131,12 +131,17 @@ export const ja: Messages = {
   midi: {
     menuItem: "MIDI コントロール",
     title: "MIDI コントロール",
+    ports: "ポート",
     input: "入力",
     output: "出力",
     portNone: "なし",
     learn: "ラーン",
-    hintIdle: "ラーンをオンにしてコンソールのコントロールをクリックし、MIDI 機器のコントロールを動かします。",
-    hintLearn: "割り当てるコンソールのコントロールをクリックしてください。",
+    colControl: "コントロール",
+    colAddr: "アドレス",
+    colOption: "挙動",
+    hintIdle:
+      "ラーンをオンにしてコンソールまたは調整画面のコントロールをクリックし、MIDI 機器のコントロールを動かします。",
+    hintLearn: "割り当てるコンソールまたは調整画面のコントロールをクリックしてください。",
     hintArmed: (control: string): string => `${control} に割り当てる MIDI コントロールを動かしてください…`,
     mappings: "割り当て",
     noMappings: "割り当てはまだありません。",
@@ -168,6 +173,7 @@ export const ja: Messages = {
         "トグルボタン (押すたび 127/0 交互送信、Stream Deck 等) 向け: 値がそのまま状態になる — 64 以上で ON、未満で OFF。モーメンタリーボタンなら押している間だけ ON。",
     },
     bound: (control: string, addr: string): string => `${addr} を ${control} に割り当てました`,
+    windowError: (message: string): string => `MIDI コントロールウィンドウを開けませんでした: ${message}`,
     inputError: (message: string): string => `MIDI 入力エラー: ${message}`,
     outputError: (message: string): string => `MIDI 出力エラー: ${message}`,
     // コントロール名はコンソールストリップの表記 (チップ / ノブ) をそのまま使う。

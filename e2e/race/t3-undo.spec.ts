@@ -16,6 +16,7 @@ import {
   waitQuiet,
   settleAfter,
   setDialogAnswer,
+  openMidiWindow,
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, setsOf } from "./analyze";
@@ -918,14 +919,16 @@ test.describe("T3 undo", () => {
     await expect(page.locator("#prefs-modal")).toBeHidden();
     expect(await faderReadout(page, "CH 1").textContent()).toBe(edited); // entry unspent
 
-    // (c) MIDI panel — non-modal on screen, but modalOpen() counts it.
-    await page.click("#btn-device");
-    await page.click("#btn-midi");
-    await expect(page.locator("#midi-panel")).toBeVisible();
-    record("(c) MIDI panel", await undoOnce(page));
-    await page.keyboard.press("Escape");
-    await expect(page.locator("#midi-panel")).toBeHidden();
-    expect(await faderReadout(page, "CH 1").textContent()).toBe(edited);
+    // (c) MIDI control — a window of its own, so it is not on this document at all
+    // and modalOpen() cannot see it. Deliberately permissive: it covers nothing here,
+    // and an undo taken with it open belongs to the plan in this window. Undo spends
+    // the entry, so it is put back before the ladder continues.
+    const midiWin = await openMidiWindow(page);
+    record("(c) MIDI control window", await undoOnce(page));
+    expect(await faderReadout(page, "CH 1").textContent()).toBe(before);
+    await page.keyboard.press("ControlOrMeta+Shift+z"); // put the entry back
+    await expect(faderReadout(page, "CH 1")).toHaveText(edited);
+    await midiWin.close();
 
     // (d) the channel tuning screen — the one modal that edits the plan, so it is
     // deliberately permissive. Undo here consumes the entry, so it is put back.
@@ -1014,7 +1017,9 @@ test.describe("T3 undo", () => {
     console.log(report("refusal ladder", []));
 
     expect(verdicts[1]).toBe(MODAL_REFUSAL); // (b)
-    expect(verdicts[2]).toBe(MODAL_REFUSAL); // (c) the MIDI panel counts as modal
+    // (c) MIDI control is a separate window since it stopped being an overlay: it is
+    // not in this document, so modalOpen() does not see it and nothing is held back.
+    expect(verdicts[2]).toMatch(UNDO_APPLIED);
     expect(verdicts[3]).toMatch(UNDO_APPLIED); // (d) the tuning screen is permissive
     expect(verdicts[4]).toMatch(UNDO_APPLIED); // (f) an un-moved press is permissive
     expect(verdicts[5]).toBe(DRAG_REFUSAL); // (e)

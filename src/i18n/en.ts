@@ -141,12 +141,19 @@ export const en = {
   midi: {
     menuItem: "MIDI control",
     title: "MIDI CONTROL",
+    // Section headings in the MIDI window, which has room for them.
+    ports: "Ports",
     input: "Input",
     output: "Output",
     portNone: "None",
     learn: "Learn",
-    hintIdle: "Turn on Learn, click a console control, then move a control on your MIDI device.",
-    hintLearn: "Click a console control to arm it for binding.",
+    // The assignment table's column heads.
+    colControl: "Control",
+    colAddr: "Address",
+    colOption: "Behavior",
+    hintIdle:
+      "Turn on Learn, click a control on the console or a tuning screen, then move a control on your MIDI device.",
+    hintLearn: "Click a control on the console or a tuning screen to arm it for binding.",
     hintArmed: (control: string): string => `Move a MIDI control to bind ${control}…`,
     mappings: "Assignments",
     noMappings: "No assignments yet.",
@@ -179,6 +186,7 @@ export const en = {
         "For toggle buttons that alternate 127/0 per press (e.g. Stream Deck toggles): the value is the state — 64 and above = on, below = off. A momentary button gives hold-to-enable.",
     },
     bound: (control: string, addr: string): string => `Assigned ${addr} to ${control}`,
+    windowError: (message: string): string => `Could not open the MIDI control window: ${message}`,
     inputError: (message: string): string => `MIDI input error: ${message}`,
     outputError: (message: string): string => `MIDI output error: ${message}`,
     // Control labels reuse the console strip wording (chips / knob captions).
