@@ -10,6 +10,8 @@ let sent: number[][];
 let learned: MidiAddr[];
 let pendingCount: number;
 let clock: number;
+let gateReason: string | null;
+let refusals: string[];
 let engine: MidiEngine;
 
 beforeEach(() => {
@@ -19,9 +21,13 @@ beforeEach(() => {
   learned = [];
   pendingCount = 0;
   clock = 0;
+  gateReason = null;
+  refusals = [];
   engine = new MidiEngine({
     resolve: (id) => controls.get(id) ?? null,
     applied: (c) => applied.push(c.id),
+    gate: () => gateReason,
+    refused: (reason) => refusals.push(reason),
     send: (bytes) => sent.push(bytes),
     learned: (addr) => learned.push(addr),
     learnPending: () => pendingCount++,
@@ -440,6 +446,56 @@ describe("feedback", () => {
     sent.length = 0;
     engine.feedback(true);
     expect(sent).toEqual([encodeCc(0, 7, 64)]);
+  });
+});
+
+describe("plan gate", () => {
+  it("reports one refusal per gated window, not per message", () => {
+    const c = fake("ch1/level", "continuous");
+    controls.set(c.id, c);
+    map(c.id, { type: "cc", channel: 0, controller: 7 });
+    gateReason = "busy";
+    for (const value of [10, 20, 30, 40]) engine.onMessage(encodeCc(0, 7, value));
+    expect(refusals).toEqual(["busy"]); // a whole sweep, one status line
+    expect(c.value).toBe(0);
+  });
+
+  it("reports a second window that raised the same reason, with no traffic in between", () => {
+    const c = fake("ch1/level", "continuous");
+    controls.set(c.id, c);
+    map(c.id, { type: "cc", channel: 0, controller: 7 });
+    gateReason = "busy";
+    engine.onMessage(encodeCc(0, 7, 10));
+    expect(refusals).toEqual(["busy"]);
+    // The window ends with the latch and no message arrives while it is down, so the
+    // engine is told; both latches name themselves the same way, which is why the
+    // reason string cannot decide this.
+    gateReason = null;
+    engine.gateReleased();
+    gateReason = "busy";
+    engine.onMessage(encodeCc(0, 7, 20));
+    expect(refusals).toEqual(["busy", "busy"]);
+  });
+
+  it("clears the window on a message that passes the gate", () => {
+    const c = fake("ch1/level", "continuous");
+    controls.set(c.id, c);
+    map(c.id, { type: "cc", channel: 0, controller: 7 });
+    gateReason = "busy";
+    engine.onMessage(encodeCc(0, 7, 10));
+    gateReason = null;
+    engine.onMessage(encodeCc(0, 7, 127)); // applies, and ends the reported window
+    expect(c.value).toBe(1);
+    gateReason = "busy";
+    engine.onMessage(encodeCc(0, 7, 10));
+    expect(refusals).toEqual(["busy", "busy"]);
+  });
+
+  it("stays silent for a mapping that resolves to nothing", () => {
+    map("gone/level", { type: "cc", channel: 0, controller: 7 });
+    gateReason = "busy";
+    engine.onMessage(encodeCc(0, 7, 10));
+    expect(refusals).toEqual([]);
   });
 });
 

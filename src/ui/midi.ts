@@ -190,6 +190,12 @@ export class MidiControl {
     this.runFeedback(true);
   }
 
+  /** One of the latches behind `blocked` cleared: end the engine's reported
+   *  refusal window, so the next one speaks up again (see MidiEngine.gateReleased). */
+  gateReleased(): void {
+    this.engine.gateReleased();
+  }
+
   /** Batch a feedback pass after a plan edit (debounced; called from the shared
    *  change funnel, so UI / follow / MIDI edits all land here). */
   scheduleFeedback(): void {
