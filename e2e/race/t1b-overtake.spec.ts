@@ -9,20 +9,21 @@ import {
   blockAt,
   releaseBarrier,
   memOf,
-  waitQuiet,
   settleAfter,
+  settleThroughIdleNet,
   snapshotOf,
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, setsOf, getsOf, type Span } from "./analyze";
 import { stepLevel } from "../../src/core/levels";
-import { CH1_FADER, CH2_FADER, readoutOf } from "./ui";
+import { CH1_FADER, CH1_PAN, CH1_PAN_ADDR, CH2_FADER, readoutOf } from "./ui";
 
 // T1b overtake — the T1 cases the first pass did not reach
-// (docs/{en,ja}/live-race-harness.md, "T1 overtake"). Three of the eight are here:
+// (docs/{en,ja}/live-race-harness.md, "T1 overtake"). Four of the nine are here:
 //
 //   overtake-converge-latch-starvation             the only liveness case in the catalog
 //   overtake-notify-echo-vs-genuine-during-flush   the discrimination the app cannot make
+//   overtake-direct-notify-ahead-of-the-send-loop  the frozen command list vs a moving snapshot
 //   overtake-edit-during-flush-send-loop           the send loop's own re-entrancy
 //
 // Each is a DIFFERENTIAL: one variable moves between two otherwise identical runs, so a
@@ -342,11 +343,7 @@ test.describe("T1b overtake", () => {
         await mark(page, "release");
         await releaseBarrier(page);
       }
-      await settleAfter(page, "notify", 900, 25_000);
-      // The idle net is armed 900 ms after the notify, so a run that fell quiet before
-      // then has not yet proved an absence. Give it its window and settle again.
-      await page.waitForTimeout(1500);
-      await waitQuiet(page);
+      await settleThroughIdleNet(page, "notify");
 
       const trace = await traceOf(page);
       const notifyAt = markTime(trace, "notify")!;
@@ -401,6 +398,111 @@ test.describe("T1b overtake", () => {
         expect(readsAfter).toHaveLength(0);
         expect(finalReadout).toBe(editedReadout);
       }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // overtake-direct-notify-ahead-of-the-send-loop
+  //
+  // The sibling of the case above, and the one it could not see. There the notify named
+  // the address the loop was suspended ON, so by the time it arrived that command had
+  // already been decided. Here it names an address the loop HAS NOT REACHED YET: CH 1's
+  // pan, emitted one command behind its fader by the same translate.
+  //
+  // The flush's command array is frozen at flush start — planToCommands runs once, before
+  // the first await — while the snapshot each command is diffed against is mutated under
+  // it by the follow layer: a direct notify writes the device's new value into the plan
+  // (applyDirect) and into the snapshot (noteDirect), both synchronously, inside one of
+  // the loop's awaits. The loop then reaches a command still carrying the PRE-notify
+  // value, finds the snapshot disagreeing with it, and sends it. Nothing in the app
+  // authored that value and the device authored the newer one, so the write is the app
+  // pushing a stale device-originated value back over the hand still on the knob.
+  //
+  // The differential is the notify's phase against one flush and nothing else: `ahead`
+  // delivers it while the loop is held at its first command, `after` once it has drained.
+  // Same address, same value, same gesture.
+  // ---------------------------------------------------------------------------
+  for (const phase of ["ahead", "after"] as const) {
+    test(`a direct notify ${phase === "ahead" ? "the send loop has not reached yet" : "after the send loop drained"} is not written back`, async ({
+      page,
+    }) => {
+      await goLive(page);
+      await page.click("#btn-view-console");
+      await expect(faderReadout(page, "CH 1")).toBeVisible();
+      await setLatency(page, { get: 25, set: 60 });
+
+      // Where the device's pan stands before anything happens, read off the fake rather
+      // than assumed: it is the value a write-back would carry, so the run has to be able
+      // to name it. 24 is a detent a device-side operator could land on and never one the
+      // app produces here — no gesture in this case touches pan.
+      const startPan = (await memOf(page))[CH1_PAN_ADDR] ?? 0;
+      const movedPan = 24;
+      expect(movedPan).not.toBe(startPan);
+
+      if (phase === "ahead") await blockAt(page, "vd_set", 1);
+      await mark(page, "edit");
+      expect(await faderKey(page, "CH 1", "ArrowUp")).toBe(true);
+
+      if (phase === "ahead") {
+        await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 15_000 });
+        // The loop is suspended on CH 1's fader — one command ahead of the pan the notify
+        // is about to move. Asserted, not assumed: if the diff ever carried a different
+        // first address the case would be measuring a loop that had already passed pan.
+        expect(heldSet(await traceOf(page))?.addr).toBe(CH1_FADER);
+      } else {
+        // The control: the same flush, allowed to finish first. `settleAfter` rather than
+        // waitQuiet — the edit's own flush is still inside its debounce window here, and
+        // silence that has not started yet would answer for it.
+        await settleAfter(page, "edit", 900, 15_000);
+      }
+
+      // A device-side move is a change to the device's own state as well as a message: a
+      // later read that answered the old value would "revert" the move for a reason the
+      // fake invented rather than the app.
+      await seedMem(page, { [CH1_PAN_ADDR]: movedPan });
+      await mark(page, "notify");
+      await pushNotifyDelivered(page, [[...CH1_PAN, movedPan]]);
+
+      if (phase === "ahead") {
+        await mark(page, "release");
+        await releaseBarrier(page);
+      }
+      // The window under test is closed once the loop drains; the idle safety net's
+      // whole-device sweep that follows is ~800 reads, so it runs at a latency CI can
+      // afford (the tail-latency drop every long case in this harness takes).
+      await setLatency(page, { get: 0, set: 0 });
+      await settleThroughIdleNet(page, "notify");
+
+      const trace = await traceOf(page);
+      const panSets = setsOf(trace).filter((s) => s.addr === CH1_PAN_ADDR);
+      const mem = await memOf(page);
+      const snapshot = await snapshotOf(page);
+      const findings = analyze(trace, {
+        edits: [{ label: "CH 1 fader", addr: CH1_FADER, at: markTime(trace, "edit")! }],
+        snapshot,
+      });
+
+      console.log(timeline(trace, { from: markTime(trace, "edit")! - 100 }));
+      console.log(report(`direct notify ${phase} the send loop`, findings));
+      console.log(
+        `pan moved ${startPan} → ${movedPan} on the device; writes to ${CH1_PAN_ADDR} = ` +
+          `[${panSets.map((s) => `${s.value}@${s.start.toFixed(0)}ms`).join(", ")}]; ` +
+          `device holds ${mem[CH1_PAN_ADDR]}, snapshot holds ${snapshot?.[CH1_PAN_ADDR]}`,
+      );
+
+      // Neither arm may lose the fader edit, or the flush under test never ran.
+      expect(findings.filter((f) => f.class === "case")).toHaveLength(0);
+      expect(findings.filter((f) => f.inv === 2)).toHaveLength(0);
+      expect(mem[CH1_FADER]).toBeDefined();
+
+      // The case's own verdict, identical in both arms because the phase of a notify
+      // against our own send loop is not something the operator can be asked to control:
+      // pan has exactly one author in this run — the device — so any write to it is the
+      // app pushing back a value it did not author, and the device must be left holding
+      // the value it last reported.
+      expect(panSets).toHaveLength(0);
+      expect(mem[CH1_PAN_ADDR]).toBe(movedPan);
+      expect(snapshot?.[CH1_PAN_ADDR]).toBe(movedPan);
     });
   }
 

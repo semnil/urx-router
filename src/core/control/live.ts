@@ -113,6 +113,24 @@ export class LiveSync {
   // address however long the session runs.
   private readonly directJournal = new Map<number, { value: number; at: number }>();
   private directSeq = 0;
+  // Bumped by every write the FOLLOW side makes into a snapshot — noteDirect's single entry
+  // and capture()'s two whole rebuilds. A flush translates the plan once and then awaits
+  // per command, so the lists it walks can grow older than the snapshots it diffs each
+  // command against: the loop reaches an address the device moved mid-flush, finds its
+  // frozen command disagreeing with the fresh entry, and sends a value the plan has
+  // stopped holding — the device's own previous one, back over the hand still on the knob.
+  // This is what lets a running flush notice and re-take its translate.
+  //
+  // A COUNTER rather than a dirty flag, because the flush has two independent consumers
+  // (the value loop and the name loop) and a flag one of them cleared would be invisible to
+  // the other. Each holds its own last-seen value instead. Separate from `directSeq`, which
+  // counts only `noteDirect` and whose marks the journal compares with `>`.
+  //
+  // It is a SNAPSHOT write standing in for a PLAN write, which works only because every
+  // device-side plan write is synchronously followed by one (follow.ts applyDirect →
+  // noteDirect; every reconcile → resync). A follow path that merged into the plan without
+  // touching a snapshot would re-open the hole here in silence.
+  private snapshotEpoch = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
   private pending = false;
@@ -178,6 +196,7 @@ export class LiveSync {
     const k = addrKey(paramId, x, y);
     this.snapshot.set(k, value);
     this.directJournal.set(k, { value, at: ++this.directSeq });
+    this.snapshotEpoch++;
   }
 
   /** Every writable parameter address the current plan maps to, as [paramId, x, y]
@@ -271,6 +290,14 @@ export class LiveSync {
    * predates, not the plan's — the rule that a re-base never takes a value from the live
    * plan is unchanged.
    */
+  /** A plan's writable addresses and the values it would send, as the flush's diff and the
+   *  snapshot's rebuild both need them. One spelling, because the two are required to
+   *  agree: the flush diffs against a snapshot this same function built, and an address
+   *  key or a value derived differently on one side would be a silent mismatch. */
+  private commandValues(model: DeviceModel, plan: Plan, scope: WriteScope): Map<number, number> {
+    return new Map(planToCommands(model, plan, scope).map((c) => [cmdAddr(c), c.vdValue] as const));
+  }
+
   private capture(deviceView?: Plan, since?: number): void {
     // A re-base re-authors the plan from the device, so a collision reported against the
     // pre-read plan may already be gone — a reconcile reads the shared address once and
@@ -278,14 +305,13 @@ export class LiveSync {
     // after a reconcile (planValuesChanged, unlike markChanged, does not), so the report
     // latch has to clear here or the next genuine loss of that same pair is swallowed.
     this.collapsedKey = "";
+    this.snapshotEpoch++;
     const model = this.hooks.getModel();
     const scope = this.scope();
     const plan = this.hooks.getPlan();
     // Every caller passes a private copy (readback's clone, or the converge's own),
     // so a view is never the live plan itself.
-    const device = deviceView
-      ? new Map(planToCommands(model, deviceView, scope).map((c) => [cmdAddr(c), c.vdValue] as const))
-      : null;
+    const device = deviceView ? this.commandValues(model, deviceView, scope) : null;
     this.snapshot.clear();
     this.nameSnapshot.clear();
     this.index.clear();
@@ -332,21 +358,59 @@ export class LiveSync {
       let sent = 0;
       let sideEffect = false;
       const refetch = new Set<string>();
-      const commands = planToCommands(model, plan, this.scope());
+      const scope = this.scope();
+      const commands = planToCommands(model, plan, scope);
+      // Both lists below are frozen at flush start; the snapshots they are diffed against
+      // are not. Any await can let a device-side change land (noteDirect's one entry, or a
+      // reconcile's whole capture), and what a frozen list carries is then older than what
+      // the plan holds. `fresher` re-takes the values on the first command after that
+      // happened, so what goes out is a value the plan holds NOW and a device-authored one
+      // can never be sent back at the device as an app write.
+      //
+      // Only the VALUES are re-taken. The ORDER stays this flush's own, because order binds
+      // meaning (a type selector types the array after it), and an address the plan only
+      // just grew stays out — that is a pending app edit, and its own markChanged has
+      // already scheduled the trailing flush that carries it.
+      //
+      // A re-take is the same ~0.13 ms translate the flush opened with, and it is paid only
+      // in the windows where a notify or a reconcile actually landed inside the loop.
+      let valuesAt = this.snapshotEpoch;
+      let fresh: Map<number, number> | null = null;
       for (const c of commands) {
         const k = cmdAddr(c);
-        if (this.snapshot.get(k) === c.vdValue) continue;
-        await vdSet(c.paramId, c.x, c.y, c.vdValue);
-        this.snapshot.set(k, c.vdValue);
+        if (this.snapshotEpoch !== valuesAt) {
+          valuesAt = this.snapshotEpoch;
+          fresh = this.commandValues(model, plan, scope);
+        }
+        // Absent from the re-take = the address left the plan while this flush ran, so
+        // there is nothing left to send to it.
+        const value = fresh ? fresh.get(k) : c.vdValue;
+        if (value === undefined) continue;
+        if (this.snapshot.get(k) === value) continue;
+        await vdSet(c.paramId, c.x, c.y, value);
+        this.snapshot.set(k, value);
         sent++;
         if (CONVERGE.has(c.name)) sideEffect = true;
         else if (REFETCH.has(c.name) && c.node) refetch.add(c.node);
       }
+      // The name loop needs the same guard for the same reason: capture() rebuilds the NAME
+      // snapshot too, so a reconcile resolving inside one of these awaits leaves the frozen
+      // list carrying a string the plan has stopped holding. Rarer than a value — only a
+      // readback can bring a device-side name in — and never yet caught in the harness, but
+      // it is one structure, so it gets one rule.
+      let namesAt = this.snapshotEpoch;
+      let freshNames: Map<string, string> | null = null;
       for (const w of planToNameWrites(model, plan)) {
         const k = nameKey(w);
-        if (this.nameSnapshot.get(k) === w.value) continue;
-        await vdSetStr(w.param, 0, w.y, w.value);
-        this.nameSnapshot.set(k, w.value);
+        if (this.snapshotEpoch !== namesAt) {
+          namesAt = this.snapshotEpoch;
+          freshNames = new Map(planToNameWrites(model, plan).map((n) => [nameKey(n), n.value]));
+        }
+        const value = freshNames ? freshNames.get(k) : w.value;
+        if (value === undefined) continue;
+        if (this.nameSnapshot.get(k) === value) continue;
+        await vdSetStr(w.param, 0, w.y, value);
+        this.nameSnapshot.set(k, value);
         sent++;
       }
       this.lastFlushConverged = sideEffect;

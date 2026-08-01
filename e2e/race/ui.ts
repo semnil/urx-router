@@ -33,5 +33,12 @@ export async function openEqScreen(page: Page, id: string): Promise<void> {
 export const CH1_FADER = "139:0:0";
 export const CH2_FADER = "139:0:1";
 
+/** CH_PAN on the first mono channel, in both shapes a case needs: the address a write is
+ *  matched by, and the tuple a notify is pushed as. translate.ts emits it directly behind
+ *  CH_FADER on the same node, which is what puts it one command ahead of a send loop held
+ *  at that fader. */
+export const CH1_PAN: [number, number, number] = [141, 0, 0];
+export const CH1_PAN_ADDR = CH1_PAN.join(":");
+
 /** HPF_FREQ on the first mono channel, as a notify tuple. */
 export const CH1_HPF_FREQ: [number, number, number] = [26, 0, 0];

@@ -949,6 +949,23 @@ export async function settleAfter(page: Page, markDetail: string, quiet = 900, g
   if (woke) await waitQuiet(page, quiet);
 }
 
+/**
+ * Settle past device-follow's IDLE SAFETY NET, not merely past the burst that armed it.
+ * `settleAfter` returns as soon as the link falls quiet, which for a notify is ~300 ms in —
+ * before the 900 ms idle timer (follow.ts IDLE_FULL_MS) has fired the whole-device sweep it
+ * schedules. An absence verdict taken there passes for free, which is the harness's own
+ * first trap ("silence is also true before anything has started") one level out.
+ *
+ * The extra wait is the idle arm plus enough slack for the sweep to start; it lives here
+ * rather than as a literal in each case so the two numbers track the one constant they
+ * encode.
+ */
+export async function settleThroughIdleNet(page: Page, markDetail: string, cap = 25_000): Promise<void> {
+  await settleAfter(page, markDetail, 900, cap);
+  await page.waitForTimeout(1500);
+  await waitQuiet(page);
+}
+
 /** Deliver a MIDI burst as one batched message, the way the bridge does. */
 export const pushMidi = (page: Page, msgs: number[][]): Promise<void> =>
   page.evaluate((m) => window.__urxFake.pushMidi(m), msgs);

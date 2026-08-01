@@ -298,6 +298,37 @@ describe("LiveSync device-follow snapshot", () => {
     await vi.advanceTimersByTimeAsync(120);
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
   });
+
+  it("does not send a device-followed value the send loop had not reached yet", async () => {
+    // The flush translates the plan ONCE and then awaits per command, so a notify that
+    // lands in one of those awaits moves the plan and the snapshot under a command list
+    // that still carries the pre-notify value. ch1's CH_PAN is emitted one command behind
+    // its CH_FADER, which puts it on the far side of the only write this flush makes.
+    const plan = basePlan();
+    const conn = plan.connections.find((c) => c.from === "ch1:out");
+    if (!conn) throw new Error("expected a ch1 STEREO send connection");
+    const pan = planToCommands(model, plan).find((c) => c.name === "CH_PAN" && c.node === "ch1");
+    if (!pan) throw new Error("expected a ch1 CH_PAN command");
+    const panAddr = `${pan.paramId}:${pan.x}:${pan.y}`;
+
+    const live = liveFor(plan);
+    live.begin();
+    setCh1Fader(plan, -6);
+    // The device moves the pan while the fader write is in flight — the direct-follow
+    // path, whose two halves both run synchronously from inside that await.
+    vi.mocked(vdSet).mockImplementationOnce(async () => {
+      conn.params = { ...conn.params, pan: 24 };
+      live.noteDirect(pan.paramId, pan.x, pan.y, 24);
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+
+    // Only the fader. A write to the pan would carry 0 — the value the device held before
+    // it moved — over the hand that just moved it.
+    const sent = vi.mocked(vdSet).mock.calls.map(([id, x, y]) => `${id}:${x}:${y}`);
+    expect(sent).not.toContain(panAddr);
+    expect(sent).toHaveLength(1);
+  });
 });
 
 // A direct-follow notify and a device read overlap constantly while a session is up: a
