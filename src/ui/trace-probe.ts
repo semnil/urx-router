@@ -20,8 +20,11 @@
 import type { Plan } from "../core/plan";
 import { clonePlanState, diffPlans, type PlanPatch } from "../core/plan-history";
 
-/** Who a plan write is attributed to. The set is the writers the harness document
- *  names; "unknown" is a bug in the instrumentation, not a writer. */
+/** Who a plan write is attributed to. The writers the harness document names, save the
+ *  eighth (constraints / integrity), which has none by design — it never writes on a
+ *  schedule of its own, so its keys belong to the funnel they ride in (see that
+ *  document, "The eighth writer has no WriteSource of its own"). "unknown" is a bug in
+ *  the instrumentation, not a writer. */
 export type WriteSource =
   | "ui"
   | "midi"
@@ -49,7 +52,9 @@ export interface LedgerEntry {
 
 export interface TraceProbeHooks {
   getPlan: () => Plan;
-  /** The live snapshot as address → value, or null with no session. */
+  /** The live snapshot as address → value, or null with no session — no session being
+   *  Live sync not active, not the absence of the LiveSync object (which a non-DEMO
+   *  build always has, holding the last session's map until the next one re-captures). */
   liveSnapshot: () => Record<string, number> | null;
   /** Undo / redo depth, so a case can count entries without driving the UI. */
   depth: () => { undo: number; redo: number };

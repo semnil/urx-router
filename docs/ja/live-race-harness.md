@@ -509,6 +509,18 @@ gh workflow run race.yml --ref <branch>
 書き手は `markChanged(source)` / `planReadFromDevice(source)` と device-follow の 3 経路・undo・load
 で名指しする。
 
+**8 番目の書き手だけは意図的に固有の `WriteSource` を持たない**。制約 / 整合性の書き手は自分のタイミングで
+書くことがない。`constraints.ts` は読むだけ、`routing.ts` のミラー
+(`mirrorBalPair` / `applyPairTransition` / `mirrorLinkedInsertFx`) は UI / MIDI のファネル内で
+`markChanged(source)` より前に走り、`scene-scope.ts` の `applySceneExternal` が走る 2 箇所はどちらも
+共有プランの外側 — `applyDeviceStateScoped` では readback の私的コピーへ、`loadFromText` では
+`loadPlan` が差し替える前の受け入れ文書へ書く。いずれもその後のマージまたは差し替えを通ってはじめて
+プランに届くので、その場でサンプルを打っても当該の書き込みがまだ触れていないプランを差分することになる。
+したがってキーは乗っているファネルに帰属する — ミラーなら `ui` / `midi`、シーンスコープのファイルなら
+`load`、保持されたシーン外の値ならデバイス読み出しのソース (`device-action` / `follow-full` / `refetch`)
+— で、13 が名指しするのもそのファネルである。この書き手を他の書き手と組ませたケースは、この書き手ではなく
+ファネルを測ることになる。
+
 13 は IPC ログには決して現れない。**負けた側の書き込みはコマンドにならないから**である。
 
 ```

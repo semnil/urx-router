@@ -532,6 +532,18 @@ reaches the plan without reaching that differ is an edit the user cannot undo, s
 undo entries cannot disagree about what a gesture touched. Writers name themselves through
 `markChanged(source)` / `planReadFromDevice(source)` and the three device-follow paths, undo and load.
 
+**The eighth writer has no `WriteSource` of its own, deliberately.** Constraints / integrity never
+writes on a schedule of its own: `constraints.ts` only reads, `routing.ts`'s mirrors
+(`mirrorBalPair` / `applyPairTransition` / `mirrorLinkedInsertFx`) run inside the UI and MIDI funnels
+before their `markChanged(source)`, and `scene-scope.ts`'s `applySceneExternal` runs at two sites that
+are both *outside* the shared plan — into the readback's private clone in `applyDeviceStateScoped`,
+and into the incoming document in `loadFromText` before `loadPlan` installs it. Both reach the plan
+only through the merge or the replacement that follows, so a sample stamped at either site would diff
+a plan those writes have not touched yet. Its keys are therefore attributed to the funnel they ride
+in — `ui` / `midi` for a mirror, `load` for a scene-scoped file, and the device-read source
+(`device-action` / `follow-full` / `refetch`) for a kept scene-external value — and invariant 13 names
+that funnel. A case pairing it with another writer would be measuring the funnel, not this writer.
+
 Invariant 13 can never appear in the IPC log: **the losing write never becomes a command.**
 
 ```

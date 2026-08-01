@@ -217,6 +217,40 @@ export function inspectorNodes(selection: Selection): string[] {
   return selection.type === "node" ? [selection.id] : [parseRef(selection.from).nodeId, parseRef(selection.to).nodeId];
 }
 
+/** The gate a rebuild of `host` asks before running, so it cannot land inside an IME
+ *  composition. `replaceChildren` ends one: the interim characters are committed as
+ *  literal text and composition restarts on the rebuilt field — and a device-driven
+ *  reflect repaints this panel at ~20 Hz while a knob is being swept, so a node name
+ *  typed through an IME while the unit is being touched arrives shredded. A rebuild
+ *  asked for while a composition is in flight is remembered and run once it ends,
+ *  rather than dropped: the plan has already changed and the panel would otherwise keep
+ *  showing the value before it. The composition events bubble, so the host keeps
+ *  listening across every rebuild; `focusout` is the backstop for a field that goes
+ *  away without a compositionend of its own. */
+export function compositionGate(host: HTMLElement, rebuild: () => void): { held: () => boolean } {
+  let composing = false;
+  let pending = false;
+  const end = (): void => {
+    if (!composing) return;
+    composing = false;
+    if (!pending) return;
+    pending = false;
+    rebuild();
+  };
+  host.addEventListener("compositionstart", () => {
+    composing = true;
+  });
+  host.addEventListener("compositionend", end);
+  host.addEventListener("focusout", end);
+  return {
+    held: () => {
+      if (!composing) return false;
+      pending = true;
+      return true;
+    },
+  };
+}
+
 export function renderInspector(
   host: HTMLElement,
   model: DeviceModel,

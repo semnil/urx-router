@@ -813,7 +813,8 @@ export const ledgerOf = (page: Page): Promise<import("./analyze").LedgerEntry[]>
     () => (window as unknown as { __urxTrace?: { ledger: unknown[] } }).__urxTrace?.ledger ?? [],
   ) as Promise<import("./analyze").LedgerEntry[]>;
 
-/** What the live snapshot holds right now, or null with no session / no probe. */
+/** What the live snapshot holds right now, or null with no probe / with Live sync not
+ *  active — a session that has ended answers null, not its own last contents. */
 export const snapshotOf = (page: Page): Promise<Record<string, number> | null> =>
   page.evaluate(
     () =>

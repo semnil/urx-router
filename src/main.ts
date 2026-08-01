@@ -39,7 +39,7 @@ import type { RecentEntry } from "./core/storage";
 import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
-import { inspectorNodes, renderInspector } from "./ui/inspector";
+import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
 import { focusables, preserveFocus } from "./ui/dom";
 import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
@@ -983,12 +983,20 @@ const inspectorActions = {
     // write the same values.
     const insFxMirrored = mirrorLinkedInsertFx(getModel(modelId), plan, id);
     markChanged();
+    // Two of the side effects below write the plan AFTER markChanged took the ledger
+    // sample, so their keys would land in whatever samples next — under live follow a
+    // device notify, which invariant 13 then reads as the device authoring a key the
+    // operator moved. Re-sampled as this edit once the last of them has run.
+    let lateWrite = false;
     // CH_ON drives the on-canvas mute dimming; the STEREO link draws a pair
     // connector — both show on the canvas, so repaint nodes at once. A mirrored ON
     // change repaints every node, so the partner's dimming follows for free.
     // Linking a pair snaps its partner next to the kept node so the tie isn't drawn
     // across a gap an earlier manual move may have opened.
-    if (patch.stereoLink === true) graph.alignStereoPair(id);
+    if (patch.stereoLink === true) {
+      graph.alignStereoPair(id);
+      lateWrite = true;
+    }
     // CH_ON / a bus, FX or MONITOR master / duckerOn / the oscillator all mute a
     // node: it dims and its connections recede (isOffSend), so repaint both. The
     // oscillator's on lives under an osc patch that also carries level/mode, so
@@ -1004,7 +1012,11 @@ const inspectorActions = {
     if (mirrored || insFxMirrored) consoleView.refresh();
     // Switching COMP/EQ type resets the destination chain to factory (the device
     // does the same — the SSMCS ⇄ COMP->EQ banks are exclusive and not preserved).
-    if (patch.compEqType !== undefined && patch.compEqType !== prev?.compEqType) resetCompEqBank(id, patch.compEqType);
+    if (patch.compEqType !== undefined && patch.compEqType !== prev?.compEqType) {
+      resetCompEqBank(id, patch.compEqType);
+      lateWrite = true;
+    }
+    if (lateWrite) traceProbe?.sample("ui");
     // An EQ band's filter type / ON changes which controls show (Q, gain), so it
     // needs a re-render; a freq/Q/gain slick must NOT re-render (it keeps slider
     // focus). Detect a relayout by diffing the changed bands' type/on.
@@ -1240,7 +1252,14 @@ inspectorHost.addEventListener(
   { passive: true },
 );
 
+// A rebuild made while an IME composition is in flight (a node name being typed in
+// kana) would commit its interim characters as literal text and restart it — once per
+// device-driven reflect, ~20 Hz through a knob sweep. Held until the composition ends,
+// then run once.
+const inspectorComposition = compositionGate(inspectorHost, () => refreshInspector());
+
 function refreshInspector(): void {
+  if (inspectorComposition.held()) return;
   // On mobile the inspector is a bottom sheet that slides up only while something
   // is selected; this flag drives that state (no effect on the desktop panel).
   document.body.classList.toggle("has-selection", selection !== null);
@@ -1583,6 +1602,8 @@ async function fileFlow<T>(run: () => Promise<T>): Promise<T | null> {
     return await run();
   } finally {
     fileFlowBusy = false;
+    // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).
+    midi?.gateReleased();
   }
 }
 
@@ -1910,7 +1931,11 @@ planHistory.install();
 const traceProbe = TRACE
   ? installTraceProbe({
       getPlan: () => plan,
-      liveSnapshot: () => live?.snapshotEntries() ?? null,
+      // Gated on the session rather than on `live` existing: outside a DEMO build it is
+      // always constructed, and end() leaves the finished session's map in place — a
+      // flush still awaiting a vdSet when the session ends writes into it afterwards, so
+      // clearing there would not answer null either. isActive() is what "no session" is.
+      liveSnapshot: () => (live?.isActive() ? live.snapshotEntries() : null),
       depth: () => planHistory?.depth() ?? { undo: 0, redo: 0 },
     })
   : null;
@@ -2146,6 +2171,8 @@ if (!DEMO) {
       });
     } finally {
       deviceReadInFlight = false;
+      // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).
+      midi?.gateReleased();
       fetchAbort = null;
       fetchBtn.textContent = t().toolbar.fetchDevice;
       // In the finally: even a canceled read may have applied part of the device state.
@@ -2460,6 +2487,8 @@ if (!DEMO) {
         await failLive(t().status.liveError(errorText(err)));
       } finally {
         deviceReadInFlight = false;
+        // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).
+        midi?.gateReleased();
         // In the finally: a partially failed readback still applied device values.
         planReadFromDevice();
       }
