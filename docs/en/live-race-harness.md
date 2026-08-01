@@ -420,10 +420,11 @@ former cost.
 | `t2c`–`t2f` | T2's remaining eight cases (the shape-changing params filled in later) |
 | `t9-probe.spec.ts` | the probe's own contract, and invariants 13 and 3 |
 
-All 88 catalog cases are present in a spec. Eight of them are unreachable or unfalsifiable, and each
-`test.skip` carries its reason (a fixed connection the UI cannot delete; no observable that separates
-the two branches; making the fake claim an `--experimental` launch mode would measure the harness
-rather than the app; and so on).
+**Every case in the tier tables above is present in a spec**, matched by id — `grep -rF <id> e2e/race`
+answers it for one, and the ids are the census. What is not *driven* is a handful of `test.skip`
+sub-arms (`grep -rn "test.skip" e2e/race`), each carrying its reason beside it: a fixed connection the
+UI cannot delete; no observable that separates the two branches; making the fake claim an
+`--experimental` launch mode would measure the harness rather than the app; and so on.
 
 ```sh
 pnpm test:e2e:app                # the ordinary suite (--project=chromium; race is testIgnore'd out)
@@ -464,8 +465,7 @@ The slow cases are the ones that deliberately provoke several whole-device readb
 reads each) — the cost of what is being measured, not overhead. Split with `--shard=1/3`, per file, or
 `--grep`. **Do not chain whole-suite runs in one command.**
 
-71 of the 87 catalog cases are covered; the 16 that are not carry their reason in a `test.skip`.
-**One is unreachable rather than undriven**: the unresolvable-source hole in
+**One of those skips is unreachable rather than undriven**: the unresolvable-source hole in
 `shape-routing-wire-selectors`. `sourcePorts()` returns null only for a node `models/build.ts` does
 not admit as a selector source, and authoring one into a plan does not reach it either — `validatePlan`
 rejects the wire before adoption, so what would be measured is the load report, not the selector.
