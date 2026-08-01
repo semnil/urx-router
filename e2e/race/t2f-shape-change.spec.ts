@@ -509,9 +509,15 @@ test.describe("T2f shape-change", () => {
     trace = await traceOf(page);
     const setupAt = markTime(trace, "setup-notify")!;
     const setupCost = fullReadsAfter(trace, setupAt);
-    const setupSweepReads = getsOf(trace).filter((g) => g.start > setupAt);
-    const readsOfTheChange = setupSweepReads.filter((g) => g.addr === "758:0:0");
-    const writesOfFlagged = setsOf(trace).filter((s) => s.start > liveAt && SETUP_IDS.includes(paramIdOf(s.addr)));
+    // Both nets count the STRING path beside the numeric one. This surface is partly
+    // MADE of it — the sixteen knob-function slots ride vd_get_str / vd_set_str on 770,
+    // counted explicitly in phase 1 — so a net built from vd_get / vd_set alone would
+    // let exactly the command kind under test through unseen.
+    const setupSweepReads = deviceIpcAfter(trace, setupAt).filter((s) => s.cmd === "vd_get" || s.cmd === "vd_get_str");
+    const readsOfTheChange = setupSweepReads.filter((s) => s.addr === "758:0:0");
+    const writesOfFlagged = deviceIpcAfter(trace, liveAt).filter(
+      (s) => (s.cmd === "vd_set" || s.cmd === "vd_set_str") && SETUP_IDS.includes(paramIdOf(s.addr)),
+    );
 
     console.log(timeline(trace, { from: ctlAt - 50, limit: 30 }));
     console.log(

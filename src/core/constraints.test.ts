@@ -16,7 +16,13 @@ import { directOutTarget } from "./routing";
 import { emptyPlan } from "./plan";
 import { getModel } from "../models";
 import { ref } from "../models/types";
-import { INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "./control/params";
+import {
+  INSERT_FX_NONE,
+  INSERT_FX_OPTIONS,
+  OUTPUT_INSERT_FX_OPTIONS,
+  PAN_BAL_BAL,
+  PAN_BAL_PAN,
+} from "./control/params";
 import type { InsertFxOption, InsertFxSlot } from "./control/params";
 
 describe("rateConstraints", () => {
@@ -124,6 +130,24 @@ describe("insertFxMenu", () => {
       const plan = planAt(48000);
       plan.nodeParams["ch1"] = { insertFx: options[0].value };
       expect(insertFxMenu(u44v, plan, "ch1").every((e) => e.lock === null)).toBe(true);
+    }
+  });
+
+  // A STEREO-linked pair holds one effect between them on the unit, and the app mirrors
+  // the selection onto both members — so the census counts the pair once and the pair's
+  // own menu must not lock against what the app itself wrote. The gate is Signal Type:
+  // the unit was measured mirroring in PAN mode too.
+  it("does not hold a linked partner's mirrored selection against either member", () => {
+    for (const panBal of [PAN_BAL_BAL, PAN_BAL_PAN]) {
+      for (const [, options] of INPUT_SLOTS) {
+        const plan = planAt(48000);
+        plan.nodeParams["ch1"] = { stereoLink: true, panBal, insertFx: options[0].value };
+        plan.nodeParams["ch2"] = { insertFx: options[0].value };
+        expect(insertFxMenu(u44v, plan, "ch1").every((e) => e.lock === null)).toBe(true);
+        expect(insertFxMenu(u44v, plan, "ch2").every((e) => e.lock === null)).toBe(true);
+        // The pair still holds the slot against an unrelated channel.
+        expect(lockOf(insertFxMenu(u44v, plan, "ch3"), options[0].label)).toBe("slot");
+      }
     }
   });
 

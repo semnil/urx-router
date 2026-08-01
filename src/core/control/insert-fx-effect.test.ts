@@ -5,10 +5,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
-import { emptyPlan } from "../plan";
+import { deserialize, emptyPlan, serialize } from "../plan";
 
 vi.mock("../platform", () => ({ vdGet: vi.fn() }));
 import { vdGet } from "../platform";
+import { INSERT_FX_NONE } from "./params";
 import { applyDeviceState } from "./readback";
 import { planToCommands } from "./translate";
 import type { VdCommand } from "./translate";
@@ -18,17 +19,21 @@ import {
   ENGINE_OUTPUT,
   ENGINE_PITCH,
   MBC_BAND_PARAM,
+  MBC_GLOBAL,
   MBC_RELEASE_MS,
   MBC_XOVER_LM_RANGE,
   MBC_XOVER_MH_RANGE,
   insertFxEngine,
   insertFxFamilyOf,
+  insertFxParamKey,
   insertFxParams,
   insertFxWritableSlots,
   mbcOutGainLabel,
   mbcXoverHz,
   mbcXoverLabel,
   midiNoteName,
+  qualifyInsertFxParams,
+  type InsertFxFamily,
 } from "./insert-fx-effect";
 
 const model = getModel("URX44V");
@@ -187,6 +192,105 @@ describe("insert-fx effect emission", () => {
     const cmds = planToCommands(model, plan);
     expect(engineWrites(cmds, ENGINE_OUTPUT).get(6)).toBe(-2500);
     expect(engineWrites(cmds, ENGINE_COMPANDER_INPUT).has(6)).toBe(false);
+  });
+});
+
+// The plan keeps ONE engine-slot map per node. Keyed by slot alone it is handed to
+// whatever family the selector names next, whose slot is a different parameter under
+// a different law: Compander-H Threshold -3000 is MBC's 1-knob switch (a bool), its
+// ratio, its band width. INSERT_FX is a converge side effect, so the emit path re-sends
+// that until the device agrees — it never reads the device back into the plan.
+describe("insert-fx plan storage is qualified by family", () => {
+  const stereo = model.nodes.find((n) => n.id === "bus.stereo")?.id ?? model.nodes.find((n) => n.kind === "bus")!.id;
+
+  it("does not emit one family's stored values under the next family's slots", () => {
+    const plan = emptyPlan("URX44V");
+    // Compander-H on the STEREO master, Threshold -30 dB + Width 6 dB, then the
+    // selector moved to Multi-Band Comp with the values left behind.
+    plan.nodeParams[stereo] = {
+      insertFx: 1793,
+      insertFxParams: { [insertFxParamKey("compander", 6)]: -3000, [insertFxParamKey("compander", 11)]: 600 },
+    };
+    expect(engineWrites(planToCommands(model, plan), ENGINE_OUTPUT).get(6)).toBe(-3000);
+    plan.nodeParams[stereo] = { ...plan.nodeParams[stereo], insertFx: 1792 };
+    const mbc = engineWrites(planToCommands(model, plan), ENGINE_OUTPUT);
+    expect(mbc.has(6)).toBe(false); // MBC 1-knob switch, not a compander threshold
+    expect(mbc.has(11)).toBe(false); // MBC LOW band gain, not a compander width
+    // Selecting the compander again finds its own values where it left them.
+    plan.nodeParams[stereo] = { ...plan.nodeParams[stereo], insertFx: 1793 };
+    expect(engineWrites(planToCommands(model, plan), ENGINE_OUTPUT).get(6)).toBe(-3000);
+  });
+
+  it("reads a bare slot number as the selected family's (the readback shape)", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams[monoInput] = { insertFx: 1793, insertFxParams: { "6": -2000 } };
+    expect(engineWrites(planToCommands(model, plan), ENGINE_COMPANDER_INPUT).get(6)).toBe(-2000);
+  });
+
+  it("qualifies a loaded document's bare slots against the selector it carries", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams[stereo] = { insertFx: 1793, insertFxParams: { "6": -3000 } };
+    const loaded = deserialize(serialize(plan));
+    expect(loaded.nodeParams[stereo]?.insertFxParams).toEqual({ [insertFxParamKey("compander", 6)]: -3000 });
+  });
+
+  // A document saved with the selector on No Effect still carries the full engine map
+  // of whatever was chosen before it (an older build's selector change kept it), and
+  // the next selection reads it — the CONSOLE's INS FX chip restores an effect without
+  // going near the map. Nothing can address those raws until a family is named, so the
+  // load drops them; what a family already parked under its own key stays.
+  it("drops bare slots a No Effect document has nothing to read them as", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams[stereo] = {
+      insertFx: INSERT_FX_NONE,
+      insertFxParams: { "6": -3000, [insertFxParamKey("compander", 11)]: 600 },
+    };
+    expect(deserialize(serialize(plan)).nodeParams[stereo]?.insertFxParams).toEqual({
+      [insertFxParamKey("compander", 11)]: 600,
+    });
+    const bareOnly = emptyPlan("URX44V");
+    bareOnly.nodeParams[stereo] = { insertFx: INSERT_FX_NONE, insertFxParams: { "6": -3000 } };
+    expect(deserialize(serialize(bareOnly)).nodeParams[stereo]?.insertFxParams).toBeUndefined();
+  });
+
+  it("keeps the value a family authored over the bare one read back for it", () => {
+    const params = qualifyInsertFxParams({ "6": -2000, [insertFxParamKey("compander", 6)]: -3000 }, "compander");
+    expect(params).toEqual({ [insertFxParamKey("compander", 6)]: -3000 });
+  });
+});
+
+// boundRaw is documented as the last line before an out-of-range raw reaches the
+// hardware, and it is a no-op for a slot that states no bounds — an opt-out no
+// catalog reader can see. MBC slot 6 is the case that showed it: a bool taking a
+// compander's -3000 unchanged.
+describe("insert-fx writable slots are all bounded", () => {
+  const families: InsertFxFamily[] = [
+    "guitar-clean",
+    "guitar-crunch",
+    "guitar-lead",
+    "guitar-drive",
+    "pitch",
+    "compander",
+    "mbc",
+  ];
+  for (const fam of families) {
+    it(`${fam}: every emitted slot states a finite raw range`, () => {
+      for (const s of insertFxWritableSlots(fam)) {
+        expect.soft(Number.isFinite(s.rawMin), `${fam} slot ${s.slot} rawMin`).toBe(true);
+        expect.soft(Number.isFinite(s.rawMax), `${fam} slot ${s.slot} rawMax`).toBe(true);
+        expect.soft(s.rawMin, `${fam} slot ${s.slot} rawMin <= rawMax`).toBeLessThanOrEqual(s.rawMax);
+      }
+    });
+  }
+
+  it("bounds an out-of-range raw on a device-managed bool slot", () => {
+    const plan = emptyPlan("URX44V");
+    const stereo = model.nodes.find((n) => n.id === "bus.stereo")?.id ?? model.nodes.find((n) => n.kind === "bus")!.id;
+    plan.nodeParams[stereo] = {
+      insertFx: 1792,
+      insertFxParams: { [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobOn)]: -3000 },
+    };
+    expect(engineWrites(planToCommands(model, plan), ENGINE_OUTPUT).get(MBC_GLOBAL.oneKnobOn)).toBe(0);
   });
 });
 

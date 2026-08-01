@@ -10,7 +10,7 @@ import { insertFxControl, isStereoChannel } from "./control/translate";
 import { INSERT_FX_NONE, insertFxAvailable } from "./control/params";
 import type { InsertFxOption, InsertFxSlot } from "./control/params";
 import type { Plan } from "./plan";
-import { directOutTarget } from "./routing";
+import { directOutTarget, isStereoLinkedPair, partnerChannel } from "./routing";
 
 /** Selectable rates in Hz (44.1 kHz … 192 kHz). */
 export const SAMPLE_RATES = [44100, 48000, 88200, 96000, 176400, 192000];
@@ -102,13 +102,22 @@ export type InsertFxCensus = ReadonlyMap<InsertFxSlot, readonly string[]>;
  *  rather than collapsing to one owner: a plan carrying a collision is loadable
  *  (the loader warns and offers to open it), so a slot claimed by this node AND
  *  another must still read as taken for this node's menu.
+ *  A STEREO-linked MONO IN pair claims once, under the member the model lists first:
+ *  measured, its two members mirror the selector and point at one engine instance,
+ *  so the pair holds one effect between them. The gate is Signal Type, not PAN/BAL —
+ *  the mirror was measured in both modes. Counting the app's own mirror as a second
+ *  holder would lock the pair's menu against its own selection and report a file the
+ *  app itself saved as a collision.
  *  Shared with plan-validate.ts, whose slot-collision check reads the same census. */
 export function insertFxCensus(model: DeviceModel, plan: Plan): InsertFxCensus {
   const holders = new Map<InsertFxSlot, string[]>();
   for (const node of model.nodes) {
     const slot = insertFxSlotOf(model, plan, node.id);
     if (!slot) continue;
-    holders.set(slot, [...(holders.get(slot) ?? []), node.id]);
+    const held = holders.get(slot) ?? [];
+    const partner = isStereoLinkedPair(model, plan, node.id) ? partnerChannel(model, node.id) : undefined;
+    if (partner !== undefined && held.includes(partner)) continue;
+    holders.set(slot, [...held, node.id]);
   }
   return holders;
 }
@@ -117,8 +126,9 @@ export function insertFxCensus(model: DeviceModel, plan: Plan): InsertFxCensus {
 // the reason it is locked. Both reasons are UI-only — the write set is never
 // gated by either (see architecture.md), so this decides what the screens offer
 // and nothing about what is emitted. Empty for a node with no insert FX. The
-// slot census skips the node itself, so the value it already holds stays
-// selectable; No Effect has neither a ceiling nor a slot and is never locked.
+// slot census skips the node itself — and its STEREO-linked partner, which shares the
+// node's one claim — so the value it already holds stays selectable; No Effect has
+// neither a ceiling nor a slot and is never locked.
 // A caller rendering many menus in one pass passes the census in so the sweep
 // runs once instead of per node.
 export function insertFxMenu(
@@ -129,9 +139,10 @@ export function insertFxMenu(
 ): InsertFxMenuEntry[] {
   const ifx = insertFxControl(model, nodeId);
   if (!ifx) return [];
+  const partner = isStereoLinkedPair(model, plan, nodeId) ? partnerChannel(model, nodeId) : undefined;
   const taken = new Set<InsertFxSlot>();
   for (const [slot, holders] of census ?? insertFxCensus(model, plan)) {
-    if (holders.some((h) => h !== nodeId)) taken.add(slot);
+    if (holders.some((h) => h !== nodeId && h !== partner)) taken.add(slot);
   }
   return ifx.options.map((option) => ({
     option,

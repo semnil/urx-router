@@ -300,6 +300,89 @@ describe("LiveSync device-follow snapshot", () => {
   });
 });
 
+// A direct-follow notify and a device read overlap constantly while a session is up: a
+// reconcile of one node runs for hundreds of milliseconds, and the operator's other hand
+// is on the board. The re-base rebuilds the whole snapshot from the copy the read ran
+// against — which was cloned when the read was ISSUED, and so cannot carry what the
+// device said afterwards.
+describe("LiveSync direct-follow journal across a read", () => {
+  /** The ch1 CH_ON command at a given state, for its address and its two raw values. */
+  function ch1OnCmd(on: boolean) {
+    const probe = basePlan();
+    probe.nodeParams.ch1 = { ...probe.nodeParams.ch1, on };
+    const cmd = planToCommands(model, probe).find((c) => c.name === "CH_ON" && c.node === "ch1");
+    if (!cmd) throw new Error("expected a ch1 CH_ON command");
+    return cmd;
+  }
+
+  it("restores a notify the read's copy predates, instead of fighting the operator", async () => {
+    const unmuted = ch1OnCmd(true);
+    const muted = ch1OnCmd(false);
+    const plan = basePlan();
+    // The session starts in agreement: ch1 explicitly on, and the device says so too.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: true };
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+
+    // (1) A knob turn on ch4 settles into a scoped reconcile; the read clones the plan
+    // as it stands now, and the mark is taken beside it.
+    const since = live.directMark();
+    const deviceView = clonePlanState(plan);
+
+    // (2) The operator MUTEs ch1 on the hardware while that read is in flight. Follow
+    // decodes it straight into the plan and patches the one snapshot entry.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: false };
+    live.noteDirect(muted.paramId, muted.x, muted.y, muted.vdValue);
+
+    // (3) The read resolves with ch4's value, which the merge puts into both the plan
+    // and the copy it read into. Nothing in it knows about ch1.
+    deviceView.nodeParams.ch4 = { ...deviceView.nodeParams.ch4, gain: 30 };
+    plan.nodeParams.ch4 = { ...plan.nodeParams.ch4, gain: 30 };
+    live.resync(deviceView, since);
+
+    // (4) The operator un-mutes ch1 on the hardware. A snapshot rebuilt from the copy
+    // alone claims the channel was never muted, so this notify equals it and follow
+    // drops it as our own echo — the plan then keeps the mute the operator lifted.
+    expect(live.isEcho(unmuted.paramId, unmuted.x, unmuted.y, unmuted.vdValue)).toBe(false);
+
+    // (5) …and with nothing else pending, the flush must send nothing. Against a stale
+    // snapshot entry the plan's mute reads as an unsent edit, and the next window
+    // re-mutes the channel on the unit.
+    vi.mocked(vdSet).mockClear();
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+
+  it("lets the read's own value stand over a notify it was issued after", async () => {
+    const unmuted = ch1OnCmd(true);
+    const muted = ch1OnCmd(false);
+    const plan = basePlan();
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: true };
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+
+    // The mute lands BEFORE the read is issued, so the read sees it and can supersede
+    // it: the operator lifted the mute again while the read was on its way to ch1.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: false };
+    live.noteDirect(muted.paramId, muted.x, muted.y, muted.vdValue);
+
+    const since = live.directMark();
+    const deviceView = clonePlanState(plan);
+    deviceView.nodeParams.ch1 = { ...deviceView.nodeParams.ch1, on: true };
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: true };
+    live.resync(deviceView, since);
+
+    // The journal entry is older than the read, so the read wins: the un-muted value is
+    // device truth, and the next notify carrying it is an echo.
+    expect(live.isEcho(unmuted.paramId, unmuted.x, unmuted.y, unmuted.vdValue)).toBe(true);
+    vi.mocked(vdSet).mockClear();
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+});
+
 // The EQ 1-knob is the other kind of side effect: the device recomputes the four band
 // values, which the plan mirrors rather than authors. Pushing them back (a converge)
 // would write the operator's stale manual curve over the device's own work, so the owner

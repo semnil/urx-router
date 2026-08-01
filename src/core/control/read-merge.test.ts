@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
 import { readIntoPlan, type ReadbackResult } from "./readback";
-import { applyPatchInContext, clonePlanState, diffPlans } from "../plan-history";
+import { applyPatchInContext, clonePlanState, diffPlans, PlanWriteWitness } from "../plan-history";
 
 // readIntoPlan is the contest between a device read and the operator's hands: the read
 // samples the unit before a gesture exists, resolves hundreds of milliseconds to tens of
@@ -172,6 +172,171 @@ describe("readIntoPlan", () => {
 
     // "A cancel means nothing happened" — with no restore step to get it wrong.
     expect(JSON.stringify(plan)).toBe(before);
+  });
+});
+
+// The value contest cannot see an edit that ended where it started. These drive the real
+// witness through the funnel main.ts uses (a write, then markChanged), so what is pinned
+// is authorship reaching the merge — not a set handed to it.
+describe("readIntoPlan against an edit that goes there and back", () => {
+  /** One edit funnel: mutate, then report to the witness the way markChanged does. */
+  function edit(witness: PlanWriteWitness, mutate: () => void): void {
+    mutate();
+    witness.note();
+  }
+
+  it("does not enshrine the value a read sampled between two app writes", async () => {
+    const plan = basePlan();
+    // Live session, ch1 explicitly on, device in agreement.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: true };
+    const witness = new PlanWriteWitness(() => plan);
+
+    // A full reconcile is in flight: ~800 sequential reads, seconds wide.
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        // The operator MUTEs ch1 in the app; the flush window sends it.
+        edit(witness, () => (plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: false }));
+        // The read's sequential pass reaches CH_ON right here and samples the device
+        // as it stands between the two flushes: muted.
+        into.nodeParams.ch1 = { ...into.nodeParams.ch1, on: false };
+        // The operator un-mutes; that window's flush lands too, so the DEVICE ends
+        // un-muted and the plan is back at the value the read was issued on.
+        edit(witness, () => (plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: true }));
+        return OK;
+      },
+      witness,
+    );
+
+    expect(merged).not.toBeNull();
+    // Value equality reads this key as untouched, so the device's mid-gesture sample
+    // would apply — silently, and the next converge round would push it at the unit.
+    expect(plan.nodeParams.ch1?.on).toBe(true);
+    expect(merged!.unplaced).toContain("nodeParams ch1.on");
+    // The same key is kept out of the patch the history baseline absorbs: absorbed but
+    // not applied would put a value the app never wrote into the next undo entry.
+    const absorbed = merged!.devicePatch.filter((e) => e.field === "nodeParams" && e.key === "ch1");
+    expect(absorbed.some((e) => "on" in (e as { before: Record<string, unknown> }).before)).toBe(false);
+  });
+
+  it("still takes the device's value on a key no funnel touched", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: true, hpf: false };
+    const witness = new PlanWriteWitness(() => plan);
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        into.nodeParams.ch1 = { ...into.nodeParams.ch1, on: false, hpf: true };
+        edit(witness, () => (plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: false }));
+        edit(witness, () => (plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: true }));
+        return OK;
+      },
+      witness,
+    );
+
+    // Authorship is per key, not per node: the app's own key is held, its neighbour on
+    // the same node takes device truth.
+    expect(plan.nodeParams.ch1?.on).toBe(true);
+    expect(plan.nodeParams.ch1?.hpf).toBe(true);
+    expect(merged!.unplaced).toEqual(["nodeParams ch1.on"]);
+  });
+
+  it("goes back to the value contest once the read has resolved", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: true };
+    const witness = new PlanWriteWitness(() => plan);
+
+    // An edit before the read is issued is not authored during it…
+    edit(witness, () => (plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: true }));
+    await readIntoPlan(
+      () => plan,
+      async (into) => {
+        into.nodeParams.ch1 = { ...into.nodeParams.ch1, on: false };
+        return OK;
+      },
+      witness,
+    );
+    expect(plan.nodeParams.ch1?.on).toBe(false);
+
+    // …and the witness disarms with the last read, so the next one starts clean.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: false };
+    await readIntoPlan(
+      () => plan,
+      async (into) => {
+        into.nodeParams.ch1 = { ...into.nodeParams.ch1, on: true };
+        return OK;
+      },
+      witness,
+    );
+    expect(plan.nodeParams.ch1?.on).toBe(true);
+  });
+});
+
+// A NodeParams key can be a whole group of fields (comp, gate, eqBands, …), and the two
+// sides move different fields of it at the same time: the operator's hand on the unit's
+// COMP RELEASE, their pointer on the app's COMP ATTACK. Contesting the group whole hands
+// it to the app and the next flush reverts the device's own sibling on the unit.
+describe("readIntoPlan inside a nested group", () => {
+  it("keeps the field the device moved and the field the app moved", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, comp: { attack: 10, release: 100 } };
+    const witness = new PlanWriteWitness(() => plan);
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        // The operator turned COMP RELEASE on the hardware; the notify settled into a
+        // scoped reconcile of ch1, and this is what it reads back.
+        into.nodeParams.ch1 = { ...into.nodeParams.ch1, comp: { attack: 10, release: 200 } };
+        // Meanwhile they drag COMP ATTACK in the tuning screen.
+        plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, comp: { attack: 50, release: 100 } };
+        witness.note();
+        return OK;
+      },
+      witness,
+    );
+
+    expect(merged).not.toBeNull();
+    expect(plan.nodeParams.ch1?.comp).toEqual({ attack: 50, release: 200 });
+    // Part of the group was left to the plan, and that is still named rather than
+    // salvaged in silence.
+    expect(merged!.unplaced).toContain("nodeParams ch1.comp");
+  });
+
+  it("fills the bands a readback read without disturbing the one being dragged", async () => {
+    const plan = basePlan();
+    const bands = [] as NonNullable<Plan["nodeParams"][string]["eqBands"]>;
+    bands[0] = { on: true, freq: 100, gain: 0, q: 0.71 };
+    bands[3] = { on: true, freq: 8000, gain: 0, q: 0.71 };
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, eqBands: bands };
+    const witness = new PlanWriteWitness(() => plan);
+
+    await readIntoPlan(
+      () => plan,
+      async (into) => {
+        // The device recomputed band 3 (a 1-knob move); the read fills only the bands
+        // it read, so the array stays sparse.
+        const read = [] as NonNullable<Plan["nodeParams"][string]["eqBands"]>;
+        read[0] = { on: true, freq: 100, gain: 0, q: 0.71 };
+        read[3] = { on: true, freq: 8000, gain: 6, q: 0.71 };
+        into.nodeParams.ch1 = { ...into.nodeParams.ch1, eqBands: read };
+        // The operator drags band 0's gain in the EQ screen at the same time.
+        const moved = structuredClone(plan.nodeParams.ch1!.eqBands!);
+        moved[0] = { ...moved[0], gain: -4 };
+        plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, eqBands: moved };
+        witness.note();
+        return OK;
+      },
+      witness,
+    );
+
+    const after = plan.nodeParams.ch1!.eqBands!;
+    expect(after[0]?.gain).toBe(-4);
+    expect(after[3]?.gain).toBe(6);
+    // The holes the readback left are still holes: nothing filled band 1 or 2.
+    expect(1 in after).toBe(false);
+    expect(2 in after).toBe(false);
   });
 });
 

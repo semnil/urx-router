@@ -14,8 +14,9 @@ export interface EngineHooks {
   /** An incoming message changed the plan through `control` (mirror + repaint). */
   applied(control: BoundControl): void;
   /** A localized refusal, or null when incoming messages may edit the plan. The
-   *  engine never reads the value — it forwards it to `refused` and compares it
-   *  with the previous one to decide whether the gated window changed. */
+   *  engine never reads the value — it forwards it to `refused`. The window it
+   *  belongs to is decided by gateReleased(), not by the string: two windows in a
+   *  row carry the same reason whenever the same latch raised both. */
   gate?(): string | null;
   /** The first message of a gated window that would actually have edited
    *  something. Called once per window, never per message: a controller sweep is
@@ -68,10 +69,9 @@ export class MidiEngine {
   private lastRecv = new Map<string, number>(); // last receive time per address
   private lastFedAt = new Map<string, number>(); // toggle echo guard: last feedback send-time per address
   private learn: { pendingCc: CcEvent | null } | null = null;
-  // The reason the current gated window was already reported under; null when not
-  // gated. Cleared by the first message that is allowed through, so the next
-  // window reports again.
-  private gated: string | null = null;
+  // Whether the current gated window has already been reported. Cleared by
+  // gateReleased(), and by the first message that is allowed through.
+  private gated = false;
 
   constructor(private hooks: EngineHooks) {}
 
@@ -97,6 +97,16 @@ export class MidiEngine {
 
   isMapped(controlId: string): boolean {
     return this.mappings.some((m) => m.control === controlId);
+  }
+
+  /** The gate's owner released the plan: end the reported window, so the next one
+   *  speaks up again. The engine cannot see this for itself — it runs only on an
+   *  incoming message, and a window opens and closes with none arriving whenever
+   *  the operator is not touching the controller. Comparing the reason instead
+   *  silenced every window after the first, since one latch always names itself
+   *  the same way. */
+  gateReleased(): void {
+    this.gated = false;
   }
 
   /** True when this mapping shares its address with an earlier one — a gang
@@ -198,7 +208,7 @@ export class MidiEngine {
       this.reportRefusal(refusal, matched);
       return;
     }
-    this.gated = null;
+    this.gated = false;
     // Common case: a single mapping, no gang — apply it directly.
     if (matched.length === 1) {
       if (!this.dropEcho(matched[0], ev)) this.apply(matched[0], ev);
@@ -222,9 +232,9 @@ export class MidiEngine {
   // per-message record goes to the trace log, which is where it belongs.
   private reportRefusal(reason: string, matched: MidiMapping[]): void {
     this.hooks.trace?.(`refuse ${matched.map((m) => m.control).join(",")} (${reason})`);
-    if (reason === this.gated) return;
+    if (this.gated) return;
     if (!matched.some((m) => this.hooks.resolve(m.control))) return;
-    this.gated = reason;
+    this.gated = true;
     this.hooks.refused?.(reason);
   }
 

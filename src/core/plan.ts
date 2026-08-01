@@ -5,7 +5,8 @@
 import type { ConnectionKind, DeviceModel, ModelId } from "../models/types";
 import { parseRef, ref } from "../models/types";
 import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES } from "./constraints";
-import { migrateFxEffectParams } from "./control/fx-effect";
+import { FX_CHANNEL_NODE_INDEX, migrateFxEffectParams } from "./control/fx-effect";
+import { insertFxFamilyOf, qualifyInsertFxParams } from "./control/insert-fx-effect";
 import { stripSceneExternal } from "./scene-scope";
 
 // LEVEL fader / send range in dB (the device level_gain table, shared by every
@@ -210,10 +211,12 @@ export interface NodeParams {
    *  device auto-engages it whenever an effect is (re)selected. Absent = leave the
    *  device state alone; only written while an effect is selected. */
   insertFxOn?: boolean;
-  /** Insert-FX effect parameters: RAW broker values keyed by the engine array SLOT
-   *  (see control/insert-fx-effect.ts), mirroring the device so a captured plan
-   *  round-trips. The selected `insertFx` value picks the slot layout. Absent slots
-   *  fall back to the family's factory defaults. */
+  /** Insert-FX effect parameters: RAW broker values keyed by effect FAMILY + engine
+   *  array slot (`insertFxParamKey`, see control/insert-fx-effect.ts), mirroring the
+   *  device so a captured plan round-trips. The selected `insertFx` value picks which
+   *  family's entries are read; absent slots fall back to the family's factory
+   *  defaults. A bare slot number is the device-shaped namespace a readback writes and
+   *  reads as the currently selected family's. */
   insertFxParams?: Record<string, number>;
   /** COMP_EQ_TYPE: 0 = COMP->EQ, 1 = SSMCS (MONO IN channels). Absent = COMP->EQ. */
   compEqType?: number;
@@ -341,6 +344,10 @@ export const PLAN_FORMAT = "urx-router-plan";
 // this build writes carries only the qualified names, which an older build reads as
 // absent — so it is tagged 2 and refused there rather than silently loading factory
 // defaults for those parameters and writing them at the unit.
+// 3: the same rule applied to the two remaining places one stored value could be
+// read under a law it was not written under — the Ping Pong delay time (its own key
+// beside Mono Delay's, one slot under two laws) and the insert-FX engine slots (keyed
+// by family, so a selector change cannot hand them to the next effect).
 export const PLAN_VERSION = 2;
 
 // Language-agnostic load failures. The UI maps the code to a localized message.
@@ -588,11 +595,23 @@ function sanitizeNodeParams(v: unknown, version: number): Record<string, NodePar
     if (!isStringRecord(np)) continue;
     const clean = sanitizeParamRecord(np) as NodeParams;
     // Every load path (file open, recent files, ?plan= deep link, drop) reaches
-    // deserialize, so this is where a plan written with the pre-family FX parameter
-    // keys is re-keyed onto the family that saved it. Version 1 only: from 2 on a
-    // bare key is not a legacy value, and rewriting it would move a parameter the
-    // document meant to leave alone.
-    if (version < 2 && clean.fxEffect) migrateFxEffectParams(clean.fxEffect);
+    // deserialize, so this is where a plan written with keys an effect no longer
+    // addresses is re-keyed onto the effect that saved them. Which steps run is
+    // decided per document version inside migrateFxEffectParams.
+    const fxIndex = FX_CHANNEL_NODE_INDEX[nodeId];
+    if (clean.fxEffect && fxIndex !== undefined) migrateFxEffectParams(clean.fxEffect, fxIndex, version);
+    // The insert-FX engine slots are re-keyed at EVERY version: a bare slot number
+    // is the device-shaped namespace a readback writes, so it belongs to the family
+    // the document's own selector names, whenever it was written. With no effect
+    // selected they belong to nothing and are dropped — a document saved with the
+    // selector on No Effect keeps a full map of whatever was chosen before it, and
+    // the next selection (the CONSOLE's INS FX chip restores one) would read it.
+    if (clean.insertFxParams) {
+      const fam = clean.insertFx === undefined ? null : insertFxFamilyOf(clean.insertFx);
+      const params = qualifyInsertFxParams(clean.insertFxParams, fam);
+      if (Object.keys(params).length > 0) clean.insertFxParams = params;
+      else delete clean.insertFxParams;
+    }
     out[nodeId] = clean;
   }
   return out;

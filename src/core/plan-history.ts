@@ -199,6 +199,24 @@ function diffKeys(before: AnyRecord, after: AnyRecord): [KeySlots, KeySlots] | n
   return changed ? [b, a] : null;
 }
 
+/** Whether both values are records, or both arrays — something the contest can descend
+ *  into one level. A group replaced by an array of the same keys is a shape change, not
+ *  a per-field edit. */
+function sameKindGroup(a: unknown, b: unknown): boolean {
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  return Array.isArray(a) === Array.isArray(b);
+}
+
+/** The sub-keys that differ inside one nested NodeParams / ConnParams value (comp,
+ *  gate, eqBands, …), or null when the pair is not two groups of the same kind — a
+ *  scalar, or a key that appeared or disappeared, which is contested whole. */
+function groupSubKeys(before: Slot<unknown> | undefined, after: Slot<unknown> | undefined): string[] | null {
+  if (!before?.present || !after?.present) return null;
+  if (!sameKindGroup(before.value, after.value)) return null;
+  const sub = diffKeys(before.value as AnyRecord, after.value as AnyRecord);
+  return sub ? Object.keys(sub[0]) : null;
+}
+
 /** Slot entries for one node-id-keyed record (positions / names / colors / notes). */
 function diffRecordSlots(
   field: "positions" | "nodeNames" | "nodeColors" | "notes",
@@ -408,6 +426,36 @@ function slotHolds(rec: AnyRecord, key: string, slot: Slot<unknown>): boolean {
   return deepEqual(rec![key], slot.value);
 }
 
+/** The part of one nested group value (comp, gate, eqBands, …) the plan still holds the
+ *  patch's `before` side of, merged over what the plan holds now — or null when nothing
+ *  of it survives, or the key is not a group on both sides.
+ *
+ *  A whole-value check bottoms out at the top-level NodeParams key, which is coarser
+ *  than the edits it arbitrates: the app moving COMP ATTACK and the device moving COMP
+ *  RELEASE are one contested key, so the app would win the whole group and the next
+ *  flush would actively revert the device's own sibling on the unit. Re-running the
+ *  same slot contest one level down settles each field with its own author. Sparse
+ *  arrays are why this reuses diffKeys / applySlots rather than a fresh walk: eqBands
+ *  is written by index and a readback fills only the bands it read, and both are
+ *  hole-aware. */
+function narrowGroup(current: unknown, before: Slot<unknown>, after: Slot<unknown> | undefined): Slot<unknown> | null {
+  if (!before.present || !after?.present) return null;
+  if (!sameKindGroup(current, before.value) || !sameKindGroup(current, after.value)) return null;
+  const sub = diffKeys(before.value as AnyRecord, after.value as AnyRecord);
+  if (!sub) return null;
+  const keep: KeySlots = {};
+  let any = false;
+  for (const [key, slot] of Object.entries(sub[0])) {
+    if (!slotHolds(current as AnyRecord, key, slot)) continue;
+    keep[key] = sub[1][key];
+    any = true;
+  }
+  if (!any) return null;
+  const merged = structuredClone(current) as Record<string, unknown>;
+  applySlots(merged, keep);
+  return { present: true, value: merged };
+}
+
 /** The part of `e` whose `before` side `plan` still holds: the whole entry, a subset of
  *  its keys, or nothing. Where the two disagree the plan's value was authored after the
  *  patch was taken, and that authorship is what the caller must not overwrite. */
@@ -436,9 +484,20 @@ function entryInContext(plan: Plan, e: PlanPatchEntry): PlanPatchEntry | null {
       // diffKeys writes both sides for every differing key, so `after` has whatever
       // `before` has.
       for (const [key, slot] of Object.entries(e.before)) {
-        if (!slotHolds(rec, key, slot)) continue;
-        before[key] = slot;
-        after[key] = e.after[key];
+        if (slotHolds(rec, key, slot)) {
+          before[key] = slot;
+          after[key] = e.after[key];
+          any = true;
+          continue;
+        }
+        // The plan moved this key since the patch was taken — but a nested group can
+        // have been moved by both sides in different fields, so the contest re-runs
+        // one level down. The key stays OUT of `before`: it was not held whole, and
+        // that is what makes the caller name it as contested rather than pass a
+        // partly-written group off as fully applied.
+        const narrowed = narrowGroup(rec?.[key], slot, e.after[key]);
+        if (!narrowed) continue;
+        after[key] = narrowed;
         any = true;
       }
       return any ? ({ ...e, before, after } as PlanPatchEntry) : null;
@@ -456,7 +515,8 @@ function entryInContext(plan: Plan, e: PlanPatchEntry): PlanPatchEntry | null {
 /** The keys of `e` that `part` — its in-context subset, or null for none of it — left
  *  out. nodeParams / connParams are named key by key, since they are the two fields
  *  that narrow to a subset and a caller cannot otherwise tell a partly-applied entry
- *  from a rejected one; every other field is all or nothing. */
+ *  from a rejected one; every other field is all or nothing. A group applied only in
+ *  part is named here too, since part of it really was left to the plan's own value. */
 function outOfContextKeys(e: PlanPatchEntry, part: PlanPatchEntry | null): string[] {
   const label = "key" in e ? `${e.field} ${e.key}` : e.field;
   if (e.field !== "nodeParams" && e.field !== "connParams") return part ? [] : [label];
@@ -481,6 +541,173 @@ export function applyPatchInContext(plan: Plan, patch: PlanPatch): string[] {
     if (part !== e) moved.push(...outOfContextKeys(e, part));
   }
   return [...applyPatch(plan, scoped), ...moved];
+}
+
+// The name one contested piece of a patch goes by. NUL-joined for the same reason a
+// wire key is: a node id carries dots (bus.stereo), so a printable separator would let
+// two different pieces spell the same name.
+function contestName(...parts: string[]): string {
+  return parts.join(WIRE_SEP);
+}
+
+/** The printable label of the same piece, in the spelling applyPatchInContext reports. */
+function contestLabel(field: PatchField, key?: string, rest?: string[]): string {
+  const head = key === undefined ? field : `${field} ${key}`;
+  return rest?.length ? `${head}.${rest.join(".")}` : head;
+}
+
+/** Every piece of `patch`, named at the granularity the merge arbitrates: one name per
+ *  entry, one per nodeParams / connParams key, and one per changed sub-key of a nested
+ *  group value. A write witness records these and dropAuthored asks for them, so what
+ *  an edit authored and what a merge contests cannot be spelled differently. */
+export function patchContestNames(patch: PlanPatch): string[] {
+  const out: string[] = [];
+  for (const e of patch) {
+    if (e.field !== "nodeParams" && e.field !== "connParams") {
+      out.push("key" in e ? contestName(e.field, e.key) : contestName(e.field));
+      continue;
+    }
+    for (const key of Object.keys(e.before)) {
+      const subs = groupSubKeys(e.before[key], e.after[key]);
+      if (!subs) out.push(contestName(e.field, e.key, key));
+      else for (const sub of subs) out.push(contestName(e.field, e.key, key, sub));
+    }
+  }
+  return out;
+}
+
+/** Rebuild an `after` slot with `keys` put back to what `before` holds — the device's
+ *  own siblings still land, and the sub-keys the app authored read as no change. */
+function revertSubKeys(before: Slot<unknown>, after: Slot<unknown>, keys: string[]): Slot<unknown> {
+  if (!before.present || !after.present) return after;
+  const value = structuredClone(after.value) as Record<string, unknown>;
+  const slots: KeySlots = {};
+  for (const key of keys) slots[key] = slotOf(before.value as Record<string, unknown>, key);
+  applySlots(value, slots);
+  return { present: true, value };
+}
+
+/** The part of `patch` that `authored` — the contest names an edit funnel wrote while
+ *  the patch was being computed — does not claim, plus the labels of what was taken out.
+ *
+ *  This is authorship, not value: an edit that goes A → B → A inside a device read's
+ *  window leaves the plan holding exactly what the read's own `before` side says, so the
+ *  value contest in entryInContext reads it as untouched and a read that sampled the
+ *  device at B writes B back — silently, and permanently once the snapshot re-bases on
+ *  it. Only the write site knows the key was moved at all, so it is the write site the
+ *  names come from. */
+export function dropAuthored(patch: PlanPatch, authored: ReadonlySet<string>): { patch: PlanPatch; dropped: string[] } {
+  if (!authored.size) return { patch, dropped: [] };
+  const kept: PlanPatch = [];
+  const dropped: string[] = [];
+  for (const e of patch) {
+    if (e.field !== "nodeParams" && e.field !== "connParams") {
+      const key = "key" in e ? e.key : undefined;
+      if (authored.has(key === undefined ? contestName(e.field) : contestName(e.field, key))) {
+        dropped.push(contestLabel(e.field, key));
+      } else {
+        kept.push(e);
+      }
+      continue;
+    }
+    const before: KeySlots = {};
+    const after: KeySlots = {};
+    let any = false;
+    for (const key of Object.keys(e.before)) {
+      if (authored.has(contestName(e.field, e.key, key))) {
+        dropped.push(contestLabel(e.field, e.key, [key]));
+        continue;
+      }
+      const subs = groupSubKeys(e.before[key], e.after[key]);
+      const mine = subs?.filter((sub) => authored.has(contestName(e.field, e.key, key, sub))) ?? [];
+      if (subs && mine.length === subs.length && mine.length) {
+        dropped.push(contestLabel(e.field, e.key, [key]));
+        continue;
+      }
+      before[key] = e.before[key];
+      // A group the two sides moved in different fields keeps the device's, so only
+      // the fields the app authored are put back.
+      after[key] = mine.length ? revertSubKeys(e.before[key], e.after[key], mine) : e.after[key];
+      for (const sub of mine) dropped.push(contestLabel(e.field, e.key, [key, sub]));
+      any = true;
+    }
+    if (any) kept.push({ ...e, before, after } as PlanPatchEntry);
+  }
+  return { patch: kept, dropped };
+}
+
+/** One read's view of the witness. `authored()` may be asked more than once; `close()`
+ *  is what disarms the witness, so it belongs in a `finally`. */
+export interface PlanWriteWatch {
+  authored: () => ReadonlySet<string>;
+  close: () => void;
+}
+
+/** Which plan keys an edit funnel wrote while a device read was in flight.
+ *
+ *  A read merges back by comparing values, and value equality cannot see an edit that
+ *  went A → B → A inside the read's window (see dropAuthored). Authorship is the missing
+ *  half and only the write site has it, so every edit funnel reports here and a read asks
+ *  what moved since it was issued.
+ *
+ *  A sample is a diff against a clone, taken at each write and once more when the read
+ *  resolves — the differ the undo entries already use, so a key cannot be named one way
+ *  here and another in the contest, and a funnel that mutates further after reporting is
+ *  still caught by the closing sample. It costs a whole-plan diff per edit (0.12 ms for
+ *  the URX44V default plan) and is armed ONLY while a read is in flight; with none open
+ *  `note()` is a null check.
+ *
+ *  A device-authored write that lands between two samples (follow's applyDirect, an
+ *  earlier read merging) is attributed to the app, since one sample cannot tell two
+ *  writers apart. That direction is deliberate: a false claim of authorship keeps a value
+ *  the device itself reported, while a missed one is the defect this exists to close. */
+export class PlanWriteWitness {
+  // Contest name → the sample it was last written at. Keyed by name, so it is bounded
+  // by the plan's key count rather than by how long a read runs.
+  private readonly written = new Map<string, number>();
+  private samples = 0;
+  private open = 0;
+  private last: Plan | null = null;
+
+  constructor(private readonly getPlan: () => Plan) {}
+
+  /** An edit funnel has just written to the plan. */
+  note(): void {
+    if (this.open) this.sample();
+  }
+
+  /** Watch the writes made from now until the read being issued resolves. */
+  watch(): PlanWriteWatch {
+    if (!this.open++) this.last = clonePlanState(this.getPlan());
+    const at = this.samples;
+    let closed = false;
+    return {
+      authored: () => {
+        this.sample();
+        const names = new Set<string>();
+        for (const [name, sample] of this.written) if (sample > at) names.add(name);
+        return names;
+      },
+      close: () => {
+        if (closed) return;
+        closed = true;
+        if (!--this.open) {
+          this.written.clear();
+          this.last = null;
+        }
+      },
+    };
+  }
+
+  private sample(): void {
+    if (!this.last) return;
+    const plan = this.getPlan();
+    const patch = diffPlans(this.last, plan);
+    this.last = clonePlanState(plan);
+    if (!patch.length) return;
+    const at = ++this.samples;
+    for (const name of patchContestNames(patch)) this.written.set(name, at);
+  }
 }
 
 /** The undo / redo stacks over a rolling baseline. Pure: no timers, no DOM, no

@@ -22,7 +22,7 @@ import {
   hasProbe,
   type InstallOptions,
 } from "./fake-device";
-import { analyze, report, timeline, markTime, spans, type Span } from "./analyze";
+import { analyze, report, timeline, markTime, spans, getsOf, type Span } from "./analyze";
 import { MAX_ENTRIES } from "../../src/core/plan-history";
 import { CH1_FADER, CH2_FADER, faderOf, faderReadout, strip } from "./ui";
 
@@ -515,6 +515,14 @@ test.describe("Tzb tail", () => {
     await page.click("#btn-device");
     await page.click("#btn-fetch");
     await waitForReads(page, base + 100); // the read is genuinely under way
+    // How far the sweep got before the cancel. It is the yardstick for what follows:
+    // a whole-device read is several hundred sequential vd_gets, so a cancel that only
+    // suppressed the COMMIT — and let the sweep run to completion — issues many times
+    // this many more before the link falls quiet. Without the bound, `quiesceAfter`
+    // stamped behind `waitQuiet` exonerates exactly that. (t6's teardown ladder bounds
+    // the same way, against its boot sweep.)
+    const readsBeforeCancel = (await getCount(page)) - base;
+    expect(readsBeforeCancel).toBeGreaterThanOrEqual(100);
     await mark(page, "cancel");
     await clickHidden(page, "btn-fetch"); // the same button cancels an in-flight fetch
     await waitQuiet(page, 800);
@@ -542,13 +550,21 @@ test.describe("Tzb tail", () => {
     // "no further command after the abort was acknowledged" is the only way to say
     // the read stopped rather than merely stopped being reported.
     const findings = analyze(trace, { quiesceAfter: "cancel-done" });
+    const readsAfterCancel = getsOf(trace).filter(
+      (g) => g.start > markTime(trace, "cancel")! && g.start < markTime(trace, "cancel-done")!,
+    ).length;
     console.log(timeline(trace, { from: markTime(trace, "fetch")! - 100, limit: 40 }));
     console.log(report("Fetch cancelled mid-read", findings));
     console.log(
       `readout: r0=${r0} afterCC=${r1} restored=${restored} afterOrphanCC=${afterOrphanCc} | ` +
         `fresh=${fresh} afterNewCC=${afterNewCc}`,
     );
+    console.log(`reads: ${readsBeforeCancel} before the cancel, ${readsAfterCancel} between cancel and cancel-done`);
     expect(findings).toHaveLength(0);
+    // The read STOPPED, rather than stopped being reported: fewer reads followed the
+    // cancel than the sweep had already issued before it, where a sweep left running to
+    // completion would have issued several times as many.
+    expect(readsAfterCancel).toBeLessThan(readsBeforeCancel);
 
     // "A cancel means nothing happened", now because nothing was written rather than
     // because a clone was put back: the plan is the one that existed before the read.
@@ -600,6 +616,13 @@ test.describe("Tzb tail", () => {
     await page.locator("#model-picker").selectOption("URX22");
     await expect(page.locator("#statusbar")).toContainText("Switched to URX22", { timeout: 30_000 });
     await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+    // The switch's OWN teardown (param unsubscribe, meter release, disconnect) is issued
+    // in the same task as the replacement, and only vd_disconnect is exempt from
+    // invariant 16 — so anchored on the "switch" mark the invariant reports the teardown
+    // itself and can never fail. Drained first and re-anchored here, it measures escape.
+    // t5's link-loss ladder stamps its boundary the same way.
+    await page.waitForTimeout(200);
+    await mark(page, "switch-teardown");
     const depthAfterSwitch = await depthOf(page);
 
     await mark(page, "release");
@@ -620,7 +643,7 @@ test.describe("Tzb tail", () => {
     const releaseAt = markTime(trace, "release")!;
     const late = all.filter((s) => s.cmd === "vd_set" && s.start > releaseAt);
     const orphanAddrs = late.map((s) => s.addr!).filter((a) => a === CH3_FADER || a === CH4_FADER);
-    const findings = analyze(trace, { quiesceAfter: "switch" });
+    const findings = analyze(trace, { quiesceAfter: "switch-teardown" });
 
     console.log(timeline(trace, { from: markTime(trace, "arm")! - 100, limit: 60 }));
     console.log(

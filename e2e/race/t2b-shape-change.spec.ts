@@ -12,6 +12,7 @@ import {
   settleAfter,
   waitQuiet,
   divergeAt,
+  divergeStrAt,
   ignoreWrites,
   refuseAt,
   dialogsOf,
@@ -335,11 +336,14 @@ test.describe("T2b shape-change", () => {
     expect(depthAfter.undo - depthBefore.undo).toBe(1);
     expect(regKeys(await paramAddrsOf(page)).has(CH1_NAME)).toBe(false);
 
-    // Phase 2a — the device's own rename. The name addresses live on the string path
-    // and are in no session's registration (asserted above), so the bridge drops the
-    // notify entirely: not even an escalation. A rename made on the unit is never
-    // picked up for the rest of the session, and since armIdle() is only reachable from
-    // inside onNotify, nothing is scheduled to discover it later either.
+    // Phase 2a — the device's own rename. Planted on the string path, which is the only
+    // way a device-side rename exists: the name addresses are in no registration, so no
+    // notify can carry the value and only a read discovers it. Measured on hardware, a
+    // rename does broadcast one notify on its own address (18:0:0) and nothing else —
+    // which the bridge drops entirely: not even an escalation. So a rename made on the
+    // unit is never picked up for the rest of the session, and since armIdle() is only
+    // reachable from inside onNotify, nothing is scheduled to discover it later either.
+    await divergeStrAt(page, CH1_NAME, "DESK 3");
     await mark(page, "name-notify");
     const nameWhy = await pushNotify(page, [[18, 0, 0, 0]]);
     await settleAfter(page, "name-notify", 1800);
@@ -358,8 +362,10 @@ test.describe("T2b shape-change", () => {
     expect(await paramExact(page, "Name").locator('input[type="text"]').inputValue()).toBe("VOX LEAD");
 
     // Phase 2b — the same repair reached the way the app can actually reach it. The
-    // sentinel forces one whole-device reconcile, and the reconcile's own vd_get_str —
-    // which on this device answers "" — CLEARS the name the operator just typed.
+    // sentinel forces one whole-device reconcile, and the reconcile's own vd_get_str is
+    // what finally carries the device's name into the plan — REPLACING the one the
+    // operator typed, a whole phase after the unit changed it, and only because
+    // something unrelated forced a sweep.
     await mark(page, "forced-reconcile");
     await pushBulkChange(page);
     await settleAfter(page, "forced-reconcile", 1800);
@@ -376,7 +382,10 @@ test.describe("T2b shape-change", () => {
 
     expect(notifyCost).toBe(2); // the settle escalates, the idle net follows behind it
     expect(nameReads.length).toBeGreaterThan(0);
-    expect(nameNow).toBe(""); // the reconcile, not the notify, is what carried the device's value
+    // The reconcile, not the notify, is what carried the device's value: the field now
+    // holds the name planted on the unit in phase 2a, and the eight keystrokes typed in
+    // phase 1 are gone.
+    expect(nameNow).toBe("DESK 3");
 
     // Phase 3 — Sweet Spot Data. SSMCS mode first (COMP_EQ_TYPE is a converge param and
     // is the control case here: it DOES classify), then the preset, which does not.

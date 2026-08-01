@@ -104,6 +104,9 @@ export interface Span {
   start: number;
   end: number;
   seq: number;
+  /** The ipc-end's own seq, +inf while the command is still in flight. `t` ties are
+   *  routine (fake-device.ts), so an interval boundary is only exact in seq. */
+  endSeq: number;
   detail?: string;
 }
 
@@ -116,16 +119,62 @@ export function spans(trace: TraceEvent[]): Span[] {
       const s = open.get(e.of);
       if (!s) continue;
       open.delete(e.of);
-      out.push({ cmd: s.cmd!, addr: s.addr, value: s.value, start: s.t, end: e.t, seq: s.seq, detail: e.detail });
+      out.push({
+        cmd: s.cmd!,
+        addr: s.addr,
+        value: s.value,
+        start: s.t,
+        end: e.t,
+        seq: s.seq,
+        endSeq: e.seq,
+        detail: e.detail,
+      });
     }
   }
   // A command still in flight when the trace was dumped: keep it, ended at +inf, so a
   // "still reading when the edit landed" case is not silently dropped.
   for (const s of open.values()) {
-    out.push({ cmd: s.cmd!, addr: s.addr, value: s.value, start: s.t, end: Number.POSITIVE_INFINITY, seq: s.seq });
+    out.push({
+      cmd: s.cmd!,
+      addr: s.addr,
+      value: s.value,
+      start: s.t,
+      end: Number.POSITIVE_INFINITY,
+      seq: s.seq,
+      endSeq: Number.POSITIVE_INFINITY,
+    });
   }
   return out.sort((a, b) => a.seq - b.seq);
 }
+
+/**
+ * A boundary a trace position is compared against: a millisecond, plus the `seq` that
+ * produced it when the boundary is itself a trace event.
+ *
+ * `performance.now()` ties are routine and `seq` is what carries the order
+ * (fake-device.ts), so a plain `t` comparison decides every tie on the LENIENT side —
+ * an edit stamped in the same millisecond as the read that overtook it reads as clean.
+ * Marks are trace events and `markTime` returns a mark's own `t`, so the reverse lookup
+ * below is exact; a case-computed offset (a mark time plus 50 ms, say) matches no event
+ * and keeps the numeric comparison, which is the only thing available for it.
+ */
+interface Bound {
+  t: number;
+  seq?: number;
+}
+
+const boundAt = (trace: TraceEvent[], t: number): Bound => {
+  const m = trace.find((e) => e.kind === "mark" && e.t === t);
+  return m ? { t, seq: m.seq } : { t };
+};
+
+/** True when the trace position (t, seq) is strictly before the boundary. */
+const beforeBound = (t: number, seq: number, b: Bound): boolean =>
+  t !== b.t ? t < b.t : b.seq !== undefined ? seq < b.seq : false;
+
+/** True when the trace position (t, seq) is strictly after the boundary. */
+const afterBound = (t: number, seq: number, b: Bound): boolean =>
+  t !== b.t ? t > b.t : b.seq !== undefined ? seq > b.seq : false;
 
 export const marksOf = (trace: TraceEvent[]): TraceEvent[] => trace.filter((e) => e.kind === "mark");
 
@@ -142,11 +191,19 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
   const sets = all.filter((s) => s.cmd === "vd_set");
   const gets = all.filter((s) => s.cmd === "vd_get");
 
+  // Every edit's `at` is a mark time, so it resolves to the mark's own seq and a tie
+  // between the gesture and the command it raced is decided by order rather than by the
+  // millisecond both share.
+  const editBounds = new Map<DeclaredEdit, Bound>((spec.edits ?? []).map((e) => [e, boundAt(trace, e.at)]));
+
   // 1 — stale-read overwrite. A read of the edited address that began BEFORE the
   // gesture and resolved AFTER it answers a pre-edit value that the readback then
   // writes into the plan on top of the operator's own.
   for (const e of spec.edits ?? []) {
-    const straddling = gets.filter((g) => g.addr === e.addr && g.start < e.at && g.end > e.at);
+    const b = editBounds.get(e)!;
+    const straddling = gets.filter(
+      (g) => g.addr === e.addr && beforeBound(g.start, g.seq, b) && afterBound(g.end, g.endSeq, b),
+    );
     if (straddling.length) {
       out.push({
         inv: 1,
@@ -159,7 +216,8 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
 
   // 2 — lost edit. The gesture changed the plan; nothing carrying it ever left.
   for (const e of spec.edits ?? []) {
-    const after = sets.filter((s) => s.addr === e.addr && s.start >= e.at);
+    const b = editBounds.get(e)!;
+    const after = sets.filter((s) => s.addr === e.addr && !beforeBound(s.start, s.seq, b));
     const carried = e.value === undefined ? after : after.filter((s) => s.value === e.value);
     if (!carried.length) {
       out.push({
@@ -171,19 +229,42 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
     }
   }
 
-  // 4 — interval overlap. A write issued while a readback of the same session is in
-  // flight: the two are describing the same device from opposite directions.
-  for (const s of sets) {
-    const during = gets.find((g) => g.start < s.start && g.end > s.start);
-    if (during) {
+  // 4 — interval overlap. Two of flush / refetch / scoped reconcile / full reconcile /
+  // Fetch / Write in flight at the same time: two descriptions of one device, live at
+  // once, over a link that answers them in an order neither of them chose.
+  //
+  // ANY intersecting pair counts, not just "a write issued inside a read". The narrower
+  // form was blind to the two same-kind intersections — two readbacks overlapping (the
+  // reconcile-during-reconcile shape) and two send loops overlapping (a flush landing
+  // inside a Write) — and a case that wanted them had to grow a private overlap counter
+  // beside the analyzer. Kinds are reported separately because they are different
+  // events: read-write is the stale-read hazard, read-read is a doubled sweep,
+  // write-write is two writers on one address space. One report per kind — a burst of
+  // them shares its cause, which is the pair named here.
+  //
+  // Decided in seq: both edges are trace events, and at equal `t` the issue order is the
+  // whole question.
+  const rw = all.filter((s) => s.cmd === "vd_get" || s.cmd === "vd_set");
+  const overlapKind = (a: Span, b: Span): "read-write" | "read-read" | "write-write" =>
+    a.cmd === b.cmd ? (a.cmd === "vd_get" ? "read-read" : "write-write") : "read-write";
+  const seenKinds = new Set<string>();
+  let live: Span[] = [];
+  for (const s of rw) {
+    // Everything still open when this command was ISSUED intersects it, by construction:
+    // it started earlier and has not ended yet.
+    live = live.filter((o) => o.endSeq > s.seq);
+    for (const other of live) {
+      const kind = overlapKind(other, s);
+      if (seenKinds.has(kind)) continue;
+      seenKinds.add(kind);
       out.push({
         inv: 4,
         name: "interval overlap",
-        detail: `vd_set ${s.addr} at ${s.start.toFixed(0)} ms issued inside an in-flight vd_get ${during.addr} (${during.start.toFixed(0)}–${during.end.toFixed(0)} ms)`,
+        detail: `${kind}: ${s.cmd} ${s.addr} at ${s.start.toFixed(0)} ms issued inside an in-flight ${other.cmd} ${other.addr} (${other.start.toFixed(0)}–${other.end.toFixed(0)} ms)`,
         at: s.start,
       });
-      break; // one report per run: the whole burst has the same cause
     }
+    live.push(s);
   }
 
   // 6 — stimulus reachability, the grown window, and registration lag behind them. The
@@ -192,8 +273,15 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
   // that arrived while a DIFFERENT set was registered is not evidence about this one.
   // Without a window this reports the artefact backwards. Clause B is not windowed at
   // all — see its own comment.
+  // A window edge is usually a mark time, so it resolves to that mark's seq and an event
+  // stamped in the same millisecond as the edge is placed by order rather than dropped
+  // to whichever side the tie falls on.
   const w6 = spec.registrationWindow;
-  const inWindow6 = (e: TraceEvent): boolean => !w6 || (e.t >= w6.from && (w6.to === undefined || e.t <= w6.to));
+  const from6 = w6 ? boundAt(trace, w6.from) : undefined;
+  const to6 = w6?.to === undefined ? undefined : boundAt(trace, w6.to);
+  const inWindow6At = (t: number, seq: number): boolean =>
+    (!from6 || !beforeBound(t, seq, from6)) && (!to6 || !afterBound(t, seq, to6));
+  const inWindow6 = (e: TraceEvent): boolean => inWindow6At(e.t, e.seq);
 
   // A — stimulus reachability. The fake bridge refused a notify the case pushed, so
   // whatever that push was meant to provoke, the app never saw it: an absence verdict
@@ -281,17 +369,28 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
   }
 
   // 8 — send ordering. A selector types the array after it, so the order binds meaning.
+  //
+  // The chain is carried ACROSS an address the run never wrote. Comparing adjacent pairs
+  // and skipping any pair that touches a hole broke the order into disconnected segments:
+  // for [A, B, C] with B never sent, a C-before-A inversion — the whole claim — was
+  // invisible, because the only two comparisons available both touched B. Each written
+  // element is compared against the last written one instead, so a hole is bridged
+  // rather than ending the chain.
   if (spec.order && spec.order.length > 1) {
-    const seen = spec.order.map((a) => sets.find((s) => s.addr === a)?.seq ?? -1);
-    for (let i = 1; i < seen.length; i++) {
-      if (seen[i - 1] === -1 || seen[i] === -1) continue;
-      if (seen[i - 1] > seen[i]) {
+    let lastSeq = -1;
+    let lastAddr = "";
+    for (const addr of spec.order) {
+      const seq = sets.find((s) => s.addr === addr)?.seq ?? -1;
+      if (seq === -1) continue;
+      if (lastSeq !== -1 && lastSeq > seq) {
         out.push({
           inv: 8,
           name: "send ordering",
-          detail: `${spec.order[i - 1]} was sent after ${spec.order[i]}`,
+          detail: `${lastAddr} was sent after ${addr}`,
         });
       }
+      lastSeq = seq;
+      lastAddr = addr;
     }
   }
 
@@ -300,7 +399,7 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
   if (spec.registration) {
     const reg = new Set(spec.registration.map((a) => a.join(":")));
     const w = spec.registrationWindow;
-    const inWindow = w ? sets.filter((s) => s.start >= w.from && (w.to === undefined || s.start <= w.to)) : sets;
+    const inWindow = w ? sets.filter((s) => inWindow6At(s.start, s.seq)) : sets;
     const written = new Set(inWindow.map((s) => s.addr!).filter(Boolean));
     const orphan = [...written].filter((a) => !reg.has(a));
     if (orphan.length) {
@@ -322,7 +421,8 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
     for (const e of spec.edits) {
       const held = spec.snapshot[e.addr];
       if (held === undefined) continue;
-      const sent = sets.filter((s) => s.addr === e.addr && s.start >= e.at);
+      const b = editBounds.get(e)!;
+      const sent = sets.filter((s) => s.addr === e.addr && !beforeBound(s.start, s.seq, b));
       if (!sent.length) {
         out.push({
           inv: 3,
@@ -368,8 +468,24 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
   // 16 — teardown quiescence. Nothing may reach the device after the session ended.
   if (spec.quiesceAfter) {
     const t = markTime(trace, spec.quiesceAfter);
-    if (t !== undefined) {
-      const late = all.filter((s) => s.start > t && s.cmd.startsWith("vd_") && s.cmd !== "vd_disconnect");
+    if (t === undefined) {
+      // The mark the check is anchored to is not in the trace — a renamed or misspelled
+      // mark, or one the run never reached. Dropping the check silently made `report()`
+      // print "clean" and every `findings.filter(f => f.inv === 16)).toHaveLength(0)`
+      // pass for free, which is the negative assertion this invariant exists to make.
+      // Reported the way clause C reports a mis-scoped registrationWindow: the harness
+      // contradicted itself, so it is the harness that needs fixing.
+      out.push({
+        inv: 16,
+        class: "harness",
+        name: "quiesce mark missing",
+        detail: `quiesceAfter names the mark "${spec.quiesceAfter}", which is not in this trace — nothing was checked`,
+      });
+    } else {
+      const b = boundAt(trace, t);
+      const late = all.filter(
+        (s) => afterBound(s.start, s.seq, b) && s.cmd.startsWith("vd_") && s.cmd !== "vd_disconnect",
+      );
       if (late.length) {
         out.push({
           inv: 16,

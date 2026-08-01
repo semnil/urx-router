@@ -58,6 +58,9 @@ export function fxEffectTypes(fxIndex: number): FxEffectTypeOption[] {
   return fxIndex === 0 ? FX1_EFFECT_TYPES : FX2_EFFECT_TYPES;
 }
 
+/** FX channel index per plan node id (FX1 = 0, FX2 = 1). */
+export const FX_CHANNEL_NODE_INDEX: Record<string, number> = { "bus.fx1": 0, "bus.fx2": 1 };
+
 // type value → family, built once (the two delay values appear in both menus
 // with the same family, so the merge is unambiguous).
 const FAMILY_BY_TYPE: ReadonlyMap<number, FxFamily> = new Map(
@@ -68,15 +71,22 @@ export function fxFamilyOf(typeValue: number): FxFamily {
   return FAMILY_BY_TYPE.get(typeValue) ?? "delay";
 }
 
-/** True when the value is a real EFFECT TYPE from either channel's menu. Emit
- *  checks this before writing the selector: an off-menu value would otherwise be
- *  sent to the device verbatim and drag the (defaulted) delay family with it. */
-export function isFxEffectType(typeValue: number): boolean {
-  return FAMILY_BY_TYPE.has(typeValue);
-}
-
 /** Factory-default EFFECT TYPE per FX channel (FX1 Rev-X Hall, FX2 Mono Delay). */
 export const FX_EFFECT_TYPE_DEFAULT = [0, 1024] as const;
+
+/** The EFFECT TYPE an FX channel will actually be set to: the plan's value when
+ *  that CHANNEL's own menu offers it, the channel's factory type otherwise. The
+ *  two menus are not the same list (FX1 reverbs are Rev-X, FX2's are Rev.R3), so
+ *  a value real on the other channel is still off-menu here — writing it would
+ *  hand the selector a reverb it does not have. Every site that has to decide what
+ *  an off-menu type means asks this one: the emit firewall, the load migration and
+ *  the inspector's selector, which would otherwise disagree about which effect a
+ *  hand-edited / `?plan=` document names. */
+export function resolveFxEffectType(fxIndex: number, typeValue: number | undefined): number {
+  const fallback = FX_EFFECT_TYPE_DEFAULT[fxIndex];
+  if (typeValue === undefined) return fallback;
+  return fxEffectTypes(fxIndex).some((o) => o.value === typeValue) ? typeValue : fallback;
+}
 
 // ---- raw → display encodings (calibrated; raw is the broker array value) ----
 
@@ -442,9 +452,16 @@ export const REVR3_PARAMS: FxParamDesc[] = [
 const DELAY_RAW_MAX_MONO = 40436; // 2700 ms × 14.976
 const DELAY_RAW_MAX_PINGPONG = 13500; // 1350 ms × 10
 const DELAY_RAW_MIN_PINGPONG = 10; // 1.0 ms × 10
+/** Plan storage key for each delay type's time slot. Both types are family "delay"
+ *  and both put the time on slot 6, so the family name does not separate them —
+ *  only the type does, and it has to: a raw stored under one law reads as a
+ *  different number of milliseconds under the other. Mono keeps the bare name (one
+ *  type uses it); Ping Pong names itself. */
+export const MONO_DELAY_KEY = "delay";
+export const PINGPONG_DELAY_KEY = "pingPongDelay";
 export const DELAY_PARAMS: FxParamDesc[] = [
   {
-    key: "delay",
+    key: MONO_DELAY_KEY,
     slot: 6,
     label: "delayTime",
     control: "slider",
@@ -513,12 +530,13 @@ export const DELAY_PARAMS: FxParamDesc[] = [
   { key: "note", slot: 11, label: "note", control: "select", def: 9, options: FX_NOTE_OPTIONS },
 ];
 
-// Ping Pong shares the delay layout but its delay-time slot has its own law and
-// range (see pingPongDelayMs); every other slot is identical to Mono Delay.
+// Ping Pong shares the delay layout but its delay-time slot has its own law, range
+// and storage key (see pingPongDelayMs); every other slot is identical to Mono Delay.
 const PINGPONG_DELAY_PARAMS: FxParamDesc[] = DELAY_PARAMS.map((d) =>
-  d.key === "delay"
+  d.key === MONO_DELAY_KEY
     ? {
         ...d, // Mono delay slot (def 5000 = 500 ms here) with the Ping Pong law and range.
+        key: PINGPONG_DELAY_KEY,
         rawMin: DELAY_RAW_MIN_PINGPONG,
         rawMax: DELAY_RAW_MAX_PINGPONG,
         rawStep: 10,
@@ -542,29 +560,54 @@ export function fxParams(type: number): FxParamDesc[] {
 /** The keys that were shared across families before they carried a family name. */
 const LEGACY_FX_PARAM_KEYS = ["initialDelay", "diffusion", "hpf", "lpf", "hiRatio", "feedback"] as const;
 
-/** Re-key an FX channel's stored parameters from the bare names to the family-qualified
- *  ones, in place. Run on load for a version-1 document only (core/plan.ts
- *  sanitizeNodeParams) — the family name is the family key itself.
+/** Re-key an FX channel's stored parameters onto the names the build that reads them
+ *  addresses, in place. Run on load from core/plan.ts sanitizeNodeParams, which owns
+ *  the document version; `fxIndex` is the node's FX channel (FX_CHANNEL_NODE_INDEX).
  *
- *  A plan saved before the keys were qualified holds one value per bare name and does
- *  not record which family wrote it. Assigning it to the SAVED type's family reproduces
- *  exactly what the previous build emitted for that saved state, and differs only after
- *  a family switch. There is no information in the file to do better, and dropping the
- *  value is worse. A bare key the saved family does not have, and a plan with no type at
- *  all, are left as they are. */
-export function migrateFxEffectParams(fx: { type?: number; params?: Record<string, number> }): void {
+ *  A plan saved before a key was qualified holds one value under the shared name and
+ *  does not record which effect wrote it. Assigning it to the SAVED type reproduces
+ *  exactly what the previous build emitted for that saved state, and differs only
+ *  after a type switch. There is no information in the file to do better, and dropping
+ *  the value is worse — the next flush would write a factory default over it.
+ *
+ *  A document with no `type` is not un-attributable: the channel's selector still has
+ *  a value, the factory one (the pre-range builds wrote `params` alone whenever the
+ *  operator changed a parameter without touching the EFFECT TYPE menu). It resolves
+ *  through resolveFxEffectType like every other site, so a type the channel's own menu
+ *  does not offer is read as that channel's factory type here and written as that type
+ *  by translate.ts. A key the resolved type does not have is left as it is.
+ *
+ *  Two steps, each gated on the version that introduced its keys:
+ *   - < 2: the bare names several families shared (hpf / lpf / hiRatio …).
+ *   - < 3: the delay time, when the saved type is Ping Pong. From 3 on a `delay` key
+ *     beside a Ping Pong type is the MONO value parked under its own key, so re-keying
+ *     it then would be the very re-interpretation the split exists to prevent. */
+export function migrateFxEffectParams(
+  fx: { type?: number; params?: Record<string, number> },
+  fxIndex: number,
+  version: number,
+): void {
   const params = fx.params;
-  if (typeof fx.type !== "number" || !params) return;
-  const prefix: string = fxFamilyOf(fx.type);
-  const owned = new Set(fxParams(fx.type).map((d) => d.key));
-  for (const legacy of LEGACY_FX_PARAM_KEYS) {
-    if (!(legacy in params)) continue;
-    const qualified = prefix + legacy[0].toUpperCase() + legacy.slice(1);
-    if (!owned.has(qualified)) continue;
-    // The bare key goes either way. It addresses nothing once the family owns a
-    // qualified name for that parameter, so leaving it would carry a value no build
-    // reads into every later save of the plan.
-    if (!(qualified in params)) params[qualified] = params[legacy];
-    delete params[legacy];
+  if (!params) return;
+  const type = resolveFxEffectType(fxIndex, fx.type);
+  const owned = new Set(fxParams(type).map((d) => d.key));
+  const rename = (from: string, to: string): void => {
+    if (!(from in params) || !owned.has(to)) return;
+    // The old key goes either way. It addresses nothing once the type owns another
+    // name for that parameter, so leaving it would carry a value no build reads into
+    // every later save of the plan.
+    if (!(to in params)) params[to] = params[from];
+    delete params[from];
+  };
+  if (version < 2) {
+    const prefix: string = fxFamilyOf(type);
+    for (const legacy of LEGACY_FX_PARAM_KEYS) {
+      rename(legacy, prefix + legacy[0].toUpperCase() + legacy.slice(1));
+    }
+    // Both re-keyings ride the same version, because both landed before any build that
+    // writes one shipped: the released app is version 1. From 2 on, a `delay` key beside
+    // a Ping Pong type is the MONO value parked under its own name, so re-keying it then
+    // would be the re-interpretation the split exists to prevent.
+    rename(MONO_DELAY_KEY, PINGPONG_DELAY_KEY);
   }
 }

@@ -40,12 +40,19 @@ test.describe("T0 baseline", () => {
     const during = spans(trace).filter((s) => s.start > from && s.cmd.startsWith("vd_"));
 
     console.log(timeline(trace, { from: from - 100 }));
-    console.log(`idle window: ${during.length} device command(s)`);
+    console.log(
+      `idle window: ${during.length} device command(s)` +
+        `${during.length ? ` — ${[...new Set(during.map((s) => s.cmd))].join(", ")}` : ""}`,
+    );
 
     // No notify means no settle and no idle net: the safety sweep is armed BY a
-    // notify, so a quiet session must cost nothing at all.
-    expect(during.filter((s) => s.cmd === "vd_get")).toHaveLength(0);
-    expect(during.filter((s) => s.cmd === "vd_set")).toHaveLength(0);
+    // notify, so a quiet session must cost nothing at all. The WHOLE window, not the
+    // two command kinds a case usually cares about: a session churning its own
+    // registration (vd_params_subscribe / vd_meters_subscribe) or re-connecting on a
+    // timer costs the device just as much and would have passed a read/write count
+    // unseen, although `during` already collected it. The title says "reads nothing
+    // and writes nothing" only because every kind is nothing.
+    expect(during).toHaveLength(0);
 
     // The registration itself is the other half of the floor: a session that never
     // registered would also produce no traffic, and would pass the two counts above

@@ -15,10 +15,12 @@ import type {
 } from "../core/plan";
 import { LEVEL_MIN_DB, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
-import { formatHz, FX_EFFECT_TYPE_DEFAULT, fxEffectTypes, fxParams } from "../core/control/fx-effect";
+import { formatHz, fxEffectTypes, fxParams, resolveFxEffectType } from "../core/control/fx-effect";
 import {
   insertFxFamilyOf,
+  insertFxParamKey,
   insertFxParams,
+  qualifyInsertFxParams,
   MBC_BANDS,
   MBC_BAND_PARAM,
   MBC_GLOBAL,
@@ -43,6 +45,7 @@ import {
   PITCH_SCALE_PENTATONIC,
   PITCH_MIDI_ENABLE_SLOT,
   PITCH_MIDI_REALTIME_SLOT,
+  type InsertFxFamily,
   type InsertFxParamDesc,
   type MbcBandKey,
 } from "../core/control/insert-fx-effect";
@@ -212,6 +215,40 @@ const HA_GAIN_DEFAULT_DB = -8;
 export function inspectorNodes(selection: Selection): string[] {
   if (!selection) return [];
   return selection.type === "node" ? [selection.id] : [parseRef(selection.from).nodeId, parseRef(selection.to).nodeId];
+}
+
+/** The gate a rebuild of `host` asks before running, so it cannot land inside an IME
+ *  composition. `replaceChildren` ends one: the interim characters are committed as
+ *  literal text and composition restarts on the rebuilt field — and a device-driven
+ *  reflect repaints this panel at ~20 Hz while a knob is being swept, so a node name
+ *  typed through an IME while the unit is being touched arrives shredded. A rebuild
+ *  asked for while a composition is in flight is remembered and run once it ends,
+ *  rather than dropped: the plan has already changed and the panel would otherwise keep
+ *  showing the value before it. The composition events bubble, so the host keeps
+ *  listening across every rebuild; `focusout` is the backstop for a field that goes
+ *  away without a compositionend of its own. */
+export function compositionGate(host: HTMLElement, rebuild: () => void): { held: () => boolean } {
+  let composing = false;
+  let pending = false;
+  const end = (): void => {
+    if (!composing) return;
+    composing = false;
+    if (!pending) return;
+    pending = false;
+    rebuild();
+  };
+  host.addEventListener("compositionstart", () => {
+    composing = true;
+  });
+  host.addEventListener("compositionend", end);
+  host.addEventListener("focusout", end);
+  return {
+    held: () => {
+      if (!composing) return false;
+      pending = true;
+      return true;
+    },
+  };
 }
 
 export function renderInspector(
@@ -724,10 +761,17 @@ export function renderInspector(
           // the plan; selecting No Effect leaves the dormant switch state alone.
           (v) => {
             const sel = Number(v);
-            actions.onUpdateNodeParams(
-              node.id,
-              sel === INSERT_FX_NONE ? { insertFx: sel } : { insertFx: sel, insertFxOn: true },
-            );
+            const patch: NodeParams = sel === INSERT_FX_NONE ? { insertFx: sel } : { insertFx: sel, insertFxOn: true };
+            // Park the outgoing effect's engine values under its own family before
+            // the selector names another one: a bare slot number left behind would
+            // be read as the new family's, whose slot means a different parameter
+            // under a different law, and emitted as absolute state on the next flush.
+            const prev = plan.nodeParams[node.id];
+            if (prev?.insertFxParams) {
+              const prevFam = prev.insertFx === undefined ? null : insertFxFamilyOf(prev.insertFx);
+              patch.insertFxParams = qualifyInsertFxParams(prev.insertFxParams, prevFam);
+            }
+            actions.onUpdateNodeParams(node.id, patch);
           },
         ),
       );
@@ -1150,7 +1194,9 @@ function fxEffectSection(
 ): HTMLElement {
   const t = m.inspector.fxEffect;
   const fx = plan.nodeParams[nodeId]?.fxEffect ?? {};
-  const type = fx.type ?? FX_EFFECT_TYPE_DEFAULT[fxIndex];
+  // Resolved against THIS channel's menu, so the selector shows the effect the write
+  // path would send rather than one the channel does not offer (translate.ts).
+  const type = resolveFxEffectType(fxIndex, fx.type);
   const descs = fxParams(type);
   const { el, body } = section(t.title, { key: "fxEffect" });
 
@@ -1205,18 +1251,27 @@ function fxEffectSection(
 
 // ---- Insert-FX effect editor (guitar amp / pitch fix / compander / MBC) ----
 
-function insertFxVal(plan: Plan, nodeId: string, slot: number, def: number): number {
-  return plan.nodeParams[nodeId]?.insertFxParams?.[String(slot)] ?? def;
+// The engine-slot map is keyed by family + slot, so a value stored by one effect is
+// never read by the next one the selector names (insert-fx-effect.ts). A bare slot
+// number is the device-shaped namespace a readback writes, read as the selected
+// family's and replaced by the qualified key on the first edit.
+function insertFxVal(plan: Plan, nodeId: string, fam: InsertFxFamily, slot: number, def: number): number {
+  const params = plan.nodeParams[nodeId]?.insertFxParams;
+  return params?.[insertFxParamKey(fam, slot)] ?? params?.[String(slot)] ?? def;
 }
 function mergeInsertFxParams(
   actions: InspectorActions,
   plan: Plan,
   nodeId: string,
+  fam: InsertFxFamily,
   patch: Record<number, number>,
 ): void {
   const params = plan.nodeParams[nodeId]?.insertFxParams ?? {};
   const next = { ...params };
-  for (const [slot, raw] of Object.entries(patch)) next[slot] = raw;
+  for (const [slot, raw] of Object.entries(patch)) {
+    next[insertFxParamKey(fam, Number(slot))] = raw;
+    delete next[slot];
+  }
   actions.onUpdateNodeParams(nodeId, { insertFxParams: next });
 }
 
@@ -1225,16 +1280,17 @@ function appendInsertFxDesc(
   body: HTMLElement,
   desc: InsertFxParamDesc,
   nodeId: string,
+  fam: InsertFxFamily,
   plan: Plan,
   actions: InspectorActions,
   t: Messages["inspector"]["insertFxEffect"],
 ): void {
   const label = t.params[desc.label as keyof typeof t.params] ?? desc.label;
-  const cur = insertFxVal(plan, nodeId, desc.slot, desc.def);
+  const cur = insertFxVal(plan, nodeId, fam, desc.slot, desc.def);
   const set = (raw: number) => {
     const patch: Record<number, number> = { [desc.slot]: raw };
     if (desc.mirror !== undefined) patch[desc.mirror] = raw;
-    mergeInsertFxParams(actions, plan, nodeId, patch);
+    mergeInsertFxParams(actions, plan, nodeId, fam, patch);
   };
   if (desc.control === "toggle") {
     body.append(boolToggle(label, cur !== 0, (v) => set(v ? 1 : 0)));
@@ -1279,11 +1335,11 @@ function insertFxEffectSection(
   if (fam === "mbc") {
     renderMbc(body, nodeId, plan, actions, t);
   } else if (fam === "pitch") {
-    for (const d of insertFxParams("pitch")) appendInsertFxDesc(body, d, nodeId, plan, actions, t);
+    for (const d of insertFxParams("pitch")) appendInsertFxDesc(body, d, nodeId, fam, plan, actions, t);
     renderPitchScale(body, nodeId, plan, actions, t);
     renderPitchMidi(body, nodeId, plan, actions, t);
   } else {
-    for (const d of insertFxParams(fam)) appendInsertFxDesc(body, d, nodeId, plan, actions, t);
+    for (const d of insertFxParams(fam)) appendInsertFxDesc(body, d, nodeId, fam, plan, actions, t);
   }
   return el;
 }
@@ -1295,12 +1351,11 @@ function renderMbc(
   actions: InspectorActions,
   t: Messages["inspector"]["insertFxEffect"],
 ): void {
-  const set = (slot: number, raw: number) => mergeInsertFxParams(actions, plan, nodeId, { [slot]: raw });
+  const set = (slot: number, raw: number) => mergeInsertFxParams(actions, plan, nodeId, "mbc", { [slot]: raw });
+  const val = (slot: number, def: number) => insertFxVal(plan, nodeId, "mbc", slot, def);
   // 1-knob
   body.append(
-    boolToggle(t.params.oneKnobOn, insertFxVal(plan, nodeId, MBC_GLOBAL.oneKnobOn, 0) !== 0, (v) =>
-      set(MBC_GLOBAL.oneKnobOn, v ? 1 : 0),
-    ),
+    boolToggle(t.params.oneKnobOn, val(MBC_GLOBAL.oneKnobOn, 0) !== 0, (v) => set(MBC_GLOBAL.oneKnobOn, v ? 1 : 0)),
   );
   body.append(
     rangeSlider(
@@ -1308,7 +1363,7 @@ function renderMbc(
       0,
       MBC_ONE_KNOB_LEVEL_MAX,
       1,
-      insertFxVal(plan, nodeId, MBC_GLOBAL.oneKnobLevel, 0),
+      val(MBC_GLOBAL.oneKnobLevel, 0),
       (r) => String(r),
       (v) => set(MBC_GLOBAL.oneKnobLevel, v),
     ),
@@ -1321,31 +1376,21 @@ function renderMbc(
     for (const k of bandKeys) {
       const p = MBC_BAND_PARAM[k];
       body.append(
-        rangeSlider(
-          `${bandLabel[b.band]} ${t.params[k]}`,
-          p.rawMin,
-          p.rawMax,
-          1,
-          insertFxVal(plan, nodeId, b[k], p.def),
-          p.format,
-          (v) => set(b[k], v),
+        rangeSlider(`${bandLabel[b.band]} ${t.params[k]}`, p.rawMin, p.rawMax, 1, val(b[k], p.def), p.format, (v) =>
+          set(b[k], v),
         ),
       );
     }
   }
   // Global
-  body.append(
-    boolToggle(t.params.bypass, insertFxVal(plan, nodeId, MBC_GLOBAL.bypass, 0) !== 0, (v) =>
-      set(MBC_GLOBAL.bypass, v ? 1 : 0),
-    ),
-  );
+  body.append(boolToggle(t.params.bypass, val(MBC_GLOBAL.bypass, 0) !== 0, (v) => set(MBC_GLOBAL.bypass, v ? 1 : 0)));
   body.append(
     rangeSlider(
       t.params.xoverLowMid,
       MBC_XOVER_LM_RANGE.min,
       MBC_XOVER_LM_RANGE.max,
       1,
-      insertFxVal(plan, nodeId, MBC_GLOBAL.xoverLowMid, 37),
+      val(MBC_GLOBAL.xoverLowMid, 37),
       mbcXoverLabel,
       (v) => set(MBC_GLOBAL.xoverLowMid, v),
     ),
@@ -1356,7 +1401,7 @@ function renderMbc(
       MBC_XOVER_MH_RANGE.min,
       MBC_XOVER_MH_RANGE.max,
       1,
-      insertFxVal(plan, nodeId, MBC_GLOBAL.xoverMidHigh, 94),
+      val(MBC_GLOBAL.xoverMidHigh, 94),
       mbcXoverLabel,
       (v) => set(MBC_GLOBAL.xoverMidHigh, v),
     ),
@@ -1367,7 +1412,7 @@ function renderMbc(
       0,
       MBC_RELEASE_MS.length - 1,
       1,
-      insertFxVal(plan, nodeId, MBC_GLOBAL.release, 7),
+      val(MBC_GLOBAL.release, 7),
       (r) => {
         const ms = MBC_RELEASE_MS[r] ?? 0;
         return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`;
@@ -1381,7 +1426,7 @@ function renderMbc(
       MBC_OUT_GAIN_RAW_MIN,
       MBC_OUT_GAIN_RAW_MAX,
       1,
-      insertFxVal(plan, nodeId, MBC_GLOBAL.outGain, 68),
+      val(MBC_GLOBAL.outGain, 68),
       mbcOutGainLabel,
       (v) => set(MBC_GLOBAL.outGain, v),
     ),
@@ -1395,7 +1440,7 @@ function renderPitchScale(
   actions: InspectorActions,
   t: Messages["inspector"]["insertFxEffect"],
 ): void {
-  const scale = insertFxVal(plan, nodeId, PITCH_SCALE_SLOT, PITCH_SCALE_CHROMATIC);
+  const scale = insertFxVal(plan, nodeId, "pitch", PITCH_SCALE_SLOT, PITCH_SCALE_CHROMATIC);
   // The app only authors note patterns for Chromatic / Major (`editable`); every
   // other device preset (read back from hardware) is display-only — shown when it
   // is the current value, never selectable.
@@ -1420,7 +1465,7 @@ function renderPitchScale(
         if (sel === PITCH_SCALE_CHROMATIC) PITCH_NOTE_SLOTS.forEach((s) => (patch[s] = 1));
         else if (sel === PITCH_SCALE_MAJOR)
           PITCH_NOTE_SLOTS.forEach((s, i) => (patch[s] = PITCH_MAJOR_ON.has(i) ? 1 : 0));
-        mergeInsertFxParams(actions, plan, nodeId, patch);
+        mergeInsertFxParams(actions, plan, nodeId, "pitch", patch);
       },
     ),
   );
@@ -1428,8 +1473,11 @@ function renderPitchScale(
   for (let i = 0; i < PITCH_NOTE_SLOTS.length; i++) {
     const slot = PITCH_NOTE_SLOTS[i];
     body.append(
-      boolToggle(SEMITONE_NAMES[i], insertFxVal(plan, nodeId, slot, 1) !== 0, (on) =>
-        mergeInsertFxParams(actions, plan, nodeId, { [slot]: on ? 1 : 0, [PITCH_SCALE_SLOT]: PITCH_SCALE_CUSTOM }),
+      boolToggle(SEMITONE_NAMES[i], insertFxVal(plan, nodeId, "pitch", slot, 1) !== 0, (on) =>
+        mergeInsertFxParams(actions, plan, nodeId, "pitch", {
+          [slot]: on ? 1 : 0,
+          [PITCH_SCALE_SLOT]: PITCH_SCALE_CUSTOM,
+        }),
       ),
     );
   }
@@ -1442,8 +1490,8 @@ function renderPitchMidi(
   actions: InspectorActions,
   t: Messages["inspector"]["insertFxEffect"],
 ): void {
-  const enable = insertFxVal(plan, nodeId, PITCH_MIDI_ENABLE_SLOT, 0);
-  const realtime = insertFxVal(plan, nodeId, PITCH_MIDI_REALTIME_SLOT, 0);
+  const enable = insertFxVal(plan, nodeId, "pitch", PITCH_MIDI_ENABLE_SLOT, 0);
+  const realtime = insertFxVal(plan, nodeId, "pitch", PITCH_MIDI_REALTIME_SLOT, 0);
   const cur = enable === 0 ? 0 : realtime === 0 ? 1 : 2;
   body.append(
     selectControl(
@@ -1456,7 +1504,7 @@ function renderPitchMidi(
       String(cur),
       (v) => {
         const mode = Number(v);
-        mergeInsertFxParams(actions, plan, nodeId, {
+        mergeInsertFxParams(actions, plan, nodeId, "pitch", {
           [PITCH_MIDI_ENABLE_SLOT]: mode === 0 ? 0 : 1,
           [PITCH_MIDI_REALTIME_SLOT]: mode === 2 ? 1 : 0,
         });

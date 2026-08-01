@@ -353,8 +353,11 @@ export const MBC_OUT_GAIN_RAW_MIN = 52;
 export const MBC_OUT_GAIN_RAW_MAX = 76;
 /** Calibrated raw bounds for the writable MBC global slots — the single source the
  *  emit-path firewall (insertFxWritableSlots) and the inspector share. The two
- *  device-managed bool flags (oneKnobOn / bypass) carry no range. */
-export const MBC_GLOBAL_BOUNDS: Partial<Record<keyof typeof MBC_GLOBAL, { rawMin: number; rawMax: number }>> = {
+ *  device-managed bool flags (oneKnobOn / bypass) carry the bool range: a slot
+ *  reaching the emit path without bounds opts out of that firewall silently. */
+export const MBC_GLOBAL_BOUNDS: Record<keyof typeof MBC_GLOBAL, { rawMin: number; rawMax: number }> = {
+  oneKnobOn: { rawMin: 0, rawMax: 1 },
+  bypass: { rawMin: 0, rawMax: 1 },
   oneKnobLevel: { rawMin: 0, rawMax: MBC_ONE_KNOB_LEVEL_MAX },
   xoverLowMid: { rawMin: MBC_XOVER_LM_RANGE.min, rawMax: MBC_XOVER_LM_RANGE.max },
   xoverMidHigh: { rawMin: MBC_XOVER_MH_RANGE.min, rawMax: MBC_XOVER_MH_RANGE.max },
@@ -606,10 +609,24 @@ export interface InsertFxSlotSpec {
   /** Second slot written with the same raw (Pitch Coarse/Fine/Formant). */
   mirror?: number;
   /** Calibrated raw bounds, carried from the catalog so the emit path can bound a
-   *  hand-edited plan to the same range the inspector enforces. Absent where the
-   *  catalog declares none (device-managed flags / table indices). */
-  rawMin?: number;
-  rawMax?: number;
+   *  hand-edited plan to the same range the inspector enforces. Every slot states
+   *  them: an absent bound is an opt-out of that firewall (translate.ts boundRaw
+   *  passes the raw through), which is silent at the catalog and audible at the
+   *  device. */
+  rawMin: number;
+  rawMax: number;
+}
+
+/** Raw bounds for a descriptor. A slider states them; a toggle is the bool range
+ *  and a select its option span, both of which the catalog spells as a control
+ *  kind rather than as rawMin/rawMax. */
+function descBounds(d: InsertFxParamDesc): { rawMin: number; rawMax: number } {
+  if (d.control === "select") {
+    const values = (d.options ?? []).map((o) => o.value);
+    return { rawMin: Math.min(...values), rawMax: Math.max(...values) };
+  }
+  if (d.control === "toggle") return { rawMin: 0, rawMax: 1 };
+  return { rawMin: d.rawMin as number, rawMax: d.rawMax as number };
 }
 
 export function insertFxWritableSlots(family: InsertFxFamily): InsertFxSlotSpec[] {
@@ -624,23 +641,76 @@ export function insertFxWritableSlots(family: InsertFxFamily): InsertFxSlotSpec[
     }
     for (const [key, slot] of Object.entries(MBC_GLOBAL)) {
       const b = MBC_GLOBAL_BOUNDS[key as keyof typeof MBC_GLOBAL];
-      out.push(b ? { slot, rawMin: b.rawMin, rawMax: b.rawMax } : { slot });
+      out.push({ slot, rawMin: b.rawMin, rawMax: b.rawMax });
     }
     cached = out;
   } else {
     const out: InsertFxSlotSpec[] = insertFxParams(family).map((d) => ({
       slot: d.slot,
       mirror: d.mirror,
-      rawMin: d.rawMin,
-      rawMax: d.rawMax,
+      ...descBounds(d),
     }));
     if (family === "pitch") {
       out.push({ slot: PITCH_SCALE_SLOT, rawMin: PITCH_SCALE_CUSTOM, rawMax: PITCH_SCALE_CHROMATIC });
-      for (const slot of PITCH_NOTE_SLOTS) out.push({ slot });
-      out.push({ slot: PITCH_MIDI_ENABLE_SLOT }, { slot: PITCH_MIDI_REALTIME_SLOT });
+      // The note keyboard and the two MIDI Control bits are bools.
+      for (const slot of PITCH_NOTE_SLOTS) out.push({ slot, rawMin: 0, rawMax: 1 });
+      out.push({ slot: PITCH_MIDI_ENABLE_SLOT, rawMin: 0, rawMax: 1 });
+      out.push({ slot: PITCH_MIDI_REALTIME_SLOT, rawMin: 0, rawMax: 1 });
     }
     cached = out;
   }
   SLOTS_CACHE.set(family, cached);
   return cached;
+}
+
+// ---- plan storage keys ----
+//
+// The plan keeps ONE engine-slot map per node (NodeParams.insertFxParams). A bare
+// slot number says nothing about which effect wrote it, so switching the selector
+// to another family hands the stored raws to that family's parameters — the same
+// slot under a different law (Compander-H Threshold -3000 is MBC's 1-knob switch,
+// its ratio, its band width) and emitted as absolute state on the next flush.
+// Qualifying the key by family is what keeps the two apart, and lets the plan
+// remember each family's values across a switch.
+//
+// A BARE key is still read, as the family the node's selector currently names:
+// that is the shape a device readback writes (it reads the selector and the engine
+// together, so its map is by construction the selected family's), and the shape
+// every document written before the qualification carries.
+
+/** Plan storage key for an engine slot under the family that owns it. */
+export function insertFxParamKey(family: InsertFxFamily, slot: number): string {
+  return `${family}:${slot}`;
+}
+
+/** True for a key in the bare (device-shaped) namespace — a slot number alone. */
+function isBareInsertFxSlot(key: string): boolean {
+  return /^\d+$/.test(key);
+}
+
+/** Re-key a node's bare slot entries onto `family`, returning a new map. Run when a
+ *  plan enters the app (core/plan.ts) and when the selector is about to name a
+ *  different family (ui/inspector.ts), so the bare namespace never outlives the
+ *  family it was written for. An entry the family already holds under its own key
+ *  wins — that one was authored, the bare one only read back.
+ *
+ *  A null family — No Effect, or a selector value this build does not know — drops
+ *  the bare entries instead. Nothing can address them then (the emit path needs a
+ *  family to pick the slot layout), and leaving them is what lets the NEXT effect
+ *  selected read values another one wrote. routing.ts does the same with the whole
+ *  map where a Signal Type transition clears the selector. Entries already under a
+ *  family's own key are kept either way. */
+export function qualifyInsertFxParams(
+  params: Record<string, number>,
+  family: InsertFxFamily | null,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(params)) if (!isBareInsertFxSlot(key)) out[key] = raw;
+  if (!family) return out;
+  for (const [key, raw] of Object.entries(params)) {
+    if (!isBareInsertFxSlot(key)) continue;
+    const qualified = insertFxParamKey(family, Number(key));
+    if (!(qualified in out)) out[qualified] = raw;
+  }
+  return out;
 }

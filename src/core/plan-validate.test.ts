@@ -3,7 +3,13 @@ import { insertFxSlotProblems, planProblems } from "./plan-validate";
 import { validatePlan } from "./routing";
 import { emptyPlan } from "./plan";
 import { getModel } from "../models";
-import { INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "./control/params";
+import {
+  INSERT_FX_NONE,
+  INSERT_FX_OPTIONS,
+  OUTPUT_INSERT_FX_OPTIONS,
+  PAN_BAL_BAL,
+  PAN_BAL_PAN,
+} from "./control/params";
 import type { InsertFxOption, InsertFxSlot } from "./control/params";
 
 // The slot facts come off the catalog rather than being listed here, so a family
@@ -52,6 +58,25 @@ describe("insertFxSlotProblems", () => {
     expect(problems).toHaveLength(1);
     expect(problems[0].slot).toBe("out-dyn");
     expect([...problems[0].nodes].sort()).toEqual(["bus.mix1", "bus.stereo"]);
+  });
+
+  // A STEREO-linked pair is one holder (the app mirrors the selection onto both members,
+  // as the unit does in PAN and BAL alike), so reopening a file the app itself saved must
+  // not read as a collision — while a third node claiming the same slot still does.
+  it("counts a linked pair once in either PAN/BAL mode, and still reports a third node", () => {
+    for (const panBal of [PAN_BAL_BAL, PAN_BAL_PAN]) {
+      for (const [slot, options] of INPUT_SLOTS) {
+        const plan = emptyPlan("URX44V");
+        plan.nodeParams["ch1"] = { stereoLink: true, panBal, insertFx: options[0].value };
+        plan.nodeParams["ch2"] = { insertFx: options[0].value };
+        expect(planProblems(u44v, plan)).toEqual([]);
+        plan.nodeParams["ch3"] = { insertFx: options[options.length - 1].value };
+        const problems = insertFxSlotProblems(u44v, plan);
+        expect(problems).toHaveLength(1);
+        expect(problems[0].slot).toBe(slot);
+        expect([...problems[0].nodes].sort()).toEqual(["ch1", "ch3"]);
+      }
+    }
   });
 
   it("ignores No Effect and an unset selection", () => {

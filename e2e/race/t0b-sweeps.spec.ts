@@ -757,12 +757,16 @@ test.describe("T0b baseline sweeps", () => {
     // device resource, which is why it shows up in a sweep with no device attached.
     expect(unavailable).toEqual(["STEREO master · Insert FX (select) — select offers no alternative option"]);
 
-    // Pinned behaviour #2, and the one the ledger alone can see: two inspector
-    // controls mutate the plan AFTER calling the change funnel, so part of what they
-    // wrote is attributed to nobody. Both are selectors whose write reshapes the plan
-    // around itself (Signal Type re-wires the pair, COMP/EQ Type resets the
-    // destination bank) — the "diff at commit, not at edit" rule made visible.
-    expect(unreported).toEqual(["MONO IN · Signal Type (select)", "MONO IN · COMP/EQ Type (select)"]);
+    // Turned over from a pinned defect the ledger alone could see: two inspector
+    // controls mutate the plan AFTER calling the change funnel — both selectors whose
+    // write reshapes the plan around itself (Signal Type re-wires the pair, COMP/EQ
+    // Type resets the destination bank) — so the part they wrote after the sample was
+    // attributed to nobody, and under live follow the next device notify's sample swept
+    // it up as device-authored. The funnel now re-samples once its last mutation has
+    // run, so every key a gesture writes carries that gesture's own source and this
+    // list is empty. It stays asserted rather than deleted: a control that grows a
+    // trailing mutation without a trailing sample lands here by name.
+    expect(unreported).toEqual([]);
   });
 
   // -------------------------------------------------------------------------

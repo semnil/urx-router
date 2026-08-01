@@ -46,10 +46,14 @@ jobs:
       # handle still carries what its driver uses — is pinned in
       # src/ui/meter-bench.contract.test.ts and src/ui/keyprobe.test.ts.
       - name: Dev-only hooks stay out of the bundle
+        # `! grep ...` per line does not work here: POSIX errexit is ignored for a
+        # pipeline beginning with `!`, so under the default `bash -e` only the LAST
+        # line's status became the step's status and an earlier leak passed silently.
+        # An explicit if/exit per handle fails on whichever line actually matches.
         run: |
-          ! grep -rl --include='*.js' --include='*.html' "__urxConsole" dist
-          ! grep -rl --include='*.js' --include='*.html' "__urxKeyProbe" dist
-          ! grep -rl --include='*.js' --include='*.html' "__urxTrace" dist
+          if grep -rl --include='*.js' --include='*.html' "__urxConsole" dist; then echo "__urxConsole leaked into the bundle"; exit 1; fi
+          if grep -rl --include='*.js' --include='*.html' "__urxKeyProbe" dist; then echo "__urxKeyProbe leaked into the bundle"; exit 1; fi
+          if grep -rl --include='*.js' --include='*.html' "__urxTrace" dist; then echo "__urxTrace leaked into the bundle"; exit 1; fi
       - run: pnpm typecheck:e2e
       - run: pnpm test
 

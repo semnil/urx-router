@@ -70,6 +70,67 @@ test.describe("T9 probe", () => {
     expect(mine.length).toBeGreaterThan(0);
     // A console fader rides its connection's params, not the node's.
     expect(mine.some((l) => l.field === "connParams" && (l.subKeys ?? []).includes("level"))).toBe(true);
+
+    // The rest of the contract — everything this tier leans on and nothing pinned:
+    //
+    //   - reading is SIDE-EFFECT-FREE. Cases here sample the probe in the middle of a
+    //     gesture, so an accessor that grew the ledger or moved the depth would be
+    //     changing the thing it was asked to measure.
+    //   - snapshot() hands back a COPY. `snapshotOf` crosses the IPC boundary and
+    //     copies on the way, so the driver cannot see this: only a write into the
+    //     returned object from inside the page can, and if it reached the live map the
+    //     next diff would measure against a value the harness invented.
+    //   - sample(source) is a MUTATOR — the one t0b's surface sweeps call: it takes the
+    //     plan delta since the last sample and attributes it, so with nothing changed
+    //     since it adds nothing.
+    //   - clear() empties the ledger and re-takes the baseline, which is what lets a
+    //     later phase read its own writers without the boot readback's thousand entries
+    //     in front of them (t2d / t2e call it between phases).
+    const contract = await page.evaluate(() => {
+      const p = (
+        window as unknown as {
+          __urxTrace: {
+            ledger: unknown[];
+            snapshot: () => Record<string, number> | null;
+            depth: () => { undo: number; redo: number };
+            sample: (s: string) => number;
+            clear: () => void;
+          };
+        }
+      ).__urxTrace;
+      const n0 = p.ledger.length;
+      const d0 = p.depth();
+      const s0 = p.snapshot()!;
+      s0["999:0:0"] = 1; // poke the object the accessor just handed back
+      const s1 = p.snapshot()!;
+      const d1 = p.depth();
+      const readsGrewLedger = p.ledger.length - n0;
+      const sampledDelta = p.sample("unknown");
+      const grownBySample = p.ledger.length - n0;
+      p.clear();
+      return {
+        readsGrewLedger,
+        leaked: "999:0:0" in s1,
+        keysStable: Object.keys(s1).length === Object.keys(s0).length - 1,
+        depthStable: d1.undo === d0.undo && d1.redo === d0.redo,
+        sampledDelta,
+        grownBySample,
+        afterClear: p.ledger.length,
+        readableAfterClear: p.snapshot() !== null && p.depth().undo === d0.undo,
+      };
+    });
+    console.log(`probe contract: ${JSON.stringify(contract)}`);
+    expect(contract.readsGrewLedger).toBe(0);
+    expect(contract.leaked).toBe(false);
+    expect(contract.keysStable).toBe(true);
+    expect(contract.depthStable).toBe(true);
+    // Nothing has touched the plan since the edit's own funnel reported it, so the
+    // delta is empty and the mutator writes no entry.
+    expect(contract.sampledDelta).toBe(0);
+    expect(contract.grownBySample).toBe(0);
+    // …and clear() drops the ledger without taking the two accessors with it.
+    expect(contract.afterClear).toBe(0);
+    expect(contract.readableAfterClear).toBe(true);
   });
 
   // Invariant 13: the scoped readback and the operator contend for the same plan key

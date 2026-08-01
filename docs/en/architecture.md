@@ -122,6 +122,18 @@ The constraint core (`core/routing.ts`):
   stay on the primary). Called from each edit funnel: `main.ts` `onUpdateParams` / `onUpdateNodeParams` for the
   graph / inspector, and `console.ts` `commit` for CONSOLE — both views share the one function so they behave
   identically. No mirroring in PAN mode. See [device-model.md](device-model.md).
+- **The insert FX is the one thing a link does not carry, and it answers to Signal Type alone.** Measured on the
+  unit: the Signal Type transition itself — in **either** direction — clears the selector and its ON on **both**
+  members, whichever member was holding one, and the engine array keeps its values (only a selector write
+  re-seeds it). While the pair *is* linked the selector mirrors both ways and both members point at one engine
+  instance, so a linked pair holds one insert effect between them rather than one each. That mirror does **not**
+  depend on PAN/BAL: it was measured in both modes, and a PAN⇄BAL toggle on its own never clears the effect.
+  So the insert FX is the one piece of pair state gated on `stereoLink` rather than on `isBalLinkedPair` —
+  a STEREO-linked pair in PAN mode is reachable, and there the unit mirrors while the BAL-only mirror does not.
+  `applyPairTransition` clears `insertFx` / `insertFxOn` / `insertFxParams` on both members at the transition,
+  the mirror carries them whenever the pair is linked, and the 1-of slot census (`insertFxCensus`) counts a
+  linked pair as a single holder — the app follows what the device does instead of modelling a second copy of
+  the rule ([What the app models, and what it leaves to the unit](#what-the-app-models-and-what-it-leaves-to-the-unit)).
 - A STEREO-linked pair is tied on canvas by a heart connector and drags as one unit. Linking
   (`alignStereoPair`, called from `onUpdateNodeParams` when `stereoLink` turns on) first snaps the partner back
   beside the kept node — the selected member stays put, the other moves to its default-layout relative offset —
@@ -748,8 +760,8 @@ just grew is absent from the clone and is left out of the snapshot entirely, for
 | Session start | `begin` from the starting read's clone | `reset` |
 | App edit, `markChanged` | per address, as its own write returns | entry opened, closed at the gesture boundary |
 | Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands |
-| Reconcile readback, scoped or full | `resync` from the read's clone | `reset`, in the reflect |
-| EQ 1-knob refetch | `capture` from the read's clone | `absorb` of the device-authored keys only |
+| Reconcile readback, scoped or full | `resync` from the read's clone, then the direct journal's entries stamped after the read was issued | `reset`, in the reflect |
+| EQ 1-knob refetch | `capture` from the read's clone, then the same journal replay | `absorb` of the device-authored keys only |
 | Converge round | `capture` from the frozen clone | untouched |
 
 #### The display update
@@ -799,6 +811,7 @@ describes a state it can return to.
 | A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
 | A MIDI message arriving under those same latches | the engine's gate, before any receive bookkeeping | a refusal must consume no pickup, timestamp or 14-bit pair state |
 | A device-authored key the app has moved since | `absorb`'s per-key context check | the plan holds the app's newer value, so the device is echoing the app's own write back on it |
+| A read's value for a key the app wrote while that read was in flight | `readIntoPlan`'s authorship filter, before the patch is applied | the operator authored it after the read sampled the address; comparing values instead would take an edit that returned to where it started for one that never happened |
 | A meter reading | never enters the plan at all | display only, and the stream stops with the session |
 
 ### One device address, more than one owner
@@ -815,6 +828,12 @@ console are defined over it (`insertFxMenu`). The plan loader warns about a file
 and opens it on the operator's word (`planProblems` in `core/plan-validate.ts`) — a refusal would make
 Fetch → Save → reopen impossible for the app's own document, since a **device readback** and a `.urxf`
 import deliberately do not validate; neither can produce it from a unit that honours its own spec.
+
+A **STEREO-linked MONO IN pair** is one holder, not two, and the census counts it as one: measured on the unit,
+a linked pair's two members mirror the selector both ways and point at a single engine instance, and the link
+transition clears the effect on both. The census reads `stereoLink`, not PAN/BAL: the mirror was measured in
+both modes. Counting it as a collision would lock the pair's own menu against a selection the app itself
+authored (see the pair rules above).
 
 The collapse below is therefore not a repair of a state the hardware reports. It is an invariant on the app's
 own emission: `Plan` is free to hold two owners for one address — nothing in its type prevents it, and a
