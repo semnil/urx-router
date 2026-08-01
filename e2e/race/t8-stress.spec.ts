@@ -338,13 +338,11 @@ test.describe("T8 stress", () => {
     expect(readWrite).toBeDefined();
     expect(readWrite!.at!).toBeLessThan(markTime(trace, "settle")!);
 
-    // PINNED, and a defect rather than a property (the *.audit.test.ts convention):
-    // a device-side change the follow layer applied is written straight back out to
-    // the device BY THE NEXT FLUSH, even though nothing in the app authored it. It is
-    // harmless while the control is standing still — the value being written is the
-    // one the device just reported — but it is exactly the wrong thing to do to a
-    // knob a second pair of hands is still turning, and it is authorship (invariant
-    // 13) that the trace cannot resolve: the write looks identical to an operator's.
+    // ASSERTED, after the window behind it was placed on a barrier and closed. A
+    // device-side change the follow layer applied used to be written straight back out
+    // by the next flush, even though nothing in the app authored it — harmless while the
+    // control stood still, and exactly the wrong thing to do to a knob a second pair of
+    // hands was still turning.
     //
     // The scope matters, and it is what reconciles this with t5-drop's opposite-looking
     // "nothing was written back": there is no timer that pushes a followed value out on
@@ -354,15 +352,16 @@ test.describe("T8 stress", () => {
     // presses arrows for ten seconds, so flushes run throughout, and only this one has a
     // flush to observe.
     //
-    // MEASURED INTERMITTENT (2026-08-01), which is why the count is not asserted in
-    // either direction: the same tree produced 8 write-backs running this file alone and
-    // 0 running the whole tier at --workers=4. The direct-follow journal (live.ts) closed
-    // the interleaving where a reconcile's capture erased the snapshot entry noteDirect
-    // had written; whatever produces the remaining ones is a different path and is not
-    // yet localised. Asserting > 0 fails the loaded run and asserting 0 fails the light
-    // one, so the run reports the count and the tier's ladders own the verdict until a
-    // case can place the window deterministically.
-    console.log(`pushed-back device-originated writes: ${pushedBack.length} (intermittent — not asserted)`);
+    // It read 0 / 2 / 3 / 3 across four runs of this one case (2026-08-01), which is why
+    // it went unasserted for as long as it did: the count is a function of where the
+    // notifies fell inside the flush's own await chain. The cause is one flush behind
+    // one translate — live.ts froze its command list at flush start and diffed each
+    // command against a snapshot the follow side kept writing into, so the loop reached
+    // an address the device had moved and sent the value it no longer held.
+    // t1b-overtake's "a direct notify the send loop has not reached yet" places that
+    // window on a barrier and owns the verdict; this line is the tier's regression net,
+    // and it is a real one — every one of those runs would fail it.
+    expect(pushedBack).toHaveLength(0);
     // What IS deterministic here: the flushes were real, so a zero above is never
     // "nothing was sent".
     expect(all.filter((s) => s.cmd === "vd_set" && s.addr === CH1_FADER).length).toBeGreaterThan(0);

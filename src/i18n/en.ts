@@ -821,6 +821,8 @@ export const en = {
       brokerClosed: "Device Center closed the control connection. Start it again, then retry.",
       notConnected: "not connected to the device",
       brokerTimeout: (detail: string): string => `Device Center did not answer in time (${detail})`,
+      brokerUnresponsive:
+        "Device Center stopped answering, so the operation was stopped. Restart Device Center, then try again.",
       brokerRejected: (detail: string): string => `the device refused the write (${detail})`,
       brokerBadResponse: (detail: string): string => `Device Center sent an unexpected response (${detail})`,
       brokerIo: (detail: string): string => `the connection to Device Center failed (${detail})`,

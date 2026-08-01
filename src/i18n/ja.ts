@@ -781,6 +781,8 @@ export const ja: Messages = {
       brokerClosed: "Device Center が制御接続を閉じました。起動し直してから再度お試しください。",
       notConnected: "デバイスに接続していません",
       brokerTimeout: (detail: string): string => `Device Center から応答がありませんでした (${detail})`,
+      brokerUnresponsive:
+        "Device Center が応答しなくなったため、処理を中止しました。Device Center を起動し直してから再度お試しください。",
       brokerRejected: (detail: string): string => `デバイスが書き込みを拒否しました (${detail})`,
       brokerBadResponse: (detail: string): string => `Device Center から想定外の応答が返りました (${detail})`,
       brokerIo: (detail: string): string => `Device Center との通信に失敗しました (${detail})`,

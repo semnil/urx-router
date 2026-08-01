@@ -77,6 +77,7 @@ export const SHELL_CODES: Record<string, keyof Messages["error"]["shell"]> = {
   "broker-closed": "brokerClosed",
   "not-connected": "notConnected",
   "broker-timeout": "brokerTimeout",
+  "broker-unresponsive": "brokerUnresponsive",
   "broker-rejected": "brokerRejected",
   "broker-bad-response": "brokerBadResponse",
   "broker-io": "brokerIo",

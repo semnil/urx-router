@@ -210,6 +210,7 @@ single source of truth. This table states what each case measures.
 | `overtake-converge-and-refetch-one-flush` | mixed | Two repairs on one flush, the weaker one running last |
 | `overtake-converge-latch-starvation` | console | A liveness defect: whether sustained editing stops reaching the device entirely |
 | `overtake-notify-echo-vs-genuine-during-flush` | console | Phase and address held fixed while only the message's truth varies |
+| `overtake-direct-notify-ahead-of-the-send-loop` | console | A device-side change on an address the frozen command list has not reached yet |
 | `overtake-reconcile-during-reconcile` | mixed | The reconcile queue's own re-entrancy, with no operator involved |
 | `overtake-direct-scoped-coalesce-boundary` | console | Whether a reconcile resolving inside the coalesce upgrades an unrelated direct reflect |
 | `overtake-drag-flush-backpressure` | console | A realistic gesture on a realistic link, and the convergence latency an operator perceives |
@@ -575,6 +576,12 @@ agreement, zero findings.
   the old value for the whole gesture
 - **Echo versus ack**: a broker that echoes faster than it acks makes the app apply its own write as a
   device-side change and escalate to a whole-device readback — several hundred reads per echoed write
+- **A flush wrote a device-authored value back at the device — fixed.** With the send loop held at CH 1's
+  fader and a pan notify delivered while it was held, the loop reached CH 1's pan — one command behind —
+  and sent the **pre-notify** value: the device was left holding `0` after reporting `24`, and the idle
+  sweep then pulled that `0` back into the plan, so the move made on the unit was reverted end to end.
+  The same defect is what `stress-three-operators-one-node` had been counting without being able to
+  assert: **0 / 2 / 3 / 3 write-backs across four runs of one case**, all on pan, now 0 in four
 
 **T2 — address-set shape**
 
@@ -902,6 +909,36 @@ timed re-arm would repeat it during unrelated work.
 
 Measured before → after: registration 2 → 1 entry per engine slot; a losing owner's edit 2 phantom
 writes per flush for the rest of the session → 0 writes plus one status line.
+
+### 9. Re-taking the flush's values when the follow side moves the snapshot (`live.ts`)
+
+A flush translated the plan **once**, at flush start, and then awaited one `vd_set` per changed
+address. The snapshot it diffs each command against is not frozen with it: the follow side writes into
+the snapshot from inside those awaits — `noteDirect` patches the single entry a direct notify carried,
+and a reconcile's `capture()` rebuilds the whole map. The loop then reached an address the device had
+moved, found its own frozen command disagreeing with the fresh entry, and **sent the value the plan had
+stopped holding** — the device's own previous one. Nothing in the app authored it, so it is invisible to
+invariant 13: on the wire it is indistinguishable from an operator's write.
+
+The damage is not the redundant write. The value that goes out is the one from **before** the device-side
+move, so the knob a second pair of hands is turning is pushed back, and the idle safety net then reads
+that reverted value into the plan: the move is undone end to end, with the screen and the device agreeing
+on it afterwards. That agreement is why `stress-three-operators-one-node`'s convergence assertion passed
+throughout — it converges, on the wrong value.
+
+The flush now carries a `snapshotEpoch`, bumped by `noteDirect` and by `capture()` and by nothing else
+(the flush's own `snapshot.set` must not bump it, or every command would re-take). When the counter moves
+between two commands, the loop re-takes `planToCommands` and reads the remaining values from it. Only the
+**values** are re-taken: the order stays the flush's own, because order binds meaning (a type selector
+types the array after it — fix 8), and an address the plan only just grew stays out, because that is a
+pending app edit whose own `markChanged` has already scheduled the trailing flush. An address that left
+the plan mid-flush is skipped rather than sent.
+
+Measured, `stress-three-operators-one-node` run four times: **0 / 2 / 3 / 3 write-backs → 0 / 0 / 0 / 0**.
+The count was a function of where the notifies fell in the flush's await chain, which is why the case had
+carried it as a logged number rather than an assertion; the barrier case
+`overtake-direct-notify-ahead-of-the-send-loop` places that window exactly and owns the verdict, and the
+stress count is now asserted at zero as the tier's regression net.
 
 ## What the harness itself got wrong
 
