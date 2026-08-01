@@ -541,6 +541,41 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());
 
+    // The page that owned a device session is being replaced — a dev-server reload, a
+    // webview recovering from a crash, the `--reset-storage` reload. Everything the
+    // frontend holds is gone with it, INCLUDING the connection epoch that
+    // `vd_disconnect` needs, so the session can never be named again from the page
+    // side: it would outlive its owner as an open broker socket and an open MIDI port.
+    //
+    // Measured before this existed, after one dev reload: the connect handshake still
+    // succeeded (device list, sync_status, firmware) and then the broker answered NOT
+    // ONE parameter read — the app sent a `requestVD` GET every 3 s and received zero
+    // bytes back for as long as it was left running. The MIDI port restore failed the
+    // same way, with "that port is no longer available".
+    //
+    // Native-side rather than a `pagehide` handler in the page: the IPC a dying page
+    // posts is not guaranteed to leave before navigation tears the webview down, and a
+    // teardown that only usually happens is the failure mode this exists to remove.
+    // `Started` also fires for the first load of all, where both calls are no-ops.
+    #[cfg(desktop)]
+    let builder = builder.on_page_load(|webview, payload| {
+        use tauri::webview::PageLoadEvent;
+        use tauri::Manager;
+        if payload.event() != PageLoadEvent::Started {
+            return;
+        }
+        let app = webview.app_handle();
+        vd::shutdown(&app.state::<vd::VdState>());
+        midi::close_input(&app.state::<midi::MidiState>());
+        midi::close_output(&app.state::<midi::MidiState>());
+        // The idle-sleep hold belongs here for the same reason and is the least visible of
+        // the three: the frontend takes it only while Live sync is up, so a reload during a
+        // session would otherwise leave the machine awake for as long as the app runs, with
+        // no page that knows the assertion exists. Release failures are already reported by
+        // `set`; there is nothing further to salvage from a page that is gone.
+        let _ = keepawake::set(&app.state::<keepawake::KeepAwakeState>(), false);
+    });
+
     // App-owned Edit > Undo / Redo (see build_menu). The click is forwarded to the
     // frontend, which is the only side that knows what an undo means here.
     #[cfg(target_os = "macos")]

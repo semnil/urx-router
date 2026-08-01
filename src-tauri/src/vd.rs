@@ -21,7 +21,7 @@ use tauri::ipc::Channel;
 // localizes the code and shows the detail as-is (src/i18n error.shell) — a raw
 // message would reach a Japanese dialog in English. Codes: broker-unreachable,
 // no-device, control-worker-gone, not-connected, device-lost, broker-closed,
-// broker-timeout, broker-rejected, broker-bad-response, broker-io.
+// broker-timeout, broker-unresponsive, broker-rejected, broker-bad-response, broker-io.
 
 /// Stable error code raised when the worker thread is gone (its command channel or
 /// reply channel is closed). The frontend exact-matches this code, so its value
@@ -192,9 +192,8 @@ impl VdState {
     /// disconnect so a delayed teardown of an earlier session cannot close this one.
     pub fn install(&self, tx: Sender<Cmd>) -> u64 {
         let mut c = self.conn.lock().unwrap();
-        if let Some(old) = c.tx.replace(tx) {
-            let _ = old.send(Cmd::Shutdown);
-        }
+        stop(&mut c);
+        c.tx = Some(tx);
         c.epoch += 1;
         c.epoch
     }
@@ -339,9 +338,25 @@ pub fn watch_link(tx: Sender<Cmd>, channel: Channel<LinkEvent>) -> Result<(), St
 pub fn disconnect(state: &VdState, epoch: u64) {
     let mut c = state.conn.lock().unwrap();
     if c.epoch == epoch {
-        if let Some(tx) = c.tx.take() {
-            let _ = tx.send(Cmd::Shutdown);
-        }
+        stop(&mut c);
+    }
+}
+
+/// Close whatever connection is installed, whatever generation it belongs to. The
+/// epoch-matched `disconnect` above is for a session ending; this is for the page
+/// that owned it going away, where no epoch survives to name it — see the page-load
+/// teardown in lib.rs. A no-op when nothing is installed.
+pub fn shutdown(state: &VdState) {
+    let mut c = state.conn.lock().unwrap();
+    stop(&mut c);
+}
+
+/// Take the installed worker's channel and tell it to exit. The one spelling of a
+/// teardown, so a step added to it (dropping a channel eagerly, bumping the epoch)
+/// cannot reach one caller and miss another. Caller holds the lock.
+fn stop(c: &mut Conn) {
+    if let Some(tx) = c.tx.take() {
+        let _ = tx.send(Cmd::Shutdown);
     }
 }
 
@@ -501,7 +516,7 @@ mod imp {
         // without this, every later command keeps talking to a broker that still
         // ACKs writes with no unit attached and answers reads from its cache, and
         // the frontend is told a plan was written when nothing reached hardware.
-        let mut lost: Option<String> = None;
+        let mut health = Health::default();
         loop {
             // While a subscription is streaming, poll for commands briefly so the
             // bounded pump runs back-to-back and keeps up with the ~250/s feed; when
@@ -521,7 +536,7 @@ mod imp {
                     value,
                     reply,
                 }) => {
-                    let _ = reply.send(guard(&mut lost, || {
+                    let _ = reply.send(health.guard(|| {
                         do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value))
                     }));
                 }
@@ -531,9 +546,9 @@ mod imp {
                     y,
                     reply,
                 }) => {
-                    let _ = reply.send(guard(&mut lost, || {
-                        do_get(&mut ws, &mut subs, &dev_uid, param_id, x, y)
-                    }));
+                    let _ = reply.send(
+                        health.guard(|| do_get(&mut ws, &mut subs, &dev_uid, param_id, x, y)),
+                    );
                 }
                 Ok(Cmd::SetStr {
                     param_id,
@@ -542,7 +557,7 @@ mod imp {
                     value,
                     reply,
                 }) => {
-                    let _ = reply.send(guard(&mut lost, || {
+                    let _ = reply.send(health.guard(|| {
                         do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value))
                     }));
                 }
@@ -552,9 +567,11 @@ mod imp {
                     y,
                     reply,
                 }) => {
-                    let _ = reply.send(guard(&mut lost, || {
-                        do_get_str(&mut ws, &mut subs, &dev_uid, param_id, x, y)
-                    }));
+                    let _ =
+                        reply
+                            .send(health.guard(|| {
+                                do_get_str(&mut ws, &mut subs, &dev_uid, param_id, x, y)
+                            }));
                 }
                 Ok(Cmd::MetersSubscribe {
                     addrs,
@@ -569,7 +586,7 @@ mod imp {
                     }
                     let mut first = Ok(());
                     for &(id, x) in &addrs {
-                        let r = guard(&mut lost, || reg_meter(&mut ws, &dev_uid, id, x, "regist"));
+                        let r = health.guard(|| reg_meter(&mut ws, &dev_uid, id, x, "regist"));
                         if first.is_ok() {
                             first = r;
                         }
@@ -600,9 +617,7 @@ mod imp {
                     }
                     let mut first = Ok(());
                     for &(id, x, y) in &addrs {
-                        let r = guard(&mut lost, || {
-                            reg_param(&mut ws, &dev_uid, id, x, y, "regist")
-                        });
+                        let r = health.guard(|| reg_param(&mut ws, &dev_uid, id, x, y, "regist"));
                         if first.is_ok() {
                             first = r;
                         }
@@ -1118,25 +1133,75 @@ mod imp {
     /// its own and latch the session as dead rather than re-deriving the state.
     pub(super) const DEVICE_LOST_PREFIX: &str = "device-lost";
 
-    /// Fail a command outright once the session is known dead, latching the reason
-    /// the first time one surfaces it. The device-lost push arrives exactly once,
-    /// so without the latch only the command that consumed it could ever notice —
-    /// every later one would keep talking to a broker that ACKs writes with no unit
-    /// attached and answers reads from its cache.
-    pub(super) fn guard<T>(
-        lost: &mut Option<String>,
-        call: impl FnOnce() -> Result<T, String>,
-    ) -> Result<T, String> {
-        if let Some(reason) = lost {
-            return Err(reason.clone());
-        }
-        let r = call();
-        if let Err(e) = &r {
-            if e.starts_with(DEVICE_LOST_PREFIX) {
-                *lost = Some(e.clone());
+    /// Prefix every per-command deadline carries. A single one is survivable; a run of
+    /// them with nothing answered in between is the stall latched below.
+    pub(super) const BROKER_TIMEOUT_PREFIX: &str = "broker-timeout";
+
+    /// Consecutive deadlines, with no command answered in between, that mean the
+    /// broker has stopped answering this session rather than that one read was slow.
+    ///
+    /// Three, because each deadline is 3 s (do_get_value / do_set / vd_get_data), so
+    /// the stall is declared ~9 s in. The number that mattered is the one it replaces:
+    /// a whole-device readback is ~800 parameters, and with every one of them running
+    /// out its own deadline the app sat on "Connecting for live sync…" for ~40 minutes
+    /// before the read finished and its error count refused the session. Measured, on
+    /// a broker left holding an abandoned session (see the page-load teardown in
+    /// lib.rs): the app sent a GET every 3 s and received zero bytes back.
+    ///
+    /// A healthy local broker answers in milliseconds, so three deadlines in a row is
+    /// already far outside normal — and one answered command anywhere in the run puts
+    /// the count back to zero, so a single slow parameter cannot trip it.
+    pub(super) const BROKER_STALL_LIMIT: u32 = 3;
+
+    /// Stable code the stall latches. Distinct from device-lost: the unit may well be
+    /// attached and fine — it is the broker that has stopped talking to us.
+    pub(super) const BROKER_UNRESPONSIVE: &str = "broker-unresponsive";
+
+    /// What the worker knows about the session's health, and the one funnel every
+    /// parameter command passes through. Held as one value rather than as a pair of
+    /// `&mut` locals threaded through each call site, so a third latch is a change
+    /// here instead of a change at all seven of them.
+    #[derive(Default)]
+    pub(super) struct Health {
+        lost: Option<String>,
+        stalled: u32,
+    }
+
+    impl Health {
+        /// Fail a command outright once the session is known dead, latching the reason
+        /// the first time one surfaces it. The device-lost push arrives exactly once,
+        /// so without the latch only the command that consumed it could ever notice —
+        /// every later one would keep talking to a broker that ACKs writes with no unit
+        /// attached and answers reads from its cache.
+        ///
+        /// The second latch is the stall: a broker that answers nothing would otherwise
+        /// cost every remaining command its full deadline, and the caller only learns the
+        /// operation failed once the last of them has run out.
+        pub(super) fn guard<T>(
+            &mut self,
+            call: impl FnOnce() -> Result<T, String>,
+        ) -> Result<T, String> {
+            if let Some(reason) = &self.lost {
+                return Err(reason.clone());
             }
+            let r = call();
+            match &r {
+                Err(e) if e.starts_with(DEVICE_LOST_PREFIX) => self.lost = Some(e.clone()),
+                Err(e) if e.starts_with(BROKER_TIMEOUT_PREFIX) => {
+                    self.stalled += 1;
+                    if self.stalled >= BROKER_STALL_LIMIT {
+                        eprintln!(
+                            "vd: {} consecutive broker deadlines; treating the broker as unresponsive",
+                            self.stalled
+                        );
+                        self.lost = Some(BROKER_UNRESPONSIVE.to_string());
+                    }
+                }
+                // Anything else means the broker is talking to us, whatever it said.
+                _ => self.stalled = 0,
+            }
+            r
         }
-        r
     }
 
     // Bound a single pump's drain. The broker streams meters at ~250/s, so reads
@@ -1193,6 +1258,71 @@ mod imp {
         }
         subs.flush();
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod guard_tests {
+        // The two latches, driven directly: guard is the one funnel every parameter
+        // command passes through, and both of its latches decide how long a caller
+        // waits for an answer it is never going to get. Asserted through what a caller
+        // sees — a latched session refuses a command that would otherwise have run —
+        // rather than by reading the struct's own fields.
+        use super::{Health, BROKER_STALL_LIMIT, BROKER_TIMEOUT_PREFIX, BROKER_UNRESPONSIVE};
+
+        fn timeout() -> Result<i64, String> {
+            Err("broker-timeout: value at 139:0:0".to_string())
+        }
+
+        /// Did this call reach `call()` at all, or did the latch refuse it first?
+        fn ran(health: &mut Health) -> bool {
+            health.guard(|| Ok(7)) == Ok(7)
+        }
+
+        #[test]
+        fn a_run_of_deadlines_latches_the_broker_as_unresponsive() {
+            let mut health = Health::default();
+            // Every one of them still reports on its own merits: the latch decides what
+            // happens NEXT, so a run that stops one short costs nothing but its deadlines.
+            for _ in 0..BROKER_STALL_LIMIT {
+                let e = health.guard(timeout).unwrap_err();
+                assert!(
+                    e.starts_with(BROKER_TIMEOUT_PREFIX),
+                    "reported as its own timeout: {e}"
+                );
+            }
+            // Past the limit every later command fails on the latch instead of running out
+            // its own deadline — the ~800-parameter readback this exists for.
+            assert_eq!(health.guard(|| Ok(7)).unwrap_err(), BROKER_UNRESPONSIVE);
+        }
+
+        #[test]
+        fn one_answered_command_clears_the_run() {
+            let mut health = Health::default();
+            for _ in 0..BROKER_STALL_LIMIT - 1 {
+                let _ = health.guard(timeout);
+            }
+            assert!(ran(&mut health), "not latched one short of the limit");
+            // The answer put the run back to zero, so the same number of deadlines again
+            // still does not reach it.
+            for _ in 0..BROKER_STALL_LIMIT - 1 {
+                let _ = health.guard(timeout);
+            }
+            assert!(ran(&mut health), "the earlier deadlines no longer count");
+        }
+
+        #[test]
+        fn a_refusal_is_the_broker_talking_to_us() {
+            let mut health = Health::default();
+            for _ in 0..BROKER_STALL_LIMIT * 2 {
+                let _ = health.guard(|| {
+                    Err::<i64, String>("broker-rejected: 140:0:0 (response_code 500)".to_string())
+                });
+            }
+            // A device that refuses every write is not a broker that has stopped
+            // answering, and stopping the session on it would take the failure away
+            // from the caller that can report which write was refused.
+            assert!(ran(&mut health));
+        }
     }
 
     #[cfg(test)]

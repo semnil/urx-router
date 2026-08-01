@@ -542,7 +542,7 @@ function reflectFollow(): void {
 function assertReadComplete(result: ReadbackResult, label: string): void {
   if (!result.errors.length) return;
   console.warn(label, result.errors);
-  throw new Error(t().error.followReadIncomplete(result.errors.length));
+  throw new Error(linkFailureIn(result.errors) ?? t().error.followReadIncomplete(result.errors.length));
 }
 // A merged device read could not place part of its result: a wire the operator removed
 // while it was in flight, or an edit a device-side routing change left nowhere to land.
@@ -1957,6 +1957,33 @@ $("btn-hide-unused").addEventListener("click", () => {
   graph.hideUnused();
 });
 
+// The codes the shell LATCHES: past one of these every later command fails on the latch
+// rather than on its own merits, so a single occurrence names the whole operation's cause.
+// `broker-unresponsive` is the one that made this necessary — a broker that stops answering
+// turns a whole-device read into hundreds of identical failures, and a count then tells the
+// operator how much failed while saying nothing about why or what to do.
+const LATCHED_LINK_CODES = ["broker-unresponsive", "device-lost", "broker-closed", "control-worker-gone"];
+
+/** The localized cause when a multi-parameter read failed because the LINK died, or null
+ *  when its failures are its own — a param the unit refused, a group that did not decode —
+ *  which is what the failure count is the honest answer to. A read reports per group rather
+ *  than stopping at the first, so the code sits behind the group's own prefix and is matched
+ *  inside the entry rather than at its head.
+ *
+ *  This re-derives at the top of the stack what the shell knew at the bottom. The deeper
+ *  fix is for the readback's per-group catch to RETHROW a latched code instead of
+ *  collecting it — every caller already has a rejection path (applyDeviceState rejects on
+ *  abort), so all three read consumers would get the cause for free and this helper would
+ *  delete. It is left for its own change because it alters what a partially-read plan keeps
+ *  on the device link, which is a behaviour question rather than a wording one. */
+function linkFailureIn(errors: string[]): string | null {
+  for (const e of errors) {
+    const code = LATCHED_LINK_CODES.find((c) => e.includes(c));
+    if (code) return errorText(code);
+  }
+  return null;
+}
+
 // Turn a connect-time failure into a clear, localized status. Three of the Rust vd
 // worker's codes (vd.rs) name a state the user can act on directly — Device Center
 // not running, running with no URX attached, or the control worker dying / going
@@ -2167,7 +2194,9 @@ if (!DEMO) {
         const unread = merged.unreadNodes.size;
         setStatus(
           merged.errors.length
-            ? t().status.fetchPartial(merged.applied, merged.errors.length, unread)
+            ? // A link that died mid-read is named rather than counted, for the reason
+              // linkFailureIn gives; the per-group reasons stay in the report below.
+              (linkFailureIn(merged.errors) ?? t().status.fetchPartial(merged.applied, merged.errors.length, unread))
             : unread
               ? t().status.fetchedUnread(device.model, merged.applied, unread)
               : t().status.fetchedDevice(device.model, merged.applied),
@@ -2469,7 +2498,9 @@ if (!DEMO) {
         // over the real values. Live sync needs a complete read to start from.
         if (merged.errors.length) {
           console.warn("live readback issues:", merged.errors);
-          return await failLive(t().status.liveError(t().error.liveReadIncomplete(merged.errors.length)));
+          return await failLive(
+            t().status.liveError(linkFailureIn(merged.errors) ?? t().error.liveReadIncomplete(merged.errors.length)),
+          );
         }
         dirty = false;
         liveDeviceLabel = device.model;

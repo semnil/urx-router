@@ -61,6 +61,9 @@ describe("errorText", () => {
       "broker-closed",
       "not-connected",
       "broker-timeout: value at 766:0:0",
+      // Latched by the worker after a run of deadlines, so it is raised bare — the
+      // detail belongs to the one command that timed out, not to the stall.
+      "broker-unresponsive",
       "broker-rejected: 140:0:0 (response_code 500)",
       "broker-bad-response: no sync_status",
       "broker-io: connection reset",
