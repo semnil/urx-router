@@ -12,12 +12,14 @@
 
 ## Testing
 
-<!-- What you ran, and on what. -->
+<!-- Only what this PR's own checks do not already report. The build, the unit tests and
+     the ordinary E2E tier run on every PR and their result is in the checks above — do
+     not restate them here. -->
 
-- [ ] `pnpm test`
-- [ ] `pnpm test:e2e`
 - [ ] Verified on hardware — model and System firmware:
-- [ ] Not applicable
+- [ ] Ran something the checks do not cover — say what and what it showed (the race harness
+      on a PR that is not a version bump, a measurement, a manual repro):
+- [ ] Nothing beyond the checks
 
 ## UI changes
 
@@ -25,7 +27,9 @@
 
 ## Checklist
 
-- [ ] `pnpm format` (and `cargo fmt` for Rust changes)
+<!-- Only what the checks cannot decide. Formatting is not here: format.yml applies it
+     to a same-repo PR itself and reports above. -->
+
 - [ ] E2E coverage added for new behavior
 - [ ] `docs/en` and `docs/ja` updated together
 - [ ] Routing rule changes: `src/models/`, `docs/*/device-model.md`, and `UPDATE_SKILL=1 pnpm test skill-export`
