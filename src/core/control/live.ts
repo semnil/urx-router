@@ -23,6 +23,8 @@ import {
 } from "./translate";
 import type { SharedOwners, NameWrite, WriteScope } from "./translate";
 import { reachedAndFailed, sendConverging } from "./client";
+import { writeSettle } from "./settle";
+import type { PendingWrites } from "./settle";
 
 // Coalesce rapid edits (a slider drag fires per pixel) into one flush so the
 // single-threaded device worker is not flooded; the snapshot diff means only the
@@ -87,8 +89,21 @@ export interface LiveSyncHooks {
    *  build, and the tests that do not exercise it). Resolves the private copy its read
    *  ran against (readback.readIntoPlan) — that copy is what the device holds as far as
    *  the read established it, and so what the snapshot re-base measures from. Null when
-   *  the plan it read into has been replaced: there is then nothing to re-base. */
-  refetchNodes?: (nodes: ReadonlySet<string>) => Promise<Plan | null>;
+   *  the plan it read into has been replaced: there is then nothing to re-base.
+   *
+   *  `pending` is what THIS flush put on the device and the device acked. The unit acks
+   *  a write before the value is readable, and this read is issued in the same
+   *  millisecond as the last ack, so the read holds until the unit has spoken for the
+   *  addresses it is about to ask for, and answers each of them with WHAT THE UNIT
+   *  ANNOUNCED (settle.ts, readback's writeOverlay). Never with what was sent: an acked
+   *  write the unit silently discarded is indistinguishable from one it took, and
+   *  answering it from the send would record our value as device truth with no diff left
+   *  to retry. Both halves happen inside the read, where its own clone and witness cover
+   *  an edit made meanwhile — hence a value handed over rather than a wait taken here.
+   *  Without it the read put the value the edit had just replaced back into the plan, the
+   *  capture below recorded it as device truth, and the unit's own notify for our write
+   *  then failed isEcho and was reconciled as a device-side change. */
+  refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites) => Promise<Plan | null>;
 }
 
 export class LiveSync {
@@ -358,6 +373,21 @@ export class LiveSync {
       let sent = 0;
       let sideEffect = false;
       const refetch = new Set<string>();
+      // What this flush wrote and the device acked, keyed the way the snapshot is
+      // (translate.addrKey). Handed to the refetch, whose read would otherwise be issued
+      // inside the window in which the unit still answers these addresses with the
+      // values these writes replaced. Bounded by the flush's own diff.
+      //
+      // `mark` is taken immediately before that address's own vdSet, because only a
+      // notify after it can be the announcement of that write; one mark for the whole
+      // flush would let a device-side notify for the fader confirm a write the loop had
+      // not reached yet. `changed` says the snapshot held a DIFFERENT value, so the unit
+      // must change and must announce it — as against an address the snapshot held NO
+      // entry for, whose write may be a value the unit already holds, and a no-op write
+      // emits no notify at all (measured). `node` decides which of the two subsets below
+      // the address lands in, and cannot be resolved until the loop has finished: the
+      // command that puts a node into `refetch` may come after the ones that wrote it.
+      const writes = new Map<number, { mark: number; node?: string; changed: boolean }>();
       const scope = this.scope();
       const commands = planToCommands(model, plan, scope);
       // Both lists below are frozen at flush start; the snapshots they are diffed against
@@ -386,9 +416,18 @@ export class LiveSync {
         // there is nothing left to send to it.
         const value = fresh ? fresh.get(k) : c.vdValue;
         if (value === undefined) continue;
-        if (this.snapshot.get(k) === value) continue;
+        const had = this.snapshot.get(k);
+        if (had === value) continue;
+        // Taken before the send, not after it: a notify that lands while this very
+        // vdSet is in flight cannot be placed on either side of it, and the safe
+        // reading is that it is the answer to this write. A misattribution either way
+        // is self-correcting — the real answer arrives later and overwrites it — so
+        // what the mark buys is one fewer spurious reconcile, not the merge's
+        // correctness (settle.ts).
+        const mark = writeSettle.mark();
         await vdSet(c.paramId, c.x, c.y, value);
         this.snapshot.set(k, value);
+        writes.set(k, { mark, node: c.node, changed: had !== undefined });
         sent++;
         if (CONVERGE.has(c.name)) sideEffect = true;
         else if (REFETCH.has(c.name) && c.node) refetch.add(c.node);
@@ -440,10 +479,44 @@ export class LiveSync {
       // A refetch after the converge, if both happened: converge rebuilds the snapshot
       // from the plan, and the read that follows is what makes the plan right.
       if (refetch.size && this.hooks.refetchNodes) {
-        // Sampled before the call, which issues its read (and takes its private copy)
-        // synchronously — so the mark and the copy describe the same instant.
+        // Sampled before the call, which takes its private copy synchronously — so the
+        // mark and the copy describe the same instant. The read's own settle happens
+        // after that copy, so a direct notify landing in it is device truth the copy
+        // predates, which is exactly what this mark restores.
         const since = this.directSeq;
-        const deviceView = await this.hooks.refetchNodes(refetch);
+        // Split by whether this read is going to ASK the unit about the address.
+        //
+        //   - inside its scope: the read re-reads that whole node, so this is an address
+        //     it may ask the unit about and it may not start before the unit has spoken
+        //     for it. By node rather than by which addresses the pass actually reads,
+        //     because the two lists would then have to agree for ever and the cost of
+        //     the conservative reading is one wait the pass shares with its neighbours
+        //     anyway. A changed write ends that wait at its own notify
+        //     (9-204 ms measured, and the collateral the read is FOR went fresh 1-2 ms
+        //     behind it); one the snapshot held no entry for can only end at the bound,
+        //     since it may be a no-op the unit never announces.
+        //   - outside it: not read, so nothing here confirms or repairs it. A CHANGED
+        //     one the unit never announces is a write that went nowhere, and the settle
+        //     reports it to the follow side, which arms its idle full reconcile — the
+        //     only repair available without widening this read, which is what the
+        //     scoping is for. A no-op write legitimately says nothing and is left alone.
+        //
+        // Nothing is withdrawn from this handle, and nothing needs to be. The read is
+        // answered from what the unit ANNOUNCED, and the last announcement wins — so an
+        // address the operator moved on the board after our write comes back carrying
+        // THEIR value, which is the answer the withdrawal used to reach by falling back
+        // to a read. A capture() landing inside the flush needs no answer either: it
+        // re-authors the snapshot from a device read, and a device read cannot contradict
+        // a later word from the same device.
+        const written = new Map<number, number>();
+        const mustSettle = new Set<number>();
+        const mustAnnounce = new Set<number>();
+        for (const [k, w] of writes) {
+          written.set(k, w.mark);
+          if (w.node !== undefined && refetch.has(w.node)) mustSettle.add(k);
+          else if (w.changed) mustAnnounce.add(k);
+        }
+        const deviceView = await this.hooks.refetchNodes(refetch, { written, mustSettle, mustAnnounce });
         // The read ran against its own copy of the plan (readback.readIntoPlan), so the
         // copy is what the device holds: re-base from it and an edit made during the
         // await — on the read node or any other — stays a diff. Null = the plan it read

@@ -23,10 +23,13 @@ import type { PlanPatch, PlanWriteWitness } from "../plan-history";
 import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, FX_STEREO_ASSIGN_ON, normalizeInsertFx, PARAMS } from "./params";
 import type { ParamName } from "./params";
+import { writeSettle } from "./settle";
+import type { PendingWrites } from "./settle";
 import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, FX_SLOT_LEVEL, FX_SLOT_ON, fxParams } from "./fx-effect";
 import { insertFxEngine, insertFxFamilyOf, insertFxWritableSlots } from "./insert-fx-effect";
 import type { DynField, EqControl, EqOneKnobControl } from "./translate";
 import {
+  addrKey,
   busBalance,
   busEqOn,
   busFader,
@@ -114,6 +117,52 @@ function readers(source: ParamSource): Readers {
   };
 }
 
+/**
+ * A source that answers an address out of what the DEVICE ANNOUNCED about it, and
+ * reads everything else.
+ *
+ * The unit acks a write before the value is readable: measured on a URX44V, a GET of a
+ * just-written address answers the PRE-write value until that write's own change notify
+ * arrives, 9-204 ms after the write was issued (n = 87, value-paired). The caller
+ * settles first (see settle.ts), so every entry here is a value the unit itself has
+ * spoken. What that adds over reading the address is a statement of a different kind:
+ * an announcement names what the unit took, where a read anywhere near the boundary can
+ * still name the value it replaced.
+ *
+ * What is never here is the value the caller SENT. An acked write the unit silently
+ * discarded is indistinguishable from one it took, and answering that address from the
+ * send would put a value on the unit's behalf that the unit does not hold — with plan
+ * and snapshot then agreeing, no diff left to retry, and the unit never speaking about
+ * it again. An address the unit has said nothing about is simply absent, and comes off
+ * the device like any other: that is the blind read this path has always taken, for that
+ * address alone, and the one answer that cannot enshrine a divergence. It is also why a
+ * quantised or clamped write needs no case of its own — its notify carries the unit's
+ * value, and that value is the answer.
+ *
+ * It lands one step ahead of the merge, which is what makes it complete: the value
+ * goes into the read's private clone before diffPlans measures it, so the patch
+ * carries no entry for the address, nothing is absorbed into the history baseline,
+ * and `deviceView` — the same clone — agrees with the plan when live.ts re-bases its
+ * snapshot from it. readIntoPlan, dropAuthored and the write witness need no part in
+ * it.
+ *
+ * Keyed by translate.addrKey, the key live.ts's snapshot and follow index already
+ * use: a second spelling of a device address is how a collapsed command misses its
+ * entry.
+ */
+function writeOverlay(source: ParamSource, announced?: ReadonlyMap<number, number>): ParamSource {
+  if (!announced?.size) return source;
+  return {
+    get: (paramId, x, y) => {
+      const said = announced.get(addrKey(paramId, x, y));
+      return said === undefined ? source.get(paramId, x, y) : Promise.resolve(said);
+    },
+    // Numeric only: the flush's name writes go out through a separate string path
+    // and are not in `written`.
+    getStr: (paramId, x, y) => source.getStr(paramId, x, y),
+  };
+}
+
 export interface ReadbackResult {
   /**
    * Count of node/parameter groups successfully read and applied to the plan
@@ -159,8 +208,39 @@ export async function applyDeviceState(
   plan: Plan,
   signal?: AbortSignal,
   only?: ReadonlySet<string>,
+  /** Writes the caller made immediately before this read (see settle.PendingWrites).
+   *  The pass holds until the unit has spoken for the addresses it is about to ask
+   *  about, and answers each of those from WHAT THE UNIT ANNOUNCED — reading the rest as
+   *  usual. Live sync's sideEffect refetch is the one caller; every other path (the
+   *  Fetch button, the self-test, prepare, compare) reads nothing it just wrote and
+   *  passes nothing.
+   *
+   *  Waited HERE rather than before the call, because readIntoPlan clones the plan at
+   *  the call: a wait taken outside is a window in which an operator edit lands in
+   *  neither the clone the read diffs from nor the witness that protects an edit made
+   *  during the read, and the merge would revert it. Inside, both cover it — at the
+   *  cost of holding the undo refusal (main.ts's followReads) open for the wait as well
+   *  as the read. Kept that way deliberately: the refusal exists because a device read
+   *  holds the plan, the clone and the witness are already open here, and committing an
+   *  entry against them would freeze this read's own writes into it. It is a deferral,
+   *  not a discard, and it is bounded by the settle's own window. */
+  pending?: PendingWrites,
 ): Promise<ReadbackResult> {
-  return readPass(LIVE_SOURCE, model, plan, signal, only);
+  // Only `mustSettle` — the addresses inside this read's scope — may hold it open, and
+  // it holds for all of them: a changed write ends its own wait at its notify, one that
+  // may be a no-op can only end at the bound, and neither may be read before then. A
+  // write to some node this read does not touch names no boundary it needs and would
+  // cost the drag that produced it a window; the settle judges it anyway, and reports a
+  // changed one the unit never announced so the follow side can repair it. See
+  // settle.ts.
+  const announced = pending
+    ? await writeSettle.settle(pending.written, {
+        mustSettle: pending.mustSettle,
+        mustAnnounce: pending.mustAnnounce,
+        signal,
+      })
+    : undefined;
+  return readPass(writeOverlay(LIVE_SOURCE, announced), model, plan, signal, only);
 }
 
 /**
@@ -772,8 +852,10 @@ export async function applyNodeState(
   plan: Plan,
   nodeIds: ReadonlySet<string>,
   signal?: AbortSignal,
+  /** See applyDeviceState — the live-sync refetch's own writes. */
+  pending?: PendingWrites,
 ): Promise<ReadbackResult> {
-  return applyDeviceState(model, plan, signal, nodeIds);
+  return applyDeviceState(model, plan, signal, nodeIds, pending);
 }
 
 /** What a merged device read produced. */
