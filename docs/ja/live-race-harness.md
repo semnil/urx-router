@@ -403,9 +403,11 @@ param notify の到達性を判定する不変条件 6 にメーターの通信�
 | `t2c`〜`t2f` | T2 の残り 8 ケース (書込アドレス集合の形を変える param のうち、後から埋めた分) |
 | `t9-probe.spec.ts` | probe 自身の契約と、不変条件 13 / 3 |
 
-カタログ 88 件は**全件スペックに存在する**。うち 8 件は到達不能または反証不能で、各 `test.skip` に
-理由を書いてある (固定接続なので UI から削除できない / 判定を分離できる観測点が無い / `--experimental`
-の launch mode を疑似デバイスに偽らせるとアプリではなくハーネスを測ることになる、等)。
+**上のティア表のケースは全件、id で対応するスペックに存在する** — 1 件を確かめるなら
+`grep -rF <id> e2e/race`、全体の台帳は id そのもの。**駆動されていない**のは `test.skip` の
+サブアーム数件だけで (`grep -rn "test.skip" e2e/race` が台帳)、それぞれ理由を隣に書いてある
+(固定接続なので UI から削除できない / 判定を分離できる観測点が無い / `--experimental` の launch mode を
+疑似デバイスに偽らせるとアプリではなくハーネスを測ることになる、等)。
 
 ```sh
 pnpm test:e2e:app                # 従来のスイート (--project=chromium。race は testIgnore で除外)
@@ -444,8 +446,8 @@ undo は WebKit 自身が持ち、アプリは意図的に `preventDefault` し�
 コスト。分割は `--shard=1/3`、ファイル単位、`--grep` のいずれでも効く。**通し実行を 1 コマンドに
 連鎖させない**。
 
-カタログ 87 件のうち 71 件を被覆。未着手 16 件は各ケースの `test.skip` に理由を書いてある。
-**1 件は到達不能と確定した**: `shape-routing-wire-selectors` の「解決不能な出所」は、`sourcePorts()`
+**その skip のうち 1 件は「未着手」ではなく到達不能と確定している**:
+`shape-routing-wire-selectors` の「解決不能な出所」は、`sourcePorts()`
 が null を返す条件を `models/build.ts` がセレクタ出所として認めず、プラン側から仕込んでも
 `validatePlan` が採用前に弾くため、測れるのは読込報告であってセレクタではない。
 
