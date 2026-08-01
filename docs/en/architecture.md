@@ -249,7 +249,10 @@ The connection and node colors live in both layers: wire colors as `--w-*` (CSS)
 
 > As with model/rule consistency (device-model.md ↔ models/), **keep the theme palette in sync
 > between the CSS variables in style.css and `PALETTES` in graph.ts** — wire (`--w-*` ↔ `PALETTES.wire`),
-> node rail (`--rail-*` ↔ `PALETTES.rail`), and the surface colors.
+> node rail (`--rail-*` ↔ `PALETTES.rail`), the page background (`--canvas-bg` ↔ `PALETTES.canvasBg`),
+> and the surface colors. The background pair is the one with no on-screen tell: the page reads the CSS
+> variable, while an export under a *fixed* theme rasterizes `canvasBg` instead — so if the two drift, only
+> the exported PNG/PDF is wrong, and only for the theme that is not the active one.
 > The `--w-*` variables back the legend swatches and the inspector routing-list dots. `key` (the ducker
 > key source) shares `source`'s blue and, like `record`, has no legend row of its own, but both carry
 > `--w-key` / `--w-record` CSS variables for the routing-list dots (`.dot-key` / `.dot-record`) alongside
@@ -641,8 +644,11 @@ parameter reads), so the list alone cannot tell a present device from a stale en
 is what distinguishes them. Once online, the handshake also reads the unit's System firmware version from
 `/vd/device` (the `firm_list` entry named "System") and carries it on `DeviceSummary.firmware`; the frontend
 compares it against the validated `SUPPORTED_SYSTEM_FIRMWARE` (`core/control/firmware.ts`) and warns at the
-start of fetch / write / live sync when it differs, letting the user continue or stop. The read is best-effort:
-an unreadable firmware leaves the field empty, which disables the warning rather than blocking the operation.
+start of fetch / write / live sync when it differs, letting the user continue or stop. The field is a
+**three-valued** `Option<String>`, and the three values do not collapse: a version arms or disarms the warning
+by comparison, `Some("")` means the unit answered with no System entry and legitimately disables the gate, and
+`None` means the read itself did not land — the version is unknown rather than absent, so the operation stops
+instead of proceeding with the gate silently off ([Aborting on failure](#aborting-on-failure)).
 
 Every failure raised outside the UI layer returns a stable, machine-readable code rather than a raw English
 string — see [Error codes](#error-codes) for the scheme. The broker link's are `broker-unreachable` (Device
@@ -1061,6 +1067,22 @@ harmlessly; a one-off heals), boot port restore reports to the status line inste
 controller that was never opened, and a file write goes through a temp file and a rename so a failure cannot
 destroy the copy already on disk.
 
+**Four exceptions are permanent**, and each is a place where aborting would be the weaker behavior. They are
+listed here so they are not proposed again as gaps:
+
+1. **The self-test aggregates instead of stopping.** It is the diagnostic, not a user action: its job is to
+   report every parameter that failed a round trip in one pass, so a partial capture still runs the sweep and
+   the restore rather than leaving the unit perturbed.
+2. **`translate.ts`'s value coercion clamps instead of refusing.** It is the last line before the hardware, and
+   a coerced in-range value is a better outcome than an out-of-range one reaching the unit.
+3. **`pump` discards an invalid binary frame.** The vd protocol is JSON text, TCP has already settled frame
+   integrity underneath it, and a stray frame on the idle drain is noise rather than a failed operation —
+   so discarding it *is* the salvage. A binary frame arriving while a command waits for its reply still fails
+   loudly, in `read_text` (`broker-bad-response: binary frame`).
+4. **MIDI unplug is not detected at all.** midir has no hot-plug notification, and a virtual port (Stream Deck
+   and its kind) outlives the hardware behind it, so polling cannot tell a live port from a dead one even in
+   principle. The lists are re-enumerated on demand instead, and a port that fails to open reports it.
+
 Errors are surfaced by meaning. An **operation that did not complete** (a failed load, save, image export,
 fetch, write, self-test, connect, or live-sync start, plus a link drop during live sync) is shown as a
 **modal** so it cannot be missed
@@ -1197,28 +1219,6 @@ works by mouse wheel (desktop) and two-finger pinch (touch); both share one "zoo
 routine (`zoomAt` in `graph.ts`). `viewport-fit=cover` plus `env(safe-area-inset-bottom)` clears the
 notch / home indicator.
 
-## Hiding nodes
-
-On larger models the nodes a plan does not need take space and clutter the diagram, so **any node**
-can be collapsed off the canvas — connected or not. Hidden nodes collect on a **shelf**
-docked along the bottom (an HTML overlay `graph.ts` builds — kept out of the SVG, so it never shows in
-an export) as rail-colored chips; clicking a chip restores that one, and "Show all" restores them all.
-
-- The toolbar "Hide unused" shelves only nodes with *no wires at all* (fixed sends count as wires, so a
-  channel sitting on just its factory sends is left in place — collapse unused channels by hand). The
-  inspector adds a "Hide this node" button for any selected node.
-- **Multi-select**: Ctrl/Cmd-clicking nodes toggles them into a selection without dragging. With two or
-  more selected, a floating action bar (an HTML overlay, like the shelf) offers a batch "Hide" that
-  shelves the whole selection. "Clear" and `Escape` drop the selection. The selection set is transient
-  view state, not persisted.
-- **Wires of a hidden node**: any wire (fixed or editable) is skipped while either endpoint is hidden,
-  so a shelved node takes its wires off-canvas with it and rendering never leaves a wire dangling. The
-  connections themselves stay in `plan.connections` — hiding is purely visual — and reappear when the
-  node is restored.
-- **Ducker**: hiding a parent channel hides its ducker too, and restoring the ducker restores the
-  parent — a ducker is never shown without its channel. On the shelf, a parent and its hidden ducker
-  collapse into one chip (the child chip is suppressed); restoring the parent chip brings the whole
-  unit back.
 ## Node graph rendering constraints
 
 Four constraints on the SVG canvas do not read off the code, and an obvious change reintroduces each
@@ -1252,6 +1252,28 @@ This class of desktop-only rendering difference reproduces without launching Tau
 `pnpm build` `dist` with `vite preview` and open it in Playwright's **webkit** engine, which stands
 in for WKWebView, then compare the numbers against Chromium.
 
+## Hiding nodes
+
+On larger models the nodes a plan does not need take space and clutter the diagram, so **any node**
+can be collapsed off the canvas — connected or not. Hidden nodes collect on a **shelf**
+docked along the bottom (an HTML overlay `graph.ts` builds — kept out of the SVG, so it never shows in
+an export) as rail-colored chips; clicking a chip restores that one, and "Show all" restores them all.
+
+- The toolbar "Hide unused" shelves only nodes with *no wires at all* (fixed sends count as wires, so a
+  channel sitting on just its factory sends is left in place — collapse unused channels by hand). The
+  inspector adds a "Hide this node" button for any selected node.
+- **Multi-select**: Ctrl/Cmd-clicking nodes toggles them into a selection without dragging. With two or
+  more selected, a floating action bar (an HTML overlay, like the shelf) offers a batch "Hide" that
+  shelves the whole selection. "Clear" and `Escape` drop the selection. The selection set is transient
+  view state, not persisted.
+- **Wires of a hidden node**: any wire (fixed or editable) is skipped while either endpoint is hidden,
+  so a shelved node takes its wires off-canvas with it and rendering never leaves a wire dangling. The
+  connections themselves stay in `plan.connections` — hiding is purely visual — and reappear when the
+  node is restored.
+- **Ducker**: hiding a parent channel hides its ducker too, and restoring the ducker restores the
+  parent — a ducker is never shown without its channel. On the shelf, a parent and its hidden ducker
+  collapse into one chip (the child chip is suppressed); restoring the parent chip brings the whole
+  unit back.
 - A hidden node also drops from the **CONSOLE view** (`console.ts` filters `plan.hidden` out of its
   strip list, and a shelved ducker drops its chip from the parent strip).
 - The hidden set persists as `plan.hidden` (an array of node ids) and is restored on load. Like
