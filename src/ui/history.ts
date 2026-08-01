@@ -158,12 +158,12 @@ export class PlanHistory {
     this.armIdle();
   }
 
-  /** The plan settled at values no entry should describe: a device readback landed,
-   *  or device-follow wrote a node-local scalar straight into it. Re-takes the
-   *  baseline so those values cannot ride along in the next entry, and drops any
-   *  entry still open (an app edit inside that window goes unrecorded, which is the
-   *  conservative side of the trade — the alternative bakes a device-authored value
-   *  into a patch whose inverse would then push it back over the operator). */
+  /** The plan settled at values no entry should describe: a device readback of any
+   *  breadth landed (fetch, Live-sync start, the `.urxf` import). Re-takes the baseline
+   *  so those values cannot ride along in the next entry, and drops any entry still open
+   *  — which is what makes it the wrong call for a writer that knows WHICH keys the
+   *  device authored: dropping the entry makes an app edit made in that window silently
+   *  un-undoable, so those writers absorb() their own patch instead. */
   rebase(): void {
     this.cancelPending();
     this.open = false;

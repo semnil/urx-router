@@ -594,6 +594,213 @@ Which case a parameter falls into is settled by measurement rather than assumpti
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being
 operated — before either behavior is implemented.
 
+### Event timing while Live sync is up
+
+While the session is up, four kinds of event move values, each on its own window: an **edit made in the app**
+(a view, the inspector, a tuning screen, or an incoming MIDI message), a **device-side change** arriving as a
+notify, the **internal re-bases** those two schedule, and the **display update** that shows the result. What is
+*not* sent, and what is dropped rather than queued, is as much a part of the contract as what is; the notes and
+the two tables below name where. Every interval quoted is the constant in the source: `DEBOUNCE_MS`
+(`control/live.ts`), `RECONCILE_DEBOUNCE_MS` / `IDLE_FULL_MS` / `MAX_CONCENTRATION` (`control/follow.ts`),
+`REFLECT_MIN_MS` (`main.ts`), `FEEDBACK_DEBOUNCE_MS` (`ui/midi.ts`). The defects this timing exists to prevent,
+and the harness that measures them, are in [live-race-harness.md](live-race-harness.md).
+
+#### An edit in the app → the device
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor OP as Operator
+  participant V as View<br/>graph, console, inspector
+  participant P as plan
+  participant L as LiveSync<br/>control/live.ts
+  participant D as Device
+
+  OP->>V: fader drag, first step
+  V->>P: write the value
+  V->>L: markChanged, then schedule
+  Note over L: opens a 120 ms window<br/>a trailing throttle, not a re-arming debounce
+  OP->>V: further steps, roughly 25 ms apart
+  V->>P: overwrite the same key
+  V->>L: markChanged, then schedule
+  Note over L: the window is already armed<br/>the edit joins it and nothing re-arms
+  L->>L: flush translates the whole plan and diffs it against the snapshot
+  loop every command whose value differs from the snapshot
+    L->>D: vdSet paramId x y value
+    D-->>L: ack
+    L->>L: snapshot.set, so this address is now device truth
+  end
+  L->>D: vdSetStr for each name the name snapshot does not already hold
+  L->>V: onSent count to the status line
+  Note over P,D: the drag's intermediate values were overwritten in the plan<br/>before the window closed, so no command ever carried them
+```
+
+Every edit funnel reaches `markChanged`, so a graph drag, a console fader, an inspector field and a mapped MIDI
+control all enter here — the `WriteSource` argument only changes what the trace ledger attributes. The same
+call schedules the MIDI feedback pass (120 ms, `FEEDBACK_DEBOUNCE_MS`) and opens the undo entry, which closes
+at the next gesture boundary rather than here ([Undo / redo](#undo--redo)).
+
+One window costs a whole-plan translate plus a diff — 0.20 ms for the URX44V default plan, 782 commands — so
+flushing per window rather than per gesture is 0.2% of a core. A re-arming debounce was measured sending
+*nothing* while a drag was in motion: the device only ever heard the end of a move.
+
+A snapshot entry is written after its own `vdSet` returned, so a flush that stops at a failure leaves every
+unsent address a diff. The failure itself ends the session ([Aborting on failure](#aborting-on-failure)).
+
+#### A device-side change → the app
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant D as Device
+  participant F as DeviceFollow<br/>control/follow.ts
+  participant L as LiveSync snapshot
+  participant H as follow hooks<br/>main.ts
+  participant P as plan
+
+  D->>F: param notify, address and value
+  alt Follow USB, address 848
+    F->>H: intercept updates the badge and consumes the notify
+    Note over F: no settle window — the address has no owner node,<br/>so letting it through would escalate every change to a full re-read
+  else the value equals the snapshot
+    F->>F: an echo of our own write, dropped
+  else a fresh device-side change
+    F->>L: lookup resolves name, owner node and follow kind
+    alt follow direct, a node-local scalar
+      F->>H: applyDirect
+      H->>P: decode the value straight in, no read-back
+      H->>L: noteDirect patches that one snapshot entry
+      H->>H: absorb those keys into the history baseline, then requestReflect
+    else scoped: EQ, dynamics, structure, sideEffect
+      F->>F: remember the owner node for the settle
+    else unknown address, or more than 3 controls in one window
+      F->>F: force a full reconcile
+    end
+    Note over F: settle timer re-armed to 300 ms<br/>idle timer re-armed to 900 ms
+  end
+  Note over D,F: 300 ms with no notify
+  alt a read is needed: forced full, or the remembered owner nodes
+    F->>H: reconcileAll, or reconcileNodes
+    H->>D: read the whole device, or just those nodes, into a private clone
+    D-->>H: values
+    H->>P: merge, device truth first and edits made during the read over the top
+    H->>L: resync from the copy the read ran against
+    F->>D: re-register the writable address set when the plan's shape changed
+  else the window held direct notifies only
+    F->>H: requestReflect, since the values are already in the plan
+  end
+  Note over D,F: 900 ms with no notify: one full reconcile as a missed-notify safety net
+```
+
+Which branch a parameter takes is the catalog's `follow` flag, not a guess at the notify: `direct` is the
+node-local scalar set (fader, pan, on, level), everything else is read back so a scoped read can never drift
+from a full one. A parameter flagged `direct` that `applyDirect` cannot actually place falls back to the scoped
+branch rather than being dropped.
+
+More than `MAX_CONCENTRATION` distinct controls inside one settle window is not two hands on the unit but a
+scene or preset recall, which changes more than a scoped read would catch — hence the escalation. A reconcile
+that cannot read **stops following** instead of leaving the plan claiming values the device does not hold: the
+notify already fired and nothing re-triggers the read, so the next converge would write the stale value back
+over the operator's own move on the hardware.
+
+#### The internal re-bases: the snapshot and the history baseline
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant L as LiveSync<br/>control/live.ts
+  participant D as Device
+  participant H as readback hooks<br/>main.ts
+  participant P as plan
+  participant HI as PlanHistory
+
+  L->>D: vdSet a param the unit answers by moving others
+  alt converge: the unit reset values the plan authors
+    L->>L: freeze a clone of the plan
+    L->>D: re-read the write scope, re-send what diverged, repeat until settled
+    L->>L: capture from that frozen clone
+    Note over L: an edit that arrived during the converge is still a diff<br/>baking it in here would drop it in silence
+  else refetch: the unit authored values the plan only mirrors
+    L->>H: refetchNodes for the owner nodes
+    H->>D: read those nodes into a private clone
+    D-->>H: values
+    H->>P: merge
+    H->>HI: absorb exactly the device-authored keys
+    H-->>L: the clone the read ran against
+    L->>L: capture from it
+  end
+  Note over L: the next schedule asks the diff whether the same is about to happen again<br/>while it would, the 120 ms window re-arms rather than firing
+```
+
+The split between the two is who owns what moved: **converge** pushes the plan's own values back at a unit that
+reset them, **refetch** reads the unit's back because pushing would fight it (the EQ 1-knob's four bands). A
+failed write inside a converge round is routed into the same teardown a direct write failure takes — otherwise
+the next `capture` would record the plan as device truth and leave those parameters diverged with no diff left
+to retry them.
+
+Every re-base takes its values from **the private clone a read ran against**, never from the live plan, and the
+snapshot's *shape* from the live plan: an address the operator moved during the read then holds their value in
+the plan and the device's in the clone, so it stays a diff and the next flush sends it. An address the plan only
+just grew is absent from the clone and is left out of the snapshot entirely, for the same reason.
+
+| Event | Live snapshot | History baseline |
+| --- | --- | --- |
+| Session start | `begin` from the starting read's clone | `reset` |
+| App edit, `markChanged` | per address, as its own write returns | entry opened, closed at the gesture boundary |
+| Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands |
+| Reconcile readback, scoped or full | `resync` from the read's clone | `reset`, in the reflect |
+| EQ 1-knob refetch | `capture` from the read's clone | `absorb` of the device-authored keys only |
+| Converge round | `capture` from the frozen clone | untouched |
+
+#### The display update
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant S as follow direct, reconcile, refetch
+  participant R as requestReflect<br/>main.ts
+  participant G as graph
+  participant C as console
+  participant I as inspector and tuning screen
+  participant M as meter stream
+
+  S->>R: requestReflect
+  Note over R: coalesced onto one timer, at most one per 50 ms<br/>a knob sweep delivers ~10 notifies per second in ~30 per second IPC batches
+  alt a readback landed in the window
+    R->>G: refresh, re-adopting the plan-backed view state and keeping the viewport
+    R->>C: syncRateUi re-applies the rate constraints, rebuilding the strips
+    R->>I: the same call refreshes the inspector, and the tuning screen refreshes
+  else direct notifies only
+    R->>G: repaint just the touched nodes
+    R->>C: refresh just the touched strips
+    R->>I: inspector only when the selection reads a touched node, tuning screen always
+  end
+  Note over G: while the graph is the hidden view its work is deferred<br/>and done once on the way back
+  M->>C: meter readings, about 10 per second per address
+  C->>C: paint loop at 30 fps, bars driven by compositor transforms<br/>numeric readout on every 5th frame
+  Note over M,C: a meter reading never enters the plan<br/>nothing about it is written back, undone or sent
+```
+
+The reflect is coalesced across *producers*, so it cannot know what the device authored — which is why the
+history is settled at each producer's own site (see the table above) and not here. Its full branch does call
+`PlanHistory.reset`, because a readback of any breadth re-authored the plan's values and no earlier entry
+describes a state it can return to.
+
+#### What is discarded, and where
+
+| What | Discarded at | Why |
+| --- | --- | --- |
+| A drag's intermediate values | the plan itself — the next step overwrites the key inside the window | only the final value of an address ever becomes a command |
+| An address whose value equals the snapshot | the flush's diff | the device already holds it |
+| A notify whose value equals the snapshot | `isEcho`, before the settle window | our own write coming back is not a change |
+| A notify for Follow USB, 848 | `intercept`, ahead of node resolution | host-owned and outside the plan; it would otherwise force a full re-read |
+| A device read whose plan was replaced | `readIntoPlan`'s identity guard, after the read resolves | its values belong to a document nothing shows |
+| An undo taken while a device read or a file flow holds the plan | `PlanHistory.blocked`, before the open entry is closed | it is deferred, not consumed, so the retry is exact |
+| A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
+| A MIDI message arriving under those same latches | the engine's gate, before any receive bookkeeping | a refusal must consume no pickup, timestamp or 14-bit pair state |
+| A device-authored key the app has moved since | `absorb`'s per-key context check | the plan holds the app's newer value, so the device is echoing the app's own write back on it |
+| A meter reading | never enters the plan at all | display only, and the stream stops with the session |
+
 ### One device address, more than one owner
 
 An insert effect's parameters live in **one engine array per effect family**, addressed `engine:0:slot` with no

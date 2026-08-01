@@ -566,21 +566,21 @@ test.describe("T3 undo", () => {
   }
 
   // ---------------------------------------------------------------------------
-  // undo-rebase-dropped-by-device-sweep
+  // undo-entry-survives-device-sweep
   // ---------------------------------------------------------------------------
   for (const delta of [5, 40, 95]) {
-    test(`a 10 Hz device sweep drops an entry opened ${delta} ms after a notify`, async ({ page }) => {
+    test(`an entry opened ${delta} ms after a notify survives a 10 Hz device sweep`, async ({ page }) => {
       await goLive(page);
       await page.click("#btn-view-console");
       await expect(faderReadout(page, "CH 3")).toBeVisible();
       await setLatency(page, { get: 8, set: 25 });
 
       // --- sweep arm -------------------------------------------------------------
-      // A COMMITTED entry from before the sweep, which is what separates the two
-      // baseline calls: rebase() re-takes the baseline and keeps both stacks, reset()
-      // empties them. With only the open entry on the stack (goLive has just cleared
-      // it) losing it would be consistent with either, so an older entry is put there
-      // and its survival is measured. The keyup is its boundary, so it is closed.
+      // A COMMITTED entry from before the sweep. It was what separated the two baseline
+      // calls while the direct path re-took the whole baseline (rebase keeps both
+      // stacks, reset empties them); it stays because an absorb must leave it alone too,
+      // and with only the open entry on the stack (goLive has just cleared it) that
+      // could not be told apart. The keyup is its boundary, so it is closed.
       const sweptBase = (await faderReadout(page, "CH 3").textContent())!;
       await faderOf(page, "CH 3").focus();
       await page.keyboard.press("ArrowUp");
@@ -615,10 +615,14 @@ test.describe("T3 undo", () => {
       );
       const sweptEdited = (await faderReadout(page, "CH 3").textContent())!;
       expect(sweptEdited).not.toBe(sweptBefore);
-      // Long enough for several more notifies (and so several rebases) to land.
+      // Long enough for several more notifies (and so several more absorbs) to land,
+      // and for the edit's own 300 ms idle backstop to close its entry.
       await page.waitForTimeout(600);
       const sweptStatus = await undoOnce(page);
       const sweptAfter = (await faderReadout(page, "CH 3").textContent())!;
+      // One press deeper: the entry committed BEFORE the sweep must still be there.
+      const sweptStatus2 = await undoOnce(page);
+      const sweptAfter2 = (await faderReadout(page, "CH 3").textContent())!;
 
       await page.evaluate(() => {
         clearInterval((window as unknown as { __sweep: ReturnType<typeof setInterval> }).__sweep);
@@ -653,7 +657,10 @@ test.describe("T3 undo", () => {
           `${(notifies.length / ((sweepTo - sweepFrom) / 1000)).toFixed(1)} notify/s; ` +
           `edit intended Δ=${delta} ms, achieved Δ=${achieved ? (editAt - achieved.t).toFixed(1) : "?"} ms`,
       );
-      console.log(`sweep arm : "${sweptStatus}" ${sweptBase} → ${sweptBefore} → ${sweptEdited} → ${sweptAfter}`);
+      console.log(
+        `sweep arm : "${sweptStatus}" / "${sweptStatus2}" ` +
+          `${sweptBase} → ${sweptBefore} → ${sweptEdited} → ${sweptAfter} → ${sweptAfter2}`,
+      );
       console.log(`quiet arm : "${quietStatus}" ${quietBefore} → ${quietEdited} → ${quietAfter}`);
 
       // The sweep must actually have REACHED the app: an address outside the
@@ -662,22 +669,26 @@ test.describe("T3 undo", () => {
       // every verdict below would be about nothing.
       expect(findings.filter((f) => f.inv === 6)).toHaveLength(0);
       expect(notifies.length).toBeGreaterThan(8);
-      // PINNED DEFECT. An edit made while direct-follow notifies keep arriving is
-      // silently un-undoable, with no signal that this is so — and the Ctrl+Z that
-      // should have taken it back spends the entry UNDER it instead, so the operator's
-      // fader jumps past the value they were trying to return to. The control arm is
-      // the same edit with the device silent, which is what attributes the loss to the
-      // device traffic rather than to the wheel funnel. The older entry surviving is
-      // what names the call: reset() would have emptied the stack (as the full
-      // reconcile above does), so what runs on the direct-follow path is rebase(). The
-      // Δ ladder is three phases INSIDE one 100 ms notify interval — every cell has the
-      // next notify arriving before the 300 ms backstop could commit, so it says the
-      // loss does not depend on where in that interval the edit falls, and says nothing
-      // about a gap wider than the backstop.
+      // THE FIX, and what it replaced. The direct-follow path absorbs the keys the
+      // notify itself authored instead of re-taking the whole baseline, so an edit made
+      // while the unit is being touched records one entry and undoes to where the press
+      // found it — the same as with the device silent, which is what the control arm
+      // states. Before the fix these three cells measured the opposite: the edit was
+      // silently un-undoable, and the Ctrl+Z that should have taken it back spent the
+      // entry UNDER it, so the fader jumped past the value the operator was returning
+      // to. The Δ ladder is three phases INSIDE one 100 ms notify interval, and every
+      // cell has the next notify landing before the edit's 300 ms idle backstop could
+      // commit — the timer a rebase used to cancel — so it says the outcome does not
+      // depend on where in that interval the edit falls, and says nothing about a gap
+      // wider than the backstop.
       expect(sweptStatus).toMatch(UNDO_APPLIED);
       expect(sweptAfter).not.toBe(sweptEdited);
-      expect(sweptAfter).not.toBe(sweptBefore);
-      expect(sweptAfter).toBe(sweptBase);
+      expect(sweptAfter).toBe(sweptBefore);
+      // An absorb leaves both stacks standing, which is what separates it from a reset
+      // (and from the rebase that used to eat this press): the pre-sweep entry is still
+      // beneath, so the second press reaches it.
+      expect(sweptStatus2).toMatch(UNDO_APPLIED);
+      expect(sweptAfter2).toBe(sweptBase);
       expect(quietStatus).not.toBe(NOTHING_TO_UNDO);
       expect(quietAfter).toBe(quietBefore);
     });

@@ -253,7 +253,7 @@ source of truth. This table states what each case measures.
 | `undo-refusal-ladder` | history | Refusal order and non-consumption, including the deliberately permissive conditions |
 | `undo-apply-sequence-hidden-and-viewport` | graph | The order inside the apply, and that an undo's write reaches the device |
 | `undo-during-device-activity-ladder` | history | Five device activities by five offsets: whether the gates are per-flow or per-link |
-| `undo-rebase-dropped-by-device-sweep` | history | The rate at which app edits become silently un-undoable while the device is touched |
+| `undo-entry-survives-device-sweep` | history | That an app edit made while the device is being touched is still one entry, and still has the entry before it beneath |
 | `undo-reset-paths-and-pending-commit` | history | All seven reset paths and the two races that outlive a reset |
 | `undo-macos-edit-menu-path` | history | The only native surface, and the only path whose refusal ordering differs from the chord's |
 
@@ -541,6 +541,13 @@ agreement, zero findings.
 - **A dispatched pointerdown with no pointerup** (the standard e2e wire-selection trick) leaves the
   press "down" for ever and suppresses the 300 ms idle backstop: **two wheel bursts 1.2 s apart collapse
   into one entry**, where the control arm produces two (achieved gaps 121 ms)
+- **An edit made while the device was being touched was silently un-undoable — fixed.** Every
+  direct-follow notify ran `planHistory.rebase()`, which drops the open entry and cancels the 300 ms
+  idle backstop, so a wheel edit landing between two notifies recorded nothing and the Ctrl+Z spent the
+  entry beneath it — the fader jumped *past* the value the operator was returning to. The direct path
+  now absorbs the keys the notify authored; measured after the fix at Δ = 5 / 40 / 95 ms inside the
+  100 ms notify interval, the edit undoes to where the press found it and the pre-sweep entry is still
+  beneath it
 - An undo fired inside a held reconcile is applied, and the reconcile then wipes both stacks
 - The apply order is correct: the persisted mirror moves before any repaint, the viewport is untouched,
   and `markChanged` runs last
@@ -749,6 +756,17 @@ The coalesced reflect joins several producers and cannot know what the device au
 `planReadFromDevice` splits into `planValuesChanged` (probe + MIDI feedback) and the history settle,
 and the reflect calls only the first. **The `rebase()` MIDI relied on was relocated verbatim** to its
 own site, so this change moves one behaviour and not two.
+
+The **direct-follow apply** is the same rule at the one other site that writes device values into the
+plan outside a readback, and it kept its whole-plan `rebase()` until the sweep case named the cost: an
+app edit made while the unit was being touched was silently un-undoable, and the Ctrl+Z that should have
+taken it back spent the entry beneath it. `applyDirect` reports only *whether* it placed the value —
+where it lands is a node param for most of the set and a connection param for a fader / pan / assign ON
+— so the site diffs a clone taken around the call rather than a scoped differ a newly flagged direct
+param could silently fall out of. A whole-plan clone plus diff measures 0.12 ms for the URX44V default
+plan, against a notify stream of ~10/s. The case turned over with it:
+`undo-rebase-dropped-by-device-sweep` became `undo-entry-survives-device-sweep`, one press deeper — the
+edit undoes to where it started, and the entry committed before the sweep is still under it.
 
 ### 6. Emitting the pair-level selectors before the pans (`translate.ts`)
 

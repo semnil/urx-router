@@ -21,8 +21,8 @@ import { CH1_FADER, faderOf, faderReadout, graphNode, strip } from "./ui";
 
 // T3b undo — the eleven T3 cells t3-undo.spec.ts did not reach
 // (docs/{en,ja}/live-race-harness.md). Where t3-undo goes at the device-facing half
-// of the tier (refusals under a device activity, the rebase a sweep performs, the
-// native menu), this file goes at the half that needs no device at all: the three
+// of the tier (refusals under a device activity, what a sweep does to the baseline,
+// the native menu), this file goes at the half that needs no device at all: the three
 // interacting pointer rules, the two keyup rules, the text-surface suppression, the
 // window blur, the funnel's own post-markChanged mutations, the stack's arithmetic,
 // the chord × focus-target matrix, the apply ORDER, and the reset paths.
