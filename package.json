@@ -21,7 +21,7 @@
     "test:e2e:race": "playwright test --project=race",
     "test:e2e:race:webkit": "playwright test --project=race-webkit",
     "check:md": "node scripts/check-md-tables.mjs",
-    "bench:meters": "node scripts/meter-bench-run.mjs",
+    "check:assets": "node scripts/check-assets-index.mjs",
     "format": "prettier --write \"src/**/*.ts\" \"e2e/**/*.ts\" \"scripts/**/*.mjs\" \"*.ts\"",
     "preview": "vite preview --port 4173 --strictPort",
     "e2e:serve": "node scripts/e2e-serve.mjs",
@@ -29,7 +29,8 @@
     "e2e:worktree": "node scripts/e2e-worktree.mjs",
     "reset:storage": "node scripts/reset-storage.mjs",
     "tauri": "tauri",
-    "clean": "rm -rf node_modules/.vite dist dist-trace && cargo clean --manifest-path src-tauri/Cargo.toml"
+    "clean": "rm -rf node_modules/.vite dist dist-trace && cargo clean --manifest-path src-tauri/Cargo.toml",
+    "bench:meters": "node scripts/meter-bench-run.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0",
