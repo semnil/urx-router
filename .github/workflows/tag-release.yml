@@ -1,0 +1,98 @@
+name: Tag release
+
+# Turns a merged version bump into a release. The app version lives in package.json
+# alone (see CLAUDE.md), a version bump is its own pull request carrying nothing else,
+# and merging that PR is the whole release gesture — this workflow is what makes that
+# true, by tagging the merge commit and starting the two workflows a tag drives.
+#
+# Triggered by CI FINISHING on main, not by the push itself. The tag starts a Pages
+# deploy, and Pages publishes for real — there is no draft to read first, the way the
+# installers have one. Tagging on the push would put the demo live off a commit whose
+# build and tests had not reported yet. `workflow_run` is the only trigger that can
+# wait for another workflow's verdict.
+#
+# The dispatches are not a style choice. **A tag pushed with the repository's
+# GITHUB_TOKEN starts no workflow**, so release.yml's and pages.yml's `push: tags:`
+# triggers never see this tag; `workflow_dispatch` is the documented exception that
+# fires whatever token asked for it. Both are dispatched ON THE TAG, so each runs with
+# GITHUB_REF_NAME set to it and behaves exactly as it would on a tag push — which is
+# what release.yml's check-tag reads.
+#
+# Everything here is a no-op unless this push actually moved the version, so it is safe
+# on every green CI run on main.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write # create and push the tag
+  actions: write # dispatch release.yml and pages.yml
+
+jobs:
+  # `branches: [main]` above filters on the CI run's head branch, which for a pull
+  # request is the PR's branch — so a PR run cannot reach here already. The event check
+  # says so out loud rather than leaving a release trigger resting on that reading.
+  tag:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The commit CI reported on, not whatever main points at now: another merge
+          # can land between the run finishing and this job starting, and the tag has to
+          # name the commit that was actually tested.
+          ref: ${{ github.event.workflow_run.head_sha }}
+          # The first parent has to be readable to answer "did this push move the
+          # version", which is the whole gate.
+          fetch-depth: 0
+        # HEAD_SHA is the same value; it travels through the environment because that is
+        # the habit that keeps the next interpolation — of a field somebody else can
+        # write — out of the shell.
+      - env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(jq -r .version package.json)
+          tag="v${version}"
+          # The first parent is the previous tip of main, whether the merge was a merge
+          # commit or a squash, so this reads "what this push changed" either way. A
+          # root commit has no parent and is not a release.
+          #
+          # Resolved and read in three steps rather than one pipeline, because a
+          # pipeline's status is its LAST command's: `git show ... | jq -r .version`
+          # yields an empty string and exit 0 when git fails, which compares unequal to
+          # every version and would tag a push that moved nothing. The premise of this
+          # whole job is a readable previous version, so failing to read one stops it.
+          if ! parent=$(git rev-parse --verify --quiet "${HEAD_SHA}^"); then
+            echo "no first parent — nothing to compare"
+            exit 0
+          fi
+          prev_json=$(git show "${parent}:package.json")
+          prev=$(printf '%s' "${prev_json}" | jq -r .version)
+          if [[ -z "${prev}" || "${prev}" == 'null' ]]; then
+            echo "could not read the version at ${parent} — refusing to tag"
+            exit 1
+          fi
+          if [[ "${prev}" == "${version}" ]]; then
+            echo "version unchanged at ${version} — not a release"
+            exit 0
+          fi
+          echo "version ${prev} -> ${version}"
+          # An existing tag means the release already happened (a re-run of this
+          # workflow, or a tag pushed by hand). Moving it would repoint a published
+          # release at a different commit, so stop instead.
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "${tag} already exists — leaving it alone"
+            exit 0
+          fi
+          # Lightweight, matching what `git tag vX.Y.Z` produces by hand; no committer
+          # identity is needed for one.
+          git tag "${tag}" "${HEAD_SHA}"
+          git push origin "refs/tags/${tag}"
+          echo "tagged ${tag} at ${HEAD_SHA}"
+          gh workflow run release.yml --ref "${tag}"
+          gh workflow run pages.yml --ref "${tag}"
+          echo "dispatched release.yml and pages.yml on ${tag}"

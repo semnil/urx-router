@@ -1,10 +1,19 @@
 name: Release
 
 # Builds desktop installers (macOS .dmg/.app, Windows .exe NSIS setup) with
-# tauri-action and attaches them to a draft GitHub Release. Push a vX.Y.Z tag
-# to cut a release; the draft is left for manual review before publishing.
-# A manual workflow_dispatch run only builds and uploads the bundles as job
-# artifacts (no release), useful for verifying the packaging pipeline.
+# tauri-action and attaches them to a draft GitHub Release. A vX.Y.Z tag cuts a
+# release; the draft is left for manual review before publishing.
+#
+# The tag normally arrives from tag-release.yml, which dispatches this workflow ON THE
+# TAG rather than pushing it into a `push:` trigger — a tag pushed with the repository's
+# GITHUB_TOKEN starts no workflow at all, and workflow_dispatch is the documented
+# exception. So what decides a release here is the REF TYPE, not the event: a dispatch
+# on a tag is a release exactly like a tag push, and a dispatch on a branch stays what
+# it always was — a packaging check that builds the bundles as job artifacts and
+# creates nothing.
+#
+# No E2E runs here. The harness runs on the version-bump PR (race.yml), in front of the
+# tag rather than behind it.
 on:
   push:
     tags:
@@ -25,9 +34,11 @@ jobs:
     steps:
       - id: check
         # Accept vX.Y.Z as stable and vX.Y.Z-{alpha,beta,rc}* as prerelease.
-        # workflow_dispatch carries no tag, so validTag stays false there.
+        # Gated on the REF TYPE, not the event: tag-release.yml reaches this workflow by
+        # dispatching it on the tag it just created, and that has to mean the same thing
+        # as a tag push. A dispatch on a branch has no tag to read and stays false.
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" != 'push' ]]; then
+          if [[ "${GITHUB_REF_TYPE}" != 'tag' ]]; then
             echo 'validTag=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
