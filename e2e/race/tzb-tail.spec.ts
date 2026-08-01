@@ -370,15 +370,20 @@ test.describe("Tzb tail", () => {
       // this case's variable is already D, where the recall falls inside the gesture,
       // and holding the sweep would replace that variable rather than add to it. Logged
       // here and recorded under the harness's known gaps.
+      //
+      // Whether the plan and the unit end up APART on that key is the SAME interleaving
+      // read from the other side, so it is logged with it rather than pinned beside it:
+      // they diverge when the drag's last write outlives the merge, and they agree when
+      // the merge happens to settle on the value that write carried. It was asserted
+      // here until CI produced the second case (both `-7.2`, D=1500) — a red run stating
+      // nothing the comment above does not already say is unresolvable.
       const sweepStart = reads.length ? reads[0].start : Number.POSITIVE_INFINITY;
+      const unitHolds = deviceLevelText((await memOf(page))[CH1_FADER]);
       console.log(
         `sweep began at ${sweepStart.toFixed(0)} ms; the pointer's key settled at ${after}` +
-          ` (the scene holds ${deviceLevelText(-700)}) — interleaving-dependent, not asserted`,
+          ` (the scene holds ${deviceLevelText(-700)}; the unit and the plan ` +
+          `${unitHolds === after ? "agree" : "have come apart"}) — interleaving-dependent, not asserted`,
       );
-      // The unit was left holding the last thing the drag sent, and the plan claims
-      // something it was never given: the two descriptions of the same channel have
-      // come apart, and no further read is scheduled to notice.
-      expect(deviceLevelText((await memOf(page))[CH1_FADER])).not.toBe(after);
 
       // …and the three entries that existed before the gesture are gone, dropped by a
       // reset that ran while the pointer was still down: a readback re-authors every

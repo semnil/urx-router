@@ -1,8 +1,10 @@
 name: Post-merge
 
 # Heavier jobs that run only after a change lands on main, to keep PR feedback
-# fast. The frontend build/unit gate runs per-PR in ci.yml.
-# Doc-only changes don't affect E2E behaviour or the dependency license set.
+# fast. The frontend build/unit gate and the ordinary E2E suite both run per-PR in
+# ci.yml; the live-sync race harness runs from race.yml, on demand and beside a
+# release build, because it is 22 minutes of machine time against that suite's 3.5.
+# Doc-only changes don't affect the dependency license set or the Rust build.
 on:
   push:
     branches: [main]
@@ -11,28 +13,6 @@ on:
       - 'docs/**'
 
 jobs:
-  e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm test:e2e
-      # The "list" reporter writes no playwright-report/; traces (trace:
-      # on-first-retry, with CI retries) and failure attachments land in the
-      # default test-results/, so that is what a failing run has to upload.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: failure()
-        with:
-          name: playwright-traces
-          path: test-results/
-          retention-days: 7
-
   licenses:
     uses: ./.github/workflows/licenses.yml
 

@@ -1,0 +1,144 @@
+name: Race harness
+
+# The live-sync race-diagnosis harness (e2e/race; design in
+# docs/{en,ja}/live-race-harness.md), split out of the ordinary E2E tier because it is
+# 86% of the suite's machine time on its own: 22.4 minutes against 3.5, measured on a
+# two-worker ubuntu runner. That cost is what is being measured rather than overhead —
+# several cases provoke whole-device readbacks of ~800 sequential commands — so the
+# answer is to run it somewhere other than on every PR, not to make it cheaper.
+#
+# It runs on the ONE pull request that changes the app version. That PR carries nothing
+# else (see CLAUDE.md), and merging it is what tags a release, so the harness sits
+# directly in front of the only commit a user ever installs — a stronger place than the
+# release itself, where a red result would arrive after the tag already exists.
+#
+# `paths` alone would not mean "version bump": Dependabot's npm ecosystem edits
+# package.json every week for dependencies. The `detect` job reads the `version` field
+# on both sides of the PR, and the harness runs only when it actually moved.
+#
+# Also runnable on demand against any branch, which is how the live-sync surface gets
+# checked before a version PR exists:
+#
+#   gh workflow run race.yml --ref <branch>
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+  workflow_dispatch:
+
+jobs:
+  # A cheap gate in front of ~25 minutes of runner time. A manual dispatch always runs:
+  # there is no base to compare against, and asking for it IS the intent.
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      bumped: ${{ steps.check.outputs.bumped }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The base commit has to be in the local history for `git show` to read
+          # package.json out of it.
+          fetch-depth: 0
+      - id: check
+        # The SHA travels in the environment rather than inline: the value here is a hex
+        # commit id, but interpolating event payload straight into a shell is the habit
+        # that goes wrong the first time the field carries text somebody else authored.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" != 'pull_request' ]]; then
+            echo 'bumped=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          head=$(jq -r .version package.json)
+          # Read in two steps, not one pipeline: a pipeline's status is its LAST
+          # command's, so `git show ... | jq` returns an empty string and exit 0 when git
+          # fails. Empty compares unequal to every version, so the skip would quietly
+          # become "always run" — the cheap direction to be wrong in, but not one to
+          # arrive at by accident. Say so and run.
+          if ! base_json=$(git show "${BASE_SHA}:package.json"); then
+            echo 'bumped=true' >> "$GITHUB_OUTPUT"
+            echo "could not read package.json at ${BASE_SHA} — running the harness rather than guessing"
+            exit 0
+          fi
+          base=$(printf '%s' "${base_json}" | jq -r .version)
+          echo "version: ${base} (base) -> ${head} (head)"
+          if [[ "${base}" != "${head}" ]]; then
+            echo 'bumped=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'bumped=false' >> "$GITHUB_OUTPUT"
+            echo 'package.json changed but the version did not — the harness is skipped'
+          fi
+
+  race:
+    needs: detect
+    if: needs.detect.outputs.bumped == 'true'
+    runs-on: ubuntu-latest
+    # Well above the ~5 minutes a shard takes. It is a backstop against a wedged run
+    # holding a runner for the 6-hour job default, not a budget.
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    strategy:
+      # A second shard's result is not implied by the first one's, and a partial picture
+      # is what sends someone back for another full run.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Chromium only. The WebKit cases are their own job below, so the shards do not
+      # pay for a browser they never launch.
+      - run: pnpm exec playwright install --with-deps chromium
+      # No `--` before the flag: pnpm 10 forwards the separator through to the script
+      # rather than consuming it, and Playwright reads everything after a `--` as a
+      # positional file filter. `pnpm test:e2e:race -- --shard=1/3` therefore runs the
+      # WHOLE harness in every shard and still passes — three times the cost, silently.
+      - run: pnpm test:e2e:race --shard=${{ matrix.shard }}/3
+      # The "list" reporter writes no playwright-report/; traces (trace: on-first-retry,
+      # with the project's one CI retry) and failure attachments land in the default
+      # test-results/, so that is what a failing run has to upload. The name carries the
+      # shard: from v4 on an artifact name can be uploaded once per run, so three shards
+      # sharing one name fails the upload instead of merging into it.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: race-traces-${{ matrix.shard }}
+          path: test-results/
+          retention-days: 7
+
+  # The five cases tagged @webkit, in the engine the macOS build actually renders in.
+  # Its own job rather than a fourth shard: WebKit is a separate download, and paying
+  # for it in all three shards would cost more than the cases do (28 s of tests).
+  race-webkit:
+    needs: detect
+    if: needs.detect.outputs.bumped == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps webkit
+      - run: pnpm test:e2e:race:webkit
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: race-traces-webkit
+          path: test-results/
+          retention-days: 7

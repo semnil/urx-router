@@ -1,8 +1,8 @@
 name: CI
 
-# Lightweight checks on every PR and on pushes to main. Heavier jobs
-# (Playwright E2E, third-party license generation) run post-merge; see
-# post-merge.yml.
+# Lightweight checks on every PR and on pushes to main: the build, the unit tests and
+# the ordinary E2E suite. Third-party license generation runs post-merge (post-merge.yml)
+# and the live-sync race harness runs from race.yml, which nothing triggers per-merge.
 # Doc-only changes (Markdown, docs/) don't affect the build or tests, so skip
 # these checks for them — except the skill's generated model references, which
 # skill-export.test.ts diffs against the generator, so an .md-only edit there
@@ -52,3 +52,30 @@ jobs:
           ! grep -rl --include='*.js' --include='*.html' "__urxTrace" dist
       - run: pnpm typecheck:e2e
       - run: pnpm test
+
+  # The ordinary E2E suite (--project=chromium): 383 cases, none over 3 s, 3.5 minutes of
+  # machine time — about two on the runner's two workers. At that price the alternative,
+  # a net that only fires once the change is already on main, costs more than it saves.
+  # The race harness is deliberately NOT here; see race.yml for what it costs and why.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e:app
+      # The "list" reporter writes no playwright-report/; traces (trace: on-first-retry,
+      # with CI retries) and failure attachments land in the default test-results/, so
+      # that is what a failing run has to upload.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7

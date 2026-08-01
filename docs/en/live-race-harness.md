@@ -426,15 +426,26 @@ the two branches; making the fake claim an `--experimental` launch mode would me
 rather than the app; and so on).
 
 ```sh
-npx playwright test --project=chromium     # the ordinary suite (race is testIgnore'd out)
-npx playwright test --project=race         # the harness
-npx playwright test --project=race --shard=1/3   # split
-npx playwright test --project=race-webkit  # the three cases that run in WebKit (@webkit)
+pnpm test:e2e:app                # the ordinary suite (--project=chromium; race is testIgnore'd out)
+pnpm test:e2e:race               # the harness
+pnpm test:e2e:race --shard=1/3   # split
+pnpm test:e2e:race:webkit        # the cases that run in WebKit (@webkit)
 ```
 
-The `race` project raises the per-test timeout to **180 s**: one case holds a barrier across a converge
-round of ~800 sequential reads, and at the 30 s default a passing case turns into a timeout that reads
-like a defect.
+**No `--` before a forwarded flag.** pnpm 10 passes the separator through to the script rather than
+consuming it, and Playwright reads everything after a `--` as a positional file filter — so
+`pnpm test:e2e:race -- --shard=1/3` runs the WHOLE harness in every shard and still passes, at three
+times the cost, silently.
+
+The `race` project raises the per-test timeout to **120 s** and drops to **one** CI retry. The longest
+case measured 60 s on a two-worker CI runner — a barrier held across a converge round of ~800
+sequential reads — so at the 30 s default a passing case turns into a timeout that reads like a defect.
+Twice that worst case rather than three times it, because the handful needing more say so themselves
+(`test.setTimeout` in `tzb-tail` and `t8-stress`), and a project figure wide enough to cover them would
+let every other case burn three minutes before reporting, once per retry. One retry rather than the
+suite's two for the matching reason: every pin here is placed on a barrier rather than on a delay, so a
+case that only passes on the third attempt is not a pin holding — it is a flake, and at two retries it
+stays hidden long enough to reach main.
 
 **`race-webkit`** runs the same harness in the engine the macOS build actually renders in, scoped to the
 **three cases whose verdict is about the engine rather than the app's logic**: a strip rack rebuilt under
@@ -458,6 +469,40 @@ reads each) — the cost of what is being measured, not overhead. Split with `--
 `shape-routing-wire-selectors`. `sourcePorts()` returns null only for a node `models/build.ts` does
 not admit as a selector source, and authoring one into a plan does not reach it either — `validatePlan`
 rejects the wire before adoption, so what would be measured is the load report, not the selector.
+
+### Where each tier runs
+
+The project boundary is also the CI tiering, and these are the numbers that cut it there. Measured on a
+two-worker `ubuntu-latest` runner:
+
+| Tier | Tests | Machine time | Slowest test | Runs from |
+| --- | --- | --- | --- | --- |
+| `chromium` — the ordinary suite | 383 | 3.5 min | 2.7 s | `ci.yml`, every PR and push to main |
+| `race` — the harness | 156 | 22.4 min | 60 s | `race.yml`, sharded three ways |
+| `race-webkit` | 5 | 28 s | 26 s | `race.yml`, its own job |
+
+The harness is **86% of the E2E machine time on its own**, which is what took it off the ordinary PR
+tier: at 3.5 minutes the ordinary suite is cheaper to run per-PR than to run after the merge, and at
+22.4 it is not.
+
+Where it runs instead is **the one pull request that changes the app version**. That PR carries nothing
+else, and merging it is what tags a release (`tag-release.yml`), so the harness sits directly in front
+of the only commit a user ever installs. In front of the tag rather than behind it: a release-time run
+would report on a tag that already exists. A `paths: package.json` filter alone would not say "version
+bump" — Dependabot edits that file weekly — so `race.yml`'s `detect` job compares the `version` field
+across the PR and the shards run only when it moved.
+
+Against a branch, on demand — which is how the live-sync surface gets checked before a version PR
+exists:
+
+```sh
+gh workflow run race.yml --ref <branch>
+```
+
+The bargain that buys: an ordinary merge does not run the harness, so a break surfaces at the version
+PR or the next manual run rather than at the merge that caused it, and `git log` over the live-sync
+surface is what narrows it. WebKit is a separate browser download, so it is its own job rather than a
+fourth shard — paying for it three times would cost more than the cases do.
 
 ### Observables
 
@@ -929,7 +974,9 @@ fixed or withdrawn.
   running alone; `-14.0`, a value the drag passed through, under `--workers=4`). Deciding it needs the
   edit placed on a barrier, but that case's variable is already where the recall falls inside the
   gesture, so a barrier would replace the variable rather than add to it. Today the unconditional half
-  is asserted and the pointer's key is logged
+  is asserted and the pointer's key is logged — including **whether the plan and the unit end up apart
+  on it**, which is the same interleaving read from the other side and was asserted until CI produced
+  the case where they agree (both `-7.2` at D=1500). Two CI retries had been hiding it
 - The string path (`vd_set_str`: channel names, Sweet Spot Data) is outside every address-set
   invariant — it has no snapshot entry and no registration entry — so clause B is silent on it by
   construction. **Measured on hardware (2026-07-31)**: renaming a channel broadcasts exactly one
