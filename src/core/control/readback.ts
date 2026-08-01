@@ -18,8 +18,8 @@ import type {
   SsmcsParams,
 } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
-import { applyPatchInContext, clonePlanState, diffPlans } from "../plan-history";
-import type { PlanPatch } from "../plan-history";
+import { applyPatchInContext, clonePlanState, diffPlans, dropAuthored } from "../plan-history";
+import type { PlanPatch, PlanWriteWitness } from "../plan-history";
 import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, FX_STEREO_ASSIGN_ON, normalizeInsertFx, PARAMS } from "./params";
 import type { ParamName } from "./params";
@@ -811,6 +811,13 @@ export interface MergedRead extends ReadbackResult {
  * second diff and re-applying them over the device patch reaches the same result the
  * long way round, and only after writing values it is about to overwrite.
  *
+ * The value contest has one blind spot, and `witness` is what covers it: an edit that
+ * goes A -> B -> A inside the read's window leaves the plan holding the read's own
+ * `before` value, so it is indistinguishable from a key nobody touched — and a read that
+ * sampled the device at B (both writes went out, the read caught the middle one) would
+ * write B back in silence. The witness names the keys an edit funnel authored while the
+ * read was in flight, and those are skipped whatever they now hold.
+ *
  * `current` is re-read after the await, and must resolve the caller's live plan rather
  * than a captured object — a read whose plan has been replaced (File > New, a model
  * switch) has nothing to merge into, since its node ids may not exist in the document
@@ -823,15 +830,28 @@ export interface MergedRead extends ReadbackResult {
 export async function readIntoPlan(
   current: () => Plan,
   read: (into: Plan) => Promise<ReadbackResult>,
+  witness?: PlanWriteWitness,
 ): Promise<MergedRead | null> {
   const plan = current();
   const before = clonePlanState(plan);
   const target = clonePlanState(plan);
-  const result = await read(target);
-  if (current() !== plan) return null;
-  const devicePatch = diffPlans(before, target);
-  const unplaced = applyPatchInContext(plan, devicePatch);
-  return { ...result, deviceView: target, devicePatch, unplaced };
+  const watch = witness?.watch();
+  try {
+    const result = await read(target);
+    if (current() !== plan) return null;
+    // Taken before anything is written, so the merge's own writes are not read back as
+    // the app's authorship by a read still in flight beside this one.
+    const authored = watch?.authored();
+    // The patch is filtered rather than the apply, so what this read is allowed to
+    // author is one list: the history baseline absorbs the same devicePatch, and a key
+    // absorbed but not applied would put a value the app never wrote into the next
+    // undo entry.
+    const { patch: devicePatch, dropped } = dropAuthored(diffPlans(before, target), authored ?? new Set());
+    const unplaced = [...applyPatchInContext(plan, devicePatch), ...dropped];
+    return { ...result, deviceView: target, devicePatch, unplaced };
+  } finally {
+    watch?.close();
+  }
 }
 
 /**

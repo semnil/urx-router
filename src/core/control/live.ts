@@ -102,6 +102,17 @@ export class LiveSync {
   // with the snapshot from the same planToCommands pass. Lets device-follow route
   // an incoming notify to a direct apply or a scoped readback with no key re-parse.
   private readonly index = new Map<number, FollowAddr>();
+  // Every direct-follow notify the session has taken, as address → the last value the
+  // device reported and the journal position it arrived at. A re-base rebuilds the whole
+  // snapshot from the private clone a read ran against, and that clone was taken when the
+  // read was ISSUED — so it cannot carry a notify that landed while the read was in
+  // flight, and the rebuild would drop the entry noteDirect wrote for it. The device's
+  // next notify for that address would then match the stale snapshot entry, be dropped as
+  // our own echo, and the following flush would write the operator's own move on the
+  // hardware back off the board. Keyed by address, so it holds one entry per writable
+  // address however long the session runs.
+  private readonly directJournal = new Map<number, { value: number; at: number }>();
+  private directSeq = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
   private pending = false;
@@ -135,6 +146,8 @@ export class LiveSync {
    *  is enshrined as a value the device was already given. Omit it only where the plan
    *  itself is device truth (no read spanned an await). */
   begin(deviceView?: Plan): void {
+    this.directJournal.clear();
+    this.directSeq = 0;
     this.capture(deviceView);
     this.active = true;
   }
@@ -143,9 +156,17 @@ export class LiveSync {
    *  plan into agreement with the device, so the next outgoing diff measures from the
    *  device truth (and so device-side notifies for the just-read values register as
    *  echoes). Pass the copy the readback ran against, or an edit made during that read
-   *  is recorded as device truth and stops being a diff. */
-  resync(deviceView?: Plan): void {
-    this.capture(deviceView);
+   *  is recorded as device truth and stops being a diff — and `since`, the mark taken
+   *  when that read was issued, or the direct notifies it could not carry are dropped. */
+  resync(deviceView?: Plan, since?: number): void {
+    this.capture(deviceView, since);
+  }
+
+  /** The journal position to hand back to resync() with the view a read produces. Taken
+   *  when the read is ISSUED: every direct notify after it is device truth the read's
+   *  private clone predates, and is restored over the rebuild. */
+  directMark(): number {
+    return this.directSeq;
   }
 
   /** Patch one snapshot entry to a device-reported value (a direct follow notify),
@@ -154,7 +175,9 @@ export class LiveSync {
    *  change never alters the writable-address set or the name snapshot, so patching
    *  the single entry keeps the snapshot in agreement with the device. */
   noteDirect(paramId: number, x: number, y: number, value: number): void {
-    this.snapshot.set(addrKey(paramId, x, y), value);
+    const k = addrKey(paramId, x, y);
+    this.snapshot.set(k, value);
+    this.directJournal.set(k, { value, at: ++this.directSeq });
   }
 
   /** Every writable parameter address the current plan maps to, as [paramId, x, y]
@@ -242,8 +265,13 @@ export class LiveSync {
    * hold, so a name typed during the read is sent for exactly the reason an address the
    * view does not carry is — absence from the snapshot IS the diff. The extra entries a
    * name dropped during the read leaves behind are never consulted.
+   *
+   * `since` is the journal mark the read carried; the direct-follow notifies that landed
+   * after it are re-applied over the rebuild. Those entries are DEVICE truth the view
+   * predates, not the plan's — the rule that a re-base never takes a value from the live
+   * plan is unchanged.
    */
-  private capture(deviceView?: Plan): void {
+  private capture(deviceView?: Plan, since?: number): void {
     // A re-base re-authors the plan from the device, so a collision reported against the
     // pre-read plan may already be gone — a reconcile reads the shared address once and
     // assigns it to both owners, which erases the divergence. Nothing schedules a flush
@@ -275,6 +303,13 @@ export class LiveSync {
     }
     this.writableAddrList = addrs;
     for (const w of planToNameWrites(model, deviceView ?? plan)) this.nameSnapshot.set(nameKey(w), w.value);
+    if (since === undefined) return;
+    // Restore what the view could not know: a notify the device sent after the read was
+    // issued. Confined to the addresses this capture registered, so the shape still comes
+    // from the live plan alone.
+    for (const [k, entry] of this.directJournal) {
+      if (entry.at > since && this.index.has(k)) this.snapshot.set(k, entry.value);
+    }
   }
 
   /** Resolve an incoming device notify address to its catalog name, owner node,
@@ -321,7 +356,10 @@ export class LiveSync {
         // Converge against a frozen copy, not the live plan: an edit that arrives
         // during the (awaited) converge must stay a diff for the trailing flush,
         // not get baked into the snapshot here as if already on the device (which
-        // would silently drop it).
+        // would silently drop it). The mark is taken beside the freeze, for the
+        // other half of the same window: a direct notify arriving during the
+        // converge is device truth this copy is too old to carry.
+        const since = this.directSeq;
         const converged = structuredClone(plan);
         const r = await sendConverging(model, converged, { scope: this.scope() });
         // sendConverging reports per-command failures instead of rejecting, so a
@@ -333,17 +371,20 @@ export class LiveSync {
         if (failed || r.readErrors.length) {
           throw new Error(failed?.error ?? r.readErrors[0] ?? "converge failed");
         }
-        this.capture(converged);
+        this.capture(converged, since);
       }
       // A refetch after the converge, if both happened: converge rebuilds the snapshot
       // from the plan, and the read that follows is what makes the plan right.
       if (refetch.size && this.hooks.refetchNodes) {
+        // Sampled before the call, which issues its read (and takes its private copy)
+        // synchronously — so the mark and the copy describe the same instant.
+        const since = this.directSeq;
         const deviceView = await this.hooks.refetchNodes(refetch);
         // The read ran against its own copy of the plan (readback.readIntoPlan), so the
         // copy is what the device holds: re-base from it and an edit made during the
         // await — on the read node or any other — stays a diff. Null = the plan it read
         // into is gone, and there is nothing a snapshot could describe.
-        if (deviceView) this.capture(deviceView);
+        if (deviceView) this.capture(deviceView, since);
       }
       if (sent) this.hooks.onSent(sent);
       // After onSent because the status line is last-writer-wins, and never from

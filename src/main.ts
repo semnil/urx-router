@@ -18,7 +18,7 @@ import {
 import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
 import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
-import { clonePlanState, diffPlans, type PatchTouch } from "./core/plan-history";
+import { clonePlanState, diffPlans, PlanWriteWitness, type PatchTouch } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import { planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
@@ -302,6 +302,13 @@ let modelId: ModelId = detectModel();
 let plan: Plan = newPlanAtLastRate(modelId);
 ensureFixedConnections(getModel(modelId), plan);
 let dirty = false;
+// Which plan keys an edit funnel wrote while a device read was in flight. Every read
+// goes through readIntoPlan with it, and markChanged is the one site that reports: a
+// funnel that authored a key and then put it back where the read found it is otherwise
+// indistinguishable from an untouched key, and the read would write the device's
+// mid-gesture sample over it. Armed only while a read is open, so an edit outside one
+// costs a null check.
+const planWrites = new PlanWriteWitness(() => plan);
 let selection: Selection = null;
 let recent: RecentEntry[] = loadRecent();
 let themeMode: ThemeMode = detectThemeMode();
@@ -605,6 +612,7 @@ async function followRead(
     const merged = await readIntoPlan(
       () => plan,
       (into) => read(into, controller.signal),
+      planWrites,
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
     return merged;
@@ -664,6 +672,10 @@ const follow =
         // operator's own edit on the hardware. Reject so DeviceFollow takes its
         // stop-following path, the same one a rejected reconcile already took.
         reconcileNodes: async (nodeIds) => {
+          // Taken before the read is issued: a direct notify landing while it is in
+          // flight is device truth the read's private copy predates, and the re-base
+          // below rebuilds the whole snapshot from that copy.
+          const since = live?.directMark();
           const merged = await followRead("device-follow scoped readback", (into, signal) =>
             applyNodeState(getModel(modelId), into, nodeIds, signal),
           );
@@ -674,7 +686,7 @@ const follow =
           // ran against says what the device holds, it is not reachable from there, and
           // the reflect's delay is a window in which an undo would diff against a
           // snapshot that still describes the pre-read plan.
-          live?.resync(merged.deviceView);
+          live?.resync(merged.deviceView, since);
           followFull = true;
           requestReflect();
           assertReadComplete(merged, "device-follow scoped readback issues:");
@@ -682,6 +694,7 @@ const follow =
         },
         // Escalation / idle safety net: pull the whole device into the plan.
         reconcileAll: async () => {
+          const since = live?.directMark();
           const merged = await followRead("device-follow readback", (into, signal) =>
             applyDeviceStateScoped(into, signal),
           );
@@ -689,7 +702,7 @@ const follow =
           traceProbe?.sample("follow-full");
           noteMergeConflicts(merged);
           plan.unreadNodes = merged.unreadNodes;
-          live?.resync(merged.deviceView);
+          live?.resync(merged.deviceView, since);
           followFull = true;
           requestReflect();
           assertReadComplete(merged, "device-follow readback issues:");
@@ -842,6 +855,9 @@ function markChanged(source: WriteSource = "ui"): void {
   // Attribute the write before the funnel's own side effects run: note() may commit an
   // entry, and the ledger has to say who authored the keys that entry carries.
   traceProbe?.sample(source);
+  // Name the keys for any device read in flight, so a value the app moved and moved back
+  // inside the read's window is not overwritten by what the device held in between.
+  planWrites.note();
   live?.schedule();
   midi?.scheduleFeedback();
   planHistory?.note();
@@ -2094,6 +2110,7 @@ if (!DEMO) {
         const merged = await readIntoPlan(
           () => plan,
           (into) => applyDeviceStateScoped(into, controller.signal),
+          planWrites,
         );
         // Unreachable while this handler holds deviceReadInFlight (loadPlan refuses
         // under it), but the contract is stated rather than assumed.
@@ -2404,6 +2421,7 @@ if (!DEMO) {
         const merged = await readIntoPlan(
           () => plan,
           (into) => applyDeviceStateScoped(into),
+          planWrites,
         );
         if (!merged) return await abort(t().status.canceled);
         noteMergeConflicts(merged);
