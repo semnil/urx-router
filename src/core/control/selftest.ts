@@ -48,12 +48,16 @@ import {
   REC_POINT_OPTIONS,
 } from "./params";
 import { sendConverging } from "./client";
+import type { ConvergeRound } from "./client";
 import { applyDeviceState } from "./readback";
 import {
   auditUnverified,
   channelControl,
+  cmdAddr,
+  formatAddrKey,
   inputPorts,
   insertFxControl,
+  planToCommands,
   UNVERIFIED_MAPPINGS,
   unverifiedAddresses,
 } from "./translate";
@@ -87,6 +91,31 @@ export interface UnverifiedFinding {
   confirmed: boolean;
 }
 
+/**
+ * The converge trace of one pass that ended with a residual, plus the captured
+ * baseline for the addresses that did not match. A residual line says a parameter
+ * differs at the end; it cannot say whether the parameter was in the first round's
+ * diff at all (it is not, when the device already held the plan's value and a later
+ * command in the same round reset it), whether the following rounds re-sent it, or
+ * how long each round took. That is the difference between a device that refuses a
+ * write and one that takes it and then moves — which the summary cannot distinguish.
+ */
+/** One address's value in the captured device state. */
+export interface CapturedValue {
+  addr: string;
+  name: string;
+  value: number;
+}
+
+export interface SelfTestPassTrace {
+  pass: number;
+  /** What the capture holds at each residual address — the start of the diff the pass
+   *  computed, without which the trace cannot say why a command was or was not sent
+   *  in the first round. */
+  baseline: CapturedValue[];
+  rounds: ConvergeRound[];
+}
+
 export interface SelfTestReport {
   /** True when every pass matched its written plan exactly (no residual diff). */
   ok: boolean;
@@ -100,6 +129,8 @@ export interface SelfTestReport {
   written: number;
   /** Params that did not match after a write — the findings. */
   residual: SelfTestMismatch[];
+  /** Per-round trace of every pass that ended with a residual (see SelfTestPassTrace). */
+  traces: SelfTestPassTrace[];
   /** Guessed ids that collide with a confirmed param (static audit; the guess is wrong). */
   collisions: UnverifiedCollision[];
   /** Per-unverified-mapping outcome (confirmed / refuted / could-not-test). */
@@ -384,6 +415,7 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300, signal?: A
     passes,
     written: 0,
     residual: [],
+    traces: [],
     collisions: [],
     unverified: [],
     aborted: false,
@@ -429,6 +461,12 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300, signal?: A
     report.errors.push(...cap.errors);
     if (!cap.ok) return report; // connected device is not this model
     const original = cap.plan;
+    // The capture as device values, for a failing pass's trace: the same inverse the
+    // restore writes, indexed once rather than per pass.
+    const captured = new Map<number, CapturedValue>();
+    for (const c of planToCommands(model, original)) {
+      captured.set(cmdAddr(c), { addr: formatAddrKey(cmdAddr(c)), name: c.name, value: c.vdValue });
+    }
 
     // 2. Sweep: each pass writes a silent perturbed plan (converging, so params
     // the device resets as a side effect of a mode change are re-sent) and the
@@ -438,12 +476,19 @@ export async function runSelfTest(model: DeviceModel, settleMs = 300, signal?: A
     for (let pass = 0; pass < passes; pass++) {
       const plan = perturbedPlan(model, original, pass, suppress);
       report.phase = "write";
-      const result = await phaseStep(sendConverging(model, plan, { settleMs, signal }));
+      const result = await phaseStep(sendConverging(model, plan, { settleMs, signal, trace: true }));
       if (!result) break;
       const { outcomes, residual } = result;
       report.written += outcomes.length;
       report.errors.push(...outcomes.filter((o) => !o.ok).map((o) => `p${pass} ${o.command.name}: ${o.error}`));
       report.phase = "verify";
+      // Keep the trace of a pass that did not converge, with the captured state of
+      // the addresses that stayed wrong: the summary below records the end state,
+      // and this is what says how it got there.
+      if (residual.length) {
+        const baseline = residual.map((d) => captured.get(cmdAddr(d.command))).filter((v) => v !== undefined);
+        report.traces.push({ pass, baseline, rounds: result.trace });
+      }
       for (const d of residual) {
         report.residual.push({
           name: d.command.name,
@@ -514,6 +559,12 @@ export function summarizeVerdicts(unverified: UnverifiedFinding[]): {
  * the run on URX22/URX44), then the device-fidelity residual and any issues. Pure.
  */
 export function formatSelfTestReport(report: SelfTestReport): string {
+  // The one shape a divergence is printed in, wherever it appears in the report.
+  const wroteRead = (name: string, addr: string, wrote: number, read: number | null): string =>
+    `${name} @ ${addr} — wrote ${wrote}, read ${read ?? "unreadable"}`;
+  const mismatchLine = (m: SelfTestMismatch): string =>
+    wroteRead(m.name, `${m.paramId}:${m.x}:${m.y}`, m.expected, m.actual);
+
   const lines: string[] = [];
   lines.push(`# URX self-test report — ${report.device || "(no device)"}`);
   lines.push("");
@@ -531,11 +582,7 @@ export function formatSelfTestReport(report: SelfTestReport): string {
           ? "CONFIRMED — round-tripped on the device"
           : `REFUTED — ${u.mismatches.length} address(es) did not round-trip`;
       lines.push(`- **${u.label}** (${u.key}): ${verdict}`);
-      for (const m of u.mismatches) {
-        lines.push(
-          `  - ${m.name} @ ${m.paramId}:${m.x}:${m.y} — wrote ${m.expected}, read ${m.actual ?? "unreadable"}`,
-        );
-      }
+      for (const m of u.mismatches) lines.push(`  - ${mismatchLine(m)}`);
     }
   }
 
@@ -552,17 +599,41 @@ export function formatSelfTestReport(report: SelfTestReport): string {
   if (other.length) {
     lines.push("");
     lines.push("## Other device divergence (confirmed params)");
-    for (const m of other) {
-      lines.push(
-        `- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — wrote ${m.expected}, read ${m.actual ?? "unreadable"}`,
-      );
-    }
+    for (const m of other) lines.push(`- p${m.pass} ${mismatchLine(m)}`);
   }
 
   if (report.errors.length) {
     lines.push("");
     lines.push("## Issues (read/send failures)");
     for (const e of report.errors) lines.push(`- ${e}`);
+  }
+
+  // The time series behind each failing pass. Verbose on purpose: a residual line
+  // names the end state, and the question a divergence raises — was it ever sent,
+  // what else went out in the same round and in what order, how long did the device
+  // have — is answerable only from the rounds themselves.
+  for (const t of report.traces) {
+    lines.push("");
+    lines.push(`## Converge trace — pass ${t.pass}`);
+    lines.push("");
+    lines.push("Captured value of each address that did not converge (the diff's starting point):");
+    for (const b of t.baseline) lines.push(`- ${b.name} @ ${b.addr} = ${b.value}`);
+    t.rounds.forEach((r, i) => {
+      lines.push("");
+      const found =
+        r.reread === null ? "no re-read (the round stopped on a send failure)" : `${r.reread.length} still differing`;
+      lines.push(`### Round ${i + 1} — sent ${r.sent.length}, ${r.elapsedMs} ms, ${found}`);
+      lines.push("");
+      lines.push("Sent, in order:");
+      for (const c of r.sent) lines.push(`- ${c.name} @ ${formatAddrKey(cmdAddr(c))} = ${c.vdValue}`);
+      if (r.reread?.length) {
+        lines.push("");
+        lines.push("Read back after the settle:");
+        for (const d of r.reread) {
+          lines.push(`- ${wroteRead(d.command.name, formatAddrKey(cmdAddr(d.command)), d.command.vdValue, d.current)}`);
+        }
+      }
+    });
   }
   lines.push("");
   return lines.join("\n");

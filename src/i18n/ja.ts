@@ -576,7 +576,7 @@ export const ja: Messages = {
     selfTestRunning: "デバイスのセルフテストを実行中… 切断しないでください (メニューから中止できます)",
     selfTestCancelled: "セルフテストを中止しました — デバイスは無音状態です。元に戻すには再度取得してください",
     selfTestPass: (n: number): string => `セルフテスト合格: ${n} 件のパラメータを書き込み、同一に読み戻しました`,
-    selfTestFail: (n: number): string => `セルフテスト失敗: 書き込み後に ${n} 件が一致しませんでした (コンソール参照)`,
+    selfTestFail: (n: number): string => `セルフテスト失敗: 書き込み後に ${n} 件が一致しませんでした`,
     selfTestRestoreFail: "セルフテスト: デバイスが復元されていない可能性があります — 再度取得して確認してください",
     selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
       `セルフテストの推測: 確認 ${confirmed} 件・否定 ${refuted} 件・検証不能 ${untestable} 件`,
@@ -638,6 +638,8 @@ export const ja: Messages = {
       "デバイスのセルフテストを実行しますか? 全パラメータを一時的に上書きして書き込みを検証し、元の状態に復元します。実行中は出力をミュート (フェーダー最小・発振器/ファンタム OFF) します。",
     selfTestExport:
       "この機種には未確認のパラメータ対応があります。確認のため返送できるよう、セルフテストのレポートを保存しますか?",
+    selfTestFailExport:
+      "セルフテストで問題が見つかりました。一致しなかったパラメータと、読み取り/書き込みに失敗した項目を記載したレポートを保存しますか?",
     deviceErrorExport: "一部のパラメータを読み取り/書き込みできませんでした。各失敗を記載したレポートを保存しますか?",
     importSettings: (name: string, model: string): string =>
       `${name} を現在の ${model} 計画に取り込みますか? 設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます (ファイルに編集状態は含まれません)。`,

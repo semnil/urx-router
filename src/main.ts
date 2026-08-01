@@ -2060,13 +2060,14 @@ type ErrorReport = { filename: string; markdown: string } | null;
 
 // Offer to save a device action's failure report. Called after withDevice has
 // disconnected, so the per-command reasons are visible without the dev console
-// and the connection is not held across the (indefinite) dialogs.
-async function offerErrorReport(report: ErrorReport): Promise<void> {
-  if (report && (await confirmDialog(t().confirm.deviceErrorExport))) {
+// and the connection is not held across the (indefinite) dialogs. The self-test
+// passes its own prompt and file-type label; everything else takes the defaults.
+async function offerErrorReport(report: ErrorReport, prompt?: string, label?: string): Promise<void> {
+  if (report && (await confirmDialog(prompt ?? t().confirm.deviceErrorExport))) {
     // A failed report write must surface like a failed plan save — a silent
     // rejection would read as a saved report.
     try {
-      await saveTextDocument(report.filename, report.markdown, { ext: "md", label: t().filter.errorReport });
+      await saveTextDocument(report.filename, report.markdown, { ext: "md", label: label ?? t().filter.errorReport });
     } catch (err) {
       showError(t().status.saveError(errorText(err)));
     }
@@ -2816,16 +2817,32 @@ if (!DEMO) {
     // menu click cancels instead of starting another run (the run can take minutes
     // of serial round-trips, and stalls entirely if the device link drops mid-test).
 
-    async function runDeviceSelfTest(): Promise<void> {
+    // The --self-test launch has nobody to answer a save dialog, so its report goes to
+    // the log. In chunks: the whole thing in one console line risks the dev server's
+    // forwarding limits, and one line per row would be thousands of frames.
+    function logReport(markdown: string): void {
+      const CHUNK = 50;
+      const rows = markdown.split("\n");
+      const total = Math.ceil(rows.length / CHUNK);
+      for (let n = 0; n < total; n++) {
+        console.warn(`[self-test] report ${n + 1}/${total}\n${rows.slice(n * CHUNK, (n + 1) * CHUNK).join("\n")}`);
+      }
+    }
+
+    // `headless` = the --self-test launch (see logReport).
+    async function runDeviceSelfTest(headless = false): Promise<void> {
       const controller = new AbortController();
       selfTestAbort = controller;
       selfTestBtn.textContent = t().toolbar.selfTestCancel;
       setStatus(t().status.selfTestRunning);
       try {
         const report = await runSelfTest(getModel(modelId), 300, controller.signal);
+        // Traces go out as a count, not as their contents: one carries every command of
+        // a failing pass's first round, which is a terminal-flooding console line. The
+        // report below is where they are read.
         console.warn(
           `[self-test] ${report.aborted ? "CANCELLED" : report.ok ? "PASS" : "FAIL"}`,
-          JSON.stringify(report),
+          JSON.stringify({ ...report, traces: report.traces.length }),
         );
         if (report.errors.length) console.warn("[self-test] issues:", JSON.stringify(report.errors));
         if (report.residual.length) console.warn("[self-test] mismatches:", JSON.stringify(report.residual));
@@ -2841,20 +2858,23 @@ if (!DEMO) {
                   ? t().status.selfTestPass(report.written)
                   : t().status.selfTestFail(report.residual.length),
         );
-        // Confirmation workflow: when the model has unverified guesses (URX22/44),
-        // offer to save the human-readable report so the owner can send it back.
-        if (!report.aborted && report.unverified.length && (await confirmDialog(t().confirm.selfTestExport))) {
-          // The run itself succeeded; a failed report write surfaces like a failed
-          // plan save (the fetch/write reports do the same via offerErrorReport), not
-          // as a self-test error the outer catch would misreport.
-          try {
-            await saveTextDocument(`${modelId}-self-test.md`, formatSelfTestReport(report), {
-              ext: "md",
-              label: t().filter.report,
-            });
-          } catch (err) {
-            showError(t().status.saveError(errorText(err)));
-          }
+        // Two reasons to keep the report, kept apart: the model's unconfirmed mappings
+        // (a property of the model, so the run always has those verdicts to send back)
+        // and anything the run found wrong. The second is the one that used to have no
+        // way out of the console — a failure whose per-param detail is unreadable is a
+        // diagnostic that diagnoses nothing.
+        const guesses = report.unverified.length > 0;
+        const problems = report.residual.length > 0 || report.errors.length > 0 || !report.restored;
+        if (headless) {
+          if (guesses || problems) logReport(formatSelfTestReport(report));
+          return;
+        }
+        if (!report.aborted && (guesses || problems)) {
+          await offerErrorReport(
+            { filename: `${modelId}-self-test.md`, markdown: formatSelfTestReport(report) },
+            guesses ? t().confirm.selfTestExport : t().confirm.selfTestFailExport,
+            t().filter.report,
+          );
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -2878,7 +2898,7 @@ if (!DEMO) {
     // Headless trigger: when launched with --self-test, run it once on startup
     // (no dialog), so it can be driven from the command line without the UI.
     void selfTestRequested().then((auto) => {
-      if (auto) void runDeviceSelfTest();
+      if (auto) void runDeviceSelfTest(true);
     });
 
     // Headless trigger (audit): --prepare-modified writes a distinctive silent
