@@ -1001,6 +1001,28 @@ without latching only the command that consumed it could ever notice, and every 
 to a broker that ACKs writes with no unit attached and answers reads from its cache. Once latched, every later
 command fails until a reconnect.
 
+### Reset chains, and what a converge round sends
+
+Some device parameters reset others when written. Emit order handles that for a whole send — `planToCommands` puts a
+type selector before the array it types, and the EQ 1-knob before the values it discards — but a **converge round
+re-sends only what still differs**, and that is where order alone stops being enough.
+
+The measured case is the EQ 1-knob, on a URX44V. Writing ON (`46`) discards the type back to Intensity; writing the
+type (`47`) discards the level (`48`) to that type's neutral point (Intensity 50, the presets 0). Three links. When a
+COMP/EQ bank switch reset all three at once, the loop walked the chain one link per round: round 2 re-sent ON and
+un-set the type, round 3 re-sent the type and un-set the level, and the 3-round budget ran out with the level wrong —
+reported as a residual the device had in fact accepted every time it was written.
+
+`VdCommand.group` names the chain, and `roundCommands` (client.ts) expands a round to **every member of a group any
+differing command belongs to**, in emit order. One round then lands all three. The plan is re-translated only when a
+group is actually involved, so a write with no 1-knob difference pays nothing.
+
+The other `sideEffect` heads (`COMP_EQ_TYPE`, `INSERT_FX` and the two output selectors, `FX_EFFECT_TYPE`,
+`SIGNAL_TYPE`, `PAN_BAL`) are two links deep, which one extra round settles, so they carry no group today. That is a
+budget coincidence rather than a property, so `translate.test.ts` pins the split: a new `sideEffect` param fails the
+test until someone records which side it is on. `SIGNAL_TYPE` and `PAN_BAL` reset addresses owned by *other* nodes,
+which a group cannot express — their ordering is pinned separately.
+
 ### Aborting on failure
 
 On the device link a failed operation **aborts the operation**, rather than continuing on a premise the link just

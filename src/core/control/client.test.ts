@@ -194,6 +194,34 @@ describe("sendConverging", () => {
     expect(r.outcomes.some((o) => !o.ok && !o.skipped)).toBe(true);
   });
 
+  // The EQ 1-knob reset chain, measured on a URX44V: an OFF->ON transition discards
+  // the type back to Intensity, and a type write discards the level to that type's
+  // neutral. A round that re-sends only what differs walks the chain one link per
+  // round — ON, then the type it just discarded, then the level that discarded —
+  // and a 3-round budget runs out with the level still wrong. The chain travels as
+  // one group, so a single round lands all three.
+  it("re-sends a reset chain whole rather than one link per round", async () => {
+    const table = installDevice();
+    const inner = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      const wasOn = table.get(`46:${x}:${y}`) ?? 0;
+      await inner(id, x, y, v);
+      if (id === 46 && v === 1 && wasOn !== 1) table.set(`47:${x}:${y}`, 0);
+      if (id === 47) table.set(`48:${x}:${y}`, 0);
+    });
+    // The device already holds the type and level the plan wants, with 1-knob off:
+    // only the ON differs, which is exactly the state a round-1 bank reset leaves.
+    table.set("47:0:0", 2);
+    table.set("48:0:0", 11);
+    const plan = dirtyPlan();
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], eqOneKnob: { on: true, type: 2, level: 11 } };
+
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+    expect(r.residual).toEqual([]);
+    expect(r.rounds).toBe(1);
+    expect([table.get("46:0:0"), table.get("47:0:0"), table.get("48:0:0")]).toEqual([1, 2, 11]);
+  });
+
   // A re-diff that cannot read the device leaves the residual unknowable, so the
   // loop ends and surfaces why rather than sending another round blind.
   it("stops and reports readErrors when a re-diff cannot read the device", async () => {

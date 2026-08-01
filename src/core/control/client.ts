@@ -7,7 +7,7 @@ import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
-import { planToCommands, planToNameWrites } from "./translate";
+import { cmdAddr, planToCommands, planToNameWrites } from "./translate";
 import type { NameWrite, VdCommand, WriteScope } from "./translate";
 
 /** The device's clock state: whether it slaves to the USB host, and the rate it
@@ -212,11 +212,30 @@ export async function sendNames(writes: NameWrite[]): Promise<NameOutcome[]> {
   return outcomes;
 }
 
+/**
+ * One converge round, for a caller that has to explain a residual afterwards.
+ * The residual alone cannot: it says a parameter differs at the end, not whether
+ * it was ever in the diff, whether the later rounds re-sent it, or what the device
+ * answered each time. Kept only when `trace` is set (the diagnostics), since a
+ * live write would otherwise retain every command it ever sent.
+ */
+export interface ConvergeRound {
+  /** Commands sent this round, in the order they went out. */
+  sent: VdCommand[];
+  /** Milliseconds from this round's first send to the end of its re-read. */
+  elapsedMs: number;
+  /** What the re-read found still differing, or null when the round stopped on a
+   *  send failure and no re-read was made. */
+  reread: CommandDiff[] | null;
+}
+
 export interface ConvergeResult {
   /** Every command sent across all rounds. */
   outcomes: SendOutcome[];
   /** Send rounds performed (1 = converged on the first write). */
   rounds: number;
+  /** Per-round record, one entry per round — empty unless `trace` was requested. */
+  trace: ConvergeRound[];
   /** Diffs still remaining after the last round — empty means the device matches. */
   residual: CommandDiff[];
   /** Read failures from a re-diff between rounds. Non-empty means the loop
@@ -226,20 +245,30 @@ export interface ConvergeResult {
 }
 
 /**
- * Write the plan to the device until it converges: send the diff, re-read, and
- * re-send whatever still differs, up to maxRounds. A single write is not always
- * enough — setting some params makes the device reset dependents as a side
- * effect (e.g., changing COMP/EQ type resets the channel-strip section toggles),
- * so a value written in the same batch is clobbered and only sticks once the
- * reset has settled and it is re-sent. The caller must have connected first; it
- * may pass the diff it already computed (for the confirm prompt) to skip the
- * first re-read. Stops early when nothing differs.
+ * What a converge round must actually send: everything that differs, plus every
+ * member of a `group` any of them belongs to, in emit order.
  *
- * Retrying is only sound while the link is healthy. A round that failed to send,
- * or a re-diff that could not read the device, ends the loop instead of starting
- * another round — re-sending the whole plan over a link that just failed would
- * re-trigger the side-effect resets this loop exists to settle.
+ * A round that re-sends only what differs is right for independent parameters and
+ * wrong for a reset chain. The EQ 1-knob is the measured one: writing ON discards
+ * the type, writing the type discards the level. Re-sending ON alone therefore
+ * un-sets the type that already matched, the next round re-sends the type and
+ * un-sets the level, and the loop alternates until it runs out of rounds — leaving
+ * the parameter it never got to as a residual the device did accept every time it
+ * was written. Sending the group whole lands all three in one round.
+ *
+ * The plan is re-translated only when a group is actually involved, which no write
+ * without an EQ 1-knob difference ever is.
  */
+function roundCommands(model: DeviceModel, plan: Plan, scope: WriteScope, diffs: CommandDiff[]): VdCommand[] {
+  const groups = new Set<string>();
+  for (const d of diffs) if (d.command.group) groups.add(d.command.group);
+  if (!groups.size) return diffs.map((d) => d.command);
+  const addrs = new Set(diffs.map((d) => cmdAddr(d.command)));
+  return planToCommands(model, plan, scope).filter(
+    (c) => addrs.has(cmdAddr(c)) || (c.group !== undefined && groups.has(c.group)),
+  );
+}
+
 export interface ConvergeOptions {
   /** A diff already in hand (the write path's confirmed set); absent = seed one. */
   initialDiffs?: CommandDiff[];
@@ -248,16 +277,35 @@ export interface ConvergeOptions {
   signal?: AbortSignal;
   /** Write scope (see translate.ts). Diagnostics leave it at "all". */
   scope?: WriteScope;
+  /** Keep a per-round record (see ConvergeRound). Diagnostics only. */
+  trace?: boolean;
 }
 
+/**
+ * Write the plan to the device until it converges: send the diff, re-read, and
+ * re-send whatever still differs, up to maxRounds. A single write is not always
+ * enough — setting some params makes the device reset dependents as a side
+ * effect (e.g., changing COMP/EQ type resets the channel-strip section toggles),
+ * so a value written in the same batch is clobbered and only sticks once the
+ * reset has settled and it is re-sent. What a round sends is `roundCommands`, not
+ * the diff itself. The caller must have connected first; it may pass the diff it
+ * already computed (for the confirm prompt) to skip the first re-read. Stops early
+ * when nothing differs.
+ *
+ * Retrying is only sound while the link is healthy. A round that failed to send,
+ * or a re-diff that could not read the device, ends the loop instead of starting
+ * another round — re-sending the whole plan over a link that just failed would
+ * re-trigger the side-effect resets this loop exists to settle.
+ */
 export async function sendConverging(
   model: DeviceModel,
   plan: Plan,
   opts: ConvergeOptions = {},
 ): Promise<ConvergeResult> {
-  const { initialDiffs, maxRounds = 3, settleMs = 300, signal, scope = "all" } = opts;
+  const { initialDiffs, maxRounds = 3, settleMs = 300, signal, scope = "all", trace: wantTrace = false } = opts;
   const outcomes: SendOutcome[] = [];
   const readErrors: string[] = [];
+  const trace: ConvergeRound[] = [];
   let residual = initialDiffs;
   if (!residual) {
     const seed = await diffPlan(model, plan, { signal, scope });
@@ -267,13 +315,18 @@ export async function sendConverging(
   let rounds = 0;
   while (residual.length > 0 && rounds < maxRounds && !readErrors.length) {
     signal?.throwIfAborted();
-    const sent = await sendCommands(
-      residual.map((d) => d.command),
-      signal,
-    );
+    const startedAt = Date.now();
+    const sending = roundCommands(model, plan, scope, residual);
+    const sent = await sendCommands(sending, signal);
     outcomes.push(...sent);
     rounds++;
-    if (sent.some(reachedAndFailed)) break;
+    const record = (reread: CommandDiff[] | null): void => {
+      if (wantTrace) trace.push({ sent: sending, elapsedMs: Date.now() - startedAt, reread });
+    };
+    if (sent.some(reachedAndFailed)) {
+      record(null);
+      break;
+    }
     // A side-effect reset (e.g. from a COMP/EQ-type change) lands asynchronously,
     // a beat after the write returns. Let it settle before re-reading, so the
     // residual is the true post-reset state and the next round's re-send is not
@@ -283,8 +336,9 @@ export async function sendConverging(
     const next = await diffPlan(model, plan, { signal, scope });
     readErrors.push(...next.errors);
     residual = next.diffs;
+    record(residual);
   }
-  return { outcomes, rounds, residual, readErrors };
+  return { outcomes, rounds, trace, residual, readErrors };
 }
 
 /**

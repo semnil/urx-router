@@ -163,6 +163,14 @@ export interface VdCommand {
    * address, which is every plan the screens can author.
    */
   shadowed?: string[];
+  /**
+   * Commands that must be re-sent TOGETHER, in emit order, whenever any one of
+   * them differs — because writing an earlier member resets the later ones on the
+   * device. Order alone is enough for a full send; it is not enough for the
+   * converge loop, which re-sends only what still differs and would otherwise
+   * re-arm the reset it is trying to settle (see sendConverging).
+   */
+  group?: string;
 }
 
 function encodeValue(encoding: ParamSpec["encoding"], planValue: number): number {
@@ -1099,19 +1107,32 @@ function pushEqBandCommands(out: VdCommand[], ctrl: EqControl, bands: EqBand[]):
 // Push the EQ 1-knob commands (ON / TYPE / LEVEL) for one node's EQ, on every
 // linked instance. When 1-knob is on the device drives the 4-band PEQ, so the
 // caller skips the band commands — the bands are device-driven, not authored.
+// ON / TYPE / LEVEL is a reset chain, measured on a URX44V: an OFF->ON transition
+// discards the type back to Intensity, and any type write discards the level to that
+// type's neutral point (Intensity 50, the presets 0). Sending them in this order lands
+// all three — but only if all three go out, which is why they carry a `group`: a
+// converge round re-sending ON alone would leave the type behind, the next round would
+// re-send the type and leave the level behind, and the loop alternates until it runs
+// out of rounds. Three links is what makes this one reach a residual; the shorter
+// chains behind the other sideEffect params are pinned in translate.test.ts.
 function pushEqOneKnobCommands(out: VdCommand[], ctrl: EqOneKnobControl, ok: EqOneKnobParams): void {
   for (const inst of ctrl.instances) {
-    if (ok.on !== undefined) out.push(rawCommand("EQ_ONE_KNOB_ON", ctrl.on, "bool", inst, ok.on ? 1 : 0));
+    const chain: VdCommand[] = [];
+    if (ok.on !== undefined) chain.push(rawCommand("EQ_ONE_KNOB_ON", ctrl.on, "bool", inst, ok.on ? 1 : 0));
     // The preset enum is shared across every EQ instance; each screen exposes only
     // its applicable subset, so the menu here is the union of both subsets.
     if (ok.type !== undefined) {
       const type = boundEnum(ok.type, EQ_ONE_KNOB_TYPE_ALL_OPTIONS, EQ_ONE_KNOB_TYPE_DEFAULT);
-      out.push(rawCommand("EQ_ONE_KNOB_TYPE", ctrl.type, "enum", inst, type));
+      chain.push(rawCommand("EQ_ONE_KNOB_TYPE", ctrl.type, "enum", inst, type));
     }
     if (ok.level !== undefined) {
       const level = boundRaw(planRaw(ok.level, EQ_ONE_KNOB_LEVEL_MIN), EQ_ONE_KNOB_LEVEL_MIN, EQ_ONE_KNOB_LEVEL_MAX);
-      out.push(rawCommand("EQ_ONE_KNOB_LEVEL", ctrl.level, "raw", inst, level));
+      chain.push(rawCommand("EQ_ONE_KNOB_LEVEL", ctrl.level, "raw", inst, level));
     }
+    // Named after the chain's own head address, so there is one spelling of it. Only a
+    // chain of two or more can be broken by a partial re-send.
+    if (chain.length > 1) for (const c of chain) c.group = `eq1knob:${cmdAddr(chain[0])}`;
+    out.push(...chain);
   }
 }
 

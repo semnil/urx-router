@@ -1315,3 +1315,68 @@ describe("addrKey packing", () => {
     }
   });
 });
+
+// A `sideEffect` param is by definition the head of a reset chain: writing it makes the
+// device move parameters emitted after it. Emit order handles that for a full send;
+// `group` is what carries it into a converge round, which re-sends only what differs
+// (see client.ts roundCommands). Nothing derives the group from the flag, so this pins
+// which heads carry one and — for the rest — why they do not, rather than leaving a new
+// emitter to be forgotten until a device run turns up a residual.
+describe("reset chains (sideEffect heads vs converge groups)", () => {
+  // Measured on a URX44V: ON discards the type, a type write discards the level. Three
+  // links, so one link per round exhausts sendConverging's 3-round budget.
+  const GROUPED = new Set(["EQ_ONE_KNOB_ON", "EQ_ONE_KNOB_TYPE", "EQ_ONE_KNOB_LEVEL"]);
+  // Two links each: the head plus what it repopulates, which one extra round settles.
+  // A third link, or a shorter budget, would put them in the same failure as the EQ
+  // 1-knob — that is what to check first if a converge leaves one of these behind.
+  const UNGROUPED = new Set([
+    "COMP_EQ_TYPE", // -> the channel-strip section toggles (bank swap)
+    "INSERT_FX", // -> INSERT_FX_ON + the engine array it binds
+    "OUTPUT_INSERT_FX_STEREO",
+    "OUTPUT_INSERT_FX_MIX",
+    "FX_EFFECT_TYPE", // -> the FX_EFFECT_PARAM array
+    "SIGNAL_TYPE", // -> the SECONDARY channel's state, so a group cannot express it
+    "PAN_BAL", // -> CH_PAN + every SEND_PAN; its order is pinned above
+  ]);
+
+  it("accounts for every emitted sideEffect param", () => {
+    const emitted = new Set<string>();
+    for (const id of MODEL_IDS) {
+      for (const c of planToCommandsUncollapsed(getModel(id), defaultPlan(id))) {
+        if ((PARAMS[c.name] as ParamSpec).sideEffect) emitted.add(c.name);
+      }
+    }
+    for (const name of emitted) {
+      expect(GROUPED.has(name) || UNGROUPED.has(name), `${name} is a reset-chain head with no decision recorded`).toBe(
+        true,
+      );
+    }
+  });
+
+  // The 1-knob triple sits at EQ-ON + 2 / 3 / 4, so an anchor and a y name one chain
+  // instance across every EQ block (mono channel, stereo channel, output bus).
+  const CHAIN_OFFSET: Record<string, number> = { EQ_ONE_KNOB_ON: 2, EQ_ONE_KNOB_TYPE: 3, EQ_ONE_KNOB_LEVEL: 4 };
+
+  it("gives one group to each chain instance of two or more, and to nothing else", () => {
+    for (const id of MODEL_IDS) {
+      const chains = new Map<string, VdCommand[]>();
+      for (const c of planToCommands(getModel(id), defaultPlan(id))) {
+        const offset = CHAIN_OFFSET[c.name];
+        if (offset === undefined) {
+          expect(c.group, `${c.name} carries a group but is not a known chain member`).toBeUndefined();
+          continue;
+        }
+        const key = `${c.paramId - offset}:${c.y}`;
+        chains.set(key, [...(chains.get(key) ?? []), c]);
+      }
+      expect(chains.size).toBeGreaterThan(0);
+      for (const [key, members] of chains) {
+        // A chain of one cannot be broken by a partial re-send, so it is never tagged.
+        if (members.length < 2) expect(members[0].group, `${key} is a chain of one`).toBeUndefined();
+        else
+          expect(new Set(members.map((m) => m.group)), `${key} is not one group`).toEqual(new Set([members[0].group]));
+        if (members.length > 1) expect(members[0].group, `${key} carries no group`).toBeDefined();
+      }
+    }
+  });
+});
