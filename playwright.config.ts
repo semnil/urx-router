@@ -11,9 +11,18 @@ import { defineConfig, devices } from "@playwright/test";
 // no on-demand transform and no optimizer reload, so startup is deterministic.
 // Behaviour is identical: the only build-mode flag is VITE_DEMO (src/core/env.ts),
 // which a plain build leaves unset exactly like the dev server.
-// The port comes from package.json's `preview` script (--port 4173 --strictPort),
-// which `e2e:serve` composes with the build.
-const SERVER_URL = "http://localhost:4173";
+//
+// The two ports come from the environment (E2E_PORT / E2E_TRACE_PORT, defaulting to
+// 4173 / 4174), which is what lets a second checkout run the suite at the same time:
+// `scripts/e2e-serve.mjs` reads the same variables, and the web server inherits this
+// process's environment, so the URL polled here and the port bound there are resolved
+// once from one place. Two runs sharing a port would not fail — `reuseExistingServer`
+// would hand the second one the first one's bundle, and it would pass against code
+// that is not the code under test. Isolate the checkout too (`pnpm e2e:worktree`):
+// a port pair alone still leaves both runs building into the same dist/.
+const PORT = Number(process.env.E2E_PORT ?? 4173);
+const TRACE_PORT = Number(process.env.E2E_TRACE_PORT ?? 4174);
+const SERVER_URL = `http://localhost:${PORT}`;
 
 // The race-diagnosis harness (e2e/race, docs/{en,ja}/live-race-harness.md) runs as its
 // own project against its own server. It needs a bundle that carries the plan-ledger
@@ -28,7 +37,7 @@ const SERVER_URL = "http://localhost:4173";
 // runs per-PR from ci.yml; the harness is 22.4 minutes across 156, so it runs from its
 // own race.yml — sharded, on demand and alongside a release build. Nothing about the
 // tiers lives in this file beyond the project boundary they are cut along.
-const TRACE_URL = "http://localhost:4174";
+const TRACE_URL = `http://localhost:${TRACE_PORT}`;
 
 export default defineConfig({
   testDir: "e2e",
