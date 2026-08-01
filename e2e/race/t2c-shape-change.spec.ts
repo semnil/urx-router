@@ -48,7 +48,8 @@ const RATE_ADDR = "766:0:0";
 const CH1_ONE_KNOB_LEVEL = "48:0:0";
 /** ch1's LOW band gain — the band block starts 5 params after the EQ-ON anchor (44 →
  *  49) with a 5-param stride, gain last (49 on / 50 type / 51 q / 52 freq / 53 gain).
- *  It carries NO sideEffect, which is what makes it this case's control. */
+ *  It carries NO sideEffect, which is what makes it this case's control — and it is
+ *  also what arm B counts refetch passes on (see REFETCH_ANCHOR there). */
 const CH1_EQ_LOW_GAIN = "53:0:0";
 
 /** Insert-FX selector on the two mono channels: one address per owner. */
@@ -225,7 +226,12 @@ test.describe("T2c shape-change", () => {
     const depthBefore = await depthOf(page);
 
     await mark(page, "level-drag");
-    const drag = await dragSlider(page, level, { from: 0.12, to: 0.85, steps: 10, hold: 90, liftMark: "level-lift" });
+    // Longer than arm A's, and that is a property of the refetch arm rather than a
+    // preference: a flush carrying a sideEffect param now waits for the device to
+    // announce the write before reading it back, so one cycle is write + announcement +
+    // read where the control arm's is write alone. The gesture has to outlast several of
+    // them for "issued mid-drag" to have anything to count.
+    const drag = await dragSlider(page, level, { from: 0.12, to: 0.85, steps: 16, hold: 90, liftMark: "level-lift" });
     const levelAtLift = Number(await level.inputValue());
     await settleAfter(page, "level-lift", 1500);
 
@@ -235,13 +241,27 @@ test.describe("T2c shape-change", () => {
     const writes = setsBetween(trace, CH1_ONE_KNOB_LEVEL, dragAt);
     const midDrag = setsBetween(trace, CH1_ONE_KNOB_LEVEL, dragAt, liftAt);
     const gaps = gapsOf(startsBetween(trace, CH1_ONE_KNOB_LEVEL, dragAt, liftAt));
-    // Every scoped readback of ch1 reads the 1-knob block (readback.ts readEqOneKnob),
-    // and with no notify pushed nothing else reads at all, so a read of 48:0:0 IS a
-    // refetch — confirmed by the full-reconcile count being zero.
-    const refetches = readsBetween(trace, CH1_ONE_KNOB_LEVEL, dragAt);
+    // Every scoped readback of ch1 reads the whole input EQ block — the four bands and
+    // then the 1-knob (readback.ts readEqBands / readEqOneKnob) — and with no notify
+    // pushed nothing else reads at all, so a read of the LOW band's gain IS one refetch
+    // pass, confirmed by the full-reconcile count being zero.
+    //
+    // The count is anchored on a BAND address rather than on 48:0:0, the address the
+    // drag writes, and that is not interchangeable. Whether a pass reads the written
+    // address at all is a property of what the UNIT said: the app answers an address the
+    // unit has announced out of that announcement and never asks, so the count off
+    // 48:0:0 reads 0 on a correct app AND on an app that never refetched at all. The
+    // band gains are what the 1-knob makes the unit recompute (the collateral the
+    // refetch exists to collect), nothing in this arm writes them, so they come off the
+    // unit in every case.
+    const REFETCH_ANCHOR = CH1_EQ_LOW_GAIN;
+    const refetches = readsBetween(trace, REFETCH_ANCHOR, dragAt);
+    // Logged beside it for exactly that reason: the two counts moving apart is what a
+    // change in the overlay looks like from here.
+    const writtenReads = readsBetween(trace, CH1_ONE_KNOB_LEVEL, dragAt);
     // …and how many of them were issued while the pointer was still down: a readback
     // straddling later moves of the same gesture is the shape this whole tier is about.
-    const midRefetch = readsBetween(trace, CH1_ONE_KNOB_LEVEL, dragAt, liftAt);
+    const midRefetch = readsBetween(trace, REFETCH_ANCHOR, dragAt, liftAt);
     const fullReads = fullReadsAfter(trace, dragAt);
     const levelAfter = Number(await level.inputValue());
     const depthAfter = await depthOf(page);
@@ -250,8 +270,9 @@ test.describe("T2c shape-change", () => {
     console.log(
       `[refetch] level drag ${drag.ms} ms over ${drag.values.length} positions ${drag.values.join("→")}: ` +
         `${writes.length} write(s) on ${CH1_ONE_KNOB_LEVEL} (${midDrag.length} before the lift), ` +
-        `flush gaps ${gaps.join("/")} ms; ${refetches} node readback(s) (${midRefetch} issued mid-drag), ` +
-        `${fullReads} full reconcile(s)`,
+        `flush gaps ${gaps.join("/")} ms; ${refetches} node readback(s) counted on ${REFETCH_ANCHOR} ` +
+        `(${midRefetch} issued mid-drag), ${fullReads} full reconcile(s); ` +
+        `${writtenReads} read(s) of the written address ${CH1_ONE_KNOB_LEVEL}`,
     );
     console.log(
       `undo depth ${depthBefore.undo} → ${depthAfter.undo}; slider ${levelBefore} → ${levelAtLift} → ${levelAfter}`,
@@ -280,7 +301,48 @@ test.describe("T2c shape-change", () => {
     // refetch split exists for exactly this (live.test.ts "keeps flushing on cadence
     // through a 1-knob level drag"): a converge would have made the window back off and
     // the unit would have heard nothing until the pointer stopped.
+    //
+    // WHERE THE WINDOW ENDS, exactly. Each cycle is write → the unit's announcement of
+    // it (fake-device.ts ANNOUNCE_MS) → the pass's reads, and the pin is that the first
+    // read of each cycle lands AFTER that announcement and PROMPTLY after it. Both
+    // directions of the regression are named by it: a pass that stopped waiting reads
+    // before the notify, and one that fell back to the bounded window reads ~200 ms
+    // after it. Nothing is queued between the two events, so the delta is not a measure
+    // of machine load the way an absolute gap is.
+    const announcements = trace.filter((e) => e.kind === "notify" && e.addr === CH1_ONE_KNOB_LEVEL && e.t > dragAt);
+    const writeSpans = setsOf(trace).filter((g) => g.addr === CH1_ONE_KNOB_LEVEL && g.start > dragAt);
+    const cycles = writeSpans.map((w) => {
+      const ann = announcements.find((e) => e.t >= w.end);
+      const firstRead = getsOf(trace).find((g) => g.start >= w.end);
+      return { at: w.start, ann: ann?.t, read: firstRead?.start };
+    });
+    console.log(
+      `[refetch] per cycle, write → announcement → first read: ` +
+        cycles
+          .map((c) =>
+            c.ann === undefined || c.read === undefined
+              ? `${c.at.toFixed(0)}: —`
+              : `+${(c.ann - c.at).toFixed(0)}/+${(c.read - c.ann).toFixed(0)} ms`,
+          )
+          .join(", "),
+    );
+    for (const c of cycles) {
+      expect(c.ann).toBeDefined();
+      expect(c.read).toBeDefined();
+      expect(c.read!).toBeGreaterThanOrEqual(c.ann!);
+      expect(c.read! - c.ann!).toBeLessThan(80);
+    }
+
+    // …and the gap between flushes as a coarse net beside it. It CANNOT be tightened to
+    // catch the same regression, and saying so is the point of this paragraph: the gap
+    // is announcement (100 ms) plus the pass's ~70 sequential reads, and the reads are
+    // the dominant and load-sensitive term. Measured 421/434/440 ms here; the bounded-
+    // fallback regression would print ~640, which a ceiling low enough to catch would
+    // sit under the read chunk's own headroom on a slower machine. So the ceiling only
+    // says the cadence did not COLLAPSE — the several-windows-per-gesture property this
+    // case is about — and the per-cycle pin above is what watches the wait.
     expect(midDrag.length).toBeGreaterThan(1);
+    expect(Math.max(...gaps)).toBeLessThan(700);
     expect(refetches).toBeGreaterThan(1);
     // …most of them issued with the pointer still down, so they really are reads taken
     // across the gesture rather than one tidy read after it.
@@ -291,13 +353,14 @@ test.describe("T2c shape-change", () => {
     expect(refetches).toBe(writes.length);
     // 2 — the drag's own value survives the storm, and the last position it reached is
     // one the device was given. Stated for exactly that much: this run diverges nothing,
-    // so a read of 48:0:0 answers the app's own last write, and every readback here is
-    // issued AFTER the write of the position it goes on to read. Its answer is therefore
-    // that position, and the end state is the same whether the readback MERGES or
-    // assigns wholesale — this pair does not decide the merge. (The value is read off
-    // the plan, not off the pointer: the 1-knob level row carries no `data-dyn`, so the
-    // mid-drag `syncValues` never touches it and the row is rebuilt from the plan once
-    // the pointer lifts.) The merge needs an edit placed INSIDE a read window with
+    // so the level address carries the app's own last write whichever way the pass gets
+    // it — off the unit, whose `mem` holds what was written, or out of the write itself
+    // — and every readback here is issued AFTER the write of the position it goes on to
+    // read. Its answer is therefore that position, and the end state is the same whether
+    // the readback MERGES or assigns wholesale — this pair does not decide the merge.
+    // (The value is read off the plan, not off the pointer: the 1-knob level row carries
+    // no `data-dyn`, so the mid-drag `syncValues` never touches it and the row is rebuilt
+    // from the plan once the pointer lifts.) The merge needs an edit placed INSIDE a read window with
     // nothing after it, which no position of a drag is — arm C below places one.
     expect(levelAfter).toBe(levelAtLift);
     expect(levelAfter).toBe(Math.max(...writes));
