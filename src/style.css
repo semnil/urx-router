@@ -9,8 +9,7 @@
   --graph-bg:
     radial-gradient(130% 80% at 50% -8%, rgba(255, 180, 80, 0.05), transparent 60%),
     repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 3px),
-    radial-gradient(circle, rgba(255, 224, 160, 0.05) 1px, transparent 1px) 0 0 / 26px 26px,
-    #14110d;
+    radial-gradient(circle, rgba(255, 224, 160, 0.05) 1px, transparent 1px) 0 0 / 26px 26px, #14110d;
   --bar: linear-gradient(180deg, #272015, #1b1610);
   --bar-solid: #221d16;
   --panel: #191510;
@@ -89,8 +88,7 @@
   --graph-bg:
     radial-gradient(130% 80% at 50% -8%, rgba(255, 170, 40, 0.06), transparent 60%),
     repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.018) 0 1px, transparent 1px 3px),
-    radial-gradient(circle, rgba(120, 100, 60, 0.1) 1px, transparent 1px) 0 0 / 26px 26px,
-    #e8e3d8;
+    radial-gradient(circle, rgba(120, 100, 60, 0.1) 1px, transparent 1px) 0 0 / 26px 26px, #e8e3d8;
   --bar: linear-gradient(180deg, #f5f1e9, #e6dfd0);
   --bar-solid: #efeadf;
   --panel: #efeadf;
@@ -201,7 +199,9 @@ body {
   height: 9px;
   border-radius: 50%;
   background: var(--led);
-  box-shadow: 0 0 8px var(--led), 0 0 2px var(--led);
+  box-shadow:
+    0 0 8px var(--led),
+    0 0 2px var(--led);
 }
 
 .brand .word {
@@ -264,7 +264,9 @@ select#model-picker,
   height: 8px;
   border-radius: 50%;
   background: var(--tally);
-  box-shadow: 0 0 8px var(--tally), 0 0 2px var(--tally);
+  box-shadow:
+    0 0 8px var(--tally),
+    0 0 2px var(--tally);
   animation: tally-pulse 1.4s ease-in-out infinite;
 }
 
@@ -429,7 +431,9 @@ button {
   width: 8px;
   height: 8px;
   color: var(--text-dim);
-  transition: transform 0.16s ease, color 0.16s ease;
+  transition:
+    transform 0.16s ease,
+    color 0.16s ease;
 }
 
 .menu-trigger[aria-expanded="true"] {
@@ -457,7 +461,9 @@ button {
   background: linear-gradient(180deg, var(--ctl-bg2), var(--ctl-bg));
   border: 1px solid var(--ctl-border);
   border-radius: 8px;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45), var(--ctl-shadow);
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.45),
+    var(--ctl-shadow);
   animation: menu-in 0.13s ease;
 }
 
@@ -749,7 +755,6 @@ select:focus-visible,
   grid-column: span 1;
 }
 
-
 @media (prefers-reduced-motion: reduce) {
   .insp-section > summary::after {
     transition: none;
@@ -1037,7 +1042,9 @@ select:focus-visible,
   border-radius: 3px;
   background: linear-gradient(180deg, #ffd36b, #c9882a);
   border: 1px solid #6b4a18;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 
 .param input[type="range"]::-moz-range-track,
@@ -1353,7 +1360,9 @@ select:focus-visible,
   border-radius: 10px;
   background: var(--bar);
   border: 1px solid var(--line);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45), var(--ctl-shadow);
+  box-shadow:
+    0 12px 30px rgba(0, 0, 0, 0.45),
+    var(--ctl-shadow);
   transform: translateX(-50%);
   animation: sel-bar-in 0.16s ease-out;
 }
@@ -1731,7 +1740,9 @@ select:focus-visible,
   align-items: center;
   justify-content: center;
   background: #14110d;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.55), inset 0 1px 1px rgba(0, 0, 0, 0.65);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.55),
+    inset 0 1px 1px rgba(0, 0, 0, 0.65);
 }
 .con-scribble .con-pled .dot {
   width: 6px;
@@ -1754,7 +1765,9 @@ select:focus-visible,
 .con-scribble.power:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 1px;
-  box-shadow: var(--ctl-shadow), 0 0 0 4px rgba(0, 0, 0, 0.9);
+  box-shadow:
+    var(--ctl-shadow),
+    0 0 0 4px rgba(0, 0, 0, 0.9);
 }
 .con-chips {
   display: flex;
@@ -2646,7 +2659,12 @@ select:focus-visible,
   background: var(--panel);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
   color: var(--text);
-  font: 600 14px -apple-system, "Segoe UI", "Meiryo", system-ui, sans-serif;
+  font:
+    600 14px -apple-system,
+    "Segoe UI",
+    "Meiryo",
+    system-ui,
+    sans-serif;
 }
 
 /* Overlay ladder, so a new one lands in the right place rather than wherever the
@@ -3142,14 +3160,30 @@ select:focus-visible,
 #dyn-screen-box .midi-target {
   border-radius: 4px;
 }
-/* The dot moves inside the cell here. A console chip floats over the strip, which
-   has room around it; a screen row's control runs to the edge of a scrolling column
-   (.prefs-grid clips), so the console's -3px offset put half the dot outside the
-   panel. The cell's top-right corner is empty above the readout, so an inset dot
-   sits clear of both the track and the digits. */
+/* The mapped dot is anchored to the ROW here rather than to the control. A console
+   chip floats over the strip with room around it; a screen row's control has none —
+   measured, the console's own corner offset put half the dot outside the scrolling
+   column (.prefs-grid clips), inset on the right it sat on the value's last character,
+   and inset on the left it sat on the slider's thumb whenever the control was parked
+   at its minimum (amber on amber, invisible). The label gutter is empty at every
+   value, and it is also where the eye scans for which rows are assigned. */
 #dyn-screen-box .midi-target.midi-mapped::before {
-  top: 1px;
-  right: 1px;
+  display: none;
+}
+#dyn-screen-box .prefs-row.midi-mapped-row {
+  position: relative;
+}
+#dyn-screen-box .prefs-row.midi-mapped-row::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--led);
+  pointer-events: none;
 }
 /* No border-radius here: the outline follows each element's own radius (chips /
    fader caps keep theirs, knobs stay circular) — declaring one would override
@@ -3543,7 +3577,11 @@ select:focus-visible,
 .gt-shade.gr {
   transform: scaleY(var(--lvl, 0));
   transform-origin: top;
-  background: repeating-linear-gradient(-45deg, var(--gr) 0 3px, color-mix(in srgb, var(--gr) 55%, transparent) 3px 6px);
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--gr) 0 3px,
+    color-mix(in srgb, var(--gr) 55%, transparent) 3px 6px
+  );
 }
 .gt-peak.gr {
   transform: translateY(calc(var(--pk, 0) * 100%));

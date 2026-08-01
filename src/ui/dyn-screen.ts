@@ -1128,10 +1128,7 @@ export class DynScreen {
     // the pointer capture.
     const rowCtx: DynRowCtx = {
       ...ctx,
-      midi: (row, key) => {
-        this.armable(row.querySelector<HTMLElement>(".ctl, .prefs-toggle"), key, ctx);
-        return row;
-      },
+      midi: (row, key) => this.armable(row, key, ctx),
       vals,
       states: this.states,
       set: (patch) => {
@@ -1155,22 +1152,33 @@ export class DynScreen {
   }
 
   /**
-   * Mark one control as armable for MIDI learn and wire the arming. `key` is the
-   * descriptor's own value key; the id comes from the descriptor, so a locked or
-   * unmappable row (an enum selector, which answers null) is simply left alone —
-   * it neither rings nor arms, which is the same treatment the console gives a
-   * read-only chip.
+   * Mark a parameter row as armable for MIDI learn and wire the arming, by the value
+   * key it edits. Takes the ROW rather than the control: the ring goes on the control
+   * (what the operator clicks) but the mapped dot goes on the row, and a control that
+   * has not been appended yet has no row to reach through `closest`. `key` is the
+   * descriptor's own; the id comes from the descriptor, so a locked row or an
+   * unmappable one (an enum selector, which answers null) is simply left alone — the
+   * same treatment the console gives a read-only chip. Returns the row, so it wraps
+   * the `settingsRow(...)` call it decorates.
    */
-  private armable(control: HTMLElement | null, key: string, ctx: DynCtx): void {
+  private armable(row: HTMLElement, key: string, ctx: DynCtx): HTMLElement {
     const midi = this.hooks.midi;
-    if (!control || !midi) return;
+    const control = row.querySelector<HTMLElement>(".ctl, .prefs-toggle");
+    if (!control || !midi) return row;
     // A locked row's control is disabled; arming it would bind a mapping whose
     // writes the catalog refuses anyway.
-    if (this.states.get(key)?.locked) return;
+    if (this.states.get(key)?.locked) return row;
     const id = this.p().controlId?.(ctx, key);
-    if (!id) return;
+    if (!id) return row;
     markMidi(control, id, midi);
     armOnActivate(control, id, midi);
+    // The mapped dot is the row's, not the control's. A console chip floats over the
+    // strip with room around it; a screen row's control has none — measured, the dot
+    // landed on the value's last character at the cell's right corner and on the
+    // slider's own thumb at its left one (a control parked at its minimum: amber on
+    // amber). The label gutter is empty at every value.
+    if (midi.isMapped(id)) row.classList.add("midi-mapped-row");
+    return row;
   }
 
   /** Re-resolve and rebuild after a row that changes the shape of the screen. The
@@ -1220,7 +1228,6 @@ export class DynScreen {
     // about to bind, so the same gate the console's faders carry applies here.
     wheelStep(input, () => this.hooks.midi?.learnActive());
     ctl.append(input, val);
-    this.armable(ctl, f.key, this.ctx());
     // The device's push-and-turn fine grid is confirmed for a few values only (the
     // COMP makeup gain, the EQ band gains), so the field table says which (see
     // reference/work/vd/vd-params.md). The legend goes in as the row's `legend`, which
@@ -1229,7 +1236,11 @@ export class DynScreen {
     // so a row the device takes over prints `Gain FINE Device-driven` and the legend
     // never comes and goes (which would move the label block it sits in).
     const fine = f.fineStep !== undefined;
-    const row = settingsRow(label, ctl, { ...opts, legend: fine ? fineTag() : undefined });
+    const row = this.armable(
+      settingsRow(label, ctl, { ...opts, legend: fine ? fineTag() : undefined }),
+      f.key,
+      this.ctx(),
+    );
     if (fine) {
       // `has-fine` stays unconditional so "legend printed" and "legend can light" are
       // one fact — the screens once printed the tag without it and the legend sat dim
