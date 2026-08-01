@@ -492,15 +492,16 @@ would report on a tag that already exists. A `paths: package.json` filter alone 
 bump" — Dependabot edits that file weekly — so `race.yml`'s `detect` job compares the `version` field
 across the PR and the shards run only when it moved.
 
-Against a branch, on demand — which is how the live-sync surface gets checked before a version PR
-exists:
+Against a branch, on demand — **available, not required**, for pulling the verdict forward before a
+version PR exists:
 
 ```sh
 gh workflow run race.yml --ref <branch>
 ```
 
-The bargain that buys: an ordinary merge does not run the harness, so a break surfaces at the version
-PR or the next manual run rather than at the merge that caused it, and `git log` over the live-sync
+The bargain that buys: **no pull request is obliged to run the harness**, and an ordinary merge does
+not, so a break surfaces at the version PR or at whatever manual run someone chose to make, rather
+than at the merge that caused it, and `git log` over the live-sync
 surface is what narrows it. WebKit is a separate browser download, so it is its own job rather than a
 fourth shard — paying for it three times would cost more than the cases do.
 
