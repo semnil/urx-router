@@ -1219,6 +1219,39 @@ an export) as rail-colored chips; clicking a chip restores that one, and "Show a
   parent — a ducker is never shown without its channel. On the shelf, a parent and its hidden ducker
   collapse into one chip (the child chip is suppressed); restoring the parent chip brings the whole
   unit back.
+## Node graph rendering constraints
+
+Four constraints on the SVG canvas do not read off the code, and an obvious change reintroduces each
+of them.
+
+- **Hit testing runs on enlarged transparent overlays, and their fill must be set as an inline
+  attribute.** The drawn jack circles (r=6) and wires (2–3.5px) are too thin to click reliably, so
+  every port carries a transparent `PORT_HIT_R` circle and every wire a transparent `WIRE_HIT_W`
+  band, with the drawn shapes set to `pointer-events:none`. Moving that transparent fill into CSS
+  **breaks image export** — PNG/PDF render a clone of the same SVG without the page's stylesheet, so
+  the default black shows up. Only the hover affordance belongs in CSS.
+- **Never filter a wire in `objectBoundingBox` units.** A horizontal wire (input source ↔ channel)
+  has a geometry bbox of zero height, the filter region collapses, and **the element stops being
+  drawn at all**. Selection and emphasis glow use an underlying halo (a thicker, low-opacity stroke
+  in the same colour) instead. Jack pins are circles, so a filter is fine there.
+- **A `pointerdown` that calls `preventDefault` suppresses the browser's `dblclick`.** Node and port
+  presses do call it, so anything relying on a `dblclick` listener is **dead on the desktop build**
+  (easy to miss: dispatching a synthetic event in a preview still works). Double presses are
+  detected in-house from the previous press's timestamp and id.
+- **`fitView` breaks on the transient size it sees from the constructor.** It measures the viewport
+  with `getBoundingClientRect`, so measuring before the webview has settled its stylesheet and
+  layout clamps the zoom to its lower bound and leaves the nodes tiny and pushed off the top. It
+  never shows in the browser (Chromium, inline CSS) and **reproduces every time on the desktop**
+  (WKWebView, external CSS link). The fix is a `ResizeObserver` plus an `autoFit` flag: re-fit once
+  the real size lands and on window resize, and drop `autoFit` on a manual pan or zoom. **The
+  toolbar has the same desktop-only failure** — without `white-space:nowrap`, a flex child wraps CJK
+  text at any character boundary, so buttons and labels grow to two lines at narrow widths. Any new
+  width-sensitive control follows the same `nowrap` + `flex-shrink:0` pattern.
+
+This class of desktop-only rendering difference reproduces without launching Tauri: serve a
+`pnpm build` `dist` with `vite preview` and open it in Playwright's **webkit** engine, which stands
+in for WKWebView, then compare the numbers against Chromium.
+
 - A hidden node also drops from the **CONSOLE view** (`console.ts` filters `plan.hidden` out of its
   strip list, and a shelved ducker drops its chip from the parent strip).
 - The hidden set persists as `plan.hidden` (an array of node ids) and is restored on load. Like
