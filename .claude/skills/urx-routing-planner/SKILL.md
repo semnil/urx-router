@@ -187,8 +187,9 @@ Reason codes:
    - `duplicate` — the same `from -> to` is listed twice. Drop the repeat.
    - `notPlanFile` / `planVersionUnsupported` / `unknownModel` — the document
      itself is refused, before the routing is even looked at: `format` must be
-     exactly `urx-router-plan`, `version` must not exceed `1`, and `modelId` must
-     be one of the three models.
+     exactly `urx-router-plan`, `version` must not exceed what `plan_tool.py`'s
+     `PLAN_VERSION` currently accepts (its `planVersionUnsupported` message states
+     the exact bound), and `modelId` must be one of the three models.
 
 Fix and re-validate until `OK`.
 

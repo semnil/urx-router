@@ -182,8 +182,8 @@ each group: fix the app, fix the case, fix the harness.
 Each tier's verdicts are only interpretable given the previous one. A red T1 with a red T0 is a
 harness bug, not an app bug.
 
-Per-case steps, fake-device profiles and assertions live in `e2e/race/cases/*.ts` as the single
-source of truth. This table states what each case measures.
+Per-case steps, fake-device profiles and assertions live in the `e2e/race/t*.spec.ts` files as the
+single source of truth. This table states what each case measures.
 
 ### T0 baseline — floor and reachability
 
@@ -196,7 +196,7 @@ source of truth. This table states what each case measures.
 | `baseline-inspector-surface-sweep` | inspector | Every control on every node kind, pinning the "toggles re-render, sliders do not" rule per control |
 | `baseline-tuning-surface-sweep` | tuning | GATE / COMP / EQ screens, all three ways of closing, and the reach of the fine grid |
 | `baseline-shell-flows-sweep` | mixed | Consent, licenses, load report, rate choice, updater, dropzone, recent files and every Preferences row |
-| `baseline-view-locale-churn` | mixed | The only non-device path that forces a full rebuild mid-gesture |
+| `baseline-view-locale-churn` | mixed | The only non-device path that forces a full rebuild mid-gesture (language, theme, view switch) |
 
 ### T1 overtake — the core stale-read and lost-edit ladders
 
@@ -230,7 +230,7 @@ source of truth. This table states what each case measures.
 | `shape-sdrec-track-count-readonly` | mixed | The only param the device acknowledges and discards — and whose device-side change never arrives |
 | `shape-sample-rate-and-follow-usb` | mixed | The only scalar always first in the write set that the device can revert on its own |
 | `shape-scene-write-scope` | mixed | A non-plan setting reshaping the write diff, the snapshot and the registration at one chokepoint — and blinding follow to the addresses it drops |
-| `shape-routing-wire-selectors` | graph | The deliberate NONE sentinel and the accidental hole, side by side |
+| `shape-routing-wire-selectors` | graph | The deliberate NONE sentinel and the accidental hole that says nothing, side by side |
 | `shape-send-emission-wire-presence` | console | The most ordinary operator gesture that reshapes the address set without looking like a mode switch; the read-only FX tap is unfollowable |
 | `shape-refused-and-acked-writes` | mixed | All three refusal shapes, and whether an unclosable diff forms a flush loop |
 | `shape-string-path-writes` | mixed | The writes that bypass the diff engine entirely, benign case beside consequential one; a device-side rename is never delivered |
@@ -248,7 +248,7 @@ source of truth. This table states what each case measures.
 | `undo-idle-backstop-wheel-ladder` | inspector | The only gesture with no DOM boundary of its own, laddered across the constant that defines it |
 | `undo-window-blur-mid-drag` | console | The only path where a gesture ends with no pointer event |
 | `undo-diff-at-commit-post-mutations` | inspector | The four sites where the funnel mutates the plan after `markChanged` |
-| `undo-empty-diff-and-redo-stack` | graph | The stack's own arithmetic and the transition-only depth reporting |
+| `undo-empty-diff-and-redo-stack` | graph | The stack's own arithmetic (an empty diff, redo invalidation, cap eviction) and the transition-only depth reporting |
 | `undo-chord-ownership-matrix` | history | Seven focus targets by eight chord shapes: who owns a keystroke |
 | `undo-refusal-ladder` | history | Refusal order and non-consumption, including the deliberately permissive conditions |
 | `undo-apply-sequence-hidden-and-viewport` | graph | The order inside the apply, and that an undo's write reaches the device |
@@ -280,7 +280,7 @@ source of truth. This table states what each case measures.
 | `drop-link-loss-mid-reconcile` | mixed | A half-read plan reflected as authoritative, with the history reset against it |
 | `drop-write-reject-mid-send` | mixed | Whether the retry is built from a fresh diff and ordering survives an abort |
 | `drop-read-reject-mid-fetch` | mixed | The only path producing a plan object with a live writer still attached to its predecessor |
-| `drop-device-lost-latch` | mixed | The one disconnection shape that does not arrive as a link event |
+| `drop-device-lost-latch` | mixed | The one disconnection shape that does not arrive as a link event, learned only by attrition |
 | `drop-bulk-change-sentinel-mid-drag` | console | The largest device-side event landing on the smallest app state |
 | `drop-unknown-address-notify-storm` | mixed | Three arms: unresolvable (the dropped window), resolvable, unregistered (refused) |
 | `drop-missed-notify-idle-net` | console | Whether the safety net has the same trigger as the thing it protects against |
@@ -295,7 +295,7 @@ source of truth. This table states what each case measures.
 | `teardown-live-toggle-race` | mixed | The session lifecycle itself, and the only place the epoch guard is falsifiable |
 | `teardown-deactivate-with-armed-timers` | mixed | Whether module-level latches are session-scoped |
 | `teardown-dyn-screen-close-during-refresh` | tuning | A deferral mechanism added to protect drags becoming the hazard |
-| `teardown-flow-refusals` | mixed | The guarded and unguarded readbacks contrasted with an identical set of flows |
+| `teardown-flow-refusals` | mixed | The guarded and unguarded readbacks contrasted with an identical set of flows (File > New, File > Open, model switch) |
 
 ### T7 meter — the single process-wide subscription
 
@@ -314,7 +314,7 @@ source of truth. This table states what each case measures.
 | --- | --- | --- |
 | `stress-three-operators-one-node` | mixed | Whether operator, MIDI and device panel driving one channel converge at all |
 | `stress-seeded-schedule-fuzz` | mixed | Three-way interleavings nobody hypothesised, reproducible from the seed |
-| `stress-latency-jitter-storm` | console | The one input that can reorder responses, with a fixed-latency comparison |
+| `stress-latency-jitter-storm` | console | Jitter spreads when the answers arrive; the fixed-latency comparison separates spread from queue depth |
 | `stress-long-session-quiescence` | mixed | State that survives an operation rather than state produced by one |
 
 ### Differential design
@@ -458,8 +458,11 @@ re-measure logic Chromium already covers, at minutes a run. Same precedent as
 
 | Condition | Wall clock |
 | --- | --- |
-| Whole suite at `--workers=4` | ~5.3 min |
+| The race tiers at `--workers=4` | ~6 min (162 cases; measured on Apple silicon, isolated) |
 | The heaviest file (T2) alone | ~2.5 min |
+
+This table is **the only place the harness's wall clock is stated**: `CLAUDE.md` points here rather
+than repeating a second figure that drifts out of step with this one.
 
 The slow cases are the ones that deliberately provoke several whole-device readbacks (~800 sequential
 reads each) — the cost of what is being measured, not overhead. Split with `--shard=1/3`, per file, or
@@ -571,15 +574,9 @@ agreement, zero findings.
 - **1-Knob OFF writes all 18 band addresses to addresses the app is not registered for**
 - **The COMP/EQ bank swap** writes two new-bank addresses that are not yet registered; a notify on the
   abandoned bank costs two reconciles against one on the live bank
-- **Scene write scope**, measured on two params of different follow kinds: two reconciles against one
 - **Signal Type = STEREO** writes both pair indices and **re-authors the partner node wholesale**; one
   undo restores all of it. But the converge round is a **re-send, not a repair** — it keeps pushing the
   app's value back at a channel the unit has reset
-- **String-path writes bypass the diff engine entirely.** A rename enters neither the snapshot nor the
-  registration, so a device-side rename cannot be classified: it escalates to two whole-device
-  reconciles, and the readback that repairs it **clears the name the operator just typed**.
-  SWEET_SPOT_DATA rides the same path, so it cannot carry a sideEffect flag — **no read is scheduled at
-  all** after it, against 1578 addresses for the numeric converge param used as the control
 - **Insert-FX ordering is clean** (selector 135 before bypass 134) — it works as the counter-example
 
 **T3 — undo**
@@ -914,7 +911,16 @@ not repeat them.
 - **A barrier can satisfy its own assertion.** `blockAt` holds every subsequent matching command on the
   same gate, so "X was issued before the held command resolved" is trivially true at release time
 - **Do not report properties of the fake as run results.** Seeded determinism, FIFO ordering under
-  equal delays, and the fake's `mem` holding the last write it accepted all say nothing about the app
+  equal delays, and the fake's `mem` holding the last write it accepted all say nothing about the app.
+  Two cases were built on one anyway, and both were withdrawn when the fake was made to serialize
+  commands through a single worker the way `vd.rs` does. **Response reordering** was the first: it
+  existed only because each command awaited its own timer, so a cheap one could pass an expensive one.
+  The real bridge answers one command at a time, so the count is now structurally zero and no run can
+  produce it. What that arm was really establishing survives as **queue depth** — two chains on the
+  link at once — which serialization does not remove. The second was **closing a tuning screen inside
+  its own pending meter registration** by a route made of reads: on a serial worker those reads queue
+  behind the held registration, so the window cannot be entered that way at all. The case now closes
+  the screen with the Close button, which needs no read, and measures the same generation stamp
 - **`paramAddrs` / `meterAddrs` are NOT proof of a live registration**, and a multi-session case is
   where that bites. Both survive an unsubscribe and a teardown on purpose (they are the "last
   registered" observable), so `expect.poll(() => meterAddrsOf(page)).toContain(X)` after a session
