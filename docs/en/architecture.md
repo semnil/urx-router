@@ -474,7 +474,15 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   **Every device read runs against a private copy of the plan** (`readback.readIntoPlan`) and merges back through the
   undo differ — device truth first, the edits made while the read was in flight over the top — so a whole-node assign
   cannot overwrite a gesture the operator made inside a window that is hundreds of milliseconds to tens of seconds
-  wide. The snapshot re-base is the other half of the same rule and happens at the read rather than in the coalesced
+  wide. "Device truth" is what the device answered for all but one read: Live sync's own `sideEffect` refetch is
+  issued in the same millisecond as the write that caused it, and the unit does not answer for a write that early
+  (see [A write is not readable when it is acked](#a-write-is-not-readable-when-it-is-acked)), so that read waits
+  those writes out and answers their addresses from what the UNIT ANNOUNCED for them rather than asking again — so
+  the clone it merges from carries the device's own word for that set too, and `readback.test.ts` pins that an
+  address the unit has spoken for is not asked about a second time while one it stayed silent about still is.
+  Every other read path — Fetch, Live-sync start, device follow's reconciles, the self-test, compare, prepare, the
+  `.urxf` import — hands over no such set and is device truth throughout. The snapshot re-base is the other half of
+  the same rule and happens at the read rather than in the coalesced
   reflect: its VALUES come from that copy and its SHAPE from the live plan, so an edit made inside a read is neither
   overwritten nor recorded as something the device was already given, and an address the plan only just grew is left
   out of the snapshot entirely so the next diff sends it.
@@ -802,6 +810,75 @@ that cannot read **stops following** instead of leaving the plan claiming values
 notify already fired and nothing re-triggers the read, so the next converge would write the stale value back
 over the operator's own move on the hardware.
 
+#### A write is not readable when it is acked
+
+The broker acks a write before the unit will answer for it. **Measured on a URX44V (System V1.3.1.0), and the
+window is not small**: a GET of a just-written address answers the value that write REPLACED until that write's own
+change notify arrives. Pairing each write with the notify carrying its value — strictly by value, since matching on
+the address alone during a drag picks up the PREVIOUS write's answer and manufactures a fresh-before-the-boundary
+reading that does not exist — produced no counterexample in either direction across **87 samples on six addresses**,
+53 of them taken during a real drag: not one fresh read before that notify, not one stale read after it. The notify
+is the boundary rather than an estimate of it. From the write's issue the window is **9-204 ms**, median ~101,
+polled every 4 ms; the ack tells nothing about it (one write acked in 2 ms stayed stale for another 31 ms), and it
+is always the ack that lands first. The parameter's class is
+irrelevant: the same behaviour was measured on a `sideEffect` head, a `follow: "direct"` scalar, plain storage and
+the PEQ band gains. Two consequences bound any repair. A side effect goes readable **1-2 ms after** the address that
+caused it, so no separate wait is needed for what a write makes the unit recompute; and a write of a value the unit
+already holds emits **no notify at all**, so a wait for one has to be able to end on a timer.
+
+`core/control/settle.ts` is that wait, and the whole of it is one sentence: **the answer for an address this flush
+wrote is the value the DEVICE ANNOUNCED for it, never the value that was sent.** An acked write the unit silently
+discarded is indistinguishable from one it took, so answering from the send would put a value on the unit's behalf
+that the unit does not hold — with plan and snapshot then agreeing, no diff left to retry, and the unit never
+speaking about it again. It is also why a write the unit quantised, clamped or refused needs no case of its own: a
+notify is a confirmation whatever value it carries, and that value is the answer. An address the unit has said
+nothing about is simply absent from the result and comes off the device like any other, which is the blind read this
+path has always taken and the one answer that cannot enshrine a divergence.
+
+`DeviceFollow` registers its notify subscription with the settle and feeds it every notify **before** the echo and
+intercept filters — the answer to our own write IS an echo, so a settle fed after those would never see the one
+message it waits for. A notify counts as OUR write's announcement only if it arrived after that address's own
+`vdSet` was issued, so the mark is taken **per address** rather than once per flush: the loop awaits per command, so
+a device-side notify for the fader can easily land before the fader was reached. Getting that attribution wrong is
+self-correcting in either direction — the real write's answer arrives later and overwrites it, and a notify that
+predates the write leaves the address to be read off the unit — so the mark buys one fewer spurious reconcile, not
+the correctness of the merge.
+
+Two ways the wait ends, and which one an address gets is decided by what the snapshot held:
+
+| | The snapshot held | The wait ends at | Because |
+| --- | --- | --- | --- |
+| class (a) | a DIFFERENT value | that address's own notify | the unit must change, and a change is announced |
+| class (b) | NO entry | the bounded window | the write may be a value the unit already holds, and a no-op emits no notify at all |
+
+Only the addresses inside the read's own scope may hold it open (`mustSettle`); a collateral write to some node this
+read does not touch names no boundary it needs and would cost the drag that produced it a window. Those outside the
+scope are still judged: one the unit was OBLIGED to announce (class (a)) and did not is a write that went nowhere,
+and the settle reports it — at the bound, not when the wait happened to end on some other address — to whoever
+registered as its notify source. `follow.ts` is that source, and its repair is to arm the **existing** idle full
+reconcile. Widening the read instead would undo the reason it is scoped, and class (b) must never arm it: a
+legitimate silence would order an ~800-read sweep every time.
+
+Nothing is withdrawn from the handle the flush passes over, and nothing needs to be. The read is answered from what
+the unit announced and **the last announcement wins**, so an address the operator moved on the board after our write
+comes back carrying THEIR value. A `capture()` landing inside the flush needs no answer either: it re-authors the
+snapshot from a device read, and a device read cannot contradict a later word from the same device.
+
+**The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
+the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
+has ever been measured — the 1-2 ms figure above belongs to the `refetch` family, which never reaches this loop. Its
+round also sends `roundCommands`, whole groups, so a wait that ended at the read diff's own notifies would return
+while the rest of a group was still inside its window.
+
+**What the wait costs was measured on the unit, not estimated** (2026-08-02, URX44V V1.3.1.0, a throwaway build of
+this branch carrying the diagnostic instrumentation). A 1-knob LEVEL drag produced ten flush cycles, and the settle
+ended at the device's own notify in **10 of 10** — 42-203 ms after the write was issued, write to read-complete
+58-298 ms. **The 300 ms bound was never reached.** Two things follow. Lowering `SETTLE_TIMEOUT_MS` cannot make a
+drag faster, because what ends the wait is the announcement and not the bound — the constant governs class (b)
+alone. And the added latency IS the device's announcement window, so the only ways to remove it are not to read at
+all (which leaves the plan's band gains stale for the whole drag, and the EQ plot then draws a curve the unit is not
+producing) or to read inside the window, which is the defect this exists to fix.
+
 #### The internal re-bases: the snapshot and the history baseline
 
 ```mermaid
@@ -816,12 +893,15 @@ sequenceDiagram
   L->>D: vdSet a param the unit answers by moving others
   alt converge: the unit reset values the plan authors
     L->>L: freeze a clone of the plan
+    Note over L,D: 300 ms blind between rounds<br/>no converge head's reset latency is measured, and a round re-sends whole groups
     L->>D: re-read the write scope, re-send what diverged, repeat until settled
     L->>L: capture from that frozen clone
     Note over L: an edit that arrived during the converge is still a diff<br/>baking it in here would drop it in silence
   else refetch: the unit authored values the plan only mirrors
-    L->>H: refetchNodes for the owner nodes
-    H->>D: read those nodes into a private clone
+    L->>H: refetchNodes for the owner nodes, with what this flush just wrote
+    H->>H: clone the plan, open the write witness
+    D-->>H: the notify for each write inside this read's scope, or 300 ms
+    H->>D: read those nodes into that clone, answering an announced address from the announcement
     D-->>H: values
     H->>P: merge
     H->>HI: absorb exactly the device-authored keys
@@ -836,6 +916,25 @@ reset them, **refetch** reads the unit's back because pushing would fight it (th
 failed write inside a converge round is routed into the same teardown a direct write failure takes — otherwise
 the next `capture` would record the plan as device truth and leave those parameters diverged with no diff left
 to retry them.
+
+The refetch carries one extra thing across: **what the flush that triggered it just wrote** — the addresses, the
+notify position each was sent from, and which of them this read is going to ask the unit about. The values sent are
+deliberately not in it; they are not an input to any answer the settle gives. Both halves of what the handle buys —
+the wait and answering an announced address from the announcement — happen **inside** the read, after
+`readIntoPlan` has cloned the plan and opened the write witness. Taken outside, the wait would be a window in which
+an operator edit lands in neither, and the merge would revert it. That does widen the window undo is refused in,
+since the wait sits inside the same in-flight set as the read it belongs to; kept that way deliberately, because
+committing an entry against an open clone and witness would freeze this read's own writes into it, and the refusal
+is a deferral bounded by the settle's own window.
+
+Nothing is withdrawn from that handle before it travels, and the earlier design that withdrew two things is gone.
+The reason it can be gone is that the answer is the unit's own announcement and **the last one wins**: an address
+the operator moved on the board after our write announces THEIR value, which is the answer the withdrawal used to
+reach by falling back to a read. A `capture()` landing inside the flush needs no answer either — it re-authors the
+snapshot from a device read, and a device read cannot contradict a later word from the same device. What the
+withdrawal was protecting against remains real and is what the whole mechanism exists for: answer a written address
+from OUR value and the merge reverts the operator's move on the hardware, the `capture` after it records our value
+as device truth, plan and snapshot agree, no later flush finds a diff, and only the idle reconcile heals it.
 
 Every re-base takes its values from **the private clone a read ran against**, never from the live plan, and the
 snapshot's *shape* from the live plan: an address the operator moved during the read then holds their value in
@@ -1028,6 +1127,19 @@ The other `sideEffect` heads (`COMP_EQ_TYPE`, `INSERT_FX` and the two output sel
 budget coincidence rather than a property, so `translate.test.ts` pins the split: a new `sideEffect` param fails the
 test until someone records which side it is on. `SIGNAL_TYPE` and `PAN_BAL` reset addresses owned by *other* nodes,
 which a group cannot express — their ordering is pinned separately.
+
+A round's budget only works if the residual it measures is real, and there is a **known exposure here that this
+branch deliberately does not close**. The caller that leaves the diff to be seeded — Live sync's converging flush —
+has just written the device, and the unit answers a GET with the pre-write value for 9-204 ms afterwards
+([above](#a-write-is-not-readable-when-it-is-acked)). A seed read taken inside that window reports differences that
+are not there (a redundant selector write repopulates the engine array it binds with type defaults) and misses the
+resets this loop exists to settle: an empty residual exits before the first re-read, and `live.ts` then records the
+plan as device truth with no diff left to retry. **The seed read is not waited out today.** Adding the wait costs a
+flat +300 ms on every `sendConverging` — the write path, the self-test and every converge race case — it is an
+exposure independent of the refetch's, and no race case shows it going red to green, so it is a change of its own
+rather than a rider on this one. The reads *between* rounds are waited out, blind, as they always were.
+Seeding the loop from the flush's own send list instead was tried and is wrong — those values freeze at send time,
+so an address the operator moved on the unit during the flush's awaits would be written straight back off the board.
 
 ### Aborting on failure
 
@@ -1497,7 +1609,13 @@ An undo is refused, with the reason on the status line and **without spending th
   not have reached the unit. Those three deliberately do **not** refuse a file flow: they start on
   their own and nothing on screen names them, so the plan-replacement side is handled at the read
   instead (`loadPlan` ends the session and abandons the read; the read is bound to the plan it was
-  issued for and drops its result if that plan is gone);
+  issued for and drops its result if that plan is gone). The 1-knob refetch now holds the refusal
+  open for **up to 300 ms longer** than the read itself takes, because it waits the flush's writes
+  out from inside the read
+  ([above](#a-write-is-not-readable-when-it-is-acked)) and that wait is inside the same in-flight
+  membership. Deliberate: the clone and the write witness are open for the whole of it, so an entry
+  committed there would freeze this read's own writes into it — and the refusal is a deferral, not a
+  discard, bounded by the settle's own window;
 - a **drag** is in progress (a press that has moved), because it holds start values and element
   references in its own closures that the repaint would rebuild from under it;
 - a modal is open — none of them edits the plan, except the channel tuning screen, which is exactly

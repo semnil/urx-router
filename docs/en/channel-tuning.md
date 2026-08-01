@@ -518,5 +518,24 @@ recomputation: the notify registration is an address list, and the band addresse
 device-follow scoped path uses, then re-captures the snapshot — without which every value the read
 brought in would read as a pending edit on the next diff. A device-side turn of the same knob already
 took this path; this is the same repair for our own write. A refetch is also one read of one node
-rather than a converge round, so the flush window does not have to back off — which is what made a
-drag on the 1-knob level wait for the pointer to stop.
+rather than a converge round, so the flush window is not held open for a whole convergence — which is
+what made a drag on the 1-knob level wait for the pointer to stop.
+
+It is **not free**, and the cost is measurable. The unit does not answer for a write at the moment it
+acks it (`docs/en/architecture.md`, "A write is not readable when it is acked"), and the refetch is
+issued in that same millisecond — so the read waits the write out from inside the flush, and one
+cycle of a 1-knob level drag is write + wait + read where a plain parameter's is write alone. In the
+race harness, on the same gesture: **423/428/432 ms per flush window against 322/334 ms** before the
+wait existed (`t2c-shape-change`, which is why that case's drag was lengthened from 10 steps to 16 —
+a shorter one no longer contains several windows). The control arm in the same case, a LOW band gain
+drag with no `sideEffect`, is unchanged at 205/200 ms: only a drag that makes the unit recompute
+pays.
+
+**Measured on the unit, not inferred from that** (2026-08-02, URX44V V1.3.1.0, a throwaway build of
+the fix carrying the diagnostic instrumentation). A 1-knob LEVEL drag produced ten flush cycles and
+the settle ended at the device's own notify in **10 of 10** — 42-203 ms after the write was issued,
+write to read-complete 58-298 ms, and the 300 ms bound never reached. So the cost is the device's
+announcement window and nothing else, and it cannot be tuned away: lowering the bound does not touch
+a drag, and the alternative — deferring the read to pointer-up — leaves the band gains stale for the
+whole gesture, so the plot draws a curve the unit is not producing. Several flushes still reach the
+unit inside one gesture, which is the property that mattered.
