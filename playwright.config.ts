@@ -22,6 +22,12 @@ const SERVER_URL = "http://localhost:4173";
 // whole-device readbacks of ~800 sequential commands. Splitting it out means
 // `--project=chromium` is still the ordinary suite at its ordinary cost, and the
 // harness can be run, sharded or skipped on its own.
+//
+// That split is also the CI tiering. Measured on a two-worker ubuntu runner: the
+// ordinary suite is 3.5 minutes of machine time across 383 cases, none over 3 s, so it
+// runs per-PR from ci.yml; the harness is 22.4 minutes across 156, so it runs from its
+// own race.yml — sharded, on demand and alongside a release build. Nothing about the
+// tiers lives in this file beyond the project boundary they are cut along.
 const TRACE_URL = "http://localhost:4174";
 
 export default defineConfig({
@@ -41,9 +47,19 @@ export default defineConfig({
       testDir: "e2e/race",
       // Its own timeout, well above the 30 s default: a single case can hold a barrier
       // through a converge round that reads ~800 addresses sequentially, and the driver
-      // then waits for the link to fall quiet again. Measured at 35 s for the longest,
-      // so the default turns a passing case into a timeout that reads like a defect.
-      timeout: 180_000,
+      // then waits for the link to fall quiet again. The longest measured 60 s on a
+      // two-worker CI runner, so the default turns a passing case into a timeout that
+      // reads like a defect. Twice that rather than three times it, because the handful
+      // of cases needing more say so themselves (`test.setTimeout` in tzb-tail and
+      // t8-stress) — a project figure wide enough to cover them would also let every
+      // OTHER case burn three minutes before reporting, once per retry.
+      timeout: 120_000,
+      // One retry, not the suite's two. Every pin here is placed on a barrier rather
+      // than on a delay, so a case that only passes on the third attempt is not a pin
+      // holding — it is a flake, and at two retries it stays hidden long enough to reach
+      // main. The cost argues the same way: a race retry is minutes, an ordinary one is
+      // seconds.
+      retries: process.env.CI ? 1 : 0,
       use: { ...devices["Desktop Chrome"], baseURL: TRACE_URL },
     },
     {
@@ -59,10 +75,15 @@ export default defineConfig({
       name: "race-webkit",
       testDir: "e2e/race",
       grep: /@webkit/,
-      timeout: 180_000,
+      timeout: 120_000,
+      retries: process.env.CI ? 1 : 0,
       use: { ...devices["Desktop Safari"], baseURL: TRACE_URL },
     },
   ],
+  // Both servers start whatever `--project` selects — the list is a property of the
+  // config, not of the run — so the ordinary tier builds the trace bundle it will not
+  // visit. Left that way deliberately: measured at 6 s for the pair on a CI runner
+  // (the app is 73 modules), which is less than the branch it would take to skip one.
   webServer: [
     {
       command: "pnpm e2e:serve",
