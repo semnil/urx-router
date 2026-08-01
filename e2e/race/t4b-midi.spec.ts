@@ -6,6 +6,9 @@ import {
   pushNotify,
   pushMidi,
   midiSentOf,
+  openMidiWindow,
+  setMidiLearn,
+  midiRow,
   traceOf,
   setLatency,
   blockAt,
@@ -450,17 +453,14 @@ test.describe("T4b midi", () => {
     await pushMidi(page, [cc7(110)]); // (110<<7)|127 = 14207 → pos 35 → +4.0
     await expect(faderReadout(page, "CH 1")).toHaveText("+4.0");
 
-    // Close and reopen the input port through the panel — the operator unplugging
+    // Close and reopen the input port from the MIDI window — the operator unplugging
     // and replugging a controller.
-    await page.click("#btn-device");
-    await page.click("#btn-midi");
-    await expect(page.locator("#midi-panel")).toBeVisible();
-    await page.locator("#midi-panel .mp-in").selectOption("");
+    const win = await openMidiWindow(page);
+    await win.locator(".mw-in").selectOption("");
     await expect.poll(() => page.evaluate(() => window.__urxFake.midi.inPort)).toBeNull();
-    await page.locator("#midi-panel .mp-in").selectOption("Fake In");
+    await win.locator(".mw-in").selectOption("Fake In");
     await expect.poll(() => page.evaluate(() => window.__urxFake.midi.inPort)).toBe("Fake In");
-    await page.locator("#midi-panel .mp-close").click();
-    await expect(page.locator("#midi-panel")).toBeHidden();
+    await win.close();
 
     await mark(page, "after-reopen");
     await pushMidi(page, [cc7(100)]); // the SAME MSB as the very first message
@@ -490,22 +490,18 @@ test.describe("T4b midi", () => {
     await expect(faderReadout(page, "CH 2")).toHaveText("+10.0");
     await expect(faderReadout(page, "CH 1")).toHaveText("-∞");
 
-    await page.click("#btn-device");
-    await page.click("#btn-midi");
-    await expect(page.locator("#midi-panel")).toBeVisible();
-    const rows = page.locator("#midi-panel .mp-row");
+    const win = await openMidiWindow(page);
+    const rows = win.locator(".mw-list tbody tr");
     await expect(rows).toHaveCount(2);
     await dump(page, "cc14 cross-binding", "cc39", { ledger: await ledgerOf(page) });
-    console.log(`panel rows: ${(await rows.allTextContents()).join(" | ")}`);
+    console.log(`assignment rows: ${(await rows.allTextContents()).join(" | ")}`);
 
     // Neither row is tagged as linked — the two mappings have different address
-    // keys ("cc14:0:7" vs "cc:0:39"), so nothing in the panel says that moving one
+    // keys ("cc14:0:7" vs "cc:0:39"), so nothing in the list says that moving one
     // physical control drives both.
-    await expect(page.locator("#midi-panel .mp-row.linked")).toHaveCount(0);
-    await expect(page.locator('#midi-panel .mp-row[data-control="ch1/level"] .mp-addr')).toHaveText(
-      "CH 1 CC 7/39 (14bit)",
-    );
-    await expect(page.locator('#midi-panel .mp-row[data-control="ch2/level"] .mp-addr')).toHaveText("CH 1 CC 39");
+    await expect(win.locator(".mw-list tbody tr.linked")).toHaveCount(0);
+    await expect(midiRow(win, "ch1/level").locator(".mw-addr")).toHaveText("CH 1 CC 7/39 (14bit)");
+    await expect(midiRow(win, "ch2/level").locator(".mw-addr")).toHaveText("CH 1 CC 39");
   });
 
   test("a pitch bend and a 14-bit pair bound to toggles are accepted and permanently inert", async ({ page }) => {
@@ -525,26 +521,24 @@ test.describe("T4b midi", () => {
     ]);
     await page.waitForTimeout(200);
 
-    await page.click("#btn-device");
-    await page.click("#btn-midi");
-    await expect(page.locator("#midi-panel")).toBeVisible();
+    const win = await openMidiWindow(page);
     await dump(page, "inert toggle bindings", "inert", { ledger: await ledgerOf(page) });
     console.log(
-      `panel rows: ${(await page.locator("#midi-panel .mp-row").allTextContents()).join(" | ")}; ` +
+      `assignment rows: ${(await win.locator(".mw-list tbody tr").allTextContents()).join(" | ")}; ` +
         `plan writes: ${(await ledgerOf(page)).filter((l) => l.source === "midi").length}`,
     );
 
     // Pinned behaviour: both bindings exist, both are listed, neither can ever fire
     // (toggleTarget refuses pitchbend and cc14), and no plan write was attempted.
-    await expect(page.locator("#midi-panel .mp-row")).toHaveCount(2);
+    await expect(win.locator(".mw-list tbody tr")).toHaveCount(2);
     await expect(scribble(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
     await expect(scribble(page, "CH 2")).toHaveAttribute("aria-pressed", "true");
     expect((await ledgerOf(page)).filter((l) => l.source === "midi")).toHaveLength(0);
     // The rows carry no behaviour control at all — the take-in select is for
     // continuous controls and the button-mode select is skipped for these two
-    // address types — so the panel shows nothing that would hint they are dead.
-    await expect(page.locator("#midi-panel .mp-mode")).toHaveCount(0);
-    await expect(page.locator("#midi-panel .mp-btn")).toHaveCount(0);
+    // address types — so the list shows nothing that would hint they are dead.
+    await expect(win.locator(".mw-mode")).toHaveCount(0);
+    await expect(win.locator(".mw-btn")).toHaveCount(0);
   });
 
   // ===========================================================================
@@ -748,17 +742,16 @@ test.describe("T4b midi", () => {
     const ch1Before = (await faderReadout(page, "CH 1").textContent())!;
     const ch2Before = (await faderReadout(page, "CH 2").textContent())!;
 
-    await page.click("#btn-device");
-    await page.click("#btn-midi");
-    await expect(page.locator("#midi-panel")).toBeVisible();
-    await page.locator("#midi-panel .mp-in").selectOption("Fake In");
+    const win = await openMidiWindow(page);
+    await win.locator(".mw-in").selectOption("Fake In");
     await expect.poll(() => page.evaluate(() => window.__urxFake.midi.inPort)).toBe("Fake In");
 
     // Entering learn mode re-renders the whole console: the element that was on
-    // screen a moment ago is out of the document.
+    // screen a moment ago is out of the document. Learn is turned on from the other
+    // window, so the re-render is driven across the relay rather than in-page — the
+    // point of the case is what the console does with it, which is unchanged.
     const preLearn = (await faderOf(page, "CH 1").elementHandle())!;
-    await page.locator("#midi-panel .mp-learn-btn").click();
-    await expect(page.locator("#console-host")).toHaveClass(/midi-learn/);
+    await setMidiLearn(page, win, true);
     expect(await preLearn.evaluate((el) => el.isConnected)).toBe(false);
 
     // A device-side change to ch1 is reported; its scoped readback is held open so
@@ -783,7 +776,7 @@ test.describe("T4b midi", () => {
 
     await mark(page, "learn");
     await pushMidi(page, [cc7(100), cc7(101)]); // two of the same CC settle a plain binding
-    await expect(page.locator('#midi-panel .mp-row[data-control="ch1/level"]')).toBeVisible();
+    await expect(midiRow(win, "ch1/level")).toBeVisible();
 
     // Learn is still on: the wheel and dblclick handlers stay inert behind it.
     await mark(page, "inert-gestures");

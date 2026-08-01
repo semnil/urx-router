@@ -406,6 +406,59 @@ export async function midiOpenInput(port: string, onMessage: (bytes: number[]) =
   return () => void invoke<void>("midi_close_input").catch(() => {});
 }
 
+// ---- MIDI control window -------------------------------------------------
+// The MIDI panel is a window of its own, and a view: it holds no plan and opens no
+// port, so everything crosses this relay. Both directions are Channels rather than
+// events — that keeps the traffic inside `invoke`, so the second window needs no
+// capability beyond core, and it matches how the meter / param / MIDI-input streams
+// already reach the frontend. The payload is JSON both frontends encode themselves;
+// the Rust side is the wire, not a participant.
+
+/** Open the MIDI control window, or raise it when it is already up. Geometry is the
+ *  frontend's to remember (it rides with the rest of the MIDI settings). */
+export function openMidiWindow(
+  title: string,
+  geometry?: { x: number; y: number; width: number; height: number },
+): Promise<void> {
+  return invoke<void>("open_midi_window", { title, ...(geometry ?? {}) });
+}
+
+export function closeMidiWindow(): Promise<void> {
+  return invoke<void>("close_midi_window");
+}
+
+/** Raise the MIDI window: called when learn turns on and when a binding lands, so a
+ *  window that drifted behind the app comes back for the moment it matters. */
+export function focusMidiWindow(): Promise<void> {
+  return invoke<void>("focus_midi_window");
+}
+
+/** The MIDI window's position and size, or null when it is not up. */
+export function midiWindowGeometry(): Promise<[number, number, number, number] | null> {
+  return invoke<[number, number, number, number] | null>("midi_window_geometry");
+}
+
+/** Register the main window's receiver for the MIDI window's intents. */
+export function midiUiAttachMain(onIntent: (payload: string) => void): Promise<void> {
+  return invoke<void>("midi_ui_attach_main", { channel: newChannel<string>(onIntent) });
+}
+
+/** Register the MIDI window's receiver for the main window's state. */
+export function midiUiAttachWindow(onState: (payload: string) => void): Promise<void> {
+  return invoke<void>("midi_ui_attach_window", { channel: newChannel<string>(onState) });
+}
+
+/** Main → MIDI window. A send with no window listening is a no-op, not an error:
+ *  the window may have just closed, and the next attach re-sends the whole state. */
+export function midiUiToWindow(payload: string): Promise<void> {
+  return invoke<void>("midi_ui_to_window", { payload });
+}
+
+/** MIDI window → main. */
+export function midiUiToMain(payload: string): Promise<void> {
+  return invoke<void>("midi_ui_to_main", { payload });
+}
+
 /** Open a MIDI output port for controller feedback (motor faders / LEDs).
  * Replaces any previously open output. Rejects when the port is gone. */
 export function midiOpenOutput(port: string): Promise<void> {

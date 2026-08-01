@@ -9,6 +9,7 @@ use tauri::State;
 
 mod keepawake;
 mod midi;
+mod midiwin;
 mod vd;
 
 // Every error a command returns is a stable kebab-case code, optionally followed
@@ -515,7 +516,23 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(vd::VdState::default())
         .manage(midi::MidiState::default())
-        .manage(keepawake::KeepAwakeState::default());
+        .manage(midiwin::MidiUiState::default())
+        .manage(keepawake::KeepAwakeState::default())
+        // The MIDI window is a second view of the main window's state, not a second
+        // app: it goes away with the main window, and its own closing has to reach
+        // the main window so learn mode does not stay armed with nothing to show it.
+        .on_window_event(|window, event| {
+            use tauri::Manager;
+            if !matches!(event, tauri::WindowEvent::Destroyed) {
+                return;
+            }
+            let app = window.app_handle();
+            if window.label() == midiwin::MIDI_WINDOW {
+                midiwin::notify_closed(app);
+            } else if let Some(midi) = app.get_webview_window(midiwin::MIDI_WINDOW) {
+                let _ = midi.close();
+            }
+        });
 
     // The updater/process plugins exist on desktop only; the frontend checks for
     // updates at startup and restarts the app once a new bundle is installed.
@@ -533,9 +550,14 @@ pub fn run() {
         if id != EDIT_UNDO_ID && id != EDIT_REDO_ID {
             return;
         }
+        // Addressed to the main window, not broadcast: the menu is application-wide,
+        // but the plan and its history live in one window, and the MIDI window
+        // listens on the same `Any` target — an undo delivered there would find no
+        // history and, worse, would be one the operator could not see happen.
+        //
         // The menu is a nicety, not a device operation: a failed emit leaves the
         // click undone, and there is nothing further to salvage.
-        if let Err(e) = app.emit(EDIT_MENU_EVENT, id) {
+        if let Err(e) = app.emit_to("main", EDIT_MENU_EVENT, id) {
             eprintln!("edit menu: could not deliver {id}: {e}");
         }
     });
@@ -569,6 +591,14 @@ pub fn run() {
             midi_open_output,
             midi_close_output,
             midi_send,
+            midiwin::open_midi_window,
+            midiwin::close_midi_window,
+            midiwin::focus_midi_window,
+            midiwin::midi_window_geometry,
+            midiwin::midi_ui_attach_main,
+            midiwin::midi_ui_attach_window,
+            midiwin::midi_ui_to_main,
+            midiwin::midi_ui_to_window,
             set_keep_awake,
             set_edit_menu_state,
             set_edit_menu_labels

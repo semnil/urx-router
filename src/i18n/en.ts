@@ -141,12 +141,19 @@ export const en = {
   midi: {
     menuItem: "MIDI control",
     title: "MIDI CONTROL",
+    // Section headings in the MIDI window, which has room for them.
+    ports: "Ports",
     input: "Input",
     output: "Output",
     portNone: "None",
     learn: "Learn",
-    hintIdle: "Turn on Learn, click a console control, then move a control on your MIDI device.",
-    hintLearn: "Click a console control to arm it for binding.",
+    // The assignment table's column heads.
+    colControl: "Control",
+    colAddr: "Address",
+    colOption: "Behavior",
+    hintIdle:
+      "Turn on Learn, click a control on the console or a tuning screen, then move a control on your MIDI device.",
+    hintLearn: "Click a control on the console or a tuning screen to arm it for binding.",
     hintArmed: (control: string): string => `Move a MIDI control to bind ${control}…`,
     mappings: "Assignments",
     noMappings: "No assignments yet.",
@@ -179,6 +186,7 @@ export const en = {
         "For toggle buttons that alternate 127/0 per press (e.g. Stream Deck toggles): the value is the state — 64 and above = on, below = off. A momentary button gives hold-to-enable.",
     },
     bound: (control: string, addr: string): string => `Assigned ${addr} to ${control}`,
+    windowError: (message: string): string => `Could not open the MIDI control window: ${message}`,
     inputError: (message: string): string => `MIDI input error: ${message}`,
     outputError: (message: string): string => `MIDI output error: ${message}`,
     // Control labels reuse the console strip wording (chips / knob captions).
@@ -203,7 +211,40 @@ export const en = {
       hpf: "HPF",
       hiZ: "Hi-Z",
       duckerOn: "DUCKER",
+      // The channel tuning screens' parameters. The scope beside them says which
+      // processor they belong to, so these are the knob names alone.
+      threshold: "Threshold",
+      range: "Range",
+      attack: "Attack",
+      hold: "Hold",
+      decay: "Decay",
+      ratio: "Ratio",
+      release: "Release",
+      autoMakeup: "Auto Makeup",
+      oneKnob: "1-Knob",
+      oneKnobLevel: "1-Knob Level",
+      freq: "Freq",
+      q: "Q",
+      bandOn: "Band ON",
     },
+    // A param whose console caption does not fit a processor scope. `gain` is the
+    // only one: the console shouts GAIN because that is what its knob caption says,
+    // while a tuning screen prints "Gain" beside "Threshold" and "Ratio". The
+    // console's own wording is deliberate and stays as it is; this is the same
+    // parameter read on a different surface.
+    scopedParam: { gain: "Gain" } as Record<string, string>,
+    // The id's third component, printed between the node and the param. A send
+    // target reads as a signal path ("→ MIX 1"); a processor or band is a stage of
+    // this node, so it reads as one more step of its name.
+    scope: {
+      gate: "GATE",
+      comp: "COMP",
+      eq: "EQ 1-Knob",
+      "eq.low": "EQ LOW",
+      "eq.lowMid": "EQ LOW-MID",
+      "eq.highMid": "EQ HIGH-MID",
+      "eq.high": "EQ HIGH",
+    } as Record<string, string>,
   },
   inspector: {
     title: "Inspector",

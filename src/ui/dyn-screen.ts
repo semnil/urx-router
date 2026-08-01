@@ -33,12 +33,14 @@
 import { el, settingsRow, settingsSection, sliderRow, wheelStep, wireDismiss } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { fineTag, optInFine } from "./fine";
+import { armOnActivate, markMidi } from "./midi-learn";
+import type { MidiLearnHooks } from "./midi-learn";
 import { setLevelText } from "./glyph";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 import { decodeGrDb, METER_GREEN_TOP_DB, METER_YELLOW_TOP_DB, MeterStore, subscribeMeters } from "../core/meters";
 import type { MeterTap } from "../core/meters";
-import { dynValueText, formatDyn } from "../core/control/translate";
+import { dynFromPos, dynToPos, dynValueText, formatDyn } from "../core/control/translate";
 import type { DynField } from "../core/control/translate";
 import type { DeviceModel } from "../models/types";
 import type { NodeParams, Plan } from "../core/plan";
@@ -127,6 +129,12 @@ export interface DynBar {
 }
 
 export interface DynRowCtx extends DynCtx {
+  /** Make a row the descriptor built armable for MIDI learn, by the value key it
+   *  edits. The host resolves the key to a control id through `controlId` and marks
+   *  the row's own control — the descriptor never has to know what a control id
+   *  looks like, only which of its values a row carries. Returns the row, so it
+   *  wraps the `settingsRow(...)` call it decorates. */
+  midi: (row: HTMLElement, key: string) => HTMLElement;
   vals: Record<string, unknown>;
   /** What `rowStates` reported, resolved — so a row that is not a slider reads the same
    *  answer the sliders do instead of restating the rule. Absent for a key = editable. */
@@ -187,6 +195,11 @@ export interface DynProcessor {
   /** A label for a field whose key the shared `inspector.dyn` table does not name (or
    *  names differently — COMP's `gain` is a makeup gain, the EQ's is a band gain). */
   fieldLabel?: (f: DynField, m: Messages) => string | undefined;
+  /** The MIDI control id one of this processor's value keys is addressable by, or
+   *  null where there is none (the enum selectors are deliberately not mappable).
+   *  Which processor and which band a key belongs to is the descriptor's business —
+   *  the host only needs an id to arm and to mark. */
+  controlId?: (ctx: DynCtx, key: string) => string | null;
   /** The tag pill on the Parameters heading (which band the rows below belong to), and
    *  whether it is shown — `settingsSection` keeps a hidden pill so the heading's height
    *  does not change, the same reservation the rows themselves get. */
@@ -261,6 +274,9 @@ export interface DynScreenHooks {
   /** A meter registration failed. Bars stuck on the floor look exactly like
    *  silence, so this takes the same loud path a live error does. */
   onMeterError: (message: string) => void;
+  /** MIDI learn, when the desktop build has it: the same contract the CONSOLE
+   *  strips arm through. Absent in a browser build, where there is no MIDI. */
+  midi?: MidiLearnHooks;
   /** The screen closed: the surfaces that print these values re-render. */
   onClosed: () => void;
 }
@@ -500,7 +516,7 @@ export class DynScreen {
       const f = key && this.fields.find((x) => x.key === key);
       if (!f) continue;
       const v = this.val(f.key);
-      if (fromPos(f, Number(input.value)) !== v) input.value = String(toPos(f, v));
+      if (dynFromPos(f, Number(input.value)) !== v) input.value = String(dynToPos(f, v));
       const out = this.box.querySelector<HTMLElement>(`[data-dyn-val="${f.key}"]`);
       if (out) setLevelText(out, dynValueText(f, v));
     }
@@ -1112,6 +1128,7 @@ export class DynScreen {
     // the pointer capture.
     const rowCtx: DynRowCtx = {
       ...ctx,
+      midi: (row, key) => this.armable(row, key, ctx),
       vals,
       states: this.states,
       set: (patch) => {
@@ -1134,6 +1151,36 @@ export class DynScreen {
     return col;
   }
 
+  /**
+   * Mark a parameter row as armable for MIDI learn and wire the arming, by the value
+   * key it edits. Takes the ROW rather than the control: the ring goes on the control
+   * (what the operator clicks) but the mapped dot goes on the row, and a control that
+   * has not been appended yet has no row to reach through `closest`. `key` is the
+   * descriptor's own; the id comes from the descriptor, so a locked row or an
+   * unmappable one (an enum selector, which answers null) is simply left alone — the
+   * same treatment the console gives a read-only chip. Returns the row, so it wraps
+   * the `settingsRow(...)` call it decorates.
+   */
+  private armable(row: HTMLElement, key: string, ctx: DynCtx): HTMLElement {
+    const midi = this.hooks.midi;
+    const control = row.querySelector<HTMLElement>(".ctl, .prefs-toggle");
+    if (!control || !midi) return row;
+    // A locked row's control is disabled; arming it would bind a mapping whose
+    // writes the catalog refuses anyway.
+    if (this.states.get(key)?.locked) return row;
+    const id = this.p().controlId?.(ctx, key);
+    if (!id) return row;
+    markMidi(control, id, midi);
+    armOnActivate(control, id, midi);
+    // The mapped dot is the row's, not the control's. A console chip floats over the
+    // strip with room around it; a screen row's control has none — measured, the dot
+    // landed on the value's last character at the cell's right corner and on the
+    // slider's own thumb at its left one (a control parked at its minimum: amber on
+    // amber). The label gutter is empty at every value.
+    if (midi.isMapped(id)) row.classList.add("midi-mapped-row");
+    return row;
+  }
+
   /** Re-resolve and rebuild after a row that changes the shape of the screen. The
    *  rebind matters for a processor whose fields depend on its own values (the EQ's
    *  bands are the device's while 1-knob is on). */
@@ -1152,7 +1199,7 @@ export class DynScreen {
     input.min = String(f.logSteps === undefined ? f.min : 0);
     input.max = String(f.logSteps ?? f.max);
     input.step = String(f.logSteps === undefined ? f.step : 1);
-    input.value = String(toPos(f, value));
+    input.value = String(dynToPos(f, value));
     input.dataset.dyn = f.key;
     input.setAttribute("aria-label", label);
     const val = el("span", "param-val gt-val");
@@ -1171,13 +1218,15 @@ export class DynScreen {
     };
     show(value);
     input.addEventListener("input", () => {
-      const v = fromPos(f, Number(input.value));
+      const v = dynFromPos(f, Number(input.value));
       show(v);
       this.setVals({ [f.key]: v });
       if (f.key === this.capKey) this.syncCap();
       else this.markPlotDirty();
     });
-    wheelStep(input);
+    // A wheel notch over an armed control would move the value the operator is
+    // about to bind, so the same gate the console's faders carry applies here.
+    wheelStep(input, () => this.hooks.midi?.learnActive());
     ctl.append(input, val);
     // The device's push-and-turn fine grid is confirmed for a few values only (the
     // COMP makeup gain, the EQ band gains), so the field table says which (see
@@ -1187,7 +1236,11 @@ export class DynScreen {
     // so a row the device takes over prints `Gain FINE Device-driven` and the legend
     // never comes and goes (which would move the label block it sits in).
     const fine = f.fineStep !== undefined;
-    const row = settingsRow(label, ctl, { ...opts, legend: fine ? fineTag() : undefined });
+    const row = this.armable(
+      settingsRow(label, ctl, { ...opts, legend: fine ? fineTag() : undefined }),
+      f.key,
+      this.ctx(),
+    );
     if (fine) {
       // `has-fine` stays unconditional so "legend printed" and "legend can light" are
       // one fact — the screens once printed the tag without it and the legend sat dim
@@ -1313,18 +1366,6 @@ function loadSels(): Record<string, number> {
     if (n !== undefined) out[k] = n;
   }
   return out;
-}
-
-/** Value → slider position, and back. Identity for a linear field; for a logarithmic
- *  one the same mapping the inspector's frequency control used, so a plan authored
- *  through either lands on the same values. */
-function toPos(f: DynField, v: number): number {
-  if (f.logSteps === undefined) return v;
-  return Math.round((f.logSteps * Math.log(v / f.min)) / Math.log(f.max / f.min));
-}
-function fromPos(f: DynField, pos: number): number {
-  if (f.logSteps === undefined) return pos;
-  return Math.round(f.min * Math.exp((Math.log(f.max / f.min) * pos) / f.logSteps));
 }
 
 function wrap(cls: string, ...kids: HTMLElement[]): HTMLElement {

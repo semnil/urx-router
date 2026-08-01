@@ -4,6 +4,7 @@ import { defaultPlan } from "../../models/initial-state";
 import type { Plan } from "../plan";
 import { ensureFixedConnections, LEVEL_OFF_DB } from "../plan";
 import { ref } from "../../models/types";
+import { COMP_EQ_SSMCS, EQ_TYPE_PASS } from "../control/params";
 import { bindControl, controlId, listControls, parseControlId } from "./controls";
 
 const model = getModel("URX44V");
@@ -19,12 +20,19 @@ const conn = (from: string, to: string) =>
   plan.connections.find((c) => c.from === ref(from, "out") && c.to === ref(to, "in"))!;
 
 describe("control ids", () => {
-  it("round-trip through the id syntax, including send scopes", () => {
+  it("round-trip through the id syntax, including send and processor scopes", () => {
     expect(parseControlId(controlId("ch1", "level"))).toEqual({ node: "ch1", param: "level" });
     expect(parseControlId(controlId("bus.fx1", "level", "bus.mix1"))).toEqual({
       node: "bus.fx1",
       param: "level",
-      send: "bus.mix1",
+      scope: "bus.mix1",
+    });
+    // A band scope carries a dot, which the id grammar has to pass through — the
+    // whole point of the third component is that it names a stage, not only a bus.
+    expect(parseControlId(controlId("ch1", "gain", "eq.low"))).toEqual({
+      node: "ch1",
+      param: "gain",
+      scope: "eq.low",
     });
     expect(parseControlId("nonsense")).toBeNull();
     expect(parseControlId("a/b@c@d")).toBeNull();
@@ -233,5 +241,138 @@ describe("normalized value access", () => {
     on.set(1);
     expect(plan.nodeParams["bus.osc"]?.osc?.on).toBe(true);
     expect(on.get()).toBe(1);
+  });
+});
+
+describe("channel tuning screen parameters", () => {
+  it("lists GATE / COMP / EQ under processor and band scopes", () => {
+    const ids = new Set(listControls(model, plan).map((c) => c.id));
+    for (const id of [
+      "ch1/threshold@gate",
+      "ch1/range@gate",
+      "ch1/attack@gate",
+      "ch1/hold@gate",
+      "ch1/decay@gate",
+      "ch1/threshold@comp",
+      "ch1/ratio@comp",
+      "ch1/gain@comp",
+      "ch1/autoMakeup@comp",
+      "ch1/oneKnob@comp",
+      "ch1/oneKnobLevel@comp",
+      "ch1/oneKnob@eq",
+      "ch1/oneKnobLevel@eq",
+      "ch1/bandOn@eq.low",
+      "ch1/freq@eq.low",
+      "ch1/q@eq.low",
+      "ch1/gain@eq.high",
+    ])
+      expect(ids, id).toContain(id);
+    // The EQ exists on the buses too; GATE / COMP are MONO IN-channel features.
+    expect(ids).toContain("bus.stereo/gain@eq.low");
+    expect(ids).toContain("bus.mix1/freq@eq.high");
+    expect(ids).not.toContain("bus.stereo/threshold@gate");
+    expect(ids).not.toContain("ch_5_6/threshold@comp");
+    // The enum dropdowns (knee / filter type / 1-knob type) are deliberately absent.
+    expect(ids).not.toContain("ch1/knee@comp");
+    expect(ids).not.toContain("ch1/type@eq.low");
+  });
+
+  it("snaps to the field table's own grid, so MIDI and the slider agree", () => {
+    // GATE threshold: -72 … 0 dB in 1 dB steps.
+    const thr = bindControl(model, plan, "ch1/threshold@gate")!;
+    thr.set(0);
+    expect(plan.nodeParams.ch1?.gate?.threshold).toBe(-72);
+    thr.set(1);
+    expect(plan.nodeParams.ch1?.gate?.threshold).toBe(0);
+    thr.set(0.5);
+    expect(plan.nodeParams.ch1?.gate?.threshold).toBe(-36);
+    expect(thr.get()).toBeCloseTo(0.5, 6);
+    // COMP makeup gain: 0 … +18 dB in 0.5 dB steps, no float dust.
+    const gain = bindControl(model, plan, "ch1/gain@comp")!;
+    gain.set(0.25);
+    expect(plan.nodeParams.ch1?.comp?.gain).toBe(4.5);
+    // An EQ band frequency is logarithmic: the midpoint is the geometric one, not
+    // 10 kHz — a linear mapping would resolve nothing at the bottom of the range.
+    const freq = bindControl(model, plan, "ch1/freq@eq.low")!;
+    freq.set(0);
+    expect(plan.nodeParams.ch1?.eqBands?.[0]?.freq).toBe(20);
+    freq.set(1);
+    expect(plan.nodeParams.ch1?.eqBands?.[0]?.freq).toBe(20000);
+    freq.set(0.5);
+    expect(plan.nodeParams.ch1?.eqBands?.[0]?.freq).toBe(632);
+    expect(freq.get()).toBeCloseTo(0.5, 3);
+  });
+
+  it("writes one band without disturbing the other three", () => {
+    // The bands are one array, and the seed fills all four: writing LOW must not
+    // rebuild the entry beside it.
+    const before = structuredClone(plan.nodeParams.ch1?.eqBands?.[1]);
+    bindControl(model, plan, "ch1/gain@eq.high")!.set(1);
+    bindControl(model, plan, "ch1/gain@eq.low")!.set(0);
+    expect(plan.nodeParams.ch1?.eqBands?.[3]?.gain).toBe(18);
+    expect(plan.nodeParams.ch1?.eqBands?.[0]?.gain).toBe(-18);
+    expect(plan.nodeParams.ch1?.eqBands?.[1]).toEqual(before);
+  });
+
+  it("refuses the values the device owns while COMP 1-knob is on", () => {
+    const thr = bindControl(model, plan, "ch1/threshold@comp")!;
+    const auto = bindControl(model, plan, "ch1/autoMakeup@comp")!;
+    const level = bindControl(model, plan, "ch1/oneKnobLevel@comp")!;
+    // 1-knob off: the level does nothing, everything else is the operator's.
+    expect(level.set(0.5)).toBe(false);
+    expect(thr.set(0.5)).toBe(true);
+    expect(auto.set(1)).toBe(true);
+    bindControl(model, plan, "ch1/oneKnob@comp")!.set(1);
+    // 1-knob on: the device computes threshold / ratio / gain and cannot be told
+    // about Auto Makeup; only the level is left.
+    expect(thr.set(0.9)).toBe(false);
+    expect(bindControl(model, plan, "ch1/ratio@comp")!.set(0.9)).toBe(false);
+    expect(auto.set(0)).toBe(false);
+    expect(level.set(0.5)).toBe(true);
+    expect(plan.nodeParams.ch1?.comp?.oneKnobLevel).toBe(50);
+  });
+
+  it("refuses the band values while EQ 1-knob is on", () => {
+    const gain = bindControl(model, plan, "ch1/gain@eq.low")!;
+    expect(gain.set(0.75)).toBe(true);
+    bindControl(model, plan, "ch1/oneKnob@eq")!.set(1);
+    expect(gain.set(0.25)).toBe(false);
+    expect(bindControl(model, plan, "ch1/bandOn@eq.low")!.set(0)).toBe(false);
+    expect(bindControl(model, plan, "ch1/oneKnobLevel@eq")!.set(0.4)).toBe(true);
+    expect(plan.nodeParams.ch1?.eqOneKnob?.level).toBe(40);
+  });
+
+  it("refuses Q and gain the filter type does not read", () => {
+    const q = bindControl(model, plan, "ch1/q@eq.low")!;
+    const gain = bindControl(model, plan, "ch1/gain@eq.low")!;
+    // LOW ships as a shelf: a shelf reads no Q, but does read gain.
+    expect(q.set(0.5)).toBe(false);
+    expect(gain.set(0.5)).toBe(true);
+    // A pass filter reads neither.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, eqBands: [{ type: EQ_TYPE_PASS }] };
+    expect(bindControl(model, plan, "ch1/q@eq.low")!.set(0.5)).toBe(false);
+    expect(bindControl(model, plan, "ch1/gain@eq.low")!.set(0.5)).toBe(false);
+    // A mid band is fixed peaking, which reads both.
+    expect(bindControl(model, plan, "ch1/q@eq.lowMid")!.set(0.5)).toBe(true);
+    expect(bindControl(model, plan, "ch1/gain@eq.lowMid")!.set(0.5)).toBe(true);
+  });
+
+  it("refuses a stereo channel's EQ at the rates the device bypasses it", () => {
+    // Measured: at 176.4 / 192 kHz a stereo channel's EQ passes the signal
+    // untouched while still storing and returning its parameters.
+    const gain = bindControl(model, plan, "ch_5_6/gain@eq.low")!;
+    expect(gain.set(0.75)).toBe(true);
+    plan.sampleRate = 192000;
+    expect(bindControl(model, plan, "ch_5_6/gain@eq.low")!.set(0.25)).toBe(false);
+    expect(bindControl(model, plan, "ch_5_6/oneKnob@eq")!.set(1)).toBe(false);
+    // A mono channel's EQ is unaffected by the rate.
+    expect(bindControl(model, plan, "ch1/gain@eq.low")!.set(0.25)).toBe(true);
+  });
+
+  it("drops COMP entirely in SSMCS mode, keeping GATE and losing the EQ", () => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+    expect(bindControl(model, plan, "ch1/threshold@comp")).toBeNull();
+    expect(bindControl(model, plan, "ch1/gain@eq.low")).toBeNull();
+    expect(bindControl(model, plan, "ch1/threshold@gate")).not.toBeNull();
   });
 });

@@ -8,6 +8,8 @@
 import { formatDyn } from "../core/control/translate";
 import { GATE_RANGE_OFF_DB } from "../core/control/vd";
 import { GR_FLOOR_DB } from "../core/meters";
+import { controlId, GATE_SCOPE } from "../core/midi/controls";
+import type { ControlParam } from "../core/midi/controls";
 import { bindChannelStrip, displayBar, subObjectIo } from "./dyn-chan";
 import { transferPlot } from "./dyn-plot";
 import { HI_DB } from "./dyn-screen";
@@ -48,6 +50,9 @@ export const GATE_DYN: DynProcessor = {
   persistSel: true,
   read: io.read,
   patch: io.patch,
+  // Every GATE value is a slider on the catalog's `gate` scope, so the key maps
+  // straight through; there is no enum row on this screen to exclude.
+  controlId: (ctx, key) => controlId(ctx.nodeId, key as ControlParam, GATE_SCOPE),
   // The curve carries one editable value, so a press on it is unambiguous.
   plotDragsCap: true,
 

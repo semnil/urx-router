@@ -1,4 +1,5 @@
-import type { Page } from "@playwright/test";
+import { expect } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
 // Fake URX device for the live-sync race harness (docs/{en,ja}/live-race-harness.md).
 //
@@ -119,6 +120,15 @@ export interface FakeHandle {
     outPort: string | null;
     inChannel: { onmessage: (b: unknown[]) => void } | null;
     sent: number[][];
+    /** The shell's own record of the MIDI control window, which is what
+     *  `midi_window_geometry` answers from — and what survives a reload of the main
+     *  page, exactly as the Rust side does. Backed by localStorage rather than a
+     *  field, because the window is a second PAGE with its own fake: a boolean would
+     *  be two booleans, and the page that closes is not the page that is asked. */
+    readonly windowOpen: boolean;
+    /** How many times the app asked for the window (a raise counts separately). */
+    windowOpens: number;
+    windowFocuses: number;
   };
   /** Deliver raw MIDI messages as one batched burst, the way the bridge does. */
   pushMidi: (msgs: number[][]) => void;
@@ -171,7 +181,9 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
     jitter: opts.jitter ?? 0,
     seed: opts.seed ?? 1,
   };
-  await page.addInitScript(
+  // On the CONTEXT, not the page: MIDI control is a second window, which is a second
+  // page here, and it needs the same bridge before its bundle resolves.
+  await page.context().addInitScript(
     ([config, storage]: [FakeConfig, Record<string, string>]) => {
       localStorage.setItem("urx-lang", "en");
       localStorage.setItem("urx-theme", "dark");
@@ -246,7 +258,19 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         deviceLost: false,
         dialogs: [],
         dialogAnswer: "Cancel",
-        midi: { inputs: ["Fake In"], outputs: ["Fake Out"], inPort: null, outPort: null, inChannel: null, sent: [] },
+        midi: {
+          inputs: ["Fake In"],
+          outputs: ["Fake Out"],
+          inPort: null,
+          outPort: null,
+          inChannel: null,
+          sent: [],
+          get windowOpen(): boolean {
+            return localStorage.getItem("urx-fake-midiwin") !== null;
+          },
+          windowOpens: 0,
+          windowFocuses: 0,
+        },
         pushMidi: (msgs) => {
           for (const bytes of msgs) put("notify", { cmd: "midi", detail: bytes.join(" ") });
           fake.midi.inChannel?.onmessage(msgs.map((bytes) => ({ bytes })));
@@ -314,6 +338,17 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         linkDrop: (reason) => linkCb?.({ reason }),
       };
       window.__urxFake = fake;
+
+      // The MIDI-control UI relay (midiwin.rs). Each side registers a receiver and a
+      // post reaches the OTHER page only — BroadcastChannel does not echo to its
+      // sender, and neither does the Rust relay it stands in for.
+      let midiUiToMain: { onmessage: (p: string) => void } | null = null;
+      let midiUiToWindow: { onmessage: (p: string) => void } | null = null;
+      const midiUiRelay = new BroadcastChannel("urx-midi-ui");
+      midiUiRelay.onmessage = (e: MessageEvent<{ dir: string; payload: string }>) => {
+        if (e.data.dir === "main") midiUiToMain?.onmessage(e.data.payload);
+        else midiUiToWindow?.onmessage(e.data.payload);
+      };
 
       let paramChannel: { onmessage: (b: unknown[]) => void } | null = null;
       let meterChannel: { onmessage: (b: unknown[]) => void } | null = null;
@@ -580,6 +615,46 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             return null;
           case "midi_send":
             fake.midi.sent.push([...((args.bytes as number[]) ?? [])]);
+            done();
+            return null;
+          // midiwin.rs — MIDI control is a second OS window, which is a second PAGE
+          // here. The shell owns whether it exists (so the record outlives a reload of
+          // this page, and `midi_window_geometry` answers from it), and relays between
+          // the two webviews without ever echoing to the sender.
+          case "open_midi_window":
+            fake.midi.windowOpens++;
+            if (fake.midi.windowOpen) fake.midi.windowFocuses++; // an open on a live window raises it
+            localStorage.setItem("urx-fake-midiwin", "1");
+            done();
+            return null;
+          case "close_midi_window":
+            localStorage.removeItem("urx-fake-midiwin");
+            done();
+            return null;
+          case "focus_midi_window":
+            fake.midi.windowFocuses++;
+            done();
+            return null;
+          case "midi_window_geometry":
+            done();
+            return localStorage.getItem("urx-fake-midiwin") ? [0, 0, 440, 620] : null;
+          case "midi_ui_attach_main":
+            midiUiToMain = args.channel as { onmessage: (p: string) => void };
+            done();
+            return null;
+          case "midi_ui_attach_window":
+            midiUiToWindow = args.channel as { onmessage: (p: string) => void };
+            done();
+            return null;
+          case "midi_ui_to_main":
+            // The window going away is the shell's business too: once destroyed,
+            // get_webview_window answers None.
+            if (String(args.payload ?? "").includes('"closed"')) localStorage.removeItem("urx-fake-midiwin");
+            midiUiRelay.postMessage({ dir: "main", payload: args.payload });
+            done();
+            return null;
+          case "midi_ui_to_window":
+            midiUiRelay.postMessage({ dir: "window", payload: args.payload });
             done();
             return null;
           case "set_edit_menu_state":
@@ -949,3 +1024,36 @@ export const divergeStrAt = (page: Page, addr: string, value: string): Promise<v
     },
     [addr, value] as [string, string],
   );
+
+/**
+ * Open the MIDI control window from the Device menu and attach to it.
+ *
+ * It is a second OS window in the app, so it is a second PAGE here; the shell command
+ * is faked, which means the page is opened on this side. The bridge is installed on
+ * the context, so the new page carries the same fake and the same relay — a state
+ * push from the main window reaches it exactly as it would over the Rust relay.
+ */
+export async function openMidiWindow(page: Page): Promise<Page> {
+  await page.click("#btn-device");
+  await page.click("#btn-midi");
+  await expect.poll(() => page.evaluate(() => window.__urxFake.midi.windowOpen)).toBe(true);
+  const win = await page.context().newPage();
+  await win.goto("/midi.html");
+  await expect(win.locator("#midi-window")).toBeVisible();
+  // Nothing it shows is its own: it asks for state on boot and renders what arrives.
+  await expect(win.locator(".mw-title")).toHaveText("MIDI CONTROL");
+  return win;
+}
+
+/** Turn the MIDI window's learn mode on or off, waiting for the arming surface to
+ *  agree — the mode lives in the main window and reaches the console through a
+ *  re-render, so a click here is not observable until that lands. */
+export async function setMidiLearn(page: Page, win: Page, on: boolean): Promise<void> {
+  const btn = win.locator(".mw-learnbtn");
+  if ((await btn.getAttribute("aria-pressed")) !== String(on)) await btn.click();
+  await expect(btn).toHaveAttribute("aria-pressed", String(on));
+  if (on) await expect(page.locator("#console-host")).toHaveClass(/midi-learn/);
+}
+
+/** One assignment row in the MIDI window's table. */
+export const midiRow = (win: Page, control: string): Locator => win.locator(`.mw-list tr[data-control="${control}"]`);

@@ -1,14 +1,27 @@
-// The console-control catalog for external MIDI control: every fader, knob and
-// toggle the CONSOLE view draws, addressable by a fixed control id that does not
-// depend on the visible tab. Values cross this boundary normalized (0..1;
-// toggles 0 | 1) and are snapped to the same grids the console uses, so a MIDI
-// edit and a console edit write identical plan values. Kept language-agnostic:
-// labels are composed by the UI from the node label + the param token.
+// The control catalog for external MIDI control: every fader, knob and toggle the
+// CONSOLE view draws, plus every parameter the channel tuning screens edit,
+// addressable by a fixed control id that does not depend on the visible tab or on
+// any screen being open. Values cross this boundary normalized (0..1; toggles
+// 0 | 1) and are snapped to the same grids those surfaces use, so a MIDI edit and
+// an on-screen edit write identical plan values. Kept language-agnostic: labels are
+// composed by the UI from the node label + the scope + the param token.
 
 import type { DeviceModel } from "../../models/types";
-import { LEVEL_OFF_DB, sendConnection, type NodeParams, type Plan, type PlanConnection } from "../plan";
+import { LEVEL_OFF_DB, sendConnection, type EqBand, type NodeParams, type Plan, type PlanConnection } from "../plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../levels";
-import { busBalance, channelControl } from "../control/translate";
+import {
+  busBalance,
+  channelControl,
+  channelDynamics,
+  dynFromPos,
+  dynToPos,
+  eqBandFields,
+  eqBandHasType,
+  hasEq,
+  EQ_BAND_NAMES,
+} from "../control/translate";
+import type { DynField } from "../control/translate";
+import { COMP_EQ_COMP_FIRST, EQ_TYPE_PASS, EQ_TYPE_PEAKING, EQ_TYPE_SHELVING } from "../control/params";
 import { mixSendLocks } from "../routing";
 import { channelEqUnavailable } from "../constraints";
 import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../control/vd";
@@ -19,6 +32,19 @@ export const MAIN_BUS = "bus.stereo";
 /** Send targets a channel strip can follow (the console's SENDS rack columns). */
 export const SEND_TARGETS = ["bus.fx1", "bus.fx2", "bus.mix1", "bus.mix2"] as const;
 export type SendTarget = (typeof SEND_TARGETS)[number];
+
+/**
+ * Processor scopes. The id's third component names the stage a parameter belongs to,
+ * exactly the way a send-scoped id names its destination bus — a node has one fader
+ * but three thresholds, and "which threshold" is the same kind of question as "which
+ * send's level". Bands are scopes of their own so a mapping stays bound to LOW rather
+ * than following whichever band the screen happens to have selected: a mapping has to
+ * work with the screen closed.
+ */
+export const GATE_SCOPE = "gate";
+export const COMP_SCOPE = "comp";
+export const EQ_SCOPE = "eq";
+export const eqBandScope = (index: number): string => `${EQ_SCOPE}.${EQ_BAND_NAMES[index]}`;
 
 /** Param tokens; the UI localizes them (i18n midi.param). */
 export type ControlParam =
@@ -41,18 +67,34 @@ export type ControlParam =
   | "phaseR"
   | "hpf"
   | "hiZ"
-  | "duckerOn";
+  | "duckerOn"
+  // The channel tuning screens' parameters. `gain` is shared with the console's
+  // analog GAIN and told apart by its scope (COMP makeup / an EQ band's gain).
+  | "threshold"
+  | "range"
+  | "attack"
+  | "hold"
+  | "decay"
+  | "ratio"
+  | "release"
+  | "autoMakeup"
+  | "oneKnob"
+  | "oneKnobLevel"
+  | "freq"
+  | "q"
+  | "bandOn";
 
 export type ControlKind = "continuous" | "toggle";
 
 export interface ControlDesc {
-  /** Fixed id: "node/param" or "node/param@sendTarget". */
+  /** Fixed id: "node/param" or "node/param@scope". */
   id: string;
   /** The node whose strip / graph repaint covers this control. */
   node: string;
   param: ControlParam;
-  /** Send-target bus id for send-scoped controls (level/mute/pan of one send). */
-  send?: string;
+  /** What the param belongs to when the node alone does not say: a send-target bus
+   *  id, or a processor / band scope (`gate`, `comp`, `eq.low`). */
+  scope?: string;
   kind: ControlKind;
 }
 
@@ -65,13 +107,13 @@ export interface BoundControl extends ControlDesc {
   set(v: number): boolean;
 }
 
-export function controlId(node: string, param: ControlParam, send?: string): string {
-  return send ? `${node}/${param}@${send}` : `${node}/${param}`;
+export function controlId(node: string, param: ControlParam, scope?: string): string {
+  return scope ? `${node}/${param}@${scope}` : `${node}/${param}`;
 }
 
-export function parseControlId(id: string): { node: string; param: string; send?: string } | null {
+export function parseControlId(id: string): { node: string; param: string; scope?: string } | null {
   const m = /^([^/@]+)\/([^/@]+)(?:@([^/@]+))?$/.exec(id);
-  return m ? { node: m[1], param: m[2], ...(m[3] ? { send: m[3] } : {}) } : null;
+  return m ? { node: m[1], param: m[2], ...(m[3] ? { scope: m[3] } : {}) } : null;
 }
 
 function clamp01(v: number): number {
@@ -97,6 +139,22 @@ function linearCodec(min: number, max: number, step: number): { get(x: number): 
 const panCodec = linearCodec(PAN_MIN, PAN_MAX, 1);
 const phonesCodec = linearCodec(PHONES_LEVEL_MIN, PHONES_LEVEL_MAX, 0.1);
 const oscLevelCodec = linearCodec(-96, 0, 1);
+/** The 1-knob level both COMP and the EQ carry, in percent — the one slider on the
+ *  tuning screens that is not a `DynField`. */
+const oneKnobCodec = linearCodec(0, 100, 1);
+
+/** A tuning-screen parameter's codec, derived from the same field table its slider
+ *  is built from: both resolve a position first, so a MIDI value and a dragged
+ *  slider cannot land on different values of the same grid. A logarithmic field
+ *  (an EQ band frequency) carries positions rather than its value. */
+function dynCodec(f: DynField): { get(x: number): number; set(v: number): number } {
+  if (f.logSteps === undefined) return linearCodec(f.min, f.max, f.step);
+  const steps = f.logSteps;
+  return {
+    get: (x) => clamp01(dynToPos(f, x) / steps),
+    set: (v) => dynFromPos(f, Math.round(clamp01(v) * steps)),
+  };
+}
 
 export function listControls(model: DeviceModel, plan: Plan): ControlDesc[] {
   return controlNodes(model).flatMap((id) => nodeControls(model, plan, id));
@@ -148,7 +206,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       id: controlId(id, param, send),
       node: id,
       param,
-      ...(send ? { send } : {}),
+      ...(send ? { scope: send } : {}),
       kind: "continuous",
       get: () => codec.get(conn(to)?.params?.[param] ?? fallback),
       set: (v) => {
@@ -169,7 +227,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       id: controlId(id, "mute", send),
       node: id,
       param: "mute",
-      ...(send ? { send } : {}),
+      ...(send ? { scope: send } : {}),
       kind: "toggle",
       get: () => ((conn(to)?.params?.on ?? defaultOn) ? 0 : 1),
       set: (v) => {
@@ -240,6 +298,198 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     },
   });
 
+  // ---- the channel tuning screens' parameters ------------------------------
+  // GATE and COMP keep their values in one nodeParams sub-object each; the EQ
+  // spreads across `eqBands[i]` and `eqOneKnob`. Each write clones the group it
+  // touches, so the history differ sees the same shape a screen edit produces.
+
+  /** A continuous parameter inside a `gate` / `comp` sub-object, on the field
+   *  table's own grid. */
+  const subDyn = (sub: "gate" | "comp", scope: string, f: DynField, locked?: () => boolean): BoundControl => {
+    const codec = dynCodec(f);
+    const cur = (): Record<string, unknown> => (plan.nodeParams[id]?.[sub] ?? {}) as Record<string, unknown>;
+    return {
+      id: controlId(id, f.key as ControlParam, scope),
+      node: id,
+      param: f.key as ControlParam,
+      scope,
+      kind: "continuous",
+      get: () => codec.get(typeof cur()[f.key] === "number" ? (cur()[f.key] as number) : f.def),
+      set: (v) => {
+        if (locked?.()) return false;
+        const p = np();
+        p[sub] = { ...cur(), [f.key]: codec.set(v) };
+        return true;
+      },
+    };
+  };
+
+  /** A flag inside a `gate` / `comp` sub-object. */
+  const subFlag = (
+    sub: "gate" | "comp",
+    scope: string,
+    key: string,
+    param: ControlParam,
+    def: boolean,
+    locked?: () => boolean,
+  ): BoundControl => {
+    const cur = (): Record<string, unknown> => (plan.nodeParams[id]?.[sub] ?? {}) as Record<string, unknown>;
+    return {
+      id: controlId(id, param, scope),
+      node: id,
+      param,
+      scope,
+      kind: "toggle",
+      get: () => (((cur()[key] as boolean | undefined) ?? def) ? 1 : 0),
+      set: (v) => {
+        if (locked?.()) return false;
+        const p = np();
+        p[sub] = { ...cur(), [key]: v >= 0.5 };
+        return true;
+      },
+    };
+  };
+
+  /** A 1-knob level, in percent. COMP keeps it in its sub-object, the EQ in
+   *  `eqOneKnob` — the two differ only in where they live. */
+  const oneKnobLevel = (
+    scope: string,
+    read: () => number,
+    write: (v: number) => void,
+    locked: () => boolean,
+  ): BoundControl => ({
+    id: controlId(id, "oneKnobLevel", scope),
+    node: id,
+    param: "oneKnobLevel",
+    scope,
+    kind: "continuous",
+    get: () => oneKnobCodec.get(read()),
+    set: (v) => {
+      if (locked()) return false;
+      write(oneKnobCodec.set(v));
+      return true;
+    },
+  });
+
+  const pushDynamics = (): void => {
+    const compEqType = plan.nodeParams[id]?.compEqType ?? COMP_EQ_COMP_FIRST;
+    const dyn = channelDynamics(model, id, compEqType);
+    if (dyn) {
+      for (const f of dyn.gate) out.push(subDyn("gate", GATE_SCOPE, f));
+      // COMP is absent in SSMCS mode (the morphing strip replaces it), which is
+      // also how the tuning screen learns to refuse to open.
+      if (dyn.comp) {
+        // While 1-knob is on the device computes threshold / ratio / gain and
+        // announces each recomputation, so a write would be overwritten within the
+        // flush; Auto Makeup cannot be operated then either, and the level does
+        // nothing while it is off. Same rules the screen's rows render under.
+        const comp = (): Record<string, unknown> => (plan.nodeParams[id]?.comp ?? {}) as Record<string, unknown>;
+        const oneOn = (): boolean => comp().oneKnob === true;
+        const driven = new Set(["threshold", "ratio", "gain"]);
+        for (const f of dyn.comp) out.push(subDyn("comp", COMP_SCOPE, f, driven.has(f.key) ? oneOn : undefined));
+        out.push(subFlag("comp", COMP_SCOPE, "autoMakeup", "autoMakeup", false, oneOn));
+        out.push(subFlag("comp", COMP_SCOPE, "oneKnob", "oneKnob", false));
+        out.push(
+          oneKnobLevel(
+            COMP_SCOPE,
+            () => (typeof comp().oneKnobLevel === "number" ? (comp().oneKnobLevel as number) : 0),
+            (v) => {
+              const p = np();
+              p.comp = { ...comp(), oneKnobLevel: v };
+            },
+            () => !oneOn(),
+          ),
+        );
+      }
+    }
+
+    if (!hasEq(model, id, compEqType)) return;
+    // Above 96 kHz a stereo channel's EQ is acoustically bypassed (measured), so
+    // every EQ control on it refuses — the whole processor, 1-knob included.
+    const rateLocked = (): boolean => channelEqUnavailable(id, plan.sampleRate);
+    const knob = (): Record<string, unknown> => (plan.nodeParams[id]?.eqOneKnob ?? {}) as Record<string, unknown>;
+    const knobOn = (): boolean => knob().on === true;
+    out.push({
+      id: controlId(id, "oneKnob", EQ_SCOPE),
+      node: id,
+      param: "oneKnob",
+      scope: EQ_SCOPE,
+      kind: "toggle",
+      get: () => (knobOn() ? 1 : 0),
+      set: (v) => {
+        if (rateLocked()) return false;
+        const p = np();
+        p.eqOneKnob = { ...knob(), on: v >= 0.5 };
+        return true;
+      },
+    });
+    out.push(
+      oneKnobLevel(
+        EQ_SCOPE,
+        () => (typeof knob().level === "number" ? (knob().level as number) : 0),
+        (v) => {
+          const p = np();
+          p.eqOneKnob = { ...knob(), level: v };
+        },
+        () => rateLocked() || !knobOn(),
+      ),
+    );
+
+    for (const [index] of EQ_BAND_NAMES.entries()) {
+      const scope = eqBandScope(index);
+      const band = (): EqBand => plan.nodeParams[id]?.eqBands?.[index] ?? {};
+      // The bands are an array: the other three have to survive an edit to this one.
+      const writeBand = (patch: EqBand): void => {
+        const p = np();
+        const bands = (p.eqBands ?? []).slice();
+        bands[index] = { ...bands[index], ...patch };
+        p.eqBands = bands;
+      };
+      // 1-knob computes all four bands from one level, so the band values are the
+      // device's while it is on.
+      const bandLocked = (): boolean => rateLocked() || knobOn();
+      const type = (): number => band().type ?? (eqBandHasType(index) ? EQ_TYPE_SHELVING : EQ_TYPE_PEAKING);
+      out.push({
+        id: controlId(id, "bandOn", scope),
+        node: id,
+        param: "bandOn",
+        scope,
+        kind: "toggle",
+        get: () => (bandLocked() ? 0 : (band().on ?? true) ? 1 : 0),
+        set: (v) => {
+          if (bandLocked()) return false;
+          writeBand({ on: v >= 0.5 });
+          return true;
+        },
+      });
+      for (const f of eqBandFields(index)) {
+        // A pass filter reads neither Q nor gain (measured: Q 0.71 and Q 4.00 draw
+        // an identical high-pass), and only a peaking band reads Q — the same rows
+        // the screen locks and tags "Unused by this type".
+        const unused =
+          f.key === "q"
+            ? (): boolean => type() !== EQ_TYPE_PEAKING
+            : f.key === "gain"
+              ? (): boolean => type() === EQ_TYPE_PASS
+              : (): boolean => false;
+        const codec = dynCodec(f);
+        out.push({
+          id: controlId(id, f.key as ControlParam, scope),
+          node: id,
+          param: f.key as ControlParam,
+          scope,
+          kind: "continuous",
+          get: () => codec.get((band()[f.key as "freq" | "q" | "gain"] as number | undefined) ?? f.def),
+          set: (v) => {
+            if (bandLocked() || unused()) return false;
+            writeBand({ [f.key]: codec.set(v) } as EqBand);
+            return true;
+          },
+        });
+      }
+    }
+  };
+
   if (node.kind === "ducker") {
     out.push(boolControl("duckerOn", false));
     return out;
@@ -301,7 +551,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           id: controlId(id, "tap", target),
           node: id,
           param: "tap",
-          send: target,
+          scope: target,
           kind: "toggle",
           get: () => (conn(target)?.params?.tap === "pre" ? 1 : 0),
           set: (v) => {
@@ -353,5 +603,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     out.push(boolControl("mono", false));
     out.push(nodeControl("phonesLevel", phonesCodec, PHONES_LEVEL_DEFAULT));
   }
+  // The tuning screens' parameters come last, so the console's own controls keep
+  // their order in the assignment list and in `listControls`.
+  pushDynamics();
   return out;
 }

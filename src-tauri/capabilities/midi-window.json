@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "midi-window",
+  "description": "Core access for the MIDI control window. It is a view of the main window's state: no dialogs, no updater, no process control, and no device or file access of its own.",
+  "windows": ["midi"],
+  "permissions": ["core:default"]
+}

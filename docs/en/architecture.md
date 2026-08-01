@@ -480,14 +480,40 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
 
 ## External MIDI control
 
-The CONSOLE view's controls (faders / send levels / MUTE / PAN-BAL / GAIN / PHONES / the toggles) can be driven
-from an external MIDI controller (desktop app only). Configuration lives in the non-modal panel under Device →
-"MIDI control" — it stays open while console controls are clicked to assign them. The panel is dismissed by its
-✕ button or a press outside it (except while learn is on — outside clicks are the arming gesture then). The
-assignment list's per-mapping selects (take-in mode / button behavior) explain their options in a legend card
-anchored to the hovered / focused row — below it, flipped above near the viewport bottom, so the row and its
-select stay visible — with a header naming the setting and the owning assignment (`ui/dom.ts` `popTop` holds
-the below/flip-above placement shared with the console popovers).
+The CONSOLE view's controls (faders / send levels / MUTE / PAN-BAL / GAIN / PHONES / the toggles) and every
+parameter the channel tuning screens edit (GATE / COMP / the 4-band PEQ) can be driven from an external MIDI
+controller (desktop app only).
+
+Configuration lives in a **window of its own** (Device → "MIDI control"), not an overlay. That is what lets it
+stay visible while a tuning screen — which is modal and runs full-bleed — is open, and it is why the assignment
+list is a table with room for a whole control name: the operator reads what is bound to what there. `midi.html`
++ `src/midi-window.ts` are a second Vite entry; the demo build drops them, since MIDI is desktop-only and an
+orphan page would ship to GitHub Pages.
+
+The window is a **view**. It holds no plan, no model, no engine and no port — a MIDI input port delivers its
+bursts to the window that opened it, so a window with no plan must never open one. It renders a state the main
+window pushes and reports intents back (`ui/midi-protocol.ts`); everything that decides what it shows stays in
+`ui/midi.ts`. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
+same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
+`invoke`, so the second window needs no capability beyond core. Its geometry is remembered in `urx-midi` and
+passed to the next open. Closing the main window closes it; closing it drops learn mode, which would otherwise
+stay armed against a control nothing on screen names.
+
+Because it is a window rather than an overlay it can drift behind the app, so two things bring the binding back
+to where the operator is looking: it **raises itself when learn turns on** (a plain `set_focus`, not
+always-on-top — that would cover the app for a session to solve a problem lasting a gesture), and every bound
+control carries **its address as a tooltip** (`CH 1 CC 21`), which costs no layout and is readable with the
+window closed.
+
+It deliberately does **not** raise itself when a binding lands, which is measured rather than assumed (macOS,
+2026-08-01). A click on a window that is not active does not reach the webview: wry's `acceptsFirstMouse:`
+returns the `accept_first_mouse` attribute, and Tauri's default for it is `false`
+(`tauri-runtime/src/webview.rs`; the `tauri.conf.json` window key is `acceptFirstMouse`). Measured both ways —
+with the MIDI window focused a single click on a console fader neither armed it nor moved it, and with the main
+window focused the same click armed it. Raising on every binding therefore turned each following assignment
+into two clicks, one to activate and one to arm, right in the middle of the run of gestures that assigning a
+bank of controls is. Turning `acceptFirstMouse` on would buy the click back at the price of a focus-click
+moving whatever control is under the pointer, which on a mixer is a fader jumping.
 
 - **Bridge (Rust)** — `src-tauri/src/midi.rs` enumerates ports through midir (CoreMIDI on macOS, WinMM on
   Windows) and holds one open input plus one open output. Incoming messages are batched per burst — the same
@@ -495,20 +521,39 @@ the below/flip-above placement shared with the console popovers).
   `midi_open_input`, `midi_close_input`, `midi_open_output`, `midi_close_output`, `midi_send`). Everything is a
   local OS-API round-trip (no broker), so the commands stay synchronous. The frontend bridge is
   `core/platform.ts` (no-ops outside Tauri). midir has no hot-plug notification, so the port lists are
-  re-enumerated every time the panel opens. A port that fails to open reports the error on the status
-  line and drops the select back to "None" (the stored port entry is removed too).
+  re-enumerated every time the MIDI window announces itself. A port that fails to open reports the error on the
+  status line — the app's and the window's own — and drops the select back to "None" (the stored port entry is
+  removed too). `src-tauri/src/midiwin.rs` adds the window itself: `open_midi_window` (async on purpose —
+  building a webview from a blocking command deadlocks on Windows), `close_midi_window`, `focus_midi_window`,
+  `midi_window_geometry`, and the four relay commands.
 - **Mapping (core/midi/)** — pure, language-agnostic logic. `message.ts` decodes/encodes CC / note / pitch
   bend; `mapping.ts` holds the free-mapping model (address, take-in mode) plus persistence validation (a
   persisted mapping in the removed "relative" take-in mode migrates to absolute on load, and the STEREO /
   MONITOR power LED's old send-less "mute" id migrates to the uniform "chOn"); `controls.ts`
-  enumerates and resolves every console control under a **fixed control id**
-  (`node/param[@sendTarget]`, e.g. `ch1/level@bus.mix1`). Fixed ids do not depend on the visible view or the
-  SENDS rack's collapse state: "CH 1 main fader" and "CH 1 → MIX 1 send" are separate controls, assigned
-  individually (the rack chip / PRE button / column fader arm the same send-scoped ids, plus a `tap` control
-  for a MIX send's PRE/POST).
-  Values cross the boundary normalized (0..1) and are snapped on set to the same grids the console uses
-  (the level_gain grid in `levels.ts`, the channel's GAIN dB range, PAN ±63, PHONES 0.1 steps). Device locks
-  (a FIXED bus's send level, a Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz) refuse the write.
+  enumerates and resolves every assignable control under a **fixed control id**
+  (`node/param[@scope]`, e.g. `ch1/level@bus.mix1`). Fixed ids do not depend on the visible view, the
+  SENDS rack's collapse state, or on any screen being open: "CH 1 main fader" and "CH 1 → MIX 1 send" are
+  separate controls, assigned individually (the rack chip / PRE button / column fader arm the same
+  send-scoped ids, plus a `tap` control for a MIX send's PRE/POST).
+
+  The id's third component is a **scope**: it names what the param belongs to when the node alone does not
+  say. A send target is one kind (`@bus.mix1`); a processor or an EQ band is another (`@gate`, `@comp`,
+  `@eq.low`) — a node has one fader but three thresholds, and "which threshold" is the same question as
+  "which send's level". A band is a scope rather than a cursor because a mapping has to keep working with
+  the tuning screen closed, and the screen's band bar resets to LOW on every open. The two kinds print
+  differently in the assignment list, because they mean different things: `CH 1 → MIX 1 · Level` is where the
+  signal goes, `CH 1 · EQ LOW · Gain` is a stage of this node.
+
+  Values cross the boundary normalized (0..1) and are snapped on set to the same grids the surfaces use
+  (the level_gain grid in `levels.ts`, the channel's GAIN dB range, PAN ±63, PHONES 0.1 steps). A tuning
+  screen's parameter takes its grid from the same `DynField` table its slider is built from, through the
+  shared `dynToPos` / `dynFromPos` in `control/translate.ts` — both resolve a position first, so a MIDI value
+  and a dragged slider cannot land on different values of one grid (an EQ band frequency is logarithmic and
+  carries positions rather than its value). Device locks refuse the write: a FIXED bus's send level, a
+  Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain and Auto
+  Makeup while 1-knob is on (the device computes them), COMP's 1-knob level while it is off, every EQ band
+  value while EQ 1-knob is on, and the Q / gain a filter type does not read. The enum selectors (COMP knee,
+  the EQ filter type and 1-knob type) carry no control at all.
 - **Engine (`engine.ts`)** — routes incoming events onto bound controls. Take-in modes are per-mapping:
   absolute / pickup (swallowed until the physical value reaches or crosses the plan value). 14-bit CC assembles the MSB/LSB
   pair (n / n+32). Toggles carry a per-mapping button behavior instead of a take-in mode, named after the
@@ -519,8 +564,13 @@ the below/flip-above placement shared with the console popovers).
   back) and "Toggle" (state — for buttons that alternate 127/0 per press, e.g. an Elgato Stream Deck
   MIDI-plugin toggle button, which value-follows-state handles per press; note on / CC ≥ 64 = on, else off,
   so a momentary button gives hold-to-enable). The stored values stay edge / state.
-- **Learn** — turning the panel's Learn on gives armable console controls a dashed target ring; clicking one
-  arms it (pulsing outline; already-bound controls carry an amber dot) and the next MIDI input binds. A CC
+- **Learn** — turning the window's Learn on gives armable controls a dashed target ring, on the CONSOLE
+  strips and on an open tuning screen alike (`ui/midi-learn.ts` holds the one treatment and the one arming
+  path, so the two surfaces cannot drift); clicking one arms it (pulsing outline; already-bound controls carry
+  an amber dot) and the next MIDI input binds. On a tuning screen the target is the row's control cell, and
+  the press is taken in the capture phase so the slider never starts a drag; the wheel is gated for the same
+  reason. A tuning screen opens normally while learn is on — its `▸` opener is not itself assignable, so it
+  passes the arming guard through. A CC
   settles on its second message (same CC = 7-bit, its pair partner = 14-bit); a lone CC (a button) commits
   after a 500 ms quiet gap. One binding per console control (a new binding replaces the control's previous
   one), but a physical control may drive several controls: learning it to more than one gangs them — one

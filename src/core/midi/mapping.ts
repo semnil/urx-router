@@ -71,6 +71,23 @@ export function addrLabel(addr: MidiAddr): string {
   }
 }
 
+/** The address at tooltip / badge length. `addrLabel` is the assignment list's full
+ *  form; this is what fits beside a control, so the 14-bit pair is written as one
+ *  token rather than spelled out. Language-invariant, like its long form. */
+export function addrShort(addr: MidiAddr): string {
+  const ch = `CH ${addr.channel + 1}`;
+  switch (addr.type) {
+    case "cc":
+      return `${ch} CC ${addr.controller}`;
+    case "cc14":
+      return `${ch} CC ${addr.controller}+${addr.controller + 32}`;
+    case "note":
+      return `${ch} NOTE ${addr.note}`;
+    case "pitchbend":
+      return `${ch} PB`;
+  }
+}
+
 function isChannel(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 15;
 }

@@ -13,6 +13,7 @@ import {
   settleAfter,
   pushMidi,
   midiSentOf,
+  openMidiWindow,
   type InstallOptions,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf } from "./analyze";
@@ -496,13 +497,10 @@ test.describe("T4 midi", () => {
 
     // Open the output port: runFeedback(true) resyncs every binding and deletes the
     // pickup state with the emit.
-    await page.click("#btn-device");
-    await page.click("#btn-midi");
-    await expect(page.locator("#midi-panel")).toBeVisible();
-    await page.locator("#midi-panel .mp-out").selectOption("Fake Out");
+    const win = await openMidiWindow(page);
+    await win.locator(".mw-out").selectOption("Fake Out");
     await expect.poll(() => page.evaluate(() => window.__urxFake.midi.outPort)).toBe("Fake Out");
-    await page.keyboard.press("Escape");
-    await expect(page.locator("#midi-panel")).toBeHidden();
+    await win.close();
     // Polled, not read once: the address received input moments ago, so the resync
     // pass defers behind RECENT_MS and lands on the 350 ms settle retry.
     await expect

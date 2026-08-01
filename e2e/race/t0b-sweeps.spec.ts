@@ -10,6 +10,7 @@ import {
   pushNotify,
   dialogsOf,
   divergeAt,
+  openMidiWindow,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf } from "./analyze";
 import { drag, port, tapJack, faceplate } from "../graph-helpers";
@@ -1131,14 +1132,16 @@ test.describe("T0b baseline sweeps", () => {
       { label: "View > hide off sends", run: () => menuItem(page, "#btn-view", "#btn-hide-off"), silent: true },
       { label: "View > Show all (restore the shelf)", run: () => page.click(".shelf-showall") },
       {
+        // MIDI control is a window of its own, so it is not on this document and holds
+        // nothing back — it is swept for the opposite reason to the modals around it:
+        // to pin that opening it refuses nothing.
         label: "Device > MIDI control (open, probe, close)",
         run: async () => {
           await armProbe();
-          await menuItem(page, "#btn-device", "#btn-midi");
-          await expect(page.locator("#midi-panel")).toBeVisible();
-          matrix.push(await probeRefusals("MIDI panel"));
-          await page.keyboard.press("Escape");
-          await expect(page.locator("#midi-panel")).toBeHidden();
+          const win = await openMidiWindow(page);
+          matrix.push(await probeRefusals("MIDI control window"));
+          await win.close();
+          await expect.poll(() => page.evaluate(() => window.__urxFake.midi.windowOpen)).toBe(false);
         },
       },
       {
@@ -1246,11 +1249,17 @@ test.describe("T0b baseline sweeps", () => {
     // The refusal matrix. Every modal that is up refuses undo by name and keeps
     // Delete off the graph behind it; the control arm shows the same keystroke doing
     // both things when nothing is in the way.
-    for (const who of ["MIDI panel", "Device setup modal", "Preferences modal"]) {
+    for (const who of ["Device setup modal", "Preferences modal"]) {
       const row = matrix.find((m) => m.startsWith(who))!;
       expect(row).toContain("Close the open dialog before undoing");
       expect(row).toContain("Delete refused");
     }
+    // MIDI control is the one Device-menu surface that is NOT on this document: it is
+    // a window of its own, so `modalOpen()` cannot see it and it holds nothing back.
+    // It reads like the control arm rather than like the modals beside it.
+    const midiWindow = matrix.find((m) => m.startsWith("MIDI control window"))!;
+    expect(midiWindow).not.toContain("Close the open dialog before undoing");
+    expect(midiWindow).toContain("Undone");
     const control = matrix.find((m) => m.startsWith("no modal"))!;
     expect(control).not.toContain("Close the open dialog before undoing");
     expect(control).toContain("Undone");

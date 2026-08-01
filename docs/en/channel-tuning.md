@@ -384,6 +384,31 @@ every strip, including those with no chips at all. The opener is not offered whe
 EQ forced off (the toggle beside it is read-only there), nor in SSMCS mode, where the EQ chip belongs
 to the morphing strip and there is no 4-band PEQ to open.
 
+## MIDI assignment
+
+Every parameter on these screens can be driven from an external MIDI controller, on the same catalog
+and the same learn gesture the CONSOLE strips use (`ui/midi-learn.ts`; the catalog is
+`core/midi/controls.ts`, the surrounding design is in architecture.md).
+
+- **The target is the row's control cell.** While learn is on it takes a dashed ring, the armed one a
+  solid pulse, and an already-bound one an amber dot — the console's own three states, so a strip
+  control and a screen control read the same. The press is taken in the **capture phase**, so the
+  slider never starts a drag on the click that arms it, and the wheel is gated for the same reason.
+- **A row that is locked is not offered.** The reasons are the ones the rows already print: the rate
+  has a stereo channel's EQ inert, 1-knob has handed the values to the device, or the filter type does
+  not read that value. Nor are the enum selectors (COMP knee, EQ filter type, EQ 1-knob type) — the
+  catalog carries continuous and toggle controls only.
+- **A band binds to that band.** The id's scope is `@eq.low` … `@eq.high`, not "whichever band the bar
+  has selected": a mapping has to keep working with this screen closed, and the bar resets to LOW on
+  every open. `DynProcessor.controlId` is where a descriptor answers which id one of its value keys
+  has — the host stays ignorant of which processor it is showing, and answers `null` for a key with no
+  control.
+- **The grid is the field table's.** A MIDI value and a dragged slider both resolve a position first
+  (`dynToPos` / `dynFromPos` in `control/translate.ts`), so the two cannot land on different values of
+  one grid.
+- **The screen opens while learn is on.** The `▸` opener is not itself assignable, so it passes the
+  arming guard through rather than arming instead of opening.
+
 ## Without a device
 
 The screen opens in every build and in every state. The parameters are plan values and fully

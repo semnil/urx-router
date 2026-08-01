@@ -1,13 +1,20 @@
-// External MIDI control orchestration (desktop only): owns the port
-// connections, the per-model mapping persistence, the learn state the console
-// arms into, and the feedback scheduling. The pure mapping logic lives in
-// core/midi; incoming edits run the same funnel as console edits (BAL pair
-// mirror + the shared change hook), so Live sync mirrors them to the device.
+// External MIDI control orchestration (desktop only): owns the port connections,
+// the per-model mapping persistence, the learn state the arming surfaces arm into,
+// and the feedback scheduling. The pure mapping logic lives in core/midi; incoming
+// edits run the same funnel as console edits (BAL pair mirror + the shared change
+// hook), so Live sync mirrors them to the device.
+//
+// The panel itself is a separate OS window (src/midi-window.ts). It is a view — this
+// class holds every piece of state it renders and receives its intents back, because
+// a MIDI input port delivers its bursts to the window that opened it, and only this
+// window has a plan to apply them to.
 
 import type { DeviceModel, DeviceNode } from "../models/types";
 import type { Plan } from "../core/plan";
 import { loadJson, saveJson } from "../core/storage";
 import {
+  closeMidiWindow,
+  focusMidiWindow,
   isTauri,
   midiCloseOutput,
   midiListInputs,
@@ -15,20 +22,24 @@ import {
   midiOpenInput,
   midiOpenOutput,
   midiSend,
+  midiUiAttachMain,
+  midiUiToWindow,
+  midiWindowGeometry,
+  openMidiWindow,
 } from "../core/platform";
 import { MidiEngine } from "../core/midi/engine";
-import { bindControl, parseControlId, type BoundControl, type ControlParam } from "../core/midi/controls";
 import {
-  addrLabel,
-  BUTTON_MODES,
-  sanitizeMappings,
-  TAKE_MODES,
-  type MidiAddr,
-  type MidiMapping,
-} from "../core/midi/mapping";
+  bindControl,
+  parseControlId,
+  type BoundControl,
+  type ControlKind,
+  type ControlParam,
+} from "../core/midi/controls";
+import { addrLabel, addrShort, sanitizeMappings, type MidiAddr, type MidiMapping } from "../core/midi/mapping";
 import { mirrorBalPair } from "../core/routing";
-import { el, popTop, wireDismiss } from "./dom";
-import { errorCode, errorText, t } from "../i18n";
+import { parseRelay } from "./midi-protocol";
+import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
+import { errorCode, errorText, getLang, t } from "../i18n";
 
 export interface MidiHooks {
   getModel: () => DeviceModel;
@@ -39,7 +50,8 @@ export interface MidiHooks {
   /** A localized refusal, or null when an incoming message may edit the plan
    *  (a device read mutating it across awaits, a file flow that can replace it). */
   blocked: () => string | null;
-  /** Learn mode / armed control / mappings changed: re-render the console. */
+  /** Learn mode / armed control / mappings changed: re-render the arming
+   *  surfaces (the CONSOLE strips and an open tuning screen). */
   onLearnChanged: () => void;
   onStatus: (msg: string) => void;
 }
@@ -50,9 +62,19 @@ interface MidiStore {
   input?: string;
   output?: string;
   models?: Record<string, unknown>;
+  /** Where the operator last left the MIDI window. */
+  window?: { x: number; y: number; width: number; height: number };
 }
 
 const STORE_KEY = "urx-midi";
+
+/** Which behaviour control an assignment row offers. A toggle bound to a pitch bend
+ *  or a 14-bit CC pair offers none: `toggleTarget` refuses both, so the binding is
+ *  permanently inert and a button-behaviour select would suggest otherwise. */
+function optionOf(kind: ControlKind, m: MidiMapping): "mode" | "button" | undefined {
+  if (kind === "continuous") return "mode";
+  return m.addr.type === "pitchbend" || m.addr.type === "cc14" ? undefined : "button";
+}
 
 // Incoming edits already suppress their own echo (engine.lastSent); this pass
 // batches feedback for edits from everywhere else (UI, device follow, plan load).
@@ -79,17 +101,14 @@ export class MidiControl {
   private feedbackTimer = 0;
   private settleTimer = 0;
   private learnFlushTimer = 0;
-  private panel: HTMLElement | null = null;
-  private titleEl!: HTMLElement;
-  private inLabel!: HTMLElement;
-  private outLabel!: HTMLElement;
-  private inSel!: HTMLSelectElement;
-  private outSel!: HTMLSelectElement;
-  private learnBtn!: HTMLButtonElement;
-  private hintEl!: HTMLElement;
-  private listHead!: HTMLElement;
-  private listEl!: HTMLElement;
-  private infoEl!: HTMLElement;
+  /** True between the window's "ready" and its "closed": what makes a state push
+   *  worth sending, and the only thing this side trusts about the window's life. */
+  private windowOpen = false;
+  private inputs: string[] = [];
+  private outputs: string[] = [];
+  /** The last thing worth saying, mirrored into the window (its own status line) as
+   *  well as the app's — the window is where the operator is looking while binding. */
+  private status = "";
 
   constructor(private hooks: MidiHooks) {
     this.engine = new MidiEngine({
@@ -123,6 +142,38 @@ export class MidiControl {
     });
     this.engine.setMappings(this.loadMappings());
     this.restorePorts();
+    if (isTauri()) void this.attach();
+  }
+
+  /** Attach the relay for the app's lifetime — the MIDI window can open, close and
+   *  reopen, and each time it announces itself with "ready".
+   *
+   *  The window can also OUTLIVE this side: reloading the main window (or a dev
+   *  HMR reload) leaves it up with a fresh receiver on the other end and nothing to
+   *  make it speak again, since "ready" is sent on its boot and not on ours. So the
+   *  shell is asked whether the window is there — geometry answers only for a window
+   *  that exists — and the state is pushed at it. Without this the window sat holding
+   *  the previous session's list. */
+  private async attach(): Promise<void> {
+    try {
+      await midiUiAttachMain((payload) => this.onIntent(payload));
+      this.windowOpen = (await midiWindowGeometry()) !== null;
+      if (this.windowOpen) {
+        this.pushState();
+        void this.refreshPorts();
+      }
+    } catch {
+      // The relay is the window's lifeline, not the device's: with no window there
+      // is nothing to report and nothing to salvage.
+    }
+  }
+
+  /** Status goes to the app's own line and to the window's, since the window is
+   *  what the operator is watching while assigning. */
+  private say(message: string): void {
+    this.status = message;
+    this.hooks.onStatus(message);
+    this.pushState();
   }
 
   /** Resolve a control id, memoized: an incoming sweep resolves per message and
@@ -161,16 +212,23 @@ export class MidiControl {
     return this.engine.isMapped(id);
   }
 
-  /** The console armed a control: the next MIDI input binds to it. An id the
-   *  catalog cannot bind (a console control missing from controls.ts) is
-   *  refused, so drift fails visibly at arm time instead of persisting a
-   *  mapping that would be dead on receive. */
+  /** The address a control is bound to, at tooltip length — so a binding stays
+   *  readable from the control itself when the MIDI window is behind the app. */
+  addrOf(id: string): string | null {
+    const bound = this.engine.getMappings().find((m) => m.control === id);
+    return bound ? addrShort(bound.addr) : null;
+  }
+
+  /** An arming surface armed a control: the next MIDI input binds to it. An id the
+   *  catalog cannot bind (a control missing from controls.ts) is refused, so drift
+   *  fails visibly at arm time instead of persisting a mapping that would be dead
+   *  on receive. */
   arm(id: string): void {
     if (!this.resolve(id)) return;
     this.armed = id;
     this.engine.startLearn();
     this.hooks.onLearnChanged();
-    this.updateLearnUi();
+    this.pushState();
   }
 
   // ---- app integration ----
@@ -186,7 +244,7 @@ export class MidiControl {
     this.bound.clear();
     this.boundPlan = null;
     this.engine.setMappings(this.loadMappings());
-    if (this.panel && !this.panel.hidden) this.renderList();
+    this.pushState();
     this.runFeedback(true);
   }
 
@@ -206,46 +264,6 @@ export class MidiControl {
     }, FEEDBACK_DEBOUNCE_MS);
   }
 
-  /** Re-apply localized texts (language switch) to the open panel. */
-  relocalize(): void {
-    if (!this.panel) return;
-    this.applyPanelI18n();
-    this.renderList();
-    this.updateLearnUi();
-  }
-
-  togglePanel(): void {
-    if (!this.panel) this.buildPanel();
-    const p = this.panel!;
-    if (p.hidden) {
-      p.hidden = false;
-      void this.refreshPorts();
-      this.renderList();
-      this.updateLearnUi();
-      this.dismiss.attach();
-    } else {
-      this.closePanel();
-    }
-  }
-
-  /** An outside press or Escape dismisses the panel — except while learn is on
-   *  (arming clicks land on console controls outside the panel, and leaving
-   *  learn is the Learn button's job, not a stray Escape's) and on the menu
-   *  entry itself (its click handler toggles; closing here would make that
-   *  toggle reopen the panel). */
-  private readonly dismiss = wireDismiss({
-    keep: (target) => this.panel!.contains(target) || !!(target as Element).closest?.("#btn-midi"),
-    inert: () => this.learnOn,
-    close: () => this.closePanel(),
-  });
-
-  private closePanel(): void {
-    if (!this.panel) return;
-    this.dismiss.detach();
-    this.panel.hidden = true;
-    this.setLearn(false);
-  }
-
   // ---- ports ----
 
   private restorePorts(): void {
@@ -253,7 +271,7 @@ export class MidiControl {
     const s = this.store();
     // Boot restore is best-effort (a saved port may be unplugged right now); the
     // two opens are independent, so let them run concurrently. Not silent
-    // though: a saved port that no longer exists otherwise leaves the panel
+    // though: a saved port that no longer exists otherwise leaves the window
     // showing a controller that was never actually opened, and the operator only
     // finds out when a fader does nothing. The failure goes to the status line,
     // not a dialog — nothing was interrupted, it just did not come back.
@@ -272,7 +290,7 @@ export class MidiControl {
     } catch (err) {
       this.closeInput = null;
       this.inputPort = null;
-      this.hooks.onStatus(midiErrorStatus(err, t().midi.inputError));
+      this.say(midiErrorStatus(err, t().midi.inputError));
     }
   }
 
@@ -283,33 +301,32 @@ export class MidiControl {
       this.runFeedback(true); // align motor faders / LEDs with the plan at once
     } catch (err) {
       this.outputPort = null;
-      this.hooks.onStatus(midiErrorStatus(err, t().midi.outputError));
+      this.say(midiErrorStatus(err, t().midi.outputError));
     }
   }
 
   private async setInputPort(port: string | null): Promise<void> {
-    if (port) {
-      await this.openInput(port);
-      // A failed open (exclusive / unplugged port) left no input: put the
-      // select back on "none" so it does not keep showing a dead choice.
-      if (!this.inputPort) this.inSel.value = "";
-    } else {
+    if (port) await this.openInput(port);
+    else {
       this.closeInput?.();
       this.closeInput = null;
       this.inputPort = null;
     }
     this.savePorts();
+    // Push either way: a failed open (exclusive / unplugged port) left no input, and
+    // the window's select has to fall back to "none" rather than keep showing a dead
+    // choice. It renders from this state, so re-sending it is the correction.
+    this.pushState();
   }
 
   private async setOutputPort(port: string | null): Promise<void> {
-    if (port) {
-      await this.openOutput(port);
-      if (!this.outputPort) this.outSel.value = "";
-    } else {
+    if (port) await this.openOutput(port);
+    else {
       void midiCloseOutput();
       this.outputPort = null;
     }
     this.savePorts();
+    this.pushState();
   }
 
   // ---- feedback ----
@@ -337,7 +354,10 @@ export class MidiControl {
       this.learnFlushTimer = 0;
     }
     this.hooks.onLearnChanged();
-    this.updateLearnUi();
+    this.pushState();
+    // Turning learn on is one of the two moments the window's contents are the
+    // answer to what was just done, so bring it forward if it drifted behind.
+    if (on) this.raiseWindow();
   }
 
   private bumpLearnFlush(): void {
@@ -358,8 +378,13 @@ export class MidiControl {
     next.push({ control: id, addr, mode: "absolute" });
     this.applyMappings(next);
     this.hooks.onLearnChanged();
-    this.updateLearnUi();
-    this.hooks.onStatus(t().midi.bound(this.labelOf(id), addrLabel(addr)));
+    this.say(t().midi.bound(this.labelOf(id), addrLabel(addr)));
+    // Deliberately NOT raised here. Measured on macOS (2026-08-01): raising takes
+    // focus off the main window, and a click on a window that is not active does
+    // not reach the webview (`accept_first_mouse` defaults to false), so every
+    // binding after the first would have cost two clicks — one to activate, one to
+    // arm. Assigning a bank of controls is a run of gestures, and the confirmation
+    // is already on the status line of the window the operator is clicking in.
   }
 
   // ---- mappings ----
@@ -378,7 +403,7 @@ export class MidiControl {
     const s = this.store();
     s.models = { ...s.models, [this.hooks.getModel().id]: next };
     saveJson(STORE_KEY, s);
-    if (this.panel && !this.panel.hidden) this.renderList();
+    this.pushState();
     this.scheduleFeedback();
   }
 
@@ -391,11 +416,14 @@ export class MidiControl {
     saveJson(STORE_KEY, s);
   }
 
-  /** Human-readable control label: node label (model-fixed) + send target +
-   *  the console's own wording for the control ("CH 1 → MIX 1 · Level"). */
+  /** Human-readable control label: node label (model-fixed) + scope + the surface's
+   *  own wording for the control ("CH 1 → MIX 1 · Level", "CH 1 · GATE · Threshold").
+   *  The two scope kinds print differently because they mean different things — a
+   *  send target is where the signal goes, a processor is a stage of this node. */
   private labelOf(id: string): string {
     const parsed = parseControlId(id);
     if (!parsed) return id;
+    const m = t().midi;
     const nodes = this.hooks.getModel().nodes;
     const byId = (nid: string): DeviceNode | undefined => nodes.find((n) => n.id === nid);
     const self = byId(parsed.node);
@@ -404,265 +432,148 @@ export class MidiControl {
     // (attachTo) instead, so the assignment reads e.g. "CH 5/6 · DUCKER".
     const owner = self?.attachTo ? byId(self.attachTo) : self;
     const node = owner?.label ?? parsed.node;
-    const send = parsed.send ? ` → ${byId(parsed.send)?.label ?? parsed.send}` : "";
-    const param = t().midi.param[parsed.param as ControlParam] ?? parsed.param;
-    return `${node}${send} · ${param}`;
+    const target = parsed.scope ? byId(parsed.scope) : undefined;
+    const processor = parsed.scope !== undefined && target === undefined;
+    const scope = !parsed.scope ? "" : target ? ` → ${target.label}` : ` · ${m.scope[parsed.scope] ?? parsed.scope}`;
+    // Inside a processor scope a param is read on a tuning screen, which prints
+    // sentence-case labels; the console's own captions stay as they are.
+    const param =
+      (processor ? m.scopedParam[parsed.param] : undefined) ?? m.param[parsed.param as ControlParam] ?? parsed.param;
+    return `${node}${scope} · ${param}`;
   }
 
-  // ---- panel ----
+  // ---- the MIDI window ----
+  // The panel is a window of its own: it renders `MidiUiState` and reports intents
+  // (ui/midi-protocol.ts). Everything that decides what it shows stays here, where
+  // the engine, the ports and the plan are — the window never opens a port, because
+  // a port delivers its bursts to the window that opened it.
 
-  private buildPanel(): void {
-    const panel = el("div", "midi-panel");
-    panel.id = "midi-panel";
-    panel.hidden = true;
-
-    const head = el("div", "mp-head");
-    this.titleEl = el("span", "mp-title");
-    const close = el("button", "mp-close") as HTMLButtonElement;
-    close.type = "button";
-    close.textContent = "✕";
-    close.addEventListener("click", () => this.closePanel());
-    head.append(this.titleEl, close);
-
-    const ports = el("div", "mp-ports");
-    const inRow = el("label", "mp-port");
-    this.inLabel = el("span", "");
-    this.inSel = document.createElement("select");
-    this.inSel.className = "mp-in";
-    this.inSel.addEventListener("change", () => void this.setInputPort(this.inSel.value || null));
-    inRow.append(this.inLabel, this.inSel);
-    const outRow = el("label", "mp-port");
-    this.outLabel = el("span", "");
-    this.outSel = document.createElement("select");
-    this.outSel.className = "mp-out";
-    this.outSel.addEventListener("change", () => void this.setOutputPort(this.outSel.value || null));
-    outRow.append(this.outLabel, this.outSel);
-    ports.append(inRow, outRow);
-
-    const learnRow = el("div", "mp-learn");
-    this.learnBtn = el("button", "mp-learn-btn") as HTMLButtonElement;
-    this.learnBtn.type = "button";
-    this.learnBtn.addEventListener("click", () => this.setLearn(!this.learnOn));
-    this.hintEl = el("div", "mp-hint");
-    learnRow.append(this.learnBtn, this.hintEl);
-
-    this.listHead = el("div", "mp-listhead");
-    this.listEl = el("div", "mp-list");
-    // Option legend card: while a take-in / button select is hovered or
-    // focused, every option is listed here with a one-line behavior note (a
-    // native dropdown cannot annotate its own options). Floats anchored to the
-    // owning row (placeInfo); hidden when idle.
-    this.infoEl = el("div", "mp-info");
-    this.infoEl.hidden = true;
-    // Scrolling moves the rows out from under a shown card; hide it rather
-    // than track (the next hover re-anchors it).
-    this.listEl.addEventListener("scroll", () => this.hideInfo(), { passive: true });
-
-    panel.append(head, ports, learnRow, this.listHead, this.listEl, this.infoEl);
-    document.body.append(panel);
-    this.panel = panel;
-    this.applyPanelI18n();
-  }
-
-  private applyPanelI18n(): void {
-    const m = t().midi;
-    this.titleEl.textContent = m.title;
-    this.inLabel.textContent = m.input;
-    this.outLabel.textContent = m.output;
-    this.learnBtn.textContent = m.learn;
-    this.listHead.textContent = m.mappings;
-  }
-
-  private updateLearnUi(): void {
-    if (!this.panel) return;
-    const m = t().midi;
-    this.learnBtn.setAttribute("aria-pressed", String(this.learnOn));
-    this.learnBtn.classList.toggle("on", this.learnOn);
-    this.hintEl.textContent = !this.learnOn
-      ? m.hintIdle
-      : this.armed
-        ? m.hintArmed(this.labelOf(this.armed))
-        : m.hintLearn;
-  }
-
-  // Re-enumerate the ports (midir has no hot-plug events, so every panel open
-  // re-lists) and rebuild both selects around the current choice — which is kept
-  // selectable even when its device is currently unplugged.
-  private async refreshPorts(): Promise<void> {
-    const [ins, outs] = await Promise.all([midiListInputs().catch(() => []), midiListOutputs().catch(() => [])]);
-    fillPortSelect(this.inSel, ins, this.inputPort);
-    fillPortSelect(this.outSel, outs, this.outputPort);
-  }
-
-  private renderList(): void {
-    if (!this.panel) return;
-    const m = t().midi;
-    // Rebuilding detaches the selects, so a legend they were showing would
-    // never receive its blur/leave — clear it with them.
-    this.hideInfo();
-    this.listEl.replaceChildren();
-    // Gangs render contiguously (head then its members), so a member can drop
-    // the repeated address and just mark itself as linked to the row above.
-    const mappings = this.engine.getGangedMappings();
-    if (mappings.length === 0) {
-      const empty = el("div", "mp-empty");
-      empty.textContent = m.noMappings;
-      this.listEl.append(empty);
+  /** Device menu → MIDI control. Opens the window, or raises it when already up. */
+  toggleWindow(): void {
+    if (this.windowOpen) {
+      void closeMidiWindow().catch(() => {});
       return;
     }
-    for (const mapping of mappings) {
-      const linked = this.engine.isLinkedMember(mapping);
-      const row = el("div", linked ? "mp-row linked" : "mp-row");
-      row.dataset.control = mapping.control;
-      const label = this.labelOf(mapping.control);
-      const name = el("div", "mp-ctl");
-      name.textContent = label;
-      name.title = label; // the cell ellipsizes long names; hover shows the full one
-      // A gang member shares the head's physical control, so it carries no
-      // address of its own: the address slot shows a "Linked" marker instead of
-      // repeating it, which keeps the select column aligned across every row.
-      const addr = el("div", "mp-addr");
-      if (linked) {
-        addr.textContent = m.linked;
-        addr.title = `${m.linkedHint}\n${addrLabel(mapping.addr)}`;
-      } else {
-        addr.textContent = addrLabel(mapping.addr);
-      }
-      row.append(name, addr);
-      // The take-in mode applies to continuous controls only (toggles just fire).
-      const control = this.resolve(mapping.control);
-      if (control?.kind === "continuous") {
-        this.addChoice(
-          row,
-          "mp-mode",
-          TAKE_MODES,
-          mapping.mode,
-          () => ({ title: t().midi.modeTitle, who: label, label: t().midi.mode, desc: t().midi.modeDesc }),
-          (mode) => this.patchMapping(mapping, { mode }),
-        );
-      } else if (control?.kind === "toggle" && mapping.addr.type !== "pitchbend" && mapping.addr.type !== "cc14") {
-        // Button behavior, named after the sender's button type: Momentary
-        // (edge, the default — flip per press) or Toggle (state — the value is
-        // the state, for alternating senders like Stream Deck toggle buttons).
-        this.addChoice(
-          row,
-          "mp-btn",
-          BUTTON_MODES,
-          mapping.button ?? "edge",
-          () => ({
-            title: t().midi.buttonModeTitle,
-            who: label,
-            label: t().midi.buttonMode,
-            desc: t().midi.buttonModeDesc,
-          }),
-          (button) => this.patchMapping(mapping, { button }),
-        );
-      }
-      const del = el("button", "mp-del") as HTMLButtonElement;
-      del.type = "button";
-      del.textContent = "✕";
-      del.title = m.remove;
-      del.addEventListener("click", () => {
-        this.applyMappings(this.engine.getMappings().filter((x) => x !== mapping));
-        this.hooks.onLearnChanged(); // drop the mapped badge on the console
-      });
-      row.append(del);
-      this.listEl.append(row);
-    }
-  }
-
-  private patchMapping(mapping: MidiMapping, patch: Partial<MidiMapping>): void {
-    this.applyMappings(this.engine.getMappings().map((x) => (x === mapping ? { ...x, ...patch } : x)));
-  }
-
-  /** One mapping-option select: options from `values`, named/explained by the
-   *  `content` thunk (the i18n tables plus the setting name and the owning
-   *  assignment; a thunk, so a language switch between interactions
-   *  re-reads), the legend wired, a change handed to `onPick`. */
-  private addChoice<T extends string>(
-    row: HTMLElement,
-    cls: string,
-    values: readonly T[],
-    current: T,
-    content: () => { title: string; who: string; label: Record<T, string>; desc: Record<T, string> },
-    onPick: (v: T) => void,
-  ): void {
-    const sel = document.createElement("select");
-    sel.className = cls;
-    const c = content();
-    for (const value of values) {
-      const opt = document.createElement("option");
-      opt.value = value;
-      opt.textContent = c.label[value];
-      sel.append(opt);
-    }
-    sel.value = current;
-    sel.setAttribute("aria-label", `${c.title} — ${c.who}`);
-    sel.addEventListener("change", () => onPick(sel.value as T));
-    this.wireLegend(sel, row, values, content);
-    row.append(sel);
-  }
-
-  // ---- option legend ----
-
-  /** Show the legend card for one select: a header naming the setting and the
-   *  owning assignment, then every option with its behavior note, the
-   *  selected one highlighted. `content` is a thunk so a language switch
-   *  between interactions re-reads the active catalog. */
-  private wireLegend<T extends string>(
-    sel: HTMLSelectElement,
-    row: HTMLElement,
-    values: readonly T[],
-    content: () => { title: string; who: string; label: Record<T, string>; desc: Record<T, string> },
-  ): void {
-    const show = (): void => {
-      const c = content();
-      this.infoEl.replaceChildren();
-      const ph = el("div", "ph");
-      const cat = el("span", "cat");
-      cat.textContent = c.title;
-      const who = el("span", "who");
-      who.textContent = c.who;
-      ph.append(cat, who);
-      this.infoEl.append(ph);
-      for (const v of values) {
-        const ln = el("div", "ln" + (v === sel.value ? " cur" : ""));
-        const nm = el("span", "nm");
-        nm.textContent = c.label[v];
-        ln.append(nm, document.createTextNode(" — " + c.desc[v]));
-        this.infoEl.append(ln);
-      }
-      this.infoEl.hidden = false;
-      this.placeInfo(row);
-    };
-    const hide = (): void => this.hideInfo();
-    // No "change" handler: a change patches the mapping, which rebuilds the
-    // list (renderList) — the legend is cleared there, since blur/leave never
-    // fire on the detached select.
-    sel.addEventListener("focus", show);
-    sel.addEventListener("pointerenter", show);
-    sel.addEventListener("blur", hide);
-    sel.addEventListener("pointerleave", () => {
-      if (document.activeElement !== sel) hide();
+    void openMidiWindow(t().midi.title, this.store().window).catch((err: unknown) => {
+      this.hooks.onStatus(midiErrorStatus(err, t().midi.windowError));
     });
+    // `windowOpen` is set by the window's own "ready", not here: an open that failed
+    // must not leave this side believing there is a window to push state at.
   }
 
-  /** Anchor the legend card to the owning row: preferred directly below it,
-   *  flipped directly above when the viewport bottom is close (popTop) —
-   *  either way the row and its hovered select stay visible beside the card.
-   *  The width write precedes the height read: the card's wrap depends on it. */
-  private placeInfo(row: HTMLElement): void {
-    if (!this.panel) return;
-    const panelBox = this.panel.getBoundingClientRect();
-    const s = this.infoEl.style;
-    s.left = `${panelBox.left + 6}px`;
-    s.width = `${panelBox.width - 12}px`;
-    s.top = `${popTop(row.getBoundingClientRect(), this.infoEl.offsetHeight, 6)}px`;
+  /** Re-send the state after a language or theme switch, so the window follows the
+   *  app rather than staying on whatever it booted in. */
+  relocalize(): void {
+    this.pushState();
   }
 
-  private hideInfo(): void {
-    this.infoEl.hidden = true;
-    this.infoEl.replaceChildren();
+  private onIntent(payload: string): void {
+    const intent = parseRelay<MidiUiIntent>(payload);
+    if (!intent) return;
+    switch (intent.type) {
+      case "ready":
+        this.windowOpen = true;
+        this.pushState();
+        void this.refreshPorts();
+        return;
+      case "closed":
+        this.windowOpen = false;
+        // Learn is armed against a control in a window the operator can no longer
+        // see; leaving it on would swallow the next click on the console.
+        this.setLearn(false);
+        this.rememberGeometry();
+        return;
+      case "learn":
+        this.setLearn(intent.on);
+        return;
+      case "remove":
+        this.applyMappings(this.engine.getMappings().filter((x) => x.control !== intent.control));
+        this.hooks.onLearnChanged(); // drop the mapped dot on the arming surfaces
+        return;
+      case "mode":
+        this.patchMapping(intent.control, { mode: intent.mode });
+        return;
+      case "button":
+        this.patchMapping(intent.control, { button: intent.button });
+        return;
+      case "port":
+        void (intent.dir === "in" ? this.setInputPort(intent.name) : this.setOutputPort(intent.name));
+        return;
+      case "refreshPorts":
+        void this.refreshPorts();
+        return;
+    }
+  }
+
+  /** Push the whole state. Cheap enough to send in full on every change: the list is
+   *  tens of rows and the window rebuilds from it, so there is no diff to get wrong. */
+  private pushState(): void {
+    if (!this.windowOpen) return;
+    const state: MidiUiState = {
+      inputs: this.inputs,
+      outputs: this.outputs,
+      input: this.inputPort,
+      output: this.outputPort,
+      rows: this.engine.getGangedMappings().map((m) => {
+        const control = this.resolve(m.control);
+        const linked = this.engine.isLinkedMember(m);
+        return {
+          control: m.control,
+          label: this.labelOf(m.control),
+          // A gang member shares the head's physical control, so it carries no
+          // address of its own — the window prints its "Linked" marker instead.
+          ...(linked ? {} : { addr: addrLabel(m.addr) }),
+          // An unbindable id (a mapping saved for another model) still has to be
+          // listed and removable, so it falls back to the toggle column.
+          kind: control?.kind ?? "toggle",
+          ...(optionOf(control?.kind ?? "toggle", m) ? { option: optionOf(control?.kind ?? "toggle", m) } : {}),
+          mode: m.mode,
+          ...(m.button ? { button: m.button } : {}),
+          linked,
+        };
+      }),
+      learnOn: this.learnOn,
+      armed: this.armed ? this.labelOf(this.armed) : null,
+      status: this.status,
+      lang: getLang(),
+      theme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
+    };
+    void midiUiToWindow(JSON.stringify(state)).catch(() => {});
+  }
+
+  /** Raise the window, so one that drifted behind the app comes back. Called when
+   *  learn turns ON and nowhere else: that is the moment the operator is looking
+   *  here rather than at the board, and it is before the run of arming clicks
+   *  rather than in the middle of it (see `onLearned`). A window that is already
+   *  frontmost is unaffected. */
+  private raiseWindow(): void {
+    if (!this.windowOpen) return;
+    void focusMidiWindow().catch(() => {});
+  }
+
+  /** Remember where the operator put the window, so the next open lands there. */
+  private rememberGeometry(): void {
+    void midiWindowGeometry()
+      .then((g) => {
+        if (!g) return;
+        const s = this.store();
+        s.window = { x: g[0], y: g[1], width: g[2], height: g[3] };
+        saveJson(STORE_KEY, s);
+      })
+      .catch(() => {});
+  }
+
+  // Re-enumerate the ports (midir has no hot-plug events, so every open re-lists)
+  // and push them with the rest of the state.
+  private async refreshPorts(): Promise<void> {
+    const [ins, outs] = await Promise.all([midiListInputs().catch(() => []), midiListOutputs().catch(() => [])]);
+    this.inputs = ins;
+    this.outputs = outs;
+    this.pushState();
+  }
+
+  private patchMapping(control: string, patch: Partial<MidiMapping>): void {
+    this.applyMappings(this.engine.getMappings().map((x) => (x.control === control ? { ...x, ...patch } : x)));
   }
 }
 
@@ -683,20 +594,4 @@ function traceEnabled(): boolean {
   } catch {
     return false;
   }
-}
-
-function fillPortSelect(sel: HTMLSelectElement, ports: string[], current: string | null): void {
-  sel.replaceChildren();
-  const none = document.createElement("option");
-  none.value = "";
-  none.textContent = t().midi.portNone;
-  sel.append(none);
-  const names = current && !ports.includes(current) ? [...ports, current] : ports;
-  for (const name of names) {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    sel.append(opt);
-  }
-  sel.value = current ?? "";
 }

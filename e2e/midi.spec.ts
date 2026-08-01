@@ -4,6 +4,11 @@ import { test, expect, type Page } from "@playwright/test";
 // Tauri IPC bridge before the app boots: invoke() answers the boot-time queries,
 // captures the MIDI input channel (so the test can push messages into the app),
 // and records outgoing midi_send bytes (so feedback is observable).
+//
+// MIDI control is a second OS window, which is a second PAGE here. The stub is
+// installed on the context rather than the page so both get it, and the relay the
+// Rust side provides between the two webviews is faked over a BroadcastChannel —
+// which, like the real relay, never delivers a message back to its sender.
 
 declare global {
   interface Window {
@@ -12,6 +17,8 @@ declare global {
       inputPort: string | null;
       outputPort: string | null;
       sent: number[][];
+      /** Set once open_midi_window is invoked, so the menu entry is observable. */
+      windowOpened: boolean;
     };
   }
 }
@@ -27,44 +34,76 @@ const sendMidi = (page: Page, ...msgs: number[][]) =>
     window.__midiTest.inChannel!.onmessage(list.map((bytes) => ({ bytes })));
   }, msgs);
 
-const openPanel = async (page: Page) => {
+/** Open the MIDI control window from the Device menu and attach to it. The shell
+ *  command is stubbed, so the second page is opened here — the app's own state
+ *  reaches it over the faked relay exactly as it would over the real one. */
+const openMidiWindow = async (page: Page): Promise<Page> => {
   await page.click("#btn-device");
   await page.click("#btn-midi");
-  await expect(page.locator("#midi-panel")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__midiTest.windowOpened)).toBe(true);
+  const win = await page.context().newPage();
+  await win.goto("/midi.html");
+  await expect(win.locator("#midi-window")).toBeVisible();
+  // The window asks for state on boot; nothing it shows is its own.
+  await expect(win.locator(".mw-title")).toHaveText("MIDI CONTROL");
+  return win;
 };
 
-const pickInputPort = async (page: Page) => {
-  await expect(page.locator("#midi-panel .mp-in option")).toHaveCount(3); // None + Stub In + Broken In
-  await page.locator("#midi-panel .mp-in").selectOption("Stub In");
+const pickInputPort = async (page: Page, win: Page) => {
+  await expect(win.locator(".mw-in option")).toHaveCount(3); // None + Stub In + Broken In
+  await win.locator(".mw-in").selectOption("Stub In");
   await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
 };
 
-const pickOutputPort = async (page: Page) => {
-  await page.locator("#midi-panel .mp-out").selectOption("Stub Out");
+const pickOutputPort = async (page: Page, win: Page) => {
+  await win.locator(".mw-out").selectOption("Stub Out");
   await expect.poll(() => page.evaluate(() => window.__midiTest.outputPort)).toBe("Stub Out");
 };
 
-/** Learn one binding: arm `control` (a locator inside the console), then move
+const setLearn = async (page: Page, win: Page, on: boolean) => {
+  const btn = win.locator(".mw-learnbtn");
+  if ((await btn.getAttribute("aria-pressed")) !== String(on)) await btn.click();
+  if (on) await expect(page.locator("#console-host")).toHaveClass(/midi-learn/);
+};
+
+/** Learn one binding: arm a control (a locator inside the app window), then move
  *  the given MIDI control (two messages settle a plain CC without the flush timer). */
-const learnBinding = async (page: Page, arm: () => Promise<void>, ...msgs: number[][]) => {
-  const learnBtn = page.locator("#midi-panel .mp-learn-btn");
-  if ((await learnBtn.getAttribute("aria-pressed")) !== "true") await learnBtn.click();
-  await expect(page.locator("#console-host")).toHaveClass(/midi-learn/);
+const learnBinding = async (page: Page, win: Page, arm: () => Promise<void>, ...msgs: number[][]) => {
+  await setLearn(page, win, true);
   await arm();
   await sendMidi(page, ...msgs);
 };
 
+/** One assignment row in the MIDI window's table. */
+const mapRow = (win: Page, control: string) => win.locator(`.mw-list tr[data-control="${control}"]`);
+
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
+  await page.context().addInitScript(() => {
     localStorage.setItem("urx-lang", "en");
     localStorage.setItem("urx-theme", "dark");
     localStorage.setItem("urx-model", "URX44V");
     localStorage.setItem("urx-disclaimer-accepted", "1"); // skip the consent gate
-    const state: Window["__midiTest"] = { inChannel: null, inputPort: null, outputPort: null, sent: [] };
+    const state: Window["__midiTest"] = {
+      inChannel: null,
+      inputPort: null,
+      outputPort: null,
+      sent: [],
+      windowOpened: false,
+    };
     window.__midiTest = state;
     class Channel {
       onmessage: (data: unknown) => void = () => {};
     }
+    // The UI relay: each side registers a receiver, and a post reaches the other
+    // page only (BroadcastChannel does not echo to its sender, and neither does
+    // the Rust relay it stands in for).
+    let toMain: Channel | null = null;
+    let toWindow: Channel | null = null;
+    const relay = new BroadcastChannel("urx-midi-ui");
+    relay.onmessage = (e: MessageEvent<{ dir: string; payload: string }>) => {
+      if (e.data.dir === "main") toMain?.onmessage(e.data.payload);
+      else toWindow?.onmessage(e.data.payload);
+    };
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
       Channel,
       invoke: (cmd: string, args: Record<string, unknown>) => {
@@ -101,6 +140,39 @@ test.beforeEach(async ({ page }) => {
           case "midi_send":
             state.sent.push(args.bytes as number[]);
             return Promise.resolve();
+          // The window itself is opened by the test (Playwright drives the second
+          // page); the shell command only has to succeed and be observable.
+          // The shell owns the window's existence, which is why it survives a
+          // reload of THIS page: localStorage stands in for that, so
+          // midi_window_geometry can still answer "there is a window".
+          case "open_midi_window":
+            state.windowOpened = true;
+            localStorage.setItem("urx-test-midiwin", "1");
+            return Promise.resolve();
+          case "close_midi_window":
+            localStorage.removeItem("urx-test-midiwin");
+            return Promise.resolve();
+          case "focus_midi_window":
+            return Promise.resolve();
+          case "midi_window_geometry":
+            return Promise.resolve(localStorage.getItem("urx-test-midiwin") ? [0, 0, 440, 620] : null);
+          case "midi_ui_attach_main":
+            toMain = args.channel as Channel;
+            return Promise.resolve();
+          case "midi_ui_attach_window":
+            toWindow = args.channel as Channel;
+            return Promise.resolve();
+          case "midi_ui_to_main":
+            // The window going away is the shell's business too: once it is
+            // destroyed, get_webview_window answers None. Modelling that is what
+            // makes "reopen after a reload" and "still open across a reload" two
+            // different situations here, as they are in the app.
+            if (String(args.payload).includes('"closed"')) localStorage.removeItem("urx-test-midiwin");
+            relay.postMessage({ dir: "main", payload: args.payload });
+            return Promise.resolve();
+          case "midi_ui_to_window":
+            relay.postMessage({ dir: "window", payload: args.payload });
+            return Promise.resolve();
           // Minimal vd surface for the fetch feedback test: a matching device with
           // no firmware gate, every parameter read answering 0 (CH levels = 0.0 dB).
           case "vd_connect":
@@ -135,56 +207,46 @@ test("MIDI control is available without --experimental; only the self-test is ga
   await expect(page.locator("#btn-selftest")).toBeHidden();
 });
 
-test("the ✕ button closes the panel and drops learn mode", async ({ page }) => {
-  await openPanel(page);
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn on
+test("closing the MIDI window drops learn mode", async ({ page }) => {
+  const win = await openMidiWindow(page);
+  await setLearn(page, win, true);
   await expect(page.locator("#console-host")).toHaveClass(/midi-learn/);
-  // The panel class sets its own display, so [hidden] must still win (the
-  // global [hidden] rule): after ✕ the panel is gone, not just marked hidden.
-  await page.locator("#midi-panel .mp-close").click();
-  await expect(page.locator("#midi-panel")).toBeHidden();
+  // The window is an OS window: it goes away with its own chrome, and the app has
+  // to hear about it — a learn left armed would swallow the next console click.
+  await win.close();
   await expect(page.locator("#console-host")).not.toHaveClass(/midi-learn/);
-  // Reopening works too.
-  await openPanel(page);
-  await expect(page.locator("#midi-panel")).toBeVisible();
 });
 
-test("Escape dismisses the panel like an outside press", async ({ page }) => {
-  await openPanel(page);
-  await page.keyboard.press("Escape");
-  await expect(page.locator("#midi-panel")).toBeHidden();
-});
-
-test("a press outside the panel dismisses it, except while learn is on", async ({ page }) => {
-  await openPanel(page);
-  // Presses inside the panel keep it open.
-  await page.locator("#midi-panel .mp-title").click();
-  await expect(page.locator("#midi-panel")).toBeVisible();
-  // While learn is on, outside presses arm console controls instead of closing.
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn on
+test("a click on a console control arms instead of editing while learn is on", async ({ page }) => {
+  const win = await openMidiWindow(page);
+  const before = await readLevel(page, "CH 1").textContent();
+  await setLearn(page, win, true);
   await strip(page, "CH 1").locator(".con-fader").click();
-  await expect(page.locator("#midi-panel")).toBeVisible();
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
-  // With learn off an outside press closes the panel, and it can reopen.
-  await page.click("#btn-view-console");
-  await expect(page.locator("#midi-panel")).toBeHidden();
-  await openPanel(page);
+  // Armed, not moved: the window names what it is waiting for.
+  await expect(win.locator(".mw-hint")).toContainText("CH 1 · Level");
+  expect(await readLevel(page, "CH 1").textContent()).toBe(before);
 });
 
 test("learn binds a CC to a fader and incoming CC moves it", async ({ page }) => {
-  await openPanel(page);
-  await pickInputPort(page);
-  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
+  );
   // The binding lands in the assignment list, keyed by the console wording.
-  const row = page.locator('#midi-panel .mp-row[data-control="ch1/level"]');
+  const row = mapRow(win, "ch1/level");
   await expect(row).toBeVisible();
   await expect(row).toContainText("CH 1 · Level");
   await expect(row).toContainText("CH 1 CC 7");
   // The name cell ellipsizes long labels; the title carries the full wording.
-  await expect(row.locator(".mp-ctl")).toHaveAttribute("title", "CH 1 · Level");
+  await expect(row.locator(".mw-ctl")).toHaveAttribute("title", "CH 1 · Level");
   // Learn stays on for the next binding; the mapped control shows its dot.
   await expect(strip(page, "CH 1").locator(".con-fader")).toHaveClass(/midi-mapped/);
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  await setLearn(page, win, false);
 
   await sendMidi(page, [0xb0, 7, 127]);
   await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
@@ -196,14 +258,26 @@ test("one physical control can gang several console controls", async ({ page }) 
   // Assigning the same MIDI control to a second console control links them: one
   // CC drives both at once, and the later row is tagged as linked to the first
   // (which owns the feedback). Saves learning every send source individually.
-  await openPanel(page);
-  await pickInputPort(page);
-  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
-  await learnBinding(page, () => strip(page, "CH 2").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
+  );
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 2").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
+  );
+  await setLearn(page, win, false);
 
-  const head = page.locator('#midi-panel .mp-row[data-control="ch1/level"]');
-  const member = page.locator('#midi-panel .mp-row[data-control="ch2/level"]');
+  const head = mapRow(win, "ch1/level");
+  const member = mapRow(win, "ch2/level");
   // The head shows the shared MIDI address ("CH 1 CC 7" = MIDI channel 1, CC 7);
   // the member drops the repeated address for a "Linked" marker and is grouped
   // under the head (the .linked row class rails + indents it).
@@ -212,12 +286,12 @@ test("one physical control can gang several console controls", async ({ page }) 
   await expect(head).not.toHaveClass(/\blinked\b/);
   await expect(member).toContainText("CH 2 · Level");
   await expect(member).toHaveClass(/\blinked\b/);
-  await expect(member.locator(".mp-addr")).toHaveText("Linked");
+  await expect(member.locator(".mw-addr, .mw-linked")).toHaveText("Linked");
   await expect(member).not.toContainText("CC 7"); // no repeated code address
   // The reported bug: the marker must not shift the mode/behavior select column.
   // Head and member selects stay left-aligned.
-  const headSel = await head.locator(".mp-mode, .mp-btn").boundingBox();
-  const memberSel = await member.locator(".mp-mode, .mp-btn").boundingBox();
+  const headSel = await head.locator(".mw-mode, .mw-btn").boundingBox();
+  const memberSel = await member.locator(".mw-mode, .mw-btn").boundingBox();
   expect(memberSel!.x).toBeCloseTo(headSel!.x, 0);
 
   // One incoming CC moves both faders together.
@@ -230,12 +304,12 @@ test("one physical control can gang several console controls", async ({ page }) 
 });
 
 test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
-  await openPanel(page);
-  await pickInputPort(page);
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
   const muteChip = () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" });
-  await learnBinding(page, () => muteChip().click(), [0x90, 60, 127]); // a note binds on its first message
-  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/mute"]')).toContainText("CH 1 NOTE 60");
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  await learnBinding(page, win, () => muteChip().click(), [0x90, 60, 127]); // a note binds on its first message
+  await expect(mapRow(win, "ch1/mute")).toContainText("CH 1 NOTE 60");
+  await setLearn(page, win, false);
 
   await expect(muteChip()).not.toHaveClass(/\bon\b/);
   await sendMidi(page, [0x90, 60, 127]);
@@ -250,16 +324,16 @@ test("an incoming DUCKER toggle repaints the parent strip's chip in place", asyn
   // records the ducker node as dirty, and refreshStrip must retarget that to the
   // parent strip; otherwise the refs lookup misses and the chip stays stale until
   // a full re-render (switching GRAPH ↔ CONSOLE), which is exactly the reported bug.
-  await openPanel(page);
-  await pickInputPort(page);
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
   const duckChip = () => strip(page, "CH 5/6").getByRole("button", { name: "DUCKER" });
-  await learnBinding(page, () => duckChip().click(), [0x90, 62, 127]); // a note binds on its first message
-  const duckRow = page.locator('#midi-panel .mp-row[data-control="out.ducker1/duckerOn"]');
+  await learnBinding(page, win, () => duckChip().click(), [0x90, 62, 127]); // a note binds on its first message
+  const duckRow = mapRow(win, "out.ducker1/duckerOn");
   await expect(duckRow).toContainText("CH 1 NOTE 62");
   // A hung ducker names its parent channel (not the bare "Ducker"), so the
   // assignment says which channel the ducker belongs to.
-  await expect(duckRow.locator(".mp-ctl")).toHaveText("CH 5/6 · DUCKER");
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  await expect(duckRow.locator(".mw-ctl")).toHaveText("CH 5/6 · DUCKER");
+  await setLearn(page, win, false);
 
   // Still in CONSOLE view (no view switch): the chip must flip in place.
   await expect(duckChip()).not.toHaveClass(/\bon\b/);
@@ -270,26 +344,27 @@ test("an incoming DUCKER toggle repaints the parent strip's chip in place", asyn
 });
 
 test("the SENDS rack controls arm with send-scoped control ids", async ({ page }) => {
-  await openPanel(page);
-  await pickInputPort(page);
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
   const m1 = strip(page, "CH 1").locator(".con-scol", {
     has: page.getByRole("button", { name: "M1", exact: true }),
   });
   // The MIX 1 enable chip reuses the send-scoped mute id (old send-tab mappings work).
   await learnBinding(
     page,
+    win,
     () => m1.getByRole("button", { name: "M1", exact: true }).click(),
     [0xb0, 30, 100],
     [0xb0, 30, 101],
   );
-  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/mute@bus.mix1"]')).toBeVisible();
+  await expect(mapRow(win, "ch1/mute@bus.mix1")).toBeVisible();
   // The MIX 1 PRE button binds the send tap (a new toggle control).
-  await learnBinding(page, () => m1.locator(".con-slp").click(), [0x90, 61, 127]);
-  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/tap@bus.mix1"]')).toBeVisible();
+  await learnBinding(page, win, () => m1.locator(".con-slp").click(), [0x90, 61, 127]);
+  await expect(mapRow(win, "ch1/tap@bus.mix1")).toBeVisible();
   // The MIX 1 column fader binds the send level.
-  await learnBinding(page, () => m1.locator(".con-vfad").click(), [0xb0, 31, 100], [0xb0, 31, 101]);
-  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/level@bus.mix1"]')).toBeVisible();
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  await learnBinding(page, win, () => m1.locator(".con-vfad").click(), [0xb0, 31, 100], [0xb0, 31, 101]);
+  await expect(mapRow(win, "ch1/level@bus.mix1")).toBeVisible();
+  await setLearn(page, win, false);
 
   // The bound note flips the PRE tap on.
   const pre = m1.locator(".con-slp");
@@ -299,12 +374,12 @@ test("the SENDS rack controls arm with send-scoped control ids", async ({ page }
 });
 
 test("the scribble power LED arms the node master (chOn) and a note toggles it", async ({ page }) => {
-  await openPanel(page);
-  await pickInputPort(page);
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
   const power = () => strip(page, "CH 1").locator(".con-scribble.power");
-  await learnBinding(page, () => power().click(), [0x90, 62, 127]);
-  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/chOn"]')).toBeVisible();
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  await learnBinding(page, win, () => power().click(), [0x90, 62, 127]);
+  await expect(mapRow(win, "ch1/chOn")).toBeVisible();
+  await setLearn(page, win, false);
 
   await expect(power()).toHaveAttribute("aria-pressed", "true"); // CH_ON ships on
   await sendMidi(page, [0x90, 62, 127]);
@@ -314,9 +389,9 @@ test("the scribble power LED arms the node master (chOn) and a note toggles it",
 test("learn mode ignores a wheel over a fader so a stray scroll never edits it", async ({ page }) => {
   // The console fader/knob wheel handlers bail while learn is active, so scrolling
   // over an armable control neither edits its level nor consumes the arm gesture.
-  await openPanel(page);
-  await pickInputPort(page);
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn on
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
   await expect(page.locator("#console-host")).toHaveClass(/midi-learn/);
 
   const fader = strip(page, "CH 1").locator(".con-fader");
@@ -336,13 +411,13 @@ test("edge-mode MUTE flips on every CC press even with no release-to-0 between",
   // Regression for a Stream Deck "Push" button set to send 127 only (no 0 on
   // release, confirmed by a bus trace): edge mode must flip on every press, not
   // just the first — a rising-edge test would stick after the first press.
-  await openPanel(page);
-  await pickInputPort(page);
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
   const muteChip = () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" });
-  await learnBinding(page, () => muteChip().click(), [0xb0, 20, 127], [0xb0, 20, 127]);
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  await learnBinding(page, win, () => muteChip().click(), [0xb0, 20, 127], [0xb0, 20, 127]);
+  await setLearn(page, win, false);
   // Default button behavior is Momentary (edge).
-  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/mute"] .mp-btn')).toHaveValue("edge");
+  await expect(mapRow(win, "ch1/mute").locator(".mw-btn")).toHaveValue("edge");
 
   await expect(muteChip()).not.toHaveClass(/\bon\b/);
   await sendMidi(page, [0xb0, 20, 127]); // press 1
@@ -353,126 +428,88 @@ test("edge-mode MUTE flips on every CC press even with no release-to-0 between",
   await expect(muteChip()).toHaveClass(/\bon\b/);
 });
 
-test("assignment selects form an aligned column across rows", async ({ page }) => {
-  // Mode and button-behavior selects share a fixed width, so their left edges
-  // (and the address cells sitting against them) line up across rows.
-  await openPanel(page);
-  await pickInputPort(page);
-  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
+test("assignment rows form aligned columns whatever each row's option is", async ({ page }) => {
+  // A continuous row carries a take-in mode and a toggle row a button behavior —
+  // two vocabularies of different widths in one column. The table is what keeps
+  // them aligned, so the cells are pinned rather than the controls: a hand-built
+  // row (the old flex layout) needed a fixed select width to hold this, and lost
+  // it the moment a label grew.
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
   await learnBinding(
     page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
+  );
+  await learnBinding(
+    page,
+    win,
     () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" }).click(),
     [0x90, 60, 127],
   );
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  await setLearn(page, win, false);
 
-  const mode = await page.locator('#midi-panel .mp-row[data-control="ch1/level"] .mp-mode').boundingBox();
-  const btn = await page.locator('#midi-panel .mp-row[data-control="ch1/mute"] .mp-btn').boundingBox();
-  expect(mode!.width).toBeCloseTo(btn!.width, 0);
-  expect(mode!.x).toBeCloseTo(btn!.x, 0);
+  // Both rows first: the window renders from a relayed state push, and a column
+  // measured while the table still holds one row is measuring a different table.
+  await expect(win.locator(".mw-list tbody tr")).toHaveCount(2);
+  const optCell = async (control: string) => (await mapRow(win, control).locator("td.mw-opt").boundingBox())!;
+  const delCell = async (control: string) => (await mapRow(win, control).locator(".mw-del").boundingBox())!;
+  const level = await optCell("ch1/level");
+  const mute = await optCell("ch1/mute");
+  expect(level.x).toBeCloseTo(mute.x, 0);
+  expect(level.width).toBeCloseTo(mute.width, 0);
+  // And the delete button stays in its own column rather than being pushed by the
+  // wider of the two option labels.
+  expect((await delCell("ch1/level")).x).toBeCloseTo((await delCell("ch1/mute")).x, 0);
 });
 
-test("the option legend explains every choice of a hovered select", async ({ page }) => {
-  await openPanel(page);
-  await pickInputPort(page);
-  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
-
-  const info = page.locator("#midi-panel .mp-info");
-  await expect(info).toBeHidden();
-  const mode = page.locator('#midi-panel .mp-row[data-control="ch1/level"] .mp-mode');
-  await mode.focus();
-  await expect(info).toBeVisible();
-  await expect(info.locator(".ph .cat")).toHaveText("Take-in mode"); // header names the setting…
-  await expect(info.locator(".ph .who")).toHaveText("CH 1 · Level"); // …and the owning assignment
-  // The select announces the same setting + assignment composition on its own.
-  await expect(mode).toHaveAttribute("aria-label", "Take-in mode — CH 1 · Level");
-  await expect(info.locator(".ln")).toHaveCount(2); // one note per take-in mode (absolute / pickup)
-  await expect(info.locator(".ln.cur .nm")).toHaveText("Absolute"); // current choice highlighted
-  await mode.blur();
-  await expect(info).toBeHidden();
-  // Changing the mode rebuilds the row; the legend never lingers detached.
-  await mode.selectOption("pickup");
-  await expect(info).toBeHidden();
-});
-
-test("the option legend floats beside its row and never hides the hovered select", async ({ page }) => {
-  // Seed enough assignments that the panel hits its max height — the regression
-  // ground: an in-flow legend shrank the scrolling list and flickered with the
-  // hover it depends on; a panel-bottom overlay covered the hovered select.
-  await page.evaluate(() => {
-    const mappings: Array<{ control: string }> = [];
-    for (const ch of ["ch1", "ch2"]) {
-      mappings.push({ control: `${ch}/level` }, { control: `${ch}/mute` });
-      for (const send of ["bus.mix1", "bus.mix2", "bus.fx1", "bus.fx2"]) {
-        mappings.push({ control: `${ch}/level@${send}` }, { control: `${ch}/mute@${send}` });
-      }
-    }
-    mappings.push({ control: "ch3/level" }, { control: "ch4/mute" });
-    const models = {
-      URX44V: mappings.map((m, i) => ({ ...m, addr: { type: "cc", channel: 0, controller: i + 1 }, mode: "absolute" })),
-    };
-    localStorage.setItem("urx-midi", JSON.stringify({ models }));
-  });
-  await page.reload();
-  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
-  await openPanel(page);
-
-  const rows = page.locator("#midi-panel .mp-row");
-  await expect(rows).toHaveCount(22);
-  // The regression needs a list that already scrolls inside the panel.
-  const list = page.locator("#midi-panel .mp-list");
-  expect(await list.evaluate((e) => e.scrollHeight > e.clientHeight)).toBe(true);
-  const info = page.locator("#midi-panel .mp-info");
-
-  // Bottom row: no room below in the viewport, so the card flips above the row.
-  const lastSel = rows.last().locator(".mp-btn");
-  await lastSel.scrollIntoViewIfNeeded();
-  const selBox = (await lastSel.boundingBox())!;
-  const lastRowBox = (await rows.last().boundingBox())!;
-  await lastSel.hover();
-  await expect(info).toBeVisible();
-  const above = (await info.boundingBox())!;
-  expect(above.y + above.height).toBeLessThanOrEqual(lastRowBox.y + 1);
-  // The select neither moves nor loses the pointer to the card, so the card
-  // holds steady instead of toggling with the hover that shows it.
-  expect(await lastSel.boundingBox()).toEqual(selBox);
-  const hit = await page.evaluate(
-    ([x, y]) => (document.elementFromPoint(x, y) as HTMLElement | null)?.className ?? "",
-    [selBox.x + selBox.width / 2, selBox.y + selBox.height / 2] as const,
+test("every assignment row prints its control, address and behavior", async ({ page }) => {
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
   );
-  expect(hit).toContain("mp-btn");
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" }).click(),
+    [0x90, 60, 127],
+  );
+  await setLearn(page, win, false);
 
-  // Top row: room below, so the card sits directly under its row.
-  const firstSel = rows.first().locator(".mp-mode");
-  await firstSel.scrollIntoViewIfNeeded();
-  const firstRowBox = (await rows.first().boundingBox())!;
-  await firstSel.hover();
-  await expect(info).toBeVisible();
-  const below = (await info.boundingBox())!;
-  expect(below.y).toBeGreaterThanOrEqual(firstRowBox.y + firstRowBox.height - 1);
-
-  // Scrolling the list moves the rows out from under the card: it hides.
-  await list.evaluate((e) => e.scrollBy(0, 40));
-  await expect(info).toBeHidden();
+  // The name is not ellipsized away: the window is where the operator reads what
+  // is bound to what, so the whole control name is in the cell.
+  const level = mapRow(win, "ch1/level");
+  await expect(level.locator(".mw-ctl")).toHaveText("CH 1 · Level");
+  await expect(level.locator(".mw-addr")).toHaveText("CH 1 CC 7");
+  await expect(level.locator(".mw-mode")).toBeVisible(); // continuous → take-in mode
+  const mute = mapRow(win, "ch1/mute");
+  await expect(mute.locator(".mw-addr")).toHaveText("CH 1 NOTE 60");
+  await expect(mute.locator(".mw-btn")).toBeVisible(); // toggle → button behavior
 });
 
 test("a follow-value toggle responds to every press of an alternating button", async ({ page }) => {
   // Stream Deck style: the MIDI plugin's toggle button sends one CC per press,
   // alternating 127 / 0. Default edge mode flips on the 127 presses only; the
   // per-mapping "Follow value" behavior must respond to every press.
-  await openPanel(page);
-  await pickInputPort(page);
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
   const muteChip = () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" });
-  await learnBinding(page, () => muteChip().click(), [0xb0, 20, 127], [0xb0, 20, 127]);
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  await learnBinding(page, win, () => muteChip().click(), [0xb0, 20, 127], [0xb0, 20, 127]);
+  await setLearn(page, win, false);
 
-  const row = page.locator('#midi-panel .mp-row[data-control="ch1/mute"]');
+  const row = mapRow(win, "ch1/mute");
   // The labels name the SENDER's button type (what the user reads on the
   // Stream Deck side): edge = "Momentary", state = "Toggle".
-  await expect(row.locator('.mp-btn option[value="edge"]')).toHaveText("Momentary");
-  await expect(row.locator('.mp-btn option[value="state"]')).toHaveText("Toggle");
-  await row.locator(".mp-btn").selectOption("state");
+  await expect(row.locator('.mw-btn option[value="edge"]')).toHaveText("Momentary");
+  await expect(row.locator('.mw-btn option[value="state"]')).toHaveText("Toggle");
+  await row.locator(".mw-btn").selectOption("state");
   await sendMidi(page, [0xb0, 20, 127]);
   await expect(muteChip()).toHaveClass(/\bon\b/); // 127 = muted
   await sendMidi(page, [0xb0, 20, 0]);
@@ -482,13 +519,13 @@ test("a follow-value toggle responds to every press of an alternating button", a
 });
 
 test("feedback follows UI edits out of the output port", async ({ page }) => {
-  await openPanel(page);
-  await pickInputPort(page);
-  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 64], [0xb0, 7, 65]);
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await learnBinding(page, win, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 64], [0xb0, 7, 65]);
+  await setLearn(page, win, false);
 
   // Opening the output resyncs every binding to the current plan value.
-  await pickOutputPort(page);
+  await pickOutputPort(page, win);
   await expect.poll(() => page.evaluate(() => window.__midiTest.sent.length)).toBeGreaterThan(0);
   const synced = await page.evaluate(() => window.__midiTest.sent.at(-1));
   expect(synced?.[0]).toBe(0xb0);
@@ -506,12 +543,12 @@ test("a toggle ignores the echo of its own feedback", async ({ page }) => {
   // A controller that reflects feedback back (a shared virtual MIDI bus, or a
   // plugin that re-sends its state when feedback changes it) returns the value
   // just sent; the mute must stay put instead of flipping straight back.
-  await openPanel(page);
-  await pickInputPort(page);
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
   const muteChip = () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" });
-  await learnBinding(page, () => muteChip().click(), [0xb0, 20, 127], [0xb0, 20, 127]);
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
-  await pickOutputPort(page);
+  await learnBinding(page, win, () => muteChip().click(), [0xb0, 20, 127], [0xb0, 20, 127]);
+  await setLearn(page, win, false);
+  await pickOutputPort(page, win);
 
   await muteChip().click(); // mute via the UI
   await expect(muteChip()).toHaveClass(/\bon\b/);
@@ -529,11 +566,11 @@ test("feedback follows a device fetch out of the output port", async ({ page }) 
   // A fetch readback rewrites the plan without markChanged, so it must push the
   // fetched values to the controller itself — otherwise the next touch of the
   // physical control would send the stale value back and overwrite the plan.
-  await openPanel(page);
-  await pickInputPort(page);
-  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 64], [0xb0, 7, 65]);
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
-  await pickOutputPort(page);
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await learnBinding(page, win, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 64], [0xb0, 7, 65]);
+  await setLearn(page, win, false);
+  await pickOutputPort(page, win);
 
   // Park the fader at -∞ so the stubbed readback (every read = 0 → 0.0 dB) is a
   // real change, and drain the port-open resync + the edit's own feedback before
@@ -554,19 +591,32 @@ test("feedback follows a device fetch out of the output port", async ({ page }) 
 });
 
 test("assignments and the port choice survive a reload", async ({ page }) => {
-  await openPanel(page);
-  await pickInputPort(page);
-  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
+  );
+
+  // Closed first, so this is about what localStorage carries across a restart. A
+  // window left OPEN across the reload is a different situation — the app finds it
+  // still there and speaks to it again (see the reattach test below).
+  await setLearn(page, win, false);
+  await win.close();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("urx-test-midiwin"))).toBeNull();
 
   await page.reload();
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
-  // The saved input port reopens on boot, without touching the panel.
+  // The saved input port reopens on boot, without touching the MIDI window.
   await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
   await page.click("#btn-view-console");
   await sendMidi(page, [0xb0, 7, 127]);
   await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
-  await openPanel(page);
-  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/level"]')).toBeVisible();
+  const reopened = await openMidiWindow(page);
+  await expect(mapRow(reopened, "ch1/level")).toBeVisible();
 });
 
 test("an open SEND PAN popover follows an incoming mapped pan CC", async ({ page }) => {
@@ -574,14 +624,15 @@ test("an open SEND PAN popover follows an incoming mapped pan CC", async ({ page
   // swap the strip without touching an open SEND PAN popover — the knob kept its
   // stale value and the fresh PAN ▾ button came up unmarked (no .open) while the
   // popover stayed on screen.
-  await openPanel(page);
-  await pickInputPort(page);
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
   const panBtn = () => strip(page, "CH 1").locator(".con-panbtn");
   const pop = page.locator(".con-spop");
   const mix1 = () => pop.locator(".pcol", { hasText: "MIX 1" });
   // The pan knob lives inside the popover, so open it under learn to arm it.
   await learnBinding(
     page,
+    win,
     async () => {
       await panBtn().click();
       await mix1().locator(".con-knob").click();
@@ -589,8 +640,8 @@ test("an open SEND PAN popover follows an incoming mapped pan CC", async ({ page
     [0xb0, 21, 60],
     [0xb0, 21, 61],
   );
-  await expect(page.locator('#midi-panel .mp-row[data-control="ch1/pan@bus.mix1"]')).toBeVisible();
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off (the press also closes the popover)
+  await expect(mapRow(win, "ch1/pan@bus.mix1")).toBeVisible();
+  await setLearn(page, win, false);
 
   await panBtn().click(); // reopen the popover, then push an external pan edit
   await expect(pop).toBeVisible();
@@ -608,9 +659,9 @@ test("switching the model cancels an armed learn instead of persisting a dead ma
   // While learn is on the panel ignores outside presses, so the toolbar model
   // picker stays reachable; committing the old model's armed id after the
   // switch would store a mapping under the new model's key that may never bind.
-  await openPanel(page);
-  await pickInputPort(page);
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn on
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
   const fader = strip(page, "CH 1").locator(".con-fader");
   await fader.click(); // armed
   await expect(fader).toHaveClass(/midi-armed/);
@@ -619,39 +670,138 @@ test("switching the model cancels an armed learn instead of persisting a dead ma
   await expect(page.locator("#model-picker")).toHaveValue("URX22");
   // The switch dropped learn mode and the armed control with it.
   await expect(page.locator("#console-host")).not.toHaveClass(/midi-learn/);
-  await expect(page.locator("#midi-panel .mp-learn-btn")).toHaveAttribute("aria-pressed", "false");
+  await expect(win.locator(".mw-learnbtn")).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator(".midi-armed")).toHaveCount(0);
   // The messages that would have completed the learn create no mapping.
   await sendMidi(page, [0xb0, 7, 100], [0xb0, 7, 101]);
-  await expect(page.locator("#midi-panel .mp-empty")).toBeVisible();
-  await expect(page.locator("#midi-panel .mp-row")).toHaveCount(0);
+  await expect(win.locator(".mw-empty")).toBeVisible();
+  await expect(win.locator(".mw-list tbody tr")).toHaveCount(0);
 });
 
 test("a port that fails to open reverts its select to none and reports the error", async ({ page }) => {
   // The stub's "Broken" ports reject midi_open_* (an exclusive port held by
   // another app); the select must fall back to "none" instead of keeping a
   // choice that is not actually open.
-  await openPanel(page);
-  await page.locator("#midi-panel .mp-in").selectOption("Broken In");
+  const win = await openMidiWindow(page);
+  await win.locator(".mw-in").selectOption("Broken In");
   await expect(page.locator("#statusbar")).toContainText("MIDI input error");
-  await expect(page.locator("#midi-panel .mp-in")).toHaveValue("");
+  await expect(win.locator(".mw-in")).toHaveValue("");
   expect(await page.evaluate(() => window.__midiTest.inputPort)).toBe(null);
-  await page.locator("#midi-panel .mp-out").selectOption("Broken Out");
+  await win.locator(".mw-out").selectOption("Broken Out");
   await expect(page.locator("#statusbar")).toContainText("MIDI output error");
-  await expect(page.locator("#midi-panel .mp-out")).toHaveValue("");
+  await expect(win.locator(".mw-out")).toHaveValue("");
   // A working port still opens normally afterwards.
-  await pickInputPort(page);
+  await pickInputPort(page, win);
 });
 
 test("removing an assignment stops the control from responding", async ({ page }) => {
-  await openPanel(page);
-  await pickInputPort(page);
-  await learnBinding(page, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 100], [0xb0, 7, 101]);
-  await page.locator("#midi-panel .mp-learn-btn").click(); // learn off
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
+  );
+  await setLearn(page, win, false);
 
   const before = await readLevel(page, "CH 1").textContent();
-  await page.locator('#midi-panel .mp-row[data-control="ch1/level"] .mp-del').click();
-  await expect(page.locator("#midi-panel .mp-empty")).toBeVisible();
+  await mapRow(win, "ch1/level").locator(".mw-del").click();
+  await expect(win.locator(".mw-empty")).toBeVisible();
   await sendMidi(page, [0xb0, 7, 127]);
   await expect(readLevel(page, "CH 1")).toHaveText(before ?? "");
+});
+
+test("a tuning screen's controls arm under processor and band scopes", async ({ page }) => {
+  // The tuning screens are the second arming surface. Their ids carry a scope —
+  // a node has one fader but three thresholds — and a band binds to THAT band,
+  // not to whichever the screen's bar happens to have selected.
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
+
+  // GATE, opened from the CONSOLE strip. The opener still opens while learn is on.
+  await strip(page, "CH 1").locator(".con-chip-open").first().click();
+  const box = page.locator("#dyn-screen-box");
+  await expect(box).toBeVisible();
+  const row = (label: string) => box.locator(".prefs-row").filter({ has: page.getByText(label, { exact: true }) });
+  await row("Threshold").locator(".ctl").click();
+  await expect(win.locator(".mw-hint")).toContainText("CH 1 · GATE · Threshold");
+  await sendMidi(page, [0xb0, 40, 100], [0xb0, 40, 101]);
+  await expect(mapRow(win, "ch1/threshold@gate")).toBeVisible();
+  await expect(mapRow(win, "ch1/threshold@gate").locator(".mw-ctl")).toHaveText("CH 1 · GATE · Threshold");
+
+  // An incoming value moves the screen's own slider, on the field table's grid.
+  await setLearn(page, win, false);
+  await sendMidi(page, [0xb0, 40, 0], [0xb0, 40, 0]);
+  await expect(row("Threshold").locator(".gt-val")).toHaveText("-72.0 dB");
+  await box.locator(".consent-btn-primary").click();
+});
+
+test("an EQ band binds to that band, not to the selected one", async ({ page }) => {
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
+
+  await page.click("#btn-view-graph");
+  await page.locator('#graph-host g.node[data-id="ch1"]').click();
+  const sec = page.locator("#inspector .insp-section", { has: page.locator("#btn-eq-screen") });
+  if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
+  await sec.locator("#btn-eq-screen").click();
+  const box = page.locator("#dyn-screen-box");
+  const row = (label: string) => box.locator(".prefs-row").filter({ has: page.getByText(label, { exact: true }) });
+
+  // LOW is selected on open and ships as a shelf. The enum row has no control at
+  // all, and Q is locked because a shelf does not read it — neither is offered.
+  await expect(row("Type").locator(".midi-target")).toHaveCount(0);
+  await expect(row("Q").locator(".midi-target")).toHaveCount(0);
+  await expect(row("Gain").locator(".midi-target")).toHaveCount(1);
+
+  await row("Gain").locator(".ctl").click();
+  await sendMidi(page, [0xb0, 41, 100], [0xb0, 41, 101]);
+  await expect(mapRow(win, "ch1/gain@eq.low")).toBeVisible();
+  await expect(mapRow(win, "ch1/gain@eq.low").locator(".mw-ctl")).toHaveText("CH 1 · EQ LOW · Gain");
+
+  // HIGH MID is fixed peaking, which does read Q — the lock follows the type, not
+  // the row. Its gain binds under its own scope, leaving LOW's binding alone.
+  await box.locator("#dyn-band-highmid").click();
+  await expect(row("Q").locator(".midi-target")).toHaveCount(1);
+  await row("Gain").locator(".ctl").click();
+  await sendMidi(page, [0xb0, 42, 100], [0xb0, 42, 101]);
+  await expect(mapRow(win, "ch1/gain@eq.highMid")).toBeVisible();
+  await expect(mapRow(win, "ch1/gain@eq.low")).toBeVisible();
+});
+
+test("a MIDI window that outlives a reload of the app is spoken to again", async ({ page }) => {
+  // The window announces itself with "ready" on ITS boot, not on the app's. Reload
+  // the app with the window still up and nothing would make it speak again, so the
+  // app asks the shell whether a window is there and pushes its state at it —
+  // otherwise the window sits holding the previous session's list.
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
+  );
+  await setLearn(page, win, false);
+  await expect(mapRow(win, "ch1/level")).toBeVisible();
+
+  await page.reload();
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  // Same window object, never reloaded: what it shows now came from the new session.
+  await expect(win.locator(".mw-in")).toHaveValue("Stub In");
+  await expect(mapRow(win, "ch1/level")).toBeVisible();
+  // And it still drives the app: learn from the surviving window binds a second one.
+  await page.click("#btn-view-console");
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" }).click(),
+    [0x90, 60, 127],
+  );
+  await expect(mapRow(win, "ch1/mute")).toBeVisible();
 });

@@ -44,11 +44,11 @@ export function scrubFloat(v: number): number {
 // Capture phase, like the toolbar menus — console / graph handlers may stop
 // propagation, but a dismissal gesture must still reach the overlay. `keep`
 // names the press targets that must not dismiss (the overlay itself and its
-// toggle button); `inert` pauses dismissal without detaching (MIDI learn). The
-// Preferences update-check lock instead rides its requestClose choke point, not
-// `inert`. Shared by the MIDI panel, the Preferences and Device setup
-// modals and the licenses modal so the phase/lifecycle contract lives in one place; attach on open,
-// detach on close.
+// toggle button); `inert` pauses dismissal without detaching (the Device setup
+// modal, while an apply is in flight). The Preferences update-check lock instead
+// rides its requestClose choke point, not `inert`. Shared by the Preferences and
+// Device setup modals, the licenses modal and the channel tuning screen so the
+// phase/lifecycle contract lives in one place; attach on open, detach on close.
 export function wireDismiss(opts: { keep: (target: Node) => boolean; inert?: () => boolean; close: () => void }): {
   attach: () => void;
   detach: () => void;
@@ -78,16 +78,22 @@ export function wireDismiss(opts: { keep: (target: Node) => boolean; inert?: () 
 // updates the readout and reports the change. Shared by the inspector's sliders,
 // the Device setup brightness row and the gate screen's parameter rows — every
 // range input in the app steps by the wheel-step preference, or none should.
-export function wheelStep(slider: HTMLInputElement): void {
-  onWheelStep(slider, (dir) => {
-    const step = Number(slider.step) || 1;
-    const lo = Number(slider.min);
-    const hi = Number(slider.max);
-    const next = Math.min(hi, Math.max(lo, scrubFloat(Number(slider.value) + dir * step)));
-    if (next === Number(slider.value)) return;
-    slider.value = String(next);
-    slider.dispatchEvent(new Event("input"));
-  });
+// `blocked` short-circuits the notch (the tuning screens pass MIDI learn, where a
+// stray scroll would move the value being assigned).
+export function wheelStep(slider: HTMLInputElement, blocked?: () => boolean | undefined): void {
+  onWheelStep(
+    slider,
+    (dir) => {
+      const step = Number(slider.step) || 1;
+      const lo = Number(slider.min);
+      const hi = Number(slider.max);
+      const next = Math.min(hi, Math.max(lo, scrubFloat(Number(slider.value) + dir * step)));
+      if (next === Number(slider.value)) return;
+      slider.value = String(next);
+      slider.dispatchEvent(new Event("input"));
+    },
+    blocked,
+  );
 }
 
 // Vertical placement for a floating popover: `gap` px below the anchor rect,
