@@ -1264,10 +1264,20 @@ inspectorHost.addEventListener(
 // kana) would commit its interim characters as literal text and restart it — once per
 // device-driven reflect, ~20 Hz through a knob sweep. Held until the composition ends,
 // then run once.
-const inspectorComposition = compositionGate(inspectorHost, () => refreshInspector());
+// The deferred run takes the UNGATED rebuild: the gate has already cleared `composing` by
+// the time it fires, so routing it back through refreshInspector would only re-ask a
+// question it just answered.
+const inspectorComposition = compositionGate(inspectorHost, () => rebuildInspector());
 
 function refreshInspector(): void {
   if (inspectorComposition.held()) return;
+  rebuildInspector();
+}
+
+// The rebuild itself, with no gate in front of it. Split out for the gate's own deferred
+// run above, and for the dev keyboard harness, which drives the gated and ungated arms of
+// the IME measurement side by side (ui/keyprobe.ts).
+function rebuildInspector(): void {
   // On mobile the inspector is a bottom sheet that slides up only while something
   // is selected; this flag drives that state (no effect on the desktop panel).
   document.body.classList.toggle("has-selection", selection !== null);
@@ -3080,7 +3090,19 @@ setStatus(t().status.loaded(modelId));
 // Keyboard measurement harness (ui/keyprobe.ts), dev builds only. Installed here,
 // after the keydown handler above, so its chord log can report whether the app had
 // already claimed the chord. The branch is statically dropped from a production build.
-if (import.meta.env.DEV) installKeyProbe({ onReport: setStatus });
+if (import.meta.env.DEV)
+  installKeyProbe({
+    onReport: setStatus,
+    // The two arms of the IME measurement: the panel repaint as the app runs it (the
+    // composition gate decides), and the same repaint with no gate in front of it — the
+    // behaviour the gate replaced. The host supplies both because neither is reachable
+    // from a module the harness can import, and `pulseMs` so the harness fires at the
+    // rate a real device sweep produces rather than at a number of its own.
+    refreshInspector,
+    rebuildInspector,
+    inspectorHost,
+    pulseMs: REFLECT_MIN_MS,
+  });
 
 // Deep-link entry: a `?plan=<base64url-json>` parameter loads a plan straight
 // into the viewer (a generator emits a shareable URL). A decode failure or a

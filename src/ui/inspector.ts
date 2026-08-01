@@ -218,15 +218,33 @@ export function inspectorNodes(selection: Selection): string[] {
 }
 
 /** The gate a rebuild of `host` asks before running, so it cannot land inside an IME
- *  composition. `replaceChildren` ends one: the interim characters are committed as
- *  literal text and composition restarts on the rebuilt field — and a device-driven
- *  reflect repaints this panel at ~20 Hz while a knob is being swept, so a node name
- *  typed through an IME while the unit is being touched arrives shredded. A rebuild
- *  asked for while a composition is in flight is remembered and run once it ends,
- *  rather than dropped: the plan has already changed and the panel would otherwise keep
- *  showing the value before it. The composition events bubble, so the host keeps
- *  listening across every rebuild; `focusout` is the backstop for a field that goes
- *  away without a compositionend of its own. */
+ *  composition. `replaceChildren` destroys one — measured in the real WKWebView, with the
+ *  panel repainted at the 20 Hz a device-driven reflect produces (ui/keyprobe.ts, F4):
+ *  typing `nihonngo` into a node name produced `nいhおnngお` and EIGHT compositionstarts
+ *  for eight keystrokes. Not "the interim kana are committed and composition restarts":
+ *  the romaji buffer that spans keystrokes goes with the element, so a consonant that had
+ *  no vowel yet lands as literal ASCII and only a bare vowel survives as kana. Focus and
+ *  caret are not the problem — they are carried across the rebuild and every character
+ *  landed in the right place. A rebuild asked for while a composition is in flight is
+ *  remembered and run once it ends, rather than dropped: the plan has already changed and
+ *  the panel would otherwise keep showing the value before it. Same repaint rate through
+ *  this gate: one compositionstart, one compositionend, `日本語` intact, 67 of 397
+ *  repaints held.
+ *
+ *  Confirmed on the device path itself, which is what the synthetic repaint stands in
+ *  for: sweeping CH 1's A.Gain (`HA_GAIN`, a direct follow) with the channel selected
+ *  repaints this panel 6 times. With a composition open, all 6 are held and exactly ONE
+ *  runs — at the commit — and the name arrives whole.
+ *
+ *  The composition events bubble, so the host keeps listening across every rebuild.
+ *  `focusout` backstops a field that loses FOCUS — not one that is removed: the same
+ *  measurement recorded zero compositionend AND zero focusout at the host across 349
+ *  rebuilds that took the composing field away. Whether WebKit fires neither, or fires
+ *  them at a node already detached, is the same thing to a listener here. So nothing
+ *  releases the gate if the composing field is removed by some other path, and what makes
+ *  that unreachable is that `renderInspector` has exactly ONE call site and it is behind
+ *  this gate. A second one would latch `composing` for the rest of the session and the
+ *  panel would silently stop updating. */
 export function compositionGate(host: HTMLElement, rebuild: () => void): { held: () => boolean } {
   let composing = false;
   let pending = false;
