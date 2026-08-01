@@ -604,8 +604,7 @@ export const en = {
     selfTestRunning: "Running device self-test… do not disconnect (use the menu again to cancel)",
     selfTestCancelled: "Self-test canceled — device left silent; fetch again to restore your state",
     selfTestPass: (n: number): string => `Self-test passed: ${n} params written and read back identically`,
-    selfTestFail: (n: number): string =>
-      `Self-test FAILED: ${n} param${n === 1 ? "" : "s"} did not match after write (see console)`,
+    selfTestFail: (n: number): string => `Self-test FAILED: ${n} param${n === 1 ? "" : "s"} did not match after write`,
     selfTestRestoreFail: "Self-test: device may not be restored — fetch again to check",
     selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
       `Self-test guesses: ${confirmed} confirmed, ${refuted} refuted, ${untestable} untestable`,
@@ -669,6 +668,8 @@ export const en = {
       "Run the device self-test? It briefly overwrites every parameter to verify writes, then restores the original state. Outputs stay muted throughout (faders floored, oscillator and phantom off).",
     selfTestExport:
       "This model has unconfirmed parameter mappings. Save the self-test report so it can be sent back to confirm them?",
+    selfTestFailExport:
+      "The self-test found problems. Save a report listing every parameter that did not match and every read or write that failed?",
     deviceErrorExport: "Some parameters could not be read or written. Save a report listing each failure?",
     importSettings: (name: string, model: string): string =>
       `Import ${name} onto the current ${model} plan? A settings file does not say which unit it came from, so check that ${model} is the right model. Layout, hidden nodes, and notes are kept — the file carries no editing state.`,
