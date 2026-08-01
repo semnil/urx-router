@@ -145,11 +145,25 @@ fn experimental_enabled() -> bool {
     std::env::args().any(|a| a == "--experimental")
 }
 
+// A launch flag that names a one-shot ACTION rather than a capability, consumed by
+// the first caller. The frontend asks on every page load, and a webview reload is a
+// page load — in `tauri dev` an HMR edit is one — so reading argv each time re-armed
+// the action. Measured: nine reloads during an editing session started nine device
+// self-tests on the connected unit, each abandoning the previous run's Rust callbacks
+// mid-flight, and the last one was still sweeping when the process was killed, so it
+// never reached its restore and left the unit holding a perturbed (silent) state in
+// place of the operator's settings. `experimental_enabled` is deliberately NOT one of
+// these: it gates what the UI offers, which every page load has to ask about again.
+fn take_launch_action(taken: &std::sync::atomic::AtomicBool, arg: &str) -> bool {
+    std::env::args().any(|a| a == arg) && !taken.swap(true, std::sync::atomic::Ordering::SeqCst)
+}
+
 // True when launched with --self-test: the frontend runs the device self-test
 // once on startup, headless, so it can be driven without the UI.
 #[tauri::command]
 fn self_test_requested() -> bool {
-    std::env::args().any(|a| a == "--self-test")
+    static TAKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    take_launch_action(&TAKEN, "--self-test")
 }
 
 // True when launched with --prepare-modified: the frontend writes a distinctive,
@@ -157,7 +171,8 @@ fn self_test_requested() -> bool {
 // so a scene SAVE/RECALL audit can save and diff it. Experimental / headless only.
 #[tauri::command]
 fn prepare_modified_requested() -> bool {
-    std::env::args().any(|a| a == "--prepare-modified")
+    static TAKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    take_launch_action(&TAKEN, "--prepare-modified")
 }
 
 // True when launched with --reset-storage: the frontend clears its localStorage
@@ -165,7 +180,8 @@ fn prepare_modified_requested() -> bool {
 // any of it, then boots clean. The browser dev app uses the ?reset URL instead.
 #[tauri::command]
 fn reset_storage_requested() -> bool {
-    std::env::args().any(|a| a == "--reset-storage")
+    static TAKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    take_launch_action(&TAKEN, "--reset-storage")
 }
 
 // The third-party license notice bundled as an app resource (cargo-about output;
@@ -640,4 +656,42 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    // A one-shot launch action must survive a page reload without firing again. The
+    // frontend asks on every page load; before this latch, `--self-test` re-ran a
+    // destructive device sweep on each one, which in `tauri dev` means on each HMR
+    // edit. argv[0] stands in for a flag that is actually present, so the test needs
+    // no control over how the test binary was launched.
+    use super::take_launch_action;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn a_launch_action_is_consumed_by_its_first_caller() {
+        let present = std::env::args().next().expect("argv[0]");
+        static TAKEN: AtomicBool = AtomicBool::new(false);
+        assert!(
+            take_launch_action(&TAKEN, &present),
+            "the first caller takes the action"
+        );
+        assert!(
+            !take_launch_action(&TAKEN, &present),
+            "a page reload does not re-arm it"
+        );
+    }
+
+    #[test]
+    fn an_absent_flag_leaves_the_latch_alone() {
+        static TAKEN: AtomicBool = AtomicBool::new(false);
+        assert!(!take_launch_action(
+            &TAKEN,
+            "--not-a-flag-this-binary-was-given"
+        ));
+        assert!(
+            !TAKEN.load(Ordering::SeqCst),
+            "an unasked action stays available"
+        );
+    }
 }
