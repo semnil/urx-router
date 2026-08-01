@@ -20,6 +20,8 @@
 - [ ] Ran something the checks do not cover — say what and what it showed (the race harness
       on a PR that is not a version bump, a measurement, a manual repro):
 - [ ] Nothing beyond the checks
+- [ ] Assumptions this PR rests on are listed here, each with what would settle it (a measurement,
+      a probe, a device read) — or "none". No check can report the one nobody wrote down
 
 ## UI changes
 

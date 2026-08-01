@@ -249,7 +249,10 @@ The connection and node colors live in both layers: wire colors as `--w-*` (CSS)
 
 > As with model/rule consistency (device-model.md ↔ models/), **keep the theme palette in sync
 > between the CSS variables in style.css and `PALETTES` in graph.ts** — wire (`--w-*` ↔ `PALETTES.wire`),
-> node rail (`--rail-*` ↔ `PALETTES.rail`), and the surface colors.
+> node rail (`--rail-*` ↔ `PALETTES.rail`), the page background (`--canvas-bg` ↔ `PALETTES.canvasBg`),
+> and the surface colors. The background pair is the one with no on-screen tell: the page reads the CSS
+> variable, while an export under a *fixed* theme rasterizes `canvasBg` instead — so if the two drift, only
+> the exported PNG/PDF is wrong, and only for the theme that is not the active one.
 > The `--w-*` variables back the legend swatches and the inspector routing-list dots. `key` (the ducker
 > key source) shares `source`'s blue and, like `record`, has no legend row of its own, but both carry
 > `--w-key` / `--w-record` CSS variables for the routing-list dots (`.dot-key` / `.dot-record`) alongside
@@ -641,8 +644,11 @@ parameter reads), so the list alone cannot tell a present device from a stale en
 is what distinguishes them. Once online, the handshake also reads the unit's System firmware version from
 `/vd/device` (the `firm_list` entry named "System") and carries it on `DeviceSummary.firmware`; the frontend
 compares it against the validated `SUPPORTED_SYSTEM_FIRMWARE` (`core/control/firmware.ts`) and warns at the
-start of fetch / write / live sync when it differs, letting the user continue or stop. The read is best-effort:
-an unreadable firmware leaves the field empty, which disables the warning rather than blocking the operation.
+start of fetch / write / live sync when it differs, letting the user continue or stop. The field is a
+**three-valued** `Option<String>`, and the three values do not collapse: a version arms or disarms the warning
+by comparison, `Some("")` means the unit answered with no System entry and legitimately disables the gate, and
+`None` means the read itself did not land — the version is unknown rather than absent, so the operation stops
+instead of proceeding with the gate silently off ([Aborting on failure](#aborting-on-failure)).
 
 Every failure raised outside the UI layer returns a stable, machine-readable code rather than a raw English
 string — see [Error codes](#error-codes) for the scheme. The broker link's are `broker-unreachable` (Device
@@ -1061,6 +1067,22 @@ harmlessly; a one-off heals), boot port restore reports to the status line inste
 controller that was never opened, and a file write goes through a temp file and a rename so a failure cannot
 destroy the copy already on disk.
 
+**Four exceptions are permanent**, and each is a place where aborting would be the weaker behavior. They are
+listed here so they are not proposed again as gaps:
+
+1. **The self-test aggregates instead of stopping.** It is the diagnostic, not a user action: its job is to
+   report every parameter that failed a round trip in one pass, so a partial capture still runs the sweep and
+   the restore rather than leaving the unit perturbed.
+2. **`translate.ts`'s value coercion clamps instead of refusing.** It is the last line before the hardware, and
+   a coerced in-range value is a better outcome than an out-of-range one reaching the unit.
+3. **`pump` discards an invalid binary frame.** The vd protocol is JSON text, TCP has already settled frame
+   integrity underneath it, and a stray frame on the idle drain is noise rather than a failed operation —
+   so discarding it *is* the salvage. A binary frame arriving while a command waits for its reply still fails
+   loudly, in `read_text` (`broker-bad-response: binary frame`).
+4. **MIDI unplug is not detected at all.** midir has no hot-plug notification, and a virtual port (Stream Deck
+   and its kind) outlives the hardware behind it, so polling cannot tell a live port from a dead one even in
+   principle. The lists are re-enumerated on demand instead, and a port that fails to open reports it.
+
 Errors are surfaced by meaning. An **operation that did not complete** (a failed load, save, image export,
 fetch, write, self-test, connect, or live-sync start, plus a link drop during live sync) is shown as a
 **modal** so it cannot be missed
@@ -1196,6 +1218,39 @@ sliders, for the same reason (a second copy reads a render-time snapshot and wri
 works by mouse wheel (desktop) and two-finger pinch (touch); both share one "zoom about a fixed point"
 routine (`zoomAt` in `graph.ts`). `viewport-fit=cover` plus `env(safe-area-inset-bottom)` clears the
 notch / home indicator.
+
+## Node graph rendering constraints
+
+Four constraints on the SVG canvas do not read off the code, and an obvious change reintroduces each
+of them.
+
+- **Hit testing runs on enlarged transparent overlays, and their fill must be set as an inline
+  attribute.** The drawn jack circles (r=6) and wires (2–3.5px) are too thin to click reliably, so
+  every port carries a transparent `PORT_HIT_R` circle and every wire a transparent `WIRE_HIT_W`
+  band, with the drawn shapes set to `pointer-events:none`. Moving that transparent fill into CSS
+  **breaks image export** — PNG/PDF render a clone of the same SVG without the page's stylesheet, so
+  the default black shows up. Only the hover affordance belongs in CSS.
+- **Never filter a wire in `objectBoundingBox` units.** A horizontal wire (input source ↔ channel)
+  has a geometry bbox of zero height, the filter region collapses, and **the element stops being
+  drawn at all**. Selection and emphasis glow use an underlying halo (a thicker, low-opacity stroke
+  in the same colour) instead. Jack pins are circles, so a filter is fine there.
+- **A `pointerdown` that calls `preventDefault` suppresses the browser's `dblclick`.** Node and port
+  presses do call it, so anything relying on a `dblclick` listener is **dead on the desktop build**
+  (easy to miss: dispatching a synthetic event in a preview still works). Double presses are
+  detected in-house from the previous press's timestamp and id.
+- **`fitView` breaks on the transient size it sees from the constructor.** It measures the viewport
+  with `getBoundingClientRect`, so measuring before the webview has settled its stylesheet and
+  layout clamps the zoom to its lower bound and leaves the nodes tiny and pushed off the top. It
+  never shows in the browser (Chromium, inline CSS) and **reproduces every time on the desktop**
+  (WKWebView, external CSS link). The fix is a `ResizeObserver` plus an `autoFit` flag: re-fit once
+  the real size lands and on window resize, and drop `autoFit` on a manual pan or zoom. **The
+  toolbar has the same desktop-only failure** — without `white-space:nowrap`, a flex child wraps CJK
+  text at any character boundary, so buttons and labels grow to two lines at narrow widths. Any new
+  width-sensitive control follows the same `nowrap` + `flex-shrink:0` pattern.
+
+This class of desktop-only rendering difference reproduces without launching Tauri: serve a
+`pnpm build` `dist` with `vite preview` and open it in Playwright's **webkit** engine, which stands
+in for WKWebView, then compare the numbers against Chromium.
 
 ## Hiding nodes
 

@@ -8,12 +8,14 @@ on:
     paths:
       - '**/*.md'
       - 'scripts/check-md-tables.mjs'
+      - 'scripts/check-assets-index.mjs'
       - '.github/workflows/docs.yml'
   push:
     branches: [main]
     paths:
       - '**/*.md'
       - 'scripts/check-md-tables.mjs'
+      - 'scripts/check-assets-index.mjs'
       - '.github/workflows/docs.yml'
 
 jobs:
@@ -25,3 +27,8 @@ jobs:
         with:
           node-version: 24
       - run: node scripts/check-md-tables.mjs
+      # The doc-side half of the "## Reusable assets" index: a row edited to point at
+      # nothing, or an asset that reaches the repo without reaching the table. The
+      # code-side half runs in ci.yml, which skips Markdown-only changes. Zero-dep on
+      # purpose — this job has no pnpm install.
+      - run: node scripts/check-assets-index.mjs

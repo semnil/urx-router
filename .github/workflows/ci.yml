@@ -34,6 +34,11 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The code-side half of the "## Reusable assets" index: a renamed fixture, a
+      # deleted pnpm script or a new handle that no row mentions. The doc-side half runs
+      # in docs.yml, which this workflow skips for Markdown-only changes. Before the
+      # build so it reports in seconds; it needs no install of its own.
+      - run: node scripts/check-assets-index.mjs
       - run: pnpm build
       # Three handles are build-gated. Two are dev-only (import.meta.env.DEV): the meter
       # bench's console handle (src/ui/console.ts) and the keyboard measurement harness
