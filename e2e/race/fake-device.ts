@@ -85,6 +85,11 @@ export interface FakeHandle {
   t0: number;
   log: TraceEvent[];
   mem: Record<string, number>;
+  /** The string half of the state map (vd_set_str / vd_get_str — channel names, Sweet
+   *  Spot Data). Held apart from `mem` because the two are separate IPCs carrying
+   *  separate value types, and a readback that answered "" whatever was written would
+   *  make every full read erase a name the operator typed. */
+  memStr: Record<string, string>;
   /** Addresses the app last registered for param notifies — the follow registration
    *  set, readable with no probe into the app's own module scope. */
   paramAddrs: Array<[number, number, number]>;
@@ -92,6 +97,10 @@ export interface FakeHandle {
   counters: { subscribes: number; unsubscribes: number; meterSubs: number; meterUnsubs: number; connects: number };
   /** Addresses whose read answers this value whatever was written ("the device holds X"). */
   diverge: Record<string, number>;
+  /** The same hook on the string path: what `vd_get_str` answers whatever was written.
+   *  A rename made on the unit's own LCD is exactly this — the device holds a name the
+   *  app never wrote, and only a read can discover it. */
+  divergeStr: Record<string, string>;
   /** Reject the nth (1-based) matching command. */
   refusals: Array<{ cmd: string; nth: number; kind: "transport" | "code400"; hit: number }>;
   /** Accept and discard: the write is acked but never stored. */
@@ -129,7 +138,9 @@ export interface FakeHandle {
    *  record per reading would bury the trace the analyzer reads. */
   pushMeters: (list: Array<[number, number, number]>) => string[];
   /** Hold the nth matching command until release(); the barrier is what makes
-   *  "the edit lands at read #17" exact rather than statistical. */
+   *  "the edit lands at read #17" exact rather than statistical. There is one slot:
+   *  re-arming over a barrier that is already holding a command throws, because that
+   *  command holds the worker queue and nothing could ever open its gate again. */
   blockAt: (cmd: string, nth: number) => void;
   release: () => void;
   blocked: () => boolean;
@@ -224,10 +235,12 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         t0,
         log,
         mem: {},
+        memStr: {},
         paramAddrs: [],
         meterAddrs: [],
         counters: { subscribes: 0, unsubscribes: 0, meterSubs: 0, meterUnsubs: 0, connects: 0 },
         diverge: {},
+        divergeStr: {},
         refusals: [],
         ignoreWrites: [],
         deviceLost: false,
@@ -279,6 +292,16 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           return why;
         },
         blockAt: (cmd, nth) => {
+          // One slot, and re-arming it drops the previous resolver. A command already
+          // suspended on that gate would then wait for ever — it also holds the worker
+          // queue, so the whole link stops — and release() could only open the new
+          // barrier. Refusing at the call site turns a permanent hang far from its cause
+          // into an error naming the barrier that was still holding something.
+          if (barrier && barrier.hit >= barrier.nth) {
+            throw new Error(
+              `fake: blockAt(${cmd}, ${nth}) re-arms over a barrier still holding ${barrier.cmd} #${barrier.nth} — release() it first`,
+            );
+          }
           let open = (): void => {};
           const gate = new Promise<void>((r) => (open = r));
           barrier = { cmd, nth, hit: 0, gate, open };
@@ -346,16 +369,58 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
 
       const key = (a: Record<string, unknown>): string => `${a.paramId}:${a.x}:${a.y}`;
 
+      // `nth` counts EVERY call of that command, refused ones included, so two refusals
+      // stacked on one command fire on the calls their numbers name. Returning at the
+      // first match instead left the later entries un-incremented, which slid each of
+      // them one call further out per refusal already spent: refuseAt(cmd, 1) +
+      // refuseAt(cmd, 3) fired on calls 1 and 4.
       const refusalFor = (cmd: string): "transport" | "code400" | null => {
+        let kind: "transport" | "code400" | null = null;
         for (const r of fake.refusals) {
           if (r.cmd !== cmd) continue;
           r.hit++;
-          if (r.hit === r.nth) return r.kind;
+          if (r.hit === r.nth && kind === null) kind = r.kind;
         }
-        return null;
+        return kind;
       };
 
-      async function handle(cmd: string, args: Record<string, unknown>): Promise<unknown> {
+      // ONE worker, the way the bridge has one. vd.rs:504-556 is a single thread taking
+      // Cmds off one channel and answering each with a blocking address-matched round
+      // trip before it takes the next, so the shipped bridge cannot resolve a later cheap
+      // command ahead of an earlier expensive one, and a slow command is backpressure on
+      // every subsystem queued behind it. A per-command setTimeout produced exactly that
+      // impossible ordering: at get 25 / set 60, a read issued 5 ms after a write resolved
+      // 30 ms before it, and the read's continuation ran while the write's was still
+      // pending — an interleaving no case could ever see on hardware.
+      //
+      // Only the RESOLUTION is serialized. Every queue-point effect stays at the issue
+      // instant (a read is answered when issued, a write applies when issued): that is the
+      // documented contract and the reason an overtake is reachable at all.
+      //
+      // vd_connect is deliberately outside the queue — it INSTALLS the worker
+      // (vd.rs:193-200, where install() shuts the prior one down) rather than running on
+      // one, so it cannot queue behind the work it replaces. So is everything the shell
+      // routes elsewhere: the dialog plugin, the MIDI commands (midi.rs touches local OS
+      // APIs on the caller's thread) and the menu pushes share no queue with the vd worker.
+      const onWorker = (cmd: string): boolean => cmd.startsWith("vd_") && cmd !== "vd_connect";
+      /** What `handle` settled at the queue point and `serve` answers with. */
+      interface Served {
+        done: (detail?: string) => void;
+        sampled: number;
+        sampledStr: string;
+        held: Promise<void> | null;
+      }
+      let workQueue: Promise<void> = Promise.resolve();
+      const enqueue = (run: () => Promise<unknown>): Promise<unknown> => {
+        const next = workQueue.then(run);
+        workQueue = next.then(
+          () => {},
+          () => {},
+        );
+        return next;
+      };
+
+      function handle(cmd: string, args: Record<string, unknown>): Promise<unknown> {
         const isAddr = cmd === "vd_get" || cmd === "vd_set" || cmd === "vd_get_str" || cmd === "vd_set_str";
         const start = put("ipc-start", {
           cmd,
@@ -370,11 +435,48 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         // every held read answer post-edit values and hide the race the barrier exists
         // to place exactly.
         let sampled = 0;
+        let sampledStr = "";
         if (cmd === "vd_get") {
           const k = key(args);
           sampled = k in fake.diverge ? fake.diverge[k] : (fake.mem[k] ?? 0);
+        } else if (cmd === "vd_get_str") {
+          // The string path has a state map of its own, for the reason the numeric one
+          // has: a fake that answered "" whatever was written would make every full
+          // readback erase a non-empty name and every diffNames report one, so a case
+          // could not tell the app clearing a name from the fake never holding it.
+          const k = key(args);
+          sampledStr = k in fake.divergeStr ? fake.divergeStr[k] : (fake.memStr[k] ?? "");
         } else if (cmd === "vd_set" && !fake.ignoreWrites.includes(Number(args.paramId))) {
           fake.mem[key(args)] = Number(args.value);
+        } else if (cmd === "vd_set_str" && !fake.ignoreWrites.includes(Number(args.paramId))) {
+          fake.memStr[key(args)] = String(args.value ?? "");
+        } else if (cmd === "vd_params_unsubscribe" || cmd === "vd_meters_unsubscribe") {
+          // A teardown is a queue-point effect for the same reason an install is, and it
+          // matters more: vd.rs's `param_ch = None` / `meter_ch = None` (vd.rs:586/619)
+          // run inside the worker whatever the LINK is doing, so a channel is dropped
+          // even when the command that dropped it answers an error. Left at the resolve,
+          // behind the device-lost latch, a session torn down over a dead link kept both
+          // channels installed here and a later pushNotify / pushMeters was DELIVERED
+          // into it — so every "nothing arrives after teardown" verdict was measuring the
+          // fake. The command may still reject below; the effect has already happened.
+          if (cmd === "vd_params_unsubscribe") {
+            fake.counters.unsubscribes++;
+            // vd.rs:619 also does param_addrs.clear(). Deliberately not mirrored:
+            // fake.paramAddrs is the harness's "addresses the app LAST registered"
+            // observable, read by ~80 spec sites after a session ends, and the
+            // no-subscription refusal is decided from paramChannel alone.
+            paramChannel = null;
+          } else {
+            fake.counters.meterUnsubs++;
+            // vd.rs:586 also does meter_addrs.clear(). Not mirrored, same reason.
+            meterChannel = null;
+          }
+        } else if (cmd === "vd_disconnect") {
+          // vd.rs:339-346 — disconnect names one generation, and a delayed teardown of a
+          // superseded session is a no-op, so it cannot close the connection a later
+          // activation opened. At the queue point, like the unsubscribes above: Cmd::
+          // Shutdown drops the whole Subs with the worker however the link is behaving.
+          if (Number(args.epoch ?? 0) === fake.counters.connects) teardown();
         } else if (cmd === "vd_params_subscribe" || cmd === "vd_meters_subscribe") {
           // A subscription is installed at the queue point too, and for the same reason.
           // vd.rs:590-613 / 559-580: the handler only SENDS registrations (reg_param /
@@ -394,11 +496,32 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           install(cmd, args);
         }
 
+        // Counted at the queue point, where the command joins the worker's queue, and
+        // AWAITED in `serve` below. The count belongs here so `blocked()` reports the hit
+        // at the instant the case's gesture produced it; the wait belongs there so a held
+        // command holds the QUEUE, which is what the one worker thread does with a round
+        // trip it is still inside.
+        let held: Promise<void> | null = null;
         if (barrier && barrier.cmd === cmd) {
           barrier.hit++;
-          if (barrier.hit >= barrier.nth) await barrier.gate;
+          if (barrier.hit >= barrier.nth) held = barrier.gate;
         }
 
+        const ctx: Served = { done, sampled, sampledStr, held };
+        return onWorker(cmd) ? enqueue(() => serve(cmd, args, ctx)) : serve(cmd, args, ctx);
+      }
+
+      /** Everything that happens once the worker has TAKEN the command: the barrier it
+       *  may be held on, the two latches, and the reply. Split from `handle` so the
+       *  queue-point effects stay at the issue instant while this half is what the one
+       *  worker serializes. */
+      async function serve(cmd: string, args: Record<string, unknown>, ctx: Served): Promise<unknown> {
+        const { done, sampled, sampledStr } = ctx;
+        if (ctx.held) await ctx.held;
+
+        // Both latches are read where the worker reads them: as it takes the command off
+        // the queue (vd.rs:518-556, `guard(&mut lost, …)` inside the loop), not as the
+        // app issues it.
         if (fake.deviceLost && cmd.startsWith("vd_")) {
           await wait(config.latency.get);
           done("device-lost");
@@ -440,7 +563,11 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             done(fake.midi.inPort);
             return null;
           case "midi_close_input":
+            // The channel goes with the port. midi.rs:105-107 drops the midir
+            // connection, and delivery ends with it; leaving inChannel installed let
+            // pushMidi reach a handler the app had already closed the input on.
             fake.midi.inPort = null;
+            fake.midi.inChannel = null;
             done();
             return null;
           case "midi_open_output":
@@ -470,10 +597,9 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             fake.counters.connects++;
             done();
             return { model: config.model, label: "Fake URX", firmware: config.firmware, epoch: fake.counters.connects };
-          case "vd_disconnect": {
-            // vd.rs:339-346 — disconnect names one generation, and a delayed teardown of
-            // a superseded session is a no-op, so it cannot close the connection a later
-            // activation opened.
+          case "vd_disconnect":
+            // The epoch-matched teardown ran at the queue point; only the reply is
+            // outstanding here.
             //
             // Divergence kept, vd.rs:206-215: `sender()` errors with "not-connected"
             // once the connection is taken, so every vd command after this one fails at
@@ -481,19 +607,17 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             // measure is WHICH commands the app still issues after its own teardown
             // (t5's escaping-writes ladder); failing them would replace that measurement
             // with an error cascade.
-            const epoch = Number(args.epoch ?? 0);
-            if (epoch === fake.counters.connects) teardown();
             done(String(args.epoch ?? ""));
             return null;
-          }
           case "vd_get":
             await wait(config.latency.get);
             done();
             return sampled;
           case "vd_get_str":
+            // Sampled at the queue point from the string state map, like vd_get.
             await wait(config.latency.getStr);
             done();
-            return "";
+            return sampledStr;
           case "vd_set":
             await wait(config.latency.set);
             done();
@@ -508,12 +632,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             done();
             return null;
           case "vd_params_unsubscribe":
-            fake.counters.unsubscribes++;
-            // vd.rs:619 also does param_addrs.clear() here. Deliberately not mirrored:
-            // fake.paramAddrs is the harness's "addresses the app LAST registered"
-            // observable, read by ~80 spec sites after a session ends, and the
-            // no-subscription refusal is decided from paramChannel alone.
-            paramChannel = null;
+            // The channel was dropped at the queue point; only the reply is outstanding.
             done();
             return null;
           case "vd_meters_subscribe":
@@ -522,12 +641,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             done();
             return null;
           case "vd_meters_unsubscribe":
-            fake.counters.meterUnsubs++;
-            // vd.rs:586 also does meter_addrs.clear() here. Deliberately not mirrored, for
-            // the reason the param side gives: fake.meterAddrs is the harness's
-            // "addresses the app LAST registered" observable, read after a session ends,
-            // and the no-subscription refusal is decided from meterChannel alone.
-            meterChannel = null;
+            // The channel was dropped at the queue point; only the reply is outstanding.
             done();
             return null;
           case "vd_watch_link":
@@ -728,6 +842,9 @@ export const paramAddrsOf = (page: Page): Promise<Array<[number, number, number]
 
 export const memOf = (page: Page): Promise<Record<string, number>> => page.evaluate(() => window.__urxFake.mem);
 
+/** The string half of the state map — what the unit would answer a vd_get_str with. */
+export const memStrOf = (page: Page): Promise<Record<string, string>> => page.evaluate(() => window.__urxFake.memStr);
+
 export const blockAt = (page: Page, cmd: string, nth: number): Promise<void> =>
   page.evaluate(([c, n]) => window.__urxFake.blockAt(c as string, n as number), [cmd, nth] as [string, number]);
 
@@ -818,4 +935,16 @@ export const divergeAt = (page: Page, addr: string, value: number): Promise<void
       window.__urxFake.diverge[a as string] = v as number;
     },
     [addr, value] as [string, number],
+  );
+
+/** Plant a device-side value on the STRING path: what a vd_get_str answers whatever the
+ *  app wrote. A rename made on the unit's own LCD is exactly this shape, and it is the
+ *  only way to reach one — the name addresses are in no registration, so no notify can
+ *  carry it and only a read discovers it. */
+export const divergeStrAt = (page: Page, addr: string, value: string): Promise<void> =>
+  page.evaluate(
+    ([a, v]) => {
+      window.__urxFake.divergeStr[a] = v;
+    },
+    [addr, value] as [string, string],
   );
