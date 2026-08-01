@@ -28,7 +28,8 @@ jobs:
           node-version: 24
       - run: node scripts/check-md-tables.mjs
       # The doc-side half of the "## Reusable assets" index: a row edited to point at
-      # nothing, or an asset that reaches the repo without reaching the table. The
-      # code-side half runs in ci.yml, which skips Markdown-only changes. Zero-dep on
-      # purpose — this job has no pnpm install.
+      # nothing, or an asset that reaches the repo without reaching the table — plus
+      # every file reference docs/{en,ja} makes, in a code span or in a sentence, which
+      # is the half a docs-only change can break. The code-side half runs in ci.yml, which skips
+      # Markdown-only changes. Zero-dep on purpose — this job has no pnpm install.
       - run: node scripts/check-assets-index.mjs
