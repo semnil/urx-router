@@ -1,0 +1,281 @@
+// Post-write settle: what a read may believe about an address the caller has just
+// written, and how long it must wait before asking the unit instead.
+//
+// The unit acks a write before the value is readable. Measured on a URX44V (System
+// V1.3.1.0), across six addresses and three parameter classes: a GET of a just-written
+// address answers the PRE-write value until that write's own change notify arrives.
+// Strictly value-paired, n = 87 (53 of them taken during a real drag): 9 ms at the
+// fastest, ~101 ms median, 204 ms at the widest, and not one read before its own notify
+// was fresh, nor one stale after it. The notify IS the boundary, not an approximation
+// of it.
+//
+// So the answer this module gives is THE VALUE THE DEVICE ANNOUNCED — never the value
+// the caller sent. That is the whole of it, and it is why there is no special case for
+// a write the unit quantised, clamped or refused: a notify is a confirmation whatever
+// value it carries, and that value is what the unit holds. Live sync's stance is that
+// the device's word is the truth, the same stance the session's own "unsaved changes
+// will be discarded" gate states. An address the unit has said nothing about is not
+// answered at all — the caller reads it off the unit, which is what a blind read does
+// today and the one answer that cannot enshrine a divergence.
+//
+// A notify counts as the announcement of OUR write only if it arrived after that
+// address's own vdSet was issued, which is why the caller hands over a mark PER
+// ADDRESS rather than one for the flush: the write loop awaits per command, so a device
+// notify for the fader can easily land before the fader was reached. Getting that
+// attribution wrong is SELF-CORRECTING in either direction — the real write's notify
+// arrives later and overwrites the value, and a notify that predates the write leaves
+// the address to be read off the unit — so the mark removes a spurious reconcile
+// rather than carrying the correctness of the merge.
+//
+// Two ways the wait ends, both measured:
+//   - the address's own notify (exact). What every write the snapshot held a DIFFERENT
+//     value for owes: the unit must change, and a change is announced.
+//   - the bounded window (conservative), 300 ms against the measured 204 ms maximum,
+//     i.e. a 1.47x margin. What a write the snapshot held NO entry for gets, because
+//     that write may be a no-op and a no-op emits no notify at all (measured: 18 such
+//     writes acked in 0-1 ms and produced none). The wait must time out rather than
+//     hang, and the address must not be read before it does.
+//
+// One side-effect family needs no boundary of its own: writing EQ_ONE_KNOB_LEVEL makes
+// the unit recompute the four EQ_BAND_GAIN registers of the same node, and those moved
+// 1-2 ms after the written address itself went fresh (4 clean samples). That is a
+// sideEffect: "refetch" family, and it is the ONLY one measured — every sideEffect:
+// "converge" head (COMP_EQ_TYPE, SIGNAL_TYPE, PAN_BAL, the insert-FX and FX type
+// selectors) resets values whose latency after the head's own notify nobody has
+// measured. So a notify boundary is used where the write is read back by a refetch,
+// and NOT where a converge round re-reads: client.ts keeps its blind window.
+
+import { addrKey } from "./translate";
+
+/**
+ * The bounded wait, and the whole of it for a write no notify can be expected for.
+ * See the measured window above. One source for every site that spends it, so a test
+ * clearing one wait by advancing another is only ever right while they agree.
+ */
+export const SETTLE_TIMEOUT_MS = 300;
+
+/** Shared "the device announced nothing about any of it" answer. */
+const NOTHING_ANNOUNCED: ReadonlyMap<number, number> = new Map();
+
+export interface SettleOptions {
+  /** Cancels the wait the way it cancels the reads around it: the returned promise
+   *  rejects with the signal's reason, as signal.throwIfAborted() would. */
+  signal?: AbortSignal;
+  /** Ceiling on the wait, and the whole of it for an address that never announces.
+   *  0 disables the settle entirely (the unit tests, whose fake device has no
+   *  asynchronous anything to settle). */
+  timeoutMs?: number;
+  /** The addresses the wait may not end before hearing about — every address the read
+   *  that follows is going to ASK the unit for. Omitted = all of `written`.
+   *
+   *  An address outside it is still judged: it is answered from its announcement if one
+   *  arrived on its own, and left out otherwise. Keeping the two apart is what stops a
+   *  flush's collateral write to some other node — a node this read does not touch —
+   *  from holding a drag's read open for the whole window. */
+  mustSettle?: ReadonlySet<number>;
+  /** The addresses the unit is OBLIGED to announce: the caller sent a value the device
+   *  did not hold, so it must change and must say so. One still silent when the bound
+   *  elapses is a write that went nowhere — reported to whatever registered a source
+   *  (see arm), which is how the repair is reached without this module knowing what the
+   *  repair is. Class (b) — a write that may be a no-op — must stay out of it, or a
+   *  legitimate silence would order a whole-device sweep every time. */
+  mustAnnounce?: ReadonlySet<number>;
+}
+
+/**
+ * What a writer hands to the read that follows it, so the read is not answered out of
+ * its own write's staleness window. Travels as one value because its parts are one
+ * statement about one batch of writes — a `written` without the marks it was taken at
+ * would count notifies that predate it.
+ */
+export interface PendingWrites {
+  /** Every address the writer sent and the device acked, mapped to the settle mark
+   *  taken immediately BEFORE that address's own vdSet: only a notify after it can be
+   *  the announcement of that write. The values sent are deliberately not here — they
+   *  are not an input to any answer this module gives. */
+  written: ReadonlyMap<number, number>;
+  /** The subset the following read may not START before: the addresses inside its
+   *  scope, which it is going to read off the unit for any it cannot answer from an
+   *  announcement. */
+  mustSettle: ReadonlySet<number>;
+  /** The subset outside that scope which the unit owes an announcement (see
+   *  SettleOptions.mustAnnounce). This read neither confirms nor repairs them — it does
+   *  not look at them at all — so the one repair available is the reconcile a silent
+   *  one arms. */
+  mustAnnounce: ReadonlySet<number>;
+}
+
+/** One in-flight wait: what the caller is owed an answer about (`announced` filling as
+ *  the unit speaks), and separately the addresses whose answer ENDS the wait. */
+interface Waiter {
+  written: ReadonlyMap<number, number>;
+  announced: Map<number, number>;
+  waitFor: Set<number>;
+  done: () => void;
+}
+
+export class WriteSettle {
+  // Sinks for the "the unit owed an announcement and made none" report, registered by
+  // whoever owns the notify subscription. A set rather than a field so a
+  // re-registration cannot leave a stale one behind.
+  private readonly sinks = new Set<(addrs: ReadonlySet<number>) => void>();
+  private seq = 0;
+  // The last notify per address, with the position it arrived at. One entry per
+  // writable address however long the session runs, and it is what lets a settle
+  // called AFTER its own notify already landed resolve at once: the flush awaits a
+  // vdSet per command, so the answer to an early command can arrive while a later
+  // one is still in flight.
+  private readonly seen = new Map<number, { value: number; at: number }>();
+  private readonly waiters = new Set<Waiter>();
+
+  /** Register the notify source; the returned call releases it. Held by whoever owns
+   *  the subscription — while it is up a write can be waited out exactly, and while it
+   *  is not nothing feeds note() and every wait spends its bound. `onUnannounced` is
+   *  the repair channel: a source is by definition the side that can re-read the
+   *  device, and this module has no business knowing how. */
+  arm(onUnannounced: (addrs: ReadonlySet<number>) => void): () => void {
+    this.sinks.add(onUnannounced);
+    return () => this.sinks.delete(onUnannounced);
+  }
+
+  /** The notify position to hand back as an address's mark. Taken immediately before
+   *  that address's own write goes out. */
+  mark(): number {
+    return this.seq;
+  }
+
+  /** Record an incoming device notify. Called before the echo test — the answer to
+   *  our own write IS an echo, so a settle fed after that filter would never see the
+   *  one notify it is waiting for. */
+  note(p: { paramId: number; x: number; y: number; value: number }): void {
+    const k = addrKey(p.paramId, p.x, p.y);
+    this.seen.set(k, { value: p.value, at: ++this.seq });
+    for (const w of this.waiters) {
+      // The LAST announcement wins, unconditionally. A second notify for one address
+      // inside one window is the unit correcting itself (a quantise arriving after the
+      // raw echo) or the operator moving the control on the board, and in both readings
+      // the later word is the one the unit is standing behind.
+      if (w.written.has(k)) w.announced.set(k, p.value);
+      // The two are answered independently: this notify may end the wait without being
+      // one this caller is owed an answer about, and far more often the other way round.
+      if (w.waitFor.delete(k) && !w.waitFor.size) w.done();
+    }
+  }
+
+  /**
+   * Wait until the device has spoken for `mustSettle` (default: all of `written`), or
+   * until the bounded window elapses.
+   *
+   * Resolves with the value the DEVICE ANNOUNCED for each `written` address it spoke
+   * for after that address's own mark. An address absent from the result is one the
+   * unit has said nothing about — a no-op write, an acked write it silently discarded,
+   * or simply one the wait was not held open for — and the caller reads it off the
+   * device rather than answering it from what was sent.
+   */
+  async settle(written: ReadonlyMap<number, number>, opts: SettleOptions = {}): Promise<ReadonlyMap<number, number>> {
+    const { signal, timeoutMs = SETTLE_TIMEOUT_MS, mustSettle, mustAnnounce } = opts;
+    signal?.throwIfAborted();
+    // The settle is switched off (the unit tests, whose mock device has no asynchronous
+    // anything to settle). Nothing was waited for, so nothing was announced: switching
+    // the wait off must not also switch off what rests on it.
+    if (timeoutMs <= 0) return NOTHING_ANNOUNCED;
+    // Answers already in hand, and the wait set, built separately against each
+    // address's own mark. Separately because they are not required to overlap: a
+    // collateral write is judged and never waited for, and an address the read will ask
+    // for is waited for whether or not this caller wrote it.
+    const announced = new Map<number, number>();
+    for (const [k, at] of written) {
+      const s = this.seen.get(k);
+      if (s !== undefined && s.at > at) announced.set(k, s.value);
+    }
+    const named = mustSettle ?? new Set(written.keys());
+    const waitFor = new Set<number>();
+    for (const k of named) {
+      const s = this.seen.get(k);
+      const at = written.get(k);
+      if (s === undefined || at === undefined || s.at <= at) waitFor.add(k);
+    }
+    if (mustAnnounce?.size) this.watchAnnouncements(written, mustAnnounce, timeoutMs, signal);
+    if (waitFor.size > 0) {
+      await this.wait(timeoutMs, signal, (done) => {
+        const waiter: Waiter = { written, announced, waitFor, done };
+        this.waiters.add(waiter);
+        return () => this.waiters.delete(waiter);
+      });
+    }
+    return announced.size ? announced : NOTHING_ANNOUNCED;
+  }
+
+  // A write the unit was obliged to announce and did not, judged at the bound rather
+  // than when the wait happened to end: a wait that ended early on some other address's
+  // notify says nothing about this one, and reporting it there would order a sweep for
+  // an announcement merely still in flight. The check re-reads `seen`, which keeps the
+  // last notify per address for the life of the session, so nothing has to be held open
+  // for it.
+  //
+  // Reported, not repaired. What the addresses have in common is that the read this
+  // settle belongs to does not touch them — widening that read would undo the reason it
+  // is scoped — so the only thing left is to tell the side that owns the notify stream
+  // that its picture may be wrong, and let it decide (follow.ts arms its existing idle
+  // full reconcile).
+  private watchAnnouncements(
+    written: ReadonlyMap<number, number>,
+    mustAnnounce: ReadonlySet<number>,
+    timeoutMs: number,
+    signal: AbortSignal | undefined,
+  ): void {
+    if (!this.sinks.size) return;
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      const silent = new Set<number>();
+      for (const k of mustAnnounce) {
+        const s = this.seen.get(k);
+        const at = written.get(k);
+        if (s === undefined || at === undefined || s.at <= at) silent.add(k);
+      }
+      if (silent.size) for (const sink of [...this.sinks]) sink(silent);
+    }, timeoutMs);
+    const onAbort = (): void => clearTimeout(timer);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  }
+
+  // One wait, one teardown: the timeout, the optional early resolve, and the abort
+  // all come through `finish`, so no path leaves a timer or a waiter behind.
+  private wait(
+    timeoutMs: number,
+    signal: AbortSignal | undefined,
+    arm?: (done: () => void) => () => void,
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let closed = false;
+      let disarm: (() => void) | undefined;
+      const finish = (aborted: boolean): void => {
+        if (closed) return;
+        closed = true;
+        clearTimeout(timer);
+        disarm?.();
+        signal?.removeEventListener("abort", onAbort);
+        if (aborted) reject(signal?.reason);
+        else resolve();
+      };
+      const onAbort = (): void => finish(true);
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      signal?.addEventListener("abort", onAbort);
+      disarm = arm?.(() => finish(false));
+    });
+  }
+}
+
+/**
+ * The session's settle. Module state on purpose, unlike readback's ParamSource:
+ * there is one device link and one notify stream behind it, and its two ends sit on
+ * opposite sides of the app's one direction of travel — follow.ts sees every notify
+ * (device → plan), live.ts does the writing (plan → device). Nothing in the import
+ * graph forbids joining them (follow.ts already type-imports live.ts); what a hook
+ * would cost is the interfaces. The notify stream would have to be handed down through
+ * LiveSyncHooks to reach a caller that has no other use for it, and every test
+ * constructing one would have to supply it. A shared module is the smaller statement:
+ * the writer names the settle, the follow feeds it, and neither learns anything about
+ * the other — including the repair, which travels back the same way.
+ */
+export const writeSettle = new WriteSettle();

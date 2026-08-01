@@ -90,6 +90,18 @@ export interface AnalyzeSpec {
    * instant: it only looks up addresses `edits` already names.
    */
   snapshot?: Record<string, number> | null;
+  /**
+   * What the DEVICE holds, per address — `memOf` in fake-device.ts, read at the same
+   * instant as `snapshot`. Supplied only by a case that wants invariant 3's VALUE clause;
+   * absent, that clause does not run, so no existing case changes verdict.
+   *
+   * It is what a legitimate re-base is exonerated BY: capture() moves snapshot entries
+   * from every device read, so "the entry disagrees with the last send" proves nothing on
+   * its own — it has to also disagree with the unit. That is the quantise case exactly: a
+   * unit that stores 70 for a written 71 holds 70, the reconcile that read it back was
+   * doing its job, and an entry agreeing with the unit is not poison however it got there.
+   */
+  deviceState?: Record<string, number>;
   /** Mark detail after which no IPC may occur. */
   quiesceAfter?: string;
 }
@@ -291,7 +303,11 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
   // refusal is a fact about the trace alone, so a case that pushes a stimulus and
   // captures no registration would otherwise lose the check entirely.
   const expectedDrops = new Set(spec.expectedDrops ?? []);
-  for (const n of trace.filter((e) => e.kind === "notify-drop" && inWindow6(e))) {
+  // The unit's own announcement of a write is not a case push (fake-device.ts
+  // ANNOUNCE_MS): a refused one means the app never registered that address, which is
+  // clause B's subject, and reading it here would report every case that writes outside
+  // its own registration as a case measuring nothing.
+  for (const n of trace.filter((e) => e.kind === "notify-drop" && e.origin !== "device" && inWindow6(e))) {
     if (n.addr && expectedDrops.has(n.addr)) continue;
     out.push({
       inv: 6,
@@ -355,7 +371,7 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
     // no address) or a registrationWindow scoped to the wrong instant. It is kept as a
     // harness self-check on the window the case supplied.
     const sentinel = BULK_CHANGE_ADDR;
-    for (const n of trace.filter((e) => e.kind === "notify" && inWindow6(e))) {
+    for (const n of trace.filter((e) => e.kind === "notify" && e.origin !== "device" && inWindow6(e))) {
       if (n.addr && n.addr !== sentinel && !reg.has(n.addr)) {
         out.push({
           inv: 6,
@@ -430,7 +446,35 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
           detail: `${e.label}: the live snapshot holds ${e.addr} = ${held}, but nothing carrying it was sent after ${e.at.toFixed(0)} ms — the next diff measures from a value the device was never given`,
           at: e.at,
         });
+        continue;
       }
+      // 3, VALUE form. The address WAS sent and the snapshot holds something else. The
+      // snapshot's contract is "what the device was last told", so an entry contradicting
+      // the last send is a value the next diff measures from and will never send — and,
+      // the way this was found on hardware, it is also what makes the unit's own notify
+      // for that write arrive as a foreign change (live.ts's isEcho is bare snapshot
+      // equality), costing a scoped reconcile and an idle sweep nobody asked for.
+      //
+      // Two exonerations, and the clause is a false-positive machine without them:
+      //   - the value is one the app ITSELF sent at some point in the run (its own write
+      //     coming back in another order, not a value it never authored);
+      //   - the DEVICE holds it (the quantise case). An address the run never wrote
+      //     answers 0 at the fake, so that is what an absent entry means here.
+      if (spec.deviceState === undefined) continue;
+      const last = sent[sent.length - 1];
+      const truth = spec.deviceState[e.addr] ?? 0;
+      if (held === last.value || held === truth) continue;
+      if (sets.some((s) => s.addr === e.addr && s.value === held)) continue;
+      out.push({
+        inv: 3,
+        name: "snapshot poisoning (value)",
+        detail:
+          `${e.label}: the live snapshot holds ${e.addr} = ${held}; the last value sent after ` +
+          `${e.at.toFixed(0)} ms was ${last.value} (at ${last.start.toFixed(0)} ms) and the unit holds ` +
+          `${truth} — nothing in this run ever sent ${held}, so the next diff measures from a value the ` +
+          `app did not author and a device notify carrying ${last.value} reads as our own echo`,
+        at: last.start,
+      });
     }
   }
 

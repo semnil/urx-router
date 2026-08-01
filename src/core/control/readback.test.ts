@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections, type Plan, type PlanConnection } from "../plan";
 import { ref } from "../../models/types";
@@ -10,7 +10,9 @@ vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 import { vdGet, vdGetStr } from "../platform";
 import { COLOR_PALETTE, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { applyDeviceState, formatReadbackReport } from "./readback";
-import { planToCommands } from "./translate";
+import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
+import type { PendingWrites } from "./settle";
+import { addrKey, planToCommands } from "./translate";
 
 const model = getModel("URX44V");
 
@@ -387,6 +389,273 @@ describe("applyDeviceState round-trip", () => {
 
     expect(result.errors).toEqual([]);
     expect(target.connections.some((c) => c.to === ref("bus.stream", "in") && c.kind === "source")).toBe(false);
+  });
+});
+
+// The unit acks a write before the value is readable (measured: a GET answers the
+// pre-write value until that write's own notify arrives, 9-204 ms later, n = 87).
+// Live sync's sideEffect refetch reads a node it has just written, so it hands the
+// read what it wrote — and the read answers those addresses with WHAT THE UNIT
+// ANNOUNCED about them, never with what was sent.
+describe("applyDeviceState write overlay", () => {
+  // A plan whose ch1 EQ 1-knob is on — the measured case: writing it makes the unit
+  // recompute the four band gains, which is what the refetch is for.
+  function oneKnobPlan(): Plan {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, eqOneKnob: { on: true, type: 0, level: 50 } };
+    return plan;
+  }
+  function cmdFor(plan: Plan, name: string): { paramId: number; x: number; y: number; vdValue: number } {
+    const cmd = planToCommands(model, plan).find((c) => c.name === name && c.node === "ch1");
+    if (!cmd) throw new Error(`expected a ch1 ${name} command`);
+    return cmd;
+  }
+  const oneKnobCommand = (plan: Plan): { paramId: number; x: number; y: number; vdValue: number } =>
+    cmdFor(plan, "EQ_ONE_KNOB_ON");
+  // The device still answering the value the write replaced: the staleness window.
+  function staleTable(plan: Plan, cmd: { paramId: number; x: number; y: number }): Map<string, number> {
+    const table = deviceTableFor(plan);
+    table.set(`${cmd.paramId}:${cmd.x}:${cmd.y}`, 0);
+    return table;
+  }
+  const keyOf = (cmd: { paramId: number; x: number; y: number }): number => addrKey(cmd.paramId, cmd.x, cmd.y);
+  const wasRead = (cmd: { paramId: number; x: number; y: number }): boolean =>
+    vi.mocked(vdGet).mock.calls.some(([id, x, y]) => id === cmd.paramId && x === cmd.x && y === cmd.y);
+
+  /** A write the unit has ANNOUNCED, which is what makes answering a read from it
+   *  legitimate at all. Nothing is left in scope to wait for, so these cases exercise
+   *  the overlay alone; the wait has its own block below. */
+  function announced(cmd: { paramId: number; x: number; y: number }, value: number): PendingWrites {
+    const at = writeSettle.mark();
+    writeSettle.note({ paramId: cmd.paramId, x: cmd.x, y: cmd.y, value });
+    return { written: new Map([[keyOf(cmd), at]]), mustSettle: new Set(), mustAnnounce: new Set() };
+  }
+
+  // FAKE TIMERS FOR THE WHOLE BLOCK, and not for convenience: most of these cases
+  // assert that no wait was taken, and on real timers a settle that spent 300 ms would
+  // pass them all unnoticed. Here a wait nothing advances never ends, so the case times
+  // out instead of quietly measuring a slower app.
+  let armedSource: (() => void) | null = null;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    armedSource = writeSettle.arm(() => {});
+  });
+  afterEach(() => {
+    armedSource?.();
+    armedSource = null;
+    vi.useRealTimers();
+  });
+
+  it("answers an address the unit announced from the announcement, not from the device", async () => {
+    const source = oneKnobPlan();
+    const cmd = oneKnobCommand(source);
+    mockVdGetFrom(staleTable(source, cmd));
+
+    const target = emptyPlan("URX44V");
+    await applyDeviceState(model, target, undefined, undefined, announced(cmd, 1));
+
+    expect(target.nodeParams.ch1.eqOneKnob?.on).toBe(true);
+    // Not merely decoded to the same answer — the unit was never asked.
+    expect(wasRead(cmd)).toBe(false);
+  });
+
+  it("answers what the unit announced even when that is not what was sent", async () => {
+    // The coerced write — a grid snap, a range clamp, a value the unit adjusts on the
+    // way in. It needs no case of its own in the app: the notify carries the unit's
+    // value and the unit's value is the answer. Here the flush sent ON and the unit
+    // announced OFF, and what lands in the plan is OFF, with no read taken.
+    const source = oneKnobPlan();
+    const cmd = oneKnobCommand(source);
+    mockVdGetFrom(deviceTableFor(source));
+
+    const target = emptyPlan("URX44V");
+    await applyDeviceState(model, target, undefined, undefined, announced(cmd, 0));
+
+    expect(target.nodeParams.ch1.eqOneKnob?.on).toBe(false);
+    expect(wasRead(cmd)).toBe(false);
+  });
+
+  it("still reads every address the announcement does not name", async () => {
+    const source = oneKnobPlan();
+    source.nodeParams.ch1 = { ...source.nodeParams.ch1, hpf: true, hpfFreq: 120 };
+    const cmd = oneKnobCommand(source);
+    mockVdGetFrom(staleTable(source, cmd));
+
+    const target = emptyPlan("URX44V");
+    await applyDeviceState(model, target, undefined, undefined, announced(cmd, 1));
+
+    // One address is overlaid; the rest of the node is device truth as before.
+    expect(target.nodeParams.ch1.hpfFreq).toBe(120);
+  });
+
+  it("reads a write the unit never announced rather than answering it from the write", async () => {
+    // Nothing has established that the unit took this one. An acked write it silently
+    // discarded looks exactly like it, and answering it from the send would record our
+    // value as device truth: plan and snapshot then agree, no later flush finds a diff,
+    // and only a reconcile heals it. Reading it is the blind read, for that address
+    // alone.
+    const source = oneKnobPlan();
+    const cmd = oneKnobCommand(source);
+    mockVdGetFrom(staleTable(source, cmd));
+
+    const target = emptyPlan("URX44V");
+    const silent: PendingWrites = {
+      written: new Map([[keyOf(cmd), writeSettle.mark()]]),
+      mustSettle: new Set(),
+      mustAnnounce: new Set(),
+    };
+    await applyDeviceState(model, target, undefined, undefined, silent);
+
+    expect(wasRead(cmd)).toBe(true);
+    expect(target.nodeParams.ch1.eqOneKnob?.on).toBe(false);
+  });
+
+  it("answers the announced write and reads the one beside it that nothing announced", async () => {
+    // Both halves in one flush, which is the shape live sync actually produces: the
+    // 1-knob write is what made it refetch, and an HPF frequency moved in the same
+    // window rides along in `written`. One statement each — announced is answered from
+    // the announcement, silent is asked for — and the pair is the point: handing over
+    // only the announced subset would answer the second address on nothing at all.
+    const source = oneKnobPlan();
+    source.nodeParams.ch1 = { ...source.nodeParams.ch1, hpf: true, hpfFreq: 120 };
+    const knob = oneKnobCommand(source);
+    mockVdGetFrom(staleTable(source, knob));
+    // A different HPF frequency, so "read off the device" and "answered from the
+    // announcement" cannot produce the same number.
+    const moved = oneKnobPlan();
+    moved.nodeParams.ch1 = { ...moved.nodeParams.ch1, hpf: true, hpfFreq: 400 };
+    const hpf = cmdFor(moved, "HPF_FREQ");
+
+    const at = writeSettle.mark();
+    writeSettle.note({ paramId: knob.paramId, x: knob.x, y: knob.y, value: 1 });
+    const target = emptyPlan("URX44V");
+    await applyDeviceState(model, target, undefined, undefined, {
+      written: new Map([
+        [keyOf(knob), at],
+        [keyOf(hpf), at],
+      ]),
+      mustSettle: new Set(),
+      mustAnnounce: new Set(),
+    });
+
+    expect(wasRead(knob)).toBe(false);
+    expect(target.nodeParams.ch1.eqOneKnob?.on).toBe(true);
+    expect(wasRead(hpf)).toBe(true);
+    expect(target.nodeParams.ch1.hpfFreq).toBe(120);
+  });
+
+  it("ignores an announcement that predates the address's own write", async () => {
+    // The unit spoke about this address BEFORE the flush reached it — the operator
+    // moving the control on the board while the loop worked through the commands ahead
+    // of it. That notify is not the answer to our write, so the address is read.
+    const source = oneKnobPlan();
+    const cmd = oneKnobCommand(source);
+    mockVdGetFrom(staleTable(source, cmd));
+
+    writeSettle.note({ paramId: cmd.paramId, x: cmd.x, y: cmd.y, value: 1 });
+    const target = emptyPlan("URX44V");
+    await applyDeviceState(model, target, undefined, undefined, {
+      written: new Map([[keyOf(cmd), writeSettle.mark()]]),
+      mustSettle: new Set(),
+      mustAnnounce: new Set(),
+    });
+
+    expect(wasRead(cmd)).toBe(true);
+    expect(target.nodeParams.ch1.eqOneKnob?.on).toBe(false);
+  });
+
+  it("is inert with an empty map — the address comes off the device", async () => {
+    const source = oneKnobPlan();
+    const cmd = oneKnobCommand(source);
+    mockVdGetFrom(staleTable(source, cmd));
+
+    const target = emptyPlan("URX44V");
+    const inert: PendingWrites = { written: new Map(), mustSettle: new Set(), mustAnnounce: new Set() };
+    await applyDeviceState(model, target, undefined, undefined, inert);
+
+    expect(target.nodeParams.ch1.eqOneKnob?.on).toBe(false);
+    expect(wasRead(cmd)).toBe(true);
+  });
+
+  // The wait is taken here rather than by the caller: readIntoPlan clones the plan at
+  // the call, so a wait taken outside is a window in which an operator edit lands in
+  // neither that clone nor the witness that protects an edit made during the read —
+  // and the merge would revert it. Inside, both cover it.
+  describe("the settle it waits out first", () => {
+    function waitingFor(cmd: { paramId: number; x: number; y: number }): PendingWrites {
+      return {
+        written: new Map([[keyOf(cmd), writeSettle.mark()]]),
+        mustSettle: new Set([keyOf(cmd)]),
+        mustAnnounce: new Set(),
+      };
+    }
+
+    it("does not read until the write's own notify arrives", async () => {
+      const plan = oneKnobPlan();
+      const cmd = oneKnobCommand(plan);
+      mockVdGetFrom(deviceTableFor(plan));
+      const pending = waitingFor(cmd);
+
+      const read = applyDeviceState(model, emptyPlan("URX44V"), undefined, undefined, pending);
+      await vi.advanceTimersByTimeAsync(40);
+      expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
+      writeSettle.note({ paramId: cmd.paramId, x: cmd.x, y: cmd.y, value: 1 });
+      await read;
+      expect(vi.mocked(vdGet)).toHaveBeenCalled();
+    });
+
+    it("reads anyway once the bounded window expires, since a no-op write never notifies", async () => {
+      const plan = oneKnobPlan();
+      const cmd = oneKnobCommand(plan);
+      mockVdGetFrom(deviceTableFor(plan));
+      const pending = waitingFor(cmd);
+
+      const read = applyDeviceState(model, emptyPlan("URX44V"), undefined, undefined, pending);
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS - 1);
+      expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await read;
+      expect(vi.mocked(vdGet)).toHaveBeenCalled();
+    });
+
+    it("reads an address the window expired on rather than answering it from the write", async () => {
+      const source = oneKnobPlan();
+      const cmd = oneKnobCommand(source);
+      mockVdGetFrom(staleTable(source, cmd));
+
+      const target = emptyPlan("URX44V");
+      const read = applyDeviceState(model, target, undefined, undefined, waitingFor(cmd));
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
+      await read;
+
+      expect(wasRead(cmd)).toBe(true);
+      expect(target.nodeParams.ch1.eqOneKnob?.on).toBe(false);
+    });
+
+    it("takes no wait for an address outside the read's scope", async () => {
+      // The collateral write. It is judged — announced, so it is answered — but the
+      // read is not held open for it: doing so would cost the drag that produced it a
+      // whole window per flush. Measurable here because the timers are fake: a wait
+      // would never end.
+      const source = oneKnobPlan();
+      const cmd = oneKnobCommand(source);
+      mockVdGetFrom(staleTable(source, cmd));
+
+      const target = emptyPlan("URX44V");
+      await applyDeviceState(model, target, undefined, undefined, announced(cmd, 1));
+
+      expect(target.nodeParams.ch1.eqOneKnob?.on).toBe(true);
+    });
+
+    it("is abortable while it waits, like the reads around it", async () => {
+      const cmd = oneKnobCommand(oneKnobPlan());
+      const controller = new AbortController();
+      const read = applyDeviceState(model, emptyPlan("URX44V"), controller.signal, undefined, waitingFor(cmd));
+      controller.abort();
+      await expect(read).rejects.toThrow();
+      expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -406,9 +406,22 @@ const live = DEMO
       // and rebuild the console on every flush of a 1-knob drag. The abort rule is the
       // shared one: a read that cannot complete leaves the plan claiming values the device
       // does not hold.
-      refetchNodes: async (nodeIds) => {
+      //
+      // `pending` is what the flush that triggered this refetch just put on the unit.
+      // The read waits those writes out and answers their addresses from what the UNIT
+      // announced (see readback / settle), and it does both INSIDE this merged read, so
+      // an edit made while it waits is covered by the same clone and witness that cover
+      // one made while it reads. Without it the read wrote the value the click had just
+      // replaced back into the plan, this hook absorbed it into the undo baseline,
+      // live.ts's re-base recorded it as device truth, and the unit's own notify for our
+      // write then read as a device-side change. That also widens the window undo is
+      // refused in, since the wait is inside followReads membership like the read it
+      // belongs to. Left that way: the clone and the witness are open for the whole of
+      // it, so committing an entry there would freeze this read's own writes into it —
+      // and the refusal is a deferral, bounded by the settle's own window.
+      refetchNodes: async (nodeIds, pending) => {
         const merged = await followRead("1-knob readback", (into, signal) =>
-          applyNodeState(getModel(modelId), into, nodeIds, signal),
+          applyNodeState(getModel(modelId), into, nodeIds, signal, pending),
         );
         // The plan this read was issued for is gone (a file flow replaced it): its
         // values belong to a document nothing shows, and no snapshot can describe it.
@@ -2836,7 +2849,8 @@ if (!DEMO) {
       selfTestBtn.textContent = t().toolbar.selfTestCancel;
       setStatus(t().status.selfTestRunning);
       try {
-        const report = await runSelfTest(getModel(modelId), 300, controller.signal);
+        // The settle window is settle.ts's one constant; this site takes the default.
+        const report = await runSelfTest(getModel(modelId), undefined, controller.signal);
         // Traces go out as a count, not as their contents: one carries every command of
         // a failing pass's first round, which is a terminal-flooding console line. The
         // report below is where they are read.

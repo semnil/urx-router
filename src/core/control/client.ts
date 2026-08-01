@@ -9,6 +9,7 @@ import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import { cmdAddr, planToCommands, planToNameWrites } from "./translate";
 import type { NameWrite, VdCommand, WriteScope } from "./translate";
+import { SETTLE_TIMEOUT_MS } from "./settle";
 
 /** The device's clock state: whether it slaves to the USB host, and the rate it
  *  is running at right now. Read together as the pre-check a write needs. */
@@ -270,7 +271,11 @@ function roundCommands(model: DeviceModel, plan: Plan, scope: WriteScope, diffs:
 }
 
 export interface ConvergeOptions {
-  /** A diff already in hand (the write path's confirmed set); absent = seed one. */
+  /** A diff already in hand (the write path's confirmed set); absent = seed one. Still
+   *  the Write button's route in — it diffs the device to build its confirm prompt and
+   *  hands the confirmed set straight over (main.ts), which is what makes round 1 send
+   *  exactly what the operator agreed to. Live sync is the caller that does NOT: its
+   *  flush has already sent the diff itself, so a seeded round would send it twice. */
   initialDiffs?: CommandDiff[];
   maxRounds?: number;
   settleMs?: number;
@@ -302,7 +307,17 @@ export async function sendConverging(
   plan: Plan,
   opts: ConvergeOptions = {},
 ): Promise<ConvergeResult> {
-  const { initialDiffs, maxRounds = 3, settleMs = 300, signal, scope = "all", trace: wantTrace = false } = opts;
+  const {
+    initialDiffs,
+    maxRounds = 3,
+    // One source with settle.ts: this site's blind window and the notify wait's bounded
+    // fallback are the same measured number, and a test that clears one by advancing the
+    // other is only right while they agree.
+    settleMs = SETTLE_TIMEOUT_MS,
+    signal,
+    scope = "all",
+    trace: wantTrace = false,
+  } = opts;
   const outcomes: SendOutcome[] = [];
   const readErrors: string[] = [];
   const trace: ConvergeRound[] = [];
@@ -332,6 +347,13 @@ export async function sendConverging(
     // residual is the true post-reset state and the next round's re-send is not
     // racing a reset still in flight. (settleMs = 0 in tests, where the mock has
     // no async reset.)
+    //
+    // Blind, and not the notify wait a refetch takes: what this round SENDS is
+    // `roundCommands`, which pulls in every member of a group any differing command
+    // belongs to, and those members were never read. A wait that ended at the read
+    // diff's own notifies would return while the rest of the group was still inside
+    // its own window. No converge head's reset latency is measured either — only the
+    // "refetch" family's, which never reaches this loop.
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
     const next = await diffPlan(model, plan, { signal, scope });
     readErrors.push(...next.errors);

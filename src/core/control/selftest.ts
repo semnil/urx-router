@@ -48,6 +48,7 @@ import {
   REC_POINT_OPTIONS,
 } from "./params";
 import { sendConverging } from "./client";
+import { SETTLE_TIMEOUT_MS } from "./settle";
 import type { ConvergeRound } from "./client";
 import { applyDeviceState } from "./readback";
 import {
@@ -406,7 +407,11 @@ export async function captureDeviceState(
  * leaves `phase` at the failing step. The caller must ensure the connected
  * device matches `model`.
  */
-export async function runSelfTest(model: DeviceModel, settleMs = 300, signal?: AbortSignal): Promise<SelfTestReport> {
+export async function runSelfTest(
+  model: DeviceModel,
+  settleMs = SETTLE_TIMEOUT_MS,
+  signal?: AbortSignal,
+): Promise<SelfTestReport> {
   const passes = passesFor(model);
   const report: SelfTestReport = {
     ok: false,

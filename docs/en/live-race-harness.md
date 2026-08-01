@@ -113,7 +113,7 @@ The analyzer decides these mechanically and reports the record pair that violate
 | --- | --- | --- |
 | 1 | Stale-read overwrite | A device-authored write whose read started before a UI write to the same key |
 | 2 | Lost edit | A UI write with no matching command emitted before the next snapshot capture |
-| 3 | Snapshot poisoning | A capture that recorded a value which was never sent |
+| 3 | Snapshot poisoning | A capture that recorded a value which was never sent (clause A), or an entry contradicting the last value sent to that address (clause B, the VALUE form — opt-in) |
 | 4 | Interval overlap | Two or more of flush / refetch / scoped reconcile / full reconcile / Fetch / Write intersect in time |
 | 5 | Echo misclassification | A notify for an address just written with the same value classified as genuine, or the converse |
 | 6 | Stimulus reachability | The fake bridge refused a notify the case pushed, so the app never saw it (clause A); an address the plan emits that the session has not registered, so a device-side change to it is undeliverable (clause B, the grown window); behind them, the old registration-lag check as a harness self-check (clause C) |
@@ -127,6 +127,19 @@ The analyzer decides these mechanically and reports the record pair that violate
 | 14 | Orphan-plan write | A write into a `Plan` object `main.ts` no longer references |
 | 15 | Refusal integrity | A refusal consumes no state, and the identical retry succeeds once the condition clears |
 | 16 | Teardown quiescence | No plan write, IPC or timer callback after session end or plan replacement |
+
+Invariant 3 has two clauses of its own, and the second is **opt-in**. Clause A is the original: the snapshot holds
+an address nothing in the run ever sent, so the next diff measures from a value the device was never given. Clause B
+is the VALUE form — the address WAS sent and the entry holds something else. That is the shape post-write read
+staleness produces: the flush wrote X, a read inside the staleness window answered the pre-write value, and the
+`capture` after it put that value in the snapshot over the one the same flush wrote there. Beyond the next diff's
+blind spot, it also makes the unit's own notify for X arrive as a foreign change (`live.ts`'s `isEcho` is bare
+snapshot equality), costing a scoped reconcile and an idle sweep nobody asked for. Clause B runs only when a case
+supplies `deviceState` (`memOf`, read at the same instant as `snapshot`), because it needs two exonerations without
+which it is a false-positive machine: a value **the app itself sent** at some point in the run is its own write
+coming back in another order, and a value **the unit holds** is the quantise case — `capture()` moves snapshot
+entries from every device read, so disagreeing with the last send proves nothing unless it also disagrees with the
+unit. No existing case supplies it, so none changed verdict.
 
 Invariant 6 was originally phrased as "the registration agrees with the emitted set on every flush".
 It does not: follow calls `subscribe()` only at `begin()` and after a completed reconcile, so an
@@ -214,6 +227,7 @@ single source of truth. This table states what each case measures.
 | `overtake-reconcile-during-reconcile` | mixed | The reconcile queue's own re-entrancy, with no operator involved |
 | `overtake-direct-scoped-coalesce-boundary` | console | Whether a reconcile resolving inside the coalesce upgrades an unrelated direct reflect |
 | `overtake-drag-flush-backpressure` | console | A realistic gesture on a realistic link, and the convergence latency an operator perceives |
+| `overtake-refetch-reads-before-the-write-settles` | tuning | The one window the fake had no state for: a write the unit accepted and cannot yet report. `t1c-refetch-stale.spec.ts` |
 
 ### T2 shape-change — params that reshape the writable address set
 
@@ -337,7 +351,7 @@ must provide the following.
 | Item | Requirement |
 | --- | --- |
 | a | Per-param configurable latency with optional jitter |
-| b | A real state map so a readback returns what was written, plus a divergence hook that answers X regardless |
+| b | A real state map so a readback returns what was written — immediately, unless `staleAfterWrite` (row n) scripts otherwise — plus a divergence hook that answers X regardless |
 | c | A notify scheduler emitting echo, genuine, unregistered-address, BULK_CHANGE and silence at scripted times relative to an accepted write |
 | d | Refusal injection by command index and param id, distinguishing transport rejection, response code 400 and accepted-and-ignored |
 | e | A device-lost latch, after which every command fails identically |
@@ -349,8 +363,36 @@ must provide the following.
 | k | `transformCallback` and `plugin:event|listen` |
 | l | The bridge's notify filter: a param notify is forwarded only while a subscription is installed and only for an address this session registered, plus the `BULK_CHANGE` sentinel — mirroring `Subs::absorb`, per ENTRY inside a batch |
 | m | The same filter on the meter half: a reading is forwarded only while the meter channel is installed and only for a `(meter_id, x)` this session registered — no sentinel, since every reading carries an address |
+| n | Post-write read staleness: `staleAfterWrite[addr] = n` makes the next `n` reads after EACH write to that address answer the value it held BEFORE that write, while `mem` stays truthful — the unit ACCEPTED the write and cannot yet report it. Numeric path only. What ENDS the window is not this setting's business: every value-changing write is announced (see below), and that announcement closes any window open on the address whether its scripted reads were spent or not |
+| o | The announcement itself, which is unconditional and needs no case to arm it: a write that CHANGES the value the unit reports is announced `cfg.announceMs` (100, the measured median) after its **ack**. Three silences, all from the one rule — a same-value write (measured: 18 acked in 0-1 ms, none announced), an `ignoreWrites` address (acked and never stored, so nothing it reports moved) and a `diverge`d address (the unit goes on asserting what it already held) |
 
 Plus a **barrier**: `blockAt({ cmd, nth })` holds a specific command, and `release()` lets it through.
+
+Items n and o are the ones the fake lived **without** for its whole life, and the omission was not neutral — see
+"What the harness itself got wrong". WHICH reads are stale is a **count**, not a duration, for the reason the
+barriers exist: a duration makes every verdict a property of CI load. Staleness is distinct from both its
+neighbours — `divergeAt` says the unit holds a value the app never wrote and never agrees; `ignoreWrites` says the
+write was acked and never stored, so it arms nothing; staleness says the unit agrees a moment later, and every
+repair path in the app is built on reading again.
+
+Item o is a **contract, not a knob**, and two things about it are load-bearing. The fake **owes** the announcement:
+a device that accepts a value-changing write and never announces it is not a device any URX measurement describes,
+so an app that waits for the announcement before re-reading would otherwise be failed here for the fake's own
+contradiction. And it is anchored on the **ack**, not on the queue point — which is not a detail. Under a slow-link
+profile a queue-point announcement is delivered before the app has even been told its write succeeded, an ordering
+the unit never presents (acks land in 0-1 ms and the notify 9-204 ms after the write's issue, always after the ack).
+T8-stress found this by going red and staying red through the fix; anchored on the ack it passes, with numbers
+matching main's arm exactly. `announceMs` also has to stay BELOW live.ts's 120 ms flush window, or an announcement
+is routinely overtaken by the next write of a drag, arrives against a snapshot that has moved on, and is applied as
+a device-side change — a hazard of a late announcement rather than of anything the app does.
+
+**Coercion is deliberately not modelled at all.** `diverge` bends READS and leaves `mem` alone, so nothing the unit
+reports has moved and there is nothing for it to announce; making it announce its asserted value instead would be a
+notify carrying a value the app never sent, which to the app is a DEVICE-SIDE CHANGE rather than a coercion, and it
+would silently change what `divergeAt` means in the dozen spec files already using it. Whether the unit ever coerces
+a write, or acks and silently discards one, is unmeasured — never observed across three instrumented hardware
+sessions — and it is not known whether it CAN be measured. So this is not a knob waiting on a measurement that
+would settle it: one gets added if and when such a device behaviour is actually seen, and not before.
 
 **Why the filter has to exist at all was measured, not assumed (2026-07-31).** A client that connects
 to the broker and registers NOTHING still receives the whole push stream — meter frames and the
@@ -948,6 +990,35 @@ not repeat them.
 - **Silence is also true before anything has started.** `waitQuiet` called straight after a gesture
   returns immediately and reports "nothing was sent". Any verdict that is an ABSENCE must use
   `settleAfter`
+- **For the harness's whole life a write was readable the instant it was acked**, and no URX behaves
+  that way. Measured on a URX44V (System V1.3.1.0, 2026-08-01): a GET of a just-written address
+  answers the value that write REPLACED until that write's own notify arrives — 9-204 ms from the
+  write's issue, 87 value-paired samples on six addresses with no counterexample, and independent of
+  the parameter's class. The fake settled a write at the queue point and answered a read from the same
+  map, so there was no state between "acked" and "readable" **at all**. Every case that read an
+  address back after writing it was therefore modelling a device that cannot exist, and the whole
+  defect class in that window was unreachable — not merely untested. A barrier is no substitute: it
+  holds the QUEUE, so it delays the read and the write together. `staleAfterWrite` (contract item n)
+  is the missing state, and `t1c-refetch-stale` the first case to need it. Two lessons generalize.
+  The fake's timing model was **inferred from the IPC surface**, which shows an ack and not a
+  readability boundary, and nothing in the harness could have found the gap — it took an
+  instrumented build against real hardware. And when the fake gained the state, the case that had to
+  be re-anchored was in an unrelated tier (`t2c` counted refetch passes on the address the drag
+  writes, which a correct app now never reads), so a missing device state does not only hide
+  defects: it shapes the assertions that were written around it
+- **Adding the missing state was not the end of it — the state needs an anchor, and the first one
+  contradicted the measurement it came from.** The announcement (contract item o) was first scheduled
+  `announceMs` after the **queue point**. Under a slow-link profile that delivers a write's own notify
+  BEFORE its ack, which no URX presents: acks land in 0-1 ms, the notify 9-204 ms after the write's
+  issue, always after the ack, 30/30. `t8-stress` went red and stayed red — the edit train landed on
+  -2.0, +10.0 and -0.4 against an expected +5.0, with the screen agreeing with the device each time,
+  which reads exactly like a serious app defect. Anchored on the ack it passes, with numbers matching
+  main's arm exactly (16 writes, queue depth 2, +5.0 in both jitter profiles). Two lessons. A new
+  device state is only as good as what its timing is measured AGAINST, and "the ack to the notify" is
+  the interval the hardware brackets most tightly (58-151 ms), so it is the one to anchor on. And a
+  red case is not evidence about the app until **both arms run the same fake**: the first attempt here
+  compared a fixed tree against main with a fake that had changed in between, which would have
+  reported the fix as the cause of a defect the harness had invented
 - **A filtered stimulus is the SECOND form of silence.** A notify the bridge refuses leaves the app in
   exactly the state "nothing has happened yet" leaves it in, so an absence verdict passes for free and
   a whole case can measure nothing while staying green. A case whose subject is the app's response

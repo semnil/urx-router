@@ -30,6 +30,8 @@ vi.mock("../platform", () => ({
 }));
 
 import { DeviceFollow, type DeviceFollowHooks } from "./follow";
+import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
+import { addrKey } from "./translate";
 import type { FollowAddr } from "./live";
 
 const ADDR: [number, number, number] = [139, 0, 0];
@@ -309,6 +311,44 @@ describe("DeviceFollow", () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(reconcileNodes).not.toHaveBeenCalled();
     expect(reconcileAll).not.toHaveBeenCalled();
+  });
+
+  // The subscription this class owns is the app's only notify stream, so it is also
+  // what a write can be settled against (settle.ts). Two obligations come with that.
+  it("feeds the settle before the echo filter drops our own write's answer", async () => {
+    // The answer to a write of ours IS an echo. A settle told only about what survives
+    // this method would never see the one notify it is waiting for.
+    const follow = followFor({ isEcho: () => true });
+    await follow.begin();
+    const before = writeSettle.mark();
+    notify(-600);
+    expect(writeSettle.mark()).toBeGreaterThan(before);
+    follow.end();
+  });
+
+  it("arms the idle full reconcile for a write the unit never announced", async () => {
+    // The settle's report: a value-changing write on an address outside the scoped read
+    // that would have repaired it, and the unit said nothing about it inside the bound.
+    // Nothing else can repair that — the settle knows a write went silent and nothing
+    // about how to re-read — so it comes back here, and the missed-notify safety net is
+    // exactly the response.
+    const reconcileAll = vi.fn(async () => {});
+    const follow = followFor({ reconcileAll });
+    await follow.begin();
+    const k = addrKey(9001, 0, 0);
+    await writeSettle.settle(new Map([[k, writeSettle.mark()]]), {
+      mustSettle: new Set(),
+      mustAnnounce: new Set([k]),
+    });
+    expect(reconcileAll).not.toHaveBeenCalled();
+    // The report lands at the bound, not at the settle's return.
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
+    expect(reconcileAll).not.toHaveBeenCalled();
+    // …and it arms the idle timer rather than sweeping at once, so a burst of these
+    // during a drag costs one sweep after the drag rather than one each.
+    await vi.advanceTimersByTimeAsync(900);
+    expect(reconcileAll).toHaveBeenCalledTimes(1);
+    follow.end();
   });
 
   it("does nothing on a notify before begin", async () => {

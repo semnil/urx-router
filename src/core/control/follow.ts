@@ -19,6 +19,7 @@
 import { vdParamsSubscribe, type ParamUpdate } from "../platform";
 import type { ParamName } from "./params";
 import type { FollowAddr } from "./live";
+import { writeSettle } from "./settle";
 
 // A device-side change arrives as a burst (a knob sweep fires ~10 notifies/s);
 // wait for it to settle before the reconcile readback runs. 300 ms — see the
@@ -92,6 +93,13 @@ export class DeviceFollow {
   // Identity of the currently registered address set, so a reconcile that did not
   // change the plan's structure skips re-registering all ~hundreds of addresses.
   private registeredKey = "";
+  // Release for the notify source this follow registers with the write settle. The
+  // subscription below is the only notify stream in the app, so while it is up a
+  // write can be waited out exactly, and while it is not the settle must fall back
+  // to its bounded window (see settle.ts). Held strictly PAIRED with `unsub`, and
+  // released everywhere that is: an armed source with no stream behind it would make
+  // the settle report every write as unannounced for the rest of the session.
+  private settleSource: (() => void) | null = null;
 
   constructor(private readonly hooks: DeviceFollowHooks) {}
 
@@ -122,6 +130,8 @@ export class DeviceFollow {
     }
     this.unsub?.();
     this.unsub = null;
+    this.settleSource?.();
+    this.settleSource = null;
   }
 
   // Register the current writable address set for notifies. The set rarely changes
@@ -137,6 +147,11 @@ export class DeviceFollow {
     this.registeredKey = key;
     this.unsub?.();
     this.unsub = null;
+    // Dropped with the stream it stands for, before the await rather than after it: a
+    // registration that throws leaves this method by an exception, and an unpaired
+    // source would outlive the subscription it was armed for.
+    this.settleSource?.();
+    this.settleSource = null;
     const unsub = await vdParamsSubscribe(addrs, (p) => this.onNotify(p));
     // end() may have run while the registration was in flight; drop it rather
     // than leaving a live subscription with no owner to unsubscribe it.
@@ -145,6 +160,13 @@ export class DeviceFollow {
       return;
     }
     this.unsub = unsub;
+    // A write the unit was obliged to announce and never did, on an address outside
+    // the scoped read that would have repaired it (settle.ts). Nothing else can say so:
+    // the settle knows a write went silent and nothing about how to re-read, and this
+    // side owns the only full reconcile. The idle net is the right one — it already
+    // exists, it is the missed-notify safety net by construction, and a burst of these
+    // during a drag costs one sweep after the drag rather than one each.
+    this.settleSource = writeSettle.arm(() => this.armIdle());
   }
 
   private clearWindow(): void {
@@ -155,6 +177,10 @@ export class DeviceFollow {
 
   private onNotify(p: ParamUpdate): void {
     if (!this.active) return;
+    // Fed before every filter below. The answer to a write of ours IS an echo and a
+    // host-owned address IS intercepted, so a settle told only about what survives
+    // this method would never see the notify it is waiting for.
+    writeSettle.note(p);
     // Host-owned address: handled there, and never part of a reconcile window — it
     // has no node, so letting it through would force a full re-read every time.
     if (this.hooks.intercept?.(p)) return;

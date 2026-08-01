@@ -6,12 +6,17 @@ import { clonePlanState } from "../plan-history";
 // LiveSync drives the device through platform.vdSet / vdSetStr and re-reads via
 // vdGet on a converge; mock those. The point of these tests is the flush cadence
 // (how many device writes a drag produces), so vdSet's call count is the metric.
-vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn() }));
+// vdGetStr is here for the one case whose refetch hook runs the REAL readback rather
+// than a stand-in (the cadence pin below): a scoped pass reads names too.
+vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
-import { vdSet, vdSetStr, vdGet } from "../platform";
-import { planToCommands } from "./translate";
+import { vdSet, vdSetStr, vdGet, vdGetStr } from "../platform";
+import { addrKey, planToCommands } from "./translate";
 import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
+import { applyNodeState } from "./readback";
+import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
+import type { PendingWrites } from "./settle";
 
 const model = getModel("URX44V");
 
@@ -24,7 +29,10 @@ function basePlan(): Plan {
 // The refetch hook resolves the private copy its read ran against (readback.readIntoPlan)
 // — what the device holds as far as the read established it. Returning null stands for
 // "no re-base": either the plan it read into is gone, or the case does not exercise one.
-function liveFor(plan: Plan, refetchNodes?: (nodes: ReadonlySet<string>) => Promise<Plan | null>): LiveSync {
+function liveFor(
+  plan: Plan,
+  refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites) => Promise<Plan | null>,
+): LiveSync {
   return new LiveSync({
     getModel: () => model,
     getPlan: () => plan,
@@ -47,6 +55,7 @@ function setCh1Fader(plan: Plan, db: number): void {
 beforeEach(() => {
   vi.mocked(vdSet).mockReset().mockResolvedValue(undefined);
   vi.mocked(vdGet).mockReset().mockResolvedValue(0);
+  vi.mocked(vdGetStr).mockReset().mockResolvedValue("");
   vi.useFakeTimers();
 });
 
@@ -182,6 +191,33 @@ describe("LiveSync sideEffect converge", () => {
       await vi.advanceTimersByTimeAsync(16);
     }
     expect(vi.mocked(vdSet).mock.calls.length).toBeGreaterThan(afterConverge + 2);
+  });
+
+  it("leaves the converge to seed its own diff, with nothing re-sent before the first read", async () => {
+    // The seed read is the converge's own, not a diff handed down from this flush.
+    // Seeding it from the send list was tried: those values freeze when they go out, so
+    // an address the operator moved on the unit during the flush's awaits is written
+    // straight back off the board, and every selector in the list is re-sent — which
+    // repopulates the engine array it binds.
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const order: string[] = [];
+    vi.mocked(vdSet).mockImplementation(async () => {
+      order.push("set");
+    });
+    vi.mocked(vdGet).mockImplementation(async () => {
+      order.push("get");
+      return 0;
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+
+    // The one address the diff found, sent once and then READ. A seeded round 1 would
+    // have sent it a second time before anything was read.
+    expect(order[0]).toBe("set");
+    expect(order[1]).toBe("get");
   });
 
   it("does not drop an edit that arrives during a sideEffect converge", async () => {
@@ -446,6 +482,147 @@ describe("LiveSync sideEffect refetch", () => {
     expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
   });
 
+  // The unit acks a write before the value is readable, so the read this flush issues
+  // is told what the flush just wrote — it holds until the unit has spoken for the
+  // addresses it is about to ask about, and answers those from what the unit ANNOUNCED
+  // (readback / settle.ts). The cases below pin what is handed over: which addresses,
+  // which of them the read may not start before, and which the unit owes an
+  // announcement the read will not be looking for.
+  const addrOf = (plan: Plan, name: string, node = "ch1"): number => {
+    const c = planToCommands(model, plan).find((x) => x.name === name && x.node === node)!;
+    return addrKey(c.paramId, c.x, c.y);
+  };
+  const setFader = (plan: Plan, node: string, db: number): void => {
+    const conn = plan.connections.find((c) => c.from === `${node}:out`);
+    if (!conn) throw new Error(`expected a ${node} STEREO send connection`);
+    conn.params = { ...conn.params, level: db };
+  };
+
+  it("hands the refetch exactly the addresses this flush wrote", async () => {
+    const plan = basePlan();
+    const handed: PendingWrites[] = [];
+    const live = liveFor(plan, async (_nodes, pending) => {
+      handed.push(pending);
+      return null;
+    });
+    live.begin();
+    setCh1OneKnob(plan, { on: true });
+    // A second address in the same window, so the map is not trivially one entry.
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    const sent = new Set(vi.mocked(vdSet).mock.calls.map(([id, x, y]) => addrKey(id, x, y)));
+    expect(sent.size).toBeGreaterThan(1);
+    // Equal to the vdSet calls, not merely a superset of them: an address this flush did
+    // not send has no write of ours for the unit's word to be attributed to.
+    expect(handed.map((p) => new Set(p.written.keys()))).toEqual([sent]);
+  });
+
+  it("marks each address at its own write, not once for the flush", async () => {
+    // The loop awaits per command, so a device notify for an address it has not reached
+    // yet is ordinary. One mark for the whole flush would let that notify count as the
+    // announcement of a write not yet made — and the read would then answer with the
+    // value the operator's own move replaced. Here every send moves the notify clock,
+    // so two addresses sharing a mark would be a mark taken outside the loop.
+    const plan = basePlan();
+    const handed: PendingWrites[] = [];
+    const live = liveFor(plan, async (_nodes, pending) => {
+      handed.push(pending);
+      return null;
+    });
+    live.begin();
+    setCh1OneKnob(plan, { on: true });
+    setCh1Fader(plan, -6);
+    vi.mocked(vdSet).mockImplementation(async () => {
+      writeSettle.note({ paramId: 9999, x: 0, y: 0, value: 0 });
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    const marks = [...handed[0].written.values()];
+    expect(marks.length).toBeGreaterThan(1);
+    expect(new Set(marks).size).toBe(marks.length);
+  });
+
+  it("holds the read for every write to a node it is about to read", async () => {
+    // Both writes land on ch1, and ch1 is what the refetch reads — so both are addresses
+    // this read will ASK the unit about, and neither may be asked for early. The fader
+    // is a change the unit must announce, so its own wait ends at its own notify; nothing
+    // here is left for the unannounced report, whose remit is the addresses this read
+    // does not look at.
+    const plan = basePlan();
+    const handed: PendingWrites[] = [];
+    const live = liveFor(plan, async (_nodes, pending) => {
+      handed.push(pending);
+      return null;
+    });
+    // The session opens on a full device readback, so the 1-knob is already in the
+    // snapshot; the fader below is moved from a value the snapshot holds too.
+    setCh1OneKnob(plan, { on: false, level: 50 });
+    live.begin();
+    setCh1OneKnob(plan, { on: true });
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(handed[0].written.size).toBe(2);
+    expect([...handed[0].mustSettle].sort()).toEqual([addrOf(plan, "EQ_ONE_KNOB_ON"), addrOf(plan, "CH_FADER")].sort());
+    expect(handed[0].mustAnnounce.size).toBe(0);
+  });
+
+  it("holds for an address the snapshot never held, which only the bound can close", async () => {
+    const plan = basePlan();
+    const handed: PendingWrites[] = [];
+    const live = liveFor(plan, async (_nodes, pending) => {
+      handed.push(pending);
+      return null;
+    });
+    live.begin();
+    // ch1 carries no eqOneKnob at all until this edit, so its addresses are not in the
+    // snapshot the flush diffs against and the flush cannot say they changed. A write
+    // the unit already agreed with emits no notify (measured), so nothing but the bound
+    // can say the window is over — and the read must not take it before then.
+    setCh1OneKnob(plan, { on: true });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(handed[0].mustSettle.has(addrOf(plan, "EQ_ONE_KNOB_ON"))).toBe(true);
+    // …and it is NOT reported as a write that went missing when it stays silent: a no-op
+    // write legitimately never announces, and ordering a whole-device sweep for one
+    // would fire on every structural edit.
+    expect(handed[0].mustAnnounce.size).toBe(0);
+  });
+
+  it("reports a changed write outside the read's scope instead of waiting for it", async () => {
+    // ch2's fader moves in the same window as ch1's 1-knob. The read is scoped to ch1,
+    // so it neither confirms nor repairs ch2 — holding it open for ch2 would cost the
+    // drag a window and buy nothing. What is left is to say so: the unit must announce a
+    // change, and a silent one is a write that went nowhere, which the settle reports to
+    // the follow side (settle.ts mustAnnounce).
+    const plan = basePlan();
+    const handed: PendingWrites[] = [];
+    const live = liveFor(plan, async (_nodes, pending) => {
+      handed.push(pending);
+      return null;
+    });
+    live.begin();
+    setCh1OneKnob(plan, { on: true });
+    setFader(plan, "ch2", -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    const ch2Fader = addrOf(plan, "CH_FADER", "ch2");
+    expect(handed[0].written.has(ch2Fader)).toBe(true);
+    expect(handed[0].mustSettle.has(ch2Fader)).toBe(false);
+    expect([...handed[0].mustAnnounce]).toEqual([ch2Fader]);
+  });
+
   it("does not write the refetched values straight back", async () => {
     const plan = basePlan();
     // The readback stands in for the device recomputing the bands: it writes values into
@@ -560,22 +737,47 @@ describe("LiveSync sideEffect refetch", () => {
     // the window does not have to back off — which is the whole point of the split: the
     // level is a dragged slider, and it was the case that made every drag on it wait for
     // the pointer to stop.
+    //
+    // The hook TRAVERSES THE SETTLE, taking the same wait readback.applyDeviceState
+    // takes because it IS that read: the hook runs the real applyNodeState, so the wait
+    // is reached the way the app reaches it. A hook that called the settle itself would
+    // measure this case's own arithmetic instead of the app's — it could not fail if
+    // readback.ts stopped waiting at all, which is the regression worth a cadence pin in
+    // the first place.
+    //
+    // Worst case on purpose: no notify source feeds the settle here (DeviceFollow owns
+    // the only subscription), so every window spends the bounded fallback rather than
+    // ending at the unit's own announcement, which on hardware lands at 9-204 ms. A drag
+    // that keeps its cadence under the fallback keeps it under anything the unit does.
     const plan = basePlan();
-    // Null: this case measures the flush cadence, not the re-base.
-    const live = liveFor(plan, async () => null);
+    const live = liveFor(plan, async (nodes, pending) => {
+      await applyNodeState(model, clonePlanState(plan), nodes, undefined, pending);
+      // Null: this case measures the flush cadence, not the re-base.
+      return null;
+    });
     live.begin();
     setCh1OneKnob(plan, { on: true, level: 0 });
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 200);
     const before = vi.mocked(vdSet).mock.calls.length;
 
-    for (let i = 1; i <= 10; i++) {
-      setCh1OneKnob(plan, { level: i * 8 });
+    // Long enough for several windows of throttle + settle to fit, so the count below
+    // discriminates: a converge in this position sends NOTHING until the pointer stops,
+    // and one write would be the whole gesture.
+    const steps = 24;
+    for (let i = 1; i <= steps; i++) {
+      setCh1OneKnob(plan, { level: i * 4 });
       live.schedule();
       await vi.advanceTimersByTimeAsync(130);
     }
-    expect(vi.mocked(vdSet).mock.calls.length).toBeGreaterThan(before + 5);
+    const sent = vi.mocked(vdSet).mock.calls.length - before;
+    // A window costs the settle and not the throttle on top of it: an edit arriving while
+    // a flush is working sets `pending`, and the trailing flush runs straight off the end
+    // of that one rather than re-arming the 120 ms timer. So a 3120 ms drag has room for
+    // ~10, and it sends 11. Asserted at 7 — the bound rather than the measurement: a
+    // modest slowdown leaves it green, and doubling the wait (~5) does not.
+    expect(sent).toBeGreaterThan(6);
   });
 });
 

@@ -49,6 +49,12 @@ export interface TraceEvent {
   /** ipc-end only: the seq of its ipc-start. */
   of?: number;
   detail?: string;
+  /** notify / notify-drop only: "device" = the unit spoke on its own (a write's
+   *  announcement, see ANNOUNCE_MS), as against a stimulus a case pushed. The two read
+   *  identically on the wire and mean opposite things to a verdict — a refused case push
+   *  is a case measuring nothing, while a refused announcement is the bridge doing its
+   *  job on an address the session never registered. */
+  origin?: "device";
 }
 
 export interface FakeLatency {
@@ -68,6 +74,9 @@ export interface FakeConfig {
   /** ± ms of uniform jitter on every latency. Deterministic: seeded, not Math.random. */
   jitter: number;
   seed: number;
+  /** How long after a write that moved the value the unit REPORTS it announces it
+   *  (see ANNOUNCE_MS). */
+  announceMs: number;
 }
 
 export const DEFAULT_LATENCY: FakeLatency = {
@@ -78,6 +87,30 @@ export const DEFAULT_LATENCY: FakeLatency = {
   setStr: 0,
   subscribe: 0,
 };
+
+/**
+ * How long after a write's ACK the fake announces it, when that write moved the value
+ * the unit REPORTS. The announcement also ends any staleness window armed on the address
+ * (see FakeHandle.stale). What "reports" excludes is spelled out at the `announce`
+ * closure: a same-value write, an `ignoreWrites` address and a `diverge`d one all leave
+ * it where it was, and all three are silent.
+ *
+ * Measured on a URX44V: 9-204 ms from the write's ISSUE, median ~101 (n = 87 strictly
+ * value-paired samples on 6 addresses, 53 of them taken during a real drag), and
+ * 58-151 ms from the ack — always after it, 30/30. It is armed from the ack here
+ * because that is the ordering, and because `latency.set` is a knob a case can set
+ * anywhere (see Served.announce).
+ *
+ * The number is bounded on both sides by something other than taste. Above: it has to
+ * stay under live.ts's 120 ms flush window, or an announcement is routinely overtaken by
+ * the next write of a drag, arrives against a snapshot that has moved on, and is applied
+ * as a device-side change — a hazard of a late announcement, not of anything the app
+ * does, and one the unit does not actually present. Below: it has to outlast the read an
+ * unfixed app issues straight after its write, or the staleness a case armed is already
+ * over when that read arrives and the defect goes green; T1c's refetch reaches the
+ * address ~26 ms after the write on the measured trace.
+ */
+export const ANNOUNCE_MS = 100;
 
 /** What the page-side fake exposes. Mirrored here so the specs are typed. */
 export interface FakeHandle {
@@ -106,6 +139,37 @@ export interface FakeHandle {
   refusals: Array<{ cmd: string; nth: number; kind: "transport" | "code400"; hit: number }>;
   /** Accept and discard: the write is acked but never stored. */
   ignoreWrites: number[];
+  /**
+   * Post-write read staleness: address ("paramId:x:y") → how many reads of it, after
+   * EACH write to it, answer the value it held BEFORE that write.
+   *
+   * The unit acks a write before the value is readable. Measured on a URX44V (System
+   * V1.3.1.0) across six addresses and three parameter classes: a GET of a just-written
+   * address answers the pre-write value until that write's own device notify arrives —
+   * 9-204 ms from the write's issue, 87 value-paired samples with no counterexample.
+   * `mem` stays truthful throughout: the unit ACCEPTED the write, which is what
+   * separates this from `ignoreWrites` (acked, never stored) and from `diverge` (holds
+   * for ever a value the app never wrote).
+   *
+   * WHICH reads are stale is COUNT-based, not time-based. A duration would make every
+   * verdict a property of CI load; a count makes "the refetch's read is the stale one"
+   * exact — the same reason the barriers exist rather than sleeps.
+   *
+   * WHEN the window ends is not this setting's business at all: EVERY value-changing
+   * write is announced `cfg.announceMs` later (see ANNOUNCE_MS), and that announcement
+   * closes any window open on the address whether the scripted reads were spent or not.
+   * So a case never has to push the notify itself, and must not expect the window to
+   * outlast it — after it, reads answer `mem` again.
+   *
+   * Standing, not one-shot: every write to the address arms `n` stale reads again.
+   */
+  staleAfterWrite: Record<string, number>;
+  /** The armed entries, address → the pre-write value still being answered, how many
+   *  stale reads are left, how many were actually answered, and whether the write's own
+   *  notify has gone out. `spent > 0` proves a case's scripted staleness was REACHED by
+   *  a read rather than merely configured; `notified` says the window has closed, after
+   *  which reads answer `mem` again. */
+  stale: Record<string, { value: number; left: number; spent: number; notified: boolean }>;
   deviceLost: boolean;
   /** Native dialog messages the app asked to show, and the button the fake answers
    *  with. The default declines, so a flow that reaches a confirm has usually already
@@ -138,7 +202,7 @@ export interface FakeHandle {
   mark: (detail: string) => void;
   /** Push device-side param notifies through the bridge's filter. Returns one verdict
    *  per entry, in order: "" for a delivered one, the refusal reason for a dropped one. */
-  pushNotify: (list: Array<[number, number, number, number]>) => string[];
+  pushNotify: (list: Array<[number, number, number, number]>, origin?: "device") => string[];
   /** The address-free bulk-change sentinel — the one notify that bypasses the filter,
    *  and so the sanctioned way to force one whole-device reconcile. */
   pushBulkChange: () => string[];
@@ -169,6 +233,8 @@ export interface InstallOptions {
   latency?: Partial<FakeLatency>;
   jitter?: number;
   seed?: number;
+  /** Override ANNOUNCE_MS for this session. */
+  announceMs?: number;
   /** Extra localStorage seeding, applied after the defaults. */
   storage?: Record<string, string>;
 }
@@ -180,6 +246,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
     latency: { ...DEFAULT_LATENCY, ...(opts.latency ?? {}) },
     jitter: opts.jitter ?? 0,
     seed: opts.seed ?? 1,
+    announceMs: opts.announceMs ?? ANNOUNCE_MS,
   };
   // On the CONTEXT, not the page: MIDI control is a second window, which is a second
   // page here, and it needs the same bridge before its bundle resolves.
@@ -255,6 +322,8 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         divergeStr: {},
         refusals: [],
         ignoreWrites: [],
+        staleAfterWrite: {},
+        stale: {},
         deviceLost: false,
         dialogs: [],
         dialogAnswer: "Cancel",
@@ -281,7 +350,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         },
         setLatency: (patch) => Object.assign(config.latency, patch),
         mark: (detail) => void put("mark", { detail }),
-        pushNotify: (list) => {
+        pushNotify: (list, origin) => {
           // absorb() filters ENTRIES, not frames: a batch carrying one registered and
           // one unregistered address delivers the first and drops the second.
           const why: string[] = [];
@@ -293,6 +362,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
               addr: `${param_id}:${x}:${y}`,
               value,
               detail: w || undefined,
+              origin,
             });
             if (!w) passed.push({ param_id, x, y, value });
           }
@@ -404,6 +474,85 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
 
       const key = (a: Record<string, unknown>): string => `${a.paramId}:${a.x}:${a.y}`;
 
+      // Post-write read staleness (see FakeHandle.staleAfterWrite) and the announcement
+      // that ends it. Three pieces: what a read answers AND consumes, what a write arms,
+      // and what the unit says about a write afterwards. The first two are queue-point
+      // effects, like the store they sit beside — the worker stays a plain serial queue
+      // with no await added to it.
+      type Stale = { value: number; left: number; spent: number; notified: boolean };
+      const openStale = (k: string): Stale | undefined => {
+        const s = fake.stale[k];
+        return s && s.left > 0 && !s.notified ? s : undefined;
+      };
+      const takeVisible = (k: string): number => {
+        const s = openStale(k);
+        if (!s) return fake.mem[k] ?? 0;
+        s.left--;
+        s.spent++;
+        return s.value;
+      };
+      // Armed from what is VISIBLE, not from what is stored: two writes inside one
+      // staleness window leave the second one answering the value the first was still
+      // hiding, which is what the measured session's second round did — its read
+      // answered the value from before ITS write, not the settled one.
+      const armStale = (k: string): Stale | undefined => {
+        const n = fake.staleAfterWrite[k];
+        if (!n) return undefined;
+        const entry: Stale = { value: openStale(k)?.value ?? fake.mem[k] ?? 0, left: n, spent: 0, notified: false };
+        fake.stale[k] = entry;
+        return entry;
+      };
+      // What a read of the address would answer once any staleness window is over: the
+      // value the unit REPORTS, which `diverge` overrides and `mem` otherwise holds.
+      const reported = (k: string): number => (k in fake.diverge ? fake.diverge[k] : (fake.mem[k] ?? 0));
+      // The unit announces a write that CHANGED the value it reports, and that
+      // announcement is what ends the staleness window — the boundary the staleness was
+      // measured against rather than a separate stimulus. Nothing else closes it: a
+      // device that accepts a value-changing write and never announces it is not a
+      // device any URX measurement describes (30/30 value-paired), and an app that waits
+      // for the announcement before re-reading would then be failed here for the fake's
+      // own contradiction rather than for a defect.
+      //
+      // Armed from the ACK rather than from the queue point (see Served.announce), which
+      // is also the interval the measurement brackets most tightly: 58-151 ms after the
+      // ack, always after it, 30/30. `announceMs` has to stay BELOW live.ts's flush
+      // window or the fake stops modelling the unit in a way that matters: an
+      // announcement overtaken by the next write of a drag arrives against a snapshot
+      // that has moved on, fails isEcho, and is applied as a device-side change — a
+      // hazard of the announcement being late, not of anything the app does.
+      //
+      // Three silences, and the same rule produces all of them. A same-value write:
+      // measured, 18 of them acked in 0-1 ms and produced none. A write the fake never
+      // accepted (`ignoreWrites`), the acked-and-silently-discarded model: nothing it
+      // reports moved. And a write to a `diverge`d address, which is the same shape from
+      // the reporting side — the unit goes on asserting the value it already held, so
+      // there is nothing new to announce, and its reads and its (absent) notify agree.
+      // Announcing the asserted value instead would be a notify contradicting the fake's
+      // own `mem` and carrying a value the app never sent, which is a DEVICE-SIDE CHANGE
+      // to the app, not a coercion. A coerced write is a transform applied to the write
+      // on the way in; `diverge` bends reads and leaves `mem` alone, so it is not one,
+      // and modelling coercion needs a knob this fake does not have.
+      //
+      // Two things are captured when the write is APPLIED rather than read again when the
+      // timer fires. The staleness entry, by identity, so a later write's window is not
+      // closed by an earlier write's announcement. And the VALUE, because a notify reports
+      // the change it belongs to — two writes inside one window produce two notifies
+      // carrying their own values, in order. Read lazily, the first write's announcement
+      // carries the SECOND write's value and arrives before that write's ack, so the app
+      // sees a value its snapshot cannot hold yet, calls it a device-side change, and
+      // applies it over whatever the operator has moved to since. (Measured against the
+      // app: a 240-detent key train landed 5-14 dB off.)
+      const announce = (k: string, armed: Stale | undefined, value: number): void => {
+        const [p, x, y] = k.split(":").map(Number);
+        setTimeout(() => {
+          if (armed && fake.stale[k] === armed) {
+            armed.left = 0;
+            armed.notified = true;
+          }
+          fake.pushNotify([[p, x, y, value]], "device");
+        }, config.announceMs);
+      };
+
       // `nth` counts EVERY call of that command, refused ones included, so two refusals
       // stacked on one command fire on the calls their numbers name. Returning at the
       // first match instead left the later entries un-incremented, which slid each of
@@ -444,6 +593,14 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         sampled: number;
         sampledStr: string;
         held: Promise<void> | null;
+        /** Arms the write's own announcement, deliberately NOT armed at the queue point:
+         *  the measured notify follows the ACK (30/30, ack+58-151 ms), and `latency.set`
+         *  is a case's knob that can be set above the announcement window. Armed there,
+         *  a case with a slow link would receive the unit's word about a write before the
+         *  app was told the write landed — an ordering the unit never produces, which the
+         *  app then reads as a device-side change to an address whose snapshot entry it
+         *  has not written yet. */
+        announce?: () => void;
       }
       let workQueue: Promise<void> = Promise.resolve();
       const enqueue = (run: () => Promise<unknown>): Promise<unknown> => {
@@ -471,9 +628,12 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         // to place exactly.
         let sampled = 0;
         let sampledStr = "";
+        let pending: (() => void) | undefined;
         if (cmd === "vd_get") {
           const k = key(args);
-          sampled = k in fake.diverge ? fake.diverge[k] : (fake.mem[k] ?? 0);
+          // `diverge` still outranks staleness: it says the unit HOLDS that value, so
+          // there is no pre-write value for a read to lag behind and nothing to spend.
+          sampled = k in fake.diverge ? fake.diverge[k] : takeVisible(k);
         } else if (cmd === "vd_get_str") {
           // The string path has a state map of its own, for the reason the numeric one
           // has: a fake that answered "" whatever was written would make every full
@@ -482,7 +642,18 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           const k = key(args);
           sampledStr = k in fake.divergeStr ? fake.divergeStr[k] : (fake.memStr[k] ?? "");
         } else if (cmd === "vd_set" && !fake.ignoreWrites.includes(Number(args.paramId))) {
-          fake.mem[key(args)] = Number(args.value);
+          const k = key(args);
+          const value = Number(args.value);
+          const said = reported(k);
+          // Armed BEFORE the store, so the entry carries the pre-write value. Both are
+          // queue-point effects for the reason the store already was: the broker applies
+          // a write when it takes it, and what a LATER READ sees is the separate question
+          // this models. A write the fake never accepted (ignoreWrites) arms nothing —
+          // there is no accepted value for a read to be lagging behind.
+          const armed = armStale(k);
+          fake.mem[k] = value;
+          const now = reported(k);
+          if (now !== said) pending = () => announce(k, armed, now);
         } else if (cmd === "vd_set_str" && !fake.ignoreWrites.includes(Number(args.paramId))) {
           fake.memStr[key(args)] = String(args.value ?? "");
         } else if (cmd === "vd_params_unsubscribe" || cmd === "vd_meters_unsubscribe") {
@@ -542,7 +713,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           if (barrier.hit >= barrier.nth) held = barrier.gate;
         }
 
-        const ctx: Served = { done, sampled, sampledStr, held };
+        const ctx: Served = { done, sampled, sampledStr, held, announce: pending };
         return onWorker(cmd) ? enqueue(() => serve(cmd, args, ctx)) : serve(cmd, args, ctx);
       }
 
@@ -696,6 +867,8 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           case "vd_set":
             await wait(config.latency.set);
             done();
+            // After the ack, never before it — see Served.announce.
+            ctx.announce?.();
             return null;
           case "vd_set_str":
             await wait(config.latency.setStr);
@@ -846,9 +1019,11 @@ export async function pushNotifyDelivered(page: Page, list: Array<[number, numbe
 /** Force one whole-device reconcile the way a scene recall does. */
 export const pushBulkChange = (page: Page): Promise<string[]> => page.evaluate(() => window.__urxFake.pushBulkChange());
 
-/** The notifies the bridge refused, for a case whose subject IS the refusal. */
+/** The notifies the bridge refused, for a case whose subject IS the refusal. The unit's
+ *  own write announcements are excluded — a refused one says the app never registered
+ *  that address, which is invariant 6's "grown window" and not this. */
 export const notifyDropsOf = (page: Page): Promise<TraceEvent[]> =>
-  page.evaluate(() => window.__urxFake.log.filter((e) => e.kind === "notify-drop"));
+  page.evaluate(() => window.__urxFake.log.filter((e) => e.kind === "notify-drop" && e.origin !== "device"));
 
 /**
  * Push level-meter readings through the bridge's registered-set filter. Resolves to one
@@ -1029,6 +1204,43 @@ export const divergeAt = (page: Page, addr: string, value: number): Promise<void
     },
     [addr, value] as [string, number],
   );
+
+/**
+ * Make the next `reads` reads of `addr` after EVERY write to it answer the value it held
+ * before that write — the unit's own post-write read staleness (see
+ * FakeHandle.staleAfterWrite).
+ *
+ * Unlike `divergeAt`, which answers one value for ever and models a device holding
+ * something the app never wrote, this models a device that ACCEPTED the write and cannot
+ * yet report it: `mem` carries the written value throughout, so `memOf` stays the one
+ * answer to "what does the unit hold". The two are not interchangeable — a diverging
+ * address never agrees with the app, a stale one agrees a moment later, and every repair
+ * path in the app is built on reading again.
+ *
+ * The numeric path only: `vd_set_str` settles at the queue point as before, so a name
+ * write is readable immediately here (unmeasured on hardware in either direction).
+ *
+ * Which read spends it is a matter of ORDER, not of time: at DEFAULT_LATENCY a run of
+ * queued commands drains as one microtask burst, so a case that needs a SPECIFIC read to
+ * be the stale one either scripts a non-zero `latency.get` or picks an address only that
+ * read touches.
+ *
+ * The window is closed by the write's own announcement, which the fake makes for every
+ * value-changing write with or without this (ANNOUNCE_MS). A case does not push it and
+ * must not expect the staleness to outlast it.
+ */
+export const staleReadsAt = (page: Page, addr: string, reads: number): Promise<void> =>
+  page.evaluate(
+    ([a, n]) => {
+      window.__urxFake.staleAfterWrite[a as string] = n as number;
+    },
+    [addr, reads] as [string, number],
+  );
+
+/** The stale entries as they stand. `spent` says how many reads the staleness a case
+ *  scripted actually answered — 0 means it was configured and never reached — and
+ *  `notified` that the window has closed on the write's own notify. */
+export const staleStateOf = (page: Page): Promise<FakeHandle["stale"]> => page.evaluate(() => window.__urxFake.stale);
 
 /** Plant a device-side value on the STRING path: what a vd_get_str answers whatever the
  *  app wrote. A rename made on the unit's own LCD is exactly this shape, and it is the
