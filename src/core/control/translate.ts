@@ -826,6 +826,23 @@ export const DUCKER_FIELDS: DynField[] = [
   { key: "threshold", name: "DUCKER_THRESHOLD", min: -60, max: 0, step: 1, def: -40, unit: "db" },
 ];
 
+/**
+ * Value → slider position, and back. Identity for a linear field; for a logarithmic
+ * one (an EQ band frequency spans three decades, which a linear slider cannot resolve
+ * at the bottom) the position is an index into `logSteps` even divisions of the log
+ * range. It lives beside the field table rather than in the screen that draws the
+ * slider, because the MIDI catalog has to land on the same values: a normalized MIDI
+ * value and a dragged slider both resolve to a position, so the two cannot drift.
+ */
+export function dynToPos(f: DynField, v: number): number {
+  if (f.logSteps === undefined) return v;
+  return Math.round((f.logSteps * Math.log(v / f.min)) / Math.log(f.max / f.min));
+}
+export function dynFromPos(f: DynField, pos: number): number {
+  if (f.logSteps === undefined) return pos;
+  return Math.round(f.min * Math.exp((Math.log(f.max / f.min) * pos) / f.logSteps));
+}
+
 /** Format one dynamics value for display, by its unit. The single source for the
  *  inspector, the gate screen and anything else that prints a DynField. */
 export function formatDyn(v: number, unit: DynField["unit"]): string {

@@ -38,7 +38,7 @@ import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 import { decodeGrDb, METER_GREEN_TOP_DB, METER_YELLOW_TOP_DB, MeterStore, subscribeMeters } from "../core/meters";
 import type { MeterTap } from "../core/meters";
-import { dynValueText, formatDyn } from "../core/control/translate";
+import { dynFromPos, dynToPos, dynValueText, formatDyn } from "../core/control/translate";
 import type { DynField } from "../core/control/translate";
 import type { DeviceModel } from "../models/types";
 import type { NodeParams, Plan } from "../core/plan";
@@ -500,7 +500,7 @@ export class DynScreen {
       const f = key && this.fields.find((x) => x.key === key);
       if (!f) continue;
       const v = this.val(f.key);
-      if (fromPos(f, Number(input.value)) !== v) input.value = String(toPos(f, v));
+      if (dynFromPos(f, Number(input.value)) !== v) input.value = String(dynToPos(f, v));
       const out = this.box.querySelector<HTMLElement>(`[data-dyn-val="${f.key}"]`);
       if (out) setLevelText(out, dynValueText(f, v));
     }
@@ -1152,7 +1152,7 @@ export class DynScreen {
     input.min = String(f.logSteps === undefined ? f.min : 0);
     input.max = String(f.logSteps ?? f.max);
     input.step = String(f.logSteps === undefined ? f.step : 1);
-    input.value = String(toPos(f, value));
+    input.value = String(dynToPos(f, value));
     input.dataset.dyn = f.key;
     input.setAttribute("aria-label", label);
     const val = el("span", "param-val gt-val");
@@ -1171,7 +1171,7 @@ export class DynScreen {
     };
     show(value);
     input.addEventListener("input", () => {
-      const v = fromPos(f, Number(input.value));
+      const v = dynFromPos(f, Number(input.value));
       show(v);
       this.setVals({ [f.key]: v });
       if (f.key === this.capKey) this.syncCap();
@@ -1313,18 +1313,6 @@ function loadSels(): Record<string, number> {
     if (n !== undefined) out[k] = n;
   }
   return out;
-}
-
-/** Value → slider position, and back. Identity for a linear field; for a logarithmic
- *  one the same mapping the inspector's frequency control used, so a plan authored
- *  through either lands on the same values. */
-function toPos(f: DynField, v: number): number {
-  if (f.logSteps === undefined) return v;
-  return Math.round((f.logSteps * Math.log(v / f.min)) / Math.log(f.max / f.min));
-}
-function fromPos(f: DynField, pos: number): number {
-  if (f.logSteps === undefined) return pos;
-  return Math.round(f.min * Math.exp((Math.log(f.max / f.min) * pos) / f.logSteps));
 }
 
 function wrap(cls: string, ...kids: HTMLElement[]): HTMLElement {

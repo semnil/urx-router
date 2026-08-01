@@ -20,6 +20,7 @@ import { MidiEngine } from "../core/midi/engine";
 import { bindControl, parseControlId, type BoundControl, type ControlParam } from "../core/midi/controls";
 import {
   addrLabel,
+  addrShort,
   BUTTON_MODES,
   sanitizeMappings,
   TAKE_MODES,
@@ -159,6 +160,13 @@ export class MidiControl {
 
   isMapped(id: string): boolean {
     return this.engine.isMapped(id);
+  }
+
+  /** The address a control is bound to, at tooltip length — so a binding stays
+   *  readable from the control itself when the MIDI window is behind the app. */
+  addrOf(id: string): string | null {
+    const bound = this.engine.getMappings().find((m) => m.control === id);
+    return bound ? addrShort(bound.addr) : null;
   }
 
   /** The console armed a control: the next MIDI input binds to it. An id the
@@ -391,11 +399,14 @@ export class MidiControl {
     saveJson(STORE_KEY, s);
   }
 
-  /** Human-readable control label: node label (model-fixed) + send target +
-   *  the console's own wording for the control ("CH 1 → MIX 1 · Level"). */
+  /** Human-readable control label: node label (model-fixed) + scope + the surface's
+   *  own wording for the control ("CH 1 → MIX 1 · Level", "CH 1 · GATE · Threshold").
+   *  The two scope kinds print differently because they mean different things — a
+   *  send target is where the signal goes, a processor is a stage of this node. */
   private labelOf(id: string): string {
     const parsed = parseControlId(id);
     if (!parsed) return id;
+    const m = t().midi;
     const nodes = this.hooks.getModel().nodes;
     const byId = (nid: string): DeviceNode | undefined => nodes.find((n) => n.id === nid);
     const self = byId(parsed.node);
@@ -404,9 +415,14 @@ export class MidiControl {
     // (attachTo) instead, so the assignment reads e.g. "CH 5/6 · DUCKER".
     const owner = self?.attachTo ? byId(self.attachTo) : self;
     const node = owner?.label ?? parsed.node;
-    const send = parsed.send ? ` → ${byId(parsed.send)?.label ?? parsed.send}` : "";
-    const param = t().midi.param[parsed.param as ControlParam] ?? parsed.param;
-    return `${node}${send} · ${param}`;
+    const target = parsed.scope ? byId(parsed.scope) : undefined;
+    const processor = parsed.scope !== undefined && target === undefined;
+    const scope = !parsed.scope ? "" : target ? ` → ${target.label}` : ` · ${m.scope[parsed.scope] ?? parsed.scope}`;
+    // Inside a processor scope a param is read on a tuning screen, which prints
+    // sentence-case labels; the console's own captions stay as they are.
+    const param =
+      (processor ? m.scopedParam[parsed.param] : undefined) ?? m.param[parsed.param as ControlParam] ?? parsed.param;
+    return `${node}${scope} · ${param}`;
   }
 
   // ---- panel ----

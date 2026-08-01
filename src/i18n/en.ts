@@ -203,7 +203,40 @@ export const en = {
       hpf: "HPF",
       hiZ: "Hi-Z",
       duckerOn: "DUCKER",
+      // The channel tuning screens' parameters. The scope beside them says which
+      // processor they belong to, so these are the knob names alone.
+      threshold: "Threshold",
+      range: "Range",
+      attack: "Attack",
+      hold: "Hold",
+      decay: "Decay",
+      ratio: "Ratio",
+      release: "Release",
+      autoMakeup: "Auto Makeup",
+      oneKnob: "1-Knob",
+      oneKnobLevel: "1-Knob Level",
+      freq: "Freq",
+      q: "Q",
+      bandOn: "Band ON",
     },
+    // A param whose console caption does not fit a processor scope. `gain` is the
+    // only one: the console shouts GAIN because that is what its knob caption says,
+    // while a tuning screen prints "Gain" beside "Threshold" and "Ratio". The
+    // console's own wording is deliberate and stays as it is; this is the same
+    // parameter read on a different surface.
+    scopedParam: { gain: "Gain" } as Record<string, string>,
+    // The id's third component, printed between the node and the param. A send
+    // target reads as a signal path ("→ MIX 1"); a processor or band is a stage of
+    // this node, so it reads as one more step of its name.
+    scope: {
+      gate: "GATE",
+      comp: "COMP",
+      eq: "EQ 1-Knob",
+      "eq.low": "EQ LOW",
+      "eq.lowMid": "EQ LOW-MID",
+      "eq.highMid": "EQ HIGH-MID",
+      "eq.high": "EQ HIGH",
+    } as Record<string, string>,
   },
   inspector: {
     title: "Inspector",
