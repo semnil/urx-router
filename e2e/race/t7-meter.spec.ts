@@ -261,6 +261,17 @@ test.describe("T7 meter", () => {
     // meter-late-unsub-kills-console, barrier form. The window is the screen's own
     // registration await, held open by a barrier so the close lands strictly inside
     // it rather than statistically near it.
+    //
+    // The close is UI-DRIVEN, and it has to be. This case used to close the screen the
+    // way the ladder below does — a device-side switch to SSMCS, whose scoped reconcile
+    // makes rebind() find no compressor — but the bridge is ONE worker thread
+    // (src-tauri/src/vd.rs) and the fake now serializes the same way, so those vd_gets
+    // queue BEHIND the held vd_meters_subscribe and can never resolve while the gate is
+    // shut. "Closed inside its own pending registration" is unreachable on a faithful
+    // bridge whenever the closing event itself needs a read; the Close press needs none,
+    // and the mechanism under test — the generation stamp in core/meters.ts — does not
+    // care which of the two closed the screen. The device-driven close stays measured by
+    // the ladder below, where the registration has resolved before the reconcile runs.
     test("a screen closed inside its own pending registration does not tear down the console's new stream", async ({
       page,
     }) => {
@@ -280,19 +291,12 @@ test.describe("T7 meter", () => {
       await openFromConsole(page, 1);
       await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 15_000 });
 
-      // Inside that await the device switches ch1 to SSMCS. The scoped reconcile's
-      // reflect calls dynScreen.refresh(), rebind() finds no compressor and the
-      // screen closes — running stopMeters (its unsub is still null) and handing the
-      // slot back, so the console re-subscribes while the screen's own registration
-      // is still outstanding.
-      // COMP_EQ_TYPE is a scoped param: the notify only schedules a readback of the
-      // owning node, and it is the READ that decides what the plan gets. The device
-      // has to actually hold SSMCS, or the reconcile reads the old value back and
-      // the screen stays open.
-      await divergeAt(page, CH1_COMP_EQ_TYPE.join(":"), SSMCS);
-      await mark(page, "ssmcs-notify");
-      await pushNotify(page, [[...CH1_COMP_EQ_TYPE, SSMCS]]);
-      await expect(dynBox(page)).toBeHidden({ timeout: 30_000 });
+      // Closed strictly inside that await: the screen runs stopMeters with its unsub
+      // still null, hands the slot back, and the console re-subscribes while the
+      // screen's own registration is still outstanding.
+      await mark(page, "close-comp");
+      await dynBox(page).locator(".consent-btn-primary").click();
+      await expect(dynBox(page)).toBeHidden();
       await mark(page, "screen-closed");
 
       await mark(page, "release");
@@ -336,13 +340,22 @@ test.describe("T7 meter", () => {
       expect(findings).toHaveLength(0);
     });
 
-    // meter-late-unsub-kills-console, latency form. Two points of the Δ ladder: the
-    // close inside the registration await, and the same close after it resolved. The
-    // 2 s registration is what makes the "inside" point reachable at all — measured
-    // here, the close costs ~900 ms after the notify (a 300 ms settle plus the node
-    // readback), so the 200 ms window the case sketch names cannot contain it.
+    // meter-late-unsub-kills-console, latency form: a DEVICE-driven close — the unit
+    // switches ch1 to SSMCS, the scoped reconcile's reflect calls dynScreen.refresh(),
+    // rebind() finds no compressor and the screen closes on its own.
+    //
+    // WITHDRAWN — the Δ=300 rung ("the same close inside the registration await"). The
+    // bridge serves one command at a time, so the reconcile's vd_gets queue behind the
+    // registration and cannot start until it has resolved: on a 2000 ms registration the
+    // close lands at the earliest ~2000 ms + the 300 ms settle + a node readback, i.e.
+    // strictly after the await whatever Δ is asked for. It is not a rung that needs a
+    // wider window — it is unreachable by construction on a faithful bridge, because the
+    // event that closes the screen is itself made of reads the registration is holding.
+    // The rung's subject (a close inside a pending registration) is measured by the
+    // barrier case above, where the close is UI-driven and needs no read. One value is
+    // left in the loop deliberately, so the withdrawal is legible beside what survives.
     const SUB_MS = 2000;
-    for (const delta of [300, 2500]) {
+    for (const delta of [2500]) {
       test(`a screen closed ${delta} ms into a ${SUB_MS} ms registration keeps the console fed`, async ({ page }) => {
         await goLive(page);
         await consoleWithMeters(page);
@@ -375,12 +388,15 @@ test.describe("T7 meter", () => {
         );
         console.log(`counters: subs ${base.meterSubs}→${end.meterSubs}, unsubs ${base.meterUnsubs}→${end.meterUnsubs}`);
 
-        // The two ladder points differ in exactly one observable: a screen whose
-        // registration had already resolved owns a stream and unsubscribes it on the
-        // way out (two unsubscribes), while one closed inside the await has nothing
-        // to release and its late handle is suppressed by the generation stamp (one).
-        expect(inside).toBe(delta === 300);
-        expect(end.meterUnsubs - base.meterUnsubs).toBe(inside ? 1 : 2);
+        // The placement first, or the count below is not attributable: the close landed
+        // AFTER the registration resolved, which is the only side of the edge a
+        // device-driven close can reach (see the withdrawal above). The barrier case is
+        // where the other side is measured, and it reads one unsubscribe there.
+        expect(inside).toBe(false);
+        // A screen whose registration had already resolved owns a stream and
+        // unsubscribes it on the way out, so the console's release and the screen's own
+        // are two separate exchanges.
+        expect(end.meterUnsubs - base.meterUnsubs).toBe(2);
         // Either way the console must end up with a live stream on its own addresses.
         await expect.poll(() => regOf(page)).toContain(key(CH1_POST));
         await pushMetersDelivered(page, [[...CH1_POST, -188]]);
@@ -411,8 +427,13 @@ test.describe("T7 meter", () => {
 
         await page.waitForTimeout(d);
         await tapBadge(page, "CH 2").click();
-        await mark(page, "rescope2");
         await page.locator(".con-tappop .crow", { has: page.getByText("PRE GATE", { exact: true }) }).click();
+        // Stamped AFTER the row click, which is the gesture that re-scopes. Stamped
+        // before it — with the badge click and a locator resolution still to come —
+        // the mark bounds a driver round trip rather than the gesture, and the gap
+        // between the two is the same order as the 30 ms dead zone the rung is judged
+        // against below.
+        await mark(page, "rescope2");
         await expect(tapBadge(page, "CH 2")).toContainText("PRE GATE");
         // The verdict at the low rungs is an absence (no second registration ever
         // left), and waitQuiet answers that immediately whether or not one was on its

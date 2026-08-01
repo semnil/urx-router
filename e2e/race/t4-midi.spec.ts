@@ -39,6 +39,12 @@ import { CH1_FADER, CH2_FADER, faderOf, faderReadout, openEqScreen } from "./ui"
 
 const CC7 = { type: "cc", channel: 0, controller: 7 } as const;
 
+/** src/ui/history.ts. The idle backstop that closes an entry with no boundary of its
+ *  own — the constant the rebase ladder below straddles. Restated here rather than
+ *  imported: an e2e spec that pulled in a `src/ui` module would load the app's i18n
+ *  and DOM-facing tree in the driver's Node process. */
+const IDLE_COMMIT_MS = 300;
+
 type Mapping = { control: string; addr: typeof CC7; mode: "absolute" | "pickup" };
 
 /** Seed the persisted MIDI store: ports (reopened at boot) + this model's bindings. */
@@ -261,6 +267,12 @@ test.describe("T4 midi", () => {
           `CH 1 after undo=${ch1AfterUndo}; status="${undoStatus}"`,
       );
 
+      // The achieved phase, as a PRECONDITION rather than a log line. The rung's whole
+      // verdict flips on whether the CC beat the wheel entry's 300 ms idle commit, and
+      // both marks are stamped through driver round trips — so a run that drifted
+      // across the boundary would fail the branch below and read as an app regression.
+      // Asserted here it fails naming the drift instead.
+      expect(achieved < IDLE_COMMIT_MS).toBe(inWindow);
       // Both edits reach the device either way — this is a history defect, not a
       // sync one, and saying so keeps the two apart.
       expect((await memOf(page))[CH1_FADER]).toBe(500);

@@ -3,7 +3,7 @@ import {
   installFake,
   goLive,
   mark,
-  pushNotify,
+  pushNotifyDelivered,
   traceOf,
   setLatency,
   blockAt,
@@ -15,6 +15,7 @@ import {
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, setsOf, getsOf, type Span } from "./analyze";
+import { stepLevel } from "../../src/core/levels";
 import { CH1_FADER, CH2_FADER, readoutOf } from "./ui";
 
 // T1b overtake — the T1 cases the first pass did not reach
@@ -54,6 +55,13 @@ const seedMem = (page: Page, entries: Record<string, number>): Promise<void> =>
   }, entries);
 
 const INSERT_FX_VD_NONE = 0xffffffff;
+
+/** src/core/control/live.ts. The trailing flush window the starvation stream has to
+ *  keep re-arming — so a tick slower than this measures the driver, not the latch. */
+const DEBOUNCE_MS = 120;
+/** Ticks in the starvation stream. 55 of Up/Up/Down/Down net one detent up, which is
+ *  what makes the trailing flush's value computable rather than merely non-zero. */
+const STREAM_TICKS = 55;
 
 /** One ArrowUp on every main fader except the named strips, all in one synchronous
  *  loop so the whole set lands inside a single flush window. Returns the labels it hit:
@@ -160,30 +168,48 @@ test.describe("T1b overtake", () => {
       }
 
       const before = (await faderReadout(page, "CH 1").textContent())!;
+      // Where the train starts from, read off the device rather than assumed, and where
+      // it must end: the app steps the LEVEL_STEPS_DB grid one detent per key
+      // (console.ts faderKeyStep → core/levels stepLevel), so the landing value follows
+      // from the train alone. 55 ticks of Up/Up/Down/Down net one detent up.
+      const startRaw = (await memOf(page))[CH1_FADER] ?? 0;
+      const dirs = Array.from({ length: STREAM_TICKS }, (_, i) => (i % 4 < 2 ? 1 : -1));
+      const settledRaw = Math.round(dirs.reduce((db, d) => stepLevel(db, d), startRaw / 100) * 100);
       await mark(page, "starve-start");
       // 55 edits at 90 ms = 4.95 s, below DEBOUNCE_MS throughout. The Up/Up/Down/Down
       // cycle keeps the value off its baseline for three ticks in four (so a flush that
       // did run would almost always find a diff) without walking off the top of the
       // level grid, and 55 ticks leave it one detent above where it started.
-      await page.evaluate(
+      //
+      // The closing mark is stamped IN-PAGE, in the same task as the last tick. Stamped
+      // from the driver it costs a round trip, which races the 120 ms trailing-flush
+      // timer the last tick armed: a flush landing in that gap would be counted as
+      // "during" and read as the latch releasing on its own. The achieved gaps come back
+      // with it, because a tick that slipped past 120 ms lets the window close for a
+      // reason that is the driver's, not the app's.
+      const gaps = await page.evaluate(
         async ([armSecond, period, count]) => {
           if (armSecond) (document.querySelector("[data-race-chip]") as HTMLElement | null)?.click();
           const keys = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown"];
+          const at: number[] = [];
           await new Promise<void>((resolve) => {
             let i = 0;
             const id = setInterval(() => {
               const el = document.querySelector('.con-strip .con-fader[aria-label="CH 1"]') as HTMLElement | null;
+              at.push(performance.now());
               el?.dispatchEvent(new KeyboardEvent("keydown", { key: keys[i % 4], bubbles: true }));
               if (++i >= (count as number)) {
                 clearInterval(id);
+                window.__urxFake.mark("starve-end");
                 resolve();
               }
             }, period as number);
           });
+          return at.slice(1).map((t, i) => +(t - at[i]).toFixed(1));
         },
-        [latched, 90, 55] as [boolean, number, number],
+        [latched, 90, STREAM_TICKS] as [boolean, number, number],
       );
-      await mark(page, "starve-end");
+      const maxGap = Math.max(...gaps);
       const streamed = (await faderReadout(page, "CH 1").textContent())!;
       await settleAfter(page, "starve-end", 900, 15_000);
 
@@ -198,12 +224,19 @@ test.describe("T1b overtake", () => {
       console.log(timeline(trace, { from: from - 200 }));
       console.log(report(`converge latch — ${latched ? "latched" : "control"}`, findings));
       console.log(
-        `stream ${(to - from).toFixed(0)} ms: vd_set during = ${during.length}, after = ${after.length}` +
+        `stream ${(to - from).toFixed(0)} ms, max tick gap ${maxGap.toFixed(0)} ms (re-arm window 120):` +
+          ` vd_set during = ${during.length}, after = ${after.length}` +
           ` (CH 1 fader ${faderAfter.length}); readout before=${before} streamed=${streamed}` +
-          `; device now holds ${CH1_FADER} = ${(await memOf(page))[CH1_FADER]}`,
+          `; device now holds ${CH1_FADER} = ${(await memOf(page))[CH1_FADER]}, train settles at ${settledRaw}`,
       );
 
       if (latched) {
+        // The cadence really was faster than the window it has to keep re-arming.
+        // Asserted BEFORE the absence: a slipped tick lets the trailing window close for
+        // a reason that belongs to the driver, and the write it produces would otherwise
+        // read as "the latch does not starve after all". This way a slipped run fails
+        // naming the slip.
+        expect(maxGap).toBeLessThan(DEBOUNCE_MS);
         // PINNED DEFECT. Five seconds of continuous operator movement on a live mixer
         // and not one command left the app: the re-arm in schedule() never lets the
         // window close while a converge param is still in the diff. Nothing is lost —
@@ -214,9 +247,12 @@ test.describe("T1b overtake", () => {
         // cadence stops, the same edits go out.
         expect(faderAfter.length).toBeGreaterThan(0);
         // …and it carries the value the operator ended on, not an intermediate one:
-        // the trailing flush sends the settled plan. (Asserting the fake's memory
-        // against the last write it accepted would only restate the harness.)
-        expect(faderAfter[faderAfter.length - 1].value).toBeGreaterThan(0);
+        // the trailing flush sends the settled plan. The train's landing value is
+        // computed off the same grid the app steps on, so "an intermediate value" and
+        // "the settled value" are separable here — `> 0` was satisfied by both.
+        // (Asserting the fake's memory against the last write it accepted would only
+        // restate the harness.)
+        expect(faderAfter[faderAfter.length - 1].value).toBe(settledRaw);
         expect(await faderReadout(page, "CH 1").textContent()).toBe(streamed);
       } else {
         // The control. Same cadence, same fader, same lastFlushConverged — but with no
@@ -296,7 +332,12 @@ test.describe("T1b overtake", () => {
       // An echo needs no such write: the device already holds exactly what we sent.
       if (variant === "genuine") await seedMem(page, { [CH1_FADER]: value });
       await mark(page, "notify");
-      await pushNotify(page, [[139, 0, 0, value]]);
+      // Delivered, not merely pushed. The whole case is the app's RESPONSE to this one
+      // message, and a notify the bridge refuses leaves the app in exactly the state
+      // "nothing has happened yet" leaves it in — under which the late-echo arm's
+      // absence verdict passes for free and the other two would fail for a reason that
+      // is not the app's. This throws at the push, naming the address.
+      await pushNotifyDelivered(page, [[139, 0, 0, value]]);
       if (held) {
         await mark(page, "release");
         await releaseBarrier(page);
@@ -325,6 +366,12 @@ test.describe("T1b overtake", () => {
           ` readout edited=${editedReadout} final=${finalReadout};` +
           ` snapshot holds ${snapshot?.[CH1_FADER]}, device holds ${(await memOf(page))[CH1_FADER]}`,
       );
+
+      // In all three arms: nothing the analyzer classifies as "the case may have
+      // measured nothing" fired. Clause A is the one that would — a stimulus the bridge
+      // refused — and it is judged with no registration in hand, so this holds whichever
+      // arm is running.
+      expect(findings.filter((f) => f.class === "case")).toHaveLength(0);
 
       if (variant === "early-echo") {
         // PINNED DEFECT. The message is our own write coming back, but it overtook our

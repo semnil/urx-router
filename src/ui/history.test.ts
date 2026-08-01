@@ -264,6 +264,35 @@ describe("gesture boundaries", () => {
     expect(undoDepth(h)).toBe(1);
   });
 
+  it("does not treat a stepping keyup in a text field as a boundary", () => {
+    const h = harness();
+    const field = focused("text");
+    // ArrowLeft and Enter ARE boundary keys everywhere else, and inside a name field
+    // they are a caret move and a Return — neither ends the edit. What stops them
+    // splitting it is the keyup handler's second conjunct, the target owning its own
+    // undo stack; the character-keyup test above cannot reach it, because a character
+    // is not a boundary key and the first conjunct decides alone.
+    //
+    // An edit on EITHER side of the two keyups is what makes the difference visible:
+    // "an entry is still open" reads the same whether or not the first half was
+    // already committed, so the count after the focusout is the discriminating
+    // observable.
+    h.edit((p) => (p.nodeNames.ch1 = "AB"));
+    keyUp("ArrowLeft", field);
+    keyUp("Enter", field);
+    settle();
+    h.edit((p) => (p.nodeNames.ch1 = "AXB"));
+    expect(h.history.canUndo()).toBe(true);
+
+    field.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    settle();
+    // One entry for the whole visit to the field, and it takes the name back to
+    // where the field was entered — not to the halfway state a caret move would
+    // have pinned.
+    expect(undoDepth(h)).toBe(1);
+    expect(h.plan.nodeNames.ch1).toBeUndefined();
+  });
+
   it("closes an entry on focusout", () => {
     const h = harness();
     h.edit((p) => (p.notes.ch1 = "gate on"));

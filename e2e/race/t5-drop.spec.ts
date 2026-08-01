@@ -397,7 +397,15 @@ test.describe("T5 drop", () => {
       await faderOf(page, "CH 1").focus();
       await page.keyboard.press("ArrowUp");
     }
-    await waitQuiet(page);
+    await mark(page, "last-press");
+    // settleAfter, not waitQuiet. Every verdict below this point is an ABSENCE (one
+    // doomed write and no more, nothing re-subscribed), and by now the link has been
+    // silent for the best part of a second — so waitQuiet returns on the spot, before
+    // the last press's own 120 ms flush window has even closed, and a write emitted
+    // inside it would land after the trace was read. settleAfter waits for the link to
+    // wake after the mark first, and bounds that wait so a press that really emits
+    // nothing still terminates.
+    await settleAfter(page, "last-press");
     await mark(page, "settled");
 
     const midTrace = await traceOf(page);

@@ -568,16 +568,29 @@ test.describe("T4b midi", () => {
       };
     });
 
-  /** Wait for the next outgoing message, then deliver `value` on the same address
-   *  exactly `d` ms after it left. Returns the achieved phase. */
-  const loopbackAfter = (page: Page, d: number, value: number): Promise<number> =>
+  /** Wait for the first outgoing message past `since` sends, then deliver `value` on
+   *  the same address exactly `d` ms after it left. Returns the achieved phase.
+   *
+   *  `since` is passed IN rather than sampled here. The evaluate starts a couple of
+   *  driver round trips after the gesture and the feedback emit it waits for lands
+   *  ~120 ms later, so a baseline taken inside can already include it — and then the
+   *  1 ms poll never terminates and the case hangs to the Playwright timeout with no
+   *  diagnosis at all. The poll carries a deadline for the same reason: a gesture that
+   *  emits nothing has to fail saying which wait it was in. */
+  const loopbackAfter = (page: Page, d: number, value: number, since: number, cap = 5000): Promise<number> =>
     page.evaluate(
-      async ([delay, v]) => {
+      async ([delay, v, n0, deadlineMs]) => {
         const w = window as unknown as { __sendAt: number[] };
         const f = window.__urxFake;
-        const n0 = f.midi.sent.length;
-        await new Promise<void>((res) => {
-          const tick = (): void => void (f.midi.sent.length > n0 ? res() : setTimeout(tick, 1));
+        const deadline = performance.now() + deadlineMs;
+        await new Promise<void>((res, rej) => {
+          const tick = (): void => {
+            if (f.midi.sent.length > n0) return res();
+            if (performance.now() > deadline) {
+              return rej(new Error(`loopbackAfter: no MIDI feedback past send #${n0} within ${deadlineMs} ms`));
+            }
+            setTimeout(tick, 1);
+          };
           tick();
         });
         const bytes = f.midi.sent[f.midi.sent.length - 1];
@@ -587,8 +600,21 @@ test.describe("T4b midi", () => {
         f.pushMidi([[bytes[0], bytes[1], v]]);
         return achieved;
       },
-      [d, value] as [number, number],
+      [d, value, since, cap] as [number, number, number, number],
     );
+
+  /** Push a MIDI message from INSIDE the page and return its phase from the last
+   *  outgoing feedback emit. A driver `pushMidi` is a round trip whose lateness is
+   *  unbounded, so a case whose verdict turns on "inside the 300 ms echo window"
+   *  cannot measure the push from outside — under driver lag it would be measuring the
+   *  window expiring rather than the thing it claims. */
+  const pushAtPhase = (page: Page, bytes: number[]): Promise<number> =>
+    page.evaluate((b) => {
+      const w = window as unknown as { __sendAt: number[] };
+      const at = w.__sendAt[w.__sendAt.length - 1];
+      window.__urxFake.pushMidi([b]);
+      return performance.now() - at;
+    }, bytes);
 
   for (const d of [50, 250, 290, 310, 400]) {
     const inWindow = d < 300;
@@ -608,7 +634,7 @@ test.describe("T4b midi", () => {
       await mark(page, "ui-mute");
       await muteChip(page, "CH 1").click();
       await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
-      const achieved = await loopbackAfter(page, d, 127);
+      const achieved = await loopbackAfter(page, d, 127, armIdx);
       await page.waitForTimeout(150);
 
       const state = await muteChip(page, "CH 1").getAttribute("aria-pressed");
@@ -643,10 +669,11 @@ test.describe("T4b midi", () => {
     await expect.poll(async () => (await midiSentOf(page)).length).toBeGreaterThan(0);
 
     await stampSends(page);
+    const armIdx = (await midiSentOf(page)).length;
     await mark(page, "ui-mute");
     await muteChip(page, "CH 1").click();
     await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
-    const achieved = await loopbackAfter(page, 50, 64); // ≥ 64 = an on-value, ≠ lastSent 127
+    const achieved = await loopbackAfter(page, 50, 64, armIdx); // ≥ 64 = an on-value, ≠ lastSent 127
     await page.waitForTimeout(150);
 
     const state = await muteChip(page, "CH 1").getAttribute("aria-pressed");
@@ -665,21 +692,30 @@ test.describe("T4b midi", () => {
     await expect.poll(async () => (await midiSentOf(page)).length).toBeGreaterThan(0);
 
     await stampSends(page);
+    const armIdx = (await midiSentOf(page)).length;
     await mark(page, "ui-mute");
     await muteChip(page, "CH 1").click();
     await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
-    const achieved = await loopbackAfter(page, 50, 127);
+    const achieved = await loopbackAfter(page, 50, 127, armIdx);
     await page.waitForTimeout(50);
     const afterFirst = await muteChip(page, "CH 1").getAttribute("aria-pressed");
-    await pushMidi(page, [cc7(127)]); // still well inside the 300 ms window
+    // Pushed in-page and stamped, like the first one: the claim is that the guard was
+    // SPENT, and under driver lag an unmeasured push measures the window expiring
+    // instead — which produces the same "flipped back" reading for the opposite reason.
+    const secondPhase = await pushAtPhase(page, cc7(127));
     await page.waitForTimeout(150);
     const afterSecond = await muteChip(page, "CH 1").getAttribute("aria-pressed");
 
     await dump(page, "toggle echo, one-shot guard", "ui-mute", { ledger: await ledgerOf(page) });
-    console.log(`D achieved=${achieved.toFixed(0)} ms; MUTE after first=${afterFirst} after second=${afterSecond}`);
+    console.log(
+      `D achieved=${achieved.toFixed(0)} ms, second at ${secondPhase.toFixed(0)} ms;` +
+        ` MUTE after first=${afterFirst} after second=${afterSecond}`,
+    );
 
     expect(achieved).toBeLessThan(300);
     expect(afterFirst).toBe("true"); // eaten
+    // Both messages inside one window — the precondition the "one-shot" claim rests on.
+    expect(secondPhase).toBeLessThan(300);
     expect(afterSecond).toBe("false"); // applied — the guard was spent on the first
   });
 

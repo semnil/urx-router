@@ -35,6 +35,8 @@ import { CH1_FADER, CH1_HPF_FREQ, faderOf, faderReadout, graphNode, openEqScreen
 
 // "{param_id}:{x}:{y}", where y is the instance index — the input channel, here.
 const CH2_FADER: [number, number, number] = [139, 0, 1];
+/** CH_FADER on the third mono channel, as the trace addresses it. */
+const CH3_FADER = "139:0:2";
 // HPF frequency (26) is a scoped (non-direct) param: a notify on it re-reads the whole
 // owner node rather than being placed straight into the plan.
 const NOTHING_TO_UNDO = "Nothing to undo";
@@ -114,6 +116,38 @@ function wheelBurst(target: Locator, n: number, gap: number, up = true): Promise
     [n, gap, up ? -1 : 1] as [number, number, number],
   );
 }
+/**
+ * The same burst, sampling the COMMITTED undo depth immediately before each notch.
+ *
+ * The ladder below used to derive its expectation from the achieved wall-clock gaps,
+ * which cannot decide it. The idle backstop is armed inside the notch's own dispatch
+ * and re-armed by the next one, and the two timers are due 300 ms and `gap` ms after
+ * the same instant — so a rung whose achieved gap drifted past 300 under contention
+ * makes a gap-derived formula demand a split the app never made, and the case fails as
+ * if the app had regressed. `depth()` is the commit itself (the `race` project always
+ * serves the trace build), so the splits are OBSERVED between the notches that produced
+ * them instead of inferred from when they were dispatched.
+ */
+function wheelBurstSampled(target: Locator, n: number, gap: number): Promise<{ gaps: number[]; depths: number[] }> {
+  return target.evaluate(
+    async (el, [count, d]) => {
+      const probe = (window as unknown as { __urxTrace?: { depth: () => { undo: number; redo: number } } }).__urxTrace;
+      const at: number[] = [];
+      const depths: number[] = [];
+      for (let i = 0; i < (count as number); i++) {
+        if (i) await new Promise((r) => setTimeout(r, d as number));
+        // Sampled at the END of the gap, before the notch that closes it: what rose
+        // since the previous sample is what the backstop committed during that gap.
+        depths.push(probe?.depth().undo ?? -1);
+        at.push(performance.now());
+        el.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }));
+      }
+      return { gaps: at.slice(1).map((t, i) => +(t - at[i]).toFixed(1)), depths };
+    },
+    [n, gap] as [number, number],
+  );
+}
+
 /** The EQ screen's 1-Knob ON button, found from the level slider's id rather than a
  *  localized label. Its write is a refetch (sideEffect) param. */
 const oneKnobOn = (page: Page) =>
@@ -261,10 +295,11 @@ test.describe("T3 undo", () => {
   // undo-idle-backstop-wheel-ladder
   // ---------------------------------------------------------------------------
   // The only gesture with no DOM boundary of its own, laddered directly across
-  // IDLE_COMMIT_MS. The expectation is computed from the ACHIEVED gaps rather than the
-  // requested ones: a run whose timers drifted past the constant is still a valid
-  // measurement of the constant, and pretending otherwise would make the ladder flaky
-  // instead of informative.
+  // IDLE_COMMIT_MS. The expectation is OBSERVED rather than derived: the committed depth
+  // is sampled between the notches (`wheelBurstSampled`), so a run whose timers drifted
+  // is still a valid measurement of the constant and cannot demand a split the app never
+  // made. The achieved gaps are printed beside it — a ladder is only interpretable with
+  // its measured phases — but nothing is inferred from them.
   for (const d of [80, 250, 290, 320, 800]) {
     test(`five wheel notches ${d} ms apart: the 300 ms backstop decides the entry count`, async ({ page }) => {
       await page.click("#btn-view-console");
@@ -272,7 +307,7 @@ test.describe("T3 undo", () => {
       const before = (await faderReadout(page, "CH 1").textContent())!;
 
       await mark(page, `burst-${d}`);
-      const gaps = await wheelBurst(faderOf(page, "CH 1"), 5, d);
+      const { gaps, depths } = await wheelBurstSampled(faderOf(page, "CH 1"), 5, d);
       await page.waitForTimeout(1200);
       const moved = (await faderReadout(page, "CH 1").textContent())!;
       expect(moved).not.toBe(before);
@@ -280,14 +315,24 @@ test.describe("T3 undo", () => {
       const depth = await undoDepth(page);
       const after = (await faderReadout(page, "CH 1").textContent())!;
 
-      // One entry, plus one more for every gap the backstop had time to fire in.
-      const splits = gaps.filter((g) => g >= 300).length;
+      // One entry for the burst's tail, plus one for every commit the backstop actually
+      // made between two notches. `depths` is the committed depth before each notch, so
+      // its rise across the burst IS that count.
+      const splits = depths[depths.length - 1] - depths[0];
       const trace = await traceOf(page);
       console.log(timeline(trace));
       console.log(report(`idle backstop D=${d}`, []));
-      console.log(`D=${d}: achieved gaps ${gaps.join("/")} ms → expected ${1 + splits}, got ${depth}`);
+      console.log(
+        `D=${d}: achieved gaps ${gaps.join("/")} ms, committed depth ${depths.join("→")} ` +
+          `→ ${splits} split(s), expected ${1 + splits}, got ${depth}`,
+      );
       console.log(`readout: before=${before} moved=${moved} after=${after}`);
 
+      // The stack is empty when the burst starts (a fresh page, no gesture before it),
+      // which is what makes `depth` the burst's own entries — and it is also the check
+      // that the probe is present at all, since a plain build would read -1 here and
+      // make every rung expect one entry whatever the app did.
+      expect(depths[0]).toBe(0);
       expect(depth).toBe(1 + splits);
       // However it was split, undoing every entry restores the pre-burst value exactly.
       expect(after).toBe(before);
@@ -309,6 +354,12 @@ test.describe("T3 undo", () => {
     await setLatency(page, { get: 8, set: 60 });
 
     const before = (await faderReadout(page, "CH 1").textContent())!;
+    // The RAW the unit holds before the gesture — the value the undo has to put back on
+    // the wire. The readouts below state what the screen shows; only this states what
+    // the device was left playing, which is the half the case's own comment claims.
+    // An address the fake was never written to answers 0, which is what the boot
+    // readback put in the plan.
+    const beforeRaw = (await memOf(page))[CH1_FADER] ?? 0;
     // Hold the very first write of the session: the edit below is the only thing that
     // writes, so the barrier lands on its own flush.
     await blockAt(page, "vd_set", 1);
@@ -338,11 +389,13 @@ test.describe("T3 undo", () => {
       // and clause B has nothing to report.
       snapshot: await snapshotOf(page),
     });
+    const undoWrites = writes.filter((w) => w.start > undoAt);
+    const deviceHolds = (await memOf(page))[CH1_FADER];
     console.log(timeline(trace, { from: markTime(trace, "edit")! - 100 }));
     console.log(report("undo during flush", findings));
     console.log(`status="${status}" readout ${before} → ${edited} → ${justAfter} → ${after}`);
     console.log(`writes on ${CH1_FADER}: ${writes.map((w) => `${w.start.toFixed(0)}ms=${w.value}`).join(", ")}`);
-    console.log(`device holds ${CH1_FADER} = ${(await memOf(page))[CH1_FADER]}`);
+    console.log(`device holds ${CH1_FADER} = ${deviceHolds} (pre-edit ${beforeRaw})`);
 
     // The gate does not know about a flush, so the undo goes through.
     expect(status).not.toBe(BUSY_REFUSAL);
@@ -350,8 +403,13 @@ test.describe("T3 undo", () => {
     // The undo landed on screen at once…
     expect(justAfter).toBe(before);
     // …and the write it produced followed the one already in flight, so the device
-    // ends holding the undone value rather than the one the held write carried.
-    expect(writes.filter((w) => w.start > undoAt).length).toBeGreaterThan(0);
+    // ends holding the undone value rather than the one the held write carried. Both
+    // halves are asserted by VALUE: a write that followed the undo while carrying the
+    // edited value satisfies a count and leaves the unit playing what the operator just
+    // took back, which is the failure this case is named for.
+    expect(undoWrites.length).toBeGreaterThan(0);
+    expect(undoWrites.at(-1)!.value).toBe(beforeRaw);
+    expect(deviceHolds).toBe(beforeRaw);
     expect(after).toBe(before);
     expect(await undoDepth(page)).toBe(0);
   });
@@ -582,6 +640,9 @@ test.describe("T3 undo", () => {
       // and with only the open entry on the stack (goLive has just cleared it) that
       // could not be told apart. The keyup is its boundary, so it is closed.
       const sweptBase = (await faderReadout(page, "CH 3").textContent())!;
+      // The raw the unit holds before either edit. Both presses below are undone, so
+      // this is what the device must be left playing — the half no readout can state.
+      const sweptBaseRaw = (await memOf(page))[CH3_FADER] ?? 0;
       await faderOf(page, "CH 3").focus();
       await page.keyboard.press("ArrowUp");
       const sweptBefore = (await faderReadout(page, "CH 3").textContent())!;
@@ -618,6 +679,7 @@ test.describe("T3 undo", () => {
       // Long enough for several more notifies (and so several more absorbs) to land,
       // and for the edit's own 300 ms idle backstop to close its entry.
       await page.waitForTimeout(600);
+      await mark(page, "swept-undo");
       const sweptStatus = await undoOnce(page);
       const sweptAfter = (await faderReadout(page, "CH 3").textContent())!;
       // One press deeper: the entry committed BEFORE the sweep must still be there.
@@ -631,6 +693,9 @@ test.describe("T3 undo", () => {
       // The sweep's idle net runs one full re-read; let it finish before the control
       // arm, or its own planHistory.reset() would be credited to the sweep.
       await waitQuiet(page, 1500, 120_000);
+      // Read here, not at the bottom: the control arm edits the same fader again, so
+      // the unit's state after the two presses is only readable before it runs.
+      const sweptDeviceHolds = (await memOf(page))[CH3_FADER];
 
       // --- control arm: the identical edit with the device silent -----------------
       const quietBefore = (await faderReadout(page, "CH 3").textContent())!;
@@ -650,8 +715,25 @@ test.describe("T3 undo", () => {
       const editAt = markTime(trace, "edit-during-sweep")!;
       const achieved = notifies.filter((n) => n.t <= editAt).at(-1);
       const findings = analyze(trace, { registration, registrationWindow: sinceLastSubscribe(trace) });
+      // The reachability check needs the SWEEP's own window. `sinceLastSubscribe` starts
+      // at the post-sweep reconcile's re-subscribe, so every notify this arm pushed falls
+      // outside it and invariant 6's clause A — "the bridge refused the stimulus", the one
+      // finding that would make every verdict below hold for free — could not fire at all.
+      const sweepFindings = analyze(trace, {
+        registration,
+        registrationWindow: { from: sweepFrom, to: sweepTo },
+      });
+      const undoWrites = setsOf(trace).filter(
+        (s) =>
+          s.addr === CH3_FADER && s.start > markTime(trace, "swept-undo")! && s.start < markTime(trace, "edit-quiet")!,
+      );
       console.log(timeline(trace, { from: sweepFrom - 50, limit: 80 }));
       console.log(report(`entry vs sweep Δ=${delta}`, findings));
+      console.log(report(`entry vs sweep Δ=${delta} (sweep window)`, sweepFindings));
+      console.log(
+        `undo writes on ${CH3_FADER}: ${undoWrites.map((w) => `${w.start.toFixed(0)}ms=${w.value}`).join(", ") || "(none)"}` +
+          `; device holds ${sweptDeviceHolds} (pre-sweep ${sweptBaseRaw})`,
+      );
       console.log(
         `sweep: ${notifies.length} notifies over ${((sweepTo - sweepFrom) / 1000).toFixed(2)} s = ` +
           `${(notifies.length / ((sweepTo - sweepFrom) / 1000)).toFixed(1)} notify/s; ` +
@@ -667,7 +749,7 @@ test.describe("T3 undo", () => {
       // registration is refused by the bridge and traced as a drop, which invariant 6's
       // clause A reports — and a sweep of refusals is silence, not a direct follow, so
       // every verdict below would be about nothing.
-      expect(findings.filter((f) => f.inv === 6)).toHaveLength(0);
+      expect(sweepFindings.filter((f) => f.inv === 6)).toHaveLength(0);
       expect(notifies.length).toBeGreaterThan(8);
       // THE FIX, and what it replaced. The direct-follow path absorbs the keys the
       // notify itself authored instead of re-taking the whole baseline, so an edit made
@@ -689,6 +771,11 @@ test.describe("T3 undo", () => {
       // beneath, so the second press reaches it.
       expect(sweptStatus2).toMatch(UNDO_APPLIED);
       expect(sweptAfter2).toBe(sweptBase);
+      // …and the UNIT was taken back with it. A plan that shows the pre-sweep value
+      // while the device still plays the edited one is the shape this tier exists to
+      // catch, and the readouts above cannot tell the two apart.
+      expect(undoWrites.at(-1)?.value).toBe(sweptBaseRaw);
+      expect(sweptDeviceHolds).toBe(sweptBaseRaw);
       expect(quietStatus).not.toBe(NOTHING_TO_UNDO);
       expect(quietAfter).toBe(quietBefore);
     });

@@ -404,7 +404,15 @@ test.describe("T2e shape-change", () => {
         ` (the identical CC wrote ${fixedPan} in phase 3, against a plan the lock now refuses)`,
     );
     for (const a of CH1_M1_PAN) expect(underLinkAddrs.has(a)).toBe(false);
-    for (const a of CH1_M1_LEVEL) expect(underLinkAddrs.has(a)).toBe(true);
+    // The LEVEL went through — as far as a held link lets it. The barrier armed in phase
+    // 6 is still holding vd_get #1, and the bridge serves one command at a time
+    // (src-tauri/src/vd.rs), so live.ts's send loop — which awaits each vdSet — gets its
+    // FIRST command onto the queue and never issues the linked instance behind it.
+    // Asserting both would be asserting a bridge that serves two commands at once; what
+    // the phase is about is that the level was authored and emitted at all while the pan
+    // was swallowed, and one instance leaving states that as sharply as two. The pair is
+    // asserted whole in phase 5, where nothing is held.
+    expect(CH1_M1_LEVEL.filter((a) => underLinkAddrs.has(a))).toEqual([CH1_M1_LEVEL[0]]);
 
     // Phase 7 — the reconcile is no longer the repair, but it must not undo it. Releasing
     // the barrier lets the 900 ms idle net's whole-device reconcile run; it re-derives
@@ -464,8 +472,14 @@ test.describe("T2e shape-change", () => {
   // The rate half is a two-page differential (the picker locks while live, so the rate
   // has to be the device's own at session start), and the slot half runs on the 48 kHz
   // page where a selection is possible at all.
+  //
+  // The name says AGREE, because that is what the body proves (phase 3's two locked
+  // surfaces, phase 5's chip taking the one effect ch3's own menu leaves open). The
+  // DISAGREEMENT is the pre-fix behaviour and is described where it is pinned, in
+  // phase 5 — the console's chip re-took a slot the inspector was greying out. A title
+  // stating the defect the fix removed reads as a live claim about the app.
   // ---------------------------------------------------------------------------
-  test("the insert-FX rate ceiling and the 1-of slot are data, not emit gates, and the two screens disagree about both", async ({
+  test("the insert-FX rate ceiling and the 1-of slot are data, not emit gates, and the two screens agree about both", async ({
     page,
     context,
   }) => {

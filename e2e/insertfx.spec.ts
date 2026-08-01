@@ -318,9 +318,26 @@ test("a write says which node's insert-FX values reach the device", async ({ pag
     );
   // Prefixed, not substituted: the question the operator answers is unchanged.
   await expect.poll(() => dialogsOf(page)).toContainEqual(expect.stringContaining("to the device?"));
-  // And the write still went out, carrying the engine array ONCE per slot rather
-  // than once per owner (four MONO IN channels hold the same compander here).
+  // The confirm is raised BEFORE the send, so the write log has to be read once the
+  // send has STOPPED GROWING — otherwise the count below is a sample taken mid-round
+  // and says nothing about how many commands the write emitted. Waited on the log
+  // itself rather than on a status string: which string the flow ends on depends on
+  // whether it converged, which is the thing under test.
+  let settled = -1;
+  for (let i = 0; i < 60 && settled !== (await writesOf(page)).length; i++) {
+    settled = (await writesOf(page)).length;
+    await page.waitForTimeout(200);
+  }
+  expect(settled).toBeGreaterThan(0);
+  // And the write went out carrying the engine array ONCE per slot rather than once
+  // per owner (four MONO IN channels hold the same compander here). The stub's writes
+  // land in the state its reads answer from, so sendConverging's re-diff finds nothing
+  // and the loop stops after one round: the ceiling is the slot count, not the slot
+  // count times the round cap.
   const engine = (await writesOf(page)).filter(([id]) => id === 689);
+  console.log(
+    `write settled at ${settled} command(s), ${engine.length} on 689; dialogs: ${(await dialogsOf(page)).length}`,
+  );
   expect(engine.length).toBeGreaterThan(0);
   expect(engine.length).toBeLessThanOrEqual(COMPANDER_SLOT_COUNT);
 });

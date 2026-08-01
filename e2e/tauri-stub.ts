@@ -88,6 +88,15 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       const dialogs: string[] = [];
       const writes: Array<[number, number]> = [];
       const strWrites: Array<[number, number, string]> = [];
+      // The device's numeric state, seeded from `values` and UPDATED by every write,
+      // so a re-read answers what was written. Without that a converge loop
+      // (client.ts sendConverging: send the diff, re-read, re-send whatever still
+      // differs) sees an identical residual every round and re-sends it maxRounds
+      // times — which makes any "how many commands went out" assertion a sample of a
+      // transient instead of a settled write. Keyed by paramId alone, exactly as the
+      // read half already was: one axis for both halves, or a write would be
+      // invisible to the read that follows it.
+      const values: Record<number, number> = { ...(o.values ?? {}) };
       const w = window as unknown as {
         __urxDialogs: string[];
         __urxWrites: Array<[number, number]>;
@@ -115,11 +124,12 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
             });
           }
           if (cmd === "vd_get") {
-            const v = o.values?.[Number(args?.paramId)];
+            const v = values[Number(args?.paramId)];
             if (v !== undefined) return Promise.resolve(v);
             return o.failReads ? Promise.reject(new Error("read timeout")) : Promise.resolve(0);
           }
           if (cmd === "vd_set") {
+            values[Number(args?.paramId)] = Number(args?.value);
             writes.push([Number(args?.paramId), Number(args?.value)]);
             return Promise.resolve(null);
           }
