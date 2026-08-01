@@ -59,7 +59,7 @@ pnpm test:e2e:race:webkit # --project=race-webkit: the @webkit-tagged race cases
 pnpm build:trace  # production-shaped bundle carrying the trace probe (VITE_TRACE=1) into dist-trace/
 pnpm format       # Prettier --write on the TS sources (src/e2e/scripts + root *.ts; config = package.json "prettier", printWidth 120)
 pnpm check:md     # Markdown table integrity (a note pasted mid-table silently swallows the rows after it)
-pnpm check:assets # "## Reusable assets" vs the repo: every row points at something real, and nothing real is missing from it
+pnpm check:assets # "## Reusable assets" + docs/{en,ja} vs the repo: every row and every file the documents name — in a code span or in a sentence — points at something real, and nothing real is missing from the table
 pnpm bench:meters # CONSOLE render bench in Playwright WebKit (--tree <git worktree> measures an older revision the same way)
 pnpm clean        # remove the Vite cache (node_modules/.vite) + dist + dist-trace + Cargo target
 pnpm reset:storage # clear the dev app's (browser) localStorage = opens the ?reset URL

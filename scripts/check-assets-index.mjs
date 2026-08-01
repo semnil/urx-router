@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// Verifies the "## Reusable assets" table in CLAUDE.md against the repo.
+// Verifies the "## Reusable assets" table in CLAUDE.md, and the file references the
+// design documents make, against the repo.
 //
 // The prose is judgement and is not generatable, so this checks the ANCHORS:
 // every row points at something that exists (forward), and everything that
 // exists is in a row (reverse). "Reach for it when" is unverifiable by
 // construction, which is why the table is hand-written in the first place.
+// docs/{en,ja}/*.md gets the forward half of that treatment — see the docs section.
 //
 //   node scripts/check-assets-index.mjs        check
 //   node scripts/check-assets-index.mjs --hook check after a CLAUDE.md edit (forward half only)
@@ -18,8 +20,11 @@
 // Known limits, deliberate:
 //   - The private half is unverifiable in CI. reference/work/device-tests/ is
 //     /reference/-ignored and absent from every checkout but the operator's, so an
-//     ignored path is SKIPPED, never failed (`git check-ignore`). Locally, where the
-//     private repo is checked out, the same assertion does fire.
+//     ignored path is SKIPPED, never failed (`git check-ignore`). The skip is decided by
+//     the ignore rule and not by whether the tree is there, so it holds in the
+//     operator's checkout too: a private path that went stale is skipped, not reported,
+//     in EVERY checkout (measured). The skip is named on the OK line for that reason —
+//     it is the one outcome a reader has to check by hand.
 //   - Tier-B flags (§CLI flag) are a weak oracle: a substring match that includes
 //     comments, because meter-bench-run.mjs composes its flags at runtime
 //     ("--" + name), so --tree exists only in its usage comment. Tier A (Tauri
@@ -41,6 +46,7 @@ import { fileURLToPath } from "node:url";
 
 const DOC = "CLAUDE.md";
 const SECTION = "## Reusable assets";
+const DOC_DIRS = ["docs/en", "docs/ja"];
 // Derived, not spelled: a renamed checker must not quietly re-enter its own corpus.
 const SELF = relative(process.cwd(), fileURLToPath(import.meta.url))
   .split(sep)
@@ -61,7 +67,42 @@ const PROSE_TOKENS = new Map([
   ['grep -rn "window.__urx" src/', "an instruction to the reader, not a path"],
 ]);
 
+// The same discipline for docs/{en,ja}, keyed `<document>|<token>`: the English and
+// Japanese copies are one document, so one entry covers both, and the same string stays
+// checked in every other document. Reverse rule G reports an entry that stops
+// suppressing anything, so the list cannot become a blanket pardon.
+const DOC_MENTIONS = new Map([
+  [
+    "architecture.md|THIRD_PARTY_LICENSES.html",
+    "cargo-about generates it into src-tauri/ and .gitignore excludes it — the sentence naming it says exactly that",
+  ],
+  [
+    "architecture.md|latest.json",
+    "the updater manifest tauri-action publishes to a GitHub Release, served from a URL and never a file in the tree",
+  ],
+]);
+
 const SOURCE_EXT = /\.(ts|mjs|js|py|rs|json|sh|yml|yaml|html|css|png|svg)$/;
+
+// Extensions that make a bare basename in a design document a file claim. Wider than
+// SOURCE_EXT (which classifies a command's arguments) because the documents name
+// documents, manifests and the license text too.
+const DOC_EXT = "ts|tsx|rs|mjs|cjs|js|json|md|css|html|toml|txt|ya?ml|py|sh|png|svg|hbs";
+const DOC_ROOTED = /^(?:src-tauri|src|e2e|scripts|docs|public|reference|\.github|\.claude)\//;
+// A token with at least one slash. The head may start with a dot (.github/…), and the
+// tail may end in one (core/control/), carry a glob (e2e/race/t*.spec.ts) or a brace
+// alternation (docs/{en,ja}/…). `<` is excluded from the head so a Mermaid label's
+// <br/> is not a token: it matched 110 times and was pardoned as "another tree's path",
+// which made the OK line's suppression count say the opposite of what was suppressed.
+const DOC_SLASHY = /(?<![\w./~@<-])([A-Za-z.][\w.-]*\/(?:[\w.*{}@,-]+\/)*[\w.*{}@,-]*)/g;
+const DOC_BASENAME = new RegExp(String.raw`(?<![\w./~@-])([A-Za-z][\w.-]*\.(?:${DOC_EXT}))(?![\w/-])`, "g");
+// A dotfile name (.env.demo, .gitignore). Never followed by a slash — .github/… is a
+// path and belongs to DOC_SLASHY. Which of these is a claim is decided by DOT_ROOTS.
+const DOC_DOTFILE = /(?<![\w./~@-])(\.[A-Za-z][\w.-]*)(?![\w/-])/g;
+const DOC_PATH_TAIL = new RegExp(String.raw`(?:\.(?:${DOC_EXT})|/)$`);
+// Markdown link and image targets, stripped before the prose scan: a broken target is a
+// different class, visible to the reader who clicks it, and deliberately not checked.
+const MD_TARGET = /\]\([^)\n]*\)/g;
 
 const HOOK = process.argv.includes("--hook");
 
@@ -84,15 +125,33 @@ if (HOOK) {
   if (!edited || edited.split(/[\\/]/).pop() !== DOC) process.exit(0);
 }
 
+// Kept structured so the report can be read in file order: findings are produced in
+// rule order, and rule order is not reading order once they span thirteen documents.
 const findings = [];
-const finding = (where, message) => findings.push(`${where}: ${message}`);
+const finding = (where, message) => findings.push({ where, message });
+function reportFindings() {
+  const key = (f) => {
+    const m = f.where.match(/^(.*):(\d+)$/);
+    return [m ? m[1] : f.where, m ? Number(m[2]) : 0];
+  };
+  findings.sort((a, b) => {
+    const [af, al] = key(a);
+    const [bf, bl] = key(b);
+    return af.localeCompare(bf) || al - bl;
+  });
+  for (const f of findings) console.error(`${f.where}: ${f.message}`);
+}
 
 // --- repo inventory helpers -------------------------------------------------
+
+// Never walked. A build output is not part of the repository's inventory, and
+// src-tauri/target alone is large enough to make the whole-tree walk below unaffordable.
+const WALK_SKIP = new Set(["node_modules", ".git", "dist", "dist-trace", "target", "gen", ".vite"]);
 
 function walk(dir, out = []) {
   if (!existsSync(dir)) return out;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === "node_modules" || entry.name === ".git") continue;
+    if (WALK_SKIP.has(entry.name)) continue;
     const path = join(dir, entry.name);
     if (entry.isDirectory()) walk(path, out);
     else out.push(path.split(sep).join("/"));
@@ -197,9 +256,26 @@ const scriptsText = scriptFiles
   .filter((f) => f !== SELF)
   .map(read)
   .join("\n");
-const ciText = read(".github/workflows/ci.yml");
-const settingsText = read(".claude/settings.json");
-const envText = walk(".")
+// The checker's own two inputs. `read` answers "" for a file that is not there, and an
+// empty corpus does not fail a rule — it makes every handle read as ungrepped and
+// md-hook.sh read as unreferenced, which is a rename reported as a dozen wrong things.
+// Named here instead, once. This is also what backs the PROSE_TOKENS pardon of `ci.yml`:
+// the row's claim is about a real file, and the file is asserted even though the span is
+// not a path.
+const CI_WORKFLOW = ".github/workflows/ci.yml";
+const SETTINGS = ".claude/settings.json";
+const ciText = read(CI_WORKFLOW);
+const settingsText = read(SETTINGS);
+// Not in the hook: it fires on every CLAUDE.md edit, and a missing input is the repo's
+// problem to report on a full run, not a reason to block the operator mid-edit.
+if (!HOOK && !ciText)
+  finding(CI_WORKFLOW, "does not exist, so the per-handle bundle-grep assertion has nothing to read");
+if (!HOOK && !settingsText)
+  finding(SETTINGS, "does not exist, so a script reached only through the tracked hook reads as unreferenced");
+// One whole-tree walk, shared: the environment-variable oracle reads a few files out of
+// it, and the docs half indexes it by directory name and by basename.
+const repoFiles = walk(".");
+const envText = repoFiles
   .filter((f) => /^\.env/.test(f.replace(/^\.\//, "")) || /\.config\.ts$/.test(f))
   .map(read)
   .join("\n");
@@ -239,19 +315,22 @@ for (const file of e2eFiles.filter((f) => f.endsWith(".ts"))) {
 const asserted = new Set(); // line numbers that produced a checkable anchor
 const introduced = new Set(); // line numbers that were the first to carry one of their tokens
 const claimed = new Set(); // tokens already spoken for by an earlier line
+const usedProse = new Set(); // PROSE_TOKENS entries that actually pardoned a span
 const skipped = [];
 const testFilterHits = new Set(); // for reverse rule F
 let checked = 0;
 
-function assertPath(token, line, note = "") {
+// `file` is the document making the claim: the table's rows and a design document's
+// spans share this funnel, so both reach the same git check-ignore classification below.
+function assertPath(token, line, note = "", file = DOC) {
   const path = token.replace(/^\.\//, "");
   if (existsSync(path)) return true;
-  return { miss: path, line, note };
+  return { miss: path, line, note, file };
 }
 
 const pathMisses = [];
-const takePath = (token, line, note) => {
-  const r = assertPath(token, line, note);
+const takePath = (token, line, note, file) => {
+  const r = assertPath(token, line, note, file);
   if (r !== true) pathMisses.push(r);
 };
 
@@ -339,7 +418,10 @@ for (const span of spans) {
   const line = span.line;
   if (!token) continue;
 
-  if (PROSE_TOKENS.has(token)) continue;
+  if (PROSE_TOKENS.has(token)) {
+    usedProse.add(token);
+    continue;
+  }
   asserted.add(line);
   if (!claimed.has(token)) {
     claimed.add(token);
@@ -388,17 +470,231 @@ for (const span of spans) {
   }
 }
 
+// --- docs/{en,ja}: the file references the design documents make -------------
+//
+// The table above is checked and the private memory is checked; the design documents
+// name files on nearly 600 spans and were checked by nobody. Nothing in them is stale
+// today (measured), so this is preventive: the point is that the next moved file is
+// caught by a run rather than by a reader months later.
+//
+// The one design problem is the memory checker's: a CLAIM is not a MENTION. Three
+// rules, each measured against the corpus before it was kept:
+//
+//   - A rooted path (src/, e2e/, docs/, .github/ …) has to resolve as written. It goes
+//     through the same funnel as the table's own paths, so src-tauri/target/release/bundle/
+//     reads as generated rather than missing. 178 assertions, 2 misses, both that one.
+//   - An abbreviated one — `core/routing.ts`, `ui/dom.ts`, `control/live.ts`, the form
+//     the reader resolves by context — resolves under any directory carrying its FIRST
+//     segment. That segment is the whole discriminator: it tells this repo's shorthand
+//     from another tree's path, because `ui` and `control` are directories here and
+//     `tauri-runtime` is not, so `tauri-runtime/src/webview.rs` never becomes a claim
+//     and needs no pardon. check-memory-refs.mjs settled the same rule after measuring
+//     plain suffix matching at 10 false positives out of 10 — that path among them.
+//     137 assertions, 0 misses.
+//   - A bare basename (`main.ts`, `ci.yml`, `tauri.conf.json`) resolves by name anywhere
+//     in the tree. The memory checker does NOT check this class (45 unresolved there,
+//     0 real findings); in documents that describe only this repo it measures the other
+//     way — 292 spans, 8 misses, and all 8 are the two DOC_MENTIONS entries, each named
+//     twice per language.
+//   - A dotfile (`.env.demo`) is invisible to that rule — it has no extension the rule
+//     knows, and every leading-dot span in the corpus is a CSS class, a file format or a
+//     method (`.consent-scrim`, `.urxf`, `.toContain`). So the same discriminator the
+//     shortened form uses applies: a leading dot-segment that names a top-level entry of
+//     THIS repo, or the stem of one (`.env` from .env.demo). 4 assertions, 0 misses, and
+//     26 distinct spans (74 occurrences) classified as mentions without an allowlist
+//     entry each.
+//
+// Fenced blocks are scanned whole, like the memory checker's: they are code, and a path
+// in a Mermaid label rots like any other (+86 assertions, no new misses). Prose outside
+// backticks is scanned for basenames and dotfiles ONLY — a slash in a sentence is not a
+// path (`ON/OFF`, `CH3/4`), but `console-sends.md` in a sentence is still that file, and
+// backticks are a house style rather than a rule the documents follow. Measured before
+// keeping it: 43 assertions, 0 misses, and it is the ONLY thing that covers
+// console-sends.md and live-race-harness.md, which no backticked span in the corpus
+// names at all.
+//
+// Deliberately not checked: Markdown link and image targets (a different class, and a
+// broken one is visible to the reader who clicks it — MD_TARGET strips them before the
+// prose scan, so the link TEXT is checked and the target is not), and anything a
+// document says about ANOTHER repository. The hook is excluded too: it watches
+// CLAUDE.md, and a document the edit did not touch is not the edit's business —
+// docs.yml runs the whole file on any Markdown change, external pull requests included.
+
+const docSkips = new Map(); // reason -> count, named on the OK line
+const docSkipped = []; // docs-side paths skipped as generated/private, named the same way
+const usedMentions = new Set();
+let docFileCount = 0;
+let docSpans = 0;
+let docChecked = 0;
+
+if (!HOOK) {
+  const docFiles = DOC_DIRS.flatMap((d) => walk(d))
+    .filter((f) => f.endsWith(".md"))
+    .sort();
+  docFileCount = docFiles.length;
+  // An empty corpus is finding #1, never a silent pass: moving or renaming the
+  // documentation directories would otherwise disable every assertion below at once,
+  // and a run that checks nothing prints the same OK line as a run that checks 646.
+  if (!docFileCount) finding(DOC_DIRS.join(" / "), "holds no Markdown, so no document reference was checked");
+
+  // Directory NAMES and file basenames of the whole tree, derived from the one walk
+  // rather than a second one.
+  const dirsByName = new Map();
+  const dirs = new Set();
+  const byBase = new Map();
+  for (const f of repoFiles) {
+    const parts = f.split("/");
+    for (let i = 0; i < parts.length - 1; i++) {
+      const p = parts.slice(0, i + 1).join("/");
+      if (dirs.has(p)) continue;
+      dirs.add(p);
+      if (!dirsByName.has(parts[i])) dirsByName.set(parts[i], []);
+      dirsByName.get(parts[i]).push(p);
+    }
+    const base = parts[parts.length - 1];
+    if (!byBase.has(base)) byBase.set(base, []);
+    byBase.get(base).push(f);
+  }
+
+  const docNote = (reason) => docSkips.set(reason, (docSkips.get(reason) ?? 0) + 1);
+  const trimTok = (t) => t.replace(/[.,]+$/, "");
+
+  // Leading dot-segments of the repo's own top-level dot entries: .env (from .env.demo
+  // and .env.trace), .github, .claude, .gitignore. Derived, so a new dotfile family is
+  // covered by existing, and a token whose lead is not one of these is a mention.
+  const DOT_ROOTS = new Set(
+    readdirSync(".", { withFileTypes: true })
+      .filter((e) => e.name.startsWith("."))
+      .map((e) => e.name.split(".").slice(0, 2).join(".")),
+  );
+
+  // `{en,ja}` enumerates NAMED things, so every alternative has to resolve. A group with
+  // no comma is the writer's placeholder (`{ProductCode}`) and globs instead.
+  function expandBraces(s) {
+    const m = s.match(/\{([^{}]*)\}/);
+    if (!m) return [s];
+    const head = s.slice(0, m.index);
+    const tail = s.slice(m.index + m[0].length);
+    if (!m[1].includes(",")) return expandBraces(`${head}*${tail}`);
+    return m[1].split(",").flatMap((alt) => expandBraces(head + alt + tail));
+  }
+
+  const globHit = (pattern) => {
+    const re = new RegExp(
+      `^${pattern
+        .replace(/\/+$/, "")
+        .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+        .replace(/\*/g, "[^/]*")
+        .replace(/\?/g, "[^/]")}$`,
+    );
+    return repoFiles.some((f) => re.test(f)) || [...dirs].some((d) => re.test(d));
+  };
+
+  function docClaim(file, line, token, slashy) {
+    const key = `${file.split("/").pop()}|${token}`;
+    const why = DOC_MENTIONS.get(key);
+    if (why) {
+      usedMentions.add(key);
+      docNote(why);
+      return;
+    }
+    // Dotfile lane, NON-slashy only: `.github/workflows/ci.yml` is a path and belongs to
+    // the rooted rule below — routing it here by its leading dot suppressed it silently.
+    if (!slashy && token.startsWith(".")) {
+      if (!DOT_ROOTS.has(token.split(".").slice(0, 2).join("."))) {
+        docNote("a leading dot that names no top-level entry of this repo (`.consent-scrim`, `.urxf`, `.toContain`)");
+        return;
+      }
+      docChecked++;
+      if (!byBase.has(token)) finding(`${file}:${line}`, `\`${token}\` names no file in the repository`);
+      return;
+    }
+    if (!slashy) {
+      docChecked++;
+      if (byBase.has(token)) return;
+      // The likeliest way a basename claim goes stale is a changed extension
+      // (main.js → main.ts, a .yml workflow renamed .yaml), so name that file.
+      const stem = token.slice(0, token.lastIndexOf("."));
+      const alt = [...byBase.keys()].find((k) => k !== token && k.slice(0, k.lastIndexOf(".")) === stem);
+      finding(
+        `${file}:${line}`,
+        `\`${token}\` names no file in the repository${alt ? ` (did you mean ${byBase.get(alt)[0]}?)` : ""}`,
+      );
+      return;
+    }
+    if (DOC_ROOTED.test(token)) {
+      for (const variant of expandBraces(token)) {
+        docChecked++;
+        if (/[*?]/.test(variant)) {
+          if (!globHit(variant)) finding(`${file}:${line}`, `\`${variant}\` matches no file in the repository`);
+        } else {
+          takePath(variant, line, "", file);
+        }
+      }
+      return;
+    }
+    // Not rooted: a claim about this repo's layout only if it is shaped like a path AND
+    // its first segment names a directory here. Everything else is a mention.
+    if (!DOC_PATH_TAIL.test(token) && !/[*?]/.test(token)) {
+      docNote("a slash that is not a path (`ON/OFF`, `Ctrl/Cmd`, `node/param`)");
+      return;
+    }
+    const [head, ...rest] = token.replace(/\/+$/, "").split("/");
+    const bases = dirsByName.get(head);
+    if (!bases) {
+      docNote("leading segment names no directory of this repo — another tree's path, or a build output");
+      return;
+    }
+    for (const variant of expandBraces(rest.join("/"))) {
+      docChecked++;
+      const hit = !variant
+        ? true
+        : bases.some((b) => (/[*?]/.test(variant) ? globHit(`${b}/${variant}`) : existsSync(`${b}/${variant}`)));
+      if (!hit) finding(`${file}:${line}`, `\`${token}\` — no ${head}/ directory in the repo holds ${variant}`);
+    }
+  }
+
+  for (const file of docFiles) {
+    let fenced = false;
+    read(file)
+      .split("\n")
+      .forEach((raw, i) => {
+        if (/^\s*```/.test(raw)) {
+          fenced = !fenced;
+          return;
+        }
+        const texts = fenced ? [raw] : [...raw.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
+        docSpans += texts.length;
+        for (const text of texts) {
+          for (const m of text.matchAll(DOC_SLASHY)) {
+            const token = trimTok(m[1]);
+            if (token.includes("/")) docClaim(file, i + 1, token, true);
+          }
+          for (const m of text.matchAll(DOC_BASENAME)) docClaim(file, i + 1, trimTok(m[1]), false);
+          for (const m of text.matchAll(DOC_DOTFILE)) docClaim(file, i + 1, trimTok(m[1]), false);
+        }
+        // The same two name rules over the prose, with the code spans and the link
+        // targets removed. Not the slashy rule: outside backticks a slash is prose.
+        if (!fenced) {
+          const prose = raw.replace(/`[^`\n]*`/g, "").replace(MD_TARGET, "]()");
+          for (const m of prose.matchAll(DOC_BASENAME)) docClaim(file, i + 1, trimTok(m[1]), false);
+          for (const m of prose.matchAll(DOC_DOTFILE)) docClaim(file, i + 1, trimTok(m[1]), false);
+        }
+      });
+  }
+}
+
 // Path misses, resolved against .gitignore in one spawn: a private path is skipped,
 // a genuinely missing one fails.
 const ignored = ignoredSet(pathMisses.map((m) => m.miss));
 for (const m of pathMisses) {
   if (ignored.has(m.miss)) {
-    skipped.push(m.miss);
+    (m.file === DOC ? skipped : docSkipped).push(m.miss);
     continue;
   }
   const base = m.miss.split("/").pop();
   const near = [...srcFiles, ...e2eFiles, ...scriptFiles].find((f) => f.endsWith("/" + base));
-  finding(`${DOC}:${m.line}`, `\`${m.miss}\` does not resolve to a file${near ? ` (did you mean ${near}?)` : ""}`);
+  finding(`${m.file}:${m.line}`, `\`${m.miss}\` does not resolve to a file${near ? ` (did you mean ${near}?)` : ""}`);
 }
 
 // Every table row must yield at least one asserted token, and that token must be the
@@ -476,6 +772,22 @@ if (!forwardOnly) {
   for (const file of unitTests.filter((f) => /\.(contract|audit)\.test\.ts$/.test(f))) {
     if (!testFilterHits.has(file)) finding(file, `is a contract/pin test that no \`pnpm test\` row selects`);
   }
+
+  // G. a suppression that suppresses nothing. Both allowlists are exact-string pardons
+  //    written for one span each; once that span is gone the entry only stands ready to
+  //    pardon the next token that happens to be spelled the same way. Delete it instead.
+  for (const token of PROSE_TOKENS.keys()) {
+    if (!usedProse.has(token))
+      finding(DOC, `PROSE_TOKENS entry \`${token}\` no longer matches any span in "${SECTION}" — delete it`);
+  }
+  for (const [key, why] of DOC_MENTIONS) {
+    if (usedMentions.has(key)) continue;
+    const [doc, token] = key.split("|");
+    finding(
+      DOC_DIRS.map((d) => `${d}/${doc}`).join(" / "),
+      `DOC_MENTIONS entry \`${token}\` (${why}) no longer suppresses anything — delete it`,
+    );
+  }
 }
 
 // --- report -----------------------------------------------------------------
@@ -485,20 +797,25 @@ if (forwardOnly) {
   // "delete the script" and "update the table", and a hook that blocks that
   // sequence gets ignored.
   if (findings.length) {
-    for (const f of findings) console.error(f);
+    reportFindings();
     process.exit(2);
   }
   process.exit(0);
 }
 
 if (findings.length) {
-  for (const f of findings) console.error(f);
-  console.error(`\n${findings.length} finding(s) in "${SECTION}"`);
+  reportFindings();
+  console.error(`\n${findings.length} finding(s)`);
   process.exit(1);
 }
 
 // Named, not counted: a skip is the one outcome that looks like a pass, and a path
 // that quietly became ignored (a build output, a moved directory) has to be readable
-// off the OK line.
-const note = skipped.length ? ` (skipped as private/generated: ${skipped.join(", ")})` : "";
+// off the OK line. Same for a mention the docs half pardoned by name.
+const note = skipped.length ? ` (skipped as private/generated: ${[...new Set(skipped)].join(", ")})` : "";
 console.log(`OK: ${spans.length} tokens${note}, ${checked} assertions, ${rows.length} rows, 6 inventories`);
+console.log(
+  `    docs: ${docFileCount} files, ${docSpans} code spans, ${docChecked} file references (spans and prose)` +
+    (docSkipped.length ? ` (skipped as private/generated: ${[...new Set(docSkipped)].join(", ")})` : "") +
+    (docSkips.size ? `\n    suppressed: ${[...docSkips].map(([why, n]) => `${n}× ${why}`).join("; ")}` : ""),
+);
