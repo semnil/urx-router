@@ -98,9 +98,9 @@ export function wheelStep(slider: HTMLInputElement, blocked?: () => boolean | un
 
 // Vertical placement for a floating popover: `gap` px below the anchor rect,
 // flipped above it when the viewport bottom is too close, clamped to a 6px
-// viewport inset. Shared by the console popovers and the MIDI legend card so
-// the flip/inset contract lives in one place (horizontal placement stays with
-// each caller — they anchor differently).
+// viewport inset. The console popovers' flip/inset contract, kept here rather
+// than inline so a second floating surface inherits it (horizontal placement
+// stays with each caller — they anchor differently).
 export function popTop(anchor: DOMRect, height: number, gap: number): number {
   const below = anchor.bottom + gap;
   if (below + height <= window.innerHeight - 6) return below;
