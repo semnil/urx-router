@@ -33,14 +33,14 @@
     "bench:meters": "node scripts/meter-bench-run.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.0",
+    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "24",
     "esbuild": "^0.28.1",
     "jsdom": "^30.0.1",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2",
-    "vite": "^8.1.5",
+    "vite": "^8.2.0",
     "vitest": "^4.1.10"
   },
   "pnpm": {
