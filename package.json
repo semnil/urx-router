@@ -33,7 +33,7 @@
     "bench:meters": "node scripts/meter-bench-run.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.0",
+    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "24",
     "esbuild": "^0.28.1",
