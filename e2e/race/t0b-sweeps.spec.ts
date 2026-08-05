@@ -1274,7 +1274,13 @@ test.describe("T0b baseline sweeps", () => {
     page,
   }) => {
     await boot(page);
+    // The only case in this file that goes live, and so the only one whose first
+    // actionability check is a cold one. Printed rather than assumed: it is the figure
+    // `goLive`'s own bound has to cover, and the flake it replaced said nothing about
+    // how long the wait actually was.
+    const upAt = Date.now();
     await goLive(page);
+    console.log(`session up in ${Date.now() - upAt} ms`);
     await page.click("#btn-view-console");
     await expect(faderReadout(page, "CH 1")).toBeVisible();
     await page.evaluate(() => window.__urxFake.setLatency({ get: 25, set: 25 }));

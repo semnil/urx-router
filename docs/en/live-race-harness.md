@@ -1090,6 +1090,21 @@ not repeat them.
   did not. Found by comparing flaky counts between two release runs (1 → 4), **not** by a failure: the
   causal link to those particular flakes was never established, and five local runs of the two cases
   on the unfixed tree all passed
+- **A precondition is not a gesture, and a page-wide fail-fast bound reaches it anyway.** `t0b-sweeps`
+  sets a 4 s `page.setDefaultTimeout` in its `boot()` so an unreachable control lands in the sweep's
+  error column by name — and Playwright applies a page default to every later action, including
+  `goLive`'s own clicks, in the file's ONE case that is not a sweep. That case failed on
+  `page.click("#btn-device")` at exactly 4000 ms in every WebKit run since the tier existed (1.6.0,
+  1.6.1 and the run after it: first attempt 9.0-9.4 s, retry always green). It read as a flake and was
+  not one — the FIRST attempt fails, deterministically, and the retry always passes. The mechanism is
+  the actionability gate itself: it is a `requestAnimationFrame` loop wanting two consecutive frames
+  with the same box, and a headless engine delivers a document's first frames sparsely (measured on
+  macOS WebKit: 2 frames in the first 187 ms, against a ~16 ms cadence once the page is warm). Nothing
+  to do with the app — the button's box is byte-identical across 92 consecutive frames, and the same
+  `goLive` passes unbounded in the four other `@webkit` cases. `goLive` now carries its own bound on
+  every step, as its `waitForSelector` already did for the readback; the sweeps keep theirs, which is
+  what it was written for. The case prints how long the session took to come up (437 ms on an idle
+  Mac) so the margin is a figure in the log rather than something to rediscover
 
 Across two audit rounds these accounted for **24 vacuous assertions and 28 over-stated claims**, all
 fixed or withdrawn.

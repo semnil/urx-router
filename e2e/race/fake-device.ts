@@ -969,15 +969,35 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
   );
 }
 
+/** Every step of `goLive` carries this rather than the caller's page default, because
+ *  bringing the session up is a PRECONDITION and not one of the gestures a case
+ *  measures. A caller that bounds its gestures fail-fast — t0b-sweeps sets a 4 s page
+ *  default so an unreachable control lands in its error column by name — would
+ *  otherwise apply that bound here, where the failure is not a result at all.
+ *
+ *  What made it matter: the first actionability-gated action after a cold page load
+ *  waits on Playwright's stability gate, which is a requestAnimationFrame loop needing
+ *  two consecutive frames. Headless WebKit delivers its first frames sparsely
+ *  (measured on macOS WebKit: 2 frames in the first 187 ms of a document, against a
+ *  ~16 ms cadence once the page is warm), so on a CI runner that first check is the
+ *  one long wait in the run — and `goLive`'s opening click is where every case meets
+ *  it. It is not the app: the button's own box is byte-identical across 92 consecutive
+ *  frames. The `waitForSelector` below already carried its own bound for the readback;
+ *  the clicks were left inheriting, which is what made this a WebKit-only flake. */
+const SESSION_UP_TIMEOUT_MS = 30_000;
+
 /** Bring a live session up, then hand the fake its scripted latency. The initial
  *  readback is ~800 sequential reads: at a scripted latency it would take minutes,
  *  so the session is established at zero latency and the profile applied after. */
 export async function goLive(page: Page, latency: Partial<FakeLatency> = {}): Promise<void> {
-  await page.click("#btn-device");
-  await page.click("#btn-live");
+  await page.click("#btn-device", { timeout: SESSION_UP_TIMEOUT_MS });
+  await page.click("#btn-live", { timeout: SESSION_UP_TIMEOUT_MS });
   // Attached, not visible: the click closes the Device menu, so the toggle that
   // carries the session state is hidden by the time it flips.
-  await page.waitForSelector('#btn-live[aria-pressed="true"]', { state: "attached", timeout: 30_000 });
+  await page.waitForSelector('#btn-live[aria-pressed="true"]', {
+    state: "attached",
+    timeout: SESSION_UP_TIMEOUT_MS,
+  });
   if (Object.keys(latency).length) await setLatency(page, latency);
 }
 
