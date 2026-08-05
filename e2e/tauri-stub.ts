@@ -34,6 +34,20 @@ export async function stubTauriBoot(page: Page, commands: Record<string, unknown
   }, commands);
 }
 
+/**
+ * The registrations a Live sync session makes on top of the reads: the notify
+ * stream, the link watch and the meter stream. Without them the activation aborts
+ * before the session counts as up, so pass them as `commands` in any spec that
+ * turns Live sync on.
+ */
+export const LIVE_COMMANDS = {
+  vd_params_subscribe: null,
+  vd_params_unsubscribe: null,
+  vd_watch_link: null,
+  vd_meters_subscribe: null,
+  vd_meters_unsubscribe: null,
+};
+
 /** A device-connected Tauri stub: the boot half above, plus a vd link whose reads
  *  the spec supplies and whose writes and dialogs it can inspect afterwards. */
 export interface DeviceStubOptions {
