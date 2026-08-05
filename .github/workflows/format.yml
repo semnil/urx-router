@@ -27,6 +27,7 @@ concurrency:
 jobs:
   format:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,6 +47,7 @@ jobs:
           toolchain: stable
           components: rustfmt
       - run: pnpm install --frozen-lockfile
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       - run: pnpm format
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml
       - name: Push formatting fixes (same-repo PRs)

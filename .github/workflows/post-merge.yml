@@ -37,6 +37,9 @@ jobs:
             args: ''
             rustTargets: ''
     runs-on: ${{ matrix.platform }}
+    # A cold Rust build is what this job is FOR, so the bound is generous: 5.1 minutes
+    # is the slowest of sixteen recent runs.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -53,6 +56,7 @@ jobs:
           workspaces: src-tauri
           shared-key: release
       - run: pnpm install --frozen-lockfile
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       # tauri-build reads the frontend output and copies bundle.resources at
       # compile time, so both have to exist. This job never bundles, so the
       # notice is a placeholder rather than the generated one.

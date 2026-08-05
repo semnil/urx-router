@@ -36,6 +36,7 @@ jobs:
       contents: read
     outputs:
       bumped: ${{ steps.check.outputs.bumped }}
+      playwright: ${{ steps.pw.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -72,6 +73,22 @@ jobs:
             echo 'bumped=false' >> "$GITHUB_OUTPUT"
             echo 'package.json changed but the version did not — the harness is skipped'
           fi
+      # The WebKit job runs inside the official Playwright image, whose tag has to name
+      # the SAME Playwright the lockfile resolves — a stale tag would test against a
+      # browser build the installed Playwright does not drive. Read here rather than
+      # written down anywhere, because `container:` is evaluated before any step of its
+      # own job runs, so the value can only reach it through a prior job's output. From
+      # the lockfile, not package.json: the range there is a caret.
+      - id: pw
+        run: |
+          version=$(node -e "
+            const s = require('fs').readFileSync('pnpm-lock.yaml', 'utf8');
+            const m = s.match(/^  playwright-core@([0-9]+\.[0-9]+\.[0-9]+):/m);
+            if (!m) { console.error('playwright-core not found in pnpm-lock.yaml'); process.exit(1); }
+            console.log(m[1]);
+          ")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "playwright ${version}"
 
   race:
     needs: detect
@@ -96,6 +113,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       # Chromium only. The WebKit cases are their own job below, so the shards do not
       # pay for a browser they never launch. Bounded rather than bare — the action's
       # header has the measurement and the reason.
@@ -126,6 +144,20 @@ jobs:
     needs: detect
     if: needs.detect.outputs.bumped == 'true'
     runs-on: ubuntu-latest
+    # The one job in this repository that does not build its environment out of the
+    # Ubuntu mirror. `--with-deps webkit` is 201 .deb fetches / 125 MB against chromium's
+    # 29 / 32 MB, and on 2026-08-05 a degraded mirror stalled it past this job's whole
+    # budget: it reached package 182 and was killed, tests never started, and the release
+    # PR carried a check that said only "cancelled". The image carries those libraries
+    # and the browsers already. Measured on a runner the same day: 947 MB pulled in
+    # **27 s**, against 33-44 s for the apt path on a good day — so this is not a trade
+    # of speed for reliability, and it replaces 201 sequential requests with 7 blobs from
+    # a different host.
+    #
+    # The tag comes from `detect`, which reads the version the lockfile resolves. Pinning
+    # it here by hand would drift the first time Dependabot bumps Playwright, and the
+    # symptom of that drift is a browser build the installed Playwright does not drive.
+    container: mcr.microsoft.com/playwright:v${{ needs.detect.outputs.playwright }}-noble
     timeout-minutes: 15
     permissions:
       contents: read
@@ -137,29 +169,15 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # TEMPORARY probe, removed once it has answered. WebKit's dependency install is
-      # 201 .deb fetches and it is what a degraded Ubuntu mirror stalled past this job's
-      # whole budget. The candidate fix is the official Playwright image, which carries
-      # the libraries and the browsers already — but it is 947 MB against 125 MB of
-      # .debs, from a different host, and MCR's throughput to a runner cannot be
-      # measured from a development machine. This measures it. Bounded and
-      # non-blocking: the probe must not be able to cost the job it is measuring.
-      - name: Measure the Playwright container image pull (temporary probe)
-        continue-on-error: true
-        timeout-minutes: 6
-        run: |
-          set -uo pipefail
-          v=$(pnpm exec playwright --version | awk '{print $NF}')
-          img="mcr.microsoft.com/playwright:v${v}-noble"
-          t0=$(date +%s)
-          if timeout 300 docker pull "${img}" >/dev/null; then
-            echo "::notice title=MCR pull::${img} pulled in $(( $(date +%s) - t0 )) s"
-          else
-            echo "::notice title=MCR pull::${img} did not finish inside 300 s"
-          fi
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
+      # Kept rather than dropped, and without the deps: inside the image this prints
+      # "browser is already installed" and costs a second, but an image whose browser
+      # revision does not match the lockfile heals itself here instead of failing at
+      # launch with a path that does not exist.
       - uses: ./.github/actions/install-browsers
         with:
           browser: webkit
+          with-deps: "false"
       - run: pnpm test:e2e:race:webkit
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
