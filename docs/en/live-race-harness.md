@@ -1078,6 +1078,18 @@ not repeat them.
   by default; `goLive` then times out on `#btn-live[aria-pressed="true"]` with no other symptom
 - **Do not print a verdict you did not check.** `analyze()` with an empty spec can only emit invariant
   4, and an offline sweep has neither a read nor a write, so the line always says "clean"
+- **A command named `vd_*` is not automatically a command on the worker.** `onWorker` routed the whole
+  prefix onto the fake's single serial queue, on the reasoning that the prefix names the vd surface.
+  The link ledger's reading breaks it: `vd_link_stats` takes the state mutex and reads atomics,
+  sending no `Cmd` at all — which is the point of it, since a reading taken while an ~800 command
+  sweep is running has to report now rather than the sweep's start. Queued in the fake it occupied a
+  FIFO position the shipped app never puts anything in, at every session open and every teardown,
+  and with no `case` of its own the trace went through the unhandled-command throw as well — invisible,
+  because the tracker treats a failed reading as a link that has gone. What decides is whether the
+  Rust command sends a `Cmd` to the worker; the prefix is a heuristic that happened to hold until it
+  did not. Found by comparing flaky counts between two release runs (1 → 4), **not** by a failure: the
+  causal link to those particular flakes was never established, and five local runs of the two cases
+  on the unfixed tree all passed
 
 Across two audit rounds these accounted for **24 vacuous assertions and 28 over-stated claims**, all
 fixed or withdrawn.

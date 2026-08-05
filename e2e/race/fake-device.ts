@@ -586,7 +586,18 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // one, so it cannot queue behind the work it replaces. So is everything the shell
       // routes elsewhere: the dialog plugin, the MIDI commands (midi.rs touches local OS
       // APIs on the caller's thread) and the menu pushes share no queue with the vd worker.
-      const onWorker = (cmd: string): boolean => cmd.startsWith("vd_") && cmd !== "vd_connect";
+      //
+      // vd_link_stats is the third: it reads the session's atomics under the state mutex
+      // and sends no `Cmd` at all (lib.rs `vd_link_stats` → vd.rs `stats`), which is the
+      // point of it — a reading taken while an ~800 command sweep is running has to
+      // report now rather than the sweep's start. Queued here it would be a command the
+      // shipped app never puts in that FIFO, and the ledger issues one at every session
+      // open and every teardown, which is exactly where the registration-ordering cases
+      // are looking. The `vd_` prefix is what made it queue; name it rather than widening
+      // the prefix rule, so the next `vd_`-named command is queued until someone decides
+      // otherwise.
+      const onWorker = (cmd: string): boolean =>
+        cmd.startsWith("vd_") && cmd !== "vd_connect" && cmd !== "vd_link_stats";
       /** What `handle` settled at the queue point and `serve` answers with. */
       interface Served {
         done: (detail?: string) => void;
@@ -746,6 +757,30 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           case "reset_storage_requested":
             done();
             return false;
+          // The link ledger (core/control/link-stats.ts). Answered rather than left to
+          // the `default` throw: the tracker swallows a failed reading as "the link has
+          // gone", so a throw is not visible as a failure — it just puts every race
+          // trace through the unhandled-command path at each session open and teardown.
+          // The counts are zeros because no case asserts on them; what a case can be
+          // disturbed by is the call happening at all, and that is now faithful.
+          case "vd_link_stats":
+            done();
+            return {
+              sets: 0,
+              gets: 0,
+              param_subscribes: 0,
+              meter_subscribes: 0,
+              regist_frames: 0,
+              unregist_frames: 0,
+              deadlines: 0,
+              stalled: 0,
+            };
+          case "append_link_log":
+            done();
+            return "/dev/null/link-ledger.jsonl";
+          case "app_build_kind":
+            done();
+            return "dev";
           case "plugin:updater|check":
             done();
             return null;
