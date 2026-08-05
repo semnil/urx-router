@@ -27,6 +27,7 @@ permissions:
 jobs:
   check-tag:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.check.outputs.version }}
       prerelease: ${{ steps.check.outputs.prerelease }}
@@ -64,6 +65,7 @@ jobs:
     needs: check-tag
     if: needs.check-tag.outputs.validTag == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       releaseId: ${{ steps.release.outputs.result }}
     steps:
@@ -108,6 +110,11 @@ jobs:
             args: ''
             rustTargets: ''
     runs-on: ${{ matrix.platform }}
+    # The most generous bound in the repository, and deliberately so: this job signs,
+    # notarizes and packages, its Rust cache can be cold, and a false timeout here fails
+    # a RELEASE. 12.8 minutes is the slowest of fourteen recent runs. It is a hang
+    # detector, not a budget — what it replaces is GitHub's six-hour default.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -132,6 +139,7 @@ jobs:
           shared-key: release
           save-if: false
       - run: pnpm install --frozen-lockfile
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       # bundle.resources; generated once by the licenses job above.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

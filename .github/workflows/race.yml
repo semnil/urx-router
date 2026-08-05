@@ -36,6 +36,7 @@ jobs:
       contents: read
     outputs:
       bumped: ${{ steps.check.outputs.bumped }}
+      playwright: ${{ steps.pw.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -72,11 +73,23 @@ jobs:
             echo 'bumped=false' >> "$GITHUB_OUTPUT"
             echo 'package.json changed but the version did not — the harness is skipped'
           fi
+      # Both harness jobs run inside the official Playwright image; the tag comes from
+      # here. See .github/actions/playwright-version for why it is a job's output.
+      - id: pw
+        uses: ./.github/actions/playwright-version
 
   race:
     needs: detect
     if: needs.detect.outputs.bumped == 'true'
     runs-on: ubuntu-latest
+    # Same image as the WebKit job below, for the same reason and at the same measured
+    # cost — see that job's header. The shards' own exposure is the smaller one (36
+    # sequential .deb fetches against WebKit's 201, and the three of them were unharmed
+    # by the degradation that killed WebKit), so what settles it here is that this
+    # workflow runs on the version-bump PR: every mirror request in it sits in front of
+    # a release. One environment for all four jobs also means the workflow states one
+    # rule rather than two.
+    container: mcr.microsoft.com/playwright:v${{ needs.detect.outputs.playwright }}-noble
     # Well above the ~5 minutes a shard takes. It is a backstop against a wedged run
     # holding a runner for the 6-hour job default, not a budget.
     timeout-minutes: 25
@@ -96,9 +109,12 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Chromium only. The WebKit cases are their own job below, so the shards do not
-      # pay for a browser they never launch.
-      - run: pnpm exec playwright install --with-deps chromium
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
+      # Already in the image; kept as the self-healing no-op described in the action.
+      - uses: ./.github/actions/install-browsers
+        with:
+          browser: chromium
+          with-deps: "false"
       # No `--` before the flag: pnpm 10 forwards the separator through to the script
       # rather than consuming it, and Playwright reads everything after a `--` as a
       # positional file filter. `pnpm test:e2e:race -- --shard=1/3` therefore runs the
@@ -123,6 +139,20 @@ jobs:
     needs: detect
     if: needs.detect.outputs.bumped == 'true'
     runs-on: ubuntu-latest
+    # The one job in this repository that does not build its environment out of the
+    # Ubuntu mirror. `--with-deps webkit` is 201 .deb fetches / 125 MB against chromium's
+    # 29 / 32 MB, and on 2026-08-05 a degraded mirror stalled it past this job's whole
+    # budget: it reached package 182 and was killed, tests never started, and the release
+    # PR carried a check that said only "cancelled". The image carries those libraries
+    # and the browsers already. Measured on a runner the same day: 947 MB pulled in
+    # **27 s**, against 33-44 s for the apt path on a good day — so this is not a trade
+    # of speed for reliability, and it replaces 201 sequential requests with 7 blobs from
+    # a different host.
+    #
+    # The tag comes from `detect`, which reads the version the lockfile resolves. Pinning
+    # it here by hand would drift the first time Dependabot bumps Playwright, and the
+    # symptom of that drift is a browser build the installed Playwright does not drive.
+    container: mcr.microsoft.com/playwright:v${{ needs.detect.outputs.playwright }}-noble
     timeout-minutes: 15
     permissions:
       contents: read
@@ -134,7 +164,15 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps webkit
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
+      # Kept rather than dropped, and without the deps: inside the image this prints
+      # "browser is already installed" and costs a second, but an image whose browser
+      # revision does not match the lockfile heals itself here instead of failing at
+      # launch with a path that does not exist.
+      - uses: ./.github/actions/install-browsers
+        with:
+          browser: webkit
+          with-deps: "false"
       - run: pnpm test:e2e:race:webkit
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()

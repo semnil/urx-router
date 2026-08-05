@@ -1,0 +1,81 @@
+name: Install Playwright browsers
+description: >
+  playwright install --with-deps, under a bound, with the failure named.
+
+# Why this exists rather than a bare `run:`.
+#
+# `--with-deps` is two operations, and only one of them is the browser. First it runs
+# `apt-get update` plus `apt-get install` of the browser's system libraries — measured
+# at 29 packages / 32 MB for chromium and **201 packages / 125 MB for webkit**, fetched
+# one .deb at a time from the runner's Ubuntu mirror. Only then does it download the
+# browser build. Normal cost: 22-26 s for chromium, 33-44 s for webkit.
+#
+# On 2026-08-05 that mirror degraded for a quarter of an hour. Individual .deb fetches
+# stalled 22, 30, 44, 62, 90, 93 and 157 s; the webkit job reached package 182 of 201
+# and was killed by its own 15-minute job timeout, so the tests never started. The three
+# chromium jobs in the same run finished in 22-26 s — the degradation scaled with the
+# number of requests, not with reachability.
+#
+# What that cost was not the runner minutes. It was a release PR carrying a red check
+# that said only "cancelled", with the reason 600 lines into a log the API will not
+# serve while the run is still going. Bounded, the step fails at a known time and says
+# what stalled, which is the whole of the difference.
+#
+# Deliberately NOT retried. `timeout` signals the process it started — pnpm — and apt
+# runs under sudo as a grandchild, so it survives and keeps `/var/lib/dpkg/lock`. A
+# second attempt would fail on the lock rather than on the mirror, turning one clear
+# failure into a confusing one. Re-running the job is a click and gets a clean VM, and
+# a 15-minute degradation would not have been ridden out by a retry anyway.
+
+inputs:
+  browser:
+    description: Which browser to install (chromium / firefox / webkit).
+    required: true
+  with-deps:
+    description: >
+      Install the system libraries too. False inside the official Playwright container,
+      which already carries them — there the install is a no-op that prints "browser is
+      already installed", and it is kept rather than dropped so an image whose browser
+      revision does not match the lockfile heals itself instead of failing at launch.
+    required: false
+    default: "true"
+  timeout:
+    description: >
+      Seconds to allow. The default is roughly seven times the slowest normal run, so
+      it absorbs an ordinary bad day and still fails well inside a job's budget.
+    required: false
+    default: "300"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      # The two values travel in the environment rather than being interpolated into
+      # the script. They are literals in the calling workflow today, and the habit is
+      # what keeps that true when someone later wires an input to an event field.
+      env:
+        BROWSER: ${{ inputs.browser }}
+        TIMEOUT: ${{ inputs.timeout }}
+        WITH_DEPS: ${{ inputs.with-deps }}
+      run: |
+        set -uo pipefail
+        # An `if`, not `[ … ] && deps=…`. GitHub runs `shell: bash` with -e, and a false
+        # `&&` list exits the script when it happens to be the last command — so the
+        # short form works here and becomes a failure the day a line is added after it.
+        deps=""
+        if [ "${WITH_DEPS}" = "true" ]; then deps="--with-deps"; fi
+        # Captured on the command itself, not after an `if`. After a false `if` with no
+        # `else`, `$?` is the if statement's own status — zero — so the 124 test below
+        # would never have fired and every timeout would have reported as a generic
+        # failure. Measured, not remembered.
+        status=0
+        timeout "${TIMEOUT}" pnpm exec playwright install ${deps} "${BROWSER}" || status=$?
+        if [ "${status}" -eq 0 ]; then
+          exit 0
+        fi
+        if [ "${status}" -eq 124 ]; then
+          echo "::error title=Playwright browser install timed out::playwright install --with-deps ${BROWSER} exceeded ${TIMEOUT} s. Its first half fetches the browser's system libraries one .deb at a time from the runner's Ubuntu mirror (chromium 29 packages, webkit 201); a degraded mirror is what this bound exists to catch. Re-run the job — it gets a fresh VM. If it recurs, the log's 'Get:' lines carry the per-package timings."
+        else
+          echo "::error title=Playwright browser install failed::playwright install --with-deps ${BROWSER} exited ${status}."
+        fi
+        exit 1

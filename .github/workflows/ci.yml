@@ -24,8 +24,23 @@ on:
       - '.claude/skills/urx-routing-planner/references/model-*.md'
 
 jobs:
+  # Ten seconds of wall clock so the E2E job below can run inside the official Playwright
+  # image: `container:` is evaluated before any step of its own job, so the tag can only
+  # come from a prior job. What it buys is 36 sequential .deb fetches per run taken off
+  # the Ubuntu mirror — see .github/actions/install-browsers for the day that mattered.
+  playwright_version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.pw.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: pw
+        uses: ./.github/actions/playwright-version
+
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -34,6 +49,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       # The code-side half of the "## Reusable assets" index: a renamed fixture, a
       # deleted pnpm script or a new handle that no row mentions. The doc-side half runs
       # in docs.yml, which this workflow skips for Markdown-only changes. This is also
@@ -69,7 +85,13 @@ jobs:
   # a net that only fires once the change is already on main, costs more than it saves.
   # The race harness is deliberately NOT here; see race.yml for what it costs and why.
   e2e:
+    needs: playwright_version
     runs-on: ubuntu-latest
+    # The browsers and their system libraries come from the image rather than from the
+    # runner's Ubuntu mirror. Measured on a runner: 947 MB pulled in 27 s, against 20-31 s
+    # for `--with-deps chromium` on a good day — so the change is free in time and takes
+    # 36 sequential .deb fetches out of every pull request.
+    container: mcr.microsoft.com/playwright:v${{ needs.playwright_version.outputs.version }}-noble
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -79,7 +101,12 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
+      # Already in the image; kept as the self-healing no-op described in the action.
+      - uses: ./.github/actions/install-browsers
+        with:
+          browser: chromium
+          with-deps: "false"
       - run: pnpm test:e2e:app
       # The "list" reporter writes no playwright-report/; traces (trace: on-first-retry,
       # with CI retries) and failure attachments land in the default test-results/, so
