@@ -1,0 +1,36 @@
+name: Resolve the Playwright version
+description: >
+  The Playwright version the lockfile resolves, as a step output.
+
+# Why a job exists solely to run this.
+#
+# The E2E jobs run inside the official Playwright image, whose tag has to name the SAME
+# Playwright the lockfile resolves: a stale tag means testing against a browser build the
+# installed Playwright does not drive. `container:` is evaluated before any step of its
+# own job, so the value can only reach it through a PRIOR job's output — hence a small
+# job whose entire purpose is this. Measured at ~10 s of wall clock, against the 36
+# sequential .deb fetches per job it takes off the Ubuntu mirror.
+#
+# From the lockfile rather than package.json, where the range is a caret. Loud on a miss:
+# a pnpm lockfile format change breaks the match and fails here, which is a great deal
+# better than resolving to an empty string and pulling a tag that does not exist.
+
+outputs:
+  version:
+    description: e.g. "1.62.1"
+    value: ${{ steps.read.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - id: read
+      shell: bash
+      run: |
+        version=$(node -e "
+          const s = require('fs').readFileSync('pnpm-lock.yaml', 'utf8');
+          const m = s.match(/^  playwright-core@([0-9]+\.[0-9]+\.[0-9]+):/m);
+          if (!m) { console.error('playwright-core not found in pnpm-lock.yaml'); process.exit(1); }
+          console.log(m[1]);
+        ")
+        echo "version=${version}" >> "$GITHUB_OUTPUT"
+        echo "playwright ${version}"

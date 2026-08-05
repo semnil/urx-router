@@ -73,27 +73,23 @@ jobs:
             echo 'bumped=false' >> "$GITHUB_OUTPUT"
             echo 'package.json changed but the version did not — the harness is skipped'
           fi
-      # The WebKit job runs inside the official Playwright image, whose tag has to name
-      # the SAME Playwright the lockfile resolves — a stale tag would test against a
-      # browser build the installed Playwright does not drive. Read here rather than
-      # written down anywhere, because `container:` is evaluated before any step of its
-      # own job runs, so the value can only reach it through a prior job's output. From
-      # the lockfile, not package.json: the range there is a caret.
+      # Both harness jobs run inside the official Playwright image; the tag comes from
+      # here. See .github/actions/playwright-version for why it is a job's output.
       - id: pw
-        run: |
-          version=$(node -e "
-            const s = require('fs').readFileSync('pnpm-lock.yaml', 'utf8');
-            const m = s.match(/^  playwright-core@([0-9]+\.[0-9]+\.[0-9]+):/m);
-            if (!m) { console.error('playwright-core not found in pnpm-lock.yaml'); process.exit(1); }
-            console.log(m[1]);
-          ")
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "playwright ${version}"
+        uses: ./.github/actions/playwright-version
 
   race:
     needs: detect
     if: needs.detect.outputs.bumped == 'true'
     runs-on: ubuntu-latest
+    # Same image as the WebKit job below, for the same reason and at the same measured
+    # cost — see that job's header. The shards' own exposure is the smaller one (36
+    # sequential .deb fetches against WebKit's 201, and the three of them were unharmed
+    # by the degradation that killed WebKit), so what settles it here is that this
+    # workflow runs on the version-bump PR: every mirror request in it sits in front of
+    # a release. One environment for all four jobs also means the workflow states one
+    # rule rather than two.
+    container: mcr.microsoft.com/playwright:v${{ needs.detect.outputs.playwright }}-noble
     # Well above the ~5 minutes a shard takes. It is a backstop against a wedged run
     # holding a runner for the 6-hour job default, not a budget.
     timeout-minutes: 25
@@ -114,12 +110,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
-      # Chromium only. The WebKit cases are their own job below, so the shards do not
-      # pay for a browser they never launch. Bounded rather than bare — the action's
-      # header has the measurement and the reason.
+      # Already in the image; kept as the self-healing no-op described in the action.
       - uses: ./.github/actions/install-browsers
         with:
           browser: chromium
+          with-deps: "false"
       # No `--` before the flag: pnpm 10 forwards the separator through to the script
       # rather than consuming it, and Playwright reads everything after a `--` as a
       # positional file filter. `pnpm test:e2e:race -- --shard=1/3` therefore runs the
