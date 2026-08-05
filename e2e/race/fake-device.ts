@@ -586,7 +586,18 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // one, so it cannot queue behind the work it replaces. So is everything the shell
       // routes elsewhere: the dialog plugin, the MIDI commands (midi.rs touches local OS
       // APIs on the caller's thread) and the menu pushes share no queue with the vd worker.
-      const onWorker = (cmd: string): boolean => cmd.startsWith("vd_") && cmd !== "vd_connect";
+      //
+      // vd_link_stats is the third: it reads the session's atomics under the state mutex
+      // and sends no `Cmd` at all (lib.rs `vd_link_stats` → vd.rs `stats`), which is the
+      // point of it — a reading taken while an ~800 command sweep is running has to
+      // report now rather than the sweep's start. Queued here it would be a command the
+      // shipped app never puts in that FIFO, and the ledger issues one at every session
+      // open and every teardown, which is exactly where the registration-ordering cases
+      // are looking. The `vd_` prefix is what made it queue; name it rather than widening
+      // the prefix rule, so the next `vd_`-named command is queued until someone decides
+      // otherwise.
+      const onWorker = (cmd: string): boolean =>
+        cmd.startsWith("vd_") && cmd !== "vd_connect" && cmd !== "vd_link_stats";
       /** What `handle` settled at the queue point and `serve` answers with. */
       interface Served {
         done: (detail?: string) => void;
@@ -746,6 +757,30 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           case "reset_storage_requested":
             done();
             return false;
+          // The link ledger (core/control/link-stats.ts). Answered rather than left to
+          // the `default` throw: the tracker swallows a failed reading as "the link has
+          // gone", so a throw is not visible as a failure — it just puts every race
+          // trace through the unhandled-command path at each session open and teardown.
+          // The counts are zeros because no case asserts on them; what a case can be
+          // disturbed by is the call happening at all, and that is now faithful.
+          case "vd_link_stats":
+            done();
+            return {
+              sets: 0,
+              gets: 0,
+              param_subscribes: 0,
+              meter_subscribes: 0,
+              regist_frames: 0,
+              unregist_frames: 0,
+              deadlines: 0,
+              stalled: 0,
+            };
+          case "append_link_log":
+            done();
+            return "/dev/null/link-ledger.jsonl";
+          case "app_build_kind":
+            done();
+            return "dev";
           case "plugin:updater|check":
             done();
             return null;
@@ -934,15 +969,35 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
   );
 }
 
+/** Every step of `goLive` carries this rather than the caller's page default, because
+ *  bringing the session up is a PRECONDITION and not one of the gestures a case
+ *  measures. A caller that bounds its gestures fail-fast — t0b-sweeps sets a 4 s page
+ *  default so an unreachable control lands in its error column by name — would
+ *  otherwise apply that bound here, where the failure is not a result at all.
+ *
+ *  What made it matter: the first actionability-gated action after a cold page load
+ *  waits on Playwright's stability gate, which is a requestAnimationFrame loop needing
+ *  two consecutive frames. Headless WebKit delivers its first frames sparsely
+ *  (measured on macOS WebKit: 2 frames in the first 187 ms of a document, against a
+ *  ~16 ms cadence once the page is warm), so on a CI runner that first check is the
+ *  one long wait in the run — and `goLive`'s opening click is where every case meets
+ *  it. It is not the app: the button's own box is byte-identical across 92 consecutive
+ *  frames. The `waitForSelector` below already carried its own bound for the readback;
+ *  the clicks were left inheriting, which is what made this a WebKit-only flake. */
+const SESSION_UP_TIMEOUT_MS = 30_000;
+
 /** Bring a live session up, then hand the fake its scripted latency. The initial
  *  readback is ~800 sequential reads: at a scripted latency it would take minutes,
  *  so the session is established at zero latency and the profile applied after. */
 export async function goLive(page: Page, latency: Partial<FakeLatency> = {}): Promise<void> {
-  await page.click("#btn-device");
-  await page.click("#btn-live");
+  await page.click("#btn-device", { timeout: SESSION_UP_TIMEOUT_MS });
+  await page.click("#btn-live", { timeout: SESSION_UP_TIMEOUT_MS });
   // Attached, not visible: the click closes the Device menu, so the toggle that
   // carries the session state is hidden by the time it flips.
-  await page.waitForSelector('#btn-live[aria-pressed="true"]', { state: "attached", timeout: 30_000 });
+  await page.waitForSelector('#btn-live[aria-pressed="true"]', {
+    state: "attached",
+    timeout: SESSION_UP_TIMEOUT_MS,
+  });
   if (Object.keys(latency).length) await setLatency(page, latency);
 }
 
