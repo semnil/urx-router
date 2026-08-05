@@ -446,7 +446,11 @@ class (l) had already fixed on the param side.
 - The wire-selection trick (a dispatched pointerdown with no pointerup) must be used deliberately and
   its effect on press state recorded in the trace: it silently suppresses the idle backstop
 - Every step records **both the intended and the achieved offset**. A ladder is only interpretable
-  with the achieved values beside the intended ones
+  with the achieved values beside the intended ones — and a rung is placed against the achieved
+  figure, never the intended one. The driver's own cost between the sleep and the mark (clicks,
+  locator resolutions) is added to every rung and is **one-directional**: it only ever pushes a
+  gesture LATER, so a rung placed after a window's edge is robust and one placed before it is what a
+  slow runner takes away
 
 ## Implementation and running
 
@@ -1105,6 +1109,19 @@ not repeat them.
   every step, as its `waitForSelector` already did for the readback; the sweeps keep theirs, which is
   what it was written for. The case prints how long the session took to come up (437 ms on an idle
   Mac) so the margin is a figure in the log rather than something to rediscover
+- **A ladder's rungs were placed for a driver cost of zero.** `meter-rescope-inside-subpending-ladder`
+  put its second re-scope 10, 50 and 260 ms into a 200 ms registration, and the two low rungs are
+  meant to land INSIDE it. Between the sleep and the mark sit two clicks and a locator resolution,
+  and on CI that cost 147, 150 and 153 ms across one job's three rungs — so D=50 achieved exactly
+  200 ms into a 200 ms window, hit the dead-zone guard and failed, while D=10 achieved 157 with 14 ms
+  to spare. It had been read as a flake for three release runs. It is not: with a 200 ms window an
+  inside rung is **unplaceable** on that runner, and the guard was doing its job. The window is now
+  1000 ms with the rungs at 10 / 300 / 1100, which clears the edge by 230 ms at the worst driver cost
+  yet seen — 470 ms, on a retry, where `trace: "on-first-retry"` is in force. Two lessons. The cost is
+  one-directional, so the failure mode is asymmetric: an "after the edge" rung cannot be taken away by
+  a slow runner and a "before the edge" one always can. And a dead-zone guard that fails rather than
+  passing vacuously reports as a flake, which is exactly how it was misread — the printed achieved
+  phase is what says otherwise, and it was in the log the whole time
 
 Across two audit rounds these accounted for **24 vacuous assertions and 28 over-stated claims**, all
 fixed or withdrawn.
