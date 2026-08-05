@@ -49,7 +49,7 @@ pnpm tauri dev    # desktop app (Rust required; install via rustup if missing)
 pnpm build        # tsc --noEmit + vite build
 pnpm build:demo   # browser demo build (VITE_DEMO=1; excludes save/image export)
 pnpm preview      # serve the built dist/ at http://localhost:4173 (browser check of a build:demo bundle)
-pnpm e2e:serve    # vite build + preview on 4173 — what playwright.config.ts launches as its webServer (E2E_PORT overrides; --trace serves dist-trace on E2E_TRACE_PORT, 4174)
+pnpm e2e:serve    # vite build + preview on 4173 — what playwright.config.ts launches as its webServer (E2E_PORT overrides; --trace, aliased as e2e:serve:trace, serves dist-trace on E2E_TRACE_PORT, 4174)
 pnpm e2e:worktree # run the suite in a throwaway worktree on a free port pair, so a second checkout can run it at the same time
 pnpm test         # vitest (core: routing/constraints/plan/levels/meters/midi, control: vd/translate/readback/live/follow/fx/insert-fx/firmware etc., models, ui: console/fine/licenses, the plot-drawing contract in dyn-plot)
 pnpm typecheck:e2e # tsc -p tsconfig.e2e.json — type-checks e2e/ + the root config .ts (playwright/vite/vitest); the src build's tsconfig only includes "src"
