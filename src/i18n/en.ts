@@ -170,11 +170,12 @@ export const en = {
     // value-follows-state. Stored values stay "edge" / "state" for persistence
     // compatibility.
     buttonMode: { edge: "Momentary", state: "Toggle" },
-    // Legend-card headers: which setting the hovered select controls.
+    // Names the setting a select controls: its tooltip, half of its aria-label,
+    // and the heading over that vocabulary in the legend under the table.
     modeTitle: "Take-in mode",
     buttonModeTitle: "Button behavior",
-    // One-line behavior notes shown in the legend card while a select is
-    // hovered / focused (a native dropdown cannot annotate its own options).
+    // One-line behavior notes, printed in that legend for every vocabulary the
+    // list uses (a native dropdown cannot annotate its own options).
     modeDesc: {
       absolute: "Applies the received value as-is. Jumps when the physical control and the on-screen value disagree.",
       pickup:

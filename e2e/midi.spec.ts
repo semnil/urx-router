@@ -492,6 +492,50 @@ test("every assignment row prints its control, address and behavior", async ({ p
   const mute = mapRow(win, "ch1/mute");
   await expect(mute.locator(".mw-addr")).toHaveText("CH 1 NOTE 60");
   await expect(mute.locator(".mw-btn")).toBeVisible(); // toggle → button behavior
+  // The same select repeats down the column, so it announces its own row too.
+  await expect(level.locator(".mw-mode")).toHaveAttribute("aria-label", "Take-in mode — CH 1 · Level");
+  await expect(mute.locator(".mw-btn")).toHaveAttribute("aria-label", "Button behavior — CH 1 · MUTE");
+});
+
+test("the behavior column prints a key for the vocabularies the list uses", async ({ page }) => {
+  // What a native dropdown cannot say about its own options. The regression ground
+  // is the window move, which dropped the panel's hover-revealed card and left the
+  // notes in the i18n table with nothing reading them: every select then offered
+  // Momentary / Toggle with no way to find out what either does.
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  const legend = win.locator(".mw-legend");
+  await expect(legend).toHaveCount(0); // nothing bound: nothing to explain
+
+  // A continuous control brings the take-in vocabulary, and only that one — the key
+  // describes the selects on screen, not every select the window can build.
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
+  );
+  await expect(legend.locator("h4")).toHaveText(["Take-in mode"]);
+  await expect(legend.locator("dt")).toHaveText(["Absolute", "Pickup"]);
+  await expect(legend.locator("dd").first()).toContainText("Applies the received value as-is");
+
+  // A toggle adds the second vocabulary beside it.
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" }).click(),
+    [0x90, 60, 127],
+  );
+  await expect(legend.locator("h4")).toHaveText(["Take-in mode", "Button behavior"]);
+  await expect(legend.locator("dt")).toHaveText(["Absolute", "Pickup", "Momentary", "Toggle"]);
+  await expect(legend.locator("dd").last()).toContainText("64 and above = on");
+
+  // Removing the only continuous binding takes its half of the key with it.
+  await setLearn(page, win, false);
+  await mapRow(win, "ch1/level").locator(".mw-del").click();
+  await expect(legend.locator("h4")).toHaveText(["Button behavior"]);
+  await expect(legend.locator("dt")).toHaveText(["Momentary", "Toggle"]);
 });
 
 test("a follow-value toggle responds to every press of an alternating button", async ({ page }) => {

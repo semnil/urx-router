@@ -3399,6 +3399,57 @@ select:focus-visible,
   padding: 8px 0;
   color: var(--text-dim);
 }
+/* The Behavior column's key, printed under the table it explains — the faceplate
+   idiom, where a switch's positions are silkscreened beside the switch rather than
+   revealed by a gesture. It is reference text, not a value, so it carries no LED
+   accent: in this window amber means "bound", and spending it here would cost the
+   addresses their only signal.
+
+   One grid for the whole block, the vocabularies joining it through `subgrid`: the
+   notes are set in the same mono the rest of the window is, so two name columns
+   sized apart leave the note blocks on visibly different left edges — which reads
+   as a slip rather than as two lists. Subgrid rather than a fixed width because the
+   widest name is whatever the vocabularies happen to hold; it sits inside the app's
+   own floor (Safari 16.4+, evergreen WebView2), and an engine without it drops to a
+   one-column grid — the name above its note, degraded but readable. */
+.mw-legend {
+  margin-top: 14px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+.mw-legend h4 {
+  grid-column: 1 / -1;
+  margin: 0 0 6px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.mw-legend dl {
+  grid-column: 1 / -1;
+  margin: 0;
+  display: grid;
+  grid-template-columns: subgrid;
+  column-gap: 12px;
+  row-gap: 6px;
+}
+.mw-legend dl + h4 {
+  margin-top: 13px;
+}
+/* The name is the literal token the select shows, so it is set as one. */
+.mw-legend dt {
+  color: var(--text);
+}
+.mw-legend dd {
+  margin: 0;
+  color: var(--text-dim);
+}
 /* The app's status bar is in the other window, so the confirmations this window's
    own actions produce need somewhere to land here. */
 .mw-status {

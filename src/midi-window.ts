@@ -76,13 +76,16 @@ function portRow(
   grid.append(name, sel);
 }
 
-/** A select over one of the mapping vocabularies, labelled from the i18n table. */
+/** A select over one of the mapping vocabularies, labelled from the i18n table.
+ *  It announces the setting AND the assignment it sits on: the same select repeats
+ *  down the column, so the setting name alone does not say which row was reached. */
 function choice<T extends string>(
   cls: string,
   values: readonly T[],
   current: T,
   labels: Record<T, string>,
   title: string,
+  who: string,
   onPick: (v: T) => void,
 ): HTMLSelectElement {
   const sel = document.createElement("select");
@@ -94,10 +97,46 @@ function choice<T extends string>(
     sel.append(opt);
   }
   sel.value = current;
-  sel.setAttribute("aria-label", title);
+  sel.setAttribute("aria-label", `${title} — ${who}`);
   sel.title = title;
   sel.addEventListener("change", () => onPick(sel.value as T));
   return sel;
+}
+
+/** The Behavior column's key: every option of every vocabulary the list actually
+ *  offers, with its one-line note. A native dropdown cannot annotate its own
+ *  options, so the notes are printed under the table they explain rather than
+ *  revealed by a hover the operator has to discover first.
+ *
+ *  Only the vocabularies in use are printed — a list of continuous controls says
+ *  nothing about button behavior — so the block describes the selects on screen
+ *  rather than every select this window can build. Null when there is nothing to
+ *  explain, which is also the empty list's case. */
+function legend(rows: MidiUiRow[], m: ReturnType<typeof t>["midi"]): HTMLElement | null {
+  const groups: Array<{ title: string; values: readonly string[]; text: Record<string, string> }> = [];
+  if (rows.some((r) => r.option === "mode")) {
+    groups.push({ title: m.modeTitle, values: TAKE_MODES, text: { ...m.mode } });
+  }
+  if (rows.some((r) => r.option === "button")) {
+    groups.push({ title: m.buttonModeTitle, values: BUTTON_MODES, text: { ...m.buttonMode } });
+  }
+  if (groups.length === 0) return null;
+  const notes: Record<string, string> = { ...m.modeDesc, ...m.buttonModeDesc };
+  const box = el("div", "mw-legend");
+  for (const g of groups) {
+    const h = el("h4", "");
+    h.textContent = g.title;
+    const dl = document.createElement("dl");
+    for (const v of g.values) {
+      const dt = document.createElement("dt");
+      dt.textContent = g.text[v];
+      const dd = document.createElement("dd");
+      dd.textContent = notes[v];
+      dl.append(dt, dd);
+    }
+    box.append(h, dl);
+  }
+  return box;
 }
 
 function mappingRow(row: MidiUiRow, m: ReturnType<typeof t>["midi"]): HTMLElement {
@@ -115,13 +154,13 @@ function mappingRow(row: MidiUiRow, m: ReturnType<typeof t>["midi"]): HTMLElemen
   // the delete button keeps its column.
   if (row.option === "mode") {
     opt.append(
-      choice("mw-mode", TAKE_MODES, row.mode, m.mode, m.modeTitle, (mode) =>
+      choice("mw-mode", TAKE_MODES, row.mode, m.mode, m.modeTitle, row.label, (mode) =>
         send({ type: "mode", control: row.control, mode }),
       ),
     );
   } else if (row.option === "button") {
     opt.append(
-      choice("mw-btn", BUTTON_MODES, row.button ?? "edge", m.buttonMode, m.buttonModeTitle, (button) =>
+      choice("mw-btn", BUTTON_MODES, row.button ?? "edge", m.buttonMode, m.buttonModeTitle, row.label, (button) =>
         send({ type: "button", control: row.control, button }),
       ),
     );
@@ -189,6 +228,8 @@ function render(): void {
     for (const r of state.rows) tbody.append(mappingRow(r, m));
     table.append(thead, tbody);
     list.append(table);
+    const key = legend(state.rows, m);
+    if (key) list.append(key);
   }
 
   body.append(ports, learn, list);
