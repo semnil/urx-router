@@ -8,17 +8,14 @@ routing rules in detail.
 The Pre/Post of a channel's send to **FX 1 / FX 2** can be set freely in the
 planner — the plan records the intended value — but it cannot be written to the
 URX from software: the device only accepts this setting from its own front panel
-(LCD). While live sync is connected the control is therefore shown read-only
-(disabled, with an explanatory tooltip) and reflects the device value, which
-readback keeps current — this applies to both the inspector's Pre/Post toggle and
-the CONSOLE view's PRE button. Offline (the pure planner) it stays editable.
+(LCD). While live sync is connected the control is therefore read-only and shows
+the device's own value.
 
 The Pre/Post of **CH → MIX** and **FX-channel → MIX** sends can be written to the
 device as usual.
 
-> Background: only the device's front panel can set the CH → FX send Pre/Post (the
-> broker rejects a software write). The app reads it back, so while live it always
-> shows the true device value.
+> Background: only the device's front panel can set the CH → FX send Pre/Post — the
+> broker rejects a software write.
 
 ## The CH SETTING Icon is not modeled
 
@@ -26,8 +23,8 @@ The device's CH SETTING offers an **Icon** alongside its name and color, but the
 planner intentionally does not model it. Every node kind — mono channels included
 — exposes the icon over the broker, and the value is a bare glyph id that carries
 no hint of which picture it selects, so supporting it means calibrating the whole
-glyph set against the unit's screen first. The name (`nodeNames`) and color
-(`nodeColors`) are supported because their values are self-describing.
+glyph set against the unit's screen first. The name and the color are supported because their values are
+self-describing.
 
 ## CUE (solo/monitor interrupt) assignment cannot be controlled
 
@@ -38,10 +35,9 @@ routing is a temporary bus that the device clears at power-off, so it cannot hol
 a persistent assignment that a saved plan would represent (see
 [device-model.md](device-model.md)).
 
-The MONITOR bus **CUE Int** toggle (enable/disable the cue interrupt,
-`MONITOR_CUE_INTERRUPT`) is a confirmed parameter, so it is read, written and
-live-synced from the CONSOLE MONITOR strip and the inspector. What cannot be
-controlled is the per-channel CUE on/off (the assignment).
+The MONITOR bus **CUE Int** toggle (enable/disable the cue interrupt) is a
+confirmed parameter and is supported. What cannot be controlled is the
+per-channel CUE on/off (the assignment).
 
 ## Live control is hardware-verified on the URX44V only
 
@@ -67,12 +63,6 @@ protocol, so newer versions are not guaranteed to behave identically.
 | Firmware | V1.3.1.0 |
 | Device Center | 2.2.1 (2.2.1.1) |
 
-On connect the app reads the unit's System firmware version (`/vd/device`); when
-it differs from the verified version above, fetch, write and live sync warn at
-the start that the app may not work correctly. The user can continue or stop — it
-never forces a halt (and when the firmware cannot be read, it proceeds without a
-warning).
-
 ## The AUTO (auto gain) trigger is not modeled
 
 The device's input screens offer an **AUTO** button that runs a one-shot
@@ -83,15 +73,14 @@ only the auto-measure trigger is out of scope.
 
 ## SD Rec Track Count is read-only
 
-The microSD recorder's per-track source assignment is fully editable and
-live-synced (each stereo track pair selects a source — a channel pair, STEREO or
-a MIX bus — over param 736; see [device-model.md](device-model.md)).
+The microSD recorder's per-track source assignment is a normal, writable setting
+(each stereo track pair selects a source — a channel pair, STEREO or a MIX bus —
+over param 736; see [device-model.md](device-model.md)).
 
 The recorder's **Track Count** (2 … 16), however, is **read-only**: like the
 CH → FX send Pre/Post, the device accepts a software write but ignores it and
-only its own front panel changes it (param 839). The planner reads it back and
-uses it to gate how many track-pair slots are shown, but cannot push it — so a
-saved plan's Track Count is not written to the device.
+only its own front panel changes it (param 839). A saved plan's Track Count is
+therefore not written to the device.
 
 This applies to the URX44 / URX44V only (the URX22 has no microSD recording).
 
@@ -132,24 +121,8 @@ transitions observed), though it does interrupt audio just the same — the dial
 and the interruption are separate things.
 
 Follow USB is exposed as a broker parameter (848) and can be both read and
-written; its factory default is on. **Write to device** reads it together with
-the device's current rate before sending anything, so this no longer happens
-silently: when the rates differ and Follow USB is on, the planner asks whether to
-write at the device's rate or to turn Follow USB off first. The **FOLLOW USB**
-badge beside the Rate picker shows the state and toggles it. Before any device
-has been read it shows a dimmed "unknown" rather than "off" — clicking it then
-reads the state from the device instead of toggling. If the state cannot be read,
-the write is canceled rather than sent on a guess.
-
-The plan keeps the rate it recorded either way, and writing the rate the device
-already has costs nothing — the planner only sends values that differ, and the
-device ignores an identical write in any case.
-
-While Live sync is on, the Rate picker is locked: re-clocking renegotiates the
-USB stream, interrupting audio mid-session and putting the held connection at
-risk. Change the rate before starting Live sync, or through **Write to device**.
-The FOLLOW USB badge stays available, because toggling it only re-clocks when the
-computer is running a different rate.
+written; its factory default is on. The device ignores a write of the rate it is
+already running.
 
 ## The HDMI sample-rate ceiling depends on the audio mode
 
@@ -159,11 +132,9 @@ while **Multi Channels mode** goes up to 192 kHz with the multichannel audio
 down-mixed 8→2 into the stereo pair.
 
 This mode does not follow the incoming signal; it is a device setting configured
-and held on the unit. The desktop app can read and write it on the **Device setup**
-screen (Device > Device setup), together with HDCP, Brightness, Language and Auto
-Power Off. It is deliberately **not** part of the routing plan, so the plan models
-neither the mode nor the mode-dependent rate ceiling, and neither is reflected in
-the sample-rate warnings. The 8→2 down-mix, and whether a high-rate signal actually
+and held on the unit. It is deliberately **not** part of the routing plan, so the
+plan models neither the mode nor the mode-dependent rate ceiling, and neither is
+reflected in the sample-rate warnings. The 8→2 down-mix, and whether a high-rate signal actually
 arrives in Multi Channels mode, still follow the incoming HDMI signal and are not
 determined by a saved plan either. The HDMI input stays a selectable channel source and the
 8→2 down-mix appears in the routing (see [device-model.md](device-model.md)).
@@ -181,8 +152,8 @@ whose clock has drifted has to be corrected on its own screen, and a unit whose
 internal battery has run down (the display warns "Low Battery" or "No Battery")
 keeps stamping recordings incorrectly until the battery is replaced.
 
-The **Device setup** screen carries the date and time *formats* and the time zone,
-which are ordinary settings, but not the clock itself.
+The date and time *formats* and the time zone are ordinary settings; the clock
+itself is not one of them.
 
 ## The Time Zone list may name a city wrongly
 
@@ -199,8 +170,7 @@ picked, pick again — nothing else depends on the value.
 
 The URX22 has no microSD recorder, and the clock exists to date-stamp those
 recordings, so the unit has no Date/Time menu at all. The HDMI page is fitted to the
-URX44V only. The **Device setup** screen shows those rows for every model, marked
-with the models that have them, rather than hiding them.
+URX44V only.
 
 ## The URX does not save device-wide settings in a scene
 
@@ -224,17 +194,15 @@ The **Monitor source** staying put after a recall is the most visible example.
 Yamaha's user guide states the same exclusions at a screen-category level: the
 SETUP, MONITOR, microSD and STREAMING settings are "not saved" to a scene.
 
-**Where URX Router helps.** The planner reads these settings from the unit and
-keeps them in its plan, so managing a setup as a URX Router plan (a saved file or a
-share link) carries the Monitor routing and levels, Phones, output and USB
-patching, microSD recording source, streaming output, oscillator and sample rate
-across — the settings a device scene leaves behind. The system settings (brightness,
-Language, Auto Power Off, the date / time formats and time zone, the HDMI and USB
-Main pages, and the USER DEFINED KNOBS assignments) stay outside the plan, because a
-plan travels between units and they belong to one unit; the desktop app reads and
-writes them on the **Device setup** screen instead. Preferences can also draw the same boundary the other way:
-a "Scene only" device scope leaves those device-wide settings untouched on fetch,
-write and Live sync, and a scene-only plan save omits them so opening the file
-keeps the current values — the same semantic as a scene recall on the unit.
-
 > Confirmed by comparing the unit's scene and live state.
+
+## Device Center sometimes needs a force quit after a long session
+
+On macOS, after a long Live sync session, Device Center can stop closing through its normal
+quit and has to be force quit. The cause is **not established**.
+
+Short sessions do not reproduce it. Quitting URX Router with Live sync explicitly turned off,
+and quitting it with Live sync still running, were each tried, and neither was followed by a
+hang.
+
+> Not reproduced on demand.
