@@ -1,17 +1,6 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { stubTauriBoot, stubTauriDevice } from "./tauri-stub";
-
-// A Live sync session registers the notify stream, the link watch and the meter
-// stream on top of the device stub's reads; without these the activation aborts
-// before the session counts as up.
-const LIVE_COMMANDS = {
-  vd_params_subscribe: null,
-  vd_params_unsubscribe: null,
-  vd_watch_link: null,
-  vd_meters_subscribe: null,
-  vd_meters_unsubscribe: null,
-};
+import { LIVE_COMMANDS, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
 
 // Preferences modal (toolbar gear). The gear is an independent entry available
 // in every build; rows that need the desktop shell render disabled with a
