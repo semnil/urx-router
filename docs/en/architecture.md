@@ -1247,6 +1247,91 @@ INS FX chips, `rateConstraints` dims FX2), because those features genuinely do n
 says. Confirmed on hardware: a rate-changing write completes, with the commands after the re-clock all arriving.
 
 
+## The link ledger
+
+A Live sync session records what it asked of the Device Center broker, and what the broker failed to answer.
+The counts are collected in the worker (`src-tauri/src/vd.rs`, `LinkCounters`), tracked per session in
+`src/core/control/link-stats.ts`, appended to a log file, and — under `--experimental` — shown at the right
+end of the status bar with the full ledger behind a click (`src/ui/link-stats.ts`).
+
+The bar carries **two** of the ledger's rows, `Link up` and `No answer`: the two whose value is in being
+glanced at, on a strip it shares with the message text. It prints them with the panel's own labels and the
+panel's own figures — `LINK_BAR_KEYS satisfies readonly LinkLedgerKey[]`, and one `ledgerValue` for both
+surfaces. That is not tidiness. The bar briefly had a shorter vocabulary of its own, and a reader had no way
+to tell that its `cmd` and the panel's `Sent` were one number.
+
+### What it records, and what it deliberately does not
+
+| Value | Where it is counted |
+| --- | --- |
+| Link up | The frontend, from the connect |
+| Sent (`set` / `get`) | The worker, per command it puts on the socket |
+| Subscriptions (params / meters) | The worker, per subscription command — including the session's first, which is why the row is not called "re-subscribes": a healthy session opens at 2 and that is not churn. The churn is the row below, where a first registration has no `unregist` beside it |
+| Registration frames (`regist` / `unregist`) | The worker, per address — subscription is per-address, never a bulk post |
+| Full reads | The frontend: a whole-device readback is a decision this side makes, and the broker only sees the ~800 commands it decomposes into |
+| No answer | The worker, in `Health::guard`, where a deadline is already classified. Two figures with different tenses: the count is the session's total, and `n/3 to cutoff` is the CURRENT consecutive run — three deadlines in a row (~9 s with nothing answered) latch `broker-unresponsive` and end the session, and any answered command puts it back to zero |
+
+Round-trip latency, queue depth, notify and meter rates, and the share of notifies the address filter drops
+were all considered and **left out**. The first four measure how the link feels from this side, which is not
+evidence about the broker's internal state: it can answer promptly right up to the moment its own teardown
+deadlocks. The drop share is worse than merely weak — it cannot measure what it looks like it measures.
+Registration and notify emission are decoupled on this protocol (measured: a registered address can change and
+announce nothing), and an address nobody moves emits nothing however many times it is registered, so a
+registration piling up at the broker is invisible in the inbound stream.
+
+What is left is the set of quantities this side can count exactly and that describe what it *did*: causes,
+not symptoms.
+
+### Why a file, and what its lines mean
+
+The symptom the ledger was built for shows up **after the app is gone**, so a reading that lives only in the
+status bar is missing exactly when it is wanted. Each session appends JSONL to `link-ledger.jsonl` in the
+app's log directory (`append_link_log`): one line when the session opens, one a minute while it runs, and one
+as it ends carrying `end: "off"` or `end: "error"`.
+
+The path comes from the **bundle identifier** and does not vary by build profile
+(`~/Library/Logs/com.semnil.urx-router/` on macOS, `%LOCALAPPDATA%\com.semnil.urx-router\logs\` on Windows), so
+`pnpm tauri dev` and the installed app append to the **same file**. Every line therefore carries `build`
+(`dev` / `release`, from `debug_assertions` — the binary that opened the socket, not the frontend bundle) and
+`version`, or a diagnostic run and ordinary use would interleave with nothing to separate them.
+
+**Lifecycle.** The file rotates at 2 MiB, keeping one previous generation (`link-ledger.1.jsonl`), so the whole
+record is bounded at roughly 4 MiB however long the install lives. 2 MiB is on the order of ten thousand lines
+— over a hundred hours of continuous session — so the run before an incident is still on disk. An age cap was
+rejected (it needs every line parsed on every append) and so was truncate-from-the-front (it rewrites the file
+each time); one rotation is the cheapest thing that bounds it. Nothing in the app deletes the log: it is the
+record of the sessions before this one, which is the only thing that makes it useful.
+
+There is deliberately no `end` value for "the app exited". A dying page's IPC is not guaranteed to leave before
+the webview is torn down — the same reason the session teardown is native (below) — so the app's own exit is
+identified by its **absence**: a session whose last line carries no end reason is one that nothing closed.
+
+A log line that cannot be written does not stop a device session. It is reported once on the status line and
+every time to the console — salvage, not abort (see "Aborting on failure"): the failing-operation-aborts rule
+covers the device link, and this is not on it.
+
+### Session teardown
+
+Every way out of the worker loop lands on one epilogue: it unregisters every address the session registered,
+then completes the WebSocket close handshake rather than dropping the socket with the Close frame still queued.
+A replaced connection, an explicit disconnect, a dropped command channel and the app's own exit therefore all
+leave the same way, and so does the pump's own error break. The drain that finishes the handshake stops at the
+socket's first read timeout: an empty read means the peer has nothing queued, and counting those against a
+frame budget would spend seconds of the operator's Quit on a broker that has already gone quiet.
+
+On the app side the same is true of the connection: `releaseLive` in `main.ts` is the one release, so "read the
+ledger's final counters, then drop the link" is a property of the code rather than a rule each of the three
+exits re-implements.
+
+The app's exit is the case that needs more than telling: `lib.rs` builds the app and runs it with a
+`RunEvent::Exit` handler that calls `vd::shutdown_blocking`, which **waits** (bounded, 1.5 s) for the
+unregisters and the close to reach the wire. Everywhere else the worker outlives the caller and finishes on its
+own; at exit it does not, and "told to close" and "closed" are the same thing only when something outlives the
+telling.
+
+Whether an abandoned session is what leaves Device Center needing a force quit is **not established**. Closing
+it properly removes it from the candidates, which is a different claim — see `docs/en/known-issues.md`.
+
 ## Device setup (the unit's SETUP > GENERAL)
 
 `Device > Device setup` opens the settings that belong to the **unit** rather than to a routing plan:
@@ -1270,6 +1355,13 @@ carrying these would push one operator's screen brightness, menu language, power
 assignments onto another operator's hardware. Two smaller consequences fall out of the same choice: the
 self-test's perturbation walk (which nudges scalars by +1) never reaches values like brightness 10 or a
 20-minute power-off timer, and `scene-scope.ts` needs no new branch.
+
+The complement is what makes a plan worth keeping, and it is easy to lose sight of while reading the list
+above. Everything a **device scene** leaves behind — monitor routing and levels, phones, the output / USB /
+microSD patches, streaming, the oscillator and the sample rate — *is* in the plan, so a saved file or a
+`?plan=` link carries it across sessions and across units, which a scene recall on the unit does not. What
+the URX itself excludes from a scene is listed in [known-issues.md](known-issues.md); the "Scene only" device
+scope in Preferences is how the app draws the same line the other way.
 
 **Batch, not live.** Unlike Preferences, which applies each change immediately, this screen is read →
 edit → apply:

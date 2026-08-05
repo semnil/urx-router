@@ -174,6 +174,8 @@ const OUT_OF_SCOPE: Record<string, string> = {
   tooltip: "canvas tooltips — hover affordances on the graph",
   warning: "the warning cards — inline on the graph and the inspector",
   status: "the status line — one strip below every view, driven by most other specs",
+  linkStats:
+    "the link ledger — a status-bar readout and its panel, covered field by field in linkstats.spec.ts, whose expectation tables are typed over the view's own key lists",
   confirm: "the shell's native confirm dialogs — outside the webview",
   filter: "EQ filter-type names — a value vocabulary, printed wherever a band is",
   error: "error text — routed to the status line or a native dialog by its caller",

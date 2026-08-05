@@ -369,6 +369,70 @@ export function vdDisconnect(epoch: number): Promise<void> {
   return invoke<void>("vd_disconnect", { epoch });
 }
 
+/** What the current connection has asked of the broker, and what the broker failed
+ *  to answer. Counts, over one connection; all zero when nothing is connected. */
+export interface LinkStats {
+  sets: number;
+  gets: number;
+  paramSubscribes: number;
+  meterSubscribes: number;
+  registFrames: number;
+  unregistFrames: number;
+  deadlines: number;
+  /** The CURRENT consecutive-deadline run, not a total — the distance to the stall
+   *  that ends the session, back to zero as soon as the broker answers anything. */
+  stalled: number;
+}
+
+// The Rust side serializes LinkStats with snake_case fields (serde default).
+interface RawLinkStats {
+  sets: number;
+  gets: number;
+  param_subscribes: number;
+  meter_subscribes: number;
+  regist_frames: number;
+  unregist_frames: number;
+  deadlines: number;
+  stalled: number;
+}
+
+/**
+ * Read the link ledger. Resolves with null outside Tauri, where there is no link to
+ * have a ledger. Cheap by construction on the Rust side (atomics, no command queue),
+ * so a caller may poll it — but it is still an IPC round trip, so not per frame.
+ */
+export async function vdLinkStats(): Promise<LinkStats | null> {
+  if (!isTauri()) return null;
+  const s = await invoke<RawLinkStats>("vd_link_stats");
+  return {
+    sets: s.sets,
+    gets: s.gets,
+    paramSubscribes: s.param_subscribes,
+    meterSubscribes: s.meter_subscribes,
+    registFrames: s.regist_frames,
+    unregistFrames: s.unregist_frames,
+    deadlines: s.deadlines,
+    stalled: s.stalled,
+  };
+}
+
+/**
+ * Append one line to the link ledger log in the app's log directory; resolves with
+ * the file's path. Rejects outside Tauri (the browser build never calls it).
+ */
+export function appendLinkLog(line: string): Promise<string> {
+  return invoke<string>("append_link_log", { line });
+}
+
+/** Which build is running, for a record that outlives it. `tauri dev` and the
+ *  installed app write to the same ledger — the path comes from the bundle
+ *  identifier, which does not vary by profile — so the lines have to say.
+ *
+ *  Only the build kind crosses IPC; the version is a compile-time import. */
+export function appBuildKind(): Promise<"dev" | "release"> {
+  return invoke<"dev" | "release">("app_build_kind");
+}
+
 // External MIDI control (desktop only). The Rust midi module owns the open
 // input/output connections; the frontend opens a port by name, receives raw
 // message bytes through a channel, and sends feedback bytes back out.

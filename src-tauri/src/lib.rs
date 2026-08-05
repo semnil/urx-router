@@ -135,6 +135,81 @@ async fn write_binary_file(request: tauri::ipc::Request<'_>) -> Result<(), Strin
         .map_err(file_io)?
 }
 
+// Which build is running, for the ledger's own lines. A session's numbers mean
+// different things depending on which build produced them, and `tauri dev` and the
+// installed app write to the SAME file (the path is derived from the bundle identifier,
+// which does not vary by profile) — so without this, a diagnostic run and ordinary use
+// interleave with nothing to tell them apart.
+//
+// Only this half crosses IPC. The version is a compile-time constant the frontend
+// already imports from package.json (which `tauri.conf.json` reads too, so the two
+// cannot disagree); asking Rust for it would make a value that can never be unavailable
+// arrive over a fallible round trip. `debug_assertions` is not derivable that way: it
+// describes the binary that opened the broker socket, not the frontend bundle.
+#[tauri::command]
+fn app_build_kind() -> &'static str {
+    if cfg!(debug_assertions) {
+        "dev"
+    } else {
+        "release"
+    }
+}
+
+/// Rotate the ledger at this size, keeping one previous generation, so the whole
+/// record is bounded at roughly twice it.
+///
+/// 2 MiB is around ten thousand lines at the shape these records have — over a hundred
+/// hours of continuous session, so the run before a force quit is still in the file —
+/// while staying small enough to attach to a report. The alternative shapes were an age
+/// cap (needs every line parsed) and truncate-from-the-front (rewrites the file on every
+/// append); one rotation is the cheapest thing that bounds it.
+const LINK_LOG_MAX_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Move the ledger aside when it has grown past `max`, replacing the previous
+/// generation. Returns whether it rotated (for the test — nothing else asks).
+///
+/// Both steps are best-effort: a rotation that cannot happen must not cost the caller
+/// its line. `remove_file` before `rename` because Windows refuses a rename onto an
+/// existing path, where Unix would replace it silently — the same call has to mean the
+/// same thing on both.
+fn rotate_link_log(path: &std::path::Path, prev: &std::path::Path, max: u64) -> bool {
+    if fs::metadata(path).map(|m| m.len()).unwrap_or(0) < max {
+        return false;
+    }
+    let _ = fs::remove_file(prev);
+    fs::rename(path, prev).is_ok()
+}
+
+// Append one line to the link ledger in the app's log directory, and answer with the
+// file's path so the UI can name where it went.
+//
+// Append rather than the atomic whole-file write the plan/image exports use: this is
+// a record ACROSS sessions — the symptom it exists for (Device Center needing a force
+// quit) shows up after the app is gone, so a session that rewrote the file would erase
+// the evidence of the one before it. It is also why the path is fixed rather than
+// chosen: nothing about it is a document the operator saves.
+#[tauri::command]
+async fn append_link_log(app: tauri::AppHandle, line: String) -> Result<String, String> {
+    use std::io::Write;
+    use tauri::Manager;
+    let dir = app.path().app_log_dir().map_err(file_io)?;
+    let path = dir.join("link-ledger.jsonl");
+    let prev = dir.join("link-ledger.1.jsonl");
+    tauri::async_runtime::spawn_blocking(move || {
+        fs::create_dir_all(&dir).map_err(|e| io_error(&e))?;
+        rotate_link_log(&path, &prev, LINK_LOG_MAX_BYTES);
+        let mut f = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| io_error(&e))?;
+        writeln!(f, "{line}").map_err(|e| io_error(&e))?;
+        Ok(path.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(file_io)?
+}
+
 // True when the app was launched with the --experimental flag. Device writes and
 // Live sync are always on (covered by the first-launch consent gate); the flag
 // only gates the round-trip diagnostics (self-test), the .urxf settings-file
@@ -210,13 +285,23 @@ fn third_party_licenses(app: tauri::AppHandle) -> Result<String, String> {
 // live sync mirroring every edit, that stalls the UI continuously.
 #[tauri::command]
 async fn vd_connect(state: State<'_, vd::VdState>) -> Result<vd::Connection, String> {
-    let (tx, device) = tauri::async_runtime::spawn_blocking(vd::open)
+    let (tx, device, counters) = tauri::async_runtime::spawn_blocking(vd::open)
         .await
         .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())??;
     // The epoch identifies this connection: the frontend hands it back to
     // vd_disconnect so a delayed teardown of an earlier session cannot close it.
-    let epoch = state.install(tx);
+    let epoch = state.install(tx, counters);
     Ok(vd::Connection { device, epoch })
+}
+
+// This connection's ledger — what the app has asked of the broker, and what the
+// broker failed to answer (see vd::LinkCounters). Synchronous and lock-free by
+// design: it reads atomics rather than queueing a command, so a reading taken while
+// an ~800 command sweep is running reports now instead of reporting the sweep's
+// start. Zeroed when nothing is connected.
+#[tauri::command]
+fn vd_link_stats(state: State<vd::VdState>) -> vd::LinkStats {
+    vd::stats(&state)
 }
 
 #[tauri::command]
@@ -635,6 +720,9 @@ pub fn run() {
             vd_params_unsubscribe,
             vd_watch_link,
             vd_disconnect,
+            vd_link_stats,
+            append_link_log,
+            app_build_kind,
             midi_list_inputs,
             midi_list_outputs,
             midi_open_input,
@@ -654,8 +742,27 @@ pub fn run() {
             set_edit_menu_state,
             set_edit_menu_labels
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        // Built and run in two steps for one reason: the broker session has to be
+        // closed while the process is still alive. `on_page_load` covers a page being
+        // replaced, but nothing covered the app itself going away — quitting with Live
+        // sync up abandoned the session rather than closing it, leaving ~800
+        // registrations installed and the socket dropped without a close handshake.
+        // `shutdown_blocking` waits (bounded) for the unregisters and the close to
+        // actually reach the wire, because "told to close" and "closed" are the same
+        // thing only when something outlives the telling.
+        .run(|app, event| {
+            use tauri::Manager;
+            if matches!(event, tauri::RunEvent::Exit) {
+                // The broker session ALONE, unlike the page-load teardown above, which
+                // also drops the MIDI ports and the sleep hold. Those two are reclaimed
+                // by the OS when the process ends; this one is not — the unregisters and
+                // the close handshake are in-band frames that have to reach the broker
+                // while there is still a process to send them.
+                vd::shutdown_blocking(&app.state::<vd::VdState>());
+            }
+        });
 }
 
 #[cfg(test)]
@@ -680,6 +787,49 @@ mod tests {
             !take_launch_action(&TAKEN, &present),
             "a page reload does not re-arm it"
         );
+    }
+
+    // The ledger is appended to for the life of the install, so its size is bounded by
+    // rotation rather than by anyone remembering to clear it. Pinned because both
+    // halves are easy to lose: a rotation that fires early throws away the history the
+    // file exists for, and one that never fires is an unbounded file.
+    #[test]
+    fn the_ledger_rotates_only_once_it_is_full() {
+        use super::rotate_link_log;
+        let dir = std::env::temp_dir().join(format!(
+            "urx-link-log-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("link-ledger.jsonl");
+        let prev = dir.join("link-ledger.1.jsonl");
+
+        std::fs::write(&path, b"first\n").expect("write");
+        assert!(
+            !rotate_link_log(&path, &prev, 64),
+            "a file under the cap stays where it is"
+        );
+        assert!(!prev.exists(), "and no generation is made for it");
+
+        assert!(rotate_link_log(&path, &prev, 6), "at the cap it rotates");
+        assert!(
+            !path.exists(),
+            "the live file is gone, so the next append starts one"
+        );
+        assert_eq!(std::fs::read(&prev).expect("previous"), b"first\n");
+
+        // A second rotation replaces the generation rather than accumulating them:
+        // two files is the bound, whatever the install's age.
+        std::fs::write(&path, b"second\n").expect("write");
+        assert!(rotate_link_log(&path, &prev, 6));
+        assert_eq!(std::fs::read(&prev).expect("previous"), b"second\n");
+        assert_eq!(
+            std::fs::read_dir(&dir).expect("dir").count(),
+            1,
+            "one live file and one generation, never a third"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

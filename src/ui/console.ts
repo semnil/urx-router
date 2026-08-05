@@ -70,7 +70,7 @@ import {
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
-import { el, focusables, onWheelStep, popTop, preserveFocus, scrubFloat } from "./dom";
+import { el, focusables, onWheelStep, popLeft, popTop, preserveFocus, scrubFloat } from "./dom";
 import { fineActive, fineTag } from "./fine";
 import { t } from "../i18n";
 
@@ -1096,8 +1096,7 @@ export class Console {
   private placePopover(pop: HTMLElement, anchor: HTMLElement, align: "right" | "center", gap: number): void {
     const r = anchor.getBoundingClientRect();
     const pw = pop.offsetWidth;
-    let left = align === "center" ? r.left + r.width / 2 - pw / 2 : r.right - pw;
-    left = Math.max(6, Math.min(left, window.innerWidth - pw - 6));
+    const left = popLeft(align === "center" ? r.left + r.width / 2 - pw / 2 : r.right - pw, pw);
     pop.style.left = left + "px";
     const top = popTop(r, pop.offsetHeight, gap);
     pop.style.top = top + "px";

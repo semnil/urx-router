@@ -96,15 +96,40 @@ export function wheelStep(slider: HTMLInputElement, blocked?: () => boolean | un
   );
 }
 
+/** How close a floating popover may come to the window edge, on either axis. */
+const POP_INSET = 6;
+
+/** Clamp a popover's desired left edge into the viewport. How it aligns
+ *  (right-anchored, centred) stays with the caller; this owns only the inset, which
+ *  was written out per alignment in two files before there was a second surface. */
+export function popLeft(desiredLeft: number, width: number): number {
+  return Math.max(POP_INSET, Math.min(desiredLeft, window.innerWidth - width - POP_INSET));
+}
+
+/**
+ * Copy text to the clipboard, resolving with whether it landed. The capability check
+ * matters: `navigator.clipboard` is absent in an insecure context, where reading it
+ * blind throws instead of rejecting. Shared so the surfaces that offer a copy cannot
+ * decide that differently — there are three of them.
+ */
+export async function copyText(text: string): Promise<boolean> {
+  if (!navigator.clipboard?.writeText) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Vertical placement for a floating popover: `gap` px below the anchor rect,
-// flipped above it when the viewport bottom is too close, clamped to a 6px
-// viewport inset. The console popovers' flip/inset contract, kept here rather
-// than inline so a second floating surface inherits it (horizontal placement
-// stays with each caller — they anchor differently).
+// flipped above it when the viewport bottom is too close, clamped to the inset
+// above. The console popovers' flip contract, kept here rather than inline so a
+// second floating surface inherits it.
 export function popTop(anchor: DOMRect, height: number, gap: number): number {
   const below = anchor.bottom + gap;
-  if (below + height <= window.innerHeight - 6) return below;
-  return Math.max(6, anchor.top - height - gap);
+  if (below + height <= window.innerHeight - POP_INSET) return below;
+  return Math.max(POP_INSET, anchor.top - height - gap);
 }
 
 /** Every focusable control inside a rebuilt subtree, in DOM order. The custom controls

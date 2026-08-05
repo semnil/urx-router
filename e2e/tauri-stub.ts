@@ -46,6 +46,23 @@ export const LIVE_COMMANDS = {
   vd_watch_link: null,
   vd_meters_subscribe: null,
   vd_meters_unsubscribe: null,
+  // The link ledger: read on every session teardown, appended to on an interval and
+  // at the end. A session runs without them (the tracker treats an unreadable ledger
+  // as a link that has gone), so they are here to exercise the real path rather than
+  // to make one work. A spec asserting on the ledger overrides these.
+  vd_link_stats: {
+    sets: 0,
+    gets: 0,
+    param_subscribes: 0,
+    meter_subscribes: 0,
+    regist_frames: 0,
+    unregist_frames: 0,
+    deadlines: 0,
+    stalled: 0,
+  },
+  append_link_log: "",
+  // Stamped onto every ledger line: `tauri dev` and the installed app share one file.
+  app_build_kind: "dev",
 };
 
 /** A device-connected Tauri stub: the boot half above, plus a vd link whose reads
@@ -102,6 +119,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       const dialogs: string[] = [];
       const writes: Array<[number, number]> = [];
       const strWrites: Array<[number, number, string]> = [];
+      const linkLog: string[] = [];
       // The device's numeric state, seeded from `values` and UPDATED by every write,
       // so a re-read answers what was written. Without that a converge loop
       // (client.ts sendConverging: send the diff, re-read, re-send whatever still
@@ -115,10 +133,12 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         __urxDialogs: string[];
         __urxWrites: Array<[number, number]>;
         __urxStrWrites: Array<[number, number, string]>;
+        __urxLinkLog: string[];
       };
       w.__urxDialogs = dialogs;
       w.__urxWrites = writes;
       w.__urxStrWrites = strWrites;
+      w.__urxLinkLog = linkLog;
       (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
         Channel: class {
           onmessage: (data: unknown) => void = () => {};
@@ -154,6 +174,13 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
             strWrites.push([Number(args?.paramId), Number(args?.y), String(args?.value ?? "")]);
             return Promise.resolve(null);
           }
+          // Recorded rather than answered from `constants`, because the ledger log is
+          // a sequence: what matters is which lines a session wrote and in what order,
+          // not that the append was accepted. The path still comes from `constants`.
+          if (cmd === "append_link_log") {
+            linkLog.push(String(args?.line ?? ""));
+            return Promise.resolve(constants.append_link_log ?? "");
+          }
           return cmd in constants
             ? Promise.resolve(constants[cmd])
             : Promise.reject(new Error(`stub: unhandled command ${cmd}`));
@@ -175,3 +202,7 @@ export const strWritesOf = (page: Page): Promise<Array<[number, number, string]>
 /** Every vd_set the stub received, as [paramId, value]. */
 export const writesOf = (page: Page): Promise<Array<[number, number]>> =>
   page.evaluate(() => (window as unknown as { __urxWrites: Array<[number, number]> }).__urxWrites);
+
+/** Every link-ledger line the stub was asked to append, in order (raw JSONL). */
+export const linkLogOf = (page: Page): Promise<string[]> =>
+  page.evaluate(() => (window as unknown as { __urxLinkLog: string[] }).__urxLinkLog);

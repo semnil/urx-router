@@ -40,7 +40,7 @@ import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/cont
 import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
-import { focusables, preserveFocus } from "./ui/dom";
+import { copyText, focusables, preserveFocus } from "./ui/dom";
 import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
 import { MidiControl } from "./ui/midi";
@@ -116,6 +116,10 @@ import { collisionOwners } from "./core/control/translate";
 import type { SharedOwners } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
+import { version } from "../package.json";
+import { LinkLedgerTracker } from "./core/control/link-stats";
+import type { LinkSessionEnd } from "./core/control/link-stats";
+import { LinkStatsView } from "./ui/link-stats";
 import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
 import { runPrepareModified } from "./core/control/prepare";
@@ -387,6 +391,48 @@ function sharedSettingText(owners: SharedOwners[]): string {
   const more = owners.reduce((n, o) => n + o.dropped.length, 0) - 1;
   return t().status.sharedSetting(graph.labelOf(first.dropped[0]), graph.labelOf(first.kept ?? ""), more);
 }
+// The link ledger — what a session asks of the Device Center broker, and what the
+// broker fails to answer (core/control/link-stats.ts says why these values and not
+// latency). COLLECTED AND LOGGED in every desktop build, deliberately: the symptom it
+// exists for turns up after the app is gone, and a record that only exists when the
+// operator happened to launch with a flag records nothing. Only the on-screen readout
+// is gated behind --experimental.
+const linkLedger = DEMO ? null : new LinkLedgerTracker(version);
+let linkStatsView: LinkStatsView | null = null;
+
+// A log line that could not be written is not a device failure and does not stop a
+// session — but it is not swallowed either: it says so once per session (the tracker's
+// own latch) and every time in the console (see architecture.md "Aborting on failure").
+function warnLinkLog(message: string): void {
+  console.warn("link ledger:", message);
+  setStatus(t().status.linkLogFailed(message));
+}
+
+/** Start the ledger for a session. Called on the connect rather than once the session
+ *  counts as up, so the elapsed time and the Rust-side command counts — which start at
+ *  the connect — measure the same window. The tracker owns the interval and the opening
+ *  line; this is only the two things the app knows, the device label and where a
+ *  failure gets reported. */
+function beginLinkLedger(device: string): void {
+  if (!linkLedger) return;
+  linkLedger.begin(device, warnLinkLog);
+  linkStatsView?.setSession(true);
+}
+
+/** Close the ledger and release the connection, in that order — a reading taken after
+ *  the disconnect reports a session that did nothing, and the counters go to zero with
+ *  the link. THE one release: every exit from a live session goes through here, so the
+ *  ordering is a property of the code rather than a rule each exit re-implements.
+ *
+ *  Chained rather than awaited so callers stay synchronous where they were: the
+ *  disconnect was already fire-and-forget, and its epoch guard is what makes a late one
+ *  safe. */
+function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
+  linkStatsView?.setSession(false);
+  const ledger = linkLedger?.active ? linkLedger.end(reason) : Promise.resolve();
+  return ledger.finally(() => vdDisconnect(epoch));
+}
+
 const live = DEMO
   ? null
   : new LiveSync({
@@ -803,12 +849,12 @@ function setLiveUi(on: boolean): void {
 
 // Turn live sync off and release the connection. Used by the toggle, by a write
 // failure, and whenever the plan is replaced wholesale (loadPlan).
-function deactivateLive(status?: string): void {
+function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   if (!liveSessionUp) return;
   liveSessionUp = false;
   follow?.end();
   live?.end();
-  void vdDisconnect(liveEpoch);
+  void releaseLive(liveEpoch, end);
   setLiveUi(false);
   // A CH → FX tap shown read-only while live becomes editable again off-line.
   refreshInspector();
@@ -821,7 +867,7 @@ function deactivateLive(status?: string): void {
 // so the second and later calls return here before re-showing the dialog.
 function stopLiveOnError(message: string): void {
   if (!liveSessionUp) return;
-  deactivateLive();
+  deactivateLive(undefined, "error");
   // The badge asserts something about the device on the other end of a link that
   // just went away, so it goes back to unknown rather than keeping a claim about
   // hardware that may no longer be attached.
@@ -1400,6 +1446,12 @@ function reflectHistory(touch: PatchTouch): void {
 // read spans seconds: re-reading it after the await would apply the outgoing document's
 // scene-external values to whatever replaced it.
 async function applyDeviceStateScoped(target: Plan, signal?: AbortSignal): Promise<ReadbackResult> {
+  // Counted at the operation, not at its callers: the broker only ever sees the ~800
+  // commands this decomposes into, so `reads` is the one ledger row nothing downstream
+  // can reconstruct — and a count derived at each call site is only right for as long
+  // as every future caller remembers a second, unrelated line. A no-op outside a
+  // session (the tracker guards it), so the Fetch button costs nothing here.
+  linkLedger?.noteFullRead();
   const keep = getSettings().deviceScope === "scene" ? captureSceneExternal(target) : null;
   const result = await applyDeviceState(getModel(modelId), target, signal);
   if (keep) applySceneExternal(target, keep);
@@ -1806,14 +1858,7 @@ $("btn-share").addEventListener(
     } catch {
       // ignore (history unavailable)
     }
-    if (navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(link).then(
-        () => setStatus(t().status.shareUrlCopied),
-        () => setStatus(t().status.shareUrlInBar),
-      );
-    } else {
-      setStatus(t().status.shareUrlInBar);
-    }
+    void copyText(link).then((ok) => setStatus(ok ? t().status.shareUrlCopied : t().status.shareUrlInBar));
   }),
 );
 
@@ -2476,8 +2521,11 @@ if (!DEMO) {
       // Past the connect: any exit must release the held connection first. A
       // user-neutral exit (canceled) goes to the status line; a failure (failLive)
       // surfaces as a dialog — both drop the connection first, by its epoch.
+      // Opened on the connect, so the elapsed time and the Rust-side command counts —
+      // which start there too — measure the same window. Every exit below closes it.
+      beginLinkLedger(device.model);
       const abort = async (status: string): Promise<void> => {
-        await vdDisconnect(device.epoch);
+        await releaseLive(device.epoch, "off");
         setStatus(status);
       };
       const failLive = async (message: string): Promise<void> => {
@@ -2489,7 +2537,7 @@ if (!DEMO) {
         // both end()s no-op when nothing was started.
         follow?.end();
         live?.end();
-        await vdDisconnect(device.epoch);
+        await releaseLive(device.epoch, "error");
         showError(message);
       };
       if (!(await confirmFirmware(device))) return await abort(t().status.canceled);
@@ -2754,6 +2802,19 @@ if (!DEMO) {
     experimentalOn = true;
     prefs.refresh();
     for (const el of document.querySelectorAll<HTMLElement>("[data-experimental-only]")) el.hidden = false;
+
+    // The link ledger's readout. The counters and the log run in every desktop build;
+    // this is the only part that is a diagnostic, so it is the only part gated. Built
+    // here rather than at startup so a build that never shows it never makes it — and
+    // it picks up a session already running, since the gate resolves asynchronously.
+    if (linkLedger) {
+      linkStatsView = new LinkStatsView($("link-stats"), {
+        read: () => linkLedger.read(),
+        logPath: () => linkLedger.path,
+        onCopied: setStatus,
+      });
+      linkStatsView.setSession(linkLedger.active);
+    }
 
     // Arm the settings-file import: the File menu entry (revealed just above) and
     // the drop target, which only accepts .urxf from this registration on.

@@ -591,6 +591,7 @@ export const ja: Messages = {
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} は ${kept} と本体上の設定を共有しています${more > 0 ? ` (他 ${more} 件)` : ""} — 本体に届くのは ${kept} の値だけです`,
     liveError: (message: string): string => `ライブ同期を停止: ${message}`,
+    linkLogFailed: (message: string): string => `リンク台帳を書き出せませんでした: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",
     fixedConnection: "固定接続は削除できません",
@@ -688,6 +689,29 @@ export const ja: Messages = {
     title: "デバイスとの照合",
     intro:
       "読み取り専用 — 書き込みは行っていません。ツールが往復する全 param をデバイスから読み、計画と照合しました。要約に件数を、全件ログに 1 件ずつ示すので、一致を鵜呑みにせず検証できます。取り込んだ設定ファイルを実機と照合する用途に使えます — ファイルの元となった個体を接続して照合してください。",
+  },
+  linkStats: {
+    title: "Device Center リンク",
+    row: {
+      up: "接続経過",
+      sent: "送信",
+      subscriptions: "購読",
+      frames: "購読フレーム",
+      reads: "全体読み",
+      noanswer: "無応答",
+      log: "ログ",
+    },
+    set: "書込",
+    get: "読出",
+    params: "param",
+    meters: "meter",
+    regist: "regist",
+    unregist: "unregist",
+    stall: (n: number, limit: number): string => `連続 ${n}/${limit} で切断`,
+    noLog: "未書き出し",
+    copy: "コピー",
+    copied: "リンク台帳をクリップボードにコピーしました",
+    copyFailed: "クリップボードにコピーできませんでした — パネルから読み取ってください",
   },
   licenses: {
     title: "サードパーティライセンス",

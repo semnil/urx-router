@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { copyText } from "./dom";
 
 // Show a copyable report in the shared modal. The default framing is a plan-load
 // failure (a `?plan=` decode error or a routing validation failure); `opts`
@@ -58,12 +59,9 @@ export function showLoadReport(
     sel?.addRange(range);
   };
   const onCopy = (): void => {
-    const done = (): void => void (copy.textContent = m.copied);
-    if (navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(report).then(done, selectBody);
-    } else {
-      selectBody();
-    }
+    // Falls back to selecting the text, so the report is still takeable by hand when
+    // the clipboard is refused or absent (an insecure context).
+    void copyText(report).then((ok) => (ok ? void (copy.textContent = m.copied) : selectBody()));
   };
   const onClose = (): void => {
     scrim.hidden = true;
