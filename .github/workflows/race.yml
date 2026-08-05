@@ -97,8 +97,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Chromium only. The WebKit cases are their own job below, so the shards do not
-      # pay for a browser they never launch.
-      - run: pnpm exec playwright install --with-deps chromium
+      # pay for a browser they never launch. Bounded rather than bare — the action's
+      # header has the measurement and the reason.
+      - uses: ./.github/actions/install-browsers
+        with:
+          browser: chromium
       # No `--` before the flag: pnpm 10 forwards the separator through to the script
       # rather than consuming it, and Playwright reads everything after a `--` as a
       # positional file filter. `pnpm test:e2e:race -- --shard=1/3` therefore runs the
@@ -134,7 +137,29 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps webkit
+      # TEMPORARY probe, removed once it has answered. WebKit's dependency install is
+      # 201 .deb fetches and it is what a degraded Ubuntu mirror stalled past this job's
+      # whole budget. The candidate fix is the official Playwright image, which carries
+      # the libraries and the browsers already — but it is 947 MB against 125 MB of
+      # .debs, from a different host, and MCR's throughput to a runner cannot be
+      # measured from a development machine. This measures it. Bounded and
+      # non-blocking: the probe must not be able to cost the job it is measuring.
+      - name: Measure the Playwright container image pull (temporary probe)
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          set -uo pipefail
+          v=$(pnpm exec playwright --version | awk '{print $NF}')
+          img="mcr.microsoft.com/playwright:v${v}-noble"
+          t0=$(date +%s)
+          if timeout 300 docker pull "${img}" >/dev/null; then
+            echo "::notice title=MCR pull::${img} pulled in $(( $(date +%s) - t0 )) s"
+          else
+            echo "::notice title=MCR pull::${img} did not finish inside 300 s"
+          fi
+      - uses: ./.github/actions/install-browsers
+        with:
+          browser: webkit
       - run: pnpm test:e2e:race:webkit
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
