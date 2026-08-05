@@ -10,8 +10,10 @@
 // transport (tungstenite) and the MIDI bridge (midir) are desktop-only crates,
 // so mobile targets do not build the hardware control surface at all.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -50,6 +52,83 @@ pub struct Connection {
     #[serde(flatten)]
     pub device: DeviceSummary,
     pub epoch: u64,
+}
+
+/// What this connection asked of the broker, and what the broker failed to answer.
+///
+/// Every field is a monotonic count over ONE connection — a new connection starts
+/// at zero — because the question they exist for is "how much did this session cost
+/// the broker before it misbehaved", which a rate or an average averages away.
+///
+/// What is deliberately NOT here: round-trip latency, queue depth, notify rates, the
+/// share of notifies the address filter drops. Those measure how the link FEELS from
+/// this side, and that is not evidence about the broker's internal state — it can
+/// answer promptly right up to the moment its own teardown deadlocks. The drop share
+/// in particular cannot measure registration accumulation at all: registration and
+/// notify emission are decoupled on this protocol (measured — a registered address
+/// can change and announce nothing), and an address nobody moves emits nothing however
+/// many times it is registered. See docs/{en,ja}/architecture.md "The link ledger".
+#[derive(Default)]
+pub struct LinkCounters {
+    sets: AtomicU64,
+    gets: AtomicU64,
+    param_subscribes: AtomicU64,
+    meter_subscribes: AtomicU64,
+    regist_frames: AtomicU64,
+    unregist_frames: AtomicU64,
+    deadlines: AtomicU64,
+    /// The CURRENT consecutive-deadline run (Health.stalled), not a total: it is the
+    /// distance to the stall latch that ends the session, so it goes back to zero the
+    /// moment the broker answers anything.
+    stalled: AtomicU64,
+}
+
+impl LinkCounters {
+    fn bump(c: &AtomicU64) {
+        c.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// A command ran out its deadline: one more on the total, and the consecutive run
+    /// set to where the stall latch has got to. Both here, in one notation, because
+    /// they are one event seen two ways.
+    fn note_deadline(&self, run: u32) {
+        Self::bump(&self.deadlines);
+        self.stalled.store(run.into(), Ordering::Relaxed);
+    }
+
+    /// The broker answered, so the consecutive run is over.
+    fn clear_stall(&self) {
+        self.stalled.store(0, Ordering::Relaxed);
+    }
+
+    fn read(&self) -> LinkStats {
+        LinkStats {
+            sets: self.sets.load(Ordering::Relaxed),
+            gets: self.gets.load(Ordering::Relaxed),
+            param_subscribes: self.param_subscribes.load(Ordering::Relaxed),
+            meter_subscribes: self.meter_subscribes.load(Ordering::Relaxed),
+            regist_frames: self.regist_frames.load(Ordering::Relaxed),
+            unregist_frames: self.unregist_frames.load(Ordering::Relaxed),
+            deadlines: self.deadlines.load(Ordering::Relaxed),
+            stalled: self.stalled.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// The counters above as one serializable reading. Read straight off the atomics
+/// rather than through `Cmd`, deliberately: a stats request queued behind an ~800
+/// command sweep would report the state of the link as it was minutes ago, which is
+/// exactly the moment the reading matters.
+#[derive(Clone, Default, Serialize)]
+pub struct LinkStats {
+    pub sets: u64,
+    pub gets: u64,
+    pub param_subscribes: u64,
+    pub meter_subscribes: u64,
+    pub regist_frames: u64,
+    pub unregist_frames: u64,
+    pub deadlines: u64,
+    pub stalled: u64,
 }
 
 /// One live level-meter reading pushed to the frontend. `value` is the broker's
@@ -150,10 +229,12 @@ pub enum Cmd {
     /// Register a channel to receive the link-lost event (see LinkEvent). Replaces
     /// any prior watch. Fire-and-forget; the worker pushes one event if the broker
     /// link drops while idle, then exits.
-    WatchLink {
-        channel: Channel<LinkEvent>,
-    },
-    Shutdown,
+    WatchLink { channel: Channel<LinkEvent> },
+    /// Unregister everything this session registered, close the socket, and exit.
+    /// `done` is signalled once that has actually happened — only the app-exit path
+    /// passes one, because it is the only caller whose process may not outlive the
+    /// worker. Everywhere else the worker keeps running and finishes on its own.
+    Shutdown { done: Option<Sender<()>> },
 }
 
 /// The installed connection: the channel to the live worker (if any) and the
@@ -163,6 +244,10 @@ pub enum Cmd {
 struct Conn {
     tx: Option<Sender<Cmd>>,
     epoch: u64,
+    /// The live worker's counters, kept here so a reading never has to queue behind
+    /// the commands it is counting. Replaced wholesale by each install, so a new
+    /// connection's ledger starts at zero and a dead one's stops where it stopped.
+    counters: Arc<LinkCounters>,
 }
 
 /// Managed Tauri state: the channel to the live worker, if connected, tagged with
@@ -176,27 +261,40 @@ pub struct VdState {
 /// command channel plus the connected device; the caller installs the channel
 /// into VdState. Kept free of VdState so a Tauri command can run it on a
 /// blocking task — the handshake waits up to seconds and must not stall the UI.
-pub fn open() -> Result<(Sender<Cmd>, DeviceSummary), String> {
+pub fn open() -> Result<(Sender<Cmd>, DeviceSummary, Arc<LinkCounters>), String> {
     let (tx, rx) = mpsc::channel::<Cmd>();
     let (ready_tx, ready_rx) = mpsc::channel::<Result<DeviceSummary, String>>();
-    std::thread::spawn(move || imp::worker(rx, ready_tx));
+    let counters = Arc::new(LinkCounters::default());
+    let worker_counters = Arc::clone(&counters);
+    std::thread::spawn(move || imp::worker(rx, ready_tx, worker_counters));
     let summary = ready_rx
         .recv()
         .map_err(|_| CONTROL_WORKER_GONE.to_string())??;
-    Ok((tx, summary))
+    Ok((tx, summary, counters))
 }
 
 impl VdState {
     /// Install a freshly opened connection, shutting down any prior worker, and
     /// return the generation assigned to it. The caller hands this epoch back to
     /// disconnect so a delayed teardown of an earlier session cannot close this one.
-    pub fn install(&self, tx: Sender<Cmd>) -> u64 {
+    pub fn install(&self, tx: Sender<Cmd>, counters: Arc<LinkCounters>) -> u64 {
         let mut c = self.conn.lock().unwrap();
-        stop(&mut c);
+        stop(&mut c, None);
         c.tx = Some(tx);
+        c.counters = counters;
         c.epoch += 1;
         c.epoch
     }
+}
+
+/// This connection's ledger. Zeroed when nothing is connected, which is what the
+/// frontend renders as "no link" rather than as a session that did nothing.
+pub fn stats(state: &VdState) -> LinkStats {
+    let c = state.conn.lock().unwrap();
+    if c.tx.is_none() {
+        return LinkStats::default();
+    }
+    c.counters.read()
 }
 
 /// Clone the live worker's command channel, or error if not connected. The
@@ -338,7 +436,7 @@ pub fn watch_link(tx: Sender<Cmd>, channel: Channel<LinkEvent>) -> Result<(), St
 pub fn disconnect(state: &VdState, epoch: u64) {
     let mut c = state.conn.lock().unwrap();
     if c.epoch == epoch {
-        stop(&mut c);
+        stop(&mut c, None);
     }
 }
 
@@ -347,25 +445,54 @@ pub fn disconnect(state: &VdState, epoch: u64) {
 /// that owned it going away, where no epoch survives to name it — see the page-load
 /// teardown in lib.rs. A no-op when nothing is installed.
 pub fn shutdown(state: &VdState) {
-    let mut c = state.conn.lock().unwrap();
-    stop(&mut c);
+    stop(&mut state.conn.lock().unwrap(), None);
 }
 
-/// Take the installed worker's channel and tell it to exit. The one spelling of a
-/// teardown, so a step added to it (dropping a channel eagerly, bumping the epoch)
-/// cannot reach one caller and miss another. Caller holds the lock.
-fn stop(c: &mut Conn) {
-    if let Some(tx) = c.tx.take() {
-        let _ = tx.send(Cmd::Shutdown);
+/// How long the app-exit teardown waits for the worker to unregister and close.
+/// It is the operator's quit that is being held, so it is bounded: a broker that has
+/// stopped answering must not turn Quit into a hang of our own making.
+const EXIT_TEARDOWN_WAIT: Duration = Duration::from_millis(1500);
+
+/// Close the session and WAIT for the worker to have unregistered and closed the
+/// socket, or for the bound above. The other teardowns can be fire-and-forget
+/// because the worker outlives them; this one is called as the process is going
+/// away, and the frames only reach the broker if they are sent before it does.
+///
+/// Whether an abandoned session is what leaves Device Center needing a force quit is
+/// NOT established — this closes the session properly so that it stops being one of
+/// the candidates, which is a different claim. See docs/{en,ja}/known-issues.md.
+pub fn shutdown_blocking(state: &VdState) {
+    // The wait is the only thing this path adds; the teardown itself is `stop`, so a
+    // step added there reaches app quit too — which is the one teardown with no second
+    // chance to run it.
+    let (done, wait) = mpsc::channel();
+    let sent = stop(&mut state.conn.lock().unwrap(), Some(done));
+    if !sent {
+        return; // nothing installed, or the worker is already gone
     }
+    if wait.recv_timeout(EXIT_TEARDOWN_WAIT).is_err() {
+        eprintln!("vd: the broker session did not close within the exit teardown window");
+    }
+}
+
+/// Take the installed worker's channel and tell it to exit, optionally handing it the
+/// channel to signal once it has. The one spelling of a teardown, so a step added to it
+/// (dropping a channel eagerly, bumping the epoch) cannot reach one caller and miss
+/// another. Returns whether a live worker was actually told. Caller holds the lock.
+fn stop(c: &mut Conn, done: Option<Sender<()>>) -> bool {
+    let Some(tx) = c.tx.take() else { return false };
+    tx.send(Cmd::Shutdown { done }).is_ok()
 }
 
 #[cfg(desktop)]
 mod imp {
-    use super::{Cmd, DeviceSummary, LinkEvent, MeterUpdate, ParamUpdate, BULK_CHANGE};
+    use super::{
+        Cmd, DeviceSummary, LinkCounters, LinkEvent, MeterUpdate, ParamUpdate, BULK_CHANGE,
+    };
     use std::collections::HashSet;
     use std::net::TcpStream;
     use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     use serde_json::{json, Value};
@@ -469,7 +596,11 @@ mod imp {
         }
     }
 
-    pub fn worker(rx: Receiver<Cmd>, ready: Sender<Result<DeviceSummary, String>>) {
+    pub fn worker(
+        rx: Receiver<Cmd>,
+        ready: Sender<Result<DeviceSummary, String>>,
+        counters: Arc<LinkCounters>,
+    ) {
         let mut ws = match connect(URL) {
             Ok((ws, _)) => ws,
             Err(e) => {
@@ -516,7 +647,10 @@ mod imp {
         // without this, every later command keeps talking to a broker that still
         // ACKs writes with no unit attached and answers reads from its cache, and
         // the frontend is told a plan was written when nothing reached hardware.
-        let mut health = Health::default();
+        let mut health = Health::new(Arc::clone(&counters));
+        // Set by the app-exit teardown, which waits for it: the socket has to be
+        // unregistered and closed before the process goes away, not merely told to be.
+        let mut exit_done: Option<Sender<()>> = None;
         loop {
             // While a subscription is streaming, poll for commands briefly so the
             // bounded pump runs back-to-back and keeps up with the ~250/s feed; when
@@ -528,7 +662,11 @@ mod imp {
                 Duration::from_millis(50)
             };
             match rx.recv_timeout(wait) {
-                Ok(Cmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
+                Ok(Cmd::Shutdown { done }) => {
+                    exit_done = done;
+                    break;
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
                 Ok(Cmd::Set {
                     param_id,
                     x,
@@ -536,6 +674,7 @@ mod imp {
                     value,
                     reply,
                 }) => {
+                    LinkCounters::bump(&counters.sets);
                     let _ = reply.send(health.guard(|| {
                         do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value))
                     }));
@@ -546,6 +685,7 @@ mod imp {
                     y,
                     reply,
                 }) => {
+                    LinkCounters::bump(&counters.gets);
                     let _ = reply.send(
                         health.guard(|| do_get(&mut ws, &mut subs, &dev_uid, param_id, x, y)),
                     );
@@ -557,6 +697,7 @@ mod imp {
                     value,
                     reply,
                 }) => {
+                    LinkCounters::bump(&counters.sets);
                     let _ = reply.send(health.guard(|| {
                         do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value))
                     }));
@@ -567,6 +708,7 @@ mod imp {
                     y,
                     reply,
                 }) => {
+                    LinkCounters::bump(&counters.gets);
                     let _ =
                         reply
                             .send(health.guard(|| {
@@ -581,11 +723,11 @@ mod imp {
                     // Replace any prior subscription: unregister the old set, then
                     // register the new one address by address (never a bulk post on
                     // /vd/meters — that has been seen to crash Device Center).
-                    for &(id, x) in &subs.meter_addrs {
-                        let _ = reg_meter(&mut ws, &dev_uid, id, x, "unregist");
-                    }
+                    LinkCounters::bump(&counters.meter_subscribes);
+                    unregister_meters(&mut ws, &dev_uid, &mut subs, &counters);
                     let mut first = Ok(());
                     for &(id, x) in &addrs {
+                        LinkCounters::bump(&counters.regist_frames);
                         let r = health.guard(|| reg_meter(&mut ws, &dev_uid, id, x, "regist"));
                         if first.is_ok() {
                             first = r;
@@ -597,10 +739,7 @@ mod imp {
                     let _ = reply.send(first);
                 }
                 Ok(Cmd::MetersUnsubscribe) => {
-                    for &(id, x) in &subs.meter_addrs {
-                        let _ = reg_meter(&mut ws, &dev_uid, id, x, "unregist");
-                    }
-                    subs.meter_addrs.clear();
+                    unregister_meters(&mut ws, &dev_uid, &mut subs, &counters);
                     subs.meters.clear();
                     subs.meter_ch = None;
                 }
@@ -612,11 +751,11 @@ mod imp {
                     // Replace any prior subscription: unregister the old set, then
                     // register the new one address by address (per-address regist
                     // only, mirroring meters — a bulk post has crashed Device Center).
-                    for &(id, x, y) in &subs.param_addrs {
-                        let _ = reg_param(&mut ws, &dev_uid, id, x, y, "unregist");
-                    }
+                    LinkCounters::bump(&counters.param_subscribes);
+                    unregister_params(&mut ws, &dev_uid, &mut subs, &counters);
                     let mut first = Ok(());
                     for &(id, x, y) in &addrs {
+                        LinkCounters::bump(&counters.regist_frames);
                         let r = health.guard(|| reg_param(&mut ws, &dev_uid, id, x, y, "regist"));
                         if first.is_ok() {
                             first = r;
@@ -628,10 +767,7 @@ mod imp {
                     let _ = reply.send(first);
                 }
                 Ok(Cmd::ParamsUnsubscribe) => {
-                    for &(id, x, y) in &subs.param_addrs {
-                        let _ = reg_param(&mut ws, &dev_uid, id, x, y, "unregist");
-                    }
-                    subs.param_addrs.clear();
+                    unregister_params(&mut ws, &dev_uid, &mut subs, &counters);
                     subs.params.clear();
                     subs.param_ch = None;
                 }
@@ -654,7 +790,65 @@ mod imp {
                 }
             }
         }
+        // EVERY break above lands here, which is what makes this the session's one exit
+        // — including the pump's error break, where the link is already gone and the
+        // unregisters are discarded like the rest of that path's writes.
+        unregister_all(&mut ws, &dev_uid, &mut subs, &counters);
+        // `close` only QUEUES the Close frame; the handshake finishes on the reads that
+        // follow, and dropping the socket before then hands the broker an abrupt
+        // disconnect instead of a close.
         let _ = ws.close(None);
+        let _ = ws.flush();
+        for _ in 0..CLOSE_FRAMES {
+            // `Ok(None)` is the socket's own 200 ms read timeout: the peer has nothing
+            // queued, so its Close is not coming and there is nothing left to drain.
+            // Counting those against the budget would spend 64 × 200 ms on a quiet
+            // broker — which is exactly the state a session that just unregistered
+            // everything is in, and it is the operator's Quit being held.
+            match read_text(&mut ws) {
+                Ok(Some(_)) => {}
+                _ => break, // a closed / dead socket, or nothing more to read
+            }
+        }
+        // Sent LAST, so the app-exit path is released by the close having happened and
+        // not merely by the intent to close.
+        if let Some(done) = exit_done.take() {
+            let _ = done.send(());
+        }
+    }
+
+    /// Frames the close handshake will read through before giving up on the peer's
+    /// half. Under Live sync the broker is still streaming meters when the close goes
+    /// out, so the peer's Close frame arrives behind a few readings, not immediately.
+    const CLOSE_FRAMES: usize = 64;
+
+    /// Drop every meter registration this session holds. Shared by the subscription
+    /// replacement, the explicit unsubscribe and the session teardown, so the three
+    /// cannot disagree about what leaving looks like.
+    fn unregister_meters(ws: &mut Ws, dev_uid: &str, subs: &mut Subs, counters: &LinkCounters) {
+        for &(id, x) in &subs.meter_addrs {
+            LinkCounters::bump(&counters.unregist_frames);
+            let _ = reg_meter(ws, dev_uid, id, x, "unregist");
+        }
+        subs.meter_addrs.clear();
+    }
+
+    /// The parameter half of the above.
+    fn unregister_params(ws: &mut Ws, dev_uid: &str, subs: &mut Subs, counters: &LinkCounters) {
+        for &(id, x, y) in &subs.param_addrs {
+            LinkCounters::bump(&counters.unregist_frames);
+            let _ = reg_param(ws, dev_uid, id, x, y, "unregist");
+        }
+        subs.param_addrs.clear();
+    }
+
+    /// Everything this session registered, on the way out. The registration reply is
+    /// never read (see Cmd::ParamsSubscribe), so this cannot confirm the broker took
+    /// them — it can only make sure they were asked for, which is the whole of what
+    /// this side controls.
+    fn unregister_all(ws: &mut Ws, dev_uid: &str, subs: &mut Subs, counters: &LinkCounters) {
+        unregister_meters(ws, dev_uid, subs, counters);
+        unregister_params(ws, dev_uid, subs, counters);
     }
 
     fn send_json(ws: &mut Ws, v: Value) -> Result<(), String> {
@@ -1161,13 +1355,24 @@ mod imp {
     /// parameter command passes through. Held as one value rather than as a pair of
     /// `&mut` locals threaded through each call site, so a third latch is a change
     /// here instead of a change at all seven of them.
-    #[derive(Default)]
     pub(super) struct Health {
         lost: Option<String>,
         stalled: u32,
+        /// The session ledger. A deadline is recorded HERE rather than at the call
+        /// sites because this is already the one place that classifies one, so the
+        /// count and the latch can never come to disagree about what happened.
+        counters: Arc<LinkCounters>,
     }
 
     impl Health {
+        pub(super) fn new(counters: Arc<LinkCounters>) -> Self {
+            Health {
+                lost: None,
+                stalled: 0,
+                counters,
+            }
+        }
+
         /// Fail a command outright once the session is known dead, latching the reason
         /// the first time one surfaces it. The device-lost push arrives exactly once,
         /// so without the latch only the command that consumed it could ever notice —
@@ -1189,6 +1394,7 @@ mod imp {
                 Err(e) if e.starts_with(DEVICE_LOST_PREFIX) => self.lost = Some(e.clone()),
                 Err(e) if e.starts_with(BROKER_TIMEOUT_PREFIX) => {
                     self.stalled += 1;
+                    self.counters.note_deadline(self.stalled);
                     if self.stalled >= BROKER_STALL_LIMIT {
                         eprintln!(
                             "vd: {} consecutive broker deadlines; treating the broker as unresponsive",
@@ -1198,7 +1404,10 @@ mod imp {
                     }
                 }
                 // Anything else means the broker is talking to us, whatever it said.
-                _ => self.stalled = 0,
+                _ => {
+                    self.stalled = 0;
+                    self.counters.clear_stall();
+                }
             }
             r
         }
@@ -1267,6 +1476,7 @@ mod imp {
         // waits for an answer it is never going to get. Asserted through what a caller
         // sees — a latched session refuses a command that would otherwise have run —
         // rather than by reading the struct's own fields.
+        use super::super::LinkCounters;
         use super::{Health, BROKER_STALL_LIMIT, BROKER_TIMEOUT_PREFIX, BROKER_UNRESPONSIVE};
 
         fn timeout() -> Result<i64, String> {
@@ -1280,7 +1490,7 @@ mod imp {
 
         #[test]
         fn a_run_of_deadlines_latches_the_broker_as_unresponsive() {
-            let mut health = Health::default();
+            let mut health = Health::new(std::sync::Arc::new(LinkCounters::default()));
             // Every one of them still reports on its own merits: the latch decides what
             // happens NEXT, so a run that stops one short costs nothing but its deadlines.
             for _ in 0..BROKER_STALL_LIMIT {
@@ -1297,7 +1507,7 @@ mod imp {
 
         #[test]
         fn one_answered_command_clears_the_run() {
-            let mut health = Health::default();
+            let mut health = Health::new(std::sync::Arc::new(LinkCounters::default()));
             for _ in 0..BROKER_STALL_LIMIT - 1 {
                 let _ = health.guard(timeout);
             }
@@ -1312,7 +1522,7 @@ mod imp {
 
         #[test]
         fn a_refusal_is_the_broker_talking_to_us() {
-            let mut health = Health::default();
+            let mut health = Health::new(std::sync::Arc::new(LinkCounters::default()));
             for _ in 0..BROKER_STALL_LIMIT * 2 {
                 let _ = health.guard(|| {
                     Err::<i64, String>("broker-rejected: 140:0:0 (response_code 500)".to_string())
@@ -1527,8 +1737,9 @@ mod tests {
     // the meantime. These drive VdState's install/sender/disconnect directly with
     // dummy worker channels, so they reproduce the exact interleaving deterministi-
     // cally on any host (no broker, no websocket, no threads).
-    use super::{disconnect, sender, Cmd, VdState};
+    use super::{disconnect, sender, Cmd, LinkCounters, VdState};
     use std::sync::mpsc;
+    use std::sync::Arc;
 
     // The reported field bug: live connects, its teardown's disconnect is delayed,
     // a write connects (new generation), then the stale disconnect finally lands.
@@ -1539,11 +1750,11 @@ mod tests {
 
         // Live session connects.
         let (live_tx, _live_rx) = mpsc::channel::<Cmd>();
-        let live_epoch = state.install(live_tx);
+        let live_epoch = state.install(live_tx, Arc::new(LinkCounters::default()));
 
         // A later write connects before the live teardown's disconnect runs.
         let (write_tx, write_rx) = mpsc::channel::<Cmd>();
-        let write_epoch = state.install(write_tx);
+        let write_epoch = state.install(write_tx, Arc::new(LinkCounters::default()));
         assert_ne!(
             live_epoch, write_epoch,
             "each install gets a fresh generation"
@@ -1555,9 +1766,9 @@ mod tests {
         // The write's connection survives: sender() resolves (not "not connected")
         // and the cloned channel still reaches its worker.
         let tx = sender(&state).expect("write connection must stay installed");
-        tx.send(Cmd::Shutdown)
+        tx.send(Cmd::Shutdown { done: None })
             .expect("worker channel must still be open");
-        assert!(matches!(write_rx.recv(), Ok(Cmd::Shutdown)));
+        assert!(matches!(write_rx.recv(), Ok(Cmd::Shutdown { .. })));
     }
 
     // A disconnect that matches the current generation closes it.
@@ -1565,7 +1776,7 @@ mod tests {
     fn matching_disconnect_closes() {
         let state = VdState::default();
         let (tx, _rx) = mpsc::channel::<Cmd>();
-        let epoch = state.install(tx);
+        let epoch = state.install(tx, Arc::new(LinkCounters::default()));
 
         disconnect(&state, epoch);
 
@@ -1580,11 +1791,11 @@ mod tests {
     fn install_shuts_prior_worker() {
         let state = VdState::default();
         let (tx1, rx1) = mpsc::channel::<Cmd>();
-        state.install(tx1);
+        state.install(tx1, Arc::new(LinkCounters::default()));
         let (tx2, _rx2) = mpsc::channel::<Cmd>();
-        state.install(tx2);
+        state.install(tx2, Arc::new(LinkCounters::default()));
         assert!(
-            matches!(rx1.recv(), Ok(Cmd::Shutdown)),
+            matches!(rx1.recv(), Ok(Cmd::Shutdown { .. })),
             "prior worker told to stop"
         );
     }

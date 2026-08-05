@@ -1172,7 +1172,10 @@ select:focus-visible,
 
 /* ---- statusbar ---- */
 
-#statusbar {
+/* The strip. `#statusbar` stays the MESSAGE — the whole test suite and every caller
+   of setStatus mean the message by that name — so the row it now shares with the link
+   readout is the thing that got the new one. */
+.statusbar-row {
   display: flex;
   align-items: center;
   height: 30px;
@@ -1184,6 +1187,132 @@ select:focus-visible,
   color: var(--text-dim);
   background: var(--bar-solid);
   border-top: 1px solid var(--line);
+}
+
+#statusbar {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- link ledger (status bar readout, experimental) ---- */
+
+.linkbar {
+  margin-left: auto;
+  padding-left: 16px;
+  flex-shrink: 0;
+}
+
+/* A button so the whole readout is one focus stop and one click target; it borrows
+   the bar's own type rather than a control's, because it is a readout first. */
+.linkbar-open {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.linkbar-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 14px;
+  padding: 0 10px;
+  border-left: 1px solid var(--line);
+}
+
+.linkbar-cell:first-child {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.linkbar-cell:last-child {
+  padding-right: 0;
+}
+
+.linkbar-num {
+  color: var(--text);
+}
+
+.linkbar-lbl {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+/* The one state on the row that asks for a decision. */
+.linkbar-cell.warn .linkbar-num {
+  color: var(--warn);
+}
+
+.linkbar-pop {
+  position: fixed;
+  z-index: 60;
+  min-width: 300px;
+  max-width: min(420px, calc(100vw - 12px));
+  padding: 11px 13px 12px;
+  border: 1px solid var(--ctl-border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+}
+
+.linkbar-pop h4 {
+  margin: 0 0 9px;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--plot-faint);
+}
+
+.linkbar-pop table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.linkbar-pop td {
+  padding: 2.5px 0;
+  vertical-align: baseline;
+}
+
+.linkbar-pop td.k {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.linkbar-pop td.v {
+  padding-left: 14px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* The log path is the one value that is prose-length, so the breakdown wraps under
+   its figure instead of forcing the panel wide. */
+.linkbar-sub {
+  margin-left: 6px;
+  font-size: 9px;
+  color: var(--text-dim);
+}
+
+/* Chrome comes from `.prefs-btn` (the app-wide raised-button recipe, including its
+   light-theme hover); only the size is local. */
+.linkbar-copy {
+  margin-top: 10px;
+  padding: 3px 10px;
+  font-size: 10px;
 }
 
 /* ---- graph node cursors ---- */
@@ -1535,7 +1664,7 @@ select:focus-visible,
     color: var(--text);
   }
 
-  #statusbar {
+  .statusbar-row {
     padding-bottom: env(safe-area-inset-bottom);
   }
 }

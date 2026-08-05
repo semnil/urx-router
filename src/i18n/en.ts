@@ -619,6 +619,7 @@ export const en = {
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} shares device settings with ${kept}${more > 0 ? ` (+${more} more)` : ""} — only ${kept}'s values reach the device`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
+    linkLogFailed: (message: string): string => `Link ledger could not be written: ${message}`,
     connected: "Connected",
     connectionDeleted: "Connection deleted",
     fixedConnection: "Fixed connection — cannot be removed",
@@ -718,6 +719,44 @@ export const en = {
     title: "Device comparison",
     intro:
       "Read-only — nothing was written. Every parameter the tool round-trips was read from the device and compared with the plan; the summary counts them and the full log lists each one, so a match can be verified rather than trusted. Use it to check an imported settings file against the hardware — connect the unit the file came from and compare.",
+  },
+  // The link ledger (status bar, experimental builds). Names what the app asked of the
+  // broker, in the operator's terms rather than the protocol's.
+  //
+  // One vocabulary, used by both surfaces: the status bar prints a SUBSET of these rows
+  // and prints them with these words. It used to carry its own shorter set — `cmd` for
+  // the row called `Sent` — and a reader had no way to know the two were one number.
+  //
+  // "Subscriptions", not "Re-subscribes": the count includes the session's FIRST
+  // registration of each set, so calling it a re-subscription made a healthy session
+  // open at 2 and read as churn. The churn itself is the registration-frames row,
+  // which counts each address and so distinguishes a first registration (no unregist)
+  // from a replacement.
+  linkStats: {
+    title: "Device Center link",
+    row: {
+      up: "Link up",
+      sent: "Sent",
+      subscriptions: "Subscriptions",
+      frames: "Registration frames",
+      reads: "Full reads",
+      noanswer: "No answer",
+      log: "Log",
+    },
+    set: "set",
+    get: "get",
+    params: "params",
+    meters: "meters",
+    regist: "regist",
+    unregist: "unregist",
+    // What the pair means, not what it is: the left figure is the session's total, this
+    // one is the CURRENT consecutive run and the session ends when it reaches the
+    // limit. "stall 2/3" said neither of those.
+    stall: (n: number, limit: number): string => `${n}/${limit} to cutoff`,
+    noLog: "not written yet",
+    copy: "Copy",
+    copied: "Link ledger copied to the clipboard",
+    copyFailed: "Couldn't copy to the clipboard — read the ledger from the panel",
   },
   licenses: {
     title: "Third-party licenses",
