@@ -178,3 +178,34 @@ mod imp {
         Err("keep-awake-unsupported".into())
     }
 }
+
+// Only on the two platforms that can actually take a hold: elsewhere `acquire`
+// refuses by design, and a test that asserted on that would be testing the refusal.
+// The hold taken here is real (an IOKit assertion / a power request) and is released
+// by the Drop this exercises, so the process leaves nothing behind either way.
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
+mod tests {
+    use super::{release_owned_by, set, KeepAwakeState};
+
+    // The app has two webviews and one hold. A page load ends what THAT page holds —
+    // the same rule as the device session's, which is what the second window's load
+    // used to break. This one has no test of its own without a real acquire, which is
+    // why it is guarded above rather than faked.
+    #[test]
+    fn a_page_load_releases_only_the_hold_that_page_took() {
+        let state = KeepAwakeState::default();
+        set(&state, "main", true).expect("the hold must be available to test the release");
+
+        release_owned_by(&state, "midi");
+        assert!(
+            state.held.lock().unwrap().is_some(),
+            "another window's load leaves this hold alone"
+        );
+
+        release_owned_by(&state, "main");
+        assert!(
+            state.held.lock().unwrap().is_none(),
+            "its own page load releases it, as it always did"
+        );
+    }
+}
