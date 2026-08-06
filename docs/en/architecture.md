@@ -1746,7 +1746,7 @@ unregisters and the close to reach the wire. Everywhere else the worker outlives
 own; at exit it does not, and "told to close" and "closed" are the same thing only when something outlives the
 telling.
 
-**A page load is the other teardown, and it is scoped to the page that can own a session.** `on_page_load`
+**A page load is the other teardown, and it is scoped to what that page owns.** `on_page_load`
 (`PageLoadEvent::Started`) shuts the worker down, closes both MIDI ports and releases the idle-sleep hold:
 everything the frontend held goes with the page, including the connection epoch `vd_disconnect` needs, so a
 session that outlived it would be an open broker socket and an open MIDI port nothing can name again. It is
