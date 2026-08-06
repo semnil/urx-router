@@ -785,6 +785,40 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     expect(target.nodeNames["bus.mix1"]).toBeUndefined();
   });
 
+  // The name path has the same post-write staleness window as the numeric ones
+  // (measured on a URX44V: 81 ms), and the numeric repair cannot reach it — a
+  // name notify is in no registration, so `writeOverlay` has nothing to answer
+  // from. Live sync's sideEffect refetch is the one read issued inside that
+  // window, so it must not read names at all: a rename flushed in the same
+  // window would come back as the name it replaced and be written into the plan
+  // AND the name snapshot together, leaving no diff to retry.
+  it("skips the name read for the sideEffect refetch, and only for it", async () => {
+    mockVdGetFrom(new Map());
+    vi.mocked(vdGetStr).mockImplementation((paramId: number, _x: number, y: number) =>
+      Promise.resolve(paramId === 18 && y === 0 ? "FromDevice" : ""),
+    );
+
+    // The refetch hands over what it just wrote. Names are untouched by it.
+    const refetched = emptyPlan("URX44V");
+    refetched.nodeNames.ch1 = "OperatorJustTypedThis";
+    await applyDeviceState(model, refetched, undefined, new Set(["ch1"]), {
+      written: new Map(),
+      mustSettle: new Set(),
+      mustAnnounce: new Set(),
+    });
+    expect(refetched.nodeNames.ch1).toBe("OperatorJustTypedThis");
+    expect(vi.mocked(vdGetStr).mock.calls.some(([p]) => p === 18)).toBe(false);
+
+    // Every other caller passes no pending set and still reads names, which is
+    // how a rename made on the unit reaches the app at all.
+    vi.mocked(vdGetStr).mockClear();
+    const reconciled = emptyPlan("URX44V");
+    reconciled.nodeNames.ch1 = "OperatorJustTypedThis";
+    await applyDeviceState(model, reconciled, undefined, new Set(["ch1"]));
+    expect(reconciled.nodeNames.ch1).toBe("FromDevice");
+    expect(vi.mocked(vdGetStr).mock.calls.some(([p]) => p === 18)).toBe(true);
+  });
+
   // The device's own stereo pair labels are right-aligned in a 2-character field
   // (" 5/ 6"), so a leading-space strip would shorten the name and write the
   // shortened form back on the next sync. Only trailing padding may be dropped.
