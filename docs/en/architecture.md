@@ -938,8 +938,10 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   open, and every port refresh checks this side's record against it (`reconcileOpenPorts`), adopting the
   shell's answer. Without that the frontend went on naming a port nothing was listening on and the window
   went on offering it as chosen — with no way back, since re-picking the same entry fires no `change`. The
-  reconcile stands down while an open is in flight: the two commands are answered on different threads, and a
-  reply that overtook the open it describes would clear a port that is being connected right now.
+  reconcile stands down for anything that opens a port: the two commands are answered on different threads,
+  and a reply that overtook the open it describes would clear a port that is being connected right now. In
+  flight when it starts is not enough on its own — an open that begins and ends inside the round trip leaves
+  that count back at zero — so finished opens are counted too and the count is compared across the trip.
   `src-tauri/src/midiwin.rs` adds the window itself: `open_midi_window` (async on purpose —
   building a webview from a blocking command deadlocks on Windows), `close_midi_window`, `focus_midi_window`,
   `midi_window_geometry`, and the four relay commands.
