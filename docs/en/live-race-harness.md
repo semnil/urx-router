@@ -1138,6 +1138,17 @@ fixed or withdrawn.
 - The macOS native menu itself, real drag-and-drop path resolution and the OS-refusal semantics of the
   sleep hold stay outside automation
 - The codebase has no test-id vocabulary, so every case depends on the current DOM ids and class names
+- **The three CI shards are balanced by test COUNT, and the tiers are not equally expensive.** Playwright
+  splits the ordered list into equal-count contiguous chunks — 55 cases each, cutting across file
+  boundaries — so the split follows the file names, and the file names follow the tier order. Measured on
+  one run: shard 1 carried **749 s** of test time against shard 2's 253 s and shard 3's 315 s, at 55 cases
+  apiece. It is not a scheduling accident: T1 (overtake) and T2 (shape change) are the tiers whose cases
+  provoke whole-device readbacks of ~800 sequential commands and hold a barrier through them, 33-48 s each,
+  and being adjacent in the ordering they land together. The workflow's wall clock is the slowest shard, so
+  this costs about **2.5 minutes per release run** (7m18s against the ~4m35s an even split by duration would
+  give). Left as it is — a release runs the harness once — and recorded because the obvious fix, raising the
+  shard count, lowers the maximum without addressing the imbalance, while assigning files to shards by hand
+  makes the split something a new case can silently unbalance
 - **A plan EDIT never appears in the IPC trace** — only its write does, lagged by up to the 120 ms
   flush window and continuing after the read has resolved. So no predicate over the trace can decide
   "did an edit land inside the read's window", which became a load-bearing question once the readback
