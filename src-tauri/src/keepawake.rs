@@ -18,21 +18,33 @@ use std::sync::Mutex;
 /// each platform names its own `Hold`, and releasing it is its `Drop`.
 #[derive(Default)]
 pub struct KeepAwakeState {
-    held: Mutex<Option<imp::Hold>>,
+    /// The hold, with the label of the webview that took it — a page load may release
+    /// what that page holds and nothing else.
+    held: Mutex<Option<(String, imp::Hold)>>,
 }
 
 /// Turn the suppression on or off. Idempotent: a second `true` keeps the
 /// existing hold rather than stacking one the release path would not know about.
-pub fn set(state: &KeepAwakeState, on: bool) -> Result<(), String> {
+pub fn set(state: &KeepAwakeState, owner: &str, on: bool) -> Result<(), String> {
     let mut held = state.held.lock().unwrap();
     if on {
         if held.is_none() {
-            *held = Some(imp::acquire()?);
+            *held = Some((owner.to_string(), imp::acquire()?));
         }
     } else {
         *held = None;
     }
     Ok(())
+}
+
+/// Release the hold only if `label` is the webview that took it. A page load ends
+/// what that page was holding; another page's load is not its business (see
+/// `vd::shutdown_owned_by` for the same rule on the device session).
+pub fn release_owned_by(state: &KeepAwakeState, label: &str) {
+    let mut held = state.held.lock().unwrap();
+    if held.as_ref().is_some_and(|(owner, _)| owner == label) {
+        *held = None;
+    }
 }
 
 #[cfg(target_os = "macos")]

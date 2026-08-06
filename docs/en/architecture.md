@@ -1751,12 +1751,15 @@ telling.
 everything the frontend held goes with the page, including the connection epoch `vd_disconnect` needs, so a
 session that outlived it would be an open broker socket and an open MIDI port nothing can name again. It is
 native rather than a `pagehide` handler in the page, because the IPC a dying page posts is not guaranteed to
-leave before the webview is torn down. It runs for the **main window only**: the MIDI control window is a
-second webview that owns no plan, no session and no port, so its own load would otherwise end the main
-window's session and close the MIDI input that window had already restored. Nothing tells the frontend — it
-goes on showing the port as selected, and re-picking the same entry fires no `change` — so the only way back
-was picking "none" and the port again. Measured before the label check: opening MIDI control left MIDI learn
-unable to receive anything at all, which is what a control window is opened to do.
+leave before the webview is torn down. It ends **what that page holds, and nothing else**: each hold records
+the webview that took it (`vd::shutdown_owned_by`, `midi::close_owned_by`, `keepawake::release_owned_by`), so
+the question is answered by the hold rather than by a rule about which windows exist. The app has two
+webviews and the difference was measured the hard way — the MIDI control window owns no plan, no session and
+no port, and its own load used to end the main window's session and close the MIDI input that window had
+already restored. Nothing told the frontend: it went on showing the port as selected, and re-picking the same
+entry fires no `change`, so the only way back was picking "none" and the port again. Opening MIDI control
+therefore left MIDI learn unable to receive anything at all, which is what a control window is opened to do.
+A third window inherits the right behaviour without anyone remembering to add it to a list.
 
 Whether an abandoned session is what leaves Device Center needing a force quit is **not established**. Closing
 it properly removes it from the candidates, which is a different claim — see `docs/en/known-issues.md`.

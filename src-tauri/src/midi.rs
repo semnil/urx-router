@@ -26,10 +26,21 @@ use tauri::ipc::Channel;
 /// ports, and that idea is not falsifiable from the page: a connection closed
 /// from this side (the page-load teardown) leaves it asserting a port nothing
 /// is listening on. Storing the name is what lets it be checked instead.
+///
+/// The owning webview is kept with it for the other half of the same problem: a
+/// page load may close what that page opened and nothing else, and this app has a
+/// second window (midiwin.rs) whose own load used to close the first one's ports.
 #[derive(Default)]
 pub struct MidiState {
-    input: Mutex<Option<(String, MidiInputConnection<()>)>>,
-    output: Mutex<Option<(String, MidiOutputConnection)>>,
+    input: Mutex<Option<Held<MidiInputConnection<()>>>>,
+    output: Mutex<Option<Held<MidiOutputConnection>>>,
+}
+
+/// An open connection, with who opened it and what it was opened on.
+struct Held<T> {
+    owner: String,
+    port: String,
+    conn: T,
 }
 
 /// One incoming MIDI message. The OS layer resolves running status, so `bytes`
@@ -69,6 +80,7 @@ pub fn list_outputs() -> Result<Vec<String>, String> {
 /// rather than per message (the same batching idea as the vd meter pump).
 pub fn open_input(
     state: &MidiState,
+    owner: &str,
     port: String,
     channel: Channel<Vec<MidiMessage>>,
 ) -> Result<(), String> {
@@ -104,7 +116,11 @@ pub fn open_input(
             (),
         )
         .map_err(|e| format!("midi-open-failed: {e}"))?;
-    *slot = Some((port, conn));
+    *slot = Some(Held {
+        owner: owner.to_string(),
+        port,
+        conn,
+    });
     Ok(())
 }
 
@@ -112,24 +128,38 @@ pub fn close_input(state: &MidiState) {
     *state.input.lock().unwrap() = None;
 }
 
+/// Close whichever ports `label` opened, and leave any other page's alone. The
+/// page-load teardown's whole job (see `vd::shutdown_owned_by` for the same rule on
+/// the device session).
+pub fn close_owned_by(state: &MidiState, label: &str) {
+    let mut input = state.input.lock().unwrap();
+    if input.as_ref().is_some_and(|h| h.owner == label) {
+        *input = None;
+    }
+    let mut output = state.output.lock().unwrap();
+    if output.as_ref().is_some_and(|h| h.owner == label) {
+        *output = None;
+    }
+}
+
 /// The ports actually open right now, input first — the answer to "is what the
 /// frontend thinks it holds still true". Read on every port refresh rather than
 /// pushed, since the closing side (a page-load teardown) is talking about a page
 /// that is going away and has nobody left to tell.
 pub fn open_ports(state: &MidiState) -> (Option<String>, Option<String>) {
-    let input = state.input.lock().unwrap().as_ref().map(|(p, _)| p.clone());
+    let input = state.input.lock().unwrap().as_ref().map(|h| h.port.clone());
     let output = state
         .output
         .lock()
         .unwrap()
         .as_ref()
-        .map(|(p, _)| p.clone());
+        .map(|h| h.port.clone());
     (input, output)
 }
 
 /// Open the named output port for controller feedback, replacing any
 /// previously open output.
-pub fn open_output(state: &MidiState, port: String) -> Result<(), String> {
+pub fn open_output(state: &MidiState, owner: &str, port: String) -> Result<(), String> {
     let mut slot = state.output.lock().unwrap();
     *slot = None;
     let midi_out = MidiOutput::new(CLIENT).map_err(|e| format!("midi-init-failed: {e}"))?;
@@ -141,7 +171,11 @@ pub fn open_output(state: &MidiState, port: String) -> Result<(), String> {
     let conn = midi_out
         .connect(&target, "urx-router-output")
         .map_err(|e| format!("midi-open-failed: {e}"))?;
-    *slot = Some((port, conn));
+    *slot = Some(Held {
+        owner: owner.to_string(),
+        port,
+        conn,
+    });
     Ok(())
 }
 
@@ -153,7 +187,8 @@ pub fn close_output(state: &MidiState) {
 /// motor faders / LEDs following the plan).
 pub fn send(state: &MidiState, bytes: Vec<u8>) -> Result<(), String> {
     match state.output.lock().unwrap().as_mut() {
-        Some((_, conn)) => conn
+        Some(held) => held
+            .conn
             .send(&bytes)
             .map_err(|e| format!("midi-send-failed: {e}")),
         None => Err("midi-output-not-open".into()),
