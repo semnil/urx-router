@@ -214,6 +214,14 @@ describe("LiveSync sideEffect converge", () => {
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
 
+    // …and the seed read waits out the write it follows. The loop reads the whole
+    // write scope, and this flush wrote part of it a millisecond ago, so a read
+    // taken now answers the values those writes replaced: differences that are
+    // not there, and — worse — the resets this loop exists to settle are missed,
+    // which exits it before the first re-read. Nothing has been read yet.
+    expect(order).toEqual(["set"]);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
+
     // The one address the diff found, sent once and then READ. A seeded round 1 would
     // have sent it a second time before anything was read.
     expect(order[0]).toBe("set");

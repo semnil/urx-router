@@ -9,7 +9,8 @@ import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import { cmdAddr, planToCommands, planToNameWrites } from "./translate";
 import type { NameWrite, VdCommand, WriteScope } from "./translate";
-import { SETTLE_TIMEOUT_MS } from "./settle";
+import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
+import type { PendingWrites } from "./settle";
 
 /** The device's clock state: whether it slaves to the USB host, and the rate it
  *  is running at right now. Read together as the pre-check a write needs. */
@@ -277,6 +278,15 @@ export interface ConvergeOptions {
    *  exactly what the operator agreed to. Live sync is the caller that does NOT: its
    *  flush has already sent the diff itself, so a seeded round would send it twice. */
   initialDiffs?: CommandDiff[];
+  /** What the caller wrote immediately before calling, when it is leaving the
+   *  diff to be seeded. The seed read is otherwise issued inside those writes'
+   *  own staleness window (see architecture.md, "A write is not readable when it
+   *  is acked") and reports differences that are not there while missing the
+   *  resets this loop exists to settle. Held only until the unit has spoken for
+   *  them — measured 17-84 ms on a URX44V, not the bounded fallback — so this
+   *  costs a converging flush the window it was already inside, not a flat 300 ms.
+   *  Callers that hand over `initialDiffs` never seed and never need it. */
+  pending?: PendingWrites;
   maxRounds?: number;
   settleMs?: number;
   signal?: AbortSignal;
@@ -309,6 +319,7 @@ export async function sendConverging(
 ): Promise<ConvergeResult> {
   const {
     initialDiffs,
+    pending,
     maxRounds = 3,
     // One source with settle.ts: this site's blind window and the notify wait's bounded
     // fallback are the same measured number, and a test that clears one by advancing the
@@ -323,6 +334,18 @@ export async function sendConverging(
   const trace: ConvergeRound[] = [];
   let residual = initialDiffs;
   if (!residual) {
+    // The whole write set holds this wait, not a subset: the seed read asks the
+    // unit about every address in the scope, so any one of them still inside its
+    // window would be reported as a difference the plan does not have.
+    // Bounded by this function's own `settleMs`, so the one constant governs both
+    // waits here and a test that switches the loop's settle off switches this off
+    // with it. In production it is the notify that ends it, not the bound.
+    if (pending)
+      await writeSettle.settle(pending.written, {
+        mustSettle: new Set(pending.written.keys()),
+        timeoutMs: settleMs,
+        signal,
+      });
     const seed = await diffPlan(model, plan, { signal, scope });
     readErrors.push(...seed.errors);
     residual = seed.diffs;
