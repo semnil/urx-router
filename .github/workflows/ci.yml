@@ -80,6 +80,49 @@ jobs:
       - run: pnpm typecheck:e2e
       - run: pnpm test
 
+  # The Rust half had no gate at all: `cargo fmt` runs in format.yml, the platform build
+  # runs post-merge, and `cargo test` ran in neither — so nothing on a pull request
+  # compiled `src-tauri` at all, and `#[cfg(test)]` is not compiled by `cargo check`
+  # either. What the tests there pin is shell behaviour with no other net: the launch-flag
+  # latch, the ledger's rotation, the worker's connection generations, and which webview's
+  # page load may tear the app's device session and MIDI ports down.
+  #
+  # macOS rather than ubuntu, which would be the cheaper runner: this crate is only ever
+  # built on macos-14 and windows-latest, and a Linux build needs libwebkit2gtk installed
+  # from the Ubuntu mirror — the sequential apt path #257 took out of every E2E run, and
+  # a platform nothing else here compiles on. Free either way on a public repository.
+  rust:
+    runs-on: macos-14
+    # Unmeasured for this shape (debug profile, tests). The only figure that exists is the
+    # 5.1-minute cold RELEASE build post-merge.yml records, so this takes that bound with
+    # the same headroom rather than inventing a budget of its own.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+      - uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: src-tauri
+          # Its own key: the release cache holds a different profile's artifacts, and
+          # sharing it would have each eviction take the other's warm build with it.
+          shared-key: test
+      - run: pnpm install --frozen-lockfile
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
+      # tauri-build reads the frontend output and copies bundle.resources at compile time,
+      # so both have to exist before cargo runs. This job never bundles, so the notice is
+      # a placeholder rather than the generated one (same as post-merge.yml's warm build).
+      - run: pnpm build
+      - run: echo "" > src-tauri/THIRD_PARTY_LICENSES.html
+      - run: cargo test
+        working-directory: src-tauri
+
   # The ordinary E2E suite (--project=chromium): 383 cases, none over 3 s, 3.5 minutes of
   # machine time — about two on the runner's two workers. At that price the alternative,
   # a net that only fires once the change is already on main, costs more than it saves.
