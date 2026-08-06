@@ -93,6 +93,21 @@ jobs:
   # a platform nothing else here compiles on. Free either way on a public repository.
   rust:
     runs-on: macos-14
+    # No debug info. Nothing here debugs: the tests report by assertion message, and a
+    # backtrace would be read from the source anyway. Measured on the first warm run
+    # before this: the cargo work was 13.65 s against 11.7 s spent restoring a 415 MB
+    # cache, so the artifacts' size had become the larger half of the job — and that
+    # cache shares a 10 GB repository budget with the two release caches (399 / 474 MB),
+    # where eviction is what turns a warm run back into a cold one.
+    #
+    # Job level rather than on the cargo step: rust-cache runs earlier and folds CARGO_*
+    # variables into its key, so setting it on the step would leave the key describing a
+    # build the cache no longer holds. Both profiles are needed — `cargo test` builds the
+    # tested crate under `test` and its dependencies under `dev`, and the dependencies
+    # are the 298 crates.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     # Unmeasured for this shape (debug profile, tests). The only figure that exists is the
     # 5.1-minute cold RELEASE build post-merge.yml records, so this takes that bound with
     # the same headroom rather than inventing a budget of its own.
