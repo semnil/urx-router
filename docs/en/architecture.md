@@ -931,7 +931,10 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   `core/platform.ts` (no-ops outside Tauri). midir has no hot-plug notification, so the port lists are
   re-enumerated every time the MIDI window announces itself. A port that fails to open reports the error on the
   status line — the app's and the window's own — and drops the select back to "None" (the stored port entry is
-  removed too). `src-tauri/src/midiwin.rs` adds the window itself: `open_midi_window` (async on purpose —
+  removed too). The reverse has no report at all: a port closed from the NATIVE side (the page-load teardown
+  under "Session teardown") leaves the frontend still holding it and the window still showing it as selected —
+  and re-picking the same entry fires no `change`, so "none" and back is the only way to reopen it.
+  `src-tauri/src/midiwin.rs` adds the window itself: `open_midi_window` (async on purpose —
   building a webview from a blocking command deadlocks on Windows), `close_midi_window`, `focus_midi_window`,
   `midi_window_geometry`, and the four relay commands.
 - **Mapping (core/midi/)** — pure, language-agnostic logic. `message.ts` decodes/encodes CC / note / pitch
@@ -1734,6 +1737,18 @@ The app's exit is the case that needs more than telling: `lib.rs` builds the app
 unregisters and the close to reach the wire. Everywhere else the worker outlives the caller and finishes on its
 own; at exit it does not, and "told to close" and "closed" are the same thing only when something outlives the
 telling.
+
+**A page load is the other teardown, and it is scoped to the page that can own a session.** `on_page_load`
+(`PageLoadEvent::Started`) shuts the worker down, closes both MIDI ports and releases the idle-sleep hold:
+everything the frontend held goes with the page, including the connection epoch `vd_disconnect` needs, so a
+session that outlived it would be an open broker socket and an open MIDI port nothing can name again. It is
+native rather than a `pagehide` handler in the page, because the IPC a dying page posts is not guaranteed to
+leave before the webview is torn down. It runs for the **main window only**: the MIDI control window is a
+second webview that owns no plan, no session and no port, so its own load would otherwise end the main
+window's session and close the MIDI input that window had already restored. Nothing tells the frontend — it
+goes on showing the port as selected, and re-picking the same entry fires no `change` — so the only way back
+was picking "none" and the port again. Measured before the label check: opening MIDI control left MIDI learn
+unable to receive anything at all, which is what a control window is opened to do.
 
 Whether an abandoned session is what leaves Device Center needing a force quit is **not established**. Closing
 it properly removes it from the candidates, which is a different claim — see `docs/en/known-issues.md`.
