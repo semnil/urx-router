@@ -887,6 +887,11 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           case "midi_list_outputs":
             done();
             return fake.midi.outputs;
+          // What the shell holds, which the app checks its own record against on
+          // every port refresh (ui/midi.ts reconcileOpenPorts).
+          case "midi_open_ports":
+            done();
+            return [fake.midi.inPort, fake.midi.outPort];
           case "midi_open_input":
             fake.midi.inPort = String(args.port ?? "");
             fake.midi.inChannel = args.channel as { onmessage: (b: unknown[]) => void };

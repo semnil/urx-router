@@ -437,6 +437,13 @@ fn midi_list_outputs() -> Result<Vec<String>, String> {
     midi::list_outputs()
 }
 
+/// Which ports are open right now (input, output) — what the frontend checks its
+/// own idea of the chosen ports against on every refresh.
+#[tauri::command]
+fn midi_open_ports(state: State<midi::MidiState>) -> (Option<String>, Option<String>) {
+    midi::open_ports(&state)
+}
+
 #[tauri::command]
 fn midi_open_input(
     state: State<midi::MidiState>,
@@ -668,11 +675,6 @@ pub fn run() {
         // Only the page that can OWN these holds them. The MIDI control window is a
         // second webview and owns none of them — it has no plan, no session and no
         // port (midiwin.rs) — so its own load must not tear down the main window's.
-        // Without this, opening MIDI control ended the device session and closed the
-        // MIDI input the main window had already restored, while that window went on
-        // showing the port as selected: nothing tells the frontend a port it holds was
-        // closed underneath it, and re-picking the same entry fires no `change`, so the
-        // only way back was picking "none" and the port again.
         if webview.label() == midiwin::MIDI_WINDOW {
             return;
         }
@@ -736,6 +738,7 @@ pub fn run() {
             app_build_kind,
             midi_list_inputs,
             midi_list_outputs,
+            midi_open_ports,
             midi_open_input,
             midi_close_input,
             midi_open_output,

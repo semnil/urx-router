@@ -121,6 +121,11 @@ test.beforeEach(async ({ page }) => {
             return Promise.resolve(["Stub In", "Broken In"]);
           case "midi_list_outputs":
             return Promise.resolve(["Stub Out", "Broken Out"]);
+          // What the shell actually holds. The app checks its own idea of the
+          // chosen ports against this on every refresh, so a test can close a
+          // port "from the shell" the way the page-load teardown once did.
+          case "midi_open_ports":
+            return Promise.resolve([state.inputPort, state.outputPort]);
           case "midi_open_input":
             if (args.port === "Broken In") return Promise.reject(new Error("port busy"));
             state.inChannel = args.channel as Window["__midiTest"]["inChannel"];
@@ -736,6 +741,35 @@ test("a port that fails to open reverts its select to none and reports the error
   await expect(win.locator(".mw-out")).toHaveValue("");
   // A working port still opens normally afterwards.
   await pickInputPort(page, win);
+});
+
+test("a port closed from the shell stops being offered as the chosen one", async ({ page }) => {
+  // The shell can close a port under a page that is still running: the page-load
+  // teardown in lib.rs did exactly that for every webview, so opening the MIDI
+  // window closed the input the main window had restored. Nothing was reported —
+  // the app kept naming the port, the window kept showing it selected, and
+  // re-picking the same entry fires no `change`, so there was no way back through
+  // the UI. The app now reads what the shell actually holds on every port refresh.
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await expect(win.locator(".mw-in")).toHaveValue("Stub In");
+
+  // Close it the way the shell would, without telling the page.
+  await page.evaluate(() => {
+    window.__midiTest.inputPort = null;
+    window.__midiTest.inChannel = null;
+  });
+
+  // Reopening the window is a refresh (the app answers "ready" with one).
+  await win.close();
+  await expect.poll(() => page.evaluate(() => window.__midiTest.windowOpened)).toBe(true);
+  const again = await openMidiWindow(page);
+  await expect(again.locator(".mw-in")).toHaveValue("");
+
+  // And the choice is live again: picking the port reopens it for real.
+  await again.locator(".mw-in").selectOption("Stub In");
+  await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
+  await sendMidi(page, [0xb0, 7, 100]);
 });
 
 test("removing an assignment stops the control from responding", async ({ page }) => {

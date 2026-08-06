@@ -464,6 +464,18 @@ export function midiListOutputs(): Promise<string[]> {
 }
 
 /**
+ * The ports the shell actually has open, `[input, output]`. The frontend's own
+ * record of the chosen ports is a claim it cannot check from the page — a
+ * connection closed natively (the page-load teardown in lib.rs) leaves it naming
+ * a port nothing is listening on — and this is what makes that claim falsifiable.
+ * Both null outside Tauri.
+ */
+export function midiOpenPorts(): Promise<[string | null, string | null]> {
+  if (!isTauri()) return Promise.resolve([null, null]);
+  return invoke<[string | null, string | null]>("midi_open_ports");
+}
+
+/**
  * Open a MIDI input port and stream each raw message through onMessage.
  * Replaces any previously open input. Rejects when the port is gone. Returns a
  * close function. No-op (resolved noop) outside Tauri.
