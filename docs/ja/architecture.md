@@ -405,7 +405,8 @@ flowchart TD
   `midi_window_geometry`、および 4 つの Channel リレーコマンド。メインウィンドウの破棄がこれを閉じ、これ自身の
   クローズが learn モードを落とす) + MIDI ブリッジのコマンド (`midi_list_inputs/outputs`。`midi_open_input` は
   受信バーストを Tauri Channel で届ける。`midi_close_input`。`midi_open_output/midi_close_output`。`midi_send`。
-  midir を使用。ローカルの OS API に触れるだけなので同期コマンド) + スリープ抑止 (`set_keep_awake`、
+  `midi_open_ports` は開いているポートを答える — ネイティブ側のクローズは、それが起きるページには報告できない
+  ため。midir を使用。ローカルの OS API に触れるだけなので同期コマンド) + スリープ抑止 (`set_keep_awake`、
   `keepawake.rs`: macOS では IOKit の電源アサーション、Windows では power request。どちらもプロセス
   スコープで、`Hold` の `Drop` が解放する。バインディングは各プラットフォームのツリーに既にある
   `core-foundation` / `windows-sys` から採り、手で宣言しているのは IOKit の `IOPMAssertion*` だけ) +
@@ -793,9 +794,14 @@ Vite エントリで、デモビルドでは出力しない (MIDI はデスク�
   ため同期 command のままでよい。ブリッジは `core/platform.ts` (Tauri 外は no-op)。midir にホットプラグ通知は
   無いため、ポート一覧は MIDI ウィンドウが名乗り出るたびに再列挙する。開けなかったポートはエラーを status 行
   (アプリ側とウィンドウ側の両方) に出し、セレクトを
-  「なし」へ戻す (保存済みポートのエントリも破棄する)。逆向きには報告手段が無い: **ネイティブ側から閉じられた
-  ポート** (「セッションの終了処理」のページ読み込み側) は frontend が保持したまま・ウィンドウも選択済みのまま
-  表示し続け、しかも同じ項目を選び直しても `change` は発火しないため、開き直す手段は「なし」を挟む 2 手だけになる。
+  「なし」へ戻す (保存済みポートのエントリも破棄する)。逆向き — **ネイティブ側から閉じられたポート**
+  (「セッションの終了処理」のページ読み込み側がこれを行う) — は報告できない: 閉じる側が語っているのは
+  これから消えるページだからである。そこで push ではなく**読みにいく**: `midi_open_ports` が実際に開いている
+  ポートを答え、ポート再列挙のたびにこちら側の記録と突き合わせてシェルの答えを採用する
+  (`reconcileOpenPorts`)。これが無いと frontend は誰も聞いていないポートを名乗り続け、ウィンドウもそれを
+  選択済みとして出し続ける — 同じ項目を選び直しても `change` は発火しないので、戻る手段が無い。
+  突き合わせは**オープンが飛んでいる間は見送る**: 2 つの command は別スレッドで応答するため、記述対象の
+  オープンを追い越した応答は「いま接続中のポート」を消してしまう。
 - **マッピング (core/midi/)** — 言語非依存の純ロジック。`message.ts` が CC / ノート / ピッチベンドを
   decode/encode、`mapping.ts` が自由マッピングモデル (アドレス・取り込みモード) と永続化
   バリデーション (削除した「relative」取り込みモードの永続マッピングは読込時に absolute へ移行し、STEREO / MONITOR の電源 LED の旧「mute」id は一律「chOn」へ移行)、`controls.ts` が割当可能な全コントロールを**固定コントロール id** (`node/param[@スコープ]`、

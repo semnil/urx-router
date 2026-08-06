@@ -428,8 +428,9 @@ carries a one-line map of the same directories and points here.
   `focus_midi_window`, `midi_window_geometry`, and four Channel relay commands; the main window's
   destruction closes it, and its own closing drops learn mode) + MIDI bridge commands
   (`midi_list_inputs/outputs`; `midi_open_input` delivers received bursts over a Tauri Channel;
-  `midi_close_input`; `midi_open_output/midi_close_output`; `midi_send`. Uses midir; synchronous commands
-  since they only touch local OS APIs) + the idle-sleep hold (`set_keep_awake`, `keepawake.rs`: IOKit power
+  `midi_close_input`; `midi_open_output/midi_close_output`; `midi_send`; `midi_open_ports` answers which
+  ports are open, since a native close cannot be reported to the page it happens to. Uses midir;
+  synchronous commands since they only touch local OS APIs) + the idle-sleep hold (`set_keep_awake`, `keepawake.rs`: IOKit power
   assertions on macOS / a power request on Windows, both process-scoped and released by the `Hold`'s `Drop`;
   the bindings come from `core-foundation` / `windows-sys`, already in each platform's tree, and only
   IOKit's `IOPMAssertion*` is declared by hand) + the macOS Edit menu's app-owned Undo / Redo (`build_menu`
@@ -931,9 +932,14 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   `core/platform.ts` (no-ops outside Tauri). midir has no hot-plug notification, so the port lists are
   re-enumerated every time the MIDI window announces itself. A port that fails to open reports the error on the
   status line — the app's and the window's own — and drops the select back to "None" (the stored port entry is
-  removed too). The reverse has no report at all: a port closed from the NATIVE side (the page-load teardown
-  under "Session teardown") leaves the frontend still holding it and the window still showing it as selected —
-  and re-picking the same entry fires no `change`, so "none" and back is the only way to reopen it.
+  removed too). The reverse direction — a port closed from the NATIVE side, which the page-load teardown
+  under "Session teardown" does — cannot be reported, because the side that closes it is talking about a page
+  that is going away. So it is **read instead of pushed**: `midi_open_ports` answers which ports are actually
+  open, and every port refresh checks this side's record against it (`reconcileOpenPorts`), adopting the
+  shell's answer. Without that the frontend went on naming a port nothing was listening on and the window
+  went on offering it as chosen — with no way back, since re-picking the same entry fires no `change`. The
+  reconcile stands down while an open is in flight: the two commands are answered on different threads, and a
+  reply that overtook the open it describes would clear a port that is being connected right now.
   `src-tauri/src/midiwin.rs` adds the window itself: `open_midi_window` (async on purpose —
   building a webview from a blocking command deadlocks on Windows), `close_midi_window`, `focus_midi_window`,
   `midi_window_geometry`, and the four relay commands.

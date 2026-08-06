@@ -20,10 +20,16 @@ use tauri::ipc::Channel;
 
 /// The open connections, managed as Tauri state. One input + one output at a
 /// time: opening a port drops the previous connection of the same direction.
+///
+/// Each is kept with the port name it was opened under, so `open_ports` can
+/// answer what is actually open. The frontend holds its own idea of the chosen
+/// ports, and that idea is not falsifiable from the page: a connection closed
+/// from this side (the page-load teardown) leaves it asserting a port nothing
+/// is listening on. Storing the name is what lets it be checked instead.
 #[derive(Default)]
 pub struct MidiState {
-    input: Mutex<Option<MidiInputConnection<()>>>,
-    output: Mutex<Option<MidiOutputConnection>>,
+    input: Mutex<Option<(String, MidiInputConnection<()>)>>,
+    output: Mutex<Option<(String, MidiOutputConnection)>>,
 }
 
 /// One incoming MIDI message. The OS layer resolves running status, so `bytes`
@@ -98,12 +104,27 @@ pub fn open_input(
             (),
         )
         .map_err(|e| format!("midi-open-failed: {e}"))?;
-    *slot = Some(conn);
+    *slot = Some((port, conn));
     Ok(())
 }
 
 pub fn close_input(state: &MidiState) {
     *state.input.lock().unwrap() = None;
+}
+
+/// The ports actually open right now, input first — the answer to "is what the
+/// frontend thinks it holds still true". Read on every port refresh rather than
+/// pushed, since the closing side (a page-load teardown) is talking about a page
+/// that is going away and has nobody left to tell.
+pub fn open_ports(state: &MidiState) -> (Option<String>, Option<String>) {
+    let input = state.input.lock().unwrap().as_ref().map(|(p, _)| p.clone());
+    let output = state
+        .output
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|(p, _)| p.clone());
+    (input, output)
 }
 
 /// Open the named output port for controller feedback, replacing any
@@ -120,7 +141,7 @@ pub fn open_output(state: &MidiState, port: String) -> Result<(), String> {
     let conn = midi_out
         .connect(&target, "urx-router-output")
         .map_err(|e| format!("midi-open-failed: {e}"))?;
-    *slot = Some(conn);
+    *slot = Some((port, conn));
     Ok(())
 }
 
@@ -132,7 +153,7 @@ pub fn close_output(state: &MidiState) {
 /// motor faders / LEDs following the plan).
 pub fn send(state: &MidiState, bytes: Vec<u8>) -> Result<(), String> {
     match state.output.lock().unwrap().as_mut() {
-        Some(conn) => conn
+        Some((_, conn)) => conn
             .send(&bytes)
             .map_err(|e| format!("midi-send-failed: {e}")),
         None => Err("midi-output-not-open".into()),

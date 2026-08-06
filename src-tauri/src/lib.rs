@@ -233,6 +233,21 @@ fn take_launch_action(taken: &std::sync::atomic::AtomicBool, arg: &str) -> bool 
     std::env::args().any(|a| a == arg) && !taken.swap(true, std::sync::atomic::Ordering::SeqCst)
 }
 
+// Whether a page load in this webview is replacing the page that OWNS the app's device
+// session, MIDI ports and idle-sleep hold — the only load that may tear them down (the
+// `on_page_load` hook in `run`). Every page is that one except the MIDI control window,
+// which is a second webview owning no plan, no session and no port (midiwin.rs).
+// Without the distinction, opening MIDI control ended the main window's session and
+// closed the MIDI input it had already restored — and learn mode, which can only be
+// turned on from that window, could then never receive a message.
+//
+// Named rather than inlined because it is the whole decision: the holds are app-global
+// while their owner is one webview, and nothing in the types says so.
+#[cfg(desktop)]
+fn page_load_owns_holds(label: &str) -> bool {
+    label != midiwin::MIDI_WINDOW
+}
+
 // True when launched with --self-test: the frontend runs the device self-test
 // once on startup, headless, so it can be driven without the UI.
 #[tauri::command]
@@ -435,6 +450,13 @@ fn midi_list_inputs() -> Result<Vec<String>, String> {
 #[tauri::command]
 fn midi_list_outputs() -> Result<Vec<String>, String> {
     midi::list_outputs()
+}
+
+/// Which ports are open right now (input, output) — what the frontend checks its
+/// own idea of the chosen ports against on every refresh.
+#[tauri::command]
+fn midi_open_ports(state: State<midi::MidiState>) -> (Option<String>, Option<String>) {
+    midi::open_ports(&state)
 }
 
 #[tauri::command]
@@ -665,15 +687,7 @@ pub fn run() {
         if payload.event() != PageLoadEvent::Started {
             return;
         }
-        // Only the page that can OWN these holds them. The MIDI control window is a
-        // second webview and owns none of them — it has no plan, no session and no
-        // port (midiwin.rs) — so its own load must not tear down the main window's.
-        // Without this, opening MIDI control ended the device session and closed the
-        // MIDI input the main window had already restored, while that window went on
-        // showing the port as selected: nothing tells the frontend a port it holds was
-        // closed underneath it, and re-picking the same entry fires no `change`, so the
-        // only way back was picking "none" and the port again.
-        if webview.label() == midiwin::MIDI_WINDOW {
+        if !page_load_owns_holds(webview.label()) {
             return;
         }
         let app = webview.app_handle();
@@ -736,6 +750,7 @@ pub fn run() {
             app_build_kind,
             midi_list_inputs,
             midi_list_outputs,
+            midi_open_ports,
             midi_open_input,
             midi_close_input,
             midi_open_output,
@@ -785,6 +800,25 @@ mod tests {
     // no control over how the test binary was launched.
     use super::take_launch_action;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    // The holds the page-load teardown drops are app-global; their owner is one webview.
+    // Adding a second window is what made that difference matter, and it was measured:
+    // opening MIDI control closed the MIDI input the main window had already restored,
+    // so learn mode — reachable only from that window — could never receive a message.
+    // A third window inherits the same question, and this is where it gets answered.
+    #[cfg(desktop)]
+    #[test]
+    fn only_the_owning_page_load_tears_the_holds_down() {
+        use super::{midiwin::MIDI_WINDOW, page_load_owns_holds};
+        assert!(
+            page_load_owns_holds("main"),
+            "the window that owns the session still tears it down on reload"
+        );
+        assert!(
+            !page_load_owns_holds(MIDI_WINDOW),
+            "the MIDI control window owns none of it, so its own load takes nothing"
+        );
+    }
 
     #[test]
     fn a_launch_action_is_consumed_by_its_first_caller() {

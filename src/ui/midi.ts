@@ -21,6 +21,7 @@ import {
   midiListOutputs,
   midiOpenInput,
   midiOpenOutput,
+  midiOpenPorts,
   midiSend,
   midiUiAttachMain,
   midiUiToWindow,
@@ -95,6 +96,9 @@ export class MidiControl {
   private closeInput: (() => void) | null = null;
   private inputPort: string | null = null;
   private outputPort: string | null = null;
+  /** Opens that have been asked for but not answered — what `reconcileOpenPorts`
+   *  stands down for, since the shell cannot describe a connection it is still making. */
+  private opensInFlight = 0;
   private bound = new Map<string, BoundControl>();
   // The plan object every entry in `bound` was bound against.
   private boundPlan: Plan | null = null;
@@ -280,6 +284,7 @@ export class MidiControl {
   }
 
   private async openInput(port: string): Promise<void> {
+    this.opensInFlight++;
     try {
       // The Rust side replaces any prior input, so no explicit close first.
       this.closeInput = await midiOpenInput(port, (bytes) => {
@@ -291,10 +296,13 @@ export class MidiControl {
       this.closeInput = null;
       this.inputPort = null;
       this.say(midiErrorStatus(err, t().midi.inputError));
+    } finally {
+      this.opensInFlight--;
     }
   }
 
   private async openOutput(port: string): Promise<void> {
+    this.opensInFlight++;
     try {
       await midiOpenOutput(port);
       this.outputPort = port;
@@ -302,7 +310,33 @@ export class MidiControl {
     } catch (err) {
       this.outputPort = null;
       this.say(midiErrorStatus(err, t().midi.outputError));
+    } finally {
+      this.opensInFlight--;
     }
+  }
+
+  /**
+   * Adopt the shell's answer about which ports are open. This side's `inputPort` /
+   * `outputPort` is a claim the page cannot check: a connection closed natively —
+   * the page-load teardown in lib.rs, which used to fire for the MIDI window's own
+   * load — leaves it naming a port nothing is listening on, and the window goes on
+   * offering that port as the chosen one. The select is no way back either, since
+   * re-picking the same entry fires no `change`. Reading the truth on every refresh
+   * turns that silence into a port that visibly falls back to "none".
+   *
+   * Skipped while an open is in flight: the two commands are answered on separate
+   * threads, so a reply that raced ahead of the open it is meant to describe would
+   * clear a port that is being connected right now — the same symptom, caused here.
+   */
+  private async reconcileOpenPorts(): Promise<void> {
+    if (!isTauri() || this.opensInFlight > 0) return;
+    const [input, output] = await midiOpenPorts().catch(() => [this.inputPort, this.outputPort]);
+    if (this.opensInFlight > 0) return; // one started while this was in flight
+    if (input !== this.inputPort) {
+      this.inputPort = input;
+      this.closeInput = null; // whatever it would have closed is already gone
+    }
+    this.outputPort = output;
   }
 
   private async setInputPort(port: string | null): Promise<void> {
@@ -563,12 +597,14 @@ export class MidiControl {
       .catch(() => {});
   }
 
-  // Re-enumerate the ports (midir has no hot-plug events, so every open re-lists)
-  // and push them with the rest of the state.
+  // Re-enumerate the ports (midir has no hot-plug events, so every open re-lists),
+  // check what this side believes it holds against what the shell actually has, and
+  // push both with the rest of the state.
   private async refreshPorts(): Promise<void> {
     const [ins, outs] = await Promise.all([midiListInputs().catch(() => []), midiListOutputs().catch(() => [])]);
     this.inputs = ins;
     this.outputs = outs;
+    await this.reconcileOpenPorts();
     this.pushState();
   }
 
