@@ -3,9 +3,11 @@
 // The staleness window is not numeric-only. Measured on a URX44V (System V1.3.1.0):
 // a channel name written and then polled every 4 ms answered the PREVIOUS name for
 // 81 ms. The numeric repair does not reach it — `writeOverlay` answers an address out
-// of what the unit ANNOUNCED, and a name announcement reaches no registration at all
-// (names are not emitted by `planToCommands`, so `Subs::absorb` drops them), so there
-// is nothing to answer from and a settle could only ever spend its bound.
+// of what the unit ANNOUNCED, and a name is written on the string path (`vdSetStr`),
+// whose loop records nothing in the flush's write ledger, so a name address is never in
+// the `PendingWrites` the overlay is built from and a settle could only spend its bound.
+// The unit's own announcement does arrive, and is followed — that is the second case
+// below — but it reaches the follow layer, not the read the refetch issues.
 //
 // What that costs is worse than the numeric case rather than milder. A stale numeric
 // read oscillates: the plan and the snapshot disagree, the next diff re-sends, and the

@@ -131,9 +131,10 @@ export interface FakeHandle {
   counters: { subscribes: number; unsubscribes: number; meterSubs: number; meterUnsubs: number; connects: number };
   /** Addresses whose read answers this value whatever was written ("the device holds X"). */
   diverge: Record<string, number>;
-  /** The same hook on the string path: what `vd_get_str` answers whatever was written.
-   *  A rename made on the unit's own LCD is exactly this — the device holds a name the
-   *  app never wrote, and only a read can discover it. */
+  /** The same hook on the string path: what `vd_get_str` answers whatever was written,
+   *  with `memStr` left alone. It models a unit whose reads and whose notify disagree, so
+   *  an address under it announces nothing and only a read discovers the value. A rename
+   *  the unit announces — which is what an LCD rename actually is — is `pushNameNotify`. */
   divergeStr: Record<string, string>;
   /** Reject the nth (1-based) matching command. */
   refusals: Array<{ cmd: string; nth: number; kind: "transport" | "code400"; hit: number }>;
@@ -314,6 +315,25 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       const callbacks = new Map<number, (p: unknown) => void>();
       const listeners = new Map<string, (p: unknown) => void>();
 
+      /** The string half of `pushNotify`, shared by the write's own announcement and by
+       *  a case's scripted push so the two cannot describe different devices. A name
+       *  notify carries its text in `value_str` and a numeric `value` of 0, and passes
+       *  the same `Subs::absorb` filter as any other — an address this session did not
+       *  register is dropped here, which is what still happens to Sweet Spot Data. */
+      const emitNameNotify = (param_id: number, x: number, y: number, value: string): string[] => {
+        const w = notifyRefusal(param_id, x, y, 0);
+        put(w ? "notify-drop" : "notify", {
+          addr: `${param_id}:${x}:${y}`,
+          value: 0,
+          detail: w || undefined,
+          origin: "device",
+        });
+        // snake_case, like the real bridge: the frontend maps `param_id`/`value_str`
+        // itself, so a camelCase payload here would test a wire that does not exist.
+        if (!w) paramChannel?.onmessage([{ param_id, x, y, value: 0, value_str: value }]);
+        return [w];
+      };
+
       const fake: FakeHandle = {
         cfg: config,
         t0,
@@ -382,17 +402,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           // wants the announcement and the stored value to disagree has `divergeStr`
           // for exactly that, and says so explicitly.
           fake.memStr[`${param_id}:${x}:${y}`] = value;
-          const w = notifyRefusal(param_id, x, y, 0);
-          put(w ? "notify-drop" : "notify", {
-            addr: `${param_id}:${x}:${y}`,
-            value: 0,
-            detail: w || undefined,
-            origin: "device",
-          });
-          // snake_case, like the real bridge: the frontend maps `param_id`/`value_str`
-          // itself, so a camelCase payload here would test a wire that does not exist.
-          if (!w) paramChannel?.onmessage([{ param_id, x, y, value: 0, value_str: value }]);
-          return [w];
+          return emitNameNotify(param_id, x, y, value);
         },
         pushBulkChange: () => fake.pushNotify([[BULK[0], BULK[1], BULK[2], BULK[3]]]),
         pushMeters: (list) => {
@@ -551,6 +561,8 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // What a read of the address would answer once any staleness window is over: the
       // value the unit REPORTS, which `diverge` overrides and `mem` otherwise holds.
       const reported = (k: string): number => (k in fake.diverge ? fake.diverge[k] : (fake.mem[k] ?? 0));
+      /** The same question on the string path, answered from the string maps. */
+      const reportedStr = (k: string): string => (k in fake.divergeStr ? fake.divergeStr[k] : (fake.memStr[k] ?? ""));
       // The unit announces a write that CHANGED the value it reports, and that
       // announcement is what ends the staleness window — the boundary the staleness was
       // measured against rather than a separate stimulus. Nothing else closes it: a
@@ -588,17 +600,25 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // sees a value its snapshot cannot hold yet, calls it a device-side change, and
       // applies it over whatever the operator has moved to since. (Measured against the
       // app: a 240-detent key train landed 5-14 dB off.)
-      const announce = (k: string, armed: Stale | undefined, value: number): void => {
+      //
+      // ONE function for both paths, dispatched on the value's own type — which is
+      // already this file's model of a device value (`Stale.value` is `number |
+      // string`). The string path lived without an announcement at all for the
+      // harness's whole life, and what kept the omission alive was that its reasoning
+      // sat in a comment beside a twin nobody diffed against the numeric one. Two
+      // copies of the ack anchor and the window-closing rule would recreate exactly
+      // that, and the numeric copy is the one people edit.
+      const announce = (k: string, armed: Stale | undefined, value: number | string): void => {
         const [p, x, y] = k.split(":").map(Number);
         setTimeout(() => {
           if (armed && fake.stale[k] === armed) {
             armed.left = 0;
             armed.notified = true;
           }
-          fake.pushNotify([[p, x, y, value]], "device");
+          if (typeof value === "string") emitNameNotify(p, x, y, value);
+          else fake.pushNotify([[p, x, y, value]], "device");
         }, config.announceMs);
       };
-
       // `nth` counts EVERY call of that command, refused ones included, so two refusals
       // stacked on one command fire on the calls their numbers name. Returning at the
       // first match instead left the later entries un-incremented, which slid each of
@@ -712,15 +732,37 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           const now = reported(k);
           if (now !== said) pending = () => announce(k, armed, now);
         } else if (cmd === "vd_set_str" && !fake.ignoreWrites.includes(Number(args.paramId))) {
-          // Armed BEFORE the store, like the numeric path, so the entry carries the
-          // pre-write name. No announcement is scheduled: a name notify reaches no
-          // registration on a real link (names are not emitted by planToCommands, so
-          // `Subs::absorb` drops them), so the window can only be spent by the reads a
-          // case scripts. Modelling an announcement here would hand the app a signal
-          // the shipped bridge filters out.
-          const ks = key(args);
-          armStaleStr(ks);
-          fake.memStr[ks] = String(args.value ?? "");
+          // The same five steps as the numeric arm above, deliberately spelled the same
+          // way so the two can be diffed by eye: only the maps and the value type
+          // differ. The string path lived without both the window and the announcement
+          // for the harness's whole life, and it drifted unnoticed because nobody could
+          // read the two arms side by side.
+          //
+          // BOTH HALVES OF THE RULE ARE MEASURED HERE, not carried over from the
+          // numeric path. The ORDER: 32 name writes over two runs announced after their
+          // own ack, 32/32 — ack 0-4 ms from the issue, notify ack+1-102 ms. The
+          // SILENCE (`now !== said`): a same-value name write acked in 0 ms and
+          // announced nothing in 2000 ms, bracketed by a value-changing write on each
+          // side of one subscription so a dead stream could not pass for a silent
+          // device. And the WINDOW: 81 ms on a URX44V, closed by the write's own notify
+          // — a fake that armed it and never closed it would describe a device that
+          // goes on answering a name it no longer holds.
+          //
+          // `announceMs` (the numeric median, 100) is reused for names even so, and one
+          // number is why that is a choice rather than a fit: most name notifies land at
+          // 66-102 ms, but 2 of the 32 arrived under 10 ms — a low tail the numeric
+          // spread (ack+58-151 ms) does not have, cause unidentified. Erring LATE is the
+          // hazardous direction, so modelling the late cluster is what keeps the
+          // overtake case reachable; a fake at 5 ms would simply never produce it.
+          //
+          // An address the session did not register is still dropped at the bridge, so
+          // Sweet Spot Data (param 91, in no registration) reaches nothing.
+          const k = key(args);
+          const said = reportedStr(k);
+          const armed = armStaleStr(k);
+          fake.memStr[k] = String(args.value ?? "");
+          const now = reportedStr(k);
+          if (now !== said) pending = () => announce(k, armed, now);
         } else if (cmd === "vd_params_unsubscribe" || cmd === "vd_meters_unsubscribe") {
           // A teardown is a queue-point effect for the same reason an install is, and it
           // matters more: vd.rs's `param_ch = None` / `meter_ch = None` (vd.rs:586/619)
@@ -954,14 +996,13 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             done();
             return sampledStr;
           case "vd_set":
-            await wait(config.latency.set);
-            done();
-            // After the ack, never before it — see Served.announce.
-            ctx.announce?.();
-            return null;
           case "vd_set_str":
-            await wait(config.latency.setStr);
+            await wait(cmd === "vd_set" ? config.latency.set : config.latency.setStr);
             done();
+            // After the ack, never before it — see Served.announce. One arm for both,
+            // because that ordering rule is one rule: measured on the numeric path
+            // (ack+58-151 ms, 30/30) and on the string path (ack+1-102 ms, 32/32).
+            ctx.announce?.();
             return null;
           case "vd_params_subscribe":
             // Installed at the queue point; only the reply is outstanding here.
@@ -1337,8 +1378,8 @@ export const divergeAt = (page: Page, addr: string, value: number): Promise<void
  * address never agrees with the app, a stale one agrees a moment later, and every repair
  * path in the app is built on reading again.
  *
- * The numeric path only: `vd_set_str` settles at the queue point as before, so a name
- * write is readable immediately here (unmeasured on hardware in either direction).
+ * Both paths: a name is not exempt. Measured on a URX44V — a written name answered the
+ * one it replaced for 81 ms — and the fake modelled it as exempt for its whole life.
  *
  * Which read spends it is a matter of ORDER, not of time: at DEFAULT_LATENCY a run of
  * queued commands drains as one microtask burst, so a case that needs a SPECIFIC read to
@@ -1363,9 +1404,10 @@ export const staleReadsAt = (page: Page, addr: string, reads: number): Promise<v
 export const staleStateOf = (page: Page): Promise<FakeHandle["stale"]> => page.evaluate(() => window.__urxFake.stale);
 
 /** Plant a device-side value on the STRING path: what a vd_get_str answers whatever the
- *  app wrote. A rename made on the unit's own LCD is exactly this shape, and it is the
- *  only way to reach one — the name addresses are in no registration, so no notify can
- *  carry it and only a read discovers it. */
+ *  app wrote, with `memStr` left alone. What it models is a unit whose READS and whose
+ *  notify disagree — so, like the numeric `diverge`, an address under it announces
+ *  nothing (the unit goes on asserting what it already held) and only a read discovers
+ *  the value. A rename the unit announces is `pushNameNotify`, which stores it. */
 export const divergeStrAt = (page: Page, addr: string, value: string): Promise<void> =>
   page.evaluate(
     ([a, v]) => {

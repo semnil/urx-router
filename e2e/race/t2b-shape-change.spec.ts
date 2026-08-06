@@ -335,6 +335,13 @@ test.describe("T2b shape-change", () => {
     // (the 300 ms idle backstop is suppressed while a text surface has focus, and the
     // Space in "VOX LEAD" is a BOUNDARY_KEY that ownsNativeUndo exempts inside a text
     // input — both are what keep eight keystrokes from costing eight entries).
+    //
+    // It also catches something further away, and did: the unit ANNOUNCES every name
+    // write it takes, so these four writes echo back. Counting an echo as a followed
+    // change armed the idle full reconcile, whose reflect ends in planHistory.reset()
+    // — measured here as 0 entries and an ~800-read sweep 900 ms after the last
+    // keystroke. The fake modelled no announcement at all until then, which is the only
+    // reason a rename looked free. See follow.ts's string branch.
     expect(depthAfter.undo - depthBefore.undo).toBe(1);
     expect(regKeys(await paramAddrsOf(page)).has(CH1_NAME)).toBe(true);
 
