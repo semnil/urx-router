@@ -240,7 +240,11 @@ export async function applyDeviceState(
         signal,
       })
     : undefined;
-  return readPass(writeOverlay(LIVE_SOURCE, announced), model, plan, signal, only);
+  // `pending` marks the one caller that has just written the device: Live sync's
+  // sideEffect refetch. That is also exactly the caller whose name read would sit
+  // inside the name path's own staleness window, so it is the caller that skips
+  // names — see the name section in readPass.
+  return readPass(writeOverlay(LIVE_SOURCE, announced), model, plan, signal, only, pending !== undefined);
 }
 
 /**
@@ -259,6 +263,10 @@ async function readPass(
   plan: Plan,
   signal?: AbortSignal,
   only?: ReadonlySet<string>,
+  /** Skip the name pass. Only Live sync's `sideEffect` refetch sets it — see the
+   *  name section below for why that read must not happen at all rather than
+   *  being made to wait. */
+  skipNames = false,
 ): Promise<ReadbackResult> {
   const { vdGet, vdGetStr } = readers(source);
   ensureFixedConnections(model, plan);
@@ -485,22 +493,51 @@ async function readPass(
   // A non-empty device name becomes the node-name override; an empty one clears
   // it so the canvas falls back to the model's default label. Like color, kept
   // out of the body-read provenance.
-  for (const node of model.nodes) {
-    signal?.throwIfAborted();
-    if (!want(node.id)) continue;
-    const nc = nameControl(model, node.id);
-    if (!nc) continue;
-    try {
-      // trimEnd, not trim: the device right-aligns numbers in the stereo pair
-      // labels, so the factory name really is " 5/ 6" and a leading-space strip
-      // would write the shortened form back on the next sync. Trailing padding
-      // is still dropped so an all-blank name reads as empty.
-      const name = (await vdGetStr(nc.param, 0, nc.instances[0])).trimEnd();
-      if (name) plan.nodeNames[node.id] = name;
-      else delete plan.nodeNames[node.id];
-      applied++;
-    } catch (e) {
-      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+  //
+  // Live sync's `sideEffect` refetch skips this entirely, and the reason is not
+  // cost. **The name path has the same post-write staleness window as every
+  // numeric one** — measured on a URX44V (System V1.3.1.0): a name written and
+  // then polled every 4 ms answered the PREVIOUS name for 81 ms. But the numeric
+  // repair does not reach here. `writeOverlay` answers an address out of what
+  // the unit ANNOUNCED for it, and no name announcement can get into it: a name
+  // is written on the string path (`vdSetStr`), and that loop in `live.ts`
+  // records nothing in the flush's write ledger, so a name address is never in
+  // the `PendingWrites` the overlay is built from. The unit's notify itself does
+  // arrive — name addresses are registered, which is what carries a rename made
+  // on the unit — but it arrives at the follow layer, not here. A settle would
+  // therefore always spend its whole bound, and answering from the send is what
+  // D1 forbids.
+  //
+  // Not reading is the right answer rather than the cheap one. The refetch exists
+  // to collect what the unit RECOMPUTED because of a write, and no parameter
+  // write makes the unit recompute a name. What the read could only do here is
+  // harm: a rename flushed in the same window comes back as the name it
+  // replaced, and `live.ts` puts that into the plan AND `nameSnapshot` together
+  // — they agree, no diff remains, and the operator's rename is reverted with
+  // nothing left to retry. Unlike a numeric revert it does not even oscillate,
+  // so nothing draws attention to it.
+  //
+  // A rename made on the unit still arrives: device follow's scoped reconcile and
+  // the idle full reconcile both run this pass with no `pending`, as do Fetch,
+  // compare and the self-test.
+  if (!skipNames) {
+    for (const node of model.nodes) {
+      signal?.throwIfAborted();
+      if (!want(node.id)) continue;
+      const nc = nameControl(model, node.id);
+      if (!nc) continue;
+      try {
+        // trimEnd, not trim: the device right-aligns numbers in the stereo pair
+        // labels, so the factory name really is " 5/ 6" and a leading-space strip
+        // would write the shortened form back on the next sync. Trailing padding
+        // is still dropped so an all-blank name reads as empty.
+        const name = (await vdGetStr(nc.param, 0, nc.instances[0])).trimEnd();
+        if (name) plan.nodeNames[node.id] = name;
+        else delete plan.nodeNames[node.id];
+        applied++;
+      } catch (e) {
+        errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
   }
 

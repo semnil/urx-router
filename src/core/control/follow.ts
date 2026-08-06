@@ -45,7 +45,11 @@ export interface DeviceFollowHooks {
    *  Returning true consumes the notify. Without this they would resolve to no node
    *  and escalate every change to a full re-read of the device. */
   intercept?: (p: ParamUpdate) => boolean;
-  /** Whether an incoming notify is the echo of a known/just-written value. */
+  /** Whether an incoming notify is the echo of a known/just-written value. Answers
+   *  for BOTH paths — the host dispatches on `valueStr`, because the numeric and the
+   *  name snapshots are separate maps and neither can answer for the other. One gate
+   *  rather than two: an echo policy that lived in two places would have to be found
+   *  and changed twice, and the second site is what goes stale. */
   isEcho: (p: ParamUpdate) => boolean;
   /** Resolve a notify address to its catalog name, owner node, and follow kind,
    *  or undefined when the address is not in the writable set. */
@@ -54,6 +58,13 @@ export interface DeviceFollowHooks {
    *  when the param is not actually directly placeable (flagged direct but unhandled),
    *  so the caller falls back to a scoped read. */
   applyDirect: (node: string, name: ParamName, value: number) => boolean;
+  /** A rename made on the unit. Returns the owning node when the address is a name
+   *  one and the value was placed, so the caller can repaint just that node — or
+   *  undefined when it is not a name address at all. The app's own rename echoed
+   *  back never reaches here: `isEcho` covers both paths (see it, and `onNotify`).
+   *  Kept off `applyDirect` because a name is not a catalog parameter: it has no
+   *  `ParamName`, no numeric value and no entry in the live snapshot. */
+  applyName?: (paramId: number, x: number, y: number, value: string) => string | undefined;
   /** Patch the live snapshot's single entry for a just-applied direct change to the
    *  device-reported value, so the host can skip the full re-translate on reflect
    *  (and the next outgoing diff still measures from the device truth). */
@@ -184,8 +195,32 @@ export class DeviceFollow {
     // Host-owned address: handled there, and never part of a reconcile window — it
     // has no node, so letting it through would force a full re-read every time.
     if (this.hooks.intercept?.(p)) return;
-    // Our own write (or a value we already hold) coming back — not a change.
+    // Our own write (or a value we already hold) coming back — not a change. Ahead of
+    // the rename branch, and it covers that branch too: the unit announces every name
+    // write it accepts, so the OPERATOR's own rename in the app echoes back, and
+    // counting that echo as a followed change armed the idle net — a full reconcile
+    // whose reflect ends in `planHistory.reset()`, so one rename during Live sync cost
+    // ~800 reads 900 ms later and took its own undo entry with it. The host dispatches
+    // this hook on `valueStr` because the two snapshots are separate maps.
     if (this.hooks.isEcho(p)) return;
+    // A device-side rename, which the numeric filters below cannot judge: it has no
+    // catalog entry and no numeric value. Handled here and answered with the node, so
+    // it stays a direct follow: one repaint, no readback. A string notify on an
+    // address that is NOT a name is a shape no URX has ever sent; it falls through
+    // to the unknown-address path, which is where anything unrecognised belongs.
+    if (p.valueStr !== undefined) {
+      const node = this.hooks.applyName?.(p.paramId, p.x, p.y, p.valueStr);
+      if (node !== undefined) {
+        // The same tail the numeric direct path takes, and it is not optional: the
+        // host coalesces renders behind `flushDirect`, and the idle net is what
+        // catches a notify this method mis-routed. Returning before them left the
+        // plan updated and nothing repainted — which looked exactly like the notify
+        // never arriving.
+        this.hooks.flushDirect();
+        this.armIdle();
+        return;
+      }
+    }
     // Signal "following" once at the start of a burst, not on every notify in it.
     if (this.settleTimer === null) this.hooks.onFollow();
 

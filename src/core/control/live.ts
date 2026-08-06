@@ -19,6 +19,7 @@ import {
   collisionOwners,
   formatAddrKey,
   planToCommands,
+  nameControl,
   planToNameWrites,
 } from "./translate";
 import type { SharedOwners, NameWrite, WriteScope } from "./translate";
@@ -110,6 +111,11 @@ export class LiveSync {
   private active = false;
   private readonly snapshot = new Map<number, number>();
   private readonly nameSnapshot = new Map<string, string>();
+  // Name address -> owner node. Kept apart from `index` because a name is not a
+  // VdCommand: it has no catalog entry, no follow strategy and no value in the
+  // numeric snapshot. Registering the addresses without this map would make every
+  // rename an UNKNOWN address, which follow.ts escalates to a whole-device read.
+  private readonly nameIndex = new Map<number, string>();
   // The snapshot's writable addresses as numeric [paramId, x, y] triples, built
   // alongside the snapshot so device-follow registration needs no key re-parse.
   private writableAddrList: Array<[number, number, number]> = [];
@@ -342,6 +348,21 @@ export class LiveSync {
       const direct = (PARAMS as Record<string, ParamSpec>)[c.name].follow === "direct";
       this.index.set(k, { name: c.name, node: c.node, direct });
     }
+    // Name addresses join the registration set. They are not in `planToCommands`
+    // (the app writes names through a separate string path), so for the life of the
+    // follow layer they were in no registration and `Subs::absorb` dropped every
+    // rename notify — the unit announces one, measured on a URX44V, and nothing was
+    // listening. ~17 addresses against ~800, and a name notify only fires when
+    // someone renames, so the steady-state cost is nil.
+    this.nameIndex.clear();
+    for (const node of model.nodes) {
+      const nc = nameControl(model, node.id);
+      if (!nc) continue;
+      for (const y of nc.instances) {
+        addrs.push([nc.param, 0, y]);
+        this.nameIndex.set(addrKey(nc.param, 0, y), node.id);
+      }
+    }
     this.writableAddrList = addrs;
     for (const w of planToNameWrites(model, deviceView ?? plan)) this.nameSnapshot.set(nameKey(w), w.value);
     if (since === undefined) return;
@@ -358,6 +379,24 @@ export class LiveSync {
    *  set (the caller treats that as an unknown change worth a full reconcile). */
   lookup(paramId: number, x: number, y: number): FollowAddr | undefined {
     return this.index.get(addrKey(paramId, x, y));
+  }
+
+  /** The node a name address belongs to, or undefined when it is not one. */
+  lookupName(paramId: number, x: number, y: number): string | undefined {
+    return this.nameIndex.get(addrKey(paramId, x, y));
+  }
+
+  /** The string-path echo test. Separate from `isEcho` because names live in their
+   *  own snapshot: the numeric one has no entry for them, so asking it would call
+   *  the app's own rename a device-side change and bounce it back. */
+  isEchoName(paramId: number, y: number, value: string): boolean {
+    return this.nameSnapshot.get(`${paramId}:${y}`) === value;
+  }
+
+  /** Record a name the device reported, so the next flush does not re-send it and
+   *  the next notify for it reads as an echo. The string half of `noteDirect`. */
+  noteDirectName(paramId: number, y: number, value: string): void {
+    this.nameSnapshot.set(`${paramId}:${y}`, value);
   }
 
   private async flush(): Promise<void> {
@@ -464,7 +503,19 @@ export class LiveSync {
         // converge is device truth this copy is too old to carry.
         const since = this.directSeq;
         const converged = structuredClone(plan);
-        const r = await sendConverging(model, converged, { scope: this.scope() });
+        // The loop seeds its own diff by reading the device, and this flush wrote
+        // that device a millisecond ago — so the same handle the refetch gets goes
+        // here too, and for the same reason. `mustSettle` is left to the loop:
+        // its read covers the whole write scope, not one node's worth (see
+        // client.ts). Only the marks and the addresses matter here; the loop
+        // reads the unit rather than answering from an announcement, because
+        // what it is after is the values the unit RESET, which are not these.
+        const seedPending: PendingWrites = {
+          written: new Map([...writes].map(([k, w]) => [k, w.mark])),
+          mustSettle: new Set(writes.keys()),
+          mustAnnounce: new Set(),
+        };
+        const r = await sendConverging(model, converged, { scope: this.scope(), pending: seedPending });
         // sendConverging reports per-command failures instead of rejecting, so a
         // failed write here would otherwise be swallowed — and captureSnapshot
         // would then record the plan as device truth, leaving those parameters

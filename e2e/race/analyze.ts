@@ -345,8 +345,10 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
     //     flush run; an unflushed address is invariant 2's subject, not this one.
     //   - a window that has since CLOSED. The pair answers for its own instant only.
     //   - the string path (vd_set_str: channel names, Sweet Spot Data), which has no
-    //     snapshot entry and no registration entry, so the clause is silent by
-    //     construction — that stays a documented gap, not a finding.
+    //     snapshot entry, so the clause is silent by construction — a documented gap,
+    //     not a finding. Names ARE registered now (follow.ts carries a device-side
+    //     rename), which puts them in the same reverse difference as FOLLOW_USB below
+    //     rather than outside the pair entirely; Sweet Spot Data is in neither set.
     //   - planExternal params (SETUP > GENERAL), emitted by nothing and correctly
     //     invisible; and the meter registration, which is invariant 11's subject.
     //   - anything at all with no session: snapshotOf answers null and the clause is

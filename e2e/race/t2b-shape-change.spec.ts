@@ -4,7 +4,8 @@ import {
   installFake,
   goLive,
   mark,
-  pushNotify,
+  pushNameNotify,
+  memStrOf,
   pushBulkChange,
   traceOf,
   paramAddrsOf,
@@ -12,7 +13,6 @@ import {
   settleAfter,
   waitQuiet,
   divergeAt,
-  divergeStrAt,
   ignoreWrites,
   refuseAt,
   dialogsOf,
@@ -34,8 +34,9 @@ import { CH1_FADER, CH2_FADER, faderOf, faderReadout, graphNode } from "./ui";
 //
 // What this file adds over T2 is the three shapes T2 had no case for:
 //   - a write on node A that re-authors node B (Signal Type STEREO),
-//   - writes that leave the numeric diff engine entirely (names / Sweet Spot Data:
-//     no snapshot entry, no registration, no side-effect classification),
+//   - writes that leave the numeric diff engine entirely (Sweet Spot Data: no snapshot
+//     entry, no registration, no side-effect classification. Names left it the same way
+//     until they were registered and given a direct follow — see t1d-name-window),
 //   - the deliberate NONE sentinel of a routing selector, and the write/read
 //     asymmetry of the SD Rec pair that hides a half-applied write.
 //
@@ -43,10 +44,6 @@ import { CH1_FADER, CH2_FADER, faderOf, faderReadout, graphNode } from "./ui";
 // sequential reads and several cases here provoke two or three of them. Nothing below
 // is a timing verdict — every assertion is about which IPC happened, in what order,
 // and against which registered address set.
-
-/** Read by a full device readback only — applyNodeState skips it by design, so a read
- *  of this address is one whole-device reconcile. */
-const RATE_ADDR = "766:0:0";
 
 /** SIGNAL_TYPE (23) is written to BOTH channels of the MONO IN pair. */
 const CH1_SIGNAL_TYPE = "23:0:0";
@@ -77,10 +74,6 @@ const EQ_HIGH_TYPE = "65:0:0";
 const EQ_MID_TYPES = ["55:0:0", "60:0:0"];
 
 const regKeys = (addrs: Array<[number, number, number]>): Set<string> => new Set(addrs.map((a) => a.join(":")));
-
-/** Whole-device reconciles that began after `at` (see RATE_ADDR). */
-const fullReadsAfter = (trace: TraceEvent[], at: number): number =>
-  getsOf(trace).filter((g) => g.addr === RATE_ADDR && g.start > at).length;
 
 const setsAfter = (trace: TraceEvent[], at: number): ReturnType<typeof setsOf> =>
   setsOf(trace).filter((s) => s.start > at);
@@ -271,20 +264,29 @@ test.describe("T2b shape-change", () => {
   });
 
   // shape-string-path-writes. Names and Sweet Spot Data leave through vd_set_str, which
-  // has no snapshot, no registration and no sideEffect classification. The benign case
-  // and the consequential one are together deliberately: the same structural gap
-  // produces "a rename cannot be followed" and "the device rewrote a whole channel
-  // strip and nothing is scheduled to find out".
-  test("names and Sweet Spot Data bypass the diff engine: no snapshot, no registration, no repair", async ({
-    page,
-  }) => {
+  // has no numeric snapshot entry and no sideEffect classification.
+  //
+  // PINNED DEFECT, HALF RESOLVED — rewritten rather than deleted, which is the rule for
+  // a pin whose subject changed. This case used to assert that NEITHER address was
+  // registered, and drew the conclusion "a rename cannot be followed". That was true of
+  // the app, not of the unit: the URX does announce a rename (measured on a URX44V, one
+  // notify on the renamed address), and the app simply never registered the address, so
+  // `Subs::absorb` dropped it. Names are now registered and followed directly, so the
+  // name half is pinned the other way round here and its behaviour is owned by
+  // `t1d-name-window`. **Sweet Spot Data is unchanged and still unregistered** — the
+  // consequential half of the original finding stands, and this case keeps it.
+  test("Sweet Spot Data bypasses the diff engine: no snapshot, no registration, no repair", async ({ page }) => {
     expect(await hasProbe(page)).toBe(true);
     await goLive(page);
     await graphNode(page, "ch1").click();
     await setLatency(page, { get: 2, set: 25, setStr: 25, getStr: 25 });
 
     const regAtStart = regKeys(await paramAddrsOf(page));
-    expect(regAtStart.has(CH1_NAME)).toBe(false);
+    // The name IS registered now, which is what makes a rename made on the unit reach
+    // the app at all. Asserted rather than dropped: if it ever stops being registered,
+    // renames go silently unfollowed again and only this line would say so.
+    expect(regAtStart.has(CH1_NAME)).toBe(true);
+    // Sweet Spot Data still is not, and that is the half this case is about.
     expect(regAtStart.has(CH1_SWEET_SPOT)).toBe(false);
 
     // Phase 1 — eight characters at 90 ms, then a blur. The idle backstop is suppressed
@@ -333,59 +335,51 @@ test.describe("T2b shape-change", () => {
     // (the 300 ms idle backstop is suppressed while a text surface has focus, and the
     // Space in "VOX LEAD" is a BOUNDARY_KEY that ownsNativeUndo exempts inside a text
     // input — both are what keep eight keystrokes from costing eight entries).
+    //
+    // It also catches something further away, and did: the unit ANNOUNCES every name
+    // write it takes, so these four writes echo back. Counting an echo as a followed
+    // change armed the idle full reconcile, whose reflect ends in planHistory.reset()
+    // — measured here as 0 entries and an ~800-read sweep 900 ms after the last
+    // keystroke. The fake modelled no announcement at all until then, which is the only
+    // reason a rename looked free. See follow.ts's string branch.
     expect(depthAfter.undo - depthBefore.undo).toBe(1);
-    expect(regKeys(await paramAddrsOf(page)).has(CH1_NAME)).toBe(false);
+    expect(regKeys(await paramAddrsOf(page)).has(CH1_NAME)).toBe(true);
 
-    // Phase 2a — the device's own rename. Planted on the string path, which is the only
-    // way a device-side rename exists: the name addresses are in no registration, so no
-    // notify can carry the value and only a read discovers it. Measured on hardware, a
-    // rename does broadcast one notify on its own address (18:0:0) and nothing else —
-    // which the bridge drops entirely: not even an escalation. So a rename made on the
-    // unit is never picked up for the rest of the session, and since armIdle() is only
-    // reachable from inside onNotify, nothing is scheduled to discover it later either.
-    await divergeStrAt(page, CH1_NAME, "DESK 3");
+    // Phase 2 — the device's own rename, which the app now FOLLOWS. This phase used to
+    // pin the opposite and is rewritten rather than deleted: the name addresses were in
+    // no registration, so the bridge dropped the one notify a rename broadcasts (the
+    // unit does send it — measured on a URX44V), nothing escalated, and the value was
+    // only ever discovered by an unrelated sweep. Registering the addresses turned that
+    // into a direct follow. The behaviour itself is owned by `t1d-name-window`; what is
+    // pinned HERE is that this case's own subject — the string path — is no longer
+    // uniformly unfollowed, so a future reader does not take the Sweet Spot half as a
+    // statement about names too.
     await mark(page, "name-notify");
-    const nameWhy = await pushNotify(page, [[18, 0, 0, 0]]);
-    await settleAfter(page, "name-notify", 1800);
+    const nameWhy = await pushNameNotify(page, CH1_NAME, "DESK 3");
+    // Short on purpose: under the 900 ms idle net, which arms after ANY followed
+    // notify (numeric ones included) and is not something the name path introduces.
+    // Measuring inside that window is what makes "direct" a strict claim — the value
+    // is in the plan before anything could have re-read it.
+    await settleAfter(page, "name-notify", 400);
     trace = await traceOf(page);
     const notifyAt = markTime(trace, "name-notify")!;
-    const refusedReads = getsOf(trace).filter((g) => g.start > notifyAt);
-    const refusedStr = trace.filter(
+    // "Direct" is asserted as "no READ carried it", not as a reconcile count: this case
+    // is long and other phases provoke sweeps of their own, so a count here would be a
+    // property of the case rather than of the name path. The value can only have come
+    // from the notify — the fake's stored name is still what phase 1 typed, so a read
+    // would have produced THAT instead.
+    const nameStrReads = trace.filter(
       (e) => e.kind === "ipc-start" && e.cmd === "vd_get_str" && e.addr === CH1_NAME && e.t > notifyAt,
-    );
-    console.log(
-      `name notify: refused as "${nameWhy[0]}", ${refusedReads.length} read(s), ${refusedStr.length} get_str`,
-    );
-    expect(nameWhy).toEqual(["unregistered"]);
-    expect(refusedReads).toEqual([]);
-    expect(refusedStr).toHaveLength(0);
-    expect(await paramExact(page, "Name").locator('input[type="text"]').inputValue()).toBe("VOX LEAD");
-
-    // Phase 2b — the same repair reached the way the app can actually reach it. The
-    // sentinel forces one whole-device reconcile, and the reconcile's own vd_get_str is
-    // what finally carries the device's name into the plan — REPLACING the one the
-    // operator typed, a whole phase after the unit changed it, and only because
-    // something unrelated forced a sweep.
-    await mark(page, "forced-reconcile");
-    await pushBulkChange(page);
-    await settleAfter(page, "forced-reconcile", 1800);
-    trace = await traceOf(page);
-    const forcedAt = markTime(trace, "forced-reconcile")!;
-    const notifyCost = fullReadsAfter(trace, forcedAt);
-    const nameReads = trace.filter(
-      (e) => e.kind === "ipc-start" && e.cmd === "vd_get_str" && e.addr === CH1_NAME && e.t > forcedAt,
     );
     const nameNow = await paramExact(page, "Name").locator('input[type="text"]').inputValue();
     console.log(
-      `forced reconcile: ${notifyCost} full reconcile(s), ${nameReads.length} vd_get_str; field "${nameNow}"`,
+      `name notify: verdict "${nameWhy[0]}", ${nameStrReads.length} vd_get_str on the name; field "${nameNow}"`,
     );
-
-    expect(notifyCost).toBe(2); // the settle escalates, the idle net follows behind it
-    expect(nameReads.length).toBeGreaterThan(0);
-    // The reconcile, not the notify, is what carried the device's value: the field now
-    // holds the name planted on the unit in phase 2a, and the eight keystrokes typed in
-    // phase 1 are gone.
+    expect(nameWhy).toEqual([""]);
     expect(nameNow).toBe("DESK 3");
+    // The unit holds what it announced (pushNameNotify stores it, as a real rename
+    // does), so nothing here rests on a device state that cannot exist.
+    expect((await memStrOf(page))[CH1_NAME]).toBe("DESK 3");
 
     // Phase 3 — Sweet Spot Data. SSMCS mode first (COMP_EQ_TYPE is a converge param and
     // is the control case here: it DOES classify), then the preset, which does not.
