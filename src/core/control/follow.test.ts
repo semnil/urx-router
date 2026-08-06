@@ -7,7 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // burst escalates to a full read. Mock the transport so a test can capture the
 // notify callback and drive notifies directly.
 const h = vi.hoisted(() => ({
-  onUpdate: null as null | ((p: { paramId: number; x: number; y: number; value: number }) => void),
+  // The payload the bridge actually delivers, `valueStr` included — see ParamUpdate in
+  // core/platform.ts. Hand-rolling it without the string field meant the one place the
+  // name-notify contract is pinned was the one place the compiler could not check it.
+  onUpdate: null as null | ((p: { paramId: number; x: number; y: number; value: number; valueStr?: string }) => void),
   addrs: null as null | Array<[number, number, number]>,
   unsub: vi.fn(),
   subscribeCalls: 0,
@@ -61,6 +64,12 @@ function notify(value: number): void {
 
 function notifyAddr(paramId: number, value: number): void {
   h.onUpdate?.({ paramId, x: 0, y: 0, value });
+}
+
+// A name notify, as the bridge delivers one: the text in `valueStr`, the numeric
+// `value` a placeholder 0 (src-tauri/src/vd.rs decodes whichever the frame carries).
+function notifyName(paramId: number, valueStr: string): void {
+  h.onUpdate?.({ paramId, x: 0, y: 0, value: 0, valueStr });
 }
 
 beforeEach(() => {
@@ -227,6 +236,66 @@ describe("DeviceFollow", () => {
     expect(reconcileAll).not.toHaveBeenCalled();
     // 900 ms total since the notify → the idle full reconcile fires once.
     await vi.advanceTimersByTimeAsync(600);
+    expect(reconcileAll).toHaveBeenCalledTimes(1);
+  });
+
+  // A rename made on the unit: applied straight into the plan, one repaint, and the
+  // idle net armed like any other followed change.
+  it("follows a rename directly and arms the idle net for it", async () => {
+    const applyName = vi.fn(() => "ch1");
+    const flushDirect = vi.fn();
+    const reconcileAll = vi.fn(async () => {});
+    const reconcileNodes = vi.fn(async () => {});
+    const follow = followFor({ applyName, flushDirect, reconcileAll, reconcileNodes });
+    await follow.begin();
+    notifyName(18, "FromTheLCD");
+    expect(applyName).toHaveBeenCalledWith(18, 0, 0, "FromTheLCD");
+    expect(flushDirect).toHaveBeenCalledTimes(1);
+    // No scoped read — a name has no catalog entry to re-read — but the net still runs.
+    await vi.advanceTimersByTimeAsync(900);
+    expect(reconcileNodes).not.toHaveBeenCalled();
+    expect(reconcileAll).toHaveBeenCalledTimes(1);
+  });
+
+  // The app's own rename echoed back, stopped by the SAME gate a numeric echo is. The
+  // unit announces one for every name write it takes (measured on a URX44V), so this is
+  // not an edge case: it is what EVERY rename made in the app produces, four times over
+  // for one typed name. Letting it past the gate armed the idle net each time, and that
+  // net is a full reconcile whose reflect calls planHistory.reset() — so a rename during
+  // Live sync swept the whole device 900 ms later and erased its own undo entry.
+  //
+  // `applyName` must not even be consulted: the echo test is one hook for both paths
+  // (the host dispatches it on valueStr), and a second gate inside the apply is what
+  // this pins against.
+  it("does not repaint or arm the net for the app's own rename coming back", async () => {
+    const applyName = vi.fn(() => "ch1");
+    const flushDirect = vi.fn();
+    const reconcileAll = vi.fn(async () => {});
+    const reconcileNodes = vi.fn(async () => {});
+    const onFollow = vi.fn();
+    const follow = followFor({ isEcho: () => true, applyName, flushDirect, reconcileAll, reconcileNodes, onFollow });
+    await follow.begin();
+    notifyName(18, "TypedInTheApp");
+    expect(applyName).not.toHaveBeenCalled();
+    expect(flushDirect).not.toHaveBeenCalled();
+    expect(onFollow).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(reconcileAll).not.toHaveBeenCalled();
+    expect(reconcileNodes).not.toHaveBeenCalled();
+  });
+
+  // A string notify on an address no name owns is a shape no URX sends; it must not be
+  // swallowed by the name branch but fall through to the unknown-address escalation.
+  it("escalates a string notify on an address that is not a name", async () => {
+    const applyName = vi.fn(() => undefined);
+    const reconcileAll = vi.fn(async () => {});
+    const follow = followFor({ applyName, lookup: () => undefined, reconcileAll });
+    await follow.begin();
+    notifyName(777, "not-a-name");
+    // The hook ran and declined — without this the case would also pass with no hook
+    // installed at all, which is a different code path.
+    expect(applyName).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(300);
     expect(reconcileAll).toHaveBeenCalledTimes(1);
   });
 

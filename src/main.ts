@@ -701,7 +701,13 @@ const follow =
           setFollowUsbBadge(p.value !== 0);
           return true;
         },
-        isEcho: (p) => live?.isEcho(p.paramId, p.x, p.y, p.value) ?? false,
+        // Dispatched on the value's type, because the two snapshots are separate maps:
+        // the numeric one holds no entry for a name, so asking it would call the app's
+        // own rename a device-side change and bounce it back round.
+        isEcho: (p) =>
+          (p.valueStr !== undefined
+            ? live?.isEchoName(p.paramId, p.y, p.valueStr)
+            : live?.isEcho(p.paramId, p.x, p.y, p.value)) ?? false,
         lookup: (paramId, x, y) => live?.lookup(paramId, x, y),
         // A direct (node-local scalar) change: decode the notify value straight into
         // the plan, no read-back, and record the node so the coalesced reflect
@@ -736,10 +742,6 @@ const follow =
         applyName: (paramId, x, y, value) => {
           const node = live?.lookupName(paramId, x, y);
           if (node === undefined) return undefined;
-          // The echo test belongs here rather than in follow.ts for the same reason
-          // the apply does: the comparison is against the NAME snapshot, and getting
-          // it wrong sends the app's own rename back round as a device-side change.
-          if (live?.isEchoName(paramId, y, value)) return node;
           const before = clonePlanState(plan);
           const trimmed = value.trimEnd();
           if (trimmed) plan.nodeNames[node] = trimmed;
