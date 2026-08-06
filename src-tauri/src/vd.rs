@@ -263,6 +263,10 @@ struct Conn {
     /// the commands it is counting. Replaced wholesale by each install, so a new
     /// connection's ledger starts at zero and a dead one's stops where it stopped.
     counters: Arc<LinkCounters>,
+    /// The webview that opened this session. A page load is a teardown for the page
+    /// being replaced and for nothing else, and the app has more than one page — so
+    /// the hold has to say whose it is rather than the teardown assuming.
+    owner: Option<String>,
 }
 
 /// Managed Tauri state: the channel to the live worker, if connected, tagged with
@@ -292,11 +296,12 @@ impl VdState {
     /// Install a freshly opened connection, shutting down any prior worker, and
     /// return the generation assigned to it. The caller hands this epoch back to
     /// disconnect so a delayed teardown of an earlier session cannot close this one.
-    pub fn install(&self, tx: Sender<Cmd>, counters: Arc<LinkCounters>) -> u64 {
+    pub fn install(&self, tx: Sender<Cmd>, counters: Arc<LinkCounters>, owner: &str) -> u64 {
         let mut c = self.conn.lock().unwrap();
         stop(&mut c, None);
         c.tx = Some(tx);
         c.counters = counters;
+        c.owner = Some(owner.to_string());
         c.epoch += 1;
         c.epoch
     }
@@ -455,12 +460,17 @@ pub fn disconnect(state: &VdState, epoch: u64) {
     }
 }
 
-/// Close whatever connection is installed, whatever generation it belongs to. The
-/// epoch-matched `disconnect` above is for a session ending; this is for the page
-/// that owned it going away, where no epoch survives to name it — see the page-load
-/// teardown in lib.rs. A no-op when nothing is installed.
-pub fn shutdown(state: &VdState) {
-    stop(&mut state.conn.lock().unwrap(), None);
+/// Close the connection this webview opened, whatever generation it belongs to. The
+/// epoch-matched `disconnect` above is for a session ending; this is for the page that
+/// owned it going away, where no epoch survives to name it — see the page-load teardown
+/// in lib.rs. A no-op when nothing is installed, and when what is installed belongs to
+/// another page: this app has a second webview (midiwin.rs) whose own load used to end
+/// the main window's session, because the teardown asked nothing about ownership.
+pub fn shutdown_owned_by(state: &VdState, label: &str) {
+    let mut c = state.conn.lock().unwrap();
+    if c.owner.as_deref() == Some(label) {
+        stop(&mut c, None);
+    }
 }
 
 /// How long the app-exit teardown waits for the worker to unregister and close.
@@ -495,6 +505,7 @@ pub fn shutdown_blocking(state: &VdState) {
 /// (dropping a channel eagerly, bumping the epoch) cannot reach one caller and miss
 /// another. Returns whether a live worker was actually told. Caller holds the lock.
 fn stop(c: &mut Conn, done: Option<Sender<()>>) -> bool {
+    c.owner = None;
     let Some(tx) = c.tx.take() else { return false };
     tx.send(Cmd::Shutdown { done }).is_ok()
 }
@@ -1759,9 +1770,34 @@ mod tests {
     // the meantime. These drive VdState's install/sender/disconnect directly with
     // dummy worker channels, so they reproduce the exact interleaving deterministi-
     // cally on any host (no broker, no websocket, no threads).
-    use super::{disconnect, sender, Cmd, LinkCounters, VdState};
+    use super::{disconnect, sender, shutdown_owned_by, Cmd, LinkCounters, VdState};
     use std::sync::mpsc;
     use std::sync::Arc;
+
+    // A page load ends what THAT page holds. The app has two webviews, and the second
+    // one's load used to end the first one's session — measured: opening the MIDI
+    // control window closed the device link and the MIDI input the main window had
+    // restored, with the frontend never told. The session now records its owner, so a
+    // third window inherits the right behaviour with nothing to remember.
+    #[test]
+    fn a_page_load_ends_only_the_session_that_page_opened() {
+        let state = VdState::default();
+        let (tx, rx) = mpsc::channel::<Cmd>();
+        state.install(tx, Arc::new(LinkCounters::default()), "main");
+
+        shutdown_owned_by(&state, "midi");
+        sender(&state).expect("another window's load leaves this session alone");
+
+        shutdown_owned_by(&state, "main");
+        assert!(
+            sender(&state).is_err(),
+            "its own page load ends it, as it always did"
+        );
+        assert!(
+            matches!(rx.recv(), Ok(Cmd::Shutdown { .. })),
+            "and the worker is told to close"
+        );
+    }
 
     // The reported field bug: live connects, its teardown's disconnect is delayed,
     // a write connects (new generation), then the stale disconnect finally lands.
@@ -1772,11 +1808,11 @@ mod tests {
 
         // Live session connects.
         let (live_tx, _live_rx) = mpsc::channel::<Cmd>();
-        let live_epoch = state.install(live_tx, Arc::new(LinkCounters::default()));
+        let live_epoch = state.install(live_tx, Arc::new(LinkCounters::default()), "main");
 
         // A later write connects before the live teardown's disconnect runs.
         let (write_tx, write_rx) = mpsc::channel::<Cmd>();
-        let write_epoch = state.install(write_tx, Arc::new(LinkCounters::default()));
+        let write_epoch = state.install(write_tx, Arc::new(LinkCounters::default()), "main");
         assert_ne!(
             live_epoch, write_epoch,
             "each install gets a fresh generation"
@@ -1798,7 +1834,7 @@ mod tests {
     fn matching_disconnect_closes() {
         let state = VdState::default();
         let (tx, _rx) = mpsc::channel::<Cmd>();
-        let epoch = state.install(tx, Arc::new(LinkCounters::default()));
+        let epoch = state.install(tx, Arc::new(LinkCounters::default()), "main");
 
         disconnect(&state, epoch);
 
@@ -1813,9 +1849,9 @@ mod tests {
     fn install_shuts_prior_worker() {
         let state = VdState::default();
         let (tx1, rx1) = mpsc::channel::<Cmd>();
-        state.install(tx1, Arc::new(LinkCounters::default()));
+        state.install(tx1, Arc::new(LinkCounters::default()), "main");
         let (tx2, _rx2) = mpsc::channel::<Cmd>();
-        state.install(tx2, Arc::new(LinkCounters::default()));
+        state.install(tx2, Arc::new(LinkCounters::default()), "main");
         assert!(
             matches!(rx1.recv(), Ok(Cmd::Shutdown { .. })),
             "prior worker told to stop"

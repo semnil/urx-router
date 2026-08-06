@@ -233,21 +233,6 @@ fn take_launch_action(taken: &std::sync::atomic::AtomicBool, arg: &str) -> bool 
     std::env::args().any(|a| a == arg) && !taken.swap(true, std::sync::atomic::Ordering::SeqCst)
 }
 
-// Whether a page load in this webview is replacing the page that OWNS the app's device
-// session, MIDI ports and idle-sleep hold — the only load that may tear them down (the
-// `on_page_load` hook in `run`). Every page is that one except the MIDI control window,
-// which is a second webview owning no plan, no session and no port (midiwin.rs).
-// Without the distinction, opening MIDI control ended the main window's session and
-// closed the MIDI input it had already restored — and learn mode, which can only be
-// turned on from that window, could then never receive a message.
-//
-// Named rather than inlined because it is the whole decision: the holds are app-global
-// while their owner is one webview, and nothing in the types says so.
-#[cfg(desktop)]
-fn page_load_owns_holds(label: &str) -> bool {
-    label != midiwin::MIDI_WINDOW
-}
-
 // True when launched with --self-test: the frontend runs the device self-test
 // once on startup, headless, so it can be driven without the UI.
 #[tauri::command]
@@ -299,13 +284,18 @@ fn third_party_licenses(app: tauri::AppHandle) -> Result<String, String> {
 // would run on the main thread and freeze the webview for each round-trip — with
 // live sync mirroring every edit, that stalls the UI continuously.
 #[tauri::command]
-async fn vd_connect(state: State<'_, vd::VdState>) -> Result<vd::Connection, String> {
+async fn vd_connect(
+    webview: tauri::Webview,
+    state: State<'_, vd::VdState>,
+) -> Result<vd::Connection, String> {
     let (tx, device, counters) = tauri::async_runtime::spawn_blocking(vd::open)
         .await
         .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())??;
     // The epoch identifies this connection: the frontend hands it back to
     // vd_disconnect so a delayed teardown of an earlier session cannot close it.
-    let epoch = state.install(tx, counters);
+    // The label identifies its OWNER, which is what decides whether a later page
+    // load may tear it down (see the on_page_load hook in `run`).
+    let epoch = state.install(tx, counters, webview.label());
     Ok(vd::Connection { device, epoch })
 }
 
@@ -461,11 +451,12 @@ fn midi_open_ports(state: State<midi::MidiState>) -> (Option<String>, Option<Str
 
 #[tauri::command]
 fn midi_open_input(
+    webview: tauri::Webview,
     state: State<midi::MidiState>,
     port: String,
     channel: tauri::ipc::Channel<Vec<midi::MidiMessage>>,
 ) -> Result<(), String> {
-    midi::open_input(&state, port, channel)
+    midi::open_input(&state, webview.label(), port, channel)
 }
 
 #[tauri::command]
@@ -474,8 +465,12 @@ fn midi_close_input(state: State<midi::MidiState>) {
 }
 
 #[tauri::command]
-fn midi_open_output(state: State<midi::MidiState>, port: String) -> Result<(), String> {
-    midi::open_output(&state, port)
+fn midi_open_output(
+    webview: tauri::Webview,
+    state: State<midi::MidiState>,
+    port: String,
+) -> Result<(), String> {
+    midi::open_output(&state, webview.label(), port)
 }
 
 #[tauri::command]
@@ -491,8 +486,12 @@ fn midi_send(state: State<midi::MidiState>, bytes: Vec<u8>) -> Result<(), String
 // Take or release the idle-sleep hold (Preferences > Computer sleep). A local OS
 // call with no round-trip, so it stays synchronous like the MIDI bridge.
 #[tauri::command]
-fn set_keep_awake(state: State<keepawake::KeepAwakeState>, on: bool) -> Result<(), String> {
-    keepawake::set(&state, on)
+fn set_keep_awake(
+    webview: tauri::Webview,
+    state: State<keepawake::KeepAwakeState>,
+    on: bool,
+) -> Result<(), String> {
+    keepawake::set(&state, webview.label(), on)
 }
 
 // The macOS Edit menu's Undo / Redo, owned by the app instead of AppKit.
@@ -687,19 +686,22 @@ pub fn run() {
         if payload.event() != PageLoadEvent::Started {
             return;
         }
-        if !page_load_owns_holds(webview.label()) {
-            return;
-        }
+        // Only what THIS page holds. Each hold records the webview that took it, so the
+        // question "is this mine to end" is answered by the hold rather than by a rule
+        // about which windows exist — the app has two, and it had already been bitten
+        // once by the second one's load ending the first one's session and closing the
+        // MIDI input it had restored. A third window inherits the right behaviour with
+        // nothing to remember.
         let app = webview.app_handle();
-        vd::shutdown(&app.state::<vd::VdState>());
-        midi::close_input(&app.state::<midi::MidiState>());
-        midi::close_output(&app.state::<midi::MidiState>());
+        let label = webview.label();
+        vd::shutdown_owned_by(&app.state::<vd::VdState>(), label);
+        midi::close_owned_by(&app.state::<midi::MidiState>(), label);
         // The idle-sleep hold belongs here for the same reason and is the least visible of
         // the three: the frontend takes it only while Live sync is up, so a reload during a
         // session would otherwise leave the machine awake for as long as the app runs, with
-        // no page that knows the assertion exists. Release failures are already reported by
-        // `set`; there is nothing further to salvage from a page that is gone.
-        let _ = keepawake::set(&app.state::<keepawake::KeepAwakeState>(), false);
+        // no page that knows the assertion exists. Nothing to salvage from a page that is
+        // gone, and nothing to report to it.
+        keepawake::release_owned_by(&app.state::<keepawake::KeepAwakeState>(), label);
     });
 
     // App-owned Edit > Undo / Redo (see build_menu). The click is forwarded to the
@@ -800,25 +802,6 @@ mod tests {
     // no control over how the test binary was launched.
     use super::take_launch_action;
     use std::sync::atomic::{AtomicBool, Ordering};
-
-    // The holds the page-load teardown drops are app-global; their owner is one webview.
-    // Adding a second window is what made that difference matter, and it was measured:
-    // opening MIDI control closed the MIDI input the main window had already restored,
-    // so learn mode — reachable only from that window — could never receive a message.
-    // A third window inherits the same question, and this is where it gets answered.
-    #[cfg(desktop)]
-    #[test]
-    fn only_the_owning_page_load_tears_the_holds_down() {
-        use super::{midiwin::MIDI_WINDOW, page_load_owns_holds};
-        assert!(
-            page_load_owns_holds("main"),
-            "the window that owns the session still tears it down on reload"
-        );
-        assert!(
-            !page_load_owns_holds(MIDI_WINDOW),
-            "the MIDI control window owns none of it, so its own load takes nothing"
-        );
-    }
 
     #[test]
     fn a_launch_action_is_consumed_by_its_first_caller() {
