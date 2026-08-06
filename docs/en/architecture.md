@@ -182,7 +182,8 @@ carries a one-line map of the same directories and points here.
       ever been measured, and a round sends whole groups the read diff never named — but its SEED read takes
       the same `PendingWrites` handle and waits the flush's writes out (17-84 ms on hardware, so the bound is
       the fallback and not the price). The NAME path is fixed by not reading at all: `readPass` skips names
-      whenever `pending` is present, because a name announcement reaches no registration, so the overlay has
+      whenever `pending` is present, because a name is written on the string path and enters no write ledger, so
+      the overlay has
       nothing to answer from and a settle could only spend its bound — and a rename read back inside its own
       81 ms window goes into the plan and `nameSnapshot` together, leaving no diff to retry. See "A write is
       not readable when it is acked" / `params.ts` catalog of confirmed parameters
@@ -1238,15 +1239,27 @@ snapshot from a device read, and a device read cannot contradict a later word fr
 
 **The name path has the same window, and the numeric repair cannot reach it.** Measured on a URX44V: a channel
 name written and then polled every 4 ms answered the PREVIOUS name for 81 ms. `writeOverlay` answers an address
-out of what the unit ANNOUNCED for it, and a name announcement never arrives — names are not emitted by
-`planToCommands`, so they are in no registration, so `Subs::absorb` drops the notify. A settle would always spend
-its whole bound, and answering from the send is what this section forbids. So the refetch does not read names at
+out of what the unit ANNOUNCED for it, and no name announcement can reach it: names are not emitted by
+`planToCommands` but written on the string path (`vdSetStr`), and that loop records nothing in the flush's write
+ledger, so a name address is never in the `PendingWrites` handle the overlay is built from. A settle would always
+spend its whole bound, and answering from the send is what this section forbids. The notify itself does arrive —
+name addresses joined the registration set when the follow learned to carry a device-side rename, which is the
+paragraph below; before that they were in no registration and `Subs::absorb` dropped every one of them. So the refetch does not read names at
 all: the read exists to collect what the unit RECOMPUTED, and no parameter write makes the unit recompute a name.
 Leaving it in could only do harm — a rename flushed in the same window comes back as the name it replaced and
 goes into the plan and the name snapshot together, so they agree, no diff remains, and the rename is reverted
 with nothing left to retry. Unlike a numeric revert it does not oscillate, so nothing draws attention to it. A
 rename made on the unit still arrives: every other read path (device follow's reconciles, Fetch, compare, the
 self-test) runs the same pass with no pending set and still reads names.
+
+Registering them is what the follow costs, and it is small: **17 name addresses on a URX44V and a URX44, 15 on a
+URX22** (mono channels differ), against the ~800 the numeric set carries — and a name notify only fires when
+someone renames, so there is no steady-state traffic at all. The set comes from `nameControl` over every node the
+model has, not from what the plan currently holds: a node the operator has not named yet is registered all the
+same, and a stereo pair is registered at both of its `instances`, so both are real addresses rather than an
+extrapolation from a numeric sequence. `planToNameWrites` is the write side of that same identity and is
+deliberately not the same set — it skips a node the plan holds no name for, and it carries one string that is not
+a name at all (the SSMCS Sweet Spot preset, param 91), which nothing registers and no rename notify can concern.
 
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
 the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
