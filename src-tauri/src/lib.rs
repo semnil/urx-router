@@ -665,6 +665,17 @@ pub fn run() {
         if payload.event() != PageLoadEvent::Started {
             return;
         }
+        // Only the page that can OWN these holds them. The MIDI control window is a
+        // second webview and owns none of them — it has no plan, no session and no
+        // port (midiwin.rs) — so its own load must not tear down the main window's.
+        // Without this, opening MIDI control ended the device session and closed the
+        // MIDI input the main window had already restored, while that window went on
+        // showing the port as selected: nothing tells the frontend a port it holds was
+        // closed underneath it, and re-picking the same entry fires no `change`, so the
+        // only way back was picking "none" and the port again.
+        if webview.label() == midiwin::MIDI_WINDOW {
+            return;
+        }
         let app = webview.app_handle();
         vd::shutdown(&app.state::<vd::VdState>());
         midi::close_input(&app.state::<midi::MidiState>());
