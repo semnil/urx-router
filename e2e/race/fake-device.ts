@@ -169,7 +169,7 @@ export interface FakeHandle {
    *  notify has gone out. `spent > 0` proves a case's scripted staleness was REACHED by
    *  a read rather than merely configured; `notified` says the window has closed, after
    *  which reads answer `mem` again. */
-  stale: Record<string, { value: number; left: number; spent: number; notified: boolean }>;
+  stale: Record<string, { value: number | string; left: number; spent: number; notified: boolean }>;
   deviceLost: boolean;
   /** Native dialog messages the app asked to show, and the button the fake answers
    *  with. The default declines, so a flow that reaches a confirm has usually already
@@ -205,6 +205,11 @@ export interface FakeHandle {
   pushNotify: (list: Array<[number, number, number, number]>, origin?: "device") => string[];
   /** The address-free bulk-change sentinel — the one notify that bypasses the filter,
    *  and so the sanctioned way to force one whole-device reconcile. */
+  /** A STRING notify — what a rename broadcasts. The bridge carries it in
+   *  `valueStr` and leaves `value` at 0; the registered-set filter applies exactly
+   *  as it does to a numeric one, which is the whole point: names were in no
+   *  registration until the app started registering them. */
+  pushNameNotify: (paramId: number, x: number, y: number, value: string) => string[];
   pushBulkChange: () => string[];
   /** Push level-meter readings through the bridge's registered-set filter. Returns one
    *  verdict per frame, in order: "" for a delivered one, the refusal reason for a
@@ -369,6 +374,26 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           if (passed.length) paramChannel?.onmessage(passed);
           return why;
         },
+        pushNameNotify: (param_id, x, y, value) => {
+          // The unit STORES the new name and then announces it. Announcing without
+          // storing would be a device that reports a value it does not hold, and the
+          // next read would contradict its own notify — the same shape of harness
+          // self-contradiction the ack-anchored announcement had to fix. A case that
+          // wants the announcement and the stored value to disagree has `divergeStr`
+          // for exactly that, and says so explicitly.
+          fake.memStr[`${param_id}:${x}:${y}`] = value;
+          const w = notifyRefusal(param_id, x, y, 0);
+          put(w ? "notify-drop" : "notify", {
+            addr: `${param_id}:${x}:${y}`,
+            value: 0,
+            detail: w || undefined,
+            origin: "device",
+          });
+          // snake_case, like the real bridge: the frontend maps `param_id`/`value_str`
+          // itself, so a camelCase payload here would test a wire that does not exist.
+          if (!w) paramChannel?.onmessage([{ param_id, x, y, value: 0, value_str: value }]);
+          return [w];
+        },
         pushBulkChange: () => fake.pushNotify([[BULK[0], BULK[1], BULK[2], BULK[3]]]),
         pushMeters: (list) => {
           // absorb() filters readings one by one, exactly as it does notifies: a batch
@@ -479,7 +504,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // and what the unit says about a write afterwards. The first two are queue-point
       // effects, like the store they sit beside — the worker stays a plain serial queue
       // with no await added to it.
-      type Stale = { value: number; left: number; spent: number; notified: boolean };
+      type Stale = { value: number | string; left: number; spent: number; notified: boolean };
       const openStale = (k: string): Stale | undefined => {
         const s = fake.stale[k];
         return s && s.left > 0 && !s.notified ? s : undefined;
@@ -489,7 +514,21 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         if (!s) return fake.mem[k] ?? 0;
         s.left--;
         s.spent++;
-        return s.value;
+        return s.value as number;
+      };
+      // The same window on the NAME path. Measured on a URX44V: a channel name written
+      // and then polled every 4 ms answered the PREVIOUS name for 81 ms — the string
+      // path is not exempt, and it was modelled as exempt here for the harness's whole
+      // life. It matters more than the numeric case, not less: a stale numeric read
+      // oscillates and is visible, while a stale NAME read goes into the plan and
+      // `nameSnapshot` together, so they agree, no diff is left, and the operator's
+      // rename is reverted with nothing to retry.
+      const takeVisibleStr = (k: string): string => {
+        const s = openStale(k);
+        if (!s) return fake.memStr[k] ?? "";
+        s.left--;
+        s.spent++;
+        return s.value as string;
       };
       // Armed from what is VISIBLE, not from what is stored: two writes inside one
       // staleness window leave the second one answering the value the first was still
@@ -499,6 +538,13 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         const n = fake.staleAfterWrite[k];
         if (!n) return undefined;
         const entry: Stale = { value: openStale(k)?.value ?? fake.mem[k] ?? 0, left: n, spent: 0, notified: false };
+        fake.stale[k] = entry;
+        return entry;
+      };
+      const armStaleStr = (k: string): Stale | undefined => {
+        const n = fake.staleAfterWrite[k];
+        if (!n) return undefined;
+        const entry: Stale = { value: openStale(k)?.value ?? fake.memStr[k] ?? "", left: n, spent: 0, notified: false };
         fake.stale[k] = entry;
         return entry;
       };
@@ -651,7 +697,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           // readback erase a non-empty name and every diffNames report one, so a case
           // could not tell the app clearing a name from the fake never holding it.
           const k = key(args);
-          sampledStr = k in fake.divergeStr ? fake.divergeStr[k] : (fake.memStr[k] ?? "");
+          sampledStr = k in fake.divergeStr ? fake.divergeStr[k] : takeVisibleStr(k);
         } else if (cmd === "vd_set" && !fake.ignoreWrites.includes(Number(args.paramId))) {
           const k = key(args);
           const value = Number(args.value);
@@ -666,7 +712,15 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           const now = reported(k);
           if (now !== said) pending = () => announce(k, armed, now);
         } else if (cmd === "vd_set_str" && !fake.ignoreWrites.includes(Number(args.paramId))) {
-          fake.memStr[key(args)] = String(args.value ?? "");
+          // Armed BEFORE the store, like the numeric path, so the entry carries the
+          // pre-write name. No announcement is scheduled: a name notify reaches no
+          // registration on a real link (names are not emitted by planToCommands, so
+          // `Subs::absorb` drops them), so the window can only be spent by the reads a
+          // case scripts. Modelling an announcement here would hand the app a signal
+          // the shipped bridge filters out.
+          const ks = key(args);
+          armStaleStr(ks);
+          fake.memStr[ks] = String(args.value ?? "");
         } else if (cmd === "vd_params_unsubscribe" || cmd === "vd_meters_unsubscribe") {
           // A teardown is a queue-point effect for the same reason an install is, and it
           // matters more: vd.rs's `param_ch = None` / `meter_ch = None` (vd.rs:586/619)
@@ -1053,6 +1107,17 @@ export const BULK_CHANGE: [number, number, number, number] = [0, -1, -1, 0];
  * from "nothing has happened yet" — use `pushNotifyDelivered` whenever the case's
  * subject is the app's RESPONSE.
  */
+/** Push a rename the way the unit announces one: a string notify on a name address.
+ *  Returns one verdict, "" when it was delivered. */
+export const pushNameNotify = (page: Page, addr: string, value: string): Promise<string[]> =>
+  page.evaluate(
+    ([a, v]) => {
+      const [p, x, y] = (a as string).split(":").map(Number);
+      return window.__urxFake.pushNameNotify(p, x, y, v as string);
+    },
+    [addr, value] as [string, string],
+  );
+
 export const pushNotify = (page: Page, list: Array<[number, number, number, number]>): Promise<string[]> =>
   page.evaluate((l) => window.__urxFake.pushNotify(l), list);
 
