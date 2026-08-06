@@ -131,11 +131,6 @@ export interface FakeHandle {
   counters: { subscribes: number; unsubscribes: number; meterSubs: number; meterUnsubs: number; connects: number };
   /** Addresses whose read answers this value whatever was written ("the device holds X"). */
   diverge: Record<string, number>;
-  /** The same hook on the string path: what `vd_get_str` answers whatever was written,
-   *  with `memStr` left alone. It models a unit whose reads and whose notify disagree, so
-   *  an address under it announces nothing and only a read discovers the value. A rename
-   *  the unit announces — which is what an LCD rename actually is — is `pushNameNotify`. */
-  divergeStr: Record<string, string>;
   /** Reject the nth (1-based) matching command. */
   refusals: Array<{ cmd: string; nth: number; kind: "transport" | "code400"; hit: number }>;
   /** Accept and discard: the write is acked but never stored. */
@@ -344,7 +339,6 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         meterAddrs: [],
         counters: { subscribes: 0, unsubscribes: 0, meterSubs: 0, meterUnsubs: 0, connects: 0 },
         diverge: {},
-        divergeStr: {},
         refusals: [],
         ignoreWrites: [],
         staleAfterWrite: {},
@@ -399,8 +393,8 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           // storing would be a device that reports a value it does not hold, and the
           // next read would contradict its own notify — the same shape of harness
           // self-contradiction the ack-anchored announcement had to fix. A case that
-          // wants the announcement and the stored value to disagree has `divergeStr`
-          // for exactly that, and says so explicitly.
+          // needs the two to disagree needs a knob this fake no longer carries; the
+          // design of the one that was removed is in the private reference notes.
           fake.memStr[`${param_id}:${x}:${y}`] = value;
           return emitNameNotify(param_id, x, y, value);
         },
@@ -562,7 +556,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // value the unit REPORTS, which `diverge` overrides and `mem` otherwise holds.
       const reported = (k: string): number => (k in fake.diverge ? fake.diverge[k] : (fake.mem[k] ?? 0));
       /** The same question on the string path, answered from the string maps. */
-      const reportedStr = (k: string): string => (k in fake.divergeStr ? fake.divergeStr[k] : (fake.memStr[k] ?? ""));
+      const reportedStr = (k: string): string => fake.memStr[k] ?? "";
       // The unit announces a write that CHANGED the value it reports, and that
       // announcement is what ends the staleness window — the boundary the staleness was
       // measured against rather than a separate stimulus. Nothing else closes it: a
@@ -716,8 +710,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           // has: a fake that answered "" whatever was written would make every full
           // readback erase a non-empty name and every diffNames report one, so a case
           // could not tell the app clearing a name from the fake never holding it.
-          const k = key(args);
-          sampledStr = k in fake.divergeStr ? fake.divergeStr[k] : takeVisibleStr(k);
+          sampledStr = takeVisibleStr(key(args));
         } else if (cmd === "vd_set" && !fake.ignoreWrites.includes(Number(args.paramId))) {
           const k = key(args);
           const value = Number(args.value);
@@ -1402,19 +1395,6 @@ export const staleReadsAt = (page: Page, addr: string, reads: number): Promise<v
  *  scripted actually answered — 0 means it was configured and never reached — and
  *  `notified` that the window has closed on the write's own notify. */
 export const staleStateOf = (page: Page): Promise<FakeHandle["stale"]> => page.evaluate(() => window.__urxFake.stale);
-
-/** Plant a device-side value on the STRING path: what a vd_get_str answers whatever the
- *  app wrote, with `memStr` left alone. What it models is a unit whose READS and whose
- *  notify disagree — so, like the numeric `diverge`, an address under it announces
- *  nothing (the unit goes on asserting what it already held) and only a read discovers
- *  the value. A rename the unit announces is `pushNameNotify`, which stores it. */
-export const divergeStrAt = (page: Page, addr: string, value: string): Promise<void> =>
-  page.evaluate(
-    ([a, v]) => {
-      window.__urxFake.divergeStr[a] = v;
-    },
-    [addr, value] as [string, string],
-  );
 
 /**
  * Open the MIDI control window from the Device menu and attach to it.
