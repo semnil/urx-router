@@ -8,6 +8,19 @@ export default defineConfig(({ mode }) => ({
   server: {
     port: 5173,
     strictPort: true,
+    // A build output is not a source. `dist` is already out of the watcher's reach —
+    // Vite ignores build.outDir when emptyOutDir is on — but `dist-trace`, the trace
+    // bundle the race harness serves, is written by a build that overrides outDir, so
+    // the watcher never heard about it. Vite answers a changed .html file it has no
+    // module for with a full page RELOAD, and a page load is what tears the device
+    // session down (src-tauri/src/lib.rs on_page_load): running the race tier while
+    // `pnpm tauri dev` was up ended the operator's live session under their hands.
+    // Measured on an isolated dev server with an HMR client attached: two writes to
+    // dist-trace/index.html, two `full-reload` messages; the same writes with this
+    // ignore in place, none. Writes to dist/index.html produced none either way.
+    watch: {
+      ignored: ["**/dist-trace/**"],
+    },
   },
   build: {
     target: "es2022",
