@@ -554,6 +554,36 @@ const consoleView = new Console(consoleHost, {
 // active); setView does it once on the way back.
 let graphDirty = false;
 const followDirtyNodes = new Set<string>();
+/**
+ * The one ritual for "the device authored this into the plan", shared by the two
+ * direct-follow hooks (a numeric scalar and a rename). `place` performs the
+ * mutation and answers whether it landed.
+ *
+ * The device authored these keys, so the history takes exactly them into its
+ * baseline — the per-key rule the refetch path runs on, at the one other site that
+ * writes device values into the plan outside a readback. A whole-plan `rebase()`
+ * here dropped the entry an app gesture had open, which made an edit taken while the
+ * unit was being touched silently un-undoable AND spent the entry beneath it on the
+ * Ctrl+Z that should have taken it back.
+ *
+ * Diffed from a clone taken here because `place` reports only whether it placed the
+ * value: where it lands is several places (a fader / pan / assign ON is a connection
+ * param, a name is `nodeNames`, everything else a node param), and a scoped differ
+ * that missed one would silently stop absorbing. A whole-plan clone + diff measures
+ * 0.12 ms for the URX44V default plan against a stream of ~10 notifies/s.
+ *
+ * One definition rather than two: this rule is load-bearing and the comment above is
+ * the record of what re-opening it costs, so a second copy kept in step by hand is
+ * the shape that goes wrong quietly.
+ */
+function authorFromDevice(node: string, place: () => boolean): boolean {
+  const before = clonePlanState(plan);
+  if (!place()) return false;
+  traceProbe?.sample("follow-direct");
+  followDirtyNodes.add(node);
+  planHistory?.absorb(diffPlans(before, plan));
+  return true;
+}
 let followFull = false;
 function reflectFollow(): void {
   const ids = [...followDirtyNodes];
@@ -712,28 +742,7 @@ const follow =
         // A direct (node-local scalar) change: decode the notify value straight into
         // the plan, no read-back, and record the node so the coalesced reflect
         // repaints just it. The reflect is scheduled by flushDirect.
-        applyDirect: (node, name, value) => {
-          // The device authored these keys, so the history takes exactly them into its
-          // baseline — the per-key rule the refetch path runs on, at the one other site
-          // that writes device values into the plan outside a readback. A whole-plan
-          // rebase() here dropped the entry an app gesture had open, which made an edit
-          // taken while the unit was being touched silently un-undoable AND spent the
-          // entry beneath it on the Ctrl+Z that should have taken it back.
-          //
-          // Diffed from a clone taken here because applyDirect reports only whether it
-          // placed the value: where it lands is two places (a fader / pan / assign ON is
-          // a connection param, everything else a node param), and a scoped differ that
-          // missed one would silently stop absorbing. A whole-plan clone + diff measures
-          // 0.12 ms for the URX44V default plan against a stream of ~10 notifies/s.
-          const before = clonePlanState(plan);
-          const ok = applyDirect(plan, node, name, value);
-          if (ok) {
-            traceProbe?.sample("follow-direct");
-            followDirtyNodes.add(node);
-            planHistory?.absorb(diffPlans(before, plan));
-          }
-          return ok;
-        },
+        applyDirect: (node, name, value) => authorFromDevice(node, () => applyDirect(plan, node, name, value)),
         // A rename made on the unit's own LCD. It arrives as a string notify on a
         // name address, which the numeric follow path cannot carry — the value is
         // text, the address has no catalog entry, and the live snapshot holds no
@@ -742,16 +751,15 @@ const follow =
         applyName: (paramId, x, y, value) => {
           const node = live?.lookupName(paramId, x, y);
           if (node === undefined) return undefined;
-          const before = clonePlanState(plan);
-          const trimmed = value.trimEnd();
-          if (trimmed) plan.nodeNames[node] = trimmed;
-          else delete plan.nodeNames[node];
-          // The snapshot moves with the plan, so the next flush finds no diff and
-          // does not write the operator's own board edit back off the board.
-          live?.noteDirectName(paramId, y, value);
-          traceProbe?.sample("follow-direct");
-          followDirtyNodes.add(node);
-          planHistory?.absorb(diffPlans(before, plan));
+          authorFromDevice(node, () => {
+            const trimmed = value.trimEnd();
+            if (trimmed) plan.nodeNames[node] = trimmed;
+            else delete plan.nodeNames[node];
+            // The snapshot moves with the plan, so the next flush finds no diff and
+            // does not write the operator's own board edit back off the board.
+            live?.noteDirectName(paramId, y, value);
+            return true;
+          });
           return node;
         },
         noteDirect: (paramId, x, y, value) => live?.noteDirect(paramId, x, y, value),
