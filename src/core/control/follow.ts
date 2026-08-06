@@ -54,6 +54,12 @@ export interface DeviceFollowHooks {
    *  when the param is not actually directly placeable (flagged direct but unhandled),
    *  so the caller falls back to a scoped read. */
   applyDirect: (node: string, name: ParamName, value: number) => boolean;
+  /** A rename made on the unit. Returns the owning node when the address is a name
+   *  one and the value was placed, so the caller can repaint just that node — or
+   *  undefined when it is not a name address at all. Kept off `applyDirect` because
+   *  a name is not a catalog parameter: it has no `ParamName`, no numeric value and
+   *  no entry in the live snapshot. */
+  applyName?: (paramId: number, x: number, y: number, value: string) => string | undefined;
   /** Patch the live snapshot's single entry for a just-applied direct change to the
    *  device-reported value, so the host can skip the full re-translate on reflect
    *  (and the next outgoing diff still measures from the device truth). */
@@ -184,6 +190,26 @@ export class DeviceFollow {
     // Host-owned address: handled there, and never part of a reconcile window — it
     // has no node, so letting it through would force a full re-read every time.
     if (this.hooks.intercept?.(p)) return;
+    // A rename, which the numeric filters below cannot judge: `isEcho` reads the
+    // numeric snapshot, which has no entry for a name, so it would call every
+    // rename — including the app's own, echoed back — a device-side change. The
+    // handler owns both the echo test and the apply, and answers with the node so
+    // this stays a direct follow: one repaint, no readback. A string notify on an
+    // address that is NOT a name is a shape no URX has ever sent; it falls through
+    // to the unknown-address path, which is where anything unrecognised belongs.
+    if (p.valueStr !== undefined) {
+      const node = this.hooks.applyName?.(p.paramId, p.x, p.y, p.valueStr);
+      if (node !== undefined) {
+        // The same tail the numeric direct path takes, and it is not optional: the
+        // host coalesces renders behind `flushDirect`, and the idle net is what
+        // catches a notify this method mis-routed. Returning before them left the
+        // plan updated and nothing repainted — which looked exactly like the notify
+        // never arriving.
+        this.hooks.flushDirect();
+        this.armIdle();
+        return;
+      }
+    }
     // Our own write (or a value we already hold) coming back — not a change.
     if (this.hooks.isEcho(p)) return;
     // Signal "following" once at the start of a burst, not on every notify in it.

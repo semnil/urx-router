@@ -152,12 +152,26 @@ pub struct LinkEvent {
 /// a registered `/vd/parameters/{id}:{x}:{y}` address. `value` is the same raw
 /// broker integer vd_get returns, decoded on the JS side. Lets the UI follow
 /// edits made on the device itself (LCD / physical controls).
+///
+/// `value_str` carries the STRING notifies — the name parameters, whose
+/// `current_value` is text rather than a number. They were dropped here for the
+/// life of this file, because the decode asked for an integer and gave up when it
+/// did not get one: the unit announces a rename (measured on a URX44V, one notify
+/// on the renamed address and nothing else), the frame reached this function, and
+/// this line discarded it. Numeric notifies leave the field `None` and pay one
+/// `is_none()` on the JS side; the integer decode is still tried first, so the
+/// common path costs exactly what it did before.
+// NOT `rename_all = "camelCase"`: the frontend reads `param_id` off this wire, so a
+// blanket rename would quietly break the numeric follow path — and neither the unit
+// tests nor the race harness would catch it, because neither goes through serde.
 #[derive(Clone, PartialEq, Serialize)]
 pub struct ParamUpdate {
     pub param_id: u32,
     pub x: i64,
     pub y: i64,
     pub value: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_str: Option<String>,
 }
 
 /// The broker's bulk-change push (a namespace-level notify with no address) as one
@@ -170,6 +184,7 @@ pub const BULK_CHANGE: ParamUpdate = ParamUpdate {
     x: -1,
     y: -1,
     value: 0,
+    value_str: None,
 };
 
 /// A request handed to the worker thread, each carrying a one-shot reply channel.
@@ -1293,12 +1308,19 @@ mod imp {
             xs.parse::<i64>().ok()?,
             ys.parse::<i64>().ok()?,
         );
-        let value = vdp.pointer("/data/current_value").and_then(Value::as_i64)?;
+        // Integer first — that is every notify but the name ones, and it must stay
+        // the cheap path. A frame carrying neither is still dropped, as before.
+        let raw = vdp.pointer("/data/current_value")?;
+        let (value, value_str) = match raw.as_i64() {
+            Some(v) => (v, None),
+            None => (0, Some(raw.as_str()?.to_string())),
+        };
         Some(ParamUpdate {
             param_id,
             x,
             y,
             value,
+            value_str,
         })
     }
 

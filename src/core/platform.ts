@@ -310,6 +310,10 @@ export interface ParamUpdate {
   x: number;
   y: number;
   value: number;
+  /** Present only for a STRING notify — the name parameters, whose `current_value`
+   *  is text. Numeric notifies omit it (the Rust side skips the field), so a reader
+   *  that only understands numbers is unaffected. */
+  valueStr?: string;
 }
 
 // The Rust side streams ParamUpdate with snake_case fields (serde default).
@@ -318,6 +322,10 @@ interface RawParamUpdate {
   x: number;
   y: number;
   value: number;
+  /** Snake_case like its neighbours: the Rust struct deliberately carries NO blanket
+   *  camelCase rename, because one would also rename `param_id` and break the numeric
+   *  path in a way no test that skips serde could see. */
+  value_str?: string;
 }
 
 /**
@@ -334,7 +342,7 @@ export async function vdParamsSubscribe(
   // Batched per pump cycle on the Rust side (a device-side sweep arrives as one
   // message), so fan the batch back out into per-notify callbacks here.
   const channel = newChannel<RawParamUpdate[]>((batch) => {
-    for (const d of batch) onUpdate({ paramId: d.param_id, x: d.x, y: d.y, value: d.value });
+    for (const d of batch) onUpdate({ paramId: d.param_id, x: d.x, y: d.y, value: d.value, valueStr: d.value_str });
   });
   // Awaited, not fire-and-forget: a failed registration leaves the app blind to
   // device-side edits, and the next converge would then write the plan's stale

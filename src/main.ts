@@ -728,6 +728,30 @@ const follow =
           }
           return ok;
         },
+        // A rename made on the unit's own LCD. It arrives as a string notify on a
+        // name address, which the numeric follow path cannot carry — the value is
+        // text, the address has no catalog entry, and the live snapshot holds no
+        // entry to compare against. Placed straight into the plan like any other
+        // direct follow: one node repainted, no readback.
+        applyName: (paramId, x, y, value) => {
+          const node = live?.lookupName(paramId, x, y);
+          if (node === undefined) return undefined;
+          // The echo test belongs here rather than in follow.ts for the same reason
+          // the apply does: the comparison is against the NAME snapshot, and getting
+          // it wrong sends the app's own rename back round as a device-side change.
+          if (live?.isEchoName(paramId, y, value)) return node;
+          const before = clonePlanState(plan);
+          const trimmed = value.trimEnd();
+          if (trimmed) plan.nodeNames[node] = trimmed;
+          else delete plan.nodeNames[node];
+          // The snapshot moves with the plan, so the next flush finds no diff and
+          // does not write the operator's own board edit back off the board.
+          live?.noteDirectName(paramId, y, value);
+          traceProbe?.sample("follow-direct");
+          followDirtyNodes.add(node);
+          planHistory?.absorb(diffPlans(before, plan));
+          return node;
+        },
         noteDirect: (paramId, x, y, value) => live?.noteDirect(paramId, x, y, value),
         flushDirect: () => requestReflect(),
         // A settled scoped change: re-read just the touched owner nodes and reflect.
