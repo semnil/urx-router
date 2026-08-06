@@ -864,6 +864,18 @@ the unit announced and **the last announcement wins**, so an address the operato
 comes back carrying THEIR value. A `capture()` landing inside the flush needs no answer either: it re-authors the
 snapshot from a device read, and a device read cannot contradict a later word from the same device.
 
+**The name path has the same window, and the numeric repair cannot reach it.** Measured on a URX44V: a channel
+name written and then polled every 4 ms answered the PREVIOUS name for 81 ms. `writeOverlay` answers an address
+out of what the unit ANNOUNCED for it, and a name announcement never arrives — names are not emitted by
+`planToCommands`, so they are in no registration, so `Subs::absorb` drops the notify. A settle would always spend
+its whole bound, and answering from the send is what this section forbids. So the refetch does not read names at
+all: the read exists to collect what the unit RECOMPUTED, and no parameter write makes the unit recompute a name.
+Leaving it in could only do harm — a rename flushed in the same window comes back as the name it replaced and
+goes into the plan and the name snapshot together, so they agree, no diff remains, and the rename is reverted
+with nothing left to retry. Unlike a numeric revert it does not oscillate, so nothing draws attention to it. A
+rename made on the unit still arrives: every other read path (device follow's reconciles, Fetch, compare, the
+self-test) runs the same pass with no pending set and still reads names.
+
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
 the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
 has ever been measured — the 1-2 ms figure above belongs to the `refetch` family, which never reaches this loop. Its
@@ -1128,16 +1140,22 @@ budget coincidence rather than a property, so `translate.test.ts` pins the split
 test until someone records which side it is on. `SIGNAL_TYPE` and `PAN_BAL` reset addresses owned by *other* nodes,
 which a group cannot express — their ordering is pinned separately.
 
-A round's budget only works if the residual it measures is real, and there is a **known exposure here that this
-branch deliberately does not close**. The caller that leaves the diff to be seeded — Live sync's converging flush —
-has just written the device, and the unit answers a GET with the pre-write value for 9-204 ms afterwards
+A round's budget only works if the residual it measures is real, so **the seed read waits out the writes that
+preceded it**. The caller that leaves the diff to be seeded — Live sync's converging flush — has just written the
+device, and the unit answers a GET with the pre-write value until each write's own notify arrives
 ([above](#a-write-is-not-readable-when-it-is-acked)). A seed read taken inside that window reports differences that
 are not there (a redundant selector write repopulates the engine array it binds with type defaults) and misses the
 resets this loop exists to settle: an empty residual exits before the first re-read, and `live.ts` then records the
-plan as device truth with no diff left to retry. **The seed read is not waited out today.** Adding the wait costs a
-flat +300 ms on every `sendConverging` — the write path, the self-test and every converge race case — it is an
-exposure independent of the refetch's, and no race case shows it going red to green, so it is a change of its own
-rather than a rider on this one. The reads *between* rounds are waited out, blind, as they always were.
+plan as device truth with no diff left to retry.
+
+The flush therefore hands `sendConverging` the same `PendingWrites` handle the refetch gets, and the loop holds the
+seed read until the unit has spoken for **every** address it wrote — the whole set, not one node's worth, because
+the seed read asks about the whole write scope. This was left open when the refetch was fixed, on the reading that
+it would cost a flat +300 ms on every `sendConverging`. Measuring the window on hardware is what changed the answer:
+the wait ends at the device's own notify, 17-84 ms across four probe runs on a URX44V, and the 300 ms bound is the
+fallback rather than the price. Callers that hand over `initialDiffs` — the Write button — never seed and are
+untouched. The reads *between* rounds stay blind, for the two reasons in that section.
+
 Seeding the loop from the flush's own send list instead was tried and is wrong — those values freeze at send time,
 so an address the operator moved on the unit during the flush's awaits would be written straight back off the board.
 
