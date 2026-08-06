@@ -499,10 +499,14 @@ async function readPass(
   // numeric one** — measured on a URX44V (System V1.3.1.0): a name written and
   // then polled every 4 ms answered the PREVIOUS name for 81 ms. But the numeric
   // repair does not reach here. `writeOverlay` answers an address out of what
-  // the unit ANNOUNCED for it, and a name announcement never reaches this app at
-  // all: names are not emitted by `planToCommands`, so they are in no
-  // registration, so `Subs::absorb` drops their notify. A settle would therefore
-  // always spend its whole bound, and answering from the send is what D1 forbids.
+  // the unit ANNOUNCED for it, and no name announcement can get into it: a name
+  // is written on the string path (`vdSetStr`), and that loop in `live.ts`
+  // records nothing in the flush's write ledger, so a name address is never in
+  // the `PendingWrites` the overlay is built from. The unit's notify itself does
+  // arrive — name addresses are registered, which is what carries a rename made
+  // on the unit — but it arrives at the follow layer, not here. A settle would
+  // therefore always spend its whole bound, and answering from the send is what
+  // D1 forbids.
   //
   // Not reading is the right answer rather than the cheap one. The refetch exists
   // to collect what the unit RECOMPUTED because of a write, and no parameter

@@ -248,7 +248,7 @@ single source of truth. This table states what each case measures.
 | `shape-routing-wire-selectors` | graph | The deliberate NONE sentinel and the accidental hole that says nothing, side by side |
 | `shape-send-emission-wire-presence` | console | The most ordinary operator gesture that reshapes the address set without looking like a mode switch; the read-only FX tap is unfollowable |
 | `shape-refused-and-acked-writes` | mixed | All three refusal shapes, and whether an unclosable diff forms a flush loop |
-| `shape-string-path-writes` | mixed | The writes that bypass the diff engine entirely, benign case beside consequential one; a device-side rename is never delivered |
+| `shape-string-path-writes` | mixed | The writes that bypass the diff engine entirely, benign case beside consequential one; a device-side rename is now delivered and Sweet Spot Data still is not |
 | `shape-device-setup-plan-external` | mixed | The params never emitted, read back or registered — so never delivered — and the one intercept hook |
 | `shape-insert-fx-rate-and-slot-availability` | inspector | A constraint expressed as data rather than as an emit gate, and cross-node contention |
 
@@ -366,10 +366,10 @@ must provide the following.
 | n | Post-write read staleness: `staleAfterWrite[addr] = n` makes the next `n` reads after EACH write to that address answer the value it held BEFORE that write, while `mem` stays truthful — the unit ACCEPTED the write and cannot yet report it. Numeric path only. What ENDS the window is not this setting's business: every value-changing write is announced (see below), and that announcement closes any window open on the address whether its scripted reads were spent or not |
 | o | The announcement itself, which is unconditional and needs no case to arm it: a write that CHANGES the value the unit reports is announced `cfg.announceMs` (100, the measured median) after its **ack**. Three silences, all from the one rule — a same-value write (measured: 18 acked in 0-1 ms, none announced), an `ignoreWrites` address (acked and never stored, so nothing it reports moved) and a `diverge`d address (the unit goes on asserting what it already held) |
 
-| p | The same window on the NAME path: `staleAfterWrite` applies to a string address too, so the next `n` reads of it after a `vd_set_str` answer the name it replaced. Measured on a URX44V — 81 ms, so the string path is not exempt and the fake modelled it as exempt for its whole life. **No announcement is scheduled for it**, deliberately: a name notify reaches no registration on a real link (names are not emitted by `planToCommands`, so `Subs::absorb` drops them), so the window can only be spent by the reads a case scripts. `t1d-name-window` is the case that needed it |
+| p | The same window on the NAME path: `staleAfterWrite` applies to a string address too, so the next `n` reads of it after a `vd_set_str` answer the name it replaced. Measured on a URX44V — 81 ms, so the string path is not exempt and the fake modelled it as exempt for its whole life. **The announcement follows item o's rule too, and both halves of it are measured on this path rather than carried over**: a name write that changes the reported name is announced `announceMs` after its ack and closes the window (32 writes over two runs announced after their own ack, 32/32, at ack+1-102 ms — most of them 66-102, with 2 of the 32 under 10 ms, a low tail the numeric spread does not have and whose cause is not identified), and a same-value name write announces nothing (acked in 0 ms, silent for 2000 ms, bracketed by a changing write on each side so a dead stream could not pass for a silent device). The app hears it, because name addresses joined the registration set when the follow learned to carry a device-side rename; an address that did not — Sweet Spot Data (param 91) — is still dropped at the bridge. `t1d-name-window` is the case that needed the window |
 Plus a **barrier**: `blockAt({ cmd, nth })` holds a specific command, and `release()` lets it through.
 
-Items n and o are the ones the fake lived **without** for its whole life, and the omission was not neutral — see
+Items n, o and p are the ones the fake lived **without** for its whole life, and the omission was not neutral — see
 "What the harness itself got wrong". WHICH reads are stale is a **count**, not a duration, for the reason the
 barriers exist: a duration makes every verdict a property of CI load. Staleness is distinct from both its
 neighbours — `divergeAt` says the unit holds a value the app never wrote and never agrees; `ignoreWrites` says the
@@ -409,6 +409,15 @@ driver helpers are `pushNotify` (returns one verdict per entry — `""` delivere
 **`pushNotifyDelivered`** (pushes and throws naming any refused address — what a case whose subject is
 the app's RESPONSE must use), **`pushBulkChange`** (the sanctioned way to force one whole-device
 reconcile) and **`notifyDropsOf`** (for a case whose subject IS the refusal).
+
+**`pushNameNotify`** is the string-path member of that family — a rename made on the unit's own LCD,
+which carries its text in `value_str` and a numeric `value` of 0. It returns the same per-entry verdict,
+and it **stores the name before announcing it**: announcing without storing would be a device that
+reports a value it does not hold, so its own next read would contradict its notify. It shares one
+emitter with the announcement a name WRITE produces (item p), so a scripted rename and the unit's own
+cannot describe different devices. There is no string-path counterpart to `divergeAt` — the one that
+existed was removed once its last caller moved to `pushNameNotify`, since an unexercised knob is a
+claim about the device that nothing keeps true.
 
 Both subscriptions are installed **at the queue point**, like every other value the fake settles there,
 and for the same reason: `vd.rs`'s `ParamsSubscribe` / `MetersSubscribe` arms only *send* registrations
@@ -758,10 +767,13 @@ agreement, zero findings.
   honest finding is that **the preference silently blinds device follow to the 64 addresses it drops**
   — a MONITOR_LEVEL or OSC_MODE moved on the unit is never learned, for the rest of the session
 - **WITHDRAWN — "839 / 193 / a device-side rename are expensive to follow (2 full reconciles each)".**
-  All three are unfollowable, not expensive. In particular **a channel rename made on the unit is
-  never picked up**: no name address is ever in the registration (names ride the string path and have
-  no snapshot entry either), and the idle net only arms on a delivered notify. The repair still exists
-  — a whole-device reconcile's own `vd_get_str` — but nothing in the session schedules one
+  All three were unfollowable, not expensive: no name address was in the registration (names ride the
+  string path and have no snapshot entry either), and the idle net only arms on a delivered notify, so
+  a rename made on the unit was picked up by nothing the session schedules. **The rename half was
+  closed on 2026-08-06** — `live.ts` registers the name addresses beside `planToCommands`'s, and
+  `follow.ts` places a name notify straight into the plan (17 addresses on a URX44V/URX44, 15 on a
+  URX22, against ~800, with no steady-state traffic because a name notify fires only on a rename).
+  839 and 193 stand: both are read-only, so neither is in any write set and neither can be registered
 - **A sample-rate undo refusal takes the whole entry with it**, and the status line names only the
   rate: an ordinary edit that shared the gesture window is refused alongside it and nothing says so.
   Refusing whole is correct — a partial undo would put the plan in a state no gesture produced, and
@@ -1024,6 +1036,22 @@ not repeat them.
   red case is not evidence about the app until **both arms run the same fake**: the first attempt here
   compared a fixed tree against main with a fake that had changed in between, which would have
   reported the fix as the cause of a defect the harness had invented
+- **The string path was exempted from both, and the exemption outlived its reason.** The fake never
+  applied the staleness window to a name and never announced one. The second half carried a written
+  reason — "a name notify reaches no registration on a real link, so the app would never see it" —
+  which was true when it was written and stopped being true in the same series of commits that closed
+  the window: registering the name addresses is what made a device-side rename followable. Nothing
+  flagged the contradiction, because the fake's own comment was the only place the claim lived and it
+  was not checked against the code it described. What it hid was in the app, not the harness. The unit
+  announces every name write it accepts, so an operator's rename in the app comes straight back as an
+  echo — and the follow layer answered that echo with the same tail a real device-side rename gets,
+  arming the idle full reconcile. That reconcile's reflect calls `planHistory.reset()`, so **one
+  rename during Live sync cost an ~800-read sweep 900 ms later and erased its own undo entry**. It was
+  reachable on hardware from the moment names were registered and unreachable in the harness for
+  exactly as long as the fake stayed silent. `t2b`'s undo-depth assertion is what caught it once the
+  announcement existed; the pin is in `follow.test.ts`. The lesson is narrower than "model everything":
+  **a modelling exemption is a claim about the device, and it has to be re-read whenever the app's
+  registration set changes** — the exemption was not wrong when it was made
 - **A filtered stimulus is the SECOND form of silence.** A notify the bridge refuses leaves the app in
   exactly the state "nothing has happened yet" leaves it in, so an absence verdict passes for free and
   a whole case can measure nothing while staying green. A case whose subject is the app's response
@@ -1161,14 +1189,16 @@ fixed or withdrawn.
   on it**, which is the same interleaving read from the other side and was asserted until CI produced
   the case where they agree (both `-7.2` at D=1500). Two CI retries had been hiding it
 - The string path (`vd_set_str`: channel names, Sweet Spot Data) is outside every address-set
-  invariant — it has no snapshot entry and no registration entry — so clause B is silent on it by
-  construction. **Measured on hardware (2026-07-31)**: renaming a channel broadcasts exactly one
-  notify, `/vd/parameters/18:0:0`, and nothing else — no `BULK_CHANGE`, no pointer param — and the
-  broadcast is identical whether the rename is made on the unit's LCD or written by a client. Since
-  no name address is ever in the registration, the bridge drops it and **a rename is never followed**;
-  it is picked up by the next reconcile that covers that node, because `readPass` reads names through
-  `nameControl` under the same node filter. The device-side facts are recorded in the private param
-  ledger
+  invariant — neither has a snapshot entry — so clause B is silent on it by construction. **Measured
+  on hardware (2026-07-31)**: renaming a channel broadcasts exactly one notify,
+  `/vd/parameters/18:0:0`, and nothing else — no `BULK_CHANGE`, no pointer param — and the broadcast
+  is identical whether the rename is made on the unit's LCD or written by a client. That broadcast
+  reached nothing for the life of the follow layer, because no name address was in the registration.
+  **Since 2026-08-06 the names are registered**, so a rename is followed directly and the string path
+  is half in and half out: a name is in the registration but in no snapshot, which is the same
+  harmless direction as `FOLLOW_USB` (848) and the reverse difference clause B does not judge; Sweet
+  Spot Data is in neither and stays wholly outside. The device-side facts are recorded in the private
+  param ledger
 
 ## Related
 

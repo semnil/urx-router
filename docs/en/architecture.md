@@ -267,11 +267,14 @@ carries a one-line map of the same directories and points here.
       `live.lookup`: direct = node-local scalars (`follow: "direct"` in `params.ts`) applied with
       `applyDirect` without readback; scoped = readback of the owning node only via `applyNodeState`;
       unknown params or more than 3 controls escalate to a full readback; a safety full readback runs when
-      idle. A rename is a fourth path and is taken **before** those filters: `isEcho` reads the numeric
-      snapshot, which has no entry for a name, so it would call every rename — the app's own included — a
-      device-side change. `applyName` owns the echo test and the apply together and answers with the owning
-      node, which keeps a rename a direct follow (one repaint, no readback); a string notify on an address
-      that is not a name falls through to the unknown-address path)
+      idle. A rename is a fourth path, taken after the echo gate and before the numeric filters. **`isEcho`
+      answers for both paths** — the host dispatches it on `valueStr`, because the numeric and name snapshots
+      are separate maps and neither can answer for the other. One gate rather than two, and the unit makes
+      that matter: it announces every name write it accepts, so the operator's own rename in the app comes
+      back as an echo, and counting that echo as a followed change armed a full reconcile — whose reflect
+      calls `planHistory.reset()` — after every rename. Past the gate, `applyName` answers with the owning
+      node, which keeps a rename a direct follow (one repaint, no readback), or undefined for a string notify
+      on an address that is not a name, which falls through to the unknown-address path)
 - `src/ui/` — `graph.ts` SVG node graph (studio-rack styling, dark/light themes; `refresh()` re-adopts the
   plan-backed view state — the shelved and note-collapse sets plus the unread provenance, via
   `adoptPlanState`, shared with the constructor and `setModel` — and re-validates the selection through the

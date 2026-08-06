@@ -787,8 +787,8 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
 
   // The name path has the same post-write staleness window as the numeric ones
   // (measured on a URX44V: 81 ms), and the numeric repair cannot reach it — a
-  // name notify is in no registration, so `writeOverlay` has nothing to answer
-  // from. Live sync's sideEffect refetch is the one read issued inside that
+  // name is written on the string path, which enters no write ledger, so
+  // `writeOverlay` has nothing to answer from. Live sync's sideEffect refetch is the one read issued inside that
   // window, so it must not read names at all: a rename flushed in the same
   // window would come back as the name it replaced and be written into the plan
   // AND the name snapshot together, leaving no diff to retry.
