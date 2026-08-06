@@ -19,6 +19,8 @@ declare global {
       sent: number[][];
       /** Set once open_midi_window is invoked, so the menu entry is observable. */
       windowOpened: boolean;
+      /** How long `midi_open_ports` holds its answer before delivering it. */
+      openPortsDelayMs: number;
     };
   }
 }
@@ -89,6 +91,7 @@ test.beforeEach(async ({ page }) => {
       outputPort: null,
       sent: [],
       windowOpened: false,
+      openPortsDelayMs: 0,
     };
     window.__midiTest = state;
     class Channel {
@@ -124,8 +127,14 @@ test.beforeEach(async ({ page }) => {
           // What the shell actually holds. The app checks its own idea of the
           // chosen ports against this on every refresh, so a test can close a
           // port "from the shell" the way the page-load teardown once did.
-          case "midi_open_ports":
-            return Promise.resolve([state.inputPort, state.outputPort]);
+          case "midi_open_ports": {
+            // The answer describes the moment it is taken, and the app receives it
+            // later: `openPortsDelayMs` opens that gap on purpose, so a test can let a
+            // port be opened inside the round trip and see whether the stale answer
+            // wins. Zero by default, which is one task's delay — as it is in Tauri.
+            const answer: [string | null, string | null] = [state.inputPort, state.outputPort];
+            return new Promise((r) => setTimeout(() => r(answer), state.openPortsDelayMs));
+          }
           case "midi_open_input":
             if (args.port === "Broken In") return Promise.reject(new Error("port busy"));
             state.inChannel = args.channel as Window["__midiTest"]["inChannel"];
@@ -770,6 +779,35 @@ test("a port closed from the shell stops being offered as the chosen one", async
   await again.locator(".mw-in").selectOption("Stub In");
   await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
   await sendMidi(page, [0xb0, 7, 100]);
+});
+
+test("a port opened while the shell is being asked survives the answer", async ({ page }) => {
+  // The reconcile adopts what the shell reports, and that report describes the moment
+  // it was taken. Opening a port INSIDE that round trip leaves an answer that predates
+  // it, and adopting it would close what the operator just opened — the same silence
+  // this reconcile exists to remove, caused by the reconcile. Standing down while an
+  // open is in flight is not enough on its own: an open that begins and ends inside the
+  // round trip puts the in-flight count back to zero before the answer lands.
+  const win = await openMidiWindow(page);
+  await page.evaluate(() => {
+    window.__midiTest.openPortsDelayMs = 600;
+  });
+
+  // Provoke a refresh with the answer held: the window announcing itself is what asks.
+  await win.close();
+  const again = await openMidiWindow(page);
+
+  // …and open a port while it is held. The pick completes long before the answer,
+  // which still says "nothing is open".
+  await again.locator(".mw-in").selectOption("Stub In");
+  await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
+
+  // Outlast the held answer, then check the port is still the chosen one — on both
+  // sides, since the window renders what the app pushes.
+  await page.waitForTimeout(900);
+  expect(await page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
+  await expect(again.locator(".mw-in")).toHaveValue("Stub In");
+  await sendMidi(page, [0xb0, 7, 100]); // and it is still a port that delivers
 });
 
 test("removing an assignment stops the control from responding", async ({ page }) => {

@@ -678,7 +678,14 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
     // an init script that rewrote it on every navigation could never get there.
     if (localStorage.getItem("urx-midi") === null)
       localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V: list } }));
-    window.__midiTest = { inChannel: null, inputPort: null, outputPort: null, sent: [], windowOpened: false };
+    window.__midiTest = {
+      inChannel: null,
+      inputPort: null,
+      outputPort: null,
+      sent: [],
+      windowOpened: false,
+      openPortsDelayMs: 0,
+    };
     const relay = new BroadcastChannel("urx-midi-ui");
     let toMain: { onmessage: (d: unknown) => void } | null = null;
     let toWindow: { onmessage: (d: unknown) => void } | null = null;
