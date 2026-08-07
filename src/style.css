@@ -17,6 +17,11 @@
   --text: #f1e8d6;
   --text-dim: #ab9b7d;
   --led: #ffc24d;
+  /* The accent as INK. Dark needs no separate value — a lit lamp on a dark
+     face already clears AA as text. Light does: --led on the light grounds is
+     1.90-2.20:1, so every place that paints the accent as text reads this
+     instead. */
+  --led-ink: var(--led);
 
   --ctl-bg: #221c13;
   --ctl-bg2: #2c2517;
@@ -96,6 +101,11 @@
   --text: #2a2418;
   --text-dim: #8a7f68;
   --led: #e8920f;
+  /* The darkest amber is not the point — the minimum darkness that clears
+     4.5:1 on all six light grounds the accent is written on is. #7a5a08, which
+     this replaces in three places, reaches only 4.27 on the amber-tinted PAN
+     face and would need an exception there. */
+  --led-ink: #755407;
 
   --ctl-bg: #e9e2d3;
   --ctl-bg2: #f6f2ea;
@@ -402,7 +412,7 @@ button {
   letter-spacing: 0.06em;
   white-space: nowrap;
   text-decoration: none;
-  color: var(--led);
+  color: var(--led-ink);
   padding: 7px 12px;
   border-radius: 6px;
   background: linear-gradient(180deg, var(--ctl-bg2), var(--ctl-bg));
@@ -456,7 +466,7 @@ button {
 
 .menu-trigger[aria-expanded="true"] .caret {
   transform: rotate(180deg);
-  color: var(--led);
+  color: var(--led-ink);
 }
 
 .menu-panel {
@@ -538,7 +548,7 @@ button {
 /* A toggled-on menu item (live sync) keeps its rail lit and the label in the
    accent color, so the active state reads without opening the menu's tally. */
 .menu-panel .menu-item[aria-pressed="true"] {
-  color: var(--led);
+  color: var(--led-ink);
 }
 
 .menu-panel .menu-item:focus-visible {
@@ -952,7 +962,7 @@ select:focus-visible,
    has shipped once. */
 :root.fine-mode .has-fine:not(.locked):hover .fine-tag,
 :root.fine-mode .has-fine:not(.locked):focus-within .fine-tag {
-  color: var(--led);
+  color: var(--led-ink);
   opacity: 1;
   box-shadow: 0 0 5px var(--led);
 }
@@ -1787,7 +1797,7 @@ select:focus-visible,
   background: rgba(0, 0, 0, 0.03);
 }
 .con-group.master .con-grouplabel {
-  color: var(--led);
+  color: var(--led-ink);
 }
 
 .con-strip {
@@ -2067,15 +2077,12 @@ select:focus-visible,
   border-radius: 4px;
   border: 1px solid var(--led);
   background: color-mix(in srgb, var(--led) 16%, var(--ctl-bg));
-  color: var(--led);
+  color: var(--led-ink);
   font: 700 9px var(--mono);
   letter-spacing: 0.2px;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-}
-[data-theme="light"] .con-tap {
-  color: #7a5a08;
 }
 /* Meter-bars glyph on the meter-point badge (currentColor tracks the badge tint),
    marking it apart from the send-tap PRE/POST chip. */
@@ -2456,13 +2463,10 @@ select:focus-visible,
   color: var(--text-dim);
 }
 .con-readout .mtr .rv {
-  color: var(--led);
+  color: var(--led-ink);
 }
 .con-readout .mtr .rv.off {
   color: var(--text-dim);
-}
-[data-theme="light"] .con-readout .mtr .rv {
-  color: #a06a08;
 }
 [data-theme="light"] .con-readout .mtr .rv.off {
   color: var(--text-dim);
@@ -2519,12 +2523,9 @@ select:focus-visible,
 .con-sh .rdout {
   display: none;
   font: 700 9px var(--mono);
-  color: var(--led);
+  color: var(--led-ink);
   white-space: nowrap;
   overflow: hidden;
-}
-[data-theme="light"] .con-sh .rdout {
-  color: #7a5a08;
 }
 .con-sh.readout .lb {
   display: none;
@@ -2547,7 +2548,7 @@ select:focus-visible,
 /* Hovering one header previews the global collapse scope by tinting every header. */
 .con-root.sends-hover .con-sh .lb,
 .con-root.sends-hover .con-sh .ar {
-  color: var(--led);
+  color: var(--led-ink);
 }
 .con-sh .dots {
   display: none;
@@ -2693,7 +2694,7 @@ select:focus-visible,
 .con-panbtn.open {
   background: color-mix(in srgb, var(--led) 22%, var(--ctl-bg));
   border-color: var(--led);
-  color: var(--led);
+  color: var(--led-ink);
 }
 .con-panbtn:focus-visible {
   outline: 2px solid var(--led);
@@ -2728,7 +2729,7 @@ select:focus-visible,
 }
 .con-spop .ph .who {
   margin-left: auto;
-  color: var(--led);
+  color: var(--led-ink);
   letter-spacing: 0.5px;
 }
 .con-spop.below::before {
@@ -3493,7 +3494,7 @@ select:focus-visible,
 }
 .mw-addr {
   font-family: var(--mono);
-  color: var(--led);
+  color: var(--led-ink);
   font-variant-numeric: tabular-nums;
 }
 .mw-linked {
