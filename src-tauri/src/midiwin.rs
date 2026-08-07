@@ -82,6 +82,12 @@ pub fn notify_closed(app: &AppHandle) {
 /// does not — the window-state plugin restores that from the last session and
 /// `winfit` keeps the answer on a display.
 ///
+/// Built as a CHILD of the main window, which is what keeps it in front of it: on
+/// Windows an owned window is always above its owner in the z-order, and on macOS
+/// `addChildWindow` orders it above the parent within the app. Deliberately not
+/// "always on top" — that would put the panel above every other application for
+/// the whole session, which is a far larger promise than the one being made here.
+///
 /// `async` on purpose: building a webview from a blocking command deadlocks on
 /// Windows.
 #[tauri::command]
@@ -89,11 +95,16 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     if let Some(win) = app.get_webview_window(MIDI_WINDOW) {
         return win.set_focus().map_err(|e| format!("midi-window: {e}"));
     }
+    let main = app
+        .get_webview_window(crate::MAIN_WINDOW)
+        .ok_or_else(|| "midi-window: no main window".to_string())?;
     let win = WebviewWindowBuilder::new(&app, MIDI_WINDOW, WebviewUrl::App("midi.html".into()))
         .title(title)
         .inner_size(440.0, 620.0)
         .min_inner_size(360.0, 320.0)
         .resizable(true)
+        .parent(&main)
+        .map_err(|e| format!("midi-window: {e}"))?
         .build()
         .map_err(|e| format!("midi-window: {e}"))?;
     // AFTER `build()` on purpose, and it is the only place this can go. The plugin
@@ -119,10 +130,10 @@ pub fn close_midi_window(app: AppHandle) -> Result<(), String> {
     }
 }
 
-/// Raise the MIDI window to the front. Called when learn turns on and when a binding
-/// lands, so a window that drifted behind the app comes back for the one moment its
-/// contents matter. Deliberately not "always on top": that would cover the app for
-/// the whole session to solve a problem that lasts a gesture.
+/// Raise the MIDI window to the front. Called when learn turns on, so the panel
+/// comes forward for the one moment its contents matter. Being a child of the main
+/// window puts it in front of THAT already; what this still does is bring the app
+/// itself forward when another application is covering both.
 #[tauri::command]
 pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
     match app.get_webview_window(MIDI_WINDOW) {
