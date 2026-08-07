@@ -3906,3 +3906,64 @@ select:focus-visible,
   font-variant-numeric: tabular-nums;
   color: var(--text-dim);
 }
+
+/* ---- Windows high contrast (forced-colors) ----------------------------------
+
+   The OS replaces the whole palette with a handful of system colors, so anything
+   this UI says with color alone stops saying it. Two mechanisms survive, and only
+   two: an outline/border, and `forced-color-adjust: none` on a surface whose
+   colors ARE the information. Everything else was measured and does not work --
+   `box-shadow` is removed by the spec, and setting `color` on a filled element is
+   defeated by the opaque text backplate the engine paints behind it, which is
+   also why the Highlight / HighlightText idiom cannot be used here.
+
+   Nothing below touches a declaration used outside this query, so the normal
+   modes stay pixel-identical. Verified under Chromium's emulation; the three
+   items that need a real Windows theme are open. */
+@media (forced-colors: active) {
+  /* Engaged controls: a double rim, which is the one weight the system palette
+     cannot flatten into its neighbours. */
+  .con-chip.on,
+  .con-sl.on,
+  .con-slp.on,
+  #inspector .toggle button.on,
+  .prefs-toggle button.on,
+  .udk-banks button[aria-pressed="true"],
+  .menu-panel .menu-item[aria-pressed="true"],
+  .mw-learnbtn.on,
+  .con-panbtn.open {
+    background: Canvas;
+    color: CanvasText;
+    border: 3px double CanvasText;
+  }
+
+  /* Anything whose job is to point at a position: the filled bar becomes an
+     outline of the same geometry, so the indicator survives as a shape. Without
+     this the knob loses its pointer and reads as a plain circle. */
+  .con-knob .ind,
+  .con-fader .cap::after {
+    background: none;
+    border: 1px solid CanvasText;
+  }
+  .con-fader .zero {
+    background: none;
+    height: 0;
+    border-top: 1px solid CanvasText;
+  }
+
+  /* Surfaces where the color IS the reading: the scribble's device colour, the
+     meters' green/yellow/red zones, and the board's whole vocabulary of wires
+     and rails. Forcing these into two system colors would not raise contrast --
+     it would delete the information. The board gets a rim so the island still
+     has an edge against the forced background. */
+  .con-scribble,
+  .con-meter,
+  .mtrcol {
+    forced-color-adjust: none;
+  }
+  #graph-host {
+    forced-color-adjust: none;
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+}
