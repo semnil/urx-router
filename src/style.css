@@ -1100,12 +1100,17 @@ select:focus-visible,
   box-shadow: var(--ctl-shadow);
 }
 
+/* The same lit face the CONSOLE chips take, and for the same measured reason: on
+   the light theme's --led (#e8920f) the dark ink reaches APCA Lc 55.4, short of
+   the Lc 60 floor, where --led-face (#ffc24d) reaches 76. Dark is unaffected —
+   --led-face resolves to --led there. The rim goes to --led-ink so the brighter
+   face does not bleed into a light panel. */
 #inspector .toggle button.on,
 .prefs-toggle button.on,
 .udk-banks button[aria-pressed="true"] {
   color: var(--on-accent-ink);
-  background: var(--led);
-  border-color: var(--led);
+  background: var(--led-face);
+  border-color: var(--led-ink);
 }
 
 /* Read-only toggle (e.g. CH -> FX Pre/Post, which the device rejects from
