@@ -650,6 +650,18 @@ with no halo and said nothing.
 > `WIRE_GROUP` itself — re-splitting a group has to be a decision, not a drift. The `--rail-*` and
 > `--canvas-bg` pairs still have nothing checking them.
 
+> **What a theme switch repaints, and what it does not.** `applyResolvedTheme()` in `main.ts` is the
+> funnel for surfaces a CSS variable cannot reach on its own: the SVG graph (built from a palette) and
+> an open tuning screen's plot (a canvas that reads its theme tokens once per render — and auto mode
+> can flip underneath it with no press at all). **The CONSOLE is deliberately not in that funnel, and
+> that is now an assumption rather than a free ride.** Its scribble ink stopped being a stylesheet
+> value when `inkOn()` began picking black or white from the ground it lands on: for a strip wearing a
+> rail colour, that ground is a theme token, so the inline ink a switch leaves behind was computed
+> against the ground that just left. Measured 2026-08-07: harmless, because **all five rails resolve to
+> white in both themes**, so the stale answer is the right one. Move a rail to a ground where the two
+> themes disagree and it becomes a strip inked for the theme that left; the fix is one
+> `consoleView.refresh()` in that funnel, at the cost of one strip rebuild per switch.
+
 PNG and PDF export (`core/storage.ts`) paint the background from the export palette — the active
 theme by default, or the fixed theme chosen in Preferences (the export clone renders under that
 palette; see the Preferences section). The PDF is a hand-built single-page document embedding one
