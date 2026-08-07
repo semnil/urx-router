@@ -498,28 +498,26 @@ export async function midiOpenInput(port: string, onMessage: (bytes: number[]) =
 // already reach the frontend. The payload is JSON both frontends encode themselves;
 // the Rust side is the wire, not a participant.
 
-/** Open the MIDI control window, or raise it when it is already up. Geometry is the
- *  frontend's to remember (it rides with the rest of the MIDI settings). */
-export function openMidiWindow(
-  title: string,
-  geometry?: { x: number; y: number; width: number; height: number },
-): Promise<void> {
-  return invoke<void>("open_midi_window", { title, ...(geometry ?? {}) });
+/** Open the MIDI control window, or raise it when it is already up. Only the title
+ *  crosses: it is localized, and where the window sits is the shell's to remember. */
+export function openMidiWindow(title: string): Promise<void> {
+  return invoke<void>("open_midi_window", { title });
 }
 
 export function closeMidiWindow(): Promise<void> {
   return invoke<void>("close_midi_window");
 }
 
-/** Raise the MIDI window: called when learn turns on and when a binding lands, so a
- *  window that drifted behind the app comes back for the moment it matters. */
+/** Raise the MIDI window: called when learn turns on, so the panel comes forward
+ *  for the moment it matters even if another application is covering the app. */
 export function focusMidiWindow(): Promise<void> {
   return invoke<void>("focus_midi_window");
 }
 
-/** The MIDI window's position and size, or null when it is not up. */
-export function midiWindowGeometry(): Promise<[number, number, number, number] | null> {
-  return invoke<[number, number, number, number] | null>("midi_window_geometry");
+/** Whether the MIDI window is up. The shell is the only side that knows: the window
+ *  outlives a reload of this page and announces itself only on its own boot. */
+export function midiWindowOpen(): Promise<boolean> {
+  return invoke<boolean>("midi_window_open");
 }
 
 /** Register the main window's receiver for the MIDI window's intents. */

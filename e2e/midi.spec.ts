@@ -158,7 +158,7 @@ test.beforeEach(async ({ page }) => {
           // page); the shell command only has to succeed and be observable.
           // The shell owns the window's existence, which is why it survives a
           // reload of THIS page: localStorage stands in for that, so
-          // midi_window_geometry can still answer "there is a window".
+          // midi_window_open can still answer "there is a window".
           case "open_midi_window":
             state.windowOpened = true;
             localStorage.setItem("urx-test-midiwin", "1");
@@ -168,8 +168,8 @@ test.beforeEach(async ({ page }) => {
             return Promise.resolve();
           case "focus_midi_window":
             return Promise.resolve();
-          case "midi_window_geometry":
-            return Promise.resolve(localStorage.getItem("urx-test-midiwin") ? [0, 0, 440, 620] : null);
+          case "midi_window_open":
+            return Promise.resolve(!!localStorage.getItem("urx-test-midiwin"));
           case "midi_ui_attach_main":
             toMain = args.channel as Channel;
             return Promise.resolve();
