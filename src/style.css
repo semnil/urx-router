@@ -27,6 +27,13 @@
      1.90-2.20:1, so every place that paints the accent as text reads this
      instead. */
   --led-ink: var(--led);
+  /* The accent as a lit FACE. A lamp does not change colour with the room, so
+     the light theme lights the same face the dark one does; only the ink and
+     the rim differ. */
+  --led-face: var(--led);
+  /* Ink on any lit accent face. Dark in both themes: the light --led carries
+     ~7.6:1 with this and ~2.5:1 with white. */
+  --on-accent-ink: #14110d;
 
   --ctl-bg: #221c13;
   --ctl-bg2: #2c2517;
@@ -111,6 +118,7 @@
      this replaces in three places, reaches only 4.27 on the amber-tinted PAN
      face and would need an exception there. */
   --led-ink: #755407;
+  --led-face: #ffc24d;
 
   --ctl-bg: #e9e2d3;
   --ctl-bg2: #f6f2ea;
@@ -1062,7 +1070,7 @@ select:focus-visible,
   height: 20px;
   margin-top: -8px;
   border-radius: 3px;
-  background: linear-gradient(180deg, #ffd36b, #c9882a);
+  background: var(--seg);
   border: 1px solid #6b4a18;
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.55),
@@ -1081,7 +1089,7 @@ select:focus-visible,
   width: 13px;
   height: 20px;
   border-radius: 3px;
-  background: linear-gradient(180deg, #ffd36b, #c9882a);
+  background: var(--seg);
   border: 1px solid #6b4a18;
 }
 
@@ -1108,7 +1116,7 @@ select:focus-visible,
 #inspector .toggle button.on,
 .prefs-toggle button.on,
 .udk-banks button[aria-pressed="true"] {
-  color: #14110d;
+  color: var(--on-accent-ink);
   background: var(--led);
   border-color: var(--led);
 }
@@ -1429,7 +1437,7 @@ select:focus-visible,
   border-radius: 8px;
   font-size: 10px;
   font-weight: 700;
-  color: #14110d;
+  color: var(--on-accent-ink);
   background: var(--led);
   box-shadow: 0 0 7px rgba(255, 194, 77, 0.45);
 }
@@ -1553,7 +1561,7 @@ select:focus-visible,
 /* Hide is the primary action — amber console segment, dark ink. */
 .selbar-hide {
   font-weight: 600;
-  color: #1a1408;
+  color: var(--on-accent-ink);
   background: var(--seg);
 }
 
@@ -1975,19 +1983,16 @@ select:focus-visible,
 .con-chip.on,
 .con-sl.on,
 .con-slp.on {
-  background: var(--led);
-  color: #14110d;
-  border-color: transparent;
+  background: var(--led-face);
+  color: var(--on-accent-ink);
+  /* The rim is what keeps the lit face from bleeding into a light panel; it is
+     the ink's own darkness, so it never competes with the label. */
+  border-color: var(--led-ink);
 }
 .con-chip.mute.on {
   background: var(--mute-on);
   color: #fff;
   border-color: transparent;
-}
-[data-theme="light"] .con-chip.on,
-[data-theme="light"] .con-sl.on,
-[data-theme="light"] .con-slp.on {
-  color: #fff;
 }
 .con-gain {
   display: flex;
@@ -2888,12 +2893,10 @@ select:focus-visible,
   background: var(--ctl-bg);
   color: var(--text-dim);
 }
-/* Amber ink is dark in both themes, matching the toggle faces (the light
-   amber #e8920f carries ~7.6:1 contrast with #14110d vs ~2.5:1 with white). */
 .consent-btn-primary {
   background: var(--led);
   border-color: var(--led);
-  color: #14110d;
+  color: var(--on-accent-ink);
   font-weight: 600;
 }
 /* Third-party license notice, rendered as app DOM (ui/licenses.ts parses the
@@ -3341,6 +3344,16 @@ select:focus-visible,
     outline-color: color-mix(in srgb, var(--led) 30%, transparent);
   }
 }
+/* The only animation here with no end: learn mode arms a control and it pulses
+   until the binding lands. Measured on a real learn, the two phases differ by
+   13,140 pixels over the fader's full height — large enough that leaving it
+   running is the kind of motion this query exists to stop. The solid outline
+   stays, so the armed control is still marked. */
+@media (prefers-reduced-motion: reduce) {
+  .midi-target.midi-armed {
+    animation: none;
+  }
+}
 .midi-target.midi-mapped {
   position: relative;
 }
@@ -3461,7 +3474,7 @@ select:focus-visible,
 .mw-learnbtn.on {
   border-color: var(--led);
   background: var(--seg);
-  color: #241b09;
+  color: var(--on-accent-ink);
 }
 .mw-hint {
   flex: 1;
@@ -3612,7 +3625,7 @@ select:focus-visible,
 }
 .gt-ch {
   font-size: 11px;
-  color: #14110d;
+  color: var(--on-accent-ink);
   background: var(--led);
   border-radius: 2px;
   padding: 1px 7px;
