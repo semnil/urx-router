@@ -20,22 +20,34 @@
     <meta property="og:site_name" content="URX Router" />
     <meta property="og:locale" content="en_US" />
     <meta property="og:locale:alternate" content="ja_JP" />
-    <meta property="og:title" content="URX Router — YAMAHA URX22 / URX44 / URX44V routing planner &amp; unofficial mixer control" />
+    <meta
+      property="og:title"
+      content="URX Router — YAMAHA URX22 / URX44 / URX44V routing planner &amp; unofficial mixer control"
+    />
     <meta
       property="og:description"
       content="Plan and visualize routing for the YAMAHA URX22 / URX44 / URX44V in the browser. The desktop app adds save/load, image export, and unofficial full-mixer control (read / write / live sync)."
     />
-    <meta property="og:image" content="https://raw.githubusercontent.com/semnil/urx-router/main/docs/assets/screenshot-en.png" />
+    <meta
+      property="og:image"
+      content="https://raw.githubusercontent.com/semnil/urx-router/main/docs/assets/screenshot-en.png"
+    />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="675" />
     <meta property="og:image:alt" content="URX Router showing a URX44V routing plan in the dark studio-rack theme" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="URX Router — YAMAHA URX22 / URX44 / URX44V routing planner &amp; unofficial mixer control" />
+    <meta
+      name="twitter:title"
+      content="URX Router — YAMAHA URX22 / URX44 / URX44V routing planner &amp; unofficial mixer control"
+    />
     <meta
       name="twitter:description"
       content="Plan and visualize routing for the YAMAHA URX22 / URX44 / URX44V in the browser. The desktop app adds save/load, image export, and unofficial full-mixer control (read / write / live sync)."
     />
-    <meta name="twitter:image" content="https://raw.githubusercontent.com/semnil/urx-router/main/docs/assets/screenshot-en.png" />
+    <meta
+      name="twitter:image"
+      content="https://raw.githubusercontent.com/semnil/urx-router/main/docs/assets/screenshot-en.png"
+    />
   </head>
   <body>
     <div id="app">
@@ -52,7 +64,14 @@
           <span id="lbl-rate">Rate</span>
           <select id="rate-picker"></select>
         </label>
-        <button id="follow-usb" type="button" class="follow-usb" data-demo-hide data-control-hide aria-pressed="mixed"></button>
+        <button
+          id="follow-usb"
+          type="button"
+          class="follow-usb"
+          data-demo-hide
+          data-control-hide
+          aria-pressed="mixed"
+        ></button>
         <div class="view-tabs" id="view-tabs" role="group" aria-label="View">
           <button id="btn-view-graph" type="button" aria-pressed="true">Graph</button>
           <button id="btn-view-console" type="button" aria-pressed="false">Console</button>
@@ -85,7 +104,14 @@
               <button id="btn-new" class="menu-item" type="button" role="menuitem">New</button>
               <span class="menu-sep" role="separator"></span>
               <button id="btn-open" class="menu-item" type="button" role="menuitem">Open</button>
-              <button id="btn-open-settings" class="menu-item" type="button" role="menuitem" data-experimental-only hidden>
+              <button
+                id="btn-open-settings"
+                class="menu-item"
+                type="button"
+                role="menuitem"
+                data-experimental-only
+                hidden
+              >
                 Import settings file (experimental)
               </button>
               <button id="btn-save" class="menu-item" type="button" role="menuitem">Save</button>
@@ -93,7 +119,9 @@
               <button id="btn-export" class="menu-item" type="button" role="menuitem">Export PNG</button>
               <button id="btn-export-pdf" class="menu-item" type="button" role="menuitem">Export PDF</button>
               <span class="menu-sep" role="separator" data-control-hide></span>
-              <button id="btn-licenses" class="menu-item" type="button" role="menuitem" data-control-hide>Third-party licenses</button>
+              <button id="btn-licenses" class="menu-item" type="button" role="menuitem" data-control-hide>
+                Third-party licenses
+              </button>
             </div>
           </div>
           <button id="btn-share" type="button" data-demo-only hidden>Share URL</button>
@@ -219,7 +247,14 @@
     <div id="dropzone" class="consent-scrim dropzone" aria-hidden="true" hidden>
       <div class="dropzone-box"><span id="dropzone-label"></span></div>
     </div>
-    <div id="consent" class="consent-scrim gate-scrim" role="dialog" aria-modal="true" aria-labelledby="consent-title" hidden>
+    <div
+      id="consent"
+      class="consent-scrim gate-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="consent-title"
+      hidden
+    >
       <div class="consent-box">
         <h2 id="consent-title"></h2>
         <div id="consent-body" class="consent-body"></div>
@@ -230,7 +265,14 @@
         </div>
       </div>
     </div>
-    <div id="load-report" class="consent-scrim gate-scrim" role="dialog" aria-modal="true" aria-labelledby="load-report-title" hidden>
+    <div
+      id="load-report"
+      class="consent-scrim gate-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="load-report-title"
+      hidden
+    >
       <div class="consent-box">
         <h2 id="load-report-title"></h2>
         <p id="load-report-intro" class="load-report-intro"></p>
@@ -241,7 +283,14 @@
         </div>
       </div>
     </div>
-    <div id="rate-choice" class="consent-scrim gate-scrim" role="dialog" aria-modal="true" aria-labelledby="rate-choice-title" hidden>
+    <div
+      id="rate-choice"
+      class="consent-scrim gate-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rate-choice-title"
+      hidden
+    >
       <div class="consent-box">
         <h2 id="rate-choice-title"></h2>
         <p id="rate-choice-intro" class="load-report-intro"></p>
@@ -253,7 +302,14 @@
         </div>
       </div>
     </div>
-    <div id="licenses-modal" class="consent-scrim" role="dialog" aria-modal="true" aria-labelledby="licenses-title" hidden>
+    <div
+      id="licenses-modal"
+      class="consent-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="licenses-title"
+      hidden
+    >
       <div class="consent-box licenses-box">
         <h2 id="licenses-title"></h2>
         <div id="licenses-body" class="lic-body"></div>
