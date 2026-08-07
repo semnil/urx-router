@@ -468,8 +468,35 @@ test("assignment rows form aligned columns whatever each row's option is", async
   // Both rows first: the window renders from a relayed state push, and a column
   // measured while the table still holds one row is measuring a different table.
   await expect(win.locator(".mw-list tbody tr")).toHaveCount(2);
-  const optCell = async (control: string) => (await mapRow(win, control).locator("td.mw-opt").boundingBox())!;
-  const delCell = async (control: string) => (await mapRow(win, control).locator(".mw-del").boundingBox())!;
+  // `boundingBox()` returning null here is the one open flake in this suite: the
+  // element IS there (a missing one times out rather than returning null) but has
+  // no layout box. Twice in 33 full runs, on both machines, with three hypotheses
+  // refuted and no reproduction — so nothing but the state AT THE MOMENT IT
+  // HAPPENS can settle it, and a bare `!` turns that moment into "Cannot read
+  // properties of null" and nothing else. The dump is the settle-condition written
+  // down in reference/work/e2e-flakes.md; read that before re-deriving.
+  const boxOf = async (cell: ReturnType<typeof mapRow>, control: string, what: string) => {
+    const box = await cell.boundingBox();
+    if (box) return box;
+    const dump = await win.evaluate((c) => {
+      const tr = document.querySelector(`tr[data-control="${c}"]`);
+      const td = tr?.querySelector("td.mw-opt") as HTMLElement | null;
+      const host = document.querySelector("#midi-window");
+      return {
+        hidden: document.hidden,
+        visibility: document.visibilityState,
+        rows: document.querySelectorAll(".mw-list tbody tr").length,
+        row: tr?.outerHTML ?? "(no row)",
+        tdRect: td ? JSON.stringify(td.getBoundingClientRect()) : "(no td)",
+        tdDisplay: td ? getComputedStyle(td).display : "(no td)",
+        hostRect: host ? JSON.stringify(host.getBoundingClientRect()) : "(no host)",
+        viewport: `${innerWidth}x${innerHeight}`,
+      };
+    }, control);
+    throw new Error(`no bounding box for ${what} (${control}): ${JSON.stringify(dump)}`);
+  };
+  const optCell = (control: string) => boxOf(mapRow(win, control).locator("td.mw-opt"), control, "td.mw-opt");
+  const delCell = (control: string) => boxOf(mapRow(win, control).locator(".mw-del"), control, ".mw-del");
   const level = await optCell("ch1/level");
   const mute = await optCell("ch1/mute");
   expect(level.x).toBeCloseTo(mute.x, 0);
