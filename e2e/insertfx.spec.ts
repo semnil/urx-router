@@ -323,10 +323,18 @@ test("a write says which node's insert-FX values reach the device", async ({ pag
   // and says nothing about how many commands the write emitted. Waited on the log
   // itself rather than on a status string: which string the flow ends on depends on
   // whether it converged, which is the thing under test.
+  //
+  // The interval has to clear sendConverging's own blind wait between rounds
+  // (SETTLE_TIMEOUT_MS, 300 ms). Sampling faster than that — this polled at 200 ms —
+  // sees the inter-round gap as "stopped" every time and reads the log mid-write, so
+  // the count below became whatever had landed by then: measured 4 on 689 when only
+  // the first round was in and 8 when the second had partly landed, from the same
+  // build. That is what made this case flaky; it was never a timing accident.
+  const POLL_MS = 500;
   let settled = -1;
-  for (let i = 0; i < 60 && settled !== (await writesOf(page)).length; i++) {
+  for (let i = 0; i < 40 && settled !== (await writesOf(page)).length; i++) {
     settled = (await writesOf(page)).length;
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(POLL_MS);
   }
   expect(settled).toBeGreaterThan(0);
   // And the write went out carrying the engine array ONCE per slot rather than once
