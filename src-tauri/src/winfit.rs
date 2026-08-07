@@ -126,8 +126,37 @@ pub fn frame_delta(outer: PhysicalSize<u32>, inner: PhysicalSize<u32>) -> (u32, 
     )
 }
 
+/// Raise an OUTER rectangle so that the window it describes is at least
+/// `min_inner` — a LOGICAL size, as `tauri.conf.json` and `min_inner_size` both
+/// express it — at the given scale factor.
+///
+/// The remembered geometry is in physical pixels and the minimum is in logical
+/// ones, so the two only line up at one display scale. Restore a rectangle saved
+/// at 100% while the display is at 150% and it describes a window SMALLER than
+/// the app says it can be, and nothing downstream puts it back: **a programmatic
+/// `set_size` is not raised to the minimum**. Measured on Windows — a remembered
+/// 1280x800 came back at 150% as an 854x534 CSS viewport against a configured
+/// 960x640 minimum. Windows enforces a minimum through `WM_GETMINMAXINFO`, which
+/// a user drag goes through and a `SetWindowPos` does not.
+fn at_least(win: Rect, min_inner: (f64, f64), scale: f64, frame: (u32, u32)) -> Rect {
+    let px = |v: f64| {
+        let v = v * scale;
+        if v.is_finite() && v > 0.0 {
+            v.round() as u32
+        } else {
+            0
+        }
+    };
+    Rect {
+        width: win.width.max(px(min_inner.0).saturating_add(frame.0)),
+        height: win.height.max(px(min_inner.1).saturating_add(frame.1)),
+        ..win
+    }
+}
+
 /// Put a window at `want` — its OUTER rectangle — corrected so that it lies
-/// entirely inside a display's work area.
+/// entirely inside a display's work area and is no smaller than `min_inner`
+/// (logical, matching how the minimum is configured).
 ///
 /// `want` is a rectangle about to be applied, not necessarily one the window is
 /// at: at startup the window cannot be read back (see `restore_main_window` in
@@ -136,25 +165,34 @@ pub fn frame_delta(outer: PhysicalSize<u32>, inner: PhysicalSize<u32>) -> (u32, 
 /// A maximized, fullscreen or minimized window is left alone: its rectangle
 /// belongs to the window manager, and setting a position on a maximized window is
 /// how it silently stops being maximized.
-pub fn place_window<R: Runtime>(win: &Window<R>, want: Rect) -> tauri::Result<()> {
+pub fn place_window<R: Runtime>(
+    win: &Window<R>,
+    want: Rect,
+    min_inner: (f64, f64),
+) -> tauri::Result<()> {
     if win.is_maximized()? || win.is_minimized()? || win.is_fullscreen()? {
         return Ok(());
     }
+    // The size setter takes the INNER size, so the frame has to come off the
+    // fitted outer rectangle before it is handed back — handing the outer size
+    // over would grow the window by the height of its own title bar at every
+    // launch. The two are the same number on macOS, where tao reports the content
+    // size for both; on Windows the delta is (16, 39) at 100% and (26, 71) at
+    // 200%, so this is the platform the arithmetic exists for.
+    let outer = win.outer_size()?;
+    let (frame_w, frame_h) = frame_delta(outer, win.inner_size()?);
+    // Raised to the minimum BEFORE the fit, so that the display it is measured
+    // against is the one it will actually occupy.
+    let want = at_least(want, min_inner, win.scale_factor()?, (frame_w, frame_h));
     let areas = work_areas(win)?;
     let Some(work) = host_area(want, &areas) else {
         return Ok(());
     };
+    // A window whose minimum is larger than the work area ends up smaller than
+    // its minimum: fitting wins, and the platform does not raise the result. There
+    // is nothing better to do than pin its top-left corner, which the move below
+    // does.
     let fitted = fit(want, work);
-    // The size setter takes the INNER size, so the frame has to come off the
-    // fitted outer rectangle first — handing the outer size back would grow the
-    // window by the height of its own title bar at every launch. The two are the
-    // same number on macOS, where tao reports the content size for both.
-    //
-    // A window whose minimum size is larger than the work area stays larger than
-    // it: the platform clamps the shrink, and there is nothing better to do than
-    // pin its top-left corner, which the move below does.
-    let outer = win.outer_size()?;
-    let (frame_w, frame_h) = frame_delta(outer, win.inner_size()?);
     if fitted.width != outer.width || fitted.height != outer.height {
         win.set_size(PhysicalSize {
             width: fitted.width.saturating_sub(frame_w),
@@ -172,7 +210,13 @@ pub fn place_window<R: Runtime>(win: &Window<R>, want: Rect) -> tauri::Result<()
 /// position is the truth, which at startup it is NOT — see `restore_main_window`
 /// in lib.rs. Every window built while the event loop runs qualifies, which is
 /// what the `window_fit_plugin` hook relies on.
-pub fn fit_window<R: Runtime>(win: &Window<R>) -> tauri::Result<()> {
+///
+/// `min_inner` is the same logical minimum the window was built with. It is not
+/// redundant with the builder's `min_inner_size`: what this corrects is a size
+/// the window ALREADY has, and it can already be under its minimum — the
+/// window-state plugin's own restore sets a remembered physical size, which a
+/// display-scale change turns into a smaller logical one.
+pub fn fit_window<R: Runtime>(win: &Window<R>, min_inner: (f64, f64)) -> tauri::Result<()> {
     let pos = win.outer_position()?;
     let size = win.outer_size()?;
     place_window(
@@ -183,12 +227,13 @@ pub fn fit_window<R: Runtime>(win: &Window<R>) -> tauri::Result<()> {
             width: size.width,
             height: size.height,
         },
+        min_inner,
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{fit, host_area, Rect};
+    use super::{at_least, fit, host_area, Rect};
 
     // A 1920x1080 display with a 40px taskbar along the bottom, and a second one
     // of the same size to its right.
@@ -280,5 +325,43 @@ mod tests {
     #[test]
     fn nothing_to_fit_to_is_not_an_answer() {
         assert_eq!(host_area(win(0, 0, 1280, 800), &[]), None);
+    }
+
+    // The minimum is logical and the remembered rectangle physical, so the two
+    // only agree at one display scale.
+    const MIN: (f64, f64) = (960.0, 640.0);
+
+    #[test]
+    fn a_remembered_size_at_the_same_scale_is_untouched() {
+        let w = win(208, 208, 1296, 839);
+        assert_eq!(at_least(w, MIN, 1.0, (16, 39)), w);
+    }
+
+    #[test]
+    fn a_rectangle_saved_at_100_percent_is_raised_at_150() {
+        // 1280x800 inner + the 150% frame, which is under 960x640 logical there.
+        let saved = win(208, 208, 1280 + 22, 800 + 56);
+        assert_eq!(
+            at_least(saved, MIN, 1.5, (22, 56)),
+            // 960x640 logical is 1440x960 physical at 1.5.
+            win(208, 208, 1440 + 22, 960 + 56)
+        );
+    }
+
+    #[test]
+    fn a_window_already_over_the_minimum_keeps_its_size() {
+        let big = win(0, 0, 2560, 1392);
+        assert_eq!(at_least(big, MIN, 1.5, (22, 56)), big);
+        // And the position is never touched, at either scale.
+        assert_eq!(at_least(big, MIN, 1.0, (16, 39)).x, 0);
+    }
+
+    #[test]
+    fn no_configured_minimum_raises_nothing() {
+        let w = win(10, 10, 400, 300);
+        assert_eq!(at_least(w, (0.0, 0.0), 2.0, (26, 71)), w);
+        // A nonsense scale factor must not produce a nonsense minimum.
+        assert_eq!(at_least(w, MIN, f64::NAN, (0, 0)), w);
+        assert_eq!(at_least(w, MIN, -1.0, (0, 0)), w);
     }
 }
