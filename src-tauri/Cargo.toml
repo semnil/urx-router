@@ -6,7 +6,9 @@ version = "0.0.0"
 description = "Routing planner for YAMAHA URX series audio interfaces"
 license = "MIT"
 edition = "2021"
-rust-version = "1.77"
+# The template's 1.77 was never a considered floor; tauri-plugin-window-state
+# declares 1.77.2, and every build here (CI and both platforms) runs stable.
+rust-version = "1.77.2"
 
 [lib]
 name = "urx_router_lib"
@@ -34,6 +36,7 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tungstenite = "0.30"
 midir = "0.11"
+tauri-plugin-window-state = "2"
 
 # Power-management bindings for the idle-sleep hold (keepawake.rs). Both are
 # already in their platform's tree (core-foundation via midir -> coremidi,
