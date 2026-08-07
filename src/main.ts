@@ -3036,8 +3036,7 @@ $("btn-view-console").addEventListener("click", () => setView("console"));
 setView(detectView());
 
 // Re-resolve the active theme from the current mode and repaint what reads it:
-// the SVG graph (the console and the rest of the chrome are CSS-variable themed
-// and follow along).
+// the SVG graph, the console's scribble ink, and an open tuning screen's plot.
 function applyResolvedTheme(): void {
   theme = resolveTheme(themeMode);
   document.documentElement.dataset.theme = theme;
@@ -3045,6 +3044,14 @@ function applyResolvedTheme(): void {
   // The funnel for surfaces CSS variables cannot repaint on their own. The graph is SVG
   // built from a palette; a tuning screen's plot is a canvas whose theme tokens are read
   // once per render — and auto mode can flip underneath an open one with no press at all.
+  // The console is deliberately NOT in this set, and that is a live assumption rather
+  // than an oversight: its scribble ink stopped being a stylesheet value when inkOn()
+  // began picking black or white from the ground, which for a rail-coloured strip is a
+  // theme token — so the ink survives a theme switch computed against the ground that
+  // just left. Measured 2026-08-07: harmless, because all five rails resolve to white
+  // in BOTH themes, so the stale answer is the right one. Move a rail to a ground where
+  // the two themes disagree and this becomes a strip inked for the theme that left;
+  // adding consoleView.refresh() here is the fix, and it costs one strip rebuild.
   dynScreen.refresh();
 }
 

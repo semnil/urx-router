@@ -139,6 +139,11 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       w.__urxWrites = writes;
       w.__urxStrWrites = strWrites;
       w.__urxLinkLog = linkLog;
+      // Per-instance state, empty until something writes. x/y default to 0 so a
+      // scalar param has exactly one key whichever way it is addressed.
+      const instance: Record<string, number> = {};
+      const slotKey = (a?: Record<string, unknown>): string =>
+        `${Number(a?.paramId)}:${Number(a?.x ?? 0)}:${Number(a?.y ?? 0)}`;
       (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
         Channel: class {
           onmessage: (data: unknown) => void = () => {};
@@ -157,13 +162,26 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
               epoch: 1,
             });
           }
+          // Reads and writes are addressed by (paramId, x, y), not by paramId alone.
+          // A scalar param has one instance and never notices; an array does — the
+          // six compander engine slots share id 689 and differ only in y, so a store
+          // keyed by id collapses them onto one value. Written that way, a round that
+          // set all six read back as five still differing, and the converging write
+          // spent a second round chasing an artifact of this fixture rather than
+          // anything the app or a real unit does.
+          //
+          // `values` from the spec stays keyed by paramId and seeds EVERY instance:
+          // that is what a spec means by `{ 689: -1000 }`, and per-instance state only
+          // starts existing once something writes it.
           if (cmd === "vd_get") {
+            const at = instance[slotKey(args)];
+            if (at !== undefined) return Promise.resolve(at);
             const v = values[Number(args?.paramId)];
             if (v !== undefined) return Promise.resolve(v);
             return o.failReads ? Promise.reject(new Error("read timeout")) : Promise.resolve(0);
           }
           if (cmd === "vd_set") {
-            values[Number(args?.paramId)] = Number(args?.value);
+            instance[slotKey(args)] = Number(args?.value);
             writes.push([Number(args?.paramId), Number(args?.value)]);
             return Promise.resolve(null);
           }

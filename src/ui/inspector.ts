@@ -157,6 +157,7 @@ import { getSettings } from "../core/settings";
 import { loadJson, saveJson } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
+import { WIRE_GROUP } from "./graph";
 import { setLevelText } from "./glyph";
 import { wheelStep } from "./dom";
 import { fineTag, optInFine } from "./fine";
@@ -2072,11 +2073,10 @@ function recentRow(entry: RecentEntry, onOpen: (path: string) => void): HTMLElem
 function legendBlock(m: Messages): DocumentFragment {
   const frag = document.createDocumentFragment();
   frag.append(subheading(m.inspector.legend.signals));
-  frag.append(legendRow("var(--w-source)", m.inspector.legend.source));
+  frag.append(legendRow("var(--w-select)", m.inspector.legend.source));
   frag.append(legendRow("var(--w-send)", m.inspector.legend.send));
   frag.append(legendPreRow(m.inspector.legend.pre));
-  frag.append(legendRow("var(--w-sendswitch)", m.inspector.legend.sendSwitch));
-  frag.append(legendRow("var(--w-patch)", m.inspector.legend.patch));
+  frag.append(legendRow("var(--w-out)", m.inspector.legend.patch));
   frag.append(legendRecPointRow(m.inspector.legend.recPoint));
   frag.append(subheading(m.inspector.legend.nodes));
   frag.append(legendRow("var(--rail-input)", m.inspector.nodeKind.input, true));
@@ -2147,12 +2147,12 @@ function legendRecPointRow(label: string): HTMLElement {
     wire.setAttribute("fill", "none");
     wire.setAttribute("stroke-width", "1.6");
     wire.setAttribute("stroke-linecap", "round");
-    wire.style.stroke = "var(--w-record)";
+    wire.style.stroke = "var(--w-out)";
     const jack = document.createElementNS(SVG_NS, "circle");
     jack.setAttribute("cx", "6");
     jack.setAttribute("cy", "6.5");
     jack.setAttribute("r", "1.8");
-    jack.style.fill = "var(--w-record)";
+    jack.style.fill = "var(--w-out)";
     return [face, wire, jack];
   });
 }
@@ -2169,11 +2169,13 @@ function legendRow(color: string, label: string, square = false): HTMLElement {
   return row;
 }
 
-function connRow(text: string, kind: string): HTMLElement {
+function connRow(text: string, kind: ConnectionKind): HTMLElement {
   const row = document.createElement("div");
   row.className = "conn-row";
   const dot = document.createElement("span");
-  dot.className = `dot dot-${kind}`;
+  // The dot wears the wire's family, not its kind: the routing list and the board
+  // have to agree, and the board is drawn from WIRE_GROUP.
+  dot.className = `dot dot-${WIRE_GROUP[kind]}`;
   const t = document.createElement("span");
   t.textContent = text;
   row.append(dot, t);

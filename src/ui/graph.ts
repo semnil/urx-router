@@ -2,7 +2,7 @@
 // wires only along legal routes, and highlights legal targets while connecting.
 // Visual attributes are inline so the PNG export matches.
 
-import type { DeviceModel, DeviceNode, NodeKind, PortDirection } from "../models/types";
+import type { ConnectionKind, DeviceModel, DeviceNode, NodeKind, PortDirection } from "../models/types";
 import { fullLabel, hangsUnderHeader, isSingleInput, parseRef, ref } from "../models/types";
 import type { Plan, PlanConnection } from "../core/plan";
 import { hasConnection, LEVEL_MIN_DB, removeConnection } from "../core/plan";
@@ -124,6 +124,27 @@ export type ThemeName = "dark" | "light";
  *  ("CH 1") or the device CH SETTING name ("ch 1"). */
 export type LabelSource = "model" | "device";
 
+/** The three colour families a wire can wear. Six connection kinds share them,
+ *  because colour is the wrong carrier for the distinctions the other three make:
+ *  `key` is a `source` that happens to feed a ducker, `sendSwitch` is a `send`
+ *  with an on/off, and `record` is an output selection that lands on a track. All
+ *  three are already told apart by their endpoints, and spending a hue on each
+ *  cost more than it bought — measured, `record` and `source` were 1.6 OKLab
+ *  apart under deuteranopia, which is to say indistinguishable. */
+export type WireGroup = "select" | "send" | "out";
+
+/** Which family each connection kind is drawn in. Exhaustive by type, so adding a
+ *  kind will not compile until it is placed — the previous shape was an index
+ *  signature with a grey fallback, where a missed kind drew silently. */
+export const WIRE_GROUP: Record<ConnectionKind, WireGroup> = {
+  source: "select",
+  key: "select",
+  send: "send",
+  sendSwitch: "send",
+  patch: "out",
+  record: "out",
+};
+
 interface Palette {
   /** Page background behind the graph — must stay in sync with the matching
    *  --canvas-bg value in style.css (the theme-parity rule). Used as the raster
@@ -141,7 +162,7 @@ interface Palette {
   /** Jack-socket hole and (unconnected) pin. */
   portOuter: string;
   portPinOff: string;
-  wire: Record<string, string>;
+  wire: Record<WireGroup, string>;
   tempWire: string;
   /** Legal-target highlight shown on input ports while connecting. */
   legalFill: string;
@@ -158,7 +179,9 @@ interface Palette {
   noteInk: string;
 }
 
-const PALETTES: Record<ThemeName, Palette> = {
+// Exported for src/ui/palette.contract.test.ts, which is the only thing holding
+// this and style.css's --w-* to the same values.
+export const PALETTES: Record<ThemeName, Palette> = {
   dark: {
     canvasBg: "#14110d",
     nodeFill: "#221b12",
@@ -171,12 +194,9 @@ const PALETTES: Record<ThemeName, Palette> = {
     portOuter: "#0c0a07",
     portPinOff: "#241d12",
     wire: {
-      source: "#59b2ff",
+      select: "#59b2ff",
       send: "#76d690",
-      sendSwitch: "#4fc8b0",
-      patch: "#ffb347",
-      key: "#59b2ff",
-      record: "#b58fe0",
+      out: "#ffb347",
     },
     tempWire: "#caa86a",
     legalFill: "#1d3b2a",
@@ -199,12 +219,12 @@ const PALETTES: Record<ThemeName, Palette> = {
     portOuter: "#d9d0bd",
     portPinOff: "#cabd9f",
     wire: {
-      source: "#1f6fc8",
-      send: "#1f8a52",
-      sendSwitch: "#13836f",
-      patch: "#b8700a",
-      key: "#1f6fc8",
-      record: "#7a52c0",
+      select: "#1f6fc8",
+      // The teal the light theme used for `sendSwitch`, not the green it used for
+      // `send`: on the light board it holds 3.97 against the canvas where the green
+      // holds less, and the two were 5.3 OKLab apart — too close to be two colours.
+      send: "#13836f",
+      out: "#b8700a",
     },
     tempWire: "#9a8d70",
     legalFill: "#cde7d6",
@@ -1458,7 +1478,7 @@ export class Graph {
     }
     g.append(hit);
 
-    const color = this.palette.wire[conn.kind] ?? "#888";
+    const color = this.palette.wire[WIRE_GROUP[conn.kind]];
     // A pre-fader send is dashed and tagged so it reads at a glance without
     // opening the inspector; POST (the default) stays solid and unmarked.
     const isPre = sendHasTap(this.model, conn.from, conn.to) && conn.params?.tap === "pre";

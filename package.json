@@ -22,7 +22,7 @@
     "test:e2e:race:webkit": "playwright test --project=race-webkit",
     "check:md": "node scripts/check-md-tables.mjs",
     "check:assets": "node scripts/check-assets-index.mjs",
-    "format": "prettier --write \"src/**/*.ts\" \"e2e/**/*.ts\" \"scripts/**/*.mjs\" \"*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\" \"src/**/*.css\" \"e2e/**/*.ts\" \"scripts/**/*.mjs\" \"*.ts\" \"index.html\"",
     "preview": "vite preview --port 4173 --strictPort",
     "e2e:serve": "node scripts/e2e-serve.mjs",
     "e2e:serve:trace": "node scripts/e2e-serve.mjs --trace",
