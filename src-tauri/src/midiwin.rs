@@ -18,6 +18,11 @@ use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 /// The MIDI window's label, shared with the window-event routing in lib.rs.
 pub const MIDI_WINDOW: &str = "midi";
 
+/// The panel's smallest useful INNER size, in logical pixels. Named once because
+/// it is used twice — building the window, and correcting a restored one, which
+/// can come back under it after a display-scale change (`winfit::at_least`).
+const MIN_INNER: (f64, f64) = (360.0, 320.0);
+
 #[derive(Default)]
 pub struct MidiUiState {
     /// Set while the MIDI window is up; the main window's state pushes land here.
@@ -101,7 +106,7 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     let win = WebviewWindowBuilder::new(&app, MIDI_WINDOW, WebviewUrl::App("midi.html".into()))
         .title(title)
         .inner_size(440.0, 620.0)
-        .min_inner_size(360.0, 320.0)
+        .min_inner_size(MIN_INNER.0, MIN_INNER.1)
         .resizable(true)
         .parent(&main)
         .map_err(|e| format!("midi-window: {e}"))?
@@ -114,7 +119,7 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // window was born at. By the time `build()` returns, it has landed. A window
     // that cannot be measured is not worth failing an open for: the panel is up and
     // usable either way.
-    if let Err(e) = crate::winfit::fit_window(&win.as_ref().window()) {
+    if let Err(e) = crate::winfit::fit_window(&win.as_ref().window(), MIN_INNER) {
         eprintln!("midi-window fit: {e}");
     }
     Ok(())

@@ -1922,9 +1922,19 @@ brought inside: moved first, and shrunk only when it is larger than the work are
 belongs to is the one it overlaps most, or — when it overlaps none, which is what unplugging that display
 looks like — the one whose center is nearest, so a window comes back to the side of the desk it was on.
 This exists because the plugin's own guard is weaker; `winfit.rs`'s header states how, and against which
-version of it. The arithmetic is a pure function over rectangles (`fit` / `host_area`) and is covered by `cargo test`; a
-window whose minimum size exceeds the work area stays larger than it, with its top-left corner pinned,
-because the platform clamps the shrink and there is nothing better to do.
+version of it. The arithmetic is a pure function over rectangles (`fit` / `host_area` / `at_least`) and is
+covered by `cargo test`.
+
+**A restored window is also raised to its own minimum.** The remembered size is in physical pixels and the
+configured minimum in logical ones, so the two agree at one display scale only: a rectangle saved at 100%
+and restored at 150% describes a window smaller than the app says it can be. Nothing downstream puts it
+back — measured on Windows, **a programmatic size is not raised to the minimum**, because the platform
+enforces one through the message a user drag goes through and a programmatic move does not. `at_least`
+therefore raises the rectangle before it is fitted, using the window's current scale factor, and each
+window passes its own minimum in: the main window's is read from the running configuration, the MIDI
+window's is the one constant its builder also uses. A window whose minimum exceeds the work area still
+ends up smaller than that minimum — fitting wins, its top-left corner is pinned, and there is nothing
+better to do.
 
 **The correction is applied to numbers, not to a window.** At startup a window cannot be read back: a
 `set_position` issued from the setup hook is queued, and both that hook and `RunEvent::Ready` still report
@@ -1943,10 +1953,21 @@ that way has to make the same call.
 **The MIDI window is a child of the main window**, which is what keeps it in front: on Windows an owned
 window is always above its owner in the z-order, and on macOS `addChildWindow` orders it above the parent
 within the app. Deliberately not "always on top", which would put the panel above every other application
-for the whole session. What being a child costs on macOS, measured: the MIDI window **moves with** the main
-window (the same delta, to the pixel) and is hidden while the main window is minimized. `focus_midi_window`
-still exists and is still called when learn turns on — raising the app above another application is a
-different thing from ordering these two windows against each other.
+for the whole session. `focus_midi_window` still exists and is still called when learn turns on — raising
+the app above another application is a different thing from ordering these two windows against each other.
+
+What being a child costs, measured on both platforms — and **the two do not agree**:
+
+| | macOS | Windows |
+| --- | --- | --- |
+| Stays above its owner | yes | yes, even with the owner activated and raised |
+| Hidden while the owner is minimized | yes | yes |
+| **Moves with the owner** | **yes**, the same delta to the pixel | **no**, it stays where it is |
+
+The Windows answer is structural rather than incidental: the panel is a top-level **owned** window, not a
+child of the main window's client area, and the window manager only moves the latter with its parent — so
+there is nothing that could implement the follow, whatever issues the move. Measured through a drag's own
+message sequence as well as a plain programmatic move.
 
 `--reset-storage` clears the remembered geometry as well as `localStorage`. The state file is read during
 the plugin's own setup, so the delete has to happen before that; it is a plugin of its own, registered

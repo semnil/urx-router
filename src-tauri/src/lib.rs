@@ -321,22 +321,38 @@ fn restore_main_window(app: &tauri::AppHandle) {
                 width: s.width + frame_w,
                 height: s.height + frame_h,
             };
-            winfit::place_window(&win, want).and_then(|()| {
-                if s.maximized {
-                    win.maximize()?;
-                }
-                Ok(())
-            })
+            winfit::place_window(&win, want, configured_min_inner(app, MAIN_WINDOW)).and_then(
+                |()| {
+                    if s.maximized {
+                        win.maximize()?;
+                    }
+                    Ok(())
+                },
+            )
         }
         // Nothing saved is a first launch. The platform placed the window and
         // nothing has moved it, so its own reported rectangle is the truth — the
         // ordinary read-then-correct applies. It is still worth doing: the
         // configured size can be taller than a small display's work area.
-        None => winfit::fit_window(&win),
+        None => winfit::fit_window(&win, configured_min_inner(app, MAIN_WINDOW)),
     };
     if let Err(e) = placed {
         eprintln!("window place: {e}");
     }
+}
+
+/// A window's configured minimum INNER size, in LOGICAL pixels, as `winfit` wants
+/// it. Read from the running configuration rather than repeated here, so that
+/// changing `minWidth` / `minHeight` in `tauri.conf.json` cannot leave a second
+/// number behind. Zeroes when the window declares no minimum, which raises
+/// nothing.
+#[cfg(desktop)]
+fn configured_min_inner(app: &tauri::AppHandle, label: &str) -> (f64, f64) {
+    use tauri::Manager;
+    let Some(cfg) = app.config().app.windows.iter().find(|w| w.label == label) else {
+        return (0.0, 0.0);
+    };
+    (cfg.min_width.unwrap_or(0.0), cfg.min_height.unwrap_or(0.0))
 }
 
 /// One window's entry in the window-state plugin's file, as this side needs it.
