@@ -425,8 +425,9 @@ carries a one-line map of the same directories and points here.
   removes it from the candidates, which is a different claim; see `docs/{en,ja}/known-issues.md`) + the MIDI
   control window and the relay between it and the main window (`midiwin.rs`: `open_midi_window` — async on
   purpose, since building a webview from a blocking command deadlocks on Windows — `close_midi_window`,
-  `focus_midi_window`, `midi_window_geometry`, and four Channel relay commands; the main window's
-  destruction closes it, and its own closing drops learn mode) + MIDI bridge commands
+  `focus_midi_window`, `midi_window_open`, and four Channel relay commands; the main window's
+  destruction closes it, and its own closing drops learn mode) + where each window was and whether it is
+  still on a display (`winfit.rs` + `tauri-plugin-window-state`; see "Window geometry") + MIDI bridge commands
   (`midi_list_inputs/outputs`; `midi_open_input` delivers received bursts over a Tauri Channel;
   `midi_close_input`; `midi_open_output/midi_close_output`; `midi_send`; `midi_open_ports` answers which
   ports are open, since a native close cannot be reported to the page it happens to. Uses midir;
@@ -931,11 +932,12 @@ bursts to the window that opened it, so a window with no plan must never open on
 window pushes and reports intents back (`ui/midi-protocol.ts`); everything that decides what it shows stays in
 `ui/midi.ts`. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
-`invoke`, so the second window needs no capability beyond core. Its geometry is remembered in `urx-midi` and
-passed to the next open. Closing the main window closes it; closing it drops learn mode, which would otherwise
-stay armed against a control nothing on screen names.
+`invoke`, so the second window needs no capability beyond core. Where it sits is the shell's to remember (see
+"Window geometry"), and it is built as a **child** of the main window, so it cannot fall behind it. Closing the
+main window closes it; closing it drops learn mode, which would otherwise stay armed against a control nothing
+on screen names.
 
-Because it is a window rather than an overlay it can drift behind the app, so two things bring the binding back
+Because it is a window rather than an overlay it can drift behind ANOTHER APPLICATION, so two things bring the binding back
 to where the operator is looking: it **raises itself when learn turns on** (a plain `set_focus`, not
 always-on-top — that would cover the app for a session to solve a problem lasting a gesture), and every bound
 control carries **its address as a tooltip** (`CH 1 CC 21`), which costs no layout and is readable with the
@@ -971,7 +973,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   that count back at zero — so finished opens are counted too and the count is compared across the trip.
   `src-tauri/src/midiwin.rs` adds the window itself: `open_midi_window` (async on purpose —
   building a webview from a blocking command deadlocks on Windows), `close_midi_window`, `focus_midi_window`,
-  `midi_window_geometry`, and the four relay commands.
+  `midi_window_open`, and the four relay commands. The window is built as a **child of the main window**, so
+  it cannot fall behind it; see "Window geometry".
 - **Mapping (core/midi/)** — pure, language-agnostic logic. `message.ts` decodes/encodes CC / note / pitch
   bend; `mapping.ts` holds the free-mapping model (address, take-in mode) plus persistence validation (a
   persisted mapping in the removed "relative" take-in mode migrates to absolute on load, and the STEREO /
@@ -1854,6 +1857,56 @@ free-form strings (`Function` / `Parameter 1` / `Parameter 2`) that the device s
 validates, so the app owns the exact user-guide spelling: picking a function re-seeds both parameter
 columns from the catalog, and all three are always written together. A partial write is not reconciled by
 the device — it would leave the unit showing a triple no menu could have produced.
+
+## Window geometry
+
+Two OS windows exist: `main`, declared in `tauri.conf.json`, and `midi`, built on demand by
+`open_midi_window`. Three rules apply to both, and all three live in the shell — nothing about where a
+window sits reaches the frontend any more.
+
+**Where each window was is remembered.** `tauri-plugin-window-state` keeps a position, a size and the
+maximized flag per window label in `<app config dir>/.window-state.json`, written when a window closes and
+when the app exits. `VISIBLE` and `FULLSCREEN` are deliberately outside the saved set: restoring a window
+that was hidden at quit as hidden is an app with no window and no way to ask for one, and fullscreen is a
+mode entered for a session rather than a place a window sits. The MIDI window used to remember its own
+rectangle in `localStorage`, beside the port choice and the mappings; that half is gone, and both windows
+are now remembered the same way, in one place.
+
+**A window is never placed outside a display.** `winfit.rs` corrects a remembered rectangle against the
+work areas of the attached displays — each monitor minus its menu bar / taskbar. The whole window is
+brought inside: moved first, and shrunk only when it is larger than the work area itself. The display it
+belongs to is the one it overlaps most, or — when it overlaps none, which is what unplugging that display
+looks like — the one whose center is nearest, so a window comes back to the side of the desk it was on.
+This exists because the plugin's own guard is weaker; `winfit.rs`'s header states how, and against which
+version of it. The arithmetic is a pure function over rectangles (`fit` / `host_area`) and is covered by `cargo test`; a
+window whose minimum size exceeds the work area stays larger than it, with its top-left corner pinned,
+because the platform clamps the shrink and there is nothing better to do.
+
+**The correction is applied to numbers, not to a window.** At startup a window cannot be read back: a
+`set_position` issued from the setup hook is queued, and both that hook and `RunEvent::Ready` still report
+the position the window was BORN at — measured, after assuming the opposite. A read-then-correct at either
+point is therefore worse than nothing: it finds the birth rectangle, declares it fine, and the restore
+moves the window off the display afterwards. So the main window's restore is taken away from the plugin
+(`skip_initial_state`), and its saved rectangle is read from the state file, corrected, and applied once.
+The MIDI window keeps the plugin's restore, because it is built from a command while the event loop is
+running — its restore has landed by the time `build()` returns, so reading it back is sound. Only by then,
+though: a plugin hook of our own, registered behind the window-state plugin so that any future window would
+inherit the correction, was tried and **measured not to work** — inside a `window_created` hook the window
+still reports the position it was born at, because a `set_position` issued from one is queued exactly like one
+issued at startup. The correction therefore sits at the end of `open_midi_window`, and a third window built
+that way has to make the same call.
+
+**The MIDI window is a child of the main window**, which is what keeps it in front: on Windows an owned
+window is always above its owner in the z-order, and on macOS `addChildWindow` orders it above the parent
+within the app. Deliberately not "always on top", which would put the panel above every other application
+for the whole session. What being a child costs on macOS, measured: the MIDI window **moves with** the main
+window (the same delta, to the pixel) and is hidden while the main window is minimized. `focus_midi_window`
+still exists and is still called when learn turns on — raising the app above another application is a
+different thing from ordering these two windows against each other.
+
+`--reset-storage` clears the remembered geometry as well as `localStorage`. The state file is read during
+the plugin's own setup, so the delete has to happen before that; it is a plugin of its own, registered
+ahead of it.
 
 ## Responsive layout (mobile)
 
