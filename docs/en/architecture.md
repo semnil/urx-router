@@ -668,6 +668,50 @@ theme by default, or the fixed theme chosen in Preferences (the export clone ren
 palette; see the Preferences section). The PDF is a hand-built single-page document embedding one
 FlateDecode image (deflate via the platform `CompressionStream`), so no runtime dependency is added.
 
+## Windows high contrast (forced colors)
+
+A Windows contrast theme turns on the CSS `forced-colors` mode, which replaces every background and
+every text colour with a handful of OS system colours, deletes `box-shadow` outright, and paints an
+opaque backplate behind text. Anything this UI says with colour alone stops saying it: measured before
+the rule block existed, the default board's 51 lit chips and 73 unlit ones all computed to the same
+colour — one rectangle each, with no way to tell an engaged control from an idle one.
+
+Two mechanisms survive, and the one `@media (forced-colors: active)` block in `src/style.css` is built
+from them. Nothing in it touches a declaration used outside the query, so the ordinary themes stay
+pixel-identical.
+
+- **An outline.** An engaged control takes `3px double CanvasText`, the one weight the system palette
+  cannot flatten into its neighbours. Anything whose job is to mark a position or a path — the knob
+  pointer, the fader and mini-fader cap bars, the 0-dB lines, and the slot each cap rides in — trades
+  its fill for an outline of the same geometry.
+- **An island.** A surface whose colours ARE the reading — the scribble's device colour, the meters'
+  green/yellow/red zones, the board's whole vocabulary of wires and rails — opts out with
+  `forced-color-adjust: none`. Forcing those into two system colours would not raise contrast, it would
+  delete the information. The board additionally takes a rim so the island still has an edge.
+
+A third mechanism exists but is narrow: a **system** colour may still be used as a fill. The fader caps
+take `background: Canvas` for one reason only — to keep occluding the groove and the 0-dB line the way
+an opaque cap does in the ordinary themes, which is the layering the 0-dB rule is written against. An
+*author* colour cannot be used this way; the mode replaces it.
+
+Two traps are worth stating, because each has already produced a defect here.
+
+- **The mini-fader repeats the fader's parts under its own selectors.** `.con-vfad` shares the groove /
+  cap / 0-dB grammar with `.con-fader` by convention and not by selector, so a rule naming one does not
+  reach the other. The first version of the block named only `.con-fader`, and the mini-fader silently
+  lost its 0-dB line and its cap bar.
+- **A state's own rule can out-specify the block.** A media query adds no specificity, so
+  `.con-scol.off .con-vfad .cap::after` (four classes) beats `.con-vfad .cap::after` (two) and kept a
+  filled bar in a send column that had been switched off. Every state that repaints one of these parts
+  has to be named in the block.
+
+`e2e/forced-colors.spec.ts` pins all of the above under Chromium's emulation of the mode and asserts no
+absolute colour — the values belong to the OS theme, not to this app. What the emulation cannot answer
+was measured against a real Windows contrast theme in WebView2 (2026-08-07) and held: the system colour
+values are unguessable from their names, the opaque text backplate makes the usual
+`Highlight` / `HighlightText` idiom unreadable, `3px double` resolves as three distinct pixel rows, and
+the meter island keeps its three zones.
+
 ## CONSOLE view (mixer-style level overview)
 
 Alongside the node graph (GRAPH), a second view surveys the same plan as mixer-style vertical strips.
