@@ -575,7 +575,7 @@ The language is switched from the Preferences modal (a dropdown of native names 
 the inspector, and the open modal itself.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
-> `Ducker`, `Bus send`, `Send (ON/OFF)`, `Pre-fader send`. A tooltip that spells out a device
+> `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. A tooltip that spells out a device
 > abbreviation keeps the unit's own wording (`C.INT` → `Cue Interrupt`), and so do the MIDI takeover
 > mode names (`Absolute` / `Pickup`), which name a controller behavior the same way the button
 > behaviors do. The visible canvas element is a **node**; reserve "module" for software modules
@@ -624,16 +624,31 @@ The connection and node colors live in both layers: wire colors as `--w-*` (CSS)
 (graph.ts), and node-rail colors as `--rail-*` (CSS) / `PALETTES.rail`. The inspector's empty-state
 **legend** reads the CSS variables, so it labels exactly the colors the graph draws and follows the theme.
 
+**Six connection kinds share three wire colors.** `WIRE_GROUP` in graph.ts maps each `ConnectionKind`
+to one of `select` / `send` / `out`, and both layers are keyed by that group rather than by the kind:
+`source` and `key` are `select`, `send` and `sendSwitch` are `send`, `patch` and `record` are `out`.
+The three merged distinctions are already carried by geometry — a `key` is a `source` that lands on a
+ducker, a `sendSwitch` is a `send` with an on/off, a `record` is an output selection that lands on a
+microSD track — so a hue spent on each bought nothing and cost separability: measured under
+deuteranopia, the old `record` and `source` were 1.6 apart in OKLab (x100), which is to say the same
+color. `WIRE_GROUP` is `Record<ConnectionKind, WireGroup>`, so a new kind does not compile until it is
+placed; the read site takes no fallback, because the previous `?? "#888"` drew a missed kind in grey
+with no halo and said nothing.
+
 > As with model/rule consistency (device-model.md ↔ models/), **keep the theme palette in sync
 > between the CSS variables in style.css and `PALETTES` in graph.ts** — wire (`--w-*` ↔ `PALETTES.wire`),
 > node rail (`--rail-*` ↔ `PALETTES.rail`), the page background (`--canvas-bg` ↔ `PALETTES.canvasBg`),
 > and the surface colors. The background pair is the one with no on-screen tell: the page reads the CSS
 > variable, while an export under a *fixed* theme rasterizes `canvasBg` instead — so if the two drift, only
 > the exported PNG/PDF is wrong, and only for the theme that is not the active one.
-> The `--w-*` variables back the legend swatches and the inspector routing-list dots. `key` (the ducker
-> key source) shares `source`'s blue and, like `record`, has no legend row of its own, but both carry
-> `--w-key` / `--w-record` CSS variables for the routing-list dots (`.dot-key` / `.dot-record`) alongside
-> their `PALETTES.wire` entries.
+> The `--w-*` variables back the legend swatches and the inspector routing-list dots (`.dot-select` /
+> `.dot-send` / `.dot-out`, named for the group rather than the kind). One more reader sits outside the
+> graph entirely: the MIDI window's ganged-row rail borrows `--w-send` to mean "these move together",
+> which a grep for "wire" will not find.
+> **This pair is the one palette relationship with a test.** `src/ui/palette.contract.test.ts` parses
+> style.css and holds every `--w-*` against `PALETTES.wire`, refuses an orphan on either side, and pins
+> `WIRE_GROUP` itself — re-splitting a group has to be a decision, not a drift. The `--rail-*` and
+> `--canvas-bg` pairs still have nothing checking them.
 
 PNG and PDF export (`core/storage.ts`) paint the background from the export palette — the active
 theme by default, or the fixed theme chosen in Preferences (the export clone renders under that
