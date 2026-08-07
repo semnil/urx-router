@@ -331,6 +331,7 @@ export class Console {
   private meterTap = new Map<string, string>(); // node id → chosen tap key (override)
   private idsCache = { key: "", ids: new Set<string>() }; // visibleIds memo (model + hidden)
   private tapModel = ""; // model id the meterTap map was loaded for
+  private railInk = new Map<string, { color: string; shadow: string }>(); // rail token → ink, per render
   private tapOpenFor: string | null = null; // node whose tap popover is open
   private readonly TAP_STORE = "urx-metertap";
   private readonly SENDS_STORE = "urx-sends-open";
@@ -1136,15 +1137,36 @@ export class Console {
     markMidi(el, id, this.hooks.midi);
   }
 
-  // Paint a scribble with the node's device CH SETTING colour (contrast-picked ink),
-  // or leave the rail fallback when unset. Shared by both strip builders.
-  private paintScribble(scrib: HTMLElement, id: string): void {
-    const color = this.hooks.getPlan().nodeColors?.[id];
-    if (!color) return;
-    scrib.style.background = color;
-    const ink = inkOn(color);
+  // Paint a scribble with the node's device CH SETTING colour, or with the rail
+  // fallback when unset — and pick the ink for whichever ground it ends up being.
+  // The fallback used to return early, which left every rail-coloured scribble on
+  // the stylesheet's fixed ink and no halo at all: measured, four of the five rails
+  // are mid-tones where that ink loses by 30-40 Lc, and two of them reach neither
+  // ink's floor, which is exactly where the halo does the work.
+  private paintScribble(scrib: HTMLElement, m: StripModel): void {
+    const color = this.hooks.getPlan().nodeColors?.[m.id];
+    const ink = color ? inkOn(color) : this.inkForRail(m.rail);
+    if (color) scrib.style.background = color;
+    if (!ink) return;
     scrib.style.color = ink.color;
     scrib.style.setProperty("--scrib-shadow", ink.shadow);
+  }
+
+  // Resolve a rail token to its ink. `rail` is the token reference the strip writes
+  // (`var(--rail-channel)`), so the colour itself lives in the stylesheet and only
+  // the computed root can say what it is. That read is why this is cached and why
+  // render() drops the cache: reading it per strip would put a computed-style read
+  // inside the rebuild loop, which is the shape that costs 25 ms a layout in WebKit.
+  private inkForRail(rail: string): { color: string; shadow: string } | null {
+    const token = /^var\((--[a-z0-9-]+)\)$/.exec(rail)?.[1];
+    if (!token) return null;
+    const hit = this.railInk.get(token);
+    if (hit) return hit;
+    const hex = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+    if (!hex) return null;
+    const ink = inkOn(hex);
+    this.railInk.set(token, ink);
+    return ink;
   }
 
   // The scribble strip: the CH SETTING colour + a power LED, the node name and the
@@ -1153,7 +1175,7 @@ export class Console {
   // STREAMING) the whole scribble is the power button; the LED reflects its state.
   private scribble(m: StripModel): HTMLElement {
     const scrib = el("div", "con-scribble");
-    this.paintScribble(scrib, m.id);
+    this.paintScribble(scrib, m);
     const name = el("div", "name");
     const spec = this.powerSpec(m);
     let led: HTMLElement | undefined;
@@ -1461,6 +1483,11 @@ export class Console {
   }
 
   private render(): void {
+    // The rail inks are resolved from the computed root, so they are theme-dependent
+    // and a render is the only thing that re-derives them. A theme switch does not
+    // trigger one (see applyResolvedTheme in main.ts for why that is currently safe
+    // and what would end it).
+    this.railInk.clear();
     const model = this.hooks.getModel();
     if (this.tapModel !== model.id) {
       this.loadTaps();
@@ -2472,28 +2499,40 @@ export class Console {
   }
 }
 
-// WCAG relative luminance of a #rrggbb colour (0..1).
-function relLum(n: number): number {
-  const ch = (c: number): number => {
-    const s = c / 255;
-    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+// APCA 0.98G-4g lightness contrast (Lc) between a text colour and a background,
+// both #rrggbb as numbers. Unlike a WCAG ratio — which is two relative luminances
+// divided — this carries polarity and the non-linearity of vision at the dark end,
+// and that is exactly where the two disagree: on saturated mid-tones a ratio
+// systematically picks the wrong ink. Measured across the device's ten CH SETTING
+// colours plus the five node rails, the two verdicts differ on 12 of 21 grounds.
+// Only the magnitude is used here, since which ink wins is the whole question.
+function apcaLc(text: number, bg: number): number {
+  const y = (n: number): number => {
+    const ch = (c: number): number => Math.pow(c / 255, 2.4);
+    return 0.2126729 * ch((n >> 16) & 255) + 0.7151522 * ch((n >> 8) & 255) + 0.072175 * ch(n & 255);
   };
-  return 0.2126 * ch((n >> 16) & 255) + 0.7152 * ch((n >> 8) & 255) + 0.0722 * ch(n & 255);
-}
-function contrast(a: number, b: number): number {
-  const la = relLum(a) + 0.05;
-  const lb = relLum(b) + 0.05;
-  return la > lb ? la / lb : lb / la;
+  const soft = (v: number): number => (v > 0.022 ? v : v + Math.pow(0.022 - v, 1.414));
+  const ty = soft(y(text));
+  const by = soft(y(bg));
+  if (Math.abs(by - ty) < 0.0005) return 0;
+  // Normal polarity is dark text on a light ground; reverse polarity gets its own
+  // exponents rather than a sign flip, which is the part a ratio cannot express.
+  const raw =
+    by > ty ? (Math.pow(by, 0.56) - Math.pow(ty, 0.57)) * 1.14 : (Math.pow(by, 0.65) - Math.pow(ty, 0.62)) * 1.14;
+  const clamped = by > ty ? (raw < 0.1 ? 0 : raw - 0.027) : raw > -0.1 ? 0 : raw + 0.027;
+  return Math.abs(clamped) * 100;
 }
 
-// Scribble label ink for a device CH SETTING colour: pick black or white by which
-// gives the higher contrast (a brightness threshold mis-picks on mid-tone reds/
-// purples), and pair it with a faint opposite-tone halo so the small device name
-// stays crisp even over a mid-tone colour neither ink clears cleanly.
+const INK_WHITE = { color: "#fff", shadow: "0 1px 1px rgba(0, 0, 0, 0.55)" };
+const INK_DARK = { color: "#0e0c08", shadow: "0 1px 1px rgba(255, 255, 255, 0.5)" };
+
+// Scribble label ink for a scribble ground: pick black or white by which reads
+// better, and pair it with a faint opposite-tone halo so the small device name
+// stays crisp even over a mid-tone colour neither ink clears cleanly. The halo is
+// not decoration — four of the grounds this runs on reach Lc 60 with neither ink,
+// and there the halo is the only thing holding the glyph edges.
 function inkOn(hex: string): { color: string; shadow: string } {
-  const light = { color: "#fff", shadow: "0 1px 1px rgba(0, 0, 0, 0.55)" };
-  const dark = { color: "#0e0c08", shadow: "0 1px 1px rgba(255, 255, 255, 0.5)" };
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
   const bg = m ? parseInt(m[1], 16) : 0; // unparseable → black bg → white ink
-  return contrast(0xffffff, bg) >= contrast(0x0e0c08, bg) ? light : dark;
+  return apcaLc(0xffffff, bg) >= apcaLc(0x0e0c08, bg) ? INK_WHITE : INK_DARK;
 }

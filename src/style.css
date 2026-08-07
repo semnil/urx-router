@@ -1849,12 +1849,14 @@ select:focus-visible,
   background: var(--rail);
   color: #0e0c08;
   box-shadow: var(--ctl-shadow);
-  /* A faint opposite-tone halo (set per device colour by inkOn) sharpens the name
-     and id over mid-tone CH SETTING colours; none for the default rail case. */
+  /* A faint opposite-tone halo sharpens the name and id over a mid-tone ground.
+     Both this and the colour above are only the fallback: inkOn() in console.ts
+     picks the ink and the halo per ground — device colour or rail alike — and
+     writes them inline, so a stylesheet cannot know the answer. */
   text-shadow: var(--scrib-shadow, none);
 }
-/* Light rails are saturated mid-tones; flip the label text to white so the name
-   stays legible without washing out the rail's identity colour. */
+/* Fallback for a rail whose token cannot be resolved: light rails are saturated
+   mid-tones, so white is the safer guess of the two. */
 [data-theme="light"] .con-scribble {
   color: #fff;
 }
