@@ -15,7 +15,12 @@
   --panel: #191510;
   --line: #38301f;
   --text: #f1e8d6;
-  --text-dim: #ab9b7d;
+  /* The dim tier is a tier, not a fade: it has to stay legible on every ground
+     it lands on. Both themes carry the minimum darkness/lightness that clears
+     4.5:1 there — the light value on four grounds, the dark one on the panel
+     and the control faces (APCA Lc 60, the floor below which neither ink
+     carries a 7-10px silkscreen legend). */
+  --text-dim: #c2b293;
   --led: #ffc24d;
   /* The accent as INK. Dark needs no separate value — a lit lamp on a dark
      face already clears AA as text. Light does: --led on the light grounds is
@@ -99,7 +104,7 @@
   --panel: #efeadf;
   --line: #cec5b1;
   --text: #2a2418;
-  --text-dim: #8a7f68;
+  --text-dim: #6a614e;
   --led: #e8920f;
   /* The darkest amber is not the point — the minimum darkness that clears
      4.5:1 on all six light grounds the accent is written on is. #7a5a08, which
@@ -3668,7 +3673,7 @@ select:focus-visible,
   place-items: center;
   text-align: center;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-dim);
   /* It is a label: it must never swallow a press meant for what it covers, and without
      this it took the Close button's. */
   pointer-events: none;
@@ -3835,7 +3840,9 @@ select:focus-visible,
   font-family: var(--mono);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
-  color: var(--plot-faint);
+  /* --plot-faint is sized for the pinned-dark groove; these numbers sit on the
+     panel, where it measures 2.62:1. The dim tier is the panel's own step. */
+  color: var(--plot-dim);
 }
 .gt-scale .t::before {
   content: "";
@@ -3879,7 +3886,7 @@ select:focus-visible,
   font-size: 8.5px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 .gt-ro .v {
   font-family: var(--mono);
@@ -3895,5 +3902,5 @@ select:focus-visible,
   font-family: var(--mono);
   font-size: 9.5px;
   font-variant-numeric: tabular-nums;
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
