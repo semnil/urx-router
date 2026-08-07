@@ -77,34 +77,46 @@ pub fn notify_closed(app: &AppHandle) {
     }
 }
 
-/// Open the MIDI control window, or raise it when it is already up. Geometry comes
-/// from the frontend (it persists the window's last position with the rest of the
-/// MIDI settings), and so does the title, which is localized.
+/// Open the MIDI control window, or raise it when it is already up. Only the
+/// title comes from the frontend, because it is localized; where the window sits
+/// does not — the window-state plugin restores that from the last session and
+/// `winfit` keeps the answer on a display.
+///
+/// Built as a CHILD of the main window, which is what keeps it in front of it: on
+/// Windows an owned window is always above its owner in the z-order, and on macOS
+/// `addChildWindow` orders it above the parent within the app. Deliberately not
+/// "always on top" — that would put the panel above every other application for
+/// the whole session, which is a far larger promise than the one being made here.
 ///
 /// `async` on purpose: building a webview from a blocking command deadlocks on
 /// Windows.
 #[tauri::command]
-pub async fn open_midi_window(
-    app: AppHandle,
-    title: String,
-    x: Option<f64>,
-    y: Option<f64>,
-    width: Option<f64>,
-    height: Option<f64>,
-) -> Result<(), String> {
+pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), String> {
     if let Some(win) = app.get_webview_window(MIDI_WINDOW) {
         return win.set_focus().map_err(|e| format!("midi-window: {e}"));
     }
-    let mut builder =
-        WebviewWindowBuilder::new(&app, MIDI_WINDOW, WebviewUrl::App("midi.html".into()))
-            .title(title)
-            .inner_size(width.unwrap_or(440.0), height.unwrap_or(620.0))
-            .min_inner_size(360.0, 320.0)
-            .resizable(true);
-    if let (Some(x), Some(y)) = (x, y) {
-        builder = builder.position(x, y);
+    let main = app
+        .get_webview_window(crate::MAIN_WINDOW)
+        .ok_or_else(|| "midi-window: no main window".to_string())?;
+    let win = WebviewWindowBuilder::new(&app, MIDI_WINDOW, WebviewUrl::App("midi.html".into()))
+        .title(title)
+        .inner_size(440.0, 620.0)
+        .min_inner_size(360.0, 320.0)
+        .resizable(true)
+        .parent(&main)
+        .map_err(|e| format!("midi-window: {e}"))?
+        .build()
+        .map_err(|e| format!("midi-window: {e}"))?;
+    // AFTER `build()` on purpose, and it is the only place this can go. The plugin
+    // restores the window from its own `on_window_ready`, and the move that restore
+    // issues has not landed while that hook is running — measured, by trying to do
+    // this from a hook of our own registered behind it and reading the position the
+    // window was born at. By the time `build()` returns, it has landed. A window
+    // that cannot be measured is not worth failing an open for: the panel is up and
+    // usable either way.
+    if let Err(e) = crate::winfit::fit_window(&win.as_ref().window()) {
+        eprintln!("midi-window fit: {e}");
     }
-    builder.build().map_err(|e| format!("midi-window: {e}"))?;
     Ok(())
 }
 
@@ -118,10 +130,10 @@ pub fn close_midi_window(app: AppHandle) -> Result<(), String> {
     }
 }
 
-/// Raise the MIDI window to the front. Called when learn turns on and when a binding
-/// lands, so a window that drifted behind the app comes back for the one moment its
-/// contents matter. Deliberately not "always on top": that would cover the app for
-/// the whole session to solve a problem that lasts a gesture.
+/// Raise the MIDI window to the front. Called when learn turns on, so the panel
+/// comes forward for the one moment its contents matter. Being a child of the main
+/// window puts it in front of THAT already; what this still does is bring the app
+/// itself forward when another application is covering both.
 #[tauri::command]
 pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
     match app.get_webview_window(MIDI_WINDOW) {
@@ -130,13 +142,11 @@ pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
     }
 }
 
-/// The MIDI window's current geometry, for the frontend to persist. None when the
-/// window is not up (nothing to remember) or the platform could not answer.
+/// Whether the MIDI control window exists. The main window asks once at startup:
+/// the window OUTLIVES a reload of the main page (a dev HMR reload is one), and it
+/// announces itself with "ready" on its own boot, so nothing would make it speak
+/// again — the shell is the only side that knows it is there.
 #[tauri::command]
-pub fn midi_window_geometry(app: AppHandle) -> Option<[f64; 4]> {
-    let win = app.get_webview_window(MIDI_WINDOW)?;
-    let scale = win.scale_factor().ok()?;
-    let pos = win.outer_position().ok()?.to_logical::<f64>(scale);
-    let size = win.inner_size().ok()?.to_logical::<f64>(scale);
-    Some([pos.x, pos.y, size.width, size.height])
+pub fn midi_window_open(app: AppHandle) -> bool {
+    app.get_webview_window(MIDI_WINDOW).is_some()
 }

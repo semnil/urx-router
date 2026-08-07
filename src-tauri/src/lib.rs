@@ -11,6 +11,20 @@ mod keepawake;
 mod midi;
 mod midiwin;
 mod vd;
+mod winfit;
+
+/// The main window's label, shared with the Edit menu's delivery target and with
+/// the MIDI window's parent lookup. It is also what `capabilities/default.json`
+/// names, so the string exists in two places that cannot be merged — one more is
+/// one too many.
+pub const MAIN_WINDOW: &str = "main";
+
+/// The launch flag that clears remembered state. Spelled once because it is now
+/// answered in two halves — the frontend's localStorage and the geometry file —
+/// and a rename that reached only one would leave a half-reset that nothing fails
+/// on.
+#[cfg(desktop)]
+const RESET_STORAGE_FLAG: &str = "--reset-storage";
 
 // Every error a command returns is a stable kebab-case code, optionally followed
 // by ": " and a technical detail (an OS message, a path, an address). The frontend
@@ -253,10 +267,192 @@ fn prepare_modified_requested() -> bool {
 // True when launched with --reset-storage: the frontend clears its localStorage
 // (theme / model / meter points / consent gate / …) once on startup before reading
 // any of it, then boots clean. The browser dev app uses the ?reset URL instead.
+// The window geometry is the one remembered thing that is not in localStorage;
+// `reset_window_state_plugin` clears that half, before any window is created.
 #[tauri::command]
 fn reset_storage_requested() -> bool {
     static TAKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    take_launch_action(&TAKEN, "--reset-storage")
+    take_launch_action(&TAKEN, RESET_STORAGE_FLAG)
+}
+
+// Put the main window back where it was, inside a display.
+//
+// The window cannot be read back at startup, so this corrects the NUMBERS and then
+// places the window once. Measured, after assuming the opposite: a `set_position`
+// issued from the setup hook is queued, and both the hook and `RunEvent::Ready`
+// still report the position the window was BORN at — the move only lands once the
+// event loop has run. A read-then-correct at either point therefore reads a
+// rectangle that is about to be replaced, which is worse than doing nothing: it
+// reports the window as fine and then the restore moves it off the display.
+//
+// So the plugin's own restore is skipped for this window (`skip_initial_state`)
+// and its saved rectangle is read here, corrected, and applied. Nothing is read
+// back, so nothing can be stale.
+//
+// A plugin hook was tried instead, so that any future window would inherit the
+// correction with nothing to remember: an `on_window_ready` registered after the
+// window-state plugin's. **Measured, and it does not work** — inside that hook the
+// MIDI window still reports the position it was BORN at even when the plugin has
+// just restored it, because a `set_position` issued from a `window_created` hook
+// is queued the same way one issued at startup is. It only lands before `build()`
+// returns, which is why `open_midi_window` corrects the window there and not here.
+#[cfg(desktop)]
+fn restore_main_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let Some(win) = app.get_webview_window(MAIN_WINDOW) else {
+        return;
+    };
+    let win = win.as_ref().window();
+    let placed = match saved_window_state(app, MAIN_WINDOW) {
+        Some(s) => {
+            // The saved size is the window's INNER size and the saved position its
+            // OUTER one, so the frame has to be added back before the two can be
+            // one rectangle. Measured on the window as it was born, the one moment
+            // its own size is beyond doubt — nothing has asked to change it yet.
+            let Ok((outer, inner)) = win.outer_size().and_then(|o| Ok((o, win.inner_size()?)))
+            else {
+                return;
+            };
+            let (frame_w, frame_h) = winfit::frame_delta(outer, inner);
+            let (x, y) = s.position();
+            let want = winfit::Rect {
+                x,
+                y,
+                width: s.width + frame_w,
+                height: s.height + frame_h,
+            };
+            winfit::place_window(&win, want).and_then(|()| {
+                if s.maximized {
+                    win.maximize()?;
+                }
+                Ok(())
+            })
+        }
+        // Nothing saved is a first launch. The platform placed the window and
+        // nothing has moved it, so its own reported rectangle is the truth — the
+        // ordinary read-then-correct applies. It is still worth doing: the
+        // configured size can be taller than a small display's work area.
+        None => winfit::fit_window(&win),
+    };
+    if let Err(e) = placed {
+        eprintln!("window place: {e}");
+    }
+}
+
+/// One window's entry in the window-state plugin's file, as this side needs it.
+/// Read as data rather than asked for, because the plugin's cache and its
+/// `WindowState` are both crate-private: the only public way to reach a saved
+/// rectangle is the restore this window cannot use. The field names are therefore
+/// a dependency's ON-DISK SCHEMA, not an API — read against
+/// tauri-plugin-window-state 2.4.1, and a bump that renames one is what
+/// `parse_saved_window`'s test exists to catch.
+#[cfg(desktop)]
+#[derive(serde::Deserialize)]
+struct SavedWindow {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    // A maximized window is saved with the rectangle it had BEFORE it was
+    // maximized, which is what un-maximizing goes back to. Defaulted rather than
+    // required: an entry saved before the flag existed is still usable.
+    #[serde(default)]
+    prev_x: i32,
+    #[serde(default)]
+    prev_y: i32,
+    #[serde(default)]
+    maximized: bool,
+}
+
+#[cfg(desktop)]
+impl SavedWindow {
+    /// The outer position to place the window at.
+    fn position(&self) -> (i32, i32) {
+        if self.maximized {
+            (self.prev_x, self.prev_y)
+        } else {
+            (self.x, self.y)
+        }
+    }
+}
+
+/// Pull one label's entry out of the state file's text. Pure so it can be tested
+/// without an app, a window or a display — the same reason `winfit`'s arithmetic
+/// is a pure function.
+#[cfg(desktop)]
+fn parse_saved_window(text: &str, label: &str) -> Option<SavedWindow> {
+    let all: serde_json::Value = serde_json::from_str(text).ok()?;
+    serde_json::from_value(all.get(label)?.clone()).ok()
+}
+
+#[cfg(desktop)]
+fn saved_window_state(app: &tauri::AppHandle, label: &str) -> Option<SavedWindow> {
+    use tauri::Manager;
+    let dir = app.path().app_config_dir().ok()?;
+    // No file is the ordinary first launch and says nothing. A file that exists
+    // and holds no usable entry for this label is a different thing — the schema
+    // moved under us — and it is the one case worth a line, since the symptom
+    // otherwise is only "the app quietly stopped remembering where it was".
+    let text = fs::read_to_string(dir.join(tauri_plugin_window_state::DEFAULT_FILENAME)).ok()?;
+    let saved = parse_saved_window(&text, label);
+    if saved.is_none() {
+        eprintln!("window state: no usable entry for {label}");
+    }
+    saved
+}
+
+// What is remembered per window: a position, a size and the maximized flag,
+// written out when a window closes and when the app exits.
+//
+// VISIBLE is deliberately outside the set: it would restore a window that was
+// hidden when the app quit as hidden, which is an app with no window and no way to
+// ask for one. FULLSCREEN likewise — that is a mode entered for a session, not a
+// place a window sits.
+//
+// Every rectangle the plugin hands back is corrected afterwards, for the reason
+// `winfit`'s header states. The main window opts out of its restore entirely
+// (`restore_main_window` says why) and keeps its saving.
+#[cfg(desktop)]
+fn window_state_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    use tauri_plugin_window_state::StateFlags;
+    tauri_plugin_window_state::Builder::new()
+        .with_state_flags(StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED)
+        .skip_initial_state(MAIN_WINDOW)
+        .build()
+}
+
+// --reset-storage clears what the frontend keeps in localStorage; the window
+// geometry is the one piece of remembered state that lives outside it, in a file
+// the window-state plugin reads during its own setup. The delete has to happen
+// before that read, which is why this is a plugin of its own registered ahead of
+// it rather than a line in the app's setup hook — plugin setups run in
+// registration order, and the app's own runs after all of them.
+//
+// Not routed through `take_launch_action`: that latch exists so a one-shot action
+// cannot re-fire on a page reload, and this one is not reachable from a page at
+// all. It runs once, before the first window exists.
+#[cfg(desktop)]
+fn reset_window_state_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("urx-reset-window-state")
+        .setup(|app, _api| {
+            use tauri::Manager;
+            if !std::env::args().any(|a| a == RESET_STORAGE_FLAG) {
+                return Ok(());
+            }
+            // A missing file is the ordinary first-launch case, and nothing
+            // downstream depends on the delete having happened: with no file the
+            // plugin starts from an empty cache either way.
+            if let Ok(dir) = app.path().app_config_dir() {
+                match fs::remove_file(dir.join(tauri_plugin_window_state::DEFAULT_FILENAME)) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                        eprintln!("reset window state: {e}");
+                    }
+                    _ => {}
+                }
+            }
+            Ok(())
+        })
+        .build()
 }
 
 // The third-party license notice bundled as an app resource (cargo-about output;
@@ -663,6 +859,19 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());
 
+    // Where the operator left each window. Three plugins in a deliberate order —
+    // `PluginStore` runs setups and window hooks in registration order, which is
+    // the whole mechanism: clear the file before it is read, restore from it, then
+    // correct what the restore produced.
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(reset_window_state_plugin())
+        .plugin(window_state_plugin())
+        .setup(|app| {
+            restore_main_window(app.handle());
+            Ok(())
+        });
+
     // The page that owned a device session is being replaced — a dev-server reload, a
     // webview recovering from a crash, the `--reset-storage` reload. Everything the
     // frontend holds is gone with it, INCLUDING the connection epoch that
@@ -720,7 +929,7 @@ pub fn run() {
         //
         // The menu is a nicety, not a device operation: a failed emit leaves the
         // click undone, and there is nothing further to salvage.
-        if let Err(e) = app.emit_to("main", EDIT_MENU_EVENT, id) {
+        if let Err(e) = app.emit_to(MAIN_WINDOW, EDIT_MENU_EVENT, id) {
             eprintln!("edit menu: could not deliver {id}: {e}");
         }
     });
@@ -761,7 +970,7 @@ pub fn run() {
             midiwin::open_midi_window,
             midiwin::close_midi_window,
             midiwin::focus_midi_window,
-            midiwin::midi_window_geometry,
+            midiwin::midi_window_open,
             midiwin::midi_ui_attach_main,
             midiwin::midi_ui_attach_window,
             midiwin::midi_ui_to_main,
@@ -795,6 +1004,57 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    // The main window's label is declared in tauri.conf.json and named again by the
+    // capability file and by MAIN_WINDOW; nothing at runtime notices when one of the
+    // three moves, because a capability that matches no window simply grants nothing
+    // and a mismatched constant simply finds no window. A comment saying "keep these
+    // in sync" would not fail a pull request; this does, and `cargo test` runs on one.
+    #[test]
+    fn the_main_windows_label_is_the_one_the_config_and_the_capability_name() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(
+            conf["app"]["windows"][0]["label"].as_str(),
+            Some(super::MAIN_WINDOW)
+        );
+        let cap: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        assert!(cap["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w.as_str() == Some(super::MAIN_WINDOW)));
+    }
+
+    // The window-state plugin's file is a schema, not an API (see SavedWindow), so
+    // the shape it is read against is pinned here rather than left to be discovered
+    // at the next Dependabot bump — with a real entry, maximized case included.
+    #[test]
+    fn a_saved_window_is_read_at_the_rectangle_it_goes_back_to() {
+        let text = r#"{
+          "main": { "width": 1280, "height": 800, "x": 2392, "y": -110,
+                    "prev_x": 0, "prev_y": 0, "maximized": false,
+                    "visible": true, "decorated": true, "fullscreen": false },
+          "midi": { "width": 440, "height": 620, "x": 900, "y": 40,
+                    "prev_x": 120, "prev_y": 60, "maximized": true,
+                    "visible": true, "decorated": true, "fullscreen": false }
+        }"#;
+        let main = super::parse_saved_window(text, "main").unwrap();
+        assert_eq!(
+            (main.position(), main.width, main.height),
+            ((2392, -110), 1280, 800)
+        );
+        // Maximized: the position is the one un-maximizing goes back to, not the
+        // maximized frame's own origin.
+        let midi = super::parse_saved_window(text, "midi").unwrap();
+        assert_eq!(midi.position(), (120, 60));
+        // An absent label, a label whose entry is missing a required field, and text
+        // that is not JSON all read as "nothing saved" rather than as a default.
+        assert!(super::parse_saved_window(text, "absent").is_none());
+        assert!(super::parse_saved_window(r#"{"main":{"x":1,"y":2}}"#, "main").is_none());
+        assert!(super::parse_saved_window("not json", "main").is_none());
+    }
+
     // A one-shot launch action must survive a page reload without firing again. The
     // frontend asks on every page load; before this latch, `--self-test` re-ran a
     // destructive device sweep on each one, which in `tauri dev` means on each HMR

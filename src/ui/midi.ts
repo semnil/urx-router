@@ -25,7 +25,7 @@ import {
   midiSend,
   midiUiAttachMain,
   midiUiToWindow,
-  midiWindowGeometry,
+  midiWindowOpen,
   openMidiWindow,
 } from "../core/platform";
 import { MidiEngine } from "../core/midi/engine";
@@ -63,8 +63,6 @@ interface MidiStore {
   input?: string;
   output?: string;
   models?: Record<string, unknown>;
-  /** Where the operator last left the MIDI window. */
-  window?: { x: number; y: number; width: number; height: number };
 }
 
 const STORE_KEY = "urx-midi";
@@ -159,13 +157,12 @@ export class MidiControl {
    *  The window can also OUTLIVE this side: reloading the main window (or a dev
    *  HMR reload) leaves it up with a fresh receiver on the other end and nothing to
    *  make it speak again, since "ready" is sent on its boot and not on ours. So the
-   *  shell is asked whether the window is there — geometry answers only for a window
-   *  that exists — and the state is pushed at it. Without this the window sat holding
-   *  the previous session's list. */
+   *  shell is asked whether the window is there, and the state is pushed at it.
+   *  Without this the window sat holding the previous session's list. */
   private async attach(): Promise<void> {
     try {
       await midiUiAttachMain((payload) => this.onIntent(payload));
-      this.windowOpen = (await midiWindowGeometry()) !== null;
+      this.windowOpen = await midiWindowOpen();
       if (this.windowOpen) {
         this.pushState();
         void this.refreshPorts();
@@ -499,7 +496,7 @@ export class MidiControl {
       void closeMidiWindow().catch(() => {});
       return;
     }
-    void openMidiWindow(t().midi.title, this.store().window).catch((err: unknown) => {
+    void openMidiWindow(t().midi.title).catch((err: unknown) => {
       this.hooks.onStatus(midiErrorStatus(err, t().midi.windowError));
     });
     // `windowOpen` is set by the window's own "ready", not here: an open that failed
@@ -526,7 +523,6 @@ export class MidiControl {
         // Learn is armed against a control in a window the operator can no longer
         // see; leaving it on would swallow the next click on the console.
         this.setLearn(false);
-        this.rememberGeometry();
         return;
       case "learn":
         this.setLearn(intent.on);
@@ -594,18 +590,6 @@ export class MidiControl {
   private raiseWindow(): void {
     if (!this.windowOpen) return;
     void focusMidiWindow().catch(() => {});
-  }
-
-  /** Remember where the operator put the window, so the next open lands there. */
-  private rememberGeometry(): void {
-    void midiWindowGeometry()
-      .then((g) => {
-        if (!g) return;
-        const s = this.store();
-        s.window = { x: g[0], y: g[1], width: g[2], height: g[3] };
-        saveJson(STORE_KEY, s);
-      })
-      .catch(() => {});
   }
 
   // Re-enumerate the ports (midir has no hot-plug events, so every open re-lists),

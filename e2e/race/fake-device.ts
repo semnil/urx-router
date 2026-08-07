@@ -181,7 +181,7 @@ export interface FakeHandle {
     inChannel: { onmessage: (b: unknown[]) => void } | null;
     sent: number[][];
     /** The shell's own record of the MIDI control window, which is what
-     *  `midi_window_geometry` answers from — and what survives a reload of the main
+     *  `midi_window_open` answers from — and what survives a reload of the main
      *  page, exactly as the Rust side does. Backed by localStorage rather than a
      *  field, because the window is a second PAGE with its own fake: a boolean would
      *  be two booleans, and the page that closes is not the page that is asked. */
@@ -919,7 +919,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             return null;
           // midiwin.rs — MIDI control is a second OS window, which is a second PAGE
           // here. The shell owns whether it exists (so the record outlives a reload of
-          // this page, and `midi_window_geometry` answers from it), and relays between
+          // this page, and `midi_window_open` answers from it), and relays between
           // the two webviews without ever echoing to the sender.
           case "open_midi_window":
             fake.midi.windowOpens++;
@@ -935,9 +935,9 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             fake.midi.windowFocuses++;
             done();
             return null;
-          case "midi_window_geometry":
+          case "midi_window_open":
             done();
-            return localStorage.getItem("urx-fake-midiwin") ? [0, 0, 440, 620] : null;
+            return !!localStorage.getItem("urx-fake-midiwin");
           case "midi_ui_attach_main":
             midiUiToMain = args.channel as { onmessage: (p: string) => void };
             done();

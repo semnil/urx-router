@@ -726,8 +726,8 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
           case "midi_close_output":
           case "midi_send":
             return Promise.resolve(null);
-          case "midi_window_geometry":
-            return Promise.resolve(null);
+          case "midi_window_open":
+            return Promise.resolve(false);
           case "midi_ui_attach_main":
             toMain = args.channel as { onmessage: (d: unknown) => void };
             return Promise.resolve(null);
