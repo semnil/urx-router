@@ -3918,8 +3918,15 @@ select:focus-visible,
    also why the Highlight / HighlightText idiom cannot be used here.
 
    Nothing below touches a declaration used outside this query, so the normal
-   modes stay pixel-identical. Verified under Chromium's emulation; the three
-   items that need a real Windows theme are open. */
+   modes stay pixel-identical. Measured under Chromium's emulation and again
+   under a real Windows contrast theme in WebView2 (2026-08-07): the system
+   colour values, the text backplate and the `3px double` rendering all behaved
+   as this block assumes, so no absolute colour is asserted anywhere.
+
+   The trap this block has already fallen into: a rule reaches ONE of two
+   elements that share a visual grammar. .con-vfad is the mini-fader and repeats
+   .con-fader's groove / cap / 0-dB parts under its own selectors, so every rule
+   here that names one names the other. */
 @media (forced-colors: active) {
   /* Engaged controls: a double rim, which is the one weight the system palette
      cannot flatten into its neighbours. */
@@ -3939,16 +3946,51 @@ select:focus-visible,
 
   /* Anything whose job is to point at a position: the filled bar becomes an
      outline of the same geometry, so the indicator survives as a shape. Without
-     this the knob loses its pointer and reads as a plain circle. */
+     this the knob loses its pointer and reads as a plain circle.
+
+     The mini-fader is named beside the fader in every rule below. The two share
+     the groove / cap / 0-dB grammar by convention and not by selector, so a rule
+     added to one does not reach the other -- which is how the mini-fader lost its
+     0-dB line and its cap bar here while the fader kept both. */
   .con-knob .ind,
-  .con-fader .cap::after {
+  .con-fader .cap::after,
+  .con-vfad .cap::after,
+  /* An OFF send column repaints that same bar in the dim ink (`.con-scol.off
+     .con-vfad .cap::after`, four classes), which OUT-SPECIFIES the row above --
+     a media query adds no specificity of its own. Measured: without this the
+     OFF column kept a filled bar while every other column had an outline.
+     Naming the state is what makes the rule reach it. */
+  .con-scol.off .con-vfad .cap::after {
     background: none;
     border: 1px solid CanvasText;
   }
-  .con-fader .zero {
+  .con-fader .zero,
+  .con-vfad .zero {
     background: none;
     height: 0;
     border-top: 1px solid CanvasText;
+  }
+  /* The slot the cap rides in, which is a background plus an inset shadow: the
+     mode replaces the first and deletes the second, so nothing of it remains --
+     measured on real Windows high contrast, where every pixel across the groove
+     came back as Canvas and the fader read as a cap floating in empty space. An
+     outline of the same geometry is the one form that survives, the same answer
+     the indicators above take. */
+  .con-fader .track,
+  .con-vfad .track {
+    background: none;
+    border: 1px solid CanvasText;
+  }
+  /* And the cap has to keep covering what it rides over. Its fill is a gradient,
+     which this mode drops, so the groove and the 0-dB line showed THROUGH the
+     handle -- the 0-dB rule one block up is written the way it is ("extended
+     wider than the cap so it stays visible to either side instead of hiding
+     under it") on the assumption that the cap occludes its middle. Canvas is the
+     mode's own background colour, so this restores the layering without adding
+     one the normal themes do not have. */
+  .con-fader .cap,
+  .con-vfad .cap {
+    background: Canvas;
   }
 
   /* Surfaces where the color IS the reading: the scribble's device colour, the
