@@ -433,7 +433,11 @@ test.describe("T5 drop", () => {
     console.log(timeline(trace, { from: latchAt - 200 }));
     console.log(
       `doomed commands after the latch: ${doomed.length} ` +
-        `(${doomed.map((s) => s.cmd).join(", ")}); session ended at +${(endedAt - latchAt).toFixed(0)} ms`,
+        `(${doomed.map((s) => s.cmd).join(", ")}); session ended at +${(endedAt - latchAt).toFixed(0)} ms;` +
+        ` doomed vd_set issued at ${doomed
+          .filter((s) => s.cmd === "vd_set")
+          .map((s) => `+${(s.start - latchAt).toFixed(0)}→${(s.end - latchAt).toFixed(0)}`)
+          .join(", ")} (flush window 120)`,
     );
     console.log(`fetch after the latch: ${duringFetch.map((s) => `${s.cmd}:${s.detail ?? "ok"}`).join(", ")}`);
     console.log(`dialogs: ${dialogs.length} — ${dialogs.join(" | ")}`);
@@ -442,7 +446,17 @@ test.describe("T5 drop", () => {
     // cost of that is one write: the flush aborts on the first rejection and routes
     // straight into the same teardown a link drop takes. The drag that was in flight
     // therefore issues one doomed command, not the burst it could have.
-    expect(doomed.filter((s) => s.cmd === "vd_set")).toHaveLength(1);
+    //
+    // The count is only that claim if the teardown finished before the NEXT flush
+    // window could open — otherwise a second write is the throttle doing its job, not
+    // the abort failing to. Asserted first, so a slow renderer fails naming the slip
+    // rather than as "the abort let a second write through". Measured latch → first
+    // doomed write → session end: +79 → +105 ms at 1x and +138 → +163 at 12x CPU
+    // throttling, i.e. the teardown itself costs ~25 ms and it is the drag's own
+    // cadence that moves.
+    const doomedSets = doomed.filter((s) => s.cmd === "vd_set");
+    expect(endedAt - doomedSets[0].start).toBeLessThan(120);
+    expect(doomedSets).toHaveLength(1);
     // (No assertion that every doomed command failed: after setDeviceLost the fake
     // stamps "device-lost" on every vd_ command by construction, so such a check would
     // be a property of the harness and could not fail.)
