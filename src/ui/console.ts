@@ -1801,6 +1801,10 @@ export class Console {
         },
         { midiId: controlId(duckerId, "duckerOn") },
       );
+      // The tuning screen's opener, as GATE / COMP / EQ have. It carries the DUCKER
+      // NODE's id, not the strip's: the chip lives here because a hung node has no
+      // strip of its own, but the screen opens on the ducker.
+      proc.append(this.dynOpenChip("ducker", duckerId));
     }
 
     for (const group of [top, proc]) {

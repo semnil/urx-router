@@ -49,7 +49,7 @@ import { tapFor } from "../core/meters";
 import type { EqBand, NodeParams } from "../core/plan";
 import { el, onOff, settingsRow, settingsSection, settingsSelect } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { PLOT_FONT, oneKnobLevelRow } from "./dyn-screen";
+import { PLOT_FONT, oneKnobLevelRow, splitDisplay } from "./dyn-screen";
 import type { DynCtx, DynLane, DynPlotGeo, DynProcessor } from "./dyn-screen";
 
 /** Level-lane ruler. The stages either side of an EQ are programme level, so the ruler
@@ -330,16 +330,7 @@ export const EQ_DYN: DynProcessor = {
     };
   },
 
-  display: (parts) => {
-    // The plot and the lanes are both on screen, in signal order left to right: what
-    // goes in, what the EQ does to it, what comes out. Separate frames, because a
-    // response curve and a level meter share no axis — overlaying them would invite
-    // reading a gain off the meter ruler.
-    const wrap = document.createElement("div");
-    wrap.className = "gt-eqdisplay";
-    wrap.append(parts.plot(), parts.lanes());
-    return wrap;
-  },
+  display: splitDisplay,
 
   plotGeo: geo,
 

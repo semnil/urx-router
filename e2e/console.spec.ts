@@ -144,9 +144,11 @@ test("the MIX master BAL knob stays labeled BAL under Pan Link", async ({ page }
 });
 
 test("DUCKER and φL/φR appear on stereo channels only", async ({ page }) => {
-  await expect(strip(page, "CH 5/6").getByRole("button", { name: "DUCKER" })).toBeVisible();
+  // `exact` because the tuning-screen opener beside it is labelled "Ducker screen…",
+  // which a substring match also picks up.
+  await expect(strip(page, "CH 5/6").getByRole("button", { name: "DUCKER", exact: true })).toBeVisible();
   await expect(strip(page, "CH 5/6").getByRole("button", { name: "φL" })).toBeVisible();
-  await expect(strip(page, "CH 1").getByRole("button", { name: "DUCKER" })).toHaveCount(0);
+  await expect(strip(page, "CH 1").getByRole("button", { name: "DUCKER", exact: true })).toHaveCount(0);
 });
 
 // ---- SENDS rack ----

@@ -80,8 +80,8 @@ const openFromConsole = async (page: Page, which = 0) => {
  *  The disclosure starts folded (both processors ship off) but its state persists
  *  per section kind, so this unfolds only when it is actually closed — a second
  *  call in the same session would otherwise fold it again and hide the launcher. */
-const SECTION_OF = { gate: /^GATE$/, comp: /^COMP$/, eq: /^EQ$/ };
-const openFromInspector = async (page: Page, id: string, kind: "gate" | "comp" | "eq" = "gate") => {
+const SECTION_OF = { gate: /^GATE$/, comp: /^COMP$/, eq: /^EQ$/, ducker: /^Ducker$/ };
+const openFromInspector = async (page: Page, id: string, kind: keyof typeof SECTION_OF = "gate") => {
   await node(page, id).click();
   const sec = section(page, SECTION_OF[kind]);
   if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
@@ -180,10 +180,12 @@ test("has no launcher on a stereo channel, which has no gate", async ({ page }) 
 test("opens from the CONSOLE strip, one opener per processor the strip actually has", async ({ page }) => {
   await page.click("#btn-view-console");
   const strips = page.locator(".con-strip");
-  // A mono channel has all three (GATE / COMP / EQ); a stereo channel has neither gate
-  // nor compressor, so only its EQ opener; a MONITOR bus has no processor at all.
+  // A mono channel has three (GATE / COMP / EQ); a stereo channel has neither gate
+  // nor compressor, so its EQ and the ducker hung under it; a MONITOR bus has no
+  // processor at all. The ducker's opener sits on the parent strip because a hung
+  // node has no strip of its own — but it opens the DUCKER node's screen.
   await expect(strips.nth(0).locator(".con-chip-open")).toHaveCount(3);
-  await expect(strips.nth(4).locator(".con-chip-open")).toHaveCount(1);
+  await expect(strips.nth(4).locator(".con-chip-open")).toHaveCount(2);
   await expect(
     page.locator(".con-strip", { has: page.getByText("MONITOR 1", { exact: true }) }).locator(".con-chip-open"),
   ).toHaveCount(0);
@@ -716,5 +718,196 @@ test.describe("eq", () => {
         [114, 1],
       ]);
     });
+  });
+});
+
+// DUCKER. The one screen that does not open on the node it tunes: it opens on the
+// ducker, reads its key from wherever the key wire starts, and brackets the reduction
+// with the HOST channel's meters. Every case below pins something a measurement
+// decided, because each is a plausible thing to "tidy" back the other way.
+test.describe("ducker", () => {
+  const openDucker = (page: Page, id = "out.ducker1") => openFromInspector(page, id, "ducker");
+
+  test("titles itself with the host channel, not with the node it opened on", async ({ page }) => {
+    await openDucker(page);
+    // The ducker node's own canvas label is "Ducker", which beside a title reading
+    // Ducker names nothing. CH 5/6 is what it attenuates.
+    await expect(box(page).locator("#dyn-screen-title .gt-ch")).toHaveText("CH 5/6");
+  });
+
+  test("the key lane names its source, and says so when there is none", async ({ page }) => {
+    await openDucker(page);
+    // `:not([aria-hidden])` because the tick column leads with a two-line spacer
+    // carrying this very class, so `.first()` would read the spacer's blank text.
+    const keyCaption = box(page).locator(".gt-cap-label:not([aria-hidden])").first();
+    // The factory plan keys every ducker from CH 1.
+    await expect(keyCaption).toContainText("Key");
+    await expect(keyCaption).toContainText("CH 1");
+    await page.locator("#dyn-screen-modal .consent-btn-primary").click();
+
+    await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.ducker1:in"]').dispatchEvent("pointerdown");
+    await page.keyboard.press("Delete");
+    await openDucker(page);
+    // A keyless ducker is engaged at unity on the unit, so the lane says there is no
+    // key rather than drawing an empty bar that would read as silence.
+    await expect(box(page).locator(".gt-cap-label:not([aria-hidden])").first()).toContainText("none");
+  });
+
+  test("the key lane draws ONE bar, whatever the key source's width", async ({ page }) => {
+    // Key it from a stereo bus, whose tap has two sides. The unit sums them before
+    // its detector, and the threshold cap can only ride a ruler in its own
+    // coordinate — so the lane folds to that one number instead of drawing L and R.
+    await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.ducker1:in"]').dispatchEvent("pointerdown");
+    await page.keyboard.press("Delete");
+    await page.locator('[data-ref="bus.stereo:out"]').dispatchEvent("pointerdown");
+    await page.locator('[data-ref="out.ducker1:in"]').dispatchEvent("pointerup");
+    await openDucker(page);
+    const keySlot = box(page).locator(".gt-slot").first();
+    await expect(keySlot.locator(".gt-bar")).toHaveCount(1);
+  });
+
+  test("opens from the CONSOLE strip of the channel it hangs under", async ({ page }) => {
+    await page.click("#btn-view-console");
+    // Strip 4 is CH 5/6 — the first stereo channel, and ducker 1's host. Its second
+    // opener is the ducker's; the first is the EQ's.
+    const strip = page.locator(".con-strip").nth(4);
+    await strip.locator(".con-chip-open").nth(1).click();
+    await expect(box(page)).toBeVisible();
+    await expect(box(page).locator("#dyn-screen-title")).toContainText("Ducker");
+    // Opened on the ducker node, so its values are the ducker's: the screen writes
+    // through `nodeParams["out.ducker1"].ducker`, not through the strip's channel.
+    await expect(box(page).locator(".gt-cap-label:not([aria-hidden])").first()).toContainText("Key");
+  });
+
+  test("shows the envelope and the lanes at once, with nothing to choose between them", async ({ page }) => {
+    await openDucker(page);
+    // Both, as the EQ does. The envelope's live overlay is a reduction depth, which is
+    // read against the meter carrying the same quantity rather than instead of it.
+    await expect(box(page).locator("canvas")).toBeVisible();
+    // THREE slots for four lanes: the reduction is drawn in the POST lane's. Measured:
+    // over a LEVEL that is still at operating level the two fight for the same pixels
+    // (on PRE DUCKER at -6 dBFS a -24 dB block buries the bar's top entirely), while
+    // over POST they are complementary — they meet only if the pre-ducker signal
+    // reaches 0 dBFS, and the gap between them IS that signal's headroom.
+    await expect(box(page).locator(".gt-slot")).toHaveCount(3);
+    await expect(box(page).locator(".gt-ro")).toHaveCount(4);
+    await expect(box(page).locator(".gt-readouts.two")).toHaveCount(1);
+    // The reduction has no scale of its own — it cannot, sharing a slot. It rides the
+    // shared ruler, which stays on the threshold's domain.
+    await expect(box(page).locator(".gt-grwrap.own")).toHaveCount(0);
+    // And no display bar: a heading over a segment with nothing to pick would name a
+    // choice that does not exist.
+    await expect(box(page).locator(".gt-modes")).toHaveCount(0);
+  });
+
+  test.describe("with a live session", () => {
+    test.beforeEach(async ({ page }) => {
+      await page.click("#btn-device");
+      await page.click("#btn-live");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+    });
+
+    test("subscribes to the key tap, the host's pair and its own reduction", async ({ page }) => {
+      await openDucker(page);
+      // CH 1's Rec Point tap (113) for the key — ahead of that channel's own fader,
+      // so the source's fader does not move the trigger. Then CH 5/6's PRE DUCKER
+      // (116) and POST (120) pairs, and 119:0 — ducker 1's own reduction, measured
+      // as the index of the ducker rather than of its host channel.
+      await expect
+        .poll(() => page.evaluate(() => window.__dynTest.meterAddrs))
+        .toEqual([
+          [113, 0],
+          [116, 0],
+          [116, 1],
+          [120, 0],
+          [120, 1],
+          [119, 0],
+        ]);
+    });
+
+    test("ducker 3 meters its own reduction, not its host channel's pair index", async ({ page }) => {
+      await openDucker(page, "out.ducker3");
+      const addrs = await page.evaluate(() => window.__dynTest.meterAddrs);
+      // 119:2 for ducker 3. On a URX44V that is also CH 9/10's pair index, which is
+      // the coincidence this asserts against: the address comes from the ducker.
+      expect(addrs).toContainEqual([119, 2]);
+    });
+  });
+});
+
+// The note under the display is a FIXED two lines with `overflow: hidden`, so the
+// panel keeps its height across display modes. That makes a note too long for it get
+// cut with nothing to say so — which is what shipped: measured, the COMP and EQ notes
+// already wrapped below about 1150 px of window and their Japanese counterparts below
+// about 1300, and the ducker's second line was missing on a real unit.
+//
+// The display inventory cannot catch this class. It answers presence, and a clipped
+// element whose text still renders passes. So this measures the geometry, at the
+// narrowest window the shell allows (tauri.conf.json minWidth 960) because that is
+// the width that decides it.
+test.describe("the note under the display fits the space reserved for it", () => {
+  test.use({ viewport: { width: 960, height: 700 } });
+
+  const noteOverflow = (page: Page) =>
+    box(page)
+      .locator(".gt-note")
+      .evaluate((n) => ({ text: (n.textContent ?? "").trim(), over: n.scrollHeight - n.clientHeight }));
+
+  for (const lang of ["en", "ja"] as const) {
+    test(`in ${lang}, on every screen and every display mode`, async ({ page }) => {
+      await page.addInitScript((l) => localStorage.setItem("urx-lang", l), lang);
+      await page.reload();
+      await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+
+      const check = async (): Promise<void> => {
+        const { text, over } = await noteOverflow(page);
+        expect(over, `clipped: "${text}"`).toBeLessThanOrEqual(0);
+      };
+      for (const [nodeId, kind, second] of [
+        ["ch1", "gate", "#dyn-mode-curve"],
+        ["ch1", "comp", "#dyn-mode-curve"],
+        ["ch1", "eq", null],
+      ] as const) {
+        await openFromInspector(page, nodeId, kind);
+        await check();
+        if (second) {
+          await page.click(second);
+          await check();
+        }
+        await box(page).locator(".consent-btn-primary").click();
+      }
+
+      await openFromInspector(page, "out.ducker1", "ducker");
+      await check();
+    });
+  }
+});
+
+// The envelope carries NO live overlay, deliberately. It had a dashed rule at the live
+// reduction while that reduction lived in a column of its own; once the reduction
+// became a block on the POST bar beside this plot, the rule was a second display of one
+// quantity, and the weaker of the two — a time axis gives a live reading no position.
+// So the plot shows what the settings do, and the meter shows what is happening.
+test.describe("ducker envelope", () => {
+  const openDucker = async (page: Page): Promise<void> => {
+    await page.click("#btn-device");
+    await page.click("#btn-live");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+    await openFromInspector(page, "out.ducker1", "ducker");
+  };
+
+  test("does not repaint when only a meter moves, since nothing on it is live", async ({ page }) => {
+    await openDucker(page);
+    const before = await box(page).locator("canvas").screenshot();
+    await pushMeters(page, [119, 0, -240], [120, 0, -300], [120, 1, -300]);
+    await expect(readout(page, "Ducker GR").locator(".v")).toHaveText("-24.0");
+    // The reduction reached the readout and the meter; the plot is unchanged.
+    expect(await box(page).locator("canvas").screenshot()).toEqual(before);
+  });
+
+  test("at unity the readout still separates no reduction from no feed", async ({ page }) => {
+    await openDucker(page);
+    await pushMeters(page, [119, 0, 0]);
+    await expect(readout(page, "Ducker GR").locator(".v")).toHaveText("0.0");
   });
 });

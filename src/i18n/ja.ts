@@ -492,6 +492,16 @@ export const ja: Messages = {
       oneKnobDrives: "4 バンドは 1-knob のレベルからデバイスが計算します。カーブが追従するのはライブ同期中のみです。",
       plotHint: "曲線は EQ の周波数特性、各マーカーは各バンドの周波数を示します。",
     },
+    ducker: {
+      title: "Ducker",
+      open: "Ducker 画面…",
+      tapKey: (label: string): string => `Key · ${label}`,
+      noKey: "Key · なし",
+      tapIn: "Pre Ducker",
+      tapGr: "Ducker GR",
+      tapOut: "Post",
+      hint: "斜線は変化にかかる時間で、変化の形ではありません。Key はステレオでも 1 本 (L+R の和) です。",
+    },
   },
   shelf: {
     title: "非表示",
