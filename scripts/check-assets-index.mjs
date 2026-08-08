@@ -65,6 +65,15 @@ const PROSE_TOKENS = new Map([
   ["ci.yml", "named as the workflow that greps; the grep itself is asserted per handle"],
   ["ls scripts/", "an instruction to the reader, not a path"],
   ['grep -rn "window.__urx" src/', "an instruction to the reader, not a path"],
+  // The CDP row names what it drives. None of these is a file in any tree: the first two
+  // are Playwright's and CSS's own vocabulary, the last three are DevTools-protocol
+  // methods, and `WebSocket` is the platform global that replaces the client.
+  ["connectOverCDP", "a Playwright API named as the thing NOT to use, not a path"],
+  ["forced-colors", "the CSS media feature, named as itself"],
+  ["WebSocket", "the platform global the CDP route is driven with"],
+  ["Runtime.evaluate", "a DevTools-protocol method"],
+  ["Input.dispatchMouseEvent", "a DevTools-protocol method"],
+  ["Page.captureScreenshot", "a DevTools-protocol method"],
 ]);
 
 // The same discipline for docs/{en,ja}, keyed `<document>|<token>`: the English and
