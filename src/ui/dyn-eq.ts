@@ -451,13 +451,16 @@ function drawResponse(
     const w = Math.max(15, c.measureText(label).width + 9);
     const h = active ? 15 : 13;
     c.globalAlpha = inert ? 0.3 : b.on ? 1 : 0.35;
-    c.fillStyle = active ? tok["--led"] : tok["--plot-dim"];
+    // The ink follows the face. The selected marker is the lit face, so it takes the
+    // dark ink every lit face takes; the rest are the dim face and keep the plot's
+    // ink. Printing --plot-ink on --led left the selected letter at APCA Lc 16.1.
+    c.fillStyle = active ? tok["--led-face"] : tok["--plot-dim"];
     c.beginPath();
     c.roundRect(x - w / 2, y - h / 2, w, h, h / 2);
     c.fill();
     c.strokeStyle = tok["--plot-ink"];
     c.stroke();
-    c.fillStyle = tok["--plot-ink"];
+    c.fillStyle = active ? tok["--on-accent-ink"] : tok["--plot-ink"];
     c.fillText(label, x, y + 0.5);
   }
   c.restore();

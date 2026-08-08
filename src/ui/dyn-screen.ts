@@ -1448,6 +1448,11 @@ const PLOT_TOKENS = [
   "--plot-dim",
   "--plot-ink",
   "--led",
+  // The pair a lit face is printed with, for the plots that fill one and then write on
+  // it (the EQ's band markers). --led is the accent as a LINE here; a face that carries
+  // text takes --led-face, and its ink is --on-accent-ink.
+  "--led-face",
+  "--on-accent-ink",
   "--gr",
   "--m-green",
   "--m-yellow",

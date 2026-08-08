@@ -148,6 +148,7 @@ the second set, and a one-shot action is consumed by the first caller (an HMR re
 | `pnpm test value-coverage` | a value domain nothing exercises |
 | `pnpm test scene-scope` | the two encodings of the scene boundary drifting apart |
 | `pnpm test dyn-plot` | a plot clamping a value onto its axis instead of letting the host clip the curve |
+| `pnpm test lit-face` | a lit amber face printed on with the wrong token — the lamp and the fader-cap gradient used as a face to write text on, in the stylesheet or on any plot's canvas. The canvas half runs every processor in `src/ui/dyn-registry.ts` through a recording context and compares geometry (did a text draw land inside such a face), so a new plot is covered the day it is registered rather than when someone remembers to pin it |
 | `pnpm test eq-response` | the measured filter model — a "correction" toward textbook biquads fails here by design |
 | `pnpm test audit` | the `*.audit.test.ts` family — behavior pinned during robustness audits (how to change a pin: Conventions) |
 | `pnpm test:e2e:app inventory` | an item that silently stopped being displayed: every message under a dialog's / window's / menu's namespace must be on screen in some state it is driven through, and its ledger refuses a new message that no surface claims |

@@ -1430,8 +1430,10 @@ select:focus-visible,
   font-size: 10px;
   font-weight: 700;
   color: var(--on-accent-ink);
-  background: var(--led);
-  box-shadow: 0 0 7px rgba(255, 194, 77, 0.45);
+  background: var(--led-face);
+  /* The glow follows the face. It used to be a literal copy of the dark theme's
+     --led, so on the light theme the badge changed colour and the glow did not. */
+  box-shadow: 0 0 7px color-mix(in srgb, var(--led-face) 45%, transparent);
 }
 
 .shelf-chips {
@@ -1550,11 +1552,14 @@ select:focus-visible,
   cursor: pointer;
 }
 
-/* Hide is the primary action — amber console segment, dark ink. */
+/* Hide is the primary action — the lit face, dark ink. Not --seg: that gradient is
+   for faces nothing is printed on (fader caps, knobs), and its lower stop leaves the
+   ink at APCA Lc 42.7 on the light theme. */
 .selbar-hide {
   font-weight: 600;
   color: var(--on-accent-ink);
-  background: var(--seg);
+  background: var(--led-face);
+  border-color: var(--led-ink);
 }
 
 .selbar-clear {
@@ -2888,8 +2893,8 @@ select:focus-visible,
   color: var(--text-dim);
 }
 .consent-btn-primary {
-  background: var(--led);
-  border-color: var(--led);
+  background: var(--led-face);
+  border-color: var(--led-ink);
   color: var(--on-accent-ink);
   font-weight: 600;
 }
@@ -3466,8 +3471,8 @@ select:focus-visible,
   cursor: pointer;
 }
 .mw-learnbtn.on {
-  border-color: var(--led);
-  background: var(--seg);
+  border-color: var(--led-ink);
+  background: var(--led-face);
   color: var(--on-accent-ink);
 }
 .mw-hint {
@@ -3620,7 +3625,7 @@ select:focus-visible,
 .gt-ch {
   font-size: 11px;
   color: var(--on-accent-ink);
-  background: var(--led);
+  background: var(--led-face);
   border-radius: 2px;
   padding: 1px 7px;
 }
