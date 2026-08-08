@@ -845,11 +845,12 @@ test.describe("T4b midi", () => {
   // midi-vs-send-fader-relative-baseline — the differential against the main
   // fader (t4-midi). A SENDS mini-fader drag captures startFrac at pointerdown and
   // recomputes an absolute value from it on every move, so a MIDI write landing
-  // mid-drag is not overwritten by the next move — it is erased by arithmetic that
-  // predates it.
+  // mid-drag would not be overwritten by the next move — it would be erased by
+  // arithmetic that predates it. Since the gesture ends with its element, the case
+  // measures that difference as an absence: the erasing move is never made.
   // ===========================================================================
 
-  test("a CC mid-drag is erased by the mini-fader's frozen baseline, not overwritten", async ({ page }) => {
+  test("a CC mid-drag survives: the mini-fader's frozen baseline never gets to erase it", async ({ page }) => {
     await installFake(page, { storage: midiStore([{ control: "ch1/level@bus.mix1", addr: CC7, mode: "absolute" }]) });
     await page.goto("/");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
@@ -922,33 +923,28 @@ test.describe("T4b midi", () => {
     expect(afterBurstVisible).toBe(5);
     expect(beforeBurst).toBeLessThan(-10);
 
-    // Pinned defect, and the differential against the main fader: the remaining
-    // 13 px do not continue from +5.0 dB — they recompute an absolute value from
-    // the baseline captured at pointerdown, so the message is erased by arithmetic
-    // that predates it. A drag that had taken +5.0 dB as its baseline would have
-    // ended around -12 dB (13 px of a 43 px, 41-detent travel below +5.0); this one
-    // ends in the tail of the scale instead, exactly where the untouched gesture
-    // was always going to put it.
-    expect(detachedFinal).toBeLessThan(beforeBurst);
-    expect(detachedFinal).toBeLessThan(-50);
-    // …and the strip was rebuilt under the pointer capture (invariant 10), so the
-    // element the drag keeps writing into is out of the document while the one the
-    // operator can see froze at the value the rebuild captured.
+    // The frozen baseline is still there — the mini-fader recomputes an absolute value
+    // from `startFrac` on every move, so a message landing mid-drag would be erased by
+    // arithmetic that predates it rather than overwritten. What is gone is the drag that
+    // would do the erasing: the reflect's rebuild takes the element the gesture holds out
+    // of the document (invariant 10), and the handler on `window` ends there. The
+    // remaining 13 px recompute nothing, so the detached control keeps the value it was
+    // replaced holding instead of running on to the tail of the scale (below -50, which
+    // is where this gesture used to end).
     expect(connected).toBe(false);
+    expect(detachedFinal).toBeGreaterThan(-50);
+    expect(detachedFinal).toBeLessThanOrEqual(beforeBurst);
+    // The message survives, and screen, wire and unit are one value.
     expect(visibleFinal).toBe(5);
-    expect(visibleFinal).not.toBe(detachedFinal);
-    // Both writers are on the one key, and the drag is last (invariant 13).
+    // Both writers reached the one key, and the message is the last of them — the drag no
+    // longer gets to be last by outliving its control. (Ordering, not authorship: it is
+    // not a restatement of invariant 13, which the analyzer decides.)
     expect(level.map((l) => l.source)).toContain("midi");
     expect(level.map((l) => l.source)).toContain("ui");
-    expect(level[level.length - 1].source).toBe("ui");
-    // The message is not a lost edit in the T1 sense — it did reach the unit, and
-    // the unit held it for one flush before the next move took it back. What the
-    // operator is left with is a device that briefly obeyed a control nobody
-    // touched, and a screen that still shows that moment.
+    expect(level[level.length - 1].source).toBe("midi");
     const sent = setsOf(await traceOf(page)).filter((s) => s.addr === "146:0:0");
-    expect(sent.map((s) => s.value)).toContain(500);
-    expect(sent.at(-1)!.value).toBe(Math.round(detachedFinal) * 100);
-    expect((await memOf(page))["146:0:0"]).toBe(sent.at(-1)!.value);
+    expect(sent.at(-1)!.value).toBe(500);
+    expect((await memOf(page))["146:0:0"]).toBe(500);
   });
 
   test.skip("the orphan variant: the drag keeps writing into a deleted connection", async () => {

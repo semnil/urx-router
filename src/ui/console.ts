@@ -136,6 +136,47 @@ function fmtDb(db: number, r: LevelRange): { text: string; off: boolean } {
   return { text: (db > 0 ? "+" : "") + db.toFixed(1), off: false };
 }
 
+/**
+ * Track a pointer drag that started on `control`, in the one place all three of this
+ * view's drags share: the capture, the two `window` listeners, the teardown, and the
+ * rule that ends the gesture when its control leaves the document.
+ *
+ * The listeners have to be on `window` — a capture on the control alone stops reporting
+ * the moment the pointer leaves it — so a rebuild that replaces the strip (device
+ * follow, MIDI, a scene recall, a language or theme switch) used to leave them running
+ * against an element no longer on screen: the plan and the unit kept taking the drag
+ * while the fader the operator can see showed what the rebuild painted, and the two
+ * stayed apart for the rest of the session. The gesture now ends where its control did.
+ *
+ * Asked of the element rather than coordinated with the rebuild on purpose: the rebuild
+ * sites do not have to know a gesture exists, and nothing is deferred (a banked repaint
+ * replayed on pointerup is what swallowed a Close press on the tuning screens).
+ *
+ * `onMove` is also applied to the opening event when `seed` is set — the main fader
+ * jumps to where it was pressed. That runs before the listeners are registered, so a
+ * seed can never be answered by a teardown that does not exist yet.
+ */
+function trackDrag(
+  control: HTMLElement,
+  e: PointerEvent,
+  onMove: (ev: PointerEvent) => void,
+  opts: { seed?: boolean; onEnd?: () => void } = {},
+): void {
+  control.setPointerCapture(e.pointerId);
+  if (opts.seed) onMove(e);
+  const move = (ev: PointerEvent): void => {
+    if (!control.isConnected) return end();
+    onMove(ev);
+  };
+  const end = (): void => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", end);
+    opts.onEnd?.();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", end);
+}
+
 // A three-bar meter glyph (rising heights), coloured by the host's currentColor
 // so it tracks the badge's amber (dark) / brown (light). Marks the meter-point
 // badge apart from the send-tap chip.
@@ -906,27 +947,28 @@ export class Console {
     fader.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       if (this.midiArm(midiId)) return;
-      fader.setPointerCapture(e.pointerId);
       dragging = true;
       const startY = e.clientY;
       const startFrac = dbToFrac(level(), range);
       const travel = fader.getBoundingClientRect().height - 12;
       let moved = false;
-      const move = (ev: PointerEvent): void => {
-        const dy = startY - ev.clientY;
-        if (!moved && Math.abs(dy) < 3) return; // threshold guards mis-grabs / dblclick
-        moved = true;
-        const frac = startFrac + (dy * (ev.shiftKey ? 0.25 : 1)) / travel;
-        set(fracToDb(frac, range));
-      };
-      const up = (): void => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-        dragging = false;
-        swap(rackTouched() ? readoutText() : null); // keep it if still hovered/focused
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
+      trackDrag(
+        fader,
+        e,
+        (ev) => {
+          const dy = startY - ev.clientY;
+          if (!moved && Math.abs(dy) < 3) return; // threshold guards mis-grabs / dblclick
+          moved = true;
+          const frac = startFrac + (dy * (ev.shiftKey ? 0.25 : 1)) / travel;
+          set(fracToDb(frac, range));
+        },
+        {
+          onEnd: () => {
+            dragging = false;
+            swap(rackTouched() ? readoutText() : null); // keep it if still hovered/focused
+          },
+        },
+      );
     });
     fader.addEventListener("keydown", (e) => {
       if (this.midiLearnKey(e, midiId)) return;
@@ -1965,19 +2007,11 @@ export class Console {
     fader.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       if (this.midiArm(midiId)) return;
-      fader.setPointerCapture(e.pointerId);
       const rect = fader.getBoundingClientRect();
-      const move = (ev: PointerEvent): void => {
-        const frac = 1 - (ev.clientY - rect.top - 6) / (rect.height - 12);
-        setLevel(fracToDb(frac, range));
-      };
-      move(e);
-      const up = (): void => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
+      // Seeded: the main fader jumps to where it was pressed before the drag begins.
+      trackDrag(fader, e, (ev) => setLevel(fracToDb(1 - (ev.clientY - rect.top - 6) / (rect.height - 12), range)), {
+        seed: true,
+      });
     });
     fader.addEventListener("keydown", (e) => {
       if (this.midiLearnKey(e, midiId)) return;
@@ -2449,7 +2483,6 @@ export class Console {
     knob.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       if (this.midiArm(midiId)) return;
-      knob.setPointerCapture(e.pointerId);
       // Absolute drag mapping, with both anchors rebased whenever the Shift state
       // flips, so entering or leaving fine mode mid-drag never jumps the value:
       // each segment maps at its own rate — coarse = full range over 150px, fine =
@@ -2457,23 +2490,21 @@ export class Console {
       let startY = e.clientY;
       let start = k.get();
       let wasSt = stepFor(e);
-      const move = (ev: PointerEvent): void => {
-        const st = stepFor(ev);
-        if (st !== wasSt) {
-          start = k.get();
-          startY = ev.clientY;
-          wasSt = st;
-        }
-        const rate = st === k.step ? (k.max - k.min) / 150 : st;
-        apply(start + (startY - ev.clientY) * rate, st);
-      };
-      const up = (): void => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-        if (partnerSync) this.syncPartnerStrip(id);
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
+      trackDrag(
+        knob,
+        e,
+        (ev) => {
+          const st = stepFor(ev);
+          if (st !== wasSt) {
+            start = k.get();
+            startY = ev.clientY;
+            wasSt = st;
+          }
+          const rate = st === k.step ? (k.max - k.min) / 150 : st;
+          apply(start + (startY - ev.clientY) * rate, st);
+        },
+        { onEnd: () => partnerSync && this.syncPartnerStrip(id) },
+      );
     });
     knob.addEventListener("keydown", (e) => {
       if (this.midiLearnKey(e, midiId)) return;

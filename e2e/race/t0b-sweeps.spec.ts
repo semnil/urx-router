@@ -14,7 +14,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf } from "./analyze";
 import { drag, port, tapJack, faceplate } from "../graph-helpers";
-import { CH1_FADER, faderOf, faderReadout, graphNode, openEqScreen, strip } from "./ui";
+import { CH1_FADER, deviceLevelText, faderOf, faderReadout, graphNode, openEqScreen, strip } from "./ui";
 
 // T0b baseline sweeps — the reachability half of the T0 floor
 // (docs/{en,ja}/live-race-harness.md). The latency ladder in t0-baseline.spec.ts pins
@@ -1398,14 +1398,15 @@ test.describe("T0b baseline sweeps", () => {
 
     // Pinned behaviour, in three parts, each able to fail on its own.
     //
-    // 1. The rebuild does not end the gesture: the moves made after every strip was
-    //    replaced still reach the plan and the device, written through a StripRef
-    //    whose element is no longer in the document. That the values agree at the end
-    //    is incidental — the rebuild re-read the same plan — and it is the write
-    //    itself that is the detached-target write.
-    expect(afterRebuild.length).toBeGreaterThan(0);
-    expect(held).toBe(afterRebuild[afterRebuild.length - 1].value);
+    // 1. The rebuild ends the gesture (invariant 10). A Preferences switch replaces
+    //    every strip, and the moves made after that reach nothing: the handler on
+    //    `window` finds its element out of the document and stops there, so the plan,
+    //    the device and the strip on screen are one value. The trigger here is purely
+    //    local — no device, no MIDI — which is what makes this the case that says the
+    //    rule belongs to Console.render() rather than to the link.
+    expect(afterRebuild).toHaveLength(0);
     expect(shown).not.toBe("0.0"); // and the drag really did move it off the factory value
+    expect(shown).toBe(deviceLevelText(held));
     // 2. A direct notify that arrives while the CONSOLE is off screen reaches the plan
     //    (the ledger names follow-direct as the writer) and the deferred refresh is
     //    paid when the view comes back: the strip shows level_gain 40 = "+0.4". And

@@ -685,12 +685,14 @@ agreement, zero findings.
 
 - **MIDI is not gated at all during a held read** — not by the device-read latch, the file-flow latch,
   a modal or a drag — and its write is then absorbed by the snapshot
-- A MIDI-driven strip rebuild replaces the strip under an active pointer capture; screen and device
-  disagree and stay disagreeing
+- **A MIDI-driven strip rebuild replaced the strip under an active pointer capture, and screen and
+  device then disagreed for good — fixed** (fix 11). The rebuild still happens; the gesture now ends
+  with its element instead of writing on from outside the document
 - **The BAL mirror** deep-clones the whole source node onto its partner on every applied message,
   destroying an unrelated UI edit made moments earlier
 - A relative drag recomputes an absolute value from a baseline frozen at pointerdown, so a MIDI write
-  mid-drag is **erased by arithmetic** rather than overwritten
+  mid-drag would be **erased by arithmetic** rather than overwritten. The arithmetic is still there and
+  is no longer reachable (fix 11): the move that would do the erasing is never made
 
 **T5 — failure injection**
 
@@ -1039,6 +1041,38 @@ Measured, the `drop-link-loss-mid-flush-ladder` at all three rungs: **15 / 10 / 
 The one command still in flight when the session ends completes, which is why both cases anchor their
 boundary on the teardown mark rather than on the drop.
 
+### 11. Ending a gesture with its control (`console.ts`)
+
+Every drag in the CONSOLE tracks on `window` — a capture on the control alone stops reporting once the
+pointer leaves it — and closes over the `StripRef` it started on. A rebuild replaces that element, and
+the handlers went on writing into the plan and out to the device from a control no longer on screen,
+while the strip the operator can see showed whatever the rebuild painted. The two then stayed apart for
+the rest of the session: nothing repaints a value neither side considers stale. Measured at **screen
+`+5.0` against a device holding `-1.2`**, at every phase of the ladder and in both engines.
+
+The trigger is not the device link. A MIDI reflect, a device-follow strip rebuild, a scene recall and a
+**Preferences language or theme switch** all reach the same `Console.render()` / `refreshStrip`, which is
+why the fix is not a gate on any one of them: `trackDrag`, the one place the view's three drags now
+register from, asks whether the control is still in the document on every move and ends the gesture
+where the control went — so the rule is stated once rather than in each drag. Nothing is deferred and no
+rebuild site has to know a gesture exists — the deferral shape is what swallowed a Close press on the
+tuning screens, and repeating it here would have bought the same class of defect.
+
+What the operator loses is the rest of that drag. That is the cost, and it is the smaller one: the
+alternative is a plan and a unit taking a gesture from a control that is not on screen.
+
+Measured: `midi-vs-main-fader-absolute` at 50 / 300 / 900 ms — the visible readout, the last command on
+the wire and the unit now agree on `+5.0` at every phase, with the detached element frozen at the value
+it was replaced holding (`-24.0` / `-18.0` / `-7.2`). `midi-vs-send-fader-relative-baseline`: the frozen
+baseline is still in the code and is no longer reachable — the drag that would recompute over the message
+never makes another move, so `-22 → +5.0` survives instead of being erased down to the tail of the scale.
+`baseline-view-locale-churn`, whose trigger is purely local: **writes after the rebuild → none**.
+
+One measurement had to change with it. A plan edit is written up to one flush window later, so the trace
+carries a set a few milliseconds past the detachment that belongs to an edit the gesture had already
+made; the invariant-10 cases bound their window at `detachAt + 300 ms` rather than at `detachAt`, which
+still excludes the seconds of pointer movement where every write used to be.
+
 ## What the harness itself got wrong
 
 The audits found harness errors before they found app defects. They are recorded so the next tier does
@@ -1207,6 +1241,14 @@ fixed or withdrawn.
 - The macOS native menu itself, real drag-and-drop path resolution and the OS-refusal semantics of the
   sleep hold stay outside automation
 - The codebase has no test-id vocabulary, so every case depends on the current DOM ids and class names
+- **A case cannot import from `src/core/control/` or `src/core/plan.ts`.** Those sit in a module cycle
+  — `plan` → `control/insert-fx-effect` → `translate` → `vd` → `plan` — that resolves only because the
+  app's own entry point orders it. Playwright loads a spec directly, so entering the cycle at the wrong
+  end fails the whole project at collection with `Cannot access 'GATE_RANGE_OFF_DB' before
+  initialization` — **no tests found**, not one red case. The src imports the harness does have
+  (`core/levels`, `core/plan-history`) are leaves and are safe. The cost is real: `deviceLevelText` in
+  `e2e/race/ui.ts` restates the off sentinel and the centi-dB scale that `vd.ts` already owns, and
+  `FLUSH_TAIL_MS` copies `DEBOUNCE_MS` rather than deriving from it. Both say so at their definition
 - **The three CI shards are balanced by test COUNT, and the tiers are not equally expensive.** Playwright
   splits the ordered list into equal-count contiguous chunks — 55 cases each, cutting across file
   boundaries — so the split follows the file names, and the file names follow the tier order. Measured on

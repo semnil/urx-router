@@ -355,9 +355,12 @@ test.describe("T4 midi", () => {
 
   // ---------------------------------------------------------------------------
   // midi-vs-main-fader-absolute — the MIDI edit's own reflect calls refreshStrip,
-  // which does old.root.replaceWith(fresh) under an active pointer capture. The
-  // drag's move listeners live on `window` and close over the OLD StripRef, so they
-  // keep mutating the plan and painting a detached cap while the visible one freezes.
+  // which does old.root.replaceWith(fresh) under an active pointer capture. The drag's
+  // move listeners live on `window` and close over the OLD StripRef, so the element
+  // they hold leaves the document while they keep running. What they now do about it
+  // is end the gesture (`trackDrag`): the strip is still replaced, the drag simply
+  // stops there, and the screen and the device end on the same value. Before that the
+  // drag went on writing from the detached element and the two stayed apart.
   //
   // The burst is delivered as one batched message (the fake's contract, and the shape
   // the Rust bridge actually hands over) rather than ten 15 ms deliveries: both
@@ -394,19 +397,18 @@ test.describe("T4 midi", () => {
 
       // The phase is only interpretable if the burst really landed mid-gesture.
       expect(result.firedInDrag).toBe(true);
-      // Pinned behaviour (invariant 10). The strip the pointer captured was replaced
-      // mid-gesture, so the element the drag holds is out of the document…
+      // The strip the pointer captured really was replaced mid-gesture — the element the
+      // drag holds is out of the document. That half is unchanged; it is the trigger,
+      // not the defect.
       expect(result.connected).toBe(false);
-      // …and the drag went on writing into it: the detached readout carries the
-      // gesture's final value, which is what actually reached the device, while the
-      // strip the operator is looking at froze at the value the rebuild captured.
-      expect(result.visible).not.toBe(result.detached);
-      expect(result.mem).toBe(Math.round(dbOf(result.detached) * 100));
-      // The MIDI value is gone: the last mover wins, and it is the invisible one.
+      // Invariant 10. The gesture ended with its element, so the last write is the one
+      // the strip on screen is showing: the readout the operator can see, the value the
+      // device holds and the last command on the wire are one value.
+      expect(result.mem).toBe(Math.round(dbOf(result.visible) * 100));
       expect(result.writes.at(-1)!.value).toBe(result.mem);
-      // The stale readout is not repaired by anything the app does on its own within
-      // a further settle (a bounded window — the case observes ~3 s of quiet after the
-      // gesture, it does not establish "forever").
+      // …and it stays that value: nothing repaints it within a further settle (a bounded
+      // window — the case observes ~3 s of quiet after the gesture, it does not establish
+      // "forever").
       expect(result.visibleLater).toBe(result.visible);
     });
   }

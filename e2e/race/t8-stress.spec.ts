@@ -13,7 +13,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, type Finding, type Span } from "./analyze";
 import { stepLevel } from "../../src/core/levels";
-import { CH1_FADER, faderOf, faderReadout, strip } from "./ui";
+import { CH1_FADER, deviceLevelText, faderOf, faderReadout, strip } from "./ui";
 
 // T8 stress — convergence, seeded fuzz and jitter (docs/{en,ja}/live-race-harness.md).
 //
@@ -47,17 +47,6 @@ const MIDI_CC_LEVEL = 7;
 const MIDI_NOTE_ON = 60;
 
 const powerOf = (page: Page, name: string) => strip(page, name).locator(".con-scribble.power");
-
-/** The fake's stored raw value rendered the way the console renders the plan's, so
- *  "the device and the screen agree" is one string comparison (src/ui/console.ts
- *  fmtDb over src/core/control/vd.ts vdToLevel). An address the device was never
- *  written to reads 0 = 0.0 dB, which is what the boot readback put in the plan. */
-function deviceLevelText(raw: number | undefined): string {
-  const v = raw ?? 0;
-  if (v <= -32768) return "-∞";
-  const db = v / 100;
-  return (db > 0 ? "+" : "") + db.toFixed(1);
-}
 
 /** Seed the MIDI panel's persisted state so the second operator is present from
  *  boot: the saved ports reopen in MidiControl's constructor (restorePorts), with
