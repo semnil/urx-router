@@ -112,16 +112,19 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
         .map_err(|e| format!("midi-window: {e}"))?
         .build()
         .map_err(|e| format!("midi-window: {e}"))?;
-    // AFTER `build()` on purpose, and it is the only place this can go. The plugin
-    // restores the window from its own `on_window_ready`, and the move that restore
-    // issues has not landed while that hook is running — measured, by trying to do
-    // this from a hook of our own registered behind it and reading the position the
-    // window was born at. By the time `build()` returns, it has landed. A window
-    // that cannot be measured is not worth failing an open for: the panel is up and
-    // usable either way.
-    if let Err(e) = crate::winfit::fit_window(&win.as_ref().window(), MIN_INNER) {
-        eprintln!("midi-window fit: {e}");
-    }
+    // AFTER `build()` on purpose, and it is the only place this can go. A hook of our
+    // own registered behind the window-state plugin's was tried and measured not to
+    // work: inside a `window_created` hook the window still reports the position it
+    // was born at, because a move issued from one is queued exactly like one issued at
+    // startup. By the time `build()` returns, it has landed.
+    //
+    // This is the window's whole restore, not a correction of the plugin's — the
+    // plugin skips both windows now (`window_state_plugin` in lib.rs says why), so
+    // there is nothing here to correct and the remembered rectangle is applied once,
+    // from numbers, exactly as the main window's is. A window that cannot be placed is
+    // not worth failing an open for: the panel is up and usable either way.
+    #[cfg(desktop)]
+    crate::restore_window(&win.as_ref().window(), MIN_INNER);
     Ok(())
 }
 
