@@ -3,20 +3,23 @@ name: Tag release
 # Turns a merged version bump into a release. The app version lives in package.json
 # alone (see CLAUDE.md), a version bump is its own pull request carrying nothing else,
 # and merging that PR is the whole release gesture — this workflow is what makes that
-# true, by tagging the merge commit and starting the two workflows a tag drives.
+# true, by tagging the merge commit and starting the installer build on that tag.
 #
-# Triggered by CI FINISHING on main, not by the push itself. The tag starts a Pages
-# deploy, and Pages publishes for real — there is no draft to read first, the way the
-# installers have one. Tagging on the push would put the demo live off a commit whose
-# build and tests had not reported yet. `workflow_run` is the only trigger that can
-# wait for another workflow's verdict.
+# Triggered by CI FINISHING on main, not by the push itself. The installers are built
+# from this tag, and a tag a published release points at cannot be moved afterwards —
+# so it has to name a commit whose build and tests have already reported.
+# `workflow_run` is the only trigger that can wait for another workflow's verdict.
 #
-# The dispatches are not a style choice. **A tag pushed with the repository's
-# GITHUB_TOKEN starts no workflow**, so release.yml's and pages.yml's `push: tags:`
-# triggers never see this tag; `workflow_dispatch` is the documented exception that
-# fires whatever token asked for it. Both are dispatched ON THE TAG, so each runs with
-# GITHUB_REF_NAME set to it and behaves exactly as it would on a tag push — which is
-# what release.yml's check-tag reads.
+# It used to carry a second reason, that the tag also started the Pages deploy and
+# Pages publishes for real with no draft to read first. That one is gone: pages.yml
+# runs on `release: published`, so the demo goes live with the gesture that ends the
+# draft's review rather than with the tag. The reason above is the whole reason now.
+#
+# The dispatch is not a style choice. **A tag pushed with the repository's
+# GITHUB_TOKEN starts no workflow**, so release.yml's `push: tags:` trigger never sees
+# this tag; `workflow_dispatch` is the documented exception that fires whatever token
+# asked for it. It is dispatched ON THE TAG, so it runs with GITHUB_REF_NAME set to it
+# and behaves exactly as it would on a tag push — which is what check-tag reads.
 #
 # Everything here is a no-op unless this push actually moved the version, so it is safe
 # on every green CI run on main.
@@ -28,7 +31,7 @@ on:
 
 permissions:
   contents: write # create and push the tag
-  actions: write # dispatch release.yml and pages.yml
+  actions: write # dispatch release.yml
 
 jobs:
   # `branches: [main]` above filters on the CI run's head branch, which for a pull
@@ -94,5 +97,6 @@ jobs:
           git push origin "refs/tags/${tag}"
           echo "tagged ${tag} at ${HEAD_SHA}"
           gh workflow run release.yml --ref "${tag}"
-          gh workflow run pages.yml --ref "${tag}"
-          echo "dispatched release.yml and pages.yml on ${tag}"
+          echo "dispatched release.yml on ${tag}"
+          # pages.yml is NOT dispatched here. It runs on `release: published`, so the
+          # demo deploys when the draft this release.yml run creates is published.

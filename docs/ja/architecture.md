@@ -2361,7 +2361,11 @@ SHA とコメントを一緒にバンプする。例外は `dtolnay/rust-toolcha
 
 デスクトップ版とは別に、ブラウザだけで試せるデモを GitHub Pages で配信する。`vite build --mode demo`
 (`pnpm build:demo`。`.env.demo` が `VITE_DEMO=1` を与える) でビルドし、`.github/workflows/pages.yml`
-が `vX.Y.Z` リリースタグの push 時に `dist` を Pages へ公開する (デモはリリース版に追従する)。タグ push 前に
+が**リリースの公開時** (`release: published`) に `dist` を Pages へ公開する — タグを打った時点ではない。
+タグが作るのはインストーラーを載せた draft リリースで、デモはその draft のレビューを終わらせる操作と
+同じ操作で公開される。したがってデモとインストーラーが別のバージョンを指す期間が生じない。これは人が
+draft を公開することに依存する: リポジトリの `GITHUB_TOKEN` を使うワークフローから公開した場合は何も
+起動せず、デモは単に配信されない。リリース前に
 ローカルで確認するには `pnpm build:demo` の後に `pnpm preview` を実行する (`dist` を
 `http://localhost:4173` で配信)。デモはネイティブのファイル IO を持たないため、保存 / 読込ダイアログと
 PNG / PDF 出力をツールバーから隠す (`src/core/env.ts` の `DEMO` フラグが `[data-demo-hide]` 要素を

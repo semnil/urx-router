@@ -2616,8 +2616,12 @@ as an explicit `toolchain:` input, updated manually.
 
 Separate from the desktop app, a browser-only demo is published to GitHub Pages. `vite build --mode demo`
 (`pnpm build:demo`, with `.env.demo` setting `VITE_DEMO=1`) builds it, and `.github/workflows/pages.yml`
-publishes `dist` to Pages when a `vX.Y.Z` release tag is pushed, so the demo tracks released versions. To
-check the demo bundle locally before a tag, run `pnpm build:demo` then `pnpm preview` (serves `dist` at
+publishes `dist` to Pages when a **release is published** (`release: published`) — not when its tag is cut.
+The tag produces a draft Release that carries the installers, and the demo goes live with the same gesture
+that ends that draft's review, so the demo and the installers never describe different versions. That
+depends on a person publishing the draft: a publish performed from a workflow with the repository's
+`GITHUB_TOKEN` triggers nothing, and the demo would simply not deploy. To
+check the demo bundle locally before a release, run `pnpm build:demo` then `pnpm preview` (serves `dist` at
 `http://localhost:4173`). The demo has no native file IO, so the save / load dialogs and PNG / PDF
 export are hidden from the toolbar (`src/core/env.ts`'s `DEMO` flag hides `[data-demo-hide]` elements) —
 though a plan JSON can still be opened by dropping it on the window (the browser drag & drop path is not
