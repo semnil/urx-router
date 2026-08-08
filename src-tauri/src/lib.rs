@@ -348,7 +348,6 @@ fn restore_main_window(app: &tauri::AppHandle) {
 /// nothing.
 #[cfg(desktop)]
 fn configured_min_inner(app: &tauri::AppHandle, label: &str) -> (f64, f64) {
-    use tauri::Manager;
     let Some(cfg) = app.config().app.windows.iter().find(|w| w.label == label) else {
         return (0.0, 0.0);
     };
