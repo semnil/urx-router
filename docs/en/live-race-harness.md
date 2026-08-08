@@ -685,17 +685,20 @@ agreement, zero findings.
 
 - **MIDI is not gated at all during a held read** — not by the device-read latch, the file-flow latch,
   a modal or a drag — and its write is then absorbed by the snapshot
-- A MIDI-driven strip rebuild replaces the strip under an active pointer capture; screen and device
-  disagree and stay disagreeing
+- **A MIDI-driven strip rebuild replaced the strip under an active pointer capture, and screen and
+  device then disagreed for good — fixed** (fix 11). The rebuild still happens; the gesture now ends
+  with its element instead of writing on from outside the document
 - **The BAL mirror** deep-clones the whole source node onto its partner on every applied message,
   destroying an unrelated UI edit made moments earlier
 - A relative drag recomputes an absolute value from a baseline frozen at pointerdown, so a MIDI write
-  mid-drag is **erased by arithmetic** rather than overwritten
+  mid-drag would be **erased by arithmetic** rather than overwritten. The arithmetic is still there and
+  is no longer reachable (fix 11): the move that would do the erasing is never made
 
 **T5 — failure injection**
 
-- **Writes escape the teardown** at every position in the send loop, and the count falls as the drop
-  lands later
+- **Writes escaped the teardown** at every position in the send loop, the count falling as the drop
+  landed later — **fixed** (fix 10). Nothing escapes at any rung now; the command already on the wire
+  completes, which is why the boundary is the teardown mark rather than the drop
 - A rejected write **aborts on the first rejection** — the rule holds
 - **The concentration cliff**: four pairs in one window escalate to a whole-device read; three stay scoped
 - **Five notifies on addresses that no longer RESOLVE cost a whole-device read that five registered ones
@@ -708,8 +711,8 @@ agreement, zero findings.
   session, and its history reset **drops an entry made on the new plan**
 - The subscribe/unsubscribe call order shows the console's meter registration displaced by a call it
   did not make
-- **A model switch that outlives its flush** leaves the in-flight commands aimed at the old model's
-  addresses
+- **A model switch outlived its flush**, leaving the remaining commands aimed at the old model's
+  addresses — **fixed** (fix 10)
 - A rejected read during Fetch **commits a partial plan**, and MIDI's bound cache keeps a reference to
   the discarded one
 - A Close press on a tuning screen can be **swallowed** between a deferred refresh and its own click
@@ -1010,6 +1013,66 @@ carried it as a logged number rather than an assertion; the barrier case
 `overtake-direct-notify-ahead-of-the-send-loop` places that window exactly and owns the verdict, and the
 stress count is now asserted at zero as the tier's regression net.
 
+### 10. Ending a flush with its session (`live.ts`)
+
+`flush()` read `active` at its entry and never again, while `end()` is synchronous and the send loop is
+not. Every command the loop had left when the session went down was still issued — after a link drop, and
+after a model switch, where `loadPlan` deactivates the session and replaces the plan while the loop is
+sitting in an await between two commands. Those commands carried the old model's addresses. The same
+capture is what the fix-9 value re-take reads from (`model` and `plan` are flush-local), so past a
+replacement it was re-taking from a document nothing holds any more.
+
+`LiveSync` now carries a `sessionGen`, bumped by `begin()` and by `end()`, and the loop compares it after
+every await — the two sends, the converge and the refetch — returning rather than throwing, because a
+teardown is not a failure and there is nobody left to report one to. It returns **before** recording the
+write in the snapshot: a session that ended and began again inside one await has already rebuilt that
+snapshot from a device read, and writing a dead flush's value into it would poison the new session's
+device truth. A generation rather than the flag for the same reason — across a stop/start the flag reads
+the value the flush entered on.
+
+The teardown itself is unchanged, and deliberately: `releaseLive` chains the disconnect rather than
+awaiting it (`vd_disconnect` returns nothing to await), and its epoch guard is what makes a late one
+safe. The window between `end()` and the disconnect landing in Rust is therefore still open — what the
+generation closes is the app's own decision to keep sending into it.
+
+Measured, the `drop-link-loss-mid-flush-ladder` at all three rungs: **15 / 10 / 5 escaping writes → 0 / 0
+/ 0**, with 15 commands armed each time so the zeros are the guard's doing and not an empty remainder.
+`teardown-model-switch-during-flush`: **the remainder of the loop, including URX44V-only addresses → 0**.
+The one command still in flight when the session ends completes, which is why both cases anchor their
+boundary on the teardown mark rather than on the drop.
+
+### 11. Ending a gesture with its control (`console.ts`)
+
+Every drag in the CONSOLE tracks on `window` — a capture on the control alone stops reporting once the
+pointer leaves it — and closes over the `StripRef` it started on. A rebuild replaces that element, and
+the handlers went on writing into the plan and out to the device from a control no longer on screen,
+while the strip the operator can see showed whatever the rebuild painted. The two then stayed apart for
+the rest of the session: nothing repaints a value neither side considers stale. Measured at **screen
+`+5.0` against a device holding `-1.2`**, at every phase of the ladder and in both engines.
+
+The trigger is not the device link. A MIDI reflect, a device-follow strip rebuild, a scene recall and a
+**Preferences language or theme switch** all reach the same `Console.render()` / `refreshStrip`, which is
+why the fix is not a gate on any one of them: `trackDrag`, the one place the view's three drags now
+register from, asks whether the control is still in the document on every move and ends the gesture
+where the control went — so the rule is stated once rather than in each drag. Nothing is deferred and no
+rebuild site has to know a gesture exists — the deferral shape is what swallowed a Close press on the
+tuning screens, and repeating it here would have bought the same class of defect.
+
+What the operator loses is the rest of that drag. That is the cost, and it is the smaller one: the
+alternative is a plan and a unit taking a gesture from a control that is not on screen.
+
+Measured: `midi-vs-main-fader-absolute` at 50 / 300 / 900 ms — the visible readout, the last command on
+the wire and the unit now agree on `+5.0` at every phase, with the detached element frozen at the value
+it was replaced holding (`-24.0` / `-18.0` / `-7.2`). `midi-vs-send-fader-relative-baseline`: the frozen
+baseline is still in the code and is no longer reachable — the drag that would recompute over the message
+never makes another move, so `-22 → +5.0` survives instead of being erased down to the tail of the scale.
+`baseline-view-locale-churn`, whose trigger is purely local: **writes after the rebuild → none**.
+
+One measurement had to change with it. A plan edit is written up to one flush window later, so the trace
+carries a set a few milliseconds past the detachment that belongs to an edit the gesture had already
+made; the invariant-10 cases bound their window at `detachAt + 300 ms` rather than at `detachAt`, which
+still excludes the seconds of pointer movement where every write used to be.
+
 ## What the harness itself got wrong
 
 The audits found harness errors before they found app defects. They are recorded so the next tier does
@@ -1178,6 +1241,14 @@ fixed or withdrawn.
 - The macOS native menu itself, real drag-and-drop path resolution and the OS-refusal semantics of the
   sleep hold stay outside automation
 - The codebase has no test-id vocabulary, so every case depends on the current DOM ids and class names
+- **A case cannot import from `src/core/control/` or `src/core/plan.ts`.** Those sit in a module cycle
+  — `plan` → `control/insert-fx-effect` → `translate` → `vd` → `plan` — that resolves only because the
+  app's own entry point orders it. Playwright loads a spec directly, so entering the cycle at the wrong
+  end fails the whole project at collection with `Cannot access 'GATE_RANGE_OFF_DB' before
+  initialization` — **no tests found**, not one red case. The src imports the harness does have
+  (`core/levels`, `core/plan-history`) are leaves and are safe. The cost is real: `deviceLevelText` in
+  `e2e/race/ui.ts` restates the off sentinel and the centi-dB scale that `vd.ts` already owns, and
+  `FLUSH_TAIL_MS` copies `DEBOUNCE_MS` rather than deriving from it. Both say so at their definition
 - **The three CI shards are balanced by test COUNT, and the tiers are not equally expensive.** Playwright
   splits the ordered list into equal-count contiguous chunks — 55 cases each, cutting across file
   boundaries — so the split follows the file names, and the file names follow the tier order. Measured on

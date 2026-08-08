@@ -23,7 +23,7 @@
 // is not covered.
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { CSS, RULES, THEME_SELECTOR, decl, tokensIn } from "./style-css.test-util";
+import { CSS, RULES, THEME_SELECTOR, decl, faceDecl, tokensIn } from "./style-css.test-util";
 import { NAMED_TOKENS, recorder, vals } from "./dyn-plot.test-util";
 import { DYN_PROCESSORS } from "./dyn-registry";
 import { defaultPlan } from "../models/initial-state";
@@ -38,7 +38,7 @@ describe("a lit face that carries text uses --led-face, not --led or --seg", () 
     // ink is --led-ink and which measures Lc 68.2 / 60.6 — above the floor.
     const faces = NOT_A_FACE.map((t) => `var(${t})`);
     const offenders = RULES.filter(
-      (r) => faces.includes(decl(r.body, "background") ?? "") && decl(r.body, "color") !== undefined,
+      (r) => faces.includes(faceDecl(r.body) ?? "") && decl(r.body, "color") !== undefined,
     ).map((r) => r.selector);
     expect(offenders, "print on var(--led-face) with var(--led-ink) as the rim instead").toEqual([]);
   });
@@ -48,7 +48,7 @@ describe("a lit face that carries text uses --led-face, not --led or --seg", () 
     // invariant rather than an aspiration — and it is what stops a surface lighting the
     // right face and then printing the wrong colour on it.
     const missing = RULES.filter(
-      (r) => decl(r.body, "background") === "var(--led-face)" && decl(r.body, "color") !== "var(--on-accent-ink)",
+      (r) => faceDecl(r.body) === "var(--led-face)" && decl(r.body, "color") !== "var(--on-accent-ink)",
     ).map((r) => r.selector);
     expect(missing, "a lit face takes var(--on-accent-ink)").toEqual([]);
   });

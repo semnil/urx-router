@@ -24,7 +24,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, getsOf, type Span } from "./analyze";
 import { MAX_ENTRIES } from "../../src/core/plan-history";
-import { CH1_FADER, CH2_FADER, faderOf, faderReadout, strip } from "./ui";
+import { CH1_FADER, CH2_FADER, deviceLevelText, faderOf, faderReadout, strip } from "./ui";
 
 // The tail of four tiers in one file (docs/{en,ja}/live-race-harness.md): the two
 // drop cases nothing else in T5 reaches, the two teardown cases whose window is a
@@ -42,16 +42,12 @@ const CH3_FADER = "139:0:2"; // URX44V only — a URX22 plan has no such address
 const CH4_FADER = "139:0:3";
 const P_CH_PAN = 141; // direct-follow: applied into the plan with no readback at all
 const MIDI_CC_LEVEL = 7;
-
-/** The fake's stored raw value rendered the way the console renders the plan's
- *  (src/ui/console.ts fmtDb over src/core/control/vd.ts vdToLevel), so "the screen
- *  shows what the device holds" is one string comparison. */
-function deviceLevelText(raw: number | undefined): string {
-  const v = raw ?? 0;
-  if (v <= -32768) return "-∞";
-  const db = v / 100;
-  return (db > 0 ? "+" : "") + db.toFixed(1);
-}
+/** How long a plan edit can still be leaving after the edit itself: LiveSync's own
+ *  `DEBOUNCE_MS` (120) plus slack for a loaded runner. A set on the wire this soon after
+ *  a gesture ended belongs to an edit the gesture had already made; anything later is the
+ *  gesture still running. Copied rather than imported — `live.ts` is inside the module
+ *  cycle the harness cannot enter (see `deviceLevelText` in ./ui). */
+const FLUSH_TAIL_MS = 300;
 
 /** Click a File menu item (the menu opens on its trigger and closes on the item). */
 async function fileMenu(page: Page, id: string): Promise<void> {
@@ -337,18 +333,26 @@ test.describe("Tzb tail", () => {
       expect(dragWrites.length).toBeGreaterThan(1);
       expect(dragged).not.toBe(before);
 
-      // PINNED, and a defect. The readback lands while the pointer is still down: the
-      // element the operator is holding is taken out of the document by the reflect's
-      // full console render, and the drag's own handler — bound to `window`, closing
-      // over the detached StripRef — keeps writing into the plan and out to the
-      // device from a control that is no longer on screen (invariant 10).
+      // The readback lands while the pointer is still down, and the element the operator
+      // is holding is taken out of the document by the reflect's full console render.
+      // That is the trigger and it is unchanged.
       expect(duringDrag.connected).toBe(false);
       expect(duringDrag.detachAt).toBeGreaterThan(dragAt);
       expect(duringDrag.detachAt).toBeLessThan(releaseAt);
-      expect(setsOn(all, CH1_FADER, duringDrag.detachAt).length).toBeGreaterThan(0);
+      // Invariant 10. The drag's handler is bound to `window` and closes over the
+      // detached StripRef, so it is still called after the replacement — it now ends the
+      // gesture there instead of going on writing into the plan and out to the device
+      // from a control that is no longer on screen.
+      //
+      // Bounded one flush window past the detach rather than at it: a plan edit made
+      // BEFORE the element went is written up to 120 ms later, so the trailing set is the
+      // last pre-detach edit leaving, not the gesture continuing. What the window has to
+      // exclude is the remaining ~1.7-3 s of pointer movement, which is where every write
+      // used to be. FLUSH_TAIL_MS is that window plus slack for a loaded runner.
+      expect(setsOn(all, CH1_FADER, duringDrag.detachAt + FLUSH_TAIL_MS)).toHaveLength(0);
       // The visible half of that: the strip on screen stops answering the pointer the
-      // instant it is replaced, so the operator goes on moving a fader whose readout
-      // is frozen on the recalled value while the writes keep leaving.
+      // instant it is replaced, and now nothing else is answering it either — the
+      // readout the operator ends on is the recalled value, and it is what was written.
       expect(held).toBe(after);
 
       // The plan the operator was editing is gone — for every key they were NOT holding.
@@ -587,13 +591,13 @@ test.describe("Tzb tail", () => {
   // deactivates the session and replaces the plan, while the flush's send loop is
   // sitting in an await between two commands.
   //
-  // The barrier holds the flush at its FIRST command, so everything after it is
-  // issued once the switch has completed. That the remaining commands come after is
-  // therefore the barrier's doing and is not the claim; the claim is that they are
-  // issued AT ALL — a loop that re-checked the session (or the plan) per command
-  // would emit nothing after the release — and that they carry addresses the model
-  // now on screen does not have.
-  test("a flush interrupted by a model switch finishes sending the old model's addresses", async ({ page }) => {
+  // The barrier holds the flush at its FIRST command, so anything the loop had left
+  // could only be issued once the switch has completed. The claim is that it is not
+  // issued at all: the loop reads the session generation after every await, and
+  // loadPlan -> deactivateLive -> end() has moved it. Before that guard the remaining
+  // commands went out carrying addresses the model now on screen does not have, which
+  // is what the orphan count below still measures — now as an absence.
+  test("a flush interrupted by a model switch sends nothing more", async ({ page }) => {
     test.setTimeout(180_000);
     await installFake(page, { storage: midiStorage(["URX44V", "URX22"]) });
     await page.goto("/");
@@ -658,16 +662,19 @@ test.describe("Tzb tail", () => {
     // live session (deactivateLive runs inside loadPlan instead), so the picker moved
     // and the session went down.
     expect(await page.locator("#model-picker").inputValue()).toBe("URX22");
-    // PINNED, and the defect. The flush outlives both its session and its plan: the
-    // remaining commands go out to a unit the app has already disconnected from, and
-    // they carry channels the plan on screen does not have.
-    expect(late.length).toBeGreaterThan(1);
-    expect(orphanAddrs.length).toBeGreaterThan(0);
-    expect(findings.some((f) => f.inv === 16)).toBe(true);
-    // The backstop that DOES cover the switch: the history is reset rather than
-    // rebased, so no entry survives to be applied against the new model's node ids.
+    // …but the flush does not outlive it. `armed` above proves the loop had commands
+    // left when the barrier caught it, so these zeros are the generation check and not
+    // an empty remainder: nothing goes to a unit the app has disconnected from, and no
+    // address belonging to a model the plan no longer is.
+    expect(armed).toBeGreaterThanOrEqual(10);
+    expect(late).toHaveLength(0);
+    expect(orphanAddrs).toHaveLength(0);
+    expect(findings.some((f) => f.inv === 16)).toBe(false);
+    // The other backstop the switch has: the history is reset rather than rebased, so
+    // no entry survives to be applied against the new model's node ids.
     expect(depthAfterSwitch).toEqual({ undo: 0, redo: 0 });
-    // …and the MIDI cache was re-pointed, which the in-flight commands were not.
+    // …and the MIDI cache was re-pointed, so the second operator resolves against the
+    // model now on screen.
     expect(afterCc).not.toBe(freshCh1);
   });
 
@@ -915,19 +922,21 @@ test.describe("Tzb tail", () => {
     expect(quiet.detachAt).toBe(-1);
     // Both gestures really drove the link. Without this a press that missed its
     // control (a clipped strip, a scrolled rack) would pass every element check below
-    // by never having been a drag at all.
+    // by never having been a drag at all. The churned one is asserted at 1 rather than
+    // at the quiet one's many: it is cut short by the rebuild the case is about, so
+    // "more than one write" would be a statement about how early the churn's first
+    // rebuild happened to land.
     expect(quietWrites.length).toBeGreaterThan(1);
     expect(heldQuiet).not.toBe(beforeQuiet);
-    expect(churnWrites.length).toBeGreaterThan(1);
+    expect(churnWrites.length).toBeGreaterThanOrEqual(1);
 
-    // PINNED, and the defect (invariant 10). The device's own movement on OTHER
-    // channels rebuilds the strip the operator is holding: refreshStrip replaces the
-    // whole strip element, and the drag's handlers live on `window` closing over the
-    // detached StripRef, so the gesture continues against a control that has left the
-    // document.
+    // Invariant 10. The device's own movement on OTHER channels still rebuilds the strip
+    // the operator is holding — refreshStrip replaces the whole strip element — but the
+    // gesture no longer continues against a control that has left the document: the
+    // handlers on `window` see their element go and end there.
     expect(churn.connected).toBe(false);
     expect(churn.detachAt).toBeGreaterThan(churnDragAt);
-    expect(setsOn(all, CH2_FADER, churn.detachAt).length).toBeGreaterThan(0);
+    expect(setsOn(all, CH2_FADER, churn.detachAt + FLUSH_TAIL_MS)).toHaveLength(0);
     // The rebuild is genuinely more expensive, not merely different — logged above in
     // full, asserted here only where the difference is structural.
     expect(churn.mutations).toBeGreaterThan(quiet.mutations);

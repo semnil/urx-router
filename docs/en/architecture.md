@@ -2581,10 +2581,15 @@ error — and the status line says so; declining the discard confirm attempts no
 the entry. The plan format is
 unchanged apart from the added `sampleRate`, `nodeNames`, `nodeColors`, `hidden`, `notes` and
 `noteCollapsed` fields (older files default them on load). Loading (`deserialize`) is tolerant of
-corrupt input: every collection passes a type guard that drops a non-conforming value to its empty
-default (`positions` included, symmetrically), and `connections` is validated element-by-element so
-malformed wires (null, wrong-typed, unknown `kind`) are discarded — keeping garbled values from a
-hand edit or an older build out of the plan where they could break routing invariants.
+corrupt input at two levels. A collection that is not the right container at all falls back to its
+empty default (`positions` included, symmetrically); within a collection each element is validated on
+its own and a non-conforming one is dropped rather than the document refused — a wire that is null,
+wrong-typed or carries an unknown `kind`; a node parameter leaf that is not a finite number or a
+boolean; a note, name or colour that is not a string; a hidden / note-collapsed id that is not a
+string; a position whose coordinates are not both finite. This keeps garbled values from a hand edit,
+a generator or an older build out of the plan, where they would break routing invariants or reach a
+formatter that throws on them — a note written as an object used to load cleanly and then take the
+canvas down on its first paint.
 
 A scene-scoped save (Preferences > Plan files) additionally writes `"scope": "scene"`, omits
 `sampleRate`, and strips the scene-external state (the monitor / oscillator node params, the

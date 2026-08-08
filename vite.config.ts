@@ -17,8 +17,8 @@ export default defineConfig(({ mode }) => ({
       // second document). The demo build has no MIDI at all — the whole feature is
       // desktop-only — so it would ship an orphan page to GitHub Pages.
       input: {
-        main: resolve(__dirname, "index.html"),
-        ...(mode === "demo" || process.env.VITE_DEMO ? {} : { midi: resolve(__dirname, "midi.html") }),
+        main: resolve(import.meta.dirname, "index.html"),
+        ...(mode === "demo" || process.env.VITE_DEMO ? {} : { midi: resolve(import.meta.dirname, "midi.html") }),
       } as Record<string, string>,
     },
   },

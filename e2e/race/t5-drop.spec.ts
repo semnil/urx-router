@@ -137,9 +137,13 @@ test.describe("T5 drop", () => {
   // the loop runs at a scripted 60 ms per set, so "the drop landed at set N" is the
   // same statement, made exactly.
   //
-  // Serial, because the rungs are one measurement: the ladder's claim is that the
-  // escape count FALLS as the drop lands later in the loop, and that comparison needs
-  // all three rungs in one worker, in order.
+  // Serial, and now only so the three rungs are read as one ladder in the log — each
+  // rung carries its own verdict. Before the guard in LiveSync.flush() the claim was
+  // cross-rung and genuinely needed the order (the remainder of the loop went out,
+  // strictly fewer commands the later the drop landed, so the counts had to be compared
+  // against each other). It is now the same claim at every position — nothing escapes —
+  // which each rung states on its own. The rung positions are unchanged so the two
+  // regimes stay comparable.
   const RUNGS = [
     ["early", 2],
     ["mid", 7],
@@ -149,7 +153,7 @@ test.describe("T5 drop", () => {
 
   test.describe.serial("link loss ladder", () => {
     for (const [rung, nth] of RUNGS) {
-      test(`link loss at the ${rung} of a flush send loop: the writes after it still go out`, async ({ page }) => {
+      test(`link loss at the ${rung} of a flush send loop: nothing after it goes out`, async ({ page }) => {
         await goLive(page);
         await page.click("#btn-view-console");
         await expect(faderReadout(page, "CH 1")).toBeVisible();
@@ -203,16 +207,16 @@ test.describe("T5 drop", () => {
         // issued before the drop. Without this the escape count below is a statement
         // about an unknown loop position.
         expect(beforeDrop).toHaveLength(nth);
-        // PINNED DEFECT. LiveSync.flush() tests `active` only at its entry, and the
-        // teardown is synchronous while the send loop is not: every command the loop
-        // had left when the link died is still issued, against a connection the app
-        // has already disconnected. A loop that re-checked `active` would emit nothing
-        // after the teardown mark and this would be 0.
-        expect(escaped.length).toBeGreaterThan(0);
-        expect(findings.some((f) => f.inv === 16)).toBe(true);
+        // The teardown is synchronous while the send loop is not, so the loop is sitting
+        // in an await when the session ends. It now reads the session generation after
+        // every await and returns: the command the barrier held completes (it was already
+        // on the wire), and nothing after it is issued. The one still in flight is why
+        // the boundary is the teardown mark rather than the drop mark.
+        expect(escaped.length).toBe(0);
+        expect(findings.some((f) => f.inv === 16)).toBe(false);
 
-        // …but only writes escape. No timer (reflect / settle / idle / live debounce)
-        // survives the teardown, so nothing reads, and the meter stream is released.
+        // Nothing reads either: no timer (reflect / settle / idle / live debounce)
+        // survives the teardown, and the meter stream is released.
         expect(lateReads).toHaveLength(0);
         expect(counters.meterSubs).toBe(counters.meterUnsubs);
         expect(counters.unsubscribes).toBeGreaterThanOrEqual(1);
@@ -220,16 +224,13 @@ test.describe("T5 drop", () => {
         // the escaping writes' own failures could not stack a second report on top.
         expect(await dialogsOf(page)).toHaveLength(1);
 
-        // The ladder's own claim, made once all three rungs have run: what escapes is
-        // the REMAINDER of the send loop, so the later the drop lands in it the fewer
-        // commands get out. A teardown that killed the loop outright, or one that let
-        // the whole burst out regardless, would give three equal counts instead.
+        // The three rungs side by side. Logged, not asserted: each rung already states
+        // its own zero above, and `expect(armed).toBeGreaterThanOrEqual(nth + 2)` at the
+        // top already rules out the vacuous pass (a rung whose arming never reached past
+        // the barrier would have nothing left to escape). Re-checking either here would
+        // make one rung's verdict depend on its siblings' module state.
         if (rung === RUNGS.at(-1)![0]) {
-          const ladder = RUNGS.map(([r]) => escapedByRung.get(r));
-          console.log(`ladder escapes by rung: ${RUNGS.map(([r], i) => `${r}=${ladder[i]}`).join(", ")}`);
-          expect(ladder.every((n) => n !== undefined)).toBe(true);
-          expect(ladder[0]!).toBeGreaterThan(ladder[1]!);
-          expect(ladder[1]!).toBeGreaterThan(ladder[2]!);
+          console.log(`ladder by rung: ${RUNGS.map(([r]) => `${r}=${escapedByRung.get(r)}`).join(", ")}`);
         }
       });
     }

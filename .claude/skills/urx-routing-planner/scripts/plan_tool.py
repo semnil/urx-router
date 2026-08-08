@@ -7,8 +7,9 @@ loads the plan as authored":
 - the document gate matches core/plan.ts `deserializeDocument` plus the model
   check the app runs right after it: a file refused there never reaches the
   routing check (notPlanFile / planVersionUnsupported / unknownModel), and a
-  malformed wire or node-param value is silently DROPPED rather than refused, so
-  those are reported as warnings — the plan loads, just not as written,
+  malformed wire, node-param value, name / colour / note, hidden-or-collapsed id
+  or position is silently DROPPED rather than refused, so those are reported as
+  warnings — the plan loads, just not as written,
 - validation matches core/routing.ts `validatePlan` (noRule / singleInput /
   duplicate), and
 - the URL encoding matches core/plan.ts `encodePlanParam` ("z" + URL-safe base64
@@ -152,8 +153,52 @@ def validate(plan, models):
             problems.append(("duplicate", frm, to))
         seen.add(key)
 
+    warnings.extend(collection_warnings(plan))
     warnings.extend(node_param_warnings(plan, nodes))
     return problems, warnings
+
+
+def is_str(v):
+    return isinstance(v, str)
+
+
+def is_pos(p):
+    return isinstance(p, dict) and is_number(p.get("x")) and is_number(p.get("y"))
+
+
+# The collections the loader validates element by element. An element of the wrong
+# type is dropped, exactly like a malformed wire: the plan loads and the entry is
+# simply not there. Worth warning about because a generator that writes an object or
+# a number here gets no error from the app at all. One row per collection — key,
+# container, the word for that container, what an element must be, and why it went —
+# so a new collection is a row rather than a fourth loop.
+COLLECTIONS = (
+    ("nodeNames", dict, "object", is_str, "the value must be a string"),
+    ("nodeColors", dict, "object", is_str, "the value must be a string"),
+    ("notes", dict, "object", is_str, "the value must be a string"),
+    ("hidden", list, "array", is_str, "every element must be a node id string"),
+    ("noteCollapsed", list, "array", is_str, "every element must be a node id string"),
+    ("positions", dict, "object", is_pos, "both x and y must be finite numbers"),
+)
+
+
+def collection_warnings(plan):
+    """The entries the app's loader drops from the element-validated collections. A
+    collection that is not the right container at all falls back to empty, which loses
+    every entry at once."""
+    out = []
+    for key, container, word, ok, why in COLLECTIONS:
+        v = plan.get(key)
+        if v is None:
+            continue
+        if not isinstance(v, container):
+            out.append(f"{key} is not an {word} — the app loads the plan with no {key} at all")
+            continue
+        entries = v.items() if container is dict else enumerate(v)
+        for label, el in entries:
+            if not ok(el):
+                out.append(f"{key}[{label}]: the app drops this on load — {why}")
+    return out
 
 
 # Node-param sections carrying the DEVICE's own internal units — what the app

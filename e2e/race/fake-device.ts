@@ -976,7 +976,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             // The epoch-matched teardown ran at the queue point; only the reply is
             // outstanding here.
             //
-            // Divergence kept, vd.rs:206-215: `sender()` errors with "not-connected"
+            // Divergence kept, vd.rs `sender()`: it errors with "not-connected"
             // once the connection is taken, so every vd command after this one fails at
             // the bridge. The fake keeps answering them, because what the teardown cases
             // measure is WHICH commands the app still issues after its own teardown
