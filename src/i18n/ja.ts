@@ -69,14 +69,16 @@ export const ja: Messages = {
     cue: "C.INT",
     cueFull: "Cue Interrupt",
     mono: "MONO",
-    master: "マスター",
+    // ストリップ群の区切りラベル (この master と下の group*)。縦書きで組むため
+    // 全角字は列幅そのものを変える。どの言語でも英語表記のまま。
+    master: "MASTER",
     meterPoint: "METER POINT",
     meterPointHint: "実機がメーターを出すタップ点のみ表示。",
     readFader: "FADER",
     readMeter: "METER",
-    groupInputs: "入力",
+    groupInputs: "INPUTS",
     groupBus: "BUS / FX",
-    groupMon: "モニター",
+    groupMon: "MONITOR",
   },
   // 本体の SETUP > GENERAL。節名・コントロール名は日本語版ユーザーガイドでも英語のままなので
   // 訳さず、説明文だけを日本語にする。本体の表記と一致していることが、画面の行を

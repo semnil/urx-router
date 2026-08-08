@@ -77,6 +77,9 @@ export const en = {
     // Full name of the C.INT chip (kept distinct from the device's plain CUE).
     cueFull: "Cue Interrupt",
     mono: "MONO",
+    // Strip group separators (this one and the group* keys below). They are set in
+    // vertical writing mode, where a full-width glyph changes the column's width, so
+    // a translated label moves the rack's layout; kept in English in every language.
     master: "MASTER",
     meterPoint: "METER POINT",
     meterPointHint: "Only taps the device meters are listed.",

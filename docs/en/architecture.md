@@ -579,7 +579,10 @@ the inspector, and the open modal itself.
 > `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. A tooltip that spells out a device
 > abbreviation keeps the unit's own wording (`C.INT` → `Cue Interrupt`), and so do the MIDI takeover
 > mode names (`Absolute` / `Pickup`), which name a controller behavior the same way the button
-> behaviors do. The visible canvas element is a **node**; reserve "module" for software modules
+> behaviors do. The CONSOLE strip group separators (`INPUTS` / `BUS / FX` / `MONITOR` / `MASTER`) stay
+> in English for a reason that is layout rather than terminology: they are set in vertical writing mode,
+> where a full-width glyph is as wide as the column itself, so translating one moves the rack's geometry
+> and not only its wording. The visible canvas element is a **node**; reserve "module" for software modules
 > (`src/i18n/` etc.). The legend groups the wire kinds under "Connection types" and the node kinds
 > under "Nodes".
 
