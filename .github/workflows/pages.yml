@@ -1,13 +1,30 @@
 name: Deploy demo to GitHub Pages
 
 # Builds the browser demo (file persistence and image export hidden via
-# VITE_DEMO) and publishes it to GitHub Pages when a vX.Y.Z release tag is
-# pushed, so the demo tracks released versions rather than every main commit.
+# VITE_DEMO) and publishes it to GitHub Pages when a release IS PUBLISHED — not
+# when its tag is cut. The installers land in a draft Release that a human reads
+# before it goes out; this puts the demo behind the same gesture, so the two stop
+# describing different versions for however long that review takes.
+#
+# `release: published` fires when a draft becomes public, and nothing fires when
+# the draft is created, which is exactly the shape wanted. **It works because a
+# person publishes it.** A draft published from a workflow using the repository's
+# GITHUB_TOKEN would fire nothing at all — the same rule that stops an auto-pushed
+# tag from starting release.yml, which is why tag-release.yml has to dispatch that
+# one. Here the symptom would not be a failed run but NO run, and the demo would
+# quietly stop tracking releases. Automating the publish means giving this workflow
+# an explicit dispatch (or the publisher a PAT) in the same change.
+#
+# The event runs on the release's tag, so the build is the released code. The
+# checkout says which ref out loud rather than resting on that reading; the
+# expression is empty on a manual dispatch, where checkout falls back to the ref
+# the dispatch named. The `github-pages` environment admits both (`main`, `v*`).
+#
+# There is no `push: tags:` trigger any more. There was one, and it had not fired
+# since v1.5.1 — the tag is created with GITHUB_TOKEN, so it never reached it.
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
-      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -25,6 +42,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The released commit, named rather than inferred. Empty on a manual
+          # dispatch, where checkout falls back to the dispatched ref. Creating a
+          # release needs write access, so this field is not an outside input the
+          # way a fork's head ref would be.
+          ref: ${{ github.event.release.tag_name }}
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
