@@ -16,30 +16,12 @@
 // landing on a track. Re-splitting one means changing WIRE_GROUP, and that has to be
 // a decision rather than a drift, so the mapping is written out here too.
 // @vitest-environment jsdom
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { CSS, THEME_SELECTOR, tokensIn } from "./style-css.test-util";
 import { PALETTES, WIRE_GROUP, type WireGroup } from "./graph";
 import type { ConnectionKind } from "../models/types";
-
-// __dirname rather than import.meta.url: this file runs under jsdom, where the
-// module URL is an http: one and cannot be turned back into a path.
-const CSS = readFileSync(resolve(__dirname, "../style.css"), "utf8");
-
-/** The custom properties declared in one selector's block, as a plain map. */
-function tokensIn(selector: string): Record<string, string> {
-  const at = CSS.indexOf(selector + " {");
-  expect(at, `${selector} not found in style.css`).toBeGreaterThanOrEqual(0);
-  const body = CSS.slice(at, CSS.indexOf("\n}", at));
-  const out: Record<string, string> = {};
-  for (const m of body.matchAll(/^\s*(--[a-z0-9-]+):\s*([^;]+);/gm)) out[m[1]] = m[2].trim();
-  return out;
-}
-
-const THEME_SELECTOR: Record<keyof typeof PALETTES, string> = {
-  dark: ":root",
-  light: '[data-theme="light"]',
-};
 
 const GROUPS: WireGroup[] = ["select", "send", "out"];
 

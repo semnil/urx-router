@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { GATE_DYN } from "./dyn-gate";
 import { COMP_DYN } from "./dyn-comp";
 import { GATE_RANGE_OFF_DB } from "../core/control/vd";
-import type { DynPlotGeo, DynValues } from "./dyn-screen";
+import { recorder, vals } from "./dyn-plot.test-util";
+import type { DynPlotGeo } from "./dyn-screen";
 
 // The drawing contract every plot on the channel tuning screens follows: a curve is drawn
 // at its TRUE value and the host clips it to the plot area, so a value past the axis leaves
@@ -13,32 +14,6 @@ import type { DynPlotGeo, DynValues } from "./dyn-screen";
 // Pinned through a recording context rather than pixels: what matters is the coordinate the
 // descriptor asks for, and the clip that keeps it off the frame is the host's.
 
-interface Recorder {
-  ctx: CanvasRenderingContext2D;
-  ys: number[];
-}
-
-/** A 2D context that records the y of every path point and swallows everything else. */
-function recorder(): Recorder {
-  const ys: number[] = [];
-  const ctx = new Proxy(
-    {},
-    {
-      get(_t, prop) {
-        if (prop === "moveTo" || prop === "lineTo") return (_x: number, y: number) => void ys.push(y);
-        if (prop === "measureText") return () => ({ width: 8 });
-        if (prop === "save" || prop === "restore") return () => {};
-        // Everything else is a no-op method; property writes (fillStyle, font …) land on
-        // the target and are never read back.
-        return () => {};
-      },
-      set: () => true,
-    },
-  ) as CanvasRenderingContext2D;
-  return { ctx, ys };
-}
-
-const vals = (v: Record<string, number>): DynValues => ({ get: (k) => v[k] ?? 0 });
 const TOK: Record<string, string> = {};
 const W = 600;
 const H = 320;

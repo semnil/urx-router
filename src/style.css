@@ -1430,8 +1430,10 @@ select:focus-visible,
   font-size: 10px;
   font-weight: 700;
   color: var(--on-accent-ink);
-  background: var(--led);
-  box-shadow: 0 0 7px rgba(255, 194, 77, 0.45);
+  background: var(--led-face);
+  /* The glow follows the face. It used to be a literal copy of the dark theme's
+     --led, so on the light theme the badge changed colour and the glow did not. */
+  box-shadow: 0 0 7px color-mix(in srgb, var(--led-face) 45%, transparent);
 }
 
 .shelf-chips {
@@ -1550,11 +1552,14 @@ select:focus-visible,
   cursor: pointer;
 }
 
-/* Hide is the primary action — amber console segment, dark ink. */
+/* Hide is the primary action — the lit face, dark ink. Not --seg: that gradient is
+   for faces nothing is printed on (fader caps, knobs), and its lower stop leaves the
+   ink at APCA Lc 42.7 on the light theme. */
 .selbar-hide {
   font-weight: 600;
   color: var(--on-accent-ink);
-  background: var(--seg);
+  background: var(--led-face);
+  border-color: var(--led-ink);
 }
 
 .selbar-clear {
@@ -2888,8 +2893,8 @@ select:focus-visible,
   color: var(--text-dim);
 }
 .consent-btn-primary {
-  background: var(--led);
-  border-color: var(--led);
+  background: var(--led-face);
+  border-color: var(--led-ink);
   color: var(--on-accent-ink);
   font-weight: 600;
 }
@@ -3015,12 +3020,14 @@ select:focus-visible,
     grid-template-columns: 1fr;
   }
 }
-.prefs-section h3 {
+/* One section heading, written once. The MIDI window is a separate OS window on the
+   same stylesheet and had its own copy of these nine declarations; only the spacing
+   differs between the two surfaces, so that is all each keeps of its own. */
+.prefs-section h3,
+.mw-sec > h3 {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 26px 0 0;
-  padding-bottom: 7px;
   border-bottom: 1px solid var(--line);
   font-family: var(--mono);
   font-size: 10px;
@@ -3028,6 +3035,10 @@ select:focus-visible,
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.14em;
+}
+.prefs-section h3 {
+  margin: 26px 0 0;
+  padding-bottom: 7px;
 }
 .prefs-col > .prefs-section:first-child h3 {
   margin-top: 6px;
@@ -3415,18 +3426,27 @@ select:focus-visible,
   padding: 12px 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  /* Preferences separates sections by 26px (the h3's top margin there). Matching it
+     here rather than the 18px this window had: the two are read as one vocabulary,
+     and the smaller gap was part of why the section breaks did not register. */
+  gap: 26px;
+}
+/* The content indents by the same 14px the Preferences rows and notes take, so the
+   nesting reads at a glance: without it a section's content sat on the heading's own
+   left edge, and the mode legend — which belongs to the assignment section — looked
+   like a third top-level section rather than part of one.
+   The indent is the SECTION's padding, not a margin on each child: the assignment
+   table is `width: 100%`, so a margin makes its used width exceed the containing
+   block and the delete column is clipped by the body's scroll box (measured: the
+   table's right edge landed 14px past the section at every window width). As padding
+   it moves the containing block instead, and 100% still means the indented width.
+   The heading is pulled back out so its hairline stays full-bleed. */
+.mw-sec {
+  padding-left: 14px;
 }
 .mw-sec > h3 {
-  margin: 0 0 8px;
+  margin: 0 0 8px -14px;
   padding-bottom: 6px;
-  border-bottom: 1px solid var(--line);
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
 }
 .mw-ports {
   display: grid;
@@ -3434,6 +3454,11 @@ select:focus-visible,
   gap: 8px 12px;
   align-items: center;
 }
+/* No per-row hairline here, unlike the Preferences rows this section otherwise
+   follows: each port's control is a full-width select that already delimits itself,
+   so the rule would draw a line the row does not need. (It is also not free to add —
+   the grid is a flat list of cells, so a border lands under the label cell at the
+   label's own width — but the reason it stays out is the first one.) */
 .mw-ports > span {
   color: var(--text-dim);
 }
@@ -3466,8 +3491,8 @@ select:focus-visible,
   cursor: pointer;
 }
 .mw-learnbtn.on {
-  border-color: var(--led);
-  background: var(--seg);
+  border-color: var(--led-ink);
+  background: var(--led-face);
   color: var(--on-accent-ink);
 }
 .mw-hint {
@@ -3620,7 +3645,7 @@ select:focus-visible,
 .gt-ch {
   font-size: 11px;
   color: var(--on-accent-ink);
-  background: var(--led);
+  background: var(--led-face);
   border-radius: 2px;
   padding: 1px 7px;
 }
