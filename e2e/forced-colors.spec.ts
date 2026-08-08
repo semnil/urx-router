@@ -31,6 +31,42 @@ const openGate = async (page: Page) => {
   await expect(page.locator("#dyn-screen-box")).toBeVisible();
 };
 
+/** An element's painted pixels, row-major, each as an "r,g,b" key.
+ *
+ *  Every other assertion in this file reads a computed style, and one pair cannot be
+ *  read that way at all: a range input's track and thumb are `::-webkit-` pseudo
+ *  elements whose author declarations this engine does not report — measured, the rule
+ *  that draws the track computes to `0px none` while the track is plainly on screen.
+ *  The painted frame is the only place that pair can be asserted. */
+const pixels = async (page: Page, shot: Buffer): Promise<string[][]> =>
+  page.evaluate(
+    async (uri) => {
+      const im = await new Promise<HTMLImageElement>((res, rej) => {
+        const i = new Image();
+        i.onload = () => res(i);
+        i.onerror = rej;
+        i.src = uri;
+      });
+      const c = document.createElement("canvas");
+      c.width = im.width;
+      c.height = im.height;
+      const g = c.getContext("2d", { willReadFrequently: true })!;
+      g.drawImage(im, 0, 0);
+      const d = g.getImageData(0, 0, c.width, c.height).data;
+      const rows: string[][] = [];
+      for (let y = 0; y < c.height; y++) {
+        const row: string[] = [];
+        for (let x = 0; x < c.width; x++) {
+          const i = (y * c.width + x) * 4;
+          row.push(`${d[i]},${d[i + 1]},${d[i + 2]}`);
+        }
+        rows.push(row);
+      }
+      return rows;
+    },
+    "data:image/png;base64," + shot.toString("base64"),
+  );
+
 // One part, drawn as an outline rather than as a fill. The fill has to be GONE
 // and not merely a different colour: a background the mode has forced to Canvas
 // is exactly the invisible case this pins against, and it reports the Canvas RGB
@@ -151,6 +187,52 @@ test("the parts stay outlines in a send column that has been switched off", asyn
   await expectOutlined(page, { selector: ".con-scol.off .con-vfad .cap", pseudo: "::after" });
   await expectOutlined(page, { selector: ".con-scol.off .con-vfad .track" });
   await expectOutlined(page, { selector: ".con-scol.off .con-vfad .zero" });
+});
+
+test("a parameter slider keeps its track, and the thumb still covers it", async ({ page }) => {
+  // The track is a gradient with an inset shadow — the fader groove's construction in
+  // another costume, and it loses both the same way. Measured on real Windows high
+  // contrast (hcblack and hcwhite, WebView2): not one pixel of it survived, so every
+  // slider in the app rendered as a label, a value and a thumb floating over nothing.
+  //
+  // The fix is the groove's pair of rules, and the SECOND one is what this test is
+  // really for: an outlined track needs the thumb to keep occluding it, because the
+  // thumb's own fill is a gradient this mode drops too. Without it the track reads
+  // straight through the handle.
+  await openGate(page);
+  const input = page.locator("#dyn-screen-box .dev-slider input[type='range']").first();
+  await expect(input).toBeVisible();
+
+  await page.emulateMedia({ forcedColors: "active" });
+
+  const rows = await pixels(page, await input.screenshot());
+  const [h, w] = [rows.length, rows[0].length];
+  // The ground is the commonest colour, not the corner pixel: the thumb can sit at
+  // either end, and at the left end the corner IS the thumb.
+  const tally = new Map<string, number>();
+  for (const row of rows) for (const px of row) tally.set(px, (tally.get(px) ?? 0) + 1);
+  const ground = [...tally.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  const ink = (x: number, y: number) => rows[y][x] !== ground;
+
+  // The thumb runs nearly the full height of the control and the track is a few pixels
+  // at its middle, so the only ink a quarter of the way down is the thumb — and there
+  // it is its two SIDES, because the fill that occludes the track is Canvas, which is
+  // the ground. That the interior reads as ground is the whole point of the rule.
+  const rim = [...Array(w).keys()].filter((x) => ink(x, Math.round(h * 0.25)));
+  expect(rim.length, "the thumb is drawn").toBeGreaterThanOrEqual(2);
+  const [left, right] = [rim[0], rim[rim.length - 1]];
+  expect(right - left, "the thumb's own width").toBeGreaterThan(6);
+
+  // Which rows the track is on, read well clear of the thumb.
+  const probeX = (left + right) / 2 > w / 2 ? Math.round(w * 0.15) : Math.round(w * 0.85);
+  const trackRows = [...Array(h).keys()].filter((y) => ink(probeX, y));
+  expect(trackRows.length, "the track is drawn at all").toBeGreaterThan(0);
+
+  // ...and none of it shows through the thumb. The rim columns are excluded on either
+  // side: they are the thumb's own border, which is ink by design.
+  for (const y of trackRows)
+    for (let x = left + 2; x <= right - 2; x++)
+      expect(ink(x, y), `the track shows through the thumb at ${x},${y}`).toBe(false);
 });
 
 test("the surfaces where the colour IS the reading are opted out", async ({ page }) => {

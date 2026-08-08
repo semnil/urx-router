@@ -682,8 +682,8 @@ pixel-identical.
 
 - **An outline.** An engaged control takes `3px double CanvasText`, the one weight the system palette
   cannot flatten into its neighbours. Anything whose job is to mark a position or a path — the knob
-  pointer, the fader and mini-fader cap bars, the 0-dB lines, and the slot each cap rides in — trades
-  its fill for an outline of the same geometry.
+  pointer, the fader and mini-fader cap bars, the 0-dB lines, the slot each cap rides in, and the
+  parameter sliders' track — trades its fill for an outline of the same geometry.
 - **An island.** A surface whose colours ARE the reading — the scribble's device colour, the meters'
   green/yellow/red zones on the CONSOLE **and on the tuning screens' lanes**, the board's whole
   vocabulary of wires and rails — opts out with `forced-color-adjust: none`. Forcing those into two
@@ -692,16 +692,20 @@ pixel-identical.
   sides, bar, shade, peak and threshold cap at once.
 
 A third mechanism exists but is narrow: a **system** colour may still be used as a fill. The fader caps
-take `background: Canvas` for one reason only — to keep occluding the groove and the 0-dB line the way
-an opaque cap does in the ordinary themes, which is the layering the 0-dB rule is written against. An
-*author* colour cannot be used this way; the mode replaces it.
+and the slider thumbs take `background: Canvas` for one reason only — to keep occluding the track they
+ride over the way an opaque handle does in the ordinary themes, which is the layering the 0-dB rule is
+written against. An *author* colour cannot be used this way; the mode replaces it. An outlined track
+without this is worse than no rule at all: the line reads straight through the handle.
 
 Two traps are worth stating, because each has already produced a defect here.
 
-- **The mini-fader repeats the fader's parts under its own selectors.** `.con-vfad` shares the groove /
-  cap / 0-dB grammar with `.con-fader` by convention and not by selector, so a rule naming one does not
-  reach the other. The first version of the block named only `.con-fader`, and the mini-fader silently
-  lost its 0-dB line and its cap bar.
+- **A part repeats another part's grammar under its own selectors**, so a rule naming one does not
+  reach the other. `.con-vfad` shares the groove / cap / 0-dB grammar with `.con-fader` by convention;
+  the first version of the block named only `.con-fader`, and the mini-fader silently lost its 0-dB
+  line and its cap bar. The same trap fired twice more, and both times on a surface the block had never
+  named at all: the tuning screens' meter lane is the CONSOLE meter's grammar, and the parameter
+  slider's track is the fader groove's — both were left out, and both were invisible until a real
+  contrast theme was on screen.
 - **A state's own rule can out-specify the block.** A media query adds no specificity, so
   `.con-scol.off .con-vfad .cap::after` (four classes) beats `.con-vfad .cap::after` (two) and kept a
   filled bar in a send column that had been switched off. Every state that repaints one of these parts
@@ -712,7 +716,14 @@ absolute colour — the values belong to the OS theme, not to this app. What the
 was measured against a real Windows contrast theme in WebView2 (2026-08-07) and held: the system colour
 values are unguessable from their names, the opaque text backplate makes the usual
 `Highlight` / `HighlightText` idiom unreadable, `3px double` resolves as three distinct pixel rows, and
-the meter island keeps its three zones.
+the meter island keeps its three zones. The tuning-screen lane and the slider track were measured the
+same way (2026-08-08, hcblack and hcwhite) — both were found broken there and are fixed and re-measured
+under both themes.
+
+One assertion in that spec reads painted pixels rather than a computed style, and has to: a range
+input's track and thumb are `::-webkit-` pseudo elements whose author declarations this engine does not
+report through `getComputedStyle`. The rule that draws the track computes to `0px none` while the track
+is on screen, so the frame is the only place the pair can be checked.
 
 ## CONSOLE view (mixer-style level overview)
 

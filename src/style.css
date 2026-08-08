@@ -3990,6 +3990,30 @@ select:focus-visible,
     background: Canvas;
   }
 
+  /* The parameter rows' slider, which is the groove above in another costume: a
+     gradient track with an inset shadow, so the mode drops one and deletes the
+     other and the row renders as a label, a value and a thumb floating over
+     nothing -- measured on real Windows high contrast (hcblack), where no pixel
+     of the track survived. The same answer the groove takes. Every range input
+     in the app is one of these two classes, so this reaches the tuning screens'
+     parameter rows, the inspector's, and the Device setup brightness row.
+     The thumb was the one part of the row still visible, and it needs a rule all
+     the same: its own fill is a gradient the mode drops, so the outlined track
+     would read straight THROUGH the handle. Canvas is the mode's own background
+     colour, so filling the thumb with it restores the layering the normal themes
+     already have without inventing one -- the same pair of rules the fader groove
+     and its cap take, and for the same reason. */
+  .param input[type="range"]::-webkit-slider-runnable-track,
+  .dev-slider input[type="range"]::-webkit-slider-runnable-track {
+    background: none;
+    border: 1px solid CanvasText;
+  }
+  .param input[type="range"]::-webkit-slider-thumb,
+  .dev-slider input[type="range"]::-webkit-slider-thumb {
+    background: Canvas;
+    border: 1px solid CanvasText;
+  }
+
   /* Surfaces where the color IS the reading: the scribble's device colour, the
      meters' green/yellow/red zones, and the board's whole vocabulary of wires
      and rails. Forcing these into two system colors would not raise contrast --
