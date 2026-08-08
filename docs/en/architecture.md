@@ -576,7 +576,19 @@ The language is switched from the Preferences modal (a dropdown of native names 
 the inspector, and the open modal itself.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
-> `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. A tooltip that spells out a device
+> `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. **A row that reproduces a control
+> on one of the unit's own screens keeps that screen's English label, in every app language** — the unit
+> is English there whichever of its three display languages is selected. That was **read off the hardware
+> with its own Language set to Japanese**, screen by screen: GATE, COMP, EQ, DUCKER, OSCILLATOR, MONITOR
+> and CH SETTING carry no kana at all. The Japanese user guide names the same controls in English too
+> (`[Attack]`, `[Hold]`, `[Decay]`, `[Release]`, `[Knee]`, `[Threshold]`, `[Gain]`, `[Frequency]`,
+> `[HPF Freq.]`, `[Level]`, `[Width]`, `[Interval]`, `[Pan]`, `[Name]`, `[Color]`, and the `Assign`
+> sub-menu). So the whole of those seven screens is untranslated: the GATE / COMP / DUCKER rows including
+> `Range` and `Ratio`, the EQ band, filter type, frequency and gain, the input HPF frequency, the level
+> and pan / balance rows, the oscillator block with its bus assigns, the monitor block, the CH SETTING
+> name and colour, and the matching MIDI control names. It does **not** extend to the app's own vocabulary
+> — section headings, the legend, the node and connection kinds, status and error text are all translated,
+> and so is any sentence, hint or tooltip. A tooltip that spells out a device
 > abbreviation keeps the unit's own wording (`C.INT` → `Cue Interrupt`), and so do the MIDI takeover
 > mode names (`Absolute` / `Pickup`), which name a controller behavior the same way the button
 > behaviors do. The CONSOLE strip group separators (`INPUTS` / `BUS / FX` / `MONITOR` / `MASTER`) stay
