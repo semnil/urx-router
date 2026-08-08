@@ -1963,33 +1963,88 @@ brought inside: moved first, and shrunk only when it is larger than the work are
 belongs to is the one it overlaps most, or — when it overlaps none, which is what unplugging that display
 looks like — the one whose center is nearest, so a window comes back to the side of the desk it was on.
 This exists because the plugin's own guard is weaker; `winfit.rs`'s header states how, and against which
-version of it. The arithmetic is a pure function over rectangles (`fit` / `host_area` / `at_least`) and is
-covered by `cargo test`.
+version of it. The arithmetic is a pure function over rectangles (`fit` / `host_display` / `at_least`) and
+is covered by `cargo test`.
 
-**A restored window is also raised to its own minimum.** The remembered size is in physical pixels and the
-configured minimum in logical ones, so the two agree at one display scale only: a rectangle saved at 100%
-and restored at 150% describes a window smaller than the app says it can be. Nothing downstream puts it
-back — measured on Windows, **a programmatic size is not raised to the minimum**, because the platform
-enforces one through the message a user drag goes through and a programmatic move does not. `at_least`
-therefore raises the rectangle before it is fitted, using the window's current scale factor, and each
-window passes its own minimum in: the main window's is read from the running configuration, the MIDI
-window's is the one constant its builder also uses. A window whose minimum exceeds the work area still
-ends up smaller than that minimum — fitting wins, its top-left corner is pinned, and there is nothing
-better to do.
+**All of that arithmetic runs in one coordinate space, and which space that is depends on the platform.**
+`winfit.rs` calls it the *desk*, and `physical_per_desk` is the single place the platform is consulted.
+On **Windows** the desk is in physical pixels: `rcWork` comes from `GetMonitorInfoW` in virtual-screen
+coordinates, which are real pixels laid out coherently across displays for a per-monitor-DPI-aware
+process. On **macOS** the desk is in points, because a "physical" rectangle there is points times the scale
+factor of *the object it belongs to* — a monitor by its own, a window by its own — so displays at different
+scales are not measured in one space at all. Measured on a 1512x982@2.0 built-in panel beside a
+2560x1440@1.0 external one: the two work areas report as (0,66 3024x1898) and (1512,-458 2560x1380),
+which **overlap by 1,294,272 px² where the displays themselves share nothing**. That overlap fed the
+decision about which display a window belonged to, and the clamp into that display's rectangle
+afterwards. The module did its arithmetic in physical pixels until 2026-08-09 on the grounds that both
+monitors and windows are reported in them — true, and not the same as being reported in one space.
+
+**A restored window is also raised to its own minimum, measured on the display it is going to.** The
+remembered size is in desk units and the configured minimum in logical pixels, so the two agree only where
+one logical pixel is one desk unit. Nothing downstream puts a too-small window back — measured on Windows,
+**a programmatic size is not raised to the minimum**, because the platform enforces one through the
+message a user drag goes through and a programmatic move does not, and AppKit's `contentMinSize`
+constrains a drag rather than a `setContentSize:`. `at_least` therefore raises the rectangle, and the host
+display is chosen **before** it does, for two reasons: the minimum is only a number of desk units once a
+display is known, and a rectangle already inflated to a minimum overlaps the displays differently from the
+window that was actually there — measured, a 1400x900 window on one display was inflated to 1920x1280 and
+the inflated rectangle then named the *other* display as its host. Each window passes its own minimum in:
+the main window's is read from the running configuration, the MIDI window's is the one constant its builder
+also uses. A window whose minimum exceeds the work area still ends up smaller than that minimum — fitting
+wins, its top-left corner is pinned, and there is nothing better to do.
+
+**What scale a remembered rectangle was measured at is recorded beside it**, in
+`<app config dir>/.window-scale.json`. `.window-state.json` holds a rectangle in physical pixels and says
+nothing about the display it came from, so on macOS the numbers cannot be interpreted at all afterwards:
+1234x813 saved on a 1.0 display and 617x407 saved on a 2.0 one are the same rectangle to a reader that does
+not know which it is looking at, and applying the first while the window sits on a 2.0 panel halves both
+its position and its size. The plugin's schema belongs to the dependency, so the missing field is a file of
+our own, written at the two moments the plugin captures a rectangle — a window closing and the app exiting
+— both of which re-read the live window, so the pair cannot drift.
+
+For a state file written before that field existed, the scale is **derived by trial**: assume each display
+in turn, convert with its scale factor, and accept the display the result lands inside. Measured over the
+two displays above, 98% of the positions a 1234x813 window can take resolve uniquely and 87% of a 440x620
+one, with **no position resolving to the wrong display** — and two holes that are the reason the value is
+recorded going forward rather than only derived. A rectangle inside the region both displays' desk
+rectangles cover is consistent either way, and a rectangle that is no longer on any display — the case this
+module exists for — matches nothing. Both fall back to the window's own scale factor, which is what every
+restore used unconditionally before.
 
 **The correction is applied to numbers, not to a window.** At startup a window cannot be read back: a
 `set_position` issued from the setup hook is queued, and both that hook and `RunEvent::Ready` still report
 the position the window was BORN at — measured, after assuming the opposite. A read-then-correct at either
 point is therefore worse than nothing: it finds the birth rectangle, declares it fine, and the restore
-moves the window off the display afterwards. So the main window's restore is taken away from the plugin
-(`skip_initial_state`), and its saved rectangle is read from the state file, corrected, and applied once.
-The MIDI window keeps the plugin's restore, because it is built from a command while the event loop is
-running — its restore has landed by the time `build()` returns, so reading it back is sound. Only by then,
-though: a plugin hook of our own, registered behind the window-state plugin so that any future window would
-inherit the correction, was tried and **measured not to work** — inside a `window_created` hook the window
+moves the window off the display afterwards. So **both** windows' restores are taken away from the plugin
+(`skip_initial_state` for each), and a saved rectangle is read from the state file, corrected, and applied
+once — one `restore_window`, called from the setup hook for `main` and from the end of `open_midi_window`
+for `midi`. What is left of the plugin is the half that works: the saving, which re-reads the live window at
+each capture. The MIDI window used to keep the plugin's restore and correct the result afterwards, which
+cannot work — the restore has already lost the rectangle by then, and a correction can only enforce "inside
+a work area", not recover what was intended. The end of `open_midi_window` is still the only place its call
+can go: a plugin hook of our own, registered behind the window-state plugin so that any future window would
+inherit the treatment, was tried and **measured not to work** — inside a `window_created` hook the window
 still reports the position it was born at, because a `set_position` issued from one is queued exactly like one
-issued at startup. The correction therefore sits at the end of `open_midi_window`, and a third window built
-that way has to make the same call.
+issued at startup. A third window built that way has to make the same call.
+
+Measured end to end on macOS (2026-08-09, a seeded state file read by a dev build under its own bundle
+identifier, the window rectangle read back through `CGWindowListCopyWindowInfo`): a rectangle remembered as
+1234x813 at (2405,-29) on the 1.0 external display came back at **exactly** that rectangle on that display,
+through the trial path with no scale file present; and a rectangle remembered off every display,
+1280x800 at (4032,892) with the scale recorded as 1.0, came back inside the external display at
+(2792,122) 1280x800 — where the fallback alone would have produced (2016,446) 640x400, so the recorded
+scale is doing the work. A graceful quit then rewrote the rectangle and the scale in the same instant.
+
+**On Windows one half of this is still open, and it is not measured.** The desk being in physical pixels
+there means the arithmetic above is unaffected, but the *size* a restore applies is still applied before the
+window moves: `set_size` runs while the window is on the display it was born on, and the move that follows
+crosses a DPI boundary, at which point the OS resizes the window to preserve its LOGICAL size
+(`tao`'s `WM_DPICHANGED` handler; on Windows 11 it applies the rectangle Windows suggests). The fit's
+guarantee is therefore void on that path and the final size is off by the ratio of the two scale factors.
+Expressing the applied size in logical units would make the OS's own rescale a no-op — but only if
+`WM_DPICHANGED` fires for a programmatic move, and if it does not, that change is exactly as wrong in the
+other direction. It is one measurement on the Windows checkout, and the item is in
+`reference/work/windows-verify/` rather than guessed at here.
 
 **The MIDI window is a child of the main window**, which is what keeps it in front: on Windows an owned
 window is always above its owner in the z-order, and on macOS `addChildWindow` orders it above the parent
@@ -2010,9 +2065,10 @@ child of the main window's client area, and the window manager only moves the la
 there is nothing that could implement the follow, whatever issues the move. Measured through a drag's own
 message sequence as well as a plain programmatic move.
 
-`--reset-storage` clears the remembered geometry as well as `localStorage`. The state file is read during
-the plugin's own setup, so the delete has to happen before that; it is a plugin of its own, registered
-ahead of it.
+`--reset-storage` clears the remembered geometry as well as `localStorage` — both files, since a scale left
+behind for a rectangle that no longer exists would be read against the next rectangle written under that
+label. The state file is read during the plugin's own setup, so the delete has to happen before that; it is
+a plugin of its own, registered ahead of it.
 
 ## Responsive layout (mobile)
 
