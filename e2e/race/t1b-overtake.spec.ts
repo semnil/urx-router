@@ -177,10 +177,11 @@ test.describe("T1b overtake", () => {
       const dirs = Array.from({ length: STREAM_TICKS }, (_, i) => (i % 4 < 2 ? 1 : -1));
       const settledRaw = Math.round(dirs.reduce((db, d) => stepLevel(db, d), startRaw / 100) * 100);
       await mark(page, "starve-start");
-      // 55 edits at 90 ms = 4.95 s, below DEBOUNCE_MS throughout. The Up/Up/Down/Down
-      // cycle keeps the value off its baseline for three ticks in four (so a flush that
-      // did run would almost always find a diff) without walking off the top of the
-      // level grid, and 55 ticks leave it one detent above where it started.
+      // 55 edits — the first in the click's own task, then 54 at 90 ms = 4.86 s — every
+      // interval below DEBOUNCE_MS. The Up/Up/Down/Down cycle keeps the value off its
+      // baseline for three ticks in four (so a flush that did run would almost always
+      // find a diff) without walking off the top of the level grid, and 55 ticks leave it
+      // one detent above where it started.
       //
       // The closing mark is stamped IN-PAGE, in the same task as the last tick. Stamped
       // from the driver it costs a round trip, which races the 120 ms trailing-flush
@@ -190,15 +191,31 @@ test.describe("T1b overtake", () => {
       // reason that is the driver's, not the app's.
       const gaps = await page.evaluate(
         async ([armSecond, period, count]) => {
-          if (armSecond) (document.querySelector("[data-race-chip]") as HTMLElement | null)?.click();
           const keys = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown"];
           const at: number[] = [];
+          const edit = (i: number) => {
+            const el = document.querySelector('.con-strip .con-fader[aria-label="CH 1"]') as HTMLElement | null;
+            at.push(performance.now());
+            el?.dispatchEvent(new KeyboardEvent("keydown", { key: keys[i % 4], bubbles: true }));
+          };
+          // Sampled BEFORE the click, because the click is what arms the window the
+          // stream then has to keep re-arming. That first interval belongs in `gaps`
+          // like every other one — it is the one the verdict turns on, and it was the
+          // one the guard below could not see.
+          const armedAt = performance.now();
+          if (armSecond) (document.querySelector("[data-race-chip]") as HTMLElement | null)?.click();
+          // The first edit goes out in the SAME task as the click, which is what the
+          // description above has always claimed. Left to the interval's first callback
+          // it landed at click + 90 ms against a 120 ms window, so the whole case rested
+          // on ~25 ms of main-thread slack: on a loaded runner the window closed first,
+          // the latch was never entered, and the absence below read as the pinned defect
+          // having gone away. Measured under CDP CPU throttling, the click alone costs
+          // 5.9 ms at 1x and 35 ms at 6x, and 6x is where the old form flipped.
+          edit(0);
           await new Promise<void>((resolve) => {
-            let i = 0;
+            let i = 1;
             const id = setInterval(() => {
-              const el = document.querySelector('.con-strip .con-fader[aria-label="CH 1"]') as HTMLElement | null;
-              at.push(performance.now());
-              el?.dispatchEvent(new KeyboardEvent("keydown", { key: keys[i % 4], bubbles: true }));
+              edit(i);
               if (++i >= (count as number)) {
                 clearInterval(id);
                 window.__urxFake.mark("starve-end");
@@ -206,7 +223,7 @@ test.describe("T1b overtake", () => {
               }
             }, period as number);
           });
-          return at.slice(1).map((t, i) => +(t - at[i]).toFixed(1));
+          return [at[0] - armedAt, ...at.slice(1).map((t, i) => t - at[i])].map((g) => +g.toFixed(1));
         },
         [latched, 90, STREAM_TICKS] as [boolean, number, number],
       );
@@ -232,11 +249,12 @@ test.describe("T1b overtake", () => {
       );
 
       if (latched) {
-        // The cadence really was faster than the window it has to keep re-arming.
-        // Asserted BEFORE the absence: a slipped tick lets the trailing window close for
-        // a reason that belongs to the driver, and the write it produces would otherwise
-        // read as "the latch does not starve after all". This way a slipped run fails
-        // naming the slip.
+        // The cadence really was faster than the window it has to keep re-arming —
+        // EVERY interval of it, the arming-to-first-edit one included, which is why
+        // `gaps` starts at the click rather than at the first tick. Asserted BEFORE the
+        // absence: a slipped interval lets the trailing window close for a reason that
+        // belongs to the driver, and the write it produces would otherwise read as "the
+        // latch does not starve after all". This way a slipped run fails naming the slip.
         expect(maxGap).toBeLessThan(DEBOUNCE_MS);
         // PINNED DEFECT. Five seconds of continuous operator movement on a live mixer
         // and not one command left the app: the re-arm in schedule() never lets the
