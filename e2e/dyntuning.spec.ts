@@ -18,6 +18,10 @@ declare global {
       } | null;
       meterAddrs: Array<[number, number]>;
       mem: Record<string, number>;
+      /** Reads the app has issued. The only evidence a test has that a background
+       *  reconcile ran at all — it is hundreds of reads and nothing else it does is
+       *  observable from here. */
+      gets: number;
       subscribes: number;
       unsubscribes: number;
       sets: Array<{ id: number; value: number }>;
@@ -100,6 +104,7 @@ test.beforeEach(async ({ page }) => {
       paramChannel: null,
       meterAddrs: [],
       mem: {},
+      gets: 0,
       subscribes: 0,
       unsubscribes: 0,
       sets: [],
@@ -126,6 +131,7 @@ test.beforeEach(async ({ page }) => {
             // Answer reads with what was written: a blanket 0 would let a scoped
             // readback undo the state the test just set (1-knob back off, and its
             // level row out from under the pointer).
+            state.gets++;
             return Promise.resolve(state.mem[`${args.paramId}:${args.x}:${args.y}`] ?? 0);
           case "vd_get_str":
             return Promise.resolve("");
@@ -374,9 +380,25 @@ test.describe("with a live session", () => {
     await openFromConsole(page);
     await expectGateTaps(page);
 
+    const getsBefore = await page.evaluate(() => window.__dynTest.gets);
     await pushParam(page, 1, 0, 0, 300); // HA_GAIN on CH1 — a direct-follow scalar
-    // IDLE_FULL_MS is 900 ms; wait past it for the safety-net reconcile.
-    await page.waitForTimeout(1800);
+    // IDLE_FULL_MS is 900 ms, and the reconcile that follows reads the whole device.
+    // Waited for by its READS rather than by a clock: a blind 1800 ms left 900 ms for
+    // several hundred sequential commands plus a console re-render, and if that tail
+    // had not run the case saw the untouched subscription and passed with the slot
+    // theft it exists to catch never having had the chance to happen.
+    await expect
+      .poll(() => page.evaluate(() => window.__dynTest.gets), { timeout: 30_000 })
+      .toBeGreaterThan(getsBefore + 100);
+    // …and then for the reads to STOP, because the re-render that could steal the slot
+    // is the reconcile's epilogue, not its body.
+    let quiet = await page.evaluate(() => window.__dynTest.gets);
+    for (let same = 0; same < 3;) {
+      await page.waitForTimeout(150);
+      const now = await page.evaluate(() => window.__dynTest.gets);
+      same = now === quiet ? same + 1 : 0;
+      quiet = now;
+    }
 
     // The screen still owns its three addresses, so its meters keep updating.
     await expectGateTaps(page);

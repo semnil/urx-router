@@ -702,6 +702,7 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
       sent: [],
       windowOpened: false,
       openPortsDelayMs: 0,
+      openPortsAnswered: 0,
     };
     const relay = new BroadcastChannel("urx-midi-ui");
     let toMain: { onmessage: (d: unknown) => void } | null = null;

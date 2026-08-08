@@ -563,7 +563,20 @@ test.describe("T4b midi", () => {
     });
 
   /** Wait for the first outgoing message past `since` sends, then deliver `value` on
-   *  the same address exactly `d` ms after it left. Returns the achieved phase.
+   *  the same address exactly `d` ms after it left. Returns the achieved phase as a
+   *  BRACKET, `[before, after]`, taken either side of the delivery.
+   *
+   *  Two numbers rather than one because the app does not read the clock where this
+   *  does. `pushMidi` delivers synchronously, so the engine's own `now()` inside
+   *  consumeEcho is sampled between these two: `before` is a lower bound on the phase
+   *  the app applies and `after` an upper one, and the residue between them is the
+   *  fake's trace push plus the decode. It is a fraction of a millisecond on an idle
+   *  machine and grows with the renderer's load, which is enough to move a rung placed
+   *  10 ms from the window's edge to the other side of it — so a rung inside the window
+   *  is placed against `after` and one outside it against `before`. Measured for the
+   *  emit side of the same question and found NOT to be the problem: the offset between
+   *  the app arming its guard and the fake seeing the send is 0.0-0.9 ms at 1x and at
+   *  12x CPU throttling alike.
    *
    *  `since` is passed IN rather than sampled here. The evaluate starts a couple of
    *  driver round trips after the gesture and the feedback emit it waits for lands
@@ -571,7 +584,7 @@ test.describe("T4b midi", () => {
    *  1 ms poll never terminates and the case hangs to the Playwright timeout with no
    *  diagnosis at all. The poll carries a deadline for the same reason: a gesture that
    *  emits nothing has to fail saying which wait it was in. */
-  const loopbackAfter = (page: Page, d: number, value: number, since: number, cap = 5000): Promise<number> =>
+  const loopbackAfter = (page: Page, d: number, value: number, since: number, cap = 5000): Promise<[number, number]> =>
     page.evaluate(
       async ([delay, v, n0, deadlineMs]) => {
         const w = window as unknown as { __sendAt: number[] };
@@ -590,9 +603,9 @@ test.describe("T4b midi", () => {
         const bytes = f.midi.sent[f.midi.sent.length - 1];
         const at = w.__sendAt[w.__sendAt.length - 1];
         await new Promise<void>((res) => setTimeout(res, Math.max(0, delay - (performance.now() - at))));
-        const achieved = performance.now() - at;
+        const before = performance.now() - at;
         f.pushMidi([[bytes[0], bytes[1], v]]);
-        return achieved;
+        return [before, performance.now() - at] as [number, number];
       },
       [d, value, since, cap] as [number, number, number, number],
     );
@@ -628,16 +641,24 @@ test.describe("T4b midi", () => {
       await mark(page, "ui-mute");
       await muteChip(page, "CH 1").click();
       await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
-      const achieved = await loopbackAfter(page, d, 127, armIdx);
+      const [phaseLow, phaseHigh] = await loopbackAfter(page, d, 127, armIdx);
       await page.waitForTimeout(150);
 
       const state = await muteChip(page, "CH 1").getAttribute("aria-pressed");
       await dump(page, `toggle echo ladder D=${d}`, "ui-mute", { ledger: await ledgerOf(page) });
-      console.log(`D intended=${d} achieved=${achieved.toFixed(0)} ms; MUTE aria-pressed=${state}`);
+      console.log(
+        `D intended=${d} achieved=${phaseLow.toFixed(0)}..${phaseHigh.toFixed(0)} ms` +
+          ` (the app read its clock inside that bracket); MUTE aria-pressed=${state}`,
+      );
 
-      // The phase is only interpretable if it landed on the intended side of the
-      // 300 ms guard window, measured from the emit itself.
-      expect(achieved < 300).toBe(inWindow);
+      // The phase is only interpretable if the WHOLE bracket landed on the intended
+      // side of the 300 ms guard window — the app samples its own clock somewhere
+      // inside it, so a bracket that straddles the edge decides nothing. Placed against
+      // the far end for a rung inside the window and the near end for one outside, so
+      // the assertion is against whichever bound can cross first. D=290 sits 10 ms from
+      // the edge and this is the assertion that has to fail, rather than the verdict
+      // below, when a loaded renderer spends that 10 ms between the two samples.
+      expect((inWindow ? phaseHigh : phaseLow) < 300).toBe(inWindow);
       // …and if the emit the phase is measured from is the one that armed the guard.
       expect((await midiSentOf(page))[armIdx]).toEqual([0xb0, 7, 127]);
 
@@ -667,14 +688,16 @@ test.describe("T4b midi", () => {
     await mark(page, "ui-mute");
     await muteChip(page, "CH 1").click();
     await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
-    const achieved = await loopbackAfter(page, 50, 64, armIdx); // ≥ 64 = an on-value, ≠ lastSent 127
+    const [, phaseHigh] = await loopbackAfter(page, 50, 64, armIdx); // ≥ 64 = an on-value, ≠ lastSent 127
     await page.waitForTimeout(150);
 
     const state = await muteChip(page, "CH 1").getAttribute("aria-pressed");
     await dump(page, "toggle echo, mismatched value", "ui-mute", { ledger: await ledgerOf(page) });
-    console.log(`D achieved=${achieved.toFixed(0)} ms with value 64; MUTE aria-pressed=${state}`);
+    console.log(`D achieved=${phaseHigh.toFixed(0)} ms (upper bound) with value 64; MUTE aria-pressed=${state}`);
 
-    expect(achieved).toBeLessThan(300);
+    // The far end of the bracket: this rung claims the message was inside the window,
+    // so the bound that can cross the edge first is the one to place it against.
+    expect(phaseHigh).toBeLessThan(300);
     expect(state).toBe("false"); // flipped back — the guard did not fire
   });
 
@@ -690,7 +713,7 @@ test.describe("T4b midi", () => {
     await mark(page, "ui-mute");
     await muteChip(page, "CH 1").click();
     await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
-    const achieved = await loopbackAfter(page, 50, 127, armIdx);
+    const [, achieved] = await loopbackAfter(page, 50, 127, armIdx); // the bracket's far end
     await page.waitForTimeout(50);
     const afterFirst = await muteChip(page, "CH 1").getAttribute("aria-pressed");
     // Pushed in-page and stamped, like the first one: the claim is that the guard was

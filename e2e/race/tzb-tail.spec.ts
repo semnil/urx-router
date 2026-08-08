@@ -695,8 +695,24 @@ test.describe("Tzb tail", () => {
      *  `locator.click()` would not do: the deferral is armed by the pointerdown and
      *  flushed by the pointerup, so the press has to be long enough to contain a
      *  notify, and the two halves have to be separately timed. */
+    let boxRetries = 0;
     const pressClose = async (holdMs: number): Promise<boolean> => {
-      const b = (await page.locator("#dyn-screen-box .consent-btn-primary").boundingBox())!;
+      // Re-resolved until it answers, because the churn below rebuilds this screen at
+      // 10 Hz: a node resolved just before a refresh is detached by the time its box is
+      // asked for, and `boundingBox()` answers null for a detached node. Measured at 6x
+      // CPU throttling, where the whole run went red on the `!` that used to be here —
+      // the press is the subject of this case, so losing it to the rebuild it is
+      // deliberately straddling would be the harness reporting its own gesture.
+      // Bounded, and the count is printed: a press that needed a dozen attempts is a
+      // different measurement from one that landed first try.
+      const button = page.locator("#dyn-screen-box .consent-btn-primary");
+      let b = await button.boundingBox();
+      for (let i = 0; i < 20 && !b; i++) {
+        boxRetries++;
+        await page.waitForTimeout(20);
+        b = await button.boundingBox();
+      }
+      if (!b) throw new Error("the Close button never reported a box across 20 attempts");
       await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
       await page.mouse.down();
       await page.waitForTimeout(holdMs);
@@ -750,7 +766,8 @@ test.describe("Tzb tail", () => {
     console.log(timeline(trace, { from: markTime(trace, "quiet-press")! - 200, limit: 50 }));
     console.log(
       `notifies inside the press=${notifiesInPress}; quiet press closed=${closedQuiet}; ` +
-        `straddled press closed on the first=${closedOnFirst}; closed on a second=${closedOnSecond}`,
+        `straddled press closed on the first=${closedOnFirst}; closed on a second=${closedOnSecond};` +
+        ` Close-button box re-resolved ${boxRetries} time(s)`,
     );
     // The registration is given a window rather than the whole run: it is a snapshot
     // of one instant, and what is being asked is only whether the churn's own notifies

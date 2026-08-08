@@ -461,6 +461,17 @@ class (l) had already fixed on the param side.
   locator resolutions) is added to every rung and is **one-directional**: it only ever pushes a
   gesture LATER, so a rung placed after a window's edge is robust and one placed before it is what a
   slow runner takes away
+- **The measured interval has to be the DECIDING one, and the two are easy to confuse.** A gesture
+  that arms an app-side window is measured from the arming instant, not from the first step after it:
+  `t1b`'s starvation stream sampled its gaps from the first tick (`at.slice(1)`), so its
+  `maxGap < DEBOUNCE_MS` guard covered every interval except the click-to-first-tick one the verdict
+  actually turned on — 22-30 ms of slack, and a CI runner took it. The same shape reaches further than
+  one case: a repeat COUNT stands in for the interval between repeats, a `mark()` placed before a
+  driver action rather than before an assertion measures the action's own cost into the next rung, and
+  a phase sampled just before delivering a message is a LOWER bound on the phase the app applies —
+  bracket it either side of the delivery and place a rung inside a window against the far end. Where a
+  gesture and the edit that must share its window are separated by driver round trips, dispatch them
+  in ONE in-page task instead of hoping they land together
 
 ## Implementation and running
 

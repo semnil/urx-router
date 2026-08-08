@@ -303,8 +303,23 @@ test.describe("T2b shape-change", () => {
     await page.waitForTimeout(400);
     const depthBefore = await depthOf(page);
     await mark(page, "rename");
+    // The achieved keystroke intervals, taken in the page. The requested 90 ms is what
+    // the driver asks for; what decides the write count is what the field received, and
+    // a burst whose gaps have all grown past the 120 ms flush window is a different
+    // experiment from this one (one write per character rather than per window).
+    await nameInput.evaluate((el) => {
+      const at: number[] = [];
+      (window as unknown as { __keyAt: number[] }).__keyAt = at;
+      el.addEventListener("keydown", () => at.push(performance.now()));
+    });
     await nameInput.pressSequentially("VOX LEAD", { delay: 90 });
+    const keyGaps = await page.evaluate(() => {
+      const at = (window as unknown as { __keyAt: number[] }).__keyAt;
+      return at.slice(1).map((t, i) => +(t - at[i]).toFixed(1));
+    });
+    const depthTyped = await depthOf(page);
     await nameInput.evaluate((el) => (el as HTMLInputElement).blur());
+    const depthBlurred = await depthOf(page);
     await settleAfter(page, "rename", 1200);
 
     let trace = await traceOf(page);
@@ -319,9 +334,18 @@ test.describe("T2b shape-change", () => {
     console.log(timeline(trace, { from: renameAt - 50, limit: 40 }));
     console.log(
       `rename: ${strWrites.length} vd_set_str on ${CH1_NAME} for 8 keystrokes, ${numericOnName.length} vd_set;` +
-        ` snapshot entry = ${snapshot?.[CH1_NAME]}; undo depth ${depthBefore.undo} → ${depthAfter.undo}`,
+        ` snapshot entry = ${snapshot?.[CH1_NAME]}; undo depth ${depthBefore.undo} → typed ${depthTyped.undo}` +
+        ` → blurred ${depthBlurred.undo} → settled ${depthAfter.undo};` +
+        ` achieved keystroke gaps max ${Math.max(...keyGaps).toFixed(0)} ms (requested 90, flush window 120)`,
     );
 
+    // The achieved gaps are printed above rather than asserted, and the reason is worth
+    // keeping: they are NOT what decides this case. At 12x CPU throttling the undo half
+    // breaks (typed 4 → settled 0 instead of 1) with a max gap of 152 ms, while at 6x it
+    // passes with a LARGER one, 188 ms. A guard on the gap would therefore have turned a
+    // case that is correct at CI-equivalent load red, and named the wrong cause while
+    // doing it. What actually happens at 12x is open — reference/work/e2e-flakes.md.
+    //
     // The string path is throttled by the flush window like everything else, but it is
     // NOT coalesced by the gesture: eight keystrokes 90 ms apart leave as one write per
     // 120 ms window, so partial names ("VOX", "VOX L", …) reach the unit. Measured 4 —

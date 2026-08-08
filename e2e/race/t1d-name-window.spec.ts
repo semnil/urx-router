@@ -78,13 +78,41 @@ test.describe("T1d name window", () => {
     await page.click("#btn-view-graph");
     await node(page, "ch1").click();
     await expect(nameInput(page)).toHaveCount(1);
+    // The screen is opened BEFORE the window is, so none of its round trips are inside
+    // it, and the toggle is tagged here so the single task below can reach it.
+    await openEqScreen(page, "ch1");
+    await oneKnobOn(page).evaluate((el) => el.setAttribute("data-race-knob", "1"));
 
     await mark(page, "rename");
-    await nameInput(page).fill("OperatorTyped");
-    // …and the sideEffect edit that triggers the refetch, inside the same window.
-    await openEqScreen(page, "ch1");
-    await oneKnobOn(page).click();
+    // Both edits in ONE in-page task. They have to share a 120 ms flush window for the
+    // exposure to exist at all, and driving them from the driver put six round trips
+    // between them: measured 545 ms apart at 6x CPU throttling and 682 ms at 12x, i.e.
+    // on any loaded runner this case was measuring nothing and reporting a pass for it.
+    // `textInput` (ui/inspector.ts) commits on "input", so the native setter plus that
+    // event is the same path a typed character takes.
+    await page.evaluate(() => {
+      const input = document.querySelector("#inspector input[type='text']") as HTMLInputElement;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "OperatorTyped");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      (document.querySelector("[data-race-knob]") as HTMLElement).click();
+    });
     await settleAfter(page, "rename", 1200);
+
+    // The two gestures really did leave in ONE flush, which is the only shape in which
+    // the exposure exists — the rename has to still be in the diff when the sideEffect
+    // write triggers the refetch. Six driver round trips sit between them (opening the
+    // screen, then the toggle), so it is not a given, and if they miss the window the
+    // refetch has no name to read and the `spent === 0` verdict below is satisfied for
+    // free. Its sibling t1c asserts its own gates the same way, and for the same
+    // reason: a case that stops measuring anything must fail rather than pass.
+    const flushTrace = await traceOf(page);
+    const nameWrite = flushTrace.find((e) => e.kind === "ipc-start" && e.cmd === "vd_set_str" && e.addr === CH1_NAME);
+    const knobWrite = flushTrace.find(
+      (e) => e.kind === "ipc-start" && e.cmd === "vd_set" && e.addr === CH1_ONE_KNOB_ON,
+    );
+    expect(nameWrite, "the rename never reached the device").toBeDefined();
+    expect(knobWrite, "the 1-knob write never reached the device").toBeDefined();
+    expect(Math.abs(nameWrite!.t - knobWrite!.t)).toBeLessThan(120);
 
     // The device took the rename: this is about what the app does with the READ, not
     // about the write.

@@ -22,14 +22,22 @@ export async function stubTauriBoot(page: Page, commands: Record<string, unknown
       "plugin:updater|check": null,
       ...extra,
     };
+    // Every command the app asked for, in order. A spec that has to wait for a flow to
+    // REACH a decision (a confirm raised, a check answered) has nothing else to wait on
+    // here: a blind sleep is satisfied before the flow starts, so an absence asserted
+    // after it is an absence of anything at all.
+    const invokes: string[] = [];
+    (window as unknown as { __urxInvokes: string[] }).__urxInvokes = invokes;
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
       Channel: class {
         onmessage: (data: unknown) => void = () => {};
       },
-      invoke: (cmd: string) =>
-        cmd in responses
+      invoke: (cmd: string) => {
+        invokes.push(cmd);
+        return cmd in responses
           ? Promise.resolve(responses[cmd])
-          : Promise.reject(new Error(`stub: unhandled command ${cmd}`)),
+          : Promise.reject(new Error(`stub: unhandled command ${cmd}`));
+      },
     };
   }, commands);
 }
@@ -208,6 +216,10 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
     { ...opts, firmware },
   );
 }
+
+/** Every command the stub was invoked with, in order (`stubTauriBoot` only). */
+export const invokesOf = (page: Page): Promise<string[]> =>
+  page.evaluate(() => (window as unknown as { __urxInvokes: string[] }).__urxInvokes);
 
 /** Dialog messages the stub was asked to show, in order. */
 export const dialogsOf = (page: Page): Promise<string[]> =>
