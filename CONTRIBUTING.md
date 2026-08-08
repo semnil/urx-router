@@ -49,6 +49,17 @@ pnpm tauri dev     # desktop app
 - Run `pnpm format` (and `cargo fmt` for Rust changes) before committing. `format.yml` fixes
   drift on same-repo pull requests, but its fixup commit diverges your local branch.
 - Keep the theme palettes in `src/style.css` and `PALETTES` in `src/ui/graph.ts` in sync.
+- **Every string in `src/i18n/en.ts` is wrapped in `dev()`, `fixed()` or `tr()`, and a new key
+  has to pick one.** `dev()` is a control reproduced from one of the unit's own screens: the URX
+  is English on those screens whichever of its three display languages is selected, so every
+  catalogue repeats the same characters and `ja.ts` will not compile with a translation. `fixed()`
+  is identical for a reason that is not the device (only the CONSOLE strip group separators, which
+  are set in vertical writing mode where a full-width glyph moves the rack's geometry). `tr()` is
+  this app's own copy — headings, the legend, hints, status and error text — and each language
+  supplies its own wording. Leaving a string unwrapped fails the compile with a message naming the
+  file. Which of the three a key takes is a judgement the type system cannot make for you, so say
+  which you chose in the pull request; `docs/en/architecture.md` ("Localization" → Terminology)
+  lists what has been read off the hardware.
 
 ## Tests
 
