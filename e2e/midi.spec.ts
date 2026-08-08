@@ -493,7 +493,29 @@ test("assignment rows form aligned columns whatever each row's option is", async
         viewport: `${innerWidth}x${innerHeight}`,
       };
     }, control);
-    throw new Error(`no bounding box for ${what} (${control}): ${JSON.stringify(dump)}`);
+    // And the layer the DOM dump above cannot see. The 4th occurrence (2026-08-08)
+    // showed the element's own rect was healthy — identical to the bit with a passing
+    // run's — so the null is not the layout's, it is `DOM.getBoxModel` returning
+    // nothing to the call `boundingBox()` is built on. Playwright discards that
+    // response, so ask for it directly: whatever comes back, an error code or a box
+    // that contradicts the null, is what the next round has to explain.
+    let boxModel: string;
+    try {
+      const cdp = await win.context().newCDPSession(win);
+      const { root } = await cdp.send("DOM.getDocument", { depth: -1 });
+      const { nodeId } = await cdp.send("DOM.querySelector", {
+        nodeId: root.nodeId,
+        selector: `tr[data-control="${control}"] ${what}`,
+      });
+      boxModel = nodeId
+        ? JSON.stringify(await cdp.send("DOM.getBoxModel", { nodeId }))
+        : "(DOM.querySelector matched nothing)";
+      await cdp.detach();
+    } catch (e) {
+      // The throw IS the reading here — the protocol error names why the box is absent.
+      boxModel = `threw: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    throw new Error(`no bounding box for ${what} (${control}): ${JSON.stringify({ ...dump, boxModel })}`);
   };
   const optCell = (control: string) => boxOf(mapRow(win, control).locator("td.mw-opt"), control, "td.mw-opt");
   const delCell = (control: string) => boxOf(mapRow(win, control).locator(".mw-del"), control, ".mw-del");
