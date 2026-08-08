@@ -949,9 +949,16 @@ export class DynScreen {
     }
     // An empty caption of the same two-line height as its neighbours, so the tick
     // column's grid row matches the slots' and a tick lines up with a level.
+    //
+    // The spaces are non-breaking on purpose. Ordinary ones collapse and a trailing
+    // <br> generates no line box, so this measured 12.75px — one line, not two —
+    // and `.gt-lcol`'s `1fr auto` handed the difference to the scale: it stood
+    // 12.75px taller than the slot beside it, so the two shared a top edge and
+    // drifted apart linearly down to the floor. A tick then pointed at a level it
+    // was not level with.
     const spacer = el("span", "gt-cap-label");
     spacer.setAttribute("aria-hidden", "true");
-    spacer.append(document.createTextNode(" "), document.createElement("br"), document.createTextNode(" "));
+    spacer.append(document.createTextNode("\u00a0"), document.createElement("br"), document.createTextNode("\u00a0"));
     col.append(scale, spacer);
     return col;
   }
