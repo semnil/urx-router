@@ -25,7 +25,7 @@ import type { DynCtx, DynLane, DynProcessor } from "./dyn-screen";
  *  programme rather than on a noise floor, so the key levels worth reading sit above
  *  -60 and the cap that rides them cannot go below it.
  *
- *  The reduction shares this ruler (it is drawn in the PRE DUCKER lane's slot, so it
+ *  The reduction shares this ruler (it is drawn in the POST lane's slot, so it
  *  carries no scale of its own), which means a reduction deeper than 60 dB pegs. The
  *  range control reaches -70, so that is reachable — deliberately traded for keeping
  *  the ruler on the domain every other lane and the cap actually use. */
