@@ -60,9 +60,7 @@ import {
   sendHasTap,
   sendTapWritable,
 } from "../core/routing";
-import type { DynField } from "../core/control/translate";
 import {
-  DUCKER_FIELDS,
   busBalance,
   busFader,
   busMasterOn,
@@ -71,7 +69,6 @@ import {
   channelSections,
   colorControl,
   duckerControl,
-  dynValueText,
   formatDyn,
   fxChannelIndex,
   inputEq,
@@ -1169,28 +1166,6 @@ function formatGainDb(v: number): string {
   return `${v > 0 ? "+" : ""}${v} dB`;
 }
 
-// 0.1 dB fine grid, for the one slider in this file that has one on the device: the COMP
-// makeup gain (verified push-and-turn steps). The EQ band gain has the same grid and left
-// with the band editor — it now carries `fineStep` on its field instead, which is where
-// this should end up too (`dynFieldSlider` still keys off the param name).
-const FINE_GAIN_STEP_DB = 0.1;
-
-// One GATE/COMP/ducker detail slider, labeled and formatted by its unit. The dyn
-// labels cover all slider field keys (a subset of the DynField.key union, which
-// also spans the comp toggle keys), so index them via a string view.
-function dynFieldSlider(
-  f: DynField,
-  m: Messages,
-  cur: number | undefined,
-  onSet: (key: DynField["key"], v: number) => void,
-): HTMLElement {
-  const label = (m.inspector.dyn as Record<string, string>)[f.key];
-  const fmt = (v: number): string => dynValueText(f, v);
-  // COMP gain is the only dyn param with a device-verified fine grid.
-  const fine = f.name === "COMP_GAIN" ? FINE_GAIN_STEP_DB : undefined;
-  return rangeSlider(label, f.min, f.max, f.step, cur ?? f.def, fmt, (v) => onSet(f.key, v), fine);
-}
-
 // Merge a patch into a node's FX effect object / its raw params map, reading the
 // latest stored value at edit time so concurrent sibling edits aren't lost.
 function mergeFxEffect(actions: InspectorActions, plan: Plan, nodeId: string, patch: Partial<FxEffectParams>): void {
@@ -1532,30 +1507,17 @@ function renderPitchMidi(
   );
 }
 
-// Merge a patch into a node's live dynamics sub-object (gate / comp / ducker),
-// reading the latest stored value at edit time so concurrent sibling slider edits
-// aren't lost.
-function mergeSection(
-  actions: InspectorActions,
-  plan: Plan,
-  nodeId: string,
-  section: "gate" | "comp" | "ducker",
-  patch: Record<string, number | boolean>,
-): void {
-  actions.onUpdateNodeParams(nodeId, { [section]: { ...(plan.nodeParams[nodeId]?.[section] ?? {}), ...patch } });
-}
-
-// Ducker node detail editor: the on/off plus threshold/range/attack/decay sliders.
-// The ducker source is a key-source connection, edited on the canvas, not here.
+// Ducker node section: the on/off and the control that opens its tuning screen. The
+// ducker source is a key-source connection, edited on the canvas, not here.
 function duckerBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): HTMLElement {
   const on = np.duckerOn ?? false;
   const { el, body } = section(m.inspector.duckerOn, { open: on, on, key: "duckerOn" });
   body.append(sectionToggle(nodeId, "duckerOn", on, actions));
-  const vals = (np.ducker ?? {}) as Record<string, number | undefined>;
-  for (const f of DUCKER_FIELDS)
-    body.append(
-      dynFieldSlider(f, m, vals[f.key], (key, v) => mergeSection(actions, plan, nodeId, "ducker", { [key]: v })),
-    );
+  // The detail sliders moved to the tuning screen, for the reason stated on
+  // `dynLauncher`: they belong beside the meters that say what they are doing, and a
+  // second copy here would sit at a stale position after the screen moved a value and
+  // write it back on the next drag.
+  body.append(dynLauncher("ducker", nodeId, actions, m));
   return el;
 }
 

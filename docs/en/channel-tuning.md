@@ -2,11 +2,11 @@
 
 > 日本語版: [../ja/channel-tuning.md](../ja/channel-tuning.md)
 
-**Status: GATE, COMP and EQ implemented (EQ 2026-07-30).** This document specifies the per-node
-screens that put one processor's parameters beside the meters showing what they are doing. DUCKER and
-the insert-FX dynamics have gain-reduction meters of their own (see [Scope](#scope)) and belong here
+**Status: GATE, COMP, EQ and DUCKER implemented (DUCKER 2026-08-08).** This document specifies the
+per-node screens that put one processor's parameters beside the meters showing what they are doing.
+The insert-FX dynamics have gain-reduction meters of their own (see [Scope](#scope)) and belong here
 when they follow. Implemented in `src/ui/dyn-screen.ts` (the shared host), `src/ui/dyn-gate.ts` /
-`src/ui/dyn-comp.ts` / `src/ui/dyn-eq.ts` (what differs per processor), `src/ui/dyn-chan.ts` (the
+`src/ui/dyn-comp.ts` / `src/ui/dyn-eq.ts` / `src/ui/dyn-ducker.ts` (what differs per processor), `src/ui/dyn-chan.ts` (the
 binding the two channel-strip processors share), `src/ui/dyn-plot.ts` (the dB×dB transfer plot),
 `src/core/eq-response.ts` (the measured filter model), `src/core/meters.ts` (the GR table and
 decode), `src/style.css` (`.gt-*`), with coverage in `e2e/dyntuning.spec.ts` and
@@ -106,9 +106,14 @@ signal zones, because a reduction is not a level. Two rejected alternatives are 
 
 ### Readouts
 
-Three cells printing the live value and the held peak. A tap that has not reported prints `—`,
-never a floor value: a GR of `0.0` would claim the processor is passing everything, and a level at
-the floor would claim silence that was never measured.
+One cell per lane, printing the live value and the held peak — three for GATE / COMP, four for the
+DUCKER. A tap that has not reported prints `—`, never a floor value: a GR of `0.0` would claim the
+processor is passing everything, and a level at the floor would claim silence that was never
+measured.
+
+Four on a three-column grid wrap to 3 + 1, so the host switches to two columns once a screen has
+four lanes (`.gt-readouts.two`). It does not narrow anything — a grid fills its column — it removes
+the ragged wrap.
 
 ## COMP
 
@@ -274,6 +279,65 @@ A stereo channel's EQ is not merely locked in the app at 176.4 / 192 kHz: measur
 that cuts -13 dB at 500 Hz passes it untouched at both rates, while the parameters are still stored
 and returned. The rows lock with the rate's own sentence rather than the device-driven one, and the
 response is drawn sunk instead of left looking effective.
+
+## DUCKER
+
+**The one screen that does not tune the node it opens on.** GATE / COMP / EQ live inside a channel;
+a ducker is its own node hanging under a stereo channel, and its threshold watches a signal that
+arrives from somewhere else entirely. Every difference below follows from that.
+
+- **It opens on the ducker node**, from that node's inspector section or from the parent strip's
+  opener chip in the CONSOLE. The chip lives on the parent because a hung node has no strip of its
+  own; the id it carries is the ducker's.
+- **The title names the host channel**, not the node. The ducker node's canvas label is `Ducker`,
+  which beside a heading reading DUCKER names nothing — so this descriptor answers the `nodeLabel`
+  hook with `CH 5/6` and the rest keep their default.
+- **No display bar.** The envelope and the lanes are both on screen, as the EQ's plot and lanes are,
+  so nothing chooses between them and `DynProcessor.bar` is left unset — a heading over a segment
+  with no buttons would name a choice that does not exist.
+- **No MIDI ids.** The control catalog carries a ducker's `duckerOn` and nothing else, so returning
+  ids for these four sliders would arm learn against controls that do not exist.
+
+### Four lanes in three slots
+
+| Lane | Address | Notes |
+| --- | --- | --- |
+| Key | the key source's own tap | **One bar, whatever the source's width.** Carries the threshold cap |
+| Pre Ducker | `116 : 2p, 2p+1` | The host channel, post-fader. Stereo, so two bars |
+| Post | `120 : 2p, 2p+1` | The host's output. **The reduction is drawn in this slot** |
+| Ducker GR | `119 : p` | No column of its own (`DynLane.sameSlot`); keeps its own readout tile |
+
+**Why the key lane is one bar.** Measured on a URX44V: the unit sums a stereo key's two sides before
+its detector — a correlated pair reads 6.02 dB above either side alone, not 3 dB (a power sum) and
+not 0 dB (a louder-side pick). The cap can only ride a ruler in its own coordinate, and against a
+summed display the threshold's onset held to -3.0 ±0.5 dB where against `max(L,R)` it spread 7 dB.
+So the lane folds to what the detector reads (`duckerKeyDb`), the cap sits on it unmodified, and the
+-3.0 dB is the detector reading RMS while these meters read peak.
+
+**Why the reduction is on POST.** A reduction grows down from 0 and a level grows up from the floor,
+so they collide when `level + |reduction| > 0 dBFS`. On an input lane that is the normal case — at
+the factory range of -56 dB the block covers 93% of the ruler and the bar's top is buried. On the
+output lane `post = pre - |reduction|`, so they meet only if the pre-ducker signal reaches 0 dBFS,
+and **the gap between them is that signal's headroom**.
+
+The cost is that a merged reduction has no scale of its own: it rides the shared ruler, which stays
+on the threshold's domain (0..-60 dB), so a reduction deeper than 60 dB pegs. The range control
+reaches -70, so that is reachable — traded for keeping every other lane and the cap on the domain
+they use.
+
+### Envelope
+
+x is logarithmic time spanning both controls at once (attack from 0.092 ms, decay to 5 s); y is gain,
+0 at the top down to the range control's -72 dB floor. Three straight segments: down to the range
+over `attack`, held, back to unity over `decay`.
+
+**Straight, and with no live overlay.** The release is an exponential approach whose tail is
+dominated by the GR meter's 1 dB quantum, so no single time constant is fitted — the claim is the
+arrival time, which is what a ramp between two known points states. A dashed rule at the live
+reduction was drawn here while the reduction had a column of its own; once it became a block on the
+POST bar a few pixels to the right, the rule was a second display of one quantity and the weaker of
+the two, since a time axis gives a live reading no position. COMP keeps its dot because its plot maps
+input to output, where a live level does have one.
 
 ## Off the scale is off the frame
 
@@ -474,6 +538,12 @@ capture.
 | Deriving OUT as IN + GR | The three taps are metered independently. Within one frame the loudest input and the deepest reduction did not occur at the same instant; summing them printed an output tens of dB low |
 | Keeping the five sliders in the inspector as well | `dynFieldSlider` reads the params snapshot captured at render time and never re-renders on a value change, so after the screen moved the threshold those sliders would sit at the old position and write it back on the next drag |
 | A scrolling history / level-distribution view | Prototyped and dropped: the gate's nature makes both hard to read. Recorded so the ground they covered — whether the gate drops between phrases, how far the noise floor sits from the source — is known to be out of scope |
+| DUCKER's reduction in a column of its own | Costs a column and a scale, and the width goes to the plot instead: 333 → 235 px of lanes, 312 → 410 px of envelope at a 1440 px window |
+| DUCKER's reduction merged into KEY or PRE DUCKER | Measured: a reduction grows down from 0 and a level grows up from the floor, so they collide when `level + |reduction| > 0 dBFS`. On an input lane that is the normal case — at the factory range the block covers 93% of the ruler and the bar's top is unreadable |
+| A live overlay on the envelope | Once the reduction became a block on the POST bar a few pixels away, an overlay was a second display of one quantity. A time axis gives a live reading no position, so it could only slide up and down |
+| A Ladder / Envelope toggle on DUCKER | Both are on screen at once, as the EQ's are, so nothing chooses between them and the heading would name a choice that does not exist |
+| Widening DUCKER's ruler to -72 dB so the merged reduction keeps its depth | Buys the deep end of the range control at the cost of every other lane's resolution, and the bottom 12 dB is dead for the KEY lane — the threshold cannot go there |
+| Shortening the note's copy to stop it clipping | The container was the defect, not the copy: at one reserved line the shipped COMP and EQ notes already wrapped below ~1150 px of window (~1300 px in Japanese). Shortening only moves the width at which the next one is cut |
 | An in-screen channel selector | Every switch would re-register the address set, and the screen is opened per channel from a per-channel control anyway |
 | A gesture on the CONSOLE GATE chip (double-click / right-click) | Double-click is the factory reset elsewhere in the view and `wireActivate` has no `detail` guard; right-click is unused app-wide but collides with the macOS native menu on Ctrl+click |
 | Adding an app-side release to the level lanes | The device's meters already release at ~30 dB/s; a second one would double it |

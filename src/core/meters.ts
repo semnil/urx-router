@@ -143,17 +143,56 @@ const getTapsMap = (modelId?: string): Record<string, MeterTap[]> => {
 const GR_TAPS: Record<GrKind, Record<string, readonly [number, number]>> = {
   gate: { ch1: [107, 0], ch2: [107, 1], ch3: [107, 2], ch4: [107, 3] },
   comp: { ch1: [110, 0], ch2: [110, 1], ch3: [110, 2], ch4: [110, 3] },
+  // Measured on all four (URX44V, 2026-08-08): turning ducker y on lights 119:y and
+  // nothing else. So 119's x is the ducker's own instance index — NOT, on this
+  // evidence, "the stereo pair position", which is a separate claim about what that
+  // index means. Keying this table on the DUCKER node rather than on its host
+  // channel is what makes the distinction stop mattering: ducker 1 hangs under
+  // ch_3_4 on a URX22 and under ch_5_6 on a URX44/44V, and both are its pair 0, so
+  // the same four rows are right on every model. A table keyed on the channel would
+  // have to vary by model, and getting that wrong returns the neighbouring pair's
+  // reduction — a value, so nothing on screen would look wrong.
+  ducker: { "out.ducker1": [119, 0], "out.ducker2": [119, 1], "out.ducker3": [119, 2], "out.ducker4": [119, 3] },
 };
 
 /** Which processor's reduction to meter. */
-export type GrKind = "gate" | "comp";
+export type GrKind = "gate" | "comp" | "ducker";
 
 /** The gain-reduction meter address for one processor on a node, or undefined when
- *  the node has none (every channel but MONO IN, for these two). Which channels a
- *  model has is already stated once in the level tables, so this defers to them
- *  rather than restating the topology — URX22 has no ch3/ch4 there either. */
+ *  the node has none (every channel but MONO IN, for GATE and COMP). Which channels a
+ *  model has is already stated once in the level tables, so those two defer to them
+ *  rather than restating the topology — URX22 has no ch3/ch4 there either.
+ *
+ *  The ducker answers from its own table instead: its nodes are not in the level
+ *  tables at all (a ducker is not a metered point in the level chain), and every
+ *  model carries all four under the same ids. */
 export function grAddr(kind: GrKind, nodeId: string, modelId?: string): readonly [number, number] | undefined {
+  if (kind === "ducker") return GR_TAPS.ducker[nodeId];
   return getTapsMap(modelId)[nodeId] ? GR_TAPS[kind][nodeId] : undefined;
+}
+
+/**
+ * Fold a key source's two sides into the single number a ducker's detector compares
+ * against its threshold, so the KEY lane and the threshold cap share one coordinate.
+ *
+ * Two measured facts, both on a URX44V (2026-08-08). The unit SUMS the sides: with one
+ * source panned hard left and then centred, the detector moved +2.8 dB against +3.0
+ * for a sum and -3.0 for a louder-side pick. And the summed level is what a cap can
+ * ride — across the two configurations a tone can make, the offset from a summed
+ * display held at -3.0 ±0.5 dB (the residual is the meter's 1 dB quantum) where the
+ * offset from `max(L,R)` spread 7 dB and is therefore unusable. The constant itself is
+ * a sine's peak-to-RMS: these meters read peak and the ducker's detector reads RMS.
+ *
+ * NOT measured: uncorrelated sides. Adding two PEAK readings as if they were coherent
+ * is exact for one source and for a correlated pair, and overestimates by up to 3 dB
+ * when the sides are independent — the true peak of such a sum lies between the power
+ * sum (+3.01) and coincident peaks (+6.02). See `device-tests/PLAN.md`.
+ */
+const DETECTOR_RMS_OFFSET_DB = -3.0;
+const lin = (db: number): number => Math.pow(10, db / 20);
+export function duckerKeyDb(l: number, r: number | null): number {
+  const sum = r === null ? lin(l) : lin(l) + lin(r);
+  return 20 * Math.log10(sum) + DETECTOR_RMS_OFFSET_DB;
 }
 
 const addrKey = (meterId: number, x: number): string => `${meterId}:${x}`;

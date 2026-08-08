@@ -518,6 +518,16 @@ export const en = {
         "The device computes all four bands from the 1-knob level. The curve follows it only while Live sync is up.",
       plotHint: "The curve is the EQ's response; each marker shows a band's frequency.",
     },
+    ducker: {
+      title: "Ducker",
+      open: "Ducker screen…",
+      tapKey: (label: string): string => `Key · ${label}`,
+      noKey: "Key · none",
+      tapIn: "Pre Ducker",
+      tapGr: "Ducker GR",
+      tapOut: "Post",
+      hint: "The diagonals are times, not the shape of the change. Key is one bar even in stereo: L and R, summed.",
+    },
   },
   shelf: {
     title: "Hidden",

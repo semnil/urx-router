@@ -89,6 +89,30 @@ export interface DynLane {
    *  coordinate can be dragged on a meter (a GATE threshold in dB against the meter's
    *  dBFS); a lane with no such value leaves this unset. */
   cap?: string;
+  /** Fold a two-sided tap into ONE bar, in place of drawing L and R. Absent = one bar
+   *  per side, which is what a level lane wants when the point is to see the sides.
+   *
+   *  The ducker's KEY lane sets it because its two sides are not what the processor
+   *  reacts to: the unit sums them and its detector reads RMS, so the lane draws that
+   *  one number and the threshold cap rides it in the same coordinate. Folding here
+   *  rather than offsetting the cap keeps the cap mechanism's invariant intact — the
+   *  value it edits and the ruler it sits on stay the same units.
+   *
+   *  Named `foldSides` and not `fold` because this class already has a private `fold`,
+   *  and the two are different layers: that one is a DISPLAY convention (which of two
+   *  drawn bars a shared readout prints), this one is a DEVICE fact (how the hardware
+   *  combines the sides before it reacts to them). */
+  foldSides?: (l: number, r: number | null) => number;
+  /** Draw this lane's bars inside the PREVIOUS lane's slot instead of a column of its
+   *  own, and give it no caption. Everything else stays per-lane — its readings, its
+   *  peak hold and its readout cell are untouched — so this is placement only.
+   *
+   *  The DUCKER pairs its reduction with the KEY level this way: the two are cause and
+   *  effect, and one column shows the key rising to the threshold cap while the
+   *  reduction hangs from the top of the same ruler. The cost is that a merged lane
+   *  cannot carry `fullDb` — it is on the shared ruler by construction — so the ruler
+   *  has to span the deeper of the two domains. */
+  sameSlot?: true;
 }
 
 /** What a processor resolves for one node. Null from `bind` = the processor does not
@@ -97,6 +121,11 @@ export interface DynLane {
 export interface DynBinding {
   fields: DynField[];
   lanes: DynLane[];
+  /** How many columns the readout tiles take. Declared rather than derived from the
+   *  lane count: the host has no way to know that four tiles want two columns and
+   *  five might not, and a threshold on `lanes.length` is a guess dressed as a rule —
+   *  the same guess `nodeLabel` and the optional `bar` exist to avoid. Absent = 3. */
+  readoutCols?: number;
 }
 
 /** Everything a descriptor is asked its questions against. `sel` is whatever the
@@ -158,6 +187,12 @@ export interface DynProcessor {
   /** Identity: the segmented bar's persistence key, and the registry's own. */
   key: string;
   title: (m: Messages) => string;
+  /** What the title names the screen as belonging to. Defaults to the node's own
+   *  canvas label, which is right wherever the screen opens on the thing it tunes.
+   *  The DUCKER opens on the ducker node, whose label is "Ducker" — beside a title
+   *  that already says DUCKER it names nothing, so that descriptor answers with the
+   *  host channel instead. */
+  nodeLabel?: (ctx: DynCtx) => string | undefined;
   /** The lane ruler: its floor (the deepest level worth showing for this stage) and
    *  its tick step. */
   loDb: number;
@@ -166,7 +201,11 @@ export interface DynProcessor {
    *  fields, the taps, whether the processor exists at all — is resolved here, so the
    *  host carries no channel-kind knowledge. */
   bind: (ctx: DynCtx) => DynBinding | null;
-  bar: (ctx: DynCtx) => DynBar;
+  /** The segmented bar over the display, where there is something to pick. Absent
+   *  where there is not: the DUCKER shows its envelope and its lanes at once, as the
+   *  EQ does, so nothing chooses between them and a heading reading "Display" over a
+   *  bar with no buttons would name a choice that does not exist. */
+  bar?: (ctx: DynCtx) => DynBar;
   /** Keep the bar's choice across opens and sessions (it picks a way of reading the
    *  processor), rather than resetting per open (it is a cursor into the parameters). */
   persistSel?: true;
@@ -325,8 +364,20 @@ export function oneKnobLevelRow(opts: {
   });
 }
 
-/** How many bars a lane draws: a stereo tap's L and R, or one. */
-const laneSideCount = (lane: DynLane): number => (lane.tap?.r ? 2 : 1);
+/** A plot beside its meters, in signal order left to right, in separate frames — a
+ *  response curve and a level ruler share no axis, and overlaying them would invite
+ *  reading a gain off the meter's. The EQ and the DUCKER both arrange their display
+ *  this way; the CSS wraps the pair to two rows when the plot cannot keep its width. */
+export function splitDisplay(parts: DynParts): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "gt-splitdisplay";
+  wrap.append(parts.plot(), parts.lanes());
+  return wrap;
+}
+
+/** How many bars a lane draws: a stereo tap's L and R, or one — and always one where
+ *  the lane folds the two sides into the value its processor actually reacts to. */
+const laneSideCount = (lane: DynLane): number => (lane.tap?.r && !lane.foldSides ? 2 : 1);
 
 export class DynScreen {
   private readonly scrim: HTMLElement;
@@ -363,6 +414,8 @@ export class DynScreen {
    *  the plan, and the paint loop must not. */
   private fields: DynField[] = [];
   private lanes: DynLane[] = [];
+  /** What the binding declared about the readouts. Only the column count so far. */
+  private readoutCols = 3;
   private unsub: (() => void) | null = null;
   private raf = 0;
 
@@ -444,6 +497,7 @@ export class DynScreen {
     this.sel = sel;
     this.fields = bound.fields;
     this.lanes = bound.lanes;
+    this.readoutCols = bound.readoutCols ?? 3;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     this.peaks.clear();
     this.render();
@@ -503,6 +557,7 @@ export class DynScreen {
     }
     this.fields = bound.fields;
     this.lanes = bound.lanes;
+    this.readoutCols = bound.readoutCols ?? 3;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     return true;
   }
@@ -681,6 +736,10 @@ export class DynScreen {
       return out;
     }
     const r = live ? this.store.readingTap(lane.tap ?? null) : null;
+    if (lane.foldSides) {
+      out[0] = r ? lane.foldSides(r.l, r.stereo ? r.r : null) : null;
+      return out;
+    }
     out[0] = r?.l ?? null;
     if (out.length === 2) out[1] = r?.r ?? null;
     return out;
@@ -859,7 +918,7 @@ export class DynScreen {
     const title = el("h2", "");
     title.id = "dyn-screen-title";
     const ch = el("span", "gt-ch");
-    ch.textContent = channelLabel(this.hooks.getModel(), this.nodeId);
+    ch.textContent = proc.nodeLabel?.(this.ctx()) ?? channelLabel(this.hooks.getModel(), this.nodeId);
     const name = el("span", "");
     name.textContent = proc.title(m);
     title.append(ch, name);
@@ -880,8 +939,16 @@ export class DynScreen {
 
   private displayColumn(proc: DynProcessor): HTMLElement {
     const ctx = this.ctx();
-    const bar = proc.bar(ctx);
+    const bar = proc.bar?.(ctx);
     const col = el("div", "prefs-col");
+    if (bar) col.append(this.displayBar(bar));
+    col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }, ctx));
+    col.append(this.hintLine(proc, ctx));
+    return col;
+  }
+
+  /** The segmented bar over the display, in the heading of the section it sits in. */
+  private displayBar(bar: DynBar): HTMLElement {
     const sec = settingsSection(bar.label);
     const h = sec.firstElementChild as HTMLElement;
     const seg = el("span", "udk-banks gt-modes");
@@ -896,19 +963,22 @@ export class DynScreen {
     }
     if (bar.inert) seg.classList.add("inert");
     h.append(seg);
-    col.append(sec, proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }, ctx));
-    // The hint is the plot's — a fader cap on a meter explains itself, a plot does not
-    // say what it is showing — but its box is reserved whatever the display shows.
-    // Adding it only in one mode made the modal grow by its height on every switch,
-    // which moves the Close action and the parameter rows under the pointer. The
-    // reservation is exactly one line; `gt-note`'s fixed height keeps a longer string
-    // from silently reintroducing the jump (the E2E pins the two modes to equal height).
+    return sec;
+  }
+
+  /** The line under the display. The hint is the plot's — a fader cap on a meter
+   *  explains itself, a plot does not say what it is showing — but its box is reserved
+   *  whatever the display shows. Adding it only in one mode made the modal grow by its
+   *  height on every switch, which moves the Close action and the parameter rows under
+   *  the pointer. `gt-note` reserves TWO lines at a fixed height, which is what keeps a
+   *  longer string from silently reintroducing the jump — and from being cut, which one
+   *  line did on any window narrower than a wide desktop (E2E pins both). */
+  private hintLine(proc: DynProcessor, ctx: DynCtx): HTMLElement {
     const hint = el("p", "gt-note");
     const text = proc.hint?.(ctx);
     if (text) hint.textContent = text;
     else hint.setAttribute("aria-hidden", "true");
-    col.append(hint);
-    return col;
+    return hint;
   }
 
   /** The segmented bar picked something else. It can change the binding (the EQ's
@@ -929,7 +999,16 @@ export class DynScreen {
     const box = el("div", "gt-ladderbox");
     const row = el("div", "gt-ladders");
     row.append(this.tickColumn(proc.loDb, proc.tickStep, (db) => this.frac(db)));
-    for (const lane of this.lanes) row.append(this.laneColumn(lane));
+    let host: HTMLElement | null = null;
+    for (const lane of this.lanes) {
+      if (lane.sameSlot && host) {
+        this.laneBars(lane, host);
+        continue;
+      }
+      const built = this.laneColumn(lane);
+      row.append(built.el);
+      host = built.slot;
+    }
     box.append(row);
     return box;
   }
@@ -963,13 +1042,11 @@ export class DynScreen {
     return col;
   }
 
-  /** One lane: its bars, its caption, its cap if it carries one, and its own tick
-   *  column if it declares its own scale. */
-  private laneColumn(lane: DynLane): HTMLElement {
+  /** One lane's bars, into a slot. Separate from the column so a merged lane can put
+   *  its own into the column before it. */
+  private laneBars(lane: DynLane, slot: HTMLElement): void {
     const isGr = lane.kind === "gr";
     const sides = laneSideCount(lane);
-    const col = el("div", "gt-lcol");
-    const slot = el("div", `gt-slot${isGr ? " gt-slot-gr" : ""}${sides === 2 ? " stereo" : ""}`);
     const refs: BarRefs[] = [];
     for (let i = 0; i < sides; i++) {
       const side = sides === 2 ? el("div", "gt-side") : slot;
@@ -986,19 +1063,33 @@ export class DynScreen {
       refs.push({ shade, peak });
     }
     this.bars.set(lane.key, refs);
+  }
+
+  /** One lane: its bars, its caption, its cap if it carries one, and its own tick
+   *  column if it declares its own scale. Returns the slot as well, so a lane that
+   *  merges into this one can be given it. */
+  private laneColumn(lane: DynLane): { el: HTMLElement; slot: HTMLElement } {
+    const isGr = lane.kind === "gr";
+    const sides = laneSideCount(lane);
+    const col = el("div", "gt-lcol");
+    const slot = el("div", `gt-slot${isGr ? " gt-slot-gr" : ""}${sides === 2 ? " stereo" : ""}`);
+    this.laneBars(lane, slot);
     if (lane.cap) slot.append(this.capControl(slot));
     col.append(slot, capLabel(lane.label, (lane.tap?.l ?? lane.gr)?.[0]));
     // A reduction that runs the whole ruler (a gate's) reads off the shared tick
     // column. One that occupies a few dB of it (a compressor's) would sit invisible
     // there, so it gets a scale of its own — printed beside the lane and set apart
     // from the level pair, never a second unlabelled scale under the shared ticks.
-    if (lane.fullDb === undefined) return isGr ? wrap("gt-grwrap", col) : col;
+    if (lane.fullDb === undefined) return { el: isGr ? wrap("gt-grwrap", col) : col, slot };
     const full = lane.fullDb;
-    return wrap(
-      "gt-grwrap own",
-      this.tickColumn(-full, full / 4, (db) => 1 - Math.abs(db) / full),
-      col,
-    );
+    return {
+      el: wrap(
+        "gt-grwrap own",
+        this.tickColumn(-full, full / 4, (db) => 1 - Math.abs(db) / full),
+        col,
+      ),
+      slot,
+    };
   }
 
   /** A value as a fader cap on its own meter. The one gesture the lane rack exists
@@ -1015,7 +1106,7 @@ export class DynScreen {
       "aria-label",
       (field && this.p().fieldLabel?.(field, m)) ?? (m.inspector.dyn as Record<string, string>)[this.capKey] ?? "",
     );
-    cap.setAttribute("aria-valuemin", String(this.p().loDb));
+    cap.setAttribute("aria-valuemin", String(this.capField()?.min ?? this.p().loDb));
     cap.setAttribute("aria-valuemax", String(HI_DB));
     if (this.capLocked()) cap.classList.add("locked");
     this.cap = cap;
@@ -1150,7 +1241,7 @@ export class DynScreen {
     if (extra?.tail) params.append(...extra.tail);
 
     const ro = settingsSection(g.readouts);
-    const cells = el("div", "gt-readouts");
+    const cells = el("div", `gt-readouts${this.readoutCols === 2 ? " two" : ""}`);
     for (const lane of this.lanes) cells.append(this.readoutCell(lane));
     ro.append(cells);
 
@@ -1381,7 +1472,7 @@ function wrap(cls: string, ...kids: HTMLElement[]): HTMLElement {
   return w;
 }
 
-function channelLabel(model: DeviceModel, nodeId: string): string {
+export function channelLabel(model: DeviceModel, nodeId: string): string {
   return model.nodes.find((n: { id: string; label: string }) => n.id === nodeId)?.label ?? nodeId;
 }
 

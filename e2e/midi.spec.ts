@@ -340,7 +340,7 @@ test("an incoming DUCKER toggle repaints the parent strip's chip in place", asyn
   // a full re-render (switching GRAPH ↔ CONSOLE), which is exactly the reported bug.
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);
-  const duckChip = () => strip(page, "CH 5/6").getByRole("button", { name: "DUCKER" });
+  const duckChip = () => strip(page, "CH 5/6").getByRole("button", { name: "DUCKER", exact: true });
   await learnBinding(page, win, () => duckChip().click(), [0x90, 62, 127]); // a note binds on its first message
   const duckRow = mapRow(win, "out.ducker1/duckerOn");
   await expect(duckRow).toContainText("CH 1 NOTE 62");

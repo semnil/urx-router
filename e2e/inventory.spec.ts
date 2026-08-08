@@ -397,7 +397,7 @@ test("the device setup screen shows every page, on the model that has it and the
 test("the channel tuning screens show every processor, both displays and their notes", async ({ page }) => {
   const inv = inventoryOf("dynScreen");
   // The inspector's own section headings, as dyntuning.spec.ts addresses them.
-  const SECTION_OF = { gate: /^GATE$/, comp: /^COMP$/, eq: /^EQ$/ };
+  const SECTION_OF = { gate: /^GATE$/, comp: /^COMP$/, eq: /^EQ$/, ducker: /^Ducker$/ };
 
   await page.addInitScript(() => {
     localStorage.setItem("urx-lang", "en");
@@ -411,8 +411,8 @@ test("the channel tuning screens show every processor, both displays and their n
    *  picking by DOM order instead would silently follow a row inserted above it. */
   const exactRow = (label: string) => box.locator(".prefs-row").filter({ has: page.getByText(label, { exact: true }) });
 
-  const openFromInspector = async (kind: "gate" | "comp" | "eq"): Promise<void> => {
-    await page.locator('#graph-host g.node[data-id="ch1"]').click();
+  const openFromInspector = async (kind: keyof typeof SECTION_OF, id = "ch1"): Promise<void> => {
+    await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
     const sec = page.locator("#inspector .insp-section", {
       has: page.locator("summary", { hasText: SECTION_OF[kind] }),
     });
@@ -454,6 +454,23 @@ test("the channel tuning screens show every processor, both displays and their n
     .filter({ has: page.locator("h3", { hasText: "1-knob" }) })
     .locator("button", { hasText: "ON" })
     .click();
+  await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-primary").click();
+
+  // DUCKER opens on the ducker node rather than on a channel, so it is reached from
+  // that node's own inspector section. Both key states are driven: the default plan
+  // wires CH 1 to every ducker, so the lane names it first, and the wire is then
+  // deleted so the lane can say there is none — a state the unit really has, and one
+  // it reports as engaged rather than as silence.
+  const openDucker = () => openFromInspector("ducker", "out.ducker1");
+
+  await openDucker();
+  await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-primary").click();
+
+  await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.ducker1:in"]').dispatchEvent("pointerdown");
+  await page.keyboard.press("Delete");
+  await openDucker();
   await inv.take(page, "#dyn-screen-modal");
 
   expectComplete("dynScreen", inv);
