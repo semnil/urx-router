@@ -1503,9 +1503,10 @@ function newPlanAtLastRate(id: ModelId): Plan {
   return next;
 }
 
-/** Replace the open document. Returns false when a device read holds the plan and the
- *  replacement was refused — the caller must not then report the load as having
- *  happened. */
+/** Replace the open document. Returns false when the replacement did not happen — a
+ *  device read holds the plan, or the new one could not be drawn — and the caller must
+ *  not then report the load as having happened. Both refusals report themselves, so no
+ *  caller needs a failure surface of its own. */
 function loadPlan(next: Plan): boolean {
   // A device read (fetch / Live-sync start) is merging into the module `plan`;
   // replacing it now would strand the merge (see deviceReadInFlight). Every external
@@ -1523,25 +1524,56 @@ function loadPlan(next: Plan): boolean {
   // already awaiting the device is not reachable from there — the read itself is what
   // still points at the plan being replaced.
   abandonFollowWork();
+  // Everything that puts the module state on screen. One definition, called twice: the
+  // document is committed before anything draws it — every view reads the module `plan`,
+  // so a staged apply would mean threading the document through all of them — and a plan
+  // that parses and then cannot be rendered used to leave `plan` and `modelId` moved
+  // while the history, the MIDI bindings and the rate UI still described the document
+  // that is gone (an undo then applied entries diffed against a plan nothing holds). Two
+  // hand-kept lists would put the next view added here into only one of them, which is
+  // the failure the rollback exists to prevent.
+  const draw = (): void => {
+    rememberModel(modelId);
+    // Keep the persisted hidden layout in step with the plan now on screen, whether
+    // it came from a file (its hidden wins) or a fresh new/switch plan (already
+    // seeded from the same store, so this is a no-op).
+    rememberHidden(modelId, plan.hidden);
+    picker.value = modelId;
+    graph.setModel(getModel(modelId), plan);
+    syncRateUi(); // picker + persisted rate + constraints (also refreshes the console)
+    // A channel tuning screen can be open over this: it reads the plan through a closure,
+    // so its values are already the new ones — but nothing had told it to redraw, and it
+    // sat showing the plan that was just replaced. Refresh re-resolves the binding too, so
+    // a screen whose node or processor the new plan does not have closes itself.
+    dynScreen.refresh();
+  };
+  const prevModelId = modelId;
+  const prevPlan = plan;
+  const prevDirty = dirty;
   modelId = next.modelId;
-  rememberModel(modelId);
   plan = next;
   traceProbe?.sample("load");
-  // Keep the persisted hidden layout in step with the plan now on screen, whether
-  // it came from a file (its hidden wins) or a fresh new/switch plan (already
-  // seeded from the same store, so this is a no-op).
-  rememberHidden(modelId, plan.hidden);
   ensureFixedConnections(getModel(modelId), plan);
-  picker.value = modelId;
   selection = null;
-  graph.setModel(getModel(modelId), plan);
-  dirty = false;
-  syncRateUi(); // picker + persisted rate + constraints (also refreshes the console)
-  // A channel tuning screen can be open over this: it reads the plan through a closure,
-  // so its values are already the new ones — but nothing had told it to redraw, and it
-  // sat showing the plan that was just replaced. Refresh re-resolves the binding too, so
-  // a screen whose node or processor the new plan does not have closes itself.
-  dynScreen.refresh();
+  try {
+    draw();
+    dirty = false;
+  } catch (err) {
+    // Put the previous document back on screen and report, rather than throwing: three
+    // of the four callers pass an app-generated plan and do not catch, so a throw would
+    // reach an async fileFlow callback as an unhandled rejection — no status line, no
+    // dialog, a canvas that stopped. The restore re-renders a plan that has already
+    // rendered once, so it cannot fail in turn. Not restored, none of it recoverable
+    // here: the live session (its snapshot was captured for a plan this call set out to
+    // replace, and leaving sync is the same answer either way), the selection, and the
+    // fixed connections `ensureFixedConnections` added to `next`.
+    modelId = prevModelId;
+    plan = prevPlan;
+    dirty = prevDirty;
+    draw();
+    showLoadError(err);
+    return false;
+  }
   // A new document: the model can differ (so an entry's node ids may not exist
   // here), `plan` is a different object, and the operator already confirmed the
   // discard. Reset rather than rebase.
@@ -1619,6 +1651,9 @@ function loadFromText(text: string, path?: string): boolean | null {
       showLoadReport(buildPlanReport(next.modelId, problems), {
         title: m.slotTitle,
         intro: m.slotIntro,
+        // This one runs from the modal's click handler, outside the try below — which
+        // has already returned by then. Safe because the only step it takes that can
+        // fail is `loadPlan`, and that reports and returns false rather than throwing.
         proceed: { label: m.loadAnyway, run: () => void finishLoad() },
       });
       // Neither loaded nor failed: the decision is on screen. Null rather than false,
@@ -1628,10 +1663,17 @@ function loadFromText(text: string, path?: string): boolean | null {
     }
     return finishLoad();
   } catch (err) {
-    const message = err instanceof PlanError ? t().error[err.code] : errorText(err);
-    showError(t().status.loadError(message));
+    showLoadError(err);
     return false;
   }
+}
+
+/** The one load-failure surface: every path that fails to open a document reports here,
+ *  including `loadPlan`'s own render failure, which is reached from callers that have no
+ *  try of their own. */
+function showLoadError(err: unknown): void {
+  const message = err instanceof PlanError ? t().error[err.code] : errorText(err);
+  showError(t().status.loadError(message));
 }
 
 // Open a plan from wherever its document comes from — the Open dialog, a recent
@@ -1649,7 +1691,7 @@ async function openPlanFrom(read: () => Promise<{ text: string; path?: string } 
       if (!doc) return null;
       return loadFromText(doc.text, doc.path);
     } catch (err) {
-      showError(t().status.loadError(errorText(err)));
+      showLoadError(err);
       return false;
     }
   });
