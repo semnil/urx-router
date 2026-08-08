@@ -3744,9 +3744,6 @@ select:focus-visible,
 /* The level slots read as empty in --groove (their shade covers the bar); the GR
    slot has no shade, so without this it sits a shade darker than its neighbours
    and an idle gate looks like a dead element. */
-/* The level slots read as empty in --groove (their shade covers the bar); the GR
-   slot has no shade, so without this it sits a shade darker than its neighbours
-   and an idle gate looks like a dead element. */
 .gt-slot-gr {
   background: var(--groove);
 }
