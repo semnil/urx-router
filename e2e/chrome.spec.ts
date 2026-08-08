@@ -111,6 +111,9 @@ test.describe("language", () => {
     await page.click("#btn-view-console");
     // The first strip-group label is INPUTS (the rack's SENDS label stays English).
     await expect(page.locator(".con-grouplabel").first()).toHaveText("INPUTS");
+    // The console's own localized string is the PRE button's tooltip: the strip's
+    // visible text is device wording, which every language repeats verbatim.
+    await expect(page.locator(".con-slp").first()).toHaveAttribute("title", "Pre-fader send");
 
     // The language dropdown lives in Preferences; picking 日本語 re-localizes the
     // open modal itself, the toolbar (static i18n), and the rendered console.
@@ -123,7 +126,10 @@ test.describe("language", () => {
 
     await expect(page.locator("#btn-view-graph")).toHaveText("グラフ");
     await expect(page.locator("#btn-hide-unused")).toHaveText("未接続を隠す");
-    await expect(page.locator(".con-grouplabel").first()).toHaveText("入力");
+    await expect(page.locator(".con-slp").first()).toHaveAttribute("title", "プリフェーダー送り");
+    // The separators do not follow the language: vertical writing mode makes a
+    // full-width glyph move the rack's geometry, so they stay English everywhere.
+    await expect(page.locator(".con-grouplabel").first()).toHaveText("INPUTS");
   });
 
   test("an open selection survives a language switch with the inspector intact", async ({ page }) => {
