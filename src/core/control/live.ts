@@ -109,6 +109,14 @@ export interface LiveSyncHooks {
 
 export class LiveSync {
   private active = false;
+  // Which session a flush belongs to. Bumped by begin() and end(), and read after every
+  // await in the send loops: `end()` is synchronous while a loop is not, so a flush that
+  // checked only at its entry finishes sending against a link the app has already
+  // disconnected — and after a model switch (loadPlan -> deactivateLive -> end) it sends
+  // addresses the plan on screen does not have. A generation rather than the `active`
+  // flag, because a session that ended and began again inside one await leaves the flag
+  // at the value the flush entered on while every snapshot under it has been rebuilt.
+  private sessionGen = 0;
   private readonly snapshot = new Map<number, number>();
   private readonly nameSnapshot = new Map<string, string>();
   // Name address -> owner node. Kept apart from `index` because a name is not a
@@ -189,6 +197,7 @@ export class LiveSync {
     this.directSeq = 0;
     this.capture(deviceView);
     this.active = true;
+    this.sessionGen++;
   }
 
   /** Re-capture the device-truth snapshot after a device-follow readback has pulled the
@@ -248,6 +257,7 @@ export class LiveSync {
   /** Stop syncing and cancel any pending flush. Does not touch the connection. */
   end(): void {
     this.active = false;
+    this.sessionGen++;
     this.pending = false;
     this.lastFlushConverged = false;
     this.collapsedKey = "";
@@ -407,6 +417,11 @@ export class LiveSync {
     }
     this.flushing = true;
     try {
+      // The session this flush is for. `model` and `plan` below are captured once and the
+      // re-take at the head of the loop reads those captures, so once the generation moves
+      // both describe a document that is no longer open — which is the same instant at
+      // which nothing may be sent any more. One check answers both.
+      const gen = this.sessionGen;
       const model = this.hooks.getModel();
       const plan = this.hooks.getPlan();
       let sent = 0;
@@ -465,6 +480,10 @@ export class LiveSync {
         // correctness (settle.ts).
         const mark = writeSettle.mark();
         await vdSet(c.paramId, c.x, c.y, value);
+        // Nothing below this line belongs to a session that has gone: the remaining
+        // commands would go out over a disconnected link, and the snapshot they would be
+        // recorded in has already been rebuilt by whatever ended (or replaced) it.
+        if (this.sessionGen !== gen) return;
         this.snapshot.set(k, value);
         writes.set(k, { mark, node: c.node, changed: had !== undefined });
         sent++;
@@ -488,6 +507,7 @@ export class LiveSync {
         if (value === undefined) continue;
         if (this.nameSnapshot.get(k) === value) continue;
         await vdSetStr(w.param, 0, w.y, value);
+        if (this.sessionGen !== gen) return;
         this.nameSnapshot.set(k, value);
         sent++;
       }
@@ -516,6 +536,10 @@ export class LiveSync {
           mustAnnounce: new Set(),
         };
         const r = await sendConverging(model, converged, { scope: this.scope(), pending: seedPending });
+        // Same rule as the send loops, and before the failure check on purpose: once the
+        // session is gone there is nobody left to report a failed converge to, and the
+        // capture below would write a dead plan's values into a rebuilt snapshot.
+        if (this.sessionGen !== gen) return;
         // sendConverging reports per-command failures instead of rejecting, so a
         // failed write here would otherwise be swallowed — and captureSnapshot
         // would then record the plan as device truth, leaving those parameters
@@ -568,6 +592,7 @@ export class LiveSync {
           else if (w.changed) mustAnnounce.add(k);
         }
         const deviceView = await this.hooks.refetchNodes(refetch, { written, mustSettle, mustAnnounce });
+        if (this.sessionGen !== gen) return;
         // The read ran against its own copy of the plan (readback.readIntoPlan), so the
         // copy is what the device holds: re-base from it and an edit made during the
         // await — on the read node or any other — stays a diff. Null = the plan it read

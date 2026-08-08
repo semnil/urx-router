@@ -587,13 +587,13 @@ test.describe("Tzb tail", () => {
   // deactivates the session and replaces the plan, while the flush's send loop is
   // sitting in an await between two commands.
   //
-  // The barrier holds the flush at its FIRST command, so everything after it is
-  // issued once the switch has completed. That the remaining commands come after is
-  // therefore the barrier's doing and is not the claim; the claim is that they are
-  // issued AT ALL — a loop that re-checked the session (or the plan) per command
-  // would emit nothing after the release — and that they carry addresses the model
-  // now on screen does not have.
-  test("a flush interrupted by a model switch finishes sending the old model's addresses", async ({ page }) => {
+  // The barrier holds the flush at its FIRST command, so anything the loop had left
+  // could only be issued once the switch has completed. The claim is that it is not
+  // issued at all: the loop reads the session generation after every await, and
+  // loadPlan -> deactivateLive -> end() has moved it. Before that guard the remaining
+  // commands went out carrying addresses the model now on screen does not have, which
+  // is what the orphan count below still measures — now as an absence.
+  test("a flush interrupted by a model switch sends nothing more", async ({ page }) => {
     test.setTimeout(180_000);
     await installFake(page, { storage: midiStorage(["URX44V", "URX22"]) });
     await page.goto("/");
@@ -658,16 +658,19 @@ test.describe("Tzb tail", () => {
     // live session (deactivateLive runs inside loadPlan instead), so the picker moved
     // and the session went down.
     expect(await page.locator("#model-picker").inputValue()).toBe("URX22");
-    // PINNED, and the defect. The flush outlives both its session and its plan: the
-    // remaining commands go out to a unit the app has already disconnected from, and
-    // they carry channels the plan on screen does not have.
-    expect(late.length).toBeGreaterThan(1);
-    expect(orphanAddrs.length).toBeGreaterThan(0);
-    expect(findings.some((f) => f.inv === 16)).toBe(true);
-    // The backstop that DOES cover the switch: the history is reset rather than
-    // rebased, so no entry survives to be applied against the new model's node ids.
+    // …but the flush does not outlive it. `armed` above proves the loop had commands
+    // left when the barrier caught it, so these zeros are the generation check and not
+    // an empty remainder: nothing goes to a unit the app has disconnected from, and no
+    // address belonging to a model the plan no longer is.
+    expect(armed).toBeGreaterThanOrEqual(10);
+    expect(late).toHaveLength(0);
+    expect(orphanAddrs).toHaveLength(0);
+    expect(findings.some((f) => f.inv === 16)).toBe(false);
+    // The other backstop the switch has: the history is reset rather than rebased, so
+    // no entry survives to be applied against the new model's node ids.
     expect(depthAfterSwitch).toEqual({ undo: 0, redo: 0 });
-    // …and the MIDI cache was re-pointed, which the in-flight commands were not.
+    // …and the MIDI cache was re-pointed, so the second operator resolves against the
+    // model now on screen.
     expect(afterCc).not.toBe(freshCh1);
   });
 

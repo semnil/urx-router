@@ -694,8 +694,9 @@ agreement, zero findings.
 
 **T5 — failure injection**
 
-- **Writes escape the teardown** at every position in the send loop, and the count falls as the drop
-  lands later
+- **Writes escaped the teardown** at every position in the send loop, the count falling as the drop
+  landed later — **fixed** (fix 10). Nothing escapes at any rung now; the command already on the wire
+  completes, which is why the boundary is the teardown mark rather than the drop
 - A rejected write **aborts on the first rejection** — the rule holds
 - **The concentration cliff**: four pairs in one window escalate to a whole-device read; three stay scoped
 - **Five notifies on addresses that no longer RESOLVE cost a whole-device read that five registered ones
@@ -708,8 +709,8 @@ agreement, zero findings.
   session, and its history reset **drops an entry made on the new plan**
 - The subscribe/unsubscribe call order shows the console's meter registration displaced by a call it
   did not make
-- **A model switch that outlives its flush** leaves the in-flight commands aimed at the old model's
-  addresses
+- **A model switch outlived its flush**, leaving the remaining commands aimed at the old model's
+  addresses — **fixed** (fix 10)
 - A rejected read during Fetch **commits a partial plan**, and MIDI's bound cache keeps a reference to
   the discarded one
 - A Close press on a tuning screen can be **swallowed** between a deferred refresh and its own click
@@ -1009,6 +1010,34 @@ The count was a function of where the notifies fell in the flush's await chain, 
 carried it as a logged number rather than an assertion; the barrier case
 `overtake-direct-notify-ahead-of-the-send-loop` places that window exactly and owns the verdict, and the
 stress count is now asserted at zero as the tier's regression net.
+
+### 10. Ending a flush with its session (`live.ts`)
+
+`flush()` read `active` at its entry and never again, while `end()` is synchronous and the send loop is
+not. Every command the loop had left when the session went down was still issued — after a link drop, and
+after a model switch, where `loadPlan` deactivates the session and replaces the plan while the loop is
+sitting in an await between two commands. Those commands carried the old model's addresses. The same
+capture is what the fix-9 value re-take reads from (`model` and `plan` are flush-local), so past a
+replacement it was re-taking from a document nothing holds any more.
+
+`LiveSync` now carries a `sessionGen`, bumped by `begin()` and by `end()`, and the loop compares it after
+every await — the two sends, the converge and the refetch — returning rather than throwing, because a
+teardown is not a failure and there is nobody left to report one to. It returns **before** recording the
+write in the snapshot: a session that ended and began again inside one await has already rebuilt that
+snapshot from a device read, and writing a dead flush's value into it would poison the new session's
+device truth. A generation rather than the flag for the same reason — across a stop/start the flag reads
+the value the flush entered on.
+
+The teardown itself is unchanged, and deliberately: `releaseLive` chains the disconnect rather than
+awaiting it (`vd_disconnect` returns nothing to await), and its epoch guard is what makes a late one
+safe. The window between `end()` and the disconnect landing in Rust is therefore still open — what the
+generation closes is the app's own decision to keep sending into it.
+
+Measured, the `drop-link-loss-mid-flush-ladder` at all three rungs: **15 / 10 / 5 escaping writes → 0 / 0
+/ 0**, with 15 commands armed each time so the zeros are the guard's doing and not an empty remainder.
+`teardown-model-switch-during-flush`: **the remainder of the loop, including URX44V-only addresses → 0**.
+The one command still in flight when the session ends completes, which is why both cases anchor their
+boundary on the teardown mark rather than on the drop.
 
 ## What the harness itself got wrong
 
