@@ -559,7 +559,20 @@ The UI is English-first with Japanese localization. The implementation is a depe
 in-house module `src/i18n/`:
 
 - `en.ts` — the base language and the source of truth for the message shape (the `Messages` type).
-  It contains strings and interpolation functions.
+  Every string in it is wrapped in one of three markers, and interpolation functions sit beside
+  them unwrapped: `dev()` for a control reproduced from one of the unit's own screens, `fixed()`
+  for one that is identical in every language for a reason that is not the device (only the
+  CONSOLE strip group separators), and `tr()` for this app's own copy. `dev()` and `fixed()` are
+  identity functions whose generic parameter keeps the value's **literal type**; `tr()` brands it
+  as `Translatable`. `Messages` is `Unbrand<typeof en>`, which drops the brand — so a `tr()` slot
+  becomes an ordinary `string` a translation can fill, while a `dev()` / `fixed()` slot keeps its
+  literal and can only be filled by the same characters.
+- **A string added without a marker widens to `string`, and that is the one case where
+  `string extends T` holds** — the `_everyLeafIsMarked` assertion at the foot of the file resolves
+  to an error message instead of `true` and the build stops. This is what makes the choice
+  explicit at the moment a key is added rather than a translation being the silent default. It
+  cannot check that the choice is *right*: a device row marked `tr()` and then translated compiles
+  cleanly, so that call is stated in the pull request and confirmed by review.
 - `ja.ts` — the Japanese translation that satisfies `Messages`. Adding a key makes TypeScript
   require a translation in every language.
 - `index.ts` — the current language state, `t()` (returns the active catalog), and
