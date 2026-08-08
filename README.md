@@ -101,6 +101,14 @@ locally (what <https://urx-router.semnil.com> serves), use `pnpm build:demo` the
 The full command list (unit/e2e tests, formatting, cache cleaning) and development notes live in
 [CLAUDE.md](CLAUDE.md).
 
+The UI is English-first with a Japanese translation, and **a control reproduced from one of the
+unit's own screens is not translated** — the URX is English on those screens whichever of its three
+display languages is selected, so `Threshold`, `Attack`, `Freq`, `Pan` and the rest read the same in
+both app languages. That is enforced by the compiler rather than by review: every string in
+`src/i18n/en.ts` is wrapped in `dev()` (device label), `fixed()` (identical for a layout reason) or
+`tr()` (this app's own copy), and a translation of a `dev()` string fails the build. See
+[CONTRIBUTING.md](CONTRIBUTING.md#conventions).
+
 Pass `--experimental` to enable the hidden-by-default diagnostics — the on-device self-test,
 `.urxf` settings-file import, and read-only **Compare with device**:
 
