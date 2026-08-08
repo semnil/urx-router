@@ -753,6 +753,12 @@ input's track and thumb are `::-webkit-` pseudo elements whose author declaratio
 report through `getComputedStyle`. The rule that draws the track computes to `0px none` while the track
 is on screen, so the frame is the only place the pair can be checked.
 
+Its border-width assertions ask for **more than zero**, not for at least one pixel. A 1px border is snapped
+to the device pixel grid and reported as its used value, so at a 1.25 display scale `border-top-width`
+comes back as `0.8px` — measured on Windows, and invisible to this suite, which always runs at a scale
+factor of 1. The intent is that a border exists; a floor of 1 quietly assumes the ratio the emulation
+happens to use.
+
 ## CONSOLE view (mixer-style level overview)
 
 Alongside the node graph (GRAPH), a second view surveys the same plan as mixer-style vertical strips.
@@ -1964,7 +1970,10 @@ belongs to is the one it overlaps most, or — when it overlaps none, which is w
 looks like — the one whose center is nearest, so a window comes back to the side of the desk it was on.
 This exists because the plugin's own guard is weaker; `winfit.rs`'s header states how, and against which
 version of it. The arithmetic is a pure function over rectangles (`fit` / `host_display` / `at_least`) and
-is covered by `cargo test`.
+is covered by `cargo test`. The work area is whatever the platform reserves, from any edge: measured on
+Windows by reserving a desktop band on each of the four sides in turn — the taskbar itself can no longer be
+moved off the bottom in Windows 11 — and starting each time from a rectangle saved outside it, the window
+came back inside on all four.
 
 **All of that arithmetic runs in one coordinate space, and which space that is depends on the platform.**
 `winfit.rs` calls it the *desk*, and `physical_per_desk` is the single place the platform is consulted.
@@ -2028,12 +2037,29 @@ still reports the position it was born at, because a `set_position` issued from 
 issued at startup. A third window built that way has to make the same call.
 
 Measured end to end on macOS (2026-08-09, a seeded state file read by a dev build under its own bundle
-identifier, the window rectangle read back through `CGWindowListCopyWindowInfo`): a rectangle remembered as
-1234x813 at (2405,-29) on the 1.0 external display came back at **exactly** that rectangle on that display,
-through the trial path with no scale file present; and a rectangle remembered off every display,
-1280x800 at (4032,892) with the scale recorded as 1.0, came back inside the external display at
-(2792,122) 1280x800 — where the fallback alone would have produced (2016,446) 640x400, so the recorded
-scale is doing the work. A graceful quit then rewrote the rectangle and the scale in the same instant.
+identifier — so the operator's own geometry was never touched — with the window rectangle read back through
+`CGWindowListCopyWindowInfo`), on a 1512x982 built-in panel at 2.0 beside a 2560x1440 external at 1.0, and
+re-run unchanged after the two-pass work below:
+
+| remembered | scale file | came back |
+| --- | --- | --- |
+| 1234x813 at (2405,-29) on the 1.0 external | none, so derived by trial | exactly that rectangle |
+| 1280x800 at (4032,892), on no display at all | 1.0 | (2792,122) 1280x800, inside the external |
+| 1200x700 at (2000,400), overlapping the Dock | none | (2000,222) 1200x700, its bottom edge flush with the work area |
+| 2400x1600 at (200,200) — 1200x800 points on the 2.0 panel | 2.0 | (100,100) 1200x800 on that panel |
+| nothing saved at all (the `fit_window` path) | — | 1280x800 inside a work area |
+
+The second row is the one that isolates the recorded scale: the trial alone would have produced
+(2016,446) 640x400. The fourth is the reverse crossing — remembered on the high-DPI panel and restored while
+the window was born on the low-DPI one — and it is exact, so both directions hold. A graceful quit rewrites
+the rectangle and the scale in the same instant. The frame is **(0,0) on macOS**, which these runs measure
+rather than assume: the remembered inner height, the frame height on screen and the height saved back are
+all the same number, which a title bar inside the frame would separate.
+
+Which display a window is born on is **not** the one carrying the menu bar — AppKit centres a new window on
+`NSScreen.mainScreen`, the screen holding the key window, so it follows wherever the operator was working.
+That is why the birth display cannot be a premise anywhere in this: it is the reason the scale a rectangle
+was saved at has to be recorded rather than inferred.
 
 **On Windows the placement runs twice, because the first pass cannot know the display it is aiming at.**
 The desk being in physical pixels there means the arithmetic above is unaffected, but the *size* a restore
@@ -2065,8 +2091,10 @@ Measured end to end on Windows 11 (2026-08-09, a 2560x1440 primary at 100% and a
 against the app's own `outer_size`): a rectangle remembered on the 100% display and restored onto the 150%
 one now lands entirely inside its work area and reproduces byte for byte over three further launches, and
 the reverse direction returns the remembered rectangle exactly. On macOS the desk is in points and the scale
-factor does not change, so the loop runs once and nothing about that platform's path moves. Every measured
-value is in `reference/work/windows-verify/`.
+factor does not change, so the loop runs once and nothing about that platform's path moves — re-measured on
+macOS afterwards across the five cases in the table above, all unchanged. The raw readings behind every
+number here were taken in `reference/work/windows-verify/`, whose settled sections are folded into this
+document and then deleted; they are read back out of that file's history.
 
 **The MIDI window is a child of the main window**, which is what keeps it in front: on Windows an owned
 window is always above its owner in the z-order, and on macOS `addChildWindow` orders it above the parent
