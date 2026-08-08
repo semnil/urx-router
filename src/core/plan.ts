@@ -441,14 +441,14 @@ export function deserializeDocument(text: string): PlanDocument {
   const plan: Plan = {
     modelId: data.modelId as ModelId,
     sampleRate: SAMPLE_RATES.includes(data.sampleRate as number) ? (data.sampleRate as number) : DEFAULT_SAMPLE_RATE,
-    positions: isStringRecord(data.positions) ? (data.positions as unknown as Record<string, NodePos>) : {},
+    positions: posRecord(data.positions),
     connections: Array.isArray(data.connections) ? data.connections.filter(isPlanConnection) : [],
     nodeParams: sanitizeNodeParams(data.nodeParams, version),
-    nodeNames: isStringRecord(data.nodeNames) ? (data.nodeNames as Record<string, string>) : {},
-    nodeColors: isStringRecord(data.nodeColors) ? (data.nodeColors as Record<string, string>) : {},
-    hidden: Array.isArray(data.hidden) ? (data.hidden as string[]) : [],
-    notes: isStringRecord(data.notes) ? data.notes : {},
-    noteCollapsed: Array.isArray(data.noteCollapsed) ? (data.noteCollapsed as string[]) : [],
+    nodeNames: stringRecord(data.nodeNames),
+    nodeColors: stringRecord(data.nodeColors),
+    hidden: stringArray(data.hidden),
+    notes: stringRecord(data.notes),
+    noteCollapsed: stringArray(data.noteCollapsed),
   };
   return { plan, sceneScoped: data.scope === "scene" };
 }
@@ -520,8 +520,45 @@ export async function pipeBytes(
   return new Uint8Array(await new Response(out).arrayBuffer());
 }
 
-function isStringRecord(v: unknown): v is Record<string, string> {
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+// The element-level guards for the collections whose values deserialize used to take
+// on trust once the container was an object. The container check alone let a note
+// written as `{}` through, and the graph reaches every note on every render
+// (`(plan.notes?.[id] ?? "").trim()`), so the document loaded and the canvas then threw
+// on the first paint. Same rule as connections and nodeParams: drop the element, keep
+// the document — absence is already the "nothing set here" state for all four.
+function stringRecord(v: unknown): Record<string, string> {
+  if (!isPlainRecord(v)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, val] of Object.entries(v)) if (typeof val === "string") out[k] = val;
+  return out;
+}
+
+function stringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((el): el is string => typeof el === "string") : [];
+}
+
+// A position is the one string-keyed collection whose values are not strings. Both
+// coordinates must be finite: contentBounds falls back when the whole set produces no
+// finite extent, but a single non-finite entry among good ones poisons the min/max it
+// is folded into and frames the view on nothing.
+function posRecord(v: unknown): Record<string, NodePos> {
+  if (!isPlainRecord(v)) return {};
+  const out: Record<string, NodePos> = {};
+  for (const [k, p] of Object.entries(v)) {
+    if (!isPlainRecord(p)) continue;
+    if (finiteNum(p.x) && finiteNum(p.y)) out[k] = { x: p.x, y: p.y };
+  }
+  return out;
+}
+
+/** `Number.isFinite` as a type guard — it narrows `unknown` to `number`, which the
+ *  built-in does not, so the caller keeps the value without a cast. */
+function finiteNum(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
 }
 
 const CONNECTION_KINDS: ReadonlySet<string> = new Set<ConnectionKind>([
@@ -540,7 +577,7 @@ const CONNECTION_KINDS: ReadonlySet<string> = new Set<ConnectionKind>([
 // console's number formatting (where it would throw on .toFixed).
 function isValidConnParams(p: unknown): boolean {
   if (p === undefined) return true;
-  if (!isStringRecord(p)) return false;
+  if (!isPlainRecord(p)) return false;
   const q = p as Record<string, unknown>;
   if ("level" in q && !Number.isFinite(q.level)) return false;
   if ("pan" in q && !Number.isFinite(q.pan)) return false;
@@ -565,10 +602,10 @@ function sanitizeParamValue(v: unknown): unknown {
   if (Array.isArray(v)) {
     // Arrays hold records (eqBands); a malformed element would shift the band
     // indices, so one bad element drops the whole array.
-    const items = v.map((el) => (isStringRecord(el) ? sanitizeParamRecord(el) : undefined));
+    const items = v.map((el) => (isPlainRecord(el) ? sanitizeParamRecord(el) : undefined));
     return items.every((el) => el !== undefined) ? items : undefined;
   }
-  if (isStringRecord(v)) {
+  if (isPlainRecord(v)) {
     // A nested group that sanitizes to empty carries nothing — including the case
     // where a scalar field was mistyped as an object ("gain": {}). Drop it so the
     // node falls back to the device default rather than holding an inert husk.
@@ -588,11 +625,11 @@ function sanitizeParamRecord(rec: Record<string, unknown>): Record<string, unkno
 }
 
 function sanitizeNodeParams(v: unknown, version: number): Record<string, NodeParams> {
-  if (!isStringRecord(v)) return {};
+  if (!isPlainRecord(v)) return {};
   const out: Record<string, NodeParams> = {};
   for (const [nodeId, np] of Object.entries(v)) {
     // A non-record entry carries nothing recoverable — drop the node outright.
-    if (!isStringRecord(np)) continue;
+    if (!isPlainRecord(np)) continue;
     const clean = sanitizeParamRecord(np) as NodeParams;
     // Every load path (file open, recent files, ?plan= deep link, drop) reaches
     // deserialize, so this is where a plan written with keys an effect no longer
@@ -618,7 +655,7 @@ function sanitizeNodeParams(v: unknown, version: number): Record<string, NodePar
 }
 
 function isPlanConnection(v: unknown): v is PlanConnection {
-  if (!isStringRecord(v)) return false;
+  if (!isPlainRecord(v)) return false;
   return (
     typeof v.from === "string" &&
     typeof v.to === "string" &&

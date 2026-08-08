@@ -182,3 +182,11 @@ carries them, and another whenever it carries an effect selector (`insertFx` /
   minimized.
 - `hidden` — node ids collapsed off the canvas.
 - `positions` — `{ x, y }` per node id. Omit to let the app auto-arrange.
+
+All six are validated element by element on load and a non-conforming entry is
+DROPPED, not refused: the value of a `nodeNames` / `nodeColors` / `notes` entry
+must be a string, every element of `hidden` / `noteCollapsed` must be a node id
+string, and a `positions` entry needs both `x` and `y` as finite numbers. A
+collection that is not the right container at all (an array where an object is
+expected, say) falls back to empty and loses every entry. Nothing is reported to
+the user when this happens, so `plan_tool.py validate` warns about each one.

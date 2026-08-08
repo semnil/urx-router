@@ -92,7 +92,7 @@ describe("deserialize tolerance to malformed documents", () => {
       nodeParams: "oops",
       nodeNames: 42,
       nodeColors: null,
-      notes: [1, 2, 3], // an array is rejected by isStringRecord
+      notes: [1, 2, 3], // an array is rejected by the record guard
     });
     const plan = deserialize(doc);
     expect(plan.nodeParams).toEqual({});
@@ -102,13 +102,46 @@ describe("deserialize tolerance to malformed documents", () => {
   });
 
   it("guards positions symmetrically with the other record collections", () => {
-    // positions now runs through isStringRecord like nodeParams / nodeNames / notes,
+    // positions runs through the same record guard as nodeParams / nodeNames / notes,
     // so a hostile/garbled `positions: <number>` falls back to {} instead of
     // surviving as-is (H1 resolved). hidden stays array-guarded.
     const doc = JSON.stringify({ ...base, positions: 5, hidden: "nope" });
     const plan = deserialize(doc);
     expect(plan.positions).toEqual({}); // non-record falls back symmetrically
     expect(plan.hidden).toEqual([]); // hidden IS array-guarded, so it falls back
+  });
+
+  it("drops the non-string ELEMENTS of the string collections", () => {
+    // The container check alone was the gap: a well-formed object whose values are not
+    // strings passed, and the graph reaches every note on every render
+    // (`(plan.notes?.[id] ?? "").trim()`), so the document loaded and the canvas threw
+    // on its first paint. Element-level now, like connections and nodeParams, and by
+    // dropping rather than refusing — absence is already "nothing set here".
+    const doc = JSON.stringify({
+      ...base,
+      notes: { ch1: {}, ch2: "kick", ch3: 7 },
+      nodeNames: { ch1: ["nope"], ch2: "Kick" },
+      nodeColors: { ch1: null, ch2: "#ff0000" },
+      hidden: ["ch1", 5, null],
+      noteCollapsed: [{}, "ch2"],
+    });
+    const plan = deserialize(doc);
+    expect(plan.notes).toEqual({ ch2: "kick" });
+    expect(plan.nodeNames).toEqual({ ch2: "Kick" });
+    expect(plan.nodeColors).toEqual({ ch2: "#ff0000" });
+    expect(plan.hidden).toEqual(["ch1"]);
+    expect(plan.noteCollapsed).toEqual(["ch2"]);
+  });
+
+  it("drops a position whose coordinates are not finite numbers", () => {
+    // One bad entry among good ones is the case a whole-collection fallback misses:
+    // contentBounds only recovers when NOTHING is finite, so a single NaN folded into
+    // the min/max frames the view on nothing.
+    const doc = JSON.stringify({
+      ...base,
+      positions: { ch1: { x: 10, y: 20 }, ch2: { x: "5", y: 0 }, ch3: null, ch4: { x: 1 } },
+    });
+    expect(deserialize(doc).positions).toEqual({ ch1: { x: 10, y: 20 } });
   });
 
   it("validates each connection element and drops the invalid ones", () => {
