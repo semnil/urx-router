@@ -140,14 +140,15 @@ jobs:
     if: needs.detect.outputs.bumped == 'true'
     runs-on: ubuntu-latest
     # The one job in this repository that does not build its environment out of the
-    # Ubuntu mirror. `--with-deps webkit` is 201 .deb fetches / 125 MB against chromium's
-    # 29 / 32 MB, and on 2026-08-05 a degraded mirror stalled it past this job's whole
-    # budget: it reached package 182 and was killed, tests never started, and the release
-    # PR carried a check that said only "cancelled". The image carries those libraries
-    # and the browsers already. Measured on a runner the same day: 947 MB pulled in
-    # **27 s**, against 33-44 s for the apt path on a good day — so this is not a trade
-    # of speed for reliability, and it replaces 201 sequential requests with 7 blobs from
-    # a different host.
+    # Ubuntu mirror. `--with-deps webkit` fetches an order of magnitude more .debs than
+    # chromium, one at a time, and on 2026-08-05 a degraded mirror stalled it past this
+    # job's whole budget: it was killed with the package list unfinished, tests never
+    # started, and the release PR carried a check that said only "cancelled". The image
+    # carries those libraries and the browsers already, and pulling it costs about what
+    # the apt path costs on a good day — so this is not a trade of speed for reliability,
+    # and it replaces a long run of sequential requests with a handful of blobs from a
+    # different host. The dated measurements are in .github/actions/install-browsers,
+    # which is the only place any of these counts and timings are written down.
     #
     # The tag comes from `detect`, which reads the version the lockfile resolves. Pinning
     # it here by hand would drift the first time Dependabot bumps Playwright, and the

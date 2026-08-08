@@ -26,8 +26,9 @@ on:
 jobs:
   # Ten seconds of wall clock so the E2E job below can run inside the official Playwright
   # image: `container:` is evaluated before any step of its own job, so the tag can only
-  # come from a prior job. What it buys is 36 sequential .deb fetches per run taken off
-  # the Ubuntu mirror — see .github/actions/install-browsers for the day that mattered.
+  # come from a prior job. What it buys is chromium's whole sequential .deb fetch taken
+  # off the Ubuntu mirror every run — see .github/actions/install-browsers for the day
+  # that mattered, and for the measurements, which are stated only there.
   playwright_version:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -146,9 +147,10 @@ jobs:
     needs: playwright_version
     runs-on: ubuntu-latest
     # The browsers and their system libraries come from the image rather than from the
-    # runner's Ubuntu mirror. Measured on a runner: 947 MB pulled in 27 s, against 20-31 s
-    # for `--with-deps chromium` on a good day — so the change is free in time and takes
-    # 36 sequential .deb fetches out of every pull request.
+    # runner's Ubuntu mirror. Pulling the image costs about what `--with-deps chromium`
+    # costs on a good day — so the change is free in time and takes a whole run of
+    # sequential .deb fetches out of every pull request. The measurements behind that,
+    # dated, are in .github/actions/install-browsers and are not restated here.
     container: mcr.microsoft.com/playwright:v${{ needs.playwright_version.outputs.version }}-noble
     timeout-minutes: 15
     steps:

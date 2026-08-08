@@ -10,6 +10,12 @@ description: >
 # one .deb at a time from the runner's Ubuntu mirror. Only then does it download the
 # browser build. Normal cost: 22-26 s for chromium, 33-44 s for webkit.
 #
+# Those figures are as measured when this action was written (2026-08-06), and they are
+# written here and in no other file. Both lists move with the browser build and with the
+# runner image, so what carries over is the ratio, not the count — and a second copy of a
+# moving number is a contradiction waiting to be found: ci.yml and race.yml each carried
+# one, and they disagreed about chromium (36 against 29) within the day.
+#
 # On 2026-08-05 that mirror degraded for a quarter of an hour. Individual .deb fetches
 # stalled 22, 30, 44, 62, 90, 93 and 157 s; the webkit job reached package 182 of 201
 # and was killed by its own 15-minute job timeout, so the tests never started. The three
@@ -74,7 +80,7 @@ runs:
           exit 0
         fi
         if [ "${status}" -eq 124 ]; then
-          echo "::error title=Playwright browser install timed out::playwright install --with-deps ${BROWSER} exceeded ${TIMEOUT} s. Its first half fetches the browser's system libraries one .deb at a time from the runner's Ubuntu mirror (chromium 29 packages, webkit 201); a degraded mirror is what this bound exists to catch. Re-run the job — it gets a fresh VM. If it recurs, the log's 'Get:' lines carry the per-package timings."
+          echo "::error title=Playwright browser install timed out::playwright install --with-deps ${BROWSER} exceeded ${TIMEOUT} s. Its first half fetches the browser's system libraries one .deb at a time from the runner's Ubuntu mirror, and webkit's list is far the longer of the two; a degraded mirror is what this bound exists to catch. Re-run the job — it gets a fresh VM. If it recurs, the log's 'Get:' lines carry the per-package timings."
         else
           echo "::error title=Playwright browser install failed::playwright install --with-deps ${BROWSER} exited ${status}."
         fi
