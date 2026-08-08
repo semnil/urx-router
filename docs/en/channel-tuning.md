@@ -60,8 +60,14 @@ lanes with no matching GR, because the GR sample missed it. That is the device, 
 
 ## Layout
 
-A modal on the Preferences / Device setup shell (`.consent-box` + `.prefs-box`, 920 px, two
-columns). The left column is the display, the right the controls and readouts.
+A modal on the Preferences / Device setup shell (`.consent-box` + `.prefs-box`, two columns).
+The left column is the display, the right the controls and readouts.
+
+**The width is the one part of that shell it does not share.** `#dyn-screen-box` sits in the same
+rule as `#console-host` (to share the lane sizing tokens), and the `flex: 1` it picks up there beats
+`.prefs-box`'s `width: min(920px, 100%)`. So this screen alone spans the viewport (1452 px in a
+1500 px window) and its ground is the board's `--graph-bg` rather than `--panel`. Of the shared
+tokens only `--groove` is actually read here; `--strip-w` / `--head-h` are inherited and unused.
 
 ```text
 ┌ [CH 1] Gate ─────────────────────────────────────────────────┐
