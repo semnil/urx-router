@@ -21,6 +21,11 @@ declare global {
       windowOpened: boolean;
       /** How long `midi_open_ports` holds its answer before delivering it. */
       openPortsDelayMs: number;
+      /** How many held answers have actually been delivered. A test that opens a port
+       *  "inside the round trip" has to show the trip had not ended yet; a clock cannot
+       *  show it, and if the trip ended first the race is simply absent and every
+       *  assertion after it passes for the wrong reason. */
+      openPortsAnswered: number;
     };
   }
 }
@@ -92,6 +97,7 @@ test.beforeEach(async ({ page }) => {
       sent: [],
       windowOpened: false,
       openPortsDelayMs: 0,
+      openPortsAnswered: 0,
     };
     window.__midiTest = state;
     class Channel {
@@ -133,7 +139,12 @@ test.beforeEach(async ({ page }) => {
             // port be opened inside the round trip and see whether the stale answer
             // wins. Zero by default, which is one task's delay — as it is in Tauri.
             const answer: [string | null, string | null] = [state.inputPort, state.outputPort];
-            return new Promise((r) => setTimeout(() => r(answer), state.openPortsDelayMs));
+            return new Promise((r) =>
+              setTimeout(() => {
+                state.openPortsAnswered++;
+                r(answer);
+              }, state.openPortsDelayMs),
+            );
           }
           case "midi_open_input":
             if (args.port === "Broken In") return Promise.reject(new Error("port busy"));
@@ -844,16 +855,23 @@ test("a port opened while the shell is being asked survives the answer", async (
 
   // Provoke a refresh with the answer held: the window announcing itself is what asks.
   await win.close();
+  const answeredBefore = await page.evaluate(() => window.__midiTest.openPortsAnswered);
   const again = await openMidiWindow(page);
 
   // …and open a port while it is held. The pick completes long before the answer,
   // which still says "nothing is open".
   await again.locator(".mw-in").selectOption("Stub In");
   await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
+  // The 600 ms hold really did still contain the pick. The window's whole boot plus
+  // three or four round trips sit inside it, and on a slow enough machine the answer
+  // lands first — at which point there is no race left and every line below passes
+  // for the wrong reason.
+  expect(await page.evaluate(() => window.__midiTest.openPortsAnswered)).toBe(answeredBefore);
 
-  // Outlast the held answer, then check the port is still the chosen one — on both
-  // sides, since the window renders what the app pushes.
-  await page.waitForTimeout(900);
+  // Outlast the held answer — by watching for it to be delivered rather than by a
+  // clock — then check the port is still the chosen one on both sides, since the
+  // window renders what the app pushes.
+  await expect.poll(() => page.evaluate(() => window.__midiTest.openPortsAnswered)).toBeGreaterThan(answeredBefore);
   expect(await page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
   await expect(again.locator(".mw-in")).toHaveValue("Stub In");
   await sendMidi(page, [0xb0, 7, 100]); // and it is still a port that delivers

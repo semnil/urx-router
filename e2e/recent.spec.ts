@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { stubTauriBoot } from "./tauri-stub";
+import { invokesOf, stubTauriBoot } from "./tauri-stub";
 
 // Recent entries whose file no longer loads: the stubbed shell answers no
 // read_text_file command, so opening one fails exactly like a moved / deleted
@@ -36,8 +36,11 @@ test("declining the discard confirm keeps the recent entry", async ({ page }) =>
   // Dirty the plan so the discard confirm gates the open.
   await page.selectOption("#rate-picker", "96000");
   await page.locator(".recent-row").click();
-  // Nothing was attempted, so the entry survives.
-  await page.waitForTimeout(400);
+  // Wait for the confirm to have been RAISED, not for a clock. The open is decided at
+  // that dialog, so once it has been asked and declined the outcome is settled — where
+  // a fixed sleep is the whole definition of "nothing was attempted" and is satisfied
+  // just as well by a click that had not been processed yet.
+  await expect.poll(() => invokesOf(page)).toContain("plugin:dialog|message");
   await expect(page.locator(".recent-row")).toHaveCount(1);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("urx-recent") ?? "[]") as unknown[]);
   expect(stored).toHaveLength(1);

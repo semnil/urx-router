@@ -63,5 +63,10 @@ test("a device that reports no firmware version is still usable", async ({ page 
   await page.click("#btn-device"); // the device actions live in a menu
   await page.click("#btn-fetch");
 
-  await expect.poll(() => dialogsOf(page)).not.toContainEqual(expect.stringContaining("firmware version"));
+  // The fetch has to REACH its end before the absence below means anything. A polled
+  // negative is satisfied by its first sample, which is taken as soon as the click
+  // returns and hundreds of milliseconds before the gate it is judging has run — so
+  // without this line the case reported green whatever the gate did.
+  await expect(page.locator("#statusbar")).toContainText("Fetched", { timeout: 20_000 });
+  expect(await dialogsOf(page)).not.toContainEqual(expect.stringContaining("firmware version"));
 });
