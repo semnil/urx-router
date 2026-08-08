@@ -3994,10 +3994,21 @@ select:focus-visible,
      meters' green/yellow/red zones, and the board's whole vocabulary of wires
      and rails. Forcing these into two system colors would not raise contrast --
      it would delete the information. The board gets a rim so the island still
-     has an edge against the forced background. */
+     has an edge against the forced background.
+
+     .gt-slot is the tuning screens' meter lane, and it is here for exactly the
+     reason .con-meter is -- it was simply missed, because the two share the
+     grammar and not the selector. Measured on hcblack: the level gradient and
+     the reduction's hatch are background IMAGES and the mode drops both, the
+     shade and the peak marker are background COLOURS and the mode forces both
+     to Canvas, so all four lanes rendered as empty outlined boxes. Not "the
+     reduction cannot be told from the level" -- neither was drawn at all.
+     forced-color-adjust inherits, so naming the slot covers the sides, the bar,
+     the shade, the peak and the threshold cap that rides them. */
   .con-scribble,
   .con-meter,
-  .mtrcol {
+  .mtrcol,
+  .gt-slot {
     forced-color-adjust: none;
   }
   #graph-host {

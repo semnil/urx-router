@@ -685,9 +685,11 @@ pixel-identical.
   pointer, the fader and mini-fader cap bars, the 0-dB lines, and the slot each cap rides in — trades
   its fill for an outline of the same geometry.
 - **An island.** A surface whose colours ARE the reading — the scribble's device colour, the meters'
-  green/yellow/red zones, the board's whole vocabulary of wires and rails — opts out with
-  `forced-color-adjust: none`. Forcing those into two system colours would not raise contrast, it would
-  delete the information. The board additionally takes a rim so the island still has an edge.
+  green/yellow/red zones on the CONSOLE **and on the tuning screens' lanes**, the board's whole
+  vocabulary of wires and rails — opts out with `forced-color-adjust: none`. Forcing those into two
+  system colours would not raise contrast, it would delete the information. The board additionally
+  takes a rim so the island still has an edge. The property inherits, so `.gt-slot` covers a lane's
+  sides, bar, shade, peak and threshold cap at once.
 
 A third mechanism exists but is narrow: a **system** colour may still be used as a fill. The fader caps
 take `background: Canvas` for one reason only — to keep occluding the groove and the 0-dB line the way

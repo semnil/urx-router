@@ -21,6 +21,16 @@ import { test, expect, type Page } from "@playwright/test";
 
 const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
+/** Open CH 1's GATE tuning screen — the shortest route to a `.gt-slot` meter lane and
+ *  to a `.dev-slider` parameter row, the two surfaces the console does not carry. */
+const openGate = async (page: Page) => {
+  await page.locator('#graph-host g.node[data-id="ch1"]').click();
+  const sec = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^GATE$/ }) });
+  if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
+  await sec.locator("#btn-gate-screen").click();
+  await expect(page.locator("#dyn-screen-box")).toBeVisible();
+};
+
 // One part, drawn as an outline rather than as a fill. The fill has to be GONE
 // and not merely a different colour: a background the mode has forced to Canvas
 // is exactly the invisible case this pins against, and it reports the Canvas RGB
@@ -163,6 +173,22 @@ test("the surfaces where the colour IS the reading are opted out", async ({ page
       .evaluate((node) => getComputedStyle(node).forcedColorAdjust);
     expect(value, selector).toBe("none");
   }
+
+  // The tuning screens' meter lane is the same island for the same reason, and it was
+  // missed when this block was written — the two share the grammar and not the
+  // selector, which is the shape of defect this file's closing note names. Measured on
+  // real Windows high contrast before the rule existed: all four DUCKER lanes rendered
+  // as empty outlined boxes. The level gradient and the reduction's hatch are
+  // background IMAGES and the mode drops them; the shade and the peak marker are
+  // background COLOURS and the mode forces them to Canvas. Not "the reduction cannot be
+  // told from the level" — neither was drawn.
+  await page.click("#btn-view-graph");
+  await openGate(page);
+  const lane = await page
+    .locator("#dyn-screen-box .gt-slot")
+    .first()
+    .evaluate((node) => getComputedStyle(node).forcedColorAdjust);
+  expect(lane, ".gt-slot").toBe("none");
 });
 
 // Not covered here, and not coverable here: this is Chromium's emulation of the
