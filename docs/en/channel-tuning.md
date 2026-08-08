@@ -312,7 +312,15 @@ its detector — a correlated pair reads 6.02 dB above either side alone, not 3 
 not 0 dB (a louder-side pick). The cap can only ride a ruler in its own coordinate, and against a
 summed display the threshold's onset held to -3.0 ±0.5 dB where against `max(L,R)` it spread 7 dB.
 So the lane folds to what the detector reads (`duckerKeyDb`), the cap sits on it unmodified, and the
--3.0 dB is the detector reading RMS while these meters read peak.
+-3.0 dB is a sine's peak-to-RMS: these meters read peak and the detector reads RMS.
+
+**The cap is a guide, not a calibrated marker,** and the reason is that -3.0 is a sine's figure
+rather than a constant. Measured with a tone on one side and preamp noise on the other, the onset
+sat 8.5 dB below the summed display instead of 3.5 — because a noise-like key's peak-to-RMS is
+nearer 10 dB than 3. So programme material engages at a lower bar reading than the cap implies. No
+correction is applied for it: the app has no measurement of the key's crest factor to correct with,
+and -3.0 is simply the better of the two available constants (no correction at all puts the tone
+cases 3 dB out).
 
 **Why the reduction is on POST.** A reduction grows down from 0 and a level grows up from the floor,
 so they collide when `level + |reduction| > 0 dBFS`. On an input lane that is the normal case — at
