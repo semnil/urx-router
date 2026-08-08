@@ -13,6 +13,18 @@
 // up inside a display's work area (the monitor minus the menu bar / taskbar),
 // moved first and shrunk only when it cannot fit.
 //
+// **A placement is applied twice when it crosses a scale boundary**, which is what
+// makes that rule hold on a mixed-DPI desk. Landing a window can move it onto a
+// display at another scale, and Windows answers the move by preserving the window's
+// LOGICAL size and re-dressing it in a frame of a different thickness — measured, a
+// window placed at 1516x1004 came back 2274x1506 on a work area 1008 tall, and in the
+// other direction a remembered 1296x839 collapsed to 868x571, under its own minimum.
+// Neither number is knowable before the move (`frame_delta` says why), so the
+// placement simply runs again once the window is where it belongs and both are
+// readable. On macOS the desk is in points and a move cannot change the scale a
+// window is measured at, so the second pass never runs and that platform keeps the
+// path it always had.
+//
 // **Every rectangle below is in DESK units, and which unit that is depends on the
 // platform** — see `physical_per_desk`. This module used to do its arithmetic in
 // physical pixels on the grounds that monitor rectangles and window rectangles are
@@ -228,14 +240,39 @@ fn displays<R: Runtime>(win: &Window<R>) -> tauri::Result<Vec<Display>> {
 /// on NOW, which is not necessarily the one it is about to move to: on Windows the
 /// frame is (16, 39) at 100% and (26, 71) at 200%, and there is no way to ask for
 /// the frame at a DPI the window has not visited (`AdjustWindowRectExForDpi` is not
-/// reachable through Tauri). The residual error is bounded by that difference and
-/// lands on the containment test only. On macOS both numbers are zero, so it is
-/// exact.
+/// reachable through Tauri, and scaling the frame by the DPI ratio does not predict
+/// it — 100%'s (16, 39) times 1.5 is (24, 58.5) where 150% really wears (22, 56)).
+/// So `place_window` MEASURES it instead, by reading the frame again once the move
+/// has landed. On macOS both numbers are zero, so the first read is already exact.
 fn frame_delta(outer: PhysicalSize<u32>, inner: PhysicalSize<u32>, scale: f64) -> (u32, u32) {
     let k = physical_per_desk(scale);
     let px = outer.width.saturating_sub(inner.width) as f64;
     let py = outer.height.saturating_sub(inner.height) as f64;
     ((px / k).ceil() as u32, (py / k).ceil() as u32)
+}
+
+/// The OUTER rectangle a window with this inner size wears at this position.
+fn outer_rect(at: (i32, i32), inner: (u32, u32), frame: (u32, u32)) -> Rect {
+    Rect {
+        x: at.0,
+        y: at.1,
+        width: inner.0.saturating_add(frame.0),
+        height: inner.1.saturating_add(frame.1),
+    }
+}
+
+/// The INNER size inside an outer rectangle — what `set_size` takes. Handing the
+/// outer size over instead would grow the window by the height of its own title bar
+/// at every launch.
+///
+/// The inverse of `outer_rect`, and named beside it so that the two directions
+/// cannot acquire different rounding or different saturation by being spelled out
+/// wherever they are needed.
+fn inner_size(outer: Rect, frame: (u32, u32)) -> (u32, u32) {
+    (
+        outer.width.saturating_sub(frame.0),
+        outer.height.saturating_sub(frame.1),
+    )
 }
 
 /// Raise an OUTER rectangle so that the window it describes is at least
@@ -294,28 +331,67 @@ fn desk_size(width: u32, height: u32) -> Size {
     }
 }
 
-/// Put a window at `want` — its OUTER rectangle, in desk units — corrected so that
-/// it lies entirely inside a display's work area and is no smaller than `min_inner`
-/// (logical, matching how the minimum is configured). `frame` is what the window
-/// frame adds around the content, in desk units, from `frame_delta`.
+/// One pass of the placement arithmetic: raise the rectangle to the minimum, then
+/// fit it to the work area. Split out because it is run TWICE for a cross-DPI move
+/// (see `place_window`) and the two runs must not be able to drift apart, and
+/// because it is the whole of what a test can check without a window or a display.
 ///
-/// `want` is a rectangle about to be applied, not necessarily one the window is
-/// at: at startup the window cannot be read back (see `restore_window` in lib.rs),
-/// so the caller passes the numbers it is about to place.
+/// The order is the priority order: fitting wins, so a window whose minimum is
+/// larger than the work area comes out smaller than its minimum rather than under
+/// the taskbar.
+///
+/// It takes the host display's two numbers apart rather than a `Display`, for the
+/// same reason `at_least` takes a bare factor: `desk_per_logical` is identically 1.0
+/// wherever the desk is logical, so a version that reached for it here could only be
+/// tested on the platform where the desk is in pixels — and the `cargo test` job runs
+/// on macOS. The pairing `Display` exists to protect is still made in one line, at
+/// the single call site.
+fn placement(
+    want: Rect,
+    work: Rect,
+    min_inner: (f64, f64),
+    desk_per_logical: f64,
+    frame: (u32, u32),
+) -> Rect {
+    fit(at_least(want, min_inner, desk_per_logical, frame), work)
+}
+
+/// Put a window at `at` — an OUTER position — wearing `inner`, an INNER size, both
+/// in desk units, corrected so that the window lies entirely inside a display's work
+/// area and is no smaller than `min_inner` (logical, matching how the minimum is
+/// configured).
+///
+/// **A position and an inner size, not an outer rectangle**, because those are the
+/// only parts a caller can state: an outer rectangle can only be built by adding a
+/// frame, the frame belongs to the display the window ENDS UP on, and no caller knows
+/// that display yet. Adding one where the window happens to be instead loses the
+/// difference between the two frames at every launch — measured over four consecutive
+/// launches, the outer width fell 1516, 1510, 1504, 1498, the 6 between (16, 39) and
+/// (22, 56). It is the failure "at every launch the window grows by its own title bar"
+/// with the sign reversed, and one launch cannot see it either.
+///
+/// The numbers are about to be applied, not necessarily ones the window is at: at
+/// startup the window cannot be read back (see `restore_window` in lib.rs), so the
+/// caller passes what it is about to place.
 ///
 /// A maximized, fullscreen or minimized window is left alone: its rectangle
 /// belongs to the window manager, and setting a position on a maximized window is
 /// how it silently stops being maximized.
 fn place_window<R: Runtime>(
     win: &Window<R>,
-    want: Rect,
+    at: (i32, i32),
+    inner: (u32, u32),
     min_inner: (f64, f64),
-    frame: (u32, u32),
 ) -> tauri::Result<()> {
     if win.is_maximized()? || win.is_minimized()? || win.is_fullscreen()? {
         return Ok(());
     }
     let displays = displays(win)?;
+    // Measured on the window as it stands, which is the only frame knowable before
+    // the move — `frame_delta` says why the destination's cannot be predicted from it.
+    let scale = win.scale_factor()?;
+    let frame = frame_delta(win.outer_size()?, win.inner_size()?, scale);
+    let want = outer_rect(at, inner, frame);
     // The host is picked from the rectangle AS IT STANDS, before the minimum is
     // applied. It has to be, twice over: the minimum is logical and only means a
     // number of desk units once a display is chosen, and a rectangle inflated to a
@@ -325,30 +401,39 @@ fn place_window<R: Runtime>(
     let Some(host) = host_display(want, &displays) else {
         return Ok(());
     };
-    let want = at_least(want, min_inner, desk_per_logical(host.scale), frame);
-    // A window whose minimum is larger than the work area ends up smaller than
-    // its minimum: fitting wins, and the platform does not raise the result. There
-    // is nothing better to do than pin its top-left corner, which the move below
-    // does.
-    let fitted = fit(want, host.work);
-    // The size setter takes the INNER size, so the frame has to come off the
-    // fitted outer rectangle before it is handed back — handing the outer size
-    // over would grow the window by the height of its own title bar at every
-    // launch.
+    // Land the whole thing once, and answer the scale the window came out at. Called
+    // a second time only when that answer says the move crossed a DPI boundary — see
+    // the module header for what the second landing is for.
     //
-    // **These two calls are where the open Windows item lives**, and the guarantee at
-    // the head of this module is void on that path: the size lands while the window is
-    // still on the display it was born on, and the move below crosses a DPI boundary,
-    // at which point the OS resizes the window to preserve its LOGICAL size (tao's
-    // `WM_DPICHANGED` handler). Nothing here can see that happen. The measurement that
-    // would settle it, and the one-line fix it would authorize, are in
-    // `reference/work/windows-verify/`; architecture.md "Window geometry" states the
-    // consequence. On macOS the desk is in points, so there is no rescale to lose to.
-    win.set_size(desk_size(
-        fitted.width.saturating_sub(frame.0),
-        fitted.height.saturating_sub(frame.1),
-    ))?;
-    win.set_position(desk_position(fitted.x, fitted.y))?;
+    // The rescale is synchronous, which is what makes reading the answer here work at
+    // all: Windows sends `WM_DPICHANGED` inside the `SetWindowPos` the move issues,
+    // and tao resizes from within that handler. Waiting for the `ScaleFactorChanged`
+    // event instead would not work — the main window is placed from the setup hook,
+    // before the event loop delivers anything, and measured, the event never arrives
+    // there (it does for the MIDI window, which is built while the loop runs, which is
+    // exactly what makes it useless as the trigger).
+    let land = |frame: (u32, u32)| -> tauri::Result<f64> {
+        let fitted = placement(
+            outer_rect(at, inner, frame),
+            host.work,
+            min_inner,
+            desk_per_logical(host.scale),
+            frame,
+        );
+        let (w, h) = inner_size(fitted, frame);
+        win.set_size(desk_size(w, h))?;
+        win.set_position(desk_position(fitted.x, fitted.y))?;
+        win.scale_factor()
+    };
+    if land(frame)? != scale {
+        // On the destination now, where the frame it will actually wear is simply
+        // readable. Nothing is left to learn after this one.
+        land(frame_delta(
+            win.outer_size()?,
+            win.inner_size()?,
+            win.scale_factor()?,
+        ))?;
+    }
     Ok(())
 }
 
@@ -357,9 +442,10 @@ fn place_window<R: Runtime>(
 /// `None` meaning nothing recorded it, which falls back to the window's own scale
 /// factor, what every restore used to assume.
 ///
-/// This exists so that the frame is added and subtracted in one module. Its caller
-/// holds a rectangle and a scale; it should not also have to know that the saved size
-/// is the inner one and the saved position the outer one.
+/// This exists so that the state file's schema is read in one place. Its caller holds
+/// a rectangle and a scale; it should not also have to know that the saved size is the
+/// inner one and the saved position the outer one — which is exactly the pair
+/// `place_window` takes.
 pub fn place_saved<R: Runtime>(
     win: &Window<R>,
     position: PhysicalPosition<i32>,
@@ -367,21 +453,15 @@ pub fn place_saved<R: Runtime>(
     saved_scale: Option<f64>,
     min_inner: (f64, f64),
 ) -> tauri::Result<()> {
-    // Measured on the window as it was born, the one moment its own size is beyond
-    // doubt — nothing has asked to change it yet.
-    let scale = win.scale_factor()?;
-    let frame = frame_delta(win.outer_size()?, win.inner_size()?, scale);
-    let want = window_to_desk(position, size, saved_scale.unwrap_or(scale));
-    place_window(
-        win,
-        Rect {
-            width: want.width.saturating_add(frame.0),
-            height: want.height.saturating_add(frame.1),
-            ..want
-        },
-        min_inner,
-        frame,
-    )
+    // The window's own scale factor is only the fallback for a rectangle nothing
+    // recorded a scale for; the conversion below uses the recorded one where there is
+    // one.
+    let scale = match saved_scale {
+        Some(recorded) => recorded,
+        None => win.scale_factor()?,
+    };
+    let want = window_to_desk(position, size, scale);
+    place_window(win, (want.x, want.y), (want.width, want.height), min_inner)
 }
 
 /// Which display's scale factor a remembered PHYSICAL rectangle was measured at,
@@ -457,19 +537,21 @@ pub fn saved_rect_scale<R: Runtime>(
 pub fn fit_window<R: Runtime>(win: &Window<R>, min_inner: (f64, f64)) -> tauri::Result<()> {
     // The window is where it is, so its own scale factor is the right one to read
     // its rectangle with — this is the one caller for which no scale has to be
-    // remembered anywhere.
-    let scale = win.scale_factor()?;
-    let outer = win.outer_size()?;
-    let frame = frame_delta(outer, win.inner_size()?, scale);
-    let want = window_to_desk(win.outer_position()?, outer, scale);
-    place_window(win, want, min_inner, frame)
+    // remembered anywhere. Its INNER size, since that is the half a placement can
+    // preserve; the frame around it is `place_window`'s to measure.
+    let want = window_to_desk(
+        win.outer_position()?,
+        win.inner_size()?,
+        win.scale_factor()?,
+    );
+    place_window(win, (want.x, want.y), (want.width, want.height), min_inner)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         at_least, desk_per_logical, desk_position, desk_size, fit, host_display, physical_per_desk,
-        recover_scale, window_to_desk, work_to_desk, Display, Rect,
+        placement, recover_scale, window_to_desk, work_to_desk, Display, Rect,
     };
     use tauri::{PhysicalPosition, PhysicalSize};
 
@@ -618,6 +700,33 @@ mod tests {
         // A nonsense factor must not produce a nonsense minimum.
         assert_eq!(at_least(w, MIN, f64::NAN, (0, 0)), w);
         assert_eq!(at_least(w, MIN, -1.0, (0, 0)), w);
+    }
+
+    // Why the placement runs a second pass after a cross-DPI move: the same rectangle,
+    // the same display and the same minimum answer differently depending on which
+    // display's frame the arithmetic is done with. The factor is passed in rather than
+    // taken from a `Display`, so this runs on both platforms — `desk_per_logical` is
+    // identically 1.0 where the desk is logical, and the `cargo test` job runs on macOS,
+    // so a version that reached for it here would compile away in CI.
+    //
+    // Measured on Windows 11, 2026-08-09: a 1920x1080 display at 150% with a 72px
+    // taskbar, and a window remembered on a 100% one. Its frame is (16, 39) where it is
+    // born and (22, 56) where it is going, and one logical pixel is 1.5 desk units on
+    // the display it is going to.
+    #[test]
+    fn the_destination_frame_changes_the_answer() {
+        let work = win(-7, 1440, 1920, 1008);
+        let want = win(100, 1442, 1516, 1004);
+        // With the frame the window was born wearing, 1516x1004 clears a 960x640
+        // minimum (1440x960 plus (16, 39) is 1456x999) and nothing moves.
+        assert_eq!(placement(want, work, MIN, 1.5, (16, 39)), want);
+        // With the frame it will actually wear, the same minimum is 1462x1016 — taller
+        // than the work area — so it is raised and then fitting wins, which is the
+        // documented priority order and lands the window flush with the taskbar.
+        assert_eq!(
+            placement(want, work, MIN, 1.5, (22, 56)),
+            win(100, 1440, 1516, 1008)
+        );
     }
 
     #[test]

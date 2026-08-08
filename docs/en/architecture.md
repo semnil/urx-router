@@ -2035,16 +2035,38 @@ through the trial path with no scale file present; and a rectangle remembered of
 (2792,122) 1280x800 — where the fallback alone would have produced (2016,446) 640x400, so the recorded
 scale is doing the work. A graceful quit then rewrote the rectangle and the scale in the same instant.
 
-**On Windows one half of this is still open, and it is not measured.** The desk being in physical pixels
-there means the arithmetic above is unaffected, but the *size* a restore applies is still applied before the
-window moves: `set_size` runs while the window is on the display it was born on, and the move that follows
-crosses a DPI boundary, at which point the OS resizes the window to preserve its LOGICAL size
-(`tao`'s `WM_DPICHANGED` handler; on Windows 11 it applies the rectangle Windows suggests). The fit's
-guarantee is therefore void on that path and the final size is off by the ratio of the two scale factors.
-Expressing the applied size in logical units would make the OS's own rescale a no-op — but only if
-`WM_DPICHANGED` fires for a programmatic move, and if it does not, that change is exactly as wrong in the
-other direction. It is one measurement on the Windows checkout, and the item is in
-`reference/work/windows-verify/` rather than guessed at here.
+**On Windows the placement runs twice, because the first pass cannot know the display it is aiming at.**
+The desk being in physical pixels there means the arithmetic above is unaffected, but the *size* a restore
+applies lands before the window moves: `set_size` runs while the window is still on the display it was born
+on, and the move that follows can cross a DPI boundary, at which point the OS resizes the window to preserve
+its LOGICAL size (`tao`'s `WM_DPICHANGED` handler; on Windows 11 it applies the rectangle Windows suggests).
+Two things are wrong in that one step, and both were measured on a 100% and a 150% display: the size comes
+back multiplied by the ratio of the two scale factors — a window placed at 1516x1004 became 2274x1506 on a
+work area 1008 tall, and in the other direction a remembered 1296x839 collapsed to 868x571, below the
+configured minimum — and the window *frame* is a different thickness at the other DPI, (16,39) against
+(22,56), which also makes the minimum be raised against the wrong number.
+
+Neither can be predicted from the departure display. The frame is not reachable at a DPI the window has not
+visited, and scaling it by the ratio does not give the answer (1.5 times (16,39) is (24,58.5), not (22,56)).
+So the pass is simply **repeated once the move has landed**, where both are readable, and the size is applied
+a second time in the destination's own pixels. A placement is therefore stated as a position and an INNER
+size, never as an outer rectangle: an outer rectangle can only be built by adding a frame, and until the
+window has moved, the only frame anyone holds is the departure display's. Building it in the caller loses
+the difference between the two frames at *every* launch — measured over four consecutive launches while the
+outer rectangle was what travelled, the outer width fell 1516, 1510, 1504, 1498. The rescale
+is synchronous (Windows sends `WM_DPICHANGED` inside the move's `SetWindowPos` and `tao` resizes from within
+that handler), so the second pass sees the new state immediately. Waiting for the `ScaleFactorChanged` event
+instead would not work at all: the main window is placed from the setup hook, before the event loop delivers
+anything, and measured, **the event never arrives there** — it does arrive for the MIDI window, which is
+built while the loop runs, which is exactly what makes it useless as the trigger.
+
+Measured end to end on Windows 11 (2026-08-09, a 2560x1440 primary at 100% and a 1920x1080 secondary at
+150%, rectangles read back through `GetWindowRect` in a per-monitor-DPI-aware probe and cross-checked
+against the app's own `outer_size`): a rectangle remembered on the 100% display and restored onto the 150%
+one now lands entirely inside its work area and reproduces byte for byte over three further launches, and
+the reverse direction returns the remembered rectangle exactly. On macOS the desk is in points and the scale
+factor does not change, so the loop runs once and nothing about that platform's path moves. Every measured
+value is in `reference/work/windows-verify/`.
 
 **The MIDI window is a child of the main window**, which is what keeps it in front: on Windows an owned
 window is always above its owner in the z-order, and on macOS `addChildWindow` orders it above the parent
