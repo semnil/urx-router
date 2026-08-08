@@ -46,7 +46,23 @@ export const RULES: CssRule[] = [...CSS.replace(/\/\*[\s\S]*?\*\//g, "").matchAl
   (m) => ({ selector: m[1].replace(/\s+/g, " ").trim(), body: m[2] }),
 );
 
-/** One declaration's value from a rule body, or undefined. */
+/** One declaration's value from a rule body, or undefined. The LAST one declared, not
+ *  the first: inside a single block source order decides, so the progressive-enhancement
+ *  idiom `background: <fallback>; background: <modern>;` is the modern value, and a
+ *  caller reading the first would answer with the value the browser discards — in both
+ *  directions, since a guard that reads the fallback misses a bad modern value and a
+ *  guard that reads a bad fallback fails on a rule that is correct. (Specificity plays
+ *  no part here: two rules matching the same element are never joined by this helper.) */
 export function decl(body: string, prop: string): string | undefined {
-  return body.match(new RegExp(`(?:^|;)\\s*${prop}\\s*:([^;]+)`))?.[1].trim();
+  return [...body.matchAll(new RegExp(`(?:^|;)\\s*${prop}\\s*:([^;]+)`, "g"))].at(-1)?.[1].trim();
+}
+
+/** The face a rule paints, whichever of the three background properties names it, taking
+ *  the last in source order. The shorthand alone is not enough: `--seg` is a gradient, so
+ *  `background-image: var(--seg)` is valid CSS a `background`-only read is blind to, as is
+ *  `background-color: var(--led)`. Layering is deliberately not modelled — no rule in this
+ *  stylesheet declares more than one of the three, and a layer-reset model would be
+ *  speculation; reading the last of the three is what that case degrades to. */
+export function faceDecl(body: string): string | undefined {
+  return decl(body, "background(?:-color|-image)?");
 }
