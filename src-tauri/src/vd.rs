@@ -877,6 +877,21 @@ mod imp {
         unregister_params(ws, dev_uid, subs, counters);
     }
 
+    /// Wrap a `vdp` message in casket's JSON-RPC envelope.
+    ///
+    /// This envelope is casket's, not the protocol's: Device Center's other
+    /// endpoint carries the same `vdp` messages bare, over newline-delimited
+    /// JSON, on a port it advertises at connect time. Building it in one place is
+    /// what lets the transport be chosen at connect rather than at every call —
+    /// the five call sites now say only what they mean (`method` + `uri` + data).
+    fn request_vd(dev_uid: &str, vdp: Value) -> Value {
+        json!({
+            "jsonrpc": "1.0",
+            "method": "requestVD",
+            "params": { "dev_uid": dev_uid, "vdp": vdp }
+        })
+    }
+
     fn send_json(ws: &mut Ws, v: Value) -> Result<(), String> {
         ws.send(Message::Text(v.to_string().into()))
             .map_err(|e| format!("broker-io: {e}"))
@@ -976,14 +991,7 @@ mod imp {
         let base = uri.split('?').next().unwrap_or(uri).to_string();
         send_json(
             ws,
-            json!({
-                "jsonrpc": "1.0",
-                "method": "requestVD",
-                "params": {
-                    "dev_uid": dev_uid,
-                    "vdp": { "method": "get", "uri": uri }
-                }
-            }),
+            request_vd(dev_uid, json!({ "method": "get", "uri": uri })),
         )?;
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
@@ -1066,14 +1074,10 @@ mod imp {
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
         send_json(
             ws,
-            json!({
-                "jsonrpc": "1.0",
-                "method": "requestVD",
-                "params": {
-                    "dev_uid": dev_uid,
-                    "vdp": { "method": "post", "uri": uri, "data": { "current_value": value } }
-                }
-            }),
+            request_vd(
+                dev_uid,
+                json!({ "method": "post", "uri": uri, "data": { "current_value": value } }),
+            ),
         )?;
         // Await the matching response, skipping unrelated notifications.
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -1142,10 +1146,10 @@ mod imp {
         if subs.absorb(msg) {
             return None;
         }
-        if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
-            return None;
-        }
-        let vdp = msg.pointer("/params/vdp")?;
+        // Both envelope shapes, like notify_frame and synchronize_lost: casket
+        // wraps the `vdp` message in JSON-RPC, the other endpoint carries it bare.
+        // Matching on the wrapper's method would tie reply matching to casket.
+        let vdp = msg.pointer("/params/vdp").or_else(|| msg.pointer("/vdp"))?;
         let uri = vdp.get("uri").and_then(Value::as_str).unwrap_or("");
         (uri.split('?').next().unwrap_or(uri) == base).then_some(vdp)
     }
@@ -1164,14 +1168,7 @@ mod imp {
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
         send_json(
             ws,
-            json!({
-                "jsonrpc": "1.0",
-                "method": "requestVD",
-                "params": {
-                    "dev_uid": dev_uid,
-                    "vdp": { "method": "get", "uri": base }
-                }
-            }),
+            request_vd(dev_uid, json!({ "method": "get", "uri": base })),
         )?;
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
@@ -1238,14 +1235,10 @@ mod imp {
     ) -> Result<(), String> {
         send_json(
             ws,
-            json!({
-                "jsonrpc": "1.0",
-                "method": "requestVD",
-                "params": {
-                    "dev_uid": dev_uid,
-                    "vdp": { "method": "post", "uri": format!("/vd/meters/{meter_id}:{x}?operation={op}") }
-                }
-            }),
+            request_vd(
+                dev_uid,
+                json!({ "method": "post", "uri": format!("/vd/meters/{meter_id}:{x}?operation={op}") }),
+            ),
         )
     }
 
@@ -1261,14 +1254,10 @@ mod imp {
     ) -> Result<(), String> {
         send_json(
             ws,
-            json!({
-                "jsonrpc": "1.0",
-                "method": "requestVD",
-                "params": {
-                    "dev_uid": dev_uid,
-                    "vdp": { "method": "post", "uri": format!("/vd/parameters/{param_id}:{x}:{y}?operation={op}") }
-                }
-            }),
+            request_vd(
+                dev_uid,
+                json!({ "method": "post", "uri": format!("/vd/parameters/{param_id}:{x}:{y}?operation={op}") }),
+            ),
         )
     }
 
