@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { LIVE_COMMANDS } from "./tauri-stub";
 
 // External MIDI control is desktop-only (isTauri gate), so these tests stub the
 // Tauri IPC bridge before the app boots: invoke() answers the boot-time queries,
@@ -85,7 +86,9 @@ const learnBinding = async (page: Page, win: Page, arm: () => Promise<void>, ...
 const mapRow = (win: Page, control: string) => win.locator(`.mw-list tr[data-control="${control}"]`);
 
 test.beforeEach(async ({ page }) => {
-  await page.context().addInitScript(() => {
+  // The Live-sync registrations are taken from the shared stub rather than copied,
+  // so this stub cannot fall behind what a session actually asks the shell for.
+  await page.context().addInitScript((extra: Record<string, unknown>) => {
     localStorage.setItem("urx-lang", "en");
     localStorage.setItem("urx-theme", "dark");
     localStorage.setItem("urx-model", "URX44V");
@@ -211,11 +214,13 @@ test.beforeEach(async ({ page }) => {
           case "plugin:dialog|message":
             return Promise.resolve("Ok"); // confirm dialogs (discard edits): proceed
           default:
-            return Promise.reject(new Error(`stub: unhandled command ${cmd}`));
+            return cmd in extra
+              ? Promise.resolve(extra[cmd])
+              : Promise.reject(new Error(`stub: unhandled command ${cmd}`));
         }
       },
     };
-  });
+  }, LIVE_COMMANDS);
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-view-console");
@@ -706,6 +711,34 @@ test("feedback follows a device fetch out of the output port", async ({ page }) 
   await expect
     .poll(() => page.evaluate(() => window.__midiTest.sent.find((b) => b[0] === 0xb0 && b[1] === 7)?.[2] ?? -1))
     .toBeGreaterThan(0);
+});
+
+test("Live sync start pushes every assignment to the controller, not just what changed", async ({ page }) => {
+  // The session's starting readback makes the plan the unit's own state, and the
+  // debounced pass carries only what CHANGED in the plan — here nothing does: the
+  // stub answers 0 for every read, which is already CH 1's level. That is exactly
+  // the value a controller replugged (or moved to another bank) since the sent
+  // cache was filled would still be showing wrong, so the session start re-sends
+  // every binding once, the way opening the output port does.
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await learnBinding(page, win, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 64], [0xb0, 7, 65]);
+  await setLearn(page, win, false);
+  await pickOutputPort(page, win);
+
+  // Drain the port-open resync, so everything recorded below belongs to the session.
+  await expect.poll(() => page.evaluate(() => window.__midiTest.sent.length)).toBeGreaterThan(0);
+  const sentAtOpen = await page.evaluate(() => window.__midiTest.sent.find((b) => b[0] === 0xb0 && b[1] === 7));
+  await page.evaluate(() => (window.__midiTest.sent.length = 0));
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#live-tally")).toBeVisible(); // the session is up
+  // Nothing moved: the read confirmed the level the controller was already told.
+  await expect(readLevel(page, "CH 1")).toHaveText("0.0");
+  await expect
+    .poll(() => page.evaluate(() => window.__midiTest.sent.find((b) => b[0] === 0xb0 && b[1] === 7)))
+    .toEqual(sentAtOpen);
 });
 
 test("assignments and the port choice survive a reload", async ({ page }) => {

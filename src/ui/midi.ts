@@ -291,6 +291,17 @@ export class MidiControl {
     this.engine.gateReleased();
   }
 
+  /** Send every mapped value to the controller once, forgetting what it was last
+   *  told. Called when a broad device readback settles the plan: the plan has just
+   *  become the unit's own state, and the debounced pass only carries what CHANGED —
+   *  so every value the device confirmed unchanged would leave the controller showing
+   *  whatever it happens to hold (it may have been replugged, power-cycled or moved
+   *  to another bank since the sent cache was filled). Same pass as opening the
+   *  output port, which is the other moment nothing may be assumed about it. */
+  resyncFeedback(): void {
+    this.runFeedback(true);
+  }
+
   /** Batch a feedback pass after a plan edit (debounced; called from the shared
    *  change funnel, so UI / follow / MIDI edits all land here). */
   scheduleFeedback(): void {

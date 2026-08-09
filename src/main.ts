@@ -984,6 +984,13 @@ function planValuesChanged(): void {
 // absorb), a reconcile's reset (reflectFollow's full branch).
 function planReadFromDevice(): void {
   planValuesChanged();
+  // A full re-send rather than the diffing pass planValuesChanged just scheduled: the
+  // plan has become the unit's own state, and a value the device confirmed UNCHANGED is
+  // exactly the one a controller that drifted from the sent cache — replugged,
+  // power-cycled, moved to another bank — is still showing wrong. The diff cannot speak
+  // for it, so this is the same pass opening the output port runs, at the other moment
+  // nothing may be assumed about what the controller holds.
+  midi?.resyncFeedback();
   planHistory?.rebase();
 }
 

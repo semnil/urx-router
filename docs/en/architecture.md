@@ -1123,13 +1123,38 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   through the reverse lookup so motor faders / LEDs follow. It hangs off the shared change funnel
   (`markChanged`) and its readback twin (`planReadFromDevice`: follow reflect, fetch, the initial readback at
   Live-sync start), debounced at 120 ms and diffed against a sent cache so only changed values go out. Feedback
-  to an address that is still sending is deferred until a 300 ms quiet gap (echo suppression), and opening the
-  output port sends every binding's current value once. The receive side mirrors the guard for toggles: for
-  300 ms after feedback goes out, the first incoming value equal to it on the same address is dropped as an
-  echo and the guard disarms (a shared virtual MIDI bus, or a controller that re-sends its state when
-  feedback changes it, would otherwise flip an edge-mode toggle straight back; consuming the echo one-shot
-  keeps an equal real press right after it alive). Setting `localStorage["urx-midi-log"]` traces every rx/tx
-  byte string and the engine's per-message decision (drop/ignore/apply) to the console.
+  to an address that is still sending is deferred until a 300 ms quiet gap (echo suppression). Two moments
+  bypass the diff and send every binding's current value once: opening the output port, and **every broad
+  device readback** — `planReadFromDevice` itself, so fetch, Live-sync start and the `.urxf` import all get
+  it. At those the plan has just become the unit's own state, and a value the device confirmed unchanged is
+  precisely the one a controller replugged (or moved to another bank) since the cache was filled would
+  otherwise keep showing wrong. The receive side mirrors the guard: for 300 ms after feedback
+  goes out, the first incoming value equal to it on the same address is dropped as an echo and the guard
+  disarms (a shared virtual MIDI bus, or a controller that re-sends its state when feedback changes it,
+  would otherwise flip an edge-mode toggle straight back; consuming the echo one-shot keeps an equal real
+  press right after it alive). It covers **both kinds**, and for a continuous control the damage it prevents
+  is not a flip but an EDIT: a plan grid finer than the 7 bits the value crossed on decodes to a
+  neighbouring detent, so the echo moves the value and — while live — writes it to the unit, once per
+  feedback pass and so once per Live-sync start. The comparison is made in the domain the message was
+  actually SENT in, since a note address carries on/off whatever position the sent cache holds; a fader
+  bound to a note echoes back as full scale, which is the worst case in the family. The **14-bit forms are
+  deliberately unguarded**: a cc14 echo arrives as two 7-bit halves that cannot be matched, and needs no
+  matching, because at 14 bits every control round-trips onto the same plan value (pinned in
+  `core/midi/controls.test.ts`; at 7 bits 90 of 282 controls on a URX44V do not — the tuning screens' EQ
+  frequency and Q, GATE attack / hold / decay, COMP attack / release / ratio).
+  Setting `localStorage["urx-midi-log"]` traces every rx/tx
+  byte string and the engine's per-message decision (drop/ignore/apply) to the console; a dev build also
+  carries `window.__urxMidiProbe` (`ui/midi-probe.ts`), which records the same stream **with timestamps** on
+  the engine's own clock plus the live-sync marks, because the question a console trace cannot answer is a
+  gap — how long after a burst goes out the controller answers, and whether that answer lands before or
+  after incoming MIDI stops being refused. Measured on macOS with a Stream Deck+ over one IAC bus
+  (2026-08-09): the whole 8-address resync goes out inside 1 ms, the refusal window ends in the same
+  millisecond, and the loopback returns 5 ms later — so that window protected none of it, and one sized to
+  cover it would only discard genuine input for as long as it lasted. That measurement is why the resync is
+  **not** kept inside the window: it hangs off `planReadFromDevice` like every other post-readback
+  re-baseline, which runs after the latch clears. What protects the plan is the echo guard above, which
+  decides by value and so does not depend on that latency at all. The same run recorded no `vd_set` reaching
+  the unit.
 - **Gating** — an incoming message is refused while a device read holds the plan (`deviceReadInFlight`:
   Fetch, the Live-sync starting readback) or while a file flow does (`fileFlowBusy`: New / Open / Save /
   drop / `.urxf` import). The refusal is decided in the engine, before any receive bookkeeping (the
