@@ -886,6 +886,7 @@ function setLiveUi(on: boolean): void {
 function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   if (!liveSessionUp) return;
   liveSessionUp = false;
+  midi?.probeMark("live:off");
   follow?.end();
   live?.end();
   void releaseLive(liveEpoch, end);
@@ -2629,6 +2630,7 @@ if (!DEMO) {
         // live.begin() snapshots it as device truth, so a New/Open/switch landing in
         // between would either corrupt the read or enshrine the swapped-in plan.
         deviceReadInFlight = true;
+        midi?.probeMark("live:read:start");
         // live.begin() then snapshots through the same scope filter, so a kept
         // scene-external value is neither written back nor tracked.
         const merged = await readIntoPlan(
@@ -2636,6 +2638,7 @@ if (!DEMO) {
           (into) => applyDeviceStateScoped(into),
           planWrites,
         );
+        midi?.probeMark("live:read:end");
         if (!merged) return await abort(t().status.canceled);
         noteMergeConflicts(merged);
         plan.unreadNodes = merged.unreadNodes;

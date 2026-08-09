@@ -59,16 +59,18 @@ jobs:
       # seconds; it needs no install of its own.
       - run: node scripts/check-assets-index.mjs
       - run: pnpm build
-      # Three handles are build-gated. Two are dev-only (import.meta.env.DEV): the meter
-      # bench's console handle (src/ui/console.ts) and the keyboard measurement harness
-      # (src/ui/keyprobe.ts, installed from src/main.ts). The third, the race harness's
-      # plan-ledger probe (src/ui/trace-probe.ts), rides its own build flag (VITE_TRACE,
-      # .env.trace) so the instrumented E2E tier can be served a production-SHAPED bundle
-      # rather than a dev one. A plain build drops all three statically; this is the guard
-      # that they stay dropped. Emitted code only — the source map carries the original
-      # text of the dropped branch by design. The other half of each contract — that the
-      # handle still carries what its driver uses — is pinned in
-      # src/ui/meter-bench.contract.test.ts and src/ui/keyprobe.test.ts.
+      # Four handles are build-gated. Three are dev-only (import.meta.env.DEV): the meter
+      # bench's console handle (src/ui/console.ts), the keyboard measurement harness
+      # (src/ui/keyprobe.ts, installed from src/main.ts) and the MIDI timing buffer
+      # (src/ui/midi-probe.ts, installed from src/ui/midi.ts). The fourth, the race
+      # harness's plan-ledger probe (src/ui/trace-probe.ts), rides its own build flag
+      # (VITE_TRACE, .env.trace) so the instrumented E2E tier can be served a
+      # production-SHAPED bundle rather than a dev one. A plain build drops all four
+      # statically; this is the guard that they stay dropped. Emitted code only — the
+      # source map carries the original text of the dropped branch by design. The other
+      # half of each contract — that the handle still carries what its driver uses — is
+      # pinned in src/ui/meter-bench.contract.test.ts, src/ui/keyprobe.test.ts and
+      # src/ui/midi-probe.test.ts.
       - name: Dev-only hooks stay out of the bundle
         # `! grep ...` per line does not work here: POSIX errexit is ignored for a
         # pipeline beginning with `!`, so under the default `bash -e` only the LAST
@@ -78,6 +80,7 @@ jobs:
           if grep -rl --include='*.js' --include='*.html' "__urxConsole" dist; then echo "__urxConsole leaked into the bundle"; exit 1; fi
           if grep -rl --include='*.js' --include='*.html' "__urxKeyProbe" dist; then echo "__urxKeyProbe leaked into the bundle"; exit 1; fi
           if grep -rl --include='*.js' --include='*.html' "__urxTrace" dist; then echo "__urxTrace leaked into the bundle"; exit 1; fi
+          if grep -rl --include='*.js' --include='*.html' "__urxMidiProbe" dist; then echo "__urxMidiProbe leaked into the bundle"; exit 1; fi
       - run: pnpm typecheck:e2e
       - run: pnpm test
 
