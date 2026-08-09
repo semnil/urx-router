@@ -95,13 +95,14 @@ everything else the repo already carries — harnesses, probes, generators and p
 miss and expensive to duplicate. Before writing a new tool, `ls scripts/`, `grep -rn "window.__urx" src/`
 and the private probe index cost three minutes.
 
-**Driving the app from outside.** All three are statically dropped from a production bundle, and
+**Driving the app from outside.** All four are statically dropped from a production bundle, and
 `ci.yml` greps `dist` for each name.
 
 | Handle | Reach for it when | Where it lives |
 | --- | --- | --- |
 | `window.__urxConsole` | measuring CONSOLE render/meter cost, or reproducing a strip rebuild from outside | dev build only (`pnpm dev`); its surface is pinned by `pnpm test meter-bench` |
 | `window.__urxKeyProbe` | answering what only the real webview can — does a chord reach the page, does WebKit's field undo fire, what does a native menu click do | dev build only; F2–F10 bindings pinned by `pnpm test keyprobe` |
+| `window.__urxMidiProbe` | the question is a **gap** — how long after the app transmits does a controller answer, and does that answer land before or after incoming MIDI stops being refused. Timestamped rx / tx / engine decisions / live-sync marks on the engine's own clock, plus the two silences that read as "nothing happened" (a send the port state swallowed, a feedback pass that returned early). Its report prints, per mark, how much went out and when the first reply landed | dev build only (`pnpm tauri dev`); pinned by `pnpm test midi-probe` |
 | `window.__urxTrace` | needing the plan-key write ledger (who wrote which key) or the live snapshot's contents | `VITE_TRACE=1` build only (`pnpm build:trace`, served by `pnpm e2e:serve:trace`); pinned by `pnpm test:e2e:race t9-probe` |
 
 **Talking to real hardware.** Desktop only. The flags need `--` twice because the Tauri CLI forwards

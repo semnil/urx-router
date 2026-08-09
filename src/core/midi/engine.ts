@@ -5,7 +5,7 @@
 // injected so tests drive time explicitly.
 
 import { decodeMessage, encodeCc, encodeNote, encodePitchBend, type CcEvent, type MidiEvent } from "./message";
-import { addrKey, type MidiAddr, type MidiMapping } from "./mapping";
+import { addrKey, wireRaw, wireSteps, type MidiAddr, type MidiMapping } from "./mapping";
 import type { BoundControl } from "./controls";
 
 export interface EngineHooks {
@@ -46,13 +46,15 @@ const RECENT_MS = 300;
 
 // The receive-side mirror of that guard: a controller that reflects feedback
 // back (a shared virtual MIDI bus, or a plugin that re-sends its state when
-// feedback changes it) returns the just-sent value, which would flip an
-// edge-mode toggle straight back. Within this window after sending, the FIRST
-// incoming value equal to the last feedback on that address (kept in lastSent)
-// is dropped and the guard disarms — the transports deliver exactly one echo
-// per sent message, and consuming it one-shot keeps an equal real press right
-// after the echo alive (edge-mode presses are always 127, so a blanket window
-// would eat them).
+// feedback changes it) returns the just-sent value, which the app would apply as
+// an operator gesture — flipping an edge-mode toggle straight back, or landing a
+// continuous control on the neighbouring detent its 7-bit trip decoded to. Within
+// this window after sending, the FIRST incoming value equal to the last feedback
+// on that address (kept in lastSent) is dropped and the guard disarms — the
+// transports deliver exactly one echo per sent message, and consuming it one-shot
+// keeps an equal real press right after the echo alive (edge-mode presses are
+// always 127, so a blanket window would eat them). Which addresses are armed, and
+// why the 14-bit ones are not, is decided in feedback().
 const ECHO_MS = 300;
 
 interface PickupState {
@@ -67,7 +69,7 @@ export class MidiEngine {
   private pair = new Map<string, { msb: number; lsb: number }>(); // cc14 assembly
   private lastSent = new Map<string, number>(); // last raw value fed back per address
   private lastRecv = new Map<string, number>(); // last receive time per address
-  private lastFedAt = new Map<string, number>(); // toggle echo guard: last feedback send-time per address
+  private lastFedAt = new Map<string, number>(); // echo guard: last feedback send-time per address
   private learn: { pendingCc: CcEvent | null } | null = null;
   // Whether the current gated window has already been reported. Cleared by
   // gateReleased(), and by the first message that is allowed through.
@@ -214,9 +216,9 @@ export class MidiEngine {
       if (!this.dropEcho(matched[0], ev)) this.apply(matched[0], ev);
       return;
     }
-    // Gang: the toggle echo guard is owned per address by the list head, so a
-    // whole gang sharing an address drops or keeps together — decide the echo
-    // once per address before applying (a non-head member must not flip on it).
+    // Gang: the echo guard is owned per address by the list head, so a whole gang
+    // sharing an address drops or keeps together — decide the echo once per address
+    // before applying (a non-head member must not move on it).
     const echoed = new Set<string>();
     for (const mapping of matched) {
       if (this.dropEcho(mapping, ev)) echoed.add(addrKey(mapping.addr));
@@ -275,8 +277,8 @@ export class MidiEngine {
     return this.headOf(key) === mapping;
   }
 
-  // Consume the one-shot toggle echo guard for a mapping's address, tracing the
-  // drop. Only the first call per sent feedback (per address) matches.
+  // Consume the one-shot echo guard for a mapping's address, tracing the drop.
+  // Only the first call per sent feedback (per address) matches.
   private dropEcho(mapping: MidiMapping, ev: MidiEvent): boolean {
     const key = addrKey(mapping.addr);
     if (!this.consumeEcho(key, ev)) return false;
@@ -289,10 +291,10 @@ export class MidiEngine {
     if (!control) return; // stale mapping (other model) — leave it inert
     const key = addrKey(mapping.addr); // a mapping only ever matches via its own address
     const toggle = control.kind === "toggle";
-    // Receive bookkeeping suppresses the echo for continuous controls only: a
-    // toggle press does not represent the new state (a momentary button cannot
-    // know it just muted something), so its LED feedback must go out promptly.
-    // (The toggle echo guard itself ran per address in onMessage.)
+    // Receive bookkeeping defers the next OUTGOING pass for continuous controls
+    // only: a toggle press does not represent the new state (a momentary button
+    // cannot know it just muted something), so its LED feedback must go out
+    // promptly. (The receive-side echo guard itself ran per address in onMessage.)
     if (!toggle) this.lastRecv.set(key, this.hooks.now());
     const before = control.get();
     // Head ownership is needed twice below (pickup engagement, then the sent
@@ -313,7 +315,7 @@ export class MidiEngine {
     // The controller already shows what it sent: remember the applied value as
     // fed back, so the settle pass only sends a genuinely different value. A gang
     // shares one address, and its head owns that feedback cache — only it records.
-    if (isHead) this.lastSent.set(key, this.encodeRaw(mapping.addr, after));
+    if (isHead) this.lastSent.set(key, wireRaw(mapping.addr, after));
     this.hooks.trace?.(`apply ${mapping.control} ${before} -> ${after}`);
     if (after !== before) this.hooks.applied(control);
   }
@@ -414,19 +416,37 @@ export class MidiEngine {
       const mapping = this.headOf(key);
       const control = mapping && this.hooks.resolve(mapping.control);
       if (!mapping || !control) continue;
-      const value = control.get();
-      const raw = this.encodeRaw(mapping.addr, value);
+      // The diff is taken on what would actually go OUT, so an address that carries
+      // less than the value does (a note carries on/off) does not re-emit a
+      // byte-identical message every time the position moves.
+      const raw = wireRaw(mapping.addr, control.get());
       if (this.lastSent.get(key) === raw) continue;
       if (now - (this.lastRecv.get(key) ?? -Infinity) < RECENT_MS) {
         deferred = true;
         continue;
       }
-      this.emit(mapping.addr, value, raw);
+      this.emit(mapping.addr, raw);
       this.lastSent.set(key, raw);
-      // Arm the echo guard: this feedback loops back on a shared bus and would
-      // flip an edge toggle again (only toggles are guarded; a cc14 echo arrives
-      // as split 7-bit halves that can't be matched, so it isn't recorded).
-      if (control.kind === "toggle" && mapping.addr.type !== "cc14") this.lastFedAt.set(key, now);
+      // Arm the echo guard: this feedback loops back on a shared bus (or off a
+      // controller that re-sends its state when feedback changes it) and is applied
+      // as if the operator had moved something. On a toggle that flips an edge
+      // mapping straight back. On a CONTINUOUS control it is an edit whenever the
+      // plan's own grid is finer than the 7 bits the value crossed on: the decoded
+      // value snaps to a neighbouring detent, so `after !== before` and the change
+      // reaches the device — once per feedback pass, and so once per Live-sync start.
+      // Measured over every bindable continuous control (2026-08-09): 90 of 282 on a
+      // URX44V behave that way, all of them tuning-screen parameters (EQ frequency
+      // and Q, GATE attack / hold / decay, COMP attack / release / ratio), while
+      // every console-level control round-trips unchanged.
+      //
+      // The 14-bit forms are deliberately left unarmed. A cc14 echo cannot be matched
+      // here at all — it arrives as two 7-bit halves — and neither needs to be: at 14
+      // bits that same sweep found NO control that fails to round-trip, so their echo
+      // re-enters the same plan value and edits nothing. That is the load-bearing half
+      // of this decision rather than an aside, so it is pinned in controls.test.ts.
+      // Asked of the address' resolution rather than of its type: the property is what
+      // decides, and `wireSteps` is the one place a new address type has to choose.
+      if (wireSteps(mapping.addr) === 127) this.lastFedAt.set(key, now);
       // The physical control no longer matches the plan (the change came from
       // elsewhere): a non-motorized fader must pick the value up again.
       this.pickup.delete(key);
@@ -434,11 +454,11 @@ export class MidiEngine {
     return deferred;
   }
 
-  private encodeRaw(addr: MidiAddr, value: number): number {
-    const v = Math.max(0, Math.min(1, value));
-    return addr.type === "cc14" || addr.type === "pitchbend" ? Math.round(v * 16383) : Math.round(v * 127);
-  }
-
+  // A plain comparison, because the sent cache holds what went on the WIRE (wireRaw)
+  // rather than the encoded position — an incoming message carries the same thing, so
+  // neither side has to re-derive the other's domain. It did once, and the case it got
+  // wrong was a fader bound to a note: the cache held the position while the wire
+  // carried 127, so the echo went unrecognised and applied as a full-scale move.
   private consumeEcho(key: string, ev: MidiEvent): boolean {
     const at = this.lastFedAt.get(key);
     if (at === undefined) return false;
@@ -463,7 +483,9 @@ export class MidiEngine {
     this.lastFedAt.clear();
   }
 
-  private emit(addr: MidiAddr, value: number, raw: number): void {
+  // `raw` is already what this address puts on the wire (wireRaw), so this only has
+  // to frame it — no address here re-derives a value from the plan's.
+  private emit(addr: MidiAddr, raw: number): void {
     switch (addr.type) {
       case "cc":
         this.hooks.send(encodeCc(addr.channel, addr.controller, raw));
@@ -473,7 +495,7 @@ export class MidiEngine {
         this.hooks.send(encodeCc(addr.channel, addr.controller + 32, raw & 0x7f));
         break;
       case "note":
-        this.hooks.send(encodeNote(addr.channel, addr.note, value >= 0.5));
+        this.hooks.send(encodeNote(addr.channel, addr.note, raw >= 64));
         break;
       case "pitchbend":
         this.hooks.send(encodePitchBend(addr.channel, raw));

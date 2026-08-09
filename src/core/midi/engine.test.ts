@@ -432,10 +432,79 @@ describe("feedback", () => {
     mute.value = 1;
     engine.feedback(); // sends 127, arms the guard at clock 0
     expect(sent).toEqual([encodeCc(0, 20, 127)]);
-    clock = 300; // exactly at the window edge → guard expired
+    clock = ECHO_WINDOW; // exactly at the window edge → guard expired
     engine.onMessage(encodeCc(0, 20, 127)); // no longer treated as an echo → edge flips
     expect(mute.value).toBe(0);
     expect(applied).toEqual(["ch1/mute"]);
+  });
+
+  // Finer than the 7 bits a plain CC carries, and a power of two so the fake's own
+  // snapping is exact — the tuning screens' grids in the shape that matters here.
+  const FINE = 1 / 256;
+  const ECHO_WINDOW = 300; // ECHO_MS in engine.ts, which does not export it
+
+  it("drops a continuous control's feedback echo, which a fine grid would take as an edit", () => {
+    // The measured case (2026-08-09): a plan grid finer than the 7 bits the value
+    // crossed on decodes to a NEIGHBOURING detent, so applying the echo moves the
+    // value — and under Live sync that reaches the unit, once per feedback pass.
+    const c = fake("ch1/attack@gate", "continuous", 0, FINE);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc", channel: 0, controller: 40 });
+    c.set(0.01);
+    const before = c.value; // 3/256
+    engine.feedback();
+    const echo = Math.round(before * 127); // 1
+    expect(sent).toEqual([encodeCc(0, 40, echo)]);
+    clock += 5; // the loopback latency measured on a real bus
+    engine.onMessage(encodeCc(0, 40, echo));
+    expect(c.value).toBe(before);
+    expect(applied).toEqual([]);
+    // The guard is what prevented that, not the value being harmless: the identical
+    // message past the window IS applied, and lands a detent away.
+    clock += ECHO_WINDOW;
+    engine.onMessage(encodeCc(0, 40, echo));
+    expect(c.value).not.toBe(before);
+    expect(applied).toEqual([c.id]);
+  });
+
+  it("drops the echo of a continuous control bound to a note, which applies full-scale", () => {
+    // A note address carries on/off and nothing else, so the echo of a fader at 0.6
+    // comes back as note-on and `continuousTarget` reads it as 1.0 — a full-scale move
+    // rather than one detent, which makes it the worst of the family. It is recognised
+    // because the sent cache holds the WIRE value (wireRaw) rather than the position;
+    // a cache holding 76 against a wire carrying 127 missed this echo entirely.
+    const c = fake("ch1/level", "continuous", 0.6);
+    controls.set(c.id, c);
+    map(c.id, { type: "note", channel: 0, note: 60 });
+    engine.feedback();
+    expect(sent).toEqual([encodeNote(0, 60, true)]);
+    clock += 5;
+    engine.onMessage(encodeNote(0, 60, true)); // the echo
+    expect(c.value).toBe(0.6);
+    expect(applied).toEqual([]);
+    clock += ECHO_WINDOW; // past the window it is a genuine press, and slams to full
+    engine.onMessage(encodeNote(0, 60, true));
+    expect(c.value).toBe(1);
+    expect(applied).toEqual([c.id]);
+  });
+
+  it("leaves a 14-bit echo unguarded, because at 14 bits it re-enters the same value", () => {
+    // A cc14 echo arrives as two 7-bit halves that cannot be matched against the
+    // 14-bit cache, and does not need to be: the round trip is exact for every
+    // control (pinned in controls.test.ts), so applying it changes nothing. Pinned
+    // here is that the guard does not pretend otherwise — the halves reach `apply`
+    // and re-enter the same value rather than being swallowed by a stale arm.
+    const c = fake("ch1/level", "continuous", 0.5, FINE);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc14", channel: 0, controller: 7 });
+    engine.feedback();
+    const raw = Math.round(0.5 * 16383);
+    expect(sent).toEqual([encodeCc(0, 7, (raw >> 7) & 0x7f), encodeCc(0, 39, raw & 0x7f)]);
+    clock += 5;
+    engine.onMessage(encodeCc(0, 7, (raw >> 7) & 0x7f));
+    engine.onMessage(encodeCc(0, 39, raw & 0x7f));
+    expect(c.value).toBe(0.5);
+    expect(applied).toEqual([]); // re-entered the same value, so nothing was reported
   });
 
   it("resync forgets the sent cache and re-emits everything", () => {

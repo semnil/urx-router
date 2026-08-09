@@ -55,6 +55,34 @@ export function addrKey(addr: MidiAddr): string {
   }
 }
 
+/**
+ * The wire's resolution for an address: how many steps a value crosses on its way
+ * out. 7 bits for a CC or a note, 14 for a pair or a pitch bend.
+ *
+ * This is what decides whether a feedback echo can be an EDIT at all. A value that
+ * left at 7 bits comes back decoded onto a neighbouring detent whenever the plan's
+ * own grid is finer than 128 steps, so the engine guards those addresses; at 14 bits
+ * every control round-trips onto the value it started from (measured over all three
+ * models, pinned in controls.test.ts), so their echo cannot change anything.
+ */
+export function wireSteps(addr: MidiAddr): number {
+  return addr.type === "cc14" || addr.type === "pitchbend" ? 16383 : 127;
+}
+
+/**
+ * What actually goes on the wire for an address, from a normalized value.
+ *
+ * A note address carries on/off and nothing else, so its wire value is the byte a
+ * press would send rather than the encoded position — which is what makes the sent
+ * cache comparable with an incoming message on the same address, and what keeps the
+ * feedback diff from re-emitting a byte-identical note-on every time a fader bound to
+ * a note moves without crossing the halfway point.
+ */
+export function wireRaw(addr: MidiAddr, value: number): number {
+  const v = Math.max(0, Math.min(1, value));
+  return addr.type === "note" ? (v >= 0.5 ? 127 : 0) : Math.round(v * wireSteps(addr));
+}
+
 /** Compact human-readable address ("CH 1 CC 7", "CH 2 NOTE 64", "CH 1 PB");
  *  channel shown 1-based like every MIDI utility. Language-invariant. */
 export function addrLabel(addr: MidiAddr): string {

@@ -280,6 +280,7 @@ single source of truth. This table states what each case measures.
 | `midi-vs-send-fader-relative-baseline` | midi | A relative drag erasing a MIDI write by arithmetic rather than overwriting it |
 | `midi-pickup-without-output-port` | midi | Pickup never disengaging when no output port is open |
 | `midi-toggle-echo-window-ladder` | midi | A one-shot guard that cannot tell a genuine press from a loopback |
+| `midi-continuous-echo-reaches-the-unit` | midi | The same guard on a fader, where an unguarded echo is a device write |
 | `midi-gang-fanout-and-head-reelection` | midi | The only many-to-one writer, and an unrelated edit reassigning ownership |
 | `midi-learn-arm-during-rerender` | midi | The only case where the second operator's configuration races the device |
 | `midi-write-during-refetch-snapshot` | midi | An ungated writer combined with a snapshot re-base |

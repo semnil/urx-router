@@ -886,6 +886,7 @@ function setLiveUi(on: boolean): void {
 function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   if (!liveSessionUp) return;
   liveSessionUp = false;
+  midi?.probeMark("live:off");
   follow?.end();
   live?.end();
   void releaseLive(liveEpoch, end);
@@ -983,6 +984,13 @@ function planValuesChanged(): void {
 // absorb), a reconcile's reset (reflectFollow's full branch).
 function planReadFromDevice(): void {
   planValuesChanged();
+  // A full re-send rather than the diffing pass planValuesChanged just scheduled: the
+  // plan has become the unit's own state, and a value the device confirmed UNCHANGED is
+  // exactly the one a controller that drifted from the sent cache — replugged,
+  // power-cycled, moved to another bank — is still showing wrong. The diff cannot speak
+  // for it, so this is the same pass opening the output port runs, at the other moment
+  // nothing may be assumed about what the controller holds.
+  midi?.resyncFeedback();
   planHistory?.rebase();
 }
 
@@ -2629,6 +2637,7 @@ if (!DEMO) {
         // live.begin() snapshots it as device truth, so a New/Open/switch landing in
         // between would either corrupt the read or enshrine the swapped-in plan.
         deviceReadInFlight = true;
+        midi?.probeMark("live:read:start");
         // live.begin() then snapshots through the same scope filter, so a kept
         // scene-external value is neither written back nor tracked.
         const merged = await readIntoPlan(
@@ -2636,6 +2645,7 @@ if (!DEMO) {
           (into) => applyDeviceStateScoped(into),
           planWrites,
         );
+        midi?.probeMark("live:read:end");
         if (!merged) return await abort(t().status.canceled);
         noteMergeConflicts(merged);
         plan.unreadNodes = merged.unreadNodes;
