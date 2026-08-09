@@ -47,8 +47,9 @@ const CC14_7 = { type: "cc14", channel: 0, controller: 7 } as const; // MSB CC 7
 const CC39 = { type: "cc", channel: 0, controller: 39 } as const;
 const PB = { type: "pitchbend", channel: 0 } as const;
 const CC14_10 = { type: "cc14", channel: 0, controller: 10 } as const;
+const NOTE60 = { type: "note", channel: 0, note: 60 } as const;
 
-type Addr = typeof CC7 | typeof CC14_7 | typeof CC39 | typeof PB | typeof CC14_10;
+type Addr = typeof CC7 | typeof CC14_7 | typeof CC39 | typeof PB | typeof CC14_10 | typeof NOTE60;
 type Mapping = { control: string; addr: Addr; mode: "absolute" | "pickup"; button?: "edge" | "state" };
 
 /** Seed the persisted MIDI store: ports (reopened at boot by restorePorts, so the
@@ -735,6 +736,106 @@ test.describe("T4b midi", () => {
     expect(secondPhase).toBeLessThan(300);
     expect(afterSecond).toBe("false"); // applied — the guard was spent on the first
   });
+
+  // ===========================================================================
+  // midi-continuous-echo-reaches-the-unit — the same guard, on the other kind of
+  // control, where what it prevents is not a flip but a WRITE. A continuous echo is
+  // applied as an operator gesture; if the decoded value lands anywhere other than
+  // where it started, that is a plan edit, and under Live sync the flush carries it
+  // to the hardware. The console fader bound to a NOTE is the deterministic member
+  // of the family: `emit` puts on/off on a note address whatever position the sent
+  // cache holds, so the echo of a fader anywhere in [0.5, 1) returns as note-on and
+  // `continuousTarget` reads it as full scale — no fine grid needed to see it.
+  //
+  // The guard is armed by the port-open resync rather than by an edit, so the plan
+  // and the unit are both already still when the loopback arrives: any write past
+  // that mark belongs to the echo and to nothing else.
+  // ===========================================================================
+
+  for (const d of [50, 400]) {
+    const inWindow = d < 300;
+    test(`a fader's loopback ${d} ms after the emit ${inWindow ? "leaves the unit alone" : "slams it to full scale"}`, async ({
+      page,
+    }) => {
+      await installFake(page, {
+        storage: midiStore([{ control: "ch1/level", addr: NOTE60, mode: "absolute" }], { input: "Fake In" }),
+      });
+      await page.goto("/");
+      await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+      await goLive(page);
+      await page.click("#btn-view-console");
+      await expect(faderReadout(page, "CH 1")).toBeVisible();
+
+      // Park the fader strictly inside [0.5, 1): at the ceiling the echo re-enters the
+      // value it started from and the case would pass for the wrong reason.
+      const fader = faderOf(page, "CH 1");
+      const dbNow = async (): Promise<number> => Number((await faderReadout(page, "CH 1").textContent())!);
+      // Two settled legs rather than one run of presses. The flush is a single 120 ms
+      // window that a run of key presses fits inside, so parking in one go can land
+      // back on the value the starting snapshot already holds and write nothing at all,
+      // leaving the unit holding nothing for this address and the "it did not move"
+      // assertion below comparing undefined with undefined. `settleAfter` rather than
+      // `waitQuiet` because the link is silent when the leg starts, and waitQuiet
+      // answers "quiet" before the flush window has even opened.
+      await mark(page, "park-top");
+      await fader.click();
+      await fader.press("Home");
+      expect(await dbNow()).toBe(10);
+      await settleAfter(page, "park-top");
+      await mark(page, "park-mid");
+      for (let i = 0; i < 40 && (await dbNow()) !== 0; i++) await fader.press("ArrowDown");
+      expect(await dbNow()).toBe(0); // pos 30 of 40 → 0.75 normalized → note-on
+      await settleAfter(page, "park-mid");
+      const memBefore = (await memOf(page))[CH1_FADER];
+      expect(memBefore).toBeDefined(); // the premise the two assertions below rest on
+      const setsBefore = setsOf(await traceOf(page)).filter((s) => s.addr === CH1_FADER).length;
+
+      // Opening the output port forgets the sent cache and re-emits every binding —
+      // one note-on, which arms the guard without touching the plan.
+      await stampSends(page);
+      await mark(page, "port-open");
+      const win = await openMidiWindow(page);
+      const loop = loopbackAfter(page, d, 127, (await midiSentOf(page)).length);
+      await win.locator(".mw-out").selectOption("Fake Out");
+      const [phaseLow, phaseHigh] = await loop;
+      // A fixed wait, not settleAfter: the rung inside the window claims the link stays
+      // silent, and settleAfter waits for it to wake. Long enough to cover the 120 ms
+      // flush window and the write behind it — the rung outside the window is what
+      // proves it is long enough, since that one's write does land inside it.
+      await page.waitForTimeout(600);
+      await waitQuiet(page);
+
+      const db = await dbNow();
+      const memAfter = (await memOf(page))[CH1_FADER];
+      const sets = setsOf(await traceOf(page)).filter((s) => s.addr === CH1_FADER);
+      await dump(page, `continuous echo D=${d}`, "port-open", { ledger: await ledgerOf(page) });
+      console.log(
+        `D intended=${d} achieved=${phaseLow.toFixed(0)}..${phaseHigh.toFixed(0)} ms; ` +
+          `CH 1 = ${db} dB; unit ${memBefore} -> ${memAfter}; sets on the fader ${setsBefore} -> ${sets.length}`,
+      );
+
+      // Same phase discipline as the toggle ladder: a bracket straddling the window's
+      // edge decides nothing, so each rung is placed against the bound that can cross
+      // first. The emit the phase is measured from has to be the arming one.
+      expect((inWindow ? phaseHigh : phaseLow) < 300).toBe(inWindow);
+      expect((await midiSentOf(page)).at(-1)).toEqual([0x90, 60, 127]);
+
+      if (inWindow) {
+        // The guard swallowed it: screen and unit both stand exactly where the port
+        // open found them, and the link carried nothing.
+        expect(db).toBe(0);
+        expect(memAfter).toBe(memBefore);
+        expect(sets).toHaveLength(setsBefore);
+      } else {
+        // Past the window the identical bytes are a gesture. This is the arm that
+        // makes the case discriminate: without the guard the rung above reads this
+        // way too, and the "leaves the unit alone" verdict would be vacuous.
+        expect(db).toBe(10);
+        expect(memAfter).not.toBe(memBefore);
+        expect(sets.length).toBeGreaterThan(setsBefore);
+      }
+    });
+  }
 
   test.skip("Toggle (state) mode: a same-state message consumes the guard", async () => {
     // Not falsifiable through any observable this harness has. In "state" mode the

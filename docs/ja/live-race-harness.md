@@ -268,6 +268,7 @@ param、セッションが無い状態。逆向きの差は意図的に判定し
 | `midi-vs-send-fader-relative-baseline` | midi | 相対ドラッグは MIDI 書込を上書きではなく算術で消す |
 | `midi-pickup-without-output-port` | midi | 出力ポートが開いていないと pickup が解除されない |
 | `midi-toggle-echo-window-ladder` | midi | 1 発限りの防御が、本物の押下とループバックを区別できない |
+| `midi-continuous-echo-reaches-the-unit` | midi | 同じ防御をフェーダーで。防御が無いとエコーがそのまま実機書込になる |
 | `midi-gang-fanout-and-head-reelection` | midi | 1 対多の書き手と、無関係な編集が所有権を移す |
 | `midi-learn-arm-during-rerender` | midi | 第 2 操作者の**設定**がデバイスと競合する唯一のケース |
 | `midi-write-during-refetch-snapshot` | midi | 門を持たない書き手と、スナップショット再基準化の組み合わせ |

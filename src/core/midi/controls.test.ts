@@ -6,6 +6,7 @@ import { ensureFixedConnections, LEVEL_OFF_DB } from "../plan";
 import { ref } from "../../models/types";
 import { COMP_EQ_SSMCS, EQ_TYPE_PASS } from "../control/params";
 import { bindControl, controlId, listControls, parseControlId } from "./controls";
+import { wireRaw, wireSteps } from "./mapping";
 
 const model = getModel("URX44V");
 let plan: Plan;
@@ -374,5 +375,44 @@ describe("channel tuning screen parameters", () => {
     expect(bindControl(model, plan, "ch1/threshold@comp")).toBeNull();
     expect(bindControl(model, plan, "ch1/gain@eq.low")).toBeNull();
     expect(bindControl(model, plan, "ch1/threshold@gate")).not.toBeNull();
+  });
+});
+
+// The property the engine's echo guard is built on. A feedback message crosses the
+// wire at 7 or 14 bits; if the decoded value snaps to a DIFFERENT plan value, the echo
+// of that message is an edit rather than a no-op, and under Live sync it reaches the
+// unit. The engine therefore guards the 7-bit forms and deliberately leaves the 14-bit
+// ones unguarded — a cc14 echo arrives as two halves it cannot match anyway. That
+// exclusion is only safe while the 14-bit round trip is exact for EVERY control, which
+// is what this pins. Measured 2026-08-09: at 7 bits 90 of 282 controls on a URX44V fail
+// the same check (the tuning screens' EQ frequency and Q, GATE attack / hold / decay,
+// COMP attack / release / ratio), which is why the guard exists at all.
+describe("feedback round trip", () => {
+  const STEPS = 257; // finer than 7-bit, so every CC bucket is entered from both sides
+  /** Any 14-bit address; `wireRaw` reads only its resolution here. */
+  const PAIR = { type: "cc14", channel: 0, controller: 7 } as const;
+
+  it.each(["URX22", "URX44", "URX44V"] as const)("is exact at 14 bits for every %s control", (id) => {
+    const m = getModel(id);
+    const offenders = new Set<string>();
+    for (const desc of listControls(m, defaultPlan(id)).filter((d) => d.kind === "continuous")) {
+      // One plan per control: `set` is absolute, so a sweep cannot accumulate, but a
+      // neighbouring control's writes could change what this one is allowed to hold.
+      const p = defaultPlan(id);
+      ensureFixedConnections(m, p);
+      const c = bindControl(m, p, desc.id);
+      if (!c) continue;
+      for (let i = 0; i < STEPS; i++) {
+        if (!c.set(i / (STEPS - 1))) continue; // device-locked in this plan
+        const v = c.get();
+        // The engine's own encoder, not a copy of it: a pin that re-implements the
+        // encoding keeps passing against an encoding the engine no longer uses, which
+        // is the one failure it exists to catch.
+        const raw = wireRaw(PAIR, v);
+        if (!c.set(raw / wireSteps(PAIR))) continue;
+        if (c.get() !== v) offenders.add(desc.id);
+      }
+    }
+    expect([...offenders]).toEqual([]);
   });
 });
