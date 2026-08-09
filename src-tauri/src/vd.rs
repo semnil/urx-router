@@ -1186,10 +1186,13 @@ mod imp {
             let Some(msg) = link.read_frame()? else {
                 continue;
             };
-            if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
-                continue;
-            }
-            let vdp = msg.pointer("/params/vdp");
+            // Both envelope shapes, like reply_for / notify_frame / synchronize_lost.
+            // This loop is separate from reply_for's (it runs before a session
+            // exists, so it does not screen for a device-lost push), and keeping the
+            // casket-only unwrap here is what made the first hardware run time out
+            // on /vd/synchronize: every reply was skipped for lacking a wrapper the
+            // other transport does not send.
+            let vdp = msg.pointer("/params/vdp").or_else(|| msg.pointer("/vdp"));
             let ruri = vdp
                 .and_then(|v| v.get("uri"))
                 .and_then(Value::as_str)
