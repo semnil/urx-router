@@ -59,6 +59,7 @@ describe("errorText", () => {
       "control-worker-gone",
       "device-lost: sync_status offline",
       "broker-closed",
+      "broker-no-vdpport: the device list carried no port",
       "not-connected",
       "broker-timeout: value at 766:0:0",
       // Latched by the worker after a run of deadlines, so it is raised bare — the
