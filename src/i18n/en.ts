@@ -493,7 +493,9 @@ export const en = {
     busFixedLevel: tr("Send level is fixed (BUS Type: FIXED)."),
     panLinked: tr("Pan follows the source channel PAN (Pan Link)."),
     sdRecTrackCount: dev("Track Count"),
-    sdRecTrackCountLive: tr("Track Count is set on the device only (not writable from software)."),
+    sdRecTrackCountLive: tr(
+      "Track Count is set on the device only — the broker exposes just one of its eight settings.",
+    ),
     signalType: dev("Signal Type"),
     panBal: dev("PAN / BAL"),
     deleteConnection: tr("Delete this connection"),

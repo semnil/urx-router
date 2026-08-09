@@ -426,7 +426,7 @@ export const ja: Messages = {
     busFixedLevel: "Send レベルは固定 (BUS Type: FIXED)。",
     panLinked: "パンは Send 元チャンネルの PAN に追従 (Pan Link)。",
     sdRecTrackCount: "Track Count",
-    sdRecTrackCountLive: "Track Count はデバイス側でのみ設定できます (software から書き込み不可)。",
+    sdRecTrackCountLive: "Track Count はデバイス側でのみ設定できます (broker が公開するのは 8 段階のうち 1 つだけ)。",
     signalType: "Signal Type",
     panBal: "PAN / BAL",
     deleteConnection: "この接続を削除",
