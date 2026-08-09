@@ -416,8 +416,8 @@ carries a one-line map of the same directories and points here.
   reading taken during an ~800 command sweep reports now instead of reporting the sweep's start;
   `append_link_log` appends one JSONL line to the app log directory; `--experimental` gate:
   `experimental_enabled`/`self_test_requested` are self-test only) + **the session teardown** (one epilogue
-  every break lands on: unregister every address the session registered, then complete the WebSocket close
-  handshake — a replaced connection, an explicit disconnect, a dropped channel, the pump's own error and the
+  every break lands on: unregister every address the session registered, then begin the orderly close the
+  transport calls for — a replaced connection, an explicit disconnect, a dropped channel, the pump's own error and the
   app's quit all leave the same way, and the drain stops at the socket's first read timeout rather than
   spending the Quit on a quiet broker; the app is `build`+`run` rather than `run` so a `RunEvent::Exit`
   handler can call `vd::shutdown_blocking`, which WAITS, bounded, for those frames to reach the wire.
@@ -1923,7 +1923,9 @@ covers the device link, and this is not on it.
 ### Session teardown
 
 Every way out of the worker loop lands on one epilogue: it unregisters every address the session registered,
-then completes the WebSocket close handshake rather than dropping the socket with the Close frame still queued.
+then begins the orderly close. Over casket that means completing the WebSocket close handshake rather than
+dropping the socket with the Close frame still queued; over the plain socket of the default route there is no
+handshake to complete, so it shuts the write half and the drain below simply meets the peer's EOF.
 A replaced connection, an explicit disconnect, a dropped command channel and the app's own exit therefore all
 leave the same way, and so does the pump's own error break. The drain that finishes the handshake stops at the
 socket's first read timeout: an empty read means the peer has nothing queued, and counting those against a
