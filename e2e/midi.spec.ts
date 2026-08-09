@@ -72,6 +72,12 @@ const setLearn = async (page: Page, win: Page, on: boolean) => {
   const btn = win.locator(".mw-learnbtn");
   if ((await btn.getAttribute("aria-pressed")) !== String(on)) await btn.click();
   if (on) await expect(page.locator("#console-host")).toHaveClass(/midi-learn/);
+  // The window holds none of this state: the click only sends an intent, and the
+  // button flips when the answering push has been rendered. That render replaces
+  // the whole body, so every node resolved before it is detached — and a later
+  // measurement that lands on one reads as an element with no layout box. Waiting
+  // for the flip is what orders the two.
+  await expect(btn).toHaveAttribute("aria-pressed", String(on));
 };
 
 /** Learn one binding: arm a control (a locator inside the app window), then move
@@ -484,13 +490,14 @@ test("assignment rows form aligned columns whatever each row's option is", async
   // Both rows first: the window renders from a relayed state push, and a column
   // measured while the table still holds one row is measuring a different table.
   await expect(win.locator(".mw-list tbody tr")).toHaveCount(2);
-  // `boundingBox()` returning null here is the one open flake in this suite: the
-  // element IS there (a missing one times out rather than returning null) but has
-  // no layout box. Twice in 33 full runs, on both machines, with three hypotheses
-  // refuted and no reproduction — so nothing but the state AT THE MOMENT IT
-  // HAPPENS can settle it, and a bare `!` turns that moment into "Cannot read
-  // properties of null" and nothing else. The dump is the settle-condition written
-  // down in reference/work/e2e-flakes.md; read that before re-deriving.
+  // `boundingBox()` returning null here was this suite's open flake for five
+  // occurrences, and it was the learn-off push arriving between a locator's resolve
+  // and the measurement built on it: the node measured had been detached by the
+  // rebuild, while a fresh query of the same selector kept answering the healthy
+  // rect every dump showed. `setLearn` now waits for that push, which is the fix.
+  // The dump stays because it is what settled it, and because a null that survives
+  // the ordering is a different mechanism and has to say so. The reproduction and
+  // the five occurrences are in reference/work/e2e-flakes.md; read it first.
   const boxOf = async (cell: ReturnType<typeof mapRow>, control: string, what: string) => {
     const box = await cell.boundingBox();
     if (box) return box;
@@ -509,12 +516,11 @@ test("assignment rows form aligned columns whatever each row's option is", async
         viewport: `${innerWidth}x${innerHeight}`,
       };
     }, control);
-    // And the layer the DOM dump above cannot see. The 4th occurrence (2026-08-08)
-    // showed the element's own rect was healthy — identical to the bit with a passing
-    // run's — so the null is not the layout's, it is `DOM.getBoxModel` returning
-    // nothing to the call `boundingBox()` is built on. Playwright discards that
-    // response, so ask for it directly: whatever comes back, an error code or a box
-    // that contradicts the null, is what the next round has to explain.
+    // And the layer the DOM dump above cannot see. Asked directly, `DOM.getBoxModel`
+    // answered a healthy box for the node this selector matches — which is how the
+    // null was pinned on the handle rather than on the element: Playwright measures
+    // what it resolved, and this resolves again. Keep both readings, since a
+    // recurrence is only informative if it shows which of the two moved.
     let boxModel: string;
     try {
       const cdp = await win.context().newCDPSession(win);
