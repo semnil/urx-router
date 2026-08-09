@@ -851,6 +851,16 @@ test.describe("Tzb tail", () => {
     const { held: heldQuiet, probe: quiet } = await dragFader(page, "CH 2", 2000);
     await settleAfter(page, "drag-quiet", 900, 8000);
 
+    // The sawtooth is time-bounded, so its final tooth depends on how many driver
+    // round trips fit into two seconds. Put phase B back at phase A's starting value:
+    // if phase A happens to end exactly where the next 75%-height press lands, that
+    // seeded pointerdown is a no-op and the first CH 2 follow can replace the fader
+    // before any different pointermove. The harness would then declare an edit that
+    // never happened and report its own zero writes as a lost product edit.
+    await mark(page, "reset-churn-fader");
+    await faderOf(page, "CH 2").dispatchEvent("dblclick");
+    await settleAfter(page, "reset-churn-fader", 900, 8000);
+
     // Phase B — the churn. Direct notifies rotating over three channels at 20 Hz:
     // each one is applied with no read and repaints its strip, so refreshStrip runs
     // continuously. Three distinct controls, deliberately: a fourth would cross
@@ -885,9 +895,10 @@ test.describe("Tzb tail", () => {
     const trace = await traceOf(page);
     const all = spans(trace);
     const quietDragAt = markTime(trace, "drag-quiet")!;
+    const resetChurnAt = markTime(trace, "reset-churn-fader")!;
     const churnDragAt = markTime(trace, "drag-churn")!;
     const quietWrites = all.filter(
-      (s) => s.cmd === "vd_set" && s.addr === CH2_FADER && s.start >= quietDragAt && s.start < churnDragAt,
+      (s) => s.cmd === "vd_set" && s.addr === CH2_FADER && s.start >= quietDragAt && s.start < resetChurnAt,
     );
     const churnWrites = setsOn(all, CH2_FADER, churnDragAt);
 
@@ -928,6 +939,7 @@ test.describe("Tzb tail", () => {
     // rebuild happened to land.
     expect(quietWrites.length).toBeGreaterThan(1);
     expect(heldQuiet).not.toBe(beforeQuiet);
+    expect(beforeChurn).toBe(beforeQuiet);
     expect(churnWrites.length).toBeGreaterThanOrEqual(1);
 
     // Invariant 10. The device's own movement on OTHER channels still rebuilds the strip
