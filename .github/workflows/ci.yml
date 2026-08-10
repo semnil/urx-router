@@ -160,6 +160,11 @@ jobs:
   e2e:
     needs: playwright_version
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Codecov's tokenless upload exchanges GitHub's OIDC token. Job permissions do
+      # not inherit from frontend, so the container job needs its own grant.
+      id-token: write
     # The browsers and their system libraries come from the image rather than from the
     # runner's Ubuntu mirror. Pulling the image costs about what `--with-deps chromium`
     # costs on a good day — so the change is free in time and takes a whole run of
