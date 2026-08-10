@@ -133,7 +133,7 @@ jobs:
       # restore from — its matrix and this key have to stay identical, since a
       # mismatch only shows up as a slow release. Read-only for the same reason:
       # a cache saved here lands in the tag's own scope, where nothing reads it.
-      - uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
           shared-key: release
