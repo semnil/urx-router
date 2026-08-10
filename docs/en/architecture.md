@@ -1209,8 +1209,10 @@ by comparison, `Some("")` means the unit answered with no System entry and legit
 instead of proceeding with the gate silently off ([Aborting on failure](#aborting-on-failure)).
 
 **Two transports, and only one of them is exclusive.** Device Center serves the casket socket to **one client
-at a time**: a second connection silences the first, with no error on either side, so any other tool touching
-the broker would take the device link away and the app could not tell that from a quiet link. It also
+at a time**: a second connection silences the first, with no error on either side — and **the silenced one
+never comes back**, not even when the second leaves; its socket stays open and delivery to it simply stops
+(measured). So any other tool touching the broker would take the device link away for good, and the app could
+not tell that from a quiet link. It also
 advertises a **per-session port** that it serves to concurrent clients, and that is the default route. Casket
 stays reachable under `--experimental --casket` and deliberately **not** as an automatic fallback — falling
 back on a discovery failure would hide a regression on the default route behind a working old one. The
