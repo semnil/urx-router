@@ -1158,14 +1158,16 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   the unit.
 - **Gating** — an incoming message is refused while a device read holds the plan (`deviceReadInFlight`:
   Fetch, the Live-sync starting readback), while a file flow does (`fileFlowBusy`: New / Open / Save /
-  drop / `.urxf` import), or while a destructive round-trip run holds the **unit** (`deviceRunInFlight`:
-  the self-test, `--prepare-modified`). That third latch is the one whose reason is not the plan: both
-  runs perturb the device and then verify address by address that it holds exactly what they wrote, so a
-  controller move that reaches the unit inside that window is reported as a write the device refused, and
-  the self-test's restore then puts back a state that was never the operator's. It is also the only latch
-  measured in **minutes** rather than seconds. Refusing it does not depend on whether Live sync is up:
-  the runs own their own connection, so a session started while one is in flight would turn every mapped
-  move into a write landing in the middle of a verify. The refusal is decided in the engine, before any
+  drop / `.urxf` import), or while a destructive round-trip run holds the **device link**
+  (`deviceLinkHolder === "run"`: the self-test, `--prepare-modified`). That third latch is the one whose
+  reason is not the plan: both runs perturb the device and then verify address by address that it holds
+  exactly what they wrote, so a controller move that reaches the unit inside that window is reported as a
+  write the device refused, and the self-test's restore then puts back a state that was never the
+  operator's. It is also the only latch measured in **minutes** rather than seconds. It is read off the
+  link holder rather than a flag of its own, so what refuses a message and what refuses a second
+  connection ([Live control connection](#live-control-connection)) cannot diverge. Refusing it does not
+  depend on whether Live sync is up — a controller is a physical surface the operator keeps moving, and a
+  run is the one window in which what that moves must not become a device write. The refusal is decided in the engine, before any
   receive bookkeeping (the receive timestamp, the pickup engagement, the 14-bit pair assembly), so it
   consumes no state: the identical message applies once the window clears. It reaches the status line
   **once per window**, on the first message that would actually have edited something — incoming MIDI is
@@ -1202,19 +1204,39 @@ by comparison, `Some("")` means the unit answered with no System entry and legit
 `None` means the read itself did not land — the version is unknown rather than absent, so the operation stops
 instead of proceeding with the gate silently off ([Aborting on failure](#aborting-on-failure)).
 
-**Only one of them holds the unit at a time, and the menu is what enforces it.** `syncDeviceActionUi`
-recomputes the lock from the two latches that hold a connection for a duration — a live session
-(`liveSessionUp`) and a destructive round-trip run (`deviceRunInFlight`: the self-test,
-`--prepare-modified`) — rather than from whichever one just moved, so a session ending inside a run cannot
-re-enable what the run still needs locked. Fetch, write, compare, the `.urxf` import, device setup and the
-rate picker lock for either. The two exceptions are each the way **out** of the state that would lock them:
-the self-test entry becomes Cancel self-test while a run is in flight, so it locks for a session only, and
-the Live-sync toggle locks for a run only. Locking that toggle is what closes the one path by which an
-ordinary console edit reaches the unit mid-verify — the runs read the device, not the plan, so with no
-session up an edit (or an incoming MIDI message) goes no further than the document. Like the rate lock, this
-is a guard rail rather than an invariant: nothing below the UI refuses a second `vdConnect`, and on the vdp
-transport a second connection now succeeds where casket used to make the two mutually exclusive by silencing
-one of them.
+**The shell has one connection slot, so "a second connection" is not what happens.** `VdState::install`
+stops the worker already installed before putting the new one in, and commands are addressed to whatever is
+installed rather than to the connection that opened them (`sender` takes no epoch). A second `vdConnect`
+therefore **takes the first one's link**: the original owner's next command silently rides the new
+connection, and the moment that owner disconnects — by its own epoch, correctly — the first one's next
+command fails as `not-connected`. `core/control/connection-race.test.ts` models exactly that contract, and
+the epoch guard it exercises is about a *stale teardown*, not about two links coexisting. Nothing here
+changes with the transport: it is a property of the shell's state, not of casket or the vdp port.
+
+For a destructive round-trip run the cost is not a failed action. The run perturbs the unit and then
+verifies it address by address, so being cut off mid-perturbation leaves the unit silent-but-modified with
+the captured original living only in the dead call stack — the same unrecoverable shape as an HMR reload
+during a run.
+
+**So the link is held by exactly one thing at a time, named.** `deviceLinkHolder` is one of `fetch` /
+`write` / `compare` / `device-setup` / `follow-usb` / `live` / `run`; `holdDeviceLink` takes it or refuses,
+`releaseDeviceLink` gives it back and ignores a release that does not name the current holder (the same
+rule the epoch enforces on the Rust side). Every frontend path that opens a connection goes through it:
+`withDevice` for the seven menu actions, `activateLive` for the whole activation — **not just its connect**,
+since the starting readback runs for seconds with `liveSessionUp` still false — and the two runs, which
+call `vdConnect` from `core` and so cannot be funnelled any lower.
+
+`syncDeviceActionUi` is that latch's affordance: while the link is held, every device entry greys **except
+its holder's own**, which is that holder's Cancel (fetch, write, compare, the self-test) or its stop (Live
+sync). The rate picker locks for every holder — a rate change re-clocks the unit and renegotiates the USB
+stream. Follow USB is the one exception in the other direction: a live **session** lends it the session's
+link (its handler writes over that link rather than opening one, and measured on a URX44V the session
+survives the re-clock), so it stays usable while live and greys for every other holder — including a live
+*start*, where the session is not up yet and the same handler would take the connecting branch.
+
+The lock is the affordance and the latch is what makes it true, which is why both exist: a drop target, a
+keyboard path or a click that races the lock reaches `holdDeviceLink` and is refused there, with the status
+line saying so rather than the action silently doing nothing.
 
 Every failure raised outside the UI layer returns a stable, machine-readable code rather than a raw English
 string — see [Error codes](#error-codes) for the scheme. The broker link's are `broker-unreachable` (Device

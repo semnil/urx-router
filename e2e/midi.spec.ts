@@ -91,6 +91,19 @@ const learnBinding = async (page: Page, win: Page, arm: () => Promise<void>, ...
 /** One assignment row in the MIDI window's table. */
 const mapRow = (win: Page, control: string) => win.locator(`.mw-list tr[data-control="${control}"]`);
 
+/** Every control that must be unusable while a destructive run holds the device link
+ *  (the self-test entry is not here — it is that run's own cancel). */
+const LOCKED_UNDER_A_RUN = [
+  "#btn-live",
+  "#btn-fetch",
+  "#btn-write",
+  "#btn-compare",
+  "#btn-device-setup",
+  "#btn-open-settings",
+  "#follow-usb",
+  "#rate-picker",
+];
+
 test.beforeEach(async ({ page }) => {
   // The Live-sync registrations are taken from the shared stub rather than copied,
   // so this stub cannot fall behind what a session actually asks the shell for.
@@ -341,23 +354,48 @@ test("a running self-test freezes incoming MIDI, and releases it when the run en
   await expect(page.locator("#statusbar")).toContainText("incoming MIDI is ignored");
   await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
 
-  // Everything that would open a second connection to the unit — or re-clock it —
-  // is locked for the same window, including the Live-sync toggle: a session started
-  // under the run is the one path that turns a plain console edit into a write
-  // landing in the middle of a verify. The self-test entry stays live because it IS
-  // the cancel.
-  for (const id of ["#btn-live", "#btn-fetch", "#btn-write", "#btn-compare", "#btn-device-setup", "#rate-picker"]) {
-    await expect(page.locator(id)).toBeDisabled();
-  }
+  // Everything that would take the connection away is locked for the same window —
+  // the shell has one slot, so a second connect does not run beside the run, it
+  // replaces it. Follow USB is here too: a live SESSION lends it the session's link,
+  // but a run does not, so its handler would open one. The self-test entry stays
+  // live because it IS the cancel.
+  for (const id of LOCKED_UNDER_A_RUN) await expect(page.locator(id)).toBeDisabled();
   await expect(page.locator("#btn-selftest")).toBeEnabled();
 
   // Release the connect: the run fails, and the window it held closes with it.
   await page.evaluate(() => localStorage.removeItem("urx-test-vd-hold"));
   await expect(page.locator("#btn-selftest")).toHaveText("Self-test (experimental)"); // over, not cancelling
-  await expect(page.locator("#btn-live")).toBeEnabled();
-  await expect(page.locator("#rate-picker")).toBeEnabled();
+  for (const id of LOCKED_UNDER_A_RUN) await expect(page.locator(id)).toBeEnabled();
   await sendMidi(page, [0xb0, 7, 0]);
   await expect(readLevel(page, "CH 1")).toHaveText("-∞");
+});
+
+test("an action already holding the link locks the self-test, not the other way round", async ({ page }) => {
+  // The mirror of the case above, and the order that used to be open: the lock was
+  // applied by whoever started LAST, so a self-test begun during a Fetch or a
+  // Live-sync readback took the connection off it — and, when that live start then
+  // completed, disabled both its own cancel and the toggle that would have stopped
+  // the session.
+  await page.evaluate(() => {
+    localStorage.setItem("urx-test-experimental", "1");
+    localStorage.setItem("urx-test-vd-hold", "1");
+  });
+  await page.reload();
+  await expect(page.locator("#console-host")).toBeVisible();
+
+  await page.click("#btn-device");
+  await page.click("#btn-fetch"); // holds at its connect, exactly as a real read holds for seconds
+  await expect(page.locator("#statusbar")).toContainText("Connecting");
+
+  // Fetch keeps its own entry (it is its cancel) and every other holder is refused.
+  await expect(page.locator("#btn-fetch")).toBeEnabled();
+  for (const id of ["#btn-selftest", "#btn-live", "#btn-write", "#btn-compare", "#follow-usb"]) {
+    await expect(page.locator(id)).toBeDisabled();
+  }
+
+  await page.evaluate(() => localStorage.removeItem("urx-test-vd-hold"));
+  await expect(page.locator("#btn-selftest")).toBeEnabled();
+  await expect(page.locator("#btn-live")).toBeEnabled();
 });
 
 test("one physical control can gang several console controls", async ({ page }) => {

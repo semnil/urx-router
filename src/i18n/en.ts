@@ -623,6 +623,7 @@ export const en = {
     pdfExported: tr("PDF exported"),
     arranged: tr("Arranged to the default layout"),
     busyDeviceRead: tr("Reading from the device — try that again when it finishes"),
+    deviceLinkBusy: tr("Another device operation is holding the connection — try that again when it finishes"),
     fetchConnecting: tr("Connecting to the device…"),
     fetchedDevice: (model: string, n: number): string => `Fetched ${n} setting${n === 1 ? "" : "s"} from ${model}`,
     fetchedUnread: (model: string, n: number, unread: number): string =>
