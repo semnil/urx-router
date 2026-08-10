@@ -349,12 +349,11 @@ ratePicker.value = String(plan.sampleRate);
 
 // Live sync: mirror each edit to the connected device. The model
 // and plan are read through getters because loadPlan reassigns `plan`. A write
-// failure stops sync and drops the connection (deactivateLive). The device label
-// shown on the on-air tally is captured when sync turns on. Declared before the
+// failure stops sync and drops the connection (deactivateLive). Declared before the
 // graph because the graph's onChange callback schedules a live flush. Null in the
 // demo build (DEMO folds the ternary to null), so the control layer tree-shakes
 // out exactly as the other device features do.
-let liveDeviceLabel = "";
+
 // Tracks whether a live session's resources (held connection, follow, live UI)
 // are up — independent of the LiveSync.active flag, which a flush clears the
 // instant it errors. deactivateLive guards on this so an error-path teardown
@@ -921,6 +920,13 @@ function syncDeviceActionUi(): void {
   // This is a guard rail, not an invariant: nothing below the UI enforces it, so a
   // future path that mutates plan.sampleRate while live would bypass it.
   ratePicker.disabled = deviceLinkHolder !== null;
+  // The model picker locks for the live SESSION only, not for every holder: a switch
+  // replaces the plan wholesale, which a session cannot survive (loadPlan ends it),
+  // and while live the picker is the only surface naming the unit on the wire — the
+  // tally prints the tag alone. A start is not covered because the model may still
+  // legitimately change there (offerModelSwitch), and the switch is already refused
+  // for the read's duration by the deviceReadInFlight latch in fileFlow.
+  picker.disabled = liveSessionUp;
 }
 
 // Reflect the live-sync state across the toggle, the on-air tally, and the other
@@ -932,7 +938,7 @@ function setLiveUi(on: boolean): void {
   const tally = document.getElementById("live-tally");
   if (tally) {
     tally.hidden = !on;
-    if (on) tally.textContent = `${t().toolbar.liveTag} · ${liveDeviceLabel}`;
+    if (on) tally.textContent = t().toolbar.liveTag;
   }
   // The lock itself is the link holder's (see syncDeviceActionUi); a session is one
   // holder among several, and this call is what repaints the group when it changes.
@@ -1332,15 +1338,15 @@ function applyStaticI18n(): void {
   $("btn-compare").textContent = compareAbort ? m.toolbar.compareCancel : m.toolbar.compare;
   $("btn-selftest").textContent = selfTestAbort ? m.toolbar.selfTestCancel : m.toolbar.selfTest;
   // Live-sync toggle keeps a static label; aria-pressed and the on-air tally
-  // carry the on/off state. Refresh the tally text too (the device label is set
-  // when sync turns on; only the "LIVE" tag is localized).
+  // carry the on/off state. The tally is relabelled too — the tag is its whole
+  // text, and a language may translate it.
   const liveBtn = document.getElementById("btn-live");
   if (liveBtn) {
     liveBtn.textContent = m.toolbar.liveSync;
     liveBtn.title = m.toolbar.liveSyncHint;
   }
   const liveTally = document.getElementById("live-tally");
-  if (liveTally && live?.isActive()) liveTally.textContent = `${m.toolbar.liveTag} · ${liveDeviceLabel}`;
+  if (liveTally && live?.isActive()) liveTally.textContent = m.toolbar.liveTag;
   // View menu trigger.
   $("lbl-view").textContent = m.toolbar.view;
   $("btn-view").title = m.toolbar.viewHint;
@@ -2760,7 +2766,6 @@ if (!DEMO) {
           );
         }
         dirty = false;
-        liveDeviceLabel = device.model;
         // Read before the session is up, so the badge is already right when the rate
         // picker locks — the badge is the only Follow USB control while live.
         await refreshFollowUsbBadge();

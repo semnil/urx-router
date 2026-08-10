@@ -132,7 +132,8 @@ const SURFACES: Record<SurfaceName, Surface> = {
     roots: ["toolbar"],
     keys: ["midi.menuItem", "deviceSetup.menuItem", "licenses.title", "prefs.title"],
     // The toolbar is a strip of short labels, so what each control means is in its
-    // tooltip. The live tally names the connected device after the tag.
+    // tooltip. The live tally is the tag alone — the model it used to name is the
+    // model picker's, which locks for the session rather than repeating itself here.
     viaAttribute: [
       "toolbar.viewGraphHint",
       "toolbar.viewConsoleHint",
@@ -145,7 +146,6 @@ const SURFACES: Record<SurfaceName, Surface> = {
       "toolbar.followUsbUnknownHint",
       "prefs.title",
     ],
-    composed: ["toolbar.liveTag"],
     neverShown: {
       "toolbar.desktopApp": "the demo bundle only",
       "toolbar.desktopAppHint": "the demo bundle only",
