@@ -307,6 +307,35 @@ describe("runSelfTest", () => {
     expect(report.residual.some((m) => m.paramId === 140)).toBe(true);
   });
 
+  // URX44V has no unverified mappings, so the per-guess verdicts guard nothing here:
+  // every address a stopped pass left behind goes to the report's "Other device
+  // divergence (confirmed params)" section and prints as "wrote X, read Y". Those params
+  // were never written and never re-read, so one refused write read as the unit
+  // disagreeing about hundreds of them — a fidelity finding the run never made.
+  it("does not report the diff a stopped pass was midway through as device divergence", async () => {
+    const table = installMockDevice(populatedPlan());
+    const faderId = PARAMS.CH_FADER.id;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (id === faderId) return Promise.reject(new Error("device busy"));
+      table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    // Premise: this model has no guess verdicts, and the run did leave a residual.
+    expect(report.unverified).toEqual([]);
+    expect(report.residual.length).toBeGreaterThan(0);
+    expect(report.ok).toBe(false);
+    // Every sweep-pass entry is marked as one the run never got to compare…
+    expect(report.residual.filter((m) => m.pass >= 0 && !m.stoppedOn)).toEqual([]);
+    // …and the report says so under its own heading instead of as a finding.
+    const md = formatSelfTestReport(report);
+    expect(md).toContain("## Not compared");
+    expect(md).toContain("device was not asked about them");
+    expect(md).not.toContain("## Other device divergence");
+  });
+
   it("cancels mid-run via an abort signal: skips remaining passes and restore, still disconnects", async () => {
     installMockDevice(populatedPlan());
     const controller = new AbortController();
@@ -631,6 +660,10 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.written).toBeLessThanOrEqual(vi.mocked(vdSet).mock.calls.length);
     // The trace stops calling the whole round "sent" when part of it never went.
     expect(md).toContain("Issued, in order");
+    // The residual carries how its pass ended, which is what keeps the ordinary params —
+    // the ones no guess verdict covers — out of the findings section.
+    expect(report.residual.every((m) => m.stoppedOn === "write")).toBe(true);
+    expect(md).not.toContain("## Other device divergence");
     // And the report says the write stopped: the refusal by name, and what it cut short
     // as a count rather than one undefined-message line per command.
     expect(report.errors.some((e) => /^p0 \d+ command\(s\) never sent/.test(e))).toBe(true);

@@ -72,10 +72,20 @@ export interface SelfTestMismatch {
   y: number;
   /** Value the plan wrote. */
   expected: number;
-  /** Value read back from the device, or null if it could not be read. */
+  /** Value read back from the device after the write, or null if it could not be read.
+   *  When `stoppedOn` is set there was no write to read back after: this is what the
+   *  device held BEFORE it, which is the diff the pass was about to send. */
   actual: number | null;
-  /** Sweep pass that produced this mismatch. */
+  /** Sweep pass that produced this mismatch (-1 = the restore). */
   pass: number;
+  /** How the pass ended, when it did not finish. Absent on a pass that ran to the end of
+   *  its loop — only those entries are a divergence the device actually showed. The rest
+   *  are the diff the run was in the middle of applying, and printing them as "wrote X,
+   *  read Y" states a comparison that never happened. A model with no unverified mapping
+   *  (URX44V) has no other guard: every one of them lands in the "other divergence"
+   *  section, so one refused write reads as the unit disagreeing about hundreds of
+   *  parameters. */
+  stoppedOn?: "read" | "write";
   /** Unverified-mapping key this address belongs to, if any (the guess it refutes). */
   unverifiedKey?: string;
 }
@@ -670,6 +680,7 @@ export async function runSelfTest(
           actual: d.current,
           pass,
           unverifiedKey,
+          ...(stoppedOn ? { stoppedOn } : {}),
         });
       }
     }
@@ -943,12 +954,31 @@ export function formatSelfTestReport(report: SelfTestReport): string {
     }
   }
 
-  // Device divergence not attributable to an unverified guess — genuine fidelity issues.
+  // Device divergence not attributable to an unverified guess — genuine fidelity issues,
+  // and only from passes that completed. A pass that stopped left the diff it was partway
+  // through applying; those addresses were never written and never re-read, so they go
+  // under their own heading rather than into the findings.
   const other = report.residual.filter((r) => !r.unverifiedKey);
-  if (other.length) {
+  const shown = other.filter((r) => !r.stoppedOn);
+  const pending = other.filter((r) => r.stoppedOn);
+  if (shown.length) {
     lines.push("");
     lines.push("## Other device divergence (confirmed params)");
-    for (const m of other) lines.push(`- p${m.pass} ${mismatchLine(m)}`);
+    for (const m of shown) lines.push(`- p${m.pass} ${mismatchLine(m)}`);
+  }
+  if (pending.length) {
+    lines.push("");
+    lines.push(`## Not compared — ${pending.length} param(s) the run never got to`);
+    lines.push("");
+    lines.push(
+      "The pass stopped partway (a refused write, or a read it could not make), so these are the" +
+        " difference it was about to close. The device was not asked about them.",
+    );
+    for (const m of pending) {
+      lines.push(
+        `- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — plan wanted ${m.expected}, device held ${m.actual ?? "unreadable"} (stopped on a ${m.stoppedOn === "write" ? "refused write" : "failed read"})`,
+      );
+    }
   }
 
   if (report.errors.length) {

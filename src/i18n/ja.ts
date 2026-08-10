@@ -594,6 +594,8 @@ export const ja: Messages = {
     selfTestCancelled: "セルフテストを中止しました — デバイスは無音状態です。元に戻すには再度取得してください",
     selfTestPass: (n: number): string => `セルフテスト合格: ${n} 件のパラメータを書き込み、同一に読み戻しました`,
     selfTestFail: (n: number): string => `セルフテスト失敗: 書き込み後に ${n} 件が一致しませんでした`,
+    selfTestIncomplete: (n: number): string =>
+      `セルフテスト中断: ${n} 件は比較していません — レポートを確認してください`,
     selfTestRestoreFail: "セルフテスト: デバイスが復元されていない可能性があります — 再度取得して確認してください",
     selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
       `セルフテストの推測: 確認 ${confirmed} 件・否定 ${refuted} 件・検証不能 ${untestable} 件`,
