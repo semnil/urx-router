@@ -36,7 +36,7 @@ import { parseRef, ref } from "../../models/types";
 import type { Plan } from "../plan";
 import { emptyPlan } from "../plan";
 import { canConnect, partnerChannel } from "../routing";
-import { vdConnect, vdDisconnect } from "../platform";
+import { vdConnect, vdDisconnect, vdGet } from "../platform";
 import {
   BUS_TYPE_OPTIONS,
   DELAY_FRAME_RATE_OPTIONS,
@@ -62,7 +62,7 @@ import {
   UNVERIFIED_MAPPINGS,
   unverifiedAddresses,
 } from "./translate";
-import type { UnverifiedCollision } from "./translate";
+import type { UnverifiedCollision, VdCommand } from "./translate";
 
 export interface SelfTestMismatch {
   name: string;
@@ -141,12 +141,36 @@ export interface SelfTestReport {
   aborted: boolean;
   /** True when the device was returned to its original captured state. */
   restored: boolean;
-  /** Residual diff count after writing the original back (0 = fully restored). */
+  /** Residual diff count after writing the original back. ⚠️ It covers only what that
+   *  write SENT: an address the captured plan does not imply is outside the diff, so 0
+   *  is a statement about the write and not about the unit — which is what `diag`
+   *  below exists to make readable. */
   restoreResidual: number;
   /** Non-fatal issues (read failures, send failures) collected along the way. */
   errors: string[];
   /** Last phase reached — where it stopped if an error was thrown. */
   phase: "connect" | "readback" | "write" | "verify" | "restore" | "done";
+  /**
+   * DIAGNOSTIC — the restore's own account of itself, small enough to ride the report
+   * line the headless launch already prints. It exists because a run that reported
+   * `restoreResidual: 0` while an external sweep found 27 addresses changed left
+   * nothing to read: neither the verdict nor the log could say whether the restore had
+   * SENT those addresses, what the unit answered when it did, or what a later round
+   * re-sent over the top. Each field answers exactly one of those.
+   */
+  diag: {
+    /** Addresses the sweep wrote that the restore's command set does not carry. Empty
+     *  means the restore does emit them, and the residue has another cause. */
+    unrestorable: string[];
+    /** Per round of the converging restore: how much went out, how much of it was the
+     *  PEQ and the 1-knob chain, and how much still differed on the re-read. A 1-knob
+     *  group re-sent in the last round reloads the preset over the bands. */
+    restoreRounds: Array<{ sent: number; bands: number; oneKnob: number; residual: number | null }>;
+    /** Band gains that disagreed with the captured value when read IMMEDIATELY after
+     *  the restore. Empty here while an external sweep later finds them changed means
+     *  the unit moved them after the write, not that the write never landed. */
+    bandsAfterRestore: Array<{ addr: string; want: number; got: number | null }>;
+  };
 }
 
 // Deep-negative dB that emit clamps to each level param's own minimum (-inf for
@@ -428,6 +452,7 @@ export async function runSelfTest(
     restoreResidual: 0,
     errors: [],
     phase: "connect",
+    diag: { unrestorable: [], restoreRounds: [], bandsAfterRestore: [] },
   };
   // Run one phase's round-trips, returning its result — or undefined if the user
   // cancelled (the inner loops throw via signal.throwIfAborted). A cancel is
@@ -471,6 +496,17 @@ export async function runSelfTest(
     const captured = new Map<number, CapturedValue>();
     for (const c of planToCommands(model, original)) {
       captured.set(cmdAddr(c), { addr: formatAddrKey(cmdAddr(c)), name: c.name, value: c.vdValue });
+    }
+    // Addresses a pass emits that the captured plan does not: the restore has no command
+    // for them, so it cannot put them back — and its residual cannot say so either, being
+    // a diff over those same commands. A plan emits an address only under the mode that
+    // owns it, and the sweep runs in every mode.
+    report.phase = "readback";
+    const unrestorable = new Map<number, VdCommand>();
+    for (let pass = 0; pass < passes; pass++) {
+      for (const c of planToCommands(model, perturbedPlan(model, original, pass, suppress))) {
+        if (!captured.has(cmdAddr(c))) unrestorable.set(cmdAddr(c), c);
+      }
     }
 
     // 2. Sweep: each pass writes a silent perturbed plan (converging, so params
@@ -530,10 +566,33 @@ export async function runSelfTest(
     // restore would only re-run the round-trips the user just cancelled.
     if (!report.aborted) {
       report.phase = "restore";
-      const back = await phaseStep(sendConverging(model, original, { settleMs, signal }));
+      report.diag.unrestorable = [...unrestorable.values()].map((c) => `${c.name} ${formatAddrKey(cmdAddr(c))}`);
+      const back = await phaseStep(
+        sendConverging(model, original, { settleMs, signal, trace: true }),
+      );
       if (back) {
+        report.diag.restoreRounds = back.trace.map((r) => ({
+          sent: r.sent.length,
+          bands: r.sent.filter((c) => c.name.startsWith("EQ_BAND")).length,
+          oneKnob: r.sent.filter((c) => c.name.startsWith("EQ_ONE_KNOB")).length,
+          residual: r.reread?.length ?? null,
+        }));
+        // Read back the band gains the restore just wrote, before anything else can
+        // touch the unit. Only the ones that disagree are kept.
+        for (const c of planToCommands(model, original)) {
+          if (c.name !== "EQ_BAND_GAIN") continue;
+          signal?.throwIfAborted();
+          try {
+            const got = await vdGet(c.paramId, c.x, c.y);
+            if (got !== c.vdValue) {
+              report.diag.bandsAfterRestore.push({ addr: formatAddrKey(cmdAddr(c)), want: c.vdValue, got });
+            }
+          } catch {
+            report.diag.bandsAfterRestore.push({ addr: formatAddrKey(cmdAddr(c)), want: c.vdValue, got: null });
+          }
+        }
         report.restoreResidual = back.residual.length;
-        report.restored = back.residual.length === 0;
+        report.restored = report.restoreResidual === 0;
         report.phase = "done";
       }
     }
