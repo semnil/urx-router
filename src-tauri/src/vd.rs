@@ -1239,22 +1239,31 @@ mod imp {
         Ok(system_firmware(link))
     }
 
-    /// Send a `requestVD` GET for `uri` and return the matched response's `vdp.data`.
+    /// Send a GET for `uri` and return the matched response's `vdp.data`.
     /// Shared by the handshake-time reads (synchronize, device); drains non-matching
     /// frames until the address echoes back or the 3s deadline lapses. The parameter
     /// read path (do_get_value) keeps its own loop — it also screens for a mid-read
     /// device-lost push, which these handshake reads run before a session exists.
     fn vd_get_data(link: &mut Link, uri: &str) -> Result<Value, String> {
         let base = uri.split('?').next().unwrap_or(uri).to_string();
-        link.send_vdp(json!({ "method": "get", "uri": uri }))?;
+        // Sent and awaited under one spelling, as in do_get_value.
+        let verb = "get";
+        link.send_vdp(json!({ "method": verb, "uri": uri }))?;
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
             let Some(msg) = link.read_frame()? else {
                 continue;
             };
             // This loop is separate from reply_for's: it runs before a session
-            // exists, so it does not screen for a device-lost push.
+            // exists, so there is nothing to absorb into and it does not screen for
+            // a device-lost push. The verb is matched for the same reason reply_for
+            // matches it — a notify echoes the address it is about, and taking one
+            // as the answer here would decide the handshake off another client's
+            // traffic (a `/vd/synchronize` push is the shape that reaches this one).
             let Some(vdp) = vdp_of(&msg) else { continue };
+            if vdp.get("method").and_then(Value::as_str) != Some(verb) {
+                continue;
+            }
             let ruri = vdp.get("uri").and_then(Value::as_str).unwrap_or("");
             if ruri.split('?').next().unwrap_or(ruri) != base {
                 continue;
@@ -1320,7 +1329,10 @@ mod imp {
     ) -> Result<(), String> {
         let uri = format!("/vd/parameters/{param_id}:{x}:{y}?operation=value");
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
-        link.send_vdp(json!({ "method": "post", "uri": uri, "data": { "current_value": value } }))?;
+        // One spelling for what is sent and for what will be accepted as its reply,
+        // so the two cannot drift into a command that can never be answered.
+        let verb = "post";
+        link.send_vdp(json!({ "method": verb, "uri": uri, "data": { "current_value": value } }))?;
         // Await the matching response, skipping unrelated notifications.
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
@@ -1334,7 +1346,7 @@ mod imp {
             }
             // Subscribed notifies landing mid-command are batched, not discarded
             // (see Subs).
-            let Some(vdp) = reply_for(subs, &msg, &base) else {
+            let Some(vdp) = reply_for(subs, &msg, &base, verb) else {
                 continue;
             };
             let code = vdp
@@ -1349,7 +1361,7 @@ mod imp {
                 ))
             };
         }
-        drain_late_reply(link, subs, &base);
+        drain_late_reply(link, subs, &base, verb);
         Err(format!("broker-timeout: write at {param_id}:{x}:{y}"))
     }
 
@@ -1359,7 +1371,7 @@ mod imp {
     /// it with a stale value. Drain what is already buffered (bounded, and only
     /// after a timeout, so the healthy path pays nothing) and drop any reply for the
     /// address that just gave up. Notifies stay batched via subs, as everywhere else.
-    fn drain_late_reply(link: &mut Link, subs: &mut Subs, base: &str) {
+    fn drain_late_reply(link: &mut Link, subs: &mut Subs, base: &str, method: &str) {
         // Bounded by frames rather than wall clock: under Live sync the broker
         // streams meters continuously, so a deadline would always run to the end
         // while absorbing notifies. The straggler is the next reply frame, not a
@@ -1368,7 +1380,7 @@ mod imp {
             let Ok(Some(msg)) = link.read_frame() else {
                 break;
             };
-            if reply_for(subs, &msg, base).is_some() {
+            if reply_for(subs, &msg, base, method).is_some() {
                 return; // the straggler is consumed; the socket is clean again
             }
         }
@@ -1377,19 +1389,38 @@ mod imp {
     /// Frames drain_late_reply will look through for a straggler before giving up.
     const DRAIN_FRAMES: usize = 64;
 
-    /// The `requestVD` reply body for `base`, or None when the message was a notify
-    /// (absorbed into the pending batch) or belonged to another address. Shared by
-    /// the two await loops and the late drain so the matching cannot drift — the
-    /// exact-address compare is what stops another instance's reply (e.g. y=12)
-    /// satisfying a y=1 request through a prefix match.
-    fn reply_for<'a>(subs: &mut Subs, msg: &'a Value, base: &str) -> Option<&'a Value> {
+    /// The reply body for `method` at `base`, or None when the message was a notify,
+    /// a reply to a different verb, or a reply for another address. Shared by the two
+    /// await loops and the late drain so the matching cannot drift — the exact-address
+    /// compare is what stops another instance's reply (e.g. y=12) satisfying a y=1
+    /// request through a prefix match.
+    ///
+    /// **The address alone does not identify a reply.** A notify carries the same uri
+    /// as the command that touches that address, and `absorb` only consumes one while
+    /// the matching channel is subscribed — so with Live sync off (a Fetch, a Write,
+    /// the self-test) an inbound notify for the address in flight would otherwise be
+    /// taken as its answer. It reaches us whether or not this session registered the
+    /// address: the broker broadcasts every notify to every connected client, which is
+    /// exactly the concurrent-client case the vdp port exists for. On a GET that
+    /// returns the pushed value instead of the read; on a POST the notify carries no
+    /// `response_code`, so the write is reported refused when it succeeded.
+    fn reply_for<'a>(
+        subs: &mut Subs,
+        msg: &'a Value,
+        base: &str,
+        method: &str,
+    ) -> Option<&'a Value> {
         if subs.absorb(msg) {
             return None;
         }
         // Both envelope shapes, like notify_frame and synchronize_lost: casket
         // wraps the `vdp` message in JSON-RPC, the other endpoint carries it bare.
-        // Matching on the wrapper's method would tie reply matching to casket.
+        // Matching on the wrapper's method would tie reply matching to casket — the
+        // verb checked here is the `vdp` one, which both transports carry.
         let vdp = vdp_of(msg)?;
+        if vdp.get("method").and_then(Value::as_str) != Some(method) {
+            return None;
+        }
         let uri = vdp.get("uri").and_then(Value::as_str).unwrap_or("");
         (uri.split('?').next().unwrap_or(uri) == base).then_some(vdp)
     }
@@ -1405,7 +1436,9 @@ mod imp {
         y: i64,
     ) -> Result<Value, String> {
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
-        link.send_vdp(json!({ "method": "get", "uri": base }))?;
+        // Sent and awaited under one spelling, as in do_set.
+        let verb = "get";
+        link.send_vdp(json!({ "method": verb, "uri": base }))?;
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
             let Some(msg) = link.read_frame()? else {
@@ -1418,14 +1451,14 @@ mod imp {
             }
             // Subscribed notifies landing mid-command are batched, not discarded
             // (see Subs).
-            let Some(vdp) = reply_for(subs, &msg, &base) else {
+            let Some(vdp) = reply_for(subs, &msg, &base, verb) else {
                 continue;
             };
             return vdp.pointer("/data/current_value").cloned().ok_or_else(|| {
                 format!("broker-bad-response: no current_value at {param_id}:{x}:{y}")
             });
         }
-        drain_late_reply(link, subs, &base);
+        drain_late_reply(link, subs, &base, verb);
         Err(format!("broker-timeout: value at {param_id}:{x}:{y}"))
     }
 
@@ -1767,8 +1800,10 @@ mod imp {
     mod subs_tests {
         // Pure data-path tests for Subs (no broker, no websocket): absorb must
         // batch subscribed notifies (and leave command replies alone), and the
-        // batch must flush on the pump cadence.
-        use super::{Subs, PUMP_BUDGET};
+        // batch must flush on the pump cadence. Plus reply_for, which is where a
+        // frame absorb declined lands — the two together decide whether a notify
+        // can be mistaken for the answer to a command.
+        use super::{reply_for, Subs, PUMP_BUDGET};
         use serde_json::{json, Value};
         use std::sync::{Arc, Mutex};
         use std::time::Instant;
@@ -2003,6 +2038,69 @@ mod imp {
                 *meters_seen.lock().unwrap(),
                 vec![json!([{ "meter_id": 115, "x": 0, "value": -183 }])]
             );
+        }
+
+        // A broker reply, in the bare envelope the default endpoint sends. `data`
+        // is the measured shape for each verb (probe-regist-shape / probe-timeline):
+        // a get answers with the value plus its bounds, a post with a bare ack.
+        fn reply(method: &str, uri: &str, data: Value) -> Value {
+            json!({ "vdp": { "method": method, "uri": uri, "data": data } })
+        }
+
+        /// Every notify reaches every connected client, so one for the address a
+        /// command is waiting on arrives whenever anything else touches the unit —
+        /// which is the case the vdp port exists to support. `absorb` consumes it
+        /// only while the matching channel is subscribed, so with Live sync off
+        /// (a Fetch, a Write, the self-test) nothing but the verb keeps it out of
+        /// the await loop. A get would return the pushed value as the read; a post
+        /// finds no response_code, reads it as 0, and reports a landed write as
+        /// refused — aborting the whole write, per the device-link failure rule.
+        #[test]
+        fn reply_for_refuses_a_notify_for_the_address_in_flight() {
+            // No channels: the state every command outside Live sync runs in.
+            let mut subs = Subs::new();
+            let base = "/vd/parameters/142:0:0";
+            let push = notify_bare(base.into(), 1);
+
+            assert!(!subs.absorb(&push), "nothing subscribed to absorb it");
+            assert!(reply_for(&mut subs, &push, base, "get").is_none());
+            assert!(reply_for(&mut subs, &push, base, "post").is_none());
+
+            // The replies those two commands are actually waiting for still match,
+            // query string and all — the broker echoes it back on a write.
+            assert!(reply_for(
+                &mut subs,
+                &reply("get", base, json!({ "current_value": 1 })),
+                base,
+                "get"
+            )
+            .is_some());
+            assert!(reply_for(
+                &mut subs,
+                &reply(
+                    "post",
+                    &format!("{base}?operation=value"),
+                    json!({ "response_code": 200 })
+                ),
+                base,
+                "post"
+            )
+            .is_some());
+        }
+
+        /// The verb separates the two commands that share an address, so a straggler
+        /// from one cannot answer the other. A write followed by a read-back of the
+        /// same address is the ordinary sequence (converge, readback), and the vd
+        /// protocol carries no request id to tell them apart by.
+        #[test]
+        fn reply_for_refuses_the_other_verbs_reply_on_the_same_address() {
+            let mut subs = Subs::new();
+            let base = "/vd/parameters/142:0:0";
+            let ack = reply("post", base, json!({ "response_code": 200 }));
+            let value = reply("get", base, json!({ "current_value": 1 }));
+
+            assert!(reply_for(&mut subs, &ack, base, "get").is_none());
+            assert!(reply_for(&mut subs, &value, base, "post").is_none());
         }
     }
 }
