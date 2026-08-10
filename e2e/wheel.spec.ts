@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { wheelOver } from "./graph-helpers";
 
 // Mouse-wheel adjust on hover: every continuous control (inspector native-range

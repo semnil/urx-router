@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 // Level-meter color zones: the ladder is split into three bands keyed to absolute
 // dBFS — green up to the device's nominal reference (-18 dBFS), yellow up to the

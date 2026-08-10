@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 // The block diagram flags the stereo-channel (CH 5/6–11/12) EQ as disabled at
 // 176.4 / 192 kHz. The app still shows that EQ as editable, so a top-of-panel

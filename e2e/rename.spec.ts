@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // A node is a g.node carrying its id; its faceplate label is the first <text>.
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);

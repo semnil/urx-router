@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // The OFF visual language is uniform across every node and its wiring: the
 // oscillator (off by default) dims its node like any muted node, a muted node's

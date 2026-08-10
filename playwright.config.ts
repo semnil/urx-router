@@ -38,13 +38,17 @@ const SERVER_URL = `http://localhost:${PORT}`;
 // own race.yml — sharded, on demand and alongside a release build. Nothing about the
 // tiers lives in this file beyond the project boundary they are cut along.
 const TRACE_URL = `http://localhost:${TRACE_PORT}`;
+const COVERAGE = process.env.E2E_COVERAGE === "1";
 
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: "list",
+  // The coverage reporter only owns cache lifecycle and final report generation;
+  // the automatic fixture imported by the ordinary specs collects each page. A
+  // normal E2E run therefore pays neither the CDP collection nor the conversion.
+  reporter: COVERAGE ? [["list"], ["./e2e/coverage-reporter.ts"]] : "list",
   use: {
     baseURL: SERVER_URL,
     trace: "on-first-retry",

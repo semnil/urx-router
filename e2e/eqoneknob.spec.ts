@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // The EQ 1-knob, on the tuning screen where it lives (the inspector keeps the section's
 // ON toggle and a launcher). What it does on the device is measured and recorded in

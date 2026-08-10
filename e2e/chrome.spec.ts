@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { stubTauriBoot } from "./tauri-stub";
 import { drag, port } from "./graph-helpers";
 

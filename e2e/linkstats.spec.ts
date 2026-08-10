@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { LIVE_COMMANDS, linkLogOf, stubTauriDevice } from "./tauri-stub";
 import { LINK_BAR_KEYS, LINK_LEDGER_KEYS, type LinkBarKey, type LinkLedgerKey } from "../src/core/control/link-stats";
 

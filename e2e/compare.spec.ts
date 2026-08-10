@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { stubTauriDevice, writesOf } from "./tauri-stub";
 
 // The experimental read-only compare: it lists every parameter where the device

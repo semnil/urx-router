@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { dialogsOf, stubTauriDevice, strWritesOf, writesOf } from "./tauri-stub";
 
 // The device setup screen: the unit's SETUP > GENERAL settings, which no node on

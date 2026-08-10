@@ -1,5 +1,5 @@
-import { test, expect } from "@playwright/test";
-import type { Page } from "@playwright/test";
+import { test, expect } from "./fixtures";
+import type { Page } from "./fixtures";
 import { dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
 
 // The device paths abort rather than continue once a premise has failed: a write

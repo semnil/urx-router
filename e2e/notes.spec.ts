@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { faceplate } from "./graph-helpers";
 
 // A node is a g.node carrying its id; the note controls live inside it.

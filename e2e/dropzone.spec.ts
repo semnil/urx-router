@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // Drag & drop of a plan onto the window. This is the browser delivery path (DOM
 // drag events carrying File objects); the desktop path goes through the shell's

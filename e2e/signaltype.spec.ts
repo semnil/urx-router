@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { faceplate } from "./graph-helpers";
 
 // Positions below are compared with node(), pointer grabs measured with

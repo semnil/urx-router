@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { drag, port } from "./graph-helpers";
 
 // A ducker is bypassed (duckerOn off) on a fresh board, so its key wire reads as

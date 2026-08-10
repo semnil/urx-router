@@ -48,6 +48,7 @@ pnpm test:coverage # the same unit suite with V8 coverage for all frontend TypeS
 pnpm typecheck:e2e # tsc -p tsconfig.e2e.json — type-checks e2e/ + the root config .ts (playwright/vite/vitest); the src build's tsconfig only includes "src"
 pnpm test:e2e     # Playwright E2E, all three projects at once. No CI job runs this — each tier is its own
 pnpm test:e2e:app # --project=chromium: e2e/*.spec.ts only (routing/hide/notes/insertfx/midi etc.). The PR tier, in ci.yml
+pnpm test:e2e:coverage # the same ordinary Chromium tier with native V8 coverage remapped to coverage/e2e/lcov.info
 pnpm test:e2e:race        # --project=race: the race harness (e2e/race). `--shard=1/3` splits it; NO `--` before the flag
 pnpm test:e2e:race:webkit # --project=race-webkit: the @webkit-tagged race cases in WebKit (the engine the macOS build renders in)
 pnpm build:trace  # production-shaped bundle carrying the trace probe (VITE_TRACE=1) into dist-trace/
@@ -137,6 +138,8 @@ the second set, and a one-shot action is consumed by the first caller (an HMR re
 | `e2e/graph-helpers.ts` | addressing the node graph — a jack by plan ref, a Rec Point tap jack, a faceplate rect, a drag, a wheel |
 | `e2e/plan-param.ts` | seeding a plan through `?plan=` instead of clicking it together |
 | `e2e/inventory.ts` | asserting that a surface SHOWS something — it collects a container's visible text, its label-carrying attributes and its select options, and matches them against message-catalog keys |
+| `e2e/fixtures.ts` | adding an ordinary app E2E spec — import its shared Playwright exports so the explicit coverage command can collect native V8 readings without instrumenting the app bundle |
+| `e2e/coverage-options.ts` + `e2e/coverage-reporter.ts` | changing how E2E coverage is filtered, remapped or emitted — the options normalize Vite sources to repo paths, and the reporter brackets all workers before generating LCOV |
 | `e2e/race/fake-device.ts` | a case whose verdict is about timing: per-command latency, command barriers, a scriptable notify stream, refusal injection — its in-page surface is `__urxFake` |
 | `e2e/race/analyze.ts` + `e2e/race/ui.ts` | the invariants over one ordered trace, and the locators the harness shares |
 | in-spec `__midiTest` / `__dynTest` | driving a MIDI control or a tuning screen's meter feed — copy the installed state object, do not invent a third stub shape |

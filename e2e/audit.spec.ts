@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // UI-layer audit regressions: gaps the interaction probes surfaced that the rest
 // of the suite did not already pin. Each test locks in a verified-correct behaviour

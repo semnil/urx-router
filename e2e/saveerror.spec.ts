@@ -1,5 +1,5 @@
-import { test, expect } from "@playwright/test";
-import type { Page } from "@playwright/test";
+import { test, expect } from "./fixtures";
+import type { Page } from "./fixtures";
 
 // A native save / image export that fails after the dialog returned a path must
 // surface as an error dialog, keep the plan dirty and show no success status — a

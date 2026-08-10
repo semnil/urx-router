@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { decodeParam, planParam } from "./plan-param";
 
 // A rename marker makes the shared / downloaded output distinguishable from a

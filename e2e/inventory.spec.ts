@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { allItems, Inventory, itemsFor, itemsUnder, type Item } from "./inventory";
 import { en } from "../src/i18n/en";
 import { LIVE_COMMANDS, stubTauriBoot, stubTauriDevice } from "./tauri-stub";

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { stubTauriBoot } from "./tauri-stub";
 
 // The third-party license notice ships as a Tauri resource, so the File menu

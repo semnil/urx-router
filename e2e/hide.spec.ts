@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { drag, port } from "./graph-helpers";
 
 // One .wire-hit band exists per committed connection (the painted path is a sibling).

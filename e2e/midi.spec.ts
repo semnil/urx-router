@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { LIVE_COMMANDS } from "./tauri-stub";
 
 // External MIDI control is desktop-only (isTauri gate), so these tests stub the

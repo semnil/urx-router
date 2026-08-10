@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // The console runs against the factory plan (sends present), so we do NOT seed
 // "empty" here — the CH → MIX sends the FIXED / Pan-Link locks act on exist.
