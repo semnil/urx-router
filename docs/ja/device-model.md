@@ -259,8 +259,9 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   `microSD Playback` 1 個として表す。
 
 > **ライブ制御**: トラック毎のソース割当は vd で読み書きする (param 736・トラック毎に port ref 1 個)。
-> **Track Count は read-only** — 実機は software 書込みを受理しても無視し (param 839・本体パネルのみ)、
-> Live sync は readback はできるが push できない ([known-issues.md](known-issues.md) 参照)。工場割当は
+> **Track Count は readback のみで書き込まない** — param 839 への書込は実機に届くが、broker が 8 段階の
+> うち 1 つに上限を切るため、ソフトウェアからは「2 トラック」しか指定できず、そこから上げ直すこともできない
+> ([known-issues.md](known-issues.md) 参照)。工場割当は
 > トラック 1-12 = CH 1-12・トラック 13/14 = none・トラック 15/16 = STEREO・Track Count 16。
 
 > **録音トラック数の根拠**: URX44V は microSD へ **最大16トラック録音 / 2トラック再生**

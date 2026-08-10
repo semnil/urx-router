@@ -479,10 +479,14 @@ export const PARAMS = {
    *  snapshot-diff on URX44V. */
   SD_REC_SOURCE: { id: 736, encoding: "portRef", sceneExternal: true },
   /** microSD Rec Track Count (y = 0): how many tracks record, raw = tracks / 2
-   *  (raw 1..8 = 2..16). READ-ONLY — the broker accepts a software write
-   *  (response 200) but ignores it; only the device front panel changes it, so
-   *  live sync reads it back but never emits it. The dump mislabels it onoff /
-   *  max 1; the live value (e.g. 5 = 10 tracks) is authoritative. */
+   *  (raw 1..8 = 2..16). Read back, never emitted — not because the write is
+   *  ignored (it is not: raw 0 reaches the unit and leaves its Track Count screen
+   *  with nothing selected) but because of the range. The dump mislabels it
+   *  onoff / min 0 / max 1 while the live value goes to 8, and the broker
+   *  enforces that wrong max: raw 2, 4 and 8 are refused with 400. The only
+   *  reachable settings are raw 1 (two tracks) and the meaningless raw 0, so a
+   *  write could only ever lower the unit to two tracks and could not raise it
+   *  again — the front panel would have to. */
   SD_REC_TRACK_COUNT: { id: 839, encoding: "raw", sceneExternal: true },
 
   // ---- SETUP > GENERAL: device-wide utility settings -----------------------
@@ -879,8 +883,8 @@ export const dGainParam = (modelId: string, nodeId: string): number | undefined 
   (modelId === "URX22" ? D_GAIN_URX22 : D_GAIN_URX44V)[nodeId];
 
 // microSD Rec Track Count (RECORDER menu): how many tracks record, an even 2..16.
-// The plan stores the actual count (readback = device raw × 2). Read-only on the
-// device — the front panel sets it; a software write is ignored (see
+// The plan stores the actual count (readback = device raw × 2). Planned here but
+// never pushed: the broker refuses every value above two tracks (see
 // SD_REC_TRACK_COUNT). Default 8 (the factory value).
 export const SD_REC_TRACK_COUNT_DEFAULT = 8;
 export const SD_REC_TRACK_COUNT_OPTIONS = [2, 4, 6, 8, 10, 12, 14, 16].map((n) => ({ value: n, label: String(n) }));

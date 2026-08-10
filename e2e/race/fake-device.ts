@@ -1325,7 +1325,8 @@ export const refuseAt = (
     [cmd, nth, kind] as [string, number, string],
   );
 
-/** Accept and discard every write to these param ids (the shape 839 has). */
+/** Accept and discard every write to these param ids — the shape the unit's clock
+ *  has (an RTC write answers 200, reads back as itself, and moves nothing). */
 export const ignoreWrites = (page: Page, ids: number[]): Promise<void> =>
   page.evaluate((list) => {
     window.__urxFake.ignoreWrites.push(...list);

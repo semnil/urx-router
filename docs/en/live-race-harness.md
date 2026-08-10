@@ -242,7 +242,7 @@ single source of truth. This table states what each case measures.
 | `shape-signal-type-pair-link` | inspector | The only param whose write resets an entire other node on the device |
 | `shape-pan-bal-mode-switch` | inspector | The device rewrites values on other connections, so the undo is itself a stale write |
 | `shape-bus-type-and-pan-link-locks` | mixed | A write on node A changes the observable state of controls on B and C without writing them |
-| `shape-sdrec-track-count-readonly` | mixed | The only param the device acknowledges and discards — and whose device-side change never arrives |
+| `shape-sdrec-track-count-readonly` | mixed | The param the app reads and never writes — and whose device-side change never arrives |
 | `shape-sample-rate-and-follow-usb` | mixed | The only scalar always first in the write set that the device can revert on its own |
 | `shape-scene-write-scope` | mixed | A non-plan setting reshaping the write diff, the snapshot and the registration at one chokepoint — and blinding follow to the addresses it drops |
 | `shape-routing-wire-selectors` | graph | The deliberate NONE sentinel and the accidental hole that says nothing, side by side |
@@ -756,8 +756,8 @@ agreement, zero findings.
   when it is in the registered set (`param_addrs`) or is `BULK_CHANGE`. The registration is the
   writable address set, so **every address the plan never emits is undeliverable for the whole
   session**, and the thirteen SETUP > GENERAL addresses are only the largest family: the string-path
-  addresses (`NAME`, `SWEET_SPOT`) are in it, the read-only addresses are in it (839 microSD Track
-  Count, 193 the CH → FX send tap), and under device scope `"scene"` so are the 64 addresses that
+  addresses (`NAME`, `SWEET_SPOT`) are in it, the addresses the app only ever reads are in it (839
+  microSD Track Count, 193 the CH → FX send tap), and under device scope `"scene"` so are the 64 that
   scope drops. The earlier "~1350 reads" figure was the fake answering a stimulus the shipped app
   cannot receive. **The fake now mirrors `absorb`** — `pushNotify` filters per entry against the set
   the session registered, traces a refusal as its own `notify-drop` kind, and only `pushBulkChange`
@@ -788,7 +788,8 @@ agreement, zero findings.
   closed on 2026-08-06** — `live.ts` registers the name addresses beside `planToCommands`'s, and
   `follow.ts` places a name notify straight into the plan (17 addresses on a URX44V/URX44, 15 on a
   URX22, against ~800, with no steady-state traffic because a name notify fires only on a rename).
-  839 and 193 stand: both are read-only, so neither is in any write set and neither can be registered
+  839 and 193 stand: neither is ever emitted — 193 because the broker refuses a PRE write, 839
+  because the broker caps it below every useful value — so neither is in a write set or a registration
 - **A sample-rate undo refusal takes the whole entry with it**, and the status line names only the
   rate: an ordinary edit that shared the gesture window is refused alongside it and nothing says so.
   Refusing whole is correct — a partial undo would put the plan in a state no gesture produced, and

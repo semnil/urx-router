@@ -1722,6 +1722,13 @@ device value and keeps every one (matched or not); `compareNames` does the same 
 device's actual name. Unlike a write it does not stop on the first read failure: the audit wants every parameter it
 can still read, with the unreadable ones listed as gaps that leave the comparison incomplete.
 
+**Its scope is exactly what the plan would write**, since it walks `planToCommands` (plus the names). Two kinds of
+parameter fall outside it: the ones the app reads and never emits — the microSD Rec Track Count (839) and the CH →
+FX send tap (193) — and the device-wide settings that are not in the plan at all (`planExternal`: Follow USB and the
+thirteen SETUP > GENERAL addresses, which the unit's own settings screen reads and writes). Neither kind can ever be
+reported as a difference, and neither is in the compared count. That is a different silence from the read failures
+above, which are listed as gaps: here nothing was read, and nothing says so.
+
 The report (`formatCompareReport`, shown in the shared `#load-report` modal) is **always shown, even on a full
 match**, and carries a compared count, the differences, and a **full per-parameter log** — because a comparison that
 returns "matches" instantly is otherwise indistinguishable from one that read nothing. The status line states the

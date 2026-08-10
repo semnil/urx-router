@@ -680,9 +680,12 @@ test.describe("T2 shape-change", () => {
   });
 
   // shape-sdrec-track-count-readonly. The negative control for the abort-on-failure
-  // rule: the one parameter the broker answers 200 to and then discards.
+  // rule: the one parameter the app reads on every full readback and emits nowhere.
   test("microSD Rec Track Count is read, never written, and its notify never arrives", async ({ page }) => {
-    // The device holds 8 tracks (raw 4) and accepts-and-ignores every write to 839.
+    // The device holds 8 tracks (raw 4). Writes to 839 are swallowed rather than
+    // refused on purpose: the real broker answers 400 above two tracks, and a refusal
+    // would abort the session, so the regression this case is here to catch (the app
+    // starting to emit 839) would be reported as a broken link instead of as a write.
     await divergeAt(page, SD_TRACK_COUNT, 4);
     await ignoreWrites(page, [839]);
     await goLive(page);

@@ -100,7 +100,7 @@ describe("defaultPlan", () => {
     const factory = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, PORT_REF_NONE, PORT_REF_NONE, 256, 257];
     expect(cmds).toHaveLength(16);
     factory.forEach((v, y) => expect(byTrack.get(y), `track ${y}`).toBe(v));
-    // Track Count is read-only, so it is seeded for the UI but never emitted.
+    // Track Count is never pushed to the device, so it is seeded for the UI only.
     expect(defaultPlan("URX44V").nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(16);
   });
 

@@ -11,6 +11,12 @@ URX from software: the device only accepts this setting from its own front panel
 (LCD). While live sync is connected the control is therefore read-only and shows
 the device's own value.
 
+Because nothing writes it, nothing subscribes to it either: the notify
+registration is the set of addresses the app emits. A Pre/Post changed **on the
+unit while live sync is connected** therefore never reaches the app — the control
+keeps showing the value read when the session opened, until the next full read (a
+reconnect, or a full reconcile some other change triggers).
+
 The Pre/Post of **CH → MIX** and **FX-channel → MIX** sends can be written to the
 device as usual.
 
@@ -87,6 +93,13 @@ device's own range and leaves the unit's Track Count screen with nothing selecte
 at all (verified on a real URX44V). A saved plan's Track Count is therefore not
 written to the device — the only settings within reach are one that says "two
 tracks" and one the device has no meaning for.
+
+Because nothing writes it, nothing subscribes to it either: the notify
+registration is the set of addresses the app emits. A Track Count changed **on
+the unit while live sync is connected** therefore never reaches the app. The
+plan keeps the value read when the session opened, the graph keeps gating the
+record-track slots by that value, and the app catches up only at the next full
+read — a reconnect, or a full reconcile some other change triggers.
 
 This applies to the URX44 / URX44V only (the URX22 has no microSD recording).
 

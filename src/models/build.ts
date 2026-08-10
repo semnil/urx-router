@@ -40,7 +40,7 @@ const COL: Record<DeviceNode["column"], number> = {
 const DERIVED_BUSES = new Set(["bus.stream", "bus.mon1", "bus.mon2"]);
 
 // microSD recorder track-pair slots: 16 tracks = 8 stereo pairs (1/2 … 15/16).
-// Track Count (read-only, device-only) gates how many of these the UI shows.
+// Track Count (planned but never pushed to the device) gates how many the UI shows.
 const SD_REC_PAIRS = 8;
 
 // Layout column index for a node. OSCILLATOR is a generator that feeds the mix
@@ -259,7 +259,7 @@ export function buildModel(p: ModelParams): DeviceModel {
   //     + per-pair Source select + a read-only level meter — no per-source level /
   //     pan / PRE-POST). A source is a channel pair (its primary node), STEREO, or
   //     a MIX bus; single-input (`record`). The recorded tap is the channel's Rec
-  //     Point; Track Count (read-only) gates how many pairs are active.
+  //     Point; Track Count gates how many pairs are active.
   if (p.hasSD) {
     const recSources = [
       ...channelPairs.map(([a]) => a),
