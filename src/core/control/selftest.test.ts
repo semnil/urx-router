@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
+import { defaultPlan } from "../../models/initial-state";
 
 // runSelfTest drives the device through platform connect/get/set/disconnect, so
 // mock those with a faithful in-memory device: vdSet stores, vdGet reads back.
@@ -13,7 +14,7 @@ vi.mock("../platform", () => ({
 }));
 
 import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
-import { auditUnverified, planToCommands } from "./translate";
+import { auditUnverified, eqOneKnob, planToCommands } from "./translate";
 import {
   dGainParam,
   INSERT_FX_NONE,
@@ -114,6 +115,50 @@ describe("runSelfTest", () => {
     expect(report.restored).toBe(true);
     expect(report.written).toBeGreaterThan(0);
     expect(vi.mocked(vdDisconnect)).toHaveBeenCalled();
+  });
+
+  // The verdict's residual covers only what the restore SENT, so it cannot answer the
+  // question this asks: is the unit holding what it held? Only a full-address comparison
+  // asks that — what an external sweep does against hardware, and this is its in-memory
+  // form. It was a PIN of an open gap until 2026-08-10; the gap is closed and it is now
+  // a set.
+  //
+  // The gap: with EQ 1-knob ON in the capture, translate.ts authors no band values (the
+  // unit drives them), so the restore emitted none of those addresses while the sweep,
+  // which flips 1-knob every pass, wrote them on every pass that saw it OFF. A unit
+  // found that way ended with its VISIBLE EQ changed under restored: true. The restore
+  // now asks for those addresses explicitly (EmitOptions.includeDeviceDriven), which is
+  // sound because the unit keeps such a write — measured, not assumed.
+  it("leaves the device holding exactly what it held, including the bands the unit drives", async () => {
+    // The factory-default plan, not the sparse fixture: this compares EVERY address, and
+    // a sparse seed leaves the mock answering 0 for parameters no unit ever holds at 0
+    // (a band Q, a gate time). The capture then reads a value outside the plan's own
+    // domain and the restore re-encodes it to the nearest legal one — a difference that
+    // is the fixture's, not the app's.
+    const seed = defaultPlan("URX44V");
+    const table = installMockDevice(seed);
+    // 1-knob turned on ON THE DEVICE rather than in the seed plan: a unit found that way
+    // still holds legal band values (the seed wrote them, because the plan authors bands
+    // while 1-knob is off), which is the state the capture then reads.
+    for (const nodeId of ["ch1", "ch2"]) {
+      const ok = eqOneKnob(model, nodeId, 0);
+      if (ok) for (const inst of ok.instances) table.set(`${ok.on}:0:${inst}`, 1);
+    }
+    // What vdGet answers for an address nothing has written — the mock's own default, so
+    // "never written" and "written back to that value" compare equal instead of reading
+    // as a change the run did not make.
+    const valueAt = (t: Map<string, number>, k: string): number =>
+      t.has(k) ? t.get(k)! : PORT_REF_PARAMS.has(Number(k.split(":")[0])) ? PORT_REF_NONE : 0;
+    const before = new Map(table);
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.aborted).toBe(false);
+    expect(report.restored).toBe(true);
+    const moved = [...new Set([...before.keys(), ...table.keys()])]
+      .filter((k) => valueAt(before, k) !== valueAt(table, k))
+      .map((k) => `${k}: ${valueAt(before, k)} -> ${valueAt(table, k)}`);
+    expect(moved).toEqual([]);
   });
 
   it("reports residual mismatches when the device ignores a write", async () => {

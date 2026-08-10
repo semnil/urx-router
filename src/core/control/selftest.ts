@@ -36,7 +36,7 @@ import { parseRef, ref } from "../../models/types";
 import type { Plan } from "../plan";
 import { emptyPlan } from "../plan";
 import { canConnect, partnerChannel } from "../routing";
-import { vdConnect, vdDisconnect, vdGet } from "../platform";
+import { vdConnect, vdDisconnect, vdGet, vdSet } from "../platform";
 import {
   BUS_TYPE_OPTIONS,
   DELAY_FRAME_RATE_OPTIONS,
@@ -141,10 +141,13 @@ export interface SelfTestReport {
   aborted: boolean;
   /** True when the device was returned to its original captured state. */
   restored: boolean;
-  /** Residual diff count after writing the original back. ⚠️ It covers only what that
-   *  write SENT: an address the captured plan does not imply is outside the diff, so 0
-   *  is a statement about the write and not about the unit — which is what `diag`
-   *  below exists to make readable. */
+  /** Params that still differ from what the unit held before the run: the converging
+   *  restore's residual PLUS the addresses that write has no command for, read before
+   *  the sweep and written back after it (restoreUnsent). ⚠️ Still bounded by the app's
+   *  parameter catalogue: a run also perturbs the unit's 1-knob base save-off, which
+   *  has no entry and so cannot be read, written or counted (measured on a URX44V,
+   *  2026-08-10 — 27 addresses; nothing observed restores from it, see diag and the
+   *  private PLAN.md). */
   restoreResidual: number;
   /** Non-fatal issues (read failures, send failures) collected along the way. */
   errors: string[];
@@ -172,6 +175,12 @@ export interface SelfTestReport {
     bandsAfterRestore: Array<{ addr: string; want: number; got: number | null }>;
   };
 }
+
+// What the restore emits, named once: the diagnostic below asks "which addresses will
+// the restore NOT send", and asking it of a different set than the restore uses is how
+// a run reports a gap it does not have (the PEQ was listed as unrestorable in a run
+// that restored it, 2026-08-10).
+const RESTORE_EMIT = { includeDeviceDriven: true } as const;
 
 // Deep-negative dB that emit clamps to each level param's own minimum (-inf for
 // faders / sends, the floor for gain / monitor), so the written state is silent.
@@ -494,18 +503,39 @@ export async function runSelfTest(
     // The capture as device values, for a failing pass's trace: the same inverse the
     // restore writes, indexed once rather than per pass.
     const captured = new Map<number, CapturedValue>();
-    for (const c of planToCommands(model, original)) {
+    for (const c of planToCommands(model, original, "all", RESTORE_EMIT)) {
       captured.set(cmdAddr(c), { addr: formatAddrKey(cmdAddr(c)), name: c.name, value: c.vdValue });
     }
     // Addresses a pass emits that the captured plan does not: the restore has no command
-    // for them, so it cannot put them back — and its residual cannot say so either, being
-    // a diff over those same commands. A plan emits an address only under the mode that
-    // owns it, and the sweep runs in every mode.
+    // for them, so it cannot put them back and its residual cannot speak for them either.
+    // They are read off the unit here, BEFORE anything is perturbed, and written back
+    // after the restore.
+    //
+    // A plan emits an address only under the mode that owns it, and the sweep runs in
+    // every mode: the SSMCS GATE/COMP/EQ section toggles exist only in the other COMP/EQ
+    // order, and the insert-FX ON switch only while an effect is selected. Every one of
+    // them is a confirmed param the app already drives, so writing it back is ordinary —
+    // what makes them special is only that the captured plan has no command for them.
+    //
+    // The 4-band PEQ used to be a third family here and is not any more: it is handled
+    // where it belongs, by the restore asking for it (EmitOptions.includeDeviceDriven).
     report.phase = "readback";
     const unrestorable = new Map<number, VdCommand>();
     for (let pass = 0; pass < passes; pass++) {
       for (const c of planToCommands(model, perturbedPlan(model, original, pass, suppress))) {
         if (!captured.has(cmdAddr(c))) unrestorable.set(cmdAddr(c), c);
+      }
+    }
+    const preSweep = new Map<number, number>();
+    for (const [addr, c] of unrestorable) {
+      signal?.throwIfAborted();
+      try {
+        preSweep.set(addr, await vdGet(c.paramId, c.x, c.y));
+      } catch (e) {
+        // Unread means unrestorable AND unverifiable, which is a finding rather than a
+        // reason to stop: this is the diagnostic, and it aggregates (architecture.md,
+        // "Aborting on failure").
+        report.errors.push(`pre-sweep read ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 
@@ -567,8 +597,15 @@ export async function runSelfTest(
     if (!report.aborted) {
       report.phase = "restore";
       report.diag.unrestorable = [...unrestorable.values()].map((c) => `${c.name} ${formatAddrKey(cmdAddr(c))}`);
+      // includeDeviceDriven widens the restore — and only the restore — to the bands
+      // the app never authors while EQ 1-knob is on, because the unit drives them. A
+      // capture holding 1-knob ON otherwise emits none of them while every sweep pass
+      // wrote them, so the unit ends with a VISIBLE EQ change under a verdict that says
+      // it was restored. The unit keeps such a write (measured; see EmitOptions), and
+      // the residual now covers the same set, so a unit that did re-derive would be
+      // reported rather than passed over.
       const back = await phaseStep(
-        sendConverging(model, original, { settleMs, signal, trace: true }),
+        sendConverging(model, original, { settleMs, signal, trace: true, emit: RESTORE_EMIT }),
       );
       if (back) {
         report.diag.restoreRounds = back.trace.map((r) => ({
@@ -592,6 +629,10 @@ export async function runSelfTest(
           }
         }
         report.restoreResidual = back.residual.length;
+        // Then the addresses that write has no command for, put back from what the unit
+        // held before the sweep. Last, so the converging write's side-effect resets have
+        // already landed.
+        report.restoreResidual += await restoreUnsent(unrestorable, preSweep, settleMs, signal, report);
         report.restored = report.restoreResidual === 0;
         report.phase = "done";
       }
@@ -600,6 +641,56 @@ export async function runSelfTest(
   } finally {
     await vdDisconnect(device.epoch);
   }
+}
+
+/**
+ * Write back the addresses the converging restore has no command for, and report how
+ * many did not take. `before` is what the unit answered for each ahead of the sweep; an
+ * address missing from it was unreadable then, so there is nothing to put back and its
+ * failure is already in `errors`.
+ *
+ * Verified by re-reading past the settle window rather than by trusting the ack: a write
+ * is not readable while it is acked, and a read inside that window answers the old value
+ * — which would report a restoration that worked as one that failed. Returns the count
+ * that still differs, which the caller adds to the residual, so a unit that insists on
+ * its own value lands there instead of being passed over.
+ */
+async function restoreUnsent(
+  unrestorable: Map<number, VdCommand>,
+  before: Map<number, number>,
+  settleMs: number,
+  signal: AbortSignal | undefined,
+  report: SelfTestReport,
+): Promise<number> {
+  if (!before.size) return 0;
+  for (const [addr, c] of unrestorable) {
+    const want = before.get(addr);
+    if (want === undefined) continue;
+    signal?.throwIfAborted();
+    try {
+      await vdSet(c.paramId, c.x, c.y, want);
+    } catch (e) {
+      report.errors.push(`restore ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
+  let residual = 0;
+  for (const [addr, c] of unrestorable) {
+    const want = before.get(addr);
+    if (want === undefined) continue;
+    signal?.throwIfAborted();
+    try {
+      const got = await vdGet(c.paramId, c.x, c.y);
+      if (got === want) continue;
+      residual++;
+      // pass -1 = the restore, not a sweep pass.
+      report.residual.push({ name: c.name, paramId: c.paramId, x: c.x, y: c.y, expected: want, actual: got, pass: -1 });
+    } catch (e) {
+      residual++;
+      report.errors.push(`restore verify ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return residual;
 }
 
 /** Tally the per-guess verdicts in one pass (for the status line / report). */

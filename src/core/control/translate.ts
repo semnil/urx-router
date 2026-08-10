@@ -1502,8 +1502,35 @@ export function collisionKey(owners: readonly SharedOwners[]): string {
  * stays the full list filtered by ParamName. What that dropped is reported by the
  * live status line, the write confirm and the compare report.
  */
-export function planToCommands(model: DeviceModel, plan: Plan, scope: WriteScope = "all"): VdCommand[] {
-  const commands = collapseSharedAddrs(buildCommands(model, plan));
+export interface EmitOptions {
+  /**
+   * Also emit the values the **device** drives, which this function otherwise leaves
+   * alone — today the 4-band PEQ while EQ 1-knob is on. Not authoring them is the
+   * right default and stays it: the app must not model what the unit computes.
+   *
+   * The self-test's restore is the one caller that needs them, and for a different
+   * reason than mirroring. Putting a unit back exactly as it was found is not the same
+   * act as writing a plan onto it: a unit found with 1-knob ON has its bands written by
+   * every sweep pass (the sweep flips 1-knob off) and emitted by no restore, so its
+   * VISIBLE EQ ends changed under a verdict that says it was restored.
+   *
+   * Measured on a URX44V before relying on it (2026-08-10): a band gain written while
+   * 1-knob is on is accepted (response_code 200) and still holds 1.5 s later — the unit
+   * does not re-derive over it. Ordering is what matters instead: writing the 1-knob
+   * LEVEL while it is on makes the unit recompute base x level/50, so the bands must go
+   * out AFTER the 1-knob chain — which is the order below, and which a probe that got
+   * it backwards demonstrated by leaving a band at a fifth of its value.
+   */
+  includeDeviceDriven?: boolean;
+}
+
+export function planToCommands(
+  model: DeviceModel,
+  plan: Plan,
+  scope: WriteScope = "all",
+  emit: EmitOptions = {},
+): VdCommand[] {
+  const commands = collapseSharedAddrs(buildCommands(model, plan, emit));
   if (scope === "all") return commands;
   return commands.filter((c) => (PARAMS[c.name] as ParamSpec).sceneExternal !== true);
 }
@@ -1521,7 +1548,7 @@ export function planToCommandsUncollapsed(model: DeviceModel, plan: Plan): VdCom
   return buildCommands(model, plan);
 }
 
-function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
+function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): VdCommand[] {
   const out: VdCommand[] = [];
   // Owner-node stamping for the device-follow index: own(id) attributes every
   // command pushed since the last own() call to `id`. `mark` auto-advances, so a
@@ -1591,7 +1618,7 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (iok && np.eqOneKnob) pushEqOneKnobCommands(out, iok, np.eqOneKnob);
     // Input 4-band PEQ band values (mono COMP->EQ mode / stereo channels).
     const ieq = inputEq(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
-    if (ieq && np.eqBands && !np.eqOneKnob?.on) pushEqBandCommands(out, ieq, np.eqBands);
+    if (ieq && np.eqBands && (emit.includeDeviceDriven || !np.eqOneKnob?.on)) pushEqBandCommands(out, ieq, np.eqBands);
     // Input GATE / COMP detail values (MONO IN channels; COMP only in COMP->EQ).
     const dyn = channelDynamics(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST);
     if (dyn) {
@@ -1783,7 +1810,7 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
     if (node.kind !== "bus") continue;
     const np = plan.nodeParams[node.id];
     const oeq = outputEq(node.id);
-    if (oeq && np?.eqBands && !np.eqOneKnob?.on) pushEqBandCommands(out, oeq, np.eqBands);
+    if (oeq && np?.eqBands && (emit.includeDeviceDriven || !np.eqOneKnob?.on)) pushEqBandCommands(out, oeq, np.eqBands);
     own(node.id);
   }
 
