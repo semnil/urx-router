@@ -1837,7 +1837,24 @@ listed here so they are not proposed again as gaps:
 
 1. **The self-test aggregates instead of stopping.** It is the diagnostic, not a user action: its job is to
    report every parameter that failed a round trip in one pass, so a partial capture still runs the sweep and
-   the restore rather than leaving the unit perturbed.
+   the restore rather than leaving the unit perturbed. **Its restore reaches past what the plan implies, and
+   its verdict says where it stops.** A plan emits an address only under the mode that owns it, and the sweep
+   runs in every mode, so a pass writes addresses the captured plan has no command for — and whose absence the
+   residual cannot see either, being a diff over those same commands. Three families do it: the 4-band PEQ,
+   which the app never authors while EQ 1-knob is on because the unit drives it; the insert-FX ON switch,
+   emitted only while an effect is selected; and the SSMCS GATE/COMP/EQ section toggles, which exist only in
+   the other COMP/EQ order. The first is handled by the restore asking for it (`EmitOptions`), the other two
+   by reading them off the unit before the sweep and writing them back after — and whatever still differs
+   joins `restoreResidual`, so a unit that insists on its own value is reported rather than passed over. Both
+   rest on measurement: a band written while 1-knob is on is accepted and still holds 1.5 s later, and what
+   matters is the order — the 1-knob chain before the bands, which is the emit order.
+
+   **What it still cannot restore is what it cannot address.** A run also perturbs the unit's 1-knob base
+   save-off — the block it copies a channel's PEQ into when 1-knob goes on — which has no entry in the
+   parameter catalogue, so the app can neither read nor write it. Measured on a URX44V (2026-08-10): 27
+   addresses, and nothing observed restores from them (1-knob off, a preset reload, a neutral level, and a
+   power cycle read back by eye on the unit's own screen). `diag` reports what a run could not send; the
+   save-off is outside even that, and the private reference tree carries the measurements.
 2. **`translate.ts`'s value coercion clamps instead of refusing.** It is the last line before the hardware, and
    a coerced in-range value is a better outcome than an out-of-range one reaching the unit.
 3. **`pump` discards an invalid binary frame.** The vd protocol is JSON text, TCP has already settled frame

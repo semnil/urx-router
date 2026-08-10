@@ -663,9 +663,16 @@ export const en = {
     deviceSetupApplying: tr("Applying settings to the device…"),
     deviceSetupApplied: (n: number): string => `Applied ${n} setting${n === 1 ? "" : "s"} to the device`,
     selfTestRunning: tr("Running device self-test… do not disconnect (use the menu again to cancel)"),
+    selfTestRefused: tr(
+      "Self-test did not start — some parameters it would have to restore could not be read first. The device was not touched.",
+    ),
     selfTestCancelled: tr("Self-test canceled — device left silent; fetch again to restore your state"),
     selfTestPass: (n: number): string => `Self-test passed: ${n} params written and read back identically`,
     selfTestFail: (n: number): string => `Self-test FAILED: ${n} param${n === 1 ? "" : "s"} did not match after write`,
+    // "did not match after write" is a claim about the device, and a run that stopped
+    // partway has none to make: the loop never finished converging them.
+    selfTestIncomplete: (n: number): string =>
+      `Self-test did not complete: ${n} param${n === 1 ? "" : "s"} still differed when the run stopped — see the report`,
     selfTestRestoreFail: tr("Self-test: device may not be restored — fetch again to check"),
     selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
       `Self-test guesses: ${confirmed} confirmed, ${refuted} refuted, ${untestable} untestable`,

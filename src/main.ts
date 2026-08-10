@@ -3122,16 +3122,30 @@ if (!DEMO) {
         if (report.errors.length) console.warn("[self-test] issues:", JSON.stringify(report.errors));
         if (report.residual.length) console.warn("[self-test] mismatches:", JSON.stringify(report.residual));
         const verdicts = summarizeVerdicts(report.unverified);
+        const divergence = report.residual.filter((r) => !r.stoppedOn).length;
+        const neverCompared = report.residual.length - divergence;
         setStatus(
           report.aborted
             ? t().status.selfTestCancelled
-            : !report.restored
-              ? t().status.selfTestRestoreFail
-              : report.unverified.length
-                ? t().status.selfTestUnverified(verdicts.confirmed, verdicts.refuted, verdicts.untestable)
-                : report.ok
-                  ? t().status.selfTestPass(report.written)
-                  : t().status.selfTestFail(report.residual.length),
+            : // Before the restore verdict: a refusal wrote nothing, so `restored` is
+              // false only because there was nothing to restore — reading it as a failed
+              // restore tells the operator their unit may be left perturbed when it was
+              // never touched.
+              report.phase === "refused"
+              ? t().status.selfTestRefused
+              : !report.restored
+                ? t().status.selfTestRestoreFail
+                : report.unverified.length
+                  ? t().status.selfTestUnverified(verdicts.confirmed, verdicts.refuted, verdicts.untestable)
+                  : report.ok
+                    ? t().status.selfTestPass(report.written)
+                    : // `residual` holds two things once a pass can stop partway: what the
+                      // device answered differently, and what the run never got to ask
+                      // about. Only the first is a mismatch, and if there is any of the
+                      // second the headline is that the run did not finish.
+                      neverCompared > 0
+                      ? t().status.selfTestIncomplete(neverCompared)
+                      : t().status.selfTestFail(divergence),
         );
         // Two reasons to keep the report, kept apart: the model's unconfirmed mappings
         // (a property of the model, so the run always has those verdicts to send back)

@@ -36,7 +36,7 @@ import { parseRef, ref } from "../../models/types";
 import type { Plan } from "../plan";
 import { emptyPlan } from "../plan";
 import { canConnect, partnerChannel } from "../routing";
-import { vdConnect, vdDisconnect } from "../platform";
+import { vdConnect, vdDisconnect, vdGet, vdSet } from "../platform";
 import {
   BUS_TYPE_OPTIONS,
   DELAY_FRAME_RATE_OPTIONS,
@@ -47,7 +47,8 @@ import {
   OUTPUT_INSERT_FX_OPTIONS,
   REC_POINT_OPTIONS,
 } from "./params";
-import { sendConverging } from "./client";
+import { reachedAndFailed, sendConverging } from "./client";
+import type { SendOutcome } from "./client";
 import { SETTLE_TIMEOUT_MS } from "./settle";
 import type { ConvergeRound } from "./client";
 import { applyDeviceState } from "./readback";
@@ -62,7 +63,7 @@ import {
   UNVERIFIED_MAPPINGS,
   unverifiedAddresses,
 } from "./translate";
-import type { UnverifiedCollision } from "./translate";
+import type { UnverifiedCollision, VdCommand } from "./translate";
 
 export interface SelfTestMismatch {
   name: string;
@@ -71,25 +72,70 @@ export interface SelfTestMismatch {
   y: number;
   /** Value the plan wrote. */
   expected: number;
-  /** Value read back from the device, or null if it could not be read. */
+  /** What the device answered at the last read this pass made. On a pass that completed
+   *  that is the read-back after the write; on one that stopped it is the comparison the
+   *  run got to before it ended. Null when the address could not be read at that point. */
   actual: number | null;
-  /** Sweep pass that produced this mismatch. */
+  /** Sweep pass that produced this mismatch (-1 = the restore). */
   pass: number;
+  /** How the PASS ended, when it did not finish — not a statement about this address.
+   *  `sendCommands` stops at the first refusal, so an address earlier in the same round
+   *  was sent, and a read that failed elsewhere says nothing about one that read fine.
+   *  Absent on a pass that ran to the end of its loop — only those entries are a divergence the device settled on. On the rest the
+   *  loop never finished converging, so the difference may be one a later round would have
+   *  closed; printing them as a fidelity finding states a verdict the run did not reach.
+   *  A model with no unverified mapping (URX44V) has no other guard: every one of them
+   *  lands in the "other divergence" section, so one refused write read as the unit
+   *  disagreeing about hundreds of parameters.
+   *
+   *  It does NOT mean the address went unread. `diffPlan` keeps reading past a failure
+   *  (stopOnError is off here), so a residual entry is one that WAS read and did differ;
+   *  the addresses that could not be read are absent from the residual entirely and are
+   *  reported as read errors. */
+  stoppedOn?: "read" | "write";
   /** Unverified-mapping key this address belongs to, if any (the guess it refutes). */
   unverifiedKey?: string;
 }
 
-/** Per-guess outcome of the run, so an owner can confirm or refute each one. */
+/**
+ * What the run has to say about one guessed mapping. `outcome` is stated, not derived:
+ * it used to be two booleans with everything that was not `confirmed` falling through
+ * to "refuted", so a guess the run could not READ was published as one the device had
+ * contradicted — and every future reason for not-confirmed would have landed there too.
+ * REFUTED is a claim about the device; it needs its own evidence.
+ *
+ *   confirmed   every address round-tripped
+ *   refuted     at least one did not, in a pass that completed — `mismatches` says which
+ *   unread      one of ITS OWN addresses could not be read, so nothing about it round-
+ *               tripped. This is the one per-address reason, taken from the failed reads
+ *               themselves. Measured in a fixture: one unreadable address left an
+ *               unrelated guess with 14 "mismatches"
+ *   incomplete  it differed, in a pass that did not finish. WHY that pass stopped is a
+ *               fact about the pass, not about this guess — `sendCommands` stops at the
+ *               first refusal, so a guess written earlier in the same round was asked and
+ *               answered; a read that failed elsewhere says nothing about an address that
+ *               read fine. Naming the cause here printed exactly those two lies. The
+ *               cause is in Issues, and the difference under "Not settled"
+ *   unexercised the guess has no address on this model, so the run never wrote it
+ *   collision   a confirmed param already owns the guessed id (static audit; the
+ *               guess is wrong, and its writes were suppressed for safety)
+ *
+ * Evidence is per PASS, and that is what makes REFUTED durable: a pass that read
+ * everything and still saw a divergence has settled the guess, and a read failure in
+ * some later pass says nothing about the round trip that pass already observed.
+ */
+export type UnverifiedOutcome = "confirmed" | "refuted" | "unread" | "incomplete" | "unexercised" | "collision";
+
 export interface UnverifiedFinding {
   key: string;
   label: string;
-  /** A confirmed catalog param owns the guessed id — the guess is wrong and the
-   *  self-test could not exercise it (its writes were suppressed for safety). */
-  collision: boolean;
-  /** Addresses written for this guess that did not round-trip. */
+  outcome: UnverifiedOutcome;
+  /** Addresses written for this guess that did not round-trip, from passes that
+   *  completed. Non-empty exactly when the outcome is "refuted" — every other outcome is
+   *  a statement that nothing was settled, and a list of differences printed under it
+   *  reads as the evidence it is not. What a stopped pass left for this guess is in the
+   *  report's "Not settled" section instead. */
   mismatches: SelfTestMismatch[];
-  /** True when the guess was exercised and every address round-tripped (confirmed). */
-  confirmed: boolean;
 }
 
 /**
@@ -141,13 +187,50 @@ export interface SelfTestReport {
   aborted: boolean;
   /** True when the device was returned to its original captured state. */
   restored: boolean;
-  /** Residual diff count after writing the original back (0 = fully restored). */
+  /** Params that still differ from what the unit held before the run: the converging
+   *  restore's residual PLUS the addresses that write has no command for, read before
+   *  the sweep and written back after it (restoreUnsent). ⚠️ Still bounded by the app's
+   *  parameter catalogue: a run also perturbs the unit's 1-knob base save-off, which
+   *  has no entry and so cannot be read, written or counted (measured on a URX44V,
+   *  2026-08-10 — 27 addresses; nothing observed restores from it, see diag and the
+   *  private PLAN.md). */
   restoreResidual: number;
   /** Non-fatal issues (read failures, send failures) collected along the way. */
   errors: string[];
-  /** Last phase reached — where it stopped if an error was thrown. */
-  phase: "connect" | "readback" | "write" | "verify" | "restore" | "done";
+  /** Last phase reached — where it stopped if an error was thrown. "refused" is the
+   *  one that is not a failure: the run declined to start and wrote nothing, so
+   *  `restored` says nothing about the unit and callers must not read it as a failed
+   *  restore (it is false because nothing was restored, not because something is left
+   *  perturbed). */
+  phase: "connect" | "readback" | "write" | "verify" | "restore" | "done" | "refused";
+  /**
+   * DIAGNOSTIC — the restore's own account of itself, small enough to ride the report
+   * line the headless launch already prints. It exists because a run that reported
+   * `restoreResidual: 0` while an external sweep found 27 addresses changed left
+   * nothing to read: neither the verdict nor the log could say whether the restore had
+   * SENT those addresses, what the unit answered when it did, or what a later round
+   * re-sent over the top. Each field answers exactly one of those.
+   */
+  diag: {
+    /** Addresses the sweep wrote that the restore's command set does not carry. Empty
+     *  means the restore does emit them, and the residue has another cause. */
+    unrestorable: string[];
+    /** Per round of the converging restore: how much went out, how much of it was the
+     *  PEQ and the 1-knob chain, and how much still differed on the re-read. A 1-knob
+     *  group re-sent in the last round reloads the preset over the bands. */
+    restoreRounds: Array<{ sent: number; bands: number; oneKnob: number; residual: number | null }>;
+    /** Band gains that disagreed with the captured value when read IMMEDIATELY after
+     *  the restore. Empty here while an external sweep later finds them changed means
+     *  the unit moved them after the write, not that the write never landed. */
+    bandsAfterRestore: Array<{ addr: string; want: number; got: number | null }>;
+  };
 }
+
+// What the restore emits, named once: the diagnostic below asks "which addresses will
+// the restore NOT send", and asking it of a different set than the restore uses is how
+// a run reports a gap it does not have (the PEQ was listed as unrestorable in a run
+// that restored it, 2026-08-10).
+const RESTORE_EMIT = { includeDeviceDriven: true } as const;
 
 // Deep-negative dB that emit clamps to each level param's own minimum (-inf for
 // faders / sends, the floor for gain / monitor), so the written state is silent.
@@ -428,6 +511,7 @@ export async function runSelfTest(
     restoreResidual: 0,
     errors: [],
     phase: "connect",
+    diag: { unrestorable: [], restoreRounds: [], bandsAfterRestore: [] },
   };
   // Run one phase's round-trips, returning its result — or undefined if the user
   // cancelled (the inner loops throw via signal.throwIfAborted). A cancel is
@@ -449,6 +533,28 @@ export async function runSelfTest(
   // collisions so an owner knows the guess is refuted before any hardware round-trip.
   report.collisions = auditUnverified(model.id);
   const suppress = new Set(report.collisions.map((c) => c.key));
+  // Reads the run could not make. They are not mismatches — nobody knows whether the
+  // parameter matched — so they cannot go in `residual`, and a verdict that ignores
+  // them claims a fidelity it did not measure.
+  let readFailures = 0;
+  // Unverified-mapping keys with at least one address the run could not read. A read
+  // failure keeps the command out of the diff (diffPlan) and so out of the residual, so
+  // without this the guess shows no mismatch and reports CONFIRMED — a promotion to
+  // "verified on hardware" for an address nothing round-tripped.
+  const unreadKeys = new Set<string>();
+  // Unverified-mapping keys a pass refuted on evidence it can stand behind: the address
+  // diverged, in a pass whose reads all succeeded. Accumulated here, pass by pass, rather
+  // than derived afterwards from run-wide counters — those cannot say WHICH pass a
+  // residual came from, so one late read failure would retract a refutation an earlier
+  // pass had already established.
+  const refutedKeys = new Set<string>();
+  // …and keys whose only divergence came from a pass that did NOT complete. No cause is
+  // carried: how the pass ended is a fact about the pass, and attributing it to each
+  // address in the residual claims things the run did not observe (see UnverifiedOutcome).
+  const stoppedKeys = new Set<string>();
+  // Commands the device reached and refused. `residual` covers the same runs today, but
+  // via a coupling in sendConverging rather than as a stated fact (see report.ok).
+  let sendFailures = 0;
   // Address → unverified-mapping key, so each residual can be tagged with the guess
   // it refutes. A colliding guess shares its address with a confirmed param (whose
   // write is kept); drop those entries so a residual there is attributed to the
@@ -469,8 +575,48 @@ export async function runSelfTest(
     // The capture as device values, for a failing pass's trace: the same inverse the
     // restore writes, indexed once rather than per pass.
     const captured = new Map<number, CapturedValue>();
-    for (const c of planToCommands(model, original)) {
+    for (const c of planToCommands(model, original, "all", RESTORE_EMIT)) {
       captured.set(cmdAddr(c), { addr: formatAddrKey(cmdAddr(c)), name: c.name, value: c.vdValue });
+    }
+    // Addresses a pass emits that the captured plan does not: the restore has no command
+    // for them, so it cannot put them back and its residual cannot speak for them either.
+    // They are read off the unit here, BEFORE anything is perturbed, and written back
+    // after the restore.
+    //
+    // A plan emits an address only under the mode that owns it, and the sweep runs in
+    // every mode: the SSMCS GATE/COMP/EQ section toggles exist only in the other COMP/EQ
+    // order, and the insert-FX ON switch only while an effect is selected. Every one of
+    // them is a confirmed param the app already drives, so writing it back is ordinary —
+    // what makes them special is only that the captured plan has no command for them.
+    //
+    // The 4-band PEQ used to be a third family here and is not any more: it is handled
+    // where it belongs, by the restore asking for it (EmitOptions.includeDeviceDriven).
+    report.phase = "readback";
+    const unrestorable = new Map<number, VdCommand>();
+    for (let pass = 0; pass < passes; pass++) {
+      for (const c of planToCommands(model, perturbedPlan(model, original, pass, suppress))) {
+        if (!captured.has(cmdAddr(c))) unrestorable.set(cmdAddr(c), c);
+      }
+    }
+    // Through phaseStep like every other await here: a cancel inside this loop is a
+    // cancel, and without it the abort escapes runSelfTest and reaches the user as a
+    // self-test ERROR dialog instead.
+    const preSweep = await phaseStep(readPreSweep(unrestorable, signal, report));
+    if (!preSweep) return report; // cancelled during the pre-sweep read
+    // An address in this set has no other record of what it held: the captured plan has
+    // no command for it, so a read failure here means the run could perturb it and never
+    // put it back. Nothing has been written yet, so the honest answer is not to start —
+    // counting it in the residual afterwards leaves the unit changed and only says so.
+    //
+    // This is not the "aggregate instead of stopping" exception (architecture.md). That
+    // one is about a partial CAPTURE, whose addresses the restore still writes; these are
+    // the addresses it cannot. `errors` already names each one.
+    if (preSweep.size !== unrestorable.size) {
+      report.errors.push(
+        `refusing to sweep: ${unrestorable.size - preSweep.size} address(es) the restore cannot reach could not be read first`,
+      );
+      report.phase = "refused";
+      return report;
     }
 
     // 2. Sweep: each pass writes a silent perturbed plan (converging, so params
@@ -484,8 +630,25 @@ export async function runSelfTest(
       const result = await phaseStep(sendConverging(model, plan, { settleMs, signal, trace: true }));
       if (!result) break;
       const { outcomes, residual } = result;
-      report.written += outcomes.length;
-      report.errors.push(...outcomes.filter((o) => !o.ok).map((o) => `p${pass} ${o.command.name}: ${o.error}`));
+      // Reached the device — not `outcomes.length`, which also counts the commands
+      // `sendCommands` marked skipped after the first refusal. Those never left the app,
+      // and counting them had the same report saying "N commands written" and "M
+      // command(s) never sent" about the same run.
+      report.written += outcomes.filter((o) => !o.skipped).length;
+      sendFailures += outcomes.filter(reachedAndFailed).length;
+      report.errors.push(...sendFailureLines(outcomes, `p${pass}`));
+      // A command whose current value could not be read is left out of the diff by
+      // design (diffPlan: never write on a value you did not confirm), which also leaves
+      // it out of the residual — so without this it reads as a parameter that matched,
+      // and it also ended the converge loop early.
+
+      report.errors.push(...result.readErrors.map((e) => `p${pass} read: ${e}`));
+      readFailures += result.readErrors.length;
+      for (const c of result.unread) {
+        const key = addresses.get(`${c.paramId}:${c.y}`);
+        if (key) unreadKeys.add(key);
+      }
+
       report.phase = "verify";
       // Keep the trace of a pass that did not converge, with the captured state of
       // the addresses that stayed wrong: the summary below records the end state,
@@ -494,7 +657,24 @@ export async function runSelfTest(
         const baseline = residual.map((d) => captured.get(cmdAddr(d.command))).filter((v) => v !== undefined);
         report.traces.push({ pass, baseline, rounds: result.trace });
       }
+      // How THIS pass ended, which is what decides whether its residual is evidence.
+      // Only a pass that ran to the end of its own loop watched each address converge or
+      // fail to; both ways out short of that leave a residual describing the run rather
+      // than the device, and they are not the same thing to report. The send failure is
+      // the worse of the two — sendConverging breaks out WITHOUT re-reading, so what it
+      // hands back is the diff it was about to write, i.e. every address the pass
+      // intended to change.
+      const stoppedOn: "read" | "write" | null = result.readErrors.length
+        ? "read"
+        : outcomes.some(reachedAndFailed)
+          ? "write"
+          : null;
       for (const d of residual) {
+        const unverifiedKey = d.command.x === 0 ? addresses.get(`${d.command.paramId}:${d.command.y}`) : undefined;
+        if (unverifiedKey) {
+          if (stoppedOn === null) refutedKeys.add(unverifiedKey);
+          else stoppedKeys.add(unverifiedKey);
+        }
         report.residual.push({
           name: d.command.name,
           paramId: d.command.paramId,
@@ -503,26 +683,42 @@ export async function runSelfTest(
           expected: d.command.vdValue,
           actual: d.current,
           pass,
-          unverifiedKey: d.command.x === 0 ? addresses.get(`${d.command.paramId}:${d.command.y}`) : undefined,
+          unverifiedKey,
+          ...(stoppedOn ? { stoppedOn } : {}),
         });
       }
     }
-    report.ok = !report.aborted && report.residual.length === 0;
+    // A refused write is stated here rather than inferred from the residual. It does
+    // always leave one (sendConverging only enters a round while something differs), so
+    // the term is redundant today — but that is a coupling two functions away, and `ok`
+    // is the field a caller reads to decide the unit is fine.
+    report.ok = !report.aborted && report.residual.length === 0 && readFailures === 0 && sendFailures === 0;
 
-    // Per-guess verdict: a collision could not be tested (and is already known
-    // wrong); otherwise the guess is confirmed when it was exercised on this model
-    // and every one of its addresses round-tripped without a mismatch.
+    // Per-guess verdict. Each branch is a reason, in the order that decides: a collision
+    // is known wrong before any hardware; a divergence a complete pass observed settles
+    // the guess and nothing later takes it back; short of that, one of its own addresses
+    // was unreadable, or it differed in a pass that did not finish — and only the first
+    // of those two is a fact about the guess; a guess with no address on this model was
+    // never tested.
     const exercised = new Set(addresses.values());
     report.unverified = UNVERIFIED_MAPPINGS.filter((m) => m.models.includes(model.id)).map((m) => {
-      const collision = suppress.has(m.key);
-      const mismatches = report.residual.filter((r) => r.unverifiedKey === m.key);
-      return {
-        key: m.key,
-        label: m.label,
-        collision,
-        mismatches,
-        confirmed: !collision && exercised.has(m.key) && mismatches.length === 0,
-      };
+      // Only what a completed pass observed. The outcome already turns on that, but the
+      // DETAIL did not: a guess refuted in pass 0 also collected every stopped pass's
+      // residual, so the report published "REFUTED — N address(es)" over a count and a
+      // wrote/read list padded with differences nothing had settled.
+      const mismatches = report.residual.filter((r) => r.unverifiedKey === m.key && !r.stoppedOn);
+      const outcome: UnverifiedOutcome = suppress.has(m.key)
+        ? "collision"
+        : refutedKeys.has(m.key)
+          ? "refuted"
+          : unreadKeys.has(m.key)
+            ? "unread"
+            : stoppedKeys.has(m.key)
+              ? "incomplete"
+              : exercised.has(m.key)
+                ? "confirmed"
+                : "unexercised";
+      return { key: m.key, label: m.label, outcome, mismatches };
     });
 
     // 3. Restore the original state (converging, for the same reset behavior).
@@ -530,10 +726,48 @@ export async function runSelfTest(
     // restore would only re-run the round-trips the user just cancelled.
     if (!report.aborted) {
       report.phase = "restore";
-      const back = await phaseStep(sendConverging(model, original, { settleMs, signal }));
+      report.diag.unrestorable = [...unrestorable.values()].map((c) => `${c.name} ${formatAddrKey(cmdAddr(c))}`);
+      // includeDeviceDriven widens the restore — and only the restore — to the bands
+      // the app never authors while EQ 1-knob is on, because the unit drives them. A
+      // capture holding 1-knob ON otherwise emits none of them while every sweep pass
+      // wrote them, so the unit ends with a VISIBLE EQ change under a verdict that says
+      // it was restored. The unit keeps such a write (measured; see EmitOptions), and
+      // the residual now covers the same set, so a unit that did re-derive would be
+      // reported rather than passed over.
+      const back = await phaseStep(
+        sendConverging(model, original, { settleMs, signal, trace: true, emit: RESTORE_EMIT }),
+      );
       if (back) {
+        report.diag.restoreRounds = back.trace.map((r) => ({
+          sent: r.sent.length,
+          bands: r.sent.filter((c) => c.name.startsWith("EQ_BAND")).length,
+          oneKnob: r.sent.filter((c) => c.name.startsWith("EQ_ONE_KNOB")).length,
+          residual: r.reread?.length ?? null,
+        }));
+        // Read back the band gains the restore just wrote, before anything else can
+        // touch the unit. RESTORE_EMIT, not the default: the default omits exactly the
+        // bands this exists to watch — the ones under EQ 1-knob — so asking with it
+        // inspects nothing in the one configuration that motivated the field.
+        if (!(await phaseStep(probeBands(model, original, signal, report)))) return report;
         report.restoreResidual = back.residual.length;
-        report.restored = back.residual.length === 0;
+        // Same for the restore, and it matters more here: a read failure also ENDS the
+        // converge loop (sendConverging stops on one), so the write may have stopped
+        // part-way. Counting them keeps `restored` a statement about what was checked.
+        report.errors.push(...back.readErrors.map((e) => `restore read: ${e}`));
+        report.restoreResidual += back.readErrors.length;
+        // A refused WRITE ends the same loop, and without this the report says only that
+        // N params differ — which reads as a unit that would not keep the values, when
+        // the values never reached it. Not added to restoreResidual: the residual it left
+        // is the pre-write diff, so those params are already counted there.
+        report.errors.push(...sendFailureLines(back.outcomes, "restore"));
+
+        // Then the addresses that write has no command for, put back from what the unit
+        // held before the sweep. Last, so the converging write's side-effect resets have
+        // already landed.
+        const unsent = await phaseStep(restoreUnsent(unrestorable, preSweep, settleMs, signal, report));
+        if (unsent === undefined) return report; // cancelled during the write-back
+        report.restoreResidual += unsent;
+        report.restored = report.restoreResidual === 0;
         report.phase = "done";
       }
     }
@@ -543,17 +777,132 @@ export async function runSelfTest(
   }
 }
 
+/**
+ * Read what the unit holds at the addresses the restore has no command for, before
+ * anything perturbs them. An address that cannot be read is left OUT of the result: the
+ * run then neither writes it back nor claims it did, and the caller counts the shortfall
+ * into the residual. Recording it as readable-but-unknown would be the worse shape —
+ * restoreUnsent would skip it silently and the verdict would not notice.
+ */
+async function readPreSweep(
+  unrestorable: Map<number, VdCommand>,
+  signal: AbortSignal | undefined,
+  report: SelfTestReport,
+): Promise<Map<number, number>> {
+  const preSweep = new Map<number, number>();
+  for (const [addr, c] of unrestorable) {
+    signal?.throwIfAborted();
+    try {
+      preSweep.set(addr, await vdGet(c.paramId, c.x, c.y));
+    } catch (e) {
+      report.errors.push(`pre-sweep read ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return preSweep;
+}
+
+/**
+ * Read the band gains the restore just wrote, before anything else can touch the unit,
+ * and keep only the ones that disagree. Empty here while a later external sweep finds
+ * them changed is what separates "the write never went" from "the unit moved it after".
+ */
+async function probeBands(
+  model: DeviceModel,
+  original: Plan,
+  signal: AbortSignal | undefined,
+  report: SelfTestReport,
+): Promise<true> {
+  for (const c of planToCommands(model, original, "all", RESTORE_EMIT)) {
+    if (c.name !== "EQ_BAND_GAIN") continue;
+    signal?.throwIfAborted();
+    try {
+      const got = await vdGet(c.paramId, c.x, c.y);
+      if (got !== c.vdValue)
+        report.diag.bandsAfterRestore.push({ addr: formatAddrKey(cmdAddr(c)), want: c.vdValue, got });
+    } catch {
+      report.diag.bandsAfterRestore.push({ addr: formatAddrKey(cmdAddr(c)), want: c.vdValue, got: null });
+    }
+  }
+  return true;
+}
+
+/**
+ * Write back the addresses the converging restore has no command for, and report how
+ * many did not take. `before` is what the unit answered for each ahead of the sweep; an
+ * address missing from it was unreadable then, so there is nothing to put back and its
+ * failure is already in `errors`.
+ *
+ * Verified by re-reading past the settle window rather than by trusting the ack: a write
+ * is not readable while it is acked, and a read inside that window answers the old value
+ * — which would report a restoration that worked as one that failed. Returns the count
+ * that still differs, which the caller adds to the residual, so a unit that insists on
+ * its own value lands there instead of being passed over.
+ */
+/**
+ * Send failures from one converging write, as report lines. `sendCommands` stops at the
+ * first command the device refused and marks every command after it `skipped`, so the
+ * raw !ok list is one real failure trailed by however many never left the app — each of
+ * which would print with an undefined message. The refusal is the line worth reading;
+ * what it stopped is a count.
+ */
+function sendFailureLines(outcomes: readonly SendOutcome[], prefix: string): string[] {
+  const lines = outcomes.filter(reachedAndFailed).map((o) => `${prefix} ${o.command.name}: ${o.error}`);
+  const skipped = outcomes.filter((o) => o.skipped).length;
+  if (skipped) lines.push(`${prefix} ${skipped} command(s) never sent — the write stopped at the failure above`);
+  return lines;
+}
+
+async function restoreUnsent(
+  unrestorable: Map<number, VdCommand>,
+  before: Map<number, number>,
+  settleMs: number,
+  signal: AbortSignal | undefined,
+  report: SelfTestReport,
+): Promise<number> {
+  if (!before.size) return 0;
+  for (const [addr, c] of unrestorable) {
+    const want = before.get(addr);
+    if (want === undefined) continue;
+    signal?.throwIfAborted();
+    try {
+      await vdSet(c.paramId, c.x, c.y, want);
+    } catch (e) {
+      report.errors.push(`restore ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
+  let residual = 0;
+  for (const [addr, c] of unrestorable) {
+    const want = before.get(addr);
+    if (want === undefined) continue;
+    signal?.throwIfAborted();
+    try {
+      const got = await vdGet(c.paramId, c.x, c.y);
+      if (got === want) continue;
+      residual++;
+      // pass -1 = the restore, not a sweep pass.
+      report.residual.push({ name: c.name, paramId: c.paramId, x: c.x, y: c.y, expected: want, actual: got, pass: -1 });
+    } catch (e) {
+      residual++;
+      report.errors.push(`restore verify ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return residual;
+}
+
 /** Tally the per-guess verdicts in one pass (for the status line / report). */
 export function summarizeVerdicts(unverified: UnverifiedFinding[]): {
   confirmed: number;
   refuted: number;
   untestable: number;
 } {
+  // No fall-through: "refuted" is counted only where the run said so. It was the
+  // default once, which turned every other reason into a claim about the device.
   const counts = { confirmed: 0, refuted: 0, untestable: 0 };
   for (const u of unverified) {
-    if (u.collision) counts.untestable++;
-    else if (u.confirmed) counts.confirmed++;
-    else counts.refuted++;
+    if (u.outcome === "confirmed") counts.confirmed++;
+    else if (u.outcome === "refuted") counts.refuted++;
+    else counts.untestable++;
   }
   return counts;
 }
@@ -575,17 +924,30 @@ export function formatSelfTestReport(report: SelfTestReport): string {
   lines.push("");
   lines.push(`- Result: ${report.ok ? "PASS" : "FAIL"} (phase: ${report.phase})`);
   lines.push(`- Captured groups: ${report.applied}; passes: ${report.passes}; commands written: ${report.written}`);
-  lines.push(`- Restored: ${report.restored ? "yes" : `NO — ${report.restoreResidual} param(s) differ`}`);
+  lines.push(
+    report.phase === "refused"
+      ? "- Restored: not applicable — the run refused to start and wrote nothing"
+      : `- Restored: ${report.restored ? "yes" : `NO — ${report.restoreResidual} param(s) differ`}`,
+  );
 
   if (report.unverified.length) {
     lines.push("");
     lines.push("## Unverified-guess verdicts");
     for (const u of report.unverified) {
-      const verdict = u.collision
-        ? "COULD NOT TEST — guessed id collides with a confirmed param (guess is wrong)"
-        : u.confirmed
-          ? "CONFIRMED — round-tripped on the device"
-          : `REFUTED — ${u.mismatches.length} address(es) did not round-trip`;
+      // One line per outcome, so a new reason has to be given one rather than
+      // inheriting whatever the last branch happened to say.
+      const verdict = {
+        collision: "COULD NOT TEST — guessed id collides with a confirmed param (guess is wrong)",
+        // Neither carries a divergence list: what a stopped pass left for this guess is
+        // under "Not settled", where it is not standing next to a verdict. And only the
+        // first names a cause, because only the first is about this guess's own address.
+        unread: "COULD NOT TEST — one of its addresses could not be read, so nothing about it round-tripped",
+        incomplete:
+          "COULD NOT TEST — it differed in a pass that did not finish; the difference is under Not settled, and what stopped the run under Issues",
+        unexercised: "COULD NOT TEST — no address on this model, so the run never wrote it",
+        confirmed: "CONFIRMED — round-tripped on the device",
+        refuted: `REFUTED — ${u.mismatches.length} address(es) did not round-trip`,
+      }[u.outcome];
       lines.push(`- **${u.label}** (${u.key}): ${verdict}`);
       for (const m of u.mismatches) lines.push(`  - ${mismatchLine(m)}`);
     }
@@ -599,12 +961,38 @@ export function formatSelfTestReport(report: SelfTestReport): string {
     }
   }
 
-  // Device divergence not attributable to an unverified guess — genuine fidelity issues.
-  const other = report.residual.filter((r) => !r.unverifiedKey);
-  if (other.length) {
+  // Device divergence not attributable to an unverified guess — genuine fidelity issues,
+  // and only from passes that completed. A pass that stopped differs in what is MISSING:
+  // not the comparison (diffPlan reads every address whether or not one of them failed,
+  // so a residual entry was read and did differ) but the convergence — the re-send and
+  // re-read that a completed pass keeps doing until nothing differs. So these are not a
+  // finding, and they are not "never looked at" either.
+  const shown = report.residual.filter((r) => !r.unverifiedKey && !r.stoppedOn);
+  // Every unsettled entry, guess-attributed or not: the verdicts above no longer carry
+  // them, so this is the only place they appear at all.
+  const unsettled = report.residual.filter((r) => r.stoppedOn);
+  if (shown.length) {
     lines.push("");
     lines.push("## Other device divergence (confirmed params)");
-    for (const m of other) lines.push(`- p${m.pass} ${mismatchLine(m)}`);
+    for (const m of shown) lines.push(`- p${m.pass} ${mismatchLine(m)}`);
+  }
+  if (unsettled.length) {
+    lines.push("");
+    lines.push(`## Not settled — ${unsettled.length} param(s) still differing when the run stopped`);
+    lines.push("");
+    lines.push(
+      "The pass ended early (a refused write, or a read it could not make), so the loop never" +
+        " finished converging these. Each of them was read and did differ at that point; what a" +
+        " completed pass would have done next — re-send, re-read, until nothing differs — is what" +
+        " did not happen, so none of this is a fidelity finding. Addresses the run could not read" +
+        " AT ALL are not counted here: nothing was compared for them, and they are under Issues.",
+    );
+    for (const m of unsettled) {
+      const guess = m.unverifiedKey ? `, guess ${m.unverifiedKey}` : "";
+      lines.push(
+        `- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — plan wanted ${m.expected}, device answered ${m.actual ?? "unreadable"} at the last read (the pass stopped on a ${m.stoppedOn === "write" ? "refused write" : "failed read"}${guess})`,
+      );
+    }
   }
 
   if (report.errors.length) {
@@ -627,9 +1015,13 @@ export function formatSelfTestReport(report: SelfTestReport): string {
       lines.push("");
       const found =
         r.reread === null ? "no re-read (the round stopped on a send failure)" : `${r.reread.length} still differing`;
-      lines.push(`### Round ${i + 1} — sent ${r.sent.length}, ${r.elapsedMs} ms, ${found}`);
+      // `sent` is what the round ISSUED (roundCommands), which is what the trace is for.
+      // On a round that stopped, that is not what the device saw, and the heading has to
+      // stop saying it was.
+      const stopped = r.reread === null;
+      lines.push(`### Round ${i + 1} — ${stopped ? "issued" : "sent"} ${r.sent.length}, ${r.elapsedMs} ms, ${found}`);
       lines.push("");
-      lines.push("Sent, in order:");
+      lines.push(stopped ? "Issued, in order — the tail after the refusal never left the app:" : "Sent, in order:");
       for (const c of r.sent) lines.push(`- ${c.name} @ ${formatAddrKey(cmdAddr(c))} = ${c.vdValue}`);
       if (r.reread?.length) {
         lines.push("");
