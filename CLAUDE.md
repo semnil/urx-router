@@ -115,7 +115,7 @@ the second set, and a one-shot action is consumed by the first caller (an HMR re
 | Compare with device | checking a `.urxf` import against the unit without writing anything | Device menu → Compare (experimental); full per-parameter log, compared count and elapsed time (`src/core/control/client.ts`) |
 | `.urxf` import | reading the unit's microSD settings file into a plan | Device menu (experimental); refused while Live sync is up (`src/core/control/urxf.ts`) |
 | Storage reset | clearing the consent gate / model / view state | `pnpm reset:storage` (browser) or `pnpm tauri dev -- -- --reset-storage` |
-| Casket transport | comparing the two endpoints deliberately — the device link normally runs over the per-session port Device Center advertises, and casket is reachable only this way. **Not** a fallback: nothing selects it automatically, so a regression on the default route cannot hide behind it | `pnpm tauri dev -- -- --experimental --casket` (both flags) |
+| Casket transport | comparing the two endpoints deliberately — the device link normally runs over the per-session port Device Center advertises, and casket is reachable only this way. **Not** a fallback: nothing selects it automatically, so a regression on the default route cannot hide behind it. **Restart Device Center when you are done**: casket serves one client, taking it silences whoever held it — including Device Center's own UI, which is normally that client — and a silenced connection never recovers on its own (measured). Nothing shows this, so the run looks clean either way | `pnpm tauri dev -- -- --experimental --casket` (both flags) |
 
 **Measuring and generating.**
 
