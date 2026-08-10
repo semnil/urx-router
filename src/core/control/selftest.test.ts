@@ -24,7 +24,15 @@ import {
   PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
 } from "./params";
 import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
-import { formatSelfTestReport, passesFor, PASSES, perturbedPlan, runSelfTest, selectableInputIds } from "./selftest";
+import {
+  formatSelfTestReport,
+  passesFor,
+  PASSES,
+  perturbedPlan,
+  runSelfTest,
+  selectableInputIds,
+  summarizeVerdicts,
+} from "./selftest";
 
 const model = getModel("URX44V");
 
@@ -505,13 +513,21 @@ describe("unverified-guess workflow (URX22)", () => {
     const report = await runSelfTest(m22, 0);
 
     const hiz = report.unverified.find((u) => u.key === "hiz-channel")!;
-    expect(hiz.confirmed).toBe(false);
-    // …and it is not being reported as REFUTED either: nothing round-tripped wrong, the
-    // run simply could not look.
+    expect(hiz.outcome).toBe("unread");
     expect(hiz.mismatches).toEqual([]);
-    // The guesses whose addresses were readable are unaffected — this is per address,
-    // not a blanket downgrade of the whole run.
-    expect(report.unverified.filter((u) => u.confirmed).length).toBeGreaterThan(0);
+    // And nothing else is refuted either. A read failure stops sendConverging early, so
+    // the residual it leaves on OTHER guesses is evidence that the run stopped rather
+    // than evidence about the device — in this fixture one unreadable address left
+    // `input-ports` holding 14 of them.
+    // REFUTED is a claim about the DEVICE and needs its own evidence. Asserting the
+    // outcome is what holds that: asserting only `mismatches` left the tally free to
+    // count this as a refutation, which is what it did.
+    const verdicts = summarizeVerdicts(report.unverified);
+    expect(verdicts.refuted).toBe(0);
+    expect(verdicts.untestable).toBeGreaterThan(0);
+    expect(formatSelfTestReport(report)).not.toContain("REFUTED");
+    // Per address, not a blanket downgrade: the readable guesses still confirm.
+    expect(verdicts.confirmed).toBeGreaterThan(0);
   });
 
   it("confirms every unverified guess on a faithful device (no collisions)", async () => {
@@ -523,13 +539,13 @@ describe("unverified-guess workflow (URX22)", () => {
       ["dgain-urx22", "ducker-block", "hiz-channel", "input-ports", "stereo-block"].sort(),
     );
     for (const u of report.unverified) {
-      expect(u.collision).toBe(false);
+      expect(u.outcome).not.toBe("collision");
       // A round trip confirms every guess on a faithful device — including
       // `ducker-block`, which is exactly why the report is not the whole story for it:
       // that guess is about which PAIR a y addresses, and writing y then reading y back
       // passes whichever pair it is. Its entry exists to keep the guess visible in the
       // report, and PLAN.md's D-1 carries the LCD check that actually settles it.
-      expect(u.confirmed).toBe(true);
+      expect(u.outcome).toBe("confirmed");
     }
     expect(report.restored).toBe(true);
     // The exported report leads with the per-guess verdicts.

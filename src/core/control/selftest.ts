@@ -79,17 +79,33 @@ export interface SelfTestMismatch {
   unverifiedKey?: string;
 }
 
-/** Per-guess outcome of the run, so an owner can confirm or refute each one. */
+/**
+ * What the run has to say about one guessed mapping. `outcome` is stated, not derived:
+ * it used to be two booleans with everything that was not `confirmed` falling through
+ * to "refuted", so a guess the run could not READ was published as one the device had
+ * contradicted — and every future reason for not-confirmed would have landed there too.
+ * REFUTED is a claim about the device; it needs its own evidence.
+ *
+ *   confirmed   every address round-tripped
+ *   refuted     at least one did not — `mismatches` says which
+ *   unread      a read failed, so nothing about it is known. Either one of ITS addresses
+ *               could not be read, or the run could not read somewhere and `sendConverging`
+ *               stopped converging — which leaves a residual that is evidence the run
+ *               stopped, not evidence about the device. Measured in a fixture: one
+ *               unreadable address left an unrelated guess with 14 "mismatches"
+ *   unexercised the guess has no address on this model, so the run never wrote it
+ *   collision   a confirmed param already owns the guessed id (static audit; the
+ *               guess is wrong, and its writes were suppressed for safety)
+ */
+export type UnverifiedOutcome = "confirmed" | "refuted" | "unread" | "unexercised" | "collision";
+
 export interface UnverifiedFinding {
   key: string;
   label: string;
-  /** A confirmed catalog param owns the guessed id — the guess is wrong and the
-   *  self-test could not exercise it (its writes were suppressed for safety). */
-  collision: boolean;
-  /** Addresses written for this guess that did not round-trip. */
+  outcome: UnverifiedOutcome;
+  /** Addresses written for this guess that did not round-trip. Non-empty exactly when
+   *  the outcome is "refuted". */
   mismatches: SelfTestMismatch[];
-  /** True when the guess was exercised and every address round-tripped (confirmed). */
-  confirmed: boolean;
 }
 
 /**
@@ -608,20 +624,23 @@ export async function runSelfTest(
     }
     report.ok = !report.aborted && report.residual.length === 0 && readFailures === 0;
 
-    // Per-guess verdict: a collision could not be tested (and is already known
-    // wrong); otherwise the guess is confirmed when it was exercised on this model
-    // and every one of its addresses round-tripped without a mismatch.
+    // Per-guess verdict. Each branch is a reason, in the order that decides: a
+    // collision is known wrong before any hardware; an address nobody could read makes
+    // the guess unknowable whatever else happened; a mismatch is the only thing that
+    // refutes it; and a guess with no address on this model was never put to the test.
     const exercised = new Set(addresses.values());
     report.unverified = UNVERIFIED_MAPPINGS.filter((m) => m.models.includes(model.id)).map((m) => {
-      const collision = suppress.has(m.key);
       const mismatches = report.residual.filter((r) => r.unverifiedKey === m.key);
-      return {
-        key: m.key,
-        label: m.label,
-        collision,
-        mismatches,
-        confirmed: !collision && exercised.has(m.key) && mismatches.length === 0 && !unreadKeys.has(m.key),
-      };
+      const outcome: UnverifiedOutcome = suppress.has(m.key)
+        ? "collision"
+        : unreadKeys.has(m.key) || (mismatches.length > 0 && readFailures > 0)
+          ? "unread"
+          : mismatches.length > 0
+            ? "refuted"
+            : exercised.has(m.key)
+              ? "confirmed"
+              : "unexercised";
+      return { key: m.key, label: m.label, outcome, mismatches };
     });
 
     // 3. Restore the original state (converging, for the same reset behavior).
@@ -780,11 +799,13 @@ export function summarizeVerdicts(unverified: UnverifiedFinding[]): {
   refuted: number;
   untestable: number;
 } {
+  // No fall-through: "refuted" is counted only where the run said so. It was the
+  // default once, which turned every other reason into a claim about the device.
   const counts = { confirmed: 0, refuted: 0, untestable: 0 };
   for (const u of unverified) {
-    if (u.collision) counts.untestable++;
-    else if (u.confirmed) counts.confirmed++;
-    else counts.refuted++;
+    if (u.outcome === "confirmed") counts.confirmed++;
+    else if (u.outcome === "refuted") counts.refuted++;
+    else counts.untestable++;
   }
   return counts;
 }
@@ -816,11 +837,15 @@ export function formatSelfTestReport(report: SelfTestReport): string {
     lines.push("");
     lines.push("## Unverified-guess verdicts");
     for (const u of report.unverified) {
-      const verdict = u.collision
-        ? "COULD NOT TEST — guessed id collides with a confirmed param (guess is wrong)"
-        : u.confirmed
-          ? "CONFIRMED — round-tripped on the device"
-          : `REFUTED — ${u.mismatches.length} address(es) did not round-trip`;
+      // One line per outcome, so a new reason has to be given one rather than
+      // inheriting whatever the last branch happened to say.
+      const verdict = {
+        collision: "COULD NOT TEST — guessed id collides with a confirmed param (guess is wrong)",
+        unread: "COULD NOT TEST — a read failed, so nothing round-tripped either way",
+        unexercised: "COULD NOT TEST — no address on this model, so the run never wrote it",
+        confirmed: "CONFIRMED — round-tripped on the device",
+        refuted: `REFUTED — ${u.mismatches.length} address(es) did not round-trip`,
+      }[u.outcome];
       lines.push(`- **${u.label}** (${u.key}): ${verdict}`);
       for (const m of u.mismatches) lines.push(`  - ${mismatchLine(m)}`);
     }
