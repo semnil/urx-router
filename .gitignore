@@ -1,6 +1,15 @@
-node_modules/
-dist/
-dist-trace/
+# A trailing slash restricts a pattern to DIRECTORIES, and a symlink is not one —
+# so `node_modules/` does not ignore a `node_modules` symlink, which is how a shared
+# install gets committed from a git worktree. It breaks every CI job at once
+# (`pnpm install` fails with ENOTDIR, since a file now occupies the path it must
+# create), and `/reference/` would carry the same defect somewhere far worse: that
+# directory is excluded because it belongs to a separate private repository. No ignore
+# pattern here wants the narrowing — the slash-less form still matches the directory —
+# so none of them carries it. The one negation below keeps its slash on purpose: it
+# re-includes a path, and re-including only a real directory fails safe.
+node_modules
+dist
+dist-trace
 *.local
 .DS_Store
 *.log
@@ -16,33 +25,33 @@ dist-trace/
 !.claude/skills/urx-routing-planner/
 
 # Python bytecode cache from running the skill's plan_tool.py
-__pycache__/
+__pycache__
 *.pyc
 
 # Tauri build artifacts
-src-tauri/target/
-src-tauri/gen/
+src-tauri/target
+src-tauri/gen
 
 # Generated third-party license bundle (regenerate with `cargo about generate`)
 src-tauri/THIRD_PARTY_LICENSES.html
 
 # Playwright E2E artifacts
-test-results/
-playwright-report/
+test-results
+playwright-report
 
 # Intermediate icon source (regenerate with scripts/gen-icon.mjs) and unused
 # mobile icon sets (this project targets desktop only)
 scripts/app-icon.png
-src-tauri/icons/android/
-src-tauri/icons/ios/
+src-tauri/icons/android
+src-tauri/icons/ios
 
 # Local routing plans saved during development
-/plans/
+/plans
 
 # Reference materials (copyrighted Yamaha PDFs, reverse-engineered protocol
 # dumps, and their READMEs) live in a separate private repository. Excluded
 # from this public repo entirely.
-/reference/
+/reference
 
 # Signing material for the desktop builds. Certificates and keys belong in CI
 # secrets, never in the repository; these patterns stop a stray local copy.
