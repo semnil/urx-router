@@ -256,6 +256,22 @@ select#model-picker,
   cursor: pointer;
 }
 
+/* Locked while a live session holds the device (main.ts, syncDeviceActionUi). The
+   dim is lighter than the read-only vocabulary elsewhere (--row-lock-dim, 0.45) on
+   purpose: while live this control is the only surface naming the unit on the wire,
+   so it has to stay at least as readable as the label beside it. Measured against
+   that label's own contrast on the same strip (9.0:1 dark / 4.8:1 light), the value
+   text lands at 3.9 / 2.6 with 0.45 and at 7.9 / 5.1 with 0.7.
+   The rule is not optional decoration: WebKit — the engine the macOS build renders
+   in — applies NO disabled styling of its own here, because the recipe above sets
+   colour and background explicitly. Measured with both states shot in one page, the
+   locked and unlocked pickers came out byte-identical there while Chromium dimmed
+   its own way, so without this the lock is invisible in the shipping build. */
+select#model-picker:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .spacer {
   flex: 1;
 }

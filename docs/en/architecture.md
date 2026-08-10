@@ -1265,7 +1265,12 @@ call `vdConnect` from `core` and so cannot be funnelled any lower.
 `syncDeviceActionUi` is that latch's affordance: while the link is held, every device entry greys **except
 its holder's own**, which is that holder's Cancel (fetch, write, compare, the self-test) or its stop (Live
 sync). The rate picker locks for every holder — a rate change re-clocks the unit and renegotiates the USB
-stream. Follow USB is the one exception in the other direction: a live **session** lends it the session's
+stream. The model picker locks for a live **session** only: a switch replaces the plan wholesale (which is
+why `loadPlan` ends a session), and while live the picker is the only surface naming the unit on the wire —
+the on-air tally prints the tag alone rather than repeating a model the picker already states, since a
+mismatch is refused before any read. A live *start* is deliberately not covered: the model may still change
+there (`offerModelSwitch`), and the switch is refused for the read's duration by `deviceReadInFlight`.
+Follow USB is the one exception in the other direction: a live **session** lends it the session's
 link (its handler writes over that link rather than opening one, and measured on a URX44V the session
 survives the re-clock), so it stays usable while live and greys for every other holder — including a live
 *start*, where the session is not up yet and the same handler would take the connecting branch.
