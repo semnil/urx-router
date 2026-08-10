@@ -483,6 +483,10 @@ export async function runSelfTest(
   // collisions so an owner knows the guess is refuted before any hardware round-trip.
   report.collisions = auditUnverified(model.id);
   const suppress = new Set(report.collisions.map((c) => c.key));
+  // Reads the run could not make. They are not mismatches — nobody knows whether the
+  // parameter matched — so they cannot go in `residual`, and a verdict that ignores
+  // them claims a fidelity it did not measure.
+  let readFailures = 0;
   // Address → unverified-mapping key, so each residual can be tagged with the guess
   // it refutes. A colliding guess shares its address with a confirmed param (whose
   // write is kept); drop those entries so a residual there is attributed to the
@@ -531,6 +535,20 @@ export async function runSelfTest(
     // self-test ERROR dialog instead.
     const preSweep = await phaseStep(readPreSweep(unrestorable, signal, report));
     if (!preSweep) return report; // cancelled during the pre-sweep read
+    // An address in this set has no other record of what it held: the captured plan has
+    // no command for it, so a read failure here means the run could perturb it and never
+    // put it back. Nothing has been written yet, so the honest answer is not to start —
+    // counting it in the residual afterwards leaves the unit changed and only says so.
+    //
+    // This is not the "aggregate instead of stopping" exception (architecture.md). That
+    // one is about a partial CAPTURE, whose addresses the restore still writes; these are
+    // the addresses it cannot. `errors` already names each one.
+    if (preSweep.size !== unrestorable.size) {
+      report.errors.push(
+        `refusing to sweep: ${unrestorable.size - preSweep.size} address(es) the restore cannot reach could not be read first`,
+      );
+      return report;
+    }
 
     // 2. Sweep: each pass writes a silent perturbed plan (converging, so params
     // the device resets as a side effect of a mode change are re-sent) and the
@@ -545,6 +563,14 @@ export async function runSelfTest(
       const { outcomes, residual } = result;
       report.written += outcomes.length;
       report.errors.push(...outcomes.filter((o) => !o.ok).map((o) => `p${pass} ${o.command.name}: ${o.error}`));
+      // A command whose current value could not be read is left out of the diff by
+      // design (diffPlan: never write on a value you did not confirm), which also leaves
+      // it out of the residual — so without this it reads as a parameter that matched,
+      // and it also ended the converge loop early.
+
+      report.errors.push(...result.readErrors.map((e) => `p${pass} read: ${e}`));
+      readFailures += result.readErrors.length;
+
       report.phase = "verify";
       // Keep the trace of a pass that did not converge, with the captured state of
       // the addresses that stayed wrong: the summary below records the end state,
@@ -566,7 +592,7 @@ export async function runSelfTest(
         });
       }
     }
-    report.ok = !report.aborted && report.residual.length === 0;
+    report.ok = !report.aborted && report.residual.length === 0 && readFailures === 0;
 
     // Per-guess verdict: a collision could not be tested (and is already known
     // wrong); otherwise the guess is confirmed when it was exercised on this model
@@ -613,12 +639,11 @@ export async function runSelfTest(
         // inspects nothing in the one configuration that motivated the field.
         if (!(await phaseStep(probeBands(model, original, signal, report)))) return report;
         report.restoreResidual = back.residual.length;
-        report.restoreResidual += unrestorable.size - preSweep.size;
-        // An address whose pre-sweep read failed is one this run cannot put back AND
-        // cannot check. It stays in the residual rather than in errors alone, because
-        // errors do not reach `restored` — and a verdict that says restored while an
-        // address the run moved is unaccounted for is the defect this whole change is
-        // about, in a narrower window.
+        // Same for the restore, and it matters more here: a read failure also ENDS the
+        // converge loop (sendConverging stops on one), so the write may have stopped
+        // part-way. Counting them keeps `restored` a statement about what was checked.
+        report.errors.push(...back.readErrors.map((e) => `restore read: ${e}`));
+        report.restoreResidual += back.readErrors.length;
 
         // Then the addresses that write has no command for, put back from what the unit
         // held before the sweep. Last, so the converging write's side-effect resets have

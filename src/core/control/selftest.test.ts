@@ -174,28 +174,70 @@ describe("runSelfTest", () => {
     return table;
   }
 
-  // The pre-sweep read is what makes the write-back possible; an address it could not
-  // read is one the run then changes and never puts back. Leaving that in `errors`
-  // alone is not enough, because nothing reads errors to decide `restored` — which is
-  // the exact shape ("the verdict claims more than it checked") this whole change is
-  // about, in a narrower window.
-  it("counts an address whose pre-sweep read failed, instead of passing over it", async () => {
+  // The pre-sweep read is the only record of what these addresses held — the captured
+  // plan has no command for them. If it fails, the run could perturb one and never put
+  // it back, so it does not start. Counting it afterwards was the first attempt and is
+  // not enough: the unit is left changed and the verdict merely says so.
+  it("refuses to sweep at all when an address it could not read first would be perturbed", async () => {
     const table = seedWithOneKnobOn();
+    const before = new Map(table);
     const realGet = vi.mocked(vdGet).getMockImplementation()!;
-    // SSMCS_EQ_ON (106) is in the union — the sweep writes it in the other COMP/EQ
-    // order and the captured plan has no command for it.
+    // SSMCS_EQ_ON (106) is in the union: the sweep writes it in the other COMP/EQ order
+    // and the captured plan has no command for it.
     vi.mocked(vdGet).mockImplementation((id, x, y) =>
       id === 106 ? Promise.reject(new Error("read timeout")) : realGet(id, x, y),
     );
 
     const report = await runSelfTest(model, 0);
 
-    expect(report.errors.some((e) => e.startsWith("pre-sweep read"))).toBe(true);
-    expect(report.restoreResidual).toBeGreaterThan(0);
+    expect(report.errors.some((e) => e.startsWith("refusing to sweep"))).toBe(true);
+    expect(report.phase).toBe("readback");
+    expect(report.ok).toBe(false);
     expect(report.restored).toBe(false);
-    expect(table).toBeDefined();
+    // The point of refusing: the unit is untouched, not merely reported on.
+    expect(report.written).toBe(0);
+    expect([...table]).toEqual([...before]);
   });
 
+  // diffPlan leaves a command it could not read OUT of the diff on purpose — never
+  // write on a value you did not confirm — which also leaves it out of the residual.
+  // Read as a parameter that matched, both verdicts claim a fidelity nobody measured.
+  //
+  // ⚠️ WHAT THIS PINS, AND WHAT IT DOES NOT. It pins that both phases REPORT the reads
+  // they could not make: remove either errors.push and it fails. It does NOT pin that
+  // the counts reach the verdict — removing `readFailures` or `restoreResidual +=`
+  // leaves it green, because a read failure also ends the converge loop, so the residual
+  // is non-empty for other reasons and ok/restored are false either way.
+  //
+  // Isolating it needs a run where everything else converges and the only thing standing
+  // between it and `restored: true` is the read that never happened. Two fixtures were
+  // tried and neither produces that: failing the read from the start leaves the first
+  // diff incomplete, and failing it once the restore has put the value back also fires
+  // during the sweep, because the perturbation flips that value through its captured one
+  // on every pass. What would settle it is a parameter the sweep does not touch whose
+  // read fails only in the restore — none exists today, since the sweep writes the whole
+  // scope.
+  it("does not count a parameter it could not read as one that matched", async () => {
+    const table = installMockDevice(populatedPlan());
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    const home = table.get("140:0:0"); // CH_ON as the capture found it
+    let writing = false;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      writing = true;
+      table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+    vi.mocked(vdGet).mockImplementation((id, x, y) =>
+      writing && id === 140 && table.get(`${id}:${x}:${y}`) === home
+        ? Promise.reject(new Error("read timeout"))
+        : realGet(id, x, y),
+    );
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.errors.some((e) => e.startsWith("restore read: "))).toBe(true);
+    expect(report.restored).toBe(false);
+  });
   // Every await in the run goes through phaseStep so a cancel is recorded as one. The
   // direct reads and writes added for the write-back are easy to leave outside it, and
   // then an abort escapes runSelfTest entirely and reaches the operator as an ERROR
