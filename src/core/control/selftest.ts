@@ -87,15 +87,21 @@ export interface SelfTestMismatch {
  * REFUTED is a claim about the device; it needs its own evidence.
  *
  *   confirmed   every address round-tripped
- *   refuted     at least one did not — `mismatches` says which
+ *   refuted     at least one did not, in a pass that read everything — `mismatches`
+ *               says which
  *   unread      a read failed, so nothing about it is known. Either one of ITS addresses
- *               could not be read, or the run could not read somewhere and `sendConverging`
- *               stopped converging — which leaves a residual that is evidence the run
- *               stopped, not evidence about the device. Measured in a fixture: one
- *               unreadable address left an unrelated guess with 14 "mismatches"
+ *               could not be read, or its only divergence came from a pass where a read
+ *               failed and `sendConverging` therefore stopped converging — which leaves a
+ *               residual that is evidence the run stopped, not evidence about the device.
+ *               Measured in a fixture: one unreadable address left an unrelated guess with
+ *               14 "mismatches"
  *   unexercised the guess has no address on this model, so the run never wrote it
  *   collision   a confirmed param already owns the guessed id (static audit; the
  *               guess is wrong, and its writes were suppressed for safety)
+ *
+ * Evidence is per PASS, and that is what makes REFUTED durable: a pass that read
+ * everything and still saw a divergence has settled the guess, and a read failure in
+ * some later pass says nothing about the round trip that pass already observed.
  */
 export type UnverifiedOutcome = "confirmed" | "refuted" | "unread" | "unexercised" | "collision";
 
@@ -103,8 +109,9 @@ export interface UnverifiedFinding {
   key: string;
   label: string;
   outcome: UnverifiedOutcome;
-  /** Addresses written for this guess that did not round-trip. Non-empty exactly when
-   *  the outcome is "refuted". */
+  /** Addresses written for this guess that did not round-trip. Empty on "confirmed",
+   *  "unexercised" and "collision"; on "unread" it may be NON-empty, and is not evidence
+   *  — every pass that produced it stopped early. Only on "refuted" is it a finding. */
   mismatches: SelfTestMismatch[];
 }
 
@@ -512,6 +519,12 @@ export async function runSelfTest(
   // without this the guess shows no mismatch and reports CONFIRMED — a promotion to
   // "verified on hardware" for an address nothing round-tripped.
   const unreadKeys = new Set<string>();
+  // Unverified-mapping keys a pass refuted on evidence it can stand behind: the address
+  // diverged, in a pass whose reads all succeeded. Accumulated here, pass by pass, rather
+  // than derived afterwards from run-wide counters — those cannot say WHICH pass a
+  // residual came from, so one late read failure would retract a refutation an earlier
+  // pass had already established.
+  const refutedKeys = new Set<string>();
   // Address → unverified-mapping key, so each residual can be tagged with the guess
   // it refutes. A colliding guess shares its address with a confirmed param (whose
   // write is kept); drop those entries so a residual there is attributed to the
@@ -609,7 +622,13 @@ export async function runSelfTest(
         const baseline = residual.map((d) => captured.get(cmdAddr(d.command))).filter((v) => v !== undefined);
         report.traces.push({ pass, baseline, rounds: result.trace });
       }
+      // Whether THIS pass can refute anything. A read failure ends sendConverging's
+      // loop, so a pass that hit one may simply never have got to re-send what is left;
+      // a pass that read everything watched each address converge or fail to.
+      const decisive = result.readErrors.length === 0;
       for (const d of residual) {
+        const unverifiedKey = d.command.x === 0 ? addresses.get(`${d.command.paramId}:${d.command.y}`) : undefined;
+        if (unverifiedKey && decisive) refutedKeys.add(unverifiedKey);
         report.residual.push({
           name: d.command.name,
           paramId: d.command.paramId,
@@ -618,25 +637,26 @@ export async function runSelfTest(
           expected: d.command.vdValue,
           actual: d.current,
           pass,
-          unverifiedKey: d.command.x === 0 ? addresses.get(`${d.command.paramId}:${d.command.y}`) : undefined,
+          unverifiedKey,
         });
       }
     }
     report.ok = !report.aborted && report.residual.length === 0 && readFailures === 0;
 
-    // Per-guess verdict. Each branch is a reason, in the order that decides: a
-    // collision is known wrong before any hardware; an address nobody could read makes
-    // the guess unknowable whatever else happened; a mismatch is the only thing that
-    // refutes it; and a guess with no address on this model was never put to the test.
+    // Per-guess verdict. Each branch is a reason, in the order that decides: a collision
+    // is known wrong before any hardware; a divergence a complete pass observed settles
+    // the guess and nothing later takes it back; short of that, an unreadable address or
+    // a divergence left by a pass that stopped early leaves it unknowable; a guess with
+    // no address on this model was never put to the test.
     const exercised = new Set(addresses.values());
     report.unverified = UNVERIFIED_MAPPINGS.filter((m) => m.models.includes(model.id)).map((m) => {
       const mismatches = report.residual.filter((r) => r.unverifiedKey === m.key);
       const outcome: UnverifiedOutcome = suppress.has(m.key)
         ? "collision"
-        : unreadKeys.has(m.key) || (mismatches.length > 0 && readFailures > 0)
-          ? "unread"
-          : mismatches.length > 0
-            ? "refuted"
+        : refutedKeys.has(m.key)
+          ? "refuted"
+          : unreadKeys.has(m.key) || mismatches.length > 0
+            ? "unread"
             : exercised.has(m.key)
               ? "confirmed"
               : "unexercised";
@@ -841,7 +861,12 @@ export function formatSelfTestReport(report: SelfTestReport): string {
       // inheriting whatever the last branch happened to say.
       const verdict = {
         collision: "COULD NOT TEST — guessed id collides with a confirmed param (guess is wrong)",
-        unread: "COULD NOT TEST — a read failed, so nothing round-tripped either way",
+        // The divergence lines below are printed for every outcome that has any, so this
+        // one has to say what they are worth here: the pass that produced them stopped on
+        // a read failure before it could finish converging.
+        unread: u.mismatches.length
+          ? "COULD NOT TEST — a read failed and the run stopped converging, so the divergence below is not evidence about the device"
+          : "COULD NOT TEST — a read failed, so nothing round-tripped either way",
         unexercised: "COULD NOT TEST — no address on this model, so the run never wrote it",
         confirmed: "CONFIRMED — round-tripped on the device",
         refuted: `REFUTED — ${u.mismatches.length} address(es) did not round-trip`,

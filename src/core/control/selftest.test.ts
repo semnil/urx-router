@@ -522,12 +522,68 @@ describe("unverified-guess workflow (URX22)", () => {
     // REFUTED is a claim about the DEVICE and needs its own evidence. Asserting the
     // outcome is what holds that: asserting only `mismatches` left the tally free to
     // count this as a refutation, which is what it did.
+    // Named, not just counted: `input-ports` is the guess holding those 14, and the
+    // failure it must not fall into is the other direction as well — a divergence with no
+    // complete pass behind it is not a refutation, and it is not a confirmation either.
+    expect(report.unverified.find((u) => u.key === "input-ports")!.outcome).toBe("unread");
     const verdicts = summarizeVerdicts(report.unverified);
     expect(verdicts.refuted).toBe(0);
     expect(verdicts.untestable).toBeGreaterThan(0);
     expect(formatSelfTestReport(report)).not.toContain("REFUTED");
     // Per address, not a blanket downgrade: the readable guesses still confirm.
     expect(verdicts.confirmed).toBeGreaterThan(0);
+  });
+
+  // The other half of the same rule. Withholding REFUTED until the evidence is complete
+  // is right; withdrawing one that WAS complete is not, and a run-wide "did any read
+  // fail" cannot tell the two apart — it retracts a pass-0 refutation because pass 4
+  // failed to read something else entirely. The evidence is per pass: a pass that read
+  // every address and still watched one refuse to take the value has settled the guess.
+  it("keeps a refutation a complete pass established when a later pass fails to read", async () => {
+    const table = installMock22(seed22());
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    const addr = (c: { paramId: number; x: number; y: number }): string => `${c.paramId}:${c.x}:${c.y}`;
+    // The guess that gets refuted, and the unrelated one that goes unreadable. Both ids
+    // come from the mapping table, not from a literal: `stereo-block` addresses CH_FADER
+    // at a block id of its own, which is the whole content of that guess.
+    const inputSourceId = PARAMS.INPUT_SOURCE.id;
+    const stereo = [...unverifiedAddresses(m22)].find(([, key]) => key === "stereo-block");
+    expect(stereo).toBeDefined();
+    const stereoId = Number(stereo![0].split(":")[0]);
+    // Pass 1 is told apart from pass 0 by a command the sweep itself moves between them,
+    // read out of `perturbedPlan` rather than hard-coded, so the marker cannot drift away
+    // from the sweep it is marking.
+    const pass0 = new Map(planToCommands(m22, perturbedPlan(m22, seed22(), 0)).map((c) => [addr(c), c.vdValue]));
+    const marker = planToCommands(m22, perturbedPlan(m22, seed22(), 1)).find(
+      (c) =>
+        pass0.has(addr(c)) && pass0.get(addr(c)) !== c.vdValue && c.paramId !== inputSourceId && c.paramId !== stereoId,
+    );
+    expect(marker).toBeDefined();
+
+    let pastPass0 = false;
+    // INPUT_SOURCE is accepted and never stored, so `input-ports` diverges in every pass —
+    // including pass 0, which reads cleanly.
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (id !== inputSourceId) table.set(`${id}:${x}:${y}`, v);
+      if (id === marker!.paramId && x === marker!.x && y === marker!.y && v === marker!.vdValue) pastPass0 = true;
+      return Promise.resolve();
+    });
+    // …and from pass 1 on, an address of a DIFFERENT guess stops being readable.
+    vi.mocked(vdGet).mockImplementation((id, x, y) =>
+      pastPass0 && id === stereoId ? Promise.reject(new Error("read timeout")) : realGet(id, x, y),
+    );
+
+    const report = await runSelfTest(m22, 0);
+
+    // The fixture's own premise, asserted rather than assumed: pass 0 read everything and
+    // a later pass did not. Without this the case could pass while testing nothing.
+    expect(report.errors.some((e) => e.startsWith("p0 read:"))).toBe(false);
+    expect(report.errors.some((e) => /^p[1-9]\d* read:/.test(e))).toBe(true);
+
+    expect(report.unverified.find((u) => u.key === "input-ports")!.outcome).toBe("refuted");
+    expect(report.unverified.find((u) => u.key === "stereo-block")!.outcome).toBe("unread");
+    expect(summarizeVerdicts(report.unverified).refuted).toBe(1);
+    expect(formatSelfTestReport(report)).toContain("REFUTED");
   });
 
   it("confirms every unverified guess on a faithful device (no collisions)", async () => {
