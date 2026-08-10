@@ -1,5 +1,8 @@
 # URX Router
 
+[![CI](https://github.com/semnil/urx-router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/semnil/urx-router/actions/workflows/ci.yml)
+[![フロントエンド単体テストのカバレッジ](https://codecov.io/gh/semnil/urx-router/branch/main/graph/badge.svg)](https://codecov.io/gh/semnil/urx-router)
+
 YAMAHA URX22 / URX44 / URX44V USB オーディオインターフェース用の
 **ルーティングプランナー 兼 非公式ミキサーコントローラー（読込 / 書込 / ライブ同期）**。
 

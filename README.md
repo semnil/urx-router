@@ -1,5 +1,8 @@
 # URX Router
 
+[![CI](https://github.com/semnil/urx-router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/semnil/urx-router/actions/workflows/ci.yml)
+[![Frontend unit test coverage](https://codecov.io/gh/semnil/urx-router/branch/main/graph/badge.svg)](https://codecov.io/gh/semnil/urx-router)
+
 A **routing planner and unofficial mixer controller (read / write / live sync)** for the
 YAMAHA URX22 / URX44 / URX44V USB audio interfaces.
 

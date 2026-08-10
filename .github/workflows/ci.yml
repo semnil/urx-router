@@ -42,6 +42,9 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -82,7 +85,13 @@ jobs:
           if grep -rl --include='*.js' --include='*.html' "__urxTrace" dist; then echo "__urxTrace leaked into the bundle"; exit 1; fi
           if grep -rl --include='*.js' --include='*.html' "__urxMidiProbe" dist; then echo "__urxMidiProbe leaked into the bundle"; exit 1; fi
       - run: pnpm typecheck:e2e
-      - run: pnpm test
+      - run: pnpm test:coverage
+      - name: Upload frontend coverage
+        uses: codecov/codecov-action@8cad3ba95e5920c42f44492e54bc9639cba47959 # v6.0.2
+        with:
+          fail_ci_if_error: false
+          files: ./coverage/lcov.info
+          use_oidc: true
 
   # The Rust half had no gate at all: `cargo fmt` runs in format.yml, the platform build
   # runs post-merge, and `cargo test` ran in neither — so nothing on a pull request
