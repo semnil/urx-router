@@ -608,8 +608,8 @@ test.describe("T2b shape-change", () => {
   test("never-emitted, acked-and-ignored and 400-refused writes, and the flush loop that does not form", async ({
     page,
   }) => {
-    // The device accepts every write to CH_FADER and stores none of them — the 839
-    // shape, applied to an address the UI can actually drive.
+    // The device accepts every write to CH_FADER and stores none of them — the unit's
+    // clock shape, applied to an address the UI can actually drive.
     await ignoreWrites(page, [139]);
     await goLive(page);
     await setLatency(page, { get: 2, set: 8 });

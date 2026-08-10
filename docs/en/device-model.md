@@ -267,9 +267,10 @@ Source selection for the analog outputs (MAIN / LINE).
   source `microSD Playback`.
 
 > **Live control**: the per-track source assign is read and written over vd (param 736, one port ref
-> per track). **Track Count is read-only** — the device accepts a software write but ignores it
-> (param 839; only the front panel changes it), so live sync reads it back but cannot push it (see
-> [known-issues.md](known-issues.md)). The factory assignment is tracks 1-12 = CH 1-12, tracks 13/14
+> per track). **Track Count is read back but never written** — a write to param 839 does reach the
+> unit, but the broker caps it at one of the eight values, so software can only ever say "two
+> tracks" and could not raise it again (see [known-issues.md](known-issues.md)). The factory
+> assignment is tracks 1-12 = CH 1-12, tracks 13/14
 > = none, tracks 15/16 = STEREO, Track Count 16.
 
 > **Source of the track count**: the URX44V records **up to 16 tracks** to microSD and plays back

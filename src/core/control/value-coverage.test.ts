@@ -340,7 +340,7 @@ describe("Rec Point / BUS Type / OSC Burst round-trip", () => {
 
 // microSD Rec per-track source assign (param 736, confirmed on URX44V): each
 // source writes its L/R port ref to the track pair's two tracks, and Track Count
-// (839) is read-only — read back (raw × 2) but never emitted.
+// (839) is read back (raw × 2) but never emitted.
 describe("microSD Rec source assign round-trips (param 736)", () => {
   // source node id → the L/R port refs written to track-pair slot t1 (tracks 0/1)
   const cases: [string, number, number][] = [
@@ -373,7 +373,7 @@ describe("microSD Rec source assign round-trips (param 736)", () => {
     expect(back.connections.some((c) => c.to === ref("out.sdrec.t2", "in"))).toBe(false);
   });
 
-  it("Track Count is read-only: never emitted, read back as raw × 2", async () => {
+  it("Track Count is never emitted, read back as raw × 2", async () => {
     const plan = base();
     plan.nodeParams["out.sdrec"] = { sdRecTrackCount: 16 };
     expect(planToCommands(model, plan).some((c) => c.name === "SD_REC_TRACK_COUNT")).toBe(false);

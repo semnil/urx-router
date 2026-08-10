@@ -321,9 +321,9 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   // Seeded so writing a fresh plan restores the device's delay (the absolute
   // write only auto-clears wires, not scalar node params — see bus.osc/monitor).
   "bus.stream": { delay: { on: false, time: 1, frameRate: 5 } },
-  // microSD Rec Track Count factory state: 16 tracks (read-only on the device, so
-  // never written — this drives how many track-pair slots the canvas shows; at 16
-  // all 8 pair slots are active, so the seeded STEREO assign on track 15/16 shows).
+  // microSD Rec Track Count factory state: 16 tracks (never written to the device,
+  // so this only drives how many track-pair slots the canvas shows; at 16 all 8 pair
+  // slots are active, so the seeded STEREO assign on track 15/16 shows).
   "out.sdrec": { sdRecTrackCount: 16 },
 };
 

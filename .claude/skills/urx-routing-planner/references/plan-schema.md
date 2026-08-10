@@ -154,9 +154,10 @@ the device default. The full set:
 - `insertFxOn` — insert-effect ON/OFF (bypass), `true`/`false`. The device
   re-engages it whenever an effect is (re)selected; it only applies (and is only
   written) while an effect is selected.
-- `sdRecTrackCount` — even 2–16. **Read-only on the device** (the front panel
-  sets it); the app reads it back but never writes it. It only gates how many
-  record-track slots show.
+- `sdRecTrackCount` — even 2–16. **Never written to the device**: a write does
+  reach the unit, but the broker refuses every value above two tracks, so the app
+  reads it back and emits nothing. Set it on the unit's front panel. In a plan it
+  only gates how many record-track slots show.
 
 **Raw-encoded — author with caution (see warnings):**
 - `ssmcs` — the SSMCS channel-strip values are RAW broker integers on a non-public

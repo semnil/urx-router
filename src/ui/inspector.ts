@@ -403,9 +403,10 @@ export function renderInspector(
     }
 
     // microSD Rec header (out.sdrec): the Track Count gates how many track-pair
-    // slots show. Read-only on the device (front panel only), so it is editable in
-    // the planner but disabled with a note while live-connected (mirrors the
-    // CH → FX tap pattern); the per-track source assign is done by canvas wires.
+    // slots show. Never pushed to the device (the broker refuses every value above
+    // two tracks), so it is editable in the planner but disabled with a note while
+    // live-connected (mirrors the CH → FX tap pattern); the per-track source assign
+    // is done by canvas wires.
     if (node.id === "out.sdrec") {
       const count = plan.nodeParams[node.id]?.sdRecTrackCount ?? SD_REC_TRACK_COUNT_DEFAULT;
       host.append(

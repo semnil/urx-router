@@ -1853,8 +1853,9 @@ function buildCommands(model: DeviceModel, plan: Plan): VdCommand[] {
   // microSD Rec per-track source assign (param 736) — absolute over every track-pair
   // slot. A record wire picks one source (channel pair / STEREO / MIX); its L/R port
   // refs go to the pair's two tracks. No wire writes the NONE sentinel to both,
-  // matching readback (NONE = no record wire). Track Count (839) is read-only, never
-  // emitted. Absent on models without a recorder (recordSlots is then empty).
+  // matching readback (NONE = no record wire). Track Count (839) is never emitted —
+  // the broker refuses every value above two tracks (see PARAMS.SD_REC_TRACK_COUNT).
+  // Absent on models without a recorder (recordSlots is then empty).
   for (const slot of recordSlots(model)) {
     const conn = incomingConnection(plan, ref(slot.id, "in"), "record");
     const p = conn ? recordSourcePorts(model, parseRef(conn.from).nodeId) : null;

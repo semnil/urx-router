@@ -857,9 +857,10 @@ async function readPass(
       failed.add(slot.id);
     }
   }
-  // microSD Rec Track Count (839, read-only): tracks = raw × 2, onto the SD Rec
-  // header. Like sample rate, a standalone read kept out of body provenance and
-  // run on a full read only (read-only on the device, never a followed change).
+  // microSD Rec Track Count (839, never emitted): tracks = raw × 2, onto the SD Rec
+  // header. Like sample rate, a standalone read kept out of body provenance and run
+  // on a full read only. Nothing writes it, so it is in no registration and its
+  // notify is dropped: a front-panel change lands here at the next full read.
   if (only === undefined && model.nodes.some((n) => n.id === "out.sdrec")) {
     try {
       const sdRecTrackCount = (await vdGet(PARAMS.SD_REC_TRACK_COUNT.id, 0, 0)) * 2;
