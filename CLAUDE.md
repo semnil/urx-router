@@ -44,6 +44,7 @@ pnpm preview      # serve the built dist/ at http://localhost:4173 (browser chec
 pnpm e2e:serve    # vite build + preview on 4173 — what playwright.config.ts launches as its webServer (E2E_PORT overrides; --trace, aliased as e2e:serve:trace, serves dist-trace on E2E_TRACE_PORT, 4174)
 pnpm e2e:worktree # run the suite in a throwaway worktree on a free port pair, so a second checkout can run it at the same time
 pnpm test         # vitest (core: routing/constraints/plan/levels/meters/midi, control: vd/translate/readback/live/follow/fx/insert-fx/firmware etc., models, ui: console/dom/fine/history/inspector/keys/licenses + the contract and pin tests below)
+pnpm test:coverage # the same unit suite with V8 coverage for all frontend TypeScript sources; writes coverage/lcov.info for Codecov
 pnpm typecheck:e2e # tsc -p tsconfig.e2e.json — type-checks e2e/ + the root config .ts (playwright/vite/vitest); the src build's tsconfig only includes "src"
 pnpm test:e2e     # Playwright E2E, all three projects at once. No CI job runs this — each tier is its own
 pnpm test:e2e:app # --project=chromium: e2e/*.spec.ts only (routing/hide/notes/insertfx/midi etc.). The PR tier, in ci.yml
