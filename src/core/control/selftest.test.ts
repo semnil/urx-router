@@ -623,10 +623,27 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.errors.some((e) => e.startsWith("p0 read:"))).toBe(false);
     expect(report.errors.some((e) => /^p[1-9]\d* read:/.test(e))).toBe(true);
 
-    expect(report.unverified.find((u) => u.key === "input-ports")!.outcome).toBe("refuted");
+    const refuted = report.unverified.find((u) => u.key === "input-ports")!;
+    expect(refuted.outcome).toBe("refuted");
     expect(report.unverified.find((u) => u.key === "stereo-block")!.outcome).toBe("unread");
     expect(summarizeVerdicts(report.unverified).refuted).toBe(1);
-    expect(formatSelfTestReport(report)).toContain("REFUTED");
+    const md = formatSelfTestReport(report);
+    expect(md).toContain("REFUTED");
+
+    // The outcome turns on what a completed pass saw; so must the DETAIL printed under
+    // it. This guess also differs in every stopped pass — same address, no evidence —
+    // and counting those inflates "REFUTED — N address(es)" and pads its wrote/read list
+    // with differences nothing settled.
+    expect(report.residual.some((m) => m.unverifiedKey === "input-ports" && m.stoppedOn)).toBe(true);
+    expect(refuted.mismatches.length).toBeGreaterThan(0);
+    expect(refuted.mismatches.every((m) => m.pass === 0 && !m.stoppedOn)).toBe(true);
+    expect(md).toContain(`REFUTED — ${refuted.mismatches.length} address(es)`);
+    // …and they are still in the report, under the heading that says what they are worth.
+    expect(md).toContain("## Not settled");
+    expect(md).toContain("guess input-ports");
+    // The invariant that keeps the two apart: among the verdicts, a divergence list
+    // appears under REFUTED and nowhere else.
+    expect(report.unverified.every((u) => u.mismatches.length > 0 === (u.outcome === "refuted"))).toBe(true);
   });
 
   // The write side of the same rule, and the sharper half of it. sendConverging leaves

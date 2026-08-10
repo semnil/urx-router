@@ -130,10 +130,11 @@ export interface UnverifiedFinding {
   key: string;
   label: string;
   outcome: UnverifiedOutcome;
-  /** Addresses written for this guess that did not round-trip. Empty on "confirmed",
-   *  "unexercised" and "collision"; on "unread" and "unsent" it may be NON-empty, and is
-   *  not evidence — every pass that produced it stopped early. Only on "refuted" is it a
-   *  finding. */
+  /** Addresses written for this guess that did not round-trip, from passes that
+   *  completed. Non-empty exactly when the outcome is "refuted" — every other outcome is
+   *  a statement that nothing was settled, and a list of differences printed under it
+   *  reads as the evidence it is not. What a stopped pass left for this guess is in the
+   *  report's "Not settled" section instead. */
   mismatches: SelfTestMismatch[];
 }
 
@@ -702,7 +703,11 @@ export async function runSelfTest(
     // pass the device refused); a guess with no address on this model was never tested.
     const exercised = new Set(addresses.values());
     report.unverified = UNVERIFIED_MAPPINGS.filter((m) => m.models.includes(model.id)).map((m) => {
-      const mismatches = report.residual.filter((r) => r.unverifiedKey === m.key);
+      // Only what a completed pass observed. The outcome already turns on that, but the
+      // DETAIL did not: a guess refuted in pass 0 also collected every stopped pass's
+      // residual, so the report published "REFUTED — N address(es)" over a count and a
+      // wrote/read list padded with differences nothing had settled.
+      const mismatches = report.residual.filter((r) => r.unverifiedKey === m.key && !r.stoppedOn);
       const outcome: UnverifiedOutcome = suppress.has(m.key)
         ? "collision"
         : refutedKeys.has(m.key)
@@ -934,14 +939,11 @@ export function formatSelfTestReport(report: SelfTestReport): string {
       // inheriting whatever the last branch happened to say.
       const verdict = {
         collision: "COULD NOT TEST — guessed id collides with a confirmed param (guess is wrong)",
-        // The divergence lines below are printed for every outcome that has any, so these
-        // two have to say what they are worth here — and to name the same cause the
-        // Issues list does, since the two are read together.
-        unread: u.mismatches.length
-          ? "COULD NOT TEST — a read failed and the run stopped converging, so the divergence below is not evidence about the device"
-          : "COULD NOT TEST — a read failed, so nothing round-tripped either way",
-        unsent:
-          "COULD NOT TEST — the device refused a write and the run stopped without re-reading, so the divergence below is what it was about to send, not what the device answered",
+        // Each names the same cause the Issues list does, since the two are read together.
+        // Neither carries a divergence list: what a stopped pass left for this guess is
+        // under "Not settled", where it is not standing next to a verdict.
+        unread: "COULD NOT TEST — a read failed, so nothing about it round-tripped either way",
+        unsent: "COULD NOT TEST — the device refused a write, so it was never asked to hold the value",
         unexercised: "COULD NOT TEST — no address on this model, so the run never wrote it",
         confirmed: "CONFIRMED — round-tripped on the device",
         refuted: `REFUTED — ${u.mismatches.length} address(es) did not round-trip`,
@@ -965,9 +967,10 @@ export function formatSelfTestReport(report: SelfTestReport): string {
   // so a residual entry was read and did differ) but the convergence — the re-send and
   // re-read that a completed pass keeps doing until nothing differs. So these are not a
   // finding, and they are not "never looked at" either.
-  const other = report.residual.filter((r) => !r.unverifiedKey);
-  const shown = other.filter((r) => !r.stoppedOn);
-  const unsettled = other.filter((r) => r.stoppedOn);
+  const shown = report.residual.filter((r) => !r.unverifiedKey && !r.stoppedOn);
+  // Every unsettled entry, guess-attributed or not: the verdicts above no longer carry
+  // them, so this is the only place they appear at all.
+  const unsettled = report.residual.filter((r) => r.stoppedOn);
   if (shown.length) {
     lines.push("");
     lines.push("## Other device divergence (confirmed params)");
@@ -985,8 +988,9 @@ export function formatSelfTestReport(report: SelfTestReport): string {
         " AT ALL are not counted here: nothing was compared for them, and they are under Issues.",
     );
     for (const m of unsettled) {
+      const guess = m.unverifiedKey ? `, guess ${m.unverifiedKey}` : "";
       lines.push(
-        `- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — plan wanted ${m.expected}, device answered ${m.actual ?? "unreadable"} at the last read (stopped on a ${m.stoppedOn === "write" ? "refused write" : "failed read"})`,
+        `- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — plan wanted ${m.expected}, device answered ${m.actual ?? "unreadable"} at the last read (stopped on a ${m.stoppedOn === "write" ? "refused write" : "failed read"}${guess})`,
       );
     }
   }
