@@ -838,21 +838,32 @@ function setView(next: ViewName): void {
   }
 }
 
-// Reflect the live-sync state across the toggle, the on-air tally, and the other
-// device actions (which conflict with the held connection while sync is on).
-// Only ever called in the desktop live-sync path, so re-enabling on `off` is safe.
-function setLiveUi(on: boolean): void {
-  const liveBtn = document.getElementById("btn-live");
-  if (liveBtn) liveBtn.setAttribute("aria-pressed", String(on));
-  const tally = document.getElementById("live-tally");
-  if (tally) {
-    tally.hidden = !on;
-    if (on) tally.textContent = `${t().toolbar.liveTag} · ${liveDeviceLabel}`;
-  }
-  for (const id of ["btn-fetch", "btn-write", "btn-selftest", "btn-open-settings", "btn-compare", "btn-device-setup"]) {
+// Lock the actions that cannot share the unit with whoever is already holding it.
+// Each of them opens its own connection (or re-clocks the device), and two things
+// hold it for a duration: a live session, and a destructive round-trip run — the
+// self-test / --prepare-modified, which perturb the unit and then verify it address
+// by address against what they wrote, so a second connection landing inside that
+// window is read as the device refusing a write.
+//
+// Recomputed from both latches rather than set by whichever one moved: a session
+// ending while a run is in flight would otherwise re-enable everything the run needs
+// locked. Every way in and out of either state calls this.
+function syncDeviceActionUi(): void {
+  const held = liveSessionUp || deviceRunInFlight;
+  for (const id of ["btn-fetch", "btn-write", "btn-open-settings", "btn-compare", "btn-device-setup"]) {
     const el = document.getElementById(id) as HTMLButtonElement | null;
-    if (el) el.disabled = on;
+    if (el) el.disabled = held;
   }
+  // The two that are not symmetric, each because it is the way OUT of the state that
+  // would lock it: the self-test entry becomes Cancel self-test while a run is in
+  // flight, and the live toggle is how a session is ended. So the self-test locks for
+  // a session only, and the toggle for a run only — a session started under a run is
+  // what turns every console edit and every mapped controller move into a write
+  // landing in the middle of a verify.
+  const selfTest = document.getElementById("btn-selftest") as HTMLButtonElement | null;
+  if (selfTest) selfTest.disabled = liveSessionUp;
+  const liveToggle = document.getElementById("btn-live") as HTMLButtonElement | null;
+  if (liveToggle) liveToggle.disabled = deviceRunInFlight;
   // A rate change re-clocks the device and renegotiates the USB stream, which
   // interrupts audio mid-session and puts the held connection at risk. The rate is
   // settled at the write boundary instead (settleSampleRate), so while live the
@@ -864,7 +875,23 @@ function setLiveUi(on: boolean): void {
   //
   // The badge stays live: toggling Follow USB only re-clocks when the host is on a
   // different rate, and measured on a URX44V the connection survived it.
-  ratePicker.disabled = on;
+  ratePicker.disabled = held;
+}
+
+// Reflect the live-sync state across the toggle, the on-air tally, and the other
+// device actions (which conflict with the held connection while sync is on).
+// Only ever called in the desktop live-sync path, so re-enabling on `off` is safe.
+function setLiveUi(on: boolean): void {
+  const liveBtn = document.getElementById("btn-live");
+  if (liveBtn) liveBtn.setAttribute("aria-pressed", String(on));
+  const tally = document.getElementById("live-tally");
+  if (tally) {
+    tally.hidden = !on;
+    if (on) tally.textContent = `${t().toolbar.liveTag} · ${liveDeviceLabel}`;
+  }
+  // Reads liveSessionUp, which every caller sets before calling (deactivateLive
+  // clears it first, activateLive raises it first), so the two cannot disagree.
+  syncDeviceActionUi();
   // The Preferences device-scope control locks while the session is up; re-render
   // the modal if it is open (a link loss can end the session behind the scrim).
   prefs.refresh();
@@ -3007,9 +3034,10 @@ if (!DEMO) {
     async function runDeviceSelfTest(headless = false): Promise<void> {
       const controller = new AbortController();
       selfTestAbort = controller;
-      // Raised before the first await, so no message can slip through between the
-      // click and the connect.
+      // Raised before the first await, so nothing can slip through between the click
+      // and the connect — neither a MIDI message nor a second device action.
       deviceRunInFlight = true;
+      syncDeviceActionUi();
       selfTestBtn.textContent = t().toolbar.selfTestCancel;
       setStatus(t().status.selfTestRunning);
       try {
@@ -3061,6 +3089,7 @@ if (!DEMO) {
       } finally {
         selfTestAbort = null;
         deviceRunInFlight = false;
+        syncDeviceActionUi();
         // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased),
         // so the next run speaks up again instead of refusing silently.
         midi?.gateReleased();
@@ -3089,6 +3118,7 @@ if (!DEMO) {
     void prepareModifiedRequested().then(async (auto) => {
       if (!auto) return;
       deviceRunInFlight = true;
+      syncDeviceActionUi();
       setStatus(t().status.selfTestRunning);
       try {
         const report = await runPrepareModified(getModel(modelId));
@@ -3101,6 +3131,7 @@ if (!DEMO) {
         showError(connectFailureStatus(err, t().status.selfTestError));
       } finally {
         deviceRunInFlight = false;
+        syncDeviceActionUi();
         midi?.gateReleased();
       }
     });

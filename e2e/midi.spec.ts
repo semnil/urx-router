@@ -341,9 +341,21 @@ test("a running self-test freezes incoming MIDI, and releases it when the run en
   await expect(page.locator("#statusbar")).toContainText("incoming MIDI is ignored");
   await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
 
+  // Everything that would open a second connection to the unit — or re-clock it —
+  // is locked for the same window, including the Live-sync toggle: a session started
+  // under the run is the one path that turns a plain console edit into a write
+  // landing in the middle of a verify. The self-test entry stays live because it IS
+  // the cancel.
+  for (const id of ["#btn-live", "#btn-fetch", "#btn-write", "#btn-compare", "#btn-device-setup", "#rate-picker"]) {
+    await expect(page.locator(id)).toBeDisabled();
+  }
+  await expect(page.locator("#btn-selftest")).toBeEnabled();
+
   // Release the connect: the run fails, and the window it held closes with it.
   await page.evaluate(() => localStorage.removeItem("urx-test-vd-hold"));
   await expect(page.locator("#btn-selftest")).toHaveText("Self-test (experimental)"); // over, not cancelling
+  await expect(page.locator("#btn-live")).toBeEnabled();
+  await expect(page.locator("#rate-picker")).toBeEnabled();
   await sendMidi(page, [0xb0, 7, 0]);
   await expect(readLevel(page, "CH 1")).toHaveText("-∞");
 });

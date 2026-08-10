@@ -1202,6 +1202,20 @@ by comparison, `Some("")` means the unit answered with no System entry and legit
 `None` means the read itself did not land — the version is unknown rather than absent, so the operation stops
 instead of proceeding with the gate silently off ([Aborting on failure](#aborting-on-failure)).
 
+**Only one of them holds the unit at a time, and the menu is what enforces it.** `syncDeviceActionUi`
+recomputes the lock from the two latches that hold a connection for a duration — a live session
+(`liveSessionUp`) and a destructive round-trip run (`deviceRunInFlight`: the self-test,
+`--prepare-modified`) — rather than from whichever one just moved, so a session ending inside a run cannot
+re-enable what the run still needs locked. Fetch, write, compare, the `.urxf` import, device setup and the
+rate picker lock for either. The two exceptions are each the way **out** of the state that would lock them:
+the self-test entry becomes Cancel self-test while a run is in flight, so it locks for a session only, and
+the Live-sync toggle locks for a run only. Locking that toggle is what closes the one path by which an
+ordinary console edit reaches the unit mid-verify — the runs read the device, not the plan, so with no
+session up an edit (or an incoming MIDI message) goes no further than the document. Like the rate lock, this
+is a guard rail rather than an invariant: nothing below the UI refuses a second `vdConnect`, and on the vdp
+transport a second connection now succeeds where casket used to make the two mutually exclusive by silencing
+one of them.
+
 Every failure raised outside the UI layer returns a stable, machine-readable code rather than a raw English
 string — see [Error codes](#error-codes) for the scheme. The broker link's are `broker-unreachable` (Device
 Center not running), `no-device` (running, but no URX attached — the empty-list, `sync_status != online`, and
