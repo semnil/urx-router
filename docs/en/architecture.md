@@ -1191,11 +1191,15 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
 ## Live control connection
 
 Every device action (fetch, write, live sync, self-test) opens a connection through `vdConnect`, which runs
-the Rust worker's `handshake`: it asks the broker `getDeviceList` for the unit's `dev_uid`, then confirms the
-unit is physically attached by reading `/vd/synchronize` — `sync_status` is `"online"` only while a URX is
-connected. Device Center keeps the `getDeviceList` entry after the unit is unplugged (and answers cached
-parameter reads), so the list alone cannot tell a present device from a stale entry; the `sync_status` check
-is what distinguishes them. Once online, the handshake also reads the unit's System firmware version from
+the Rust worker's `handshake`: it finds the unit, then confirms it is physically attached by reading
+`/vd/synchronize` — `sync_status` is `"online"` only while a URX is connected. Finding it is the one step the
+two transports do differently (below); confirming it is not. Device Center keeps listing a unit after it is
+unplugged, and answers cached parameter reads for it, so the listing alone cannot tell a present device from a
+stale entry; the `sync_status` check is what distinguishes them. Measured on **both platforms** with the unit
+physically unplugged: the listing comes back unchanged, `/vd/synchronize` answers `"lost"`, and a parameter
+read still succeeds out of the broker's cache — so of the shapes `no-device` collapses (below), the empty
+list is the one that has never been observed to happen. Once online, the handshake also reads the
+unit's System firmware version from
 `/vd/device` (the `firm_list` entry named "System") and carries it on `DeviceSummary.firmware`; the frontend
 compares it against the validated `SUPPORTED_SYSTEM_FIRMWARE` (`core/control/firmware.ts`) and warns at the
 start of fetch / write / live sync when it differs, letting the user continue or stop. The field is a
@@ -1203,6 +1207,36 @@ start of fetch / write / live sync when it differs, letting the user continue or
 by comparison, `Some("")` means the unit answered with no System entry and legitimately disables the gate, and
 `None` means the read itself did not land — the version is unknown rather than absent, so the operation stops
 instead of proceeding with the gate silently off ([Aborting on failure](#aborting-on-failure)).
+
+**Two transports, and only one of them is exclusive.** Device Center serves the casket socket to **one client
+at a time**: a second connection silences the first, with no error on either side, so any other tool touching
+the broker would take the device link away and the app could not tell that from a quiet link. It also
+advertises a **per-session port** that it serves to concurrent clients, and that is the default route. Casket
+stays reachable under `--experimental --casket` and deliberately **not** as an automatic fallback — falling
+back on a discovery failure would hide a regression on the default route behind a working old one. The
+messages are the same on both; what differs is framing and addressing (an envelope naming the unit by GUID on
+every message, versus a socket already scoped to one unit and so naming nothing), which is why finding the
+unit is the step that changes and reading `/vd/synchronize` is not. `Link` holds whichever is open and hides
+the difference from everything above it. The port is looked up on every connection and never cached: it
+belongs to a Device Center session, not to a device.
+
+**Concurrency is what makes a reply hard to recognise.** The broker sends every notify to every connected
+client, whether or not this session registered the address, so a notify for the address a command is waiting
+on arrives whenever anything else touches the unit — and the reachable-by-everyone route is the one that makes
+that ordinary rather than rare. A notify names the address it is about, so matching a reply by address alone
+lets one answer the command: a read returns the pushed value instead of the read, and a write, finding no
+`response_code`, reports a write that landed as refused and aborts. Replies are therefore matched on **verb
+and address together** (`reply_for`), and each command keeps the verb it sent and the verb it will accept in
+one place so the two cannot drift. Notifies for a subscribed channel are still absorbed into that channel's
+batch rather than dropped, as they were before.
+
+**Measured on both platforms.** Windows was the open question, since a difference in the endpoints or the
+reply shapes would have meant the Windows build could not connect at all. On Windows 11 with a URX44V it is
+the same: the same endpoints, the same replies, the same handshake, and live sync plus a write both reaching
+the unit. One number differs — a sequential sweep of the broker's whole address space (7074 reads, 0
+unreadable on either platform) takes **≈1.9 s on Windows against ≈0.3 s on macOS**. That is per-round-trip
+cost on the local socket rather than anything about the protocol, and the whole-device readback behind a Fetch
+and a Live-sync start pays it in the same proportion.
 
 **The shell has one connection slot, so "a second connection" is not what happens.** `VdState::install`
 stops the worker already installed before putting the new one in, and commands are addressed to whatever is
