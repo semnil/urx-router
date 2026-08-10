@@ -1754,6 +1754,14 @@ let fileFlowBusy = false;
 // raise this latch and clear it in their finally; every wholesale plan replacement
 // checks it. The internal model-switch loadPlan runs before the latch is raised.
 let deviceReadInFlight = false;
+// The two destructive round-trip runs (the self-test, and --prepare-modified) perturb
+// the unit and then verify, address by address, that it holds exactly what they wrote.
+// Anything else that reaches the device inside that window does not merely add noise:
+// the run reports the foreign value as a write the device refused, and the self-test's
+// restore then puts back a state that was never the operator's. Both own their own
+// connection rather than going through withDevice, so nothing else in the app can see
+// they are running — this latch is how it is told. Minutes long, unlike the two above.
+let deviceRunInFlight = false;
 async function fileFlow<T>(run: () => Promise<T>): Promise<T | null> {
   // Refused, and said so: the flow the operator picked simply does not happen, and the
   // status line is showing the read's own progress rather than an answer to that click.
@@ -2729,9 +2737,15 @@ if (!DEMO) {
       // repaints nodes only, so repaint the wires here (rare, toggle-rate).
       if (control.kind === "toggle" && !graphHost.hidden) graph.repaintWires();
     },
-    // The two operator-started latches, a strict subset of what the history refuses
-    // under: a Fetch or a Live-sync start holds the plan for seconds and the latter
-    // then snapshots it as device truth, and a file flow can replace the plan outright.
+    // The operator-started latches, a strict subset of what the history refuses under:
+    // a Fetch or a Live-sync start holds the plan for seconds and the latter then
+    // snapshots it as device truth, a file flow can replace the plan outright, and a
+    // destructive run (deviceRunInFlight) is verifying the unit against what it wrote.
+    // That last one is the only latch here whose reason is the DEVICE rather than the
+    // plan: with Live sync off a refused message would have edited the plan and gone no
+    // further, but the run's own connection is unaffected by the session state this side
+    // reads, and a session started while it runs turns every mapped controller move into
+    // a write landing in the middle of a verify.
     // The follow-side reads (followReads) are deliberately NOT here, unlike in
     // PlanHistory.blocked: they recur once per flush window of a 1-knob drag, so
     // refusing in them would make an external desk stutter continuously — and an edit
@@ -2739,7 +2753,7 @@ if (!DEMO) {
     // assigns), which is what makes leaving them open safe. A modal is not here either:
     // a MIDI desk is a second physical surface, and the panel that configures it is
     // itself counted by modalOpen().
-    blocked: () => (deviceReadInFlight || fileFlowBusy ? t().status.midiBusy : null),
+    blocked: () => (deviceReadInFlight || fileFlowBusy || deviceRunInFlight ? t().status.midiBusy : null),
     // Both arming surfaces repaint: learn mode, the armed control and the mapping
     // set all decide what they draw, and a tuning screen open over the console is
     // the one the operator is looking at.
@@ -2993,6 +3007,9 @@ if (!DEMO) {
     async function runDeviceSelfTest(headless = false): Promise<void> {
       const controller = new AbortController();
       selfTestAbort = controller;
+      // Raised before the first await, so no message can slip through between the
+      // click and the connect.
+      deviceRunInFlight = true;
       selfTestBtn.textContent = t().toolbar.selfTestCancel;
       setStatus(t().status.selfTestRunning);
       try {
@@ -3043,6 +3060,10 @@ if (!DEMO) {
         showError(connectFailureStatus(err, t().status.selfTestError));
       } finally {
         selfTestAbort = null;
+        deviceRunInFlight = false;
+        // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased),
+        // so the next run speaks up again instead of refusing silently.
+        midi?.gateReleased();
         selfTestBtn.textContent = t().toolbar.selfTest;
       }
     }
@@ -3067,6 +3088,7 @@ if (!DEMO) {
     // can save and diff it. Reports go to the dev-server log like the self-test.
     void prepareModifiedRequested().then(async (auto) => {
       if (!auto) return;
+      deviceRunInFlight = true;
       setStatus(t().status.selfTestRunning);
       try {
         const report = await runPrepareModified(getModel(modelId));
@@ -3077,6 +3099,9 @@ if (!DEMO) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn("[prepare-modified] ERROR", message);
         showError(connectFailureStatus(err, t().status.selfTestError));
+      } finally {
+        deviceRunInFlight = false;
+        midi?.gateReleased();
       }
     });
   });

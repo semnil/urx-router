@@ -126,8 +126,12 @@ test.beforeEach(async ({ page }) => {
       Channel,
       invoke: (cmd: string, args: Record<string, unknown>) => {
         switch (cmd) {
+          // MIDI control ships without the flag (only the self-test is gated), so this
+          // is off unless a test asks for it — through localStorage, which is the same
+          // stand-in for launch/shell state `urx-test-midiwin` uses below, and the only
+          // one that survives the reload the flag has to be read at boot on.
           case "experimental_enabled":
-            return Promise.resolve(false); // MIDI control ships without the flag (only the self-test is gated)
+            return Promise.resolve(!!localStorage.getItem("urx-test-experimental"));
           case "self_test_requested":
           case "reset_storage_requested":
             return Promise.resolve(false);
@@ -210,6 +214,19 @@ test.beforeEach(async ({ page }) => {
           // Minimal vd surface for the fetch feedback test: a matching device with
           // no firmware gate, every parameter read answering 0 (CH levels = 0.0 dB).
           case "vd_connect":
+            // Held open while the flag is set, and failed the moment it is cleared. A
+            // self-test is minutes of round-trips against real hardware and cannot be
+            // played out here; holding it at its first await is what makes the window
+            // it keeps open observable, and releasing it is what shows the window ends.
+            if (localStorage.getItem("urx-test-vd-hold")) {
+              return new Promise((_resolve, reject) => {
+                const tick = setInterval(() => {
+                  if (localStorage.getItem("urx-test-vd-hold")) return;
+                  clearInterval(tick);
+                  reject(new Error("link lost"));
+                }, 20);
+              });
+            }
             return Promise.resolve({ model: "URX44V", label: "Stub URX", firmware: "", epoch: 1 });
           case "vd_disconnect":
             return Promise.resolve();
@@ -286,6 +303,47 @@ test("learn binds a CC to a fader and incoming CC moves it", async ({ page }) =>
 
   await sendMidi(page, [0xb0, 7, 127]);
   await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
+  await sendMidi(page, [0xb0, 7, 0]);
+  await expect(readLevel(page, "CH 1")).toHaveText("-∞");
+});
+
+test("a running self-test freezes incoming MIDI, and releases it when the run ends", async ({ page }) => {
+  // The self-test perturbs the unit and then verifies address by address that it
+  // holds what was written, so a controller move landing inside that window is
+  // reported as a write the device refused. It owns its own connection, which is why
+  // nothing about the app's own session state can stand in for this latch.
+  await page.evaluate(() => localStorage.setItem("urx-test-experimental", "1"));
+  await page.reload();
+  await expect(page.locator("#console-host")).toBeVisible();
+
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
+  );
+  await setLearn(page, win, false);
+  await sendMidi(page, [0xb0, 7, 127]);
+  await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
+
+  // Start a run and hold it at its connect (see the vd_connect case in the stub).
+  await page.evaluate(() => localStorage.setItem("urx-test-vd-hold", "1"));
+  await page.click("#btn-device");
+  await page.click("#btn-selftest"); // its confirm is answered Ok by the stub
+  await expect(page.locator("#statusbar")).toContainText("Running device self-test");
+
+  // The refusal is what orders this: asserting the level alone would be satisfied by
+  // its first sample, taken before the message had been decoded at all.
+  await sendMidi(page, [0xb0, 7, 0]);
+  await expect(page.locator("#statusbar")).toContainText("incoming MIDI is ignored");
+  await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
+
+  // Release the connect: the run fails, and the window it held closes with it.
+  await page.evaluate(() => localStorage.removeItem("urx-test-vd-hold"));
+  await expect(page.locator("#btn-selftest")).toHaveText("Self-test (experimental)"); // over, not cancelling
   await sendMidi(page, [0xb0, 7, 0]);
   await expect(readLevel(page, "CH 1")).toHaveText("-∞");
 });
