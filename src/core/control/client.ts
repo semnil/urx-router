@@ -88,6 +88,11 @@ export interface DiffResult {
   /** Per-command read failures (e.g. timeout). A non-empty list means the
    *  comparison is incomplete and the caller must not write on it. */
   errors: string[];
+  /** The commands behind those failures. `errors` carries a name and a message, which
+   *  is what a report prints; a caller that has to decide something PER ADDRESS — the
+   *  self-test, deciding whether a guessed mapping round-tripped — cannot get there
+   *  from a string. */
+  unread: VdCommand[];
 }
 
 /**
@@ -121,6 +126,7 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
   const { signal, stopOnError = false, scope = "all", emit = {} } = opts;
   const diffs: CommandDiff[] = [];
   const errors: string[] = [];
+  const unread: VdCommand[] = [];
   for (const command of planToCommands(model, plan, scope, emit)) {
     signal?.throwIfAborted();
     try {
@@ -128,10 +134,11 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
       if (current !== command.vdValue) diffs.push({ command, current });
     } catch (e) {
       errors.push(`${command.name}: ${e instanceof Error ? e.message : String(e)}`);
+      unread.push(command);
       if (stopOnError) break;
     }
   }
-  return { diffs, errors };
+  return { diffs, errors, unread };
 }
 
 export interface SendOutcome {
@@ -248,6 +255,9 @@ export interface ConvergeResult {
    *  stopped early because the device's state could no longer be confirmed, so
    *  `residual` is what was known at that point rather than a settled answer. */
   readErrors: string[];
+  /** The commands behind them (see DiffResult.unread), so a caller can decide per
+   *  address rather than per message. */
+  unread: VdCommand[];
 }
 
 /**
@@ -346,6 +356,7 @@ export async function sendConverging(
   } = opts;
   const outcomes: SendOutcome[] = [];
   const readErrors: string[] = [];
+  const unread: VdCommand[] = [];
   const trace: ConvergeRound[] = [];
   let residual = initialDiffs;
   if (!residual) {
@@ -363,6 +374,7 @@ export async function sendConverging(
       });
     const seed = await diffPlan(model, plan, { signal, scope, emit });
     readErrors.push(...seed.errors);
+    unread.push(...seed.unread);
     residual = seed.diffs;
   }
   let rounds = 0;
@@ -395,10 +407,11 @@ export async function sendConverging(
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
     const next = await diffPlan(model, plan, { signal, scope, emit });
     readErrors.push(...next.errors);
+    unread.push(...next.unread);
     residual = next.diffs;
     record(residual);
   }
-  return { outcomes, rounds, trace, residual, readErrors };
+  return { outcomes, rounds, trace, residual, readErrors, unread };
 }
 
 /**

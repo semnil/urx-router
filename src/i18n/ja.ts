@@ -589,6 +589,8 @@ export const ja: Messages = {
     deviceSetupApplying: "本体へ設定を適用しています…",
     deviceSetupApplied: (n: number): string => `${n} 件の設定を本体へ適用しました`,
     selfTestRunning: "デバイスのセルフテストを実行中… 切断しないでください (メニューから中止できます)",
+    selfTestRefused:
+      "セルフテストを開始しませんでした — 復元に必要なパラメーターの一部を事前に読み取れませんでした。デバイスには何も書き込んでいません。",
     selfTestCancelled: "セルフテストを中止しました — デバイスは無音状態です。元に戻すには再度取得してください",
     selfTestPass: (n: number): string => `セルフテスト合格: ${n} 件のパラメータを書き込み、同一に読み戻しました`,
     selfTestFail: (n: number): string => `セルフテスト失敗: 書き込み後に ${n} 件が一致しませんでした`,

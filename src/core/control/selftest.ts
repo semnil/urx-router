@@ -151,8 +151,12 @@ export interface SelfTestReport {
   restoreResidual: number;
   /** Non-fatal issues (read failures, send failures) collected along the way. */
   errors: string[];
-  /** Last phase reached — where it stopped if an error was thrown. */
-  phase: "connect" | "readback" | "write" | "verify" | "restore" | "done";
+  /** Last phase reached — where it stopped if an error was thrown. "refused" is the
+   *  one that is not a failure: the run declined to start and wrote nothing, so
+   *  `restored` says nothing about the unit and callers must not read it as a failed
+   *  restore (it is false because nothing was restored, not because something is left
+   *  perturbed). */
+  phase: "connect" | "readback" | "write" | "verify" | "restore" | "done" | "refused";
   /**
    * DIAGNOSTIC — the restore's own account of itself, small enough to ride the report
    * line the headless launch already prints. It exists because a run that reported
@@ -487,6 +491,11 @@ export async function runSelfTest(
   // parameter matched — so they cannot go in `residual`, and a verdict that ignores
   // them claims a fidelity it did not measure.
   let readFailures = 0;
+  // Unverified-mapping keys with at least one address the run could not read. A read
+  // failure keeps the command out of the diff (diffPlan) and so out of the residual, so
+  // without this the guess shows no mismatch and reports CONFIRMED — a promotion to
+  // "verified on hardware" for an address nothing round-tripped.
+  const unreadKeys = new Set<string>();
   // Address → unverified-mapping key, so each residual can be tagged with the guess
   // it refutes. A colliding guess shares its address with a confirmed param (whose
   // write is kept); drop those entries so a residual there is attributed to the
@@ -547,6 +556,7 @@ export async function runSelfTest(
       report.errors.push(
         `refusing to sweep: ${unrestorable.size - preSweep.size} address(es) the restore cannot reach could not be read first`,
       );
+      report.phase = "refused";
       return report;
     }
 
@@ -570,6 +580,10 @@ export async function runSelfTest(
 
       report.errors.push(...result.readErrors.map((e) => `p${pass} read: ${e}`));
       readFailures += result.readErrors.length;
+      for (const c of result.unread) {
+        const key = addresses.get(`${c.paramId}:${c.y}`);
+        if (key) unreadKeys.add(key);
+      }
 
       report.phase = "verify";
       // Keep the trace of a pass that did not converge, with the captured state of
@@ -606,7 +620,7 @@ export async function runSelfTest(
         label: m.label,
         collision,
         mismatches,
-        confirmed: !collision && exercised.has(m.key) && mismatches.length === 0,
+        confirmed: !collision && exercised.has(m.key) && mismatches.length === 0 && !unreadKeys.has(m.key),
       };
     });
 
@@ -792,7 +806,11 @@ export function formatSelfTestReport(report: SelfTestReport): string {
   lines.push("");
   lines.push(`- Result: ${report.ok ? "PASS" : "FAIL"} (phase: ${report.phase})`);
   lines.push(`- Captured groups: ${report.applied}; passes: ${report.passes}; commands written: ${report.written}`);
-  lines.push(`- Restored: ${report.restored ? "yes" : `NO — ${report.restoreResidual} param(s) differ`}`);
+  lines.push(
+    report.phase === "refused"
+      ? "- Restored: not applicable — the run refused to start and wrote nothing"
+      : `- Restored: ${report.restored ? "yes" : `NO — ${report.restoreResidual} param(s) differ`}`,
+  );
 
   if (report.unverified.length) {
     lines.push("");

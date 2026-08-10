@@ -14,7 +14,7 @@ vi.mock("../platform", () => ({
 }));
 
 import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
-import { auditUnverified, eqOneKnob, inputEq, planToCommands } from "./translate";
+import { auditUnverified, eqOneKnob, inputEq, planToCommands, unverifiedAddresses } from "./translate";
 import {
   dGainParam,
   INSERT_FX_NONE,
@@ -191,9 +191,11 @@ describe("runSelfTest", () => {
     const report = await runSelfTest(model, 0);
 
     expect(report.errors.some((e) => e.startsWith("refusing to sweep"))).toBe(true);
-    expect(report.phase).toBe("readback");
+    // "refused", not "readback": nothing was written, so the caller must not render
+    // this as a failed restore ("the device may not be restored") when the device was
+    // never touched. `restored` is false here only because there was nothing to restore.
+    expect(report.phase).toBe("refused");
     expect(report.ok).toBe(false);
-    expect(report.restored).toBe(false);
     // The point of refusing: the unit is untouched, not merely reported on.
     expect(report.written).toBe(0);
     expect([...table]).toEqual([...before]);
@@ -473,6 +475,43 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(plan.connections.some((c) => c.kind === "source")).toBe(true);
     const cmds = planToCommands(m22, plan);
     expect(cmds.some((c) => c.name === "INPUT_SOURCE" && c.vdValue !== PORT_REF_NONE)).toBe(true);
+  });
+
+  // CONFIRMED is a promotion: it is how a guessed device mapping stops being a guess,
+  // and `translate.ts` carries those guesses precisely so nothing writes a speculative
+  // address as though it were verified. A read failure keeps the command out of the diff
+  // (diffPlan) and so out of the residual — which reads as "no mismatch" and confirmed
+  // the guess without a single round trip having been checked.
+  it("does not confirm a guess whose addresses it could not read", async () => {
+    const table = installMock22(seed22());
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    // One address of the hi-Z guess. Failing only once writing has started keeps it in
+    // the captured plan (a read that fails during the capture leaves the parameter out
+    // of the plan entirely, so nothing would diff it and the case would be absent).
+    const hiZ = [...unverifiedAddresses(m22)].find(([, key]) => key === "hiz-channel");
+    expect(hiZ).toBeDefined();
+    const [addrKey] = hiZ!;
+    const paramId = Number(addrKey.split(":")[0]);
+    let writing = false;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      writing = true;
+      table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+    vi.mocked(vdGet).mockImplementation((id, x, y) =>
+      writing && id === paramId ? Promise.reject(new Error("read timeout")) : realGet(id, x, y),
+    );
+
+    const report = await runSelfTest(m22, 0);
+
+    const hiz = report.unverified.find((u) => u.key === "hiz-channel")!;
+    expect(hiz.confirmed).toBe(false);
+    // …and it is not being reported as REFUTED either: nothing round-tripped wrong, the
+    // run simply could not look.
+    expect(hiz.mismatches).toEqual([]);
+    // The guesses whose addresses were readable are unaffected — this is per address,
+    // not a blanket downgrade of the whole run.
+    expect(report.unverified.filter((u) => u.confirmed).length).toBeGreaterThan(0);
   });
 
   it("confirms every unverified guess on a faithful device (no collisions)", async () => {
