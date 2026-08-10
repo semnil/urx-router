@@ -78,8 +78,10 @@ export interface SelfTestMismatch {
   actual: number | null;
   /** Sweep pass that produced this mismatch (-1 = the restore). */
   pass: number;
-  /** How the pass ended, when it did not finish. Absent on a pass that ran to the end of
-   *  its loop — only those entries are a divergence the device settled on. On the rest the
+  /** How the PASS ended, when it did not finish — not a statement about this address.
+   *  `sendCommands` stops at the first refusal, so an address earlier in the same round
+   *  was sent, and a read that failed elsewhere says nothing about one that read fine.
+   *  Absent on a pass that ran to the end of its loop — only those entries are a divergence the device settled on. On the rest the
    *  loop never finished converging, so the difference may be one a later round would have
    *  closed; printing them as a fidelity finding states a verdict the run did not reach.
    *  A model with no unverified mapping (URX44V) has no other guard: every one of them
@@ -104,27 +106,25 @@ export interface SelfTestMismatch {
  *
  *   confirmed   every address round-tripped
  *   refuted     at least one did not, in a pass that completed — `mismatches` says which
- *   unread      the run could not look: one of ITS addresses could not be read, or its
- *               only divergence came from a pass `sendConverging` stopped on a read
- *               failure. Measured in a fixture: one unreadable address left an unrelated
- *               guess with 14 "mismatches"
- *   unsent      the run could not write: its only divergence came from a pass the device
- *               refused. sendConverging leaves that round WITHOUT re-reading, so it hands
- *               back the diff it was about to send — every address the pass meant to
- *               change, none of which the device was asked about
+ *   unread      one of ITS OWN addresses could not be read, so nothing about it round-
+ *               tripped. This is the one per-address reason, taken from the failed reads
+ *               themselves. Measured in a fixture: one unreadable address left an
+ *               unrelated guess with 14 "mismatches"
+ *   incomplete  it differed, in a pass that did not finish. WHY that pass stopped is a
+ *               fact about the pass, not about this guess — `sendCommands` stops at the
+ *               first refusal, so a guess written earlier in the same round was asked and
+ *               answered; a read that failed elsewhere says nothing about an address that
+ *               read fine. Naming the cause here printed exactly those two lies. The
+ *               cause is in Issues, and the difference under "Not settled"
  *   unexercised the guess has no address on this model, so the run never wrote it
  *   collision   a confirmed param already owns the guessed id (static audit; the
  *               guess is wrong, and its writes were suppressed for safety)
- *
- * `unread` and `unsent` are one situation to a tally and two to a reader: the Issues list
- * names a refused write or a failed read, and a verdict that guessed between them would
- * contradict the errors printed beside it.
  *
  * Evidence is per PASS, and that is what makes REFUTED durable: a pass that read
  * everything and still saw a divergence has settled the guess, and a read failure in
  * some later pass says nothing about the round trip that pass already observed.
  */
-export type UnverifiedOutcome = "confirmed" | "refuted" | "unread" | "unsent" | "unexercised" | "collision";
+export type UnverifiedOutcome = "confirmed" | "refuted" | "unread" | "incomplete" | "unexercised" | "collision";
 
 export interface UnverifiedFinding {
   key: string;
@@ -548,10 +548,10 @@ export async function runSelfTest(
   // residual came from, so one late read failure would retract a refutation an earlier
   // pass had already established.
   const refutedKeys = new Set<string>();
-  // …and keys whose only divergence came from a pass that did NOT complete, with how
-  // that pass ended. The verdict and the Issues list are read together, so a guess that
-  // could not be tested has to name the same cause the errors above it do.
-  const stoppedKeys = new Map<string, "read" | "write">();
+  // …and keys whose only divergence came from a pass that did NOT complete. No cause is
+  // carried: how the pass ended is a fact about the pass, and attributing it to each
+  // address in the residual claims things the run did not observe (see UnverifiedOutcome).
+  const stoppedKeys = new Set<string>();
   // Commands the device reached and refused. `residual` covers the same runs today, but
   // via a coupling in sendConverging rather than as a stated fact (see report.ok).
   let sendFailures = 0;
@@ -673,9 +673,7 @@ export async function runSelfTest(
         const unverifiedKey = d.command.x === 0 ? addresses.get(`${d.command.paramId}:${d.command.y}`) : undefined;
         if (unverifiedKey) {
           if (stoppedOn === null) refutedKeys.add(unverifiedKey);
-          // First reason wins: a later pass stopping a different way does not make this
-          // one's residual any more usable, and the report needs one cause to name.
-          else if (!stoppedKeys.has(unverifiedKey)) stoppedKeys.set(unverifiedKey, stoppedOn);
+          else stoppedKeys.add(unverifiedKey);
         }
         report.residual.push({
           name: d.command.name,
@@ -698,9 +696,10 @@ export async function runSelfTest(
 
     // Per-guess verdict. Each branch is a reason, in the order that decides: a collision
     // is known wrong before any hardware; a divergence a complete pass observed settles
-    // the guess and nothing later takes it back; short of that, the run could not look
-    // (an unreadable address, or a pass that stopped on a read) or could not write (a
-    // pass the device refused); a guess with no address on this model was never tested.
+    // the guess and nothing later takes it back; short of that, one of its own addresses
+    // was unreadable, or it differed in a pass that did not finish — and only the first
+    // of those two is a fact about the guess; a guess with no address on this model was
+    // never tested.
     const exercised = new Set(addresses.values());
     report.unverified = UNVERIFIED_MAPPINGS.filter((m) => m.models.includes(model.id)).map((m) => {
       // Only what a completed pass observed. The outcome already turns on that, but the
@@ -712,10 +711,10 @@ export async function runSelfTest(
         ? "collision"
         : refutedKeys.has(m.key)
           ? "refuted"
-          : unreadKeys.has(m.key) || stoppedKeys.get(m.key) === "read"
+          : unreadKeys.has(m.key)
             ? "unread"
             : stoppedKeys.has(m.key)
-              ? "unsent"
+              ? "incomplete"
               : exercised.has(m.key)
                 ? "confirmed"
                 : "unexercised";
@@ -939,11 +938,12 @@ export function formatSelfTestReport(report: SelfTestReport): string {
       // inheriting whatever the last branch happened to say.
       const verdict = {
         collision: "COULD NOT TEST — guessed id collides with a confirmed param (guess is wrong)",
-        // Each names the same cause the Issues list does, since the two are read together.
         // Neither carries a divergence list: what a stopped pass left for this guess is
-        // under "Not settled", where it is not standing next to a verdict.
-        unread: "COULD NOT TEST — a read failed, so nothing about it round-tripped either way",
-        unsent: "COULD NOT TEST — the device refused a write, so it was never asked to hold the value",
+        // under "Not settled", where it is not standing next to a verdict. And only the
+        // first names a cause, because only the first is about this guess's own address.
+        unread: "COULD NOT TEST — one of its addresses could not be read, so nothing about it round-tripped",
+        incomplete:
+          "COULD NOT TEST — it differed in a pass that did not finish; the difference is under Not settled, and what stopped the run under Issues",
         unexercised: "COULD NOT TEST — no address on this model, so the run never wrote it",
         confirmed: "CONFIRMED — round-tripped on the device",
         refuted: `REFUTED — ${u.mismatches.length} address(es) did not round-trip`,
@@ -990,7 +990,7 @@ export function formatSelfTestReport(report: SelfTestReport): string {
     for (const m of unsettled) {
       const guess = m.unverifiedKey ? `, guess ${m.unverifiedKey}` : "";
       lines.push(
-        `- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — plan wanted ${m.expected}, device answered ${m.actual ?? "unreadable"} at the last read (stopped on a ${m.stoppedOn === "write" ? "refused write" : "failed read"}${guess})`,
+        `- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — plan wanted ${m.expected}, device answered ${m.actual ?? "unreadable"} at the last read (the pass stopped on a ${m.stoppedOn === "write" ? "refused write" : "failed read"}${guess})`,
       );
     }
   }

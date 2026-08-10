@@ -557,7 +557,10 @@ describe("unverified-guess workflow (URX22)", () => {
     // Named, not just counted: `input-ports` is the guess holding those 14, and the
     // failure it must not fall into is the other direction as well — a divergence with no
     // complete pass behind it is not a refutation, and it is not a confirmation either.
-    expect(report.unverified.find((u) => u.key === "input-ports")!.outcome).toBe("unread");
+    // Its own addresses read FINE — the failure was hi-Z's — so the two land on different
+    // verdicts, and "unread" is reserved for the one it is actually true of. Sharing it
+    // had the report telling the owner a read of `input-ports` had failed when none had.
+    expect(report.unverified.find((u) => u.key === "input-ports")!.outcome).toBe("incomplete");
     const verdicts = summarizeVerdicts(report.unverified);
     expect(verdicts.refuted).toBe(0);
     expect(verdicts.untestable).toBeGreaterThan(0);
@@ -658,8 +661,14 @@ describe("unverified-guess workflow (URX22)", () => {
     const stereoId = Number(stereo![0].split(":")[0]);
     // One address the device refuses outright. It never stores, so it is in every round's
     // diff, so every pass stops on it — no pass ever completes.
+    const deliveredBeforeRefusal = new Set<string>();
+    let refused = false;
     vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
-      if (id === stereoId) return Promise.reject(new Error("device busy"));
+      if (id === stereoId) {
+        refused = true;
+        return Promise.reject(new Error("device busy"));
+      }
+      if (!refused) deliveredBeforeRefusal.add(`${id}:${y}`);
       table.set(`${id}:${x}:${y}`, v);
       return Promise.resolve();
     });
@@ -676,12 +685,21 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.unverified.every((u) => u.outcome !== "refuted")).toBe(true);
     const md = formatSelfTestReport(report);
     expect(md).not.toContain("REFUTED");
-    // …and the verdict names the cause the Issues list names. A refused write reported as
-    // "a read failed" contradicts the errors printed a few lines below it.
-    expect(report.unverified.some((u) => u.outcome === "unsent")).toBe(true);
+    // …and no verdict names a cause it cannot know. `sendCommands` stops at the FIRST
+    // refusal, so a guess whose command went out before it was asked and answered — and
+    // is still in the residual anyway, because the residual is the pre-round diff. A
+    // verdict reading "it was never asked to hold the value" is false about exactly those,
+    // and D.Gain is one: its addresses went out before the refused one.
+    const dgainDelivered = [...unverifiedAddresses(m22)].some(
+      ([addr, key]) => key === "dgain-urx22" && deliveredBeforeRefusal.has(addr),
+    );
+    expect(dgainDelivered).toBe(true);
+    expect(report.unverified.find((u) => u.key === "dgain-urx22")!.outcome).toBe("incomplete");
     expect(report.unverified.some((u) => u.outcome === "unread")).toBe(false);
-    expect(md).toContain("refused a write");
+    expect(md).not.toContain("never asked to hold the value");
     expect(md).not.toContain("a read failed");
+    // The cause is still in the report — as a fact about the pass, which is what it is.
+    expect(md).toContain("the pass stopped on a refused write");
     // A run cannot have written more commands than it handed to the device. `written`
     // counted the ones the refusal skipped, so the same report said "N commands written"
     // and "M command(s) never sent".
