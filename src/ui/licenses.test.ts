@@ -5,8 +5,8 @@
 // license name, variants keep their own used-by mapping, and markup in the
 // notice arrives as data (text), never as live DOM.
 
-import { describe, it, expect } from "vitest";
-import { parseNotice } from "./licenses";
+import { beforeEach, describe, it, expect } from "vitest";
+import { parseNotice, showLicenses } from "./licenses";
 
 // The template's structure in miniature: two Apache text variants, one MIT.
 const NOTICE = `<html><body><main class="container">
@@ -62,5 +62,49 @@ describe("parseNotice", () => {
     const broken = NOTICE.replace(/<pre class="license-text">Apache License text, variant two.<\/pre>/, "");
     const families = parseNotice(broken);
     expect(families[0].variants).toHaveLength(1);
+  });
+});
+
+describe("showLicenses", () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div id="licenses-modal" hidden>
+        <div id="licenses-title"></div>
+        <div id="licenses-body"></div>
+        <button id="licenses-close"></button>
+      </div>`;
+  });
+
+  it("renders collapsed license families, toggles details and releases them on close", () => {
+    showLicenses(NOTICE);
+    const modal = document.getElementById("licenses-modal") as HTMLElement;
+    const body = document.getElementById("licenses-body") as HTMLElement;
+    const close = document.getElementById("licenses-close") as HTMLButtonElement;
+    const sections = [...body.querySelectorAll<HTMLElement>(".lic-sec")];
+
+    expect(modal.hidden).toBe(false);
+    expect(document.activeElement).toBe(close);
+    expect(sections).toHaveLength(2);
+    expect(sections[0].querySelector(".lic-count")?.textContent).not.toBe("");
+    expect(sections[0].querySelector(".lic-used")?.textContent).toBe("alpha 1.0.0, beta 2.1.0");
+    const toggle = sections[0].querySelector(".lic-toggle") as HTMLButtonElement;
+    const detail = sections[0].querySelector(".lic-detail") as HTMLElement;
+    expect(detail.hidden).toBe(true);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    toggle.click();
+    expect(detail.hidden).toBe(false);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.querySelector(".lic-arrow")?.textContent).toBe("▾");
+    toggle.click();
+    expect(detail.hidden).toBe(true);
+
+    close.click();
+    expect(modal.hidden).toBe(true);
+    expect(body.childElementCount).toBe(0);
+  });
+
+  it("refuses an unparseable bundled notice", () => {
+    expect(() => showLicenses("<p>not a cargo-about notice</p>")).toThrow("no licenses found in the bundled notice");
   });
 });
