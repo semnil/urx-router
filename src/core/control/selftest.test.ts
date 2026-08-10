@@ -617,7 +617,20 @@ describe("unverified-guess workflow (URX22)", () => {
     // Not one of those residual lines is published as a claim about the device.
     expect(summarizeVerdicts(report.unverified).refuted).toBe(0);
     expect(report.unverified.every((u) => u.outcome !== "refuted")).toBe(true);
-    expect(formatSelfTestReport(report)).not.toContain("REFUTED");
+    const md = formatSelfTestReport(report);
+    expect(md).not.toContain("REFUTED");
+    // …and the verdict names the cause the Issues list names. A refused write reported as
+    // "a read failed" contradicts the errors printed a few lines below it.
+    expect(report.unverified.some((u) => u.outcome === "unsent")).toBe(true);
+    expect(report.unverified.some((u) => u.outcome === "unread")).toBe(false);
+    expect(md).toContain("refused a write");
+    expect(md).not.toContain("a read failed");
+    // A run cannot have written more commands than it handed to the device. `written`
+    // counted the ones the refusal skipped, so the same report said "N commands written"
+    // and "M command(s) never sent".
+    expect(report.written).toBeLessThanOrEqual(vi.mocked(vdSet).mock.calls.length);
+    // The trace stops calling the whole round "sent" when part of it never went.
+    expect(md).toContain("Issued, in order");
     // And the report says the write stopped: the refusal by name, and what it cut short
     // as a count rather than one undefined-message line per command.
     expect(report.errors.some((e) => /^p0 \d+ command\(s\) never sent/.test(e))).toBe(true);

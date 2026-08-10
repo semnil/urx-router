@@ -89,30 +89,36 @@ export interface SelfTestMismatch {
  *
  *   confirmed   every address round-tripped
  *   refuted     at least one did not, in a pass that completed — `mismatches` says which
- *   unread      the run could not look, so nothing about it is known. Either one of ITS
- *               addresses could not be read, or its only divergence came from a pass that
- *               did not complete: `sendConverging` stops on a read failure, and on a
- *               refused WRITE it stops without re-reading at all, so it hands back the
- *               diff it was about to write. Either way the residual is evidence about the
- *               run, not about the device. Measured in a fixture: one unreadable address
- *               left an unrelated guess with 14 "mismatches"
+ *   unread      the run could not look: one of ITS addresses could not be read, or its
+ *               only divergence came from a pass `sendConverging` stopped on a read
+ *               failure. Measured in a fixture: one unreadable address left an unrelated
+ *               guess with 14 "mismatches"
+ *   unsent      the run could not write: its only divergence came from a pass the device
+ *               refused. sendConverging leaves that round WITHOUT re-reading, so it hands
+ *               back the diff it was about to send — every address the pass meant to
+ *               change, none of which the device was asked about
  *   unexercised the guess has no address on this model, so the run never wrote it
  *   collision   a confirmed param already owns the guessed id (static audit; the
  *               guess is wrong, and its writes were suppressed for safety)
+ *
+ * `unread` and `unsent` are one situation to a tally and two to a reader: the Issues list
+ * names a refused write or a failed read, and a verdict that guessed between them would
+ * contradict the errors printed beside it.
  *
  * Evidence is per PASS, and that is what makes REFUTED durable: a pass that read
  * everything and still saw a divergence has settled the guess, and a read failure in
  * some later pass says nothing about the round trip that pass already observed.
  */
-export type UnverifiedOutcome = "confirmed" | "refuted" | "unread" | "unexercised" | "collision";
+export type UnverifiedOutcome = "confirmed" | "refuted" | "unread" | "unsent" | "unexercised" | "collision";
 
 export interface UnverifiedFinding {
   key: string;
   label: string;
   outcome: UnverifiedOutcome;
   /** Addresses written for this guess that did not round-trip. Empty on "confirmed",
-   *  "unexercised" and "collision"; on "unread" it may be NON-empty, and is not evidence
-   *  — every pass that produced it stopped early. Only on "refuted" is it a finding. */
+   *  "unexercised" and "collision"; on "unread" and "unsent" it may be NON-empty, and is
+   *  not evidence — every pass that produced it stopped early. Only on "refuted" is it a
+   *  finding. */
   mismatches: SelfTestMismatch[];
 }
 
@@ -526,6 +532,13 @@ export async function runSelfTest(
   // residual came from, so one late read failure would retract a refutation an earlier
   // pass had already established.
   const refutedKeys = new Set<string>();
+  // …and keys whose only divergence came from a pass that did NOT complete, with how
+  // that pass ended. The verdict and the Issues list are read together, so a guess that
+  // could not be tested has to name the same cause the errors above it do.
+  const stoppedKeys = new Map<string, "read" | "write">();
+  // Commands the device reached and refused. `residual` covers the same runs today, but
+  // via a coupling in sendConverging rather than as a stated fact (see report.ok).
+  let sendFailures = 0;
   // Address → unverified-mapping key, so each residual can be tagged with the guess
   // it refutes. A colliding guess shares its address with a confirmed param (whose
   // write is kept); drop those entries so a residual there is attributed to the
@@ -601,7 +614,12 @@ export async function runSelfTest(
       const result = await phaseStep(sendConverging(model, plan, { settleMs, signal, trace: true }));
       if (!result) break;
       const { outcomes, residual } = result;
-      report.written += outcomes.length;
+      // Reached the device — not `outcomes.length`, which also counts the commands
+      // `sendCommands` marked skipped after the first refusal. Those never left the app,
+      // and counting them had the same report saying "N commands written" and "M
+      // command(s) never sent" about the same run.
+      report.written += outcomes.filter((o) => !o.skipped).length;
+      sendFailures += outcomes.filter(reachedAndFailed).length;
       report.errors.push(...sendFailureLines(outcomes, `p${pass}`));
       // A command whose current value could not be read is left out of the diff by
       // design (diffPlan: never write on a value you did not confirm), which also leaves
@@ -623,17 +641,26 @@ export async function runSelfTest(
         const baseline = residual.map((d) => captured.get(cmdAddr(d.command))).filter((v) => v !== undefined);
         report.traces.push({ pass, baseline, rounds: result.trace });
       }
-      // Whether THIS pass can refute anything: only a pass that ran to the end of its
-      // own loop watched each address converge or fail to. Both ways out short of that
-      // leave a residual that describes the run rather than the device, and the send
-      // failure is the worse of the two — sendConverging breaks out WITHOUT re-reading,
-      // so what it hands back is the diff it was about to write, i.e. every address the
-      // pass intended to change. Reading that as "the device refused them" would refute
-      // a guess on the strength of a write that never happened.
-      const decisive = result.readErrors.length === 0 && outcomes.every((o) => o.ok);
+      // How THIS pass ended, which is what decides whether its residual is evidence.
+      // Only a pass that ran to the end of its own loop watched each address converge or
+      // fail to; both ways out short of that leave a residual describing the run rather
+      // than the device, and they are not the same thing to report. The send failure is
+      // the worse of the two — sendConverging breaks out WITHOUT re-reading, so what it
+      // hands back is the diff it was about to write, i.e. every address the pass
+      // intended to change.
+      const stoppedOn: "read" | "write" | null = result.readErrors.length
+        ? "read"
+        : outcomes.some(reachedAndFailed)
+          ? "write"
+          : null;
       for (const d of residual) {
         const unverifiedKey = d.command.x === 0 ? addresses.get(`${d.command.paramId}:${d.command.y}`) : undefined;
-        if (unverifiedKey && decisive) refutedKeys.add(unverifiedKey);
+        if (unverifiedKey) {
+          if (stoppedOn === null) refutedKeys.add(unverifiedKey);
+          // First reason wins: a later pass stopping a different way does not make this
+          // one's residual any more usable, and the report needs one cause to name.
+          else if (!stoppedKeys.has(unverifiedKey)) stoppedKeys.set(unverifiedKey, stoppedOn);
+        }
         report.residual.push({
           name: d.command.name,
           paramId: d.command.paramId,
@@ -646,13 +673,17 @@ export async function runSelfTest(
         });
       }
     }
-    report.ok = !report.aborted && report.residual.length === 0 && readFailures === 0;
+    // A refused write is stated here rather than inferred from the residual. It does
+    // always leave one (sendConverging only enters a round while something differs), so
+    // the term is redundant today — but that is a coupling two functions away, and `ok`
+    // is the field a caller reads to decide the unit is fine.
+    report.ok = !report.aborted && report.residual.length === 0 && readFailures === 0 && sendFailures === 0;
 
     // Per-guess verdict. Each branch is a reason, in the order that decides: a collision
     // is known wrong before any hardware; a divergence a complete pass observed settles
-    // the guess and nothing later takes it back; short of that, an unreadable address or
-    // a divergence left by a pass that stopped early leaves it unknowable; a guess with
-    // no address on this model was never put to the test.
+    // the guess and nothing later takes it back; short of that, the run could not look
+    // (an unreadable address, or a pass that stopped on a read) or could not write (a
+    // pass the device refused); a guess with no address on this model was never tested.
     const exercised = new Set(addresses.values());
     report.unverified = UNVERIFIED_MAPPINGS.filter((m) => m.models.includes(model.id)).map((m) => {
       const mismatches = report.residual.filter((r) => r.unverifiedKey === m.key);
@@ -660,11 +691,13 @@ export async function runSelfTest(
         ? "collision"
         : refutedKeys.has(m.key)
           ? "refuted"
-          : unreadKeys.has(m.key) || mismatches.length > 0
+          : unreadKeys.has(m.key) || stoppedKeys.get(m.key) === "read"
             ? "unread"
-            : exercised.has(m.key)
-              ? "confirmed"
-              : "unexercised";
+            : stoppedKeys.has(m.key)
+              ? "unsent"
+              : exercised.has(m.key)
+                ? "confirmed"
+                : "unexercised";
       return { key: m.key, label: m.label, outcome, mismatches };
     });
 
@@ -885,12 +918,14 @@ export function formatSelfTestReport(report: SelfTestReport): string {
       // inheriting whatever the last branch happened to say.
       const verdict = {
         collision: "COULD NOT TEST — guessed id collides with a confirmed param (guess is wrong)",
-        // The divergence lines below are printed for every outcome that has any, so this
-        // one has to say what they are worth here: the pass that produced them stopped on
-        // a read failure before it could finish converging.
+        // The divergence lines below are printed for every outcome that has any, so these
+        // two have to say what they are worth here — and to name the same cause the
+        // Issues list does, since the two are read together.
         unread: u.mismatches.length
           ? "COULD NOT TEST — a read failed and the run stopped converging, so the divergence below is not evidence about the device"
           : "COULD NOT TEST — a read failed, so nothing round-tripped either way",
+        unsent:
+          "COULD NOT TEST — the device refused a write and the run stopped without re-reading, so the divergence below is what it was about to send, not what the device answered",
         unexercised: "COULD NOT TEST — no address on this model, so the run never wrote it",
         confirmed: "CONFIRMED — round-tripped on the device",
         refuted: `REFUTED — ${u.mismatches.length} address(es) did not round-trip`,
@@ -936,9 +971,13 @@ export function formatSelfTestReport(report: SelfTestReport): string {
       lines.push("");
       const found =
         r.reread === null ? "no re-read (the round stopped on a send failure)" : `${r.reread.length} still differing`;
-      lines.push(`### Round ${i + 1} — sent ${r.sent.length}, ${r.elapsedMs} ms, ${found}`);
+      // `sent` is what the round ISSUED (roundCommands), which is what the trace is for.
+      // On a round that stopped, that is not what the device saw, and the heading has to
+      // stop saying it was.
+      const stopped = r.reread === null;
+      lines.push(`### Round ${i + 1} — ${stopped ? "issued" : "sent"} ${r.sent.length}, ${r.elapsedMs} ms, ${found}`);
       lines.push("");
-      lines.push("Sent, in order:");
+      lines.push(stopped ? "Issued, in order — the tail after the refusal never left the app:" : "Sent, in order:");
       for (const c of r.sent) lines.push(`- ${c.name} @ ${formatAddrKey(cmdAddr(c))} = ${c.vdValue}`);
       if (r.reread?.length) {
         lines.push("");
