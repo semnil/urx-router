@@ -1,4 +1,4 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "./fixtures";
 import { drag, port, tapJack } from "./graph-helpers";
 
 // A channel has two source jacks. The right-edge output feeds the mixer stage

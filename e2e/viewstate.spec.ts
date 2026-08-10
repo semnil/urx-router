@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // GRAPH <-> CONSOLE are two views of one plan. These tests cover that an edit made
 // in one view is read back in the other (both views funnel edits through

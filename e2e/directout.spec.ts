@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { drag, port, tapJack } from "./graph-helpers";
 
 // A channel wired straight to a USB / SD direct out is tapped at its Rec Point,

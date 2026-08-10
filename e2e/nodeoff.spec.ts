@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // A muted node (CH_ON off) reads as inactive: the faceplate dims and every fixed
 // send bound to it recedes — the same off-send treatment a bypassed ducker's key

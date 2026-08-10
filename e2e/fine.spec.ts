@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { wheelOver } from "./graph-helpers";
 
 // Fine-tuning mode (hold Shift), mirroring the device's push-and-turn fine steps.

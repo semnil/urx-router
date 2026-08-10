@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { planParamZ } from "./plan-param";
 import { dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
 

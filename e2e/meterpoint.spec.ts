@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // METER POINT selector: each strip's level meter can show one of the node's
 // observable tap points (INPUT → … → POST). Runs against the factory plan.

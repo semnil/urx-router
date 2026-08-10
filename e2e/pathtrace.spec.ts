@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { drag, faceplate, port } from "./graph-helpers";
 
 // Long-pressing a node traces the live signal path feeding it: every upstream

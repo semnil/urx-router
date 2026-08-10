@@ -91,6 +91,8 @@ jobs:
         with:
           fail_ci_if_error: false
           files: ./coverage/lcov.info
+          flags: unit
+          name: frontend-unit
           use_oidc: true
 
   # The Rust half had no gate at all: `cargo fmt` runs in format.yml, the platform build
@@ -179,7 +181,17 @@ jobs:
         with:
           browser: chromium
           with-deps: "false"
-      - run: pnpm test:e2e:app
+      - run: pnpm test:e2e:coverage
+      # A separate flag keeps the two test tiers inspectable; Codecov merges both
+      # uploads for the commit, so a line reached by either unit or E2E is covered.
+      - name: Upload frontend E2E coverage
+        uses: codecov/codecov-action@8cad3ba95e5920c42f44492e54bc9639cba47959 # v6.0.2
+        with:
+          fail_ci_if_error: false
+          files: ./coverage/e2e/lcov.info
+          flags: e2e
+          name: frontend-e2e
+          use_oidc: true
       # The "list" reporter writes no playwright-report/; traces (trace: on-first-retry,
       # with CI retries) and failure attachments land in the default test-results/, so
       # that is what a failing run has to upload.

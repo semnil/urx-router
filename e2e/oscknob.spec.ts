@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // The OSCILLATOR strip drives its level with a rotary LEVEL knob (not a fader) and
 // borrows the meter-only layout + scale of the STREAMING strip.

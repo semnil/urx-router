@@ -48,6 +48,7 @@ pnpm test:coverage # the same unit suite with V8 coverage for all frontend TypeS
 pnpm typecheck:e2e # tsc -p tsconfig.e2e.json — type-checks e2e/ + the root config .ts (playwright/vite/vitest); the src build's tsconfig only includes "src"
 pnpm test:e2e     # Playwright E2E, all three projects at once. No CI job runs this — each tier is its own
 pnpm test:e2e:app # --project=chromium: e2e/*.spec.ts only (routing/hide/notes/insertfx/midi etc.). The PR tier, in ci.yml
+pnpm test:e2e:coverage # the same ordinary Chromium tier with native V8 coverage remapped to coverage/e2e/lcov.info
 pnpm test:e2e:race        # --project=race: the race harness (e2e/race). `--shard=1/3` splits it; NO `--` before the flag
 pnpm test:e2e:race:webkit # --project=race-webkit: the @webkit-tagged race cases in WebKit (the engine the macOS build renders in)
 pnpm build:trace  # production-shaped bundle carrying the trace probe (VITE_TRACE=1) into dist-trace/

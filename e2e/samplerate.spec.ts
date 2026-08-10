@@ -1,5 +1,5 @@
-import { test, expect } from "@playwright/test";
-import type { Page } from "@playwright/test";
+import { test, expect } from "./fixtures";
+import type { Page } from "./fixtures";
 import { dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
 
 // The sample rate is the one plan value the device can accept and then undo by

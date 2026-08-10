@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // Stereo strips meter L and R independently: the meter keeps one ladder frame and one
 // OVER frame (`.con-meter.stereo`), but splits into two bar columns (`.mtrcol.l` /

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { drag, port, tapJack } from "./graph-helpers";
 
 // Each committed connection renders one transparent .wire-hit band (plus a

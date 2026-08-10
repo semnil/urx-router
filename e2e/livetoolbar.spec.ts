@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { LIVE_COMMANDS, stubTauriDevice } from "./tauri-stub";
 
 // What the toolbar says and refuses while a live session holds the device.

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // microSD Rec track-pair slots hang in a chain under the SD Rec header; Track Count
 // (read-only on the device) gates how many are shown. Uses the default factory

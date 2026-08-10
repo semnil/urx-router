@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // Windows high contrast (`forced-colors: active`). Chromium only, which the app
 // tier already is — WebView2 is the engine that ships, and its own answer is not

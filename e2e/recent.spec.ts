@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { invokesOf, stubTauriBoot } from "./tauri-stub";
 
 // Recent entries whose file no longer loads: the stubbed shell answers no
