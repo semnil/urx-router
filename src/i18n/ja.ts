@@ -553,6 +553,7 @@ export const ja: Messages = {
     pdfExported: "PDF を出力しました",
     arranged: "既定レイアウトに整列しました",
     busyDeviceRead: "本体から読み取り中です — 完了してからもう一度お試しください",
+    deviceLinkBusy: "別のデバイス操作が接続を掴んでいます — 完了してからもう一度お試しください",
     fetchConnecting: "デバイスに接続しています…",
     fetchedDevice: (model: string, n: number): string => `${model} から ${n} 件の設定を取得しました`,
     fetchedUnread: (model: string, n: number, unread: number): string =>

@@ -134,8 +134,9 @@ carries a one-line map of the same directories and points here.
     (14-bit CC pairs; toggles have a per-mapping button behavior named after the sender's button type =
     "Momentary" (edge) / "Toggle" (state), state meaning the value is the state directly, for Stream
     Deck-style alternating 127/0 senders), an incoming message is refused, before any receive bookkeeping so
-    the refusal consumes no state, while a device read or a file flow holds the plan (the two
-    operator-started latches — deliberately not a modal, not a live flush's refetch await, and not learn),
+    the refusal consumes no state, while a device read or a file flow holds the plan or a destructive
+    round-trip run holds the unit (the operator-started latches — deliberately not a modal, not a live
+    flush's refetch await, and not learn),
     reported to the status line once per gated window rather than once per message; MIDI-learn state
     machine, feedback (diff against a sent cache + 300 ms echo suppression while receiving + a one-shot
     receive-side echo guard for toggles); several mappings sharing one address form a gang (`byKey`) — one
@@ -1156,12 +1157,24 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   decides by value and so does not depend on that latency at all. The same run recorded no `vd_set` reaching
   the unit.
 - **Gating** — an incoming message is refused while a device read holds the plan (`deviceReadInFlight`:
-  Fetch, the Live-sync starting readback) or while a file flow does (`fileFlowBusy`: New / Open / Save /
-  drop / `.urxf` import). The refusal is decided in the engine, before any receive bookkeeping (the
-  receive timestamp, the pickup engagement, the 14-bit pair assembly), so it consumes no state: the
-  identical message applies once the window clears. It reaches the status line **once per window**, on the
-  first message that would actually have edited something — incoming MIDI is wire-rate, and every refused
-  message still reaches the trace log. Three windows are deliberately outside it: an open modal (the MIDI
+  Fetch, the Live-sync starting readback), while a file flow does (`fileFlowBusy`: New / Open / Save /
+  drop / `.urxf` import), or while a destructive round-trip run holds the **device link**
+  (`deviceLinkHolder === "run"`: the self-test, `--prepare-modified`). That third latch is the one whose
+  reason is not the plan: both runs perturb the device and then verify address by address that it holds
+  exactly what they wrote, so a controller move that reaches the unit inside that window is reported as a
+  write the device refused, and the self-test's restore then puts back a state that was never the
+  operator's. It is also the only latch measured in **minutes** rather than seconds. It is read off the
+  link holder rather than a flag of its own, so what refuses a message and what refuses a second
+  connection ([Live control connection](#live-control-connection)) cannot diverge. Refusing it does not
+  depend on whether Live sync is up — a controller is a physical surface the operator keeps moving, and a
+  run is the one window in which what that moves must not become a device write. The refusal is decided in the engine, before any
+  receive bookkeeping (the receive timestamp, the pickup engagement, the 14-bit pair assembly), so it
+  consumes no state: the identical message applies once the window clears. It reaches the status line
+  **once per window**, on the first message that would actually have edited something — incoming MIDI is
+  wire-rate, and every refused message still reaches the trace log. During a run that means the status
+  line stops showing the run's own "do not disconnect" line for the rest of it, which is accepted: the
+  Device menu's entry still reads Cancel self-test, and a refusal nobody is told about is the worse
+  trade. Three windows are deliberately outside it: an open modal (the MIDI
   panel itself is one, and a desk is a second physical surface), a live flush's converge / refetch await
   (it recurs per flush of a 1-knob drag, and an edit made inside one now survives it, since the read merges
   rather than assigns), and MIDI learn (it binds a control, it does not edit the plan).
@@ -1190,6 +1203,40 @@ start of fetch / write / live sync when it differs, letting the user continue or
 by comparison, `Some("")` means the unit answered with no System entry and legitimately disables the gate, and
 `None` means the read itself did not land — the version is unknown rather than absent, so the operation stops
 instead of proceeding with the gate silently off ([Aborting on failure](#aborting-on-failure)).
+
+**The shell has one connection slot, so "a second connection" is not what happens.** `VdState::install`
+stops the worker already installed before putting the new one in, and commands are addressed to whatever is
+installed rather than to the connection that opened them (`sender` takes no epoch). A second `vdConnect`
+therefore **takes the first one's link**: the original owner's next command silently rides the new
+connection, and the moment that owner disconnects — by its own epoch, correctly — the first one's next
+command fails as `not-connected`. `core/control/connection-race.test.ts` models exactly that contract, and
+the epoch guard it exercises is about a *stale teardown*, not about two links coexisting. Nothing here
+changes with the transport: it is a property of the shell's state, not of casket or the vdp port.
+
+For a destructive round-trip run the cost is not a failed action. The run perturbs the unit and then
+verifies it address by address, so being cut off mid-perturbation leaves the unit silent-but-modified with
+the captured original living only in the dead call stack — the same unrecoverable shape as an HMR reload
+during a run.
+
+**So the link is held by exactly one thing at a time, named.** `deviceLinkHolder` is one of `fetch` /
+`write` / `compare` / `device-setup` / `follow-usb` / `live` / `run`; `holdDeviceLink` takes it or refuses,
+`releaseDeviceLink` gives it back and ignores a release that does not name the current holder (the same
+rule the epoch enforces on the Rust side). Every frontend path that opens a connection goes through it:
+`withDevice` for the seven menu actions, `activateLive` for the whole activation — **not just its connect**,
+since the starting readback runs for seconds with `liveSessionUp` still false — and the two runs, which
+call `vdConnect` from `core` and so cannot be funnelled any lower.
+
+`syncDeviceActionUi` is that latch's affordance: while the link is held, every device entry greys **except
+its holder's own**, which is that holder's Cancel (fetch, write, compare, the self-test) or its stop (Live
+sync). The rate picker locks for every holder — a rate change re-clocks the unit and renegotiates the USB
+stream. Follow USB is the one exception in the other direction: a live **session** lends it the session's
+link (its handler writes over that link rather than opening one, and measured on a URX44V the session
+survives the re-clock), so it stays usable while live and greys for every other holder — including a live
+*start*, where the session is not up yet and the same handler would take the connecting branch.
+
+The lock is the affordance and the latch is what makes it true, which is why both exist: a drop target, a
+keyboard path or a click that races the lock reaches `holdDeviceLink` and is refused there, with the status
+line saying so rather than the action silently doing nothing.
 
 Every failure raised outside the UI layer returns a stable, machine-readable code rather than a raw English
 string — see [Error codes](#error-codes) for the scheme. The broker link's are `broker-unreachable` (Device
@@ -1552,7 +1599,7 @@ describes a state it can return to.
 | A device read whose plan was replaced | `readIntoPlan`'s identity guard, after the read resolves | its values belong to a document nothing shows |
 | An undo taken while a device read or a file flow holds the plan | `PlanHistory.blocked`, before the open entry is closed | it is deferred, not consumed, so the retry is exact |
 | A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
-| A MIDI message arriving under those same latches | the engine's gate, before any receive bookkeeping | a refusal must consume no pickup, timestamp or 14-bit pair state |
+| A MIDI message arriving under those same latches, or during a self-test / `--prepare-modified` run | the engine's gate, before any receive bookkeeping | a refusal must consume no pickup, timestamp or 14-bit pair state |
 | A device-authored key the app has moved since | `absorb`'s per-key context check | the plan holds the app's newer value, so the device is echoing the app's own write back on it |
 | A read's value for a key the app wrote while that read was in flight | `readIntoPlan`'s authorship filter, before the patch is applied | the operator authored it after the read sampled the address; comparing values instead would take an edit that returned to where it started for one that never happened |
 | A meter reading | never enters the plan at all | display only, and the stream stops with the session |

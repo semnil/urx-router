@@ -838,6 +838,91 @@ function setView(next: ViewName): void {
   }
 }
 
+// ---- the device link is held by exactly one thing at a time ----
+//
+// The shell has ONE connection slot: `VdState::install` stops the worker already
+// installed before putting the new one in, and commands are addressed to whatever
+// is installed rather than to the connection that opened them (`sender()` takes no
+// epoch). So a second `vdConnect` does not add a link beside the first — it takes
+// the first one's. The original owner's next command silently rides the new
+// connection, and the moment that owner disconnects, the first one's next command
+// fails as not-connected. `core/control/connection-race.test.ts` models exactly
+// that contract.
+//
+// For a destructive round-trip run (the self-test, --prepare-modified) the cost is
+// not a failed action: the run perturbs the unit and then verifies it address by
+// address, so it is cut off mid-perturbation with the captured original living only
+// in its own dead call stack.
+//
+// Every frontend path that opens a connection therefore takes this latch and
+// refuses while it is held — the UI lock below is the affordance, this is what makes
+// it true. A holder name rather than a flag, because the entry that holds it is also
+// its own way out (its Cancel; for a session, its stop) and must stay usable.
+type LinkHolder = "fetch" | "write" | "compare" | "device-setup" | "follow-usb" | "live" | "run";
+let deviceLinkHolder: LinkHolder | null = null;
+
+// Each device entry and the holder it belongs to. While the link is held, every
+// entry greys except its holder's own. The `.urxf` import owns no holder because it
+// opens no connection, so it greys for every one of them: it replaces the plan
+// wholesale, which is what a read in flight cannot survive.
+const DEVICE_ENTRIES: ReadonlyArray<[string, LinkHolder | null]> = [
+  ["btn-fetch", "fetch"],
+  ["btn-write", "write"],
+  ["btn-compare", "compare"],
+  ["btn-device-setup", "device-setup"],
+  ["btn-live", "live"],
+  ["btn-selftest", "run"],
+  ["btn-open-settings", null],
+];
+
+/** Take the device link, or report that something else has it and refuse. */
+function holdDeviceLink(holder: LinkHolder): boolean {
+  if (deviceLinkHolder !== null) {
+    // Reachable only past a disabled entry (a drop target, a keyboard path, a race
+    // between the click and the lock), so it is the belt rather than the affordance —
+    // but it says so, because an action that silently does nothing reads as a broken
+    // one.
+    setStatus(t().status.deviceLinkBusy);
+    return false;
+  }
+  deviceLinkHolder = holder;
+  syncDeviceActionUi();
+  return true;
+}
+
+/** Give it back. A release that does not name the current holder is a no-op — the
+ *  same rule the Rust side's epoch enforces, so a late teardown of one action cannot
+ *  free the link out from under the next. */
+function releaseDeviceLink(holder: LinkHolder): void {
+  if (deviceLinkHolder !== holder) return;
+  deviceLinkHolder = null;
+  syncDeviceActionUi();
+}
+
+// Lock every action that would take the link away from whoever holds it. Driven by
+// the holder rather than by whichever state last moved, so the lock cannot disagree
+// with the latch that decides the refusal.
+function syncDeviceActionUi(): void {
+  for (const [id, owner] of DEVICE_ENTRIES) {
+    const el = document.getElementById(id) as HTMLButtonElement | null;
+    if (el) el.disabled = deviceLinkHolder !== null && deviceLinkHolder !== owner;
+  }
+  // Follow USB is the one entry a live SESSION lends its connection to — its handler
+  // writes over the session's link instead of opening a second one, and measured on a
+  // URX44V the session survives the re-clock. During a live START it must not: the
+  // session is not up yet, so the same handler would take the connecting branch.
+  followUsbBadge.disabled = deviceLinkHolder !== null && !liveSessionUp;
+  // A rate change re-clocks the device and renegotiates the USB stream, which
+  // interrupts audio mid-session and puts the held connection at risk. The rate is
+  // settled at the write boundary instead (settleSampleRate), so while live the
+  // picker only reports what the device is running at. Locked here, beside the
+  // other device actions, so no early return can leave it stuck disabled.
+  //
+  // This is a guard rail, not an invariant: nothing below the UI enforces it, so a
+  // future path that mutates plan.sampleRate while live would bypass it.
+  ratePicker.disabled = deviceLinkHolder !== null;
+}
+
 // Reflect the live-sync state across the toggle, the on-air tally, and the other
 // device actions (which conflict with the held connection while sync is on).
 // Only ever called in the desktop live-sync path, so re-enabling on `off` is safe.
@@ -849,22 +934,9 @@ function setLiveUi(on: boolean): void {
     tally.hidden = !on;
     if (on) tally.textContent = `${t().toolbar.liveTag} · ${liveDeviceLabel}`;
   }
-  for (const id of ["btn-fetch", "btn-write", "btn-selftest", "btn-open-settings", "btn-compare", "btn-device-setup"]) {
-    const el = document.getElementById(id) as HTMLButtonElement | null;
-    if (el) el.disabled = on;
-  }
-  // A rate change re-clocks the device and renegotiates the USB stream, which
-  // interrupts audio mid-session and puts the held connection at risk. The rate is
-  // settled at the write boundary instead (settleSampleRate), so while live the
-  // picker only reports what the device is running at. Locked here, beside the
-  // other device actions, so no early return can leave it stuck disabled.
-  //
-  // This is a guard rail, not an invariant: nothing below the UI enforces it, so a
-  // future path that mutates plan.sampleRate while live would bypass it.
-  //
-  // The badge stays live: toggling Follow USB only re-clocks when the host is on a
-  // different rate, and measured on a URX44V the connection survived it.
-  ratePicker.disabled = on;
+  // The lock itself is the link holder's (see syncDeviceActionUi); a session is one
+  // holder among several, and this call is what repaints the group when it changes.
+  syncDeviceActionUi();
   // The Preferences device-scope control locks while the session is up; re-render
   // the modal if it is open (a link loss can end the session behind the scrim).
   prefs.refresh();
@@ -886,6 +958,8 @@ function setLiveUi(on: boolean): void {
 function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   if (!liveSessionUp) return;
   liveSessionUp = false;
+  // Before setLiveUi below, which repaints the group from whoever holds the link.
+  releaseDeviceLink("live");
   midi?.probeMark("live:off");
   follow?.end();
   live?.end();
@@ -1754,6 +1828,9 @@ let fileFlowBusy = false;
 // raise this latch and clear it in their finally; every wholesale plan replacement
 // checks it. The internal model-switch loadPlan runs before the latch is raised.
 let deviceReadInFlight = false;
+// The third latch is `deviceLinkHolder` (declared with the lock it drives, above):
+// whoever holds the device link, including the destructive runs, which are the reason
+// the MIDI gate reads it. Minutes long, unlike the two here.
 async function fileFlow<T>(run: () => Promise<T>): Promise<T | null> {
   // Refused, and said so: the flow the operator picked simply does not happen, and the
   // status line is showing the read's own progress rather than an answer to that click.
@@ -2154,10 +2231,14 @@ function connectFailureStatus(err: unknown, onError: (message: string) => string
 // first prompting. Connection and action errors surface through connectFailureStatus
 // (clear text for the actionable connect states, else the given formatter).
 async function withDevice(
+  holder: LinkHolder,
   connecting: string,
   onError: (message: string) => string,
   action: (device: DeviceSummary) => Promise<void>,
 ): Promise<void> {
+  // Ahead of the status line: an action that never starts must not leave its own
+  // "connecting…" on screen over the holder's progress.
+  if (!holdDeviceLink(holder)) return;
   setStatus(connecting);
   try {
     const device = await vdConnect();
@@ -2172,6 +2253,8 @@ async function withDevice(
     // neutral "canceled" status rather than wrapping it as an action failure.
     if (err instanceof DOMException && err.name === "AbortError") setStatus(t().status.canceled);
     else showError(connectFailureStatus(err, onError));
+  } finally {
+    releaseDeviceLink(holder);
   }
 }
 
@@ -2181,11 +2264,12 @@ async function withDevice(
 // of refusing. Wraps withDevice so the three cannot drift apart across the four call
 // sites (write, compare, device setup read, device setup apply).
 async function withCheckedDevice(
+  holder: LinkHolder,
   connecting: string,
   onError: (message: string) => string,
   action: (device: DeviceSummary) => Promise<void>,
 ): Promise<void> {
-  await withDevice(connecting, onError, async (device) => {
+  await withDevice(holder, connecting, onError, async (device) => {
     if (!(await confirmFirmware(device))) {
       setStatus(t().status.canceled);
       return;
@@ -2252,7 +2336,7 @@ if (!DEMO) {
         // Not refreshFollowUsbBadge: that one swallows a read failure back to unknown
         // because nothing depends on it. Here the read IS the requested action, so let
         // it throw and be reported.
-        await withDevice(t().status.writeConnecting, t().status.writeError, async () => {
+        await withDevice("follow-usb", t().status.writeConnecting, t().status.writeError, async () => {
           setFollowUsbBadge(await readFollowUsb());
         });
         return;
@@ -2274,7 +2358,7 @@ if (!DEMO) {
         }
         return;
       }
-      await withDevice(t().status.writeConnecting, t().status.writeError, apply);
+      await withDevice("follow-usb", t().status.writeConnecting, t().status.writeError, apply);
     }),
   );
 
@@ -2292,7 +2376,7 @@ if (!DEMO) {
     fetchBtn.textContent = t().toolbar.fetchCancel;
     let report: ErrorReport = null;
     try {
-      await withDevice(t().status.fetchConnecting, t().status.fetchError, async (device) => {
+      await withDevice("fetch", t().status.fetchConnecting, t().status.fetchError, async (device) => {
         if (!(await confirmFirmware(device))) {
           setStatus(t().status.canceled);
           return;
@@ -2464,7 +2548,7 @@ if (!DEMO) {
       writeBtn.textContent = t().toolbar.writeCancel;
       let report: ErrorReport = null;
       try {
-        await withCheckedDevice(t().status.writeConnecting, t().status.writeError, async (device) => {
+        await withCheckedDevice("write", t().status.writeConnecting, t().status.writeError, async (device) => {
           // Scene scope drops SAMPLE_RATE from the write set, so there is no
           // rate to settle — the device keeps running at its own.
           const scope = getSettings().deviceScope;
@@ -2590,6 +2674,21 @@ if (!DEMO) {
     // happens. The connection is held open for the session and released when the
     // toggle, a write failure, or a plan replacement turns sync off.
     async function activateLive(): Promise<void> {
+      if (!live) return;
+      // The link is taken for the whole activation, not just for the connect: the
+      // starting readback runs for seconds with liveSessionUp still false, and it was
+      // exactly that window in which another action could take the connection away
+      // (or be started under one). A session that comes up keeps the holder until
+      // deactivateLive gives it back; every other exit gives it back here.
+      if (!holdDeviceLink("live")) return;
+      try {
+        await startLiveSession();
+      } finally {
+        if (!liveSessionUp) releaseDeviceLink("live");
+      }
+    }
+
+    async function startLiveSession(): Promise<void> {
       if (!live) return;
       // Connect first (the pre-check): a no-device state is reported plainly,
       // without discarding the user's edits. Only on a live device do we confirm
@@ -2729,9 +2828,16 @@ if (!DEMO) {
       // repaints nodes only, so repaint the wires here (rare, toggle-rate).
       if (control.kind === "toggle" && !graphHost.hidden) graph.repaintWires();
     },
-    // The two operator-started latches, a strict subset of what the history refuses
-    // under: a Fetch or a Live-sync start holds the plan for seconds and the latter
-    // then snapshots it as device truth, and a file flow can replace the plan outright.
+    // The operator-started latches, a strict subset of what the history refuses under:
+    // a Fetch or a Live-sync start holds the plan for seconds and the latter then
+    // snapshots it as device truth, a file flow can replace the plan outright, and a
+    // destructive run holds the device link while it verifies the unit against what it
+    // wrote. That last one is the only latch here whose reason is the DEVICE rather
+    // than the plan: with Live sync off a refused message would have edited the plan
+    // and gone no further, but a controller is a physical surface an operator keeps
+    // moving, and a run is the one window where the app must not let what that moves
+    // become a device write. Read off the link holder rather than a flag of its own,
+    // so what refuses a message and what refuses a second connection cannot diverge.
     // The follow-side reads (followReads) are deliberately NOT here, unlike in
     // PlanHistory.blocked: they recur once per flush window of a 1-knob drag, so
     // refusing in them would make an external desk stutter continuously — and an edit
@@ -2739,7 +2845,7 @@ if (!DEMO) {
     // assigns), which is what makes leaving them open safe. A modal is not here either:
     // a MIDI desk is a second physical surface, and the panel that configures it is
     // itself counted by modalOpen().
-    blocked: () => (deviceReadInFlight || fileFlowBusy ? t().status.midiBusy : null),
+    blocked: () => (deviceReadInFlight || fileFlowBusy || deviceLinkHolder === "run" ? t().status.midiBusy : null),
     // Both arming surfaces repaint: learn mode, the armed control and the mapping
     // set all decide what they draw, and a tuning screen open over the console is
     // the one the operator is looking at.
@@ -2775,6 +2881,7 @@ if (!DEMO) {
     apply: async (writes, changed) => {
       let applied = false;
       await withCheckedDevice(
+        "device-setup",
         t().status.deviceSetupApplying,
         (message) => t().error.deviceSetupWrite(message),
         async () => {
@@ -2790,13 +2897,17 @@ if (!DEMO) {
   $("btn-device-setup").addEventListener("click", async () => {
     // A live session holds the one connection, and these settings are outside the
     // plan that session mirrors — so the menu entry is disabled while live
-    // (setLiveUi), and this is the belt for any path that reaches here anyway.
+    // (syncDeviceActionUi), and this is the belt for any path that reaches here
+    // anyway. Kept beside withCheckedDevice's own link check because it says
+    // something the generic one cannot: these settings are not part of what a
+    // session mirrors, so the answer is not "wait" but "not while live".
     if (liveSessionUp) {
       showError(t().error.notWhileLive);
       return;
     }
     let setup: DeviceSetup | null = null;
     await withCheckedDevice(
+      "device-setup",
       t().status.deviceSetupReading,
       (message) => t().error.deviceSetupRead(message),
       async () => {
@@ -2940,7 +3051,7 @@ if (!DEMO) {
       // reports, so an indefinite modal does not hold the broker connection open.
       let report: string | null = null;
       try {
-        await withCheckedDevice(t().status.compareConnecting, t().status.compareError, async (device) => {
+        await withCheckedDevice("compare", t().status.compareConnecting, t().status.compareError, async (device) => {
           const model = getModel(modelId);
           const startedAt = performance.now();
           const { entries, errors } = await comparePlan(model, plan, signal);
@@ -2991,6 +3102,9 @@ if (!DEMO) {
 
     // `headless` = the --self-test launch (see logReport).
     async function runDeviceSelfTest(headless = false): Promise<void> {
+      // Taken before the first await, so nothing can slip through between the click
+      // and the connect — neither a MIDI message nor a second device action.
+      if (!holdDeviceLink("run")) return;
       const controller = new AbortController();
       selfTestAbort = controller;
       selfTestBtn.textContent = t().toolbar.selfTestCancel;
@@ -3043,6 +3157,10 @@ if (!DEMO) {
         showError(connectFailureStatus(err, t().status.selfTestError));
       } finally {
         selfTestAbort = null;
+        releaseDeviceLink("run");
+        // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased),
+        // so the next run speaks up again instead of refusing silently.
+        midi?.gateReleased();
         selfTestBtn.textContent = t().toolbar.selfTest;
       }
     }
@@ -3067,6 +3185,7 @@ if (!DEMO) {
     // can save and diff it. Reports go to the dev-server log like the self-test.
     void prepareModifiedRequested().then(async (auto) => {
       if (!auto) return;
+      if (!holdDeviceLink("run")) return;
       setStatus(t().status.selfTestRunning);
       try {
         const report = await runPrepareModified(getModel(modelId));
@@ -3077,6 +3196,9 @@ if (!DEMO) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn("[prepare-modified] ERROR", message);
         showError(connectFailureStatus(err, t().status.selfTestError));
+      } finally {
+        releaseDeviceLink("run");
+        midi?.gateReleased();
       }
     });
   });

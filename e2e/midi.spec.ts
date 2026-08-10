@@ -91,6 +91,19 @@ const learnBinding = async (page: Page, win: Page, arm: () => Promise<void>, ...
 /** One assignment row in the MIDI window's table. */
 const mapRow = (win: Page, control: string) => win.locator(`.mw-list tr[data-control="${control}"]`);
 
+/** Every control that must be unusable while a destructive run holds the device link
+ *  (the self-test entry is not here — it is that run's own cancel). */
+const LOCKED_UNDER_A_RUN = [
+  "#btn-live",
+  "#btn-fetch",
+  "#btn-write",
+  "#btn-compare",
+  "#btn-device-setup",
+  "#btn-open-settings",
+  "#follow-usb",
+  "#rate-picker",
+];
+
 test.beforeEach(async ({ page }) => {
   // The Live-sync registrations are taken from the shared stub rather than copied,
   // so this stub cannot fall behind what a session actually asks the shell for.
@@ -126,8 +139,12 @@ test.beforeEach(async ({ page }) => {
       Channel,
       invoke: (cmd: string, args: Record<string, unknown>) => {
         switch (cmd) {
+          // MIDI control ships without the flag (only the self-test is gated), so this
+          // is off unless a test asks for it — through localStorage, which is the same
+          // stand-in for launch/shell state `urx-test-midiwin` uses below, and the only
+          // one that survives the reload the flag has to be read at boot on.
           case "experimental_enabled":
-            return Promise.resolve(false); // MIDI control ships without the flag (only the self-test is gated)
+            return Promise.resolve(!!localStorage.getItem("urx-test-experimental"));
           case "self_test_requested":
           case "reset_storage_requested":
             return Promise.resolve(false);
@@ -210,6 +227,19 @@ test.beforeEach(async ({ page }) => {
           // Minimal vd surface for the fetch feedback test: a matching device with
           // no firmware gate, every parameter read answering 0 (CH levels = 0.0 dB).
           case "vd_connect":
+            // Held open while the flag is set, and failed the moment it is cleared. A
+            // self-test is minutes of round-trips against real hardware and cannot be
+            // played out here; holding it at its first await is what makes the window
+            // it keeps open observable, and releasing it is what shows the window ends.
+            if (localStorage.getItem("urx-test-vd-hold")) {
+              return new Promise((_resolve, reject) => {
+                const tick = setInterval(() => {
+                  if (localStorage.getItem("urx-test-vd-hold")) return;
+                  clearInterval(tick);
+                  reject(new Error("link lost"));
+                }, 20);
+              });
+            }
             return Promise.resolve({ model: "URX44V", label: "Stub URX", firmware: "", epoch: 1 });
           case "vd_disconnect":
             return Promise.resolve();
@@ -288,6 +318,84 @@ test("learn binds a CC to a fader and incoming CC moves it", async ({ page }) =>
   await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
   await sendMidi(page, [0xb0, 7, 0]);
   await expect(readLevel(page, "CH 1")).toHaveText("-∞");
+});
+
+test("a running self-test freezes incoming MIDI, and releases it when the run ends", async ({ page }) => {
+  // The self-test perturbs the unit and then verifies address by address that it
+  // holds what was written, so a controller move landing inside that window is
+  // reported as a write the device refused. It owns its own connection, which is why
+  // nothing about the app's own session state can stand in for this latch.
+  await page.evaluate(() => localStorage.setItem("urx-test-experimental", "1"));
+  await page.reload();
+  await expect(page.locator("#console-host")).toBeVisible();
+
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
+  );
+  await setLearn(page, win, false);
+  await sendMidi(page, [0xb0, 7, 127]);
+  await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
+
+  // Start a run and hold it at its connect (see the vd_connect case in the stub).
+  await page.evaluate(() => localStorage.setItem("urx-test-vd-hold", "1"));
+  await page.click("#btn-device");
+  await page.click("#btn-selftest"); // its confirm is answered Ok by the stub
+  await expect(page.locator("#statusbar")).toContainText("Running device self-test");
+
+  // The refusal is what orders this: asserting the level alone would be satisfied by
+  // its first sample, taken before the message had been decoded at all.
+  await sendMidi(page, [0xb0, 7, 0]);
+  await expect(page.locator("#statusbar")).toContainText("incoming MIDI is ignored");
+  await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
+
+  // Everything that would take the connection away is locked for the same window —
+  // the shell has one slot, so a second connect does not run beside the run, it
+  // replaces it. Follow USB is here too: a live SESSION lends it the session's link,
+  // but a run does not, so its handler would open one. The self-test entry stays
+  // live because it IS the cancel.
+  for (const id of LOCKED_UNDER_A_RUN) await expect(page.locator(id)).toBeDisabled();
+  await expect(page.locator("#btn-selftest")).toBeEnabled();
+
+  // Release the connect: the run fails, and the window it held closes with it.
+  await page.evaluate(() => localStorage.removeItem("urx-test-vd-hold"));
+  await expect(page.locator("#btn-selftest")).toHaveText("Self-test (experimental)"); // over, not cancelling
+  for (const id of LOCKED_UNDER_A_RUN) await expect(page.locator(id)).toBeEnabled();
+  await sendMidi(page, [0xb0, 7, 0]);
+  await expect(readLevel(page, "CH 1")).toHaveText("-∞");
+});
+
+test("an action already holding the link locks the self-test, not the other way round", async ({ page }) => {
+  // The mirror of the case above, and the order that used to be open: the lock was
+  // applied by whoever started LAST, so a self-test begun during a Fetch or a
+  // Live-sync readback took the connection off it — and, when that live start then
+  // completed, disabled both its own cancel and the toggle that would have stopped
+  // the session.
+  await page.evaluate(() => {
+    localStorage.setItem("urx-test-experimental", "1");
+    localStorage.setItem("urx-test-vd-hold", "1");
+  });
+  await page.reload();
+  await expect(page.locator("#console-host")).toBeVisible();
+
+  await page.click("#btn-device");
+  await page.click("#btn-fetch"); // holds at its connect, exactly as a real read holds for seconds
+  await expect(page.locator("#statusbar")).toContainText("Connecting");
+
+  // Fetch keeps its own entry (it is its cancel) and every other holder is refused.
+  await expect(page.locator("#btn-fetch")).toBeEnabled();
+  for (const id of ["#btn-selftest", "#btn-live", "#btn-write", "#btn-compare", "#follow-usb"]) {
+    await expect(page.locator(id)).toBeDisabled();
+  }
+
+  await page.evaluate(() => localStorage.removeItem("urx-test-vd-hold"));
+  await expect(page.locator("#btn-selftest")).toBeEnabled();
+  await expect(page.locator("#btn-live")).toBeEnabled();
 });
 
 test("one physical control can gang several console controls", async ({ page }) => {
