@@ -72,19 +72,24 @@ export interface SelfTestMismatch {
   y: number;
   /** Value the plan wrote. */
   expected: number;
-  /** Value read back from the device after the write, or null if it could not be read.
-   *  When `stoppedOn` is set there was no write to read back after: this is what the
-   *  device held BEFORE it, which is the diff the pass was about to send. */
+  /** What the device answered at the last read this pass made. On a pass that completed
+   *  that is the read-back after the write; on one that stopped it is the comparison the
+   *  run got to before it ended. Null when the address could not be read at that point. */
   actual: number | null;
   /** Sweep pass that produced this mismatch (-1 = the restore). */
   pass: number;
   /** How the pass ended, when it did not finish. Absent on a pass that ran to the end of
-   *  its loop — only those entries are a divergence the device actually showed. The rest
-   *  are the diff the run was in the middle of applying, and printing them as "wrote X,
-   *  read Y" states a comparison that never happened. A model with no unverified mapping
-   *  (URX44V) has no other guard: every one of them lands in the "other divergence"
-   *  section, so one refused write reads as the unit disagreeing about hundreds of
-   *  parameters. */
+   *  its loop — only those entries are a divergence the device settled on. On the rest the
+   *  loop never finished converging, so the difference may be one a later round would have
+   *  closed; printing them as a fidelity finding states a verdict the run did not reach.
+   *  A model with no unverified mapping (URX44V) has no other guard: every one of them
+   *  lands in the "other divergence" section, so one refused write read as the unit
+   *  disagreeing about hundreds of parameters.
+   *
+   *  It does NOT mean the address went unread. `diffPlan` keeps reading past a failure
+   *  (stopOnError is off here), so a residual entry is one that WAS read and did differ;
+   *  the addresses that could not be read are absent from the residual entirely and are
+   *  reported as read errors. */
   stoppedOn?: "read" | "write";
   /** Unverified-mapping key this address belongs to, if any (the guess it refutes). */
   unverifiedKey?: string;
@@ -955,28 +960,33 @@ export function formatSelfTestReport(report: SelfTestReport): string {
   }
 
   // Device divergence not attributable to an unverified guess — genuine fidelity issues,
-  // and only from passes that completed. A pass that stopped left the diff it was partway
-  // through applying; those addresses were never written and never re-read, so they go
-  // under their own heading rather than into the findings.
+  // and only from passes that completed. A pass that stopped differs in what is MISSING:
+  // not the comparison (diffPlan reads every address whether or not one of them failed,
+  // so a residual entry was read and did differ) but the convergence — the re-send and
+  // re-read that a completed pass keeps doing until nothing differs. So these are not a
+  // finding, and they are not "never looked at" either.
   const other = report.residual.filter((r) => !r.unverifiedKey);
   const shown = other.filter((r) => !r.stoppedOn);
-  const pending = other.filter((r) => r.stoppedOn);
+  const unsettled = other.filter((r) => r.stoppedOn);
   if (shown.length) {
     lines.push("");
     lines.push("## Other device divergence (confirmed params)");
     for (const m of shown) lines.push(`- p${m.pass} ${mismatchLine(m)}`);
   }
-  if (pending.length) {
+  if (unsettled.length) {
     lines.push("");
-    lines.push(`## Not compared — ${pending.length} param(s) the run never got to`);
+    lines.push(`## Not settled — ${unsettled.length} param(s) still differing when the run stopped`);
     lines.push("");
     lines.push(
-      "The pass stopped partway (a refused write, or a read it could not make), so these are the" +
-        " difference it was about to close. The device was not asked about them.",
+      "The pass ended early (a refused write, or a read it could not make), so the loop never" +
+        " finished converging these. Each of them was read and did differ at that point; what a" +
+        " completed pass would have done next — re-send, re-read, until nothing differs — is what" +
+        " did not happen, so none of this is a fidelity finding. Addresses the run could not read" +
+        " AT ALL are not counted here: nothing was compared for them, and they are under Issues.",
     );
-    for (const m of pending) {
+    for (const m of unsettled) {
       lines.push(
-        `- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — plan wanted ${m.expected}, device held ${m.actual ?? "unreadable"} (stopped on a ${m.stoppedOn === "write" ? "refused write" : "failed read"})`,
+        `- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — plan wanted ${m.expected}, device answered ${m.actual ?? "unreadable"} at the last read (stopped on a ${m.stoppedOn === "write" ? "refused write" : "failed read"})`,
       );
     }
   }

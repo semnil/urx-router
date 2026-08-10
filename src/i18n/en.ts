@@ -670,9 +670,9 @@ export const en = {
     selfTestPass: (n: number): string => `Self-test passed: ${n} params written and read back identically`,
     selfTestFail: (n: number): string => `Self-test FAILED: ${n} param${n === 1 ? "" : "s"} did not match after write`,
     // "did not match after write" is a claim about the device, and a run that stopped
-    // partway has none to make: those params were never written and never re-read.
+    // partway has none to make: the loop never finished converging them.
     selfTestIncomplete: (n: number): string =>
-      `Self-test did not complete: ${n} param${n === 1 ? " was" : "s were"} never compared — see the report`,
+      `Self-test did not complete: ${n} param${n === 1 ? "" : "s"} still differed when the run stopped — see the report`,
     selfTestRestoreFail: tr("Self-test: device may not be restored — fetch again to check"),
     selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
       `Self-test guesses: ${confirmed} confirmed, ${refuted} refuted, ${untestable} untestable`,

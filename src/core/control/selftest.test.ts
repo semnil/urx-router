@@ -331,8 +331,8 @@ describe("runSelfTest", () => {
     expect(report.residual.filter((m) => m.pass >= 0 && !m.stoppedOn)).toEqual([]);
     // …and the report says so under its own heading instead of as a finding.
     const md = formatSelfTestReport(report);
-    expect(md).toContain("## Not compared");
-    expect(md).toContain("device was not asked about them");
+    expect(md).toContain("## Not settled");
+    expect(md).toContain("still differing when the run stopped");
     expect(md).not.toContain("## Other device divergence");
   });
 
@@ -564,6 +564,17 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(formatSelfTestReport(report)).not.toContain("REFUTED");
     // Per address, not a blanket downgrade: the readable guesses still confirm.
     expect(verdicts.confirmed).toBeGreaterThan(0);
+    // What a read-stopped residual actually contains, which is the opposite of what it
+    // sounds like: `diffPlan` keeps reading past a failure, so the entries left are ones
+    // that WERE read and did differ, and the address that could not be read is not among
+    // them — it is a read error instead. Describing these as "never compared" inverted
+    // both halves at once.
+    const stopped = report.residual.filter((m) => m.pass >= 0);
+    expect(stopped.length).toBeGreaterThan(0);
+    expect(stopped.every((m) => m.stoppedOn === "read")).toBe(true);
+    expect(stopped.some((m) => m.paramId === paramId)).toBe(false);
+    expect(report.errors.some((e) => e.startsWith("p0 read:"))).toBe(true);
+    expect(formatSelfTestReport(report)).toContain("was read and did differ");
   });
 
   // The other half of the same rule. Withholding REFUTED until the evidence is complete
@@ -664,6 +675,7 @@ describe("unverified-guess workflow (URX22)", () => {
     // the ones no guess verdict covers — out of the findings section.
     expect(report.residual.every((m) => m.stoppedOn === "write")).toBe(true);
     expect(md).not.toContain("## Other device divergence");
+    expect(md).toContain("## Not settled");
     // And the report says the write stopped: the refusal by name, and what it cut short
     // as a count rather than one undefined-message line per command.
     expect(report.errors.some((e) => /^p0 \d+ command\(s\) never sent/.test(e))).toBe(true);
