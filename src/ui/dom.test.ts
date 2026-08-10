@@ -1,6 +1,26 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach } from "vitest";
-import { focusables, preserveFocus } from "./dom";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { resetSettingsCache, updateSettings } from "../core/settings";
+import {
+  copyText,
+  el,
+  focusables,
+  onOff,
+  onWheelStep,
+  popLeft,
+  popTop,
+  preserveFocus,
+  scrubFloat,
+  settingsChoice,
+  settingsNote,
+  settingsPill,
+  settingsRow,
+  settingsSection,
+  settingsSelect,
+  sliderRow,
+  wheelStep,
+  wireDismiss,
+} from "./dom";
 
 // preserveFocus carries keyboard focus across a rebuild of a panel's contents. Two of
 // its properties are load-bearing and neither is visible from the outside:
@@ -35,8 +55,11 @@ const labelKey = (el: HTMLElement): string => el.closest<HTMLElement>(".param")?
 let host: HTMLElement;
 
 beforeEach(() => {
+  localStorage.clear();
+  resetSettingsCache();
   host = document.createElement("div");
   document.body.replaceChildren(host);
+  Reflect.deleteProperty(navigator, "clipboard");
 });
 
 describe("preserveFocus", () => {
@@ -124,4 +147,199 @@ describe("preserveFocus", () => {
     expect(document.activeElement).toBe(rebuilt);
     expect([rebuilt.selectionStart, rebuilt.selectionEnd]).toEqual([2, 5]);
   });
+
+  it("restores a non-zero scroll offset before focus", () => {
+    host.append(row("Level", slider()));
+    focusables(host)[0].focus();
+    const scrollTop = vi.fn(() => 42);
+    const restore = preserveFocus(
+      host,
+      (active) => labelKey(active),
+      (key) => focusables(host).find((control) => labelKey(control) === key),
+      scrollTop,
+    );
+
+    host.replaceChildren(row("Level", slider()));
+    expect(restore()).toBe(focusables(host)[0]);
+    expect(scrollTop).toHaveBeenCalledOnce();
+    expect(host.scrollTop).toBe(42);
+  });
 });
+
+describe("wheel helpers", () => {
+  it("uses the configured detent count and Shift-remapped horizontal wheel", () => {
+    updateSettings({ wheelSteps: 2 });
+    const target = document.createElement("div");
+    const step = vi.fn();
+    onWheelStep(target, step);
+
+    const up = new WheelEvent("wheel", { deltaY: -1, bubbles: true, cancelable: true });
+    target.dispatchEvent(up);
+    expect(up.defaultPrevented).toBe(true);
+    expect(step.mock.calls).toEqual([[1], [1]]);
+
+    const horizontal = new WheelEvent("wheel", { deltaX: 3, shiftKey: true, bubbles: true, cancelable: true });
+    target.dispatchEvent(horizontal);
+    expect(horizontal.defaultPrevented).toBe(true);
+    expect(step.mock.calls.slice(2)).toEqual([[-1], [-1]]);
+
+    const ignored = new WheelEvent("wheel", { deltaX: 3, bubbles: true, cancelable: true });
+    target.dispatchEvent(ignored);
+    expect(ignored.defaultPrevented).toBe(false);
+    expect(step).toHaveBeenCalledTimes(4);
+  });
+
+  it("honours a blocked wheel and clamps range inputs", () => {
+    const blockedTarget = document.createElement("div");
+    const blockedStep = vi.fn();
+    onWheelStep(blockedTarget, blockedStep, () => true);
+    const blocked = new WheelEvent("wheel", { deltaY: -1, cancelable: true });
+    blockedTarget.dispatchEvent(blocked);
+    expect(blocked.defaultPrevented).toBe(false);
+    expect(blockedStep).not.toHaveBeenCalled();
+
+    const range = slider();
+    range.min = "0";
+    range.max = "1";
+    range.step = "0.1";
+    range.value = "0.9";
+    const input = vi.fn();
+    range.addEventListener("input", input);
+    wheelStep(range);
+    range.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, cancelable: true }));
+    range.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, cancelable: true }));
+    expect(range.value).toBe("1");
+    expect(input).toHaveBeenCalledOnce();
+    expect(scrubFloat(2.7000000000000002)).toBe(2.7);
+  });
+});
+
+describe("overlay and popover helpers", () => {
+  it("attaches, pauses and detaches outside/Escape dismissal", () => {
+    let inert = false;
+    const keep = document.createElement("button");
+    const close = vi.fn();
+    const dismiss = wireDismiss({ keep: (target) => target === keep, inert: () => inert, close });
+    dismiss.attach();
+
+    keep.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(close).not.toHaveBeenCalled();
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(close).toHaveBeenCalledOnce();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(close).toHaveBeenCalledOnce();
+
+    inert = true;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(close).toHaveBeenCalledOnce();
+    inert = false;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(close).toHaveBeenCalledTimes(2);
+
+    dismiss.detach();
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it("clamps horizontal placement and flips vertical placement", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 300 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 200 });
+    expect(popLeft(-20, 100)).toBe(6);
+    expect(popLeft(80, 100)).toBe(80);
+    expect(popLeft(250, 100)).toBe(194);
+
+    const anchor = { top: 80, bottom: 100 } as DOMRect;
+    expect(popTop(anchor, 40, 8)).toBe(108);
+    expect(popTop({ top: 170, bottom: 190 } as DOMRect, 60, 8)).toBe(102);
+    expect(popTop({ top: 10, bottom: 190 } as DOMRect, 60, 8)).toBe(6);
+  });
+
+  it("reports clipboard capability, success and rejection", async () => {
+    expect(await copyText("plan")).toBe(false);
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    expect(await copyText("plan")).toBe(true);
+    expect(writeText).toHaveBeenCalledWith("plan");
+    writeText.mockRejectedValueOnce(new Error("denied"));
+    expect(await copyText("plan")).toBe(false);
+  });
+});
+
+describe("settings builders", () => {
+  it("builds sections, notes, pills and locked labelled rows", () => {
+    expect(el("div", "card").className).toBe("card");
+    expect(settingsPill("Desktop").outerHTML).toBe('<span class="prefs-lock">Desktop</span>');
+    expect(settingsNote("Stored immediately").textContent).toBe("Stored immediately");
+
+    const section = settingsSection("Files", { text: "Desktop", shown: false });
+    expect(section.querySelector("h3")?.firstChild?.textContent).toBe("Files");
+    expect(section.querySelector(".prefs-lock")?.classList.contains("gt-reserved")).toBe(true);
+
+    const control = document.createElement("div");
+    control.append(document.createElement("button"), document.createElement("select"), document.createElement("input"));
+    const legend = document.createElement("em");
+    legend.textContent = "FINE";
+    const built = settingsRow("Level", control, { locked: true, tag: "Unavailable", cls: "dirty", legend });
+    expect(built.className).toBe("prefs-row dirty locked");
+    expect(
+      [
+        ...built.querySelectorAll<HTMLButtonElement | HTMLSelectElement | HTMLInputElement>("button,select,input"),
+      ].every((c) => c.disabled),
+    ).toBe(true);
+    expect(built.querySelector(".lblc")?.children[1]).toBe(legend);
+    expect(built.querySelector(".prefs-lock")?.textContent).toBe("Unavailable");
+  });
+
+  it("selects only inactive choices and handles empty or numeric selects", () => {
+    const pick = vi.fn();
+    const choices = settingsChoice(["A", "B"], 0, pick, true);
+    const buttons = choices.querySelectorAll<HTMLButtonElement>("button");
+    buttons[0].click();
+    buttons[1].click();
+    expect(choices.className).toBe("prefs-toggle narrow");
+    expect(pick).toHaveBeenCalledOnce();
+    expect(pick).toHaveBeenCalledWith(1);
+
+    const apply = vi.fn();
+    const select = settingsSelect([1, 2, 4], 2, String, apply);
+    changeSelect(select, "4");
+    expect(apply).toHaveBeenCalledWith(4);
+    changeSelect(select, "99");
+    expect(apply).toHaveBeenCalledOnce();
+
+    const empty = settingsSelect<string>([], "", String, apply, "None");
+    expect(empty.disabled).toBe(true);
+    expect(empty.textContent).toBe("None");
+  });
+
+  it("wires ON/OFF and slider rows through their public callbacks", () => {
+    const toggle = vi.fn();
+    const faces = onOff(false, toggle).querySelectorAll<HTMLButtonElement>("button");
+    faces[0].click();
+    expect(toggle).toHaveBeenCalledWith(true);
+
+    const inputValue = vi.fn();
+    const built = sliderRow({
+      label: "Gain",
+      id: "gain",
+      min: -10,
+      max: 10,
+      step: 0.5,
+      value: 1,
+      format: (value) => `${value} dB`,
+      onInput: inputValue,
+    });
+    const input = built.querySelector("#gain") as HTMLInputElement;
+    expect(input.getAttribute("aria-label")).toBe("Gain");
+    expect(input.getAttribute("aria-valuetext")).toBe("1 dB");
+    input.value = "1.5";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(inputValue).toHaveBeenCalledWith(1.5);
+    expect(input.getAttribute("aria-valuetext")).toBe("1.5 dB");
+  });
+});
+
+function changeSelect(select: HTMLSelectElement, value: string): void {
+  select.value = value;
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+}
