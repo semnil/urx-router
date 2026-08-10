@@ -14,7 +14,7 @@ vi.mock("../platform", () => ({
 }));
 
 import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
-import { auditUnverified, eqOneKnob, planToCommands } from "./translate";
+import { auditUnverified, eqOneKnob, inputEq, planToCommands } from "./translate";
 import {
   dGainParam,
   INSERT_FX_NONE,
@@ -159,6 +159,88 @@ describe("runSelfTest", () => {
       .filter((k) => valueAt(before, k) !== valueAt(table, k))
       .map((k) => `${k}: ${valueAt(before, k)} -> ${valueAt(table, k)}`);
     expect(moved).toEqual([]);
+  });
+
+  // A unit found with EQ 1-knob on: the state the three cases below are about, and the
+  // one no run reached until it was staged deliberately. 1-knob goes on ON THE DEVICE
+  // rather than in the seed plan, so the bands still hold legal values for the capture
+  // to read (the plan authors them while 1-knob is off).
+  function seedWithOneKnobOn(): Map<string, number> {
+    const table = installMockDevice(defaultPlan("URX44V"));
+    for (const nodeId of ["ch1", "ch2"]) {
+      const ok = eqOneKnob(model, nodeId, 0);
+      if (ok) for (const inst of ok.instances) table.set(`${ok.on}:0:${inst}`, 1);
+    }
+    return table;
+  }
+
+  // The pre-sweep read is what makes the write-back possible; an address it could not
+  // read is one the run then changes and never puts back. Leaving that in `errors`
+  // alone is not enough, because nothing reads errors to decide `restored` — which is
+  // the exact shape ("the verdict claims more than it checked") this whole change is
+  // about, in a narrower window.
+  it("counts an address whose pre-sweep read failed, instead of passing over it", async () => {
+    const table = seedWithOneKnobOn();
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    // SSMCS_EQ_ON (106) is in the union — the sweep writes it in the other COMP/EQ
+    // order and the captured plan has no command for it.
+    vi.mocked(vdGet).mockImplementation((id, x, y) =>
+      id === 106 ? Promise.reject(new Error("read timeout")) : realGet(id, x, y),
+    );
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.errors.some((e) => e.startsWith("pre-sweep read"))).toBe(true);
+    expect(report.restoreResidual).toBeGreaterThan(0);
+    expect(report.restored).toBe(false);
+    expect(table).toBeDefined();
+  });
+
+  // Every await in the run goes through phaseStep so a cancel is recorded as one. The
+  // direct reads and writes added for the write-back are easy to leave outside it, and
+  // then an abort escapes runSelfTest entirely and reaches the operator as an ERROR
+  // dialog rather than "cancelled".
+  it("reports a cancel during the pre-sweep read as a cancel, not as a thrown error", async () => {
+    seedWithOneKnobOn();
+    const controller = new AbortController();
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    // Abort on the first read the pre-sweep loop issues (106 is only ever read there —
+    // the captured plan has no command for it, so no other phase asks).
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      if (id === 106) controller.abort();
+      return realGet(id, x, y);
+    });
+
+    const report = await runSelfTest(model, 0, controller.signal);
+
+    expect(report.aborted).toBe(true);
+    expect(report.phase).toBe("readback");
+  });
+
+  // bandsAfterRestore exists for the 1-knob-ON case, and asking planToCommands with the
+  // default emit omits exactly those bands — so the field would report "nothing wrong"
+  // by inspecting nothing. A device that refuses the band write is what makes the
+  // difference visible.
+  it("inspects the bands under 1-knob after the restore, not an empty set", async () => {
+    const table = seedWithOneKnobOn();
+    // The address the app RESOLVES for ch1, not the catalogue anchor: PARAMS holds the
+    // mono anchor id, and the per-node block is resolved from it.
+    const eq = inputEq(model, "ch1", 0)!;
+    const gain = eq.bands[0].gain;
+    // A device that takes every write EXCEPT the one that would put this band back. A
+    // plain "ignore all writes" mock cannot show anything: the restore writes the
+    // captured value, so an address that never moved already agrees with it. What
+    // bandsAfterRestore exists to catch is the unit refusing to come home.
+    const home = table.get(`${gain}:0:0`);
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (id === gain && y === 0 && v === home) return Promise.resolve();
+      table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.diag.bandsAfterRestore.map((b) => b.addr)).toContain(`${gain}:0:0`);
   });
 
   it("reports residual mismatches when the device ignores a write", async () => {

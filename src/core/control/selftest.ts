@@ -526,18 +526,11 @@ export async function runSelfTest(
         if (!captured.has(cmdAddr(c))) unrestorable.set(cmdAddr(c), c);
       }
     }
-    const preSweep = new Map<number, number>();
-    for (const [addr, c] of unrestorable) {
-      signal?.throwIfAborted();
-      try {
-        preSweep.set(addr, await vdGet(c.paramId, c.x, c.y));
-      } catch (e) {
-        // Unread means unrestorable AND unverifiable, which is a finding rather than a
-        // reason to stop: this is the diagnostic, and it aggregates (architecture.md,
-        // "Aborting on failure").
-        report.errors.push(`pre-sweep read ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
+    // Through phaseStep like every other await here: a cancel inside this loop is a
+    // cancel, and without it the abort escapes runSelfTest and reaches the user as a
+    // self-test ERROR dialog instead.
+    const preSweep = await phaseStep(readPreSweep(unrestorable, signal, report));
+    if (!preSweep) return report; // cancelled during the pre-sweep read
 
     // 2. Sweep: each pass writes a silent perturbed plan (converging, so params
     // the device resets as a side effect of a mode change are re-sent) and the
@@ -615,24 +608,24 @@ export async function runSelfTest(
           residual: r.reread?.length ?? null,
         }));
         // Read back the band gains the restore just wrote, before anything else can
-        // touch the unit. Only the ones that disagree are kept.
-        for (const c of planToCommands(model, original)) {
-          if (c.name !== "EQ_BAND_GAIN") continue;
-          signal?.throwIfAborted();
-          try {
-            const got = await vdGet(c.paramId, c.x, c.y);
-            if (got !== c.vdValue) {
-              report.diag.bandsAfterRestore.push({ addr: formatAddrKey(cmdAddr(c)), want: c.vdValue, got });
-            }
-          } catch {
-            report.diag.bandsAfterRestore.push({ addr: formatAddrKey(cmdAddr(c)), want: c.vdValue, got: null });
-          }
-        }
+        // touch the unit. RESTORE_EMIT, not the default: the default omits exactly the
+        // bands this exists to watch — the ones under EQ 1-knob — so asking with it
+        // inspects nothing in the one configuration that motivated the field.
+        if (!(await phaseStep(probeBands(model, original, signal, report)))) return report;
         report.restoreResidual = back.residual.length;
+        report.restoreResidual += unrestorable.size - preSweep.size;
+        // An address whose pre-sweep read failed is one this run cannot put back AND
+        // cannot check. It stays in the residual rather than in errors alone, because
+        // errors do not reach `restored` — and a verdict that says restored while an
+        // address the run moved is unaccounted for is the defect this whole change is
+        // about, in a narrower window.
+
         // Then the addresses that write has no command for, put back from what the unit
         // held before the sweep. Last, so the converging write's side-effect resets have
         // already landed.
-        report.restoreResidual += await restoreUnsent(unrestorable, preSweep, settleMs, signal, report);
+        const unsent = await phaseStep(restoreUnsent(unrestorable, preSweep, settleMs, signal, report));
+        if (unsent === undefined) return report; // cancelled during the write-back
+        report.restoreResidual += unsent;
         report.restored = report.restoreResidual === 0;
         report.phase = "done";
       }
@@ -641,6 +634,55 @@ export async function runSelfTest(
   } finally {
     await vdDisconnect(device.epoch);
   }
+}
+
+/**
+ * Read what the unit holds at the addresses the restore has no command for, before
+ * anything perturbs them. An address that cannot be read is left OUT of the result: the
+ * run then neither writes it back nor claims it did, and the caller counts the shortfall
+ * into the residual. Recording it as readable-but-unknown would be the worse shape —
+ * restoreUnsent would skip it silently and the verdict would not notice.
+ */
+async function readPreSweep(
+  unrestorable: Map<number, VdCommand>,
+  signal: AbortSignal | undefined,
+  report: SelfTestReport,
+): Promise<Map<number, number>> {
+  const preSweep = new Map<number, number>();
+  for (const [addr, c] of unrestorable) {
+    signal?.throwIfAborted();
+    try {
+      preSweep.set(addr, await vdGet(c.paramId, c.x, c.y));
+    } catch (e) {
+      report.errors.push(`pre-sweep read ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return preSweep;
+}
+
+/**
+ * Read the band gains the restore just wrote, before anything else can touch the unit,
+ * and keep only the ones that disagree. Empty here while a later external sweep finds
+ * them changed is what separates "the write never went" from "the unit moved it after".
+ */
+async function probeBands(
+  model: DeviceModel,
+  original: Plan,
+  signal: AbortSignal | undefined,
+  report: SelfTestReport,
+): Promise<true> {
+  for (const c of planToCommands(model, original, "all", RESTORE_EMIT)) {
+    if (c.name !== "EQ_BAND_GAIN") continue;
+    signal?.throwIfAborted();
+    try {
+      const got = await vdGet(c.paramId, c.x, c.y);
+      if (got !== c.vdValue)
+        report.diag.bandsAfterRestore.push({ addr: formatAddrKey(cmdAddr(c)), want: c.vdValue, got });
+    } catch {
+      report.diag.bandsAfterRestore.push({ addr: formatAddrKey(cmdAddr(c)), want: c.vdValue, got: null });
+    }
+  }
+  return true;
 }
 
 /**
