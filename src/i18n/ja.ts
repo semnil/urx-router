@@ -426,7 +426,7 @@ export const ja: Messages = {
     busFixedLevel: "Send レベルは固定 (BUS Type: FIXED)。",
     panLinked: "パンは Send 元チャンネルの PAN に追従 (Pan Link)。",
     sdRecTrackCount: "Track Count",
-    sdRecTrackCountLive: "Track Count はデバイス側でのみ設定できます (software から書き込み不可)。",
+    sdRecTrackCountLive: "Track Count はデバイス側でのみ設定できます (broker が公開するのは 8 段階のうち 1 つだけ)。",
     signalType: "Signal Type",
     panBal: "PAN / BAL",
     deleteConnection: "この接続を削除",
@@ -820,6 +820,8 @@ export const ja: Messages = {
         "デバイス制御の接続が中断されました。再接続してください。繰り返す場合はアプリを再起動してください。",
       deviceLost: "デバイスとの接続が切断されました (USB 抜去または Device Center 終了)",
       brokerClosed: "Device Center が制御接続を閉じました。起動し直してから再度お試しください。",
+      brokerNoVdpPort: (detail: string): string =>
+        `Device Center は応答しましたが制御ポートを提示しませんでした (${detail})。Device Center を起動し直してから再度お試しください。`,
       notConnected: "デバイスに接続していません",
       brokerTimeout: (detail: string): string => `Device Center から応答がありませんでした (${detail})`,
       brokerUnresponsive:

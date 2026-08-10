@@ -71,18 +71,41 @@ action, not a stored setting, so there is nothing for a saved plan or a
 snapshot diff to represent. Input gain itself is planned and synced as usual;
 only the auto-measure trigger is out of scope.
 
-## SD Rec Track Count is read-only
+## SD Rec Track Count cannot be set from software
 
 The microSD recorder's per-track source assignment is a normal, writable setting
 (each stereo track pair selects a source — a channel pair, STEREO or a MIX bus —
 over param 736; see [device-model.md](device-model.md)).
 
-The recorder's **Track Count** (2 … 16), however, is **read-only**: like the
-CH → FX send Pre/Post, the device accepts a software write but ignores it and
-only its own front panel changes it (param 839). A saved plan's Track Count is
-therefore not written to the device.
+The recorder's **Track Count** (2 … 16) is not written by the app, and the reason
+is narrower than "the device refuses it". The device does accept the write and
+act on it — what is missing is the range. Track Count rides param 839 as
+*value × 2*, so 2 … 16 tracks is a value of 1 … 8, but the broker publishes a
+maximum of **1** and enforces it: 2, 4 and 8 are all rejected. That leaves
+software two reachable values, 1 and 0. 1 means two tracks. 0 is outside the
+device's own range and leaves the unit's Track Count screen with nothing selected
+at all (verified on a real URX44V). A saved plan's Track Count is therefore not
+written to the device — the only settings within reach are one that says "two
+tracks" and one the device has no meaning for.
 
 This applies to the URX44 / URX44V only (the URX22 has no microSD recording).
+
+## The unit's operation mode (Standard / Simple) cannot be detected
+
+The URX runs in one of two operation modes, chosen during its initial setup:
+**Standard** or **Simple**. Simple Mode visibly reduces what the unit offers — the
+channel and bus display is cut down and no longer scrolls.
+
+Software cannot see which one is active. A sweep of every parameter the broker
+publishes is identical between a unit in Standard Mode and the same unit in Simple
+Mode (verified on a real URX44V by comparing two factory resets that differed only
+in the mode and the display language). The app therefore presents the same
+controls either way, including for things Simple Mode has taken away on the unit
+itself.
+
+The loaded **preset** is readable, so the unit's `P02`-style indicator does have a
+software equivalent — the mode does not. What Simple Mode does to a write the app
+sends for a control it has removed has not been measured.
 
 ## The STREAMING pre-DELAY meter is not readable
 

@@ -493,7 +493,9 @@ export const en = {
     busFixedLevel: tr("Send level is fixed (BUS Type: FIXED)."),
     panLinked: tr("Pan follows the source channel PAN (Pan Link)."),
     sdRecTrackCount: dev("Track Count"),
-    sdRecTrackCountLive: tr("Track Count is set on the device only (not writable from software)."),
+    sdRecTrackCountLive: tr(
+      "Track Count is set on the device only — the broker exposes just one of its eight settings.",
+    ),
     signalType: dev("Signal Type"),
     panBal: dev("PAN / BAL"),
     deleteConnection: tr("Delete this connection"),
@@ -934,6 +936,8 @@ export const en = {
       ),
       deviceLost: tr("the device link dropped (USB unplugged or Device Center quit)"),
       brokerClosed: tr("Device Center closed the control connection. Start it again, then retry."),
+      brokerNoVdpPort: (detail: string): string =>
+        `Device Center answered but did not offer a control port (${detail}). Restart Device Center, then try again.`,
       notConnected: tr("not connected to the device"),
       brokerTimeout: (detail: string): string => `Device Center did not answer in time (${detail})`,
       brokerUnresponsive: tr(

@@ -1,14 +1,20 @@
-// Live hardware control transport: a client for the Device Center broker's
-// "vd" protocol over WebSocket (ws://127.0.0.1:51780/casket, JSON-RPC 1.0).
-// Device Center must be running with a URX connected; it bridges the broker to
-// the unit's CDC serial. See reference/work/vd/vd-protocol.md.
+// Live hardware control transport: a client for the Device Center broker's "vd"
+// protocol. Device Center must be running with a URX connected; it bridges the
+// broker to the unit's CDC serial. See reference/work/vd/vd-protocol.md.
+//
+// The link runs over the per-session port Device Center advertises on :51770 —
+// newline-delimited JSON over a plain socket. A second endpoint (the casket
+// WebSocket on :51780) speaks the same messages in a JSON-RPC envelope and is
+// reachable with `--experimental --casket`; `Link` below carries both and its
+// doc is where the comparison lives.
 //
 // A dedicated worker thread owns the socket so the broker's continuous meter
-// notifications are drained without blocking command latency, and so the device
-// GUID (dev_uid) stays inside Rust — the frontend addresses parameters by
-// (param_id, x, y) and never sees the instance secret. Desktop-only: the broker
-// transport (tungstenite) and the MIDI bridge (midir) are desktop-only crates,
-// so mobile targets do not build the hardware control surface at all.
+// notifications are drained without blocking command latency, and — on the
+// casket endpoint, which names the device on every message — so the device GUID
+// stays inside Rust; the frontend addresses parameters by (param_id, x, y) and
+// never sees the instance secret. Desktop-only: tungstenite (the casket arm) and
+// the MIDI bridge (midir) are desktop-only crates, so mobile targets do not
+// build the hardware control surface at all.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
@@ -23,7 +29,13 @@ use tauri::ipc::Channel;
 // localizes the code and shows the detail as-is (src/i18n error.shell) — a raw
 // message would reach a Japanese dialog in English. Codes: broker-unreachable,
 // no-device, control-worker-gone, not-connected, device-lost, broker-closed,
-// broker-timeout, broker-unresponsive, broker-rejected, broker-bad-response, broker-io.
+// broker-timeout, broker-unresponsive, broker-rejected, broker-bad-response,
+// broker-io, broker-no-vdpport.
+//
+// This list is the Rust half of a two-sided inventory — src/i18n/index.ts asks to
+// keep it in step, and error-text.test.ts asserts the TypeScript half exhaustive
+// in both directions. Nothing checks THIS half, so a code added without a line
+// here leaves the next reader copying an inventory that is already wrong.
 
 /// Stable error code raised when the worker thread is gone (its command channel or
 /// reply channel is closed). The frontend exact-matches this code, so its value
@@ -516,6 +528,7 @@ mod imp {
         Cmd, DeviceSummary, LinkCounters, LinkEvent, MeterUpdate, ParamUpdate, BULK_CHANGE,
     };
     use std::collections::HashSet;
+    use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
     use std::sync::Arc;
@@ -526,7 +539,7 @@ mod imp {
     use tungstenite::stream::MaybeTlsStream;
     use tungstenite::{connect, Message, WebSocket};
 
-    const URL: &str = "ws://127.0.0.1:51780/casket";
+    const CASKET_URL: &str = "ws://127.0.0.1:51780/casket";
     type Ws = WebSocket<MaybeTlsStream<TcpStream>>;
 
     /// Active frontend subscriptions (meter / parameter channels) plus their
@@ -627,30 +640,21 @@ mod imp {
         ready: Sender<Result<DeviceSummary, String>>,
         counters: Arc<LinkCounters>,
     ) {
-        let mut ws = match connect(URL) {
-            Ok((ws, _)) => ws,
+        // Open the endpoint the launch flags call for, and learn the port for this
+        // Device Center session while doing it. Both are per-connection, so a
+        // reconnect repeats the lookup rather than reusing a number that a Device
+        // Center restart has already invalidated. Failures carry a stable code the
+        // frontend localizes; the raw cause stays in the log.
+        let (mut link, mut summary) = match Link::open() {
+            Ok(v) => v,
             Err(e) => {
-                // Device Center isn't running (or the broker port is closed). Return
-                // a stable code the frontend localizes; keep the raw cause for logs.
-                eprintln!("vd: cannot reach Device Center broker: {e}");
-                let _ = ready.send(Err("broker-unreachable".into()));
+                eprintln!("vd: could not open the device link: {e}");
+                let _ = ready.send(Err(e));
                 return;
             }
         };
-        // Short read timeout so the loop can interleave draining and commands.
-        // Not optional: every read below blocks with no deadline of its own, so a
-        // socket left in blocking mode turns any quiet moment into a hang the user
-        // can only escape by quitting. Refuse the session instead.
-        if let MaybeTlsStream::Plain(s) = ws.get_ref() {
-            if let Err(e) = s.set_read_timeout(Some(Duration::from_millis(200))) {
-                let _ = ready.send(Err(format!(
-                    "broker-io: could not set the socket read timeout: {e}"
-                )));
-                return;
-            }
-        }
 
-        let (dev_uid, summary) = match handshake(&mut ws) {
+        summary.firmware = match handshake(&mut link) {
             Ok(v) => v,
             Err(e) => {
                 let _ = ready.send(Err(e));
@@ -701,9 +705,9 @@ mod imp {
                     reply,
                 }) => {
                     LinkCounters::bump(&counters.sets);
-                    let _ = reply.send(health.guard(|| {
-                        do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value))
-                    }));
+                    let _ = reply.send(
+                        health.guard(|| do_set(&mut link, &mut subs, param_id, x, y, json!(value))),
+                    );
                 }
                 Ok(Cmd::Get {
                     param_id,
@@ -712,9 +716,8 @@ mod imp {
                     reply,
                 }) => {
                     LinkCounters::bump(&counters.gets);
-                    let _ = reply.send(
-                        health.guard(|| do_get(&mut ws, &mut subs, &dev_uid, param_id, x, y)),
-                    );
+                    let _ =
+                        reply.send(health.guard(|| do_get(&mut link, &mut subs, param_id, x, y)));
                 }
                 Ok(Cmd::SetStr {
                     param_id,
@@ -724,9 +727,9 @@ mod imp {
                     reply,
                 }) => {
                     LinkCounters::bump(&counters.sets);
-                    let _ = reply.send(health.guard(|| {
-                        do_set(&mut ws, &mut subs, &dev_uid, param_id, x, y, json!(value))
-                    }));
+                    let _ = reply.send(
+                        health.guard(|| do_set(&mut link, &mut subs, param_id, x, y, json!(value))),
+                    );
                 }
                 Ok(Cmd::GetStr {
                     param_id,
@@ -735,11 +738,8 @@ mod imp {
                     reply,
                 }) => {
                     LinkCounters::bump(&counters.gets);
-                    let _ =
-                        reply
-                            .send(health.guard(|| {
-                                do_get_str(&mut ws, &mut subs, &dev_uid, param_id, x, y)
-                            }));
+                    let _ = reply
+                        .send(health.guard(|| do_get_str(&mut link, &mut subs, param_id, x, y)));
                 }
                 Ok(Cmd::MetersSubscribe {
                     addrs,
@@ -750,11 +750,11 @@ mod imp {
                     // register the new one address by address (never a bulk post on
                     // /vd/meters — that has been seen to crash Device Center).
                     LinkCounters::bump(&counters.meter_subscribes);
-                    unregister_meters(&mut ws, &dev_uid, &mut subs, &counters);
+                    unregister_meters(&mut link, &mut subs, &counters);
                     let mut first = Ok(());
                     for &(id, x) in &addrs {
                         LinkCounters::bump(&counters.regist_frames);
-                        let r = health.guard(|| reg_meter(&mut ws, &dev_uid, id, x, "regist"));
+                        let r = health.guard(|| reg_meter(&mut link, id, x, "regist"));
                         if first.is_ok() {
                             first = r;
                         }
@@ -765,7 +765,7 @@ mod imp {
                     let _ = reply.send(first);
                 }
                 Ok(Cmd::MetersUnsubscribe) => {
-                    unregister_meters(&mut ws, &dev_uid, &mut subs, &counters);
+                    unregister_meters(&mut link, &mut subs, &counters);
                     subs.meters.clear();
                     subs.meter_ch = None;
                 }
@@ -778,11 +778,11 @@ mod imp {
                     // register the new one address by address (per-address regist
                     // only, mirroring meters — a bulk post has crashed Device Center).
                     LinkCounters::bump(&counters.param_subscribes);
-                    unregister_params(&mut ws, &dev_uid, &mut subs, &counters);
+                    unregister_params(&mut link, &mut subs, &counters);
                     let mut first = Ok(());
                     for &(id, x, y) in &addrs {
                         LinkCounters::bump(&counters.regist_frames);
-                        let r = health.guard(|| reg_param(&mut ws, &dev_uid, id, x, y, "regist"));
+                        let r = health.guard(|| reg_param(&mut link, id, x, y, "regist"));
                         if first.is_ok() {
                             first = r;
                         }
@@ -793,7 +793,7 @@ mod imp {
                     let _ = reply.send(first);
                 }
                 Ok(Cmd::ParamsUnsubscribe) => {
-                    unregister_params(&mut ws, &dev_uid, &mut subs, &counters);
+                    unregister_params(&mut link, &mut subs, &counters);
                     subs.params.clear();
                     subs.param_ch = None;
                 }
@@ -806,7 +806,7 @@ mod imp {
                     // notifications to the frontend instead of discarding them; stop
                     // if the link dropped, pushing the link-lost event first so a
                     // held-open live session is dropped instead of freezing silently.
-                    if let Err(e) = pump(&mut ws, &mut subs) {
+                    if let Err(e) = pump(&mut link, &mut subs) {
                         eprintln!("vd: {e}; stopping control worker");
                         if let Some(ch) = &link_ch {
                             let _ = ch.send(LinkEvent { reason: e });
@@ -819,19 +819,19 @@ mod imp {
         // EVERY break above lands here, which is what makes this the session's one exit
         // — including the pump's error break, where the link is already gone and the
         // unregisters are discarded like the rest of that path's writes.
-        unregister_all(&mut ws, &dev_uid, &mut subs, &counters);
+        unregister_all(&mut link, &mut subs, &counters);
         // `close` only QUEUES the Close frame; the handshake finishes on the reads that
         // follow, and dropping the socket before then hands the broker an abrupt
-        // disconnect instead of a close.
-        let _ = ws.close(None);
-        let _ = ws.flush();
+        // disconnect instead of a close. A plain socket has no such handshake, so the
+        // drain below is a no-op there and the shutdown is what ends it.
+        link.begin_close();
         for _ in 0..CLOSE_FRAMES {
             // `Ok(None)` is the socket's own 200 ms read timeout: the peer has nothing
             // queued, so its Close is not coming and there is nothing left to drain.
             // Counting those against the budget would spend 64 × 200 ms on a quiet
             // broker — which is exactly the state a session that just unregistered
             // everything is in, and it is the operator's Quit being held.
-            match read_text(&mut ws) {
+            match link.read_frame() {
                 Ok(Some(_)) => {}
                 _ => break, // a closed / dead socket, or nothing more to read
             }
@@ -851,19 +851,19 @@ mod imp {
     /// Drop every meter registration this session holds. Shared by the subscription
     /// replacement, the explicit unsubscribe and the session teardown, so the three
     /// cannot disagree about what leaving looks like.
-    fn unregister_meters(ws: &mut Ws, dev_uid: &str, subs: &mut Subs, counters: &LinkCounters) {
+    fn unregister_meters(link: &mut Link, subs: &mut Subs, counters: &LinkCounters) {
         for &(id, x) in &subs.meter_addrs {
             LinkCounters::bump(&counters.unregist_frames);
-            let _ = reg_meter(ws, dev_uid, id, x, "unregist");
+            let _ = reg_meter(link, id, x, "unregist");
         }
         subs.meter_addrs.clear();
     }
 
     /// The parameter half of the above.
-    fn unregister_params(ws: &mut Ws, dev_uid: &str, subs: &mut Subs, counters: &LinkCounters) {
+    fn unregister_params(link: &mut Link, subs: &mut Subs, counters: &LinkCounters) {
         for &(id, x, y) in &subs.param_addrs {
             LinkCounters::bump(&counters.unregist_frames);
-            let _ = reg_param(ws, dev_uid, id, x, y, "unregist");
+            let _ = reg_param(link, id, x, y, "unregist");
         }
         subs.param_addrs.clear();
     }
@@ -872,15 +872,284 @@ mod imp {
     /// never read (see Cmd::ParamsSubscribe), so this cannot confirm the broker took
     /// them — it can only make sure they were asked for, which is the whole of what
     /// this side controls.
-    fn unregister_all(ws: &mut Ws, dev_uid: &str, subs: &mut Subs, counters: &LinkCounters) {
-        unregister_meters(ws, dev_uid, subs, counters);
-        unregister_params(ws, dev_uid, subs, counters);
+    fn unregister_all(link: &mut Link, subs: &mut Subs, counters: &LinkCounters) {
+        unregister_meters(link, subs, counters);
+        unregister_params(link, subs, counters);
     }
 
     fn send_json(ws: &mut Ws, v: Value) -> Result<(), String> {
         ws.send(Message::Text(v.to_string().into()))
             .map_err(|e| format!("broker-io: {e}"))
     }
+
+    /// Which of Device Center's endpoints this session talks over.
+    ///
+    /// Both carry the same `vdp` messages and the same `/vd/*` uris. They differ
+    /// in framing, and in one property that matters more than the framing:
+    ///
+    /// - `Vdp` — a plain TCP socket carrying newline-delimited JSON with the `vdp`
+    ///   message bare. The port is **not fixed**: Device Center advertises one per
+    ///   session on `:51770`, so it is looked up at connect and again on every
+    ///   reconnect. **Serves concurrent clients**, so this app no longer competes
+    ///   with anything else on the machine for the link.
+    /// - `Casket` — `ws://127.0.0.1:51780/casket`, each message wrapped in a
+    ///   JSON-RPC `requestVD` envelope naming the device by GUID. **Serves one
+    ///   client**: a second connection silences the first, with no error on either
+    ///   side, so any other tool touching the broker takes this app's link away
+    ///   silently. That is the reason for the move.
+    ///
+    /// Normal launches use `Vdp`. `Casket` is reachable only with
+    /// `--experimental --casket`, and deliberately *not* as an automatic fallback:
+    /// falling back on discovery failure would hide a `Vdp` regression behind a
+    /// working casket path, and nobody would ever learn the primary route broke.
+    /// The flag exists so the two can be compared on purpose — without it the
+    /// casket path would be code that only ever runs when something is already
+    /// wrong, and that nothing checks in the meantime.
+    enum Link {
+        Casket { ws: Ws, dev_uid: String },
+        Vdp { sock: TcpStream, reader: LineReader },
+    }
+
+    /// Arm a plain socket the way every socket here wants it: a short read timeout
+    /// so a quiet link never becomes a hang, and Nagle off.
+    ///
+    /// Both are load-bearing. Without the timeout, every read below blocks with no
+    /// deadline of its own and a quiet moment becomes a hang the user can only
+    /// escape by quitting. Nagle matters because this link is a strict ping-pong —
+    /// write one small line, block for the reply, 7074 times in a full sweep — which
+    /// is the shape Nagle punishes with a fixed 40 ms stall rather than a
+    /// proportional cost. It is easy to miss because tungstenite sets `TCP_NODELAY`
+    /// itself, so the casket endpoint had it for free and a plain `TcpStream` does
+    /// not: leaving it off would be a regression against the transport this replaced.
+    fn arm_socket(sock: &TcpStream, timeout: Duration) -> Result<(), String> {
+        sock.set_read_timeout(Some(timeout))
+            .map_err(|e| format!("broker-io: could not set the socket read timeout: {e}"))?;
+        sock.set_nodelay(true)
+            .map_err(|e| format!("broker-io: could not disable Nagle: {e}"))
+    }
+
+    /// The `:51770` lookup that names this session's `vdp` port. Its own short-lived
+    /// connection: it speaks a different envelope (`vddp`) and a different uri space
+    /// (`/vddp_srv*`) from everything else here.
+    fn discover_vdp_port() -> Result<(u16, String), String> {
+        let mut sock = TcpStream::connect(("127.0.0.1", VDDP_SRV_PORT))
+            .map_err(|e| format!("broker-unreachable: {e}"))?;
+        arm_socket(&sock, DISCOVERY_TIMEOUT)?;
+        let req = json!({ "vddp": { "method": "get", "uri": "/vddp_srv/devices" } });
+        sock.write_all(format!("{req}\n").as_bytes())
+            .map_err(|e| format!("broker-io: {e}"))?;
+
+        let mut reader = LineReader::new();
+        let deadline = Instant::now() + DISCOVERY_TIMEOUT;
+        while Instant::now() < deadline {
+            let Some(msg) = reader.read_json(&mut sock)? else {
+                continue;
+            };
+            let Some(data) = msg.get("vddp").and_then(|v| v.get("data")) else {
+                continue;
+            };
+            // An empty list is Device Center up with no URX — the same state the
+            // casket path reports from an empty getDeviceList.
+            let Some(dev) = data
+                .pointer("/list")
+                .and_then(Value::as_array)
+                .and_then(|l| l.first())
+            else {
+                return Err("no-device".into());
+            };
+            let port = dev
+                .get("vdpport")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "broker-no-vdpport: the device list carried no port".to_string())?;
+            return Ok((port as u16, str_or(dev, "model", "URX")));
+        }
+        Err("broker-no-vdpport: the device list did not answer".into())
+    }
+
+    /// How long discovery waits for the device list, and how long its socket blocks
+    /// for one read — the same number, so the loop makes one read and then the
+    /// deadline ends it rather than spinning.
+    const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
+
+    /// A string field, or a placeholder. Both device lists have optional names and
+    /// both must fall back to the same word, or the two transports would show
+    /// different text for the same unknown unit.
+    fn str_or(v: &Value, key: &str, dflt: &str) -> String {
+        v.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or(dflt)
+            .to_string()
+    }
+
+    /// Newline-delimited JSON off a plain socket.
+    ///
+    /// It owns both buffers for the life of the connection. `pending` carries the
+    /// partial tail between calls, because a chunk boundary is not a message
+    /// boundary and a line split across two reads would otherwise be lost; `chunk`
+    /// is reused because a fresh `[0u8; 8192]` per read means memsetting 8 KB for
+    /// every ~100-byte frame, and this link carries roughly 200 frames a second for
+    /// as long as a session is up.
+    struct LineReader {
+        pending: Vec<u8>,
+        chunk: Vec<u8>,
+    }
+
+    impl LineReader {
+        fn new() -> Self {
+            LineReader {
+                pending: Vec::new(),
+                chunk: vec![0u8; 8192],
+            }
+        }
+
+        /// One message, or None on read timeout or on a line that is not parseable
+        /// JSON — callers treat both as "nothing yet" and loop. Parsed in place out
+        /// of `pending`, so a frame is not copied into a `String` on its way to a
+        /// parser that would immediately take it apart again.
+        fn read_json(&mut self, sock: &mut TcpStream) -> Result<Option<Value>, String> {
+            loop {
+                if let Some(nl) = self.pending.iter().position(|&b| b == b'\n') {
+                    let parsed = serde_json::from_slice::<Value>(&self.pending[..nl]).ok();
+                    self.pending.drain(..=nl);
+                    return Ok(parsed);
+                }
+                match sock.read(&mut self.chunk) {
+                    Ok(0) => return Err("broker-closed".into()),
+                    // Disjoint field borrows: reading into `chunk` and appending to
+                    // `pending` in one statement is fine, and a temporary between
+                    // them would put back the copy this reader exists to avoid.
+                    Ok(n) => self.pending.extend_from_slice(&self.chunk[..n]),
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        return Ok(None)
+                    }
+                    Err(e) => return Err(format!("broker-io: {e}")),
+                }
+            }
+        }
+    }
+
+    /// Device Center's device-list port. Fixed, unlike the `vdp` port it hands out.
+    const VDDP_SRV_PORT: u16 = 51770;
+
+    impl Link {
+        /// Open the link the launch flags call for, and report what the endpoint says
+        /// the unit is. `firmware` is left `None`: the caller completes the handshake
+        /// (`/vd/synchronize`, then `/vd/device`) over whichever transport came back
+        /// and fills it in, and those two reads are identical on both.
+        fn open() -> Result<(Link, DeviceSummary), String> {
+            if crate::experimental_enabled() && std::env::args().any(|a| a == "--casket") {
+                eprintln!("vd: --casket — using the one-client casket endpoint");
+                let (mut ws, _) = connect(CASKET_URL).map_err(|e| {
+                    eprintln!("vd: cannot reach Device Center broker: {e}");
+                    "broker-unreachable".to_string()
+                })?;
+                if let MaybeTlsStream::Plain(s) = ws.get_ref() {
+                    arm_socket(s, READ_TIMEOUT)?;
+                }
+                let (dev_uid, device) = casket_device_list(&mut ws)?;
+                return Ok((Link::Casket { ws, dev_uid }, device));
+            }
+
+            let (port, model) = discover_vdp_port()?;
+            let sock = TcpStream::connect(("127.0.0.1", port))
+                .map_err(|e| format!("broker-unreachable: vdp port {port}: {e}"))?;
+            arm_socket(&sock, READ_TIMEOUT)?;
+            Ok((
+                Link::Vdp {
+                    sock,
+                    reader: LineReader::new(),
+                },
+                DeviceSummary {
+                    // The `vddp` device list carries no label, and the two were
+                    // identical on every unit measured, so the model stands in for it.
+                    label: model.clone(),
+                    model,
+                    firmware: None,
+                },
+            ))
+        }
+
+        /// Send one `vdp` message, in whatever envelope this transport wants.
+        fn send_vdp(&mut self, vdp: Value) -> Result<(), String> {
+            match self {
+                // The JSON-RPC envelope is casket's, not the protocol's — which is
+                // why it is built here rather than at the call sites, and why the
+                // other endpoint carries the same message with nothing around it.
+                Link::Casket { ws, dev_uid } => send_json(
+                    ws,
+                    json!({
+                        "jsonrpc": "1.0",
+                        "method": "requestVD",
+                        "params": { "dev_uid": dev_uid, "vdp": vdp }
+                    }),
+                ),
+                Link::Vdp { sock, .. } => {
+                    let line = json!({ "vdp": vdp });
+                    sock.write_all(format!("{line}\n").as_bytes())
+                        .map_err(|e| format!("broker-io: {e}"))
+                }
+            }
+        }
+
+        /// Start the orderly close. On casket that queues a Close frame whose
+        /// handshake the caller's drain completes; on a plain socket there is no
+        /// handshake to complete, so this shuts the write half and the drain that
+        /// follows simply sees the peer's EOF.
+        fn begin_close(&mut self) {
+            match self {
+                Link::Casket { ws, .. } => {
+                    let _ = ws.close(None);
+                    let _ = ws.flush();
+                }
+                Link::Vdp { sock, .. } => {
+                    let _ = sock.shutdown(std::net::Shutdown::Write);
+                }
+            }
+        }
+
+        /// One inbound message, or None on read timeout or on a frame that is not
+        /// parseable JSON — callers treat both as "nothing yet" and loop, which is
+        /// what the casket path did before this existed.
+        fn read_frame(&mut self) -> Result<Option<Value>, String> {
+            match self {
+                Link::Casket { ws, .. } => {
+                    let Some(text) = read_text(ws)? else {
+                        return Ok(None);
+                    };
+                    Ok(serde_json::from_str::<Value>(&text).ok())
+                }
+                Link::Vdp { sock, reader } => reader.read_json(sock),
+            }
+        }
+    }
+
+    /// The `vdp` message inside an inbound frame, whichever envelope carried it.
+    ///
+    /// One accessor rather than the pointer pair spelled out at each parse site.
+    /// That spelling has already cost a hardware run: when the transport was added,
+    /// three parsers were taught both shapes and `vd_get_data` was not, so every
+    /// reply on the new endpoint was skipped for lacking a wrapper it never sends
+    /// and the session timed out on `/vd/synchronize`. A fourth site added later
+    /// would inherit the same trap, and it fails silently on the DEFAULT transport
+    /// while passing on the experimental one.
+    ///
+    /// `get` rather than `pointer`: `Value::pointer` allocates two Strings per path
+    /// token even when nothing needs escaping, and this runs on every frame of a
+    /// feed measured at ~200/s. The bare shape is tried first because it is the one
+    /// the default endpoint sends.
+    fn vdp_of(msg: &Value) -> Option<&Value> {
+        msg.get("vdp")
+            .or_else(|| msg.get("params").and_then(|p| p.get("vdp")))
+    }
+
+    /// Socket read timeout. Short so the worker loop can interleave draining and
+    /// commands rather than blocking on a quiet link.
+    const READ_TIMEOUT: Duration = Duration::from_millis(200);
 
     /// Read one text message, or None on read timeout. Errors on a closed or
     /// broken connection, or on an unexpected binary frame, so the awaiting
@@ -905,7 +1174,10 @@ mod imp {
         }
     }
 
-    fn handshake(ws: &mut Ws) -> Result<(String, DeviceSummary), String> {
+    /// Casket's device list: the GUID every message on that transport has to name,
+    /// plus what the broker calls the unit. Only the casket path needs this — the
+    /// `vdp` port is already scoped to one device, so it carries no GUID at all.
+    fn casket_device_list(ws: &mut Ws) -> Result<(String, DeviceSummary), String> {
         send_json(ws, json!({ "jsonrpc": "1.0", "method": "getDeviceList" }))?;
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
@@ -928,37 +1200,17 @@ mod imp {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            let mut summary = DeviceSummary {
-                model: dev
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .unwrap_or("URX")
-                    .to_string(),
-                label: dev
-                    .get("label")
-                    .and_then(Value::as_str)
-                    .unwrap_or("URX")
-                    .to_string(),
-                firmware: Some(String::new()),
-            };
             if dev_uid.is_empty() {
                 return Err("broker-bad-response: device list entry had no identifier".into());
             }
-            // The list entry persists after the unit is unplugged, so confirm the
-            // live link before claiming a device: "online" means a URX is actually
-            // attached. Anything else (e.g. "lost") is Device Center up with no
-            // unit → the same no-device state as an empty list.
-            let status = sync_status(ws, &dev_uid)?;
-            if status != "online" {
-                eprintln!("vd: URX listed but sync_status = {status}; treating as no-device");
-                return Err("no-device".into());
-            }
-            // Read the System firmware version so the frontend can warn when the
-            // attached unit's firmware differs from the validated one. A failed read
-            // yields None, which the frontend treats as a reason to stop rather than
-            // as a reason to skip the check.
-            summary.firmware = system_firmware(ws, &dev_uid);
-            return Ok((dev_uid, summary));
+            return Ok((
+                dev_uid,
+                DeviceSummary {
+                    model: str_or(dev, "model", "URX"),
+                    label: str_or(dev, "label", "URX"),
+                    firmware: None,
+                },
+            ));
         }
         // No device list within the deadline. The broker answered the WebSocket
         // handshake but never listed a unit, so treat it as no URX attached
@@ -967,43 +1219,57 @@ mod imp {
         Err("no-device".into())
     }
 
-    /// Send a `requestVD` GET for `uri` and return the matched response's `vdp.data`.
+    /// Confirm a unit is really there, and read what the frontend needs to know
+    /// about it. Identical on both transports: the endpoint only decided how the
+    /// two reads below are framed, not what they say.
+    fn handshake(link: &mut Link) -> Result<Option<String>, String> {
+        // A device entry persists after the unit is unplugged, so confirm the live
+        // link before claiming a device: "online" means a URX is actually attached.
+        // Anything else (e.g. "lost") is Device Center up with no unit → the same
+        // no-device state as an empty list.
+        let status = sync_status(link)?;
+        if status != "online" {
+            eprintln!("vd: URX listed but sync_status = {status}; treating as no-device");
+            return Err("no-device".into());
+        }
+        // Read the System firmware version so the frontend can warn when the
+        // attached unit's firmware differs from the validated one. A failed read
+        // yields None, which the frontend treats as a reason to stop rather than
+        // as a reason to skip the check.
+        Ok(system_firmware(link))
+    }
+
+    /// Send a GET for `uri` and return the matched response's `vdp.data`.
     /// Shared by the handshake-time reads (synchronize, device); drains non-matching
     /// frames until the address echoes back or the 3s deadline lapses. The parameter
     /// read path (do_get_value) keeps its own loop — it also screens for a mid-read
     /// device-lost push, which these handshake reads run before a session exists.
-    fn vd_get_data(ws: &mut Ws, dev_uid: &str, uri: &str) -> Result<Value, String> {
+    fn vd_get_data(link: &mut Link, uri: &str) -> Result<Value, String> {
         let base = uri.split('?').next().unwrap_or(uri).to_string();
-        send_json(
-            ws,
-            json!({
-                "jsonrpc": "1.0",
-                "method": "requestVD",
-                "params": {
-                    "dev_uid": dev_uid,
-                    "vdp": { "method": "get", "uri": uri }
-                }
-            }),
-        )?;
+        // Sent and awaited under one spelling, as in do_get_value.
+        let verb = "get";
+        link.send_vdp(json!({ "method": verb, "uri": uri }))?;
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
-            let Some(text) = read_text(ws)? else { continue };
-            let Ok(msg) = serde_json::from_str::<Value>(&text) else {
+            let Some(msg) = link.read_frame()? else {
                 continue;
             };
-            if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
+            // This loop is separate from reply_for's: it runs before a session
+            // exists, so there is nothing to absorb into and it does not screen for
+            // a device-lost push. The verb is matched for the same reason reply_for
+            // matches it — a notify echoes the address it is about, and taking one
+            // as the answer here would decide the handshake off another client's
+            // traffic (a `/vd/synchronize` push is the shape that reaches this one).
+            let Some(vdp) = vdp_of(&msg) else { continue };
+            if vdp.get("method").and_then(Value::as_str) != Some(verb) {
                 continue;
             }
-            let vdp = msg.pointer("/params/vdp");
-            let ruri = vdp
-                .and_then(|v| v.get("uri"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            let ruri = vdp.get("uri").and_then(Value::as_str).unwrap_or("");
             if ruri.split('?').next().unwrap_or(ruri) != base {
                 continue;
             }
             return vdp
-                .and_then(|v| v.get("data"))
+                .get("data")
                 .cloned()
                 .ok_or_else(|| format!("broker-bad-response: no data for {base}"));
         }
@@ -1014,8 +1280,8 @@ mod imp {
     /// is actually attached. Device Center keeps the getDeviceList entry after the
     /// unit is unplugged but reports a non-"online" status here, so this is what
     /// separates a present device from a stale list entry.
-    fn sync_status(ws: &mut Ws, dev_uid: &str) -> Result<String, String> {
-        vd_get_data(ws, dev_uid, "/vd/synchronize")?
+    fn sync_status(link: &mut Link) -> Result<String, String> {
+        vd_get_data(link, "/vd/synchronize")?
             .pointer("/sync_status")
             .and_then(Value::as_str)
             .map(str::to_string)
@@ -1028,8 +1294,8 @@ mod imp {
     /// not land — an unanswered /vd/device or a response without a firm_list — so
     /// the version is unknown rather than absent, and the frontend refuses to touch
     /// the device instead of proceeding with the gate silently disabled.
-    fn system_firmware(ws: &mut Ws, dev_uid: &str) -> Option<String> {
-        let data = vd_get_data(ws, dev_uid, "/vd/device").ok()?;
+    fn system_firmware(link: &mut Link) -> Option<String> {
+        let data = vd_get_data(link, "/vd/device").ok()?;
         let list = data.pointer("/firm_list").and_then(Value::as_array)?;
         // The System entry, matched by name (case-insensitive). A missing or renamed
         // entry leaves the version empty (warning disabled) rather than mistaking
@@ -1054,9 +1320,8 @@ mod imp {
     }
 
     fn do_set(
-        ws: &mut Ws,
+        link: &mut Link,
         subs: &mut Subs,
-        dev_uid: &str,
         param_id: u32,
         x: i64,
         y: i64,
@@ -1064,22 +1329,14 @@ mod imp {
     ) -> Result<(), String> {
         let uri = format!("/vd/parameters/{param_id}:{x}:{y}?operation=value");
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
-        send_json(
-            ws,
-            json!({
-                "jsonrpc": "1.0",
-                "method": "requestVD",
-                "params": {
-                    "dev_uid": dev_uid,
-                    "vdp": { "method": "post", "uri": uri, "data": { "current_value": value } }
-                }
-            }),
-        )?;
+        // One spelling for what is sent and for what will be accepted as its reply,
+        // so the two cannot drift into a command that can never be answered.
+        let verb = "post";
+        link.send_vdp(json!({ "method": verb, "uri": uri, "data": { "current_value": value } }))?;
         // Await the matching response, skipping unrelated notifications.
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
-            let Some(text) = read_text(ws)? else { continue };
-            let Ok(msg) = serde_json::from_str::<Value>(&text) else {
+            let Some(msg) = link.read_frame()? else {
                 continue;
             };
             // A device-lost push can land mid-write (the broker still ACKs the
@@ -1089,7 +1346,7 @@ mod imp {
             }
             // Subscribed notifies landing mid-command are batched, not discarded
             // (see Subs).
-            let Some(vdp) = reply_for(subs, &msg, &base) else {
+            let Some(vdp) = reply_for(subs, &msg, &base, verb) else {
                 continue;
             };
             let code = vdp
@@ -1104,7 +1361,7 @@ mod imp {
                 ))
             };
         }
-        drain_late_reply(ws, subs, &base);
+        drain_late_reply(link, subs, &base, verb);
         Err(format!("broker-timeout: write at {param_id}:{x}:{y}"))
     }
 
@@ -1114,17 +1371,16 @@ mod imp {
     /// it with a stale value. Drain what is already buffered (bounded, and only
     /// after a timeout, so the healthy path pays nothing) and drop any reply for the
     /// address that just gave up. Notifies stay batched via subs, as everywhere else.
-    fn drain_late_reply(ws: &mut Ws, subs: &mut Subs, base: &str) {
+    fn drain_late_reply(link: &mut Link, subs: &mut Subs, base: &str, method: &str) {
         // Bounded by frames rather than wall clock: under Live sync the broker
         // streams meters continuously, so a deadline would always run to the end
         // while absorbing notifies. The straggler is the next reply frame, not a
         // quarter-second of meters away.
         for _ in 0..DRAIN_FRAMES {
-            let Ok(Some(text)) = read_text(ws) else { break };
-            let Ok(msg) = serde_json::from_str::<Value>(&text) else {
-                continue;
+            let Ok(Some(msg)) = link.read_frame() else {
+                break;
             };
-            if reply_for(subs, &msg, base).is_some() {
+            if reply_for(subs, &msg, base, method).is_some() {
                 return; // the straggler is consumed; the socket is clean again
             }
         }
@@ -1133,19 +1389,38 @@ mod imp {
     /// Frames drain_late_reply will look through for a straggler before giving up.
     const DRAIN_FRAMES: usize = 64;
 
-    /// The `requestVD` reply body for `base`, or None when the message was a notify
-    /// (absorbed into the pending batch) or belonged to another address. Shared by
-    /// the two await loops and the late drain so the matching cannot drift — the
-    /// exact-address compare is what stops another instance's reply (e.g. y=12)
-    /// satisfying a y=1 request through a prefix match.
-    fn reply_for<'a>(subs: &mut Subs, msg: &'a Value, base: &str) -> Option<&'a Value> {
+    /// The reply body for `method` at `base`, or None when the message was a notify,
+    /// a reply to a different verb, or a reply for another address. Shared by the two
+    /// await loops and the late drain so the matching cannot drift — the exact-address
+    /// compare is what stops another instance's reply (e.g. y=12) satisfying a y=1
+    /// request through a prefix match.
+    ///
+    /// **The address alone does not identify a reply.** A notify carries the same uri
+    /// as the command that touches that address, and `absorb` only consumes one while
+    /// the matching channel is subscribed — so with Live sync off (a Fetch, a Write,
+    /// the self-test) an inbound notify for the address in flight would otherwise be
+    /// taken as its answer. It reaches us whether or not this session registered the
+    /// address: the broker broadcasts every notify to every connected client, which is
+    /// exactly the concurrent-client case the vdp port exists for. On a GET that
+    /// returns the pushed value instead of the read; on a POST the notify carries no
+    /// `response_code`, so the write is reported refused when it succeeded.
+    fn reply_for<'a>(
+        subs: &mut Subs,
+        msg: &'a Value,
+        base: &str,
+        method: &str,
+    ) -> Option<&'a Value> {
         if subs.absorb(msg) {
             return None;
         }
-        if msg.get("method").and_then(Value::as_str) != Some("requestVD") {
+        // Both envelope shapes, like notify_frame and synchronize_lost: casket
+        // wraps the `vdp` message in JSON-RPC, the other endpoint carries it bare.
+        // Matching on the wrapper's method would tie reply matching to casket — the
+        // verb checked here is the `vdp` one, which both transports carry.
+        let vdp = vdp_of(msg)?;
+        if vdp.get("method").and_then(Value::as_str) != Some(method) {
             return None;
         }
-        let vdp = msg.pointer("/params/vdp")?;
         let uri = vdp.get("uri").and_then(Value::as_str).unwrap_or("");
         (uri.split('?').next().unwrap_or(uri) == base).then_some(vdp)
     }
@@ -1154,29 +1429,19 @@ mod imp {
     // do_get_str decode it; sharing the request + address-matched await loop here
     // keeps the two get paths from drifting.
     fn do_get_value(
-        ws: &mut Ws,
+        link: &mut Link,
         subs: &mut Subs,
-        dev_uid: &str,
         param_id: u32,
         x: i64,
         y: i64,
     ) -> Result<Value, String> {
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
-        send_json(
-            ws,
-            json!({
-                "jsonrpc": "1.0",
-                "method": "requestVD",
-                "params": {
-                    "dev_uid": dev_uid,
-                    "vdp": { "method": "get", "uri": base }
-                }
-            }),
-        )?;
+        // Sent and awaited under one spelling, as in do_set.
+        let verb = "get";
+        link.send_vdp(json!({ "method": verb, "uri": base }))?;
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
-            let Some(text) = read_text(ws)? else { continue };
-            let Ok(msg) = serde_json::from_str::<Value>(&text) else {
+            let Some(msg) = link.read_frame()? else {
                 continue;
             };
             // A device-lost push can land mid-read; fail the command so the caller
@@ -1186,26 +1451,25 @@ mod imp {
             }
             // Subscribed notifies landing mid-command are batched, not discarded
             // (see Subs).
-            let Some(vdp) = reply_for(subs, &msg, &base) else {
+            let Some(vdp) = reply_for(subs, &msg, &base, verb) else {
                 continue;
             };
             return vdp.pointer("/data/current_value").cloned().ok_or_else(|| {
                 format!("broker-bad-response: no current_value at {param_id}:{x}:{y}")
             });
         }
-        drain_late_reply(ws, subs, &base);
+        drain_late_reply(link, subs, &base, verb);
         Err(format!("broker-timeout: value at {param_id}:{x}:{y}"))
     }
 
     fn do_get(
-        ws: &mut Ws,
+        link: &mut Link,
         subs: &mut Subs,
-        dev_uid: &str,
         param_id: u32,
         x: i64,
         y: i64,
     ) -> Result<i64, String> {
-        do_get_value(ws, subs, dev_uid, param_id, x, y)?
+        do_get_value(link, subs, param_id, x, y)?
             .as_i64()
             .ok_or_else(|| "broker-bad-response: value was not an integer".to_string())
     }
@@ -1214,14 +1478,13 @@ mod imp {
     // then the literal string; a non-string value decodes to "" so callers see
     // "no custom name".
     fn do_get_str(
-        ws: &mut Ws,
+        link: &mut Link,
         subs: &mut Subs,
-        dev_uid: &str,
         param_id: u32,
         x: i64,
         y: i64,
     ) -> Result<String, String> {
-        Ok(do_get_value(ws, subs, dev_uid, param_id, x, y)?
+        Ok(do_get_value(link, subs, param_id, x, y)?
             .as_str()
             .unwrap_or("")
             .to_string())
@@ -1229,47 +1492,16 @@ mod imp {
 
     /// Register or unregister one meter address with the broker. Fire-and-forget:
     /// the response_code reply is drained by `pump` like any other frame.
-    fn reg_meter(
-        ws: &mut Ws,
-        dev_uid: &str,
-        meter_id: u32,
-        x: i64,
-        op: &str,
-    ) -> Result<(), String> {
-        send_json(
-            ws,
-            json!({
-                "jsonrpc": "1.0",
-                "method": "requestVD",
-                "params": {
-                    "dev_uid": dev_uid,
-                    "vdp": { "method": "post", "uri": format!("/vd/meters/{meter_id}:{x}?operation={op}") }
-                }
-            }),
+    fn reg_meter(link: &mut Link, meter_id: u32, x: i64, op: &str) -> Result<(), String> {
+        link.send_vdp(
+            json!({ "method": "post", "uri": format!("/vd/meters/{meter_id}:{x}?operation={op}") }),
         )
     }
 
     /// Register or unregister one parameter address with the broker for change
     /// notifies. Fire-and-forget, like reg_meter: the reply is drained by `pump`.
-    fn reg_param(
-        ws: &mut Ws,
-        dev_uid: &str,
-        param_id: u32,
-        x: i64,
-        y: i64,
-        op: &str,
-    ) -> Result<(), String> {
-        send_json(
-            ws,
-            json!({
-                "jsonrpc": "1.0",
-                "method": "requestVD",
-                "params": {
-                    "dev_uid": dev_uid,
-                    "vdp": { "method": "post", "uri": format!("/vd/parameters/{param_id}:{x}:{y}?operation={op}") }
-                }
-            }),
-        )
+    fn reg_param(link: &mut Link, param_id: u32, x: i64, y: i64, op: &str) -> Result<(), String> {
+        link.send_vdp(json!({ "method": "post", "uri": format!("/vd/parameters/{param_id}:{x}:{y}?operation={op}") }))
     }
 
     /// Validate a broker `notify` frame and return its `vdp` object plus the
@@ -1278,7 +1510,7 @@ mod imp {
     /// by the meter and parameter forwarders, which only differ in the prefix,
     /// the address arity, and how strictly they read current_value.
     fn notify_frame<'a>(msg: &'a Value, prefix: &str) -> Option<(&'a Value, &'a str)> {
-        let vdp = msg.pointer("/params/vdp").or_else(|| msg.pointer("/vdp"))?;
+        let vdp = vdp_of(msg)?;
         if vdp.get("method").and_then(Value::as_str) != Some("notify") {
             return None;
         }
@@ -1344,7 +1576,7 @@ mod imp {
     /// error message when seen, so each read loop just `return Err(..)`s on it.
     /// Not used by handshake / sync_status, which read `/vd/synchronize` on purpose.
     fn synchronize_lost(msg: &Value) -> Option<String> {
-        let vdp = msg.pointer("/params/vdp").or_else(|| msg.pointer("/vdp"))?;
+        let vdp = vdp_of(msg)?;
         let uri = vdp.get("uri").and_then(Value::as_str)?;
         if uri.split('?').next().unwrap_or(uri) != "/vd/synchronize" {
             return None;
@@ -1462,34 +1694,30 @@ mod imp {
     /// boundary is crossed per pump, not once per ~250/s reading). Frames other than
     /// the subscribed notifies are discarded. Returns Err if the connection dropped,
     /// or if a device-lost synchronize push arrived, so the worker can stop.
-    fn pump(ws: &mut Ws, subs: &mut Subs) -> Result<(), String> {
+    fn pump(link: &mut Link, subs: &mut Subs) -> Result<(), String> {
         let start = Instant::now();
         // 512 is a non-binding hard ceiling; PUMP_BUDGET (or a drained socket)
         // normally ends the loop first, so it only caps a pathological burst.
         for _ in 0..512 {
-            match ws.read() {
-                Ok(Message::Text(t)) => {
-                    // Parse the frame once and share it: synchronize_lost and absorb
-                    // read the same envelope, and this drains the ~250/s meter
-                    // stream (avoid re-parsing per consumer).
-                    let Ok(msg) = serde_json::from_str::<Value>(&t) else {
-                        continue;
-                    };
+            // Parse the frame once and share it: synchronize_lost and absorb read
+            // the same envelope, and this drains the ~250/s meter stream (avoid
+            // re-parsing per consumer).
+            //
+            // `None` ends this pump. It means the socket is drained (its 200 ms
+            // read timeout) — but it also now covers the two frames the casket
+            // read used to step over rather than stop on: a ping/pong, and text
+            // that is not JSON. Neither carries a notify, and the worker re-enters
+            // pump on its next 5 ms poll, so the cost of ending early on one is a
+            // single extra loop; the alternative is a third outcome threaded
+            // through every reader to distinguish "skipped" from "drained".
+            match link.read_frame() {
+                Ok(Some(msg)) => {
                     if let Some(err) = synchronize_lost(&msg) {
                         return Err(err);
                     }
                     subs.absorb(&msg);
                 }
-                Ok(Message::Close(_)) => return Err("broker-closed".into()),
-                Ok(_) => {} // ping/pong/binary — discard, keep going
-                Err(tungstenite::Error::Io(e))
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    break; // socket drained — fall through to flush the batch
-                }
+                Ok(None) => break, // drained — fall through to flush the batch
                 Err(_) => return Err("broker-closed".into()),
             }
             // Yield the worker once the budget is spent so a pending command (and the
@@ -1572,8 +1800,10 @@ mod imp {
     mod subs_tests {
         // Pure data-path tests for Subs (no broker, no websocket): absorb must
         // batch subscribed notifies (and leave command replies alone), and the
-        // batch must flush on the pump cadence.
-        use super::{Subs, PUMP_BUDGET};
+        // batch must flush on the pump cadence. Plus reply_for, which is where a
+        // frame absorb declined lands — the two together decide whether a notify
+        // can be mistaken for the answer to a command.
+        use super::{reply_for, Subs, PUMP_BUDGET};
         use serde_json::{json, Value};
         use std::sync::{Arc, Mutex};
         use std::time::Instant;
@@ -1589,7 +1819,11 @@ mod imp {
             subs
         }
 
-        // A broker notify frame as the read loops see it (already-parsed JSON).
+        // A broker notify frame as the read loops see it (already-parsed JSON), in
+        // casket's JSON-RPC envelope. The default endpoint sends the same `vdp`
+        // object with nothing around it; `both_envelopes_reach_the_same_message`
+        // below is what pins that the two converge, so the rest of these tests can
+        // use one shape without the other going unchecked.
         fn notify(uri: String, value: i64) -> Value {
             json!({
                 "jsonrpc": "1.0",
@@ -1599,6 +1833,51 @@ mod imp {
                     "data": { "current_value": value }
                 }}
             })
+        }
+
+        // The same message in the bare envelope the default (vdp port) endpoint uses.
+        fn notify_bare(uri: String, value: i64) -> Value {
+            json!({ "vdp": {
+                "method": "notify",
+                "uri": uri,
+                "data": { "current_value": value }
+            }})
+        }
+
+        /// Every parser reaches the `vdp` message through one accessor, so this is
+        /// the single place the two wire shapes have to agree — and the only place
+        /// the default endpoint's shape is exercised at all.
+        ///
+        /// It is pinned because the spelling has already cost a hardware run: when
+        /// the second transport was added, three parsers were taught both shapes and
+        /// a fourth was not, and every reply on the new endpoint was skipped for
+        /// lacking a wrapper it never sends. That failure is silent on the default
+        /// path and invisible on the experimental one.
+        #[test]
+        fn both_envelopes_reach_the_same_message() {
+            let wrapped = notify("/vd/parameters/1:0:0".into(), 42);
+            let bare = notify_bare("/vd/parameters/1:0:0".into(), 42);
+            assert_eq!(super::vdp_of(&wrapped), super::vdp_of(&bare));
+            assert_eq!(
+                super::vdp_of(&bare)
+                    .and_then(|v| v.get("uri"))
+                    .and_then(Value::as_str),
+                Some("/vd/parameters/1:0:0"),
+            );
+            // A frame carrying neither envelope is nothing yet, not a panic.
+            assert!(super::vdp_of(&json!({ "method": "getDeviceList" })).is_none());
+        }
+
+        /// The parse path above `vdp_of` therefore works on both shapes too: absorb
+        /// takes the bare frame the default endpoint sends, not only casket's.
+        #[test]
+        fn absorb_takes_a_bare_envelope_notify() {
+            let mut subs = subs_with(&[], &[(1, 0, 0)]);
+            let (ch, seen) = capture::<Vec<super::super::ParamUpdate>>();
+            subs.param_ch = Some(ch);
+            assert!(subs.absorb(&notify_bare("/vd/parameters/1:0:0".into(), 42)));
+            subs.flush();
+            assert_eq!(seen.lock().unwrap().len(), 1);
         }
 
         // A capture channel: each flushed batch lands as one JSON payload.
@@ -1759,6 +2038,69 @@ mod imp {
                 *meters_seen.lock().unwrap(),
                 vec![json!([{ "meter_id": 115, "x": 0, "value": -183 }])]
             );
+        }
+
+        // A broker reply, in the bare envelope the default endpoint sends. `data`
+        // is the measured shape for each verb (probe-regist-shape / probe-timeline):
+        // a get answers with the value plus its bounds, a post with a bare ack.
+        fn reply(method: &str, uri: &str, data: Value) -> Value {
+            json!({ "vdp": { "method": method, "uri": uri, "data": data } })
+        }
+
+        /// Every notify reaches every connected client, so one for the address a
+        /// command is waiting on arrives whenever anything else touches the unit —
+        /// which is the case the vdp port exists to support. `absorb` consumes it
+        /// only while the matching channel is subscribed, so with Live sync off
+        /// (a Fetch, a Write, the self-test) nothing but the verb keeps it out of
+        /// the await loop. A get would return the pushed value as the read; a post
+        /// finds no response_code, reads it as 0, and reports a landed write as
+        /// refused — aborting the whole write, per the device-link failure rule.
+        #[test]
+        fn reply_for_refuses_a_notify_for_the_address_in_flight() {
+            // No channels: the state every command outside Live sync runs in.
+            let mut subs = Subs::new();
+            let base = "/vd/parameters/142:0:0";
+            let push = notify_bare(base.into(), 1);
+
+            assert!(!subs.absorb(&push), "nothing subscribed to absorb it");
+            assert!(reply_for(&mut subs, &push, base, "get").is_none());
+            assert!(reply_for(&mut subs, &push, base, "post").is_none());
+
+            // The replies those two commands are actually waiting for still match,
+            // query string and all — the broker echoes it back on a write.
+            assert!(reply_for(
+                &mut subs,
+                &reply("get", base, json!({ "current_value": 1 })),
+                base,
+                "get"
+            )
+            .is_some());
+            assert!(reply_for(
+                &mut subs,
+                &reply(
+                    "post",
+                    &format!("{base}?operation=value"),
+                    json!({ "response_code": 200 })
+                ),
+                base,
+                "post"
+            )
+            .is_some());
+        }
+
+        /// The verb separates the two commands that share an address, so a straggler
+        /// from one cannot answer the other. A write followed by a read-back of the
+        /// same address is the ordinary sequence (converge, readback), and the vd
+        /// protocol carries no request id to tell them apart by.
+        #[test]
+        fn reply_for_refuses_the_other_verbs_reply_on_the_same_address() {
+            let mut subs = Subs::new();
+            let base = "/vd/parameters/142:0:0";
+            let ack = reply("post", base, json!({ "response_code": 200 }));
+            let value = reply("get", base, json!({ "current_value": 1 }));
+
+            assert!(reply_for(&mut subs, &ack, base, "get").is_none());
+            assert!(reply_for(&mut subs, &value, base, "post").is_none());
         }
     }
 }

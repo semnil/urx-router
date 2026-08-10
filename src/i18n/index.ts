@@ -75,6 +75,7 @@ export const SHELL_CODES: Record<string, keyof Messages["error"]["shell"]> = {
   "control-worker-gone": "controlWorkerGone",
   "device-lost": "deviceLost",
   "broker-closed": "brokerClosed",
+  "broker-no-vdpport": "brokerNoVdpPort",
   "not-connected": "notConnected",
   "broker-timeout": "brokerTimeout",
   "broker-unresponsive": "brokerUnresponsive",
