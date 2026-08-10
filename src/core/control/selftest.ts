@@ -47,7 +47,8 @@ import {
   OUTPUT_INSERT_FX_OPTIONS,
   REC_POINT_OPTIONS,
 } from "./params";
-import { sendConverging } from "./client";
+import { reachedAndFailed, sendConverging } from "./client";
+import type { SendOutcome } from "./client";
 import { SETTLE_TIMEOUT_MS } from "./settle";
 import type { ConvergeRound } from "./client";
 import { applyDeviceState } from "./readback";
@@ -87,14 +88,14 @@ export interface SelfTestMismatch {
  * REFUTED is a claim about the device; it needs its own evidence.
  *
  *   confirmed   every address round-tripped
- *   refuted     at least one did not, in a pass that read everything — `mismatches`
- *               says which
- *   unread      a read failed, so nothing about it is known. Either one of ITS addresses
- *               could not be read, or its only divergence came from a pass where a read
- *               failed and `sendConverging` therefore stopped converging — which leaves a
- *               residual that is evidence the run stopped, not evidence about the device.
- *               Measured in a fixture: one unreadable address left an unrelated guess with
- *               14 "mismatches"
+ *   refuted     at least one did not, in a pass that completed — `mismatches` says which
+ *   unread      the run could not look, so nothing about it is known. Either one of ITS
+ *               addresses could not be read, or its only divergence came from a pass that
+ *               did not complete: `sendConverging` stops on a read failure, and on a
+ *               refused WRITE it stops without re-reading at all, so it hands back the
+ *               diff it was about to write. Either way the residual is evidence about the
+ *               run, not about the device. Measured in a fixture: one unreadable address
+ *               left an unrelated guess with 14 "mismatches"
  *   unexercised the guess has no address on this model, so the run never wrote it
  *   collision   a confirmed param already owns the guessed id (static audit; the
  *               guess is wrong, and its writes were suppressed for safety)
@@ -601,7 +602,7 @@ export async function runSelfTest(
       if (!result) break;
       const { outcomes, residual } = result;
       report.written += outcomes.length;
-      report.errors.push(...outcomes.filter((o) => !o.ok).map((o) => `p${pass} ${o.command.name}: ${o.error}`));
+      report.errors.push(...sendFailureLines(outcomes, `p${pass}`));
       // A command whose current value could not be read is left out of the diff by
       // design (diffPlan: never write on a value you did not confirm), which also leaves
       // it out of the residual — so without this it reads as a parameter that matched,
@@ -622,10 +623,14 @@ export async function runSelfTest(
         const baseline = residual.map((d) => captured.get(cmdAddr(d.command))).filter((v) => v !== undefined);
         report.traces.push({ pass, baseline, rounds: result.trace });
       }
-      // Whether THIS pass can refute anything. A read failure ends sendConverging's
-      // loop, so a pass that hit one may simply never have got to re-send what is left;
-      // a pass that read everything watched each address converge or fail to.
-      const decisive = result.readErrors.length === 0;
+      // Whether THIS pass can refute anything: only a pass that ran to the end of its
+      // own loop watched each address converge or fail to. Both ways out short of that
+      // leave a residual that describes the run rather than the device, and the send
+      // failure is the worse of the two — sendConverging breaks out WITHOUT re-reading,
+      // so what it hands back is the diff it was about to write, i.e. every address the
+      // pass intended to change. Reading that as "the device refused them" would refute
+      // a guess on the strength of a write that never happened.
+      const decisive = result.readErrors.length === 0 && outcomes.every((o) => o.ok);
       for (const d of residual) {
         const unverifiedKey = d.command.x === 0 ? addresses.get(`${d.command.paramId}:${d.command.y}`) : undefined;
         if (unverifiedKey && decisive) refutedKeys.add(unverifiedKey);
@@ -697,6 +702,11 @@ export async function runSelfTest(
         // part-way. Counting them keeps `restored` a statement about what was checked.
         report.errors.push(...back.readErrors.map((e) => `restore read: ${e}`));
         report.restoreResidual += back.readErrors.length;
+        // A refused WRITE ends the same loop, and without this the report says only that
+        // N params differ — which reads as a unit that would not keep the values, when
+        // the values never reached it. Not added to restoreResidual: the residual it left
+        // is the pre-write diff, so those params are already counted there.
+        report.errors.push(...sendFailureLines(back.outcomes, "restore"));
 
         // Then the addresses that write has no command for, put back from what the unit
         // held before the sweep. Last, so the converging write's side-effect resets have
@@ -775,6 +785,20 @@ async function probeBands(
  * that still differs, which the caller adds to the residual, so a unit that insists on
  * its own value lands there instead of being passed over.
  */
+/**
+ * Send failures from one converging write, as report lines. `sendCommands` stops at the
+ * first command the device refused and marks every command after it `skipped`, so the
+ * raw !ok list is one real failure trailed by however many never left the app — each of
+ * which would print with an undefined message. The refusal is the line worth reading;
+ * what it stopped is a count.
+ */
+function sendFailureLines(outcomes: readonly SendOutcome[], prefix: string): string[] {
+  const lines = outcomes.filter(reachedAndFailed).map((o) => `${prefix} ${o.command.name}: ${o.error}`);
+  const skipped = outcomes.filter((o) => o.skipped).length;
+  if (skipped) lines.push(`${prefix} ${skipped} command(s) never sent — the write stopped at the failure above`);
+  return lines;
+}
+
 async function restoreUnsent(
   unrestorable: Map<number, VdCommand>,
   before: Map<number, number>,

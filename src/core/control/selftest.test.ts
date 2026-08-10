@@ -447,6 +447,9 @@ describe("unverified-guess workflow (URX22)", () => {
       table.set(`${id}:${x}:${y}`, v);
       return Promise.resolve();
     });
+    // As in installMockDevice: without this the name read answers undefined and every
+    // URX22 case runs with a channel-name error per channel in its report.
+    vi.mocked(vdGetStr).mockResolvedValue("");
     return table;
   }
 
@@ -584,6 +587,74 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.unverified.find((u) => u.key === "stereo-block")!.outcome).toBe("unread");
     expect(summarizeVerdicts(report.unverified).refuted).toBe(1);
     expect(formatSelfTestReport(report)).toContain("REFUTED");
+  });
+
+  // The write side of the same rule, and the sharper half of it. sendConverging leaves
+  // the round loop on a refused write WITHOUT re-reading, so what it hands back is the
+  // diff it was ABOUT TO send — every address the pass meant to change. Publishing that
+  // as divergence refutes a guess on the strength of a write that never happened, which
+  // is the one thing REFUTED must never mean.
+  it("does not refute anything from a pass whose write the device refused", async () => {
+    const table = installMock22(seed22());
+    const stereo = [...unverifiedAddresses(m22)].find(([, key]) => key === "stereo-block");
+    expect(stereo).toBeDefined();
+    const stereoId = Number(stereo![0].split(":")[0]);
+    // One address the device refuses outright. It never stores, so it is in every round's
+    // diff, so every pass stops on it — no pass ever completes.
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (id === stereoId) return Promise.reject(new Error("device busy"));
+      table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+
+    const report = await runSelfTest(m22, 0);
+
+    // The fixture's premise: there IS a residual and the write DID fail. Without both,
+    // "nothing was refuted" would be true for the uninteresting reason.
+    expect(report.residual.length).toBeGreaterThan(0);
+    expect(report.errors.some((e) => e.startsWith("p0 ") && e.endsWith("device busy"))).toBe(true);
+    expect(report.ok).toBe(false);
+    // Not one of those residual lines is published as a claim about the device.
+    expect(summarizeVerdicts(report.unverified).refuted).toBe(0);
+    expect(report.unverified.every((u) => u.outcome !== "refuted")).toBe(true);
+    expect(formatSelfTestReport(report)).not.toContain("REFUTED");
+    // And the report says the write stopped: the refusal by name, and what it cut short
+    // as a count rather than one undefined-message line per command.
+    expect(report.errors.some((e) => /^p0 \d+ command\(s\) never sent/.test(e))).toBe(true);
+    expect(report.errors.some((e) => e.includes("undefined"))).toBe(false);
+    // Not asserted here: the restore. Every write to that address failed, so the unit
+    // still holds the captured value and the restore correctly has nothing to send —
+    // which is why the refused RESTORE needs a fixture of its own, below.
+  });
+
+  // `restored: false` with a residual count reads as a unit that would not keep the
+  // values. A refused write is the opposite — the values never reached it — and the two
+  // want different responses from whoever reads the report, so the run has to say which.
+  it("says the restore's write was refused, not just that params differ", async () => {
+    const table = installMock22(seed22());
+    // Refused only for the value the RESTORE writes. The sweep floors every fader, so the
+    // captured value is one the sweep never sends: rejecting it cannot fire during a pass,
+    // which is what makes this a fixture about the restore rather than about the sweep.
+    const faderId = PARAMS.CH_FADER.id;
+    const captured = table.get(`${faderId}:0:0`);
+    expect(captured).toBeDefined();
+    expect(captured).not.toBe(VD_LEVEL_OFF);
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (id === faderId && v === captured) return Promise.reject(new Error("device busy"));
+      table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+
+    const report = await runSelfTest(m22, 0);
+
+    // Premise: the sweep itself ran clean, so everything below is the restore's.
+    expect(report.errors.some((e) => e.startsWith("p"))).toBe(false);
+    expect(report.residual.every((m) => m.pass === -1)).toBe(true);
+    expect(report.restored).toBe(false);
+    expect(report.errors.some((e) => e.startsWith("restore ") && e.endsWith("device busy"))).toBe(true);
+    // This line comes only from the converging write — restoreUnsent reports its own
+    // failures by address, so it cannot be the one satisfying the assertion above.
+    expect(report.errors.some((e) => /^restore \d+ command\(s\) never sent/.test(e))).toBe(true);
   });
 
   it("confirms every unverified guess on a faithful device (no collisions)", async () => {
