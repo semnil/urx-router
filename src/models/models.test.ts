@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { MODELS, MODEL_IDS } from "./index";
-import { parseRef } from "./types";
+import { fullLabel, hangsUnderHeader, isSingleInput, parseRef, ref } from "./types";
+import type { ConnectionKind } from "./types";
 
 describe("model registry", () => {
   it("registers exactly the three supported models", () => {
@@ -24,6 +25,30 @@ describe("model registry", () => {
       expect(resolves(rule.from), `${id}: from ${rule.from}`).toBe(true);
       expect(resolves(rule.to), `${id}: to ${rule.to}`).toBe(true);
     }
+  });
+
+  it("formats node and port references at the model boundary", () => {
+    expect(ref("ch1", "out")).toBe("ch1:out");
+    expect(parseRef("ch1:out")).toEqual({ nodeId: "ch1", portId: "out" });
+    expect(parseRef("node:port:tail")).toEqual({ nodeId: "node", portId: "port:tail" });
+    expect(
+      fullLabel({
+        id: "duck1",
+        kind: "ducker",
+        label: "DUCKER",
+        sublabel: "CH 1/2",
+        column: "ducker",
+        ports: [],
+        pos: { col: 0, row: 0 },
+      }),
+    ).toBe("DUCKER CH 1/2");
+  });
+
+  it("classifies single-input routing kinds", () => {
+    const single: ConnectionKind[] = ["source", "patch", "key", "record"];
+    expect(single.every(isSingleInput)).toBe(true);
+    expect(isSingleInput("send")).toBe(false);
+    expect(isSingleInput("sendSwitch")).toBe(false);
   });
 });
 
@@ -86,6 +111,21 @@ describe("model-specific topology", () => {
 // than per-feature checks: a node-id collision, a backwards wire, or a dangling
 // node would silently corrupt connect / validate for all three models.
 describe("model structural invariants", () => {
+  it("finds structural recorder slots transitively without treating duckers as headers", () => {
+    const model = MODELS.URX44;
+    const header = model.nodes.find((node) => node.header);
+    expect(header).toBeDefined();
+    const child = model.nodes.find((node) => node.attachTo === header!.id);
+    expect(child).toBeDefined();
+    expect(hangsUnderHeader(model, child!.id)).toBe(true);
+    expect(hangsUnderHeader(model, header!.id)).toBe(false);
+    expect(hangsUnderHeader(model, "missing")).toBe(false);
+
+    const ducker = model.nodes.find((node) => node.kind === "ducker");
+    expect(ducker).toBeDefined();
+    expect(hangsUnderHeader(model, ducker!.id)).toBe(false);
+  });
+
   it.each(MODEL_IDS)("%s: node ids are unique", (id) => {
     const ids = MODELS[id].nodes.map((n) => n.id);
     expect(new Set(ids).size).toBe(ids.length);
