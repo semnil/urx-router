@@ -5,11 +5,11 @@
 // suites — `isTauri()` is what gates all of it, and they run with no shell — so this
 // file installs one (`main.test-util.ts`) and drives the flows through it.
 //
-// The stub answers reads with 0 and accepts writes. That is enough for what is under
-// test here: which flow runs, what it reports, and what it locks while it holds the
-// link. Fidelity beyond that — a converge round's residual, a write that has to be
-// readable afterwards — belongs to `e2e/race/fake-device.ts`, and a second, thinner
-// imitation of it here would be a fixture that agrees with nothing.
+// The stub keeps what is written to it and answers the next read with it, which is
+// what lets a converging write actually converge. What it does NOT model is the
+// device's own behaviour — a side-effect reset, a clamp, a refused value — and those
+// belong to `e2e/race/fake-device.ts`; a second, thinner imitation of it here would be
+// a fixture that agrees with nothing.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { $, bootApp, deviceCommands, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
@@ -193,11 +193,31 @@ describe("Write to device", () => {
     expect(shell.count("vd_set")).toBe(0);
   });
 
-  it("writes the plan when the operator agrees", SLOW, async () => {
+  // "Wrote N" and "wrote, but N did not take" are both reached with writes on the
+  // wire, so a case that counts `vd_set` cannot tell them apart — and against a stub
+  // that answers every read 0 it is the SECOND one that runs, every time, since the
+  // converge loop re-reads what it just sent and is told it did not land. The status
+  // frame is what separates them, and the re-write below is what says the values are
+  // on the unit rather than merely sent to it.
+  it("writes the plan, converges, and leaves the unit matching it", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-write").click();
     await invoked(shell, "vd_disconnect");
     expect(shell.count("vd_set")).toBeGreaterThan(10);
+
+    // The count comes out of the message so the assertion can pin the whole frame
+    // rather than a substring. Measured on the non-converging path (reads answering a
+    // flat 0): 1527 writes go out over three rounds, the flow lands on
+    // `writeResidual`, and its error report's save — which this stub has no dialog
+    // command for — fails, so `showError` clears the line and the status reads "".
+    const n = Number(/\d+/.exec(statusText())?.[0]);
+    expect(n).toBeGreaterThan(10);
+    expect(statusText()).toBe(t().status.written(n));
+
+    // Written and readable: the app's own diff now finds nothing left to send.
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(statusText()).toContain(t().status.writeNoChanges);
   });
 });
 
@@ -255,14 +275,23 @@ describe("Compare with device", () => {
 
   // The report is built while connected and shown after the disconnect, so an
   // indefinite modal cannot hold the broker connection open.
+  //
+  // The disconnect is held unanswered to measure the order: waiting for it to be
+  // INVOKED and then finding the modal proves nothing, because a regression that
+  // opened the modal first would satisfy both in that same order.
   it("shows its report only after the link is closed", SLOW, async () => {
-    const shell = await bootExperimental();
+    let release = (): void => {};
+    const closing = new Promise<void>((r) => (release = () => r()));
+    const shell = await bootExperimental({ vd_disconnect: () => closing });
     (await compare()).click();
     await invoked(shell, "vd_disconnect");
+
+    // The link is still open — the shell has not answered — so nothing may be up yet.
+    await new Promise((r) => setTimeout(r, 100));
+    expect($("load-report").hidden).toBe(true);
+
+    release();
     await vi.waitFor(() => expect($("load-report").hidden).toBe(false), { timeout: 10_000 });
-    // The link went first: the disconnect is already in the record by the time the
-    // modal is up.
-    expect(shell.count("vd_disconnect")).toBeGreaterThan(0);
   });
 
   // The button doubles as its own cancel while a run is in flight, and the label says
@@ -285,12 +314,42 @@ describe("the first-run consent gate", () => {
   // Desktop only, and it stands between the launch and the device layer: the Windows
   // installer shows the same notice, but a macOS drag-install and every auto-update
   // bypass it.
-  it("blocks on first launch and remembers the acceptance", SLOW, async () => {
-    await bootApp({ tauri: deviceCommands({ "plugin:dialog|message": "Ok" }), seed: {} });
-    // bootApp pre-accepts; clear it and boot again to reach the gate.
-    localStorage.removeItem("urx-disclaimer-accepted");
-    await bootApp({ tauri: deviceCommands({ "plugin:dialog|message": "Ok" }) });
+  //
+  // `consent: false` is the whole premise. A first version of this cleared the key
+  // between two boots — and the second boot's own pre-accept simply wrote it back, so
+  // the closing assertion was reading the fixture rather than the gate.
+  const bootUngated = (over: Record<string, unknown> = {}): Promise<TauriShell> =>
+    bootApp({
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", ...over }),
+      consent: false,
+    }) as Promise<TauriShell>;
+
+  it("blocks the launch until it is accepted, then remembers", SLOW, async () => {
+    const shell = await bootUngated();
+    await vi.waitFor(() => expect($("consent").hidden).toBe(false), { timeout: 10_000 });
+    expect($("app").inert).toBe(true); // the app behind the scrim is off the tab order
+    expect(localStorage.getItem("urx-disclaimer-accepted")).toBeNull();
+    expect(shell.count("plugin:updater|check")).toBe(0); // boot() is held at the gate
+
+    $("consent-agree").click();
+    await vi.waitFor(() => expect($("consent").hidden).toBe(true), { timeout: 10_000 });
+    expect($("app").inert).toBe(false);
     expect(localStorage.getItem("urx-disclaimer-accepted")).toBe("1");
+    await invoked(shell, "plugin:updater|check"); // and the rest of boot() ran
+  });
+
+  // Declining quits: `exitApp` resolves never in the real shell (the process is gone),
+  // so the stub holds too — answering it would let boot() run on past a gate that was
+  // refused, which is the opposite of what the case is about.
+  it("quits without storing anything when it is declined", SLOW, async () => {
+    const shell = await bootUngated({ "plugin:process|exit": () => new Promise(() => {}) });
+    await vi.waitFor(() => expect($("consent").hidden).toBe(false), { timeout: 10_000 });
+
+    $("consent-quit").click();
+    await invoked(shell, "plugin:process|exit");
+    expect(localStorage.getItem("urx-disclaimer-accepted")).toBeNull();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(shell.count("plugin:updater|check")).toBe(0);
   });
 });
 
@@ -301,13 +360,33 @@ describe("the update check", () => {
   });
 
   // An updater that cannot reach its endpoint is not worth a dialog on every launch —
-  // it says nothing about the plan on screen.
-  it("survives an updater that fails", SLOW, async () => {
-    const shell = await bootDevice();
-    shell.answer("plugin:updater|check", () => {
-      throw new Error("offline");
-    });
-    await bootDevice();
-    expect(statusText()).toContain("URX44V");
+  // it says nothing about the plan on screen. The failure goes into the boot the case
+  // measures: handed to a shell that is then replaced by another `bootDevice()`, it
+  // would apply to nothing and the case would pass with the updater never failing.
+  //
+  // Nothing in the DOM separates a swallowed failure from a successful check, so the
+  // rejection ledger is what carries the case: `boot()` is launched with `void`, so a
+  // throw that escaped `checkForUpdates` would land nowhere at all. Measured with the
+  // catch removed — the rejection arrives, and without this listener the case still
+  // reports green (vitest attributes it to the FILE, as one "error" beside a passing
+  // test).
+  it("survives an updater that cannot reach its endpoint", SLOW, async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown): void => void rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    try {
+      const shell = await bootDevice({
+        "plugin:updater|check": () => {
+          throw new Error("offline");
+        },
+      });
+      await invoked(shell, "plugin:updater|check");
+      expect(shell.count("plugin:dialog|message")).toBe(0); // silent at the launch check
+      expect(statusText()).toContain("URX44V");
+      await new Promise((r) => setTimeout(r, 100)); // a rejection lands a macrotask later
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
   });
 });

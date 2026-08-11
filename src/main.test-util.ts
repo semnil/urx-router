@@ -67,25 +67,36 @@ const BASE_COMMANDS: Record<string, unknown> = {
   keep_awake: null,
 };
 
+/** One parameter instance's address, as the key of the store below. */
+const addr = (a: Record<string, unknown>): string => `${a.paramId}/${a.x}/${a.y}`;
+
 /**
- * A connected unit, on top of the boot table. Reads answer 0 and writes are accepted,
- * which is enough for the entry's own wiring — which flow runs, what it reports, what
- * it locks while it holds the link. Fidelity beyond that (a converge round's residual,
- * a write that has to be readable afterwards) belongs to `e2e/race/fake-device.ts`,
- * whose per-instance value store exists for exactly that and is not worth a second
- * implementation here.
+ * A connected unit, on top of the boot table. **A write is readable afterwards**: the
+ * unit keeps what was set to it and answers the next read with it, unwritten
+ * addresses reading 0 (and "" for the string params). Without that a converging write
+ * can never converge — it re-reads what it just sent, is answered 0, and spends every
+ * round on a residual that is the stub's doing — so a case asserting "the write
+ * succeeded" would in fact be running the non-convergence path and asserting that an
+ * attempt was made.
+ *
+ * What the store deliberately does NOT model is the device's own behaviour: a
+ * side-effect reset, a clamp, a value the unit refuses. Those belong to
+ * `e2e/race/fake-device.ts`, and a second, thinner imitation of it here would be a
+ * fixture that agrees with nothing.
  *
  * `firmware` defaults to the version the app accepts, read from the gate itself so a
  * bump does not silently start every case on the mismatch dialog.
  */
 export function deviceCommands(over: Record<string, unknown> = {}): Record<string, unknown> {
+  const values = new Map<string, number>();
+  const strings = new Map<string, string>();
   return {
     vd_connect: { model: "URX44V", label: "URX44V", firmware: SUPPORTED_SYSTEM_FIRMWARE, epoch: 1 },
     vd_disconnect: null,
-    vd_get: 0,
-    vd_get_str: "",
-    vd_set: null,
-    vd_set_str: null,
+    vd_get: (a: Record<string, unknown>) => values.get(addr(a)) ?? 0,
+    vd_get_str: (a: Record<string, unknown>) => strings.get(addr(a)) ?? "",
+    vd_set: (a: Record<string, unknown>) => void values.set(addr(a), a.value as number),
+    vd_set_str: (a: Record<string, unknown>) => void strings.set(addr(a), a.value as string),
     vd_params_subscribe: null,
     vd_params_unsubscribe: null,
     vd_meters_subscribe: null,
@@ -166,6 +177,10 @@ export interface BootOptions {
   tauri?: Record<string, unknown> | false;
   /** The URL the app boots at, for the `?plan=` / `?reset` entries. */
   url?: string;
+  /** Pre-accept the first-run consent gate (default). `false` boots UNACCEPTED, which
+   *  is the only way to reach the gate: seeding cannot express it, because the
+   *  pre-accept below writes the key after the seed. */
+  consent?: boolean;
 }
 
 /** Install the markup and the globals, then run the module top to bottom. */
@@ -176,8 +191,8 @@ export async function bootApp(opts: BootOptions = {}): Promise<TauriShell | null
   localStorage.setItem("urx-model", "URX44V");
   // The consent gate is a desktop-only modal that blocks the device layer until it is
   // accepted. Pre-accepted here so a device case is not testing the gate by accident;
-  // the gate has cases of its own that clear this.
-  localStorage.setItem("urx-disclaimer-accepted", "1");
+  // the gate's own cases pass `consent: false`.
+  if (opts.consent !== false) localStorage.setItem("urx-disclaimer-accepted", "1");
   for (const [k, v] of Object.entries(opts.seed ?? {})) localStorage.setItem(k, v);
   if (opts.url) history.replaceState(null, "", opts.url);
 
