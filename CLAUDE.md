@@ -44,7 +44,7 @@ pnpm build:demo   # browser demo build (VITE_DEMO=1; excludes save/image export)
 pnpm preview      # serve the built dist/ at http://localhost:4173 (browser check of a build:demo bundle)
 pnpm e2e:serve    # vite build + preview on 4173 — what playwright.config.ts launches as its webServer (E2E_PORT overrides; --trace, aliased as e2e:serve:trace, serves dist-trace on E2E_TRACE_PORT, 4174)
 pnpm e2e:worktree # run the suite in a throwaway worktree on a free port pair, so a second checkout can run it at the same time
-pnpm test         # vitest (core: routing/constraints/plan/levels/meters/midi, control: vd/translate/readback/live/follow/fx/insert-fx/firmware etc., models, ui: console/dom/fine/history/inspector/keys/licenses + the contract and pin tests below)
+pnpm test         # vitest (core: routing/constraints/plan/levels/meters/midi, control: vd/translate/readback/live/follow/fx/insert-fx/firmware etc., models, ui: console/dom/fine/history/inspector/keys/licenses + the contract and pin tests below; `include` also covers scripts/**/*.test.mjs, which is the tooling's own pins and stays out of the coverage set)
 pnpm test:coverage # the same unit suite with V8 coverage for all frontend TypeScript sources; writes coverage/lcov.info for Codecov
 pnpm typecheck:e2e # tsc -p tsconfig.e2e.json — type-checks e2e/ + the root config .ts (playwright/vite/vitest); the src build's tsconfig only includes "src"
 pnpm test:e2e     # Playwright E2E, all three projects at once. No CI job runs this — each tier is its own
@@ -161,6 +161,7 @@ the second set, and a one-shot action is consumed by the first caller (an HMR re
 | `pnpm test lit-face` | a lit amber face printed on with the wrong token — the lamp and the fader-cap gradient used as a face to write text on, in the stylesheet or on any plot's canvas. The canvas half runs every processor in `src/ui/dyn-registry.ts` through a recording context and compares geometry (did a text draw land inside such a face), so a new plot is covered the day it is registered rather than when someone remembers to pin it |
 | `pnpm test eq-response` | the measured filter model — a "correction" toward textbook biquads fails here by design |
 | `pnpm test audit` | the `*.audit.test.ts` family — behavior pinned during robustness audits (how to change a pin: Conventions) |
+| `pnpm test check-merge-gates` | the guard over the four checks a merge waits for, which nothing else covers — each rule shown a broken arrangement AND the good one it is a mutation of, plus the ref matcher run differentially against Ruby's `File.fnmatch` itself wherever `ruby` exists (named, not silent, when it does not) |
 | `pnpm test:e2e:app inventory` | an item that silently stopped being displayed: every message under a dialog's / window's / menu's namespace must be on screen in some state it is driven through, and its ledger refuses a new message that no surface claims |
 
 **Private device probes.** `reference/work/device-tests/` carries 160+ `probe-*.mjs` plus the offline
