@@ -77,6 +77,14 @@ const unquote = (text) => text.trim().replace(/^(['"])(.*)\1$/, "$2");
 
 // Indentation-only, and shallow by design: block scalars (`run: |`) and step lists land
 // under keys nothing here reads, so their contents cannot be mistaken for a job.
+//
+// A sequence item gets a node of its own even though nothing reads it, and YAML's rule
+// that an item may sit at its key's OWN column is why. Popping on `indent <= top.indent`
+// the way a mapping key is popped would close `steps:` on its first item, and every step
+// key after it would land on the JOB — where `name:` renames the check run and a step's
+// `if:` overwrites the job's, since the later `set` wins. The reader then does not fail
+// to read the file, which would be honest; it reports a confident diagnosis of a job that
+// does not exist.
 function parse(text) {
   const lines = text.split("\n");
   const root = { key: "", indent: -1, value: "", children: new Map(), items: [], from: 0, to: lines.length };
@@ -89,10 +97,27 @@ function parse(text) {
     if (!line.trim()) continue;
     const indent = line.length - line.trimStart().length;
     const body = line.trim();
-    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) close(stack.pop(), n);
+    const isItem = body === "-" || body.startsWith("- ");
+    while (stack.length > 1) {
+      const top = stack[stack.length - 1];
+      // An item closes a sibling item at its own column, but not the key it belongs to.
+      const closes = isItem && !top.item ? indent < top.indent : indent <= top.indent;
+      if (!closes) break;
+      close(stack.pop(), n);
+    }
     const parent = stack[stack.length - 1];
-    if (body === "-" || body.startsWith("- ")) {
+    if (isItem) {
       parent.items.push(body.slice(1).trim());
+      stack.push({
+        key: "-",
+        item: true,
+        indent,
+        value: "",
+        children: new Map(),
+        items: [],
+        from: n,
+        to: lines.length,
+      });
       continue;
     }
     const match = KEY.exec(body);
@@ -171,7 +196,21 @@ function readWorkflows() {
         "`on:` is a flow list; write the block form (`on:` then `  pull_request:`) so this checker can read it",
       );
     }
-    return { path, root, pullRequest: on.children.get("pull_request") ?? null, jobs: jobsNode.children };
+    const pullRequest = on.children.get("pull_request") ?? null;
+    // The same reasoning one level down, which is where it actually bites:
+    // `pull_request: { paths: [...] }` is a filter, and the reader stores the whole
+    // mapping as a VALUE, leaving `children` empty — so every rule below asks an empty map
+    // whether a filter is present and is told no. A block-form filter is caught; the same
+    // filter in flow form was waved through with "all reportable on every pull request",
+    // which is the sentence this file exists to be able to print truthfully.
+    if (pullRequest && pullRequest.value) {
+      finding(
+        path,
+        "`pull_request:` carries an inline value; write its filters in block form (`  pull_request:` then `    paths:`) " +
+          "so this checker can see them — a filter it cannot see is one it will report as absent",
+      );
+    }
+    return { path, root, pullRequest, jobs: jobsNode.children };
   });
 }
 
@@ -335,14 +374,101 @@ function gh(args) {
   return run.stdout.trim();
 }
 
+// A ruleset's include / exclude entries are PATTERNS, not names: GitHub matches them
+// against the full ref with Ruby's File.fnmatch under File::FNM_PATHNAME. Comparing them
+// as strings reads `exclude: ["refs/heads/ma*"]` as excluding nothing, which is the
+// direction that reports a governed branch when the branch is in fact exempt.
+//
+// Every rule below is measured against Ruby rather than assumed, because three of them
+// are not what a JavaScript author would write:
+//   - `*` and `?` stop at a `/`, and `?` matches one CHARACTER — `release-?` matches
+//     `release-🚀`, which a regex without the `u` flag counts as two.
+//   - `**` crosses separators only when it is a whole path segment followed by `/`.
+//     `qa**/**/*` matches `qa/foo` because the first `**` shares its segment with `qa`
+//     and is therefore an ordinary `*`; a trailing `refs/heads/**` is ordinary too, and
+//     does not match `refs/heads/a/b`.
+//   - a character class does not match the separator either, so `main[/]extra` does NOT
+//     match `main/extra`.
+// GitHub additionally documents two things as unsupported, and both are refused rather
+// than guessed at: `\` is not a quoting character (a backslash is a literal backslash),
+// and `[^…]` complements are not supported (`[!…]` is the negation fnmatch defines).
+class PatternError extends Error {}
+
+const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// The first `]` closes the class, even immediately: Ruby does NOT read POSIX's
+// leading-`]`-is-literal form here, and measuring it is the only way to know — `[]]x`
+// matches neither `]x` nor `x`, because `[]` matches nothing and `]x` is then literal.
+// `[!]` is the one degenerate form that matches something: a negated empty class, which
+// is any single character the separator rule still excludes.
+function classEnd(pattern, start) {
+  let i = start + 1;
+  if (pattern[i] === "!" || pattern[i] === "^") i++;
+  for (; i < pattern.length; i++) if (pattern[i] === "]") return i;
+  return -1;
+}
+
+function refMatches(pattern, ref) {
+  if (pattern === "~ALL" || pattern === "~DEFAULT_BRANCH") return true;
+  let out = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === "*") {
+      const ownSegment = i === 0 || pattern[i - 1] === "/";
+      if (ownSegment && pattern[i + 1] === "*" && pattern[i + 2] === "/") {
+        out += "(?:[^/]+/)*";
+        i += 2;
+      } else {
+        while (pattern[i + 1] === "*") i++;
+        out += "[^/]*";
+      }
+    } else if (ch === "?") {
+      out += "[^/]";
+    } else if (ch === "[") {
+      const end = classEnd(pattern, i);
+      // An unterminated `[` is not a literal bracket: Ruby matches nothing at all with it,
+      // `"a["` included. Measured, because reading it as a literal is the natural guess.
+      if (end === -1) return false;
+      let body = pattern.slice(i + 1, end);
+      if (body.startsWith("^")) {
+        throw new PatternError("GitHub documents `[^…]` complements as unsupported");
+      }
+      const negated = body.startsWith("!");
+      if (negated) body = body.slice(1);
+      // Guarded rather than rewritten: the separator has to be impossible for both a
+      // plain class and a negated one, and a lookahead says that once.
+      // A backslash is literal here too, and POSIX lets the body lead with `]`.
+      out += `(?!/)[${negated ? "^" : ""}${body.replace(/[\\\]]/g, "\\$&")}]`;
+      i = end;
+    } else {
+      out += literally(ch);
+    }
+  }
+  let expression;
+  try {
+    // `u` so that `[^/]` and `?` count code points rather than UTF-16 units.
+    expression = new RegExp(`^${out}$`, "u");
+  } catch (err) {
+    throw new PatternError(`it does not compile as a pattern (${err.message})`);
+  }
+  return expression.test(ref);
+}
+
 // Reported per ruleset rather than as one union: two rulesets requiring different sets is
 // itself the thing worth seeing.
 function checkRuleset(required) {
   let repo;
+  let defaultBranch;
   try {
-    repo = gh(["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]);
+    const view = JSON.parse(gh(["repo", "view", "--json", "nameWithOwner,defaultBranchRef"]));
+    repo = view.nameWithOwner;
+    defaultBranch = view.defaultBranchRef?.name;
   } catch (err) {
     finding("gh", `${err.message}\n    --ruleset needs an authenticated gh with admin rights on the repository`);
+    return;
+  }
+  if (!defaultBranch) {
+    finding("gh", "could not read the repository's default branch — cannot tell which ruleset governs a merge");
     return;
   }
   let rulesets;
@@ -371,8 +497,43 @@ function checkRuleset(required) {
       console.log(`    ruleset "${detail.name}": no required status checks`);
       continue;
     }
-    carrying++;
     const where = `ruleset "${detail.name}"`;
+    // Which refs a ruleset governs is as load-bearing as what it requires. A rule aimed at
+    // some other branch pattern satisfies every comparison below while leaving the branch
+    // that matters ungated — so it is not counted as carrying anything.
+    const refName = detail.conditions?.ref_name ?? {};
+    const include = refName.include ?? [];
+    const exclude = refName.exclude ?? [];
+    // Every entry is evaluated, not just up to the first match: a pattern this checker
+    // cannot decide has to be named even when something before it already answered.
+    let undecidable = null;
+    const governs = (ref) => {
+      try {
+        return refMatches(ref, `refs/heads/${defaultBranch}`);
+      } catch (err) {
+        undecidable ??= `\`${ref}\` — ${err.message}`;
+        return false;
+      }
+    };
+    const covers = include.map(governs).some(Boolean) && !exclude.map(governs).some(Boolean);
+    if (undecidable) {
+      finding(
+        where,
+        `carries a ref pattern this checker will not guess at: ${undecidable}. Decide by hand whether it governs ` +
+          `${defaultBranch}, or write the condition in a form fnmatch defines`,
+      );
+      continue;
+    }
+    if (!covers) {
+      finding(
+        where,
+        `requires ${rule.parameters?.required_status_checks?.length ?? 0} status check(s) but does not govern ` +
+          `${defaultBranch} (include: ${include.join(", ") || "none"}; exclude: ${exclude.join(", ") || "none"}) — ` +
+          `a merge to ${defaultBranch} waits for none of them`,
+      );
+      continue;
+    }
+    carrying++;
     const entries = rule.parameters?.required_status_checks ?? [];
     const live = new Map(entries.map((check) => [check.context, check.integration_id]));
     for (const [context, appId] of live) {
