@@ -248,6 +248,24 @@ jobs:
     # dated, are in .github/actions/install-browsers and are not restated here.
     container: mcr.microsoft.com/playwright:v${{ needs.preflight.outputs.version }}-noble
     timeout-minutes: 15
+    # Split across runners rather than across workers on one. Playwright's default takes
+    # half the runner's cores, so raising `workers` is the cheaper-looking move — and it
+    # raises the CPU pressure every case runs under, which is the one variable this
+    # suite's load-dependent failures are known to follow (reference/work/e2e-flakes.md).
+    # Shards keep the same two workers apiece and add machines instead.
+    #
+    # Three because the per-job floor stops paying: container pull, checkout, install and
+    # the two vite builds are a fixed cost per shard, and past three the split buys less
+    # than that floor costs. The tier's own cost, and the fact that its equal-count split
+    # divides evenly where the harness's does not, belong to
+    # docs/{en,ja}/live-race-harness.md ("Where each tier runs") and are not restated here.
+    strategy:
+      # A red shard must not cancel the others: the point of splitting is that one run
+      # still reports on the whole suite, and a cancelled shard is a verdict nobody has —
+      # `ci-required` reads it as a failure with no test behind it.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -262,24 +280,33 @@ jobs:
         with:
           browser: chromium
           with-deps: "false"
-      - run: pnpm test:e2e:coverage
+      # No `--` before the flag: pnpm 10 consumes it rather than forwarding it, and
+      # Playwright then reads what follows as a file filter — every shard runs the whole
+      # suite AND passes, so nothing says the split stopped working. The count comes from
+      # `strategy.job-total` so the matrix list above is the only place it is written.
+      - run: pnpm test:e2e:coverage --shard=${{ matrix.shard }}/${{ strategy.job-total }}
       # A separate flag keeps the two test tiers inspectable; Codecov merges both
-      # uploads for the commit, so a line reached by either unit or E2E is covered.
+      # uploads for the commit, so a line reached by either unit or E2E is covered. The
+      # shards upload under that same flag and are merged the same way — a line one shard
+      # never reached is covered by whichever one did. Only `name` separates them, so a
+      # shard that uploaded nothing is still visible as itself.
       - name: Upload frontend E2E coverage
         uses: codecov/codecov-action@8cad3ba95e5920c42f44492e54bc9639cba47959 # v6.0.2
         with:
           fail_ci_if_error: false
           files: ./coverage/e2e/lcov.info
           flags: e2e
-          name: frontend-e2e
+          name: frontend-e2e-${{ matrix.shard }}
           use_oidc: true
       # The "list" reporter writes no playwright-report/; traces (trace: on-first-retry,
       # with CI retries) and failure attachments land in the default test-results/, so
-      # that is what a failing run has to upload.
+      # that is what a failing run has to upload. One name per shard: upload-artifact
+      # rejects a name another job already claimed, so a shared one would fail the upload
+      # in whichever shard lost the race — on a run that is already red.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
-          name: playwright-traces
+          name: playwright-traces-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
 
@@ -293,6 +320,9 @@ jobs:
   # alone this gate would be skipped by that same rule and the ruleset would read the red
   # run as green.
   ci-required:
+    # `e2e` is one entry here whatever the matrix does: a matrix job's result is the
+    # aggregate, failure if any shard failed, so the gate needs no per-shard knowledge and
+    # a fourth shard does not have to be remembered here.
     needs: [preflight, frontend, rust, e2e]
     if: always()
     runs-on: ubuntu-latest
