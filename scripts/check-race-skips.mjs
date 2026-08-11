@@ -23,14 +23,20 @@
 // once, because collecting a spec EXECUTES it: a case in dead code or in a string never
 // registers, and one that registers with a declared skip is marked as such.
 //
-//   `playwright test --list`  every collected case, with a declaration-time skip carried
-//                             as an annotation of type "skip".
+//   `playwright test --list`  every case e2e/race collects, and whether its declaration means
+//                             it will not run (`expectedStatus`).
 //   `vitest run` on the guard files, because collecting is not enough on that side: a case
 //                             that skips from inside its own body — `({ skip }) => skip()` —
 //                             is listed exactly like one that asserts, and reports as a skip.
 //                             A guard has to have RUN, so the state it ended in is what is
 //                             read. Its cost is the guard files alone (measured: 0.4 s for
 //                             the one file the ledger currently names).
+//
+// Which is why a guard must be a unit test. The same question about an E2E case can only be
+// answered by running the tier — the bundle built and served, minutes rather than seconds —
+// and every cheaper answer is one this review already broke: `test.fixme` collects with an
+// annotation that is not "skip", and a `test.skip()` in a body is invisible to `--list`
+// altogether. So an E2E guard is refused, with the two ways out named in the message.
 //
 // A ledger row names a case in full — every describe title down to the leaf, joined with
 // vitest's own separator (Playwright reports the tree as a tree, so the same join is applied
@@ -113,8 +119,10 @@ function readReport(file, r, what) {
 }
 
 // Every case Playwright collects for a project, with the one fact the ledger needs beside
-// the name: whether the declaration itself carries a skip. `--list` runs nothing, so a
-// conditional `test.skip(cond)` inside a body cannot appear here — only a declared one.
+// the name: whether the declaration means it will not run. That is `expectedStatus`, not the
+// annotation list — `test.fixme` is as permanent a skip as `test.skip` and its annotation is
+// "fixme", so reading the annotations misses it while the runner reports both as "skipped".
+// `--list` runs nothing, so a `test.skip()` inside a body cannot appear here in any form.
 // The outermost suite is the file, so the trail starts below it.
 function playwright(project) {
   const file = join(reports, `playwright-${project}.json`);
@@ -132,7 +140,7 @@ function playwright(project) {
       out.push({
         file: rel(resolve(root, spec.file)),
         title: [...trail, spec.title].join(NAME_SEP),
-        skipped: (spec.tests ?? []).some((t) => (t.annotations ?? []).some((a) => a.type === "skip")),
+        skipped: (spec.tests ?? []).some((t) => t.expectedStatus === "skipped"),
       });
     }
     for (const child of suite.suites ?? []) walk(child, [...trail, child.title]);
@@ -211,37 +219,25 @@ for (const [k, s] of entries) {
   else guards.push({ entry: s, gk, at: `${s.guardedBy.file} › "${s.guardedBy.title}"` });
 }
 
-// A guard the ordinary E2E tier runs is verified as far as this check can reach: it is
-// collected and its declaration carries no skip. Reading its outcome would mean building the
-// bundle and serving it, which is the tier's own job and minutes rather than seconds — so
-// those guards are counted in the summary instead of passing as if they had been run.
-const chromium = new Map();
-for (const t of playwright("chromium")) if (!t.skipped) tally(chromium, key(t.file, t.title));
-const e2eGuards = guards.filter((x) => chromium.has(x.gk));
-const unitGuards = guards.filter((x) => !chromium.has(x.gk));
+// A guard has to be a unit test, and it is RUN. Collection is not enough: a vitest case that
+// skips from inside its own body is listed like any other, and on the Playwright side
+// `test.fixme` reports as a collected case whose annotation is not "skip" at all, while a
+// `test.skip()` in a body is not visible to `--list` in any form. Verifying an E2E guard
+// therefore means running the tier — building the bundle and serving it, minutes rather than
+// seconds — so an E2E case is refused as a guard rather than accepted on its declaration.
+// Only the guard's own result is read; a sibling failing in the same file is the suite's
+// business, not this check's.
+const results = guards.length ? vitestRun([...new Set(guards.map((x) => x.entry.guardedBy.file))]) : new Map();
 
-// Everything else has to be a vitest test, and those are RUN. Collection is not enough there:
-// `it("...", ({ skip }) => skip())` is listed like any other case and reports as a skip, so a
-// guard that never reaches its assertions would otherwise be indistinguishable from one that
-// holds. Only the guard's own result is read — a sibling failing in the same file is the
-// suite's business, not this check's.
-const results = unitGuards.length ? vitestRun([...new Set(unitGuards.map((x) => x.entry.guardedBy.file))]) : new Map();
-
-for (const x of e2eGuards) {
-  const named = chromium.get(x.gk);
-  if (named > 1) {
-    problems.push(
-      `${LEDGER}: "${x.entry.title}" is guarded by ${x.at}, which is the full name of ${named} cases the ` +
-        `ordinary tier collects — the row does not say which one holds the reason`,
-    );
-  }
-}
-for (const x of unitGuards) {
+for (const x of guards) {
   const states = results.get(x.gk) ?? [];
   if (states.length === 0) {
     problems.push(
-      `${LEDGER}: "${x.entry.title}" is guarded by ${x.at}, which no per-PR runner reports as a runnable test ` +
-        `— a guard that does not run cannot report an expired reason`,
+      `${LEDGER}: "${x.entry.title}" is guarded by ${x.at}, which vitest does not run` +
+        (x.entry.guardedBy.file.startsWith("e2e/")
+          ? ` — an E2E case cannot hold a row here, because this check cannot run one: name a unit test, or ` +
+            `record the row as unguarded with what would settle it`
+          : ` — a guard that does not run cannot report an expired reason`),
     );
   } else if (states.length > 1) {
     problems.push(
@@ -263,11 +259,5 @@ if (problems.length) {
 }
 
 console.log(`OK: ${found.size} permanent skip(s) of ${collected.length} cases Playwright collects in ${RACE_DIR}`);
-console.log(
-  `    ${unitGuards.length} guarded by a unit test that runs and passes, ${unguarded.length} held by nothing:`,
-);
+console.log(`    ${guards.length} guarded by a unit test that runs and passes, ${unguarded.length} held by nothing:`);
 for (const s of unguarded) console.log(`    - ${s.file.replace(`${RACE_DIR}/`, "")} › ${s.title}`);
-if (e2eGuards.length) {
-  console.log(`    ${e2eGuards.length} guarded by an ordinary-tier E2E case — collected here, not run here:`);
-  for (const x of e2eGuards) console.log(`    - ${x.entry.title} <- ${x.at}`);
-}
