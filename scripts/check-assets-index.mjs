@@ -64,6 +64,8 @@ const PROSE_TOKENS = new Map([
   ["dist", "the build output directory, named as the thing ci.yml greps"],
   ["ci.yml", "named as the workflow that greps; the grep itself is asserted per handle"],
   ["ls scripts/", "an instruction to the reader, not a path"],
+  ["ruby", "the interpreter, named as the thing that has to be present for a differential to run"],
+  ["File.fnmatch", "Ruby's method, named as the authority a matcher is measured against"],
   ['grep -rn "window.__urx" src/', "an instruction to the reader, not a path"],
   // The CDP row names what it drives. None of these is a file in any tree: the first two
   // are Playwright's and CSS's own vocabulary, the last three are DevTools-protocol
@@ -252,7 +254,12 @@ const scripts = pkg.scripts ?? {};
 const srcFiles = walk("src");
 const e2eFiles = walk("e2e");
 const scriptFiles = walk("scripts");
-const unitTests = srcFiles.filter((f) => f.endsWith(".test.ts"));
+// Mirrors vitest.config.ts's `include`, which is what a `pnpm test <filter>` actually
+// globs: src for the app, and scripts for the tooling that has pins of its own.
+const unitTests = [
+  ...srcFiles.filter((f) => f.endsWith(".test.ts")),
+  ...scriptFiles.filter((f) => f.endsWith(".test.mjs")),
+];
 const raceSpecs = e2eFiles.filter((f) => f.startsWith("e2e/race/") && f.endsWith(".spec.ts"));
 const appSpecs = e2eFiles.filter((f) => !f.startsWith("e2e/race/") && f.endsWith(".spec.ts"));
 
@@ -747,12 +754,14 @@ if (!forwardOnly) {
   }
 
   // B. every file in scripts/ is reachable from the docs: named directly, run by a
-  //    pnpm script CLAUDE.md names, or wired into the tracked hook. All three are
-  //    required — e2e-worktree.mjs / reset-storage.mjs are reached only through their
-  //    pnpm scripts, md-hook.sh only through .claude/settings.json.
+  //    pnpm script CLAUDE.md names, wired into the tracked hook, or — for a test —
+  //    selected by a `pnpm test <filter>` row, which is how the pin table names one
+  //    without spelling the path. All four are required: e2e-worktree.mjs /
+  //    reset-storage.mjs are reached only through their pnpm scripts, md-hook.sh only
+  //    through .claude/settings.json, and a test file only through its filter.
   for (const file of scriptFiles) {
     const base = file.split("/").pop();
-    if (doc.includes(file)) continue;
+    if (doc.includes(file) || testFilterHits.has(file)) continue;
     const viaScript = Object.entries(scripts).some(([name, cmd]) => cmd.includes(file) && named(name));
     if (viaScript || settingsText.includes(base)) continue;
     finding(file, `is in scripts/ but no row, pnpm script or hook names it`);

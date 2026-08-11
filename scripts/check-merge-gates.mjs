@@ -36,7 +36,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Resolved from this file rather than from the working directory: the same script runs
 // from a pnpm script, from a CI step and from a PostToolUse hook, and only the first two
@@ -170,17 +170,20 @@ const contextOf = (id, job) => unquote(job.children.get("name")?.value ?? "") ||
 
 // --- the workflows ------------------------------------------------------------
 
-function readWorkflows() {
+function readWorkflowSources() {
   const dir = join(ROOT, WORKFLOWS);
   const files = existsSync(dir)
     ? readdirSync(dir)
         .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
         .sort()
     : [];
-  if (!files.length) finding(WORKFLOWS, "no workflow files found — this check would pass on an empty tree");
-  return files.map((name) => {
-    const path = `${WORKFLOWS}/${name}`;
-    const root = parse(readFileSync(join(dir, name), "utf8"));
+  return files.map((name) => ({ path: `${WORKFLOWS}/${name}`, text: readFileSync(join(dir, name), "utf8") }));
+}
+
+function readWorkflows(sources) {
+  if (!sources.length) finding(WORKFLOWS, "no workflow files found — this check would pass on an empty tree");
+  return sources.map(({ path, text }) => {
+    const root = parse(text);
     const on = root.children.get("on");
     const jobsNode = root.children.get("jobs");
     if (!on || !jobsNode || jobsNode.children.size === 0) {
@@ -214,8 +217,7 @@ function readWorkflows() {
   });
 }
 
-function checkWorkflows(required) {
-  const workflows = readWorkflows();
+function checkWorkflows(workflows, required) {
   const seen = new Map();
   for (const workflow of workflows) {
     if (!workflow.pullRequest) continue;
@@ -240,7 +242,7 @@ function checkWorkflows(required) {
       `\`${context}\` is required but no pull-request workflow reports it — the merge waits for a check that never arrives`,
     );
   }
-  return { workflows, seen };
+  return seen;
 }
 
 function checkJob(workflow, id, job, context) {
@@ -324,15 +326,19 @@ function checkJob(workflow, id, job, context) {
 
 // --- the manifest -------------------------------------------------------------
 
-function readManifest() {
+function readManifestSource() {
   const path = join(ROOT, MANIFEST);
-  if (!existsSync(path)) {
+  return existsSync(path) ? readFileSync(path, "utf8") : null;
+}
+
+function readManifest(source) {
+  if (source === null) {
     finding(MANIFEST, "missing — the list of required contexts has no source of truth");
     return new Set();
   }
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync(path, "utf8"));
+    parsed = JSON.parse(source);
   } catch (err) {
     finding(MANIFEST, `is not readable JSON: ${err.message}`);
     return new Set();
@@ -392,7 +398,7 @@ function gh(args) {
 // GitHub additionally documents two things as unsupported, and both are refused rather
 // than guessed at: `\` is not a quoting character (a backslash is a literal backslash),
 // and `[^…]` complements are not supported (`[!…]` is the negation fnmatch defines).
-class PatternError extends Error {}
+export class PatternError extends Error {}
 
 const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -408,7 +414,7 @@ function classEnd(pattern, start) {
   return -1;
 }
 
-function refMatches(pattern, ref) {
+export function refMatches(pattern, ref) {
   if (pattern === "~ALL" || pattern === "~DEFAULT_BRANCH") return true;
   let out = "";
   for (let i = 0; i < pattern.length; i++) {
@@ -454,9 +460,9 @@ function refMatches(pattern, ref) {
   return expression.test(ref);
 }
 
-// Reported per ruleset rather than as one union: two rulesets requiring different sets is
-// itself the thing worth seeing.
-function checkRuleset(required) {
+// The gh half. Everything it learns is handed to compareRulesets, which is where the
+// judgement lives and is the half a test can drive.
+function readRulesets() {
   let repo;
   let defaultBranch;
   try {
@@ -465,36 +471,44 @@ function checkRuleset(required) {
     defaultBranch = view.defaultBranchRef?.name;
   } catch (err) {
     finding("gh", `${err.message}\n    --ruleset needs an authenticated gh with admin rights on the repository`);
-    return;
+    return null;
   }
   if (!defaultBranch) {
     finding("gh", "could not read the repository's default branch — cannot tell which ruleset governs a merge");
-    return;
+    return null;
   }
   let rulesets;
   try {
     rulesets = JSON.parse(gh(["api", `repos/${repo}/rulesets`]));
   } catch (err) {
     finding("gh", err.message);
-    return;
+    return null;
   }
   const active = rulesets.filter((ruleset) => ruleset.target === "branch" && ruleset.enforcement === "active");
   if (!active.length) {
     finding(repo, "no active branch ruleset — nothing is a merge condition");
-    return;
+    return null;
   }
-  let carrying = 0;
+  const details = [];
   for (const summary of active) {
-    let detail;
     try {
-      detail = JSON.parse(gh(["api", `repos/${repo}/rulesets/${summary.id}`]));
+      details.push(JSON.parse(gh(["api", `repos/${repo}/rulesets/${summary.id}`])));
     } catch (err) {
       finding("gh", err.message);
-      continue;
     }
+  }
+  return { repo, defaultBranch, details };
+}
+
+// Reported per ruleset rather than as one union: two rulesets requiring different sets is
+// itself the thing worth seeing. Returns the lines to print; findings go to the list.
+function compareRulesets({ repo, defaultBranch, details }, required, integrationId) {
+  const notes = [];
+  let carrying = 0;
+  for (const detail of details) {
     const rule = detail.rules?.find((entry) => entry.type === "required_status_checks");
     if (!rule) {
-      console.log(`    ruleset "${detail.name}": no required status checks`);
+      notes.push(`    ruleset "${detail.name}": no required status checks`);
       continue;
     }
     const where = `ruleset "${detail.name}"`;
@@ -562,46 +576,71 @@ function checkRuleset(required) {
         finding(where, `does not require \`${context}\`, which ${MANIFEST} lists`);
       }
     }
-    console.log(`    ${where}: ${live.size} required context(s)`);
+    notes.push(`    ${where}: ${live.size} required context(s)`);
   }
   if (!carrying) finding(repo, "no active branch ruleset requires any status check");
+  return notes;
 }
 
-// --- report ---------------------------------------------------------------------
+// --- one run ---------------------------------------------------------------------
 
-const argv = process.argv.slice(2);
-const hook = argv.includes("--hook");
+// The whole judgement, with every read already done by the caller. The CLI below is the
+// only thing that touches the filesystem or gh; this is what scripts/check-merge-gates.test.mjs
+// drives, so the tests exercise the composition and not a paraphrase of it.
+export function inspect({ workflowSources, manifestSource, ruleset = null }) {
+  findings.length = 0;
+  const required = readManifest(manifestSource);
+  const workflows = readWorkflows(workflowSources);
+  const seen = checkWorkflows(workflows, required);
+  const notes = ruleset ? compareRulesets(ruleset, required, integrationId) : [];
+  return { findings: findings.slice(), required, workflows, seen, notes };
+}
 
-if (hook) {
-  let file;
-  try {
-    file = JSON.parse(readFileSync(0, "utf8"))?.tool_input?.file_path;
-  } catch {
-    process.exit(0);
+// --- the command -----------------------------------------------------------------
+
+// Guarded so the module can be imported by a test without running: everything above is
+// pure or explicitly the gh half, and only this part reads the tree and exits.
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  const argv = process.argv.slice(2);
+  const hook = argv.includes("--hook");
+
+  if (hook) {
+    let file;
+    try {
+      file = JSON.parse(readFileSync(0, "utf8"))?.tool_input?.file_path;
+    } catch {
+      process.exit(0);
+    }
+    const rel = (file ?? "").split("\\").join("/");
+    const relevant = /\.github\/workflows\/[^/]+\.ya?ml$/.test(rel) || rel.endsWith(MANIFEST);
+    if (!relevant) process.exit(0);
   }
-  const rel = (file ?? "").split("\\").join("/");
-  const relevant = /\.github\/workflows\/[^/]+\.ya?ml$/.test(rel) || rel.endsWith(MANIFEST);
-  if (!relevant) process.exit(0);
+
+  const manifestSource = readManifestSource();
+  const workflowSources = readWorkflowSources();
+  // Read before inspect(), which clears the list — so a gh failure is carried across and
+  // reported alongside the rest rather than being dropped by the reset.
+  const ruleset = argv.includes("--ruleset") ? readRulesets() : null;
+  const pending = findings.slice();
+  const run = inspect({ workflowSources, manifestSource, ruleset });
+  const all = [...pending, ...run.findings];
+
+  if (all.length) {
+    for (const message of all) console.error(message);
+    console.error(`\n${all.length} finding(s)`);
+    process.exit(hook ? 2 : 1);
+  }
+  if (hook) process.exit(0);
+
+  for (const note of run.notes) console.log(note);
+  // The pull-request workflows that contribute nothing are named, not counted: a workflow
+  // whose result no one has to wait for is a decision, and it should be readable as one.
+  const prWorkflows = run.workflows.filter((workflow) => workflow.pullRequest);
+  const silent = prWorkflows.filter((workflow) => ![...run.seen.values()].includes(workflow.path));
+  console.log(
+    `OK: ${run.required.size} required context(s) over ${prWorkflows.length} pull-request workflow(s), ` +
+      `all reportable on every pull request`,
+  );
+  for (const [context, path] of run.seen) console.log(`    ${context} <- ${path}`);
+  if (silent.length) console.log(`    advisory only (no required context): ${silent.map((w) => w.path).join(", ")}`);
 }
-
-const required = readManifest();
-const { workflows, seen } = checkWorkflows(required);
-if (argv.includes("--ruleset")) checkRuleset(required);
-
-if (findings.length) {
-  for (const message of findings) console.error(message);
-  console.error(`\n${findings.length} finding(s)`);
-  process.exit(hook ? 2 : 1);
-}
-if (hook) process.exit(0);
-
-// The pull-request workflows that contribute nothing are named, not counted: a workflow
-// whose result no one has to wait for is a decision, and it should be readable as one.
-const prWorkflows = workflows.filter((workflow) => workflow.pullRequest);
-const silent = prWorkflows.filter((workflow) => ![...seen.values()].includes(workflow.path));
-console.log(
-  `OK: ${required.size} required context(s) over ${prWorkflows.length} pull-request workflow(s), ` +
-    `all reportable on every pull request`,
-);
-for (const [context, path] of seen) console.log(`    ${context} <- ${path}`);
-if (silent.length) console.log(`    advisory only (no required context): ${silent.map((w) => w.path).join(", ")}`);

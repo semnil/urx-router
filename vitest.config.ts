@@ -5,7 +5,11 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    // scripts/ is tooling rather than app code, so it is included here but deliberately
+    // left out of the coverage set below: what those files need is the pins, not a
+    // percentage. `check-merge-gates` is the one with a test today, and it is the guard
+    // over the checks a merge waits for.
+    include: ["src/**/*.test.ts", "scripts/**/*.test.mjs"],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
