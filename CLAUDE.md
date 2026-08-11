@@ -139,7 +139,7 @@ the second set, and a one-shot action is consumed by the first caller (an HMR re
 | `e2e/plan-param.ts` | seeding a plan through `?plan=` instead of clicking it together |
 | `e2e/inventory.ts` | asserting that a surface SHOWS something — it collects a container's visible text, its label-carrying attributes and its select options, and matches them against message-catalog keys |
 | `e2e/fixtures.ts` | adding an ordinary app E2E spec — import its shared Playwright exports so the explicit coverage command can collect native V8 readings without instrumenting the app bundle |
-| `e2e/coverage-options.ts` + `e2e/coverage-reporter.ts` | changing how E2E coverage is filtered, remapped or emitted — the options normalize Vite sources to repo paths, and the reporter brackets all workers before generating LCOV |
+| `e2e/coverage-options.ts` + `e2e/coverage-reporter.ts` | changing how E2E coverage is filtered, remapped or emitted — the options normalize Vite sources to repo paths and read each chunk's source map off disk rather than over the preview server, and the reporter brackets all workers, generates the LCOV and then **fails the run if it names the served bundle instead of `src/`** — the shape Codecov discards whole, without failing anything |
 | `e2e/race/fake-device.ts` | a case whose verdict is about timing: per-command latency, command barriers, a scriptable notify stream, refusal injection — its in-page surface is `__urxFake` |
 | `e2e/race/analyze.ts` + `e2e/race/ui.ts` | the invariants over one ordered trace, and the locators the harness shares |
 | in-spec `__midiTest` / `__dynTest` | driving a MIDI control or a tuning screen's meter feed — copy the installed state object, do not invent a third stub shape |
