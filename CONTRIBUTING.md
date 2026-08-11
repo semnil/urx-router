@@ -63,7 +63,13 @@ pnpm tauri dev     # desktop app
 
 ## Tests
 
-`pnpm test` covers the core, the device control layer, the models, and parts of the UI.
+`pnpm test` covers the core, the device control layer, the models, the UI, and the app entry —
+including its desktop half, which runs against a stubbed Tauri shell because `isTauri()` gates
+the whole device layer and nothing else can reach past it.
+
+The hosts and stubs those suites run in are shared, not per-file: they carry a `*.test-util.ts`
+suffix (vitest collects only the test files themselves, so a search for tests misses them) and
+CLAUDE.md indexes every one under "Reusable assets". Extend one rather than writing a second.
 
 **Feature and UI changes need E2E coverage in `e2e/*.spec.ts`.** Writing the test is what is
 asked; running it locally is not. The pull request's own CI runs the ordinary E2E tier and

@@ -59,6 +59,7 @@ const PROSE_TOKENS = new Map([
   [".urxf", "a file format, not a file in this repo"],
   ["?plan=", "the deep-link query prefix"],
   ["*.audit.test.ts", "a glob naming a family; the family is checked by reverse rule F"],
+  ["*.test-util.ts", "a glob naming a family; every member is checked by reverse rule E2"],
   ["probe-*.mjs", "a glob over the private reference repo, absent from this checkout"],
   ["PLAN.md", "lives in the private reference repo, absent from this checkout"],
   ["dist", "the build output directory, named as the thing ci.yml greps"],
@@ -260,6 +261,11 @@ const unitTests = [
   ...srcFiles.filter((f) => f.endsWith(".test.ts")),
   ...scriptFiles.filter((f) => f.endsWith(".test.mjs")),
 ];
+// The unit half of rule E. These are the hosts and stubs a layer needs in order to run
+// at all under jsdom or node, and vitest does not collect them (only `.test.ts`), so a
+// search for tests does not turn them up either — which is how eight of them
+// accumulated while the section indexed only the E2E ones.
+const unitFixtures = srcFiles.filter((f) => f.endsWith(".test-util.ts"));
 const raceSpecs = e2eFiles.filter((f) => f.startsWith("e2e/race/") && f.endsWith(".spec.ts"));
 const appSpecs = e2eFiles.filter((f) => !f.startsWith("e2e/race/") && f.endsWith(".spec.ts"));
 
@@ -738,6 +744,16 @@ for (const row of rows) {
   }
 }
 
+// Every code span in a row's FIRST cell — what "X has a row" has to mean. The rules
+// below asked `sectionText.includes(file)` instead, which any mention satisfies: a row
+// deleted and the same path written into a sentence of prose left the run green.
+// Measured on this section — the E2E fixture table down to 43 rows, still OK. Exact
+// match rather than substring, so one path cannot be answered by a longer one that
+// contains it.
+const rowAnchors = new Set(
+  rows.flatMap((row) => [...(lines[row - 1].split("|")[1] ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1])),
+);
+
 // --- reverse: something real appears in no row ------------------------------
 
 const forwardOnly = HOOK;
@@ -767,21 +783,35 @@ if (!forwardOnly) {
     finding(file, `is in scripts/ but no row, pnpm script or hook names it`);
   }
 
-  // C. every published in-page handle is in the section.
+  // C and D stay a MENTION check, unlike E/E2 above, and their messages say so: not
+  // every one of these heads a row. A handle can be a fixture's surface rather than an
+  // asset of its own (`__urxFake` belongs to the fake device's row), and a launch flag
+  // is named in the "How" column of the tool it drives.
+
+  // C. every published in-page handle is named somewhere in the section.
   for (const [name, side] of handles) {
     if (!sectionText.includes(name)) {
-      finding(side === "src" ? "src/" : "e2e/", `${name} is published but appears in no row`);
+      finding(side === "src" ? "src/" : "e2e/", `${name} is published but is named nowhere in "${SECTION}"`);
     }
   }
 
-  // D. every Tauri launch flag is in the section.
+  // D. every Tauri launch flag is named somewhere in the section.
   for (const flag of launchFlags) {
-    if (!sectionText.includes(flag)) finding("src-tauri/src/lib.rs", `launch flag ${flag} appears in no row`);
+    if (!sectionText.includes(flag)) {
+      finding("src-tauri/src/lib.rs", `launch flag ${flag} is named nowhere in "${SECTION}"`);
+    }
   }
 
-  // E. every E2E fixture (a non-spec .ts) is in the section.
+  // E. every E2E fixture (a non-spec .ts) has a row of its own.
   for (const file of e2eFiles.filter((f) => f.endsWith(".ts") && !f.endsWith(".spec.ts"))) {
-    if (!sectionText.includes(file)) finding(file, `is an E2E fixture but appears in no row`);
+    if (!rowAnchors.has(file)) finding(file, `is an E2E fixture but heads no row`);
+  }
+
+  // E2. every unit fixture has a row, for the same reason as E — and this one did not
+  //     exist while the table did, which is precisely why the table only ever listed
+  //     the E2E half.
+  for (const file of unitFixtures) {
+    if (!rowAnchors.has(file)) finding(file, `is a unit fixture but heads no row`);
   }
 
   // F. every contract/pin test is covered by one of the section's `pnpm test <filter>`
