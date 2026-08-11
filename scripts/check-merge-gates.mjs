@@ -375,22 +375,47 @@ function gh(args) {
 }
 
 // A ruleset's include / exclude entries are PATTERNS, not names: GitHub matches them
-// against the full ref with Ruby's File.fnmatch under File::FNM_PATHNAME (so `*` and `?`
-// stop at a `/`, `**/` crosses any number of them, `[…]` is a character class, `\`
-// escapes, and extglob is not supported). Comparing them as strings reads
-// `exclude: ["refs/heads/ma*"]` as excluding nothing, which is the direction that reports
-// a governed branch when the branch is in fact exempt.
+// against the full ref with Ruby's File.fnmatch under File::FNM_PATHNAME. Comparing them
+// as strings reads `exclude: ["refs/heads/ma*"]` as excluding nothing, which is the
+// direction that reports a governed branch when the branch is in fact exempt.
+//
+// Every rule below is measured against Ruby rather than assumed, because three of them
+// are not what a JavaScript author would write:
+//   - `*` and `?` stop at a `/`, and `?` matches one CHARACTER — `release-?` matches
+//     `release-🚀`, which a regex without the `u` flag counts as two.
+//   - `**` crosses separators only when it is a whole path segment followed by `/`.
+//     `qa**/**/*` matches `qa/foo` because the first `**` shares its segment with `qa`
+//     and is therefore an ordinary `*`; a trailing `refs/heads/**` is ordinary too, and
+//     does not match `refs/heads/a/b`.
+//   - a character class does not match the separator either, so `main[/]extra` does NOT
+//     match `main/extra`.
+// GitHub additionally documents two things as unsupported, and both are refused rather
+// than guessed at: `\` is not a quoting character (a backslash is a literal backslash),
+// and `[^…]` complements are not supported (`[!…]` is the negation fnmatch defines).
+class PatternError extends Error {}
+
+const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// The first `]` closes the class, even immediately: Ruby does NOT read POSIX's
+// leading-`]`-is-literal form here, and measuring it is the only way to know — `[]]x`
+// matches neither `]x` nor `x`, because `[]` matches nothing and `]x` is then literal.
+// `[!]` is the one degenerate form that matches something: a negated empty class, which
+// is any single character the separator rule still excludes.
+function classEnd(pattern, start) {
+  let i = start + 1;
+  if (pattern[i] === "!" || pattern[i] === "^") i++;
+  for (; i < pattern.length; i++) if (pattern[i] === "]") return i;
+  return -1;
+}
+
 function refMatches(pattern, ref) {
   if (pattern === "~ALL" || pattern === "~DEFAULT_BRANCH") return true;
   let out = "";
   for (let i = 0; i < pattern.length; i++) {
     const ch = pattern[i];
-    if (ch === "\\" && i + 1 < pattern.length) {
-      out += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    } else if (ch === "*") {
-      // `**` crosses separators only in the `**/` form; anywhere else Ruby reads it as
-      // an ordinary `*`.
-      if (pattern[i + 1] === "*" && pattern[i + 2] === "/") {
+    if (ch === "*") {
+      const ownSegment = i === 0 || pattern[i - 1] === "/";
+      if (ownSegment && pattern[i + 1] === "*" && pattern[i + 2] === "/") {
         out += "(?:[^/]+/)*";
         i += 2;
       } else {
@@ -400,19 +425,33 @@ function refMatches(pattern, ref) {
     } else if (ch === "?") {
       out += "[^/]";
     } else if (ch === "[") {
-      const end = pattern.indexOf("]", i + 1);
-      if (end === -1) {
-        out += "\\[";
-      } else {
-        const body = pattern.slice(i + 1, end).replace(/^!/, "^");
-        out += `[${body}]`;
-        i = end;
+      const end = classEnd(pattern, i);
+      // An unterminated `[` is not a literal bracket: Ruby matches nothing at all with it,
+      // `"a["` included. Measured, because reading it as a literal is the natural guess.
+      if (end === -1) return false;
+      let body = pattern.slice(i + 1, end);
+      if (body.startsWith("^")) {
+        throw new PatternError("GitHub documents `[^…]` complements as unsupported");
       }
+      const negated = body.startsWith("!");
+      if (negated) body = body.slice(1);
+      // Guarded rather than rewritten: the separator has to be impossible for both a
+      // plain class and a negated one, and a lookahead says that once.
+      // A backslash is literal here too, and POSIX lets the body lead with `]`.
+      out += `(?!/)[${negated ? "^" : ""}${body.replace(/[\\\]]/g, "\\$&")}]`;
+      i = end;
     } else {
-      out += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      out += literally(ch);
     }
   }
-  return new RegExp(`^${out}$`).test(ref);
+  let expression;
+  try {
+    // `u` so that `[^/]` and `?` count code points rather than UTF-16 units.
+    expression = new RegExp(`^${out}$`, "u");
+  } catch (err) {
+    throw new PatternError(`it does not compile as a pattern (${err.message})`);
+  }
+  return expression.test(ref);
 }
 
 // Reported per ruleset rather than as one union: two rulesets requiring different sets is
@@ -465,8 +504,26 @@ function checkRuleset(required) {
     const refName = detail.conditions?.ref_name ?? {};
     const include = refName.include ?? [];
     const exclude = refName.exclude ?? [];
-    const governs = (ref) => refMatches(ref, `refs/heads/${defaultBranch}`);
-    const covers = include.some(governs) && !exclude.some(governs);
+    // Every entry is evaluated, not just up to the first match: a pattern this checker
+    // cannot decide has to be named even when something before it already answered.
+    let undecidable = null;
+    const governs = (ref) => {
+      try {
+        return refMatches(ref, `refs/heads/${defaultBranch}`);
+      } catch (err) {
+        undecidable ??= `\`${ref}\` — ${err.message}`;
+        return false;
+      }
+    };
+    const covers = include.map(governs).some(Boolean) && !exclude.map(governs).some(Boolean);
+    if (undecidable) {
+      finding(
+        where,
+        `carries a ref pattern this checker will not guess at: ${undecidable}. Decide by hand whether it governs ` +
+          `${defaultBranch}, or write the condition in a form fnmatch defines`,
+      );
+      continue;
+    }
     if (!covers) {
       finding(
         where,
