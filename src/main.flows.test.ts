@@ -11,8 +11,6 @@
 // and runs entirely as top-level side effects.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 
 vi.mock("./core/storage", async (importOriginal) => {
   const real = await importOriginal<typeof import("./core/storage")>();
@@ -29,60 +27,23 @@ vi.mock("./core/storage", async (importOriginal) => {
 
 import { downloadText, exportSvgToPdf, exportSvgToPng } from "./core/storage";
 import { t } from "./i18n";
+import { $, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 
-const BODY = readFileSync(resolve(process.cwd(), "index.html"), "utf8")
-  .replace(/^[\s\S]*?<body[^>]*>/, "")
-  .replace(/<\/body>[\s\S]*$/, "");
-
-const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
-const status = (): string => $("statusbar").textContent ?? "";
 const nodes = (): number => $("graph-host").querySelectorAll("g.node[data-id]").length;
 
-async function boot(seed: Record<string, string> = {}): Promise<void> {
-  document.body.innerHTML = BODY;
-  localStorage.clear();
-  localStorage.setItem("urx-lang", "en");
-  localStorage.setItem("urx-model", "URX44V");
-  for (const [k, v] of Object.entries(seed)) localStorage.setItem(k, v);
-
-  vi.resetModules();
-  await import("./main");
-  // The board rather than the status line: a boot that lands on an error (a malformed
-  // `?plan=`, say) never writes the "Loaded …" line, and waiting for it would time out
-  // on exactly the case that wants testing.
-  await vi.waitFor(() => expect($("graph-host").querySelector("svg")).not.toBeNull());
-}
+// The boot fixture is `main.test-util.ts`, shared with the other two entry suites.
+// `tauri: false`: the desktop half is `main.device.test.ts`'s, and with no shell
+// `isTauri()` stays false, which is what keeps this file from asserting against a
+// shell that is not there.
+const boot = (seed: Record<string, string> = {}): Promise<unknown> => bootApp({ seed, tauri: false });
+const status = statusText;
 
 /** Press a chord on the document, the way the app's own key handler receives one. */
 const chord = (key: string, init: KeyboardEventInit = {}): void =>
   void document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }));
 
 beforeEach(() => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe(): void {}
-      unobserve(): void {}
-      disconnect(): void {}
-    },
-  );
-  vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addEventListener() {},
-    removeEventListener() {},
-    addListener() {},
-    removeListener() {},
-    dispatchEvent: () => false,
-  }));
-  vi.stubGlobal(
-    "confirm",
-    vi.fn(() => true),
-  );
-  vi.stubGlobal("alert", vi.fn());
-  document.elementFromPoint = (() => null) as typeof document.elementFromPoint;
-  HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext;
+  installAppGlobals();
   // jsdom's Blob has no `stream()` — measured — while `CompressionStream` is there.
   // The `?plan=` codec pipes one into the other, so without this the whole deep-link
   // half of this file would be testing a platform failure rather than the codec, and
@@ -99,12 +60,7 @@ beforeEach(() => {
   }
 });
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-  document.body.replaceChildren();
-  localStorage.clear();
-  history.replaceState(null, "", "/");
-});
+afterEach(restoreAppGlobals);
 
 describe("the share link", () => {
   // The `?plan=` codec compresses through the platform's own CompressionStream. Node

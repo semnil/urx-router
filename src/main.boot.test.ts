@@ -10,8 +10,6 @@
 // is deliberately left undefined so `isTauri()` stays false and no IPC is attempted.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 
 vi.mock("./core/storage", async (importOriginal) => {
   const real = await importOriginal<typeof import("./core/storage")>();
@@ -27,67 +25,17 @@ vi.mock("./core/storage", async (importOriginal) => {
 });
 
 import { openTextDocument, saveTextDocument } from "./core/storage";
+import { $, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 
-// The app's real markup, so every getElementById in main.ts resolves the element
-// it does in the browser rather than one this file invented.
-const BODY = readFileSync(resolve(process.cwd(), "index.html"), "utf8")
-  .replace(/^[\s\S]*?<body[^>]*>/, "")
-  .replace(/<\/body>[\s\S]*$/, "");
+// The boot fixture — the markup, the globals and the module import — is
+// `main.test-util.ts`, shared with the other two entry suites. `tauri: false` is the
+// point of this file: with no shell `isTauri()` stays false and no IPC is attempted,
+// so everything below is the browser path.
+const boot = (seed: Record<string, string> = {}): Promise<unknown> => bootApp({ seed, tauri: false });
+const status = statusText;
 
-const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
-const status = (): string => $("statusbar").textContent ?? "";
-
-/** Install the markup and the globals, then run the module top to bottom. */
-async function boot(seed: Record<string, string> = {}): Promise<void> {
-  document.body.innerHTML = BODY; // innerHTML does not execute the <script type=module>
-  localStorage.clear();
-  localStorage.setItem("urx-lang", "en");
-  localStorage.setItem("urx-model", "URX44V");
-  for (const [k, v] of Object.entries(seed)) localStorage.setItem(k, v);
-
-  vi.resetModules();
-  await import("./main");
-  // `void boot()` and `void loadPlanFromUrl()` are both fired without being awaited.
-  await vi.waitFor(() => expect(status()).not.toBe(""));
-}
-
-beforeEach(() => {
-  // Graph's buildScaffold constructs one unconditionally; jsdom has none.
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe(): void {}
-      unobserve(): void {}
-      disconnect(): void {}
-    },
-  );
-  // main.ts both reads .matches and subscribes to "change" on it.
-  vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addEventListener() {},
-    removeEventListener() {},
-    addListener() {},
-    removeListener() {},
-    dispatchEvent: () => false,
-  }));
-  // platform.confirmDialog / errorDialog fall back to these off Tauri, and jsdom's
-  // own versions only log "not implemented".
-  vi.stubGlobal(
-    "confirm",
-    vi.fn(() => true),
-  );
-  vi.stubGlobal("alert", vi.fn());
-  document.elementFromPoint = (() => null) as typeof document.elementFromPoint;
-  HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext;
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-  document.body.replaceChildren();
-  localStorage.clear();
-});
+beforeEach(installAppGlobals);
+afterEach(restoreAppGlobals);
 
 describe("boot", () => {
   it("paints the board, the inspector and the status line", async () => {
