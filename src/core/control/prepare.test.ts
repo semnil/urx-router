@@ -1,9 +1,36 @@
-import { describe, expect, it } from "vitest";
-import { SSMCS_INITIAL } from "../plan";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SSMCS_INITIAL, emptyPlan } from "../plan";
 import { defaultPlan } from "../../models/initial-state";
+import { getModel } from "../../models";
 import { ref } from "../../models/types";
 import type { NodeParams, Plan } from "../plan";
-import { buildModifiedPlan } from "./prepare";
+
+// The run path talks to the device through the transport and reuses the
+// self-test's capture; both are stubbed so the sequencing — capture, spread, send,
+// retry past a refusal, always disconnect — is testable without hardware. The
+// value strategy below keeps the real `floorSilent`, so the silence pass is the
+// shipping one.
+const mocks = vi.hoisted(() => ({
+  vdConnect: vi.fn<() => Promise<{ model: string; epoch: number }>>(),
+  vdDisconnect: vi.fn<(epoch: number) => Promise<void>>(),
+  vdSet: vi.fn<(id: number, x: number, y: number, v: number) => Promise<void>>(),
+  captureDeviceState: vi.fn(),
+}));
+
+vi.mock("../platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../platform")>()),
+  vdConnect: mocks.vdConnect,
+  vdDisconnect: mocks.vdDisconnect,
+  vdSet: mocks.vdSet,
+}));
+
+vi.mock("./selftest", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./selftest")>()),
+  captureDeviceState: mocks.captureDeviceState,
+}));
+
+import { buildModifiedPlan, runPrepareModified } from "./prepare";
+import { dryRun } from "./client";
 
 // A node carrying every sub-structure the spread pass touches, at factory-ish
 // starting values, so the test exercises each range.
@@ -104,5 +131,173 @@ describe("buildModifiedPlan value strategy", () => {
     // it to an already-modified plan yields the same result — a re-run from a
     // partially-written device still converges cleanly.
     expect(JSON.stringify(buildModifiedPlan(out))).toBe(JSON.stringify(out));
+  });
+});
+
+describe("runPrepareModified", () => {
+  const model = getModel("URX44V");
+
+  const captured = (): Plan => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["ch1"] = { on: true, gain: 0, hpfFreq: 80 };
+    return plan;
+  };
+
+  // What the run will actually try to send, so a test can address a command by
+  // position without pinning the emit order itself.
+  const plannedCommands = (): ReturnType<typeof dryRun> => dryRun(model, buildModifiedPlan(captured()));
+
+  const captureOk = (): void => {
+    mocks.captureDeviceState.mockResolvedValue({ ok: true, plan: captured(), applied: 7, errors: [] });
+  };
+
+  beforeEach(() => {
+    mocks.vdConnect.mockReset().mockResolvedValue({ model: "URX44V", epoch: 3 });
+    mocks.vdDisconnect.mockReset().mockResolvedValue(undefined);
+    mocks.vdSet.mockReset().mockResolvedValue(undefined);
+    mocks.captureDeviceState.mockReset();
+  });
+
+  it("captures, writes the spread plan whole, and reports what landed", async () => {
+    captureOk();
+    const expected = plannedCommands();
+    const report = await runPrepareModified(model);
+    expect(report).toEqual({
+      device: "URX44V",
+      applied: 7,
+      written: expected.length,
+      residual: 0,
+      errors: [],
+      aborted: false,
+    });
+    expect(mocks.vdSet).toHaveBeenCalledTimes(expected.length);
+    expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
+  });
+
+  // The device it connected to is named in the report whether or not the run
+  // proceeds — a mismatch report that does not say what was on the other end is
+  // not actionable.
+  it("stops on a model mismatch, still naming the device it reached", async () => {
+    mocks.vdConnect.mockResolvedValue({ model: "URX22", epoch: 9 });
+    mocks.captureDeviceState.mockResolvedValue({
+      ok: false,
+      plan: emptyPlan("URX44V"),
+      applied: 0,
+      errors: ["connected device is URX22, not URX44V"],
+    });
+    const report = await runPrepareModified(model);
+    expect(report.device).toBe("URX22");
+    expect(report.errors).toEqual(["connected device is URX22, not URX44V"]);
+    expect(report.written).toBe(0);
+    expect(mocks.vdSet).not.toHaveBeenCalled();
+    expect(mocks.vdDisconnect).toHaveBeenCalledWith(9);
+  });
+
+  // A capture that read the device but missed some parameters still runs: those
+  // errors travel into the report beside anything the write turns up.
+  it("carries the capture's read errors into the report and still writes", async () => {
+    mocks.captureDeviceState.mockResolvedValue({
+      ok: true,
+      plan: captured(),
+      applied: 5,
+      errors: ["CH1 GAIN: timeout"],
+    });
+    const report = await runPrepareModified(model);
+    expect(report.errors).toEqual(["CH1 GAIN: timeout"]);
+    expect(report.written).toBeGreaterThan(0);
+  });
+
+  // The live write path aborts the whole operation at the first failure; a scene
+  // audit instead wants every writable parameter to land, so the rejected command
+  // is dropped and the remainder retried.
+  it("retries past a refused command instead of skipping the rest", async () => {
+    captureOk();
+    const expected = plannedCommands();
+    const bad = expected[1];
+    mocks.vdSet.mockImplementation((id, x, y) =>
+      id === bad.paramId && x === bad.x && y === bad.y ? Promise.reject(new Error("locked")) : Promise.resolve(),
+    );
+    const report = await runPrepareModified(model);
+    expect(report.residual).toBe(1);
+    expect(report.errors).toEqual([`${bad.name}@${bad.paramId}:${bad.x}:${bad.y}: locked`]);
+    // Everything except the refused one landed, and the refused one was tried once.
+    expect(report.written).toBe(expected.length - 1);
+    expect(mocks.vdSet).toHaveBeenCalledTimes(expected.length);
+  });
+
+  it("records every refusal when more than one command is device-locked", async () => {
+    captureOk();
+    const expected = plannedCommands();
+    const locked = new Set([expected[0], expected[2]].map((c) => `${c.paramId}:${c.x}:${c.y}`));
+    mocks.vdSet.mockImplementation((id, x, y) =>
+      locked.has(`${id}:${x}:${y}`) ? Promise.reject(new Error("locked")) : Promise.resolve(),
+    );
+    const report = await runPrepareModified(model);
+    expect(report.residual).toBe(2);
+    expect(report.written).toBe(expected.length - 2);
+    expect(report.errors).toHaveLength(2);
+  });
+
+  // The refusal line names the address, not just the parameter: two instances of
+  // one param are the same name and only the address separates them.
+  it("renders a non-Error refusal as a string, addressed", async () => {
+    captureOk();
+    const first = plannedCommands()[0];
+    mocks.vdSet.mockImplementation((id, x, y) =>
+      id === first.paramId && x === first.x && y === first.y ? Promise.reject("locked") : Promise.resolve(),
+    );
+    const report = await runPrepareModified(model);
+    expect(report.errors[0]).toBe(`${first.name}@${first.paramId}:${first.x}:${first.y}: locked`);
+  });
+
+  // A rejection carrying no reason still has to read as a refusal rather than as a
+  // line that trails off after the colon.
+  it("gives a refusal with an empty message a reason of its own", async () => {
+    captureOk();
+    const first = plannedCommands()[0];
+    mocks.vdSet.mockImplementation((id, x, y) =>
+      id === first.paramId && x === first.x && y === first.y ? Promise.reject(new Error("")) : Promise.resolve(),
+    );
+    const report = await runPrepareModified(model);
+    expect(report.errors[0]).toBe(`${first.name}@${first.paramId}:${first.x}:${first.y}: rejected`);
+  });
+
+  it("reports a cancel as aborted rather than throwing, and still disconnects", async () => {
+    captureOk();
+    const ctl = new AbortController();
+    let sent = 0;
+    mocks.vdSet.mockImplementation(() => {
+      if (++sent === 2) ctl.abort();
+      return Promise.resolve();
+    });
+    const report = await runPrepareModified(model, ctl.signal);
+    expect(report.aborted).toBe(true);
+    expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
+    expect(sent).toBeLessThan(plannedCommands().length);
+  });
+
+  it("reports a cancel raised during the capture as aborted", async () => {
+    const ctl = new AbortController();
+    mocks.captureDeviceState.mockImplementation(() => {
+      ctl.abort();
+      return Promise.reject(new DOMException("aborted", "AbortError"));
+    });
+    const report = await runPrepareModified(model, ctl.signal);
+    expect(report).toMatchObject({ device: "URX44V", aborted: true, written: 0 });
+    expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
+  });
+
+  // Only a cancel is swallowed: a genuine failure has to reach the caller, and
+  // the link is closed on the way out either way.
+  it("rethrows a non-cancel failure and still disconnects", async () => {
+    mocks.captureDeviceState.mockRejectedValue(new Error("link down"));
+    await expect(runPrepareModified(model)).rejects.toThrow("link down");
+    expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
+  });
+
+  it("does not disconnect a link it never opened", async () => {
+    mocks.vdConnect.mockRejectedValue(new Error("no device"));
+    await expect(runPrepareModified(model)).rejects.toThrow("no device");
+    expect(mocks.vdDisconnect).not.toHaveBeenCalled();
   });
 });

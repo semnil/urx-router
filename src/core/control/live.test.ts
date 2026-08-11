@@ -285,6 +285,34 @@ describe("LiveSync sideEffect converge", () => {
     expect(errors).toHaveLength(1);
     expect(live.isActive()).toBe(false);
   });
+
+  // A rejection with no reason still has to name the failure: the teardown message
+  // is the only thing the operator sees, and an empty one reads as a session that
+  // stopped for no stated cause.
+  it("names a converge failure whose rejection carried no message", async () => {
+    const plan = basePlan();
+    const errors: string[] = [];
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: (m) => errors.push(m),
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    let direct = true;
+    vi.mocked(vdGet).mockResolvedValue(0);
+    vi.mocked(vdSet).mockImplementation(() => (direct ? Promise.resolve() : Promise.reject(new Error(""))));
+    const flushed = live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    direct = false;
+    await vi.advanceTimersByTimeAsync(2000);
+    void flushed;
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).not.toBe("");
+    expect(live.isActive()).toBe(false);
+  });
 });
 
 describe("LiveSync flush error", () => {

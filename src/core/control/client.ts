@@ -448,7 +448,9 @@ export function formatWriteReport(
   if (failed.length) {
     lines.push("");
     lines.push("## Write failures");
-    for (const f of failed) lines.push(`- ${f.name} — ${f.error ?? "unknown error"}`);
+    // `||`, not `??`: an outcome with no error and one carrying an empty message are
+    // both "it failed and said nothing", and the second must not print a bare dash.
+    for (const f of failed) lines.push(`- ${f.name} — ${f.error || "unknown error"}`);
   }
   if (residual.length) {
     lines.push("");
