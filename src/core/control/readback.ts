@@ -858,10 +858,18 @@ async function readPass(
     }
   }
   // microSD Rec Track Count (839, never emitted): tracks = raw × 2, onto the SD Rec
-  // header. Like sample rate, a standalone read kept out of body provenance and run
-  // on a full read only. Nothing writes it, so it is in no registration and its
-  // notify is dropped: a front-panel change lands here at the next full read.
-  if (only === undefined && model.nodes.some((n) => n.id === "out.sdrec")) {
+  // header. Kept out of body provenance like sample rate, but NOT full-read-only like
+  // it: 839 lands on a node the model has (`out.sdrec`), so a scoped read can repair
+  // it, and `want` keeps the full-read behaviour identical. Sample rate stays on
+  // `only === undefined` because `plan.sampleRate` is a plan-level scalar owned by no
+  // node — a resemblance between the two, not a shared reason.
+  //
+  // This gate is what makes the address followable at all. Nothing writes 839, so it is
+  // registered for notifies by hand (live.ts) and indexed to `out.sdrec`; were it read
+  // here on a full read only, that index entry would send every front-panel Track Count
+  // change into a scoped read that never touches the address — the follow would run, the
+  // read would succeed, and the value would not change.
+  if (want("out.sdrec") && model.nodes.some((n) => n.id === "out.sdrec")) {
     try {
       const sdRecTrackCount = (await vdGet(PARAMS.SD_REC_TRACK_COUNT.id, 0, 0)) * 2;
       plan.nodeParams["out.sdrec"] = { ...plan.nodeParams["out.sdrec"], sdRecTrackCount };

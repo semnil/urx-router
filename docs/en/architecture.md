@@ -1580,6 +1580,33 @@ extrapolation from a numeric sequence. `planToNameWrites` is the write side of t
 deliberately not the same set — it skips a node the plan holds no name for, and it carries one string that is not
 a name at all (the SSMCS Sweet Spot preset, param 91), which nothing registers and no rename notify can concern.
 
+**Two read-only addresses join for the same reason**, and the name path is their precedent rather than a
+coincidence: an address the app only READS was in no registration, so the unit's announcement reached nobody and
+the value caught up only at the next full read. Both were measured announcing a front-panel change on a URX44V
+(2026-08-11, System V1.3.1.0), which is what separates them from the addresses that genuinely stay silent — D.Gain
+and the FX / insert-FX engine arrays emit nothing when the panel moves them, and for those a registration would be
+useless.
+
+| Address | Why the app never writes it | Which node's scoped read repairs it |
+| --- | --- | --- |
+| CH → FX send tap (193 / 197 / 320 / 324) | the broker publishes `max_value` 0, so PRE cannot be written (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
+| microSD Rec Track Count (839) | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node 839 lands on, and the only address that read touches |
+
+Both are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside the emit decision they mirror, so the
+registration and the write suppression cannot drift apart; `live.ts` consumes that list the same way it consumes
+`planToCommands`, **including its write scope**. That scope is not symmetry for its own sake: under *Scene only* a
+whole-device read puts the plan's scene-external values back after reading (`applyDeviceStateScoped` →
+`core/scene-scope.ts`, which names `sdRecTrackCount`), so a follow that pulled 839 in would be the one path where
+that preference does not hold — the notify-driven read and the full read would disagree about one value under one
+setting. Track Count is `sceneExternal` and drops out under *Scene only*; the send taps are scene state and stay. **The index entry and the readback gate are one decision, not two.** Naming an owner node is
+correct only while `readback` reads that address on a scoped read of that node — 839 is gated on
+`want("out.sdrec")` for exactly this reason, and the full-read behaviour is identical either way because `want` is
+`only === undefined || only.has(id)`. Were that gate to go back to `only === undefined`, every front-panel Track
+Count turn would take a scoped read that never touches 839: the follow runs, the read succeeds, and the value does
+not change. The opposite mistake — leaving the owner node off — works, at a whole-device read per turn. Sample
+rate keeps `only === undefined` because `plan.sampleRate` is a plan-level scalar no node owns, which is a
+difference in kind rather than a convention to copy.
+
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
 the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
 has ever been measured — the 1-2 ms figure above belongs to the `refetch` family, which never reaches this loop. Its

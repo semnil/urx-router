@@ -804,12 +804,16 @@ agreement, zero findings.
   out loud once per owner set (see architecture.md, "One device address, more than one owner")
 - **A notify on a SETUP > GENERAL address buys NOTHING — the notify never crosses the bridge.** The
   Rust bridge's `Subs::absorb` (`src-tauri/src/vd.rs`) forwards a param notify to the frontend only
-  when it is in the registered set (`param_addrs`) or is `BULK_CHANGE`. The registration is the
-  writable address set, so **every address the plan never emits is undeliverable for the whole
-  session**, and the thirteen SETUP > GENERAL addresses are only the largest family: the string-path
-  addresses (`NAME`, `SWEET_SPOT`) are in it, the addresses the app only ever reads are in it (839
-  microSD Track Count, 193 the CH → FX send tap), and under device scope `"scene"` so are the 64 that
-  scope drops. The earlier "~1350 reads" figure was the fake answering a stimulus the shipped app
+  when it is in the registered set (`param_addrs`) or is `BULK_CHANGE`. **An address in no
+  registration is undeliverable for the whole session**, and the thirteen SETUP > GENERAL addresses
+  are the largest family in that position. **Which addresses those are is no longer "the ones the
+  plan never emits"**: the registration was that set once, and three families have been added to it
+  by hand since — the string-path addresses (`NAME`, `SWEET_SPOT`), and the read-only follows (839
+  microSD Track Count, 193/197/320/324 the CH → FX send taps), which the unit announces and the app
+  now listens for without ever writing them. Under device scope `"scene"` the 64 addresses that scope
+  drops are still undeliverable, **and so is Track Count** — the read-only follows take the same
+  `sceneExternal` filter, because a full read under that scope restores the plan's scene-external
+  values afterwards and a followed 839 would contradict it. The earlier "~1350 reads" figure was the fake answering a stimulus the shipped app
   cannot receive. **The fake now mirrors `absorb`** — `pushNotify` filters per entry against the set
   the session registered, traces a refusal as its own `notify-drop` kind, and only `pushBulkChange`
   bypasses it — so those cases now measure the refusal instead. The consequence is worse than the
@@ -839,8 +843,11 @@ agreement, zero findings.
   closed on 2026-08-06** — `live.ts` registers the name addresses beside `planToCommands`'s, and
   `follow.ts` places a name notify straight into the plan (17 addresses on a URX44V/URX44, 15 on a
   URX22, against ~800, with no steady-state traffic because a name notify fires only on a rename).
-  839 and 193 stand: neither is ever emitted — 193 because the broker refuses a PRE write, 839
-  because the broker caps it below every useful value — so neither is in a write set or a registration
+  **The 839 / 193 half closed the same way on 2026-08-11**, once the unit was measured announcing
+  both (a front-panel PRE/POST and a Track Count turn each pushed a notify on a URX44V, System
+  V1.3.1.0): still never emitted — 193 because the broker refuses a PRE write, 839 because the broker
+  caps it below every useful value — but registered and indexed to the node whose scoped read repairs
+  them, so each costs one node read rather than the two full reconciles the withdrawn claim named
 - **A sample-rate undo refusal takes the whole entry with it**, and the status line names only the
   rate: an ordinary edit that shared the gesture window is refused alongside it and nothing says so.
   Refusing whole is correct — a partial undo would put the plan in a state no gesture produced, and

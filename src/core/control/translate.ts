@@ -1992,6 +1992,67 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   return out;
 }
 
+/** One address the app READS but never writes, for the device-follow registration. */
+export interface FollowOnlyAddr {
+  param: number;
+  x: number;
+  y: number;
+  /** Catalog name, for the follow's per-control accounting. Same convention the
+   *  emitted send commands use: the PARAMS entry names the command and its encoding,
+   *  while the address is computed per instance. */
+  name: ParamName;
+  /** Owner node whose scoped read repairs it. Undefined would mean "device-wide", which
+   *  routes the notify to a full read — nothing needs that today, and an address that
+   *  did would also have to be readable on a scoped read to be worth indexing. */
+  node: string;
+}
+
+/**
+ * Addresses the unit announces, the app reads, and nothing emits — so `planToCommands`
+ * does not carry them and they would be in no notify registration. Registering them is
+ * what lets a front-panel change reach the plan instead of waiting for the next full
+ * read. Both families were measured announcing a change on a URX44V (2026-08-11, System
+ * V1.3.1.0); the addresses that genuinely stay silent (D.Gain, the FX / insert-FX engine
+ * arrays) are not here, because a registration would do nothing for them.
+ *
+ * This lives beside `planToCommands` on purpose: the tap half is the exact complement of
+ * the `sendTapWritable` test that suppresses the write there, and the two were written as
+ * separate walks over the same (channel, bus) pairs long enough to disagree about which
+ * sources count.
+ *
+ * `scope` is applied with the same `sceneExternal` predicate `planToCommands` uses, for a
+ * reason stronger than symmetry: under "scene" a whole-device read RESTORES the plan's
+ * scene-external values afterwards (`main.ts` applyDeviceStateScoped → scene-scope.ts), so
+ * a follow that pulled one in would be the one path in the app where *Scene only* does not
+ * hold — the notify-driven read and the full read would disagree about the same value
+ * under the same preference. Track Count is `sceneExternal`; the send taps are not.
+ */
+export function planToFollowOnlyAddrs(model: DeviceModel, scope: WriteScope = "all"): FollowOnlyAddr[] {
+  const out: FollowOnlyAddr[] = [];
+  // CH → FX send taps: the broker publishes max_value 0 on 193/197/320/324, so PRE is
+  // unwritable and the emit loop above skips SEND_TAP for them. Same source filter as
+  // that loop — an FX-channel source cannot reach an unwritable tap today (its sends go
+  // to MIX, whose taps are writable), and stating that through `sendTapWritable` rather
+  // than by narrowing the walk is what keeps this correct if that ever changes.
+  for (const node of model.nodes) {
+    if (node.kind !== "channel" && fxChannelIndex(node.id) === null) continue;
+    for (const bus of model.nodes) {
+      if (bus.kind !== "bus") continue;
+      const sc = sendControl(model, node.id, bus.id);
+      if (!sc || sendTapWritable(model, ref(node.id, "out"), ref(bus.id, "in"))) continue;
+      out.push({ param: sc.tap, x: 0, y: sc.y, name: "SEND_TAP", node: node.id });
+    }
+  }
+  // microSD Rec Track Count: the broker caps it at 1, so the only values software can
+  // reach are "two tracks" and one the unit has no meaning for. Read onto out.sdrec's
+  // node params, which is the node whose scoped read repairs it.
+  if (model.nodes.some((n) => n.id === "out.sdrec")) {
+    out.push({ param: PARAMS.SD_REC_TRACK_COUNT.id, x: 0, y: 0, name: "SD_REC_TRACK_COUNT", node: "out.sdrec" });
+  }
+  if (scope === "all") return out;
+  return out.filter((f) => (PARAMS[f.name] as ParamSpec).sceneExternal !== true);
+}
+
 /** One string write: the CH SETTING name for a node, on a single instance. */
 export interface NameWrite {
   param: number;

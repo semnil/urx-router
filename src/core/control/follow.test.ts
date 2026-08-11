@@ -86,7 +86,7 @@ afterEach(() => {
 });
 
 describe("DeviceFollow", () => {
-  it("registers the writable address set on begin", async () => {
+  it("registers the follow address set on begin", async () => {
     const follow = followFor();
     await follow.begin();
     expect(h.subscribeCalls).toBe(1);
@@ -337,7 +337,7 @@ describe("DeviceFollow", () => {
     expect(h.subscribeCalls).toBe(1);
   });
 
-  it("re-registers only when the writable address set changed", async () => {
+  it("re-registers only when the follow address set changed", async () => {
     let addrs: Array<[number, number, number]> = [ADDR];
     const follow = followFor({
       addrs: () => addrs,

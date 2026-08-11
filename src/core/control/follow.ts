@@ -1,6 +1,9 @@
-// Device follow: the reverse of live sync. While active, the app registers every
-// writable parameter address for change notifies, so an edit made on the device
-// itself (LCD / physical controls) is pulled back into the plan.
+// Device follow: the reverse of live sync. While active, the app registers the
+// follow address set for change notifies, so an edit made on the device itself
+// (LCD / physical controls) is pulled back into the plan. That set is NOT the
+// writable one — it is what the app writes plus the addresses it only reads
+// (`live.followAddrs`), because an address the unit announces to nobody is one
+// the panel can change with no effect on screen.
 //
 // A notify carries the changed address and its new value, so detection is free
 // and exact — the cost is reflecting it. Each notify is classified via the live
@@ -38,7 +41,8 @@ const IDLE_FULL_MS = 900;
 const MAX_CONCENTRATION = 3;
 
 export interface DeviceFollowHooks {
-  /** Writable parameter addresses to register for notifies ([paramId, x, y]). */
+  /** Every parameter address to register for notifies ([paramId, x, y]) — the writable
+   *  set plus names, the read-only follows, and the host-owned ones the caller appends. */
   addrs: () => Array<[number, number, number]>;
   /** First refusal on an incoming notify, for addresses the host registers itself
    *  and owns outside the plan (SETUP > Follow USB is the one such address today).
@@ -52,7 +56,8 @@ export interface DeviceFollowHooks {
    *  and changed twice, and the second site is what goes stale. */
   isEcho: (p: ParamUpdate) => boolean;
   /** Resolve a notify address to its catalog name, owner node, and follow kind,
-   *  or undefined when the address is not in the writable set. */
+   *  or undefined when the address is in no index (registered by the host, or announced
+   *  by the unit on an address nothing here tracks — both take the full-read escalation). */
   lookup: (paramId: number, x: number, y: number) => FollowAddr | undefined;
   /** Apply one direct param change into the plan now (no read-back). Returns false
    *  when the param is not actually directly placeable (flagged direct but unhandled),
@@ -119,7 +124,7 @@ export class DeviceFollow {
   }
 
   /** Start following. Call after the live snapshot is captured (begin/resync), so
-   *  the writable address set and its index are known. */
+   *  the follow address set and its index are known. */
   async begin(): Promise<void> {
     this.active = true;
     await this.subscribe();
@@ -145,7 +150,7 @@ export class DeviceFollow {
     this.settleSource = null;
   }
 
-  // Register the current writable address set for notifies. The set rarely changes
+  // Register the current follow address set for notifies. The set rarely changes
   // (only a structural plan edit alters it), so when it matches what is already
   // registered this is a no-op rather than re-posting every address to the broker.
   private async subscribe(): Promise<void> {
@@ -225,8 +230,8 @@ export class DeviceFollow {
     if (this.settleTimer === null) this.hooks.onFollow();
 
     const addr = this.hooks.lookup(p.paramId, p.x, p.y);
-    // An address outside the writable set, or a global non-node address: a change
-    // worth a full read once the burst settles.
+    // An address in no index, or one whose owner is the whole device rather than a
+    // node: a change worth a full read once the burst settles.
     if (addr === undefined || addr.node === undefined) {
       this.forceFull = true;
     } else {

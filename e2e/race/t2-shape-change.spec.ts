@@ -681,7 +681,14 @@ test.describe("T2 shape-change", () => {
 
   // shape-sdrec-track-count-readonly. The negative control for the abort-on-failure
   // rule: the one parameter the app reads on every full readback and emits nowhere.
-  test("microSD Rec Track Count is read, never written, and its notify never arrives", async ({ page }) => {
+  // Was "…and its notify never arrives", which is what the app did before 839 joined the
+  // registration: the address was in no registration because nothing WROTE it, the bridge
+  // dropped the unit's announcement, and the operator's front-panel change never reached
+  // the plan for the rest of the session. The pin is rewritten rather than deleted so it
+  // tracks the fix — everything about the WRITE side is unchanged and still asserted here.
+  test("microSD Rec Track Count is read, never written, and its notify is repaired by a scoped read", async ({
+    page,
+  }) => {
     // The device holds 8 tracks (raw 4). Writes to 839 are swallowed rather than
     // refused on purpose: the real broker answers 400 above two tracks, and a refusal
     // would abort the session, so the regression this case is here to catch (the app
@@ -697,11 +704,12 @@ test.describe("T2 shape-change", () => {
     const writes = setsOf(trace).filter((s) => s.addr === SD_TRACK_COUNT);
     console.log(`839: ${reads.length} read(s), ${writes.length} write(s), registered=${reg.has(SD_TRACK_COUNT)}`);
 
-    // Read back on every full readback, emitted by nothing, and therefore absent from
-    // the registration the write set defines.
+    // Read back on every full readback, emitted by nothing — and registered anyway. The
+    // registration is no longer the write set: an address the app only reads joins it so
+    // the unit's announcement has somewhere to land.
     expect(reads.length).toBeGreaterThan(0);
     expect(writes).toHaveLength(0);
-    expect(reg.has(SD_TRACK_COUNT)).toBe(false);
+    expect(reg.has(SD_TRACK_COUNT)).toBe(true);
 
     // The control is locked while live (front panel only), so no UI path can even try.
     await graphNode(page, "out.sdrec").click();
@@ -712,49 +720,53 @@ test.describe("T2 shape-change", () => {
     // A device-side change: the operator turns the recorder to 12 tracks on the unit.
     await divergeAt(page, SD_TRACK_COUNT, 6);
     await mark(page, "track-count-notify");
-    const why = await pushNotify(page, [[839, 0, 0, 6]]);
+    // Delivered, and asserted so by the helper: the case's subject is now what the notify
+    // CAUSES, and a refused push would make every clause below pass by never happening.
+    await pushNotifyDelivered(page, [[839, 0, 0, 6]]);
     const atNotify = await trackSel.inputValue();
     console.log(`Track Count at the instant of the notify: ${atNotify}`);
     expect(atNotify).toBe("8");
-    // settleAfter, not waitQuiet: the verdict below is an ABSENCE, and a link that has
-    // not started yet is silent for the same reason a finished one is.
     await settleAfter(page, "track-count-notify", 1800);
 
     trace = await traceOf(page);
     const at = markTime(trace, "track-count-notify")!;
-    const cost = fullReadsAfter(trace, at);
+    const rates = getsOf(trace).filter((g) => g.addr === RATE_ADDR && g.start > at);
     const lateReads = getsOf(trace).filter((g) => g.addr === SD_TRACK_COUNT && g.start > at);
     console.log(timeline(trace, { from: at - 50, limit: 40 }));
-    console.log(`839 notify: refused as "${why[0]}", ${cost} full reconcile(s), ${lateReads.length} read(s) of 839`);
-    // The refusal is asserted below, so it is declared here: clause A is for the case
-    // that pushed a stimulus it did not mean to have refused.
+    console.log(
+      `839 notify: first read at +${Math.round(lateReads[0].start - at)} ms, ` +
+        `${rates.length} full reconcile(s), first at ${rates.length ? `+${Math.round(rates[0].start - at)} ms` : "(none)"}`,
+    );
     console.log(
       report(
         "sd rec track count",
         // 839 is read and never written, so it is in no snapshot: clause B can only ever
-        // see a grown EMISSION, never a registration-side absence. This case's subject
-        // is the drop, which is clause A's.
+        // see a grown EMISSION, never a registration-side absence.
         analyze(trace, {
           registration: [...(await paramAddrsOf(page))],
           snapshot: await snapshotOf(page),
-          expectedDrops: [SD_TRACK_COUNT],
         }),
       ),
     );
 
-    // The address is absent from the registration, so the bridge drops the notify
-    // (src-tauri/src/vd.rs Subs::absorb) and nothing escalates. The value the operator
-    // set on the unit's front panel never reaches the plan for the rest of the session.
-    // Worse than expensive: DeviceFollow.armIdle() is reachable only from inside
-    // onNotify, so a session that receives no deliverable notify has no idle safety net
-    // scheduled to discover the change later either.
-    expect(why).toEqual(["unregistered"]);
-    expect((await notifyDropsOf(page)).filter((d) => d.addr === SD_TRACK_COUNT)).toHaveLength(1);
-    expect(cost).toBe(0);
-    expect(lateReads).toEqual([]);
-    await expect(param(page, "Track Count").locator("select")).toHaveValue("8");
-    // Still never written, even though the plan and the device now disagree.
+    // Delivered, and repaired by a SCOPED read of out.sdrec — the node 839 lands on.
+    // Asserted by order rather than by counting whole-device reads: the settle fires at
+    // 300 ms and the idle safety net at 900 ms, so this case's 1800 ms wait contains a
+    // full read either way and a count would read the same with the routing removed.
+    // What only the scoped route can produce is a read of 839 before any whole-device
+    // pass begins. (readback gates 839 on `want("out.sdrec")` for exactly this; with the
+    // older `only === undefined` gate the scoped read would touch nothing and the value
+    // would sit stale until the idle net.)
+    expect((await notifyDropsOf(page)).filter((d) => d.addr === SD_TRACK_COUNT)).toHaveLength(0);
+    expect(lateReads.length).toBeGreaterThan(0);
+    expect(rates.length === 0 || lateReads[0].start < rates[0].start).toBe(true);
+    // The point of the whole exercise: the value the operator set on the unit is now on
+    // screen. 12 tracks = raw 6.
+    await expect(trackSel).toHaveValue("12");
+    // Still never written — following it must not have made it writable, and the control
+    // is still locked while live.
     expect(setsOf(trace).filter((s) => s.addr === SD_TRACK_COUNT)).toHaveLength(0);
+    await expect(trackSel).toBeDisabled();
   });
 
   // shape-send-emission-wire-presence, reachable portion. The catalog's script deletes
@@ -776,12 +788,13 @@ test.describe("T2 shape-change", () => {
     console.log(`MIX 1 send addresses missing from the registration: ${missingMix.join(", ") || "(none)"}`);
     expect(missingMix).toEqual([]);
 
-    // ch1 → FX 1: one level, one on, NO pan (a mono send), and NO tap — the broker
-    // reports max_value=0 for a CH → FX tap, so translate never emits it.
+    // ch1 → FX 1: one level, one on, NO pan (a mono send). The tap is registered but
+    // never emitted — the broker reports max_value=0 for a CH → FX tap, so translate
+    // writes nothing to it while the follow still listens to it.
     expect(reg.has(CH1_FX1_LEVEL)).toBe(true);
     expect(reg.has(CH1_FX1_ON)).toBe(true);
     expect(reg.has("195:0:0")).toBe(false); // the slot a MIX send's pan would occupy
-    expect(reg.has(CH1_FX1_TAP)).toBe(false);
+    expect(reg.has(CH1_FX1_TAP)).toBe(true);
 
     // Toggling the send's enable chip changes a VALUE, not the shape: only the two
     // SEND_ON instances move, and level / pan / tap stay in the set both times because
@@ -814,18 +827,26 @@ test.describe("T2 shape-change", () => {
     expect(mix1.every((a) => regAfterOff.has(a))).toBe(true);
 
     // The device's own change to the CH → FX tap — a control only its LCD can move —
-    // lands on an address the app writes nothing to, and therefore never registered.
-    // It is not expensive to follow, it is UNFOLLOWABLE: the bridge drops the notify
-    // and no reconcile is scheduled to discover the change later.
+    // lands on an address the app writes nothing to and registers anyway. It is followed
+    // by the CHANNEL's scoped read, not by a whole-device one: the tap is indexed to ch1,
+    // whose read re-reads params.tap for every bus it sends to.
+    //
+    // The device is moved to PRE before the push. Without that the scoped read would
+    // answer with the value the plan already holds, and every clause below would pass on
+    // a repair that repaired nothing.
+    await divergeAt(page, CH1_FX1_TAP, 1);
     await mark(page, "fx-tap-notify");
-    const why = await pushNotify(page, [[193, 0, 0, 1]]);
+    await pushNotifyDelivered(page, [[193, 0, 0, 1]]);
     await settleAfter(page, "fx-tap-notify", 1800);
     trace = await traceOf(page);
     const tapAt = markTime(trace, "fx-tap-notify")!;
-    const cost = fullReadsAfter(trace, tapAt);
+    const tapRates = getsOf(trace).filter((g) => g.addr === RATE_ADDR && g.start > tapAt);
+    const tapReads = getsOf(trace).filter((g) => g.addr === CH1_FX1_TAP && g.start > tapAt);
     console.log(timeline(trace, { from: t1 - 50, limit: 60 }));
-    console.log(`CH → FX tap notify: refused as "${why[0]}", ${cost} full reconcile(s)`);
-    // Declared, not reported: the tap's refusal is the finding this case exists to make.
+    console.log(
+      `CH → FX tap notify: first tap read at +${Math.round(tapReads[0].start - tapAt)} ms, ` +
+        `${tapRates.length} full reconcile(s), first at ${tapRates.length ? `+${Math.round(tapRates[0].start - tapAt)} ms` : "(none)"}`,
+    );
     console.log(
       report(
         "send emission shape",
@@ -835,13 +856,30 @@ test.describe("T2 shape-change", () => {
         analyze(trace, {
           registration: [...(await paramAddrsOf(page))],
           snapshot: await snapshotOf(page),
-          expectedDrops: [CH1_FX1_TAP],
         }),
       ),
     );
-    expect(why).toEqual(["unregistered"]);
-    expect((await notifyDropsOf(page)).filter((d) => d.addr === CH1_FX1_TAP)).toHaveLength(1);
-    expect(cost).toBe(0);
-    expect(getsOf(trace).filter((g) => g.start > tapAt)).toEqual([]);
+    expect((await notifyDropsOf(page)).filter((d) => d.addr === CH1_FX1_TAP)).toHaveLength(0);
+    expect(tapReads.length).toBeGreaterThan(0);
+    // Scoped, not full — asserted by ORDER rather than by counting whole-device reads.
+    // A count cannot say it here: the settle fires at 300 ms and the idle safety net at
+    // 900 ms, so this case's 1800 ms wait contains a full read either way, and the count
+    // would read the same whether the tap was routed to its channel or not. What only
+    // the scoped route can produce is a repair of the tap that lands BEFORE any
+    // whole-device pass begins.
+    expect(tapRates.length === 0 || tapReads[0].start < tapRates[0].start).toBe(true);
+    // Still never written, and the operator's front-panel PRE is now on screen. The
+    // inspector shows a send's Pre/Post when the WIRE is selected, not the node; the
+    // dispatchEvent is how the other specs get past the overlapping wire-hit bands.
+    expect(setsOf(trace).filter((s) => s.addr === CH1_FX1_TAP)).toHaveLength(0);
+    await page.click("#btn-view-graph");
+    await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.fx1:in"]').dispatchEvent("pointerdown");
+    const preBtn = page
+      .locator("#inspector .param", { hasText: "Pre/Post" })
+      .getByRole("button", { name: "PRE", exact: true });
+    // The selected state of this pair is the `on` class, not aria-pressed (ui/inspector.ts).
+    await expect(preBtn).toHaveClass(/\bon\b/);
+    // Read-only while live, which the follow must not have changed.
+    await expect(preBtn).toBeDisabled();
   });
 });

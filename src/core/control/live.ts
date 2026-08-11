@@ -19,6 +19,7 @@ import {
   collisionOwners,
   formatAddrKey,
   planToCommands,
+  planToFollowOnlyAddrs,
   nameControl,
   planToNameWrites,
 } from "./translate";
@@ -138,9 +139,10 @@ export class LiveSync {
   // numeric snapshot. Registering the addresses without this map would make every
   // rename an UNKNOWN address, which follow.ts escalates to a whole-device read.
   private readonly nameIndex = new Map<number, string>();
-  // The snapshot's writable addresses as numeric [paramId, x, y] triples, built
-  // alongside the snapshot so device-follow registration needs no key re-parse.
-  private writableAddrList: Array<[number, number, number]> = [];
+  // Every address to register for device-side notifies, as numeric [paramId, x, y]
+  // triples, built alongside the snapshot so the registration needs no key re-parse.
+  // Wider than the writable set: names and the read-only follows are in here too.
+  private followAddrList: Array<[number, number, number]> = [];
   // Address → {name, owner node, direct?} for the writable parameter set, built
   // with the snapshot from the same planToCommands pass. Lets device-follow route
   // an incoming notify to a direct apply or a scoped readback with no key re-parse.
@@ -278,11 +280,14 @@ export class LiveSync {
     this.snapshotEpoch++;
   }
 
-  /** Every writable parameter address the current plan maps to, as [paramId, x, y]
-   *  triples — the set to register for device-side change notifies. Captured with
-   *  the snapshot, so it must be called after begin()/resync(). Read-only. */
-  writableAddrs(): Array<[number, number, number]> {
-    return this.writableAddrList;
+  /** Every parameter address to register for device-side change notifies, as
+   *  [paramId, x, y] triples. NOT the writable set, which is what it used to be and
+   *  what the name used to say: it is the writable set plus the name addresses plus
+   *  the read-only follows (`planToFollowOnlyAddrs`) — an address the app only reads
+   *  still has to be registered, or the unit announces a front-panel change to nobody.
+   *  Captured with the snapshot, so it must be called after begin()/resync(). Read-only. */
+  followAddrs(): Array<[number, number, number]> {
+    return this.followAddrList;
   }
 
   /** What the snapshot currently holds, as "paramId:x:y" → value. A copy, and the
@@ -471,7 +476,21 @@ export class LiveSync {
         this.nameIndex.set(addrKey(nc.param, 0, y), node.id);
       }
     }
-    this.writableAddrList = addrs;
+    // Addresses the app READS but never writes, enumerated by translate beside the emit
+    // decision they mirror. Same consumer shape as the loop above: register, and index to
+    // the node whose scoped read repairs the value. The registration is therefore no
+    // longer "the addresses the app writes" — see `followAddrs`.
+    //
+    // Scoped like the emitted set, and by the same `sceneExternal` predicate: under
+    // *Scene only* a whole-device read puts the plan's scene-external values back
+    // afterwards, so following one here would make the notify path and the full-read path
+    // disagree about the same value under the same preference.
+    for (const f of planToFollowOnlyAddrs(model, scope)) {
+      addrs.push([f.param, f.x, f.y]);
+      const direct = (PARAMS as Record<string, ParamSpec>)[f.name].follow === "direct";
+      this.index.set(addrKey(f.param, f.x, f.y), { name: f.name, node: f.node, direct });
+    }
+    this.followAddrList = addrs;
     for (const w of planToNameWrites(model, deviceView ?? plan)) this.nameSnapshot.set(nameKey(w), w.value);
     if (since === undefined) return;
     // Restore what the view could not know: a notify the device sent after the read was

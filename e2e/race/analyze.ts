@@ -353,8 +353,18 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
     //     invisible; and the meter registration, which is invariant 11's subject.
     //   - anything at all with no session: snapshotOf answers null and the clause is
     //     inert rather than reading "no keys" as "the app emits nothing".
-    // The reverse difference is not judged: FOLLOW_USB (848) is appended to the
-    // registration by hand and is in no snapshot, which is the harmless direction.
+    // The reverse difference is not judged, and there are now four families in it:
+    // FOLLOW_USB (848), the name addresses, the CH → FX send taps and Track Count (839)
+    // are all appended to the registration by hand and are in no snapshot, because the
+    // app reads or intercepts them without ever writing them. What the clause below
+    // catches is an EMITTED address that is in no registration — the unit then announces
+    // our own write to nobody. The reverse cannot produce that: an address registered and
+    // not emitted delivers a notify into `DeviceFollow.onNotify`, which routes it by
+    // `lookup` and, for anything it does not recognise, escalates to a full read
+    // (`follow.ts`, the `addr === undefined || addr.node === undefined` branch). So the
+    // outcome is a read, never a dropped announcement. This is a statement about those
+    // two code paths, not a measurement — if a family is ever registered whose notify the
+    // app must NOT act on, that is the case this clause would have to grow to judge.
     if (spec.snapshot) {
       const grown = Object.keys(spec.snapshot).filter((a) => !reg.has(a));
       if (grown.length) {
