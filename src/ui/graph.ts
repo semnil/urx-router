@@ -26,6 +26,7 @@ import { getSettings } from "../core/settings";
 import type { ExportOptions, SaveResult } from "../core/storage";
 import { oscAssign } from "../core/control/translate";
 import { SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
+import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale, notePanelHeight } from "./graph-text";
 import { t } from "../i18n";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -99,8 +100,7 @@ const LABEL_FONT = '"SF Mono", "SFMono-Regular", "Menlo", "Cascadia Code", "Cons
 // fit. A node with a sublabel stacks two tiers within the fixed header height.
 const LABEL_X = 24;
 const LABEL_MAX_W = NODE_W - 25 - 8 - 5 - LABEL_X; // 122
-const MONO_ADVANCE = 0.6; // monospace glyph advance as a fraction of font size
-const LABEL_MIN_SCALE = 0.7;
+
 const LABEL_FS = 12;
 const LABEL_SUB_FS = 9;
 const LABEL_TIER1_Y = 16;
@@ -111,12 +111,6 @@ const LABEL_TIER2_Y = 32;
 // to the header alone and re-expanded with the header button.
 const NOTE_INSET = 9; // well inset from the node's left/right edges
 const NOTE_PAD_X = 10; // text inset inside the well
-const NOTE_PAD_Y = 9; // text inset inside the well (vertical)
-const NOTE_TOP_GAP = 4; // gap between the header seam and the well
-const NOTE_BOT_GAP = 5; // gap between the well and the node's bottom edge
-const NOTE_LINE_H = 15;
-const NOTE_MAX_CHARS = 21;
-const NOTE_MAX_LINES = 6;
 const NOTE_FONT_SIZE = 11;
 
 export type ThemeName = "dark" | "light";
@@ -1006,13 +1000,13 @@ export class Graph {
     if (node.sublabel) {
       // Two-tier faceplate label: the node name, then a dim secondary legend
       // beneath it, so a long name fits the fixed header height.
-      const s1 = fitScale(primary, LABEL_FS, 1);
+      const s1 = fitScale(primary, LABEL_FS, 1, LABEL_MAX_W);
       g.append(labelText(primary, LABEL_TIER1_Y, LABEL_FS * s1, s1, p.label, 1));
-      const s2 = fitScale(node.sublabel, LABEL_SUB_FS, 0.5);
+      const s2 = fitScale(node.sublabel, LABEL_SUB_FS, 0.5, LABEL_MAX_W);
       g.append(labelText(node.sublabel, LABEL_TIER2_Y, LABEL_SUB_FS * s2, 0.5 * s2, p.label, 0.6));
     } else {
       // Single line, scaled down only when it would otherwise run under the button.
-      const s = fitScale(primary, LABEL_FS, 1);
+      const s = fitScale(primary, LABEL_FS, 1, LABEL_MAX_W);
       g.append(labelText(primary, NODE_H / 2 + 1, LABEL_FS * s, s, p.label, 1));
     }
 
@@ -1173,16 +1167,7 @@ export class Graph {
 
   /** Clipped, wrapped lines for a node's note, or [] when it carries none. */
   private noteLines(id: string): string[] {
-    const raw = (this.plan.notes?.[id] ?? "").trim();
-    if (!raw) return [];
-    const all = wrapNote(raw, NOTE_MAX_CHARS);
-    if (all.length <= NOTE_MAX_LINES) return all;
-    const lines = all.slice(0, NOTE_MAX_LINES);
-    let last = lines[NOTE_MAX_LINES - 1].replace(/\s+$/, "");
-    // Trim until the ellipsis fits the cell budget (one cell wide).
-    while (last && noteWidth(last) + 1 > NOTE_MAX_CHARS) last = Array.from(last).slice(0, -1).join("");
-    lines[NOTE_MAX_LINES - 1] = `${last}…`;
-    return lines;
+    return clipNote(this.plan.notes?.[id] ?? "");
   }
 
   // Header control center, kept left of the right-edge jack hit zone.
@@ -2520,75 +2505,6 @@ function makeGlowDefs(): SVGDefsElement {
   return defs;
 }
 
-// Full-width (CJK, kana, fullwidth forms, emoji) glyphs occupy two monospace
-// cells; everything else one. Lets the wrap measure mixed JP/ASCII notes by
-// rendered width instead of raw character count.
-function cellW(ch: string): number {
-  const c = ch.codePointAt(0) ?? 0;
-  const wide =
-    (c >= 0x1100 && c <= 0x115f) ||
-    (c >= 0x2e80 && c <= 0x303e) ||
-    (c >= 0x3041 && c <= 0x33ff) ||
-    (c >= 0x3400 && c <= 0x4dbf) ||
-    (c >= 0x4e00 && c <= 0x9fff) ||
-    (c >= 0xa000 && c <= 0xa4cf) ||
-    (c >= 0xac00 && c <= 0xd7a3) ||
-    (c >= 0xf900 && c <= 0xfaff) ||
-    (c >= 0xfe30 && c <= 0xfe4f) ||
-    (c >= 0xff00 && c <= 0xff60) ||
-    (c >= 0xffe0 && c <= 0xffe6) ||
-    (c >= 0x1f300 && c <= 0x1faff) ||
-    (c >= 0x20000 && c <= 0x3fffd);
-  return wide ? 2 : 1;
-}
-
-function noteWidth(s: string): number {
-  let w = 0;
-  for (const ch of s) w += cellW(ch);
-  return w;
-}
-
-function notePanelHeight(lines: string[]): number {
-  return NOTE_TOP_GAP + NOTE_PAD_Y * 2 + lines.length * NOTE_LINE_H + NOTE_BOT_GAP;
-}
-
-// Wrap a note to a cell-width budget, hard-splitting tokens too wide to fit
-// (the only break CJK allows) and preserving the line breaks the user typed.
-function wrapNote(text: string, maxUnits: number): string[] {
-  const out: string[] = [];
-  for (const para of text.replace(/\r/g, "").split("\n")) {
-    if (para.trim() === "") {
-      out.push("");
-      continue;
-    }
-    let line = "";
-    let lineW = 0;
-    const flush = (): void => {
-      out.push(line);
-      line = "";
-      lineW = 0;
-    };
-    for (const word of para.split(/\s+/).filter(Boolean)) {
-      if (noteWidth(word) > maxUnits) {
-        if (line) flush();
-        for (const ch of word) {
-          const cw = cellW(ch);
-          if (lineW + cw > maxUnits) flush();
-          line += ch;
-          lineW += cw;
-        }
-        continue;
-      }
-      const sep = line ? 1 : 0;
-      if (lineW + sep + noteWidth(word) > maxUnits) flush();
-      line = line ? `${line} ${word}` : word;
-      lineW += sep + noteWidth(word);
-    }
-    out.push(line);
-  }
-  return out;
-}
-
 /** One label line at the fixed left inset, vertically centered on `y`. */
 function labelText(
   text: string,
@@ -2611,13 +2527,6 @@ function labelText(
   el.style.userSelect = "none";
   el.textContent = text;
   return el;
-}
-
-// Shrink factor that keeps a label clear of the header button. Monospace, so the
-// rendered width is estimated from the cell count (CJK glyphs span two cells).
-function fitScale(text: string, fontSize: number, letterSpacing: number): number {
-  const est = noteWidth(text) * (fontSize * MONO_ADVANCE + letterSpacing);
-  return est > LABEL_MAX_W ? Math.max(LABEL_MIN_SCALE, LABEL_MAX_W / est) : 1;
 }
 
 // The decorative half of a jack: the socket ring and the pin that lights inside it

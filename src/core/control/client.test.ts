@@ -2,22 +2,31 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
 
-// client.ts drives the device through platform.vdGet / vdSet, so mock those: the
-// rest of platform.ts (file IO, dialogs) is untouched here.
-vi.mock("../platform", () => ({ vdGet: vi.fn(), vdSet: vi.fn() }));
+// client.ts drives the device through platform.vdGet / vdSet (numbers) and
+// vdGetStr / vdSetStr (the CH SETTING names), so mock those four: the rest of
+// platform.ts (file IO, dialogs) is untouched here.
+vi.mock("../platform", () => ({ vdGet: vi.fn(), vdSet: vi.fn(), vdGetStr: vi.fn(), vdSetStr: vi.fn() }));
 
-import { vdGet, vdSet } from "../platform";
+import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import {
   compareCounts,
+  compareNames,
+  comparePlan,
+  diffNames,
   diffPlan,
   dryRun,
   formatCompareReport,
   formatWriteReport,
+  rateAction,
+  readClockState,
+  readFollowUsb,
   sendCommands,
   sendConverging,
+  sendNames,
+  setFollowUsb,
 } from "./client";
-import { planToCommands, type VdCommand } from "./translate";
-import { PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
+import { planToCommands, planToNameWrites, type VdCommand } from "./translate";
+import { PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { PORT_REF_NONE } from "./vd";
 
 const model = getModel("URX44V");
@@ -27,6 +36,15 @@ function basePlan(): Plan {
   ensureFixedConnections(model, plan);
   return plan;
 }
+
+// A plan that actually implies name writes: an unnamed node emits none.
+function namedPlan(): Plan {
+  const plan = basePlan();
+  for (const node of model.nodes) plan.nodeNames[node.id] = `N-${node.id}`;
+  return plan;
+}
+
+const aborted = (): AbortSignal => AbortSignal.abort();
 
 // The device's "current state" table = exactly what emit would write for a plan,
 // so vdGet returns the plan's own values: a device already matching the plan.
@@ -39,6 +57,66 @@ function deviceTableFor(plan: Plan): Map<string, number> {
 beforeEach(() => {
   vi.mocked(vdGet).mockReset();
   vi.mocked(vdSet).mockReset();
+  vi.mocked(vdGetStr).mockReset();
+  vi.mocked(vdSetStr).mockReset();
+});
+
+describe("clock state", () => {
+  // Both halves decide whether a rate write can stick, so the read is one call
+  // that either answers or rejects — a partial answer is the failure it prevents.
+  it("reads the Follow USB policy and the running rate together", async () => {
+    vi.mocked(vdGet).mockImplementation((id) =>
+      Promise.resolve(id === PARAMS.FOLLOW_USB.id ? 1 : id === PARAMS.SAMPLE_RATE.id ? 48000 : 0),
+    );
+    expect(await readClockState()).toEqual({ followUsb: true, sampleRate: 48000 });
+  });
+
+  it("reports Follow USB off as false rather than the raw value", async () => {
+    vi.mocked(vdGet).mockResolvedValue(0);
+    expect(await readClockState()).toEqual({ followUsb: false, sampleRate: 0 });
+    expect(await readFollowUsb()).toBe(false);
+  });
+
+  it("treats any non-zero Follow USB value as on", async () => {
+    vi.mocked(vdGet).mockResolvedValue(2);
+    expect(await readFollowUsb()).toBe(true);
+  });
+
+  it("rejects rather than reporting half a clock state when the rate read fails", async () => {
+    vi.mocked(vdGet).mockImplementation((id) =>
+      id === PARAMS.FOLLOW_USB.id ? Promise.resolve(1) : Promise.reject(new Error("timeout")),
+    );
+    await expect(readClockState()).rejects.toThrow("timeout");
+  });
+
+  it("rejects when the policy read fails, without reading the rate", async () => {
+    vi.mocked(vdGet).mockRejectedValue(new Error("timeout"));
+    await expect(readClockState()).rejects.toThrow("timeout");
+    expect(vi.mocked(vdGet)).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes Follow USB as 1 / 0 on its own address", async () => {
+    vi.mocked(vdSet).mockResolvedValue(undefined);
+    await setFollowUsb(true);
+    await setFollowUsb(false);
+    expect(vi.mocked(vdSet).mock.calls).toEqual([
+      [PARAMS.FOLLOW_USB.id, 0, 0, 1],
+      [PARAMS.FOLLOW_USB.id, 0, 0, 0],
+    ]);
+  });
+
+  it("propagates a failed Follow USB write rather than reporting success", async () => {
+    vi.mocked(vdSet).mockRejectedValue(new Error("nak"));
+    await expect(setFollowUsb(true)).rejects.toThrow("nak");
+  });
+
+  // The matrix the rate three-way prompt is built from.
+  it("decides what a rate write must settle before it is sent", () => {
+    expect(rateAction(48000, { followUsb: false, sampleRate: 48000 })).toBe("proceed");
+    expect(rateAction(48000, { followUsb: true, sampleRate: 48000 })).toBe("proceed");
+    expect(rateAction(96000, { followUsb: false, sampleRate: 48000 })).toBe("confirmReclock");
+    expect(rateAction(96000, { followUsb: true, sampleRate: 48000 })).toBe("askChoice");
+  });
 });
 
 describe("dryRun", () => {
@@ -272,9 +350,12 @@ describe("formatWriteReport", () => {
     expect(md).toContain("device has unreadable");
   });
 
-  it("falls back to a generic reason when an outcome has no error string", () => {
-    const md = formatWriteReport("URX44V", [{ name: "CH2 EQ" }], []);
-    expect(md).toContain("- CH2 EQ — unknown error");
+  // Both shapes are "it failed and said nothing": an outcome carrying no error at
+  // all, and one carrying an empty message — which is what a rejection with no
+  // reason leaves behind, and which used to print a bare dash.
+  it("falls back to a generic reason for a failure that named none", () => {
+    expect(formatWriteReport("URX44V", [{ name: "CH2 EQ" }], [])).toContain("- CH2 EQ — unknown error");
+    expect(formatWriteReport("URX44V", [{ name: "CH2 EQ", error: "" }], [])).toContain("- CH2 EQ — unknown error");
   });
 });
 
@@ -354,5 +435,254 @@ describe("formatCompareReport", () => {
     const md = formatCompareReport("URX44V", [entry("CH1 PAN", 140, 512, 512)], []);
     expect(md).not.toContain("## Shared device settings");
     expect(md).not.toContain("shared by more than one node");
+  });
+});
+
+describe("cancellation", () => {
+  // Every sweep over the device checks the signal per command, so a cancel takes
+  // effect within one round trip instead of after the whole plan.
+  it("stops a read sweep before the first round trip", async () => {
+    await expect(diffPlan(model, basePlan(), { signal: aborted() })).rejects.toThrow();
+    expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
+  });
+
+  it("stops a write sweep before the first round trip", async () => {
+    await expect(sendCommands(planToCommands(model, basePlan()), aborted())).rejects.toThrow();
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+
+  it("stops a comparison before the first round trip", async () => {
+    await expect(comparePlan(model, basePlan(), aborted())).rejects.toThrow();
+    expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
+  });
+
+  it("stops a sweep partway once the signal fires", async () => {
+    const ctl = new AbortController();
+    let reads = 0;
+    vi.mocked(vdGet).mockImplementation(() => {
+      if (++reads === 3) ctl.abort();
+      return Promise.resolve(0);
+    });
+    await expect(diffPlan(model, basePlan(), { signal: ctl.signal })).rejects.toThrow();
+    expect(reads).toBe(3);
+  });
+
+  // The converge loop re-checks between rounds, so a cancel does not buy another
+  // full re-send of the plan.
+  it("stops the converge loop between rounds", async () => {
+    const ctl = new AbortController();
+    const plan = basePlan();
+    const commands = planToCommands(model, plan);
+    vi.mocked(vdGet).mockResolvedValue(-1);
+    vi.mocked(vdSet).mockImplementation(() => {
+      ctl.abort();
+      return Promise.resolve();
+    });
+    await expect(
+      sendConverging(model, plan, {
+        initialDiffs: [{ command: commands[0], current: -1 }],
+        settleMs: 0,
+        signal: ctl.signal,
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("diffNames", () => {
+  it("keeps only the names the device does not already have", async () => {
+    const plan = namedPlan();
+    const writes = planToNameWrites(model, plan);
+    expect(writes.length).toBeGreaterThan(1);
+    // The device agrees with everything but the first name.
+    vi.mocked(vdGetStr).mockImplementation((param, _x, y) =>
+      Promise.resolve(
+        param === writes[0].param && y === writes[0].y
+          ? "something else"
+          : (writes.find((w) => w.param === param && w.y === y)?.value ?? ""),
+      ),
+    );
+    const { writes: out, errors } = await diffNames(model, plan);
+    expect(errors).toEqual([]);
+    expect(out).toEqual([writes[0]]);
+  });
+
+  it("reports nothing to write when every name already matches", async () => {
+    const plan = namedPlan();
+    const writes = planToNameWrites(model, plan);
+    vi.mocked(vdGetStr).mockImplementation((param, _x, y) =>
+      Promise.resolve(writes.find((w) => w.param === param && w.y === y)?.value ?? ""),
+    );
+    expect(await diffNames(model, plan)).toEqual({ writes: [], errors: [] });
+  });
+
+  // The device pads a name out to its field width; a plan name that fits is not a
+  // difference just because the device stores it with trailing blanks.
+  it("compares against the device value with its padding trimmed", async () => {
+    const plan = namedPlan();
+    const writes = planToNameWrites(model, plan);
+    vi.mocked(vdGetStr).mockImplementation((param, _x, y) => {
+      const value = writes.find((w) => w.param === param && w.y === y)?.value ?? "";
+      return Promise.resolve(`${value}    `);
+    });
+    expect((await diffNames(model, plan)).writes).toEqual([]);
+  });
+
+  // Matching diffPlan: an unreadable name is reported and left out, so the caller
+  // aborts rather than writing over a name it could not read.
+  it("leaves an unreadable name out of the writes and records the error", async () => {
+    const plan = namedPlan();
+    const writes = planToNameWrites(model, plan);
+    vi.mocked(vdGetStr).mockImplementation((param, _x, y) =>
+      param === writes[0].param && y === writes[0].y
+        ? Promise.reject(new Error("timeout"))
+        : Promise.resolve("something else"),
+    );
+    const { writes: out, errors } = await diffNames(model, plan);
+    expect(errors).toEqual([`name ${writes[0].param}:${writes[0].y}: timeout`]);
+    expect(out).toHaveLength(writes.length - 1);
+    expect(out).not.toContainEqual(writes[0]);
+  });
+
+  it("renders a non-Error rejection as a string rather than [object Object]", async () => {
+    const plan = namedPlan();
+    const writes = planToNameWrites(model, plan);
+    vi.mocked(vdGetStr).mockRejectedValue("link-down");
+    const { errors } = await diffNames(model, plan);
+    expect(errors).toHaveLength(writes.length);
+    expect(errors[0]).toBe(`name ${writes[0].param}:${writes[0].y}: link-down`);
+  });
+
+  it("reads nothing for a plan that names no node", async () => {
+    expect(await diffNames(model, basePlan())).toEqual({ writes: [], errors: [] });
+    expect(vi.mocked(vdGetStr)).not.toHaveBeenCalled();
+  });
+});
+
+describe("sendNames", () => {
+  it("writes every name through the string transport", async () => {
+    vi.mocked(vdSetStr).mockResolvedValue(undefined);
+    const writes = planToNameWrites(model, namedPlan());
+    const outcomes = await sendNames(writes);
+    expect(outcomes).toHaveLength(writes.length);
+    expect(outcomes.every((o) => o.ok)).toBe(true);
+    expect(vi.mocked(vdSetStr).mock.calls[0]).toEqual([writes[0].param, 0, writes[0].y, writes[0].value]);
+  });
+
+  // Names are idempotent and independent, so unlike sendCommands a failure does
+  // not stop the rest: the write that failed is the only one reported failed.
+  it("continues past a failure rather than skipping the rest", async () => {
+    const writes = planToNameWrites(model, namedPlan());
+    vi.mocked(vdSetStr).mockImplementation((param, _x, y) =>
+      param === writes[0].param && y === writes[0].y ? Promise.reject(new Error("nak")) : Promise.resolve(),
+    );
+    const outcomes = await sendNames(writes);
+    expect(outcomes[0]).toEqual({ write: writes[0], ok: false, error: "nak" });
+    expect(outcomes.slice(1).every((o) => o.ok)).toBe(true);
+    expect(vi.mocked(vdSetStr)).toHaveBeenCalledTimes(writes.length);
+  });
+
+  it("renders a non-Error rejection as a string", async () => {
+    vi.mocked(vdSetStr).mockRejectedValue("link-down");
+    const [outcome] = await sendNames(planToNameWrites(model, namedPlan()));
+    expect(outcome.error).toBe("link-down");
+  });
+
+  it("writes nothing when there is nothing to write", async () => {
+    expect(await sendNames([])).toEqual([]);
+    expect(vi.mocked(vdSetStr)).not.toHaveBeenCalled();
+  });
+});
+
+describe("comparePlan", () => {
+  // A comparison that returns "matches" instantly is otherwise indistinguishable
+  // from one that read nothing, so every parameter is kept — matched or not.
+  it("keeps every parameter it read, not only the mismatches", async () => {
+    const plan = basePlan();
+    const table = deviceTableFor(plan);
+    vi.mocked(vdGet).mockImplementation((id, x, y) => Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0));
+    const { entries, errors } = await comparePlan(model, plan);
+    expect(errors).toEqual([]);
+    expect(entries).toHaveLength(planToCommands(model, plan).length);
+    expect(entries.every((e) => e.match)).toBe(true);
+  });
+
+  it("records the device's value beside the plan's on a mismatch", async () => {
+    const plan = basePlan();
+    const target = planToCommands(model, plan)[0];
+    const table = deviceTableFor(plan);
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      const k = `${id}:${x}:${y}`;
+      return Promise.resolve(k === `${target.paramId}:${target.x}:${target.y}` ? 12345 : (table.get(k) ?? 0));
+    });
+    const { entries } = await comparePlan(model, plan);
+    const mismatch = entries.filter((e) => !e.match);
+    expect(mismatch).toHaveLength(1);
+    expect(mismatch[0].device).toBe(12345);
+    expect(mismatch[0].command.vdValue).toBe(target.vdValue);
+  });
+
+  // Reads all — no stopOnError — so one dead parameter does not truncate the audit,
+  // and "matched" stays distinct from "could not be read".
+  it("collects a read failure and keeps sweeping the rest", async () => {
+    const plan = basePlan();
+    const commands = planToCommands(model, plan);
+    const table = deviceTableFor(plan);
+    vi.mocked(vdGet).mockImplementation((id, x, y) =>
+      id === commands[0].paramId && x === commands[0].x && y === commands[0].y
+        ? Promise.reject(new Error("timeout"))
+        : Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0),
+    );
+    const { entries, errors } = await comparePlan(model, plan);
+    expect(errors).toEqual([`${commands[0].name}: timeout`]);
+    expect(entries).toHaveLength(commands.length - 1);
+    expect(vi.mocked(vdGet)).toHaveBeenCalledTimes(commands.length);
+  });
+
+  it("renders a non-Error rejection as a string", async () => {
+    vi.mocked(vdGet).mockRejectedValue("link-down");
+    const { entries, errors } = await comparePlan(model, basePlan());
+    expect(entries).toEqual([]);
+    expect(errors[0]).toContain(": link-down");
+  });
+});
+
+describe("compareNames", () => {
+  it("keeps every name it read, matched or not, with the device's value", async () => {
+    const plan = namedPlan();
+    const writes = planToNameWrites(model, plan);
+    vi.mocked(vdGetStr).mockImplementation((param, _x, y) =>
+      Promise.resolve(
+        param === writes[0].param && y === writes[0].y
+          ? "DEVICE"
+          : `${writes.find((w) => w.param === param && w.y === y)?.value ?? ""}  `,
+      ),
+    );
+    const { entries, errors } = await compareNames(model, plan);
+    expect(errors).toEqual([]);
+    expect(entries).toHaveLength(writes.length);
+    expect(entries[0]).toEqual({ write: writes[0], device: "DEVICE", match: false });
+    expect(entries.slice(1).every((e) => e.match)).toBe(true);
+  });
+
+  it("collects a read failure and keeps sweeping the rest", async () => {
+    const plan = namedPlan();
+    const writes = planToNameWrites(model, plan);
+    vi.mocked(vdGetStr).mockImplementation((param, _x, y) =>
+      param === writes[0].param && y === writes[0].y ? Promise.reject(new Error("timeout")) : Promise.resolve(""),
+    );
+    const { entries, errors } = await compareNames(model, plan);
+    expect(errors).toEqual([`name ${writes[0].param}:${writes[0].y}: timeout`]);
+    expect(entries).toHaveLength(writes.length - 1);
+  });
+
+  it("renders a non-Error rejection as a string", async () => {
+    vi.mocked(vdGetStr).mockRejectedValue("link-down");
+    const { errors } = await compareNames(model, namedPlan());
+    expect(errors[0]).toContain(": link-down");
+  });
+
+  it("reads nothing for a plan that names no node", async () => {
+    expect(await compareNames(model, basePlan())).toEqual({ entries: [], errors: [] });
+    expect(vi.mocked(vdGetStr)).not.toHaveBeenCalled();
   });
 });

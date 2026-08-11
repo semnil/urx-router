@@ -547,7 +547,10 @@ export class LiveSync {
         // Route it into the same teardown a direct write failure takes.
         const failed = r.outcomes.find(reachedAndFailed);
         if (failed || r.readErrors.length) {
-          throw new Error(failed?.error ?? r.readErrors[0] ?? "converge failed");
+          // `||` throughout: an empty message is what a rejection with no reason
+          // leaves behind, and `new Error("")` here would end the session with a
+          // teardown that names nothing.
+          throw new Error(failed?.error || r.readErrors[0] || "converge failed");
         }
         this.capture(converged, since);
       }

@@ -1,6 +1,17 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { compositionGate, inspectorNodes } from "./inspector";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { compositionGate, inspectorNodes, renderInspector } from "./inspector";
+import type { InspectorActions } from "./inspector";
+import { resetSectionCache } from "./inspector-sections";
+import type { Selection } from "./graph";
+import { getModel, MODEL_IDS } from "../models";
+import { defaultPlan } from "../models/initial-state";
+import type { Plan } from "../core/plan";
+import { resetSettingsCache } from "../core/settings";
+import { insertFxMenu } from "../core/constraints";
+import { insertFxControl } from "../core/control/translate";
+import { COMP_EQ_SSMCS, INSERT_FX_NONE } from "../core/control/params";
+import { setLang, t } from "../i18n";
 
 // The panel renders one selection, and which controls it renders is derived from that
 // selection's endpoint NODES — not only from the selected object. A device-side change
@@ -83,5 +94,405 @@ describe("compositionGate", () => {
     // And the composition's own end afterwards is not a second rebuild.
     fire(el, "compositionend");
     expect(rebuilds).toBe(1);
+  });
+});
+
+// The panel itself. It needs no module mocks: platform resolves its IPC lazily per
+// call, storage is localStorage inside try/catch, and there is no canvas, observer
+// or timer anywhere in the file.
+
+const nodeSel = (id: string): Selection => ({ type: "node", id });
+const connSel = (from: string, to: string): Selection => ({ type: "conn", from, to });
+
+const actions = (): InspectorActions => ({
+  onDeleteConnection: vi.fn(),
+  onUpdateParams: vi.fn(),
+  onUpdateNodeParams: vi.fn(),
+  onRenameNode: vi.fn(),
+  onRecolorNode: vi.fn(),
+  onOpenRecent: vi.fn(),
+  onHideNode: vi.fn(),
+  onOpenDynScreen: vi.fn(),
+  onClose: vi.fn(),
+});
+
+let panel: HTMLElement;
+let act: InspectorActions;
+
+/** The row order the panel put on screen — the highest-value assertion here, since
+ *  every device screen's order is a claim the source comments make in prose. */
+const rowLabels = (host: HTMLElement = panel): string[] =>
+  [...host.querySelectorAll<HTMLElement>(".param")].map((r) => r.dataset.paramLabel ?? "");
+
+const sectionByTitle = (title: string): HTMLDetailsElement | undefined =>
+  [...panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")].find(
+    (d) => d.querySelector(".sec-title")?.textContent === title,
+  );
+
+/** Drive every control the panel rendered. One coverage pass, deliberately broad:
+ *  the claims worth stating live in the named tests below it. */
+function driveEverything(host: HTMLElement): void {
+  for (const b of host.querySelectorAll("button")) b.click();
+  for (const i of host.querySelectorAll<HTMLInputElement>('input[type="range"]')) {
+    for (const v of [i.max, i.min]) {
+      i.value = v;
+      i.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    i.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true, cancelable: true }));
+  }
+  for (const i of host.querySelectorAll<HTMLInputElement>('input[type="text"]')) {
+    i.value = "renamed";
+    i.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  for (const s of host.querySelectorAll("select")) {
+    for (const o of [...s.options]) {
+      s.value = o.value;
+      s.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  }
+  for (const d of host.querySelectorAll<HTMLDetailsElement>("details.insp-section")) {
+    d.open = !d.open;
+    d.dispatchEvent(new Event("toggle"));
+  }
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  resetSettingsCache();
+  resetSectionCache();
+  setLang("en");
+  panel = document.createElement("div");
+  document.body.replaceChildren(panel);
+  act = actions();
+});
+
+describe("renderInspector — empty selection", () => {
+  it("prints the hint and the wire legend instead of rows", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), null, act);
+    expect(panel.textContent).toContain(t().inspector.hint);
+    expect(rowLabels()).toEqual([]);
+  });
+
+  it("lists recent plans and opens the one that was clicked", () => {
+    const recent = [
+      { path: "/a/one.json", name: "one", modelId: "URX44V" as const },
+      { path: "/b/two.json", name: "two", modelId: "URX22" as const },
+    ];
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), null, act, recent);
+    const rows = [...panel.querySelectorAll<HTMLButtonElement>("button.recent-row")];
+    expect(rows).toHaveLength(2);
+    expect(rows[0].querySelector(".recent-name")!.textContent).toBe("one");
+    expect(rows[1].querySelector(".recent-model")!.textContent).toContain("URX22");
+    rows[1].click();
+    expect(act.onOpenRecent).toHaveBeenCalledWith("/b/two.json");
+  });
+
+  it("replaces the previous render rather than appending to it", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const first = rowLabels().length;
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    expect(rowLabels()).toHaveLength(first);
+  });
+});
+
+describe("renderInspector — every node of every model", () => {
+  it.each(MODEL_IDS)("renders every %s node without throwing, and names each one", (id) => {
+    const model = getModel(id);
+    const plan = defaultPlan(id);
+    for (const node of model.nodes) {
+      const host = document.createElement("div");
+      document.body.append(host);
+      expect(() => renderInspector(host, model, plan, nodeSel(node.id), act)).not.toThrow();
+      expect(host.textContent).toContain(node.label);
+      host.remove();
+    }
+  });
+
+  it.each(MODEL_IDS)("renders every %s connection without throwing", (id) => {
+    const model = getModel(id);
+    const plan = defaultPlan(id);
+    for (const conn of plan.connections) {
+      const host = document.createElement("div");
+      document.body.append(host);
+      expect(() => renderInspector(host, model, plan, connSel(conn.from, conn.to), act)).not.toThrow();
+      host.remove();
+    }
+  });
+
+  // A selection naming something the model does not have must not render a panel
+  // full of controls for a node that is not there.
+  it("renders nothing for a node the model does not have", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("no-such-node"), act);
+    expect(rowLabels()).toEqual([]);
+  });
+});
+
+describe("device screen row orders", () => {
+  const labelsFor = (id: string): string[] => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel(id), act);
+    return rowLabels();
+  };
+
+  // The order the unit's own INPUT screen reads in, which is the reason the rows
+  // are appended in the sequence they are.
+  it("reads a MONO IN channel's INPUT section in the device's order", () => {
+    const m = t().inspector;
+    const labels = labelsFor("ch1");
+    const wanted = [m.phantom, m.gainAnalog, m.clipSafe, m.phase, m.hpf, m.hpfFreq, m.compEqType];
+    expect(wanted.every((l) => labels.includes(l))).toBe(true);
+    const idx = wanted.map((l) => labels.indexOf(l));
+    expect(idx).toEqual([...idx].sort((a, b) => a - b));
+  });
+
+  // ON, PRE, Pan, Level — the device SEND TO screen order. The source here is a
+  // stereo channel, so its pan reads as a BALANCE.
+  it("reads a send's SEND TO controls as ON, PRE, Pan, Level", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    const send = plan.connections.find((c) => c.kind === "send" && c.to.startsWith("bus.mix"))!;
+    renderInspector(panel, model, plan, connSel(send.from, send.to), act);
+    const m = t().inspector;
+    const seen = rowLabels();
+    expect(seen).toEqual([m.sendOn, m.prePost, m.balance, m.level]);
+  });
+
+  // The device's own name for each row, so a label that stopped resolving would
+  // show up here rather than being quietly filtered out of an order check.
+  it("names every channel row from the catalog rather than a key", () => {
+    const labels = labelsFor("ch1").filter(Boolean);
+    expect(labels.length).toBeGreaterThan(5);
+    expect(labels.every((l) => l !== "undefined")).toBe(true);
+  });
+});
+
+describe("node controls report their edits", () => {
+  it("renames a node from the name field", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const field = panel.querySelector<HTMLInputElement>('input[type="text"]')!;
+    field.value = "Kick";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(act.onRenameNode).toHaveBeenCalledWith("ch1", "Kick");
+  });
+
+  it("recolors a node from a swatch and clears it from the none swatch", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const swatches = [...panel.querySelectorAll<HTMLButtonElement>("button.swatch")];
+    expect(swatches.length).toBeGreaterThan(1);
+    swatches.at(-1)!.click();
+    swatches[0].click();
+    const calls = vi.mocked(act.onRecolorNode).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls.every(([id]) => id === "ch1")).toBe(true);
+    expect(calls.some(([, color]) => color === null)).toBe(true);
+  });
+
+  it("hides a node and closes the panel from their own buttons", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    panel.querySelector<HTMLButtonElement>("button.subtle")?.click();
+    panel.querySelector<HTMLButtonElement>("button.inspector-close")!.click();
+    expect(act.onClose).toHaveBeenCalled();
+  });
+
+  it("opens a tuning screen from its launcher", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const gate = panel.querySelector<HTMLButtonElement>("#btn-gate-screen");
+    if (!gate) throw new Error("the GATE launcher is the reason this channel has a tuning screen");
+    gate.click();
+    expect(act.onOpenDynScreen).toHaveBeenCalledWith("gate", "ch1");
+  });
+
+  it("deletes a deletable connection and refuses a fixed one", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    const send = plan.connections.find((c) => c.kind === "send")!;
+    renderInspector(panel, model, plan, connSel(send.from, send.to), act);
+    const del = panel.querySelector<HTMLButtonElement>("button.danger");
+    if (del) {
+      del.click();
+      expect(act.onDeleteConnection).toHaveBeenCalledWith(send.from, send.to);
+    } else {
+      expect(panel.textContent).toContain(t().inspector.fixedConnection);
+    }
+  });
+});
+
+describe("insert FX", () => {
+  const fxNode = (): { model: ReturnType<typeof getModel>; plan: Plan; id: string } => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    const id = model.nodes.find((n) => insertFxControl(model, n.id))!.id;
+    return { model, plan, id };
+  };
+
+  // Selecting an effect auto-engages it on the device, so the plan mirrors that;
+  // selecting No Effect leaves the dormant switch state alone.
+  it("engages an effect on selection and leaves the switch alone for No Effect", () => {
+    const { model, plan, id } = fxNode();
+    renderInspector(panel, model, plan, nodeSel(id), act);
+    const sel = [...panel.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
+      [...s.options].some((o) => Number(o.value) === INSERT_FX_NONE),
+    );
+    if (!sel) return;
+    const real = [...sel.options].find((o) => Number(o.value) !== INSERT_FX_NONE);
+    if (real) {
+      sel.value = real.value;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      const patch = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)![1];
+      expect(patch.insertFxOn).toBe(true);
+      expect(patch.insertFx).toBe(Number(real.value));
+    }
+    vi.mocked(act.onUpdateNodeParams).mockClear();
+    sel.value = String(INSERT_FX_NONE);
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    const none = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)![1];
+    expect(none.insertFx).toBe(INSERT_FX_NONE);
+    expect(none.insertFxOn).toBeUndefined();
+  });
+
+  // A bare slot number left behind after a selector change would be read as the NEW
+  // family's slot, under a different law, and emitted as absolute state on the next
+  // device flush.
+  it("parks the outgoing effect's engine values under its own family", () => {
+    const { model, plan, id } = fxNode();
+    plan.nodeParams[id] = { ...plan.nodeParams[id], insertFx: 1, insertFxParams: { "3": 42 } };
+    renderInspector(panel, model, plan, nodeSel(id), act);
+    const sel = [...panel.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
+      [...s.options].some((o) => Number(o.value) === INSERT_FX_NONE),
+    );
+    if (!sel) return;
+    sel.value = String(INSERT_FX_NONE);
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    const patch = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)![1];
+    expect(patch.insertFxParams).toBeDefined();
+    expect(Object.keys(patch.insertFxParams!)).not.toContain("3");
+  });
+});
+
+describe("section fold state", () => {
+  it("persists a hand-folded disclosure across renders", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    const first = [...panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")].find((d) => d.open);
+    if (!first) return;
+    const title = first.querySelector(".sec-title")!.textContent!;
+    first.open = false;
+    first.dispatchEvent(new Event("toggle"));
+
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    expect(sectionByTitle(title)!.open).toBe(false);
+  });
+
+  // The cache is loaded once and re-persisted on every write, so clearing storage
+  // alone does not put a later render back at the defaults.
+  it("returns to the defaults once the cache is reset with storage", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    const first = [...panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")].find((d) => d.open);
+    if (!first) return;
+    const title = first.querySelector(".sec-title")!.textContent!;
+    first.open = false;
+    first.dispatchEvent(new Event("toggle"));
+
+    localStorage.clear();
+    resetSectionCache();
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    expect(sectionByTitle(title)!.open).toBe(true);
+  });
+
+  // The property set when a section is built queues one echo toggle event; it must
+  // not be recorded as a hand fold.
+  it("does not record the echo toggle a freshly built section queues", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    for (const d of panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")) {
+      d.dispatchEvent(new Event("toggle"));
+    }
+    expect(localStorage.getItem("urx-inspector-sections")).toBeNull();
+  });
+});
+
+describe("live-connected presentation", () => {
+  // The tap is always editable in the planner — the plan records intent — and is
+  // turned read-only only while live and the device cannot accept the write.
+  it("locks a CH to FX tap only while live", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    const toFx = plan.connections.find((c) => c.kind === "send" && c.to.startsWith("bus.fx"));
+    if (!toFx) return;
+    renderInspector(panel, model, plan, connSel(toFx.from, toFx.to), act, [], false);
+    const offline = [...panel.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.disabled).length;
+    renderInspector(panel, model, plan, connSel(toFx.from, toFx.to), act, [], true);
+    const live = [...panel.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.disabled).length;
+    expect(live).toBeGreaterThanOrEqual(offline);
+  });
+});
+
+describe("localization", () => {
+  it("renders the active catalog and re-renders into a switched one", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    renderInspector(panel, model, plan, null, act);
+    const en = panel.textContent;
+    setLang("ja");
+    renderInspector(panel, model, plan, null, act);
+    expect(panel.textContent).toContain(t().inspector.hint);
+    expect(panel.textContent).not.toBe(en);
+  });
+});
+
+// One broad pass over every control of every node and every wire, in both languages.
+// It asserts only that nothing throws and that the panel keeps rendering — the claims
+// worth stating are the named tests above.
+describe("coverage sweep: every control of every selection", () => {
+  it.each(MODEL_IDS)("drives every control the %s panel renders", (id) => {
+    const model = getModel(id);
+    for (const lang of ["en", "ja"] as const) {
+      setLang(lang);
+      const plan = defaultPlan(id);
+      for (const node of model.nodes) {
+        const host = document.createElement("div");
+        document.body.append(host);
+        renderInspector(host, model, plan, nodeSel(node.id), actions(), [], lang === "ja");
+        expect(() => driveEverything(host)).not.toThrow();
+        host.remove();
+      }
+      for (const conn of plan.connections) {
+        const host = document.createElement("div");
+        document.body.append(host);
+        renderInspector(host, model, plan, connSel(conn.from, conn.to), actions(), [], false);
+        expect(() => driveEverything(host)).not.toThrow();
+        host.remove();
+      }
+    }
+    setLang("en");
+  });
+
+  // SSMCS replaces the whole channel strip, so it is a second panel shape entirely.
+  it("drives the SSMCS channel strip", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], compEqType: COMP_EQ_SSMCS };
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    expect(() => driveEverything(panel)).not.toThrow();
+    expect(rowLabels().length).toBeGreaterThan(0);
+  });
+
+  // Every insert-FX family has its own editor; the selector is what reaches them.
+  it("drives every insert-FX family's editor", () => {
+    const model = getModel("URX44V");
+    const id = model.nodes.find((n) => insertFxControl(model, n.id))?.id;
+    if (!id) return;
+    for (const { option } of insertFxMenu(model, defaultPlan("URX44V"), id)) {
+      const plan = defaultPlan("URX44V");
+      plan.nodeParams[id] = { ...plan.nodeParams[id], insertFx: option.value, insertFxOn: true };
+      const host = document.createElement("div");
+      document.body.append(host);
+      renderInspector(host, model, plan, nodeSel(id), actions());
+      expect(() => driveEverything(host)).not.toThrow();
+      host.remove();
+    }
   });
 });

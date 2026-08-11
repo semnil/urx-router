@@ -264,7 +264,12 @@ export async function runPrepareModified(model: DeviceModel, signal?: AbortSigna
       const idx = outcomes.findIndex(reachedAndFailed);
       if (idx === -1) break;
       const c = commands[idx];
-      rejected.push(`${c.name}@${c.paramId}:${c.x}:${c.y}: ${outcomes[idx].error ?? "rejected"}`);
+      // `||`, not `??`: sendCommands always sets `error` to a string on a reached
+      // failure, so the nullish form never fired — while an Error carrying an empty
+      // message (a rejection with no reason, which the transport can produce) got
+      // through it and printed a bare trailing colon. Both are "the device refused
+      // and said nothing", and both have to read as that.
+      rejected.push(`${c.name}@${c.paramId}:${c.x}:${c.y}: ${outcomes[idx].error || "rejected"}`);
       commands = commands.slice(idx + 1);
     }
     report.residual = rejected.length;

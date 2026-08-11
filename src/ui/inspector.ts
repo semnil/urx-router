@@ -13,14 +13,12 @@ import type {
   SsmcsBand,
   SsmcsParams,
 } from "../core/plan";
-import { LEVEL_MIN_DB, SSMCS_INITIAL } from "../core/plan";
+import { SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
 import { formatHz, fxEffectTypes, fxParams, resolveFxEffectType } from "../core/control/fx-effect";
 import {
   insertFxFamilyOf,
-  insertFxParamKey,
   insertFxParams,
-  qualifyInsertFxParams,
   MBC_BANDS,
   MBC_BAND_PARAM,
   MBC_GLOBAL,
@@ -49,17 +47,7 @@ import {
   type InsertFxParamDesc,
   type MbcBandKey,
 } from "../core/control/insert-fx-effect";
-import {
-  directOutTarget,
-  duckerKeySource,
-  isBalLinkedPair,
-  isFixedConnection,
-  mixSendLocks,
-  pairPrimary,
-  sendHasOn,
-  sendHasTap,
-  sendTapWritable,
-} from "../core/routing";
+import { isFixedConnection, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
 import {
   busBalance,
   busFader,
@@ -69,11 +57,9 @@ import {
   channelSections,
   colorControl,
   duckerControl,
-  formatDyn,
   fxChannelIndex,
   inputEq,
   insertFxControl,
-  isStereoChannel,
   oscAssign,
   outputEq,
 } from "../core/control/translate";
@@ -103,8 +89,6 @@ import {
   insertFxEngaged,
 } from "../core/control/params";
 import {
-  EQ_FREQ_MAX_HZ,
-  EQ_FREQ_MIN_HZ,
   HPF_FREQ_DEFAULT_HZ,
   HPF_FREQ_MAX_HZ,
   HPF_FREQ_MIN_HZ,
@@ -115,9 +99,6 @@ import {
   ssmcsAttackMs,
   ssmcsReleaseMs,
   ssmcsRatio,
-  ssmcsQ,
-  ssmcsFreqHz,
-  ssmcsGainDb,
   SSMCS_COMP_DRIVE_MIN,
   SSMCS_COMP_DRIVE_MAX,
   SSMCS_MORPHING_MIN,
@@ -151,7 +132,6 @@ import {
   rateConstraints,
 } from "../core/constraints";
 import { getSettings } from "../core/settings";
-import { loadJson, saveJson } from "../core/storage";
 import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
@@ -159,6 +139,31 @@ import { setLevelText } from "./glyph";
 import { wheelStep } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import type { DynKind } from "./dyn-registry";
+import {
+  EQ_FREQ_POS_MAX,
+  eqFreqToPos,
+  eqPosToHz,
+  fmtSsmcsGain,
+  fmtSsmcsHz,
+  fmtSsmcsMs,
+  fmtSsmcsQ,
+  fmtSsmcsRatio,
+  formatDb,
+  formatGainDb,
+  formatPan,
+  mbcReleaseLabel,
+} from "./inspector-format";
+import { clearSectionOverride, recordSectionOpen, resolveSectionOpen } from "./inspector-sections";
+import { isBalanceChannel, sendFields, sendlessNote } from "./send-fields";
+import type { ParamField } from "./send-fields";
+import {
+  insertFxVal,
+  parkOutgoingInsertFxParams,
+  pitchMidiMode,
+  pitchMidiPatch,
+  pitchScalePatch,
+  reKeyInsertFxParams,
+} from "./insert-fx-model";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 
@@ -174,31 +179,6 @@ export interface InspectorActions {
   onOpenDynScreen: (kind: DynKind, id: string) => void;
   onClose: () => void;
 }
-
-// Per-kind editable send parameters. Only summing sends carry LEVEL / PRE-POST /
-// PAN per the block diagram (device-model.md §2); selectors and output patches
-// are assignments without per-connection mix parameters. PRE-POST is further
-// dropped for the fixed STEREO / FX-channel main paths (see sendHasTap). Ordered
-// top-to-bottom as the device SEND TO screen reads it (ON — the wire itself — then
-// PRE, Pan, Level); the fixed main path drops tap and so shows Pan then Level.
-const PARAM_FIELDS: Record<ConnectionKind, ParamField[]> = {
-  send: ["tap", "pan", "level"],
-  sendSwitch: [],
-  source: [],
-  patch: [],
-  key: [],
-  record: [],
-};
-type ParamField = "level" | "pan" | "tap";
-
-// Whether a channel's send pan should read as a BALANCE: a native stereo channel,
-// or a STEREO-linked MONO IN pair switched to BAL mode (Signal Type, PAN/BAL).
-function isBalanceChannel(model: DeviceModel, plan: Plan, id: string): boolean {
-  return isStereoChannel(id) || fxChannelIndex(id) !== null || isBalLinkedPair(model, plan, id);
-}
-
-// The lowest real value shown is LEVEL_MIN_DB (-96.0); formatDb prints -∞ below it.
-const LEVEL_MIN = LEVEL_MIN_DB;
 
 // HA gain slider position shown for a channel whose gain has not been fetched or
 // set yet; matches the device's default head-amp gain.
@@ -779,15 +759,8 @@ export function renderInspector(
           (v) => {
             const sel = Number(v);
             const patch: NodeParams = sel === INSERT_FX_NONE ? { insertFx: sel } : { insertFx: sel, insertFxOn: true };
-            // Park the outgoing effect's engine values under its own family before
-            // the selector names another one: a bare slot number left behind would
-            // be read as the new family's, whose slot means a different parameter
-            // under a different law, and emitted as absolute state on the next flush.
-            const prev = plan.nodeParams[node.id];
-            if (prev?.insertFxParams) {
-              const prevFam = prev.insertFx === undefined ? null : insertFxFamilyOf(prev.insertFx);
-              patch.insertFxParams = qualifyInsertFxParams(prev.insertFxParams, prevFam);
-            }
+            const parked = parkOutgoingInsertFxParams(plan.nodeParams[node.id]);
+            if (parked) patch.insertFxParams = parked;
             actions.onUpdateNodeParams(node.id, patch);
           },
         ),
@@ -857,16 +830,7 @@ export function renderInspector(
       host.append(hint(m.inspector.selectionOnly));
     }
   } else if (conn) {
-    // A MIX 1 / MIX 2 destination governs the send controls: FIXED bus type drops
-    // the LEVEL (fixed send level); Pan Link (VARI only) drops the PAN (it follows
-    // the source channel PAN).
-    const { busFixed, panLinked } = mixSendLocks(plan, parseRef(to).nodeId);
-    // PRE/POST is taken against the channel's STEREO main-fader level, so the
-    // fixed STEREO / FX-channel main paths show LEVEL / PAN but no PRE/POST.
-    const fields = PARAM_FIELDS[conn.kind].filter(
-      (f) =>
-        (f !== "tap" || sendHasTap(model, from, to)) && (f !== "level" || !busFixed) && (f !== "pan" || !panLinked),
-    );
+    const { fields, busFixed, panLinked } = sendFields(model, plan, conn.kind, from, to);
     // Expose a per-send ON toggle where the route carries one (sendHasOn): the
     // CH/FX → MIX/FX sends and the fixed MIX → STEREO "TO ST". The STEREO main paths
     // do not. `isFixedToSt` only drives the toggle's label / default-off presentation.
@@ -892,22 +856,7 @@ export function renderInspector(
       const tapEditable = !liveActive || sendTapWritable(model, from, to);
       for (const f of fields) host.append(paramControl(f, conn, actions.onUpdateParams, panLabel, tapEditable));
     } else {
-      // A USB direct out is a live output where the missing fader / Ducker is a
-      // surprise (route via a bus to include them); a microSD Rec tap records the
-      // Rec Point stage on purpose, so it points at Rec Point instead. A channel
-      // ducker key is the same pre-fader Rec Point tap, so the source channel's
-      // fader / mute do not move the trigger (a bus key is post-fader — no note).
-      // Anything else with no send params falls back to the generic note.
-      const directOut = directOutTarget(model, from, to);
-      const note =
-        directOut === "usb"
-          ? m.inspector.directOutTap
-          : directOut === "sdRec"
-            ? m.inspector.sdRecTap
-            : duckerKeySource(model, from, to) === "channel"
-              ? m.inspector.duckerKeyTap
-              : m.inspector.selectionOnly;
-      host.append(hint(note));
+      host.append(hint(m.inspector[sendlessNote(model, from, to)]));
     }
     if (busFixed) host.append(hint(m.inspector.busFixedLevel));
     if (panLinked) host.append(hint(m.inspector.panLinked));
@@ -981,34 +930,6 @@ function subheading(text: string): HTMLElement {
   return h;
 }
 
-// Persisted section open/closed overrides, keyed by section kind (not per node)
-// so a fold preference is consistent across nodes and survives both re-renders
-// and reloads. A section with an ON-state default (gate / comp / eq / ducker)
-// clears its override when the value is toggled, so it reverts to following the
-// on-state (auto-collapse when off); a user fold of the disclosure persists.
-const SECTION_STATE_KEY = "urx-inspector-sections";
-type SectionState = Record<string, boolean>;
-let sectionState: SectionState | null = null;
-
-function sectionOverrides(): SectionState {
-  if (sectionState === null) {
-    const v = loadJson<unknown>(SECTION_STATE_KEY, null);
-    sectionState = v && typeof v === "object" ? (v as SectionState) : {};
-  }
-  return sectionState;
-}
-
-function persistSectionState(): void {
-  saveJson(SECTION_STATE_KEY, sectionOverrides());
-}
-
-function clearSectionOverride(key: string): void {
-  const s = sectionOverrides();
-  if (!(key in s)) return;
-  delete s[key];
-  persistSectionState();
-}
-
 // The bare ON/OFF control for an on-state section (GATE / COMP / EQ / Ducker):
 // its name is the section header, so the label is empty. Toggling the value
 // drops any manual fold so the section reverts to following the new on-state.
@@ -1044,10 +965,8 @@ function section(
 ): { el: HTMLDetailsElement; body: HTMLElement } {
   const el = document.createElement("details");
   el.className = "insp-section";
-  const def = opts.open ?? true;
   const key = opts.key;
-  const overrides = sectionOverrides();
-  const initial = key !== undefined && key in overrides ? overrides[key] : def;
+  const initial = resolveSectionOpen(key, opts.open ?? true);
   el.open = initial;
   if (key !== undefined) {
     // The property set above can queue one echo toggle event; skip it by only
@@ -1056,8 +975,7 @@ function section(
     el.addEventListener("toggle", () => {
       if (el.open === expected) return;
       expected = el.open;
-      overrides[key] = el.open;
-      persistSectionState();
+      recordSectionOpen(key, el.open);
     });
   }
   const sum = document.createElement("summary");
@@ -1163,10 +1081,6 @@ function gainControl(label: string, min: number, max: number, cur: number, onCha
   return rangeSlider(label, min, max, 1, cur, formatGainDb, onChange);
 }
 
-function formatGainDb(v: number): string {
-  return `${v > 0 ? "+" : ""}${v} dB`;
-}
-
 // Merge a patch into a node's FX effect object / its raw params map, reading the
 // latest stored value at edit time so concurrent sibling edits aren't lost.
 function mergeFxEffect(actions: InspectorActions, plan: Plan, nodeId: string, patch: Partial<FxEffectParams>): void {
@@ -1250,10 +1164,6 @@ function fxEffectSection(
 // never read by the next one the selector names (insert-fx-effect.ts). A bare slot
 // number is the device-shaped namespace a readback writes, read as the selected
 // family's and replaced by the qualified key on the first edit.
-function insertFxVal(plan: Plan, nodeId: string, fam: InsertFxFamily, slot: number, def: number): number {
-  const params = plan.nodeParams[nodeId]?.insertFxParams;
-  return params?.[insertFxParamKey(fam, slot)] ?? params?.[String(slot)] ?? def;
-}
 function mergeInsertFxParams(
   actions: InspectorActions,
   plan: Plan,
@@ -1262,12 +1172,7 @@ function mergeInsertFxParams(
   patch: Record<number, number>,
 ): void {
   const params = plan.nodeParams[nodeId]?.insertFxParams ?? {};
-  const next = { ...params };
-  for (const [slot, raw] of Object.entries(patch)) {
-    next[insertFxParamKey(fam, Number(slot))] = raw;
-    delete next[slot];
-  }
-  actions.onUpdateNodeParams(nodeId, { insertFxParams: next });
+  actions.onUpdateNodeParams(nodeId, { insertFxParams: reKeyInsertFxParams(params, fam, patch) });
 }
 
 // Render one flat descriptor (compander / guitar / pitch scalar) into `body`.
@@ -1305,11 +1210,6 @@ function appendInsertFxDesc(
     );
   }
 }
-
-// Standard C-major scale (semitone offsets on = major; the rest off). Used by the
-// Pitch Fix scale preset buttons; calibration confirmed Major clears slots
-// 23/25/28/30/32 (the non-major semitones).
-const PITCH_MAJOR_ON = new Set([0, 2, 4, 5, 7, 9, 11]);
 
 // INSERT-FX effect section, shown below the insert-FX selector when the chosen
 // effect has editable parameters. Layout per family: compander/guitar = flat
@@ -1402,17 +1302,8 @@ function renderMbc(
     ),
   );
   body.append(
-    rangeSlider(
-      t.params.release,
-      0,
-      MBC_RELEASE_MS.length - 1,
-      1,
-      val(MBC_GLOBAL.release, 7),
-      (r) => {
-        const ms = MBC_RELEASE_MS[r] ?? 0;
-        return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`;
-      },
-      (v) => set(MBC_GLOBAL.release, v),
+    rangeSlider(t.params.release, 0, MBC_RELEASE_MS.length - 1, 1, val(MBC_GLOBAL.release, 7), mbcReleaseLabel, (v) =>
+      set(MBC_GLOBAL.release, v),
     ),
   );
   body.append(
@@ -1454,14 +1345,7 @@ function renderPitchScale(
       t.scale,
       scales.map((o) => ({ value: String(o.value), label: o.label, disabled: !o.editable && scale !== o.value })),
       String(scales.some((o) => o.value === scale) ? scale : PITCH_SCALE_CUSTOM),
-      (v) => {
-        const sel = Number(v);
-        const patch: Record<number, number> = { [PITCH_SCALE_SLOT]: sel };
-        if (sel === PITCH_SCALE_CHROMATIC) PITCH_NOTE_SLOTS.forEach((s) => (patch[s] = 1));
-        else if (sel === PITCH_SCALE_MAJOR)
-          PITCH_NOTE_SLOTS.forEach((s, i) => (patch[s] = PITCH_MAJOR_ON.has(i) ? 1 : 0));
-        mergeInsertFxParams(actions, plan, nodeId, "pitch", patch);
-      },
+      (v) => mergeInsertFxParams(actions, plan, nodeId, "pitch", pitchScalePatch(Number(v))),
     ),
   );
   // 12 note toggles (a semitone row from the Key root). Editing any sets Custom.
@@ -1487,7 +1371,7 @@ function renderPitchMidi(
 ): void {
   const enable = insertFxVal(plan, nodeId, "pitch", PITCH_MIDI_ENABLE_SLOT, 0);
   const realtime = insertFxVal(plan, nodeId, "pitch", PITCH_MIDI_REALTIME_SLOT, 0);
-  const cur = enable === 0 ? 0 : realtime === 0 ? 1 : 2;
+  const cur = pitchMidiMode(enable, realtime);
   body.append(
     selectControl(
       t.params.midiControl,
@@ -1497,13 +1381,7 @@ function renderPitchMidi(
         { value: "2", label: "Real Time" },
       ],
       String(cur),
-      (v) => {
-        const mode = Number(v);
-        mergeInsertFxParams(actions, plan, nodeId, "pitch", {
-          [PITCH_MIDI_ENABLE_SLOT]: mode === 0 ? 0 : 1,
-          [PITCH_MIDI_REALTIME_SLOT]: mode === 2 ? 1 : 0,
-        });
-      },
+      (v) => mergeInsertFxParams(actions, plan, nodeId, "pitch", pitchMidiPatch(Number(v))),
     ),
   );
 }
@@ -1538,18 +1416,6 @@ function dynLauncher(kind: DynKind, nodeId: string, actions: InspectorActions, m
   btn.addEventListener("click", () => actions.onOpenDynScreen(kind, nodeId));
   return btn;
 }
-
-// SSMCS raw-value display formatters: ms (3-tier to match the device's variable
-// precision) and ratio (∞ at the top). Hz and dB reuse formatHz / formatDyn.
-function fmtSsmcsMs(ms: number): string {
-  return ms < 10 ? `${ms.toFixed(3)} ms` : ms < 100 ? `${ms.toFixed(2)} ms` : `${ms.toFixed(1)} ms`;
-}
-function fmtSsmcsRatio(r: number): string {
-  return r === Infinity ? "∞:1" : `${r.toFixed(2)}:1`;
-}
-const fmtSsmcsHz = (raw: number): string => formatHz(ssmcsFreqHz(raw));
-const fmtSsmcsGain = (raw: number): string => formatDyn(ssmcsGainDb(raw), "db");
-const fmtSsmcsQ = (raw: number): string => ssmcsQ(raw).toFixed(2);
 
 // Merge a patch into a node's SSMCS sub-object — at the top level, a named nested
 // sub-section (comp / sc), or a named EQ band — reading the latest stored value
@@ -1773,11 +1639,7 @@ function snappedSlider(
 // EQ band frequency slider on a log scale (20 Hz … 20 kHz) so each octave gets
 // equal width; reports the snapped Hz value and formats as Hz / kHz.
 function eqFreqControl(cur: number, onChange: (hz: number) => void): HTMLElement {
-  const steps = 1000;
-  const ratio = Math.log(EQ_FREQ_MAX_HZ / EQ_FREQ_MIN_HZ);
-  const toPos = (hz: number): number => Math.round((steps * Math.log(hz / EQ_FREQ_MIN_HZ)) / ratio);
-  const toHz = (pos: number): number => Math.round(EQ_FREQ_MIN_HZ * Math.exp((ratio * pos) / steps));
-  return snappedSlider(t().inspector.frequency, cur, steps, toPos, toHz, formatHz, onChange);
+  return snappedSlider(t().inspector.frequency, cur, EQ_FREQ_POS_MAX, eqFreqToPos, eqPosToHz, formatHz, onChange);
 }
 
 // A level / send / fader slider that snaps to the device's discrete level_gain
@@ -1974,16 +1836,6 @@ function paramBlock(labelText: string, valueText: string): { row: HTMLElement; v
     row.append(head);
   }
   return { row, value };
-}
-
-function formatDb(v: number): string {
-  if (v < LEVEL_MIN) return "-∞ dB";
-  return `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
-}
-
-function formatPan(v: number): string {
-  if (v === 0) return "C";
-  return v < 0 ? `L ${-v}` : `R ${v}`;
 }
 
 // Inline warning that the selected node's values were not read from the device

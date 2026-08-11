@@ -25,14 +25,12 @@ import type { LoadProblem } from "./core/plan-validate";
 import {
   baseName,
   downloadText,
-  loadJson,
   loadRecent,
   openBinaryDocument,
   openTextDocument,
   readTextByPath,
   rememberRecent,
   removeRecent,
-  saveJson,
   saveTextDocument,
 } from "./core/storage";
 import type { RecentEntry } from "./core/storage";
@@ -58,6 +56,28 @@ import type { MidiLearnHooks } from "./ui/midi-learn";
 import { DYN_PROCESSORS } from "./ui/dyn-registry";
 import type { DynKind } from "./ui/dyn-registry";
 import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
+import { FileFlowLatch, singleFlight } from "./app/flow-latch";
+import { nodeParamEffects } from "./app/node-param-effects";
+import {
+  detectHideOffSends,
+  detectLabelSource,
+  detectModel,
+  detectRate,
+  detectThemeMode,
+  detectView,
+  loadHidden,
+  rememberHideOffSends,
+  rememberHidden,
+  rememberLabelSource,
+  rememberModel,
+  rememberRate,
+  rememberThemeMode,
+  resetStorageFromUrl,
+  rememberView,
+  resolveTheme,
+  seedEmptyRequested,
+} from "./app/view-state";
+import type { ViewName } from "./app/view-state";
 import { errorCode, errorText, getLang, LANG_NAMES, onLangChange, t } from "./i18n";
 import { DEMO, TRACE } from "./core/env";
 import { installTraceProbe } from "./ui/trace-probe";
@@ -132,17 +152,7 @@ import type { DeviceSetup } from "./core/control/device-setup";
 // #reset) — done synchronously here, before anything below reads localStorage, and
 // the flag is stripped so a later manual reload doesn't clear again. The desktop
 // app uses the --reset-storage launch flag instead (handled async in boot()).
-(function resetStorageFromUrl(): void {
-  try {
-    const url = new URL(location.href);
-    if (url.searchParams.has("reset") || url.hash === "#reset") {
-      localStorage.clear();
-      history.replaceState(null, "", url.pathname);
-    }
-  } catch {
-    // storage / history unavailable — nothing to reset
-  }
-})();
+resetStorageFromUrl();
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -190,51 +200,14 @@ function setFollowUsbBadge(state: boolean | null): void {
 // Theme mode (ThemeMode, ui/prefs.ts): auto follows the OS color scheme. A
 // fresh install defaults to auto; an explicit light/dark choice (including ones
 // saved before auto existed) is honored.
-function systemDark(): boolean {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches;
-}
-
-function detectThemeMode(): ThemeMode {
-  try {
-    const saved = localStorage.getItem("urx-theme");
-    return saved === "light" || saved === "dark" || saved === "auto" ? saved : "auto";
-  } catch {
-    return "auto";
-  }
-}
-
-function resolveTheme(mode: ThemeMode): ThemeName {
-  return mode === "auto" ? (systemDark() ? "dark" : "light") : mode;
-}
-
 // E2E pins an empty starting board (just the fixed wires) via this flag so
 // routing/hide assertions are not perturbed by the factory-seed sends; the seed
 // data itself is verified by initial-state.test.ts.
-const seedEmpty = (() => {
-  try {
-    return localStorage.getItem("urx-seed") === "empty";
-  } catch {
-    return false;
-  }
-})();
+const seedEmpty = seedEmptyRequested();
 // Shelved (hidden) nodes are persisted globally per model so the canvas/console
 // layout survives an app restart, independent of any saved plan file. The id set
 // is model-specific, so store a per-model map under one key. Best-effort: storage
 // may be unavailable, in which case hidden state simply does not carry across.
-const HIDDEN_KEY = "urx-hidden";
-type HiddenMap = Partial<Record<ModelId, string[]>>;
-
-function loadHidden(id: ModelId): string[] {
-  const list = loadJson<HiddenMap>(HIDDEN_KEY, {})[id];
-  return Array.isArray(list) ? list : [];
-}
-
-function rememberHidden(id: ModelId, hidden: string[]): void {
-  const map = loadJson<HiddenMap>(HIDDEN_KEY, {});
-  map[id] = hidden;
-  saveJson(HIDDEN_KEY, map);
-}
-
 // Fresh plans (startup / new / model switch) restore the last hidden layout for
 // that model; a loaded file overrides it via loadPlan (which then re-records it).
 const newPlan = (id: ModelId): Plan => {
@@ -242,66 +215,6 @@ const newPlan = (id: ModelId): Plan => {
   p.hidden = loadHidden(id);
   return p;
 };
-
-// Restore the last selected model on startup, falling back to URX44V (the
-// top-of-range model with every feature) when there is no valid saved choice.
-function detectModel(): ModelId {
-  try {
-    const saved = localStorage.getItem("urx-model");
-    return MODEL_IDS.includes(saved as ModelId) ? (saved as ModelId) : "URX44V";
-  } catch {
-    return "URX44V";
-  }
-}
-
-// Persisting the selection is best-effort: storage may be unavailable (private
-// mode / blocked), in which case the model simply does not carry across reloads.
-function rememberModel(id: ModelId): void {
-  try {
-    localStorage.setItem("urx-model", id);
-  } catch {
-    // ignore
-  }
-}
-
-// Restore the last selected sample rate, falling back to the new plan's rate when
-// there is no valid saved choice. Mirrors the model restore so both carry across
-// reloads in the demo and desktop builds alike.
-function detectRate(fallback: number): number {
-  try {
-    const saved = Number(localStorage.getItem("urx-rate"));
-    return SAMPLE_RATES.includes(saved) ? saved : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function rememberRate(rate: number): void {
-  try {
-    localStorage.setItem("urx-rate", String(rate));
-  } catch {
-    // ignore
-  }
-}
-
-// Restore the last selected GRAPH/CONSOLE view, falling back to the graph (the
-// HTML default) when there is no valid saved choice. Guarded like the model /
-// rate restore so both views carry across reloads.
-function detectView(): ViewName {
-  try {
-    return localStorage.getItem("urx-view") === "console" ? "console" : "graph";
-  } catch {
-    return "graph";
-  }
-}
-
-function rememberView(view: ViewName): void {
-  try {
-    localStorage.setItem("urx-view", view);
-  } catch {
-    // ignore
-  }
-}
 
 let modelId: ModelId = detectModel();
 let plan: Plan = newPlanAtLastRate(modelId);
@@ -320,15 +233,6 @@ let themeMode: ThemeMode = detectThemeMode();
 let theme: ThemeName = resolveTheme(themeMode);
 document.documentElement.dataset.theme = theme;
 
-// Canvas label source: the planner's fixed labels (default) or the device CH
-// SETTING names. Best-effort persisted (guarded like the model / rate choices).
-function detectLabelSource(): LabelSource {
-  try {
-    return localStorage.getItem("urx-labels") === "device" ? "device" : "model";
-  } catch {
-    return "model";
-  }
-}
 let labelSource: LabelSource = detectLabelSource();
 
 for (const id of MODEL_IDS) {
@@ -812,8 +716,6 @@ const follow =
         onError: (message) => stopLiveOnError(errorText(message)),
       });
 
-type ViewName = "graph" | "console";
-
 function setView(next: ViewName): void {
   const isConsole = next === "console";
   rememberView(next);
@@ -1177,100 +1079,23 @@ const inspectorActions = {
     // device notify, which invariant 13 then reads as the device authoring a key the
     // operator moved. Re-sampled as this edit once the last of them has run.
     let lateWrite = false;
-    // CH_ON drives the on-canvas mute dimming; the STEREO link draws a pair
-    // connector — both show on the canvas, so repaint nodes at once. A mirrored ON
-    // change repaints every node, so the partner's dimming follows for free.
+    const fx = nodeParamEffects(patch, prev);
     // Linking a pair snaps its partner next to the kept node so the tie isn't drawn
     // across a gap an earlier manual move may have opened.
-    if (patch.stereoLink === true) {
+    if (fx.alignStereoPair) {
       graph.alignStereoPair(id);
       lateWrite = true;
     }
-    // CH_ON / a bus, FX or MONITOR master / duckerOn / the oscillator all mute a
-    // node: it dims and its connections recede (isOffSend), so repaint both. The
-    // oscillator's on lives under an osc patch that also carries level/mode, so
-    // detect its actual flip rather than the whole patch.
-    const oscOnChanged = patch.osc !== undefined && patch.osc.on !== prev?.osc?.on;
-    const muteChanged = patch.on !== undefined || patch.duckerOn !== undefined || oscOnChanged;
-    // STEREO link also draws a pair connector, so it repaints nodes (but no wires).
-    if (muteChanged || patch.stereoLink !== undefined) graph.repaintNodes();
-    if (muteChanged) graph.repaintWires();
-    // Track Count gates how many SD Rec track-pair slots are drawn, so a full
-    // re-render adds / removes the slot nodes (and their wires) on the canvas.
-    if (patch.sdRecTrackCount !== undefined) graph.render();
+    if (fx.repaintNodes) graph.repaintNodes();
+    if (fx.repaintWires) graph.repaintWires();
+    if (fx.rerender) graph.render();
     if (mirrored || insFxMirrored) consoleView.refresh();
-    // Switching COMP/EQ type resets the destination chain to factory (the device
-    // does the same — the SSMCS ⇄ COMP->EQ banks are exclusive and not preserved).
-    if (patch.compEqType !== undefined && patch.compEqType !== prev?.compEqType) {
-      resetCompEqBank(id, patch.compEqType);
+    if (fx.resetCompEqBank) {
+      resetCompEqBank(id, patch.compEqType as number);
       lateWrite = true;
     }
     if (lateWrite) traceProbe?.sample("ui");
-    // An EQ band's filter type / ON changes which controls show (Q, gain), so it
-    // needs a re-render; a freq/Q/gain slick must NOT re-render (it keeps slider
-    // focus). Detect a relayout by diffing the changed bands' type/on.
-    const eqRelayout =
-      patch.eqBands !== undefined &&
-      patch.eqBands.some((b, i) => b?.type !== prev?.eqBands?.[i]?.type || b?.on !== prev?.eqBands?.[i]?.on);
-    // COMP 1-knob / Auto Makeup toggles hide or show the individual comp controls,
-    // so they need a re-render; the comp value sliders must not (they keep focus).
-    const compRelayout =
-      patch.comp !== undefined &&
-      (patch.comp.oneKnob !== prev?.comp?.oneKnob || patch.comp.autoMakeup !== prev?.comp?.autoMakeup);
-    // OSC on / mode toggles re-render (mode shows or hides the frequency control);
-    // the level / frequency sliders must not (they keep focus while dragging).
-    const oscRelayout =
-      patch.osc !== undefined && (patch.osc.on !== prev?.osc?.on || patch.osc.mode !== prev?.osc?.mode);
-    // SSMCS on / side-chain on / EQ band on are two-button toggles whose active
-    // state only refreshes on re-render; the morphing-strip value sliders must not
-    // re-render (they keep focus). Selects (Sweet Spot Data / Knee) self-update.
-    const ssmcsRelayout =
-      patch.ssmcs !== undefined &&
-      (patch.ssmcs.on !== prev?.ssmcs?.on ||
-        patch.ssmcs.sc?.on !== prev?.ssmcs?.sc?.on ||
-        patch.ssmcs.eq?.low?.on !== prev?.ssmcs?.eq?.low?.on ||
-        patch.ssmcs.eq?.mid?.on !== prev?.ssmcs?.eq?.mid?.on ||
-        patch.ssmcs.eq?.high?.on !== prev?.ssmcs?.eq?.high?.on);
-    // EQ 1-knob ON toggles between the 1-knob controls and the band tabs, so it
-    // re-renders; the type select self-updates and the level slider keeps focus.
-    const eqOneKnobRelayout = patch.eqOneKnob !== undefined && patch.eqOneKnob.on !== prev?.eqOneKnob?.on;
-    // An FX EFFECT type change swaps the whole parameter editor (each effect keeps
-    // its own controls under the shared fxEffect keys), so it must re-render — else
-    // the previous effect's editor stays live and writes wrong-scale raws. The
-    // effect's own value sliders / ON toggle share the key but leave type unchanged,
-    // so match the type flip specifically and keep them mutating in place (focus).
-    const fxEffectRelayout = patch.fxEffect !== undefined && patch.fxEffect.type !== prev?.fxEffect?.type;
-    // Toggles re-render to update the active button; sliders (gain/level) mutate
-    // in place so they keep focus while dragging.
-    if (
-      patch.on !== undefined ||
-      patch.hpf !== undefined ||
-      patch.phantom !== undefined ||
-      patch.phase !== undefined ||
-      patch.phaseL !== undefined ||
-      patch.phaseR !== undefined ||
-      patch.clipSafe !== undefined ||
-      patch.hiZ !== undefined ||
-      patch.insertFx !== undefined ||
-      patch.compEqType !== undefined ||
-      patch.eqOn !== undefined ||
-      patch.gateOn !== undefined ||
-      patch.compOn !== undefined ||
-      patch.duckerOn !== undefined ||
-      patch.cueInterrupt !== undefined ||
-      patch.mono !== undefined ||
-      patch.busType !== undefined ||
-      patch.panLink !== undefined ||
-      patch.stereoLink !== undefined ||
-      patch.panBal !== undefined ||
-      eqRelayout ||
-      compRelayout ||
-      oscRelayout ||
-      ssmcsRelayout ||
-      eqOneKnobRelayout ||
-      fxEffectRelayout
-    )
-      refreshInspector();
+    if (fx.refreshInspector) refreshInspector();
   },
   // Rename mutates in place and repaints the node label without re-rendering the
   // inspector, so the text input keeps focus while typing. Empty clears the override.
@@ -1298,11 +1123,7 @@ const inspectorActions = {
 };
 graph.setTheme(theme);
 graph.setLabelSource(labelSource);
-try {
-  if (localStorage.getItem("urx-hide-off") === "1") graph.setHideOffSends(true);
-} catch {
-  // ignore (storage may be unavailable)
-}
+if (detectHideOffSends()) graph.setHideOffSends(true);
 
 const labelsBtn = $("btn-labels");
 const hideOffBtn = $("btn-hide-off");
@@ -1410,6 +1231,13 @@ function showError(message: string): void {
   setStatus("");
   void errorDialog(message);
 }
+
+// A one-shot click handler, with the failure surface every one of them reports
+// through. singleFlight fires its promise without awaiting it, so a rejection that
+// names no sink reaches nothing — the handlers that have something specific to say
+// still catch inside their own action, and this is the backstop under them.
+const guarded = (run: () => Promise<void>): (() => void) =>
+  singleFlight(run, (err: unknown) => showError(errorText(err)));
 
 /** A focused inspector control, keyed by what NAMES it on screen rather than by
  *  position. The panel's sliders are bare `input[type=range]` with no class, so an
@@ -1601,7 +1429,7 @@ function loadPlan(next: Plan): boolean {
   // entry point is already blocked at fileFlow / the model picker, so this is the
   // backstop — and it says so, because its one reachable caller went on to announce a
   // load that never happened.
-  if (deviceReadInFlight) {
+  if (flow.deviceReadInFlight) {
     setStatus(t().status.busyDeviceRead);
     return false;
   }
@@ -1802,60 +1630,32 @@ async function confirmDiscard(): Promise<boolean> {
   return confirmDialog(t().confirm.discard);
 }
 
-// Rapid-repeat guard for click handlers whose action opens dialogs or runs a
-// one-shot async flow: re-entry while the action is in flight is ignored, so a
-// double click cannot stack native dialogs or start the work twice. (The
-// device actions fetch / write / compare / self-test stay outside this — their
-// second click deliberately means cancel.)
-function singleFlight(run: () => Promise<void>): () => void {
-  let busy = false;
-  return () => {
-    if (busy) return;
-    busy = true;
-    void run().finally(() => {
-      busy = false;
-    });
-  };
-}
-
 // One plan/settings file flow at a time across every entry point (File > New /
 // Open / Save, a recent row, a window drop, the .urxf import): each latch above
 // is private to its handler, so this shared one is what keeps rapid repeat
 // across any two of them from stacking discard confirms and file dialogs.
-// Resolves null when another flow holds the latch (or while a device read is in
-// flight — see deviceReadInFlight).
-let fileFlowBusy = false;
-// A device read (fetch / Live-sync start) passes the module `plan` by reference into
-// applyDeviceState, which mutates it across many awaited round-trips, and its
-// epilogue re-reads the module `plan`. Nothing disables the file / model entry
-// points during that seconds-long window, so a New / Open / drop / recent / .urxf or
-// a model switch mid-read would swap `plan` out from under the read — corrupting it,
-// or (on Live start) snapshotting the swapped-in plan as device truth. The two reads
-// raise this latch and clear it in their finally; every wholesale plan replacement
-// checks it. The internal model-switch loadPlan runs before the latch is raised.
-let deviceReadInFlight = false;
+//
+// Its `deviceReadInFlight` half covers a different hazard: a device read (fetch /
+// Live-sync start) passes the module `plan` by reference into applyDeviceState,
+// which mutates it across many awaited round-trips, and its epilogue re-reads the
+// module `plan`. Nothing disables the file / model entry points during that
+// seconds-long window, so a New / Open / drop / recent / .urxf or a model switch
+// mid-read would swap `plan` out from under the read — corrupting it, or (on Live
+// start) snapshotting the swapped-in plan as device truth. The two reads raise it
+// and clear it in their finally; every wholesale plan replacement checks it. The
+// internal model-switch loadPlan runs before the latch is raised.
+//
 // The third latch is `deviceLinkHolder` (declared with the lock it drives, above):
 // whoever holds the device link, including the destructive runs, which are the reason
 // the MIDI gate reads it. Minutes long, unlike the two here.
-async function fileFlow<T>(run: () => Promise<T>): Promise<T | null> {
+const flow = new FileFlowLatch({
   // Refused, and said so: the flow the operator picked simply does not happen, and the
   // status line is showing the read's own progress rather than an answer to that click.
-  // A second file flow stays silent — its own native dialog is already on screen, and
-  // the second click is a rapid-repeat guard rather than a request that went unanswered.
-  if (deviceReadInFlight) {
-    setStatus(t().status.busyDeviceRead);
-    return null;
-  }
-  if (fileFlowBusy) return null;
-  fileFlowBusy = true;
-  try {
-    return await run();
-  } finally {
-    fileFlowBusy = false;
-    // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).
-    midi?.gateReleased();
-  }
-}
+  onDeviceReadBusy: () => setStatus(t().status.busyDeviceRead),
+  // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).
+  onReleased: () => midi?.gateReleased(),
+});
+const fileFlow = <T>(run: () => Promise<T>): Promise<T | null> => flow.run(run);
 
 // Warn before touching a unit whose System firmware differs from the version this
 // build was validated against — the parameter mappings may not match. Returns true
@@ -2004,7 +1804,7 @@ $("btn-save").addEventListener(
 // loadPlanFromUrl reads — or as a JSON download the desktop app opens.
 $("btn-share").addEventListener(
   "click",
-  singleFlight(async () => {
+  guarded(async () => {
     const url = new URL(location.href);
     url.search = "";
     url.hash = "";
@@ -2039,7 +1839,7 @@ $("btn-download").addEventListener("click", () => {
 
 $("btn-export").addEventListener(
   "click",
-  singleFlight(() =>
+  guarded(() =>
     graph
       .exportPng(`${modelId}-routing.png`)
       .catch((err: unknown) => showError(t().status.exportError(errorText(err)))),
@@ -2048,7 +1848,7 @@ $("btn-export").addEventListener(
 
 $("btn-export-pdf").addEventListener(
   "click",
-  singleFlight(() =>
+  guarded(() =>
     graph
       .exportPdf(`${modelId}-routing.pdf`)
       .catch((err: unknown) => showError(t().status.exportError(errorText(err)))),
@@ -2061,7 +1861,7 @@ $("btn-licenses").addEventListener(
   "click",
   // .catch (not a rejection handler on .then): a notice that reads fine but
   // fails to parse in showLicenses must land in the same error dialog.
-  singleFlight(() =>
+  guarded(() =>
     thirdPartyLicenses()
       .then(showLicenses)
       .catch((e: unknown) => showError(t().licenses.error(errorText(e)))),
@@ -2157,7 +1957,7 @@ planHistory = new PlanHistory({
   // channel tuning screen, which is exactly what its sliders do, so an undo taken with
   // it open belongs to the plan behind it.
   blocked: () =>
-    deviceReadInFlight || followReads.size > 0 || fileFlowBusy
+    flow.busy || followReads.size > 0
       ? t().status.undoDeviceBusy
       : modalOpen() && !dynScreen.isOpen()
         ? t().status.undoModal
@@ -2334,7 +2134,7 @@ if (!DEMO) {
   // picker authoritative again.
   followUsbBadge.addEventListener(
     "click",
-    singleFlight(async () => {
+    guarded(async () => {
       // Unknown: the click reads the device rather than toggling it. Toggling from
       // unknown would have to guess which way, and the operator's first question here
       // is "what is it?", not "change it".
@@ -2406,7 +2206,7 @@ if (!DEMO) {
         // Hold off every wholesale plan replacement for the duration of the read and
         // its epilogue (cleared in the finally below); the read mutates `plan` in
         // place, so a New/Open/switch mid-read would corrupt it.
-        deviceReadInFlight = true;
+        flow.deviceReadInFlight = true;
         // The read runs against a private copy, so a cancel throws out of it with the
         // plan on screen untouched — "cancel means nothing happened" needs no restore,
         // and the module plan object is never replaced (which is what used to leave
@@ -2451,7 +2251,7 @@ if (!DEMO) {
         }
       });
     } finally {
-      deviceReadInFlight = false;
+      flow.deviceReadInFlight = false;
       // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).
       midi?.gateReleased();
       fetchAbort = null;
@@ -2741,7 +2541,7 @@ if (!DEMO) {
         // (cleared in the finally below). The read mutates `plan` in place and
         // live.begin() snapshots it as device truth, so a New/Open/switch landing in
         // between would either corrupt the read or enshrine the swapped-in plan.
-        deviceReadInFlight = true;
+        flow.deviceReadInFlight = true;
         midi?.probeMark("live:read:start");
         // live.begin() then snapshots through the same scope filter, so a kept
         // scene-external value is neither written back nor tracked.
@@ -2788,7 +2588,7 @@ if (!DEMO) {
       } catch (err) {
         await failLive(t().status.liveError(errorText(err)));
       } finally {
-        deviceReadInFlight = false;
+        flow.deviceReadInFlight = false;
         // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).
         midi?.gateReleased();
         // In the finally: a partially failed readback still applied device values.
@@ -2803,7 +2603,7 @@ if (!DEMO) {
     // there must not start a second concurrent session. Deactivation is
     // synchronous and stays outside the latch, so an active session always
     // turns off immediately.
-    const startLive = singleFlight(() => activateLive());
+    const startLive = guarded(() => activateLive());
     liveBtn.addEventListener("click", () => {
       if (live?.isActive()) deactivateLive(t().status.liveOff);
       else startLive();
@@ -2850,7 +2650,7 @@ if (!DEMO) {
     // assigns), which is what makes leaving them open safe. A modal is not here either:
     // a MIDI desk is a second physical surface, and the panel that configures it is
     // itself counted by modalOpen().
-    blocked: () => (deviceReadInFlight || fileFlowBusy || deviceLinkHolder === "run" ? t().status.midiBusy : null),
+    blocked: () => (flow.busy || deviceLinkHolder === "run" ? t().status.midiBusy : null),
     // Both arming surfaces repaint: learn mode, the armed control and the mapping
     // set all decide what they draw, and a tuning screen open over the console is
     // the one the operator is looking at.
@@ -3250,11 +3050,7 @@ function applyResolvedTheme(): void {
 
 function setThemeMode(mode: ThemeMode): void {
   themeMode = mode;
-  try {
-    localStorage.setItem("urx-theme", mode);
-  } catch {
-    // ignore (storage may be unavailable)
-  }
+  rememberThemeMode(mode);
   applyResolvedTheme();
   const m = t().status;
   setStatus(mode === "auto" ? m.themeAuto : theme === "dark" ? m.themeDark : m.themeLight);
@@ -3267,11 +3063,7 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
 
 labelsBtn.addEventListener("click", () => {
   labelSource = labelSource === "device" ? "model" : "device";
-  try {
-    localStorage.setItem("urx-labels", labelSource);
-  } catch {
-    // ignore (storage may be unavailable)
-  }
+  rememberLabelSource(labelSource);
   graph.setLabelSource(labelSource);
   applyStaticI18n();
   setStatus(labelSource === "device" ? t().toolbar.labelsDevice : t().toolbar.labelsModel);
@@ -3280,11 +3072,7 @@ labelsBtn.addEventListener("click", () => {
 hideOffBtn.addEventListener("click", () => {
   const next = !graph.isHideOffSends();
   graph.setHideOffSends(next);
-  try {
-    localStorage.setItem("urx-hide-off", next ? "1" : "0");
-  } catch {
-    // ignore (storage may be unavailable)
-  }
+  rememberHideOffSends(next);
   applyStaticI18n();
   setStatus(next ? t().toolbar.hideOffSends : t().toolbar.showOffSends);
 });
