@@ -337,7 +337,9 @@ carries a one-line map of the same directories and points here.
   control **window**; owns the ports, the engine, the learn state and the per-model persistence under
   `urx-midi`; wires the arming hooks and the feedback into `markChanged`/follow application). The panel
   itself is a separate OS window — `midi.html` + `src/midi-window.ts`, a second Vite entry dropped from the
-  demo build — which is a **view**: it renders a pushed state and reports intents (`ui/midi-protocol.ts`),
+  demo build, which does nothing but hand `ui/midi-window-app.ts` its host element (that module holds the
+  state and the relay; `ui/midi-window-view.ts` is the state → DOM half, so both are drivable without a
+  window) — which is a **view**: it renders a pushed state and reports intents (`ui/midi-protocol.ts`),
   because a MIDI input port delivers its bursts to the window that opened it and only the main window has a
   plan. Both directions are Tauri Channels through one Rust relay (`src-tauri/src/midiwin.rs`), so the
   second window needs no capability beyond core. It raises itself when learn turns ON and deliberately NOT
@@ -406,6 +408,20 @@ carries a one-line map of the same directories and points here.
   and `setStatus` writes the span (a `statusbar.textContent =` would take the readout down on the next
   message). Introduces no colour: the only cell that may change is the no-answer one, since a broker that
   stopped answering is the only state on the row that asks for something to be done
+- `src/app/` — the parts of the app entry that are not wiring, lifted out of `main.ts` so each can be
+  driven without booting the whole application. `view-state.ts` the UI state that persists per browser
+  profile rather than per plan (the model and rate the app reopens on, the view, the label source, the
+  off-send declutter, the per-model shelf, and the `?reset` clear that has to run before anything else
+  reads storage) — every reader answers a default rather than throwing, because a throw out of module init
+  takes the app with it / `node-param-effects.ts` which repaint a node-parameter edit earns. It is a pure
+  function of the patch and the previous values, and the distinction it holds is **relayout versus in
+  place**: a toggle changes which controls the inspector shows and must re-render, a value slider must not,
+  since a re-render replaces the element under the pointer and the drag ends there / `flow-latch.ts` the two
+  re-entry guards and the difference between them — `singleFlight` is a silent rapid-repeat guard on one
+  handler, while `FileFlowLatch` is shared across every plan / settings entry point and **reports** a
+  refusal caused by a device read (the operator's click went unanswered) while staying silent for a second
+  file flow (its own dialog is already on screen)
+
 - `src-tauri/` — Rust shell. Webview host + tauri-plugin-dialog + file IO commands
   (`read_text_file`/`read_binary_file`/`write_text_file`/`write_binary_file`; `third_party_licenses` reads
   the cargo-about notice bundled via `bundle.resources`, shown from File → "Third-party licenses") + device
