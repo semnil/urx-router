@@ -1,0 +1,31 @@
+# Codecov's own configuration. Without this file the service applies its defaults, and the
+# one that matters here is `project`: target `auto` (the base commit's coverage) with a
+# threshold of 0%, so ANY decrease fails the check.
+#
+# Two jobs upload for a commit — `unit` from the frontend job and `e2e` from the E2E job —
+# and the E2E half is not reproducible to the line: a spec that races a repaint or a
+# timeout takes a slightly different path each run. Five CI runs over identical
+# application code — 255e32f, 26d3515, cc827ff, 95866f1, c6ad594, some of them heads a
+# later force-push replaced, so they resolve on Codecov rather than in any branch —
+# reported 11173, 11173, 11172, 11173 and 11174 hits of 12669: a spread of TWO lines, or
+# 0.016 points. That is what posted `88.18% (-0.01%) compared to 255e32f` on a pull
+# request that changed one comment and nothing else.
+#
+# 0.05% is about six lines here: three times the spread those five runs actually showed,
+# which is the margin a five-sample range earns rather than a bound it proves. What would
+# tighten it honestly: more readings of identical code from CI — every merge produces one,
+# and local repeats do not count, since they measure this machine's timing and not the
+# runner's.
+#
+# Keep it near the noise floor rather than comfortable. `patch` only ever looks at the
+# lines a pull request touched, so `project` is the ONLY status that can see coverage lost
+# somewhere the diff never went — a deleted test taking existing lines with it passes
+# `patch` by construction. A threshold wide enough to be quiet is also wide enough to let
+# that through: at 1% it would have been 127 lines.
+coverage:
+  status:
+    project:
+      default:
+        threshold: 0.05%
+    patch:
+      default: {}
