@@ -576,9 +576,16 @@ actually rests on.
 Where it runs instead is **the one pull request that changes the app version**. That PR carries nothing
 else, and merging it is what tags a release (`tag-release.yml`), so the harness sits directly in front
 of the only commit a user ever installs. In front of the tag rather than behind it: a release-time run
-would report on a tag that already exists. A `paths: package.json` filter alone would not say "version
-bump" — Dependabot edits that file weekly — so `race.yml`'s `detect` job compares the `version` field
-across the PR and the shards run only when it moved.
+would report on a tag that already exists. A `paths: package.json` filter would not have said "version
+bump" either — Dependabot edits that file weekly — so `race.yml`'s `detect` job compares the `version`
+field across the PR and the shards run only when it moved.
+
+`race.yml` carries **no trigger filter at all**, so `detect` runs on every pull request. That is what
+makes `race-required` usable as a merge condition: a workflow skipped by a trigger filter reports no
+check run, so the version-bump PR could never wait for a check the other pull requests do not even
+have. Away from that one PR the two harness jobs skip on their own condition, which reports success in
+seconds — the arrangement, and why a required check has to be able to report on every pull request, is
+in CLAUDE.md's "What a merge waits for".
 
 Against a branch, on demand — **available, not required**, for pulling the verdict forward before a
 version PR exists:
@@ -590,7 +597,11 @@ gh workflow run race.yml --ref <branch>
 The bargain that buys: **no pull request is obliged to run the harness**, and an ordinary merge does
 not, so a break surfaces at the version PR or at whatever manual run someone chose to make, rather
 than at the merge that caused it, and `git log` over the live-sync
-surface is what narrows it. WebKit is a separate browser download, so it is its own job rather than a
+surface is what narrows it. Every pull request does wait for `race-required`, but away from the
+version PR that is a gate over **two** skipped jobs, green in seconds: `detect` runs, and `race` and
+`race-webkit` skip on their own condition — **a matrix job whose own `if:` is false is not expanded**,
+so `race` reports once rather than three times. What the merge condition buys is that the release
+cannot be tagged over a red harness, not that every branch pays for one. WebKit is a separate browser download, so it is its own job rather than a
 fourth shard — paying for it three times would cost more than the cases do.
 
 ### Observables

@@ -194,8 +194,10 @@ jobs:
 
   # The single context this workflow contributes to the branch ruleset
   # (.github/required-checks.json). Away from the version-bump PR it is a few seconds of
-  # green over four skipped jobs; on that PR it is what stops a release from being tagged
-  # over a red harness — which is the one merge in this repository that ships something.
+  # green over two skipped jobs — `detect` runs, and `race` and `race-webkit` skip on their
+  # own condition, `race` as ONE job because a matrix whose job-level `if:` is false is
+  # never expanded. On that PR it is what stops a release from being tagged over a red
+  # harness — which is the one merge in this repository that ships something.
   #
   # `always()` and an explicit read of the results, because a job skipped by a failed
   # dependency reports SUCCESS to a required check: with a bare `needs:` this gate would
