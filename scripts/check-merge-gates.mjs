@@ -374,6 +374,47 @@ function gh(args) {
   return run.stdout.trim();
 }
 
+// A ruleset's include / exclude entries are PATTERNS, not names: GitHub matches them
+// against the full ref with Ruby's File.fnmatch under File::FNM_PATHNAME (so `*` and `?`
+// stop at a `/`, `**/` crosses any number of them, `[…]` is a character class, `\`
+// escapes, and extglob is not supported). Comparing them as strings reads
+// `exclude: ["refs/heads/ma*"]` as excluding nothing, which is the direction that reports
+// a governed branch when the branch is in fact exempt.
+function refMatches(pattern, ref) {
+  if (pattern === "~ALL" || pattern === "~DEFAULT_BRANCH") return true;
+  let out = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === "\\" && i + 1 < pattern.length) {
+      out += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    } else if (ch === "*") {
+      // `**` crosses separators only in the `**/` form; anywhere else Ruby reads it as
+      // an ordinary `*`.
+      if (pattern[i + 1] === "*" && pattern[i + 2] === "/") {
+        out += "(?:[^/]+/)*";
+        i += 2;
+      } else {
+        while (pattern[i + 1] === "*") i++;
+        out += "[^/]*";
+      }
+    } else if (ch === "?") {
+      out += "[^/]";
+    } else if (ch === "[") {
+      const end = pattern.indexOf("]", i + 1);
+      if (end === -1) {
+        out += "\\[";
+      } else {
+        const body = pattern.slice(i + 1, end).replace(/^!/, "^");
+        out += `[${body}]`;
+        i = end;
+      }
+    } else {
+      out += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${out}$`).test(ref);
+}
+
 // Reported per ruleset rather than as one union: two rulesets requiring different sets is
 // itself the thing worth seeing.
 function checkRuleset(required) {
@@ -424,15 +465,14 @@ function checkRuleset(required) {
     const refName = detail.conditions?.ref_name ?? {};
     const include = refName.include ?? [];
     const exclude = refName.exclude ?? [];
-    const covers =
-      include.some((ref) => ref === "~ALL" || ref === "~DEFAULT_BRANCH" || ref === `refs/heads/${defaultBranch}`) &&
-      !exclude.some((ref) => ref === `refs/heads/${defaultBranch}`);
+    const governs = (ref) => refMatches(ref, `refs/heads/${defaultBranch}`);
+    const covers = include.some(governs) && !exclude.some(governs);
     if (!covers) {
       finding(
         where,
         `requires ${rule.parameters?.required_status_checks?.length ?? 0} status check(s) but does not govern ` +
           `${defaultBranch} (include: ${include.join(", ") || "none"}; exclude: ${exclude.join(", ") || "none"}) — ` +
-          `they gate some other branch, and a merge to ${defaultBranch} waits for nothing`,
+          `a merge to ${defaultBranch} waits for none of them`,
       );
       continue;
     }
