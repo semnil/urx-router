@@ -375,8 +375,13 @@ describe("what the browser build does not offer", () => {
         await vi.waitFor(() => expect(vi.mocked(alert).mock.calls.length).toBe(dialogsBefore + 1));
       } else {
         // The frame is read out of the catalog rather than typed in, so a Japanese run
-        // asserts the same thing. The gap stands where the reason goes.
-        const [frame] = t().midi.windowError(" ").split(" ");
+        // asserts the same thing. An empty reason yields the frame directly, so no
+        // sentinel is needed — an earlier version used a NUL for that, which turned
+        // this file into something `file` calls data and `rg` refuses to search.
+        const frame = t().midi.windowError("");
+        // `startsWith("")` is true of everything, so an entry that stopped framing its
+        // reason would make the next line pass for nothing.
+        expect(frame).not.toBe("");
         await vi.waitFor(() => expect(status()).not.toBe(statusBefore));
         expect(status().startsWith(frame)).toBe(true);
         expect(status().length).toBeGreaterThan(frame.length); // the reason is named
