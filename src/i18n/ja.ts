@@ -814,6 +814,7 @@ export const ja: Messages = {
     duplicate: "すでに接続済みです",
     singleInput: "この入力は1系統のみです (既存の接続を外してください)",
     cannotConnect: "接続できません",
+    noReason: "失敗の原因が報告されませんでした",
     recPointRequired: "USB 出力・microSD Rec はチャンネル上辺の Rec Point タップから配線してください",
     recPointTargets:
       "Rec Point タップの接続先は USB 出力・microSD Rec のみです。他はチャンネルの出力から配線してください",
