@@ -122,10 +122,11 @@ const SURFACES: Record<SurfaceName, Surface> = {
     // ("CH 1 · GATE · Threshold"), never printed alone.
     composed: ["midi.param", "midi.scope", "midi.scopedParam"],
     neverShown: {
-      // ui/midi.ts routes all three through the MAIN window's status line.
+      // ui/midi.ts routes all four through the MAIN window's status line.
       "midi.windowError": "the main window's status line",
       "midi.inputError": "the main window's status line",
       "midi.outputError": "the main window's status line",
+      "midi.outputStalled": "the main window's status line",
     },
   },
   toolbar: {

@@ -1882,8 +1882,10 @@ session counts as started, and the worker replies only once every address is reg
 refused registration ends the attempt rather than starting a session that cannot do its job.
 
 Everything **outside** the device link keeps a softer rule — salvage what can be salvaged, but never in silence. A
-failed MIDI feedback send drops the engine's sent-cache so the next pass re-sends (a dead port keeps failing
-harmlessly; a one-off heals), boot port restore reports to the status line instead of leaving the panel showing a
+failed MIDI feedback send drops the engine's sent-cache so the next pass re-sends (a one-off heals; a port that
+keeps refusing is given up after `FEEDBACK_FAIL_PASSES` passes — closed on both sides and reported on the status
+line, because dropping the cache is what makes every following pass re-emit every mapping), boot port restore
+reports to the status line instead of leaving the panel showing a
 controller that was never opened, and a file write goes through a temp file and a rename so a failure cannot
 destroy the copy already on disk.
 

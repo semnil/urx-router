@@ -232,6 +232,11 @@ export const en = {
     windowError: (message: string): string => `Could not open the MIDI control window: ${message}`,
     inputError: (message: string): string => `MIDI input error: ${message}`,
     outputError: (message: string): string => `MIDI output error: ${message}`,
+    // Feedback gave up on a port that kept refusing messages (ui/midi.ts,
+    // FEEDBACK_FAIL_PASSES). Said once — nothing repeats after it.
+    outputStalled: tr(
+      "MIDI feedback stopped — the output port kept refusing messages. Reconnect the controller and choose the port again.",
+    ),
     // Control labels reuse the console strip wording (chips / knob captions).
     param: {
       level: dev("Level"),

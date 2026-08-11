@@ -79,6 +79,11 @@ function optionOf(kind: ControlKind, m: MidiMapping): "mode" | "button" | undefi
 // Incoming edits already suppress their own echo (engine.lastSent); this pass
 // batches feedback for edits from everywhere else (UI, device follow, plan load).
 const FEEDBACK_DEBOUNCE_MS = 120;
+// A port that has stopped taking messages fails every send, and the catch below drops
+// the engine's sent cache — so the next pass finds every mapping changed and re-emits
+// all of them. Without a ceiling the two feed each other for as long as the app runs.
+// Counted in PASSES, not messages: one pass emits a message per bound address.
+const FEEDBACK_FAIL_PASSES = 3;
 // Re-try cadence for feedback deferred behind an in-progress incoming sweep.
 const FEEDBACK_SETTLE_MS = 350;
 // A lone CC learn candidate commits after this quiet gap (single-message buttons).
@@ -109,6 +114,9 @@ export class MidiControl {
   // The plan object every entry in `bound` was bound against.
   private boundPlan: Plan | null = null;
   private feedbackTimer = 0;
+  /** Consecutive feedback passes that ended in a failed send, cleared by any send that
+   *  lands. What keeps the re-send from being unbounded. */
+  private txFailedPasses = 0;
   private settleTimer = 0;
   private learnFlushTimer = 0;
   /** True between the window's "ready" and its "closed": what makes a state push
@@ -160,14 +168,33 @@ export class MidiControl {
         }
         this.traceLog?.(`tx [${bytes.join(" ")}]`);
         this.probe?.tx(bytes);
-        void midiSend(bytes).catch(() => {
-          // The controller never got this value, so drop what the engine thinks
-          // it has been told and schedule another pass. A dead port keeps
-          // failing harmlessly; a one-off failure self-heals.
-          this.record("tx failed — re-sending feedback");
-          this.engine.forgetFeedback();
-          this.scheduleFeedback();
-        });
+        void midiSend(bytes).then(
+          () => {
+            // A send that lands says the port is alive. The streak below is about a
+            // port that has stopped taking messages, not about one message.
+            this.txFailedPasses = 0;
+          },
+          () => {
+            // A rejection that arrives after the port was given up has nothing left
+            // to re-send, and must not count a second time.
+            if (!this.outputPort) return;
+            // The controller never got this value, so drop what the engine thinks it
+            // has been told and schedule another pass: a one-off failure self-heals.
+            this.record("tx failed — re-sending feedback");
+            this.engine.forgetFeedback();
+            // The debounce timer is the pass boundary. Only the FIRST rejection of a
+            // pass finds it unset — that one arms it — so counting here counts passes
+            // rather than messages. A per-message limit would trip inside the first
+            // pass as soon as three addresses are bound, killing feedback on exactly
+            // the transient hiccup this path exists to heal from.
+            if (this.feedbackTimer) return;
+            if (++this.txFailedPasses >= FEEDBACK_FAIL_PASSES) {
+              this.abandonOutput();
+              return;
+            }
+            this.scheduleFeedback();
+          },
+        );
       },
       learned: (addr) => this.onLearned(addr),
       learnPending: () => this.bumpLearnFlush(),
@@ -354,6 +381,9 @@ export class MidiControl {
     try {
       await midiOpenOutput(port);
       this.outputPort = port;
+      // Re-picking a port is the operator's retry: a streak carried over from the
+      // previous connection would let one later failure trip the limit on a good one.
+      this.txFailedPasses = 0;
       this.runFeedback(true); // align motor faders / LEDs with the plan at once
     } catch (err) {
       this.outputPort = null;
@@ -418,6 +448,23 @@ export class MidiControl {
   }
 
   // ---- feedback ----
+
+  /** Give up on an output port that will not take a message. Closed in the SHELL as
+   *  well as here, because `open_ports` answers from the held slot: leaving it open
+   *  lets the next `reconcileOpenPorts` hand the dead name straight back and restart
+   *  the re-send. The SAVED port is deliberately left alone — an unplug should not
+   *  forget the operator's choice at the next boot, and that restore reports its own
+   *  failure. */
+  private abandonOutput(): void {
+    this.txFailedPasses = 0;
+    window.clearTimeout(this.feedbackTimer);
+    this.feedbackTimer = 0;
+    window.clearTimeout(this.settleTimer);
+    this.settleTimer = 0;
+    this.outputPort = null;
+    void midiCloseOutput().catch(() => {});
+    this.say(t().midi.outputStalled);
+  }
 
   private runFeedback(resync: boolean): void {
     // Marked from here rather than from the callers, so every entry to a full re-send

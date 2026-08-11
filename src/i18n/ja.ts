@@ -179,6 +179,8 @@ export const ja: Messages = {
     windowError: (message: string): string => `MIDI コントロールウィンドウを開けませんでした: ${message}`,
     inputError: (message: string): string => `MIDI 入力エラー: ${message}`,
     outputError: (message: string): string => `MIDI 出力エラー: ${message}`,
+    outputStalled:
+      "MIDI フィードバックを停止しました — 出力ポートがメッセージを受け付け続けませんでした。コントローラーを接続し直し、ポートを選び直してください。",
     // コントロール名はコンソールストリップの表記 (チップ / ノブ) をそのまま使う。
     param: {
       level: "Level",

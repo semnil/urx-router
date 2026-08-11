@@ -193,8 +193,8 @@ describe("feedback to the controller", () => {
   });
 
   // A failed send means the controller never got the value, so what the engine thinks
-  // it has been told is dropped and another pass is scheduled. A dead port keeps
-  // failing harmlessly; a one-off failure self-heals.
+  // it has been told is dropped and another pass is scheduled: a one-off failure
+  // self-heals. The persistent case is bounded — the three cases after this one.
   it("forgets and re-sends after a failed send", async () => {
     seedMappings();
     const { control } = install();
@@ -210,6 +210,103 @@ describe("feedback to the controller", () => {
 
     await vi.advanceTimersByTimeAsync(200); // the re-scheduled pass
     expect(mocks.midiSend.mock.calls.length).toBeGreaterThan(afterFailure);
+  });
+
+  // The re-send above is what makes a persistent failure dangerous: each pass drops the
+  // sent cache, so the next one re-emits EVERY mapping, forever, at the debounce
+  // cadence. Bounded by FEEDBACK_FAIL_PASSES — the port is given up, closed on both
+  // sides, and said once.
+  it("gives up the output port after a run of failed passes, and stops re-sending", async () => {
+    seedMappings();
+    const { control, hooks } = install();
+    await attached();
+    await openOutput();
+
+    vi.useFakeTimers();
+    mocks.midiSend.mockClear();
+    mocks.midiCloseOutput.mockClear();
+    mocks.midiSend.mockRejectedValue(new Error("port gone"));
+
+    control.resyncFeedback();
+    await vi.advanceTimersByTimeAsync(1000);
+    const settled = mocks.midiSend.mock.calls.length;
+    expect(settled).toBeGreaterThan(0); // it really did try
+
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(mocks.midiSend.mock.calls.length).toBe(settled); // nothing kept firing
+    // Closed in the shell too: `open_ports` answers from the held slot, so leaving it
+    // open lets the next reconcile hand the dead port straight back.
+    expect(mocks.midiCloseOutput).toHaveBeenCalled();
+    expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.outputStalled);
+  });
+
+  // The streak is CONSECUTIVE. Four failures with a landed send between them is not a
+  // dead port, and a lifetime counter would give up on one.
+  it("keeps the port through failures that a landed send separates", async () => {
+    seedMappings();
+    const { control } = install();
+    await attached();
+    await openOutput();
+
+    vi.useFakeTimers();
+    mocks.midiSend.mockClear();
+    mocks.midiCloseOutput.mockClear();
+
+    // Two failing passes, then one that lands (the default mock resolves).
+    mocks.midiSend.mockRejectedValueOnce(new Error("x")).mockRejectedValueOnce(new Error("x"));
+    control.resyncFeedback();
+    await vi.advanceTimersByTimeAsync(200); // second pass
+    await vi.advanceTimersByTimeAsync(200); // third pass lands -> streak cleared
+
+    // Two more failing passes: four failures in total, never three in a row.
+    mocks.midiSend.mockRejectedValueOnce(new Error("x")).mockRejectedValueOnce(new Error("x"));
+    control.resyncFeedback();
+    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(mocks.midiCloseOutput).not.toHaveBeenCalled();
+  });
+
+  // Counted per PASS, not per message. A pass emits one message per bound address, and
+  // they all reject together — so a per-message limit gives up inside the very first
+  // pass as soon as FEEDBACK_FAIL_PASSES addresses are bound, on exactly the transient
+  // hiccup the re-send exists to heal from.
+  it("does not give up on one failed pass that carries more messages than the limit", async () => {
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({
+        models: {
+          URX44V: [
+            MAPPING,
+            { ...MAPPING, control: "ch2/level", addr: { type: "cc", channel: 0, controller: 8 } },
+            { ...MAPPING, control: "ch3/level", addr: { type: "cc", channel: 0, controller: 9 } },
+            { ...MAPPING, control: "ch4/level", addr: { type: "cc", channel: 0, controller: 10 } },
+          ],
+        },
+      }),
+    );
+    const { control } = install();
+    await attached();
+    await openOutput();
+
+    vi.useFakeTimers();
+    mocks.midiSend.mockClear();
+    mocks.midiCloseOutput.mockClear();
+    // Exactly one failing pass: every message in it rejects, everything after lands.
+    mocks.midiSend
+      .mockRejectedValueOnce(new Error("x"))
+      .mockRejectedValueOnce(new Error("x"))
+      .mockRejectedValueOnce(new Error("x"))
+      .mockRejectedValueOnce(new Error("x"));
+
+    control.resyncFeedback();
+    await vi.advanceTimersByTimeAsync(0);
+    // Self-guard: without more bound addresses than the limit this case proves nothing,
+    // and an unresolvable control id would silently leave it under.
+    expect(mocks.midiSend.mock.calls.length).toBeGreaterThanOrEqual(4);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mocks.midiCloseOutput).not.toHaveBeenCalled();
   });
 });
 
