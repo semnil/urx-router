@@ -99,9 +99,24 @@ export const SHELL_CODES: Record<string, keyof Messages["error"]["shell"]> = {
 
 /** Split an error into its stable code and technical detail. A message is either a
  *  bare code or `"<code>: <detail>"`; anything else yields no code, and the whole
- *  message is the caller's to pass through. */
+ *  message is the caller's to pass through.
+ *
+ *  A rejection is not necessarily an Error, and `String()` on an object with no
+ *  prototype — or one whose conversion throws for any other reason — throws rather
+ *  than describing it. This runs on the path that REPORTS a failure, so a throw
+ *  here loses the failure it was called to describe: the reporter's own rejection
+ *  replaces it, with nothing left to catch either one. Nothing to say is answered
+ *  as nothing, and the caller decides what an empty description is worth. */
 function split(err: unknown): { message: string; code: string; detail: string } {
-  const message = err instanceof Error ? err.message : String(err);
+  let message: string;
+  if (err instanceof Error) message = err.message;
+  else {
+    try {
+      message = String(err);
+    } catch {
+      message = "";
+    }
+  }
   const sep = message.indexOf(": ");
   if (sep === -1) return { message, code: message, detail: "" };
   return { message, code: message.slice(0, sep), detail: message.slice(sep + 2) };
