@@ -544,22 +544,34 @@ rejects the wire before adoption, so what would be measured is the load report, 
 
 ### Where each tier runs
 
-The project boundary is also the CI tiering, and these are the numbers that cut it there. Measured on a
-two-worker `ubuntu-latest` runner:
+The project boundary is also the CI tiering, and these are the numbers that cut it there. **Measured
+2026-08-11 on `d85af81`**, from the logs of one `ci.yml` run and one on-demand `race.yml` run — two
+workers per job, `ubuntu-latest`, inside the Playwright container. Machine time is the sum of the
+per-test durations the reporter prints, so it is the work rather than the wall clock the shards divide
+it into:
 
 | Tier | Machine time | Slowest test | Runs from |
 | --- | --- | --- | --- |
-| `chromium` — the ordinary suite | 3.5 min | 2.7 s | `ci.yml`, every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside) |
-| `race` — the harness | 22.4 min | 60 s | `race.yml`, sharded three ways |
-| `race-webkit` | 28 s | 26 s | `race.yml`, its own job |
+| `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside) |
+| `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways |
+| `race-webkit` | 2.1 min | 48 s | `race.yml`, its own job |
+
+**Read the ordinary tier's figure as a range rather than a budget.** The same 428 cases measured 5.2
+minutes in another run the same day, a fifth under the reading above — runner variance, not a change in
+the suite. The harness is steadier (12.5 against 12.3 minutes for shard 1 across two runs), which is
+what lets the comparison between the tiers survive noise neither figure is free of. The ordinary tier is
+also measured **as CI runs it**: since the coverage upload landed that means `pnpm test:e2e:coverage`, an
+unminified bundle and a native V8 collector, and that overhead is part of what a per-PR run costs.
 
 Case counts are deliberately not a column here. They move with every pull request that adds a test —
 the ordinary tier's had drifted 45 cases past what this table claimed before anyone noticed — and
 nothing about the tiering follows from them. What cut the boundary is the time.
 
-The harness is **86% of the E2E machine time on its own**, which is what took it off the ordinary PR
-tier: at 3.5 minutes the ordinary suite is cheaper to run per-PR than to run after the merge, and at
-22.4 it is not.
+The harness is **about four fifths of the E2E machine time on its own** (79% of the ordinary-plus-race
+readings above), which is what took it off the ordinary PR tier: at six and a half minutes the ordinary
+suite is cheaper to run per-PR than to run after the merge, and at twenty-five it is not. Both figures
+have grown since the tiering was cut and the ratio has barely moved, which is the part the boundary
+actually rests on.
 
 Where it runs instead is **the one pull request that changes the app version**. That PR carries nothing
 else, and merging it is what tags a release (`tag-release.yml`), so the harness sits directly in front
