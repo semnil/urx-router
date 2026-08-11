@@ -101,11 +101,15 @@ export const DEFAULT_LATENCY: FakeLatency = {
  * because that is the ordering, and because `latency.set` is a knob a case can set
  * anywhere (see Served.announce).
  *
- * The number is bounded on both sides by something other than taste. Above: it has to
- * stay under live.ts's 120 ms flush window, or an announcement is routinely overtaken by
- * the next write of a drag, arrives against a snapshot that has moved on, and is applied
- * as a device-side change — a hazard of a late announcement, not of anything the app
- * does, and one the unit does not actually present. Below: it has to outlast the read an
+ * The number is bounded on both sides by something other than taste. Above: the DEFAULT
+ * stays under live.ts's 120 ms flush window so the ordinary cases are not all measuring
+ * the overtake — an announcement that arrives after the next write of a drag is matched
+ * against a snapshot that has moved on. That is a real device behaviour, not a hazard of
+ * the fake: the ack+58-151 ms measured three lines above crosses 120, so the unit DOES
+ * present it. This comment used to say the opposite ("one the unit does not actually
+ * present"), which is why no case set this above 120 for a year; `late echo of an
+ * overtaken write` in t3-undo.spec.ts is the one that deliberately does. Below: it has
+ * to outlast the read an
  * unfixed app issues straight after its write, or the staleness a case armed is already
  * over when that read arrives and the defect goes green; T1c's refetch reaches the
  * address ~26 ms after the write on the measured trace.

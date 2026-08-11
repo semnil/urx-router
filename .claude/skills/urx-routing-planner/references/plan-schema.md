@@ -87,9 +87,15 @@ the params you mean.
 
 ### connection params (ConnParams)
 
-- `level` — fader/send level in **dB**. Real range about `-96 … +10`; the app
-  snaps to a fixed grid (…, -6, -5, -4, -3.2, -2, -1.2, -0.4, 0, 0.4, 1.2, 2, …).
-  The off / -∞ notch is `-96.5`. Pick a nearby grid value; the app snaps anyway.
+- `level` — fader/send level in **dB**. Real range about `-96 … +10`, on a fixed
+  grid (…, -6, -5, -4, -3.2, -2, -1.2, -0.4, 0, 0.4, 1.2, 2, …). The off / -∞ notch
+  is `-96.5`. **Prefer a real grid value — a loaded plan is NOT snapped.** The app
+  snaps what its own controls author, but a level arriving in a plan document only
+  has to be a finite number, so an off-grid `-15.0` is kept as written. It is
+  written to the unit exactly (`-15.0` dB) and the unit keeps it — measured. What
+  diverges is the SCREEN: the fader has no detent there, so it shows the nearest
+  one, and the first touch of that control snaps the value onto the grid. Emit a
+  grid value and the plan, the display and the unit all say the same thing.
 - `pan` — `-63` (hard left) … `0` (center) … `+63` (hard right). Sends default to
   center.
 - `tap` — `"pre"` or `"post"` (default post). Only MIX/FX sends carry a tap. Note:

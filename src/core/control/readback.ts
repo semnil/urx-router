@@ -18,7 +18,7 @@ import type {
   SsmcsParams,
 } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
-import { applyPatchInContext, clonePlanState, diffPlans, dropAuthored } from "../plan-history";
+import { applyPatchInContext, clonePlanState, diffPlans, dropAuthored, readableContestKey } from "../plan-history";
 import type { PlanPatch, PlanWriteWitness } from "../plan-history";
 import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, FX_STEREO_ASSIGN_ON, normalizeInsertFx, PARAMS } from "./params";
@@ -911,8 +911,16 @@ export interface MergedRead extends ReadbackResult {
   devicePatch: PlanPatch;
   /** Everything the device patch did not write: an entry with nowhere to land (a wire
    *  removed while the read was in flight), and every key the operator moved meanwhile,
-   *  which the merge deliberately leaves standing. Skipped rather than forced; the
-   *  caller reports them. */
+   *  which the merge deliberately leaves standing. Skipped rather than forced.
+   *
+   *  WHICH callers report it, and which do not, is a decision rather than an oversight.
+   *  The Fetch flow does, through `formatReadbackReport`'s own section — that read is a
+   *  deliberate whole-device pull and a key it declined to write is worth a line. The
+   *  four live-sync callers do NOT: during a follow read this list is non-empty exactly
+   *  when the operator was editing while it ran, which is the merge working, and
+   *  surfacing it per reconcile would be a notification per gesture. They keep the
+   *  `console.warn`, which is a development aid and reaches nobody in a packaged build
+   *  (no `devtools` feature) — so for those paths this really is silent, on purpose. */
   unplaced: string[];
 }
 
@@ -1196,9 +1204,18 @@ async function readSsmcs(source: ParamSource, y: number): Promise<SsmcsParams> {
 /**
  * Render a fetch's read failures as human-readable Markdown the user can save,
  * so the per-group reasons (otherwise console-only) are visible off the status
- * bar. Lists each read failure and every node left at its plan default. Pure.
+ * bar. Lists each read failure, every node left at its plan default, and — for a
+ * merged read — every key the merge did not apply. That last section is why the
+ * parameter is widened: `unplaced` otherwise reaches nothing but a `console.warn`,
+ * and a packaged build has no inspector to read it in (no `devtools` feature).
+ *
+ * Optional rather than required: `MergedRead extends ReadbackResult`, so a union
+ * would collapse, and the `.urxf` import path passes a plain `ReadbackResult`. Pure.
  */
-export function formatReadbackReport(model: string, result: ReadbackResult): string {
+export function formatReadbackReport(
+  model: string,
+  result: ReadbackResult & Partial<Pick<MergedRead, "unplaced">>,
+): string {
   const lines: string[] = [];
   lines.push(`# URX readback report — ${model}`);
   lines.push("");
@@ -1214,6 +1231,22 @@ export function formatReadbackReport(model: string, result: ReadbackResult): str
     lines.push("");
     lines.push("## Nodes left at plan default (not read)");
     for (const id of result.unreadNodes) lines.push(`- ${id}`);
+  }
+  if (result.unplaced?.length) {
+    lines.push("");
+    // Two different things share this list and the heading has to hold for both: a key
+    // with nowhere to land (a wire removed while the read was in flight) and a key the
+    // operator moved meanwhile, which the merge leaves standing on purpose. Calling
+    // them all "no longer in the plan" would report the second — ordinary, correct
+    // behaviour — as damage.
+    lines.push("## Device values not applied");
+    lines.push("");
+    lines.push("Each was either edited here while the read was in flight (your edit stands), or had");
+    lines.push("nowhere left to land.");
+    lines.push("");
+    // A wire key joins its two refs with a separator a document must not carry;
+    // plan-history owns that encoding and undoes it.
+    for (const key of result.unplaced) lines.push(`- ${readableContestKey(key)}`);
   }
   lines.push("");
   return lines.join("\n");

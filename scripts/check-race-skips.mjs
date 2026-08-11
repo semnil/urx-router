@@ -188,6 +188,37 @@ for (const c of collected) {
 }
 
 const ledger = JSON.parse(readFileSync(join(repo, LEDGER), "utf8"));
+
+// A floor on what the tier collects. Everything above answers questions about the cases
+// Playwright DID collect, so a case that stops being collected at all is invisible to it:
+// only a total collection failure is caught (`--list` exits non-zero, see fatal above),
+// and short of that, deleting a case — or a whole file — leaves every assertion here
+// satisfied and the check green. Measured when this was written: of the 170 cases
+// collected, 8 are registered skips in 4 files, so 162 could go one at a time and 118
+// could go by the file with nothing objecting.
+//
+// A MINIMUM per file, not an exact count: adding cases must not be a chore, and the
+// failure this guards against is loss. Every file now above its floor is printed at the
+// end in the ledger's own shape, so raising one deliberately is a copy-paste rather than
+// arithmetic.
+{
+  const floors = ledger.collect?.minCases ?? {};
+  const actual = new Map();
+  for (const c of collected) tally(actual, c.file);
+  for (const [file, min] of Object.entries(floors)) {
+    const n = actual.get(file) ?? 0;
+    if (n < min) {
+      problems.push(
+        `${file}: collects ${n} case(s), below the floor of ${min} in ${LEDGER} — ` +
+          `a case that stops being collected is a check that stops running`,
+      );
+    }
+  }
+  for (const file of actual.keys()) {
+    if (!(file in floors)) problems.push(`${LEDGER}: ${file} is collected but has no collect.minCases floor`);
+  }
+}
+
 const entries = new Map();
 for (const s of ledger.skips) {
   const k = key(s.file, s.title);
@@ -256,6 +287,20 @@ if (problems.length) {
   console.error(`FAIL: ${problems.length} problem(s)`);
   for (const p of problems) console.error(`  ${p}`);
   process.exit(1);
+}
+
+// Printed in the ledger's own shape, and only for files that have grown: a floor is
+// raised by pasting these lines, so the alternative is counting by hand. Silent when
+// every floor is exact, which is the state the ledger is committed in.
+{
+  const floors = ledger.collect?.minCases ?? {};
+  const actual = new Map();
+  for (const c of collected) tally(actual, c.file);
+  const grown = [...actual].filter(([f, n]) => n > (floors[f] ?? 0)).sort();
+  if (grown.length) {
+    console.log(`    ${grown.length} file(s) now above their floor — paste to raise:`);
+    for (const [f, n] of grown) console.log(`      ${JSON.stringify(f)}: ${n},`);
+  }
 }
 
 console.log(`OK: ${found.size} permanent skip(s) of ${collected.length} cases Playwright collects in ${RACE_DIR}`);

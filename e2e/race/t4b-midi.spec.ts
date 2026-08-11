@@ -21,7 +21,7 @@ import {
   type InstallOptions,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, type LedgerEntry } from "./analyze";
-import { CH1_FADER, CH2_FADER, faderOf, faderReadout, graphNode, strip } from "./ui";
+import { CH1_FADER, CH2_FADER, faderOf, faderReadout, graphNode, settleValue, strip } from "./ui";
 
 // T4b midi — the six T4 cases t4-midi.spec.ts did not reach
 // (docs/{en,ja}/live-race-harness.md, catalog ids in the section headers below).
@@ -975,6 +975,8 @@ test.describe("T4b midi", () => {
     // gesture where an upward one saturates within ten pixels.
     let beforeBurst = 0;
     let afterBurstVisible = 0;
+    let reflectMs = -1;
+    let settledMs = -1;
     await page.mouse.move(x, y0);
     await mark(page, "drag-start");
     await page.mouse.down();
@@ -984,10 +986,20 @@ test.describe("T4b midi", () => {
       await page.waitForTimeout(25);
       if (i !== 12) continue;
       beforeBurst = Number(await valueOf(handle));
+      // The settle's baseline, read the way it will be polled — through the LOCATOR, so
+      // a repaint that replaces the strip does not make the comparison meaningless.
+      const burstFrom = await fader.getAttribute("aria-valuenow");
       await mark(page, "midi-burst");
       await pushMidi(page, [cc7(114)]); // → +5.0 dB, far above where the drag is
-      await page.waitForTimeout(120); // let the reflect coalesce and repaint
-      afterBurstVisible = Number(await valueOf(fader));
+      // Was a bare `waitForTimeout(120)` — a guess at how long the coalesced reflect
+      // (REFLECT_MIN_MS = 50) takes, never measured, and under load it read the drag's
+      // value and failed naming the app. Waiting for STILLNESS instead measures the
+      // arrival and keeps the assertion honest: polling until the value equals the 5 the
+      // case is about to assert would pass whatever the app did.
+      const settled = await settleValue(fader, burstFrom);
+      afterBurstVisible = Number(settled.value);
+      reflectMs = settled.changedAt;
+      settledMs = settled.settledAt;
     }
     await mark(page, "drag-end");
     await page.mouse.up();
@@ -1018,6 +1030,10 @@ test.describe("T4b midi", () => {
         `detachedFinal=${detachedFinal} visibleFinal=${visibleFinal} connected=${connected}`,
     );
     console.log(`ledger on the dragged send level: ${level.map((l) => l.source).join(" → ")}`);
+    console.log(
+      `reflect after the midi-burst mark: first change at ${reflectMs} ms, still at ${settledMs} ms ` +
+        `(the fixed wait this replaced was 120 ms)`,
+    );
 
     // The message landed and was applied ungated, mid-gesture, on the very control
     // under the pointer, and it moved the value far from where the drag had it.

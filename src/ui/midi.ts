@@ -79,6 +79,11 @@ function optionOf(kind: ControlKind, m: MidiMapping): "mode" | "button" | undefi
 // Incoming edits already suppress their own echo (engine.lastSent); this pass
 // batches feedback for edits from everywhere else (UI, device follow, plan load).
 const FEEDBACK_DEBOUNCE_MS = 120;
+// A port that has stopped taking messages fails every send, and the catch below drops
+// the engine's sent cache — so the next pass finds every mapping changed and re-emits
+// all of them. Without a ceiling the two feed each other for as long as the app runs.
+// Counted in PASSES, not messages: one pass emits a message per bound address.
+const FEEDBACK_FAIL_PASSES = 3;
 // Re-try cadence for feedback deferred behind an in-progress incoming sweep.
 const FEEDBACK_SETTLE_MS = 350;
 // A lone CC learn candidate commits after this quiet gap (single-message buttons).
@@ -109,6 +114,15 @@ export class MidiControl {
   // The plan object every entry in `bound` was bound against.
   private boundPlan: Plan | null = null;
   private feedbackTimer = 0;
+  /** Consecutive feedback passes that ended in a failed send, cleared by any send that
+   *  lands. What keeps the re-send from being unbounded. */
+  private txFailedPasses = 0;
+  /** Whether the last thing said about the output was that it stalled. A FLAG, not a
+   *  comparison against the message: `status` holds the string as it was rendered, so
+   *  a language switch between the stall and the reconnect leaves it matching nothing
+   *  the catalog now returns — and the stale sentence, in the old language, stays on
+   *  screen saying feedback is stopped after it has restarted. */
+  private outputStalled = false;
   private settleTimer = 0;
   private learnFlushTimer = 0;
   /** True between the window's "ready" and its "closed": what makes a state push
@@ -160,14 +174,33 @@ export class MidiControl {
         }
         this.traceLog?.(`tx [${bytes.join(" ")}]`);
         this.probe?.tx(bytes);
-        void midiSend(bytes).catch(() => {
-          // The controller never got this value, so drop what the engine thinks
-          // it has been told and schedule another pass. A dead port keeps
-          // failing harmlessly; a one-off failure self-heals.
-          this.record("tx failed — re-sending feedback");
-          this.engine.forgetFeedback();
-          this.scheduleFeedback();
-        });
+        void midiSend(bytes).then(
+          () => {
+            // A send that lands says the port is alive. The streak below is about a
+            // port that has stopped taking messages, not about one message.
+            this.txFailedPasses = 0;
+          },
+          () => {
+            // A rejection that arrives after the port was given up has nothing left
+            // to re-send, and must not count a second time.
+            if (!this.outputPort) return;
+            // The controller never got this value, so drop what the engine thinks it
+            // has been told and schedule another pass: a one-off failure self-heals.
+            this.record("tx failed — re-sending feedback");
+            this.engine.forgetFeedback();
+            // The debounce timer is the pass boundary. Only the FIRST rejection of a
+            // pass finds it unset — that one arms it — so counting here counts passes
+            // rather than messages. A per-message limit would trip inside the first
+            // pass as soon as three addresses are bound, killing feedback on exactly
+            // the transient hiccup this path exists to heal from.
+            if (this.feedbackTimer) return;
+            if (++this.txFailedPasses >= FEEDBACK_FAIL_PASSES) {
+              this.abandonOutput();
+              return;
+            }
+            this.scheduleFeedback();
+          },
+        );
       },
       learned: (addr) => this.onLearned(addr),
       learnPending: () => this.bumpLearnFlush(),
@@ -204,6 +237,10 @@ export class MidiControl {
   /** Status goes to the app's own line and to the window's, since the window is
    *  what the operator is watching while assigning. */
   private say(message: string): void {
+    // Anything said after the stall replaces it on screen, so the flag stops being
+    // true of what the operator can see. Set by abandonOutput immediately after its
+    // own say(), which is why this clears rather than guards.
+    this.outputStalled = false;
     this.status = message;
     this.hooks.onStatus(message);
     this.pushState();
@@ -354,6 +391,15 @@ export class MidiControl {
     try {
       await midiOpenOutput(port);
       this.outputPort = port;
+      // Re-picking a port is the operator's retry: a streak carried over from the
+      // previous connection would let one later failure trip the limit on a good one.
+      this.txFailedPasses = 0;
+      // The stall was a claim about a port that is open again, and feedback restarts
+      // on the next line — left standing it goes on telling the operator, in the
+      // window and on the app's status line, that the thing they just fixed is still
+      // broken. Only OUR claim is cleared, so an unrelated status (a learn hint,
+      // another error) said since is not wiped by opening a port.
+      if (this.outputStalled) this.say("");
       this.runFeedback(true); // align motor faders / LEDs with the plan at once
     } catch (err) {
       this.outputPort = null;
@@ -409,15 +455,48 @@ export class MidiControl {
 
   private async setOutputPort(port: string | null): Promise<void> {
     if (port) await this.openOutput(port);
-    else {
-      void midiCloseOutput();
-      this.outputPort = null;
-    }
+    else this.closeOutput();
     this.savePorts();
     this.pushState();
   }
 
+  /** Drop the output port on both sides and stop the feedback that was aimed at it.
+   *
+   *  Closing in the SHELL as well as here is what makes the two agree: the held slot is
+   *  what `open_ports` answers from (midi.rs), so leaving it open lets the next
+   *  `reconcileOpenPorts` hand the name straight back. Killing both timers belongs here
+   *  too — a pass armed against a port that is gone either sends into nothing or, worse,
+   *  into whatever the shell hands back next.
+   *
+   *  Says nothing and saves nothing: WHY the port went is the caller's to report, and
+   *  whether the operator's saved choice goes with it is the caller's to decide. */
+  private closeOutput(): void {
+    this.txFailedPasses = 0;
+    window.clearTimeout(this.feedbackTimer);
+    this.feedbackTimer = 0;
+    window.clearTimeout(this.settleTimer);
+    this.settleTimer = 0;
+    this.outputPort = null;
+    void midiCloseOutput().catch(() => {});
+  }
+
   // ---- feedback ----
+
+  /** Give up on an output port that will not take a message. Closed in the SHELL as
+   *  well as here, because `open_ports` answers from the held slot: leaving it open
+   *  lets the next `reconcileOpenPorts` hand the dead name straight back and restart
+   *  the re-send. The SAVED port is deliberately left alone — an unplug should not
+   *  forget the operator's choice at the next boot, and that restore reports its own
+   *  failure. */
+  private abandonOutput(): void {
+    this.closeOutput();
+    // The SAVED port is deliberately left alone — an unplug should not forget the
+    // operator's choice at the next boot, and that restore reports its own failure.
+    // That is the one thing separating this from the operator choosing "None".
+    this.say(t().midi.outputStalled);
+    // AFTER the say, which clears the flag for anything else that speaks.
+    this.outputStalled = true;
+  }
 
   private runFeedback(resync: boolean): void {
     // Marked from here rather than from the callers, so every entry to a full re-send

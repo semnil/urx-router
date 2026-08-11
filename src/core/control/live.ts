@@ -24,7 +24,7 @@ import {
 } from "./translate";
 import type { SharedOwners, NameWrite, WriteScope } from "./translate";
 import { reachedAndFailed, sendConverging } from "./client";
-import { writeSettle } from "./settle";
+import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 
 // Coalesce rapid edits (a slider drag fires per pixel) into one flush so the
@@ -107,6 +107,20 @@ export interface LiveSyncHooks {
   refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites) => Promise<Plan | null>;
 }
 
+/** One address's writes that are acked but not yet announced, oldest first. `at` is a
+ *  wall clock (Date.now), which is what lets an entry expire on a link that has gone
+ *  silent — see the fields that use it for why that is not settle.ts's axis. */
+type PendingQueue<V> = Array<{ value: V; at: number }>;
+
+/** Drop the leading entries older than `cutoff`, in one splice rather than a shift per
+ *  entry — a repeated shift is a memmove each, so draining a long queue that way would
+ *  cost O(n^2) element moves inside the notify callback that triggered it. */
+function dropExpired<V>(q: PendingQueue<V>, cutoff: number): void {
+  let i = 0;
+  while (i < q.length && q[i].at < cutoff) i++;
+  if (i) q.splice(0, i);
+}
+
 export class LiveSync {
   private active = false;
   // Which session a flush belongs to. Bumped by begin() and end(), and read after every
@@ -142,6 +156,35 @@ export class LiveSync {
   // address however long the session runs.
   private readonly directJournal = new Map<number, { value: number; at: number }>();
   private directSeq = 0;
+  // Writes the device has ACKED but not yet announced. The snapshot cannot represent
+  // them: it holds ONE value per address, so a second write to the same address moves
+  // it past the first, and when the first write's announcement finally arrives it no
+  // longer equals anything the snapshot holds — and is applied as a device-side change,
+  // writing a value the operator has already replaced back onto the board. The unit
+  // announces a numeric write ack+58-151 ms after the ack (reference/work/vd) against a
+  // 120 ms flush window, so a drag reaches that overlap on real hardware. One queue per
+  // address, oldest first, retained for the same window a settle waits (settle.ts).
+  //
+  // NOT writeSettle's job, though it is the obvious neighbour and the next reader will
+  // ask. `PendingWrites` holds addresses without the values sent — settle.ts says that
+  // is deliberate, since the answer it gives is the value the DEVICE announced — it is
+  // built per flush and closed in the same flush's finally, where this has to survive
+  // into the next one, and it is one entry per address where the whole case is two
+  // outstanding writes to one. It also only ever reaches settle on the sideEffect and
+  // refetch paths, so a plain fader drag never builds one at all.
+  //
+  // Wall clock rather than settle's notify sequence, and the two are not the same
+  // question: settle asks "did the announcement arrive after my write went out", which
+  // is ordering, while this asks "is this notify recent enough to still be one of mine",
+  // which needs elapsed time. A sequence bound would never expire on a quiet link —
+  // no notifies, no advance — and that is exactly when an unannounced write should be
+  // forgotten. SETTLE_TIMEOUT_MS is borrowed for the LENGTH, not the axis.
+  private readonly pendingValues = new Map<number, PendingQueue<number>>();
+  // The name twin. Separate for the reason isEchoName is separate — names live in their
+  // own snapshot and key on `${param}:${y}` with no x. Its measured overtake margin is
+  // wider (ack+1-102 ms), so this half is a structural twin rather than a reachable
+  // defect today; keeping one rule for one structure is what stops the two drifting.
+  private readonly pendingNames = new Map<string, PendingQueue<string>>();
   // Bumped by every write the FOLLOW side makes into a snapshot — noteDirect's single entry
   // and capture()'s two whole rebuilds. A flush translates the plan once and then awaits
   // per command, so the lists it walks can grow older than the snapshots it diffs each
@@ -195,6 +238,12 @@ export class LiveSync {
   begin(deviceView?: Plan): void {
     this.directJournal.clear();
     this.directSeq = 0;
+    // Session boundary: nothing acked on a previous link can be an echo on this one.
+    // Deliberately NOT cleared in capture() — a write acked just before a resync is
+    // exactly the one whose announcement is still in flight, and clearing there would
+    // reopen the hole this queue exists to close. The retention bounds that judgement.
+    this.pendingValues.clear();
+    this.pendingNames.clear();
     this.capture(deviceView);
     this.active = true;
     this.sessionGen++;
@@ -251,13 +300,62 @@ export class LiveSync {
    *  device-side change. An address we do not track returns false (treat as a
    *  change worth reconciling). */
   isEcho(paramId: number, x: number, y: number, value: number): boolean {
-    return this.snapshot.get(addrKey(paramId, x, y)) === value;
+    const k = addrKey(paramId, x, y);
+    // Pending first, and it CONSUMES the entry it matches: this notify is that write's
+    // announcement, so leaving it queued would let a later device-side change back to
+    // the same value be swallowed for the rest of the retention window.
+    return this.takePending(this.pendingValues, k, value) || this.snapshot.get(k) === value;
+  }
+
+  /** Append a write we have just been acked for, so its late announcement is still
+   *  recognisable after the snapshot has moved past it. */
+  private notePending<K, V>(queues: Map<K, PendingQueue<V>>, key: K, value: V): void {
+    const now = Date.now();
+    const q = queues.get(key);
+    if (!q) {
+      queues.set(key, [{ value, at: now }]);
+      return;
+    }
+    // Pruned HERE, not only when a notify asks. `takePending` sweeps the one key it is
+    // asked about, so an address the unit never announces would keep every write it
+    // ever took — and several params emit no notify at all when written (the converge /
+    // refetch families), which makes that the ordinary case rather than the lost-notify
+    // one. At the 120 ms flush cadence this holds each queue to the writes issued
+    // inside the retention window, so it is ~3 entries rather than one per flush for
+    // the life of the session.
+    dropExpired(q, now - SETTLE_TIMEOUT_MS);
+    q.push({ value, at: now });
+  }
+
+  /**
+   * Consume the queued write `value` announces, dropping everything older than the
+   * settle window first. True = this notify is the late echo of one of our own writes.
+   *
+   * MUTATES, so it must be asked once per notify — which is what the single call site
+   * (follow.ts's gate, through main.ts) does. Everything up to and including the match
+   * is spliced out, not just the match: a stale earlier entry left in front would
+   * otherwise match a genuinely later device value and swallow it.
+   *
+   * `Date.now()` and not `performance.now()`: vitest fakes Date by default and does not
+   * fake performance, so a performance clock makes the retention untestable — and the
+   * failure mode is a test that passes because the entry never expires.
+   */
+  private takePending<K, V>(queues: Map<K, PendingQueue<V>>, key: K, value: V): boolean {
+    const q = queues.get(key);
+    if (!q) return false;
+    dropExpired(q, Date.now() - SETTLE_TIMEOUT_MS);
+    const i = q.findIndex((e) => e.value === value);
+    if (i >= 0) q.splice(0, i + 1);
+    if (!q.length) queues.delete(key);
+    return i >= 0;
   }
 
   /** Stop syncing and cancel any pending flush. Does not touch the connection. */
   end(): void {
     this.active = false;
     this.sessionGen++;
+    this.pendingValues.clear();
+    this.pendingNames.clear();
     this.pending = false;
     this.lastFlushConverged = false;
     this.collapsedKey = "";
@@ -400,7 +498,8 @@ export class LiveSync {
    *  own snapshot: the numeric one has no entry for them, so asking it would call
    *  the app's own rename a device-side change and bounce it back. */
   isEchoName(paramId: number, y: number, value: string): boolean {
-    return this.nameSnapshot.get(`${paramId}:${y}`) === value;
+    const k = `${paramId}:${y}`;
+    return this.takePending(this.pendingNames, k, value) || this.nameSnapshot.get(k) === value;
   }
 
   /** Record a name the device reported, so the next flush does not re-send it and
@@ -485,6 +584,7 @@ export class LiveSync {
         // recorded in has already been rebuilt by whatever ended (or replaced) it.
         if (this.sessionGen !== gen) return;
         this.snapshot.set(k, value);
+        this.notePending(this.pendingValues, k, value);
         writes.set(k, { mark, node: c.node, changed: had !== undefined });
         sent++;
         if (CONVERGE.has(c.name)) sideEffect = true;
@@ -509,6 +609,7 @@ export class LiveSync {
         await vdSetStr(w.param, 0, w.y, value);
         if (this.sessionGen !== gen) return;
         this.nameSnapshot.set(k, value);
+        this.notePending(this.pendingNames, k, value);
         sent++;
       }
       this.lastFlushConverged = sideEffect;

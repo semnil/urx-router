@@ -384,9 +384,14 @@ contradiction. And it is anchored on the **ack**, not on the queue point — whi
 profile a queue-point announcement is delivered before the app has even been told its write succeeded, an ordering
 the unit never presents (acks land in 0-1 ms and the notify 9-204 ms after the write's issue, always after the ack).
 T8-stress found this by going red and staying red through the fix; anchored on the ack it passes, with numbers
-matching main's arm exactly. `announceMs` also has to stay BELOW live.ts's 120 ms flush window, or an announcement
-is routinely overtaken by the next write of a drag, arrives against a snapshot that has moved on, and is applied as
-a device-side change — a hazard of a late announcement rather than of anything the app does.
+matching main's arm exactly. The `announceMs` **default** stays BELOW live.ts's 120 ms flush window so the ordinary
+cases are not all measuring one thing: above it, an announcement is overtaken by the next write of a drag and
+arrives against a snapshot that has moved on. That overtake is a real device behaviour rather than an artefact of
+the fake — the measured ack+58-151 ms crosses 120 — and what used to happen next was the app's fault, not the
+announcement's: the echo test compared one value against the snapshot, so an overtaken announcement read as a
+device-side change, wrote a superseded value back into the plan, and the idle reconcile that followed wiped every
+undo entry. `live.ts` now keeps the writes it has been acked for but not yet seen announced, and the case that
+deliberately raises `announceMs` above 120 is `late echo of an overtaken write` in `t3-undo.spec.ts`.
 
 **Coercion is deliberately not modelled at all.** `diverge` bends READS and leaves `mem` alone, so nothing the unit
 reports has moved and there is nothing for it to announce; making it announce its asserted value instead would be a
@@ -1233,9 +1238,15 @@ not repeat them.
   and with no `case` of its own the trace went through the unhandled-command throw as well — invisible,
   because the tracker treats a failed reading as a link that has gone. What decides is whether the
   Rust command sends a `Cmd` to the worker; the prefix is a heuristic that happened to hold until it
-  did not. Found by comparing flaky counts between two release runs (1 → 4), **not** by a failure: the
+  did not. Found by comparing flaky counts between two release runs (2 → 4), **not** by a failure: the
   causal link to those particular flakes was never established, and five local runs of the two cases
-  on the unfixed tree all passed
+  on the unfixed tree all passed. The four were named from the run logs afterwards, and the comparison
+  itself was off by one — each run reports its count per job, and 1.6.0's two jobs reported one each.
+  Three of the four have mechanisms of their own and are fixed: the two `t7-meter` ladder rungs in
+  `b96868c`, and `baseline-view-locale-churn` in `83eb598`. The fourth was a pin that required the
+  defect to reproduce, which fix 11 above deleted in `3ba19c4` — so the `vd_link_stats` link is now
+  unfalsifiable as well as unestablished. Every one of the 16 harness runs since those fixes landed
+  has reported **flaky 0**
 - **A precondition is not a gesture, and a page-wide fail-fast bound reaches it anyway.** `t0b-sweeps`
   sets a 4 s `page.setDefaultTimeout` in its `boot()` so an unreachable control lands in the sweep's
   error column by name — and Playwright applies a page default to every later action, including

@@ -10,6 +10,7 @@ vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 import { vdGet, vdGetStr } from "../platform";
 import { COLOR_PALETTE, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { applyDeviceState, formatReadbackReport } from "./readback";
+import { readableContestKey } from "../plan-history";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { addrKey, planToCommands } from "./translate";
@@ -872,5 +873,43 @@ describe("formatReadbackReport", () => {
     const md = formatReadbackReport("URX44V", { applied: 40, errors: [], unreadNodes: new Set() });
     expect(md).not.toContain("## Read failures");
     expect(md).not.toContain("## Nodes left at plan default");
+    // A plain ReadbackResult carries no `unplaced` at all — the field has to be optional
+    // (the .urxf import path passes one), and its absence renders nothing.
+    expect(md).not.toContain("## Device values not applied");
+  });
+
+  // `unplaced` reached exactly one runtime consumer, a console.warn, and a packaged
+  // build has no inspector to read it in — so a merge that declined to write part of a
+  // device read said so to nobody.
+  it("lists the device values the merge did not apply", () => {
+    const md = formatReadbackReport("URX44V", {
+      applied: 40,
+      errors: [],
+      unreadNodes: new Set(),
+      unplaced: ["nodeParams ch1.on", "connParams ch1:out\u0000bus.stereo:in.level"],
+    });
+    expect(md).toContain("## Device values not applied");
+    expect(md).toContain("- nodeParams ch1.on");
+    // A wire key joins its two refs with NUL. Rendered raw it puts a control character
+    // into a saved document and runs the two refs together on screen.
+    expect(md).toContain("ch1:out -> bus.stereo:in.level");
+    // The raw separator must not survive into a saved document.
+    expect(md).not.toContain("\u0000");
+    expect(readableContestKey("a\u0000b")).toBe("a -> b");
+  });
+
+  // Both halves of `unplaced` reach this section — a target that is gone, and a key the
+  // operator moved while the read was in flight, which the merge leaves standing on
+  // purpose. The heading has to hold for the second one too, or the report calls
+  // ordinary correct behaviour damage.
+  it("does not describe every unapplied value as a missing target", () => {
+    const md = formatReadbackReport("URX44V", {
+      applied: 40,
+      errors: [],
+      unreadNodes: new Set(),
+      unplaced: ["nodeParams ch1.on"],
+    });
+    expect(md).not.toMatch(/no longer in the plan/i);
+    expect(md).toMatch(/edited here while the read was in flight/i);
   });
 });

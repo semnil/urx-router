@@ -179,6 +179,8 @@ export const ja: Messages = {
     windowError: (message: string): string => `MIDI コントロールウィンドウを開けませんでした: ${message}`,
     inputError: (message: string): string => `MIDI 入力エラー: ${message}`,
     outputError: (message: string): string => `MIDI 出力エラー: ${message}`,
+    outputStalled:
+      "MIDI フィードバックを停止しました — 出力ポートがメッセージを受け付け続けませんでした。コントローラーを接続し直し、ポートを選び直してください。",
     // コントロール名はコンソールストリップの表記 (チップ / ノブ) をそのまま使う。
     param: {
       level: "Level",
@@ -661,6 +663,8 @@ export const ja: Messages = {
     selfTestFailExport:
       "セルフテストで問題が見つかりました。一致しなかったパラメータと、読み取り/書き込みに失敗した項目を記載したレポートを保存しますか?",
     deviceErrorExport: "一部のパラメータを読み取り/書き込みできませんでした。各失敗を記載したレポートを保存しますか?",
+    deviceUnappliedExport:
+      "一部の実機の値は適用されませんでした (読み取り中にこちらで編集されたためです)。一覧を記載したレポートを保存しますか?",
     importSettings: (name: string, model: string): string =>
       `${name} を現在の ${model} 計画に取り込みますか? 設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます (ファイルに編集状態は含まれません)。`,
     reclock: (deviceRate: string, planRate: string): string =>

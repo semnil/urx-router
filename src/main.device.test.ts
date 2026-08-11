@@ -121,6 +121,54 @@ describe("Fetch from device", () => {
 });
 
 describe("the live session", () => {
+  // The undo history survives a reconcile that authored nothing.
+  //
+  // Pinned HERE rather than only in the race tier because that tier uploads no
+  // coverage and runs on the version-bump pull request alone — so the branch this
+  // asserts was reachable by nothing that reports on an ordinary PR. The tier still
+  // owns the timing shapes (a press DURING the read, a teardown mid-flight); this owns
+  // the plain case, which is also the common one.
+  it("keeps the undo history through a reconcile that authored nothing", SLOW, async () => {
+    const shell = await bootDevice();
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+
+    $("btn-view-console").click();
+    const slider = (): HTMLElement => $("console-host").querySelector<HTMLElement>('.con-strip [role="slider"]')!;
+    const before = slider().getAttribute("aria-valuenow");
+    slider().dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    expect(slider().getAttribute("aria-valuenow")).not.toBe(before);
+    await invoked(shell, "vd_set", 1); // the edit reached the unit
+
+    // A scoped param's notify makes the settle re-read the owner node. The channel is
+    // taken from the subscribe's own arguments rather than by position, so a second
+    // channel opening beside it cannot silently redirect this.
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+    const readsBefore = shell.count("vd_get");
+    channel.onmessage([{ param_id: 26, x: 0, y: 0, value: 40 }]); // CH1 HPF freq
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(readsBefore), { timeout: 20_000 });
+
+    // Let the read and its coalesced reflect finish, or the chord below meets the
+    // busy refusal and the case would be measuring the gate instead.
+    let seen = -1;
+    await vi.waitFor(
+      () => {
+        const now = shell.invokes.length;
+        const quiet = now === seen;
+        seen = now;
+        if (!quiet) throw new Error("still working");
+      },
+      { timeout: 20_000, interval: 300 },
+    );
+
+    // The stub answers the re-read from what it holds, which the session start already
+    // synced the plan to — so the read authored nothing and the entry must still be
+    // there. Before the fix, the reflect reset both stacks and this chord did nothing.
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(slider().getAttribute("aria-valuenow")).toBe(before), { timeout: 10_000 });
+  });
+
   it("comes up, prints the tally, and goes down again", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();

@@ -41,7 +41,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join, relative, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DOC = "CLAUDE.md";
@@ -131,6 +131,15 @@ process.on("uncaughtException", (e) => {
   process.exit(1);
 });
 
+// Which edit this hook run is about. Resolved against the cwd rather than matched on a
+// basename: a basename gate fires for ANY file called CLAUDE.md — `~/.claude/CLAUDE.md`
+// among them — and then checks THIS repository's copy, which the edit never touched.
+// What this run covers. One decision, taken at the gate, instead of the same question
+// re-derived at each section: the sections below read a field rather than re-testing
+// HOOK. A later mode is a new row here, not a fifth condition somewhere downstream —
+// which is what the previous shape's failure looked like, since a section that forgot
+// the guard fails by checking the wrong corpus rather than by erroring.
+let scope = { claudeMd: true, docFiles: null }; // null = walk DOC_DIRS
 if (HOOK) {
   let edited;
   try {
@@ -138,7 +147,17 @@ if (HOOK) {
   } catch {
     process.exit(0);
   }
-  if (!edited || edited.split(/[\\/]/).pop() !== DOC) process.exit(0);
+  if (!edited) process.exit(0);
+  const rel = relative(process.cwd(), resolve(edited)).split(sep).join("/");
+  // A docs/{en,ja} document is its own business: the same hook already checks its
+  // TABLES (check-md-tables.mjs), so skipping its REFERENCES made one Edit answer half
+  // a question. Only that one file is walked below, which is what keeps the run inside
+  // the hook's budget.
+  const isDocsMd = DOC_DIRS.some((d) => rel.startsWith(`${d}/`)) && rel.endsWith(".md");
+  if (rel !== DOC && !isDocsMd) process.exit(0);
+  // A CLAUDE.md edit answers for the asset table; a docs edit answers for that one
+  // document. Neither answers for the other.
+  scope = isDocsMd ? { claudeMd: false, docFiles: [rel] } : { claudeMd: true, docFiles: [] };
 }
 
 // Kept structured so the report can be read in file order: findings are produced in
@@ -233,9 +252,13 @@ const sectionText = lines.slice(start, end).join("\n");
 // Spans from the tables AND the surrounding paragraphs: the private probe index and
 // the "ci.yml greps dist" claim live in prose.
 const spans = [];
-for (let i = start; i < end; i++) {
-  for (const m of lines[i].matchAll(/`([^`]+)`/g)) spans.push({ raw: m[1], line: i + 1 });
-}
+// A hook run about a docs/ file answers for that file only: the asset table belongs to
+// the edit that touched CLAUDE.md, and re-reporting it here would blame every docs edit
+// for a row somebody else broke.
+if (scope.claudeMd)
+  for (let i = start; i < end; i++) {
+    for (const m of lines[i].matchAll(/`([^`]+)`/g)) spans.push({ raw: m[1], line: i + 1 });
+  }
 
 // Placeholders are the author's, not the repo's: "--tree <git worktree>" is the flag
 // --tree, and "plan_tool.py validate <plan.json>" is the subcommand validate.
@@ -552,9 +575,19 @@ for (const span of spans) {
 // Deliberately not checked: Markdown link and image targets (a different class, and a
 // broken one is visible to the reader who clicks it — MD_TARGET strips them before the
 // prose scan, so the link TEXT is checked and the target is not), and anything a
-// document says about ANOTHER repository. The hook is excluded too: it watches
-// CLAUDE.md, and a document the edit did not touch is not the edit's business —
-// docs.yml runs the whole file on any Markdown change, external pull requests included.
+// document says about ANOTHER repository.
+//
+// What the HOOK runs is narrower, and not for the reason this once gave. It used to say
+// "a document the edit did not touch is not the edit's business" — but its gate was the
+// edited file's BASENAME, so a docs/ edit was dropped before anything was read, and the
+// same hook went on checking that file's TABLES (check-md-tables.mjs): one Edit, half an
+// answer. The gate is now the resolved path, and a docs/{en,ja} edit runs the docs half
+// against THAT ONE FILE. The reverse half stays off for the hook whatever was edited
+// (`forwardOnly` below), and that boundary really is a judgement rather than a rule: rule
+// H reads CLAUDE.md as one side of a map whose other side is architecture.md, so a
+// CLAUDE.md edit CAN create a finding about a document it did not touch. docs.yml runs
+// the whole file on every pull request and every push, external pull requests included,
+// so nothing escapes permanently — the hook buys the report at the edit, not the gate.
 
 const docSkips = new Map(); // reason -> count, named on the OK line
 const docSkipped = []; // docs-side paths skipped as generated/private, named the same way
@@ -563,10 +596,12 @@ let docFileCount = 0;
 let docSpans = 0;
 let docChecked = 0;
 
-if (!HOOK) {
-  const docFiles = DOC_DIRS.flatMap((d) => walk(d))
-    .filter((f) => f.endsWith(".md"))
-    .sort();
+if (scope.docFiles === null || scope.docFiles.length) {
+  const docFiles =
+    scope.docFiles ??
+    DOC_DIRS.flatMap((d) => walk(d))
+      .filter((f) => f.endsWith(".md"))
+      .sort();
   docFileCount = docFiles.length;
   // An empty corpus is finding #1, never a silent pass: moving or renaming the
   // documentation directories would otherwise disable every assertion below at once,
@@ -746,7 +781,7 @@ for (let i = start; i < end; i++) {
   if (i + 1 < end && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) continue; // header
   rows.push(i + 1);
 }
-for (const row of rows) {
+for (const row of scope.claudeMd ? rows : []) {
   const label = () => (lines[row - 1].split("|")[1] ?? "").trim().replace(/`/g, "");
   if (!asserted.has(row)) {
     finding(`${DOC}:${row}`, `row "${label()}" carries no checkable anchor — name the module or file it lives in`);

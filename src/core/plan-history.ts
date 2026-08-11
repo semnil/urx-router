@@ -99,6 +99,17 @@ export const MAX_ENTRIES = 100;
 // A ref is "nodeId:portId", so NUL cannot occur in either half of a wire key.
 const WIRE_SEP = "\u0000";
 
+/** A contest key with its wire join undone, for anything that SHOWS one.
+ *
+ *  The join is this module's encoding and the separator is a NUL: invisible on screen,
+ *  where it runs the two refs together, and illegal in a saved document. Exported as a
+ *  renderer rather than as the separator so the encoding stays known in one place — a
+ *  caller handed the constant has to remember to undo it, and the one that forgets
+ *  produces a report with a control character in it and no error anywhere. */
+export function readableContestKey(key: string): string {
+  return key.replaceAll(WIRE_SEP, " -> ");
+}
+
 function wireKey(from: string, to: string): string {
   return `${from}${WIRE_SEP}${to}`;
 }

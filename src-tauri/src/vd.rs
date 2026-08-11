@@ -685,7 +685,7 @@ mod imp {
             // While a subscription is streaming, poll for commands briefly so the
             // bounded pump runs back-to-back and keeps up with the ~250/s feed; when
             // idle, wait longer so the thread doesn't spin. pump's own blocking read
-            // (200 ms socket timeout) supplies the backpressure when the feed is quiet.
+            // (READ_TIMEOUT, 50 ms) supplies the backpressure when the feed is quiet.
             let wait = if subs.active() {
                 Duration::from_millis(5)
             } else {
@@ -826,11 +826,18 @@ mod imp {
         // drain below is a no-op there and the shutdown is what ends it.
         link.begin_close();
         for _ in 0..CLOSE_FRAMES {
-            // `Ok(None)` is the socket's own 200 ms read timeout: the peer has nothing
-            // queued, so its Close is not coming and there is nothing left to drain.
-            // Counting those against the budget would spend 64 × 200 ms on a quiet
-            // broker — which is exactly the state a session that just unregistered
-            // everything is in, and it is the operator's Quit being held.
+            // `Ok(None)` is the socket's own read timeout (READ_TIMEOUT, 50 ms): the
+            // peer has nothing queued, so its Close is not coming and there is nothing
+            // left to drain. Counting those against the budget would spend 64 × that on
+            // a quiet broker — which is exactly the state a session that just
+            // unregistered everything is in, and it is the operator's Quit being held.
+            //
+            // This reader's patience is READ_TIMEOUT's, so it moved with it (it was
+            // 200 ms). Left inherited rather than pinned like drain_late_reply's,
+            // because the two want opposite things: that one must not give up on a
+            // straggler too early, this one must not hold Quit, and shorter is the
+            // right direction for it. Said out loud so the next change to READ_TIMEOUT
+            // knows it is moving this too.
             match link.read_frame() {
                 Ok(Some(_)) => {}
                 _ => break, // a closed / dead socket, or nothing more to read
@@ -1147,9 +1154,22 @@ mod imp {
             .or_else(|| msg.get("params").and_then(|p| p.get("vdp")))
     }
 
-    /// Socket read timeout. Short so the worker loop can interleave draining and
-    /// commands rather than blocking on a quiet link.
-    const READ_TIMEOUT: Duration = Duration::from_millis(200);
+    /// Socket read timeout, and with it the longest a queued command waits behind the
+    /// pump's blocking read.
+    ///
+    /// The worker is one thread: while `pump` sits in `read_frame` it is not looking at
+    /// the command channel at all, so a `Cmd::Set` enqueued just after that read starts
+    /// waits it out. At 200 ms that was measured on a URX44V (2026-08-11) as a **152 ms**
+    /// wait for the first live write after a quiet gap — the busy path cannot produce
+    /// that, since it is bounded by one `recv_timeout` (5 ms) plus `PUMP_BUDGET` (30 ms).
+    /// 50 ms bounds it at roughly a quarter of that; the price is the idle wake rate,
+    /// which goes from ~5/s to ~18/s (one cycle is this timeout plus the 5 ms recv).
+    ///
+    /// It bounds no command's patience: every reply loop carries its own 3 s wall-clock
+    /// deadline and treats a read timeout as "keep waiting" (`do_set`, `do_get_value`,
+    /// `do_get_str`). `drain_late_reply` is the one reader that used this as its own
+    /// give-up point, and it now carries an explicit floor instead — see there.
+    const READ_TIMEOUT: Duration = Duration::from_millis(50);
 
     /// Read one text message, or None on read timeout. Errors on a closed or
     /// broken connection, or on an unexpected binary frame, so the awaiting
@@ -1372,22 +1392,42 @@ mod imp {
     /// after a timeout, so the healthy path pays nothing) and drop any reply for the
     /// address that just gave up. Notifies stay batched via subs, as everywhere else.
     fn drain_late_reply(link: &mut Link, subs: &mut Subs, base: &str, method: &str) {
-        // Bounded by frames rather than wall clock: under Live sync the broker
-        // streams meters continuously, so a deadline would always run to the end
-        // while absorbing notifies. The straggler is the next reply frame, not a
-        // quarter-second of meters away.
+        // TWO bounds, because they answer different questions and neither covers the
+        // other. FRAMES caps the busy case: under Live sync the broker streams meters
+        // continuously, so a wall clock alone would run to the end absorbing notifies —
+        // the straggler is the next reply frame, not a quarter-second of meters away.
+        // The wall-clock FLOOR covers the quiet case: with nothing arriving, every
+        // `read_frame` returns None at the socket timeout and the frame cap is never
+        // approached, so the loop's real give-up point is that timeout. It used to be
+        // 200 ms and is now 50 ms (READ_TIMEOUT, shortened so a live write does not
+        // queue behind it), which would have quartered how long a straggler has to show
+        // up — silently, since nothing here tests that. The floor keeps this reader's
+        // patience where it was and stops it moving with a constant it does not own.
+        let deadline = Instant::now() + DRAIN_QUIET;
         for _ in 0..DRAIN_FRAMES {
-            let Ok(Some(msg)) = link.read_frame() else {
-                break;
-            };
-            if reply_for(subs, &msg, base, method).is_some() {
-                return; // the straggler is consumed; the socket is clean again
+            match link.read_frame() {
+                Ok(Some(msg)) => {
+                    if reply_for(subs, &msg, base, method).is_some() {
+                        return; // the straggler is consumed; the socket is clean again
+                    }
+                }
+                // A read timeout is silence, not the end: keep waiting until the floor.
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        return;
+                    }
+                }
+                Err(_) => return, // the link is gone; there is nothing left to clean
             }
         }
     }
 
     /// Frames drain_late_reply will look through for a straggler before giving up.
     const DRAIN_FRAMES: usize = 64;
+
+    /// How long drain_late_reply keeps waiting on a link that is saying nothing. Held
+    /// separately from READ_TIMEOUT so shortening that one cannot quietly shorten this.
+    const DRAIN_QUIET: Duration = Duration::from_millis(200);
 
     /// The reply body for `method` at `base`, or None when the message was a notify,
     /// a reply to a different verb, or a reply for another address. Shared by the two
@@ -1685,8 +1725,13 @@ mod imp {
     // keeps the batch latency and (under a live feed) the command latency low while
     // still draining many frames per send (so the IPC boundary stays ~30×/s). The
     // budget is only checked after each read, so when the feed falls quiet a pending
-    // command can still wait out the final read's ~200 ms socket timeout before the
-    // worker yields — acceptable, since the quiet case is not the one that mattered.
+    // command still waits out the final read's socket timeout before the worker yields.
+    // That WAS written off here as "not the case that mattered"; it was measured on a
+    // URX44V (2026-08-11) as a 152 ms wait for the first live write after a quiet gap,
+    // which is the case that mattered. The bound is now READ_TIMEOUT's 50 ms rather
+    // than this budget — on a quiet link the loop breaks at `Ok(None)` and never
+    // reaches the check below, so shortening the socket timeout is what moved it and
+    // changing THIS constant would not have.
     const PUMP_BUDGET: Duration = Duration::from_millis(30);
 
     /// Drain buffered frames for up to PUMP_BUDGET, absorbing meter and parameter
@@ -1703,7 +1748,7 @@ mod imp {
             // the same envelope, and this drains the ~250/s meter stream (avoid
             // re-parsing per consumer).
             //
-            // `None` ends this pump. It means the socket is drained (its 200 ms
+            // `None` ends this pump. It means the socket is drained (its 50 ms
             // read timeout) — but it also now covers the two frames the casket
             // read used to step over rather than stop on: a ping/pong, and text
             // that is not JSON. Neither carries a notify, and the worker re-enters
@@ -1803,11 +1848,41 @@ mod imp {
         // batch must flush on the pump cadence. Plus reply_for, which is where a
         // frame absorb declined lands — the two together decide whether a notify
         // can be mistaken for the answer to a command.
-        use super::{reply_for, Subs, PUMP_BUDGET};
+        use super::{reply_for, Subs, DRAIN_QUIET, PUMP_BUDGET, READ_TIMEOUT};
         use serde_json::{json, Value};
         use std::sync::{Arc, Mutex};
         use std::time::Instant;
         use tauri::ipc::{Channel, InvokeResponseBody};
+
+        // `drain_late_reply` reads until a straggler, a frame cap, OR silence. Silence is
+        // the one bound that used to be READ_TIMEOUT's by accident: every `read_frame`
+        // on a quiet link returns None at the socket timeout, so shortening that constant
+        // (200 -> 50 ms, so a live write does not queue behind the pump's blocking read)
+        // would have quartered how long a late reply has to arrive. The drain now owns
+        // DRAIN_QUIET instead. Nothing else can state this — the drain itself needs a
+        // socket, so its loop is not reachable from here; what IS checkable is that the
+        // two constants stayed independent and that the drain did not get less patient.
+        #[test]
+        fn the_late_drain_keeps_its_own_patience_when_the_socket_timeout_shortens() {
+            // The value the drain's give-up point had while READ_TIMEOUT was 200 ms.
+            // A change that lowers this is a change to how long a straggler has, and has
+            // to be argued on its own rather than fall out of a socket-timeout tweak.
+            assert_eq!(DRAIN_QUIET, std::time::Duration::from_millis(200));
+            // Independence, stated as the inequality that makes the floor load-bearing:
+            // if the socket timeout ever reached DRAIN_QUIET, the floor would stop adding
+            // anything and the coupling would be back without a line changing here.
+            assert!(
+                READ_TIMEOUT < DRAIN_QUIET,
+                "READ_TIMEOUT ({READ_TIMEOUT:?}) must stay under DRAIN_QUIET ({DRAIN_QUIET:?}), \
+                 or the late drain is bounded by the socket timeout again"
+            );
+            // The bound the whole change exists for: a queued command waits at most one
+            // recv_timeout (5 ms) plus this. 152 ms was measured on a URX44V at 200 ms.
+            assert!(
+                READ_TIMEOUT <= std::time::Duration::from_millis(50),
+                "a live write queues behind one READ_TIMEOUT; keeping it small is the fix"
+            );
+        }
 
         // A subscription whose registered sets hold exactly the addresses a test
         // drives, mirroring what MetersSubscribe / ParamsSubscribe record: absorb

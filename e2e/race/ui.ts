@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
-// The locators and addresses every race case reaches the app through. They encode how
+// The locators, addresses and DOM-reading waits every race case reaches the app through. They encode how
 // src/ui/graph.ts and src/ui/console.ts build their markup, and which broker address a
 // named control sits at, so a change to either is answered here instead of in every
 // spec that touches it. Each spec's Tauri stub setup deliberately stays in the spec
@@ -61,4 +61,62 @@ export function deviceLevelText(raw: number | undefined): string {
   if (v <= -32768) return "-∞";
   const db = v / 100;
   return (db > 0 ? "+" : "") + db.toFixed(1);
+}
+
+/** What `settleValue` observed. Times are ms from the call, `-1` when it never happened. */
+export interface SettledValue {
+  /** `aria-valuenow` as it read once it stopped moving (null = the element has none). */
+  value: string | null;
+  /** When the value first differed from `from`. -1 if it never moved. */
+  changedAt: number;
+  /** When it had held one value for the whole stillness window. -1 if it never settled. */
+  settledAt: number;
+}
+
+/**
+ * Wait for an `aria-valuenow` to move off `from` and then STOP moving, and report when —
+ * the measurement a fixed sleep cannot make.
+ *
+ * A fixed `waitForTimeout` states a guess about how long a repaint takes and then reads
+ * whatever is there; under load it reads the wrong thing and the case fails naming the
+ * app. Polling until the value equals what the case is about to assert is the opposite
+ * error and worse, because it always passes: waiting for 5 and then asserting 5 is not a
+ * check. Waiting for STILLNESS keeps the assertion honest — what settled is whatever the
+ * app settled on, and the case still says what that must be.
+ *
+ * `from` is passed in rather than sampled here: a repaint that lands between the call and
+ * the first sample would otherwise read as "never changed" and burn the whole cap.
+ * `still × step` has to exceed the repaint's own coalescing period (`REFLECT_MIN_MS` = 50
+ * ms in src/main.ts), or the settle succeeds inside the gap between two reflects and
+ * reports a value that was still moving.
+ *
+ * Polls the LOCATOR, not an element handle: a follow repaint replaces the strip, so the
+ * element the value arrives on is not the one it left.
+ */
+export async function settleValue(
+  target: Locator,
+  from: string | null,
+  { step = 10, still = 6, cap = 1000 }: { step?: number; still?: number; cap?: number } = {},
+): Promise<SettledValue> {
+  const t0 = Date.now();
+  let last = from;
+  let stable = 0;
+  let changedAt = -1;
+  for (;;) {
+    const now = await target.getAttribute("aria-valuenow");
+    if (now !== last) {
+      last = now;
+      stable = 0;
+      if (changedAt < 0 && now !== from) changedAt = Date.now() - t0;
+    } else if (changedAt >= 0) {
+      // Stillness only counts once it is standing on something other than the baseline:
+      // a value that has not moved yet is not "settled", it is "not started". `last`
+      // only ever leaves `from` through the branch above, which sets changedAt in the
+      // same step — so this one test is the whole condition.
+      stable++;
+    }
+    if (stable >= still) return { value: last, changedAt, settledAt: Date.now() - t0 };
+    if (Date.now() - t0 >= cap) return { value: last, changedAt, settledAt: -1 };
+    await target.page().waitForTimeout(step);
+  }
 }

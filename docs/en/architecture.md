@@ -100,8 +100,11 @@ carries a one-line map of the same directories and points here.
   are reported differently: an illegal wire refuses the document, an insert-FX slot collision only warns and
   offers to open it anyway / `plan.ts` plan state + JSON + the `?plan=` deep-link codec (deflate-compressed
   `"z"` format; legacy uncompressed links must keep decoding) / `levels.ts` the device's discrete level_gain
-  grid (`LEVEL_STEPS_DB`, the canonical list of settable dB values, plus position/snap/step helpers. Faders
-  and send levels snap to this grid, with the steps laid out at even spacing) / `storage.ts` save/load/image
+  grid (`LEVEL_STEPS_DB`, the canonical list of settable dB values, plus position/snap/step helpers. Every
+  level the APP authors snaps to this grid — inspector, CONSOLE and external MIDI alike, with the steps laid
+  out at even spacing — while a level the app RECEIVES does not: a device readback divides the raw value by
+  100, and a JSON / `?plan=` / `.urxf` load only checks that it is finite, so the plan says what the unit or
+  the file actually holds rather than the nearest name this grid has for it) / `storage.ts` save/load/image
   export (PNG/PDF; PDF via home-grown FlateDecode) / `platform.ts` runtime bridge between Tauri IPC and the
   browser / `meters.ts` live level meters (per-model node id → broker meter address tables
   (`NODE_TAPS_URX22` / `NODE_TAPS_URX44`), dBFS decoding, latest-value store; the gain-reduction meters live
@@ -981,7 +984,12 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   per-reading send would cross the IPC boundary ~250×/s; batching cuts that to ~30×/s. Each drain is
   time-bounded (`PUMP_BUDGET`, 30 ms) so a continuous feed neither monopolizes the worker (live writes wait
   behind it) nor delays the batch; while a subscription streams the worker also polls commands on a shorter
-  interval so the bounded pump runs back-to-back and keeps up with the feed.
+  interval so the bounded pump runs back-to-back and keeps up with the feed. That budget bounds the wait only
+  while the feed is running: on a QUIET link the drain ends at the socket's own read timeout instead, and the
+  worker is not looking at the command channel until it does — measured on a URX44V, the first live write after
+  a quiet gap waited 152 ms against a 200 ms timeout, which is why that timeout is 50 ms (`READ_TIMEOUT`), not
+  the 30 ms budget. Changing the budget would not have moved it: on a quiet link the loop leaves at the drained
+  branch and never reaches the budget check.
   A subscribed notify that lands while a command awaits its response (the `do_set` / `do_get_value` loops) is
   absorbed into the same pending batch instead of discarded, and the batch flushes on the pump cadence
   (subscription channels and pending batches live in the worker's `Subs`) — so the meters keep streaming with
@@ -1882,8 +1890,10 @@ session counts as started, and the worker replies only once every address is reg
 refused registration ends the attempt rather than starting a session that cannot do its job.
 
 Everything **outside** the device link keeps a softer rule — salvage what can be salvaged, but never in silence. A
-failed MIDI feedback send drops the engine's sent-cache so the next pass re-sends (a dead port keeps failing
-harmlessly; a one-off heals), boot port restore reports to the status line instead of leaving the panel showing a
+failed MIDI feedback send drops the engine's sent-cache so the next pass re-sends (a one-off heals; a port that
+keeps refusing is given up after `FEEDBACK_FAIL_PASSES` passes — closed on both sides and reported on the status
+line, because dropping the cache is what makes every following pass re-emit every mapping), boot port restore
+reports to the status line instead of leaving the panel showing a
 controller that was never opened, and a file write goes through a temp file and a rename so a failure cannot
 destroy the copy already on disk.
 

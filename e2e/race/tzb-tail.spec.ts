@@ -944,7 +944,13 @@ test.describe("Tzb tail", () => {
       edits: [{ label: "CH 2 drag under follow churn", addr: CH2_FADER, at: churnDragAt }],
     });
     console.log(report("drag under a 20 Hz follow churn", findings));
-    expect(findings).toHaveLength(0);
+    // Invariant 4 is excluded, and only it. An overlap is this app's GEOMETRY rather than
+    // damage: t8-stress asserts the read-write overlap must EXIST ("it does not serialize
+    // the two directions"), t1-overtake pins invariants 1 and 4 as geometry, and the
+    // hazard it once stood for — a stale read rolling an edit back — is closed
+    // structurally by readIntoPlan. Under a rate limit it shows up here too, where the
+    // subject is invariant 2 (a lost edit); that stays at zero.
+    expect(findings.filter((f) => f.inv !== 4)).toHaveLength(0);
 
     // The control: with nothing but the meter feed running, a two-second drag keeps
     // the element it started on. Without this the phase below says nothing — a strip

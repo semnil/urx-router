@@ -488,6 +488,13 @@ function authorFromDevice(node: string, place: () => boolean): boolean {
   return true;
 }
 let followFull = false;
+// How many keys the follow reads behind the pending reflect actually authored. A COUNT
+// rather than a flag because the reflect is coalesced at ~20 Hz, so several reads can
+// land before one runs and a flag ASSIGNED per call would let the last one speak for
+// all of them; it accumulates instead. Only its emptiness is read — the keys
+// themselves are the reads' own business, and each already absorbed or re-based with
+// them at its own site. Both reconcile hooks add; the reflect drains it.
+let followAuthored = 0;
 function reflectFollow(): void {
   const ids = [...followDirtyNodes];
   followDirtyNodes.clear();
@@ -505,7 +512,18 @@ function reflectFollow(): void {
     // no earlier entry describes a state it can return to. The snapshot is NOT
     // re-based here: only the private copy the read ran against says what the device
     // holds, and the reconcile hooks re-base from it the moment their read resolves.
-    planHistory?.reset();
+    //
+    // Conditional on the read having authored anything, because that premise is what
+    // the reset rests on: a reconcile that agreed with the plan at every key
+    // invalidates no earlier entry, and wiping up to 100 undo entries for it is loss
+    // with nothing bought. Both producers of a no-op reconcile reach here — a late
+    // announcement mistaken for a device edit, and a write the unit never announced
+    // (follow.ts's idle net) — and neither is rare enough to pay for. Nothing is
+    // absorbed in the other arm: PlanHistoryStack.absorb returns immediately on an
+    // empty patch, so the fallback would be a no-op spelled as code.
+    const authored = followAuthored;
+    followAuthored = 0;
+    if (authored) planHistory?.reset();
   } else {
     // Direct-only: repaint just the changed nodes / strips. The snapshot is already
     // current from noteDirect, so no full re-translate. Only one view is visible.
@@ -594,6 +612,7 @@ function abandonFollowWork(): void {
   }
   followDirtyNodes.clear();
   followFull = false;
+  followAuthored = 0;
 }
 
 /** Run a follow-side device read as a merged read (readback.readIntoPlan), carrying the
@@ -691,6 +710,10 @@ const follow =
           // the reflect's delay is a window in which an undo would diff against a
           // snapshot that still describes the pre-read plan.
           live?.resync(merged.deviceView, since);
+          // Before assertReadComplete, which throws: a partial read's authored keys
+          // still invalidate the history, exactly as followFull / requestReflect
+          // already survive that throw.
+          followAuthored += merged.devicePatch.length;
           followFull = true;
           requestReflect();
           assertReadComplete(merged, "device-follow scoped readback issues:");
@@ -707,6 +730,7 @@ const follow =
           noteMergeConflicts(merged);
           plan.unreadNodes = merged.unreadNodes;
           live?.resync(merged.deviceView, since);
+          followAuthored += merged.devicePatch.length;
           followFull = true;
           requestReflect();
           assertReadComplete(merged, "device-follow readback issues:");
@@ -2181,6 +2205,7 @@ if (!DEMO) {
     fetchAbort = controller;
     fetchBtn.textContent = t().toolbar.fetchCancel;
     let report: ErrorReport = null;
+    let reportPrompt: string | undefined;
     try {
       await withDevice("fetch", t().status.fetchConnecting, t().status.fetchError, async (device) => {
         if (!(await confirmFirmware(device))) {
@@ -2244,10 +2269,25 @@ if (!DEMO) {
               ? t().status.fetchedUnread(device.model, merged.applied, unread)
               : t().status.fetchedDevice(device.model, merged.applied),
         );
-        // Read failures are otherwise console-only: capture a report to offer after
-        // disconnect (below), so the per-group reasons are visible without the console.
-        if (merged.errors.length) {
-          report = { filename: `${modelId}-fetch-errors.md`, markdown: formatReadbackReport(device.model, merged) };
+        // Read failures AND values the merge did not apply are otherwise console-only,
+        // and a packaged build has no inspector to read a console in: capture a report
+        // to offer after disconnect (below). The two travel together because both are
+        // "what this fetch did not do", and neither is visible from the status line —
+        // which says a plain success when only the second happened.
+        if (merged.errors.length || merged.unplaced.length) {
+          report = { filename: `${modelId}-fetch-report.md`, markdown: formatReadbackReport(device.model, merged) };
+          // Which of the two it is decides the prompt. With no read failure nothing
+          // failed — the read worked and the merge left the operator's own edits
+          // standing — so the default wording would report correct behaviour as a
+          // fault, and do it right after the status line said the fetch succeeded.
+          //
+          // NOT PINNED. Reaching this arm needs an edit to land inside the read AND on
+          // a key the read authored, and three attempts at it from src/main.device
+          // produced an empty `unplaced` every time (the edit registered, the fetch
+          // reported a clean 139 settings). What would settle it is an ordinary-tier
+          // E2E case, which drives the real console and the real write witness rather
+          // than reasoning about which of them the jsdom seam misses.
+          reportPrompt = merged.errors.length ? undefined : t().confirm.deviceUnappliedExport;
         }
       });
     } finally {
@@ -2259,7 +2299,7 @@ if (!DEMO) {
       // In the finally: even a canceled read may have applied part of the device state.
       planReadFromDevice();
     }
-    await offerErrorReport(report);
+    await offerErrorReport(report, reportPrompt);
   });
 
   // Settle what sample rate this write is going to happen at, before anything is

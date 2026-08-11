@@ -544,6 +544,26 @@ describe("reset", () => {
     settle();
     expect(h.history.canUndo()).toBe(false);
   });
+
+  // The property main.ts's follow reflect rests on: a reconcile that authored nothing
+  // must be able to land without disturbing the stacks, so absorbing its empty patch is
+  // the same no-op as skipping the call. Without this, "reset only when the read wrote
+  // something" would have no stated meaning for the other arm.
+  it("absorbs an empty patch without touching either stack", () => {
+    const h = harness();
+    h.edit((p) => (p.sampleRate = 96000));
+    idle();
+    h.history.undo();
+    settle();
+    expect(h.history.canUndo()).toBe(false);
+    expect(h.history.canRedo()).toBe(true);
+
+    h.history.absorb([]);
+    expect(h.history.canRedo()).toBe(true);
+    h.history.redo();
+    settle();
+    expect(h.plan.sampleRate).toBe(96000);
+  });
 });
 
 describe("the keyboard shortcut", () => {
