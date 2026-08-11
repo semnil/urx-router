@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // A skipped race case reports as "-", never as a pass, so it cannot make the harness
-// green while measuring nothing. What it CAN do is outlive its reason: every skip here
+// green while measuring nothing. What it CAN do is outlive its reason: every skip there
 // is permanent and justified by a fact about the app or the harness ("unreachable from
 // the UI in this build", "every send is fixed in the model"), and a fact like that
 // expires without anyone reading the comment that rests on it.
@@ -14,166 +14,91 @@
 // The prose reason stays in the comment beside the skip. Duplicating it here would be a
 // second copy to go stale, which is the failure this whole check exists to catch.
 //
-// Everything below is one idea applied five ways: a `guardedBy` has to name something
-// that RUNS. Each rule is a way an earlier version of this script was satisfied by
-// something that guarantees nothing, and each was found by trying to fool it:
+// EVERYTHING BELOW IS ASKED OF THE RUNNERS. Nothing reads the sources, because four
+// rounds of review said one thing four ways: a `guardedBy` has to name a test that RUNS,
+// and no amount of pattern matching decides that. Every version was satisfied by
+// something inert — a title left in a comment, a suite that is itself skipped,
+// `describe.runIf(false)`, an `it` inside `if (false)`, a title inside a string, a
+// `.spec.js` the scan's extension list did not carry. The runners settle all of it at
+// once, because collecting a spec EXECUTES it: a case in dead code or in a string never
+// registers, and one that registers with a declared skip is marked as such.
 //
-//   - comments are stripped first. A renamed test whose old definition survives as
-//     `// it("<old title>", …)` satisfied a raw substring search, and so did a
-//     commented-out skip on the collection side.
-//   - a suite is not a test, and a skipped suite runs nothing. `test.describe(…)` matched
-//     the definition pattern, and an `it` inside `describe.skipIf(…)` matched while never
-//     executing; both are refused by brace-matching the skipped suites and excluding what
-//     falls inside them.
-//   - the guarantor may not be the skip itself. Self-reference passed trivially.
-//   - it may not live in e2e/race: that tier runs on the version-bump pull request alone,
-//     so its assertions can break for dozens of merges while this check still sees the
-//     title. Being outside that directory is not enough either — a file no runner
-//     collects is no better, so the path has to match what vitest and the ordinary
-//     Playwright project actually take, and those globs are READ OUT of the two configs
-//     rather than copied here. The first version copied them and failed on its first
-//     encounter with an unrelated edit: vitest's `include` grew a second entry, the
-//     copied literal stopped matching, and the check reported drift where the meaning
-//     had not changed. A derived list has nothing to drift.
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+//   `playwright test --list`  every collected case, with a declaration-time skip carried
+//                             as an annotation of type "skip".
+//   `vitest list --json`      the runnable cases only — skipped, conditionally skipped
+//                             and never-registered ones are already absent.
+//
+// The price of being right is node_modules, so this runs from ci.yml rather than the
+// install-free docs.yml. Nothing is lost by that: the Markdown/docs-only pull request
+// ci.yml skips cannot change a spec or a guarantor.
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RACE_DIR = "e2e/race";
-const LEDGER = join(RACE_DIR, "skip-ledger.json");
-
-const read = (rel) => readFileSync(join(repo, rel), "utf8");
-
-// Playwright's default testMatch, which no project here overrides:
-// **/*.@(spec|test).?(c|m)[jt]s?(x). Both the collection scan and the guarantor rule use
-// this one pattern — they were two, and the narrower of them missed a .spec.js the
-// harness was collecting.
-const SPEC_FILE = /\.(spec|test)\.(c|m)?[jt]sx?$/;
-// The three glob shapes these configs use, and no more: `**/` at any depth, a trailing
-// `**` for everything below, `*` within one segment. Translating a trailing `**` as "any
-// depth" and nothing else is what let e2e/race back in — the pattern then demanded a path
-// ENDING in a slash, so no file matched it and testIgnore ignored nothing. The two
-// placeholders keep each rewrite from being re-read by the ones after it.
-const globRe = (g) => {
-  const src = g
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\/\*\*$/, "@BELOW@")
-    .replace(/\*\*\//g, "@DEEP@")
-    .replace(/\*/g, "[^/]*")
-    .replace(/@BELOW@/g, "(?:/.*)?")
-    .replace(/@DEEP@/g, "(?:[^/]*/)*");
-  return new RegExp(`^${src}$`);
-};
-
-// Where a guarantor may live, derived from the configs that decide it. Anything these
-// cannot be read out of is a hard failure: guessing would put the allow-list back to
-// being a copy, and a wrong one is exactly the shape this whole check is about.
-function collectionRules() {
-  const rules = [];
-  const vitest = read("vitest.config.ts");
-  const include = vitest.match(/\binclude:\s*\[([^\]]*)\]/);
-  if (!include) throw new Error("vitest.config.ts: could not read test.include");
-  const globs = [...include[1].matchAll(/["'`]([^"'`]+)["'`]/g)].map((m) => m[1]);
-  rules.push({
-    label: `vitest (${globs.join(", ")})`,
-    takes: (f) => globs.some((g) => globRe(g).test(f)),
-  });
-
-  const pw = read("playwright.config.ts");
-  const dir = pw.match(/\btestDir:\s*["'`]([^"'`]+)["'`]/);
-  const ignore = pw.match(/\btestIgnore:\s*["'`]([^"'`]+)["'`]/);
-  if (!dir || !ignore) throw new Error("playwright.config.ts: could not read testDir / testIgnore");
-  const ignored = globRe(`${dir[1]}/${ignore[1]}`);
-  rules.push({
-    label: `the ordinary Playwright project (${dir[1]}, minus ${ignore[1]})`,
-    // Playwright's default testMatch, which this config does not override.
-    takes: (f) => f.startsWith(`${dir[1]}/`) && SPEC_FILE.test(f) && !ignored.test(f),
-  });
-  return rules;
-}
-
+const LEDGER = `${RACE_DIR}/skip-ledger.json`;
 const key = (file, title) => `${file}::${title}`;
-const quoted = (title) => [JSON.stringify(title), `'${title}'`, `\`${title}\``];
-const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// Blank out comments, keeping length and newlines so every index still lines up with the
-// original. String and template bodies are walked through rather than scanned, so a `//`
-// inside a test title is not mistaken for the start of a comment.
-function withoutComments(src) {
-  const out = src.split("");
-  for (let i = 0; i < src.length; i++) {
-    const c = src[i];
-    if (c === "/" && src[i + 1] === "/") {
-      while (i < src.length && src[i] !== "\n") out[i++] = " ";
-    } else if (c === "/" && src[i + 1] === "*") {
-      const end = src.indexOf("*/", i + 2);
-      const stop = end === -1 ? src.length : end + 2;
-      for (; i < stop; i++) if (src[i] !== "\n") out[i] = " ";
-      i--;
-    } else if (c === '"' || c === "'" || c === "`") {
-      for (i++; i < src.length && src[i] !== c; i++) if (src[i] === "\\") i++;
-    }
-  }
-  return out.join("");
+function run(bin, args) {
+  return execFileSync(join(repo, "node_modules/.bin", bin), args, {
+    cwd: repo,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 }
 
-// Ranges covered by a suite that does not, or may not, run: .skip / .fixme / .todo, and
-// the conditional pair .skipIf / .runIf — `describe.runIf(false)` reports its cases as
-// skipped, and no condition can be judged from here, so a case inside one is refused
-// whatever the argument says.
-// Both call shapes have to be followed to the end of the BODY, and they differ: `.skip(…)`
-// takes the title and the callback in one group, while `.skipIf(cond)(…)` is curried and
-// its first group is only the condition — stopping at that one was how an `it` inside a
-// skipped suite went on counting as a live guard.
-function skippedSuites(src) {
-  const ranges = [];
-  const head = /(^|[^.\w])(test\.describe|describe)((?:\.\w+)*)\s*(?=\()/g;
-  for (const m of src.matchAll(head)) {
-    if (!/\.(skip|skipIf|runIf|fixme|todo)\b/.test(m[3])) continue;
-    let i = m.index + m[0].length;
-    while (src[i] === "(") {
-      let depth = 0;
-      for (; i < src.length; i++) {
-        if (src[i] === "(") depth++;
-        else if (src[i] === ")" && --depth === 0) break;
-      }
-      i++; // past the ")"
-      while (/\s/.test(src[i] ?? "")) i++;
-    }
-    ranges.push([m.index, i]);
-  }
-  return ranges;
-}
-
-// Playwright's default testMatch takes both .spec.ts and .test.ts, and testDir recurses —
-// a skip in either, at any depth, is one the harness collects.
-function collected(rel) {
+// Every case Playwright collects for a project, with the one fact the ledger needs beside
+// the name: whether the declaration itself carries a skip. `--list` runs nothing, so a
+// conditional `test.skip(cond)` inside a body cannot appear here — only a declared one.
+function playwright(project) {
+  const json = JSON.parse(run("playwright", ["test", `--project=${project}`, "--list", "--reporter=json"]));
+  const root = json.config.rootDir;
   const out = [];
-  for (const name of readdirSync(join(repo, rel)).sort()) {
-    const child = `${rel}/${name}`;
-    if (statSync(join(repo, child)).isDirectory()) out.push(...collected(child));
-    else if (SPEC_FILE.test(name)) out.push(child);
-  }
+  const walk = (suite) => {
+    for (const spec of suite.specs ?? []) {
+      out.push({
+        file: relative(repo, resolve(root, spec.file)),
+        title: spec.title,
+        skipped: (spec.tests ?? []).some((t) => (t.annotations ?? []).some((a) => a.type === "skip")),
+      });
+    }
+    for (const child of suite.suites ?? []) walk(child);
+  };
+  for (const suite of json.suites ?? []) walk(suite);
   return out;
 }
 
-const SKIP = /^\s*test\.skip\(\s*(["'`])(.+?)\1/gm;
-const found = new Map();
-for (const file of collected(RACE_DIR)) {
-  for (const m of withoutComments(read(file)).matchAll(SKIP)) found.set(key(file, m[2]), { file, title: m[2] });
+// Vitest lists what it would RUN. A skipped case, one inside a describe.skipIf/runIf that
+// resolves away, and one that never registers are all simply absent — which is the
+// question a guarantor has to answer, asked of the thing that answers it.
+function vitest() {
+  return JSON.parse(run("vitest", ["list", "--json"])).map((t) => ({
+    file: relative(repo, t.file),
+    // "outer > inner > the title" — the ledger names the leaf.
+    title: t.name.split(" > ").at(-1),
+  }));
 }
 
-const RULES = collectionRules();
-const ledger = JSON.parse(read(LEDGER));
-const entries = new Map(ledger.skips.map((s) => [key(s.file, s.title), s]));
 const problems = [];
+const collected = playwright("race");
+const found = new Map();
+for (const c of collected) if (c.skipped) found.set(key(c.file, c.title), c);
 
-for (const [k, { file, title }] of found) {
-  if (!entries.has(k)) problems.push(`${file}: skip "${title}" is not in ${LEDGER}`);
+const runnable = new Set();
+for (const t of playwright("chromium")) if (!t.skipped) runnable.add(key(t.file, t.title));
+for (const t of vitest()) runnable.add(key(t.file, t.title));
+
+const ledger = JSON.parse(readFileSync(join(repo, LEDGER), "utf8"));
+const entries = new Map(ledger.skips.map((s) => [key(s.file, s.title), s]));
+
+for (const [k, c] of found) {
+  if (!entries.has(k)) problems.push(`${c.file}: skip "${c.title}" is not in ${LEDGER}`);
 }
 for (const [k, s] of entries) {
-  if (!found.has(k)) problems.push(`${LEDGER}: entry "${s.title}" names no skip in ${s.file}`);
+  if (!found.has(k)) problems.push(`${LEDGER}: entry "${s.title}" is not a skipped case in ${s.file}`);
 }
 
 const unguarded = [];
@@ -188,43 +113,14 @@ for (const [k, s] of entries) {
     continue;
   }
   const g = s.guardedBy;
-  const where = `${LEDGER}: "${s.title}"`;
-  if (key(g.file, g.title) === k) {
-    problems.push(`${where} is guarded by itself`);
-    continue;
-  }
-  const runner = RULES.find((c) => c.takes(g.file));
-  if (!runner) {
+  const gk = key(g.file, g.title);
+  if (gk === k) {
+    problems.push(`${LEDGER}: "${s.title}" is guarded by itself`);
+  } else if (!runnable.has(gk)) {
     problems.push(
-      `${where} is guarded by ${g.file}, which no runner collects — a guard nothing runs cannot ` +
-        `report an expired reason. Collected here: ${RULES.map((r) => r.label).join("; ")}`,
+      `${LEDGER}: "${s.title}" is guarded by ${g.file} › "${g.title}", which no per-PR runner reports as a ` +
+        `runnable test — a guard that does not run cannot report an expired reason`,
     );
-    continue;
-  }
-  let src;
-  try {
-    src = withoutComments(read(g.file));
-  } catch {
-    problems.push(`${where} is guarded by ${g.file}, which does not exist`);
-    continue;
-  }
-  const suites = skippedSuites(src);
-  // An active definition: `test("…"` / `it("…"` with no skip-ish modifier, not a suite,
-  // not inside a suite that is itself skipped. Whether it PASSES is the runner's job in
-  // the same CI; what is checked here is that it is still there and still runnable.
-  const active = quoted(g.title).some((q) => {
-    const re = new RegExp(String.raw`(^|[^.\w])(test|it)((?:\.\w+)*)\s*\(\s*${escape(q)}`, "g");
-    for (const m of src.matchAll(re)) {
-      if (/\.(skip|skipIf|runIf|fixme|todo|describe)\b/.test(m[3])) continue;
-      if (suites.some(([a, b]) => m.index > a && m.index < b)) continue;
-      return true;
-    }
-    return false;
-  });
-  if (!active) {
-    problems.push(`${where} is guarded by ${g.file} › "${g.title}", which that file does not define as an active test`);
-  } else {
-    s._runner = runner.label;
   }
 }
 
@@ -234,8 +130,8 @@ if (problems.length) {
   process.exit(1);
 }
 
-console.log(`OK: ${found.size} permanent skip(s) in ${RACE_DIR}, all registered`);
+console.log(`OK: ${found.size} permanent skip(s) of ${collected.length} cases Playwright collects in ${RACE_DIR}`);
 console.log(
-  `    ${found.size - unguarded.length} guarded by a test a per-PR runner collects, ${unguarded.length} held by nothing:`,
+  `    ${found.size - unguarded.length} guarded by a test a per-PR runner runs, ${unguarded.length} held by nothing:`,
 );
 for (const s of unguarded) console.log(`    - ${s.file.replace(`${RACE_DIR}/`, "")} › ${s.title}`);

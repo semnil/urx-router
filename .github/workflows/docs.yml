@@ -38,8 +38,3 @@ jobs:
       # reports it on every pull request. ci.yml's `preflight` runs this too, so a change
       # that breaks ci.yml's own trigger is still caught here.
       - run: node scripts/check-merge-gates.mjs
-      # The harness's permanent skips: each one is registered with the test that keeps its
-      # reason true, or with a statement that nothing does. Here rather than in the race
-      # tier itself, because that tier runs on the version-bump pull request alone — a
-      # reason can expire dozens of merges before anything would have looked.
-      - run: node scripts/check-race-skips.mjs

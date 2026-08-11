@@ -156,6 +156,14 @@ jobs:
           if grep -rl --include='*.js' --include='*.html' "__urxTrace" dist; then echo "__urxTrace leaked into the bundle"; exit 1; fi
           if grep -rl --include='*.js' --include='*.html' "__urxMidiProbe" dist; then echo "__urxMidiProbe leaked into the bundle"; exit 1; fi
       - run: pnpm typecheck:e2e
+      # The harness's permanent skips: each is registered with the test that keeps its
+      # reason true, or with a statement that nothing does. It asks both runners what they
+      # collect rather than reading the specs, so it needs the install this job already
+      # has — docs.yml, where the other three checks live, deliberately has none. Nothing
+      # is lost by not running it there: a Markdown/docs-only change, which is what this
+      # workflow skips, cannot move a spec or a guarantor. Beside the race tier itself it
+      # would be worse than useless, since that tier runs on the version-bump PR alone.
+      - run: pnpm check:skips
       - run: pnpm test:coverage
       - name: Upload frontend coverage
         uses: codecov/codecov-action@8cad3ba95e5920c42f44492e54bc9639cba47959 # v6.0.2
