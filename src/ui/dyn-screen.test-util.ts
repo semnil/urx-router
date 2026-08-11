@@ -62,13 +62,6 @@ export interface DynHostOptions {
 export function dynHost(opts: DynHostOptions = {}): DynHost {
   const { modelId = "URX44V", live = false, plotSize = { w: 600, h: 320 } } = opts;
 
-  // A DynScreen registers its pointer-release handler on `window`, which outlives
-  // the test. A stale one only ever re-renders into its own detached box, so it
-  // hides nothing today — but it is the same leak that made a MIDI window
-  // assertion insensitive, and closing it keeps a later global-channel assertion
-  // here from inheriting the problem.
-  const windowScope = recordWindowListeners();
-
   const scrim = document.createElement("div");
   scrim.id = "dyn-screen-modal";
   scrim.hidden = true;
@@ -138,6 +131,18 @@ export function dynHost(opts: DynHostOptions = {}): DynHost {
     midi: opts.midi,
     onClosed: () => void closed++,
   };
+
+  // A DynScreen registers its pointer-release handler on `window`, which outlives
+  // the test. A stale one only ever re-renders into its own detached box, so it
+  // hides nothing today — but it is the same leak that made a MIDI window
+  // assertion insensitive, and closing it keeps a later global-channel assertion
+  // here from inheriting the problem.
+  //
+  // Installed HERE rather than at the top: `restore` is the only way to take it
+  // back, so a throw before this line would leave the patch and its recordings
+  // behind with nobody holding the handle. Nothing above registers a window
+  // listener — the screens that do are built by the caller, after this returns.
+  const windowScope = recordWindowListeners();
 
   return {
     scrim,

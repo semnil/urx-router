@@ -39,12 +39,15 @@ function start(): HTMLElement {
   const host = document.createElement("div");
   document.body.append(host);
   const scope = recordWindowListeners();
+  // Queued before the call, not after it. `startMidiWindow` registers the pagehide
+  // listener and only THEN paints, so a paint that throws leaves a live listener
+  // behind — and a queue entry added after the call is exactly what a throw skips.
+  windowScopes.push(scope.release);
   try {
     startMidiWindow(host);
   } finally {
     scope.stop();
   }
-  windowScopes.push(scope.release);
   return host;
 }
 
