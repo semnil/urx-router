@@ -1287,16 +1287,18 @@ fixed or withdrawn.
   `e2e/race/ui.ts` restates the off sentinel and the centi-dB scale that `vd.ts` already owns, and
   `FLUSH_TAIL_MS` copies `DEBOUNCE_MS` rather than deriving from it. Both say so at their definition
 - **The three CI shards are balanced by test COUNT, and the tiers are not equally expensive.** Playwright
-  splits the ordered list into equal-count contiguous chunks — 55 cases each, cutting across file
-  boundaries — so the split follows the file names, and the file names follow the tier order. Measured on
-  one run: shard 1 carried **749 s** of test time against shard 2's 253 s and shard 3's 315 s, at 55 cases
-  apiece. It is not a scheduling accident: T1 (overtake) and T2 (shape change) are the tiers whose cases
-  provoke whole-device readbacks of ~800 sequential commands and hold a barrier through them, 33-48 s each,
-  and being adjacent in the ordering they land together. The workflow's wall clock is the slowest shard, so
-  this costs about **2.5 minutes per release run** (7m18s against the ~4m35s an even split by duration would
-  give). Left as it is — a release runs the harness once — and recorded because the obvious fix, raising the
-  shard count, lowers the maximum without addressing the imbalance, while assigning files to shards by hand
-  makes the split something a new case can silently unbalance
+  splits the ordered list into equal-count contiguous chunks, cutting across file boundaries — so the
+  split follows the file names, and the file names follow the tier order. Measured 2026-08-11 on
+  `d85af81`: shard 1 carried **752 s** of test time against shard 2's 272 s and shard 3's 451 s, at 56, 51
+  and 54 cases. It is not a scheduling accident: T1 (overtake) and T2 (shape change) are the tiers whose
+  cases provoke whole-device readbacks of ~800 sequential commands and hold a barrier through them, 33-48 s
+  each, and being adjacent in the ordering they land together. The workflow's wall clock is the slowest
+  shard, so this costs about **2 minutes per release run** (6.4 minutes against the ~4.2 an even split by
+  duration would give). The reading this replaced had the same shape — 749 / 253 / 315 s — so the
+  imbalance is a property of the ordering rather than of any one run. Left as it is — a
+  release runs the harness once — and recorded because the obvious fix, raising the shard count, lowers the
+  maximum without addressing the imbalance, while assigning files to shards by hand makes the split
+  something a new case can silently unbalance
 - **A plan EDIT never appears in the IPC trace** — only its write does, lagged by up to the 120 ms
   flush window and continuing after the read has resolved. So no predicate over the trace can decide
   "did an edit land inside the read's window", which became a load-bearing question once the readback
