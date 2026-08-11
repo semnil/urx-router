@@ -1289,8 +1289,10 @@ fixed or withdrawn.
 - **The three CI shards are balanced by test COUNT, and the tiers are not equally expensive.** Playwright
   splits the ordered list into equal-count contiguous chunks, cutting across file boundaries — so the
   split follows the file names, and the file names follow the tier order. Measured 2026-08-11 on
-  `d85af81`: shard 1 carried **752 s** of test time against shard 2's 272 s and shard 3's 451 s, at 56, 51
-  and 54 cases. It is not a scheduling accident: T1 (overtake) and T2 (shape change) are the tiers whose
+  `d85af81`: Playwright assigned the shards **57, 56 and 56** cases — the equal-count split this is about
+  — and shard 1 carried **752 s** of test time against shard 2's 272 s and shard 3's 451 s. (56, 51 and 54
+  of those cases ran; the remainder are skipped by their own guards and cost nothing, so the seconds are
+  over what executed.) It is not a scheduling accident: T1 (overtake) and T2 (shape change) are the tiers whose
   cases provoke whole-device readbacks of ~800 sequential commands and hold a barrier through them, 33-48 s
   each, and being adjacent in the ordering they land together. The workflow's wall clock is the slowest
   shard, so this costs about **2 minutes per release run** (6.4 minutes against the ~4.2 an even split by
