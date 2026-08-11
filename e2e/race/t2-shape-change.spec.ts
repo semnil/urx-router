@@ -686,7 +686,9 @@ test.describe("T2 shape-change", () => {
   // dropped the unit's announcement, and the operator's front-panel change never reached
   // the plan for the rest of the session. The pin is rewritten rather than deleted so it
   // tracks the fix — everything about the WRITE side is unchanged and still asserted here.
-  test("microSD Rec Track Count is read, never written, and its notify escalates to a full read", async ({ page }) => {
+  test("microSD Rec Track Count is read, never written, and its notify is repaired by a scoped read", async ({
+    page,
+  }) => {
     // The device holds 8 tracks (raw 4). Writes to 839 are swallowed rather than
     // refused on purpose: the real broker answers 400 above two tracks, and a refusal
     // would abort the session, so the regression this case is here to catch (the app
