@@ -1,0 +1,4 @@
+{
+  "note": "The status checks the branch ruleset makes a merge condition. Every entry is reported by a job in a workflow that triggers on pull_request with no trigger filter, so it reports on EVERY pull request — a check that never reports blocks the merge forever. scripts/check-merge-gates.mjs enforces that from the workflow side; `pnpm check:gates --ruleset` diffs this list against the live ruleset, which no token in CI is allowed to read. Third-party contexts (codecov/*) are deliberately absent: they report only when an upload happens.",
+  "contexts": ["ci-required", "docs-required", "format", "race-required"]
+}

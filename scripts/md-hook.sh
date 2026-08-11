@@ -1,5 +1,6 @@
 #!/bin/sh
-# Claude Code PostToolUse wrapper for the document checks.
+# Claude Code PostToolUse wrapper for the repository's own file checks (documents, and
+# the workflow arrangement the branch ruleset depends on).
 # Hook processes do not inherit the login shell PATH, so node has to be located
 # first (nodenv shims on this Mac, Homebrew elsewhere; Git Bash already has it).
 for dir in "$HOME/.anyenv/envs/nodenv/shims" /opt/homebrew/bin /usr/local/bin; do
@@ -18,7 +19,7 @@ command -v node >/dev/null 2>&1 || {
 payload=$(cat)
 self=$(dirname "$0")
 status=0
-for check in check-md-tables check-assets-index; do
+for check in check-md-tables check-assets-index check-merge-gates; do
   printf '%s' "$payload" | node "$self/$check.mjs" --hook || status=$?
 done
 exit $status
