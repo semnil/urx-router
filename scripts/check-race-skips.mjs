@@ -33,26 +33,40 @@
 // to it) — rather than by the leaf alone. Two describes may carry the same leaf title, and
 // with the leaf alone one row then answered for both cases. Nothing here splits
 // that name back apart either: a leaf title may contain the separator, and a fragment of one
-// is not a name. What makes the full name enough to address exactly one case is Playwright's
-// own refusal — two cases with the same full name in one file are a collection error, not two
-// specs (measured: exit 1, `errors[]` populated, `suites` empty) — so this checks the runner's
-// exit and reports what it says instead of reading a truncated list as a short one. The
-// ledger's own side has no such runner, so a key registered twice is checked below.
+// is not a name.
+//
+// A joined name is still not a unique address, and no join makes it one: ["a > b", "c"] and
+// ["a", "b > c"] are two different cases with the same joined name, and Playwright's own
+// duplicate-title refusal does not catch them because it joins on a different separator. So
+// the name is not trusted to be unique — it is CHECKED. A ledger row whose name matches more
+// than one collected case is refused, and so is a guardedBy that matches more than one
+// runnable test. Vitest reports its names already joined and offers no structured form, so
+// this is the only shape the check can take on that side; applying it to both keeps one rule.
+//
+// Both runners are asked for their report in a FILE rather than on stdout. A single top-level
+// console.log in any spec prints ahead of the JSON, and parsing stdout then fails on a tree
+// that is perfectly healthy — a check that a stray debug line can take down is a check that
+// gets deleted.
 //
 // The price of being right is node_modules, so this runs from ci.yml rather than the
 // install-free docs.yml. Nothing is lost by that: the Markdown/docs-only pull request
 // ci.yml skips cannot change a spec or a guarantor.
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RACE_DIR = "e2e/race";
 const LEDGER = `${RACE_DIR}/skip-ledger.json`;
-// What both runners print between a describe and what it contains.
+// What vitest prints between a describe and what it contains; Playwright reports the tree as
+// a tree, and the same join is applied to it.
 const NAME_SEP = " > ";
 const key = (file, title) => `${file}::${title}`;
+
+const reports = mkdtempSync(join(tmpdir(), "urx-skip-check-"));
+process.on("exit", () => rmSync(reports, { recursive: true, force: true }));
 
 function fatal(lines) {
   console.error("FAIL: the collection this check reads could not be produced");
@@ -60,10 +74,11 @@ function fatal(lines) {
   process.exit(1);
 }
 
-function run(bin, args) {
+function run(bin, args, env) {
   const r = spawnSync(join(repo, "node_modules/.bin", bin), args, {
     cwd: repo,
     encoding: "utf8",
+    env: { ...process.env, ...env },
     maxBuffer: 64 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -71,22 +86,27 @@ function run(bin, args) {
   return r;
 }
 
+function readReport(file, r, what) {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    fatal([`${what} exited ${r.status} and wrote no report`, ...r.stderr.trim().split("\n").slice(0, 10)]);
+  }
+}
+
 // Every case Playwright collects for a project, with the one fact the ledger needs beside
 // the name: whether the declaration itself carries a skip. `--list` runs nothing, so a
 // conditional `test.skip(cond)` inside a body cannot appear here — only a declared one.
 // The outermost suite is the file, so the trail starts below it.
 function playwright(project) {
-  const r = run("playwright", ["test", `--project=${project}`, "--list", "--reporter=json"]);
-  let json;
-  try {
-    json = JSON.parse(r.stdout);
-  } catch {
-    fatal([`playwright --list (${project}) printed no report`, ...r.stderr.trim().split("\n").slice(0, 10)]);
-  }
+  const file = join(reports, `playwright-${project}.json`);
+  const what = `playwright --list (${project})`;
+  const r = run("playwright", ["test", `--project=${project}`, "--list", "--reporter=json"], {
+    PLAYWRIGHT_JSON_OUTPUT_NAME: file,
+  });
+  const json = readReport(file, r, what);
   const errors = (json.errors ?? []).map((e) => e.message?.split("\n")[0] ?? String(e));
-  if (r.status !== 0 || errors.length) {
-    fatal([`playwright --list (${project}) exited ${r.status}`, ...errors]);
-  }
+  if (r.status !== 0 || errors.length) fatal([`${what} exited ${r.status}`, ...errors]);
   const root = json.config.rootDir;
   const out = [];
   const walk = (suite, trail) => {
@@ -109,22 +129,35 @@ function playwright(project) {
 // already the full name; it is carried through as printed, never split, because a leaf
 // title may itself contain the separator.
 function vitest() {
-  const r = run("vitest", ["list", "--json"]);
+  const file = join(reports, "vitest.json");
+  const r = run("vitest", ["list", `--json=${file}`]);
+  const json = readReport(file, r, "vitest list");
   if (r.status !== 0) fatal([`vitest list exited ${r.status}`, ...r.stderr.trim().split("\n").slice(0, 10)]);
-  return JSON.parse(r.stdout).map((t) => ({
-    file: relative(repo, t.file),
-    title: t.name,
-  }));
+  return json.map((t) => ({ file: relative(repo, t.file), title: t.name }));
 }
 
 const problems = [];
-const collected = playwright("race");
-const found = new Map();
-for (const c of collected) if (c.skipped) found.set(key(c.file, c.title), c);
+const tally = (map, k) => map.set(k, (map.get(k) ?? 0) + 1);
 
-const runnable = new Set();
-for (const t of playwright("chromium")) if (!t.skipped) runnable.add(key(t.file, t.title));
-for (const t of vitest()) runnable.add(key(t.file, t.title));
+const collected = playwright("race");
+const raceNames = new Map();
+for (const c of collected) tally(raceNames, key(c.file, c.title));
+
+const found = new Map();
+for (const c of collected) {
+  if (!c.skipped) continue;
+  const k = key(c.file, c.title);
+  if (raceNames.get(k) > 1 && !found.has(k)) {
+    problems.push(
+      `${c.file}: "${c.title}" is the full name of ${raceNames.get(k)} collected cases, so no row addresses one`,
+    );
+  }
+  found.set(k, c);
+}
+
+const runnable = new Map();
+for (const t of playwright("chromium")) if (!t.skipped) tally(runnable, key(t.file, t.title));
+for (const t of vitest()) tally(runnable, key(t.file, t.title));
 
 const ledger = JSON.parse(readFileSync(join(repo, LEDGER), "utf8"));
 const entries = new Map();
@@ -154,12 +187,18 @@ for (const [k, s] of entries) {
   }
   const g = s.guardedBy;
   const gk = key(g.file, g.title);
+  const named = runnable.get(gk) ?? 0;
   if (gk === k) {
     problems.push(`${LEDGER}: "${s.title}" is guarded by itself`);
-  } else if (!runnable.has(gk)) {
+  } else if (named === 0) {
     problems.push(
       `${LEDGER}: "${s.title}" is guarded by ${g.file} › "${g.title}", which no per-PR runner reports as a ` +
         `runnable test — a guard that does not run cannot report an expired reason`,
+    );
+  } else if (named > 1) {
+    problems.push(
+      `${LEDGER}: "${s.title}" is guarded by ${g.file} › "${g.title}", which is the full name of ${named} ` +
+        `runnable tests — the row does not say which one holds the reason`,
     );
   }
 }
