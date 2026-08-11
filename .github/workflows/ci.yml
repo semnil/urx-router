@@ -51,14 +51,38 @@ jobs:
         # way of failing to read it runs the full suite instead: an unreadable list must
         # not be able to turn the skip into "nothing to do", which is the direction that
         # ships untested code. race.yml's `detect` takes the same side for the same reason.
+        #
+        # A TRUNCATED list is the same hazard wearing a valid response. Both endpoints have
+        # a ceiling and neither says it hit one: the pull request's files stop at 3000
+        # however far you paginate, and compare carries "up to 300 changed files for the
+        # entire comparison" on its first page only, so paging does not extend that one.
+        # A list cut off above the ceiling whose visible part happens to be all
+        # documentation would skip the build and the tests with `ci-required` still green.
+        # The count is the only tell the response carries, and the pull request has a
+        # second, exact one: `changed_files` on the PR itself, which is not the same query.
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == 'pull_request' ]]; then
+            ceiling=3000
             files=$(gh api --paginate "repos/${REPO}/pulls/${PR}/files" -q '.[].filename') || files=''
+            declared=$(gh api "repos/${REPO}/pulls/${PR}" -q '.changed_files') || declared=''
           else
+            ceiling=300
             files=$(gh api "repos/${REPO}/compare/${BEFORE}...${AFTER}" -q '.files[].filename') || files=''
+            declared=''
           fi
           if [[ -z "${files}" ]]; then
             echo 'could not read the changed files — running everything rather than guessing'
+            echo 'code=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          count=$(printf '%s\n' "${files}" | wc -l | tr -d ' ')
+          if (( count >= ceiling )); then
+            echo "the file list reached the endpoint's ${ceiling}-file ceiling — it may be cut off, running everything"
+            echo 'code=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -n "${declared}" && "${declared}" != "${count}" ]]; then
+            echo "the pull request declares ${declared} changed files and the list carried ${count} — running everything"
             echo 'code=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi

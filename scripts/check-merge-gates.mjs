@@ -49,6 +49,10 @@ const MANIFEST = ".github/required-checks.json";
 const findings = [];
 const finding = (where, message) => findings.push(`${where}: ${message}`);
 
+// Read out of the manifest, and only `--ruleset` reads it back: the workflow side has no
+// say in which app reports a job.
+let integrationId = null;
+
 // --- the reader ---------------------------------------------------------------
 
 // A "#" only starts a comment outside quotes and after whitespace, so a value like
@@ -299,6 +303,15 @@ function readManifest() {
     finding(MANIFEST, "`contexts` is missing or empty — nothing would be checked");
     return new Set();
   }
+  // The app a required check must come from. A ruleset entry matches on the provider as
+  // well as the name, so the id is half of what the rule says and cannot be left implicit.
+  if (!Number.isInteger(parsed.integration_id) || parsed.integration_id <= 0) {
+    finding(
+      MANIFEST,
+      "`integration_id` is missing or not a positive integer — `--ruleset` cannot check who reports a context",
+    );
+  }
+  integrationId = parsed.integration_id;
   for (const context of contexts) {
     if (typeof context !== "string" || !context.trim()) {
       finding(MANIFEST, `\`${JSON.stringify(context)}\` is not a context name`);
@@ -359,21 +372,36 @@ function checkRuleset(required) {
       continue;
     }
     carrying++;
-    const live = new Set((rule.parameters?.required_status_checks ?? []).map((check) => check.context));
-    for (const context of live) {
+    const where = `ruleset "${detail.name}"`;
+    const entries = rule.parameters?.required_status_checks ?? [];
+    const live = new Map(entries.map((check) => [check.context, check.integration_id]));
+    for (const [context, appId] of live) {
       if (!required.has(context)) {
+        finding(where, `requires \`${context}\`, which ${MANIFEST} does not list — nothing checks that it can report`);
+        continue;
+      }
+      // A name alone is not the rule. An entry pinned to the wrong app is satisfied by
+      // nothing this repository can produce — the check goes green and the merge stays
+      // blocked, with the two halves of the reason in different places. An entry pinned to
+      // no app is the opposite hazard and quieter: any app reporting that name counts.
+      if (appId === undefined || appId === null) {
         finding(
-          `ruleset "${detail.name}"`,
-          `requires \`${context}\`, which ${MANIFEST} does not list — nothing checks that it can report`,
+          where,
+          `requires \`${context}\` from any provider — pin \`integration_id\` to ${integrationId} so only GitHub Actions can satisfy it`,
+        );
+      } else if (integrationId !== null && appId !== integrationId) {
+        finding(
+          where,
+          `requires \`${context}\` from app ${appId}, but a workflow job reports it as app ${integrationId} — that rule can never be satisfied`,
         );
       }
     }
     for (const context of required) {
       if (!live.has(context)) {
-        finding(`ruleset "${detail.name}"`, `does not require \`${context}\`, which ${MANIFEST} lists`);
+        finding(where, `does not require \`${context}\`, which ${MANIFEST} lists`);
       }
     }
-    console.log(`    ruleset "${detail.name}": ${live.size} required context(s)`);
+    console.log(`    ${where}: ${live.size} required context(s)`);
   }
   if (!carrying) finding(repo, "no active branch ruleset requires any status check");
 }
