@@ -4,17 +4,23 @@
 #
 # Two jobs upload for a commit — `unit` from the frontend job and `e2e` from the E2E job —
 # and the E2E half is not reproducible to the line: a spec that races a repaint or a
-# timeout takes a slightly different path each run. Five CI runs over identical
-# application code — 255e32f, 26d3515, cc827ff, 95866f1, c6ad594, some of them heads a
-# later force-push replaced, so they resolve on Codecov rather than in any branch —
-# reported 11173, 11173, 11172, 11173 and 11174 hits of 12669: a spread of TWO lines, or
-# 0.016 points. That is what posted `88.18% (-0.01%) compared to 255e32f` on a pull
-# request that changed one comment and nothing else.
+# timeout takes a slightly different path each run. Eleven CI runs over identical
+# application code, in two generations of the source, measure that jitter (2026-08-11):
 #
-# 0.05% is about six lines here: three times the spread those five runs actually showed,
-# which is the margin a five-sample range earns rather than a bound it proves. What would
-# tighten it honestly: more readings of identical code from CI — every merge produces one,
-# and local repeats do not count, since they measure this machine's timing and not the
+#   12669 lines  255e32f 26d3515 cc827ff 95866f1 c6ad594  ->  11173 11173 11172 11173 11174
+#   12706 lines  1c14930 726cd78 415eb43 73749c9 d6772c4 7c47838  ->  11612 11613 11612
+#                                                                     11612 11613 11612
+#
+# A spread of TWO lines at its widest, 0.016 points. (Some of those shas are heads a later
+# force-push replaced, so they resolve on Codecov rather than in any branch; 415eb43
+# changed only files coverage excludes, which is why it belongs in the second row.) That
+# jitter is what posted `88.18% (-0.01%) compared to 255e32f` on a pull request that
+# changed one comment and nothing else.
+#
+# 0.05% is about six lines here — a little over three times the widest spread eleven runs
+# have shown. The first version of this file said five runs and called the margin unearned;
+# the readings above are the ones that were supposed to settle it, and they did not widen
+# it. Local repeats still do not count: they measure this machine's timing, not the
 # runner's.
 #
 # Keep it near the noise floor rather than comfortable. `patch` only ever looks at the

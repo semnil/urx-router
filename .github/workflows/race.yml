@@ -96,8 +96,11 @@ jobs:
     # a release. One environment for all four jobs also means the workflow states one
     # rule rather than two.
     container: mcr.microsoft.com/playwright:v${{ needs.detect.outputs.playwright }}-noble
-    # Well above the ~5 minutes a shard takes. It is a backstop against a wedged run
-    # holding a runner for the 6-hour job default, not a budget.
+    # Several times what the slowest shard takes — and it is the SLOWEST that has to fit,
+    # since Playwright shards by case count and the expensive tiers land together
+    # (docs/{en,ja}/live-race-harness.md carries that reading, and every other figure about
+    # this tier). A backstop against a wedged run holding a runner for the 6-hour job
+    # default, not a budget.
     timeout-minutes: 25
     permissions:
       contents: read

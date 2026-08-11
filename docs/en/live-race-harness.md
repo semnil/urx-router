@@ -544,22 +544,34 @@ rejects the wire before adoption, so what would be measured is the load report, 
 
 ### Where each tier runs
 
-The project boundary is also the CI tiering, and these are the numbers that cut it there. Measured on a
-two-worker `ubuntu-latest` runner:
+The project boundary is also the CI tiering, and these are the numbers that cut it there. **Measured
+2026-08-11 on `d85af81`**, from the logs of one `ci.yml` run and one on-demand `race.yml` run — two
+workers per job, `ubuntu-latest`, inside the Playwright container. Machine time is the sum of the
+per-test durations the reporter prints, so it is the work rather than the wall clock the shards divide
+it into:
 
 | Tier | Machine time | Slowest test | Runs from |
 | --- | --- | --- | --- |
-| `chromium` — the ordinary suite | 3.5 min | 2.7 s | `ci.yml`, every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside) |
-| `race` — the harness | 22.4 min | 60 s | `race.yml`, sharded three ways |
-| `race-webkit` | 28 s | 26 s | `race.yml`, its own job |
+| `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside) |
+| `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways |
+| `race-webkit` | 2.1 min | 48 s | `race.yml`, its own job |
+
+**Read the ordinary tier's figure as a range rather than a budget.** The same 428 cases measured 5.2
+minutes in another run the same day, a fifth under the reading above — runner variance, not a change in
+the suite. The harness is steadier (12.5 against 12.3 minutes for shard 1 across two runs), which is
+what lets the comparison between the tiers survive noise neither figure is free of. The ordinary tier is
+also measured **as CI runs it**: since the coverage upload landed that means `pnpm test:e2e:coverage`, an
+unminified bundle and a native V8 collector, and that overhead is part of what a per-PR run costs.
 
 Case counts are deliberately not a column here. They move with every pull request that adds a test —
 the ordinary tier's had drifted 45 cases past what this table claimed before anyone noticed — and
 nothing about the tiering follows from them. What cut the boundary is the time.
 
-The harness is **86% of the E2E machine time on its own**, which is what took it off the ordinary PR
-tier: at 3.5 minutes the ordinary suite is cheaper to run per-PR than to run after the merge, and at
-22.4 it is not.
+The harness is **about four fifths of the E2E machine time on its own** (79% of the ordinary-plus-race
+readings above), which is what took it off the ordinary PR tier: at six and a half minutes the ordinary
+suite is cheaper to run per-PR than to run after the merge, and at twenty-five it is not. Both figures
+have grown since the tiering was cut and the ratio has barely moved, which is the part the boundary
+actually rests on.
 
 Where it runs instead is **the one pull request that changes the app version**. That PR carries nothing
 else, and merging it is what tags a release (`tag-release.yml`), so the harness sits directly in front
@@ -1275,16 +1287,20 @@ fixed or withdrawn.
   `e2e/race/ui.ts` restates the off sentinel and the centi-dB scale that `vd.ts` already owns, and
   `FLUSH_TAIL_MS` copies `DEBOUNCE_MS` rather than deriving from it. Both say so at their definition
 - **The three CI shards are balanced by test COUNT, and the tiers are not equally expensive.** Playwright
-  splits the ordered list into equal-count contiguous chunks — 55 cases each, cutting across file
-  boundaries — so the split follows the file names, and the file names follow the tier order. Measured on
-  one run: shard 1 carried **749 s** of test time against shard 2's 253 s and shard 3's 315 s, at 55 cases
-  apiece. It is not a scheduling accident: T1 (overtake) and T2 (shape change) are the tiers whose cases
-  provoke whole-device readbacks of ~800 sequential commands and hold a barrier through them, 33-48 s each,
-  and being adjacent in the ordering they land together. The workflow's wall clock is the slowest shard, so
-  this costs about **2.5 minutes per release run** (7m18s against the ~4m35s an even split by duration would
-  give). Left as it is — a release runs the harness once — and recorded because the obvious fix, raising the
-  shard count, lowers the maximum without addressing the imbalance, while assigning files to shards by hand
-  makes the split something a new case can silently unbalance
+  splits the ordered list into equal-count contiguous chunks, cutting across file boundaries — so the
+  split follows the file names, and the file names follow the tier order. Measured 2026-08-11 on
+  `d85af81`: Playwright assigned the shards **57, 56 and 56** cases — the equal-count split this is about
+  — and shard 1 carried **752 s** of test time against shard 2's 272 s and shard 3's 451 s. (56, 51 and 54
+  of those cases ran; the remainder are skipped by their own guards and cost nothing, so the seconds are
+  over what executed.) It is not a scheduling accident: T1 (overtake) and T2 (shape change) are the tiers whose
+  cases provoke whole-device readbacks of ~800 sequential commands and hold a barrier through them, 33-48 s
+  each, and being adjacent in the ordering they land together. The workflow's wall clock is the slowest
+  shard, so this costs about **2 minutes per release run** (6.4 minutes against the ~4.2 an even split by
+  duration would give). The reading this replaced had the same shape — 749 / 253 / 315 s — so the
+  imbalance is a property of the ordering rather than of any one run. Left as it is — a
+  release runs the harness once — and recorded because the obvious fix, raising the shard count, lowers the
+  maximum without addressing the imbalance, while assigning files to shards by hand makes the split
+  something a new case can silently unbalance
 - **A plan EDIT never appears in the IPC trace** — only its write does, lagged by up to the 120 ms
   flush window and continuing after the read has resolved. So no predicate over the trace can decide
   "did an edit land inside the read's window", which became a load-bearing question once the readback
