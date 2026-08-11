@@ -355,15 +355,22 @@ test.describe("T5 drop", () => {
     console.log(`unread nodes after the cut: ${unread.length} of ${nodeCount} — ${unread.slice(0, 8).join(", ")}`);
     console.log(`reads after teardown: ${all.filter((s) => s.cmd === "vd_get" && s.start > downAt).length}`);
 
-    // PINNED. The half-read plan is reflected and the provenance is set from the
-    // partial result, so the "?" badges do appear — but they appear on a plan the
-    // app has already rebased and reset the history against, and the session that
-    // would have repaired it is gone.
+    // The half-read plan is reflected and the provenance is set from the partial
+    // result, so the "?" badges appear on a plan the app has rebased against, and the
+    // session that would have repaired it is gone.
     expect(unread.length).toBeGreaterThan(0);
     expect(unread.length).toBeLessThan(nodeCount); // some nodes WERE read and applied
     expect(findings.some((f) => f.inv === 16)).toBe(true);
     expect(await dialogsOf(page)).toHaveLength(1);
-    expect(menuStates(trace, downAt).at(-1)).toBe("false/false");
+    // The operator's edit survives the cut. This cell used to pin the opposite — the
+    // reflect reset the history unconditionally, so the last menu push after teardown
+    // was "false/false" and the one entry went with a read that had authored nothing.
+    // The reset is now conditional on the read having authored something: the nodes it
+    // DID read agreed with the plan, and the nodes it never reached are marked rather
+    // than written. So no push follows the teardown at all, and the state standing from
+    // before the window is still the one on screen.
+    expect(menuStates(trace, downAt)).toHaveLength(0);
+    expect(menuStates(trace).at(-1)).toBe("true/false");
   });
 
   // drop-device-lost-latch. The one disconnection shape that never arrives as a link

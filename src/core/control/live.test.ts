@@ -486,6 +486,127 @@ describe("LiveSync direct-follow journal across a read", () => {
   });
 });
 
+// The unit announces a numeric write 58-151 ms after acking it, against a 120 ms flush
+// window — so the second write of a drag can move the snapshot before the first write's
+// announcement arrives. The snapshot holds one value per address and cannot represent
+// the write it has moved past, so that announcement used to read as a device-side
+// change: the plan was written back to a value the operator had already replaced, and
+// the idle reconcile that followed wiped every undo entry.
+describe("LiveSync late echo of a write the snapshot has moved past", () => {
+  /** The ch1 STEREO send fader command at a given dB — its address and raw value. */
+  function ch1FaderCmd(db: number) {
+    const probe = basePlan();
+    setCh1Fader(probe, db);
+    const cmd = planToCommands(model, probe).find((c) => c.name === "CH_FADER" && c.node === "ch1");
+    if (!cmd) throw new Error("expected a ch1 CH_FADER command");
+    return cmd;
+  }
+
+  /** Two flushes to the one address, 200 ms apart — each in its own window. */
+  async function dragTwice(plan: Plan, live: LiveSync, first: number, second: number): Promise<void> {
+    setCh1Fader(plan, first);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    setCh1Fader(plan, second);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+  }
+
+  it("reads the overtaken write's announcement as an echo, not a device edit", async () => {
+    const a = ch1FaderCmd(-6);
+    const b = ch1FaderCmd(-12);
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    await dragTwice(plan, live, -6, -12);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(2); // both writes really went out
+
+    // The FIRST write's announcement, arriving after the second moved the snapshot.
+    expect(live.isEcho(a.paramId, a.x, a.y, a.vdValue)).toBe(true);
+    // A value we never wrote is still a device-side change.
+    expect(live.isEcho(a.paramId, a.x, a.y, ch1FaderCmd(-24).vdValue)).toBe(false);
+    // The latest write's own announcement stays an echo — that is the snapshot's job.
+    expect(live.isEcho(b.paramId, b.x, b.y, b.vdValue)).toBe(true);
+  });
+
+  it("stops calling it an echo once the retention window has passed", async () => {
+    const a = ch1FaderCmd(-6);
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    await dragTwice(plan, live, -6, -12);
+
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 1);
+    // The unit never announced it inside the window a settle waits, so a notify
+    // carrying that value now is the operator's own move on the hardware.
+    expect(live.isEcho(a.paramId, a.x, a.y, a.vdValue)).toBe(false);
+  });
+
+  it("consumes the queue up to the match, so an older write cannot answer for a newer one", async () => {
+    const a = ch1FaderCmd(-6);
+    const b = ch1FaderCmd(-12);
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    await dragTwice(plan, live, -6, -12);
+    setCh1Fader(plan, -24);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+
+    // The middle write announces first: everything queued before it goes with it.
+    expect(live.isEcho(b.paramId, b.x, b.y, b.vdValue)).toBe(true);
+    // The earlier value is no longer pending, so the unit reporting it now is a real
+    // device-side move back — not our own write arriving late.
+    expect(live.isEcho(a.paramId, a.x, a.y, a.vdValue)).toBe(false);
+  });
+
+  it("does the same for a name the snapshot has moved past", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+
+    plan.nodeNames = { ...plan.nodeNames, ch1: "FIRST" };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    plan.nodeNames = { ...plan.nodeNames, ch1: "SECOND" };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+
+    const calls = vi.mocked(vdSetStr).mock.calls;
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    const [param, , y] = calls[calls.length - 1];
+    expect(live.isEchoName(param, y, "FIRST")).toBe(true);
+    expect(live.isEchoName(param, y, "SECOND")).toBe(true);
+    expect(live.isEchoName(param, y, "NEVER WRITTEN")).toBe(false);
+  });
+
+  // Both boundaries, asserted separately: `begin` clearing would hide `end` not
+  // clearing if the two were only ever checked together.
+  it("drops the queue when the session ends", async () => {
+    const a = ch1FaderCmd(-6);
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    await dragTwice(plan, live, -6, -12);
+
+    live.end();
+    expect(live.isEcho(a.paramId, a.x, a.y, a.vdValue)).toBe(false);
+  });
+
+  it("does not carry a previous session's writes into the next one", async () => {
+    const a = ch1FaderCmd(-6);
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    await dragTwice(plan, live, -6, -12);
+
+    // Straight into a new session without an intervening end(), which is what a
+    // reconnect does — begin() is the boundary that has to hold on its own.
+    live.begin(clonePlanState(plan));
+    expect(live.isEcho(a.paramId, a.x, a.y, a.vdValue)).toBe(false);
+  });
+});
+
 // The EQ 1-knob is the other kind of side effect: the device recomputes the four band
 // values, which the plan mirrors rather than authors. Pushing them back (a converge)
 // would write the operator's stale manual curve over the device's own work, so the owner

@@ -612,6 +612,13 @@ test.describe("T6 teardown", () => {
     await page.keyboard.press("ArrowUp");
     await waitQuiet(page);
 
+    // Make the device hold a fader value the app never wrote, so the scoped read below
+    // genuinely AUTHORS a key. Without it the read agrees with the plan at every key,
+    // the reflect's reset is skipped as the no-op it would be, and the Edit-menu push
+    // this case reads as its evidence never happens — leaving the case asserting the
+    // reads half of its own title and nothing about the reflect.
+    await divergeAt(page, CH1_FADER, 20);
+
     // A scoped notify: the settle runs applyNodeState over ch1. Hold its first read so
     // the teardown can be placed inside the await.
     await blockAt(page, "vd_get", 1);
@@ -650,7 +657,9 @@ test.describe("T6 teardown", () => {
     expect(findings.some((f) => f.inv === 16)).toBe(true);
     // …and the continuation still runs: followFull is latched, the reflect fires, and
     // planHistory.reset() drops the operator's entry — visible from outside the page
-    // as the Edit menu going disabled after the session ended.
+    // as the Edit menu going disabled after the session ended. The reset is conditional
+    // on the read having authored something, which the diverged fader above is what
+    // makes true: this assertion is therefore also the positive arm of that condition.
     expect(menuAfter.map((s) => s.detail)).toContain("false/false");
   });
 });

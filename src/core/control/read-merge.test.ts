@@ -375,4 +375,22 @@ describe("MergedRead.devicePatch and the context-checked absorb", () => {
     // The entry the commit would record: the gesture's full travel.
     expect(diffPlans(baseline, plan).some((e) => e.field === "connParams")).toBe(true);
   });
+
+  // The predicate main.ts's follow reflect reads to decide whether a reconcile
+  // invalidated the undo history. A read that found the device holding exactly what the
+  // plan holds authored nothing, so no earlier entry describes a state it cannot return
+  // to — and wiping the stacks for it is loss with nothing bought.
+  it("is empty when the read agrees with the plan at every key", async () => {
+    const plan = basePlan();
+    ch1Send(plan).params = { ...ch1Send(plan).params, level: -20 };
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async () => OK, // the read writes nothing into its copy: the device agrees
+    );
+
+    expect(merged).not.toBeNull();
+    expect(merged!.devicePatch).toHaveLength(0);
+    expect(merged!.unplaced).toHaveLength(0);
+  });
 });

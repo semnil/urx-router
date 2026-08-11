@@ -19,7 +19,7 @@ import {
   openMidiWindow,
   type TraceEvent,
 } from "./fake-device";
-import { analyze, report, timeline, markTime, spans, setsOf } from "./analyze";
+import { analyze, report, timeline, markTime, spans, setsOf, getsOf } from "./analyze";
 import { CH1_FADER, CH1_HPF_FREQ, faderOf, faderReadout, graphNode, openEqScreen } from "./ui";
 
 // T3 undo — the boundary, refusal, rebase and native-menu tier of the race harness
@@ -504,12 +504,19 @@ test.describe("T3 undo", () => {
       await waitQuiet(page, 1500);
 
       const after = (await faderReadout(page, "CH 1").textContent())!;
+      // Read BEFORE the retry: the retry now applies, so asking afterwards would be
+      // measuring the undo rather than what the reconcile left on the unit.
+      const deviceAfterReconcile = (await memOf(page))[CH1_FADER];
       // What the identical press answers once the reconcile is done — the other half of
-      // "a refusal costs nothing", and the half that is NOT true for this family.
+      // "a refusal costs nothing", and it is now true for this family too.
+      await mark(page, "retry");
       const retryStatus = await undoOnce(page);
+      await waitQuiet(page, 1500);
+      const afterRetry = (await faderReadout(page, "CH 1").textContent())!;
       const depth = await undoDepth(page);
       const trace = await traceOf(page);
       const undoAt = markTime(trace, "undo-in-scoped")!;
+      const retryAt = markTime(trace, "retry")!;
       const writes = setsOf(trace).filter((s) => s.addr === CH1_FADER);
       console.log(timeline(trace, { from: markTime(trace, "notify")! - 50 }));
       console.log(
@@ -526,7 +533,7 @@ test.describe("T3 undo", () => {
         ),
       );
       console.log(`status="${status}" readout ${before} → ${edited} → ${justAfter} → ${after}; depth after = ${depth}`);
-      console.log(`retry after the reconcile: "${retryStatus}"`);
+      console.log(`retry after the reconcile: "${retryStatus}" → ${afterRetry}`);
       console.log(`writes on ${CH1_FADER}: ${writes.map((w) => `${w.start.toFixed(0)}ms=${w.value}`).join(", ")}`);
       console.log(`device holds ${CH1_FADER} = ${(await memOf(page))[CH1_FADER]}`);
 
@@ -534,23 +541,32 @@ test.describe("T3 undo", () => {
       // would be measured against a baseline that is still moving.
       expect(status).toBe(BUSY_REFUSAL);
       // The press did not run — the readout stays where the edit left it, and nothing
-      // carrying the undone value leaves.
+      // carrying the undone value leaves while the read is held.
       expect(justAfter).toBe(edited);
-      expect(writes.filter((w) => w.start > undoAt)).toHaveLength(0);
+      expect(writes.filter((w) => w.start > undoAt && w.start < retryAt)).toHaveLength(0);
       expect(after).toBe(edited);
-      expect((await memOf(page))[CH1_FADER]).toBe(40);
-      // And here the refusal is NOT free: the reconcile's own reflect calls
-      // planHistory.reset() a moment later, so the entry the press would have spent is
-      // gone by the time it can be retried. That is the accepted cost of the gate for
-      // this family — visible, rather than an edit that may or may not have reached the
-      // unit depending on whether live.resync() beat the 120 ms flush timer.
+      // The reconcile left the operator's edit standing on the unit.
+      expect(deviceAfterReconcile).toBe(40);
+      // And the refusal is a DEFERRAL, not a loss. It used to be both: this reconcile's
+      // own reflect called planHistory.reset() a moment later, so the entry the press
+      // would have spent was gone by the time it could be retried, and the family was
+      // written up as one where the gate's cost is accepted. The reset is now
+      // conditional on the read having authored something, and a reconcile that agreed
+      // with the plan at every key authors nothing — so the identical press applies and
+      // reaches the unit, exactly as it does for the refetch family above.
+      expect(retryStatus).not.toBe(BUSY_REFUSAL);
+      expect(retryStatus).not.toBe(NOTHING_TO_UNDO);
+      expect(afterRetry).toBe(before);
+      expect(writes.filter((w) => w.start > retryAt && w.value === 0).length).toBeGreaterThan(0);
+      expect((await memOf(page))[CH1_FADER]).toBe(0);
+      // Spent by the retry, not wiped by the reconcile — the distinction the whole case
+      // exists to make, so it is asserted after the press rather than before it.
       expect(depth).toBe(0);
-      expect(retryStatus).toBe(NOTHING_TO_UNDO);
     });
   }
 
   for (const nth of [3, 200] as const) {
-    test(`undo fired at read #${nth} of a full reconcile, which then wipes both stacks`, async ({ page }) => {
+    test(`undo fired at read #${nth} of a full reconcile that authors nothing`, async ({ page }) => {
       await goLive(page);
       await page.click("#btn-view-console");
       await expect(faderReadout(page, "CH 1")).toBeVisible();
@@ -581,8 +597,8 @@ test.describe("T3 undo", () => {
       await waitQuiet(page, 1500, 120_000);
 
       const after = (await faderReadout(page, "CH 1").textContent())!;
-      // The undo put an entry on the redo side; whether it is still there is the
-      // question this cell exists to answer.
+      // The press was refused, so nothing should have reached the redo side. Asserting
+      // that is what separates "refused" from "applied and then hidden".
       await page.keyboard.press("ControlOrMeta+Shift+z");
       const redoStatus = await readStatus(page);
       const afterRedo = (await faderReadout(page, "CH 1").textContent())!;
@@ -614,13 +630,17 @@ test.describe("T3 undo", () => {
       expect(status).toBe(BUSY_REFUSAL);
       expect(justAfter).toBe(edited);
       expect(writes.filter((w) => w.start > undoAt)).toHaveLength(0);
-      // And the entry the press did not spend is destroyed anyway: a full reconcile's
-      // reflect calls planHistory.reset(), so both stacks are gone the moment the sweep
-      // lands. The press was doomed from the notify that started the sweep — refusing it
-      // states that, instead of applying an edit whose provenance is about to be erased.
+      // Nothing was undone, so nothing is on the redo side.
       expect(redoStatus).toBe("Nothing to redo");
       expect(afterRedo).toBe(after);
-      expect(depth).toBe(0);
+      // And the entry the press did not spend SURVIVES the sweep. It used not to: a full
+      // reconcile's reflect called planHistory.reset() unconditionally, so both stacks
+      // went the moment the sweep landed and the press was doomed from the notify that
+      // started it. The reset now fires only when the read authored something, and a
+      // sweep of a device that already agrees with the plan authors nothing — so the
+      // refusal costs a wait rather than the entry. `undoDepth` counts by pressing, so a
+      // depth of 1 is also the statement that the press works once the sweep is done.
+      expect(depth).toBe(1);
     });
   }
 
@@ -1033,5 +1053,90 @@ test.describe("T3 undo", () => {
     expect(rateLocked).toBe(true);
     expect(verdicts[8]).toBe(NOTHING_TO_UNDO);
     expect(verdicts[9]).toMatch(UNDO_APPLIED); // (j) permissive
+  });
+});
+
+// ---------------------------------------------------------------------------
+// undo-late-echo — the one place in the harness that raises `announceMs` above
+// live.ts's 120 ms flush window. Its own describe because the config is fixed at
+// install time and T3's beforeEach installs the default.
+// ---------------------------------------------------------------------------
+test.describe("T3 undo — a late announcement", () => {
+  test.beforeEach(async ({ page }) => {
+    // 220 ms, deliberately above the flush window. The unit announces a numeric write
+    // ack+58-151 ms after acking it (measured on a URX44V), so the second write of a
+    // drag really can move the snapshot before the first write's announcement lands.
+    // Every other case in the harness runs under the default, which sits below the
+    // window — which is why this branch went unexercised for a year while the comment
+    // in fake-device.ts said the unit does not present it.
+    await installFake(page, { announceMs: 220 });
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  });
+
+  test("late echo of an overtaken write leaves the plan and both stacks alone", async ({ page }) => {
+    await goLive(page);
+    await page.click("#btn-view-console");
+    await expect(faderReadout(page, "CH 1")).toBeVisible();
+
+    const before = (await faderReadout(page, "CH 1").textContent())!;
+    await faderOf(page, "CH 1").focus();
+    // Two presses in separate flush windows: the second write moves the snapshot past
+    // the first, and the first's announcement is still in flight when it does.
+    await mark(page, "edit-1");
+    await page.keyboard.press("ArrowUp");
+    await page.waitForTimeout(200);
+    await mark(page, "edit-2");
+    await page.keyboard.press("ArrowUp");
+    const edited = (await faderReadout(page, "CH 1").textContent())!;
+    expect(edited).not.toBe(before);
+
+    // Past the late announcement, past follow's idle full reconcile (IDLE_FULL_MS =
+    // 900), and past the whole-device sweep that reconcile would run.
+    await waitQuiet(page, 1500, 120_000);
+
+    const after = (await faderReadout(page, "CH 1").textContent())!;
+    const device = (await memOf(page))[CH1_FADER];
+    const depth = await undoDepth(page);
+    const trace = await traceOf(page);
+    const writes = setsOf(trace).filter((s) => s.addr === CH1_FADER);
+    const editAt = markTime(trace, "edit-2")!;
+    const readsAfter = getsOf(trace).filter((g) => g.start > editAt);
+    console.log(timeline(trace, { from: markTime(trace, "edit-1")! - 50, limit: 60 }));
+    console.log(
+      report(
+        "late echo of an overtaken write",
+        analyze(trace, {
+          registration: await paramAddrsOf(page),
+          registrationWindow: sinceLastSubscribe(trace),
+          snapshot: await snapshotOf(page),
+        }),
+      ),
+    );
+    console.log(`readout ${before} → ${edited} → ${after}; device=${device}; depth=${depth}`);
+    console.log(`writes on ${CH1_FADER}: ${writes.map((w) => `${w.start.toFixed(0)}ms=${w.value}`).join(", ")}`);
+    console.log(`reads after the second edit: ${readsAfter.length}`);
+
+    // THE assertion. The first write's announcement arrives after the second write's ack
+    // has moved the snapshot past it (measured on this trace: the ack at edit-2 + ~120
+    // ms, the announcement ~20 ms later). Compared against the snapshot alone it equals
+    // nothing the app holds, so it reads as a device-side change: the app answers it by
+    // re-reading, arms the idle net, and ~900 ms later sweeps the whole device — several
+    // hundred reads, for its own write coming home. With the pending-write memory it is
+    // recognised, and a quiet link stays quiet.
+    //
+    // The read count is the observable, not the readout: this address is a connection
+    // param, so the scoped fallback that answers a mis-classified notify re-reads device
+    // truth and repairs the value before anything is on screen. The sweep is what the
+    // operator actually pays, and it is what the undo wipe used to ride in on.
+    expect(readsAfter.length).toBeLessThan(20);
+    // Nothing moved on the board or the unit either way.
+    expect(after).toBe(edited);
+    // The detents are non-uniform near 0 dB (levels.ts): two presses from 0.0 land on
+    // +1.2, not on twice +0.4.
+    expect(device).toBe(120);
+    // Both presses are still undoable. `undoDepth` counts by pressing, so this is also
+    // the statement that they still apply.
+    expect(depth).toBe(2);
   });
 });
