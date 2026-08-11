@@ -82,21 +82,31 @@ describe("errorText", () => {
       expect(errorText(aborted)).toContain("aborted");
     });
 
-    // The one shape String() refuses. Answered as empty rather than thrown: a
-    // reporter that throws loses the failure AND itself.
-    it("answers empty for a value that cannot be converted, rather than throwing", () => {
+    // The one shape String() refuses. Described rather than thrown: a reporter that
+    // throws loses the failure AND itself.
+    it("names the failure for a value that cannot be converted, rather than throwing", () => {
       const unconvertible = Object.create(null) as object;
       expect(() => errorText(unconvertible)).not.toThrow();
-      expect(errorText(unconvertible)).toBe("");
+      expect(errorText(unconvertible)).toBe(en.error.noReason);
       expect(() => errorCode(unconvertible)).not.toThrow();
     });
 
-    // Empty in, empty out. Nothing here invents text for it — the caller decides
-    // what an empty description is worth, which is why the write-report paths
-    // substitute their own generic reason.
-    it("passes an empty message through as empty", () => {
-      expect(errorText(new Error(""))).toBe("");
-      expect(errorText("")).toBe("");
+    // Nothing to say is still reported as something. An empty description reaches
+    // `showError` as an empty dialog, and every framed use as a sentence that stops
+    // at its colon, so errorText substitutes rather than passing it on.
+    it("substitutes a reason for an empty message", () => {
+      expect(errorText(new Error(""))).toBe(en.error.noReason);
+      expect(errorText("")).toBe(en.error.noReason);
+      setLang("ja");
+      expect(errorText(new Error(""))).toBe(ja.error.noReason);
+    });
+
+    // errorCode is branched on, not shown: no branch should match a failure that
+    // named nothing, so it keeps answering empty.
+    it("leaves errorCode empty for a failure that named nothing", () => {
+      expect(errorCode(new Error(""))).toBe("");
+      expect(errorCode("")).toBe("");
+      expect(errorCode(Object.create(null) as object)).toBe("");
     });
   });
 
@@ -113,7 +123,7 @@ describe("errorText", () => {
         },
       });
       expect(() => errorText(err)).not.toThrow();
-      expect(errorText(err)).toBe("");
+      expect(errorText(err)).toBe(en.error.noReason);
       expect(() => errorCode(err)).not.toThrow();
     });
 
@@ -140,7 +150,7 @@ describe("errorText", () => {
         },
       );
       expect(() => errorText(hostile)).not.toThrow();
-      expect(errorText(hostile)).toBe("");
+      expect(errorText(hostile)).toBe(en.error.noReason);
       expect(() => errorCode(hostile)).not.toThrow();
     });
   });

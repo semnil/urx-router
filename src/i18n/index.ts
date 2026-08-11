@@ -142,7 +142,12 @@ export function errorCode(err: unknown): string {
 export function errorText(err: unknown): string {
   const { message, code, detail } = split(err);
   const key = SHELL_CODES[code];
-  if (!key) return message;
+  // An empty description is substituted here rather than at each call site: most of
+  // them frame it ("Export failed: <this>"), so an empty one reads as a sentence
+  // that stops at its colon, and `showError` puts it on screen as an empty dialog.
+  // `errorCode` deliberately keeps answering "" — it is branched on, and no branch
+  // should match a failure that named nothing.
+  if (!key) return message || t().error.noReason;
   const entry = t().error.shell[key];
   if (typeof entry !== "function") return entry;
   // A code whose entry takes a detail is always raised with one, so a bare one here

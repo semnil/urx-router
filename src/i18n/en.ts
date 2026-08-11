@@ -923,6 +923,11 @@ export const en = {
     duplicate: tr("Already connected"),
     singleInput: tr("This input accepts only one source (remove the existing connection first)"),
     cannotConnect: tr("Cannot connect"),
+    // What a failure that described itself as nothing is reported as. `errorText`
+    // substitutes it so an empty description cannot reach the operator as an empty
+    // dialog, or as a frame with nothing after its colon. A lower-case fragment
+    // like the shell codes below, since most of its uses are framed.
+    noReason: tr("the failure reported no reason"),
     recPointRequired: tr("Connect USB outputs and microSD Rec from the Rec Point tap — the jack on top of the channel"),
     recPointTargets: tr(
       "The Rec Point tap reaches only USB outputs and microSD Rec — use the channel's output for the rest",
