@@ -1,11 +1,13 @@
 name: Race harness
 
 # The live-sync race-diagnosis harness (e2e/race; design in
-# docs/{en,ja}/live-race-harness.md), split out of the ordinary E2E tier because it is
-# 86% of the suite's machine time on its own: 22.4 minutes against 3.5, measured on a
-# two-worker ubuntu runner. That cost is what is being measured rather than overhead —
-# several cases provoke whole-device readbacks of ~800 sequential commands — so the
-# answer is to run it somewhere other than on every PR, not to make it cheaper.
+# docs/{en,ja}/live-race-harness.md), split out of the ordinary E2E tier because it takes
+# the great majority of that tier's machine time on its own. The measurement that cut the
+# boundary is in that document ("Where each tier runs") and stated nowhere else — a copy
+# in a comment is exactly what went stale elsewhere in this repository. That cost is what
+# is being measured rather than overhead — several cases provoke whole-device readbacks of
+# ~800 sequential commands — so the answer is to run it somewhere other than on every PR,
+# not to make it cheaper.
 #
 # It runs on the ONE pull request that changes the app version. That PR carries nothing
 # else (see CLAUDE.md), and merging it is what tags a release, so the harness sits
@@ -136,9 +138,10 @@ jobs:
           path: test-results/
           retention-days: 7
 
-  # The five cases tagged @webkit, in the engine the macOS build actually renders in.
-  # Its own job rather than a fourth shard: WebKit is a separate download, and paying
-  # for it in all three shards would cost more than the cases do (28 s of tests).
+  # The cases tagged @webkit, in the engine the macOS build actually renders in. Its own
+  # job rather than a fourth shard: WebKit is a separate download, and paying for it in
+  # all three shards would cost more than this handful of cases does — the figures are in
+  # docs/{en,ja}/live-race-harness.md, not here.
   race-webkit:
     needs: detect
     if: needs.detect.outputs.bumped == 'true'
