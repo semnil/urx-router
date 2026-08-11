@@ -65,9 +65,10 @@ pnpm tauri dev     # desktop app
 
 `pnpm test` covers the core, the device control layer, the models, and parts of the UI.
 
-**Feature and UI changes need E2E coverage in `e2e/*.spec.ts`, and `pnpm test:e2e` should pass
-locally before you open the pull request.** The post-merge E2E run is a regression net for
-already-merged code, not a substitute for adding tests.
+**Feature and UI changes need E2E coverage in `e2e/*.spec.ts`.** Writing the test is what is
+asked; running it locally is not. The pull request's own CI runs the ordinary E2E tier and
+reports a failure on the pull request, which is where it gets read — so run whatever you find
+useful before pushing, at your own judgement.
 
 E2E runs against a production build on port 4173 and reuses an existing server locally, so stop
 any `pnpm preview` you left running first — otherwise it silently tests the wrong bundle.
@@ -113,7 +114,14 @@ CI diffs the generated files, so an out-of-date bundle fails the build.
 - **Pull request title and body in English** as well.
 - Include before/after screenshots for UI changes.
 - Pull request CI runs the build, `pnpm typecheck:e2e`, the unit tests, the ordinary E2E
-  suite and `cargo test`. Third-party license generation runs after merge.
+  suite and `cargo test` — work that is skipped, as a rule, on a Markdown/docs-only pull
+  request. The exception is the skill's generated model references
+  (`.claude/skills/urx-routing-planner/references/model-*.md`): they are Markdown, but they
+  are diffed against their generator, so they run it too. Third-party license generation
+  runs after merge, and the live-sync race harness runs on the pull request that changes
+  the version, not on every one.
+- The document and configuration checks run on **every** pull request regardless — Markdown
+  table integrity, the reusable-assets index and `pnpm check:gates`.
 - A merge waits for `ci-required`, `docs-required`, `format` and `race-required`. Each
   reports on every pull request, so a change that skips the work behind one of them still
   gets a green check rather than a check that never arrives. `pnpm check:gates` is what

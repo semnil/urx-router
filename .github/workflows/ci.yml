@@ -228,10 +228,12 @@ jobs:
       - run: cargo test
         working-directory: src-tauri
 
-  # The ordinary E2E suite (--project=chromium): 383 cases, none over 3 s, 3.5 minutes of
-  # machine time — about two on the runner's two workers. At that price the alternative,
-  # a net that only fires once the change is already on main, costs more than it saves.
-  # The race harness is deliberately NOT here; see race.yml for what it costs and why.
+  # The ordinary E2E suite (--project=chromium). It is cheap enough on a two-worker runner
+  # that the alternative — a net firing only once the change is already on main — costs more
+  # than it saves. What it costs, and what the harness costs beside it, is measured once in
+  # docs/{en,ja}/live-race-harness.md ("Where each tier runs") and stated nowhere else: the
+  # copy that used to sit in this comment went stale without anyone noticing, which is the
+  # whole reason for the rule. The race harness is deliberately NOT here; see race.yml.
   e2e:
     needs: [preflight, playwright_version]
     if: needs.preflight.outputs.code == 'true'
