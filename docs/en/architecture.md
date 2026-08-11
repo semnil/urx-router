@@ -864,7 +864,10 @@ measured against the cap's own travel — the fader element's full height, since
 it under a `-50%` translate. Both halves used to be one absolute mapping over the *groove's* inset span
 (`height - 12`), which made the press position agree with the cap at mid-travel only and put a plain press
 on the cap's edge up to 1.7 detents out at the default window size (3.6 at the minimum one) — reaching the
-unit, live, before the operator had moved.
+unit, live, before the operator had moved. The channel tuning screens' threshold cap already had the split
+(`dyn-screen.ts`: the cap's own listener grabs it, the slot's jumps and defers to the cap with
+`e.target === cap`), so the two surfaces now share one press grammar — the CONSOLE fader was the one that
+did not have it.
 
 **Fine-tuning (hold Shift)** — the controls whose device parameter has a verified fine grid tighten their
 step while Shift is held, mirroring the hardware's (undocumented) push-and-turn fine mode: the inspector's
