@@ -286,8 +286,16 @@ test.describe("T6 teardown", () => {
   });
 
   // teardown-flow-refusals, unguarded half — the direct contrast, and the measurement
-  // that turns "the gate is missing" from an inference into a fact. Same three flows,
-  // same whole-device read, started by follow instead of by the Fetch button.
+  // that turns "the gate is missing" from an inference into a fact. Same whole-device
+  // read, started by follow instead of by the Fetch button.
+  //
+  // Two of the guarded half's three flows, because the third is no longer comparable
+  // between them: the model picker is disabled outright for the live SESSION's duration
+  // (syncDeviceActionUi), and this half is the one that has a session. The guarded half
+  // reaches the picker and is refused by the read latch; here it is never reachable.
+  // The lock is measured rather than dropped, because the picker's cover comes from the
+  // session and NOT from the reconcile gate this case is about — counted as one of three
+  // flows that "some are refused", it would read as the gate partly working.
   test("the same file flows are NOT refused while a follow reconcile holds the plan", async ({ page }) => {
     await setDialogAnswer(page, "Ok");
     await goLive(page);
@@ -301,7 +309,7 @@ test.describe("T6 teardown", () => {
     await waitQuiet(page);
 
     // Hold the escalated sweep a fifth of the way in, on the barrier rather than on a
-    // read count reached and then left to run: all three flows below are several round
+    // read count reached and then left to run: both flows below are several round
     // trips each, and the read they are supposed to be running over has to still be
     // in flight when the last of them lands.
     const base = await getCount(page);
@@ -314,7 +322,7 @@ test.describe("T6 teardown", () => {
     const dialogsBefore = (await dialogsOf(page)).length;
     await fileMenu(page, "btn-open"); // cancels (the fake answers the open dialog null)
     const openDialogs = spans(await traceOf(page)).filter((s) => s.cmd === "plugin:dialog|open").length;
-    await page.locator("#model-picker").selectOption("URX22");
+    const pickerLocked = await page.locator("#model-picker").isDisabled();
     const pickerDuring = await page.locator("#model-picker").inputValue();
     await fileMenu(page, "btn-new");
     const statusDuring = await statusText(page);
@@ -322,7 +330,7 @@ test.describe("T6 teardown", () => {
     await mark(page, "flows-done");
 
     // Only now let the held sweep run out, so every read below the mark is one the
-    // app chose to issue after all three flows had replaced the plan under it.
+    // app chose to issue after both flows had replaced the plan under it.
     await releaseBarrier(page);
     await settleAfter(page, "flows-done");
     const trace = await traceOf(page);
@@ -332,18 +340,22 @@ test.describe("T6 teardown", () => {
     console.log(timeline(trace, { from: markTime(trace, "during-reconcile")! - 200 }));
     console.log(report("flows during an unguarded reconcile", findings));
     console.log(
-      `during reconcile (held at read ${heldAt} of ~${sweepReads}): picker=${pickerDuring} status="${statusDuring}"` +
+      `during reconcile (held at read ${heldAt} of ~${sweepReads}): picker=${pickerDuring}` +
+        ` (locked=${pickerLocked}) status="${statusDuring}"` +
         ` dialogs=${dialogsDuring} (was ${dialogsBefore}); open dialogs=${openDialogs};` +
         ` reads after the flows=${readsAfter.length}`,
     );
 
-    // Pinned behaviour, and the point of the pair: not one of the three is refused
+    // Pinned behaviour, and the point of the pair: neither flow that can run is refused
     // while the very same whole-device read is mutating the very same plan.
     expect(openDialogs).toBe(1); // File > Open reached its native dialog
-    expect(pickerDuring).toBe("URX22"); // the model switch went through
     expect(statusDuring).toContain("Created a new plan"); // and so did File > New
     expect(dialogsDuring).toBeGreaterThan(dialogsBefore); // each one asked its confirm
-    // …and the read that all three ran over is still going.
+    // The third flow never runs at all — locked by the session, not by the reconcile —
+    // so the model on screen is still the one the session named.
+    expect(pickerLocked).toBe(true);
+    expect(pickerDuring).toBe("URX44V");
+    // …and the read that both ran over is still going.
     expect(readsAfter.length).toBeGreaterThan(0);
     expect(findings.some((f) => f.inv === 16)).toBe(true);
   });

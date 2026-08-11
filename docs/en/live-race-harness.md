@@ -311,7 +311,7 @@ single source of truth. This table states what each case measures.
 | `teardown-live-toggle-race` | mixed | The session lifecycle itself, and the only place the epoch guard is falsifiable |
 | `teardown-deactivate-with-armed-timers` | mixed | Whether module-level latches are session-scoped |
 | `teardown-dyn-screen-close-during-refresh` | tuning | A deferral mechanism added to protect drags becoming the hazard |
-| `teardown-flow-refusals` | mixed | The guarded and unguarded readbacks contrasted with an identical set of flows (File > New, File > Open, model switch) |
+| `teardown-flow-refusals` | mixed | The guarded and unguarded readbacks contrasted with the same flows (File > New, File > Open; the model switch only in the guarded half, which has no live session to lock the picker) |
 
 ### T7 meter — the single process-wide subscription
 
@@ -718,6 +718,13 @@ agreement, zero findings.
   did not make
 - **A model switch outlived its flush**, leaving the remaining commands aimed at the old model's
   addresses — **fixed** (fix 10)
+- **That switch can no longer land on a live session at all**: the picker is disabled for the session's
+  duration (`syncDeviceActionUi`), so what an operator is left with is leave live, then switch. The flush
+  is held across both halves, and the reading separates them — the teardown moves the session generation
+  and leaves the history alone (undo depth 1), the switch resets it (0). Nothing escapes either half:
+  0 late `vd_set`, 0 orphan addresses, and the MIDI cache re-points (`0.0` → `+4.0`). The same lock is
+  why the unguarded reconcile half now contrasts two flows and not three — the picker's cover there comes
+  from the session, and the reconcile gate it was standing in for is still missing for the other two
 - A rejected read during Fetch **commits a partial plan**, and MIDI's bound cache keeps a reference to
   the discarded one
 - A Close press on a tuning screen can be **swallowed** between a deferred refresh and its own click
@@ -1231,6 +1238,18 @@ not repeat them.
   a slow runner and a "before the edge" one always can. And a dead-zone guard that fails rather than
   passing vacuously reports as a flake, which is exactly how it was misread — the printed achieved
   phase is what says otherwise, and it was in the log the whole time
+- **A case can be invalidated by an app change that breaks nothing, and the tiering is what hides it.**
+  `picker.disabled = liveSessionUp` locked the model picker for a live session's duration — a deliberate
+  guard rail, correct on its own terms. The two cases that switched model mid-session
+  (`teardown-flow-refusals`'s unguarded half, `teardown-model-switch-during-flush`) were then waiting on a
+  `selectOption` that could never resolve. Nothing reported it: the harness runs on the version-bump PR
+  alone, so every later PR's `race` job reported success **by being skipped**, and the break surfaced only
+  on an on-demand dispatch. Two properties turned "late" into "invisible" — a skipped job reports success,
+  and a case whose PREMISE has been removed fails as a **timeout** rather than as an assertion, so the
+  failure text names the locator and not the reason (`locator resolved to <select disabled
+  id="model-picker">` is the whole diagnosis, and it reads like an infrastructure hang). When a case's
+  gesture stops resolving, read the app's own guard rails first; and a green history since the change
+  means the case has not run, not that it still holds
 
 Across two audit rounds these accounted for **24 vacuous assertions and 28 over-stated claims**, all
 fixed or withdrawn.

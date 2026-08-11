@@ -587,17 +587,24 @@ test.describe("Tzb tail", () => {
   // ------------------------------------------------------------ T6 teardown ----
 
   // teardown-model-switch-during-flush. The address vocabulary itself changes under
-  // an operation that is already on the wire: a model switch runs loadPlan, which
-  // deactivates the session and replaces the plan, while the flush's send loop is
-  // sitting in an await between two commands.
+  // an operation that is already on the wire: loadPlan replaces the plan while the
+  // flush's send loop is sitting in an await between two commands.
+  //
+  // The switch cannot land on a live session any more — the picker is disabled for the
+  // session's duration (syncDeviceActionUi) — so the sequence measured here is the one
+  // an operator is left with: leave live, then switch. That splits what used to be one
+  // gesture into two, and the flush stays parked on the barrier across BOTH: the toggle
+  // moves the session generation, and the switch re-points the address vocabulary
+  // afterwards. Each half is separately survivable and the pair is what escapes if
+  // either is not, which is why the depth is read between them as well as after.
   //
   // The barrier holds the flush at its FIRST command, so anything the loop had left
   // could only be issued once the switch has completed. The claim is that it is not
   // issued at all: the loop reads the session generation after every await, and
-  // loadPlan -> deactivateLive -> end() has moved it. Before that guard the remaining
-  // commands went out carrying addresses the model now on screen does not have, which
-  // is what the orphan count below still measures — now as an absence.
-  test("a flush interrupted by a model switch sends nothing more", async ({ page }) => {
+  // deactivateLive -> end() has moved it. Before that guard the remaining commands went
+  // out carrying addresses the model now on screen does not have, which is what the
+  // orphan count below still measures — now as an absence.
+  test("a flush interrupted by leaving live and switching model sends nothing more", async ({ page }) => {
     test.setTimeout(180_000);
     await installFake(page, { storage: midiStorage(["URX44V", "URX22"]) });
     await page.goto("/");
@@ -617,14 +624,24 @@ test.describe("Tzb tail", () => {
     await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 30_000 });
 
     await mark(page, "switch");
+    // The toggle first, because the picker is locked while the session is up. Attached
+    // rather than visible: the click closes the Device menu, so the toggle that carries
+    // the session state is hidden by the time it flips.
+    await page.click("#btn-device");
+    await page.click("#btn-live");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+    // Read between the halves: leaving live is not a plan replacement, so the entries
+    // the arming made are still there. Without this the reset asserted below would also
+    // be satisfied by a teardown that had thrown the history away, which is a different
+    // mechanism with the same reading.
+    const depthAfterLiveOff = await depthOf(page);
     await page.locator("#model-picker").selectOption("URX22");
     await expect(page.locator("#statusbar")).toContainText("Switched to URX22", { timeout: 30_000 });
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
-    // The switch's OWN teardown (param unsubscribe, meter release, disconnect) is issued
-    // in the same task as the replacement, and only vd_disconnect is exempt from
-    // invariant 16 — so anchored on the "switch" mark the invariant reports the teardown
-    // itself and can never fail. Drained first and re-anchored here, it measures escape.
-    // t5's link-loss ladder stamps its boundary the same way.
+    // The teardown (param unsubscribe, meter release, disconnect) is issued in the same
+    // task as the toggle, and only vd_disconnect is exempt from invariant 16 — so
+    // anchored on the "switch" mark the invariant reports the teardown itself and can
+    // never fail. Drained first and re-anchored here, it measures escape. t5's link-loss
+    // ladder stamps its boundary the same way.
     await page.waitForTimeout(200);
     await mark(page, "switch-teardown");
     const depthAfterSwitch = await depthOf(page);
@@ -653,14 +670,15 @@ test.describe("Tzb tail", () => {
     console.log(
       `sets after the release: ${late.length} — ${[...new Set(late.map((s) => s.addr))].slice(0, 8).join(", ")}; ` +
         `addresses the URX22 does not have: ${orphanAddrs.length}; ` +
-        `undo depth after the switch=${depthAfterSwitch.undo}; picker=${await page.locator("#model-picker").inputValue()}`,
+        `undo depth after live off=${depthAfterLiveOff.undo}, after the switch=${depthAfterSwitch.undo}; ` +
+        `picker=${await page.locator("#model-picker").inputValue()}`,
     );
     console.log(`MIDI after the switch: fresh=${freshCh1} afterCC=${afterCc}`);
-    console.log(report("model switch mid-flush", findings));
+    console.log(report("live off + model switch mid-flush", findings));
 
-    // The switch was not refused: nothing gates a wholesale plan replacement on a
-    // live session (deactivateLive runs inside loadPlan instead), so the picker moved
-    // and the session went down.
+    // The picker unlocks the instant the session goes down (deactivateLive clears
+    // liveSessionUp before setLiveUi repaints the group), so the second half needs no
+    // wait of its own and the switch itself is refused by nothing.
     expect(await page.locator("#model-picker").inputValue()).toBe("URX22");
     // …but the flush does not outlive it. `armed` above proves the loop had commands
     // left when the barrier caught it, so these zeros are the generation check and not
@@ -671,7 +689,9 @@ test.describe("Tzb tail", () => {
     expect(orphanAddrs).toHaveLength(0);
     expect(findings.some((f) => f.inv === 16)).toBe(false);
     // The other backstop the switch has: the history is reset rather than rebased, so
-    // no entry survives to be applied against the new model's node ids.
+    // no entry survives to be applied against the new model's node ids — and it is the
+    // switch that does it, not the teardown that preceded it.
+    expect(depthAfterLiveOff.undo).toBeGreaterThan(0);
     expect(depthAfterSwitch).toEqual({ undo: 0, redo: 0 });
     // …and the MIDI cache was re-pointed, so the second operator resolves against the
     // model now on screen.
