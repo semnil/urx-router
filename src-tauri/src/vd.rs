@@ -685,7 +685,7 @@ mod imp {
             // While a subscription is streaming, poll for commands briefly so the
             // bounded pump runs back-to-back and keeps up with the ~250/s feed; when
             // idle, wait longer so the thread doesn't spin. pump's own blocking read
-            // (200 ms socket timeout) supplies the backpressure when the feed is quiet.
+            // (READ_TIMEOUT, 50 ms) supplies the backpressure when the feed is quiet.
             let wait = if subs.active() {
                 Duration::from_millis(5)
             } else {
@@ -826,11 +826,18 @@ mod imp {
         // drain below is a no-op there and the shutdown is what ends it.
         link.begin_close();
         for _ in 0..CLOSE_FRAMES {
-            // `Ok(None)` is the socket's own 200 ms read timeout: the peer has nothing
-            // queued, so its Close is not coming and there is nothing left to drain.
-            // Counting those against the budget would spend 64 × 200 ms on a quiet
-            // broker — which is exactly the state a session that just unregistered
-            // everything is in, and it is the operator's Quit being held.
+            // `Ok(None)` is the socket's own read timeout (READ_TIMEOUT, 50 ms): the
+            // peer has nothing queued, so its Close is not coming and there is nothing
+            // left to drain. Counting those against the budget would spend 64 × that on
+            // a quiet broker — which is exactly the state a session that just
+            // unregistered everything is in, and it is the operator's Quit being held.
+            //
+            // This reader's patience is READ_TIMEOUT's, so it moved with it (it was
+            // 200 ms). Left inherited rather than pinned like drain_late_reply's,
+            // because the two want opposite things: that one must not give up on a
+            // straggler too early, this one must not hold Quit, and shorter is the
+            // right direction for it. Said out loud so the next change to READ_TIMEOUT
+            // knows it is moving this too.
             match link.read_frame() {
                 Ok(Some(_)) => {}
                 _ => break, // a closed / dead socket, or nothing more to read
@@ -1718,8 +1725,13 @@ mod imp {
     // keeps the batch latency and (under a live feed) the command latency low while
     // still draining many frames per send (so the IPC boundary stays ~30×/s). The
     // budget is only checked after each read, so when the feed falls quiet a pending
-    // command can still wait out the final read's ~200 ms socket timeout before the
-    // worker yields — acceptable, since the quiet case is not the one that mattered.
+    // command still waits out the final read's socket timeout before the worker yields.
+    // That WAS written off here as "not the case that mattered"; it was measured on a
+    // URX44V (2026-08-11) as a 152 ms wait for the first live write after a quiet gap,
+    // which is the case that mattered. The bound is now READ_TIMEOUT's 50 ms rather
+    // than this budget — on a quiet link the loop breaks at `Ok(None)` and never
+    // reaches the check below, so shortening the socket timeout is what moved it and
+    // changing THIS constant would not have.
     const PUMP_BUDGET: Duration = Duration::from_millis(30);
 
     /// Drain buffered frames for up to PUMP_BUDGET, absorbing meter and parameter
@@ -1736,7 +1748,7 @@ mod imp {
             // the same envelope, and this drains the ~250/s meter stream (avoid
             // re-parsing per consumer).
             //
-            // `None` ends this pump. It means the socket is drained (its 200 ms
+            // `None` ends this pump. It means the socket is drained (its 50 ms
             // read timeout) — but it also now covers the two frames the casket
             // read used to step over rather than stop on: a ping/pong, and text
             // that is not JSON. Neither carries a notify, and the worker re-enters
