@@ -452,7 +452,10 @@ flowchart TD
   最後に編集したフィールドで WebKit のフィールド undo を走らせ、プランを黙って変えた — しかも実行時に有効 /
   無効を切り替えられないので、置き換えることがメニューをコードと一致させる唯一の方法である。macOS のみ。
   他のプラットフォームはメニューを入れない)。インストーラの同意ページは `bundle.licenseFile`
-  (`LICENSE.txt` = 免責 + 商標 + MIT)。同意ゲートの拒否で終了するには `process:allow-exit` 権限が要る
+  (`LICENSE.txt` = 免責 + 商標 + MIT)。同意ゲートの拒否で終了するには `process:allow-exit` 権限が要る。
+  `build.rs` はこのクレートのビルドスクリプトそのもの (`tauri_build::build()` だけ) で、`tauri.conf.json` と
+  `capabilities/*.json` を `tauri::generate_context!` が展開するコードへ変換する。設定に足した capability が
+  バイナリへ届く経路は `src/` 配下の Rust ではなくここである
 
 ## データモデル
 

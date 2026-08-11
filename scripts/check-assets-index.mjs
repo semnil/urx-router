@@ -269,10 +269,12 @@ const unitFixtures = srcFiles.filter((f) => f.endsWith(".test-util.ts"));
 // What rule H holds against the map documents: the files those documents undertake to
 // describe, which is everything that is neither a test nor a fixture nor a type
 // declaration. The shell's Rust is in it beside the frontend's TypeScript because
-// architecture.md names both halves the same way.
+// architecture.md names both halves the same way — and the walk starts at src-tauri
+// rather than src-tauri/src, which left build.rs out of the inventory while it was named
+// by no document at all. WALK_SKIP already keeps target/ and gen/ out.
 const mappedSources = [
   ...srcFiles.filter((f) => f.endsWith(".ts") && !/\.(test|test-util|d)\.ts$/.test(f)),
-  ...walk("src-tauri/src").filter((f) => f.endsWith(".rs")),
+  ...walk("src-tauri").filter((f) => f.endsWith(".rs")),
 ];
 const raceSpecs = e2eFiles.filter((f) => f.startsWith("e2e/race/") && f.endsWith(".spec.ts"));
 const appSpecs = e2eFiles.filter((f) => !f.startsWith("e2e/race/") && f.endsWith(".spec.ts"));
@@ -855,11 +857,17 @@ if (!forwardOnly) {
   //    the map while every check stayed green and CLAUDE.md still called DUCKER "to
   //    follow".
   //    Matched by BASENAME, because that is how these documents write a file inside a
-  //    directory-scoped bullet ("`plan.ts` plan state", under `src/core/`). A duplicated
-  //    basename (index.ts, device-setup.ts, link-stats.ts) can therefore be answered by its
-  //    sibling's mention: this catches a file nothing describes, not one described under the
-  //    wrong directory. Requiring BOTH translations is what makes a half-translated
-  //    addition a finding rather than a silence.
+  //    directory-scoped bullet ("`plan.ts` plan state", under `src/core/`) — and matched
+  //    with BOUNDARIES, not as a substring: the first version asked `text.includes(base)`,
+  //    which the mention of dyn-plot.ts answers for an unmapped plot.ts, exactly the
+  //    substring-for-an-exact-thing defect rule E2 was fixed for one PR earlier. A `/` may
+  //    precede the name so a mention written as a full path counts; `-` and `.` may not,
+  //    since that is what separates a file from a longer name ending in it, and a trailing
+  //    word character is refused so plan.tsx cannot answer for plan.ts.
+  //    A duplicated basename (index.ts, device-setup.ts, link-stats.ts) can still be
+  //    answered by its sibling's mention: this catches a file nothing describes, not one
+  //    described under the wrong directory. Requiring BOTH translations is what makes a
+  //    half-translated addition a finding rather than a silence.
   const mapDocs = DOC_DIRS.map((d) => `${d}/architecture.md`);
   const mapText = new Map(mapDocs.map((f) => [f, read(f)]));
   const absentMaps = mapDocs.filter((d) => !mapText.get(d));
@@ -871,8 +879,9 @@ if (!forwardOnly) {
   } else {
     for (const file of mappedSources) {
       const base = file.split("/").pop();
-      if (doc.includes(base)) continue;
-      const absent = mapDocs.filter((d) => !mapText.get(d).includes(base));
+      const named = new RegExp(String.raw`(?<![\w.-])${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\w-])`);
+      if (named.test(doc)) continue;
+      const absent = mapDocs.filter((d) => !named.test(mapText.get(d)));
       if (absent.length === mapDocs.length) finding(file, `is a source file that no map document names`);
       else if (absent.length) finding(file, `is named in one translation only — missing from ${absent.join(", ")}`);
     }

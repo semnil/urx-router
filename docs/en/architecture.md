@@ -482,7 +482,10 @@ carries a one-line map of the same directories and points here.
   changing the plan — and they cannot be enabled/disabled at runtime, so replacing them is the only way to
   make the menu agree with the chord. macOS only; no other platform installs a menu). The installer's
   consent page is `bundle.licenseFile` (`LICENSE.txt` = disclaimer + trademarks + MIT); exiting on
-  consent-gate rejection requires the `process:allow-exit` permission
+  consent-gate rejection requires the `process:allow-exit` permission. `build.rs` is the crate's build
+  script and nothing else (`tauri_build::build()`): it is what turns `tauri.conf.json` and
+  `capabilities/*.json` into the code `tauri::generate_context!` expands to, so a capability added to the
+  configuration reaches the binary through it rather than through any Rust under `src/`
 
 
 ## Data model
