@@ -100,8 +100,11 @@ carries a one-line map of the same directories and points here.
   are reported differently: an illegal wire refuses the document, an insert-FX slot collision only warns and
   offers to open it anyway / `plan.ts` plan state + JSON + the `?plan=` deep-link codec (deflate-compressed
   `"z"` format; legacy uncompressed links must keep decoding) / `levels.ts` the device's discrete level_gain
-  grid (`LEVEL_STEPS_DB`, the canonical list of settable dB values, plus position/snap/step helpers. Faders
-  and send levels snap to this grid, with the steps laid out at even spacing) / `storage.ts` save/load/image
+  grid (`LEVEL_STEPS_DB`, the canonical list of settable dB values, plus position/snap/step helpers. Every
+  level the APP authors snaps to this grid — inspector, CONSOLE and external MIDI alike, with the steps laid
+  out at even spacing — while a level the app RECEIVES does not: a device readback divides the raw value by
+  100, and a JSON / `?plan=` / `.urxf` load only checks that it is finite, so the plan says what the unit or
+  the file actually holds rather than the nearest name this grid has for it) / `storage.ts` save/load/image
   export (PNG/PDF; PDF via home-grown FlateDecode) / `platform.ts` runtime bridge between Tauri IPC and the
   browser / `meters.ts` live level meters (per-model node id → broker meter address tables
   (`NODE_TAPS_URX22` / `NODE_TAPS_URX44`), dBFS decoding, latest-value store; the gain-reduction meters live

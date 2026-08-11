@@ -3,9 +3,29 @@
 // device — coarser than the broker level_gain resolution, with index 0 = -∞ off
 // represented separately by LEVEL_OFF_DB). The grid is non-uniform — wide steps
 // in the tail, finer near 0 dB — so a uniform UI step would offer values the
-// device cannot store (e.g. -15.0). Every level is snapped to this grid before it
-// reaches the plan, and the faders space the detents evenly so adjustment near 0
-// dB is not cramped.
+// device cannot store (e.g. -15.0). The faders space the detents evenly so
+// adjustment near 0 dB is not cramped.
+//
+// EVERY LEVEL THE APP AUTHORS is snapped to this grid — the inspector through
+// `snappedSlider`, the CONSOLE through `posToLevel`/`stepLevel`, external MIDI
+// through `posToLevel`; fine mode does not reach a fader at all, so nothing in the
+// UI can produce an off-grid one. A level the app RECEIVES is not snapped, and
+// deliberately so: `vdToLevel` divides the raw device value by 100 and clamps,
+// and a JSON / `?plan=` / `.urxf` load checks only that the number is finite. The
+// plan then says what the unit or the file actually holds rather than the nearest
+// thing this grid can name — which is what a device readout has to say, and what
+// the race harness reads back (`e2e/race/ui.ts` deviceLevelText).
+//
+// The unit RETAINS a non-detent level_gain rather than rounding it — measured
+// 2026-08-11 on a URX44V, 6/6 across two level params (CH_FADER 139 and
+// SEND_LEVEL 146), each written value read back unchanged and announced by its
+// own notify. So the receiving half above is not a theoretical branch: an
+// off-grid value really can be sitting on the hardware, and snapping it on the
+// way in would replace the unit's actual state with the nearest name this grid
+// has for it. Do not "tidy" vdToLevel into posToLevel(levelToPos(...)) — beyond
+// losing that, follow.ts hands noteDirect the RAW value while the flush diffs
+// against levelToVd(planLevel), so a snapped plan value makes the next unrelated
+// edit emit an unrequested write back over what the unit holds.
 
 import { LEVEL_MIN_DB, LEVEL_OFF_DB } from "./plan";
 
