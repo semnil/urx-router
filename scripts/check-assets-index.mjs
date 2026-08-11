@@ -266,6 +266,14 @@ const unitTests = [
 // search for tests does not turn them up either — which is how eight of them
 // accumulated while the section indexed only the E2E ones.
 const unitFixtures = srcFiles.filter((f) => f.endsWith(".test-util.ts"));
+// What rule H holds against the map documents: the files those documents undertake to
+// describe, which is everything that is neither a test nor a fixture nor a type
+// declaration. The shell's Rust is in it beside the frontend's TypeScript because
+// architecture.md names both halves the same way.
+const mappedSources = [
+  ...srcFiles.filter((f) => f.endsWith(".ts") && !/\.(test|test-util|d)\.ts$/.test(f)),
+  ...walk("src-tauri/src").filter((f) => f.endsWith(".rs")),
+];
 const raceSpecs = e2eFiles.filter((f) => f.startsWith("e2e/race/") && f.endsWith(".spec.ts"));
 const appSpecs = e2eFiles.filter((f) => !f.startsWith("e2e/race/") && f.endsWith(".spec.ts"));
 
@@ -836,6 +844,39 @@ if (!forwardOnly) {
       `DOC_MENTIONS entry \`${token}\` (${why}) no longer suppresses anything — delete it`,
     );
   }
+
+  // H. every source file the map documents undertake to describe is named by one of them:
+  //    CLAUDE.md's one-line directory map, or BOTH architecture.md translations, whose
+  //    "Source layout" says outright that it is "what each file is for".
+  //    Nothing looked this way round before. The docs half above only checks that a path a
+  //    document NAMES exists, so a file no document mentions at all was invisible to every
+  //    assertion here — which is how five modules extracted out of graph.ts and
+  //    inspector.ts in one afternoon, and the DUCKER screen for three days, stayed outside
+  //    the map while every check stayed green and CLAUDE.md still called DUCKER "to
+  //    follow".
+  //    Matched by BASENAME, because that is how these documents write a file inside a
+  //    directory-scoped bullet ("`plan.ts` plan state", under `src/core/`). A duplicated
+  //    basename (index.ts, device-setup.ts, link-stats.ts) can therefore be answered by its
+  //    sibling's mention: this catches a file nothing describes, not one described under the
+  //    wrong directory. Requiring BOTH translations is what makes a half-translated
+  //    addition a finding rather than a silence.
+  const mapDocs = DOC_DIRS.map((d) => `${d}/architecture.md`);
+  const mapText = new Map(mapDocs.map((f) => [f, read(f)]));
+  const absentMaps = mapDocs.filter((d) => !mapText.get(d));
+  if (absentMaps.length) {
+    // Reported once, for the same reason as the empty-corpus finding on the docs side: a
+    // missing map would otherwise report every source file, and 95 findings read as a
+    // broken check rather than as the one document that moved.
+    finding(absentMaps.join(" / "), "is missing, so no source file could be checked against the map");
+  } else {
+    for (const file of mappedSources) {
+      const base = file.split("/").pop();
+      if (doc.includes(base)) continue;
+      const absent = mapDocs.filter((d) => !mapText.get(d).includes(base));
+      if (absent.length === mapDocs.length) finding(file, `is a source file that no map document names`);
+      else if (absent.length) finding(file, `is named in one translation only — missing from ${absent.join(", ")}`);
+    }
+  }
 }
 
 // --- report -----------------------------------------------------------------
@@ -861,7 +902,7 @@ if (findings.length) {
 // that quietly became ignored (a build output, a moved directory) has to be readable
 // off the OK line. Same for a mention the docs half pardoned by name.
 const note = skipped.length ? ` (skipped as private/generated: ${[...new Set(skipped)].join(", ")})` : "";
-console.log(`OK: ${spans.length} tokens${note}, ${checked} assertions, ${rows.length} rows, 6 inventories`);
+console.log(`OK: ${spans.length} tokens${note}, ${checked} assertions, ${rows.length} rows, 7 inventories`);
 console.log(
   `    docs: ${docFileCount} files, ${docSpans} code spans, ${docChecked} file references (spans and prose)` +
     (docSkipped.length ? ` (skipped as private/generated: ${[...new Set(docSkipped)].join(", ")})` : "") +
