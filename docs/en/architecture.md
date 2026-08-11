@@ -984,7 +984,12 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   per-reading send would cross the IPC boundary ~250×/s; batching cuts that to ~30×/s. Each drain is
   time-bounded (`PUMP_BUDGET`, 30 ms) so a continuous feed neither monopolizes the worker (live writes wait
   behind it) nor delays the batch; while a subscription streams the worker also polls commands on a shorter
-  interval so the bounded pump runs back-to-back and keeps up with the feed.
+  interval so the bounded pump runs back-to-back and keeps up with the feed. That budget bounds the wait only
+  while the feed is running: on a QUIET link the drain ends at the socket's own read timeout instead, and the
+  worker is not looking at the command channel until it does — measured on a URX44V, the first live write after
+  a quiet gap waited 152 ms against a 200 ms timeout, which is why that timeout is 50 ms (`READ_TIMEOUT`), not
+  the 30 ms budget. Changing the budget would not have moved it: on a quiet link the loop leaves at the drained
+  branch and never reaches the budget check.
   A subscribed notify that lands while a command awaits its response (the `do_set` / `do_get_value` loops) is
   absorbed into the same pending batch instead of discarded, and the batch flushes on the pump cadence
   (subscription channels and pending batches live in the worker's `Subs`) — so the meters keep streaming with
