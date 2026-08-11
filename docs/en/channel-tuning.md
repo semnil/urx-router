@@ -39,7 +39,10 @@ gives the same two for the compressor):
    on the same mono-channel axis.
 
 The first is what earns the screen's one gesture: the threshold is a **fader cap dragged on the
-input meter itself**.
+input meter itself**. A press on the cap grabs it where it is; a press on the bare slot jumps the cap
+to the pointer and defers to the cap's own listener when the press landed on it (`e.target === cap`).
+That is the same press grammar the CONSOLE fader has — see architecture.md "Pressing the main fader",
+which carries the reasoning and the measurements for both.
 
 ## What the meters can and cannot show
 
