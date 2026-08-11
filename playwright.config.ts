@@ -32,11 +32,12 @@ const SERVER_URL = `http://localhost:${PORT}`;
 // `--project=chromium` is still the ordinary suite at its ordinary cost, and the
 // harness can be run, sharded or skipped on its own.
 //
-// That split is also the CI tiering. Measured on a two-worker ubuntu runner: the
-// ordinary suite is 3.5 minutes of machine time across 383 cases, none over 3 s, so it
-// runs per-PR from ci.yml; the harness is 22.4 minutes across 156, so it runs from its
-// own race.yml — sharded, on demand and alongside a release build. Nothing about the
-// tiers lives in this file beyond the project boundary they are cut along.
+// That split is also the CI tiering: the ordinary suite runs per-PR from ci.yml, and the
+// harness — which takes the great majority of the E2E machine time — runs from its own
+// race.yml, sharded, on demand and alongside a release build. The measurements that cut the
+// boundary there are in docs/{en,ja}/live-race-harness.md ("Where each tier runs") and
+// stated nowhere else; this comment used to restate them, and the copy went stale. Nothing
+// about the tiers lives in this file beyond the project boundary they are cut along.
 const TRACE_URL = `http://localhost:${TRACE_PORT}`;
 const COVERAGE = process.env.E2E_COVERAGE === "1";
 
