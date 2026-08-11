@@ -148,22 +148,71 @@ describe("the share link", () => {
 });
 
 describe("the deep link", () => {
-  it("loads a plan the URL carries and strips nothing else from it", async () => {
+  // The model id alone is not evidence that the link carried a plan: it is one field,
+  // and a codec that dropped the connections, the node parameters or the shelf would
+  // still land the picker on URX22. So the plan encoded here is moved away from the
+  // default in four independent places, and each is read back off the surface that
+  // shows it.
+  it("loads everything the URL carries, not just the model", async () => {
     const { encodePlanParam } = await import("./core/plan");
     const { defaultPlan } = await import("./models/initial-state");
-    const param = await encodePlanParam(defaultPlan("URX22"), {});
-    history.replaceState(null, "", `/?plan=${encodeURIComponent(param)}`);
+    const plan = defaultPlan("URX22");
+    plan.sampleRate = 96000;
+    plan.hidden = ["bus.mon2"];
+    plan.nodeNames = { ...plan.nodeNames, ch1: "PROBE" };
+    const send = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    send.params = { ...send.params, level: -20 };
 
+    const param = await encodePlanParam(plan, {});
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(param)}`);
     await boot();
     await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"));
+
+    // The rate, off its default.
+    expect($<HTMLSelectElement>("rate-picker").value).toBe("96000");
+    // The shelf: the hidden node left the board and a chip stands for it.
+    expect($("graph-host").querySelector('g.node[data-id="bus.mon2"]')).toBeNull();
+    expect([...$("graph-host").querySelectorAll(".shelf-chips .chip")].map((c) => c.textContent)).toHaveLength(1);
+    // A per-node value the model does not supply. `.con-fader` by name rather than the
+    // first `[role="slider"]`: a strip carries seven of those and the main fader is the
+    // LAST — two head knobs and four send columns come first, so the loose selector
+    // reads the channel gain and the level never gets checked at all.
+    $("btn-view-console").click();
+    const strip = [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")][0];
+    expect(strip.textContent).toContain("PROBE");
+    expect(strip.querySelector(".con-fader")!.getAttribute("aria-valuenow")).toBe("-20");
   });
 
-  // A truncated or hand-edited link is the ordinary failure here, and it must leave
-  // the board that is already on screen alone.
-  it("reports a malformed link without replacing the board", async () => {
+  // A broken link has two shapes and they surface differently — measured, because they
+  // read the same from the outside and a single case would have covered only one.
+  //
+  // Neither case may assert on the board or the picker as its observable: both exist
+  // before the decode is even attempted, so a silently swallowed error passes. Waiting
+  // on the report is also what synchronizes with the async decode.
+  it("reports a link the codec cannot decode, in the load report", async () => {
+    // A `z` link (the compressed form) whose payload is not base64: the decode itself
+    // throws, so it never reaches the plan loader.
+    history.replaceState(null, "", "/?plan=z%40%40%40");
+    await boot();
+
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false));
+    expect($("load-report-body").textContent).toBe(t().error.badPlanUrl);
+    // …and only then is "the board is untouched" worth asserting.
+    expect(nodes()).toBeGreaterThan(5);
+    expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
+    expect(vi.mocked(alert)).not.toHaveBeenCalled();
+  });
+
+  it("reports a link that decodes into something that is not a plan, as a load error", async () => {
+    // An uncompressed link whose base64 is valid but whose bytes are not a document:
+    // the decode succeeds and the PLAN loader is the one that refuses, which is the
+    // error dialog rather than the report modal.
     history.replaceState(null, "", "/?plan=not-a-plan");
     await boot();
-    await vi.waitFor(() => expect(nodes()).toBeGreaterThan(5));
+
+    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
+    expect($("load-report").hidden).toBe(true);
+    expect(nodes()).toBeGreaterThan(5);
     expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
   });
 });
@@ -291,17 +340,48 @@ describe("undo and redo", () => {
 });
 
 describe("what the browser build does not offer", () => {
-  // The device half is desktop-only, and the buttons are still in the DOM. Measured:
-  // they do NOT all sit inert — the MIDI window opener reaches its platform call and
-  // reports the failure on the status line. Which is the right behaviour; what must
-  // not happen is a throw out of a click handler, since that leaves the app with no
-  // status, no dialog, and a toolbar that looks like it did nothing.
-  it("reports rather than throwing when a device action is pressed off the shell", async () => {
-    await boot();
-    for (const id of ["btn-fetch", "btn-write", "btn-midi", "btn-device-setup"]) {
-      const el = document.getElementById(id);
-      expect(() => el?.click()).not.toThrow();
-    }
-    await vi.waitFor(() => expect(status()).not.toBe(""));
-  });
+  // The device half is desktop-only and the buttons are still in the DOM. Measured off
+  // the shell, each one reports — through one of TWO channels, and which one is the
+  // fact worth pinning: three raise the error dialog, while the MIDI window opener
+  // frames its failure onto the status line instead. What must not happen is a throw
+  // out of a click handler, which leaves the app with no dialog, no status and a
+  // toolbar that looks like it did nothing.
+  //
+  // Two things make a loose version of this case pass for nothing. `status()` is
+  // already the boot line, so "the status is non-empty" is true before any click; and
+  // `btn-write` ships DISABLED in index.html — `syncDeviceActionUi` enables it at boot
+  // (measured), but an optional-chained click on a button that had stayed disabled
+  // would assert nothing at all. Hence: the element is required to exist and to be
+  // enabled, and each channel is counted per button.
+  const CHANNELS = [
+    { id: "btn-fetch", channel: "dialog" },
+    { id: "btn-write", channel: "dialog" },
+    { id: "btn-midi", channel: "status" },
+    { id: "btn-device-setup", channel: "dialog" },
+  ] as const;
+
+  for (const { id, channel } of CHANNELS) {
+    it(`${id} reports through the ${channel} rather than throwing`, async () => {
+      await boot();
+      const el = document.getElementById(id) as HTMLButtonElement | null;
+      expect(el, `#${id} is in the markup`).not.toBeNull();
+      expect(el!.disabled, `#${id} is enabled with no device link held`).toBe(false);
+
+      const dialogsBefore = vi.mocked(alert).mock.calls.length;
+      const statusBefore = status();
+      expect(() => el!.click()).not.toThrow();
+
+      if (channel === "dialog") {
+        await vi.waitFor(() => expect(vi.mocked(alert).mock.calls.length).toBe(dialogsBefore + 1));
+      } else {
+        // The frame is read out of the catalog rather than typed in, so a Japanese run
+        // asserts the same thing. The gap stands where the reason goes.
+        const [frame] = t().midi.windowError(" ").split(" ");
+        await vi.waitFor(() => expect(status()).not.toBe(statusBefore));
+        expect(status().startsWith(frame)).toBe(true);
+        expect(status().length).toBeGreaterThan(frame.length); // the reason is named
+        expect(vi.mocked(alert).mock.calls.length).toBe(dialogsBefore);
+      }
+    });
+  }
 });
