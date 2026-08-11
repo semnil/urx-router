@@ -282,7 +282,12 @@ carries a one-line map of the same directories and points here.
   one `selectionIsStale` predicate, because a caller cannot tell which of those a given in-place mutation
   moved and the sets are write-back caches (`commitHidden` pushes `hidden` into the plan, so a stale one
   resurrects an undone hide); unlike `setModel` it keeps the viewport. `labelOf` is public so every status
-  line that names a node prints what the canvas prints) / `history.ts` undo / redo (`Ctrl/Cmd+Z`,
+  line that names a node prints what the canvas prints) / `graph-text.ts` the board's text measurement,
+  split out of it: how wide a string renders in monospace cells, how a note wraps to the panel's budget, and
+  how far a label shrinks to clear the header button. None of it needs an element, and the cases that decide
+  it — a fullwidth token wider than the whole budget, a codepoint above the BMP, a paragraph of blank lines,
+  a clip whose last line is all wide glyphs — are trivial to state as arguments and awkward to produce by
+  typing into a textarea / `history.ts` undo / redo (`Ctrl/Cmd+Z`,
   `Ctrl/Cmd+Shift+Z`, `Ctrl/Cmd+Y`): gesture boundaries, the keyboard predicate, and the apply sequence over
   `core/plan-history.ts`. One entry runs from the first edit to the first boundary
   (`pointerup`/`pointercancel` a macrotask later, so a `click`-handler edit lands inside it — and the next
@@ -318,7 +323,21 @@ carries a one-line map of the same directories and points here.
   its author never opened) / `edit-menu.ts` the frontend half of the macOS Edit menu (routes a click into
   the history, pushes the items' enabled state and labels; the menu lives outside the document so neither
   follows from a re-render, and it self-registers its own `onLangChange`) / `inspector.ts` selected-element
-  editor / `console.ts` CONSOLE view (mixer-style level overview. Switched via the GRAPH/CONSOLE tabs; an
+  editor, with the layers a rendered panel cannot check split out of it: `inspector-format.ts` the value
+  formatters and slider-position mappings (the exact display strings — which `glyph.ts` splits on the
+  infinity glyph and the E2E specs assert verbatim — pinned without rendering a panel),
+  `inspector-sections.ts` the persisted section folds, keyed by section kind rather than per node so the
+  preference is the same on every node (a section with an ON-state default clears its override when the
+  value is toggled, so it goes back to auto-collapsing when off, while a user fold persists; the store is
+  resettable because clearing `localStorage` alone is not enough — its cache is loaded once and re-persisted
+  on every write), `send-fields.ts` which per-send controls a wire shows and what a wire with none of them
+  says instead (decided entirely by the routing rules and the destination bus's params, ordered as the
+  device's SEND TO screen reads it; no DOM, and the note comes back as a catalog key so the module stays
+  language-independent like `core/*`) and `insert-fx-model.ts` the insert-FX value model — which stored raw
+  an engine slot reads, how an edit re-keys it, and what has to happen to the outgoing effect's values
+  before the selector names another family, which is the step a rendered-DOM assertion passes straight over
+  (the bare slot key) / `console.ts` CONSOLE view (mixer-style level overview. Switched via the
+  GRAPH/CONSOLE tabs; an
   alternate view of the same plan; fader/MUTE/EQ edits go through `markChanged` for the same live sync as
   the graph; per-strip SENDS rack; a scribble power LED toggles each node master (CH_ON / bus master ON /
   osc.on) with the off-state dimmed via the shared `isNodeInactive`; live meters only during Live sync, ~10
@@ -380,9 +399,13 @@ carries a one-line map of the same directories and points here.
   node has (`bind` → fields + meter lanes), reads and writes its own corner of the plan (`read`/`patch`),
   and arranges its display column out of the parts the host offers (`display` over `parts.lanes()` /
   `parts.plot()`). It owns the broker's single meter slot while open, so the console is told to release and
-  regain it. `dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` are the descriptors, `dyn-chan.ts` the binding the
+  regain it. `dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` / `dyn-ducker.ts` are the descriptors — DUCKER is
+  the one whose node is not the node it tunes, since a ducker hangs under a stereo channel keyed by a wire
+  from somewhere else, so its lanes are gathered from three places instead of read off the node the screen
+  opened on — `dyn-chan.ts` the binding the
   two MONO IN channel-strip processors share, `dyn-plot.ts` the dB×dB transfer plot those two draw, and
-  `dyn-registry.ts` the one place that knows which processors exist. GATE/COMP show a LADDER of meters —
+  `dyn-registry.ts` the one place that knows which processors exist.
+  GATE/COMP show a LADDER of meters —
   where the threshold is dragged as a fader cap on the input meter, the two sharing one coordinate — or a
   CURVE; the EQ shows its response plot and the lane rack at once and its segmented bar selects a band
   instead. The EQ's filter model is `core/eq-response.ts` (measured: the unit's Q is twice the biquad Q,
