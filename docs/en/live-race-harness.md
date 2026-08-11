@@ -598,8 +598,10 @@ The bargain that buys: **no pull request is obliged to run the harness**, and an
 not, so a break surfaces at the version PR or at whatever manual run someone chose to make, rather
 than at the merge that caused it, and `git log` over the live-sync
 surface is what narrows it. Every pull request does wait for `race-required`, but away from the
-version PR that is a gate over four skipped jobs, green in seconds — what the merge condition buys is
-that the release cannot be tagged over a red harness, not that every branch pays for one. WebKit is a separate browser download, so it is its own job rather than a
+version PR that is a gate over **two** skipped jobs, green in seconds: `detect` runs, and `race` and
+`race-webkit` skip on their own condition — **a matrix job whose own `if:` is false is not expanded**,
+so `race` reports once rather than three times. What the merge condition buys is that the release
+cannot be tagged over a red harness, not that every branch pays for one. WebKit is a separate browser download, so it is its own job rather than a
 fourth shard — paying for it three times would cost more than the cases do.
 
 ### Observables
