@@ -67,6 +67,10 @@ const PROSE_TOKENS = new Map([
   ["ls scripts/", "an instruction to the reader, not a path"],
   ["ruby", "the interpreter, named as the thing that has to be present for a differential to run"],
   ["File.fnmatch", "Ruby's method, named as the authority a matcher is measured against"],
+  // Playwright's own declarations, named as the two shapes a skip ledger cannot read off a
+  // listing: one annotates itself something other than a skip, the other is not there at all.
+  ["test.fixme", "a Playwright declaration, named as itself"],
+  ["test.skip()", "a Playwright declaration, named as itself"],
   ['grep -rn "window.__urx" src/', "an instruction to the reader, not a path"],
   // The CDP row names what it drives. None of these is a file in any tree: the first two
   // are Playwright's and CSS's own vocabulary, the last three are DevTools-protocol

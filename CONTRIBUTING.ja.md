@@ -35,6 +35,7 @@ pnpm tauri dev     # デスクトップアプリ
 | `pnpm typecheck:e2e` | `e2e/` とルートの設定ファイルの型チェック |
 | `pnpm format` | TypeScript ソースへの Prettier 適用 |
 | `pnpm check:md` | Markdown テーブルの整合性チェック |
+| `pnpm check:skips` | `e2e/race` の恒久 skip が、その理由を保つものと結び付けて登録されているか |
 | `pnpm build:demo` | ブラウザデモ版のビルド（保存ダイアログと画像出力を除く） |
 
 ## 規約
@@ -108,8 +109,8 @@ UPDATE_SKILL=1 pnpm test skill-export
 - Conventional Commits、**件名も本文も英語**、意味単位で分割する。
 - **プルリクエストのタイトルと本文も英語**。
 - UI 変更には変更前後のスクリーンショットを添える。
-- プルリクエストの CI はビルド・`pnpm typecheck:e2e`・ユニットテスト・通常の E2E スイート・
-  `cargo test` を実行する — この作業は原則として Markdown / docs のみの変更では省略される。例外は
+- プルリクエストの CI はビルド・`pnpm typecheck:e2e`・`pnpm check:skips`・ユニットテスト・
+  通常の E2E スイート・`cargo test` を実行する — この作業は原則として Markdown / docs のみの変更では省略される。例外は
   スキルの生成物であるモデル参照 (`.claude/skills/urx-routing-planner/references/model-*.md`) で、
   Markdown だが生成器との差分を検査するため通常 CI も走る。サードパーティライセンスの生成は
   マージ後に走り、ライブ同期のレース診断ハーネスはバージョンを変更するプルリクエストでのみ走って

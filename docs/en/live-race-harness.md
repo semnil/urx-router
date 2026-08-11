@@ -490,10 +490,13 @@ former cost.
 | `t9-probe.spec.ts` | the probe's own contract, and invariants 13 and 3 |
 
 **Every case in the tier tables above is present in a spec**, matched by id — `grep -rF <id> e2e/race`
-answers it for one, and the ids are the census. What is not *driven* is a handful of `test.skip`
-sub-arms (`grep -rn "test.skip" e2e/race`), each carrying its reason beside it: a fixed connection the
-UI cannot delete; no observable that separates the two branches; making the fake claim an
-`--experimental` launch mode would measure the harness rather than the app; and so on.
+answers it for one, and the ids are the census. What is not *driven* is a handful of permanently
+skipped sub-arms, each carrying its reason beside it: a fixed connection the UI cannot delete; no
+observable that separates the two branches; making the fake claim an `--experimental` launch mode would
+measure the harness rather than the app; and so on. **Their census is `pnpm check:skips`, not a grep** —
+it reads what Playwright collects, so a `test.fixme` counts as one and a case in a file a pattern misses
+cannot hide, and it fails unless every one is registered in `e2e/race/skip-ledger.json` against the test
+that keeps its reason true or an explicit statement that nothing does.
 
 ```sh
 pnpm test:e2e:app                # the ordinary suite (--project=chromium; race is testIgnore'd out)

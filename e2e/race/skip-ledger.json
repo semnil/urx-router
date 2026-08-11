@@ -1,0 +1,48 @@
+{
+  "_": "Every test.skip() in e2e/race is registered here, and scripts/check-race-skips.mjs refuses one that is not. A `title` is the case's full name — every describe title down to the leaf, joined with ' > ' — because a leaf title alone can name two different cases. That is not unique either, so the checker refuses a name matching more than one collected case rather than counting it once. An entry either names the test that keeps its reason true (`guardedBy` — that test failing or disappearing is how the reason's expiry surfaces), or states in `unguarded` that nothing does and what observation would settle it. The prose reason stays in the comment beside the skip; what is here is the link a reader cannot make by eye.",
+  "skips": [
+    {
+      "file": "e2e/race/t2b-shape-change.spec.ts",
+      "title": "T2b shape-change > an unresolvable wire source produces a silent hole",
+      "unguarded": "The reason is that validatePlan rejects a wire with no matching routing rule before the plan is adopted, and no test asserts that: the load-side tests cover slot contention and the seeded-wire bijection, not a ruleless wire. A case in src/core/plan-validate.test.ts feeding a hand-built plan whose wire matches no rule, and asserting it is reported rather than adopted, would turn this into a guardedBy."
+    },
+    {
+      "file": "e2e/race/t3b-undo.spec.ts",
+      "title": "T3b undo > a sampleRate-touching entry is refused while live",
+      "unguarded": "The reason is that no sampleRate entry can exist while live — the readback's rerenderPlan resets both stacks and the rate picker is disabled from then on. t3-undo.spec.ts's refusal ladder asserts exactly that, but it is a race case, so it runs on the version-bump PR alone and cannot report an expired reason on an ordinary one. What would settle it: the same two facts pinned where every PR runs them — the rate picker's disabled state under a live session, and rerenderPlan clearing both stacks."
+    },
+    {
+      "file": "e2e/race/t3b-undo.spec.ts",
+      "title": "T3b undo > a .urxf settings import empties both stacks",
+      "unguarded": "The reason is that e2e/race/fake-device.ts answers false for experimental_enabled, so the import is unreachable from the harness. Nothing asserts that: chrome.spec.ts's --experimental case drives the OTHER stub (e2e/tauri-stub.ts) and checks the Device menu's self-test entry, not this path. What would settle it: an ordinary-tier case asserting #btn-open-settings is hidden without --experimental, plus a reading that the race fake still answers false."
+    },
+    {
+      "file": "e2e/race/t3b-undo.spec.ts",
+      "title": "T3b undo > a cancelled Fetch re-points the MIDI bound cache",
+      "unguarded": "Not a claim about the app: the case is skipped because it belongs with t4-midi.spec.ts's learn helpers rather than as a second copy here. Nothing can expire, and nothing settles it except writing it there. Listed so the count of unwritten cases is countable rather than buried."
+    },
+    {
+      "file": "e2e/race/t4b-midi.spec.ts",
+      "title": "T4b midi > Toggle (state) mode: a same-state message consumes the guard",
+      "unguarded": "The reason is that the harness has no observable that separates the two outcomes — in state mode the incoming value IS the state. It expires the moment one appears, and the trace probe is where that would come from. What would settle it: a reading in __urxTrace (or the fake's IPC) that distinguishes a consumed guard from an unconsumed one."
+    },
+    {
+      "file": "e2e/race/t4b-midi.spec.ts",
+      "title": "T4b midi > arming an id the catalog cannot bind is refused silently",
+      "unguarded": "The reason says 'unreachable from the UI in this build', which dates itself: it holds only while the control catalogue offers no id that arm() cannot bind. What would settle it: an assertion that every id the MIDI window can arm is one the catalogue binds — src/core/midi/controls.ts against the window's own list — which would make this a guardedBy."
+    },
+    {
+      "file": "e2e/race/t4b-midi.spec.ts",
+      "title": "T4b midi > the orphan variant: the drag keeps writing into a deleted connection",
+      "guardedBy": {
+        "file": "src/core/routing.test.ts",
+        "title": "isFixedConnection > marks every CH / FX-channel send (STEREO main + MIX/FX) as fixed"
+      }
+    },
+    {
+      "file": "e2e/race/t8-stress.spec.ts",
+      "title": "T8 stress > a thirty-minute session leaks no subscription, timer or plan",
+      "unguarded": "Recorded in docs/{en,ja}/live-race-harness.md as a known gap: the four assertions need module-scope state (timer count, undo depth, MIDI cache size, reachable Plan objects) that none of the harness's four surfaces carries. What would settle it: those readings on the VITE_TRACE probe, after which the duration is the smaller obstacle."
+    }
+  ]
+}

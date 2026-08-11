@@ -37,6 +37,7 @@ pnpm tauri dev     # desktop app
 | `pnpm typecheck:e2e` | type-checks `e2e/` and the root config files |
 | `pnpm format` | Prettier over the TypeScript sources |
 | `pnpm check:md` | Markdown table integrity |
+| `pnpm check:skips` | every permanent skip in `e2e/race` is registered against what holds its reason |
 | `pnpm build:demo` | browser demo build (no save dialog or image export) |
 
 ## Conventions
@@ -119,8 +120,8 @@ CI diffs the generated files, so an out-of-date bundle fails the build.
 - Conventional Commits, **subject and body in English**, split by semantic unit.
 - **Pull request title and body in English** as well.
 - Include before/after screenshots for UI changes.
-- Pull request CI runs the build, `pnpm typecheck:e2e`, the unit tests, the ordinary E2E
-  suite and `cargo test` — work that is skipped, as a rule, on a Markdown/docs-only pull
+- Pull request CI runs the build, `pnpm typecheck:e2e`, `pnpm check:skips`, the unit tests,
+  the ordinary E2E suite and `cargo test` — work that is skipped, as a rule, on a Markdown/docs-only pull
   request. The exception is the skill's generated model references
   (`.claude/skills/urx-routing-planner/references/model-*.md`): they are Markdown, but they
   are diffed against their generator, so they run it too. Third-party license generation
