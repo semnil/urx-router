@@ -205,7 +205,7 @@ single source of truth. This table states what each case measures.
 | `baseline-quiescent-floor` | mixed | That an idle live session produces no plan write and no readback. Every other verdict is a difference against this trace |
 | `baseline-single-edit-latency-ladder` | console | One edit at four latencies: the canonical timeline every phase offset is measured against, and how much lateness is the link |
 | `baseline-graph-surface-sweep` | graph | That every GRAPH gesture is reachable by the driver's vocabulary, and that gestures which should write nothing really do not |
-| `baseline-console-surface-sweep` | console | Every CONSOLE control, exercising the three separate fader-travel encodings back to back at known offsets |
+| `baseline-console-surface-sweep` | console | Every CONSOLE control, exercising the separate fader-travel encodings back to back at known offsets — including both halves of a main-fader press: on the cap it is grabbed and writes nothing, off it the cap jumps under the pointer |
 | `baseline-inspector-surface-sweep` | inspector | Every control on every node kind, pinning the "toggles re-render, sliders do not" rule per control |
 | `baseline-tuning-surface-sweep` | tuning | GATE / COMP / EQ screens, all three ways of closing, and the reach of the fine grid |
 | `baseline-shell-flows-sweep` | mixed | Consent, licenses, load report, rate choice, updater, dropzone, recent files and every Preferences row |

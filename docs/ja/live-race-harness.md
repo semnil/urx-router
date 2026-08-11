@@ -193,7 +193,7 @@ param、セッションが無い状態。逆向きの差は意図的に判定し
 | `baseline-quiescent-floor` | 全体 | 無操作のライブセッションが書込も読み戻しも生まないこと。全ケースの判定はこの痕跡との差分 |
 | `baseline-single-edit-latency-ladder` | console | 単一編集を 4 遅延で。以降の全位相が測られる基準線と、遅れのどこまでが回線かの較正 |
 | `baseline-graph-surface-sweep` | graph | GRAPH の全ジェスチャが駆動語彙で撃てること。書かないはずのジェスチャが本当に書かないことの否定側判定 |
-| `baseline-console-surface-sweep` | console | CONSOLE の全操作。フェーダーの可動域が 3 か所で別々に書かれている件を既知オフセットで連続実行 |
+| `baseline-console-surface-sweep` | console | CONSOLE の全操作。フェーダーの可動域が複数箇所で別々に書かれている件を既知オフセットで連続実行し、メインフェーダー押下の両方 (つまみ上 = 掴むだけで書かない / 溝上 = つまみがポインタへジャンプ) を含む |
 | `baseline-inspector-surface-sweep` | inspector | 全ノード種の全制御。「トグルは再描画、スライダーはしない」規則を制御ごとに固定 |
 | `baseline-tuning-surface-sweep` | tuning | GATE / COMP / EQ 画面。閉じ方 3 通りと fine グリッドの適用範囲 |
 | `baseline-shell-flows-sweep` | 混合 | 同意ゲート・ライセンス・読込報告・レート選択・更新確認・投入・最近使用・環境設定の全行 |

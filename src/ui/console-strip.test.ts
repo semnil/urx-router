@@ -5,9 +5,10 @@
 // popovers are in console-sends.test.ts; the meter carry-over across a rebuild is in
 // console.test.ts.
 //
-// The main fader differs from a rack column in one way that matters here: it is
-// SEEDED — the press jumps the value to where the pointer landed, before any movement
-// — so a case about it must not reuse the rack's "nothing until the threshold" shape.
+// The main fader differs from a rack column in one way that matters here: a press that
+// lands OFF its cap is SEEDED — the value jumps to where the pointer landed, before any
+// movement — so a case about that half must not reuse the rack's "nothing until the
+// threshold" shape. A press on the cap is the other half, and writes nothing.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test-util";
@@ -60,18 +61,56 @@ describe("the main fader", () => {
     expect(r.readDb!.classList.contains("off")).toBe(false);
   });
 
-  // Seeded, unlike the rack columns: the press alone jumps the value to where the
-  // pointer landed. A threshold here would make the jump impossible.
-  it("jumps to the press position before any movement", () => {
+  /** Press the fader at a page y, then release without moving. */
+  const press = (fader: HTMLElement, clientY: number): void => {
+    fader.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY, pointerId: 1 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
+  };
+
+  // Seeded, unlike the rack columns: off the cap, the press alone jumps the value to
+  // where the pointer landed. A threshold here would make the jump impossible.
+  it("jumps to a press that lands off the cap, before any movement", () => {
     h = consoleHost();
     const r = h.strip("ch1");
     const before = main("ch1");
-    r.fader!.dispatchEvent(
-      new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 60, pointerId: 1 }),
-    );
-    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
+    const changesBefore = h.changes();
+    const cap = r.cap!.getBoundingClientRect();
+    press(r.fader!, cap.bottom + 40);
     expect(main("ch1")).not.toBe(before);
-    expect(h.changes()).toBeGreaterThan(0);
+    expect(h.changes()).toBeGreaterThan(changesBefore);
+  });
+
+  // The other half, and the reason the seed became conditional: the cap is a couple of
+  // detents tall at this travel, so a press anywhere but its exact centre used to move
+  // the level — and reach the unit — before the operator had moved at all.
+  it("grabs the cap without moving it", () => {
+    h = consoleHost();
+    const r = h.strip("ch1");
+    const before = main("ch1");
+    const changesBefore = h.changes();
+    const cap = r.cap!.getBoundingClientRect();
+    for (const y of [cap.top, cap.top + cap.height / 2, cap.bottom]) press(r.fader!, y);
+    expect(main("ch1")).toBe(before);
+    expect(h.changes()).toBe(changesBefore);
+  });
+
+  // …and the cap then stays under the pointer: the drag is measured against the cap's
+  // own travel — the element's full height — not the groove's 6 px inset, which is what
+  // made the two disagree everywhere but mid-travel. 30 px is exactly ten detents at
+  // this travel, so the grid snap contributes nothing to the reading.
+  it("moves the cap by the distance dragged", () => {
+    h = consoleHost();
+    const r = h.strip("ch1");
+    const pos = (): number => parseFloat(r.cap!.style.getPropertyValue("--pos"));
+    const before = pos();
+    const height = r.fader!.getBoundingClientRect().height;
+    const startY = r.cap!.getBoundingClientRect().top + 1;
+    r.fader!.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: startY, pointerId: 1 }),
+    );
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: startY + 30, pointerId: 1 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
+    expect(pos() - before).toBeCloseTo((30 / height) * 100, 5);
   });
 
   it("tracks a drag and stops when its own element leaves the document", () => {

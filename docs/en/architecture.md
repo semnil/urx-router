@@ -856,6 +856,16 @@ tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.
 +90°): PHONES 2.0/8.0, A.Gain +8/+55, D.Gain -14/+15, OSCILLATOR LEVEL -50/-8. Double-clicking a fader cap or
 a knob resets it to the **factory value** (from `defaultPlan`).
 
+**Pressing the main fader** — a press that lands **on the cap grabs it where it is** and writes nothing; a
+press on the **bare track jumps** the cap centre to the pointer, which is what an `<input type="range">`
+does when clicked away from its thumb (the mini-fader has no jump at all — one pixel there is most of a
+detent; see [console-sends.md](console-sends.md)). Either way the rest of the gesture is **relative** and
+measured against the cap's own travel — the fader element's full height, since `--pos` is a percentage of
+it under a `-50%` translate. Both halves used to be one absolute mapping over the *groove's* inset span
+(`height - 12`), which made the press position agree with the cap at mid-travel only and put a plain press
+on the cap's edge up to 1.7 detents out at the default window size (3.6 at the minimum one) — reaching the
+unit, live, before the operator had moved.
+
 **Fine-tuning (hold Shift)** — the controls whose device parameter has a verified fine grid tighten their
 step while Shift is held, mirroring the hardware's (undocumented) push-and-turn fine mode: the inspector's
 EQ band Gain and COMP Gain sliders step 0.1 dB (coarse 0.5 dB), and the STREAMING TIME knob steps 0.02 ms

@@ -153,8 +153,8 @@ function fmtDb(db: number, r: LevelRange): { text: string; off: boolean } {
  * replayed on pointerup is what swallowed a Close press on the tuning screens).
  *
  * `onMove` is also applied to the opening event when `seed` is set — the main fader
- * jumps to where it was pressed. That runs before the listeners are registered, so a
- * seed can never be answered by a teardown that does not exist yet.
+ * jumps to a press that landed off its cap. That runs before the listeners are
+ * registered, so a seed can never be answered by a teardown that does not exist yet.
  */
 function trackDrag(
   control: HTMLElement,
@@ -2008,9 +2008,25 @@ export class Console {
       e.preventDefault();
       if (this.midiArm(midiId)) return;
       const rect = fader.getBoundingClientRect();
-      // Seeded: the main fader jumps to where it was pressed before the drag begins.
-      trackDrag(fader, e, (ev) => setLevel(fracToDb(1 - (ev.clientY - rect.top - 6) / (rect.height - 12), range)), {
-        seed: true,
+      // The cap centre travels the element's whole height (`--pos` is a percentage of
+      // it, under a -50% translate), so that is the scale a pointer maps through — not
+      // the groove's 6 px inset, which used to be subtracted here and made the mapping
+      // agree with the cap at mid-travel only, drifting to 1.3 detents by either end
+      // (measured at the default window; 2.7 at the minimum one).
+      const travel = rect.height;
+      // A press that lands on the cap grabs it where it is and writes nothing: the cap
+      // is 14 px on a travel worth a few pixels per detent, so jumping to the pointer
+      // moved the level by up to 1.7 detents (3.6 at the minimum window) before the
+      // operator had moved at all. A press on the bare track still jumps the cap under
+      // the pointer, which is what an <input type="range"> does away from its thumb.
+      // Either way the rest of the gesture is relative, so the cap tracks the pointer
+      // 1:1 from wherever it started.
+      const capBox = r.cap?.getBoundingClientRect();
+      const onCap = !!capBox && e.clientY >= capBox.top && e.clientY <= capBox.bottom;
+      const startFrac = onCap ? dbToFrac(this.getMain(r.m), range) : 1 - (e.clientY - rect.top) / travel;
+      const startY = e.clientY;
+      trackDrag(fader, e, (ev) => setLevel(fracToDb(startFrac + (startY - ev.clientY) / travel, range)), {
+        seed: !onCap,
       });
     });
     fader.addEventListener("keydown", (e) => {

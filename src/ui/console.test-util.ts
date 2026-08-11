@@ -60,10 +60,14 @@ export interface ConsoleHostOptions {
   plan?: Plan;
   live?: boolean;
   midi?: ConsoleMidiHooks;
-  /** The box every control measures as. One box for all of them: nothing here
-   *  depends on two controls having different sizes, and a per-selector table would
-   *  be a second place to keep the class names in step. */
+  /** The box every control measures as, the fader caps excepted (see `capBox`). */
   box?: { width: number; height: number };
+  /** The box a fader cap measures as. The one exception to the single box above, and
+   *  it has to be one: the main fader asks whether a press landed on its cap, so a cap
+   *  as tall as the fader would answer "on the cap" for every press on the strip and
+   *  the jump-to-the-press path would never run. Positioned at the fader's top, which
+   *  is where a cap sits at full level. */
+  capBox?: { width: number; height: number };
   /** Skip `show()` — for a test about what an unshown view does. */
   hidden?: boolean;
 }
@@ -73,7 +77,12 @@ export interface ConsoleHostOptions {
  * `restore()` in an afterEach: three of the four stubs are global.
  */
 export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
-  const { modelId = "URX44V", live = false, box = { width: 34, height: 120 } } = opts;
+  const {
+    modelId = "URX44V",
+    live = false,
+    box = { width: 34, height: 120 },
+    capBox = { width: 24, height: 14 },
+  } = opts;
 
   const host = document.createElement("div");
   document.body.append(host);
@@ -91,12 +100,14 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
   Element.prototype.setPointerCapture = function (): void {};
   Element.prototype.releasePointerCapture = function (): void {};
 
-  // Every element measures as the same box. `getBoundingClientRect` drives the fader
-  // travel and both popovers' placement; `offsetWidth`/`offsetHeight` are what
-  // `placePopover` reads off the popover itself.
+  // Every element measures as the same box, a fader cap excepted — the one control the
+  // view measures *against another*. `getBoundingClientRect` drives the fader travel,
+  // the cap hit test and both popovers' placement; `offsetWidth`/`offsetHeight` are
+  // what `placePopover` reads off the popover itself.
   const realRect = Element.prototype.getBoundingClientRect;
   Element.prototype.getBoundingClientRect = function (): DOMRect {
-    const r = { x: 20, y: 40, left: 20, top: 40, width: box.width, height: box.height };
+    const b = this.classList.contains("cap") ? capBox : box;
+    const r = { x: 20, y: 40, left: 20, top: 40, width: b.width, height: b.height };
     return { ...r, right: r.left + r.width, bottom: r.top + r.height, toJSON: () => r } as DOMRect;
   };
   const offsets = ["offsetWidth", "offsetHeight"] as const;
