@@ -1392,7 +1392,12 @@ notify が「自分の書込の告知」と数えられるのは、**そのア�
 | microSD Rec Track Count (839) | broker が上限 1 を強制し、届くのは「2 トラック」と実機にとって無意味な値だけ | **`out.sdrec`** — 839 が載るノードで、その読みが触れる唯一のアドレス |
 
 どちらも `translate.ts` の `planToFollowOnlyAddrs` が、対になる emit 判定のすぐ隣で列挙する。登録と書込抑制が
-離れて食い違わないようにするためで、`live.ts` は `planToCommands` と同じ形でこの一覧を消費する。**索引の
+離れて食い違わないようにするためで、`live.ts` は `planToCommands` と同じ形で — **書込スコープも含めて** — この
+一覧を消費する。スコープを掛けるのは対称性のためではない: *Scene only* のとき全体読みは読んだ後にプランの
+シーン外の値を書き戻す (`applyDeviceStateScoped` → `core/scene-scope.ts`。`sdRecTrackCount` を名指ししている) ので、
+839 を追従してしまうと**その設定が成り立たない唯一の経路**になる — notify 由来の読みと全体読みが、同じ設定の下で
+同じ値について食い違う。Track Count は `sceneExternal` なので *Scene only* では外れ、送りの tap はシーン内の値
+なので残る。**索引の
 所有ノードと readback のゲートは 2 つの判断ではなく 1 つである。** 所有ノードを名乗らせてよいのは、`readback`
 がそのアドレスをそのノードの scoped read で読む間だけで、839 が `want("out.sdrec")` でゲートされているのは
 まさにこのため (`want` は `only === undefined || only.has(id)` なので、全体読みの挙動はどちらでも同一)。

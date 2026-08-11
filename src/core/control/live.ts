@@ -480,7 +480,12 @@ export class LiveSync {
     // decision they mirror. Same consumer shape as the loop above: register, and index to
     // the node whose scoped read repairs the value. The registration is therefore no
     // longer "the addresses the app writes" — see `followAddrs`.
-    for (const f of planToFollowOnlyAddrs(model)) {
+    //
+    // Scoped like the emitted set, and by the same `sceneExternal` predicate: under
+    // *Scene only* a whole-device read puts the plan's scene-external values back
+    // afterwards, so following one here would make the notify path and the full-read path
+    // disagree about the same value under the same preference.
+    for (const f of planToFollowOnlyAddrs(model, scope)) {
       addrs.push([f.param, f.x, f.y]);
       const direct = (PARAMS as Record<string, ParamSpec>)[f.name].follow === "direct";
       this.index.set(addrKey(f.param, f.x, f.y), { name: f.name, node: f.node, direct });

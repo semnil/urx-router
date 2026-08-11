@@ -102,7 +102,9 @@ tracks" and one the device has no meaning for.
 A Track Count changed **on the unit while live sync is connected** does reach the
 app: the unit announces the change, and the app subscribes to param 839 even
 though it never writes it. The plan's value and the record-track slots the graph
-gates by it follow.
+gates by it follow. Under Preferences → device scope *Scene only* it does not:
+Track Count is one of the device-wide settings that scope leaves alone, in both
+directions.
 
 This applies to the URX44 / URX44V only (the URX22 has no microSD recording).
 

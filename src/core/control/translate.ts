@@ -2019,8 +2019,15 @@ export interface FollowOnlyAddr {
  * the `sendTapWritable` test that suppresses the write there, and the two were written as
  * separate walks over the same (channel, bus) pairs long enough to disagree about which
  * sources count.
+ *
+ * `scope` is applied with the same `sceneExternal` predicate `planToCommands` uses, for a
+ * reason stronger than symmetry: under "scene" a whole-device read RESTORES the plan's
+ * scene-external values afterwards (`main.ts` applyDeviceStateScoped → scene-scope.ts), so
+ * a follow that pulled one in would be the one path in the app where *Scene only* does not
+ * hold — the notify-driven read and the full read would disagree about the same value
+ * under the same preference. Track Count is `sceneExternal`; the send taps are not.
  */
-export function planToFollowOnlyAddrs(model: DeviceModel): FollowOnlyAddr[] {
+export function planToFollowOnlyAddrs(model: DeviceModel, scope: WriteScope = "all"): FollowOnlyAddr[] {
   const out: FollowOnlyAddr[] = [];
   // CH → FX send taps: the broker publishes max_value 0 on 193/197/320/324, so PRE is
   // unwritable and the emit loop above skips SEND_TAP for them. Same source filter as
@@ -2042,7 +2049,8 @@ export function planToFollowOnlyAddrs(model: DeviceModel): FollowOnlyAddr[] {
   if (model.nodes.some((n) => n.id === "out.sdrec")) {
     out.push({ param: PARAMS.SD_REC_TRACK_COUNT.id, x: 0, y: 0, name: "SD_REC_TRACK_COUNT", node: "out.sdrec" });
   }
-  return out;
+  if (scope === "all") return out;
+  return out.filter((f) => (PARAMS[f.name] as ParamSpec).sceneExternal !== true);
 }
 
 /** One string write: the CH SETTING name for a node, on a single instance. */

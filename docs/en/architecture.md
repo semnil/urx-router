@@ -1594,7 +1594,11 @@ useless.
 
 Both are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside the emit decision they mirror, so the
 registration and the write suppression cannot drift apart; `live.ts` consumes that list the same way it consumes
-`planToCommands`. **The index entry and the readback gate are one decision, not two.** Naming an owner node is
+`planToCommands`, **including its write scope**. That scope is not symmetry for its own sake: under *Scene only* a
+whole-device read puts the plan's scene-external values back after reading (`applyDeviceStateScoped` →
+`core/scene-scope.ts`, which names `sdRecTrackCount`), so a follow that pulled 839 in would be the one path where
+that preference does not hold — the notify-driven read and the full read would disagree about one value under one
+setting. Track Count is `sceneExternal` and drops out under *Scene only*; the send taps are scene state and stay. **The index entry and the readback gate are one decision, not two.** Naming an owner node is
 correct only while `readback` reads that address on a scoped read of that node — 839 is gated on
 `want("out.sdrec")` for exactly this reason, and the full-read behaviour is identical either way because `want` is
 `only === undefined || only.has(id)`. Were that gate to go back to `only === undefined`, every front-panel Track

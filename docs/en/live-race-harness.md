@@ -811,7 +811,9 @@ agreement, zero findings.
   by hand since — the string-path addresses (`NAME`, `SWEET_SPOT`), and the read-only follows (839
   microSD Track Count, 193/197/320/324 the CH → FX send taps), which the unit announces and the app
   now listens for without ever writing them. Under device scope `"scene"` the 64 addresses that scope
-  drops are still undeliverable. The earlier "~1350 reads" figure was the fake answering a stimulus the shipped app
+  drops are still undeliverable, **and so is Track Count** — the read-only follows take the same
+  `sceneExternal` filter, because a full read under that scope restores the plan's scene-external
+  values afterwards and a followed 839 would contradict it. The earlier "~1350 reads" figure was the fake answering a stimulus the shipped app
   cannot receive. **The fake now mirrors `absorb`** — `pushNotify` filters per entry against the set
   the session registered, traces a refusal as its own `notify-drop` kind, and only `pushBulkChange`
   bypasses it — so those cases now measure the refusal instead. The consequence is worse than the

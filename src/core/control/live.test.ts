@@ -1078,9 +1078,18 @@ describe("LiveSync shared device address", () => {
 describe("LiveSync read-only follow registrations", () => {
   const addrsOf = (live: LiveSync): Set<string> => new Set(live.followAddrs().map((a) => a.join(":")));
   const FX_TAP_IDS = [193, 197, 320, 324];
-  const begun = (): { plan: Plan; live: LiveSync } => {
+  const begun = (scope?: "all" | "scene"): { plan: Plan; live: LiveSync } => {
     const plan = basePlan();
-    const live = liveFor(plan);
+    const live = scope
+      ? new LiveSync({
+          getModel: () => model,
+          getPlan: () => plan,
+          onError: () => {},
+          onSent: () => {},
+          onCollapsed: () => {},
+          getScope: () => scope,
+        })
+      : liveFor(plan);
     live.begin();
     return { plan, live };
   };
@@ -1122,6 +1131,22 @@ describe("LiveSync read-only follow registrations", () => {
     // front-panel turn.
     expect(addr?.node).toBe("out.sdrec");
     expect(addr?.direct).toBe(false);
+  });
+
+  // Under *Scene only* a whole-device read restores the plan's scene-external values
+  // afterwards (main.ts applyDeviceStateScoped -> scene-scope.ts, which names
+  // sdRecTrackCount). Following 839 there would make the notify path and the full-read
+  // path disagree about one value under one preference — so the follow set takes the same
+  // sceneExternal filter the emitted set takes.
+  it("drops the scene-external follow under scope 'scene', and keeps the taps", () => {
+    const { live } = begun("scene");
+    const addrs = addrsOf(live);
+    expect(addrs.has("839:0:0")).toBe(false);
+    expect(live.lookup(839, 0, 0)).toBeUndefined();
+    // The differential: this is a sceneExternal filter, not "drop the read-only follows".
+    // A send tap is scene state and still follows under the narrower scope.
+    expect(addrs.has("193:0:0")).toBe(true);
+    expect(live.lookup(193, 0, 0)?.node).toBe("ch1");
   });
 
   // A guard, not evidence: this one passes with the registrations and without them,
