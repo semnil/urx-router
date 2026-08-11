@@ -10,6 +10,7 @@
 // manual so a paint happens when a test says so instead of when a timer fires.
 
 import { recorder } from "./dyn-plot.test-util";
+import { recordWindowListeners } from "./listener-scope.test-util";
 import type { Recorder } from "./dyn-plot.test-util";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
@@ -60,6 +61,13 @@ export interface DynHostOptions {
  */
 export function dynHost(opts: DynHostOptions = {}): DynHost {
   const { modelId = "URX44V", live = false, plotSize = { w: 600, h: 320 } } = opts;
+
+  // A DynScreen registers its pointer-release handler on `window`, which outlives
+  // the test. A stale one only ever re-renders into its own detached box, so it
+  // hides nothing today — but it is the same leak that made a MIDI window
+  // assertion insensitive, and closing it keeps a later global-channel assertion
+  // here from inheriting the problem.
+  const windowScope = recordWindowListeners();
 
   const scrim = document.createElement("div");
   scrim.id = "dyn-screen-modal";
@@ -147,6 +155,8 @@ export function dynHost(opts: DynHostOptions = {}): DynHost {
     pending: () => queue.size,
     canvas: rec,
     restore: () => {
+      windowScope.stop();
+      windowScope.release();
       HTMLCanvasElement.prototype.getContext = realGetContext;
       globalThis.requestAnimationFrame = realRaf;
       globalThis.cancelAnimationFrame = realCancel;

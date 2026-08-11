@@ -4,7 +4,7 @@
 // boot, what a pushed state does to it, what a malformed payload does NOT do to it,
 // and what a teardown reports.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   receiver: undefined as ((payload: string) => void) | undefined,
@@ -22,18 +22,35 @@ vi.mock("../core/platform", () => ({
 
 import { initialMidiUiState, startMidiWindow } from "./midi-window-app";
 import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
+import { recordWindowListeners } from "./listener-scope.test-util";
 import { getLang, setLang, t } from "../i18n";
 
 const sentIntents = (): MidiUiIntent[] => mocks.toMain.mock.calls.map(([p]) => JSON.parse(p) as MidiUiIntent);
 
 const stateWith = (over: Partial<MidiUiState> = {}): MidiUiState => ({ ...initialMidiUiState(), ...over });
 
+// Everything the starts in one test registered on `window`, released between
+// tests. jsdom's window outlives the file, and `mocks.toMain` is shared by every
+// window ever started, so without this a stale `pagehide` listener reports
+// alongside the live one — measured at eleven `closed` intents for one dispatch.
+const windowScopes: Array<() => void> = [];
+
 function start(): HTMLElement {
   const host = document.createElement("div");
   document.body.append(host);
-  startMidiWindow(host);
+  const scope = recordWindowListeners();
+  try {
+    startMidiWindow(host);
+  } finally {
+    scope.stop();
+  }
+  windowScopes.push(scope.release);
   return host;
 }
+
+afterEach(() => {
+  for (const release of windowScopes.splice(0)) release();
+});
 
 beforeEach(() => {
   mocks.receiver = undefined;
@@ -176,7 +193,19 @@ describe("startMidiWindow — intents", () => {
   it("reports itself closed on pagehide", () => {
     start();
     window.dispatchEvent(new Event("pagehide"));
-    expect(sentIntents().at(-1)).toEqual({ type: "closed" });
+    // Exactly one, not "the last one was closed": every window this file has
+    // started shares `mocks.toMain`, so a count is what distinguishes THIS window
+    // reporting from a leaked listener reporting for it.
+    expect(sentIntents().filter((i) => i.type === "closed")).toEqual([{ type: "closed" }]);
+  });
+
+  // The listener is the window's, not the document's: two windows are two reports,
+  // and one that was torn down is none.
+  it("reports once per window that is still up", () => {
+    start();
+    start();
+    window.dispatchEvent(new Event("pagehide"));
+    expect(sentIntents().filter((i) => i.type === "closed")).toHaveLength(2);
   });
 
   // The far side of the relay is a window that may already be gone; there is
