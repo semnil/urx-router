@@ -552,7 +552,7 @@ it into:
 
 | Tier | Machine time | Slowest test | Runs from |
 | --- | --- | --- | --- |
-| `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside) |
+| `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, sharded three ways, on every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside) |
 | `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways |
 | `race-webkit` | 2.1 min | 48 s | `race.yml`, its own job |
 
