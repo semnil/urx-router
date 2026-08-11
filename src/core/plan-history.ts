@@ -97,7 +97,9 @@ export interface PatchTouch {
 export const MAX_ENTRIES = 100;
 
 // A ref is "nodeId:portId", so NUL cannot occur in either half of a wire key.
-const WIRE_SEP = "\u0000";
+// Exported because anything that RENDERS a contest key has to undo the join: the
+// separator is invisible on screen and illegal in a saved Markdown report.
+export const WIRE_SEP = "\u0000";
 
 function wireKey(from: string, to: string): string {
   return `${from}${WIRE_SEP}${to}`;

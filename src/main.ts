@@ -2266,10 +2266,13 @@ if (!DEMO) {
               ? t().status.fetchedUnread(device.model, merged.applied, unread)
               : t().status.fetchedDevice(device.model, merged.applied),
         );
-        // Read failures are otherwise console-only: capture a report to offer after
-        // disconnect (below), so the per-group reasons are visible without the console.
-        if (merged.errors.length) {
-          report = { filename: `${modelId}-fetch-errors.md`, markdown: formatReadbackReport(device.model, merged) };
+        // Read failures AND values the merge did not apply are otherwise console-only,
+        // and a packaged build has no inspector to read a console in: capture a report
+        // to offer after disconnect (below). The two travel together because both are
+        // "what this fetch did not do", and neither is visible from the status line —
+        // which says a plain success when only the second happened.
+        if (merged.errors.length || merged.unplaced.length) {
+          report = { filename: `${modelId}-fetch-report.md`, markdown: formatReadbackReport(device.model, merged) };
         }
       });
     } finally {
