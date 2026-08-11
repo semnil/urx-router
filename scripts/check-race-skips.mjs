@@ -25,8 +25,12 @@
 //
 //   `playwright test --list`  every collected case, with a declaration-time skip carried
 //                             as an annotation of type "skip".
-//   `vitest list --json`      the runnable cases only — skipped, conditionally skipped
-//                             and never-registered ones are already absent.
+//   `vitest run` on the guard files, because collecting is not enough on that side: a case
+//                             that skips from inside its own body — `({ skip }) => skip()` —
+//                             is listed exactly like one that asserts, and reports as a skip.
+//                             A guard has to have RUN, so the state it ended in is what is
+//                             read. Its cost is the guard files alone (measured: 0.4 s for
+//                             the one file the ledger currently names).
 //
 // A ledger row names a case in full — every describe title down to the leaf, joined with
 // vitest's own separator (Playwright reports the tree as a tree, so the same join is applied
@@ -40,8 +44,7 @@
 // duplicate-title refusal does not catch them because it joins on a different separator. So
 // the name is not trusted to be unique — it is CHECKED. A ledger row whose name matches more
 // than one collected case is refused, and so is a guardedBy that matches more than one
-// runnable test. Vitest reports its names already joined and offers no structured form, so
-// this is the only shape the check can take on that side; applying it to both keeps one rule.
+// runnable test.
 //
 // Both runners are asked for their report in a FILE rather than on stdout. A single top-level
 // console.log in any spec prints ahead of the JSON, and parsing stdout then fails on a tree
@@ -54,10 +57,14 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// The ledger writes repo-relative paths with forward slashes on every platform; Windows would
+// otherwise hand back src\core\… and no entry would match anything.
+const rel = (p) => relative(repo, p).split(sep).join("/");
 const RACE_DIR = "e2e/race";
 const LEDGER = `${RACE_DIR}/skip-ledger.json`;
 // What vitest prints between a describe and what it contains; Playwright reports the tree as
@@ -74,8 +81,19 @@ function fatal(lines) {
   process.exit(1);
 }
 
-function run(bin, args, env) {
-  const r = spawnSync(join(repo, "node_modules/.bin", bin), args, {
+// Each runner is started as its own JavaScript entry under this node, not through
+// node_modules/.bin. That directory holds a shell script and a .cmd on Windows, and node
+// refuses to spawn a .cmd without a shell — so the .bin path is one that works on the CI
+// runner and not on half the machines this repo is developed on.
+const require = createRequire(import.meta.url);
+function entry(pkg, bin) {
+  const manifest = require.resolve(`${pkg}/package.json`);
+  const declared = JSON.parse(readFileSync(manifest, "utf8")).bin;
+  return resolve(dirname(manifest), typeof declared === "string" ? declared : declared[bin]);
+}
+
+function run(pkg, bin, args, env) {
+  const r = spawnSync(process.execPath, [entry(pkg, bin), ...args], {
     cwd: repo,
     encoding: "utf8",
     env: { ...process.env, ...env },
@@ -101,7 +119,7 @@ function readReport(file, r, what) {
 function playwright(project) {
   const file = join(reports, `playwright-${project}.json`);
   const what = `playwright --list (${project})`;
-  const r = run("playwright", ["test", `--project=${project}`, "--list", "--reporter=json"], {
+  const r = run("@playwright/test", "playwright", ["test", `--project=${project}`, "--list", "--reporter=json"], {
     PLAYWRIGHT_JSON_OUTPUT_NAME: file,
   });
   const json = readReport(file, r, what);
@@ -112,7 +130,7 @@ function playwright(project) {
   const walk = (suite, trail) => {
     for (const spec of suite.specs ?? []) {
       out.push({
-        file: relative(repo, resolve(root, spec.file)),
+        file: rel(resolve(root, spec.file)),
         title: [...trail, spec.title].join(NAME_SEP),
         skipped: (spec.tests ?? []).some((t) => (t.annotations ?? []).some((a) => a.type === "skip")),
       });
@@ -123,17 +141,23 @@ function playwright(project) {
   return out;
 }
 
-// Vitest lists what it would RUN. A skipped case, one inside a describe.skipIf/runIf that
-// resolves away, and one that never registers are all simply absent — which is the
-// question a guarantor has to answer, asked of the thing that answers it. Its `name` is
-// already the full name; it is carried through as printed, never split, because a leaf
-// title may itself contain the separator.
-function vitest() {
-  const file = join(reports, "vitest.json");
-  const r = run("vitest", ["list", `--json=${file}`]);
-  const json = readReport(file, r, "vitest list");
-  if (r.status !== 0) fatal([`vitest list exited ${r.status}`, ...r.stderr.trim().split("\n").slice(0, 10)]);
-  return json.map((t) => ({ file: relative(repo, t.file), title: t.name }));
+// The guard files, actually run: every case in them with the state vitest ends up giving it.
+// A file matching nothing is not an error here — the guardedBy naming it is reported as a row
+// problem, which says far more than "no test files found". The reporter's own `fullName` joins
+// on a space, so the name is rebuilt from the structured ancestors instead.
+function vitestRun(files) {
+  const file = join(reports, "vitest-run.json");
+  const args = ["run", "--reporter=json", `--outputFile=${file}`, "--passWithNoTests", ...files];
+  const r = run("vitest", "vitest", args);
+  const json = readReport(file, r, "vitest run");
+  const out = new Map();
+  for (const result of json.testResults ?? []) {
+    for (const a of result.assertionResults ?? []) {
+      const k = key(rel(result.name), [...(a.ancestorTitles ?? []), a.title].join(NAME_SEP));
+      out.set(k, [...(out.get(k) ?? []), a.status]);
+    }
+  }
+  return out;
 }
 
 const problems = [];
@@ -155,10 +179,6 @@ for (const c of collected) {
   found.set(k, c);
 }
 
-const runnable = new Map();
-for (const t of playwright("chromium")) if (!t.skipped) tally(runnable, key(t.file, t.title));
-for (const t of vitest()) tally(runnable, key(t.file, t.title));
-
 const ledger = JSON.parse(readFileSync(join(repo, LEDGER), "utf8"));
 const entries = new Map();
 for (const s of ledger.skips) {
@@ -175,6 +195,7 @@ for (const [k, s] of entries) {
 }
 
 const unguarded = [];
+const guards = [];
 for (const [k, s] of entries) {
   if (!found.has(k)) continue;
   if (Boolean(s.guardedBy) === Boolean(s.unguarded)) {
@@ -185,20 +206,52 @@ for (const [k, s] of entries) {
     unguarded.push(s);
     continue;
   }
-  const g = s.guardedBy;
-  const gk = key(g.file, g.title);
-  const named = runnable.get(gk) ?? 0;
-  if (gk === k) {
-    problems.push(`${LEDGER}: "${s.title}" is guarded by itself`);
-  } else if (named === 0) {
+  const gk = key(s.guardedBy.file, s.guardedBy.title);
+  if (gk === k) problems.push(`${LEDGER}: "${s.title}" is guarded by itself`);
+  else guards.push({ entry: s, gk, at: `${s.guardedBy.file} › "${s.guardedBy.title}"` });
+}
+
+// A guard the ordinary E2E tier runs is verified as far as this check can reach: it is
+// collected and its declaration carries no skip. Reading its outcome would mean building the
+// bundle and serving it, which is the tier's own job and minutes rather than seconds — so
+// those guards are counted in the summary instead of passing as if they had been run.
+const chromium = new Map();
+for (const t of playwright("chromium")) if (!t.skipped) tally(chromium, key(t.file, t.title));
+const e2eGuards = guards.filter((x) => chromium.has(x.gk));
+const unitGuards = guards.filter((x) => !chromium.has(x.gk));
+
+// Everything else has to be a vitest test, and those are RUN. Collection is not enough there:
+// `it("...", ({ skip }) => skip())` is listed like any other case and reports as a skip, so a
+// guard that never reaches its assertions would otherwise be indistinguishable from one that
+// holds. Only the guard's own result is read — a sibling failing in the same file is the
+// suite's business, not this check's.
+const results = unitGuards.length ? vitestRun([...new Set(unitGuards.map((x) => x.entry.guardedBy.file))]) : new Map();
+
+for (const x of e2eGuards) {
+  const named = chromium.get(x.gk);
+  if (named > 1) {
     problems.push(
-      `${LEDGER}: "${s.title}" is guarded by ${g.file} › "${g.title}", which no per-PR runner reports as a ` +
-        `runnable test — a guard that does not run cannot report an expired reason`,
+      `${LEDGER}: "${x.entry.title}" is guarded by ${x.at}, which is the full name of ${named} cases the ` +
+        `ordinary tier collects — the row does not say which one holds the reason`,
     );
-  } else if (named > 1) {
+  }
+}
+for (const x of unitGuards) {
+  const states = results.get(x.gk) ?? [];
+  if (states.length === 0) {
     problems.push(
-      `${LEDGER}: "${s.title}" is guarded by ${g.file} › "${g.title}", which is the full name of ${named} ` +
+      `${LEDGER}: "${x.entry.title}" is guarded by ${x.at}, which no per-PR runner reports as a runnable test ` +
+        `— a guard that does not run cannot report an expired reason`,
+    );
+  } else if (states.length > 1) {
+    problems.push(
+      `${LEDGER}: "${x.entry.title}" is guarded by ${x.at}, which is the full name of ${states.length} ` +
         `runnable tests — the row does not say which one holds the reason`,
+    );
+  } else if (states[0] !== "passed") {
+    problems.push(
+      `${LEDGER}: "${x.entry.title}" is guarded by ${x.at}, which vitest reports as "${states[0]}" rather than ` +
+        `a pass — a guard whose assertions do not execute cannot report an expired reason`,
     );
   }
 }
@@ -211,6 +264,10 @@ if (problems.length) {
 
 console.log(`OK: ${found.size} permanent skip(s) of ${collected.length} cases Playwright collects in ${RACE_DIR}`);
 console.log(
-  `    ${found.size - unguarded.length} guarded by a test a per-PR runner runs, ${unguarded.length} held by nothing:`,
+  `    ${unitGuards.length} guarded by a unit test that runs and passes, ${unguarded.length} held by nothing:`,
 );
 for (const s of unguarded) console.log(`    - ${s.file.replace(`${RACE_DIR}/`, "")} › ${s.title}`);
+if (e2eGuards.length) {
+  console.log(`    ${e2eGuards.length} guarded by an ordinary-tier E2E case — collected here, not run here:`);
+  for (const x of e2eGuards) console.log(`    - ${x.entry.title} <- ${x.at}`);
+}
