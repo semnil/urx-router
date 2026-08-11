@@ -100,6 +100,51 @@ describe("errorText", () => {
     });
   });
 
+  // Being an Error is no guarantee its message can be read, or that it is a string.
+  // Three separate hazards, all on the reporting path, all measured to throw before
+  // the guard covered them: the prototype walk `instanceof` performs, the message
+  // read, and the string conversion.
+  describe("an Error that refuses to describe itself", () => {
+    it("answers empty for a message getter that throws", () => {
+      const err = new Error("x");
+      Object.defineProperty(err, "message", {
+        get() {
+          throw new Error("getter exploded");
+        },
+      });
+      expect(() => errorText(err)).not.toThrow();
+      expect(errorText(err)).toBe("");
+      expect(() => errorCode(err)).not.toThrow();
+    });
+
+    // A non-string message has no `.indexOf`, which is what splits code from detail.
+    it.each([
+      ["a symbol", Symbol("s"), "Symbol(s)"],
+      ["a number", 42, "42"],
+    ])("converts %s message rather than splitting it as a string", (_name, value, expected) => {
+      const err = new Error("x");
+      Object.defineProperty(err, "message", { value, writable: true });
+      expect(() => errorText(err)).not.toThrow();
+      expect(errorText(err)).toBe(expected);
+    });
+
+    // `instanceof` walks the target's prototype chain, so a Proxy trap throws
+    // before the message is ever reached.
+    it("answers empty when the instanceof check itself throws", () => {
+      const hostile = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("proto exploded");
+          },
+        },
+      );
+      expect(() => errorText(hostile)).not.toThrow();
+      expect(errorText(hostile)).toBe("");
+      expect(() => errorCode(hostile)).not.toThrow();
+    });
+  });
+
   // Every code the shell can raise must resolve, or that failure path shows the raw
   // code instead of a message. Codes that carry a detail are listed with one, since
   // that is the only shape they are raised in.

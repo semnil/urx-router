@@ -109,13 +109,15 @@ export const SHELL_CODES: Record<string, keyof Messages["error"]["shell"]> = {
  *  as nothing, and the caller decides what an empty description is worth. */
 function split(err: unknown): { message: string; code: string; detail: string } {
   let message: string;
-  if (err instanceof Error) message = err.message;
-  else {
-    try {
-      message = String(err);
-    } catch {
-      message = "";
-    }
+  try {
+    // All three hazards are inside the one try, because all three are reachable:
+    // `instanceof` runs the target's [[GetPrototypeOf]], which a Proxy trap can
+    // throw from; `.message` can be a getter that throws; and a message that is not
+    // a string has no `.indexOf` for the split below. `String()` covers the last —
+    // including a symbol, which it converts rather than refusing.
+    message = String(err instanceof Error ? err.message : err);
+  } catch {
+    message = "";
   }
   const sep = message.indexOf(": ");
   if (sep === -1) return { message, code: message, detail: "" };
