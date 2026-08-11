@@ -115,7 +115,7 @@ describe("errorText", () => {
   // the guard covered them: the prototype walk `instanceof` performs, the message
   // read, and the string conversion.
   describe("an Error that refuses to describe itself", () => {
-    it("answers empty for a message getter that throws", () => {
+    it("substitutes a reason when the message getter throws", () => {
       const err = new Error("x");
       Object.defineProperty(err, "message", {
         get() {
@@ -140,7 +140,7 @@ describe("errorText", () => {
 
     // `instanceof` walks the target's prototype chain, so a Proxy trap throws
     // before the message is ever reached.
-    it("answers empty when the instanceof check itself throws", () => {
+    it("substitutes a reason when the instanceof check itself throws", () => {
       const hostile = new Proxy(
         {},
         {
