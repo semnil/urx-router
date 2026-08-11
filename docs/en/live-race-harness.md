@@ -547,11 +547,15 @@ rejects the wire before adoption, so what would be measured is the load report, 
 The project boundary is also the CI tiering, and these are the numbers that cut it there. Measured on a
 two-worker `ubuntu-latest` runner:
 
-| Tier | Tests | Machine time | Slowest test | Runs from |
-| --- | --- | --- | --- | --- |
-| `chromium` — the ordinary suite | 383 | 3.5 min | 2.7 s | `ci.yml`, every PR and push to main |
-| `race` — the harness | 156 | 22.4 min | 60 s | `race.yml`, sharded three ways |
-| `race-webkit` | 5 | 28 s | 26 s | `race.yml`, its own job |
+| Tier | Machine time | Slowest test | Runs from |
+| --- | --- | --- | --- |
+| `chromium` — the ordinary suite | 3.5 min | 2.7 s | `ci.yml`, every PR and push to main |
+| `race` — the harness | 22.4 min | 60 s | `race.yml`, sharded three ways |
+| `race-webkit` | 28 s | 26 s | `race.yml`, its own job |
+
+Case counts are deliberately not a column here. They move with every pull request that adds a test —
+the ordinary tier's had drifted 45 cases past what this table claimed before anyone noticed — and
+nothing about the tiering follows from them. What cut the boundary is the time.
 
 The harness is **86% of the E2E machine time on its own**, which is what took it off the ordinary PR
 tier: at 3.5 minutes the ordinary suite is cheaper to run per-PR than to run after the merge, and at
