@@ -22,25 +22,38 @@ interface Recorded {
 }
 
 /**
- * Start recording `window` registrations. Nest LIFO — `stop()` restores only if
- * the patch it installed is still the active one, so an inner scope that outlives
- * its parent leaves the parent's in place rather than tearing it out.
+ * Start recording `window` registrations.
+ *
+ * `window.addEventListener` is already an OWN accessor property of jsdom's window
+ * — the recorder does not make it one — so assigning runs its setter and the
+ * accessor survives. Restoring by assignment is therefore exact, and deleting the
+ * property would be wrong: it would take jsdom's own accessor away and leave the
+ * window inheriting from the prototype, which is not the state anything started
+ * in. `listener-scope.test.ts` pins both facts.
+ *
+ * Nest LIFO. `stop()` restores only when the patch it installed is still the
+ * active one, so an inner scope that outlives its parent does not tear the
+ * parent's out — and a scope that has stopped is inert either way, so a patch left
+ * installed by an out-of-order stop forwards without recording rather than
+ * collecting registrations for a scope that is finished with.
  */
 export function recordWindowListeners(): { stop: () => void; release: () => void } {
   const seen: Recorded[] = [];
   const real = window.addEventListener;
+  let recording = true;
   // Forwarded as the tuple the real signature takes, so the pass-through cannot
   // drift from it — a hand-written parameter list has to restate the nullable
   // callback and the boolean-or-options third argument, and gets one of them wrong.
   const patched = function (this: Window, ...args: Parameters<typeof window.addEventListener>): void {
     const [type, fn, opts] = args;
-    if (fn) seen.push({ type, fn, opts });
+    if (recording && fn) seen.push({ type, fn, opts });
     real.apply(this, args);
   } as typeof window.addEventListener;
   window.addEventListener = patched;
 
   return {
     stop: () => {
+      recording = false;
       if (window.addEventListener === patched) window.addEventListener = real;
     },
     release: () => {
