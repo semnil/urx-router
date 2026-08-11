@@ -242,7 +242,10 @@ test.describe("T3b undo", () => {
     // the pre-gesture level nor the factory one.
     const track = (await faderOf(page, "CH 1").boundingBox())!;
     const x = track.x + track.width / 2;
-    const qy = track.y + track.height * 0.32;
+    // Clear of the cap, which the press would otherwise grab where it is and move
+    // nothing — the fader is back at the pre-drag level here, so the cap sits around
+    // 25 % of the travel and is ~14 % of it tall.
+    const qy = track.y + track.height * 0.6;
     await mark(page, "dblclick");
     await page.mouse.move(x, qy);
     await page.mouse.down({ clickCount: 1 });

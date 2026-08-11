@@ -79,8 +79,10 @@ visually fuse into one 0 dB reference line, so a strip's send distribution reads
 ### Column fader
 
 - Snaps to the `LEVEL_STEPS_DB` grid (41 detents over ~80 px ≈ 2 px per detent).
-- **Relative drag** with pointer capture — no absolute jump-to-click (a 1 px aim error is a full
-  detent and live sync writes immediately). First write only after a 3 px drag threshold
+- **Relative drag** with pointer capture — no absolute jump-to-click *at all* (a 1 px aim error is a
+  full detent and live sync writes immediately). This is where it parts company with the main fader,
+  which grabs its cap where it is but still jumps on a press that lands on the bare track
+  ([architecture.md](architecture.md) "Pressing the main fader"). First write only after a 3 px drag threshold
   (protects against mis-grabs and double-click). Shift-drag = fine mode (per detent).
 - Keyboard: Arrow = 1 detent, PageUp/PageDown = 6, Home = max, End = −∞ (same as the main fader).
   Double-click = factory reset. Scroll wheel = 1 detent per notch (mirrors Arrow; the main fader,

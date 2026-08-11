@@ -504,6 +504,66 @@ test("the -∞ tick sits at the fader's bottom of travel", async ({ page }) => {
   expect(Math.abs(cap!.y + cap!.height / 2 - (tick!.y + tick!.height / 2))).toBeLessThanOrEqual(1);
 });
 
+// The travel is a few pixels per detent, so a press that jumped to the pointer moved
+// the level — and, live, the unit — before the operator had moved at all. The cap is
+// grabbed where it is instead, anywhere on it rather than at its centre alone.
+test("a press anywhere on the fader cap grabs it without moving the level", async ({ page }) => {
+  const s = strip(page, "CH 1");
+  const readout = s.locator(".con-readout .rd:not(.mtr) .rv");
+  // Step off the factory value first: a double-click resets the fader to it, so a
+  // stray one would otherwise read as "the press changed nothing".
+  await s.locator(".con-fader").focus();
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  const before = (await readout.textContent())!;
+
+  const cap = (await s.locator(".con-fader .cap").boundingBox())!;
+  const x = cap.x + cap.width / 2;
+  for (const y of [cap.y + 1, cap.y + cap.height / 2, cap.y + cap.height - 1]) {
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.up();
+    await expect(readout).toHaveText(before);
+  }
+});
+
+// …and from that grab the cap tracks the pointer 1:1, which it did not while the drag
+// was measured against the groove's inset rather than the cap's own travel.
+test("a grabbed fader cap moves by the distance dragged", async ({ page }) => {
+  const s = strip(page, "CH 1");
+  const fader = (await s.locator(".con-fader").boundingBox())!;
+  const detent = fader.height / 40; // the level grid's detents span the cap's travel
+  const cap = (await s.locator(".con-fader .cap").boundingBox())!;
+  const x = cap.x + cap.width / 2;
+  const from = cap.y + cap.height / 2;
+
+  await page.mouse.move(x, from);
+  await page.mouse.down();
+  await page.mouse.move(x, from + 3 * detent, { steps: 4 });
+  await page.mouse.up();
+
+  const after = (await s.locator(".con-fader .cap").boundingBox())!;
+  // Half a detent for the grid snap, a pixel for the device scale factor.
+  expect(Math.abs(after.y - cap.y - 3 * detent)).toBeLessThanOrEqual(detent / 2 + 1);
+});
+
+// A press on the bare track still jumps, as an <input type="range"> does when clicked
+// away from its thumb — and it now lands the cap centre on the pointer rather than up
+// to six pixels off it.
+test("a press on the bare fader track puts the cap under the pointer", async ({ page }) => {
+  const s = strip(page, "CH 1");
+  const fader = (await s.locator(".con-fader").boundingBox())!;
+  const detent = fader.height / 40;
+  const target = fader.y + fader.height * 0.8; // well below the factory cap position
+
+  await page.mouse.move(fader.x + fader.width / 2, target);
+  await page.mouse.down();
+  await page.mouse.up();
+
+  const cap = (await s.locator(".con-fader .cap").boundingBox())!;
+  expect(Math.abs(cap.y + cap.height / 2 - target)).toBeLessThanOrEqual(detent / 2 + 1);
+});
+
 test("a node hidden in the graph drops from the console", async ({ page }) => {
   await expect(strip(page, "CH 1")).toBeVisible();
   await page.click("#btn-view-graph");

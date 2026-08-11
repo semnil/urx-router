@@ -399,11 +399,26 @@ test.describe("T0b baseline sweeps", () => {
 
     const gestures: Gesture[] = [
       {
+        // Off the cap, and far enough off that the fraction survives a shorter fader:
+        // the cap is ~14 % of the travel at the harness's viewport, centred on the
+        // factory 0 dB at 25 %, so 0.3 was inside it and this gesture silently became
+        // the grab below.
         label: "main fader jump-to-click",
         run: async () => {
           const b = (await faderOf(page, "CH 1").boundingBox())!;
-          await page.mouse.click(b.x + b.width / 2, b.y + b.height * 0.3);
+          await page.mouse.click(b.x + b.width / 2, b.y + b.height * 0.6);
         },
+      },
+      {
+        // The other half of the press: on the cap it is grabbed where it is, so the
+        // press alone writes nothing — and nothing reaches the unit until the pointer
+        // actually moves.
+        label: "main fader cap grab",
+        run: async () => {
+          const c = (await faderOf(page, "CH 1").locator(".cap").boundingBox())!;
+          await page.mouse.click(c.x + c.width / 2, c.y + c.height / 2);
+        },
+        silent: true,
       },
       { label: "main fader drag 40 px in 6 steps", run: () => dragBy(page, faderOf(page, "CH 1"), 0, 40, 6) },
       { label: "fader ArrowUp", run: () => keyOn(faderOf(page, "CH 1"), "ArrowUp") },

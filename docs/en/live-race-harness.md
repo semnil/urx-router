@@ -205,7 +205,7 @@ single source of truth. This table states what each case measures.
 | `baseline-quiescent-floor` | mixed | That an idle live session produces no plan write and no readback. Every other verdict is a difference against this trace |
 | `baseline-single-edit-latency-ladder` | console | One edit at four latencies: the canonical timeline every phase offset is measured against, and how much lateness is the link |
 | `baseline-graph-surface-sweep` | graph | That every GRAPH gesture is reachable by the driver's vocabulary, and that gestures which should write nothing really do not |
-| `baseline-console-surface-sweep` | console | Every CONSOLE control, exercising the three separate fader-travel encodings back to back at known offsets |
+| `baseline-console-surface-sweep` | console | Every CONSOLE control, exercising the separate fader-travel encodings back to back at known offsets — including both halves of a main-fader press: on the cap it is grabbed and writes nothing, off it the cap jumps under the pointer |
 | `baseline-inspector-surface-sweep` | inspector | Every control on every node kind, pinning the "toggles re-render, sliders do not" rule per control |
 | `baseline-tuning-surface-sweep` | tuning | GATE / COMP / EQ screens, all three ways of closing, and the reach of the fine grid |
 | `baseline-shell-flows-sweep` | mixed | Consent, licenses, load report, rate choice, updater, dropzone, recent files and every Preferences row |
@@ -467,6 +467,15 @@ class (l) had already fixed on the param side.
   locator resolutions) is added to every rung and is **one-directional**: it only ever pushes a
   gesture LATER, so a rung placed after a window's edge is robust and one placed before it is what a
   slow runner takes away
+- **A gesture that aims at a fraction of a control's travel is aiming relative to a value that can
+  move.** `t0b`'s `main fader jump-to-click` pressed at 30 % of the fader and `t3b`'s double-click
+  preamble at 32 %, both only in order to make the fader move. The factory 0 dB puts the cap's centre
+  at 25 % and the cap covers about 14 % of the travel at this project's viewport, so both were
+  *inside* it — and the day the main fader started grabbing its cap rather than jumping, both
+  silently became gestures that write nothing. The default 800 px-high window would have put them
+  clear of it, so a viewport change alone flips the meaning. Aim from the target's own rectangle, and
+  when a control gains a "press here writes nothing" half, register that half as a `silent: true`
+  gesture — the sweep's second assertion is what then carries both
 - **The measured interval has to be the DECIDING one, and the two are easy to confuse.** A gesture
   that arms an app-side window is measured from the arming instant, not from the first step after it:
   `t1b`'s starvation stream sampled its gaps from the first tick (`at.slice(1)`), so its
