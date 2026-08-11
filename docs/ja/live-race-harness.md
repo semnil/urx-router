@@ -523,7 +523,7 @@ undo は WebKit 自身が持ち、アプリは意図的に `preventDefault` し�
 
 | ティア | マシン時間 | 最遅テスト | 実行元 |
 | --- | --- | --- | --- |
-| `chromium` — 従来のスイート | 3.5 分 | 2.7 秒 | `ci.yml`。Markdown / docs のみでない全 PR と main への push |
+| `chromium` — 従来のスイート | 3.5 分 | 2.7 秒 | `ci.yml`。Markdown / docs のみの変更を除く全 PR と main への push (生成物の `model-*.md` は例外) |
 | `race` — ハーネス | 22.4 分 | 60 秒 | `race.yml`。3 分割 |
 | `race-webkit` | 28 秒 | 26 秒 | `race.yml`。専用ジョブ |
 

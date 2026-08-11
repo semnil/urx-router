@@ -103,8 +103,13 @@ UPDATE_SKILL=1 pnpm test skill-export
 - **プルリクエストのタイトルと本文も英語**。
 - UI 変更には変更前後のスクリーンショットを添える。
 - プルリクエストの CI はビルド・`pnpm typecheck:e2e`・ユニットテスト・通常の E2E スイート・
-  `cargo test` を実行する。サードパーティライセンスの生成はマージ後に走り、ライブ同期の
-  レース診断ハーネスはバージョンを変更するプルリクエストでのみ走って全 PR では走らない。
+  `cargo test` を実行する — この作業は原則として Markdown / docs のみの変更では省略される。例外は
+  スキルの生成物であるモデル参照 (`.claude/skills/urx-routing-planner/references/model-*.md`) で、
+  Markdown だが生成器との差分を検査するため通常 CI も走る。サードパーティライセンスの生成は
+  マージ後に走り、ライブ同期のレース診断ハーネスはバージョンを変更するプルリクエストでのみ走って
+  全 PR では走らない。
+- 文書と設定の検査は上記に関わらず**すべての**プルリクエストで走る — Markdown テーブルの整合性・
+  再利用アセット索引・`pnpm check:gates`。
 - マージは `ci-required` / `docs-required` / `format` / `race-required` の 4 つを待つ。いずれもすべての
   プルリクエストで結果を返すため、対象外としてスキップされた変更でも「永久に来ないチェック」
   ではなく緑のチェックが付く。これを保つのが `pnpm check:gates` で、`.github/workflows/`

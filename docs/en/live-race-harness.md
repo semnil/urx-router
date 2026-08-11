@@ -549,7 +549,7 @@ two-worker `ubuntu-latest` runner:
 
 | Tier | Machine time | Slowest test | Runs from |
 | --- | --- | --- | --- |
-| `chromium` — the ordinary suite | 3.5 min | 2.7 s | `ci.yml`, every PR and push to main that is not Markdown/docs-only |
+| `chromium` — the ordinary suite | 3.5 min | 2.7 s | `ci.yml`, every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside) |
 | `race` — the harness | 22.4 min | 60 s | `race.yml`, sharded three ways |
 | `race-webkit` | 28 s | 26 s | `race.yml`, its own job |
 
