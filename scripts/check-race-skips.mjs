@@ -29,9 +29,12 @@
 //   - it may not live in e2e/race: that tier runs on the version-bump pull request alone,
 //     so its assertions can break for dozens of merges while this check still sees the
 //     title. Being outside that directory is not enough either — a file no runner
-//     collects is no better, so the path must match what vitest and the ordinary
-//     Playwright project actually take, and those two patterns are re-read from the
-//     configs below so this copy of them cannot drift in silence.
+//     collects is no better, so the path has to match what vitest and the ordinary
+//     Playwright project actually take, and those globs are READ OUT of the two configs
+//     rather than copied here. The first version copied them and failed on its first
+//     encounter with an unrelated edit: vitest's `include` grew a second entry, the
+//     copied literal stopped matching, and the check reported drift where the meaning
+//     had not changed. A derived list has nothing to drift.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,25 +43,50 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RACE_DIR = "e2e/race";
 const LEDGER = join(RACE_DIR, "skip-ledger.json");
 
-// The two collection rules a guarantor can live under, and the literal each is read from.
-// If a config stops saying its half, the mirror is stale and this check says so rather
-// than quietly widening.
-const COLLECTED = [
-  {
-    config: "vitest.config.ts",
-    literal: `include: ["src/**/*.test.ts"]`,
-    takes: (f) => f.startsWith("src/") && f.endsWith(".test.ts"),
-    label: "vitest",
-  },
-  {
-    config: "playwright.config.ts",
-    literal: `testIgnore: "race/**"`,
-    takes: (f) => f.startsWith("e2e/") && !f.startsWith(`${RACE_DIR}/`) && /\.(spec|test)\.ts$/.test(f),
-    label: "the ordinary Playwright project",
-  },
-];
-
 const read = (rel) => readFileSync(join(repo, rel), "utf8");
+// The three glob shapes these configs use, and no more: `**/` at any depth, a trailing
+// `**` for everything below, `*` within one segment. Translating a trailing `**` as "any
+// depth" and nothing else is what let e2e/race back in — the pattern then demanded a path
+// ENDING in a slash, so no file matched it and testIgnore ignored nothing. The two
+// placeholders keep each rewrite from being re-read by the ones after it.
+const globRe = (g) => {
+  const src = g
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\/\*\*$/, "@BELOW@")
+    .replace(/\*\*\//g, "@DEEP@")
+    .replace(/\*/g, "[^/]*")
+    .replace(/@BELOW@/g, "(?:/.*)?")
+    .replace(/@DEEP@/g, "(?:[^/]*/)*");
+  return new RegExp(`^${src}$`);
+};
+
+// Where a guarantor may live, derived from the configs that decide it. Anything these
+// cannot be read out of is a hard failure: guessing would put the allow-list back to
+// being a copy, and a wrong one is exactly the shape this whole check is about.
+function collectionRules() {
+  const rules = [];
+  const vitest = read("vitest.config.ts");
+  const include = vitest.match(/\binclude:\s*\[([^\]]*)\]/);
+  if (!include) throw new Error("vitest.config.ts: could not read test.include");
+  const globs = [...include[1].matchAll(/["'`]([^"'`]+)["'`]/g)].map((m) => m[1]);
+  rules.push({
+    label: `vitest (${globs.join(", ")})`,
+    takes: (f) => globs.some((g) => globRe(g).test(f)),
+  });
+
+  const pw = read("playwright.config.ts");
+  const dir = pw.match(/\btestDir:\s*["'`]([^"'`]+)["'`]/);
+  const ignore = pw.match(/\btestIgnore:\s*["'`]([^"'`]+)["'`]/);
+  if (!dir || !ignore) throw new Error("playwright.config.ts: could not read testDir / testIgnore");
+  const ignored = globRe(`${dir[1]}/${ignore[1]}`);
+  rules.push({
+    label: `the ordinary Playwright project (${dir[1]}, minus ${ignore[1]})`,
+    // Playwright's default testMatch, which this config does not override.
+    takes: (f) => f.startsWith(`${dir[1]}/`) && /\.(spec|test)\.[jt]sx?$/.test(f) && !ignored.test(f),
+  });
+  return rules;
+}
+
 const key = (file, title) => `${file}::${title}`;
 const quoted = (title) => [JSON.stringify(title), `'${title}'`, `\`${title}\``];
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -127,17 +155,11 @@ for (const file of collected(RACE_DIR)) {
   for (const m of withoutComments(read(file)).matchAll(SKIP)) found.set(key(file, m[2]), { file, title: m[2] });
 }
 
+const RULES = collectionRules();
 const ledger = JSON.parse(read(LEDGER));
 const entries = new Map(ledger.skips.map((s) => [key(s.file, s.title), s]));
 const problems = [];
 
-for (const { config, literal } of COLLECTED) {
-  if (!read(config).includes(literal)) {
-    problems.push(
-      `${config} no longer says \`${literal}\` — the guarantor allow-list here mirrors it and is now stale`,
-    );
-  }
-}
 for (const [k, { file, title }] of found) {
   if (!entries.has(k)) problems.push(`${file}: skip "${title}" is not in ${LEDGER}`);
 }
@@ -162,11 +184,11 @@ for (const [k, s] of entries) {
     problems.push(`${where} is guarded by itself`);
     continue;
   }
-  const runner = COLLECTED.find((c) => c.takes(g.file));
+  const runner = RULES.find((c) => c.takes(g.file));
   if (!runner) {
     problems.push(
-      `${where} is guarded by ${g.file}, which neither vitest nor the ordinary Playwright project collects — ` +
-        `a guard nothing runs cannot report an expired reason`,
+      `${where} is guarded by ${g.file}, which no runner collects — a guard nothing runs cannot ` +
+        `report an expired reason. Collected here: ${RULES.map((r) => r.label).join("; ")}`,
     );
     continue;
   }
