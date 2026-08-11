@@ -2,8 +2,12 @@
 # one that matters here is `project`: target `auto` (the base commit's coverage) with a
 # threshold of 0%, so ANY decrease fails the check.
 #
-# Two jobs upload for a commit — `unit` from the frontend job and `e2e` from the E2E job —
-# and the E2E half is not reproducible to the line: a spec that races a repaint or a
+# Four uploads arrive for a commit — `unit` from the frontend job, and `e2e` from each of
+# the three E2E shards. Codecov merges them: same flag or not, a line reached by any upload
+# is covered, which is what lets the tier be split across jobs without the figure moving
+# (measured on the pull request that split it: 91.39%, -0.01% against its base).
+#
+# The E2E half is not reproducible to the line: a spec that races a repaint or a
 # timeout takes a slightly different path each run. Eleven CI runs over identical
 # application code, in two generations of the source, measure that jitter (2026-08-11):
 #

@@ -13,8 +13,10 @@ function normalized(path: string): string {
 }
 
 /** Vite source maps may name a source as an absolute path or as ../../src/....
- * Codecov must see the same repo-relative path as Vitest's LCOV or the two uploads
- * become two unrelated files instead of one merged reading. */
+ * Every coverage upload for a commit has to name a source the same repo-relative way —
+ * Vitest's LCOV is the one to match — or Codecov files them as unrelated sources instead
+ * of merging them into one reading. Count-independent on purpose: the E2E half is however
+ * many shards ci.yml runs. */
 function repoSourcePath(path: string): string {
   const source = normalized(path);
   const index = source.lastIndexOf("src/");
