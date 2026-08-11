@@ -502,23 +502,23 @@ describe("LiveSync late echo of a write the snapshot has moved past", () => {
     return cmd;
   }
 
-  /** Two flushes to the one address, 200 ms apart — each in its own window. */
-  async function dragTwice(plan: Plan, live: LiveSync, first: number, second: number): Promise<void> {
-    setCh1Fader(plan, first);
-    live.schedule();
-    await vi.advanceTimersByTimeAsync(120);
-    setCh1Fader(plan, second);
-    live.schedule();
-    await vi.advanceTimersByTimeAsync(120);
-  }
-
-  it("reads the overtaken write's announcement as an echo, not a device edit", async () => {
-    const a = ch1FaderCmd(-6);
-    const b = ch1FaderCmd(-12);
+  /** A live session that has flushed -6 then -12 to the ch1 fader, each in its own
+   *  window — the premise every case here starts from, so it is stated once. The
+   *  second write moves the snapshot past the first, which is the overtake. */
+  async function overtakenDrag() {
     const plan = basePlan();
     const live = liveFor(plan);
     live.begin(clonePlanState(plan));
-    await dragTwice(plan, live, -6, -12);
+    for (const db of [-6, -12]) {
+      setCh1Fader(plan, db);
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+    }
+    return { plan, live, a: ch1FaderCmd(-6), b: ch1FaderCmd(-12) };
+  }
+
+  it("reads the overtaken write's announcement as an echo, not a device edit", async () => {
+    const { live, a, b } = await overtakenDrag();
     expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(2); // both writes really went out
 
     // The FIRST write's announcement, arriving after the second moved the snapshot.
@@ -530,11 +530,7 @@ describe("LiveSync late echo of a write the snapshot has moved past", () => {
   });
 
   it("stops calling it an echo once the retention window has passed", async () => {
-    const a = ch1FaderCmd(-6);
-    const plan = basePlan();
-    const live = liveFor(plan);
-    live.begin(clonePlanState(plan));
-    await dragTwice(plan, live, -6, -12);
+    const { live, a } = await overtakenDrag();
 
     await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 1);
     // The unit never announced it inside the window a settle waits, so a notify
@@ -543,12 +539,7 @@ describe("LiveSync late echo of a write the snapshot has moved past", () => {
   });
 
   it("consumes the queue up to the match, so an older write cannot answer for a newer one", async () => {
-    const a = ch1FaderCmd(-6);
-    const b = ch1FaderCmd(-12);
-    const plan = basePlan();
-    const live = liveFor(plan);
-    live.begin(clonePlanState(plan));
-    await dragTwice(plan, live, -6, -12);
+    const { plan, live, a, b } = await overtakenDrag();
     setCh1Fader(plan, -24);
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
@@ -580,25 +571,51 @@ describe("LiveSync late echo of a write the snapshot has moved past", () => {
     expect(live.isEchoName(param, y, "NEVER WRITTEN")).toBe(false);
   });
 
-  // Both boundaries, asserted separately: `begin` clearing would hide `end` not
-  // clearing if the two were only ever checked together.
-  it("drops the queue when the session ends", async () => {
-    const a = ch1FaderCmd(-6);
+  // The queue is bounded by the RETENTION, not by the session.
+  //
+  // `takePending` only sweeps the key a notify asks about, so an address the unit never
+  // announces would otherwise keep one entry per flush for as long as the session runs —
+  // and several params emit no notify at all when written, which makes that ordinary
+  // rather than exotic. `notePending` prunes as it appends, which is what bounds it.
+  //
+  // This reaches private state on purpose: the property has NO behavioural signature —
+  // `takePending` prunes on read either way, so `isEcho` answers identically with the
+  // pruning removed (verified: deleting it leaves every other case here green). A pin
+  // that goes through the public surface is therefore not available, and the choice is
+  // between this and no pin at all.
+  it("holds a silent address to the retention window, not to the session", async () => {
     const plan = basePlan();
     const live = liveFor(plan);
     live.begin(clonePlanState(plan));
-    await dragTwice(plan, live, -6, -12);
+    const depth = (): number => {
+      const q = (live as unknown as { pendingValues: Map<number, unknown[]> }).pendingValues;
+      return Math.max(0, ...[...q.values()].map((v) => v.length));
+    };
+
+    // 40 flushes to one address across well over the retention window, with the device
+    // announcing nothing — the shape a converge / refetch param actually takes.
+    for (let i = 1; i <= 40; i++) {
+      setCh1Fader(plan, -i);
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+    }
+    expect(vi.mocked(vdSet).mock.calls.length).toBeGreaterThanOrEqual(40); // it really wrote
+    // 300 ms of retention at a 120 ms cadence is 3 writes; the bound is the window, and
+    // the assertion is deliberately loose about the exact count and tight about growth.
+    expect(depth()).toBeLessThanOrEqual(4);
+  });
+
+  // Both boundaries, asserted separately: `begin` clearing would hide `end` not
+  // clearing if the two were only ever checked together.
+  it("drops the queue when the session ends", async () => {
+    const { live, a } = await overtakenDrag();
 
     live.end();
     expect(live.isEcho(a.paramId, a.x, a.y, a.vdValue)).toBe(false);
   });
 
   it("does not carry a previous session's writes into the next one", async () => {
-    const a = ch1FaderCmd(-6);
-    const plan = basePlan();
-    const live = liveFor(plan);
-    live.begin(clonePlanState(plan));
-    await dragTwice(plan, live, -6, -12);
+    const { plan, live, a } = await overtakenDrag();
 
     // Straight into a new session without an intervening end(), which is what a
     // reconnect does — begin() is the boundary that has to hold on its own.

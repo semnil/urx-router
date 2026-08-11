@@ -107,6 +107,20 @@ export interface LiveSyncHooks {
   refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites) => Promise<Plan | null>;
 }
 
+/** One address's writes that are acked but not yet announced, oldest first. `at` is a
+ *  wall clock (Date.now), which is what lets an entry expire on a link that has gone
+ *  silent — see the fields that use it for why that is not settle.ts's axis. */
+type PendingQueue<V> = Array<{ value: V; at: number }>;
+
+/** Drop the leading entries older than `cutoff`, in one splice rather than a shift per
+ *  entry — a repeated shift is a memmove each, so draining a long queue that way would
+ *  cost O(n^2) element moves inside the notify callback that triggered it. */
+function dropExpired<V>(q: PendingQueue<V>, cutoff: number): void {
+  let i = 0;
+  while (i < q.length && q[i].at < cutoff) i++;
+  if (i) q.splice(0, i);
+}
+
 export class LiveSync {
   private active = false;
   // Which session a flush belongs to. Bumped by begin() and end(), and read after every
@@ -150,12 +164,27 @@ export class LiveSync {
   // announces a numeric write ack+58-151 ms after the ack (reference/work/vd) against a
   // 120 ms flush window, so a drag reaches that overlap on real hardware. One queue per
   // address, oldest first, retained for the same window a settle waits (settle.ts).
-  private readonly pendingValues = new Map<number, Array<{ value: number; at: number }>>();
+  //
+  // NOT writeSettle's job, though it is the obvious neighbour and the next reader will
+  // ask. `PendingWrites` holds addresses without the values sent — settle.ts says that
+  // is deliberate, since the answer it gives is the value the DEVICE announced — it is
+  // built per flush and closed in the same flush's finally, where this has to survive
+  // into the next one, and it is one entry per address where the whole case is two
+  // outstanding writes to one. It also only ever reaches settle on the sideEffect and
+  // refetch paths, so a plain fader drag never builds one at all.
+  //
+  // Wall clock rather than settle's notify sequence, and the two are not the same
+  // question: settle asks "did the announcement arrive after my write went out", which
+  // is ordering, while this asks "is this notify recent enough to still be one of mine",
+  // which needs elapsed time. A sequence bound would never expire on a quiet link —
+  // no notifies, no advance — and that is exactly when an unannounced write should be
+  // forgotten. SETTLE_TIMEOUT_MS is borrowed for the LENGTH, not the axis.
+  private readonly pendingValues = new Map<number, PendingQueue<number>>();
   // The name twin. Separate for the reason isEchoName is separate — names live in their
   // own snapshot and key on `${param}:${y}` with no x. Its measured overtake margin is
   // wider (ack+1-102 ms), so this half is a structural twin rather than a reachable
   // defect today; keeping one rule for one structure is what stops the two drifting.
-  private readonly pendingNames = new Map<string, Array<{ value: string; at: number }>>();
+  private readonly pendingNames = new Map<string, PendingQueue<string>>();
   // Bumped by every write the FOLLOW side makes into a snapshot — noteDirect's single entry
   // and capture()'s two whole rebuilds. A flush translates the plan once and then awaits
   // per command, so the lists it walks can grow older than the snapshots it diffs each
@@ -280,10 +309,22 @@ export class LiveSync {
 
   /** Append a write we have just been acked for, so its late announcement is still
    *  recognisable after the snapshot has moved past it. */
-  private notePending<K, V>(queues: Map<K, Array<{ value: V; at: number }>>, key: K, value: V): void {
+  private notePending<K, V>(queues: Map<K, PendingQueue<V>>, key: K, value: V): void {
+    const now = Date.now();
     const q = queues.get(key);
-    if (q) q.push({ value, at: Date.now() });
-    else queues.set(key, [{ value, at: Date.now() }]);
+    if (!q) {
+      queues.set(key, [{ value, at: now }]);
+      return;
+    }
+    // Pruned HERE, not only when a notify asks. `takePending` sweeps the one key it is
+    // asked about, so an address the unit never announces would keep every write it
+    // ever took — and several params emit no notify at all when written (the converge /
+    // refetch families), which makes that the ordinary case rather than the lost-notify
+    // one. At the 120 ms flush cadence this holds each queue to the writes issued
+    // inside the retention window, so it is ~3 entries rather than one per flush for
+    // the life of the session.
+    dropExpired(q, now - SETTLE_TIMEOUT_MS);
+    q.push({ value, at: now });
   }
 
   /**
@@ -299,11 +340,10 @@ export class LiveSync {
    * fake performance, so a performance clock makes the retention untestable — and the
    * failure mode is a test that passes because the entry never expires.
    */
-  private takePending<K, V>(queues: Map<K, Array<{ value: V; at: number }>>, key: K, value: V): boolean {
+  private takePending<K, V>(queues: Map<K, PendingQueue<V>>, key: K, value: V): boolean {
     const q = queues.get(key);
     if (!q) return false;
-    const cutoff = Date.now() - SETTLE_TIMEOUT_MS;
-    while (q.length && q[0].at < cutoff) q.shift();
+    dropExpired(q, Date.now() - SETTLE_TIMEOUT_MS);
     const i = q.findIndex((e) => e.value === value);
     if (i >= 0) q.splice(0, i + 1);
     if (!q.length) queues.delete(key);
