@@ -44,6 +44,12 @@ const RACE_DIR = "e2e/race";
 const LEDGER = join(RACE_DIR, "skip-ledger.json");
 
 const read = (rel) => readFileSync(join(repo, rel), "utf8");
+
+// Playwright's default testMatch, which no project here overrides:
+// **/*.@(spec|test).?(c|m)[jt]s?(x). Both the collection scan and the guarantor rule use
+// this one pattern — they were two, and the narrower of them missed a .spec.js the
+// harness was collecting.
+const SPEC_FILE = /\.(spec|test)\.(c|m)?[jt]sx?$/;
 // The three glob shapes these configs use, and no more: `**/` at any depth, a trailing
 // `**` for everything below, `*` within one segment. Translating a trailing `**` as "any
 // depth" and nothing else is what let e2e/race back in — the pattern then demanded a path
@@ -82,7 +88,7 @@ function collectionRules() {
   rules.push({
     label: `the ordinary Playwright project (${dir[1]}, minus ${ignore[1]})`,
     // Playwright's default testMatch, which this config does not override.
-    takes: (f) => f.startsWith(`${dir[1]}/`) && /\.(spec|test)\.[jt]sx?$/.test(f) && !ignored.test(f),
+    takes: (f) => f.startsWith(`${dir[1]}/`) && SPEC_FILE.test(f) && !ignored.test(f),
   });
   return rules;
 }
@@ -112,7 +118,10 @@ function withoutComments(src) {
   return out.join("");
 }
 
-// Ranges covered by a suite that does not run: describe.skip / .skipIf / .fixme / .todo.
+// Ranges covered by a suite that does not, or may not, run: .skip / .fixme / .todo, and
+// the conditional pair .skipIf / .runIf — `describe.runIf(false)` reports its cases as
+// skipped, and no condition can be judged from here, so a case inside one is refused
+// whatever the argument says.
 // Both call shapes have to be followed to the end of the BODY, and they differ: `.skip(…)`
 // takes the title and the callback in one group, while `.skipIf(cond)(…)` is curried and
 // its first group is only the condition — stopping at that one was how an `it` inside a
@@ -121,7 +130,7 @@ function skippedSuites(src) {
   const ranges = [];
   const head = /(^|[^.\w])(test\.describe|describe)((?:\.\w+)*)\s*(?=\()/g;
   for (const m of src.matchAll(head)) {
-    if (!/\.(skip|skipIf|fixme|todo)\b/.test(m[3])) continue;
+    if (!/\.(skip|skipIf|runIf|fixme|todo)\b/.test(m[3])) continue;
     let i = m.index + m[0].length;
     while (src[i] === "(") {
       let depth = 0;
@@ -144,7 +153,7 @@ function collected(rel) {
   for (const name of readdirSync(join(repo, rel)).sort()) {
     const child = `${rel}/${name}`;
     if (statSync(join(repo, child)).isDirectory()) out.push(...collected(child));
-    else if (/\.(spec|test)\.ts$/.test(name)) out.push(child);
+    else if (SPEC_FILE.test(name)) out.push(child);
   }
   return out;
 }
@@ -206,7 +215,7 @@ for (const [k, s] of entries) {
   const active = quoted(g.title).some((q) => {
     const re = new RegExp(String.raw`(^|[^.\w])(test|it)((?:\.\w+)*)\s*\(\s*${escape(q)}`, "g");
     for (const m of src.matchAll(re)) {
-      if (/\.(skip|skipIf|fixme|todo|describe)\b/.test(m[3])) continue;
+      if (/\.(skip|skipIf|runIf|fixme|todo|describe)\b/.test(m[3])) continue;
       if (suites.some(([a, b]) => m.index > a && m.index < b)) continue;
       return true;
     }
