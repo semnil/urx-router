@@ -57,7 +57,7 @@ import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import type { MidiUiIntent } from "./midi-protocol";
 import { MidiControl, type MidiHooks } from "./midi";
-import { t } from "../i18n";
+import { getLang, setLang, t } from "../i18n";
 
 const MAPPING = {
   control: "ch1/level",
@@ -255,11 +255,16 @@ describe("feedback to the controller", () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.outputStalled);
 
-    // The operator reconnects and picks the port again.
+    // The operator switches language, THEN reconnects. `status` holds the sentence as
+    // it was rendered, so a check against the catalog's current wording matches
+    // nothing here and the old-language stall would stay on screen.
+    const was = getLang();
+    setLang(was === "ja" ? "en" : "ja");
     mocks.midiSend.mockResolvedValue();
     vi.useRealTimers();
     (hooks.onStatus as ReturnType<typeof vi.fn>).mockClear();
     await openOutput();
+    setLang(was);
     // Not merely "something else was said later": the stalled claim itself is gone.
     const said = (hooks.onStatus as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
     expect(said).not.toContain(t().midi.outputStalled);

@@ -117,6 +117,12 @@ export class MidiControl {
   /** Consecutive feedback passes that ended in a failed send, cleared by any send that
    *  lands. What keeps the re-send from being unbounded. */
   private txFailedPasses = 0;
+  /** Whether the last thing said about the output was that it stalled. A FLAG, not a
+   *  comparison against the message: `status` holds the string as it was rendered, so
+   *  a language switch between the stall and the reconnect leaves it matching nothing
+   *  the catalog now returns — and the stale sentence, in the old language, stays on
+   *  screen saying feedback is stopped after it has restarted. */
+  private outputStalled = false;
   private settleTimer = 0;
   private learnFlushTimer = 0;
   /** True between the window's "ready" and its "closed": what makes a state push
@@ -231,6 +237,10 @@ export class MidiControl {
   /** Status goes to the app's own line and to the window's, since the window is
    *  what the operator is watching while assigning. */
   private say(message: string): void {
+    // Anything said after the stall replaces it on screen, so the flag stops being
+    // true of what the operator can see. Set by abandonOutput immediately after its
+    // own say(), which is why this clears rather than guards.
+    this.outputStalled = false;
     this.status = message;
     this.hooks.onStatus(message);
     this.pushState();
@@ -384,12 +394,12 @@ export class MidiControl {
       // Re-picking a port is the operator's retry: a streak carried over from the
       // previous connection would let one later failure trip the limit on a good one.
       this.txFailedPasses = 0;
-      // `outputStalled` is a claim about a port that is open again, and feedback
-      // restarts on the next line — left standing it goes on telling the operator, in
-      // the window and on the app's status line, that the thing they just fixed is
-      // still broken. Cleared only when it is still THAT message, so an unrelated
-      // status (a learn hint, another error) is not wiped by opening a port.
-      if (this.status === t().midi.outputStalled) this.say("");
+      // The stall was a claim about a port that is open again, and feedback restarts
+      // on the next line — left standing it goes on telling the operator, in the
+      // window and on the app's status line, that the thing they just fixed is still
+      // broken. Only OUR claim is cleared, so an unrelated status (a learn hint,
+      // another error) said since is not wiped by opening a port.
+      if (this.outputStalled) this.say("");
       this.runFeedback(true); // align motor faders / LEDs with the plan at once
     } catch (err) {
       this.outputPort = null;
@@ -484,6 +494,8 @@ export class MidiControl {
     // operator's choice at the next boot, and that restore reports its own failure.
     // That is the one thing separating this from the operator choosing "None".
     this.say(t().midi.outputStalled);
+    // AFTER the say, which clears the flag for anything else that speaks.
+    this.outputStalled = true;
   }
 
   private runFeedback(resync: boolean): void {
