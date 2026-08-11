@@ -77,6 +77,14 @@ const unquote = (text) => text.trim().replace(/^(['"])(.*)\1$/, "$2");
 
 // Indentation-only, and shallow by design: block scalars (`run: |`) and step lists land
 // under keys nothing here reads, so their contents cannot be mistaken for a job.
+//
+// A sequence item gets a node of its own even though nothing reads it, and YAML's rule
+// that an item may sit at its key's OWN column is why. Popping on `indent <= top.indent`
+// the way a mapping key is popped would close `steps:` on its first item, and every step
+// key after it would land on the JOB — where `name:` renames the check run and a step's
+// `if:` overwrites the job's, since the later `set` wins. The reader then does not fail
+// to read the file, which would be honest; it reports a confident diagnosis of a job that
+// does not exist.
 function parse(text) {
   const lines = text.split("\n");
   const root = { key: "", indent: -1, value: "", children: new Map(), items: [], from: 0, to: lines.length };
@@ -89,10 +97,27 @@ function parse(text) {
     if (!line.trim()) continue;
     const indent = line.length - line.trimStart().length;
     const body = line.trim();
-    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) close(stack.pop(), n);
+    const isItem = body === "-" || body.startsWith("- ");
+    while (stack.length > 1) {
+      const top = stack[stack.length - 1];
+      // An item closes a sibling item at its own column, but not the key it belongs to.
+      const closes = isItem && !top.item ? indent < top.indent : indent <= top.indent;
+      if (!closes) break;
+      close(stack.pop(), n);
+    }
     const parent = stack[stack.length - 1];
-    if (body === "-" || body.startsWith("- ")) {
+    if (isItem) {
       parent.items.push(body.slice(1).trim());
+      stack.push({
+        key: "-",
+        item: true,
+        indent,
+        value: "",
+        children: new Map(),
+        items: [],
+        from: n,
+        to: lines.length,
+      });
       continue;
     }
     const match = KEY.exec(body);
@@ -171,7 +196,21 @@ function readWorkflows() {
         "`on:` is a flow list; write the block form (`on:` then `  pull_request:`) so this checker can read it",
       );
     }
-    return { path, root, pullRequest: on.children.get("pull_request") ?? null, jobs: jobsNode.children };
+    const pullRequest = on.children.get("pull_request") ?? null;
+    // The same reasoning one level down, which is where it actually bites:
+    // `pull_request: { paths: [...] }` is a filter, and the reader stores the whole
+    // mapping as a VALUE, leaving `children` empty — so every rule below asks an empty map
+    // whether a filter is present and is told no. A block-form filter is caught; the same
+    // filter in flow form was waved through with "all reportable on every pull request",
+    // which is the sentence this file exists to be able to print truthfully.
+    if (pullRequest && pullRequest.value) {
+      finding(
+        path,
+        "`pull_request:` carries an inline value; write its filters in block form (`  pull_request:` then `    paths:`) " +
+          "so this checker can see them — a filter it cannot see is one it will report as absent",
+      );
+    }
+    return { path, root, pullRequest, jobs: jobsNode.children };
   });
 }
 
@@ -339,10 +378,17 @@ function gh(args) {
 // itself the thing worth seeing.
 function checkRuleset(required) {
   let repo;
+  let defaultBranch;
   try {
-    repo = gh(["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]);
+    const view = JSON.parse(gh(["repo", "view", "--json", "nameWithOwner,defaultBranchRef"]));
+    repo = view.nameWithOwner;
+    defaultBranch = view.defaultBranchRef?.name;
   } catch (err) {
     finding("gh", `${err.message}\n    --ruleset needs an authenticated gh with admin rights on the repository`);
+    return;
+  }
+  if (!defaultBranch) {
+    finding("gh", "could not read the repository's default branch — cannot tell which ruleset governs a merge");
     return;
   }
   let rulesets;
@@ -371,8 +417,26 @@ function checkRuleset(required) {
       console.log(`    ruleset "${detail.name}": no required status checks`);
       continue;
     }
-    carrying++;
     const where = `ruleset "${detail.name}"`;
+    // Which refs a ruleset governs is as load-bearing as what it requires. A rule aimed at
+    // some other branch pattern satisfies every comparison below while leaving the branch
+    // that matters ungated — so it is not counted as carrying anything.
+    const refName = detail.conditions?.ref_name ?? {};
+    const include = refName.include ?? [];
+    const exclude = refName.exclude ?? [];
+    const covers =
+      include.some((ref) => ref === "~ALL" || ref === "~DEFAULT_BRANCH" || ref === `refs/heads/${defaultBranch}`) &&
+      !exclude.some((ref) => ref === `refs/heads/${defaultBranch}`);
+    if (!covers) {
+      finding(
+        where,
+        `requires ${rule.parameters?.required_status_checks?.length ?? 0} status check(s) but does not govern ` +
+          `${defaultBranch} (include: ${include.join(", ") || "none"}; exclude: ${exclude.join(", ") || "none"}) — ` +
+          `they gate some other branch, and a merge to ${defaultBranch} waits for nothing`,
+      );
+      continue;
+    }
+    carrying++;
     const entries = rule.parameters?.required_status_checks ?? [];
     const live = new Map(entries.map((check) => [check.context, check.integration_id]));
     for (const [context, appId] of live) {
