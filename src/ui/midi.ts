@@ -384,6 +384,12 @@ export class MidiControl {
       // Re-picking a port is the operator's retry: a streak carried over from the
       // previous connection would let one later failure trip the limit on a good one.
       this.txFailedPasses = 0;
+      // `outputStalled` is a claim about a port that is open again, and feedback
+      // restarts on the next line — left standing it goes on telling the operator, in
+      // the window and on the app's status line, that the thing they just fixed is
+      // still broken. Cleared only when it is still THAT message, so an unrelated
+      // status (a learn hint, another error) is not wiped by opening a port.
+      if (this.status === t().midi.outputStalled) this.say("");
       this.runFeedback(true); // align motor faders / LEDs with the plan at once
     } catch (err) {
       this.outputPort = null;

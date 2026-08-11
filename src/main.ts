@@ -2205,6 +2205,7 @@ if (!DEMO) {
     fetchAbort = controller;
     fetchBtn.textContent = t().toolbar.fetchCancel;
     let report: ErrorReport = null;
+    let reportPrompt: string | undefined;
     try {
       await withDevice("fetch", t().status.fetchConnecting, t().status.fetchError, async (device) => {
         if (!(await confirmFirmware(device))) {
@@ -2275,6 +2276,18 @@ if (!DEMO) {
         // which says a plain success when only the second happened.
         if (merged.errors.length || merged.unplaced.length) {
           report = { filename: `${modelId}-fetch-report.md`, markdown: formatReadbackReport(device.model, merged) };
+          // Which of the two it is decides the prompt. With no read failure nothing
+          // failed — the read worked and the merge left the operator's own edits
+          // standing — so the default wording would report correct behaviour as a
+          // fault, and do it right after the status line said the fetch succeeded.
+          //
+          // NOT PINNED. Reaching this arm needs an edit to land inside the read AND on
+          // a key the read authored, and three attempts at it from src/main.device
+          // produced an empty `unplaced` every time (the edit registered, the fetch
+          // reported a clean 139 settings). What would settle it is an ordinary-tier
+          // E2E case, which drives the real console and the real write witness rather
+          // than reasoning about which of them the jsdom seam misses.
+          reportPrompt = merged.errors.length ? undefined : t().confirm.deviceUnappliedExport;
         }
       });
     } finally {
@@ -2286,7 +2299,7 @@ if (!DEMO) {
       // In the finally: even a canceled read may have applied part of the device state.
       planReadFromDevice();
     }
-    await offerErrorReport(report);
+    await offerErrorReport(report, reportPrompt);
   });
 
   // Settle what sample rate this write is going to happen at, before anything is

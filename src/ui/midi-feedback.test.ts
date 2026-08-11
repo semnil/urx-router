@@ -240,6 +240,32 @@ describe("feedback to the controller", () => {
     expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.outputStalled);
   });
 
+  // Giving up says so; opening a port again must un-say it. The message is stored and
+  // mirrored into the MIDI window, so a stale one keeps reporting that feedback is
+  // stopped while it is running again.
+  it("stops saying the output stalled once a port opens again", async () => {
+    seedMappings();
+    const { control, hooks } = install();
+    await attached();
+    await openOutput();
+
+    vi.useFakeTimers();
+    mocks.midiSend.mockRejectedValue(new Error("port gone"));
+    control.resyncFeedback();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.outputStalled);
+
+    // The operator reconnects and picks the port again.
+    mocks.midiSend.mockResolvedValue();
+    vi.useRealTimers();
+    (hooks.onStatus as ReturnType<typeof vi.fn>).mockClear();
+    await openOutput();
+    // Not merely "something else was said later": the stalled claim itself is gone.
+    const said = (hooks.onStatus as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(said).not.toContain(t().midi.outputStalled);
+    expect(said.at(-1)).toBe("");
+  });
+
   // The streak is CONSECUTIVE. Four failures with a landed send between them is not a
   // dead port, and a lifetime counter would give up on one.
   it("keeps the port through failures that a landed send separates", async () => {

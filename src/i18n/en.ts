@@ -749,6 +749,12 @@ export const en = {
       "The self-test found problems. Save a report listing every parameter that did not match and every read or write that failed?",
     ),
     deviceErrorExport: tr("Some parameters could not be read or written. Save a report listing each failure?"),
+    // Nothing FAILED here: the read worked and the merge declined to overwrite what
+    // was edited while it ran. Saying "could not be read or written" would report the
+    // merge working as a fault, right after a success on the status line.
+    deviceUnappliedExport: tr(
+      "Some device values were not applied, because they were edited here while the read was running. Save a report listing them?",
+    ),
     importSettings: (name: string, model: string): string =>
       `Import ${name} onto the current ${model} plan? A settings file does not say which unit it came from, so check that ${model} is the right model. Layout, hidden nodes, and notes are kept — the file carries no editing state.`,
     reclock: (deviceRate: string, planRate: string): string =>

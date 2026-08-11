@@ -663,6 +663,8 @@ export const ja: Messages = {
     selfTestFailExport:
       "セルフテストで問題が見つかりました。一致しなかったパラメータと、読み取り/書き込みに失敗した項目を記載したレポートを保存しますか?",
     deviceErrorExport: "一部のパラメータを読み取り/書き込みできませんでした。各失敗を記載したレポートを保存しますか?",
+    deviceUnappliedExport:
+      "一部の実機の値は適用されませんでした (読み取り中にこちらで編集されたためです)。一覧を記載したレポートを保存しますか?",
     importSettings: (name: string, model: string): string =>
       `${name} を現在の ${model} 計画に取り込みますか? 設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます (ファイルに編集状態は含まれません)。`,
     reclock: (deviceRate: string, planRate: string): string =>
