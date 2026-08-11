@@ -32,6 +32,7 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ steps.scope.outputs.code }}
+      version: ${{ steps.pw.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -40,6 +41,20 @@ jobs:
       # Zero-dep on purpose — this job has no pnpm install. Every context the branch
       # ruleset requires still has a job that reports it on every pull request.
       - run: node scripts/check-merge-gates.mjs
+      # The image tag the E2E job's `container:` needs. It rides here rather than in a job
+      # of its own because `container:` is evaluated before any step of its own job, so the
+      # value has to come from a PRIOR job either way — and this one is already prior to
+      # everything, already checked out, and already running node. Its own job cost a
+      # second dispatch and about six seconds on the critical path of every pull request,
+      # which is the whole of what it did. See .github/actions/playwright-version for why
+      # the tag is read from the lockfile at all.
+      #
+      # Unconditional, including on the doc-only pull requests where the E2E job does not
+      # run: the whole step is one lockfile read, and a step skipped by `if:` publishes an
+      # EMPTY output — which reaches `container:` as a tag that does not exist rather than
+      # as a job that does not run.
+      - id: pw
+        uses: ./.github/actions/playwright-version
       - id: scope
         env:
           GH_TOKEN: ${{ github.token }}
@@ -99,23 +114,6 @@ jobs:
           done <<< "${files}"
           echo "code=${code}" >> "$GITHUB_OUTPUT"
           echo "code=${code}"
-
-  # Ten seconds of wall clock so the E2E job below can run inside the official Playwright
-  # image: `container:` is evaluated before any step of its own job, so the tag can only
-  # come from a prior job. What it buys is chromium's whole sequential .deb fetch taken
-  # off the Ubuntu mirror every run — see .github/actions/install-browsers for the day
-  # that mattered, and for the measurements, which are stated only there.
-  playwright_version:
-    needs: preflight
-    if: needs.preflight.outputs.code == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      version: ${{ steps.pw.outputs.version }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - id: pw
-        uses: ./.github/actions/playwright-version
 
   frontend:
     needs: preflight
@@ -235,7 +233,7 @@ jobs:
   # copy that used to sit in this comment went stale without anyone noticing, which is the
   # whole reason for the rule. The race harness is deliberately NOT here; see race.yml.
   e2e:
-    needs: [preflight, playwright_version]
+    needs: preflight
     if: needs.preflight.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -248,7 +246,7 @@ jobs:
     # costs on a good day — so the change is free in time and takes a whole run of
     # sequential .deb fetches out of every pull request. The measurements behind that,
     # dated, are in .github/actions/install-browsers and are not restated here.
-    container: mcr.microsoft.com/playwright:v${{ needs.playwright_version.outputs.version }}-noble
+    container: mcr.microsoft.com/playwright:v${{ needs.preflight.outputs.version }}-noble
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -295,7 +293,7 @@ jobs:
   # alone this gate would be skipped by that same rule and the ruleset would read the red
   # run as green.
   ci-required:
-    needs: [preflight, playwright_version, frontend, rust, e2e]
+    needs: [preflight, frontend, rust, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -307,10 +305,9 @@ jobs:
         # job with the wrong verdict sends the reader to the wrong log.
         env:
           PREFLIGHT: ${{ needs.preflight.result }}
-          PLAYWRIGHT_VERSION: ${{ needs.playwright_version.result }}
           FRONTEND: ${{ needs.frontend.result }}
           RUST: ${{ needs.rust.result }}
           E2E: ${{ needs.e2e.result }}
         run: |
-          echo "::error::CI did not pass — preflight=${PREFLIGHT} playwright_version=${PLAYWRIGHT_VERSION} frontend=${FRONTEND} rust=${RUST} e2e=${E2E}"
+          echo "::error::CI did not pass — preflight=${PREFLIGHT} frontend=${FRONTEND} rust=${RUST} e2e=${E2E}"
           exit 1
