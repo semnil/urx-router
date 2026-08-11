@@ -1238,7 +1238,7 @@ not repeat them.
   and with no `case` of its own the trace went through the unhandled-command throw as well — invisible,
   because the tracker treats a failed reading as a link that has gone. What decides is whether the
   Rust command sends a `Cmd` to the worker; the prefix is a heuristic that happened to hold until it
-  did not. Found by comparing flaky counts between two release runs (1 → 4), **not** by a failure: the
+  did not. Found by comparing flaky counts between two release runs (2 → 4), **not** by a failure: the
   causal link to those particular flakes was never established, and five local runs of the two cases
   on the unfixed tree all passed. The four were named from the run logs afterwards, and the comparison
   itself was off by one — each run reports its count per job, and 1.6.0's two jobs reported one each.
