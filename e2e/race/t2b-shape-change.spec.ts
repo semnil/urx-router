@@ -616,23 +616,33 @@ test.describe("T2b shape-change", () => {
     await page.click("#btn-view-console");
     await expect(faderReadout(page, "CH 1")).toBeVisible();
 
-    // Phase 1 — never emitted. Three different reasons, one assertion each: the CH → FX
-    // send tap is read-only on the device (sendTapWritable), the two mid PEQ bands have
-    // no filter-type control at all (EqBandControl.type is null), and the SD Rec track
-    // count is front-panel only. None of them is in the write set, so none is in the
-    // registration either — the write set defines it.
+    // Phase 1 — never emitted. Three different reasons: the CH → FX send tap is read-only
+    // on the device (sendTapWritable), the two mid PEQ bands have no filter-type control
+    // at all (EqBandControl.type is null), and the SD Rec track count is front-panel only.
+    // None of the three is ever written — asserted over the whole run at the foot of this
+    // case, which is the subject here.
+    //
+    // Registration is now a SEPARATE question, and this is where that split is pinned:
+    // the write set used to define it, so "never emitted" implied "never followed". Two
+    // of the three are registered anyway, because the unit announces them (measured on a
+    // URX44V, 2026-08-11) and a value it announces to nobody is one the panel can change
+    // with no effect on screen. The mid PEQ types are not: no control exists to change
+    // them on either side.
     const reg = regKeys(await paramAddrsOf(page));
     const neverEmitted = [CH1_FX1_TAP, ...EQ_MID_TYPES, SD_TRACK_COUNT];
     console.log(`never-emitted addresses registered: ${neverEmitted.filter((a) => reg.has(a)).join(", ") || "(none)"}`);
-    for (const a of neverEmitted) expect(reg.has(a)).toBe(false);
-    // The differential that makes it a statement about those three rather than about
-    // PEQ addresses in general: the bands that DO carry a filter type are in the set.
+    expect(reg.has(CH1_FX1_TAP)).toBe(true);
+    expect(reg.has(SD_TRACK_COUNT)).toBe(true);
+    for (const a of EQ_MID_TYPES) expect(reg.has(a)).toBe(false);
+    // The differential that makes the line above a statement about the mid bands rather
+    // than about PEQ addresses in general: the bands that DO carry a filter type are in
+    // the set.
     expect(reg.has(EQ_LOW_TYPE)).toBe(true);
     expect(reg.has(EQ_HIGH_TYPE)).toBe(true);
 
     // Phase 2 — accepted and discarded, and the flush loop that could form around it.
-    // The edit is sent once; the device acks and keeps nothing. Then a device-side
-    // notify on an unrelated unregistered address forces a whole-device reconcile,
+    // The edit is sent once; the device acks and keeps nothing. Then the address-free
+    // bulk-change sentinel (see the call below) forces a whole-device reconcile,
     // which reads the fader back as the device never-changed value and pulls the plan
     // to it. If the resync ordering were wrong, that would re-open the same diff every
     // time and the pair would ping-pong for the rest of the session.

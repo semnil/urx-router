@@ -877,7 +877,7 @@ describe("LiveSync sideEffect refetch", () => {
     // read never saw. Without it the rest of this case would pass on nothing.
     expect(grown.length).toBeGreaterThan(0);
     // Registered for notifies (shape follows the live plan)…
-    expect(new Set(live.writableAddrs().map((a) => a.join(":"))).has(addrOf(grown[0]))).toBe(true);
+    expect(new Set(live.followAddrs().map((a) => a.join(":"))).has(addrOf(grown[0]))).toBe(true);
     // …and still owed to the device, because the read never saw it.
     vi.mocked(vdSet).mockClear();
     live.schedule();
@@ -1068,5 +1068,73 @@ describe("LiveSync shared device address", () => {
     await vi.advanceTimersByTimeAsync(120);
     expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
     expect(reports).toEqual([]);
+  });
+});
+
+// The unit announces a change to these; the app never writes them. Before they were
+// registered the notify reached no one, and a front-panel change showed up only at the
+// next full read. Measured on a URX44V (2026-08-11, System V1.3.1.0): a CH → FX PRE/POST
+// and a Track Count change each pushed a notify within a second of the panel operation.
+describe("LiveSync read-only follow registrations", () => {
+  const addrsOf = (live: LiveSync): Set<string> => new Set(live.followAddrs().map((a) => a.join(":")));
+  const FX_TAP_IDS = [193, 197, 320, 324];
+  const begun = (): { plan: Plan; live: LiveSync } => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    return { plan, live };
+  };
+
+  it("registers the CH → FX send taps, which translate never emits", () => {
+    const { plan, live } = begun();
+    const addrs = addrsOf(live);
+    // CH1 → FX1 and CH1 → FX2 (mono bases 193 / 197, y = input index).
+    expect(addrs.has("193:0:0")).toBe(true);
+    expect(addrs.has("197:0:0")).toBe(true);
+    // Every channel × every FX bus, not only the first: a panel change on any of them
+    // is what this is for, and pinning one address would pass with fifteen missing.
+    const taps = [...addrs].filter((a) => FX_TAP_IDS.includes(Number(a.split(":")[0])));
+    const channels = model.nodes.filter((n) => n.kind === "channel").length;
+    const fxBuses = model.nodes.filter((n) => n.kind === "bus" && n.id.startsWith("bus.fx")).length;
+    expect(taps.length).toBe(channels * fxBuses);
+    // Registration is not emission: the write side must not have moved.
+    expect(planToCommands(model, plan).some((c) => FX_TAP_IDS.includes(c.paramId))).toBe(false);
+  });
+
+  it("routes an FX tap notify to its channel, so one scoped node read repairs it", () => {
+    const { live } = begun();
+    const addr = live.lookup(193, 0, 0);
+    expect(addr?.node).toBe("ch1");
+    // Not direct: applyDirect has no slot for a connection param, and the channel's
+    // scoped read re-reads params.tap for every bus that channel sends to.
+    expect(addr?.direct).toBe(false);
+  });
+
+  it("routes a Track Count notify to out.sdrec, the node whose scoped read holds 839", () => {
+    const { live } = begun();
+    expect(addrsOf(live).has("839:0:0")).toBe(true);
+    const addr = live.lookup(839, 0, 0);
+    // Load-bearing in both directions. An owner node is only correct while readback
+    // reads 839 on a scoped read of that node — it is gated by `want("out.sdrec")`, and
+    // if that ever went back to `only === undefined` the notify would take a scoped read
+    // that never touches the address: green everywhere, repairing nothing. Leaving the
+    // node undefined instead is the other failure — it works, at a whole-device read per
+    // front-panel turn.
+    expect(addr?.node).toBe("out.sdrec");
+    expect(addr?.direct).toBe(false);
+  });
+
+  // A guard, not evidence: this one passes with the registrations and without them,
+  // because the addresses were never written either way. It is here to fail the day
+  // someone widens the registration loop into the emit path.
+  it("writes none of the newly registered addresses when the plan's own tap changes", async () => {
+    const { plan, live } = begun();
+    const conn = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.fx1:in");
+    if (!conn) throw new Error("expected a ch1 → FX1 send connection");
+    conn.params = { ...conn.params, tap: conn.params?.tap === "pre" ? "post" : "pre" };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const sent = vi.mocked(vdSet).mock.calls.map(([id]) => id);
+    for (const id of [...FX_TAP_IDS, 839]) expect(sent).not.toContain(id);
   });
 });

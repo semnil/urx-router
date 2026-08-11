@@ -38,7 +38,8 @@ const IDLE_FULL_MS = 900;
 const MAX_CONCENTRATION = 3;
 
 export interface DeviceFollowHooks {
-  /** Writable parameter addresses to register for notifies ([paramId, x, y]). */
+  /** Every parameter address to register for notifies ([paramId, x, y]) — the writable
+   *  set plus names, the read-only follows, and the host-owned ones the caller appends. */
   addrs: () => Array<[number, number, number]>;
   /** First refusal on an incoming notify, for addresses the host registers itself
    *  and owns outside the plan (SETUP > Follow USB is the one such address today).
@@ -52,7 +53,8 @@ export interface DeviceFollowHooks {
    *  and changed twice, and the second site is what goes stale. */
   isEcho: (p: ParamUpdate) => boolean;
   /** Resolve a notify address to its catalog name, owner node, and follow kind,
-   *  or undefined when the address is not in the writable set. */
+   *  or undefined when the address is in no index (registered by the host, or announced
+   *  by the unit on an address nothing here tracks — both take the full-read escalation). */
   lookup: (paramId: number, x: number, y: number) => FollowAddr | undefined;
   /** Apply one direct param change into the plan now (no read-back). Returns false
    *  when the param is not actually directly placeable (flagged direct but unhandled),

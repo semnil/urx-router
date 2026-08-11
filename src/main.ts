@@ -644,9 +644,9 @@ const follow =
   DEMO || !live
     ? null
     : new DeviceFollow({
-        // The plan's writable set plus Follow USB, which the plan deliberately does
+        // The plan's follow set plus Follow USB, which the plan deliberately does
         // not carry (params.ts) but the badge has to keep in step with the device.
-        addrs: () => [...(live?.writableAddrs() ?? []), FOLLOW_USB_ADDR],
+        addrs: () => [...(live?.followAddrs() ?? []), FOLLOW_USB_ADDR],
         intercept: (p) => {
           const [id, x, y] = FOLLOW_USB_ADDR;
           if (p.paramId !== id || p.x !== x || p.y !== y) return false;
