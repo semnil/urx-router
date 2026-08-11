@@ -46,8 +46,8 @@ pnpm tauri dev     # desktop app
   on their own.
 - **Zero runtime external dependencies** — no npm packages or CDNs in the shipped app. Dev
   dependencies are fine.
-- Run `pnpm format` (and `cargo fmt` for Rust changes) before committing. `format.yml` fixes
-  drift on same-repo pull requests, but its fixup commit diverges your local branch.
+- Run `pnpm format` (and `cargo fmt` for Rust changes) before committing. `format.yml` runs
+  both and fails on the diff; it does not write anything back to your branch.
 - Keep the theme palettes in `src/style.css` and `PALETTES` in `src/ui/graph.ts` in sync.
 - **Every string in `src/i18n/en.ts` is wrapped in `dev()`, `fixed()` or `tr()`, and a new key
   has to pick one.** `dev()` is a control reproduced from one of the unit's own screens: the URX
@@ -112,7 +112,11 @@ CI diffs the generated files, so an out-of-date bundle fails the build.
 - Conventional Commits, **subject and body in English**, split by semantic unit.
 - **Pull request title and body in English** as well.
 - Include before/after screenshots for UI changes.
-- Pull request CI runs the build, `pnpm typecheck:e2e`, and the unit tests. E2E and
-  third-party license generation run after merge.
+- Pull request CI runs the build, `pnpm typecheck:e2e`, the unit tests, the ordinary E2E
+  suite and `cargo test`. Third-party license generation runs after merge.
+- A merge waits for `ci-required`, `docs-required`, `format` and `race-required`. Each
+  reports on every pull request, so a change that skips the work behind one of them still
+  gets a green check rather than a check that never arrives. `pnpm check:gates` is what
+  keeps that true; run it after editing anything under `.github/workflows/`.
 
 By contributing, you agree that your work is licensed under the [MIT license](LICENSE).

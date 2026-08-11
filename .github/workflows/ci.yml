@@ -3,33 +3,111 @@ name: CI
 # Lightweight checks on every PR and on pushes to main: the build, the unit tests and
 # the ordinary E2E suite. Third-party license generation runs post-merge (post-merge.yml)
 # and the live-sync race harness runs from race.yml, which nothing triggers per-merge.
-# Doc-only changes (Markdown, docs/) don't affect the build or tests, so skip
-# these checks for them — except the skill's generated model references, which
+# Doc-only changes (Markdown, docs/) don't affect the build or tests, so the expensive
+# jobs skip them — except the skill's generated model references, which
 # skill-export.test.ts diffs against the generator, so an .md-only edit there
-# must still run the unit tests. Patterns are ordered: include everything,
-# negate docs, then re-include the generated files (the last match wins).
+# must still run the unit tests.
+#
+# That skip lives on the JOBS, and the trigger carries no `paths` at all. The difference
+# is not stylistic: a workflow skipped by a trigger filter reports no check run, so a
+# required status check it carries waits forever and the pull request can never merge,
+# while a job skipped by `if:` reports success. `preflight` decides the scope once and
+# every expensive job carries the same condition; `ci-required` is the one context this
+# workflow contributes to the ruleset. scripts/check-merge-gates.mjs is what keeps that
+# arrangement true — it runs in `preflight`, the one job here with no condition.
 on:
   pull_request:
-    paths:
-      - '**'
-      - '!**/*.md'
-      - '!docs/**'
-      - '.claude/skills/urx-routing-planner/references/model-*.md'
   push:
     branches: [main]
-    paths:
-      - '**'
-      - '!**/*.md'
-      - '!docs/**'
-      - '.claude/skills/urx-routing-planner/references/model-*.md'
 
 jobs:
+  # The path filter, moved off the trigger. Cheap enough to sit in front of everything:
+  # no install, no build, and the file list comes from the API rather than from a diff,
+  # so nothing here needs history.
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      # Zero-dep on purpose — this job has no pnpm install. Every context the branch
+      # ruleset requires still has a job that reports it on every pull request.
+      - run: node scripts/check-merge-gates.mjs
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        # A pull request's file list is the same one GitHub's own path filter reads. Every
+        # way of failing to read it runs the full suite instead: an unreadable list must
+        # not be able to turn the skip into "nothing to do", which is the direction that
+        # ships untested code. race.yml's `detect` takes the same side for the same reason.
+        #
+        # A TRUNCATED list is the same hazard wearing a valid response. Both endpoints have
+        # a ceiling and neither says it hit one: the pull request's files stop at 3000
+        # however far you paginate, and compare carries "up to 300 changed files for the
+        # entire comparison" on its first page only, so paging does not extend that one.
+        # A list cut off above the ceiling whose visible part happens to be all
+        # documentation would skip the build and the tests with `ci-required` still green.
+        # The count is the only tell the response carries, and the pull request has a
+        # second, exact one: `changed_files` on the PR itself, which is not the same query.
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == 'pull_request' ]]; then
+            ceiling=3000
+            files=$(gh api --paginate "repos/${REPO}/pulls/${PR}/files" -q '.[].filename') || files=''
+            declared=$(gh api "repos/${REPO}/pulls/${PR}" -q '.changed_files') || declared=''
+          else
+            ceiling=300
+            files=$(gh api "repos/${REPO}/compare/${BEFORE}...${AFTER}" -q '.files[].filename') || files=''
+            declared=''
+          fi
+          if [[ -z "${files}" ]]; then
+            echo 'could not read the changed files — running everything rather than guessing'
+            echo 'code=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          count=$(printf '%s\n' "${files}" | wc -l | tr -d ' ')
+          if (( count >= ceiling )); then
+            echo "the file list reached the endpoint's ${ceiling}-file ceiling — it may be cut off, running everything"
+            echo 'code=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -n "${declared}" && "${declared}" != "${count}" ]]; then
+            echo "the pull request declares ${declared} changed files and the list carried ${count} — running everything"
+            echo 'code=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "${files}"
+          code=false
+          while IFS= read -r file; do
+            case "${file}" in
+              # Generated from src/models/, and skill-export.test.ts diffs it against the
+              # generator, so this .md is code as far as the unit tests are concerned.
+              .claude/skills/urx-routing-planner/references/model-*.md) code=true ;;
+              docs/*|*.md) ;;
+              *) code=true ;;
+            esac
+          done <<< "${files}"
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
+          echo "code=${code}"
+
   # Ten seconds of wall clock so the E2E job below can run inside the official Playwright
   # image: `container:` is evaluated before any step of its own job, so the tag can only
   # come from a prior job. What it buys is chromium's whole sequential .deb fetch taken
   # off the Ubuntu mirror every run — see .github/actions/install-browsers for the day
   # that mattered, and for the measurements, which are stated only there.
   playwright_version:
+    needs: preflight
+    if: needs.preflight.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -40,6 +118,8 @@ jobs:
         uses: ./.github/actions/playwright-version
 
   frontend:
+    needs: preflight
+    if: needs.preflight.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -54,13 +134,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
-      # The code-side half of the "## Reusable assets" index: a renamed fixture, a
-      # deleted pnpm script or a new handle that no row mentions. The doc-side half runs
-      # in docs.yml, which this workflow skips for Markdown-only changes. This is also
-      # the run that catches a moved file docs/{en,ja} still names: the move arrives as
-      # a code change, so docs.yml never sees it. Before the build so it reports in
-      # seconds; it needs no install of its own.
-      - run: node scripts/check-assets-index.mjs
       - run: pnpm build
       # Four handles are build-gated. Three are dev-only (import.meta.env.DEV): the meter
       # bench's console handle (src/ui/console.ts), the keyboard measurement harness
@@ -107,6 +180,8 @@ jobs:
   # from the Ubuntu mirror — the sequential apt path #257 took out of every E2E run, and
   # a platform nothing else here compiles on. Free either way on a public repository.
   rust:
+    needs: preflight
+    if: needs.preflight.outputs.code == 'true'
     runs-on: macos-14
     # No debug info. Nothing here debugs: the tests report by assertion message, and a
     # backtrace would be read from the source anyway. Measured on the first warm run
@@ -158,7 +233,8 @@ jobs:
   # a net that only fires once the change is already on main, costs more than it saves.
   # The race harness is deliberately NOT here; see race.yml for what it costs and why.
   e2e:
-    needs: playwright_version
+    needs: [preflight, playwright_version]
+    if: needs.preflight.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -206,3 +282,33 @@ jobs:
           name: playwright-traces
           path: test-results/
           retention-days: 7
+
+  # The single context this workflow contributes to the branch ruleset (.github/required-checks.json).
+  # It reports on every pull request, including a doc-only one where everything above it
+  # skipped — which is the point: a required check that does not report cannot be waited
+  # for, it can only block forever.
+  #
+  # `always()` and an explicit read of the results, rather than a bare `needs:`, because a
+  # job skipped by a failed dependency reports SUCCESS to a required check. With `needs:`
+  # alone this gate would be skipped by that same rule and the ruleset would read the red
+  # run as green.
+  ci-required:
+    needs: [preflight, playwright_version, frontend, rust, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail unless every job passed or skipped by design
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        # Named one by one rather than joined: `needs.*.result` is a bare list of results
+        # whose order is not this file's to promise, and a message that pairs the wrong
+        # job with the wrong verdict sends the reader to the wrong log.
+        env:
+          PREFLIGHT: ${{ needs.preflight.result }}
+          PLAYWRIGHT_VERSION: ${{ needs.playwright_version.result }}
+          FRONTEND: ${{ needs.frontend.result }}
+          RUST: ${{ needs.rust.result }}
+          E2E: ${{ needs.e2e.result }}
+        run: |
+          echo "::error::CI did not pass — preflight=${PREFLIGHT} playwright_version=${PLAYWRIGHT_VERSION} frontend=${FRONTEND} rust=${RUST} e2e=${E2E}"
+          exit 1

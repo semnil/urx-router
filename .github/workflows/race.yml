@@ -12,9 +12,15 @@ name: Race harness
 # directly in front of the only commit a user ever installs — a stronger place than the
 # release itself, where a red result would arrive after the tag already exists.
 #
-# `paths` alone would not mean "version bump": Dependabot's npm ecosystem edits
-# package.json every week for dependencies. The `detect` job reads the `version` field
-# on both sides of the PR, and the harness runs only when it actually moved.
+# `paths: package.json` would not mean "version bump" either: Dependabot's npm ecosystem
+# edits package.json every week for dependencies. The `detect` job reads the `version`
+# field on both sides of the PR, and the harness runs only when it actually moved.
+#
+# The trigger carries no filter at all, and `detect` runs on every pull request as a
+# result. That is what makes `race-required` a usable merge condition: a workflow skipped
+# by a trigger filter reports no check run, so the version-bump PR could never wait for a
+# check the other pull requests do not even have. Away from that one PR the two harness
+# jobs skip on their own condition, which reports success in seconds.
 #
 # Also runnable on demand against any branch, which is how the live-sync surface gets
 # checked before a version PR exists:
@@ -22,8 +28,6 @@ name: Race harness
 #   gh workflow run race.yml --ref <branch>
 on:
   pull_request:
-    paths:
-      - 'package.json'
   workflow_dispatch:
 
 jobs:
@@ -181,3 +185,33 @@ jobs:
           name: race-traces-webkit
           path: test-results/
           retention-days: 7
+
+  # The single context this workflow contributes to the branch ruleset
+  # (.github/required-checks.json). Away from the version-bump PR it is a few seconds of
+  # green over four skipped jobs; on that PR it is what stops a release from being tagged
+  # over a red harness — which is the one merge in this repository that ships something.
+  #
+  # `always()` and an explicit read of the results, because a job skipped by a failed
+  # dependency reports SUCCESS to a required check: with a bare `needs:` this gate would
+  # be skipped the same way and the ruleset would read a red harness as green. The three
+  # shards arrive here as one result, which is 'failure' if any of them failed.
+  race-required:
+    needs: [detect, race, race-webkit]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail unless every job passed or skipped by design
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        # Named one by one rather than joined: `needs.*.result` is a bare list of results
+        # whose order is not this file's to promise, and a message that pairs the wrong
+        # job with the wrong verdict sends the reader to the wrong log.
+        env:
+          DETECT: ${{ needs.detect.result }}
+          RACE: ${{ needs.race.result }}
+          # Bracketed, not dotted: a hyphen is not a legal character in an expression's
+          # property path, and `needs.race-webkit.result` parses as a subtraction.
+          RACE_WEBKIT: ${{ needs['race-webkit'].result }}
+        run: |
+          echo "::error::the race harness did not pass — detect=${DETECT} race=${RACE} race-webkit=${RACE_WEBKIT}"
+          exit 1

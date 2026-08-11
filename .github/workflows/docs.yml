@@ -1,25 +1,23 @@
 name: Docs
 
-# ci.yml deliberately skips Markdown-only changes, so documentation structure is
-# verified here instead. Runs on external PRs too, which the local Claude Code
-# hook cannot cover.
+# The document-structure checks, and the "## Reusable assets" index in both directions.
+# ci.yml's expensive jobs skip a doc-only change, so this is where documentation is
+# verified instead. Runs on external PRs too, which the local Claude Code hook cannot
+# cover.
+#
+# No trigger filter, and no condition on the job: this workflow reports `docs-required`,
+# one of the contexts the branch ruleset makes a merge condition, and a required check
+# only reports at all when its workflow runs. Filtering it to Markdown would leave every
+# code-only pull request waiting for a check that never arrives. Nothing here is
+# path-dependent anyway — both checkers read the whole tree — and the job costs seconds:
+# no pnpm install, no build.
 on:
   pull_request:
-    paths:
-      - '**/*.md'
-      - 'scripts/check-md-tables.mjs'
-      - 'scripts/check-assets-index.mjs'
-      - '.github/workflows/docs.yml'
   push:
     branches: [main]
-    paths:
-      - '**/*.md'
-      - 'scripts/check-md-tables.mjs'
-      - 'scripts/check-assets-index.mjs'
-      - '.github/workflows/docs.yml'
 
 jobs:
-  markdown:
+  docs-required:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -28,9 +26,15 @@ jobs:
         with:
           node-version: 24
       - run: node scripts/check-md-tables.mjs
-      # The doc-side half of the "## Reusable assets" index: a row edited to point at
-      # nothing, or an asset that reaches the repo without reaching the table — plus
-      # every file reference docs/{en,ja} makes, in a code span or in a sentence, which
-      # is the half a docs-only change can break. The code-side half runs in ci.yml, which skips
-      # Markdown-only changes. Zero-dep on purpose — this job has no pnpm install.
+      # Both halves of the "## Reusable assets" index: a row that points at nothing or an
+      # asset that reached the repo without reaching the table, plus every file reference
+      # docs/{en,ja} makes, in a code span or in a sentence. The same script also ran in
+      # ci.yml, which was only needed while this workflow was Markdown-filtered and could
+      # not see a moved file the documents still name; now that it runs on every change,
+      # that second copy would report the same findings twice. Zero-dep on purpose — this
+      # job has no pnpm install.
       - run: node scripts/check-assets-index.mjs
+      # The workflows themselves: every context the ruleset requires still has a job that
+      # reports it on every pull request. ci.yml's `preflight` runs this too, so a change
+      # that breaks ci.yml's own trigger is still caught here.
+      - run: node scripts/check-merge-gates.mjs

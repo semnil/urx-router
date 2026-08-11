@@ -29,8 +29,8 @@
 
 ## Checklist
 
-<!-- Only what the checks cannot decide. Formatting is not here: format.yml applies it
-     to a same-repo PR itself and reports above. -->
+<!-- Only what the checks cannot decide. Formatting is not here: the `format` check runs
+     Prettier and cargo fmt above, and a merge waits for it. -->
 
 - [ ] E2E coverage added for new behavior
 - [ ] `docs/en` and `docs/ja` updated together

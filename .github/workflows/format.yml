@@ -1,24 +1,35 @@
 name: Format
 
-# Auto-applies code formatting: Prettier for the TypeScript sources (pnpm
-# format) and cargo fmt for the Rust shell. On pull requests from branches in
-# this repository the fixes are validated (build + unit tests) and pushed back
-# to the branch as a fixup commit. GITHUB_TOKEN cannot push to forks, so fork
-# PRs fall back to a check that fails with the diff and asks the author to
-# run `pnpm format` locally.
-# Notes: pushes made with GITHUB_TOKEN do not retrigger workflows, so the
-# fixup commit gets no separate CI run — the in-job build + test gate stands
-# in for it. Formatting drift on main (e.g. a fork PR merged over a red
-# check) self-heals on the next same-repo PR, since pnpm format covers the
-# full tree.
+# Verifies code formatting: Prettier for the TypeScript sources (pnpm format) and cargo
+# fmt for the Rust shell. It applies both to a checkout and fails on the resulting diff —
+# it does not write anything back.
+#
+# It used to push the fixes to same-repo pull requests as a `style:` fixup commit, with
+# fork PRs falling back to this check because GITHUB_TOKEN cannot push to a fork. That
+# half is gone, and required status checks are the reason. They are evaluated on the head
+# commit, and **a push made with GITHUB_TOKEN triggers no workflow at all** — so the fixup
+# left a head commit that no workflow had run on, with every required context reading
+# "Expected" and no way to make one arrive. Once a merge waits on those contexts, a
+# convenience that moves the head is a pull request that cannot be merged. Recovering
+# needed a human push or a close/reopen, and neither is discoverable from the symptom.
+#
+# So `pnpm format` before committing is now a real obligation rather than a courtesy, and
+# this is where it is enforced — see CLAUDE.md "Conventions" and CONTRIBUTING.
+#
+# Formatting drift on main no longer self-heals, since nothing writes any more: the fix is
+# a commit like any other. No trigger filter, because this job reports `format`, one of
+# the contexts .github/required-checks.json makes a merge condition — a filtered-out
+# workflow reports nothing, and nothing is what a required check can never recover from.
+# A Markdown-only pull request runs the whole job — checkout, pnpm install, the Rust
+# toolchain, both formatters — and passes, since Prettier does not read .md here (see the
+# `format` script in package.json). Paying an install to check nothing is the price of the
+# context existing on every pull request; it is the same job either way, and it is not
+# on the critical path of anything.
 on:
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: format-${{ github.event.pull_request.number }}
@@ -29,12 +40,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # The merge commit, which is the default: nothing is pushed back any more, so there
+      # is no reason to check out the head commit itself, and the merge result is what
+      # main will actually carry.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # Check out the head commit itself (not the merge commit) so
-          # formatting fixes can be committed and pushed back. Fork head SHAs
-          # are fetchable from the base repository via the advertised PR refs.
-          ref: ${{ github.event.pull_request.head.sha }}
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -50,27 +59,10 @@ jobs:
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       - run: pnpm format
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml
-      - name: Push formatting fixes (same-repo PRs)
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        # The branch name is untrusted input, so it reaches the shell only as
-        # a quoted environment variable. The fixup commit triggers no workflow
-        # runs of its own, so build + unit tests run here before pushing. If
-        # the branch moved while this run was in flight the push fails; the
-        # newer push retriggers the job.
-        env:
-          BRANCH: ${{ github.event.pull_request.head.ref }}
-        run: |
-          if git diff --quiet; then
-            exit 0
-          fi
-          pnpm build
-          pnpm test
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -am 'style: apply automatic formatting'
-          git push origin "HEAD:refs/heads/$BRANCH"
-      - name: Verify formatting (fork PRs)
-        if: github.event.pull_request.head.repo.full_name != github.repository
+      # `pnpm build` and `pnpm test` used to run here, between the formatting and the
+      # push, because that push produced a commit no CI run would ever see. With nothing
+      # being pushed they are ci.yml's job and only ci.yml's.
+      - name: Verify formatting
         run: |
           git diff --exit-code || {
             echo '::error::Unformatted code found. Run `pnpm format` (and `cargo fmt` for Rust) locally and commit the result.'
