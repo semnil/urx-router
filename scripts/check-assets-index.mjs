@@ -134,7 +134,12 @@ process.on("uncaughtException", (e) => {
 // Which edit this hook run is about. Resolved against the cwd rather than matched on a
 // basename: a basename gate fires for ANY file called CLAUDE.md — `~/.claude/CLAUDE.md`
 // among them — and then checks THIS repository's copy, which the edit never touched.
-let hookDocFile = "";
+// What this run covers. One decision, taken at the gate, instead of the same question
+// re-derived at each section: the sections below read a field rather than re-testing
+// HOOK. A later mode is a new row here, not a fifth condition somewhere downstream —
+// which is what the previous shape's failure looked like, since a section that forgot
+// the guard fails by checking the wrong corpus rather than by erroring.
+let scope = { claudeMd: true, docFiles: null }; // null = walk DOC_DIRS
 if (HOOK) {
   let edited;
   try {
@@ -148,9 +153,11 @@ if (HOOK) {
   // TABLES (check-md-tables.mjs), so skipping its REFERENCES made one Edit answer half
   // a question. Only that one file is walked below, which is what keeps the run inside
   // the hook's budget.
-  if (rel === DOC) hookDocFile = "";
-  else if (DOC_DIRS.some((d) => rel.startsWith(`${d}/`)) && rel.endsWith(".md")) hookDocFile = rel;
-  else process.exit(0);
+  const isDocsMd = DOC_DIRS.some((d) => rel.startsWith(`${d}/`)) && rel.endsWith(".md");
+  if (rel !== DOC && !isDocsMd) process.exit(0);
+  // A CLAUDE.md edit answers for the asset table; a docs edit answers for that one
+  // document. Neither answers for the other.
+  scope = isDocsMd ? { claudeMd: false, docFiles: [rel] } : { claudeMd: true, docFiles: [] };
 }
 
 // Kept structured so the report can be read in file order: findings are produced in
@@ -248,7 +255,7 @@ const spans = [];
 // A hook run about a docs/ file answers for that file only: the asset table belongs to
 // the edit that touched CLAUDE.md, and re-reporting it here would blame every docs edit
 // for a row somebody else broke.
-if (!hookDocFile)
+if (scope.claudeMd)
   for (let i = start; i < end; i++) {
     for (const m of lines[i].matchAll(/`([^`]+)`/g)) spans.push({ raw: m[1], line: i + 1 });
   }
@@ -589,12 +596,12 @@ let docFileCount = 0;
 let docSpans = 0;
 let docChecked = 0;
 
-if (!HOOK || hookDocFile) {
-  const docFiles = hookDocFile
-    ? [hookDocFile]
-    : DOC_DIRS.flatMap((d) => walk(d))
-        .filter((f) => f.endsWith(".md"))
-        .sort();
+if (scope.docFiles === null || scope.docFiles.length) {
+  const docFiles =
+    scope.docFiles ??
+    DOC_DIRS.flatMap((d) => walk(d))
+      .filter((f) => f.endsWith(".md"))
+      .sort();
   docFileCount = docFiles.length;
   // An empty corpus is finding #1, never a silent pass: moving or renaming the
   // documentation directories would otherwise disable every assertion below at once,
@@ -774,7 +781,7 @@ for (let i = start; i < end; i++) {
   if (i + 1 < end && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) continue; // header
   rows.push(i + 1);
 }
-for (const row of hookDocFile ? [] : rows) {
+for (const row of scope.claudeMd ? rows : []) {
   const label = () => (lines[row - 1].split("|")[1] ?? "").trim().replace(/`/g, "");
   if (!asserted.has(row)) {
     finding(`${DOC}:${row}`, `row "${label()}" carries no checkable anchor — name the module or file it lives in`);

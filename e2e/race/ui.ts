@@ -108,9 +108,11 @@ export async function settleValue(
       last = now;
       stable = 0;
       if (changedAt < 0 && now !== from) changedAt = Date.now() - t0;
-    } else if (now !== from || changedAt >= 0) {
+    } else if (changedAt >= 0) {
       // Stillness only counts once it is standing on something other than the baseline:
-      // a value that has not moved yet is not "settled", it is "not started".
+      // a value that has not moved yet is not "settled", it is "not started". `last`
+      // only ever leaves `from` through the branch above, which sets changedAt in the
+      // same step — so this one test is the whole condition.
       stable++;
     }
     if (stable >= still) return { value: last, changedAt, settledAt: Date.now() - t0 };

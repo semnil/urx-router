@@ -10,7 +10,7 @@ vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 import { vdGet, vdGetStr } from "../platform";
 import { COLOR_PALETTE, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { applyDeviceState, formatReadbackReport } from "./readback";
-import { WIRE_SEP } from "../plan-history";
+import { readableContestKey } from "../plan-history";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { addrKey, planToCommands } from "./translate";
@@ -886,14 +886,16 @@ describe("formatReadbackReport", () => {
       applied: 40,
       errors: [],
       unreadNodes: new Set(),
-      unplaced: ["nodeParams ch1.on", `connParams ch1:out${WIRE_SEP}bus.stereo:in.level`],
+      unplaced: ["nodeParams ch1.on", "connParams ch1:out\u0000bus.stereo:in.level"],
     });
     expect(md).toContain("## Device values not applied");
     expect(md).toContain("- nodeParams ch1.on");
     // A wire key joins its two refs with NUL. Rendered raw it puts a control character
     // into a saved document and runs the two refs together on screen.
     expect(md).toContain("ch1:out -> bus.stereo:in.level");
-    expect(md).not.toContain(WIRE_SEP);
+    // The raw separator must not survive into a saved document.
+    expect(md).not.toContain("\u0000");
+    expect(readableContestKey("a\u0000b")).toBe("a -> b");
   });
 
   // Both halves of `unplaced` reach this section — a target that is gone, and a key the

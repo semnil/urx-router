@@ -996,7 +996,7 @@ test.describe("T4b midi", () => {
       // value and failed naming the app. Waiting for STILLNESS instead measures the
       // arrival and keeps the assertion honest: polling until the value equals the 5 the
       // case is about to assert would pass whatever the app did.
-      const settled = await settleValue(fader, burstFrom, { step: 10, still: 6, cap: 1000 });
+      const settled = await settleValue(fader, burstFrom);
       afterBurstVisible = Number(settled.value);
       reflectMs = settled.changedAt;
       settledMs = settled.settledAt;

@@ -18,7 +18,7 @@ import type {
   SsmcsParams,
 } from "../plan";
 import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
-import { applyPatchInContext, clonePlanState, diffPlans, dropAuthored, WIRE_SEP } from "../plan-history";
+import { applyPatchInContext, clonePlanState, diffPlans, dropAuthored, readableContestKey } from "../plan-history";
 import type { PlanPatch, PlanWriteWitness } from "../plan-history";
 import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
 import { colorIndexToHex, COMP_EQ_SSMCS, FX_STEREO_ASSIGN_ON, normalizeInsertFx, PARAMS } from "./params";
@@ -1244,8 +1244,9 @@ export function formatReadbackReport(
     lines.push("Each was either edited here while the read was in flight (your edit stands), or had");
     lines.push("nowhere left to land.");
     lines.push("");
-    // A wire key joins its two refs with NUL; a saved document must not carry one.
-    for (const key of result.unplaced) lines.push(`- ${key.replaceAll(WIRE_SEP, " -> ")}`);
+    // A wire key joins its two refs with a separator a document must not carry;
+    // plan-history owns that encoding and undoes it.
+    for (const key of result.unplaced) lines.push(`- ${readableContestKey(key)}`);
   }
   lines.push("");
   return lines.join("\n");

@@ -18,7 +18,7 @@ import {
 import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
 import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
-import { clonePlanState, diffPlans, PlanWriteWitness, type PatchTouch, type PlanPatch } from "./core/plan-history";
+import { clonePlanState, diffPlans, PlanWriteWitness, type PatchTouch } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import { planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
@@ -488,11 +488,13 @@ function authorFromDevice(node: string, place: () => boolean): boolean {
   return true;
 }
 let followFull = false;
-// What the follow reads behind the pending reflect actually authored. Accumulated
-// rather than latched because the reflect is coalesced at ~20 Hz: several reads can
-// land before one runs, and a boolean written per call cannot say "read A wrote
-// nothing, read B wrote something". Both reconcile hooks append; the reflect drains it.
-let followPatch: PlanPatch = [];
+// How many keys the follow reads behind the pending reflect actually authored. A COUNT
+// rather than a flag because the reflect is coalesced at ~20 Hz, so several reads can
+// land before one runs and a flag ASSIGNED per call would let the last one speak for
+// all of them; it accumulates instead. Only its emptiness is read — the keys
+// themselves are the reads' own business, and each already absorbed or re-based with
+// them at its own site. Both reconcile hooks add; the reflect drains it.
+let followAuthored = 0;
 function reflectFollow(): void {
   const ids = [...followDirtyNodes];
   followDirtyNodes.clear();
@@ -519,9 +521,9 @@ function reflectFollow(): void {
     // (follow.ts's idle net) — and neither is rare enough to pay for. Nothing is
     // absorbed in the other arm: PlanHistoryStack.absorb returns immediately on an
     // empty patch, so the fallback would be a no-op spelled as code.
-    const authored = followPatch;
-    followPatch = [];
-    if (authored.length) planHistory?.reset();
+    const authored = followAuthored;
+    followAuthored = 0;
+    if (authored) planHistory?.reset();
   } else {
     // Direct-only: repaint just the changed nodes / strips. The snapshot is already
     // current from noteDirect, so no full re-translate. Only one view is visible.
@@ -610,7 +612,7 @@ function abandonFollowWork(): void {
   }
   followDirtyNodes.clear();
   followFull = false;
-  followPatch = [];
+  followAuthored = 0;
 }
 
 /** Run a follow-side device read as a merged read (readback.readIntoPlan), carrying the
@@ -711,7 +713,7 @@ const follow =
           // Before assertReadComplete, which throws: a partial read's authored keys
           // still invalidate the history, exactly as followFull / requestReflect
           // already survive that throw.
-          followPatch = followPatch.concat(merged.devicePatch);
+          followAuthored += merged.devicePatch.length;
           followFull = true;
           requestReflect();
           assertReadComplete(merged, "device-follow scoped readback issues:");
@@ -728,7 +730,7 @@ const follow =
           noteMergeConflicts(merged);
           plan.unreadNodes = merged.unreadNodes;
           live?.resync(merged.deviceView, since);
-          followPatch = followPatch.concat(merged.devicePatch);
+          followAuthored += merged.devicePatch.length;
           followFull = true;
           requestReflect();
           assertReadComplete(merged, "device-follow readback issues:");

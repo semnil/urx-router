@@ -439,12 +439,29 @@ export class MidiControl {
 
   private async setOutputPort(port: string | null): Promise<void> {
     if (port) await this.openOutput(port);
-    else {
-      void midiCloseOutput();
-      this.outputPort = null;
-    }
+    else this.closeOutput();
     this.savePorts();
     this.pushState();
+  }
+
+  /** Drop the output port on both sides and stop the feedback that was aimed at it.
+   *
+   *  Closing in the SHELL as well as here is what makes the two agree: the held slot is
+   *  what `open_ports` answers from (midi.rs), so leaving it open lets the next
+   *  `reconcileOpenPorts` hand the name straight back. Killing both timers belongs here
+   *  too — a pass armed against a port that is gone either sends into nothing or, worse,
+   *  into whatever the shell hands back next.
+   *
+   *  Says nothing and saves nothing: WHY the port went is the caller's to report, and
+   *  whether the operator's saved choice goes with it is the caller's to decide. */
+  private closeOutput(): void {
+    this.txFailedPasses = 0;
+    window.clearTimeout(this.feedbackTimer);
+    this.feedbackTimer = 0;
+    window.clearTimeout(this.settleTimer);
+    this.settleTimer = 0;
+    this.outputPort = null;
+    void midiCloseOutput().catch(() => {});
   }
 
   // ---- feedback ----
@@ -456,13 +473,10 @@ export class MidiControl {
    *  forget the operator's choice at the next boot, and that restore reports its own
    *  failure. */
   private abandonOutput(): void {
-    this.txFailedPasses = 0;
-    window.clearTimeout(this.feedbackTimer);
-    this.feedbackTimer = 0;
-    window.clearTimeout(this.settleTimer);
-    this.settleTimer = 0;
-    this.outputPort = null;
-    void midiCloseOutput().catch(() => {});
+    this.closeOutput();
+    // The SAVED port is deliberately left alone — an unplug should not forget the
+    // operator's choice at the next boot, and that restore reports its own failure.
+    // That is the one thing separating this from the operator choosing "None".
     this.say(t().midi.outputStalled);
   }
 
