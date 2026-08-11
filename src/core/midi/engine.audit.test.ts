@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { MidiEngine } from "./engine";
 import type { MidiMapping } from "./mapping";
 import { encodeCc } from "./message";
-import { fake, type Fake } from "./fake-control";
+import { fake, type Fake } from "./fake-control.test-util";
 
 let controls: Map<string, Fake>;
 let applied: string[];

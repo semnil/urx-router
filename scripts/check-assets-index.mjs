@@ -270,6 +270,16 @@ const unitTests = [
 // search for tests does not turn them up either — which is how eight of them
 // accumulated while the section indexed only the E2E ones.
 const unitFixtures = srcFiles.filter((f) => f.endsWith(".test-util.ts"));
+// What rule H holds against the map documents: the files those documents undertake to
+// describe, which is everything that is neither a test nor a fixture nor a type
+// declaration. The shell's Rust is in it beside the frontend's TypeScript because
+// architecture.md names both halves the same way — and the walk starts at src-tauri
+// rather than src-tauri/src, which left build.rs out of the inventory while it was named
+// by no document at all. WALK_SKIP already keeps target/ and gen/ out.
+const mappedSources = [
+  ...srcFiles.filter((f) => f.endsWith(".ts") && !/\.(test|test-util|d)\.ts$/.test(f)),
+  ...walk("src-tauri").filter((f) => f.endsWith(".rs")),
+];
 const raceSpecs = e2eFiles.filter((f) => f.startsWith("e2e/race/") && f.endsWith(".spec.ts"));
 const appSpecs = e2eFiles.filter((f) => !f.startsWith("e2e/race/") && f.endsWith(".spec.ts"));
 
@@ -840,6 +850,46 @@ if (!forwardOnly) {
       `DOC_MENTIONS entry \`${token}\` (${why}) no longer suppresses anything — delete it`,
     );
   }
+
+  // H. every source file the map documents undertake to describe is named by one of them:
+  //    CLAUDE.md's one-line directory map, or BOTH architecture.md translations, whose
+  //    "Source layout" says outright that it is "what each file is for".
+  //    Nothing looked this way round before. The docs half above only checks that a path a
+  //    document NAMES exists, so a file no document mentions at all was invisible to every
+  //    assertion here — which is how five modules extracted out of graph.ts and
+  //    inspector.ts in one afternoon, and the DUCKER screen for three days, stayed outside
+  //    the map while every check stayed green and CLAUDE.md still called DUCKER "to
+  //    follow".
+  //    Matched by BASENAME, because that is how these documents write a file inside a
+  //    directory-scoped bullet ("`plan.ts` plan state", under `src/core/`) — and matched
+  //    with BOUNDARIES, not as a substring: the first version asked `text.includes(base)`,
+  //    which the mention of dyn-plot.ts answers for an unmapped plot.ts, exactly the
+  //    substring-for-an-exact-thing defect rule E2 was fixed for one PR earlier. A `/` may
+  //    precede the name so a mention written as a full path counts; `-` and `.` may not,
+  //    since that is what separates a file from a longer name ending in it, and a trailing
+  //    word character is refused so plan.tsx cannot answer for plan.ts.
+  //    A duplicated basename (index.ts, device-setup.ts, link-stats.ts) can still be
+  //    answered by its sibling's mention: this catches a file nothing describes, not one
+  //    described under the wrong directory. Requiring BOTH translations is what makes a
+  //    half-translated addition a finding rather than a silence.
+  const mapDocs = DOC_DIRS.map((d) => `${d}/architecture.md`);
+  const mapText = new Map(mapDocs.map((f) => [f, read(f)]));
+  const absentMaps = mapDocs.filter((d) => !mapText.get(d));
+  if (absentMaps.length) {
+    // Reported once, for the same reason as the empty-corpus finding on the docs side: a
+    // missing map would otherwise report every source file, and 95 findings read as a
+    // broken check rather than as the one document that moved.
+    finding(absentMaps.join(" / "), "is missing, so no source file could be checked against the map");
+  } else {
+    for (const file of mappedSources) {
+      const base = file.split("/").pop();
+      const named = new RegExp(String.raw`(?<![\w.-])${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\w-])`);
+      if (named.test(doc)) continue;
+      const absent = mapDocs.filter((d) => !named.test(mapText.get(d)));
+      if (absent.length === mapDocs.length) finding(file, `is a source file that no map document names`);
+      else if (absent.length) finding(file, `is named in one translation only — missing from ${absent.join(", ")}`);
+    }
+  }
 }
 
 // --- report -----------------------------------------------------------------
@@ -865,7 +915,7 @@ if (findings.length) {
 // that quietly became ignored (a build output, a moved directory) has to be readable
 // off the OK line. Same for a mention the docs half pardoned by name.
 const note = skipped.length ? ` (skipped as private/generated: ${[...new Set(skipped)].join(", ")})` : "";
-console.log(`OK: ${spans.length} tokens${note}, ${checked} assertions, ${rows.length} rows, 6 inventories`);
+console.log(`OK: ${spans.length} tokens${note}, ${checked} assertions, ${rows.length} rows, 7 inventories`);
 console.log(
   `    docs: ${docFileCount} files, ${docSpans} code spans, ${docChecked} file references (spans and prose)` +
     (docSkipped.length ? ` (skipped as private/generated: ${[...new Set(docSkipped)].join(", ")})` : "") +
