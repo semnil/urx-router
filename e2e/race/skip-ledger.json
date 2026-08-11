@@ -9,18 +9,12 @@
     {
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "a sampleRate-touching entry is refused while live",
-      "guardedBy": {
-        "file": "e2e/race/t3-undo.spec.ts",
-        "title": "every refusal in order, none of them spending the entry"
-      }
+      "unguarded": "The reason is that no sampleRate entry can exist while live — the readback's rerenderPlan resets both stacks and the rate picker is disabled from then on. t3-undo.spec.ts's refusal ladder asserts exactly that, but it is a race case, so it runs on the version-bump PR alone and cannot report an expired reason on an ordinary one. What would settle it: the same two facts pinned where every PR runs them — the rate picker's disabled state under a live session, and rerenderPlan clearing both stacks."
     },
     {
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "a .urxf settings import empties both stacks",
-      "guardedBy": {
-        "file": "e2e/chrome.spec.ts",
-        "title": "without --experimental MIDI stays but the self-test hides with its separator"
-      }
+      "unguarded": "The reason is that e2e/race/fake-device.ts answers false for experimental_enabled, so the import is unreachable from the harness. Nothing asserts that: chrome.spec.ts's --experimental case drives the OTHER stub (e2e/tauri-stub.ts) and checks the Device menu's self-test entry, not this path. What would settle it: an ordinary-tier case asserting #btn-open-settings is hidden without --experimental, plus a reading that the race fake still answers false."
     },
     {
       "file": "e2e/race/t3b-undo.spec.ts",
