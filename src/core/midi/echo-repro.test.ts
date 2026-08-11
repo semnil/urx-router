@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { MidiEngine } from "./engine";
 import { encodeCc } from "./message";
-import { fake } from "./fake-control";
+import { fake } from "./fake-control.test-util";
 
 // Reproduction of the real rig, from the measured MIDI bus trace:
 //  - the Stream Deck "Push" button sends ONE CC 127 per press and NO release 0
