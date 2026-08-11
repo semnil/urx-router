@@ -59,6 +59,7 @@ const PROSE_TOKENS = new Map([
   [".urxf", "a file format, not a file in this repo"],
   ["?plan=", "the deep-link query prefix"],
   ["*.audit.test.ts", "a glob naming a family; the family is checked by reverse rule F"],
+  ["*.test-util.ts", "a glob naming a family; every member is checked by reverse rule E2"],
   ["probe-*.mjs", "a glob over the private reference repo, absent from this checkout"],
   ["PLAN.md", "lives in the private reference repo, absent from this checkout"],
   ["dist", "the build output directory, named as the thing ci.yml greps"],
@@ -260,6 +261,11 @@ const unitTests = [
   ...srcFiles.filter((f) => f.endsWith(".test.ts")),
   ...scriptFiles.filter((f) => f.endsWith(".test.mjs")),
 ];
+// The unit half of rule E. These are the hosts and stubs a layer needs in order to run
+// at all under jsdom or node, and vitest does not collect them (only `.test.ts`), so a
+// search for tests does not turn them up either — which is how eight of them
+// accumulated while the section indexed only the E2E ones.
+const unitFixtures = srcFiles.filter((f) => f.endsWith(".test-util.ts"));
 const raceSpecs = e2eFiles.filter((f) => f.startsWith("e2e/race/") && f.endsWith(".spec.ts"));
 const appSpecs = e2eFiles.filter((f) => !f.startsWith("e2e/race/") && f.endsWith(".spec.ts"));
 
@@ -782,6 +788,13 @@ if (!forwardOnly) {
   // E. every E2E fixture (a non-spec .ts) is in the section.
   for (const file of e2eFiles.filter((f) => f.endsWith(".ts") && !f.endsWith(".spec.ts"))) {
     if (!sectionText.includes(file)) finding(file, `is an E2E fixture but appears in no row`);
+  }
+
+  // E2. every unit fixture is in the section, for the same reason as E — and this one
+  //     did not exist while the table did, which is precisely why the table only ever
+  //     listed the E2E half.
+  for (const file of unitFixtures) {
+    if (!sectionText.includes(file)) finding(file, `is a unit fixture but appears in no row`);
   }
 
   // F. every contract/pin test is covered by one of the section's `pnpm test <filter>`

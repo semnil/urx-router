@@ -44,7 +44,7 @@ pnpm build:demo   # browser demo build (VITE_DEMO=1; excludes save/image export)
 pnpm preview      # serve the built dist/ at http://localhost:4173 (browser check of a build:demo bundle)
 pnpm e2e:serve    # vite build + preview on 4173 — what playwright.config.ts launches as its webServer (E2E_PORT overrides; --trace, aliased as e2e:serve:trace, serves dist-trace on E2E_TRACE_PORT, 4174)
 pnpm e2e:worktree # run the suite in a throwaway worktree on a free port pair, so a second checkout can run it at the same time
-pnpm test         # vitest (core: routing/constraints/plan/levels/meters/midi, control: vd/translate/readback/live/follow/fx/insert-fx/firmware etc., models, ui: console/dom/fine/history/inspector/keys/licenses + the contract and pin tests below; `include` also covers scripts/**/*.test.mjs, which is the tooling's own pins and stays out of the coverage set)
+pnpm test         # vitest (core: routing/constraints/plan/levels/meters/midi, control: vd/translate/readback/live/follow/fx/insert-fx/firmware etc., models, ui: console/graph/inspector/dyn-*/midi/prefs/dom/fine/history/keys/licenses etc., the app entry: main.boot + main.flows in a browser and main.device against a stubbed Tauri shell (isTauri() gates half of main.ts, so without that shell it is unreachable rather than untested), + the contract and pin tests below; `include` also covers scripts/**/*.test.mjs, which is the tooling's own pins and stays out of the coverage set)
 pnpm test:coverage # the same unit suite with V8 coverage for all frontend TypeScript sources; writes coverage/lcov.info for Codecov
 pnpm typecheck:e2e # tsc -p tsconfig.e2e.json — type-checks e2e/ + the root config .ts (playwright/vite/vitest); the src build's tsconfig only includes "src"
 pnpm test:e2e     # Playwright E2E, all three projects at once. No CI job runs this — each tier is its own
@@ -147,6 +147,26 @@ the second set, and a one-shot action is consumed by the first caller (an HMR re
 | `e2e/race/fake-device.ts` | a case whose verdict is about timing: per-command latency, command barriers, a scriptable notify stream, refusal injection — its in-page surface is `__urxFake` |
 | `e2e/race/analyze.ts` + `e2e/race/ui.ts` | the invariants over one ordered trace, and the locators the harness shares |
 | in-spec `__midiTest` / `__dynTest` | driving a MIDI control or a tuning screen's meter feed — copy the installed state object, do not invent a third stub shape |
+
+**Unit fixtures — extend these rather than forking them.** The same rule as the E2E ones, and
+harder to find: vitest collects only the test files themselves, so these carry a `*.test-util.ts`
+suffix and a search for tests does not turn them up. Each is the host or stub some layer needs in
+order to run at all under jsdom or node, and each says in its own header **why it answers the way
+it does** — a fixture that answers too obligingly is how a case ends up green while the code runs
+the branch nobody meant to test. **Reverse rule E2 in `scripts/check-assets-index.mjs` requires a
+row here for every one of them**, which is the half that was missing while this table listed only
+the E2E fixtures and eight of these accumulated unindexed.
+
+| Fixture | Reach for it when |
+| --- | --- |
+| `src/main.test-util.ts` | booting the app entry whole, against the real `index.html` markup — and optionally against a stubbed Tauri shell, which is the same seam `e2e/tauri-stub.ts` gives the E2E tier rather than a second invention. Unknown commands **reject** (a command nobody taught it about is a flow running further than the test knows), and the device table keeps what is written and answers the next read with it, without which a converging write can never converge |
+| `src/ui/console.test-util.ts` | a CONSOLE case: pointer capture, a real (non-zero) box for every control, the size metrics the two popovers position against, a manual frame clock, and locators that go through the view's own reference map rather than a second addressing scheme |
+| `src/ui/dyn-screen.test-util.ts` | a channel tuning screen: the modal host the markup carries, the recording canvas, a manual frame clock, a measurable canvas box |
+| `src/ui/dyn-plot.test-util.ts` | pinning what a plot descriptor DRAWS — a recording 2D context, so the coordinate and the token survive instead of being rasterized away |
+| `src/ui/graph.test-util.ts` | a node graph in jsdom, plus the locators its suites share. Its all-zero rects are deliberate: the view then takes its own size fallbacks, so the initial pan and zoom are identical every run |
+| `src/ui/listener-scope.test-util.ts` | the code under test registers a window-**lifetime** listener. jsdom's window outlives the file, so each construction leaves one behind and a module-level mock is written by all of them — measured before the fix: one page-hide event, eleven close intents, ten from windows earlier tests had built |
+| `src/ui/style-css.test-util.ts` | a contract test that reads `src/style.css` as text — the artifact itself, not jsdom's parse of it |
+| `src/core/memory-storage.test-util.ts` | a node-env test of a storage-backed module; its throw-on-write mode is private mode / quota, the failure the guarded helpers absorb |
 
 **Contract and pin tests — add a case to these rather than a new test file.**
 
