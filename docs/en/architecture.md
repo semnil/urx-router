@@ -676,6 +676,14 @@ through it — otherwise "Save failed: …" would end in an English sentence in 
 aggregated error lists `core/control/*` builds for its Markdown reports keep the codes verbatim:
 those reports are diagnostics, where a stable code carries more than prose would.
 
+What passing through resolves to depends on the value: `split()` takes `.message` from an `Error` and
+`String()`s anything else. A `DOMException` — what a cancel arrives as — therefore reports as
+`aborted` where it inherits from `Error`, and as `AbortError: aborted` where it does not. Every engine
+this has been measured in answers the first way (WebView2 on Windows, read from the running app;
+WebKit and bare V8 on macOS); jsdom builds it in another realm and is the only one that answers the
+second. That is why `error-text.test.ts` pins the property they share rather than either literal —
+pinning a literal here would pin the environment instead of the app.
+
 ## Display themes
 
 The UI has a studio-rack aesthetic modeled on pro-audio gear, with two palettes (dark and light)
