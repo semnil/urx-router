@@ -154,7 +154,10 @@ describe("parseUrxf", () => {
 
   it("rejects a file that is not a settings file", () => {
     const bytes = new Uint8Array(128);
-    bytes.set(new TextEncoder().encode("PK"));
+    // The ZIP magic, escaped rather than embedded: written as literal 0x03/0x04 this
+    // file reads as `data` to `file`, and a control byte in a source is one step from
+    // a NUL, which stops ripgrep searching it at all.
+    bytes.set(new TextEncoder().encode("PK\x03\x04"));
     expect(() => parseUrxf(bytes)).toThrow(expect.objectContaining({ code: "notUrxf" }));
   });
 
