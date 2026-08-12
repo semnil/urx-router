@@ -756,15 +756,15 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.device).toBe("URX22");
     expect(report.collisions).toEqual([]);
     expect(report.unverified.map((u) => u.key).sort()).toEqual(
-      ["dgain-urx22", "ducker-block", "hiz-channel", "input-ports", "stereo-block"].sort(),
+      ["dgain-urx22", "hiz-channel", "input-ports", "stereo-block"].sort(),
     );
     for (const u of report.unverified) {
       expect(u.outcome).not.toBe("collision");
-      // A round trip confirms every guess on a faithful device — including
-      // `ducker-block`, which is exactly why the report is not the whole story for it:
-      // that guess is about which PAIR a y addresses, and writing y then reading y back
-      // passes whichever pair it is. Its entry exists to keep the guess visible in the
-      // report, and PLAN.md's D-1 carries the LCD check that actually settles it.
+      // A round trip confirms every guess on a faithful device, which is why the report
+      // is not the whole story for a guess about WHICH instance a y addresses: writing y
+      // and reading y back passes whichever one it is. `ducker-block` was such a guess
+      // and was accepted on 2026-08-13 outside the round trip (see duckerControl); the
+      // ones left here are settled by the round trip itself.
       expect(u.outcome).toBe("confirmed");
     }
     expect(report.restored).toBe(true);

@@ -1140,6 +1140,14 @@ function pushEqOneKnobCommands(out: VdCommand[], ctrl: EqOneKnobControl, ok: EqO
  * Resolve a ducker node's instance index (its parent stereo channel's stereo
  * position, via attachTo), or null if it is not a ducker. The ducker's enable
  * (258) and detail (260-263) all address this y. Confirmed on CH5/6 (research §12.27).
+ *
+ * All four positions were confirmed on a URX44V by sentinel write and LCD read-back
+ * (y 0..3 = CH5/6, CH7/8, CH9/10, CH11/12). Pair 0 is a different channel on a URX22
+ * (`ch_3_4`), which no URX22 has been read to check; the operator accepted that half
+ * on 2026-08-13 from the corroboration recorded in the private ledger's D-1, so it is
+ * no longer reported as a guess. Getting it wrong would be quiet — the write and the
+ * GR meter move together, since meters.ts keys 119 on the ducker node too — so a
+ * URX22 that ever reaches this desk is worth one sentinel write and one LCD read.
  */
 export function duckerControl(model: DeviceModel, nodeId: string): { y: number } | null {
   const node = model.nodes.find((n) => n.id === nodeId);
@@ -2162,30 +2170,6 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
       const ys = [...stereoIndexMap(model).values()];
       return [STEREO_FADER, STEREO_ON, STEREO_PAN].flatMap((id) => ys.map((y) => [id, y] as GuessAddress));
     },
-  },
-  {
-    // The ducker block rides the same stereoIndexMap as `stereo-block`, and was writing
-    // unregistered. Its y is the host channel's stereo-pair position, confirmed on all
-    // four of a URX44V by sentinel write and LCD read-back (y 0..3 = CH5/6, CH7/8,
-    // CH9/10, CH11/12) — but pair 0 is `ch_3_4` on a URX22, and nothing has checked that
-    // there. Getting it wrong is quiet: the write and the GR meter move together, since
-    // meters.ts keys 119 on the ducker node too, so the screen stays self-consistent
-    // while operating the wrong channel. The self-test cannot settle it either — it
-    // writes y and reads y back, which passes whichever pair y points at — so this
-    // entry exists to report the guess rather than to have it confirmed by a round trip.
-    key: "ducker-block",
-    label: "Ducker block (258/260-263) addressed by stereo-pair position",
-    models: ["URX22", "URX44"],
-    guessedIds: [],
-    addresses: (model) =>
-      model.nodes.flatMap((node) => {
-        const dc = node.kind === "ducker" ? duckerControl(model, node.id) : null;
-        return dc
-          ? ([PARAMS.DUCKER_ON.id, ...DUCKER_FIELDS.map((f) => PARAMS[f.name].id)].map(
-              (id) => [id, dc.y] as GuessAddress,
-            ) as GuessAddress[])
-          : [];
-      }),
   },
   {
     key: "input-ports",
