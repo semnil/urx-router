@@ -1061,21 +1061,6 @@ pub fn run() {
                 capture_window_scale(window);
                 capture_window_rect(window);
             }
-            // The MIDI window is not a child window any more (midiwin.rs says why),
-            // so nothing keeps it above the main window. Raise it whenever the main
-            // window comes forward, which is the half of the parent relationship
-            // worth keeping. Deliberately not `set_focus`: the operator clicked the
-            // main window, and keystrokes have to land there.
-            #[cfg(desktop)]
-            if matches!(event, tauri::WindowEvent::Focused(true)) && window.label() == MAIN_WINDOW {
-                if let Some(midi) = window.app_handle().get_webview_window(midiwin::MIDI_WINDOW) {
-                    // Toggled rather than left on: always-on-top floats a window above
-                    // every OTHER app too, which is more than "in front of its own
-                    // main window" and not what was asked for.
-                    let _ = midi.set_always_on_top(true);
-                    let _ = midi.set_always_on_top(false);
-                }
-            }
             if !matches!(event, tauri::WindowEvent::Destroyed) {
                 return;
             }
@@ -1207,6 +1192,7 @@ pub fn run() {
             midiwin::open_midi_window,
             midiwin::close_midi_window,
             midiwin::focus_midi_window,
+            midiwin::pin_midi_window,
             midiwin::midi_window_open,
             midiwin::midi_ui_attach_main,
             midiwin::midi_ui_attach_window,

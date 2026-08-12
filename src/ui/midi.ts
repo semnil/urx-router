@@ -15,6 +15,7 @@ import { loadJson, saveJson } from "../core/storage";
 import {
   closeMidiWindow,
   focusMidiWindow,
+  pinMidiWindow,
   isTauri,
   midiCloseOutput,
   midiListInputs,
@@ -533,6 +534,11 @@ export class MidiControl {
     // Turning learn on is one of the two moments the window's contents are the
     // answer to what was just done, so bring it forward if it drifted behind.
     if (on) this.raiseWindow();
+    // And KEEP it in front for as long as the arming lasts: the next thing the
+    // operator does is click the control being armed, in the main window, which
+    // put the panel behind it and left the hint unreadable at the one moment it
+    // is the instruction.
+    if (this.windowOpen) void pinMidiWindow(on).catch(() => {});
   }
 
   private bumpLearnFlush(): void {

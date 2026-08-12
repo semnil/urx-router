@@ -170,6 +170,26 @@ pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
     }
 }
 
+/// Keep the MIDI control window above everything, or stop. Set while learn is armed
+/// and cleared when it disarms — the narrowest scope that answers the complaint.
+///
+/// Always-on-top rather than a raise on the main window's focus. That was tried and
+/// measured not to work: `set_always_on_top(true)` immediately followed by `(false)`
+/// leaves the window where it was, because on macOS it is a window LEVEL and putting
+/// the level back puts the order back, and Tauri exposes no order-front that keeps
+/// keystrokes where they are (`set_focus` is `makeKeyAndOrderFront:`). What this
+/// costs is that the panel floats above OTHER applications too — accepted for the
+/// seconds a learn is armed, which is why it is not left on.
+#[tauri::command]
+pub fn pin_midi_window(app: AppHandle, on: bool) -> Result<(), String> {
+    match app.get_webview_window(MIDI_WINDOW) {
+        Some(win) => win
+            .set_always_on_top(on)
+            .map_err(|e| format!("midi-window: {e}")),
+        None => Ok(()),
+    }
+}
+
 /// Whether the MIDI control window exists. The main window asks once at startup:
 /// the window OUTLIVES a reload of the main page (a dev HMR reload is one), and it
 /// announces itself with "ready" on its own boot, so nothing would make it speak

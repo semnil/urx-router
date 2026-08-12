@@ -514,6 +514,15 @@ export function focusMidiWindow(): Promise<void> {
   return invoke<void>("focus_midi_window");
 }
 
+/** Keep the MIDI window above everything while learn is armed, and stop when it
+ *  disarms. Narrow on purpose: it floats above other applications too, which is
+ *  acceptable for the seconds an arming lasts and not as a standing state. The
+ *  alternative — raising it whenever the main window is focused — was implemented
+ *  and measured not to work (midiwin.rs `pin_midi_window` says why). */
+export function pinMidiWindow(on: boolean): Promise<void> {
+  return invoke<void>("pin_midi_window", { on });
+}
+
 /** Whether the MIDI window is up. The shell is the only side that knows: the window
  *  outlives a reload of this page and announces itself only on its own boot. */
 export function midiWindowOpen(): Promise<boolean> {
