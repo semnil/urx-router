@@ -599,8 +599,9 @@ const followReads = new Set<AbortController>();
 // Everything device-follow has in flight for a plan that is being replaced. Called at
 // each wholesale reassignment of `plan`, and deliberately not from deactivateLive: with
 // the document still on screen, a read stopped half way leaves it a mix of device and
-// plan values with nothing marking which is which (the hazard the Fetch cancel restores
-// a pre-read clone to avoid), so a session that merely ends lets its read finish. A
+// plan values with nothing marking which is which — the hazard a Fetch avoids by reading
+// into a private copy, so cancelling one leaves the document on screen untouched — so a
+// session that merely ends lets its read finish. A
 // queued reflect goes too — it names nodes in the outgoing plan and its full path resets
 // the history of whatever replaced it; loadPlan re-renders the new plan whole anyway.
 function abandonFollowWork(): void {
@@ -1368,15 +1369,15 @@ function syncRateUi(): void {
 
 // Re-render the plan in place, without loadPlan's ownership side effects (it
 // clears dirty, leaves live sync, and re-seeds the persisted model/rate/hidden).
-// Used wherever the plan's contents changed under the same document — a device
-// readback, or restoring the one a cancelled read started from.
+// Used wherever the plan's contents changed under the same document: a Fetch, a live
+// session's readback, and a `.urxf` settings import — the three callers below.
 function rerenderPlan(): void {
   graph.setModel(getModel(modelId), plan);
   selection = null;
   syncRateUi(); // also re-renders the CONSOLE strips (applyRateConstraints)
-  // Every value here was re-authored — by the device, or by the pre-read clone a
-  // cancelled read restores — so the entries recorded against the old contents
-  // describe states this plan cannot return to.
+  // Every value here was re-authored — by the device or by the settings file — so the
+  // entries recorded against the old contents describe states this plan cannot return
+  // to.
   planHistory?.reset();
 }
 
