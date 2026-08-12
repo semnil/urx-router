@@ -185,6 +185,32 @@ test.describe("toolbar", () => {
     await expect(page.locator(".brand .seg")).toHaveCount(0);
   });
 
+  // The rack's select recipe named the model picker by id, so the rate picker beside
+  // it — same wrapper class, one control away — was never reached and wore the UA's
+  // own menulist: measured at 11px system-ui in WebKit and 13.3px Arial with square
+  // corners in Chromium, against the picker's 12px --mono. Pinned as an equality
+  // between the two rather than as values, so it holds through a token change and
+  // fails the moment one of them drops off the recipe again.
+  test("both rack pickers wear one face", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toBeVisible();
+    const face = (id: string) =>
+      page.locator(`select#${id}`).evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return {
+          fontFamily: cs.fontFamily,
+          fontSize: cs.fontSize,
+          color: cs.color,
+          backgroundColor: cs.backgroundColor,
+          border: `${cs.borderTopWidth} ${cs.borderTopStyle} ${cs.borderTopColor}`,
+          borderRadius: cs.borderTopLeftRadius,
+          padding: cs.padding,
+          cursor: cs.cursor,
+        };
+      });
+    expect(await face("rate-picker")).toEqual(await face("model-picker"));
+  });
+
   // The Device menu only shows under the Tauri shell; stub the bridge so its
   // grouping is testable in the browser.
   async function gotoWithDeviceMenu(page: Page, experimental: boolean): Promise<void> {

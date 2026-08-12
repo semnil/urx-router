@@ -251,8 +251,16 @@ body {
    all until this list named it, so its whole face was the UA's own menulist:
    measured at 11px system-ui against the panel's 12px --mono, on WebKit's own
    #1e1e1e rather than --ctl-bg, and hugging its content 170px short of the
-   column every other control in the row fills. */
+   column every other control in the row fills.
+
+   The rate picker sits in the second .model-select of the same rack, one control
+   away from the model picker, and was missed for as long because this list names
+   that one BY ID. It read as a different product: measured at 11px system-ui on
+   #1e1e1e in WebKit and at 13.3px Arial on #3b3b3b with square corners in
+   Chromium, in both themes. Anything added to the rack from here on is a
+   selector in this list, not an id beside it. */
 select#model-picker,
+select#rate-picker,
 .prefs-select,
 .mw-body select,
 #inspector select {
@@ -272,12 +280,15 @@ select#model-picker,
    so it has to stay at least as readable as the label beside it. Measured against
    that label's own contrast on the same strip (9.0:1 dark / 4.8:1 light), the value
    text lands at 3.9 / 2.6 with 0.45 and at 7.9 / 5.1 with 0.7.
-   The rule is not optional decoration: WebKit — the engine the macOS build renders
-   in — applies NO disabled styling of its own here, because the recipe above sets
-   colour and background explicitly. Measured with both states shot in one page, the
-   locked and unlocked pickers came out byte-identical there while Chromium dimmed
-   its own way, so without this the lock is invisible in the shipping build. */
-select#model-picker:disabled {
+   The rule is not optional decoration: WebKit applies NO disabled styling of its own
+   here, because the recipe above sets colour and background explicitly. Measured with
+   both states shot in one page, the locked and unlocked pickers came out byte-identical
+   there while Chromium dimmed its own way, so without this the lock is invisible.
+   The rate picker locks with it (main.ts, syncDeviceActionUi) and joined the recipe at
+   the same time, so it needs the same rule for the same reason — it had been getting
+   the UA's own dim, which the recipe has now taken away. */
+select#model-picker:disabled,
+select#rate-picker:disabled {
   opacity: 0.7;
   cursor: not-allowed;
 }
