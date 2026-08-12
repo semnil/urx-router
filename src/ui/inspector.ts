@@ -131,7 +131,6 @@ import {
   insertFxMenu,
   isMonitorBus,
   canPatchFromMonitor,
-  MONITOR_BUS_IDS,
   outputMono,
   rateConstraints,
 } from "../core/constraints";
@@ -194,15 +193,22 @@ const HA_GAIN_DEFAULT_DB = -8;
  *  and the source channel's Signal Type / Ducker decide the pan label and the notes.
  *  Exported so a caller holding a changed node can ask whether the panel it is not
  *  rendering has gone stale, instead of restating the footprint at the call site. */
-export function inspectorNodes(model: DeviceModel, selection: Selection): string[] {
+export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Selection): string[] {
   if (!selection) return [];
   if (selection.type !== "node") return [parseRef(selection.from).nodeId, parseRef(selection.to).nodeId];
   // An analog output's MONO row reports a MONITOR bus's switch, so a change on a node
   // the panel is not "showing" moves what it draws — exactly the case this function
-  // exists for. Both buses are listed rather than the one the plan patches from: the
-  // footprint may over-report (a repaint that was not needed) but must never under-
-  // report, and reading the patch here would need the plan the caller has not got.
-  return canPatchFromMonitor(model, selection.id) ? [selection.id, ...MONITOR_BUS_IDS] : [selection.id];
+  // exists for. Narrowed to the monitor the plan actually patches from, not both:
+  // `bus.mon1/2` carry three params that follow DIRECTLY (MONITOR_ON, MONITOR_LEVEL,
+  // PHONES_LEVEL), so naming a monitor the output does not read makes a knob turn on
+  // the unit rebuild this panel at the follow rate — replaceChildren, the plan-wide
+  // duckerBypassWarnings sweep and a focus restore, ~20 times a second, for a row
+  // whose content did not change. MONO itself is not in that direct set and arrives
+  // on the full-reflect path, which refreshes the panel anyway; what this line buys
+  // is the MIDI route, where the plan is written without a device read.
+  if (!canPatchFromMonitor(model, selection.id)) return [selection.id];
+  const mono = outputMono(plan, selection.id);
+  return mono.via === "monitor" ? [selection.id, mono.monitorId] : [selection.id];
 }
 
 /** The gate a rebuild of `host` asks before running, so it cannot land inside an IME
@@ -681,11 +687,17 @@ export function renderInspector(
       ps.body.append(
         boolToggle(m.inspector.mono, np.mono ?? false, (v) => actions.onUpdateNodeParams(node.id, { mono: v })),
       );
+      host.append(ps.el);
       // The block diagram takes this monitor's PHONES pair AFTER the MONO block, so
       // switching MONO for a pair of speakers takes the headphones with it. Said only
       // while it is on: off, there is nothing for it to be about.
-      if (np.mono) ps.body.append(hint(m.inspector.monoPhonesShared));
-      host.append(ps.el);
+      //
+      // On `host`, where every other hint goes, and NOT inside the section body —
+      // measured with it there: the body's `> .param:last-child { border-bottom: none }`
+      // stopped matching, so the MONO row's rule reappeared whenever MONO was on
+      // (0px -> 1px), and the paragraph brought the UA's 1em margins (13px top and
+      // bottom) into a body padded 6px. Section height went 358 -> 495.
+      if (np.mono) host.append(hint(m.inspector.monoPhonesShared));
     }
 
     // Oscillator generator (bus.osc): on / level / mode / frequency. Frequency
@@ -1711,6 +1723,11 @@ function selectToggle(group: HTMLElement, button: HTMLButtonElement): void {
 // `lockedTitle`, when set, renders the pair read-only: both buttons disabled (no
 // click handler) and the reason shown as a row tooltip — the value is still visible.
 function boolToggle(label: string, value: boolean, onChange: (v: boolean) => void, lockedTitle?: string): HTMLElement {
+  // Read as truthiness, not `=== on`. The device write is `np.mono ? 1 : 0` and the
+  // load funnel passes a finite numeric leaf through unchecked, so a plan authored
+  // elsewhere reaches here carrying 1 — under a strict compare NEITHER button lights
+  // and the row emits aria-pressed="1", which is not an ARIA boolean at all.
+  const state = Boolean(value);
   const { row } = paramBlock(label, "");
   if (lockedTitle !== undefined) row.title = lockedTitle;
   const group = document.createElement("div");
@@ -1719,7 +1736,7 @@ function boolToggle(label: string, value: boolean, onChange: (v: boolean) => voi
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = text;
-    b.classList.toggle("on", value === on);
+    b.classList.toggle("on", state === on);
     if (lockedTitle === undefined)
       b.addEventListener("click", () => {
         selectToggle(group, b);

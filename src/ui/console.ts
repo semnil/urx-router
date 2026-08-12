@@ -1359,10 +1359,15 @@ export class Console {
     },
   ): HTMLElement {
     const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender } = opts ?? {};
-    const chip = el("div", cls + (mute ? " mute" : "") + (on ? " on" : "") + (readonlyTitle ? " readonly" : ""));
+    // Normalised before it reaches the DOM. The device write is `np.<flag> ? 1 : 0`
+    // and the load funnel passes a finite numeric leaf through unchecked, so a plan
+    // authored elsewhere reaches here carrying 1 — `String(1)` is "1", which is not
+    // an ARIA boolean, and a screen reader is told nothing rather than "pressed".
+    const state = Boolean(on);
+    const chip = el("div", cls + (mute ? " mute" : "") + (state ? " on" : "") + (readonlyTitle ? " readonly" : ""));
     chip.textContent = label;
     chip.setAttribute("role", "button");
-    chip.setAttribute("aria-pressed", String(on));
+    chip.setAttribute("aria-pressed", String(state));
     // A hover tooltip spelling out a terse label (e.g. C.INT → Cue Interrupt).
     if (title) chip.title = title;
     if (readonlyTitle) {

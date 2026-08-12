@@ -6,6 +6,7 @@ import { resetSectionCache } from "./inspector-sections";
 import type { Selection } from "./graph";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
+import { emptyPlan } from "../core/plan";
 import type { Plan } from "../core/plan";
 import { resetSettingsCache } from "../core/settings";
 import { insertFxMenu } from "../core/constraints";
@@ -23,27 +24,49 @@ describe("inspectorNodes", () => {
   const u44v = getModel("URX44V");
 
   it("reports nothing for an empty selection", () => {
-    expect(inspectorNodes(u44v, null)).toEqual([]);
+    expect(inspectorNodes(u44v, emptyPlan("URX44V"), null)).toEqual([]);
   });
 
   it("reports the node itself for a node selection", () => {
-    expect(inspectorNodes(u44v, { type: "node", id: "ch1" })).toEqual(["ch1"]);
+    expect(inspectorNodes(u44v, emptyPlan("URX44V"), { type: "node", id: "ch1" })).toEqual(["ch1"]);
   });
 
   // An analog output's MONO row reads a MONITOR bus's switch, so the footprint has to
   // carry a node the panel is not "showing". Without it a MIDI-driven MONO change
   // reaches the plan and the device while the row keeps reporting the old state.
-  it("reports the monitor buses for an analog output, whose row reads them", () => {
-    expect(inspectorNodes(u44v, { type: "node", id: "out.main" })).toEqual(["out.main", "bus.mon1", "bus.mon2"]);
-    expect(inspectorNodes(u44v, { type: "node", id: "out.line" })).toEqual(["out.line", "bus.mon1", "bus.mon2"]);
+  it("reports the monitor an analog output is patched from, and only that one", () => {
+    const patched = (from: string, to: string): Plan => {
+      const plan = emptyPlan("URX44V");
+      plan.connections.push({ from: `${from}:out`, to: `${to}:in`, kind: "patch" });
+      return plan;
+    };
+    expect(inspectorNodes(u44v, patched("bus.mon1", "out.main"), nodeSel("out.main"))).toEqual([
+      "out.main",
+      "bus.mon1",
+    ]);
+    // NOT both monitors. bus.mon1/2 carry three directly-following params, so naming a
+    // monitor this output does not read would rebuild the panel at the follow rate on
+    // a knob turn that changes nothing it shows.
+    expect(inspectorNodes(u44v, patched("bus.mon2", "out.main"), nodeSel("out.main"))).toEqual([
+      "out.main",
+      "bus.mon2",
+    ]);
+    // And none at all when the patch carries no MONO switch, or there is no patch.
+    expect(inspectorNodes(u44v, patched("bus.stereo", "out.main"), nodeSel("out.main"))).toEqual(["out.main"]);
+    expect(inspectorNodes(u44v, emptyPlan("URX44V"), nodeSel("out.main"))).toEqual(["out.main"]);
     // Not every output: a USB output has no MONO row, so it has nothing extra to watch.
-    expect(inspectorNodes(u44v, { type: "node", id: "out.usbmain_a" })).toEqual(["out.usbmain_a"]);
+    expect(inspectorNodes(u44v, patched("bus.stereo", "out.usbmain_a"), nodeSel("out.usbmain_a"))).toEqual([
+      "out.usbmain_a",
+    ]);
   });
 
   it("reports BOTH endpoints for a wire — the destination is why this exists", () => {
     // The destination bus's BUS Type / Pan Link decide which of the send controls the
     // panel draws at all; the source channel's Signal Type decides the pan's label.
-    expect(inspectorNodes(u44v, { type: "conn", from: "ch1:out", to: "bus.mix1:in" })).toEqual(["ch1", "bus.mix1"]);
+    expect(inspectorNodes(u44v, emptyPlan("URX44V"), { type: "conn", from: "ch1:out", to: "bus.mix1:in" })).toEqual([
+      "ch1",
+      "bus.mix1",
+    ]);
   });
 });
 

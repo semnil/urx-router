@@ -53,6 +53,17 @@ export function sendFields(
   return { fields, busFixed, panLinked };
 }
 
+// Keyed exhaustively rather than by two `if`s: a member added to directOutTarget's
+// union must then be given its own wording instead of falling through to the generic
+// note. The graph's wire title used to carry this table and lost it when the title
+// moved onto sendlessNote. At module scope because inside the function it was built
+// before the null check ran — 75 objects per redraw, on the path a drag fires per
+// pointermove, for a value most wires never read.
+const DIRECT_OUT_NOTES: Record<NonNullable<ReturnType<typeof directOutTarget>>, "directOutTap" | "sdRecTap"> = {
+  usb: "directOutTap",
+  sdRec: "sdRecTap",
+};
+
 /** The note a wire with no send parameters carries, as a message key. A USB direct
  *  out is a live output where the missing fader / Ducker is a surprise (route via a
  *  bus to include them); a microSD Rec tap records the Rec Point stage on purpose,
@@ -63,8 +74,10 @@ export function sendFields(
  *  so a STEREO / MIX / STREAMING patch has none and the note names the routing
  *  change that gets one. Anything else falls back to the generic note.
  *
- *  It runs up to three linear scans of the model's rules and `makeWire` calls it
- *  for every wire, so it is on the redraw path a node drag fires per pointermove.
+ *  It runs up to FOUR linear scans of the model's rules (directOutTarget, ruleKind,
+ *  canPatchFromMonitor — which alone does not short-circuit and walks all of them —
+ *  and duckerKeySource), and `makeWire` calls it for every wire, so it is on the
+ *  redraw path a node drag fires per pointermove.
  *  **Measured** (URX44V default plan, 358 rules, 75 wires, 2000 redraws):
  *  **0.070 ms per redraw**, 0.93 us per wire — 0.4% of a 60 fps frame, 1.4 ms per
  *  second at the live-follow rate. Recorded so the next reader has the number
@@ -76,14 +89,6 @@ export function sendlessNote(
   to: string,
 ): "directOutTap" | "sdRecTap" | "duckerKeyTap" | "patchViaMonitor" | "patchNoMono" | "selectionOnly" {
   const directOut = directOutTarget(model, from, to);
-  // Keyed exhaustively rather than by two `if`s: a member added to
-  // directOutTarget's union must then be given its own wording instead of
-  // falling through to the generic note. The graph's wire title used to carry
-  // this table and lost it when the title moved onto this function.
-  const DIRECT_OUT_NOTES: Record<NonNullable<typeof directOut>, "directOutTap" | "sdRecTap"> = {
-    usb: "directOutTap",
-    sdRec: "sdRecTap",
-  };
   if (directOut) return DIRECT_OUT_NOTES[directOut];
   if (ruleKind(model, from, to) === "patch" && canPatchFromMonitor(model, parseRef(to).nodeId))
     return isMonitorBus(parseRef(from).nodeId) ? "patchViaMonitor" : "patchNoMono";

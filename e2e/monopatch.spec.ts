@@ -62,7 +62,13 @@ test("patching from a MONITOR names the bus that owns the switch", async ({ page
   await expect(page.locator("#inspector .hint", { hasText: "Only MONITOR 1 / 2 carry MONO" })).toHaveCount(0);
 
   await selectWire(page, MON1_OUT, MAIN_IN);
-  await expect(page.locator("#inspector .hint", { hasText: "follows the MONITOR bus's MONO switch" })).toHaveCount(1);
+  // Full text, not the leading clause. The note grew a second sentence (CUE Interrupt
+  // is on the same path) and a hasText match on the first one would not have noticed
+  // it appearing — or disappearing again.
+  await expect(page.locator("#inspector .hint").filter({ hasText: "MONITOR bus's MONO switch" })).toHaveText(
+    "This output follows the MONITOR bus's MONO switch — set it on the MONITOR node. CUE Interrupt is on " +
+      "the same path, so while it is on, engaging CUE replaces what this output carries.",
+  );
 });
 
 test("the row follows the monitor's MONO switch", async ({ page }) => {

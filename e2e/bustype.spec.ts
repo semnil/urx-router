@@ -25,8 +25,8 @@ test("MIX bus shows BUS Type + Pan Link; FIXED hides Pan Link", async ({ page })
   await expect(param(page, "Pan Link")).toHaveCount(0);
 });
 
-// Select a wire by its endpoints. Every CH → bus send is a fixed (always-wired)
-// connection now, so it is picked by endpoint rather than created; dispatchEvent
+// Every CH → bus send is a fixed (always-wired) connection, so these pick a wire by
+// its endpoints rather than creating one. selectWire is graph-helpers'.
 
 test("FIXED bus drops the send LEVEL and shows a hint", async ({ page }) => {
   await node(page, "bus.mix1").click();

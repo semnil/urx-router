@@ -1,4 +1,4 @@
-# CONSOLE センドラック (設計仕様)
+# CONSOLE send ラック (設計仕様)
 
 > English: [../en/console-sends.md](../en/console-sends.md)
 
@@ -13,15 +13,15 @@
 タブ方式には構造的な問題が 2 つあった:
 
 1. send を 1 つミュートするにもタブ切替が必要で、切替は画面全体の文脈を反転させる。
-2. 異なるバスへの send を同時に見る・操作することができない。
+2. 異なる Bus への send を同時に見る・操作することができない。
 
 ラックは全ストリップに全 send の常設コントロールを与える。これに伴い「Send to」タブ、
 send-on-fader モード、コンソールのモードバー (`Output [MAIN]` / `Send to [...]`) を廃止する。
 ヘッドの MUTE チップは従来どおり → STEREO 主経路を制御し (その send を持つストリップ = チャンネル・FX
-チャンネル・MIX バスのみ)、ラックは主経路に触れない。ノード master ON/OFF (CH_ON / MIX 675 / STEREO /
+チャンネル・MIX Bus のみ)、ラックは主経路に触れない。ノード master ON/OFF (CH_ON / MIX 675 / STEREO /
 MONITOR、いずれも `np.on`、および OSC の `osc.on`) はスクリブル上の**電源 LED** — スクリブル全体がそのボタンで、
 オフのときストリップが減光する (グラフと共有の `isNodeInactive` 述語)。これにより旧「CH MUTE」赤バッジは廃止。
-STEREO と MONITOR バスは → STEREO send を持たないため MUTE チップを持たず、電源 LED が唯一の ON/OFF。
+STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップを持たず、電源 LED が唯一の ON/OFF。
 
 ## レイアウト
 
@@ -50,8 +50,8 @@ STEREO と MONITOR バスは → STEREO send を持たないため MUTE チッ�
 ### スロット
 
 - 列順は固定: FX 1, FX 2, MIX 1, MIX 2 (旧タブ順)。
-- 機種ごとのスロット集合 = `SEND_TARGETS` のうちバスが機種に存在し、かつ非表示でないもの。
-  バスを棚上げ (hidden) すると**全ストリップ**からその列が落ちる (旧タブと同じ規則)。
+- 機種ごとのスロット集合 = `SEND_TARGETS` のうち Bus が機種に存在し、かつ非表示でないもの。
+ Bus を棚上げ (hidden) すると**全ストリップ**からその列が落ちる (旧タブと同じ規則)。
   列位置は常に全ストリップで揃う。
 - その send を持たないストリップは該当列を空欄にする (例: FX チャンネルは MIX 1 / MIX 2 のみ)。
   send を全く持たないストリップ (MIX / MONITOR / STEREO / OSCILLATOR / STREAMING) は
@@ -72,7 +72,7 @@ STEREO と MONITOR バスは → STEREO send を持たないため MUTE チッ�
   (追加マーカーは無い)、send が OFF の間も読める。
 - CH → FX の tap はデバイスに書けない: ライブ接続中は既存の `inspector.prePostLcdOnly`
   ツールチップ付きで read-only 表示 (`sendTapWritable`)。
-- ホバーツールチップ (新規 i18n キー) でpre-faderの意味を説明する
+- ホバーツールチップ (新規 i18n キー) で pre-fader の意味を説明する
   (C.INT ツールチップと同じ機構)。
 
 ### 列フェーダー
