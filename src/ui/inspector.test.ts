@@ -28,6 +28,16 @@ describe("inspectorNodes", () => {
     expect(inspectorNodes({ type: "node", id: "ch1" })).toEqual(["ch1"]);
   });
 
+  // An analog output's MONO row reads a MONITOR bus's switch, so the footprint has to
+  // carry a node the panel is not "showing". Without it a MIDI-driven MONO change
+  // reaches the plan and the device while the row keeps reporting the old state.
+  it("reports the monitor buses for an analog output, whose row reads them", () => {
+    expect(inspectorNodes({ type: "node", id: "out.main" })).toEqual(["out.main", "bus.mon1", "bus.mon2"]);
+    expect(inspectorNodes({ type: "node", id: "out.line" })).toEqual(["out.line", "bus.mon1", "bus.mon2"]);
+    // Not every output: a USB output has no MONO row, so it has nothing extra to watch.
+    expect(inspectorNodes({ type: "node", id: "out.usbmain_a" })).toEqual(["out.usbmain_a"]);
+  });
+
   it("reports BOTH endpoints for a wire — the destination is why this exists", () => {
     // The destination bus's BUS Type / Pan Link decide which of the send controls the
     // panel draws at all; the source channel's Signal Type decides the pan's label.
@@ -555,6 +565,22 @@ describe("renderInspector — the analog outputs' MONO row", () => {
       renderInspector(host, model, defaultPlan("URX44V"), nodeSel(id), actions());
       expect(fieldValue(t().inspector.mono, host)).toBeUndefined();
       host.remove();
+    }
+  });
+
+  // The value is composed by a message function, so each language composes its own —
+  // the row is the only place either one is built, and the English case above cannot
+  // stand in for it.
+  it("composes the value in the active language", () => {
+    setLang("ja");
+    try {
+      renderInspector(panel, model, patched("bus.mon1", "out.main", true), nodeSel("out.main"), act);
+      expect(fieldValue(t().inspector.mono)).toBe(t().inspector.monoVia(t().inspector.on, "MONITOR 1"));
+      expect(fieldValue(t().inspector.mono)).toContain("MONITOR 1");
+      renderInspector(panel, model, patched("bus.stereo", "out.main"), nodeSel("out.main"), act);
+      expect(fieldValue(t().inspector.mono)).toBe(t().inspector.monoUnavailable);
+    } finally {
+      setLang("en");
     }
   });
 });

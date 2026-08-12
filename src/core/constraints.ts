@@ -205,7 +205,12 @@ export function duckerBypassWarnings(model: DeviceModel, plan: Plan): string[] {
 // lock nothing can unlock. Scoping this the same way duckerBypassWarnings leaves
 // microSD Rec alone: state the caveat only where acting on it is possible.
 const ANALOG_OUTPUTS = new Set(["out.main", "out.line"]);
-const MONITOR_BUSES = new Set(["bus.mon1", "bus.mon2"]);
+
+/** The monitor buses, in order. Exported as the list rather than only as a predicate
+ *  because a caller that has no plan — the inspector's repaint footprint — has to name
+ *  every bus that could feed the output it is showing. */
+export const MONITOR_BUS_IDS = ["bus.mon1", "bus.mon2"] as const;
+const MONITOR_BUSES = new Set<string>(MONITOR_BUS_IDS);
 
 export function isAnalogOutput(nodeId: string): boolean {
   return ANALOG_OUTPUTS.has(nodeId);
@@ -232,7 +237,12 @@ export function outputMono(plan: Plan, outputId: string): OutputMono {
   const wire = plan.connections.find((c) => parseRef(c.to).nodeId === outputId);
   const source = wire ? parseRef(wire.from).nodeId : null;
   if (!source || !isMonitorBus(source)) return { via: "none" };
-  return { via: "monitor", monitorId: source, on: plan.nodeParams[source]?.mono === true };
+  // Truthiness, not `=== true`, because that is how the value reaches the device:
+  // translate.ts writes `np.mono ? 1 : 0`, and the load funnel passes a finite numeric
+  // leaf through without a type check. A plan authored elsewhere carrying `mono: 1`
+  // therefore makes the unit sum to mono, and a strict comparison here would have the
+  // row report OFF about a device that is ON.
+  return { via: "monitor", monitorId: source, on: !!plan.nodeParams[source]?.mono };
 }
 
 /** Human label for a rate, e.g. 44100 → "44.1 kHz". */

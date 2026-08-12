@@ -130,6 +130,7 @@ import {
   insertFxAllRateLocked,
   insertFxMenu,
   isAnalogOutput,
+  MONITOR_BUS_IDS,
   outputMono,
   rateConstraints,
 } from "../core/constraints";
@@ -194,7 +195,13 @@ const HA_GAIN_DEFAULT_DB = -8;
  *  rendering has gone stale, instead of restating the footprint at the call site. */
 export function inspectorNodes(selection: Selection): string[] {
   if (!selection) return [];
-  return selection.type === "node" ? [selection.id] : [parseRef(selection.from).nodeId, parseRef(selection.to).nodeId];
+  if (selection.type !== "node") return [parseRef(selection.from).nodeId, parseRef(selection.to).nodeId];
+  // An analog output's MONO row reports a MONITOR bus's switch, so a change on a node
+  // the panel is not "showing" moves what it draws — exactly the case this function
+  // exists for. Both buses are listed rather than the one the plan patches from: the
+  // footprint may over-report (a repaint that was not needed) but must never under-
+  // report, and reading the patch here would need the plan the caller has not got.
+  return isAnalogOutput(selection.id) ? [selection.id, ...MONITOR_BUS_IDS] : [selection.id];
 }
 
 /** The gate a rebuild of `host` asks before running, so it cannot land inside an IME

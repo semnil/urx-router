@@ -332,6 +332,19 @@ describe("outputMono", () => {
     expect(outputMono(plan, "out.main")).toEqual({ via: "monitor", monitorId: "bus.mon1", on: true });
   });
 
+  // The value reaches the device as `np.mono ? 1 : 0` (translate.ts) and the load funnel
+  // lets a finite numeric leaf through unchecked, so a plan authored elsewhere can carry
+  // `mono: 1`. That unit IS summing to mono; a strict `=== true` here would report OFF
+  // about it.
+  it("reads the switch the way the device write reads it", () => {
+    const plan = emptyPlan("URX44V");
+    patch(plan, "bus.mon1", "out.main");
+    plan.nodeParams["bus.mon1"] = { mono: 1 as unknown as boolean };
+    expect(outputMono(plan, "out.main")).toEqual({ via: "monitor", monitorId: "bus.mon1", on: true });
+    plan.nodeParams["bus.mon1"] = { mono: 0 as unknown as boolean };
+    expect(outputMono(plan, "out.main")).toEqual({ via: "monitor", monitorId: "bus.mon1", on: false });
+  });
+
   // The A/B rig: MAIN through a mono-switched monitor, LINE straight from STEREO.
   // Each output answers from its own patch, so the stereo half is not contaminated
   // by the mono one — the reason no plan-wide predicate can call either a mistake.
