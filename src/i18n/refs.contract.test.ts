@@ -10,8 +10,10 @@
 // So this is the floor under that guard, and deliberately the loose one: it asks
 // only whether the leaf's own name occurs anywhere in the shipped sources. A leaf
 // whose name collides with an unrelated property (`on`, `open`, `name`) therefore
-// passes on the collision. That is a miss, not a false alarm — the check never
-// reports a key that is in use, so a failure here is always a real one.
+// passes on the collision. That is a miss, not a false alarm, and it is the shape
+// every gap below has but one: they lean into silence. **The exception is
+// destructuring**, four paragraphs down — the one form that makes this report a key
+// that IS in use. Read that before treating a failure here as settled.
 //
 // Two forms reach a leaf without ever naming it, and both vouch for the namespace
 // they are applied to: a computed index (`t().error[err.code]`, `m.inspector[key]`)
@@ -26,11 +28,13 @@
 // by key, so their members cannot be named from the text. Inside those, this check
 // is asleep and the inventory spec is the only guard.
 //
-// One reference form is NOT recognised and would be reported as unreferenced:
-// destructuring (`const { title } = t().ns`). No leaf is reached only that way today —
-// the house idiom binds the namespace and keeps the dots — so the check passes, but a
-// first such use fails here rather than silently. Adding it means following bindings,
-// which is a parser rather than a scan.
+// THE EXCEPTION the top of this header points at. One reference form is not recognised
+// and is reported as unreferenced: destructuring (`const { title } = t().ns`). No leaf is
+// reached only that way today — the house idiom binds the namespace and keeps the dots —
+// so the check passes, and a first such use fails here rather than silently, which is the
+// bearable end of a false alarm. It is still one: a failure naming a key you can see used
+// through a destructured binding is this, not a dead key. Adding it means following
+// bindings, which is a parser rather than a scan.
 //
 // Tests are excluded from the scan on purpose: a key referenced only by a test is
 // dead in the application, which is exactly what this is here to find.
