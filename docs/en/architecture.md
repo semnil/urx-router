@@ -2562,8 +2562,12 @@ identical on every model's page:
   with a MONITOR patched to MAIN OUT, engaging CUE anywhere replaces what the speakers carry. The
   patch wire's note says it — a statement, on the same footing as the MONO row, rather than a warning.
 
-What the figure does **not** give is the MONO block's gain law (L+R, −3 dB, −6 dB). No string here
-depends on it; a mono-compatibility check does.
+What the figure does **not** give is the MONO block's gain law, and that was measured on the unit
+instead (URX44V, 2026-08-13): it is a **power sum, (L+R)/√2**. Driving STEREO L alone with a −30 dBFS
+tone, the monitor meter read −30.0 with MONO off and **−33.0 on both lanes** with it on, returning to
+−30.0 exactly when switched back. So a mono check here does not change the apparent loudness of
+centre-panned material, and a hard-panned source drops 3 dB rather than staying put or halving. No
+string in the app depends on the law; a person using the feature to judge mono compatibility does.
 
 Nothing in a plan records whether the operator *wants* mono, so this is **stated, not warned about**.
 The inspector gives MAIN / LINE a standing **MONO row** — either the monitor that owns the switch and
