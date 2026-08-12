@@ -243,14 +243,19 @@ body {
   color: var(--text-dim);
 }
 
-/* The rack select recipe, shared with the Preferences selects and the MIDI
-   window's. That window is a separate OS window on this same stylesheet, and it
-   had grown its own near-copy (4px radius, --ctl-border) — near enough to read as
-   the same control and different enough to look like a slip when the two are open
-   side by side. */
+/* The rack select recipe, shared with the Preferences selects, the MIDI window's
+   and the inspector's. That window is a separate OS window on this same
+   stylesheet, and it had grown its own near-copy (4px radius, --ctl-border) —
+   near enough to read as the same control and different enough to look like a
+   slip when the two are open side by side. The inspector's carried no rule at
+   all until this list named it, so its whole face was the UA's own menulist:
+   measured at 11px system-ui against the panel's 12px --mono, on WebKit's own
+   #1e1e1e rather than --ctl-bg, and hugging its content 170px short of the
+   column every other control in the row fills. */
 select#model-picker,
 .prefs-select,
-.mw-body select {
+.mw-body select,
+#inspector select {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--text);
@@ -1054,6 +1059,28 @@ input[type="range"]:focus-visible,
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 5px 10px;
+}
+
+/* The face comes from the rack select recipe; only the width is the panel's own.
+   Every other control in a parameter row fills it — this input, the slider, the
+   button, the toggle pair — and a select that hugs its option text instead reads
+   as a different kind of control depending on which option is chosen. */
+#inspector select {
+  width: 100%;
+}
+
+/* The one select the app locks: SD Rec track count, read-only while a live session
+   holds the device. The dim has to be authored because the engines disagree about
+   whether there is one — measured with the rule removed, Chromium dims a disabled
+   select to 0.7 on its own while WebKit, the engine the macOS build renders in,
+   leaves it at 1 with its colour and border untouched, so the lock is invisible
+   there. (Unstyled, WebKit does dim it — text and border drop from 0.847 to 0.247
+   alpha — and stops the moment the recipe above authors a colour and a background,
+   which is the same trade the model picker's own :disabled rule pays for.) The
+   value is the panel's read-only dim, as worn by #inspector .toggle button:disabled. */
+#inspector select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .swatches {
