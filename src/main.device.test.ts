@@ -313,21 +313,66 @@ describe("the desktop-only surfaces", () => {
   // compiles silently, and a guard that only checked the constant would stay green while
   // the reason it exists for became false.
   //
-  // So the fake's source is read for the usage — one occurrence of the name, not a slice
-  // of a switch arm. An earlier version cut the arm out by index and was fragile both
-  // ways: a comment containing "return" between the label and the arm failed on a docs
-  // edit, and the group becoming the last arm widened the cut to the end of the file and
-  // passed on someone else's `return false`.
+  // So the fake's source is read for the usage. Two earlier versions read it by PROXIMITY
+  // and both broke on a correct edit rather than on a wrong one: the first cut the switch
+  // arm out by index (a comment containing "return" failed it on a docs edit; the group
+  // becoming the last arm widened the cut past the end of the block), and the second asked
+  // that `FAKE_LAUNCH_FLAGS_OFF` and a `return false;` sit within 200 characters of each
+  // other — which the fix for the defect below necessarily broke, because that fix is
+  // precisely to move the name away from the answer.
+  //
+  // The pin is therefore on the PROPERTY and not on a layout. The name must be absent from
+  // the serialised callback and present in the tuple handed to it; the answer is looked up
+  // through whatever that callback calls its LAST parameter, read out of the source rather
+  // than hard-coded, so a rename is not a failure. What no text scan can see is whether the
+  // list that arrives holds the right strings — the race tier is what answers that, and it
+  // runs on the version-bump PR alone, which is how the defect below entered `main` and
+  // survived three further merges.
+  //
+  // One family of the old fragility survives by design: the absence check reads code, so
+  // comments are stripped before it — writing the identifier in a comment inside the
+  // callback is not closing over it, and failing on that would be the third repeat of
+  // "a docs edit broke the pin", with a message that is false besides.
   it("keeps the settings import behind the flag, and the race fake never sets it", SLOW, async () => {
     await bootDevice();
     expect($("btn-open-settings").hidden).toBe(true);
     expect(FAKE_LAUNCH_FLAGS_OFF).toContain("experimental_enabled");
 
     const fake = readFileSync(resolve(process.cwd(), "e2e/race/fake-device.ts"), "utf8");
-    expect(fake, "the race fake no longer answers from FAKE_LAUNCH_FLAGS_OFF").toContain("FAKE_LAUNCH_FLAGS_OFF");
-    // …and it still answers them false. The list is a `readonly string[]` membership
-    // test there, so the arm is one `return false` rather than a per-flag branch.
-    expect(fake).toMatch(/FAKE_LAUNCH_FLAGS_OFF[\s\S]{0,200}?return false;/);
+    // Stripped ONCE, before any index is taken, so every read below is of code. Doing it
+    // per-assertion is how the two halves came apart: the absence half read stripped text
+    // while the presence half read the raw file, and a literal list with `// from
+    // FAKE_LAUNCH_FLAGS_OFF` beside it satisfied the pin while the list stopped crossing.
+    const code = fake.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    expect(code, "the race fake no longer answers from FAKE_LAUNCH_FLAGS_OFF").toContain("FAKE_LAUNCH_FLAGS_OFF");
+
+    // The callback handed to addInitScript is serialised and evaluated in the PAGE, where
+    // this module's bindings do not exist. Naming the import inside it compiles, type-checks
+    // and collects, then throws on the fake's first command — "Can't find variable: X" in
+    // JavaScriptCore, "X is not defined" in V8 — which presents as a live session that never
+    // comes up rather than as an error. The argument tuple is the only channel that crosses,
+    // and the only one the type checker covers: the callback's annotation and the `as` cast
+    // are the same tuple type, so an arity mismatch is a compile error.
+    const open = code.indexOf("addInitScript(");
+    const args = code.indexOf("[cfg, opts.storage", open);
+    expect(open, "installFake no longer installs through addInitScript").toBeGreaterThan(-1);
+    expect(args, "the init script's argument tuple moved").toBeGreaterThan(open);
+    const body = code.slice(open, args);
+    expect(body, "the init script closes over FAKE_LAUNCH_FLAGS_OFF instead of being handed it").not.toContain(
+      "FAKE_LAUNCH_FLAGS_OFF",
+    );
+    expect(code.slice(args, args + 200), "the init script is not handed the flag list").toContain(
+      "FAKE_LAUNCH_FLAGS_OFF",
+    );
+
+    // …and it still answers those commands false, through the parameter it arrived on. The
+    // name is escaped before it becomes a pattern: `$` is legal in an identifier and is an
+    // anchor in a regular expression, so `$flags` would otherwise match nothing and report
+    // the answer as missing.
+    const param = /addInitScript\(\s*\(\[[^\]]*,\s*([A-Za-z_$][\w$]*)\s*\]/.exec(body)?.[1];
+    expect(param, "the init script's last parameter is not a plain binding").toBeTruthy();
+    const name = String(param).replace(/[$]/g, "\\$&");
+    expect(body).toMatch(new RegExp(`(?<![\\w$])${name}\\.includes\\(cmd\\)[\\s\\S]{0,80}?return false;`));
   });
 });
 

@@ -257,7 +257,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
   // On the CONTEXT, not the page: MIDI control is a second window, which is a second
   // page here, and it needs the same bridge before its bundle resolves.
   await page.context().addInitScript(
-    ([config, storage]: [FakeConfig, Record<string, string>]) => {
+    ([config, storage, flagsOff]: [FakeConfig, Record<string, string>, string[]]) => {
       localStorage.setItem("urx-lang", "en");
       localStorage.setItem("urx-theme", "dark");
       localStorage.setItem("urx-model", config.model);
@@ -846,7 +846,14 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         }
 
         // The launch flags, from the list a unit guard also reads (see fake-flags.ts).
-        if ((FAKE_LAUNCH_FLAGS_OFF as readonly string[]).includes(cmd)) {
+        // It arrives as an ARGUMENT, not as the import at the top of this file. Every
+        // callback that crosses into the page — addInitScript here, and equally evaluate /
+        // evaluateHandle / waitForFunction / locator.evaluate — is serialised and run
+        // there, where a module-scope binding of the driver's does not exist. Naming the
+        // import inside one compiles, type-checks and collects, then throws at the first
+        // command the fake handles: "Can't find variable: X" in JavaScriptCore, "X is not
+        // defined" in V8. What that presents as is a session that never comes up.
+        if (flagsOff.includes(cmd)) {
           done();
           return false;
         }
@@ -1064,7 +1071,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         },
       };
     },
-    [cfg, opts.storage ?? {}] as [FakeConfig, Record<string, string>],
+    [cfg, opts.storage ?? {}, [...FAKE_LAUNCH_FLAGS_OFF]] as [FakeConfig, Record<string, string>, string[]],
   );
 }
 
