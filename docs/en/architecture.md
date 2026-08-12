@@ -2556,6 +2556,12 @@ and the selected-wire hint from **one** classifier, so the two carriers cannot d
 return type also refuses a new case until that case has its own wording). The row shows on an unpatched
 output too — the state a note on a wire can never reach, since there is no wire.
 
+Routing the hover through that classifier **widened it**: the title used to be keyed on the direct-out
+destinations alone, so a channel-sourced **ducker key** carried an explanation when selected and none on
+hover. It now carries the same sentence in both places, which is what the older comment already claimed
+for the taps. That is a behaviour change with no visible tell, so `e2e/directout.spec.ts` pins it by
+reading the panel's hint and comparing the wire's `<title>` against it rather than against a literal.
+
 The row is scoped to MAIN / LINE because they are the only outputs whose lock a routing change can
 remove: a USB output cannot take a MONITOR source at all (`device-model.md` §6), so a standing note
 there would be a lock nothing can unlock — the same reason `duckerBypassWarnings` leaves microSD Rec

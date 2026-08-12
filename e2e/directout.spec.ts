@@ -96,6 +96,13 @@ test("a channel-sourced ducker key explains it is a pre-fader tap", async ({ pag
   await selectWire(page, "ch1:out", "out.ducker1:in");
   await expect(page.locator("#inspector .hint", { hasText: "Ducker key" })).toHaveCount(1);
   await expect(page.locator("#inspector .hint", { hasText: "Selection only" })).toHaveCount(0);
+
+  // The same sentence on hover. It was not there before one classifier fed both
+  // carriers — the wire title was keyed on the direct-out destinations alone, so this
+  // wire had no tooltip at all while the panel explained it. Pinned because the gain
+  // is silent: nothing else would notice the branch being narrowed again.
+  const hint = await page.locator("#inspector .hint", { hasText: "Ducker key" }).innerText();
+  await expect(page.locator(`.wire-hit[data-from="ch1:out"][data-to="out.ducker1:in"] title`)).toHaveText(hint);
 });
 
 test("a bus-sourced ducker key gets no pre-fader note (it is post-fader)", async ({ page }) => {
