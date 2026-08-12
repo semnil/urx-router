@@ -2547,6 +2547,24 @@ LINE OUT are pure source selectors with no parameters of their own, so whether a
 summed to mono is decided entirely by what it is patched from: a MONITOR patch brings the switch with
 it, a STEREO / MIX / STREAMING patch has none.
 
+**Where the switch sits is read off the block diagram**, not inferred from the user guide, and the
+order is what makes the whole surface true. `MONITOR 1–2 OUT` runs `Monitor Source` → `CUE Interrupt`
+→ `MONO` → `ON`, and only then splits: one branch through the monitor `LEVEL` to `MONITOR n OUT`, the
+other through the phones `LEVEL` to `PHONES n OUT`. `MONITOR n OUT` is in turn an input of the
+`Output Patch` box that feeds the analog connectors. Three consequences follow from that one figure,
+identical on every model's page:
+
+- a MONITOR-sourced MAIN / LINE patch **does** carry the mono sum — MONO is upstream of the tap;
+- **so do the headphones**: the PHONES branch is taken after MONO, so switching a pair of speakers to
+  mono takes that monitor's PHONES with it. The inspector says so on the MONITOR node while MONO is on,
+  and the way to keep one path stereo is the other MONITOR;
+- **CUE Interrupt reaches the analog connectors too**, being upstream of both taps. It ships ON, so
+  with a MONITOR patched to MAIN OUT, engaging CUE anywhere replaces what the speakers carry. The
+  patch wire's note says it — a statement, on the same footing as the MONO row, rather than a warning.
+
+What the figure does **not** give is the MONO block's gain law (L+R, −3 dB, −6 dB). No string here
+depends on it; a mono-compatibility check does.
+
 Nothing in a plan records whether the operator *wants* mono, so this is **stated, not warned about**.
 The inspector gives MAIN / LINE a standing **MONO row** — either the monitor that owns the switch and
 its state, or that this patch has no switch at all, with the routing change that gets one — and the

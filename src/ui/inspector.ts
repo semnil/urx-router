@@ -680,6 +680,10 @@ export function renderInspector(
       ps.body.append(
         boolToggle(m.inspector.mono, np.mono ?? false, (v) => actions.onUpdateNodeParams(node.id, { mono: v })),
       );
+      // The block diagram takes this monitor's PHONES pair AFTER the MONO block, so
+      // switching MONO for a pair of speakers takes the headphones with it. Said only
+      // while it is on: off, there is nothing for it to be about.
+      if (np.mono) ps.body.append(hint(m.inspector.monoPhonesShared));
       host.append(ps.el);
     }
 

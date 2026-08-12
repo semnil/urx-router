@@ -422,7 +422,10 @@ export const ja: Messages = {
       "Ducker キー — キー元チャンネルの Rec Point (フェーダー・Ducker より前段) でタップ。そのチャンネルのフェーダー・ミュートはトリガーに影響しません。post-fader でトリガーするには STEREO / MIX Bus をキーにしてください。",
     patchNoMono:
       "MONO を持つのは MONITOR 1 / 2 だけです。この出力を MONITOR Bus からパッチすると、MONO に切り替えられます。",
-    patchViaMonitor: "この出力は MONITOR Bus の MONO スイッチに従います — 切り替えは MONITOR ノードで行います。",
+    patchViaMonitor:
+      "この出力は MONITOR Bus の MONO スイッチに従います — 切り替えは MONITOR ノードで行います。CUE Interrupt も同じ経路にあるため、それが ON の間は CUE を押すとこの出力の音が置き換わります。",
+    monoPhonesShared:
+      "MONO が ON です。この MONITOR の PHONES はその後段でタップされるため、同じモノ和が出ます — 片方をステレオで残すには、もう一方の MONITOR を使います。",
     monoUnavailable: "利用不可 — MONITOR 経由",
     monoVia: (state: string, monitor: string): string => `${state} (${monitor} から)`,
     fixedConnection: "固定接続 — 常時有効で削除できません。",

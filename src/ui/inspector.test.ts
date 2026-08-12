@@ -568,6 +568,20 @@ describe("renderInspector — the analog outputs' MONO row", () => {
     }
   });
 
+  // The block diagram takes each monitor's PHONES after the MONO block, so a pair of
+  // speakers switched to mono takes the headphones with it. Only while it is on: off,
+  // the note has nothing to be about.
+  it("warns on the MONITOR node that its PHONES follows MONO, only while MONO is on", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.mon1"] = { ...plan.nodeParams["bus.mon1"], mono: false };
+    renderInspector(panel, model, plan, nodeSel("bus.mon1"), act);
+    expect(panel.textContent).not.toContain(t().inspector.monoPhonesShared);
+
+    plan.nodeParams["bus.mon1"] = { ...plan.nodeParams["bus.mon1"], mono: true };
+    renderInspector(panel, model, plan, nodeSel("bus.mon1"), act);
+    expect(panel.textContent).toContain(t().inspector.monoPhonesShared);
+  });
+
   // The value is composed by a message function, so each language composes its own —
   // the row is the only place either one is built, and the English case above cannot
   // stand in for it.
