@@ -44,6 +44,7 @@ import {
   insertFxCensus,
   insertFxFree,
   insertFxMenu,
+  isMonitorBus,
   type InsertFxCensus,
 } from "../core/constraints";
 import { busBalance, channelControl, channelDynamics, hasEq, insertFxControl } from "../core/control/translate";
@@ -603,7 +604,7 @@ export class Console {
     const isOsc = id === "bus.osc";
     const isStream = id === "bus.stream";
     const isMix = this.isMixBus(id);
-    const isMon = id === "bus.mon1" || id === "bus.mon2";
+    const isMon = isMonitorBus(id);
     const isMono = /^ch\d+$/.test(id); // mono channels are ch1..ch4 (the only gain/gate/comp/φ-bearing strips)
     return {
       id,
@@ -627,7 +628,7 @@ export class Console {
       // no such send, so their master ON is the scribble power LED alone.
       hasMute: isChannel || this.isFxChannel(id) || isMix,
       hasEq: isChannel || isMix || isMaster,
-      hasPhones: id === "bus.mon1" || id === "bus.mon2",
+      hasPhones: isMonitorBus(id),
       // Off-state dim, computed once here (the node is in hand) and read by both strip
       // builders — the same predicate the graph uses, so the two views dim alike.
       inactive: isNodeInactive(this.hooks.getPlan(), node),
@@ -1358,10 +1359,15 @@ export class Console {
     },
   ): HTMLElement {
     const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender } = opts ?? {};
-    const chip = el("div", cls + (mute ? " mute" : "") + (on ? " on" : "") + (readonlyTitle ? " readonly" : ""));
+    // Normalised before it reaches the DOM. The device write is `np.<flag> ? 1 : 0`
+    // and the load funnel passes a finite numeric leaf through unchecked, so a plan
+    // authored elsewhere reaches here carrying 1 — `String(1)` is "1", which is not
+    // an ARIA boolean, and a screen reader is told nothing rather than "pressed".
+    const state = Boolean(on);
+    const chip = el("div", cls + (mute ? " mute" : "") + (state ? " on" : "") + (readonlyTitle ? " readonly" : ""));
     chip.textContent = label;
     chip.setAttribute("role", "button");
-    chip.setAttribute("aria-pressed", String(on));
+    chip.setAttribute("aria-pressed", String(state));
     // A hover tooltip spelling out a terse label (e.g. C.INT → Cue Interrupt).
     if (title) chip.title = title;
     if (readonlyTitle) {

@@ -536,7 +536,7 @@ function reflectFollow(): void {
     // live, writing the very address the MIDI catalog is refusing at the same instant.
     // Scoped to the nodes the panel reads, so a device sweep of an unselected node does
     // not rebuild the panel at this branch's ~20 Hz.
-    const shown = inspectorNodes(selection);
+    const shown = inspectorNodes(getModel(modelId), plan, selection);
     if (ids.some((id) => shown.includes(id))) refreshInspector();
     // The dynamics screen shows a snapshot of the same node params, so a
     // device-side edit under it would otherwise leave stale sliders on screen.

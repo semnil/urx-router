@@ -92,7 +92,9 @@ carries a one-line map of the same directories and points here.
   a third lock reason reaches them without either UI file being edited; a caller rendering many menus at
   once passes in one `insertFxCensus` sweep instead of paying it per node). And Ducker bypass detection
   (`channelDuckerOn` = PRE-send notes, `duckerBypassWarnings` = pre-fader tap warnings for USB direct outs;
-  microSD Rec intentionally excluded) / `plan-validate.ts` the plan loader's single validation funnel,
+  microSD Rec intentionally excluded), and what an analog output's MONO reads as (`outputMono` /
+  `canPatchFromMonitor` — see "MONO on the analog outputs", which states rather than warns and says why)
+  / `plan-validate.ts` the plan loader's single validation funnel,
   `planProblems` (split out of `constraints.ts`, which is rate limits and nothing else: a rate limit warns
   about a plan the app authored, these check a plan built ELSEWHERE — a file, a `?plan=` link, a generator).
   `routing.ts` cannot host them (the cycle constraints → translate → routing). It runs from `loadFromText`
@@ -635,7 +637,16 @@ The language is switched from the Preferences modal (a dropdown of native names 
 the inspector, and the open modal itself.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
-> `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. **A row that reproduces a control
+> `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. **Those five apply to prose as much
+> as to labels** — a sentence, hint or tooltip that names one writes it in English, so the same term
+> cannot read `Ducker` in a heading and in kana in the line under it. It had split exactly that way:
+> the node kinds, the legend and the screen titles kept the English while **nine** strings in `ja.ts`
+> transliterated it — seven of them sentences, plus two that are labels rather than prose (the console
+> PRE tooltip and the Preferences warning row), which is why "the labels kept it" is true only of the
+> ones the type system pins. Nothing could catch any of it, because the `dev()` / `fixed()` / `tr()`
+> marks force a string's *identity* and say nothing about which words a translated sentence may use.
+> The rule reaches the Japanese documents for the same reason: they quote these labels.
+> **A row that reproduces a control
 > on one of the unit's own screens keeps that screen's English label, in every app language** — the unit
 > is English there whichever of its three display languages is selected. That was **read off the hardware
 > with its own Language set to Japanese**, screen by screen: GATE, COMP, EQ, DUCKER, OSCILLATOR, MONITOR
@@ -647,7 +658,11 @@ the inspector, and the open modal itself.
 > and pan / balance rows, the oscillator block with its bus assigns, the monitor block, the CH SETTING
 > name and colour, and the matching MIDI control names. It does **not** extend to the app's own vocabulary
 > — section headings, the legend, the node and connection kinds, status and error text are all translated,
-> and so is any sentence, hint or tooltip. A tooltip that spells out a device
+> and so is any sentence, hint or tooltip — **except where it names one of the five terms above, or a
+> control from one of the unit's own screens**, both of which stay English wherever they appear. That
+> second half is why a translated sentence still writes `MONO`, `MONITOR`, `STEREO`, `Rec Point`,
+> `PRE` and `POST`: they are the unit's labels, and the rule below does not stop at the row that
+> reproduces one. A tooltip that spells out a device
 > abbreviation keeps the unit's own wording (`C.INT` → `Cue Interrupt`), and so do the MIDI takeover
 > mode names (`Absolute` / `Pickup`), which name a controller behavior the same way the button
 > behaviors do. The CONSOLE strip group separators (`INPUTS` / `BUS / FX` / `MONITOR` / `MASTER`) stay
@@ -2532,6 +2547,85 @@ before the fader" alone.
 None of this reaches the plan: both jacks carry the channel's `ch:out` ref, so the saved JSON, the
 `?plan=` link and the device translation are unchanged by which jack a wire was drawn from. In the DOM
 the tap is addressed by `data-tap` (not `data-ref`), keeping a `[data-ref]` lookup single-element.
+
+## MONO on the analog outputs
+
+The device carries its [MONO] switch on the MONITOR buses alone (`device-model.md` §4). MAIN OUT and
+LINE OUT are pure source selectors with no parameters of their own, so whether a speaker output can be
+summed to mono is decided entirely by what it is patched from: a MONITOR patch brings the switch with
+it, a STEREO / MIX / STREAMING patch has none.
+
+**Where the switch sits is read off the block diagram**, not inferred from the user guide, and the
+order is what makes the whole surface true. `MONITOR 1–2 OUT` runs `Monitor Source` → `CUE Interrupt`
+→ `MONO` → `ON`, and only then splits: one branch through the monitor `LEVEL` to `MONITOR n OUT`, the
+other through the phones `LEVEL` to `PHONES n OUT`. `MONITOR n OUT` is in turn an input of the
+`Output Patch` box that feeds the analog connectors. Three consequences follow from that one figure,
+identical on every model's page:
+
+- a MONITOR-sourced MAIN / LINE patch **does** carry the mono sum — MONO is upstream of the tap;
+- **so do the headphones**: the PHONES branch is taken after MONO, so switching a pair of speakers to
+  mono takes that monitor's PHONES with it. The inspector says so on the MONITOR node while MONO is on,
+  and the way to keep one path stereo is the other MONITOR;
+- **CUE Interrupt reaches the analog connectors too**, being upstream of both taps — **while it is
+  on**, which is how it ships. With a MONITOR patched to MAIN OUT and the interrupt left on, engaging
+  CUE anywhere replaces what the speakers carry. The patch wire's note says exactly that, conditional
+  clause included: a statement on the same footing as the MONO row below rather than a warning, and
+  unlike that row it does **not** read the switch — `sendlessNote` classifies a wire without the plan,
+  by design, so the note states the mechanism rather than the current state.
+
+What the figure does **not** give is the MONO block's gain law, and that was measured on the unit
+(URX44V, System 1.3.1.0, 2026-08-13, reading `129:0/1` — the monitor's own meter, downstream of MONO
+on the same figure). It is a **power sum, (L+R)/√2**, and it takes two states to say so:
+
+| oscillator | MONO off | MONO on | delta |
+| --- | --- | --- | --- |
+| STEREO L alone, −30 dBFS | L −30.0, R at the floor | both lanes −33.0 | **−3.0 dB** |
+| both lanes in phase, −30 dBFS each | both −30.0 | both **−27.0** | **+3.0 dB** |
+
+Switching back returned L to −30.0 exactly, so the reading is the switch rather than drift. The first
+row alone does **not** identify the law — an energy sum `√((L²+R²)/2)` produces the same −3.0 there —
+and the second is what separates them, since an energy sum would not have moved. What it rules out on
+the way: a straight `L+R` (0 dB on the first row), an average `(L+R)/2` (−6.0) and a plain copy of L.
+
+| material | when MONO engages |
+| --- | --- |
+| uncorrelated (a wide mix) | **unchanged** — incoherent power adds and the ÷2 takes it back |
+| centre-panned (L = R) | **up 3 dB** — coherent, so the amplitudes add before the ÷√2 |
+| hard-panned to one side | **down 3 dB** |
+
+So the centre of a mix gets louder relative to its sides, which is the direction that flatters a mono
+fold-down rather than exposing it. No string in the app depends on the law; a person judging mono
+compatibility does.
+
+Nothing in a plan records whether the operator *wants* mono, so this is **stated, not warned about**.
+The inspector gives MAIN / LINE a standing **MONO row** — either the monitor that owns the switch and
+its state, or that this patch has no switch at all, with the routing change that gets one — and the
+patch wire carries the matching note. `outputMono` / `canPatchFromMonitor` in `core/constraints.ts` decide
+it; the wire's wording comes from `sendlessNote` in `ui/send-fields.ts`, which feeds the hover `<title>`
+and the selected-wire hint from **one** classifier, so the two carriers cannot drift apart (its union
+return type also refuses a new case until that case has its own wording). The row shows on an unpatched
+output too — the state a note on a wire can never reach, since there is no wire.
+
+Routing the hover through that classifier **widened it**: the title used to be keyed on the direct-out
+destinations alone, so a channel-sourced **ducker key** carried an explanation when selected and none on
+hover. It now carries the same sentence in both places, which is what the older comment already claimed
+for the taps. That is a behaviour change with no visible tell, so `e2e/directout.spec.ts` pins it by
+reading the panel's hint and comparing the wire's `<title>` against it rather than against a literal.
+
+The row is scoped to MAIN / LINE because they are the only outputs whose lock a routing change can
+remove: a USB output cannot take a MONITOR source at all (`device-model.md` §6), so a standing note
+there would be a lock nothing can unlock — the same reason `duckerBypassWarnings` leaves microSD Rec
+alone.
+
+**There is deliberately no warning card**, which is where this parts company with the Ducker bypass it
+otherwise mirrors. That one fires on a contradiction inside the plan (`duckerOn` true *and* a pre-fader
+tap to a live output). Here there is no contradiction to find: a STEREO patch on MAIN OUT is the factory
+arrangement, so a card keyed on it would fire on nearly every plan, and no tighter predicate exists —
+`mono` being on elsewhere does not imply this output should carry it, since an A/B rig deliberately
+keeps one output stereo while the other is summed, and a monitor bus feeding no analog output at all is
+an ordinary arrangement. The cost of stating rather than warning is that the notice is read only when
+the output or its wire is selected: unlike the Rec Point tap above, there is no always-visible geometry
+that could carry it, because MONO is a state of the path rather than a second route out of the node.
 
 ## Node labels
 

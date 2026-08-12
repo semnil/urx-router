@@ -13,6 +13,17 @@ export const port = (page: Page, ref: string): Locator => page.locator(`[data-re
  *  every `[data-ref]` locator under Playwright's strict mode. */
 export const tapJack = (page: Page, ref: string): Locator => page.locator(`[data-tap="${ref}"]`);
 
+/** A drawn wire's hit band, addressed by the refs it joins. */
+export const wire = (page: Page, from: string, to: string): Locator =>
+  page.locator(`.wire-hit[data-from="${from}"][data-to="${to}"]`);
+
+/** Select a wire. `dispatchEvent` rather than a click because the hit bands
+ *  overlap: a real press lands on whichever band is on top at that pixel, which
+ *  is not necessarily the wire the test named. Six specs had grown their own copy
+ *  of this pair, each carrying the same comment. */
+export const selectWire = (page: Page, from: string, to: string): Promise<void> =>
+  wire(page, from, to).dispatchEvent("pointerdown");
+
 /** A node's own panel — the first rect in its group. Pointer geometry comes from
  *  here rather than the group's box, which also covers the Rec Point tap jack
  *  standing above the top edge. */

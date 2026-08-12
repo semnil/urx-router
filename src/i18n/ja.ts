@@ -65,7 +65,7 @@ export const ja: Messages = {
     pre: "PRE",
     sends: "SENDS",
     sendPan: "SEND PAN",
-    preHint: "プリフェーダー送り",
+    preHint: "Pre-fader send",
     cue: "C.INT",
     cueFull: "Cue Interrupt",
     mono: "MONO",
@@ -415,14 +415,22 @@ export const ja: Messages = {
     notReadFromDevice: "デバイスから読み込まれていません — 計画の初期値を表示しています。",
     selectionOnly: "選択のみ — Send パラメータはありません。",
     directOutTap:
-      "ダイレクト出力 — チャンネルの Rec Point でタップ (フェーダー・ダッカーより前段)。含めるには STEREO / MIX バス経由で送ってください。",
+      "ダイレクト出力 — チャンネルの Rec Point でタップ (フェーダー・Ducker より前段)。含めるには STEREO / MIX Bus 経由で送ってください。",
     sdRecTap:
-      "このチャンネルを Rec Point でタップして録音します (既定はプリフェーダー)。録音する段はチャンネルの Rec Point で選べます。",
+      "このチャンネルを Rec Point でタップして録音します (既定は pre-fader)。録音する段はチャンネルの Rec Point で選べます。",
     duckerKeyTap:
-      "ダッカーキー — キー元チャンネルの Rec Point (フェーダー・ダッカーより前段) でタップ。そのチャンネルのフェーダー・ミュートはトリガーに影響しません。post-fader でトリガーするには STEREO / MIX バスをキーにしてください。",
+      "Ducker キー — キー元チャンネルの Rec Point (フェーダー・Ducker より前段) でタップ。そのチャンネルのフェーダー・ミュートはトリガーに影響しません。post-fader でトリガーするには STEREO / MIX Bus をキーにしてください。",
+    patchNoMono:
+      "MONO を持つのは MONITOR 1 / 2 だけです。この出力を MONITOR Bus からパッチすると、MONO に切り替えられます。",
+    patchViaMonitor:
+      "この出力は MONITOR Bus の MONO スイッチに従います — 切り替えは MONITOR ノードで行います。CUE Interrupt も同じ経路にあるため、それが ON の間は CUE を押すとこの出力の音が置き換わります。",
+    monoPhonesShared:
+      "MONO が ON です。この MONITOR の PHONES はその後段でタップされるため、ヘッドホンにも同じ信号が出ます — 片方をステレオで残すには、もう一方の MONITOR を使います。",
+    monoUnavailable: "利用不可 — MONITOR 経由",
+    monoVia: (state: string, monitor: string): string => `${state} (${monitor} から)`,
     fixedConnection: "固定接続 — 常時有効で削除できません。",
     duckerPreSend:
-      "このチャンネルのダッカーは ON ですが、この PRE (プリフェーダー) 送りはその手前でタップするためダッキングされません。ダックを含めるには POST に切り替えてください。",
+      "このチャンネルの Ducker は ON ですが、この PRE (Pre-fader send) はその手前でタップするため Ducker が効きません。Ducker を含めるには POST に切り替えてください。",
     busType: "BUS Type",
     panLink: "Pan Link",
     busFixedLevel: "Send レベルは固定 (BUS Type: FIXED)。",
@@ -523,16 +531,16 @@ export const ja: Messages = {
     addNote: "ノートを追加",
     collapseNote: "ノートを最小化",
     expandNote: "ノートを展開",
-    recPointTap: "Rec Point タップ — フェーダー・ダッカーより前段。USB 出力・microSD Rec へはここからドラッグします",
+    recPointTap: "Rec Point タップ — フェーダー・Ducker より前段。USB 出力・microSD Rec へはここからドラッグします",
   },
   warning: {
     title: "サンプルレート注意",
     insFx: "96 kHz 超では Insert FX (MONO IN ch・MIX・STEREO) を使用できません。",
     stereoEq: "176.4 / 192 kHz ではステレオ ch (CH 5/6–11/12) の EQ を使用できません。",
     fx2: "96 kHz 超では FX2 Bus を使用できません。",
-    duckerTitle: "ダッカーがダイレクト出力に乗りません",
+    duckerTitle: "Ducker がダイレクト出力に乗りません",
     duckerBypass: (label: string): string =>
-      `${label} — ダッカー ON ですが USB / SD ダイレクト出力はその前段でタップします。含めるには STEREO / MIX バス経由で送ってください。`,
+      `${label} — Ducker ON ですが USB / SD ダイレクト出力はその前段でタップします。含めるには STEREO / MIX Bus 経由で送ってください。`,
   },
   status: {
     loaded: (model: string): string => `${model} を読み込みました — ドラッグで配置・結線`,
@@ -775,7 +783,7 @@ export const ja: Messages = {
     warnSection: "警告",
     warnFirmware: "未検証ファームウェア",
     warnRate: "サンプルレート制限",
-    warnDucker: "ダッカーバイパス",
+    warnDucker: "Ducker バイパス",
     warnNote: "OFF にすると該当する警告を表示しません。デバイスの動作には影響しません。",
     controlsSection: "操作",
     wheel: "ホイールステップ",

@@ -489,6 +489,15 @@ export const en = {
     duckerKeyTap: tr(
       "Ducker key — tapped at the source channel's Rec Point, before its fader and Ducker, so that channel's fader / mute do not change the trigger. Key from a STEREO or MIX bus to trigger post-fader.",
     ),
+    patchNoMono: tr("Only MONITOR 1 / 2 carry MONO. Patch this output from a MONITOR bus to switch it to mono."),
+    patchViaMonitor: tr(
+      "This output follows the MONITOR bus's MONO switch — set it on the MONITOR node. CUE Interrupt is on the same path, so while it is on, engaging CUE replaces what this output carries.",
+    ),
+    monoPhonesShared: tr(
+      "MONO is on. This MONITOR's PHONES is tapped after it, so those headphones carry the same mono sum — use the other MONITOR to keep one path stereo.",
+    ),
+    monoUnavailable: tr("Unavailable — via MONITOR"),
+    monoVia: (state: string, monitor: string): string => `${state}, from ${monitor}`,
     fixedConnection: tr("Fixed connection — always enabled, cannot be removed."),
     duckerPreSend: tr(
       "This channel's Ducker is on, but this PRE (pre-fader) send taps ahead of it, so the send is not ducked. Switch to POST to include the duck.",

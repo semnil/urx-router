@@ -129,6 +129,9 @@ import {
   duckerBypassWarnings,
   insertFxAllRateLocked,
   insertFxMenu,
+  isMonitorBus,
+  canPatchFromMonitor,
+  outputMono,
   rateConstraints,
 } from "../core/constraints";
 import { getSettings } from "../core/settings";
@@ -190,9 +193,22 @@ const HA_GAIN_DEFAULT_DB = -8;
  *  and the source channel's Signal Type / Ducker decide the pan label and the notes.
  *  Exported so a caller holding a changed node can ask whether the panel it is not
  *  rendering has gone stale, instead of restating the footprint at the call site. */
-export function inspectorNodes(selection: Selection): string[] {
+export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Selection): string[] {
   if (!selection) return [];
-  return selection.type === "node" ? [selection.id] : [parseRef(selection.from).nodeId, parseRef(selection.to).nodeId];
+  if (selection.type !== "node") return [parseRef(selection.from).nodeId, parseRef(selection.to).nodeId];
+  // An analog output's MONO row reports a MONITOR bus's switch, so a change on a node
+  // the panel is not "showing" moves what it draws — exactly the case this function
+  // exists for. Narrowed to the monitor the plan actually patches from, not both:
+  // `bus.mon1/2` carry three params that follow DIRECTLY (MONITOR_ON, MONITOR_LEVEL,
+  // PHONES_LEVEL), so naming a monitor the output does not read makes a knob turn on
+  // the unit rebuild this panel at the follow rate — replaceChildren, the plan-wide
+  // duckerBypassWarnings sweep and a focus restore, ~20 times a second, for a row
+  // whose content did not change. MONO itself is not in that direct set and arrives
+  // on the full-reflect path, which refreshes the panel anyway; what this line buys
+  // is the MIDI route, where the plan is written without a device read.
+  if (!canPatchFromMonitor(model, selection.id)) return [selection.id];
+  const mono = outputMono(plan, selection.id);
+  return mono.via === "monitor" ? [selection.id, mono.monitorId] : [selection.id];
 }
 
 /** The gate a rebuild of `host` asks before running, so it cannot land inside an IME
@@ -307,6 +323,26 @@ export function renderInspector(
     // The heading keeps the device identity (CH 1 …) so you always know which
     // physical strip you are patching; the Name field below holds the override.
     host.append(heading(fullLabel(node)), field(m.inspector.type, nodeKindLabel(node.kind)));
+
+    // MAIN / LINE OUT: a standing MONO row. The output itself has no MONO control
+    // — the device puts [MONO] on the MONITOR buses — so what this output can do
+    // is decided by what it is patched from, and the row is the one place that
+    // says so before the patch is drawn. Read-only on purpose: the switch keeps
+    // its single home on the MONITOR node, and the row names which one owns it.
+    if (canPatchFromMonitor(model, node.id)) {
+      const mono = outputMono(plan, node.id);
+      host.append(
+        field(
+          m.inspector.mono,
+          mono.via === "monitor"
+            ? m.inspector.monoVia(mono.on ? m.inspector.on : m.inspector.off, labelOf(mono.monitorId))
+            : m.inspector.monoUnavailable,
+        ),
+      );
+      // The unavailable state is the one that needs the way out spelled; the
+      // available one already names the node the switch lives on.
+      if (mono.via === "none") host.append(hint(m.inspector.patchNoMono));
+    }
 
     // Channel / bus strips carry a user-editable name (the device's CH SETTING
     // name); empty falls back to the model's default label.
@@ -623,7 +659,7 @@ export function renderInspector(
 
     // Monitor bus ON (MONITOR_ON) + level (MONITOR_LEVEL) plus the CUE-interrupt /
     // MONO toggles. ON precedes the fader to match the device MONITOR screen order.
-    if (node.id === "bus.mon1" || node.id === "bus.mon2") {
+    if (isMonitorBus(node.id)) {
       const np = plan.nodeParams[node.id] ?? {};
       const ps = section(m.inspector.parameters, { key: "params" });
       ps.body.append(
@@ -652,6 +688,16 @@ export function renderInspector(
         boolToggle(m.inspector.mono, np.mono ?? false, (v) => actions.onUpdateNodeParams(node.id, { mono: v })),
       );
       host.append(ps.el);
+      // The block diagram takes this monitor's PHONES pair AFTER the MONO block, so
+      // switching MONO for a pair of speakers takes the headphones with it. Said only
+      // while it is on: off, there is nothing for it to be about.
+      //
+      // On `host`, where every other hint goes, and NOT inside the section body —
+      // measured with it there: the body's `> .param:last-child { border-bottom: none }`
+      // stopped matching, so the MONO row's rule reappeared whenever MONO was on
+      // (0px -> 1px), and the paragraph brought the UA's 1em margins (13px top and
+      // bottom) into a body padded 6px. Section height went 358 -> 495.
+      if (np.mono) host.append(hint(m.inspector.monoPhonesShared));
     }
 
     // Oscillator generator (bus.osc): on / level / mode / frequency. Frequency
@@ -1677,6 +1723,11 @@ function selectToggle(group: HTMLElement, button: HTMLButtonElement): void {
 // `lockedTitle`, when set, renders the pair read-only: both buttons disabled (no
 // click handler) and the reason shown as a row tooltip — the value is still visible.
 function boolToggle(label: string, value: boolean, onChange: (v: boolean) => void, lockedTitle?: string): HTMLElement {
+  // Read as truthiness, not `=== on`. The device write is `np.mono ? 1 : 0` and the
+  // load funnel passes a finite numeric leaf through unchecked, so a plan authored
+  // elsewhere reaches here carrying 1 — under a strict compare NEITHER button lights
+  // and the row emits aria-pressed="1", which is not an ARIA boolean at all.
+  const state = Boolean(value);
   const { row } = paramBlock(label, "");
   if (lockedTitle !== undefined) row.title = lockedTitle;
   const group = document.createElement("div");
@@ -1685,7 +1736,7 @@ function boolToggle(label: string, value: boolean, onChange: (v: boolean) => voi
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = text;
-    b.classList.toggle("on", value === on);
+    b.classList.toggle("on", state === on);
     if (lockedTitle === undefined)
       b.addEventListener("click", () => {
         selectToggle(group, b);

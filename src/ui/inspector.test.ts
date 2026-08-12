@@ -6,6 +6,7 @@ import { resetSectionCache } from "./inspector-sections";
 import type { Selection } from "./graph";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
+import { emptyPlan } from "../core/plan";
 import type { Plan } from "../core/plan";
 import { resetSettingsCache } from "../core/settings";
 import { insertFxMenu } from "../core/constraints";
@@ -20,18 +21,52 @@ import { setLang, t } from "../i18n";
 // decides whether to repaint has to know the footprint. These pin it.
 
 describe("inspectorNodes", () => {
+  const u44v = getModel("URX44V");
+
   it("reports nothing for an empty selection", () => {
-    expect(inspectorNodes(null)).toEqual([]);
+    expect(inspectorNodes(u44v, emptyPlan("URX44V"), null)).toEqual([]);
   });
 
   it("reports the node itself for a node selection", () => {
-    expect(inspectorNodes({ type: "node", id: "ch1" })).toEqual(["ch1"]);
+    expect(inspectorNodes(u44v, emptyPlan("URX44V"), { type: "node", id: "ch1" })).toEqual(["ch1"]);
+  });
+
+  // An analog output's MONO row reads a MONITOR bus's switch, so the footprint has to
+  // carry a node the panel is not "showing". Without it a MIDI-driven MONO change
+  // reaches the plan and the device while the row keeps reporting the old state.
+  it("reports the monitor an analog output is patched from, and only that one", () => {
+    const patched = (from: string, to: string): Plan => {
+      const plan = emptyPlan("URX44V");
+      plan.connections.push({ from: `${from}:out`, to: `${to}:in`, kind: "patch" });
+      return plan;
+    };
+    expect(inspectorNodes(u44v, patched("bus.mon1", "out.main"), nodeSel("out.main"))).toEqual([
+      "out.main",
+      "bus.mon1",
+    ]);
+    // NOT both monitors. bus.mon1/2 carry three directly-following params, so naming a
+    // monitor this output does not read would rebuild the panel at the follow rate on
+    // a knob turn that changes nothing it shows.
+    expect(inspectorNodes(u44v, patched("bus.mon2", "out.main"), nodeSel("out.main"))).toEqual([
+      "out.main",
+      "bus.mon2",
+    ]);
+    // And none at all when the patch carries no MONO switch, or there is no patch.
+    expect(inspectorNodes(u44v, patched("bus.stereo", "out.main"), nodeSel("out.main"))).toEqual(["out.main"]);
+    expect(inspectorNodes(u44v, emptyPlan("URX44V"), nodeSel("out.main"))).toEqual(["out.main"]);
+    // Not every output: a USB output has no MONO row, so it has nothing extra to watch.
+    expect(inspectorNodes(u44v, patched("bus.stereo", "out.usbmain_a"), nodeSel("out.usbmain_a"))).toEqual([
+      "out.usbmain_a",
+    ]);
   });
 
   it("reports BOTH endpoints for a wire — the destination is why this exists", () => {
     // The destination bus's BUS Type / Pan Link decide which of the send controls the
     // panel draws at all; the source channel's Signal Type decides the pan's label.
-    expect(inspectorNodes({ type: "conn", from: "ch1:out", to: "bus.mix1:in" })).toEqual(["ch1", "bus.mix1"]);
+    expect(inspectorNodes(u44v, emptyPlan("URX44V"), { type: "conn", from: "ch1:out", to: "bus.mix1:in" })).toEqual([
+      "ch1",
+      "bus.mix1",
+    ]);
   });
 });
 
@@ -493,6 +528,100 @@ describe("coverage sweep: every control of every selection", () => {
       renderInspector(host, model, plan, nodeSel(id), actions());
       expect(() => driveEverything(host)).not.toThrow();
       host.remove();
+    }
+  });
+});
+
+// MAIN / LINE OUT carry no MONO control of their own — the device puts [MONO] on
+// the MONITOR buses — so the row reports what the output's own patch decides, and
+// it is present whether or not that patch exists. It is a statement, not a warning:
+// every state below is legal, which is why nothing here is gated on a preference.
+
+describe("renderInspector — the analog outputs' MONO row", () => {
+  const model = getModel("URX44V");
+  const fieldValue = (label: string, host: HTMLElement = panel): string | undefined =>
+    [...host.querySelectorAll<HTMLElement>(".field")]
+      .find((f) => f.querySelector(".field-key")?.textContent === label)
+      ?.querySelector(".field-val")?.textContent ?? undefined;
+
+  const patched = (from: string, to: string, mono?: boolean): Plan => {
+    const plan = defaultPlan("URX44V");
+    plan.connections = plan.connections.filter((c) => !c.to.startsWith(`${to}:`));
+    plan.connections.push({ from: `${from}:out`, to: `${to}:in`, kind: "patch" });
+    if (mono !== undefined) plan.nodeParams[from] = { ...plan.nodeParams[from], mono };
+    return plan;
+  };
+
+  it("names the way out when the patch has no mono at all", () => {
+    renderInspector(panel, model, patched("bus.stereo", "out.main"), nodeSel("out.main"), act);
+    expect(fieldValue(t().inspector.mono)).toBe(t().inspector.monoUnavailable);
+    expect(panel.textContent).toContain(t().inspector.patchNoMono);
+  });
+
+  it("names the monitor that owns the switch, and drops the way-out note", () => {
+    renderInspector(panel, model, patched("bus.mon1", "out.main", true), nodeSel("out.main"), act);
+    // Exact, not toContain: "MONITOR" carries the letters of "ON", so a substring
+    // check for the ON state also passes on "OFF, from MONITOR 1" — an outputMono
+    // stuck at off would have kept this green.
+    expect(fieldValue(t().inspector.mono)).toBe(t().inspector.monoVia(t().inspector.on, "MONITOR 1"));
+    expect(panel.textContent).not.toContain(t().inspector.patchNoMono);
+  });
+
+  it("distinguishes a monitor patch whose switch is off from one that has no switch", () => {
+    renderInspector(panel, model, patched("bus.mon2", "out.line", false), nodeSel("out.line"), act);
+    expect(fieldValue(t().inspector.mono)).toContain(t().inspector.off);
+    expect(fieldValue(t().inspector.mono)).not.toBe(t().inspector.monoUnavailable);
+  });
+
+  // An output with nothing patched into it still says where mono would come from —
+  // the case a warning keyed on a wire could never reach.
+  it("shows the row on an unpatched output", () => {
+    const plan = defaultPlan("URX44V");
+    plan.connections = plan.connections.filter((c) => !c.to.startsWith("out.main:"));
+    renderInspector(panel, model, plan, nodeSel("out.main"), act);
+    expect(fieldValue(t().inspector.mono)).toBe(t().inspector.monoUnavailable);
+  });
+
+  // Scope: the row belongs where a routing change can remove the lock. A USB output
+  // cannot take a MONITOR source at all, so a standing note there would be a lock
+  // nothing can unlock.
+  it("stays off the USB outputs and the buses", () => {
+    for (const id of ["out.usbmain_a", "out.usbsub", "bus.stereo", "bus.mon1"]) {
+      const host = document.createElement("div");
+      document.body.append(host);
+      renderInspector(host, model, defaultPlan("URX44V"), nodeSel(id), actions());
+      expect(fieldValue(t().inspector.mono, host)).toBeUndefined();
+      host.remove();
+    }
+  });
+
+  // The block diagram takes each monitor's PHONES after the MONO block, so a pair of
+  // speakers switched to mono takes the headphones with it. Only while it is on: off,
+  // the note has nothing to be about.
+  it("warns on the MONITOR node that its PHONES follows MONO, only while MONO is on", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.mon1"] = { ...plan.nodeParams["bus.mon1"], mono: false };
+    renderInspector(panel, model, plan, nodeSel("bus.mon1"), act);
+    expect(panel.textContent).not.toContain(t().inspector.monoPhonesShared);
+
+    plan.nodeParams["bus.mon1"] = { ...plan.nodeParams["bus.mon1"], mono: true };
+    renderInspector(panel, model, plan, nodeSel("bus.mon1"), act);
+    expect(panel.textContent).toContain(t().inspector.monoPhonesShared);
+  });
+
+  // The value is composed by a message function, so each language composes its own —
+  // the row is the only place either one is built, and the English case above cannot
+  // stand in for it.
+  it("composes the value in the active language", () => {
+    setLang("ja");
+    try {
+      renderInspector(panel, model, patched("bus.mon1", "out.main", true), nodeSel("out.main"), act);
+      expect(fieldValue(t().inspector.mono)).toBe(t().inspector.monoVia(t().inspector.on, "MONITOR 1"));
+      expect(fieldValue(t().inspector.mono)).toContain("MONITOR 1");
+      renderInspector(panel, model, patched("bus.stereo", "out.main"), nodeSel("out.main"), act);
+      expect(fieldValue(t().inspector.mono)).toBe(t().inspector.monoUnavailable);
+    } finally {
+      setLang("en");
     }
   });
 });

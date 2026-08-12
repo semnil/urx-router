@@ -96,7 +96,7 @@ flowchart LR
 - `sendSwitch` — 受け口は **複数可** だが **ON/OFF のみ** (個別のレベル/パンを持たない Send)。MIX→STEREO の「TO ST」Send。
 
 > `source` / `patch` / `key` の受け口は選択ワイヤを 2 本受け付けない (ソースは 1 本のみ)。
-> `key` のワイヤはキャンバス上で `source` と同じ青のセレクタ色で描画される。
+> `key` のワイヤはキャンバス 上で `source` と同じ青のセレクタ色で描画される。
 
 ### 1. チャンネル入力ソース (`source`, 受け口 1 本)
 
@@ -192,18 +192,18 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
     **工場出荷状態は FX 1 / FX 2 とも ON**。これはコンソールの**スクリブル電源 LED** — ヘッド MUTE は
     → STEREO アサインの ON/OFF を指す (送りごとの ON/OFF は SENDS ラックにある) ため、チャンネルマスターが
     オフのときはストリップが減光する (電源 LED 消灯)。盤面のノードも同様に減光し MUTE タグが付く。
-  - MIX 1 / MIX 2 バスも独自の**マスター ON/OFF** を持つ (STEREO マスターの ON と同じバスマスタースイッチ・
+  - MIX 1 / MIX 2 Bus も独自の**マスター ON/OFF** を持つ (STEREO マスターの ON と同じ Bus マスタースイッチ・
     工場 ON)。MIX → STEREO の TO ST スイッチとは独立。コンソールの**電源 LED** (またはグラフのインスペクタ)
     で編集する — マスターがオフのとき MIX ストリップが減光する (チャンネルマスターの
     オフを示すのと同じ表示)。STEREO / MIX のインスペクタのトグルは FX チャンネルと同じ「チャンネル」
     ラベルで Parameters セクション最上部に並ぶ。
-  - STEREO マスターと各 MIX バスは**マスター BALANCE** も持つ — バス出力の L/R バランス (±63・中央 0。STEREO
-    は param 583、MIX は 676 でバスごとに L/R instance 連動)。編集はグラフのインスペクタ (フェーダーの下) と
+  - STEREO マスターと各 MIX Bus は**マスター BALANCE** も持つ — Bus 出力の L/R バランス (±63・中央 0。STEREO
+    は param 583、MIX は 676 で Bus ごとに L/R instance 連動)。編集はグラフのインスペクタ (フェーダーの下) と
     CONSOLE の master / MIX ストリップ (`BAL` ノブ)。**Pan Link を ON にしても実機は BALANCE ラベルのまま**:
-    Pan Link は各 *Send* の pan をソースチャンネルに追従させるもので、バス出力バランスとは独立。
+    Pan Link は各 *Send* の pan をソースチャンネルに追従させるもので、Bus 出力バランスとは独立。
 - OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`sendSwitch`、加算 Send ではなく ON/OFF
   アサイン。オシレーターは単一のグローバルレベルを持つ。ステレオ宛先はワイヤに独立 L/R
-  (`oscL` / `oscR`) を保持し、FX バスはモノ)
+  (`oscL` / `oscR`) を保持し、FX Bus はモノ)
 - MIX 1 / MIX 2 → STEREO (`sendSwitch`、ブロックダイアグラムの MIX 1–2 OUT 内「TO ST」。**固定** = 常時結線・
   削除不可。ON/OFF のみで独立した LEVEL/PAN は持たない。on/off は接続パラメーター `params.on` (TO ST スイッチ・
   **工場出荷は OFF**) で保持し、off は盤面で減光表示する。実機反映: param `677`、ステレオ MIX の L インスタンス
@@ -221,7 +221,7 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チャンネル専用)。on/off、**Delay Time**
 (1.00 … 1000.00 ms、0.01 ms 刻み)、**Frame rate** セレクタ (24 / 25 / 29.97D / 29.97 / 30D / 30 / 60 /
 120) で構成される。遅延量は単一の時間値で、Frame rate はその時間をフレーム数で表示する際の換算にのみ影響し、
-遅延そのものは変えない。結線ではなくストリーミングバスノード (インスペクタの DELAY セクション) で編集する。
+遅延そのものは変えない。結線ではなくストリーミング Bus ノード (インスペクタの DELAY セクション) で編集する。
 
 ### 5. 出力パッチ (`patch`, 受け口 1 本)
 
@@ -253,7 +253,7 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
 
 - microSD Rec は最大 **16 トラック** を **8 つのステレオトラックペア** (1/2, 3/4, … 15/16) として
   録音する。各ペアは録音ソースを **1 つ**選択する — **チャンネルペア** (CH 1/2 … CH 11/12)・
-  **STEREO**・**MIX** バスのいずれか (ブロックダイアグラム "SD Rec Signal Assign"・RECORDER メニュー
+  **STEREO**・**MIX** Bus のいずれか (ブロックダイアグラム "SD Rec Signal Assign"・RECORDER メニュー
   = Track Count + ペア毎の Source 選択 + 読取専用レベルメーター)。
 - **単一ソース選択** (`record`) であり加算 Send ではない: **ソース毎の level / pan / PRE-POST を
   持たない**。録音されるタップ位置はチャンネルの **Rec Point**。
@@ -282,8 +282,8 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
 
 - Ducker 1–4 Source ← CH 1–N OUT / STEREO OUT / MIX 1 OUT / MIX 2 OUT (サイドチェーンのトリガ選択)
 - **チャンネルをキーにした場合、キーはそのチャンネルの CH OUT — ダイレクト出力と同じ Rec Point タップで、
-  フェーダー・ダッカーより前段** — なので、キー元チャンネルのフェーダー・ミュートはトリガーに影響しない。
-  バスキー (STEREO / MIX) はそのバスの OUT、すなわち**出力 insert FX の後**。ブロックダイアグラムは
+  フェーダー・Ducker より前段** — なので、キー元チャンネルのフェーダー・ミュートはトリガーに影響しない。
+  Bus キー (STEREO / MIX) はその Bus の OUT、すなわち**出力 insert FX の後**。ブロックダイアグラムは
   `STEREO OUT` / `MIX 1 OUT` / `MIX 2 OUT` のラベルを `INS FX` ブロックの外側に置いており、
   `DUCKER 1-4 SOURCE` ブロックはその名前を入力に取る。チャンネルをキーにしたワイヤ選択時にインスペクタが注記する。
 - **ステレオのキーは検出前に MONO へ加算される — 平均でも大きい側の採用でもなく、和。**
@@ -295,7 +295,7 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
 - 各 Ducker は 1 つのステレオチャンネルに搭載されるため、Ducker 1–4 は機種のステレオペアに順番に対応する: URX22 = CH 3/4・5/6・7/8・9/10、URX44 / URX44V = CH 5/6・7/8・9/10・11/12。盤面のノードラベルは単に `Ducker` とし、搭載先ペアは副題 (`CH 5/6 · Source`) に表示する。1–4 の序数はブロックダイアグラム上の列挙であり、ぶら下げ位置で搭載先 CH が分かるためノードには重ねて表示しない。
 - 表示上、Ducker は独立した出力ではなく搭載先チャンネルに属するため、専用種別 `ducker` のノードとして対応ステレオチャンネルの真下にぶら下げて描く (配置・移動・非表示の挙動は [architecture.md](architecture.md) 参照)。
 - Ducker の ON/OFF (`duckerOn`、工場出荷は OFF) がオフのときは、ミュートしたチャンネルと同じくノードを減光し `OFF` タグを付ける (バイパスを示す。ミュートではないため `MUTE` ではなく `OFF`)。
-- Ducker はチャンネル主経路の **フェーダー後段** にあるため、STEREO 主経路と POST 送りはダック対象だが、**PRE (プリフェーダー) 送りはその手前でタップするためダックされない**。ダッカー ON のチャンネルに PRE 送りがある場合、インスペクタが固定接続の注記の隣にその旨を表示する (盤面には表示せず情報過多を避ける)。
+- Ducker はチャンネル主経路の **フェーダー後段** にあるため、STEREO 主経路と POST 送りはダック対象だが、**PRE (pre-fader) 送りはその手前でタップするためダックされない**。Ducker ON のチャンネルに PRE 送りがある場合、インスペクタが固定接続の注記の隣にその旨を表示する (盤面には表示せず情報過多を避ける)。
 
 ## 固定 (結線不可) の要素
 
@@ -307,11 +307,11 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   PRE EQ 選択中に SSMCS へ切り替えるとタップは PRE COMP へ移る (実機挙動。プランナーも同じ動作)。
   - **USB MAIN / SUB・microSD Rec へのチャンネルダイレクトアウトはこの Rec Point でタップする**
     (= フェーダー・Ducker より前段)。フェーダー / Ducker を通した信号をこれらの出力へ送るには
-    STEREO / MIX バスを経由する必要がある (バスは Ducker 後段)。プランナーはこれを注記で示す
+    STEREO / MIX Bus を経由する必要がある (Bus は Ducker 後段)。プランナーはこれを注記で示す
     (`core/routing.ts` の `directOutTarget`): チャンネル → USB/SD のダイレクトアウト結線には
     Rec Point タップである旨を表示し、**Ducker が ON のチャンネルが USB ダイレクトアウトへ結線されて
     いる場合はインスペクタ上部に警告**を出す (`duckerBypassWarnings`)。microSD Rec はドライ収録が正当な
-    ため警告対象外で、Rec Point で段を選べる旨の中立な注記に留める。キャンバス上、これらの経路は右端の
+    ため警告対象外で、Rec Point で段を選べる旨の中立な注記に留める。キャンバス 上、これらの経路は右端の
     出力ではなく**チャンネル上辺の専用 Rec Point タップジャック**から出るため、迂回が図からも読み取れる。
     詳細は `architecture.md` の「Rec Point タップジャック」節を参照。
 - MONO IN は **COMP/EQ Type** (CH SETTING) で COMP→EQ と **SSMCS** (Sweet Spot Morphing Channel Strip)
@@ -327,7 +327,7 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   COMP→EQ は COMP OFF / EQ ON に戻し comp / 4-band EQ / EQ 1-knob を工場値へリロードする。GATE は
   Type 非依存で不変。SSMCS の初期値は実機 MONO IN の SSMCS バンク (既定 "01 Basic" プリセット適用) を
   読み取った値。
-- 各 EQ (入力チャンネル + 出力 STEREO / MIX バス) は **1-knob** モードを持ち、1 つのノブで 4-band PEQ
+- 各 EQ (入力チャンネル + 出力 STEREO / MIX Bus) は **1-knob** モードを持ち、1 つのノブで 4-band PEQ
   全体を駆動する: **on/off**・プリセット **type**・**level** (エフェクト深度 0–100 %)。type は共有
   プリセットで、**どの EQ インスタンスも 3 種すべて**を持つ — Intensity / Vocal / Loudness。
   (画面別サブセットとして記録していたが実測で否定。実機の MONO IN 用 EQ 画面も 3 択を出し、TYPE
@@ -356,7 +356,7 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   コンソールの MONITOR ストリップの**スクリブル電源 LED** で切り替える (MONITOR ストリップは → STEREO send を
   持たないため MUTE チップは無い)。
 - PHONES 1/2/front は MONITOR Bus への 1 対 1 固定結線 (ソース選択なし、ノード非表示)。PHONES は
-  対応する MONITOR バスと同一信号だが独立した **PHONES Level** (単位なしの 0.0 … 10.0 スケール、
+  対応する MONITOR Bus と同一信号だが独立した **PHONES Level** (単位なしの 0.0 … 10.0 スケール、
   モニタフェーダーとは別) を持ち、MONITOR 1 / 2 ノードで編集する (PHONES 1 ↔ MONITOR 1、
   PHONES 2 ↔ MONITOR 2)。
 - CUE Bus (ソロ/モニタ割り込み) は **表現しない**: ルーティングが電源 OFF で削除され、
