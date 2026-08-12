@@ -249,6 +249,16 @@ for (let i = start + 1; i < lines.length; i++) {
 
 const sectionText = lines.slice(start, end).join("\n");
 
+// The code spans in each table line's FIRST cell — what a row is ABOUT. Parsed here
+// rather than beside the rules that consume it because the classifier runs first and
+// needs to judge a span against the row it sits on, not against the section as a whole.
+const firstCellSpans = new Map();
+for (let i = start; i < end; i++) {
+  if (!/^\s*\|/.test(lines[i])) continue;
+  const names = [...(lines[i].split("|")[1] ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+  if (names.length) firstCellSpans.set(i + 1, names);
+}
+
 // Spans from the tables AND the surrounding paragraphs: the private probe index and
 // the "ci.yml greps dist" claim live in prose.
 const spans = [];
@@ -293,6 +303,66 @@ const unitTests = [
 // search for tests does not turn them up either — which is how eight of them
 // accumulated while the section indexed only the E2E ones.
 const unitFixtures = srcFiles.filter((f) => f.endsWith(".test-util.ts"));
+const e2eFixtures = e2eFiles.filter((f) => f.endsWith(".ts") && !f.endsWith(".spec.ts"));
+// Every spelling, because a detector that sees one lets the others slip past E3 in
+// silence. Enumerated over these files rather than guessed, and there are three plus one
+// exclusion: the declaration (`export const x` / `export function x` / `export type X =`),
+// the list `export { x, y as z }` — where an alias exports the ALIAS — and the type list
+// `export type { A, B } from "…"`, which fixtures.ts uses on the line BELOW the
+// `export { expect }` that motivated the list form, and which a list regex without the
+// `type` alternative misses for exactly the reason this comment gives. No fixture uses
+// `export * from`. A default export is deliberately excluded: it has no name for a row to
+// spell, so the row names the file instead (coverage-options.ts, coverage-reporter.ts).
+const EXPORT_DECL = /^export\s+(?:async\s+)?(?:function|const|class|type|interface)\s+(\w+)/gm;
+const EXPORT_LIST = /^export\s*(?:type\s+)?\{([^}]*)\}/gm;
+function exportsOf(file) {
+  const src = read(file);
+  const listed = [...src.matchAll(EXPORT_LIST)].flatMap((m) =>
+    m[1]
+      .split(",")
+      .map((part) =>
+        part
+          .trim()
+          .split(/\s+as\s+/)
+          .pop()
+          .trim(),
+      )
+      .filter((name) => name && name !== "default"),
+  );
+  return [...[...src.matchAll(EXPORT_DECL)].map((m) => m[1]), ...listed];
+}
+// Which fixtures export a given name, so a row may spell one in a code span. Without a
+// branch for it the classifier rejects a bare identifier as unclassified, which is part
+// of why a row could describe a fixture and never name what it hands you. Keyed by name
+// AND owner: the names are ordinary words (`test`, `key`, `mark`, `wire`, `drag`), so
+// accepting one anywhere in the section would pardon it on a row about another file.
+const exportOwners = new Map();
+for (const file of [...e2eFixtures, ...unitFixtures]) {
+  for (const name of exportsOf(file)) {
+    if (!exportOwners.has(name)) exportOwners.set(name, new Set());
+    exportOwners.get(name).add(file);
+  }
+}
+// Rows written as an INVENTORY of what the file hands you, rather than as prose about
+// when to reach for it. Only these are held to naming every export (rule E3). The
+// distinction is the whole design: on a prose row a new export is not a row change —
+// fake-device.ts exports 51 names and its row is one sentence about what the fake is
+// for — and requiring it everywhere would demand nearly every export these tables' files
+// carry. HOW nearly is deliberately not written here: the figure moves with any edit to
+// a fixture's exports or to a row's code spans, which is two files away from this
+// sentence. Five revisions of this comment carried it and four stated something the tree
+// did not; the one that was right was then copied forward verbatim into a push whose own
+// edit moved it. It is replaced by the census the OK line prints. Read it there.
+//
+// It was not zero for lack of trying, either. Over all 70 revisions of this table exactly
+// one row ever carried an export in a code span (`colorToken` on the fixtures row,
+// 66ebab6), and the VERY NEXT commit (f0d7018) stripped it because THIS checker refused
+// it as unclassified, choosing that over widening PROSE_TOKENS. The row-tied branch above
+// is what lifts that refusal, so the span is back. An inventory row
+// is the opposite: it enumerates, so an export missing from it is a reader being told
+// the list is complete when it is not, which is how the wire locator was forked four
+// times and hand-written eighteen more while the row listed five other things.
+const INVENTORY_ROWS = new Map([["e2e/graph-helpers.ts", "the row enumerates what a spec can address"]]);
 // What rule H holds against the map documents: the files those documents undertake to
 // describe, which is everything that is neither a test nor a fixture nor a type
 // declaration. The shell's Rust is in it beside the frontend's TypeScript because
@@ -519,6 +589,12 @@ for (const span of spans) {
   } else if (token.includes("/") || SOURCE_EXT.test(token)) {
     checked++;
     takePath(token, line);
+  } else if ((firstCellSpans.get(line) ?? []).some((anchor) => exportOwners.get(token)?.has(anchor))) {
+    // A name exported by a file THIS row heads. Checkable in the same sense as a path:
+    // it stops resolving the moment the export is renamed or dropped. Tied to the row
+    // because the names are ordinary words — accepting `wire` or `test` section-wide
+    // would pardon it on a row about a file that exports no such thing.
+    checked++;
   } else {
     // The load-bearing invariant. A silently-ignored token class is how this check
     // would rot the same way the table does.
@@ -799,9 +875,8 @@ for (const row of scope.claudeMd ? rows : []) {
 // Measured on this section — the E2E fixture table down to 43 rows, still OK. Exact
 // match rather than substring, so one path cannot be answered by a longer one that
 // contains it.
-const rowAnchors = new Set(
-  rows.flatMap((row) => [...(lines[row - 1].split("|")[1] ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1])),
-);
+const rowAnchors = new Set(rows.flatMap((row) => firstCellSpans.get(row) ?? []));
+const rowLineOf = new Map(rows.flatMap((row) => (firstCellSpans.get(row) ?? []).map((name) => [name, row])));
 
 // --- reverse: something real appears in no row ------------------------------
 
@@ -861,6 +936,25 @@ if (!forwardOnly) {
   //     the E2E half.
   for (const file of unitFixtures) {
     if (!rowAnchors.has(file)) finding(file, `is a unit fixture but heads no row`);
+  }
+
+  // E3. an inventory row names every export of the file it heads. E and E2 stop at "a
+  //     row exists", which is what let this row stay green while the file gained two
+  //     exports — measured over the twelve days this table has existed, eight commits
+  //     added an export to a file whose row already existed and touched none of them.
+  //     Naming the export rather than merely editing the row is the point: a diff-based
+  //     rule is satisfied by any edit, including one that leaves the list wrong.
+  for (const [file, why] of INVENTORY_ROWS) {
+    const row = rowLineOf.get(file);
+    if (row === undefined) {
+      finding(DOC, `INVENTORY_ROWS names ${file}, which heads no row — drop the entry or restore the row`);
+      continue;
+    }
+    const text = lines[row - 1];
+    const missing = exportsOf(file).filter((name) => !text.includes(`\`${name}\``));
+    if (missing.length) {
+      finding(`${DOC}:${row}`, `${file} exports ${missing.join(", ")}, which this row does not name (${why})`);
+    }
   }
 
   // F. every contract/pin test is covered by one of the section's `pnpm test <filter>`
@@ -950,7 +1044,27 @@ if (findings.length) {
 // that quietly became ignored (a build output, a moved directory) has to be readable
 // off the OK line. Same for a mention the docs half pardoned by name.
 const note = skipped.length ? ` (skipped as private/generated: ${[...new Set(skipped)].join(", ")})` : "";
-console.log(`OK: ${spans.length} tokens${note}, ${checked} assertions, ${rows.length} rows, 7 inventories`);
+// Computed rather than written down anywhere: this is the figure behind E3 being narrow,
+// and four of the five prose copies it had were false at the revision that shipped them,
+// because the edits that move it (a fixture's exports, a row's code spans) are in other
+// files. Printed, it cannot disagree with the tree it was read from.
+const census = [...rowAnchors]
+  .filter((a) => e2eFixtures.includes(a) || unitFixtures.includes(a))
+  .reduce(
+    (acc, file) => {
+      const text = lines[rowLineOf.get(file) - 1];
+      for (const name of exportsOf(file)) {
+        acc.total++;
+        if (text.includes(`\`${name}\``)) acc.named++;
+      }
+      return acc;
+    },
+    { total: 0, named: 0 },
+  );
+console.log(
+  `OK: ${spans.length} tokens${note}, ${checked} assertions, ${rows.length} rows, 7 inventories` +
+    `, ${census.total - census.named} of ${census.total} fixture exports unnamed by their row`,
+);
 console.log(
   `    docs: ${docFileCount} files, ${docSpans} code spans, ${docChecked} file references (spans and prose)` +
     (docSkipped.length ? ` (skipped as private/generated: ${[...new Set(docSkipped)].join(", ")})` : "") +

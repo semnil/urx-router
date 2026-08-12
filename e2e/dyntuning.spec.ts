@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { selectWire } from "./graph-helpers";
 
 // Channel tuning screens (GATE / COMP / EQ). The meter half needs a live session,
 // which is desktop-only, so this spec stubs the Tauri IPC bridge before boot — and
@@ -813,7 +814,7 @@ test.describe("ducker", () => {
     await expect(keyCaption).toContainText("CH 1");
     await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 
-    await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.ducker1:in"]').dispatchEvent("pointerdown");
+    await selectWire(page, "ch1:out", "out.ducker1:in");
     await page.keyboard.press("Delete");
     await openDucker(page);
     // A keyless ducker is engaged at unity on the unit, so the lane says there is no
@@ -825,7 +826,7 @@ test.describe("ducker", () => {
     // Key it from a stereo bus, whose tap has two sides. The unit sums them before
     // its detector, and the threshold cap can only ride a ruler in its own
     // coordinate — so the lane folds to that one number instead of drawing L and R.
-    await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.ducker1:in"]').dispatchEvent("pointerdown");
+    await selectWire(page, "ch1:out", "out.ducker1:in");
     await page.keyboard.press("Delete");
     await page.locator('[data-ref="bus.stereo:out"]').dispatchEvent("pointerdown");
     await page.locator('[data-ref="out.ducker1:in"]').dispatchEvent("pointerup");

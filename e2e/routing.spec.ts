@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
-import { drag, port, tapJack } from "./graph-helpers";
+import { drag, port, selectWire, tapJack } from "./graph-helpers";
 
 // Each committed connection renders one transparent .wire-hit band (plus a
 // sibling painted path); counting the band gives one element per connection and
@@ -163,7 +163,7 @@ test("drops PRE/POST from the fixed CH -> STEREO send but keeps its STEREO-assig
   // CH1 -> STEREO is the fixed main-fader path. Since firmware V1.3 it carries a
   // STEREO-assign ON (post-fader) plus LEVEL and PAN, but no PRE/POST toggle — it is
   // itself the PRE/POST reference. Select it by endpoint (off sends paint behind).
-  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "ch1:out", "bus.stereo:in");
   await expect(page.locator("#inspector .param")).toHaveCount(3); // Send ON + Pan + Level
   await expect(page.locator("#inspector .toggle")).toHaveCount(1); // the STEREO-assign ON only (no PRE/POST)
   await expect(page.locator("#inspector")).toContainText("Fixed connection");
@@ -172,7 +172,7 @@ test("drops PRE/POST from the fixed CH -> STEREO send but keeps its STEREO-assig
 test("marks a PRE MIX send on the canvas without opening the inspector", async ({ page }) => {
   // CH1 → MIX1 is a fixed (always-wired) send now; select it directly by endpoint.
   // The MIX send exposes a Send ON toggle plus LEVEL / PAN / PRE-POST.
-  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "ch1:out", "bus.mix1:in");
   await expect(page.locator("#inspector .toggle")).toHaveCount(2); // Send ON + PRE/POST
   await expect(page.locator("#inspector .param")).toHaveCount(4); // Send ON + PRE/POST + Pan + Level
 
@@ -192,7 +192,7 @@ test("marks a PRE MIX send on the canvas without opening the inspector", async (
 test("a fixed FX channel → MIX send exposes a Send ON toggle and no delete", async ({ page }) => {
   // FX 1 → MIX 1 is fixed (always wired); its inspector shows a Send ON toggle
   // (SEND_ON) plus PRE / Pan / Level, and offers no delete (it is structural).
-  await page.locator('.wire-hit[data-from="bus.fx1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "bus.fx1:out", "bus.mix1:in");
   const sendRow = page.locator("#inspector .param", { hasText: "Send" });
   await expect(sendRow).toHaveCount(1);
   await expect(page.locator("#inspector .toggle")).toHaveCount(2); // Send ON + PRE/POST
@@ -206,7 +206,7 @@ test("a fixed FX channel → MIX send exposes a Send ON toggle and no delete", a
 test("a fixed MIX → STEREO (TO ST) switch exposes a TO ST toggle and no delete", async ({ page }) => {
   // MIX 1 → STEREO is fixed (block diagram); its inspector shows a TO ST ON/OFF
   // toggle (off at the factory) and no delete, and no level/pan (a sendSwitch).
-  await page.locator('.wire-hit[data-from="bus.mix1:out"][data-to="bus.stereo:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "bus.mix1:out", "bus.stereo:in");
   const toStRow = page.locator("#inspector .param", { hasText: "TO ST" });
   await expect(toStRow).toHaveCount(1);
   await expect(page.locator("#inspector .toggle")).toHaveCount(1); // only the TO ST switch
@@ -223,7 +223,7 @@ test("a microSD Rec assign carries no level / pan / PRE-POST", async ({ page }) 
   // channel pair / STEREO / MIX feeds one track-pair slot, with no mix params.
   await connectFromTap(page, "ch1:out", "out.sdrec.t1:in");
   await expect(wires(page)).toHaveCount(FIXED + 1);
-  await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.sdrec.t1:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "ch1:out", "out.sdrec.t1:in");
   await expect(page.locator("#inspector .param")).toHaveCount(0);
   // A channel → SD Rec tap has no mix params; the hint explains it records at the
   // channel Rec Point (the direct-out advisory) rather than the generic note.
@@ -231,14 +231,14 @@ test("a microSD Rec assign carries no level / pan / PRE-POST", async ({ page }) 
 });
 
 test("the send pan slider uses the device L63 – C – R63 range", async ({ page }) => {
-  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "ch1:out", "bus.mix1:in");
   const pan = page.locator("#inspector .param", { hasText: "Pan" }).locator("input[type='range']");
   await expect(pan).toHaveAttribute("min", "-63");
   await expect(pan).toHaveAttribute("max", "63");
 });
 
 test("the send level slider bottoms out at -∞ (level_gain floor), not -60", async ({ page }) => {
-  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "ch1:out", "bus.mix1:in");
   const level = page.locator("#inspector .param", { hasText: "Level" }).locator("input[type='range']");
   // The slider walks the device's discrete level_gain grid by index: 0 = -∞ notch.
   await expect(level).toHaveAttribute("min", "0");
@@ -249,7 +249,7 @@ test("the send level slider bottoms out at -∞ (level_gain floor), not -60", as
 });
 
 test("the send level slider only offers detents the device can store", async ({ page }) => {
-  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "ch1:out", "bus.mix1:in");
   const level = page.locator("#inspector .param", { hasText: "Level" }).locator("input[type='range']");
   const readout = page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val");
   // -15.0 dB does not exist on the grid; adjacent detents jump -16 -> -14.

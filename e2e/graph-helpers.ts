@@ -19,8 +19,16 @@ export const wire = (page: Page, from: string, to: string): Locator =>
 
 /** Select a wire. `dispatchEvent` rather than a click because the hit bands
  *  overlap: a real press lands on whichever band is on top at that pixel, which
- *  is not necessarily the wire the test named. Six specs had grown their own copy
- *  of this pair, each carrying the same comment. */
+ *  is not necessarily the wire the test named. While nothing here named it, the
+ *  ordinary tier had it written by hand in eighteen places across eight specs and
+ *  forked into a named local four more times, comment and all.
+ *
+ *  Two other shapes are not this one and are left alone. Five locators over four
+ *  specs (ducker, nodeoff twice, nodestate, pathtrace) reach the painted path
+ *  THROUGH the hit band's attributes, which is a different element. And e2e/race
+ *  still spells the selector out ten times over six files, three of those lines
+ *  dispatching the gesture (two of them one pointerdown/pointerup site, which this
+ *  helper does not do) — left for a change whose own checks can run that tier. */
 export const selectWire = (page: Page, from: string, to: string): Promise<void> =>
   wire(page, from, to).dispatchEvent("pointerdown");
 

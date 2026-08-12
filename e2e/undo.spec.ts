@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
-import { drag, faceplate, port } from "./graph-helpers";
+import { drag, faceplate, port, selectWire } from "./graph-helpers";
 
 // Undo / redo over the plan. What each test really pins is the number of entries a
 // gesture produces: the boundary rules hang off real pointer, key and focus events,
@@ -27,7 +27,7 @@ const connect = (page: Page) => drag(page, port(page, "in.micline_1_2:out"), por
 
 /** Select the fixed CH 1 → MIX 1 send, whose inspector carries a Level slider. */
 async function selectSend(page: Page): Promise<void> {
-  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "ch1:out", "bus.mix1:in");
 }
 const levelSlider = (page: Page) =>
   page.locator("#inspector .param", { hasText: "Level" }).locator("input[type='range']");

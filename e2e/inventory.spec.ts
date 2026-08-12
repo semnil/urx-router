@@ -6,6 +6,7 @@ import { planParam } from "./plan-param";
 import { listControls } from "../src/core/midi/controls";
 import { getModel } from "../src/models";
 import { defaultPlan } from "../src/models/initial-state";
+import { selectWire } from "./graph-helpers";
 
 // Display-item coverage for every dialog, window, menu and popover: each one is
 // driven through the states it has, and everything the message catalog holds for
@@ -469,7 +470,7 @@ test("the channel tuning screens show every processor, both displays and their n
   await inv.take(page, "#dyn-screen-modal");
   await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 
-  await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.ducker1:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "ch1:out", "out.ducker1:in");
   await page.keyboard.press("Delete");
   await openDucker();
   await inv.take(page, "#dyn-screen-modal");
