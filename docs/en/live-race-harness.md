@@ -1303,6 +1303,22 @@ not repeat them.
   id="model-picker">` is the whole diagnosis, and it reads like an infrastructure hang). When a case's
   gesture stops resolving, read the app's own guard rails first; and a green history since the change
   means the case has not run, not that it still holds
+- **The init script is a different world, and nothing in the toolchain says so.** The fake's
+  launch-flag answer was moved out of inline `switch` arms into a lookup in `FAKE_LAUNCH_FLAGS_OFF`,
+  imported at the top of `fake-device.ts` — but the code reading it lives inside the function handed
+  to `page.context().addInitScript`, which is serialised and evaluated **in the page**, where a
+  driver-side module binding does not exist. It compiles, `pnpm typecheck:e2e` passes, and `--list`
+  collects every case; the failure arrives at runtime as `Can't find variable:
+  FAKE_LAUNCH_FLAGS_OFF` on the **first** command the fake handles. What that presents as is not an
+  error message but an absence: `goLive` times out after 30 s on
+  `#btn-live[aria-pressed="true"]` — the live session never comes up — in **every** engine
+  (measured 2026-08-13: 4 of `race-webkit`'s 5 cases, and the same case in the Chromium `race`
+  project). The failure text names only the locator, so on its own it is indistinguishable from an
+  infrastructure hang, exactly as the previous bullet describes; what distinguished it was the page
+  console line in the failing run's own trace (`trace.zip` from CI run 31635304181), and that is what
+  the identification rests on. Anything the init script needs arrives through its argument tuple;
+  that is the whole rule, and it is now stated at the site. It entered `main` with the pull request
+  that wrote it and survived three further merges before a version bump ran the harness again
 
 Across two audit rounds these accounted for **24 vacuous assertions and 28 over-stated claims**, all
 fixed or withdrawn.
