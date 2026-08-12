@@ -461,6 +461,15 @@ fn saved_window_state(app: &tauri::AppHandle, label: &str) -> Option<SavedWindow
 #[cfg(desktop)]
 const WINDOW_SCALE_FILENAME: &str = ".window-scale.json";
 
+/// What the window-state plugin saves, named once. The plugin is registered with it
+/// and the flush below writes with it, and a pair that has to agree is a pair that
+/// can disagree.
+#[cfg(desktop)]
+const WINDOW_STATE_FLAGS: tauri_plugin_window_state::StateFlags =
+    tauri_plugin_window_state::StateFlags::POSITION
+        .union(tauri_plugin_window_state::StateFlags::SIZE)
+        .union(tauri_plugin_window_state::StateFlags::MAXIMIZED);
+
 /// The scale factors a session has captured for windows that have since closed. The
 /// plugin next door keeps its rectangles the same way — an in-memory cache updated at
 /// each close and written once at exit (`WindowStateCache`) — and matching it is what
@@ -618,9 +627,8 @@ fn save_window_scales(app: &tauri::AppHandle) {
 // at each capture and is therefore always self-consistent.
 #[cfg(desktop)]
 fn window_state_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    use tauri_plugin_window_state::StateFlags;
     tauri_plugin_window_state::Builder::new()
-        .with_state_flags(StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED)
+        .with_state_flags(WINDOW_STATE_FLAGS)
         .skip_initial_state(MAIN_WINDOW)
         .skip_initial_state(midiwin::MIDI_WINDOW)
         .build()
@@ -1060,6 +1068,18 @@ pub fn run() {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 capture_window_scale(window);
                 capture_window_rect(window);
+                // And put both on disk now. The plugin writes its file at
+                // `RunEvent::Exit` and nowhere else, so anything that ends the process
+                // without getting there loses every move since the last launch —
+                // measured: across a dozen `tauri dev` rebuild-restarts the file's
+                // mtime never moved, and the MIDI window came back to where it had
+                // been hours earlier. `save_window_state` re-reads the live windows
+                // before writing, so this does not depend on running after the
+                // plugin's own handler for the same event.
+                let app = window.app_handle();
+                use tauri_plugin_window_state::AppHandleExt;
+                let _ = app.save_window_state(WINDOW_STATE_FLAGS);
+                save_window_scales(app);
             }
             if !matches!(event, tauri::WindowEvent::Destroyed) {
                 return;
