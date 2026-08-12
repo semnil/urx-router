@@ -79,6 +79,74 @@ test("an unparseable notice lands in the error dialog, not an empty modal", asyn
   await expect(page.locator("#licenses-modal")).toBeHidden();
 });
 
+// The notice opens on an await, so it claims the modal hold LAST while the overlay
+// ladder still draws it beneath a decision gate (style.css: a gate is z-index 130, a
+// tool modal 100). Reading the top off the claim order inerted the report the
+// operator was looking at and moved focus into the notice behind it.
+const ILLEGAL_PLAN = JSON.stringify({
+  format: "urx-router-plan",
+  version: 1,
+  modelId: "URX44V",
+  connections: [{ from: "ch1:out", to: "ch2:in", kind: "source" }],
+});
+const RECENT = [{ path: "/tmp/illegal.json", name: "illegal.json", modelId: "URX44V" }];
+
+type Internals = { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+
+test("a notice arriving under a load report is the one held back, not the report", async ({ page }) => {
+  await stubTauriBoot(page, { third_party_licenses: NOTICE, read_text_file: ILLEGAL_PLAN });
+  // Hold the notice read open. It is the only way to reach this order at all: while a
+  // gate is up the app behind it is inert, so the second modal cannot be raised by a
+  // click — it has to be one that was already loading when the gate arrived.
+  await page.addInitScript(() => {
+    const internals = (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__;
+    const invoke = internals.invoke;
+    internals.invoke = (cmd, args) =>
+      cmd === "third_party_licenses"
+        ? new Promise((resolve) => {
+            (window as unknown as { __releaseNotice: () => void }).__releaseNotice = () =>
+              void resolve(invoke(cmd, args));
+          })
+        : invoke(cmd, args);
+  });
+  await page.addInitScript((entries) => localStorage.setItem("urx-recent", JSON.stringify(entries)), RECENT);
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+
+  await page.click("#btn-file");
+  await page.click("#btn-licenses"); // in flight, nothing on screen yet
+  // The recent entry holds a plan with one connection the routing rules refuse, so
+  // opening it stops at the report — the gate, claimed first.
+  await page.locator(".recent-row").click();
+  await expect(page.locator("#load-report")).toBeVisible();
+  await page.evaluate(() => (window as unknown as { __releaseNotice: () => void }).__releaseNotice());
+  await expect(page.locator("#licenses-modal")).toBeVisible();
+
+  // The report is what the page draws on top, so it is what stays reachable — and the
+  // notice's own `close.focus()` is refused rather than pulling focus out of it.
+  const held = await page.evaluate(() => ({
+    report: (document.getElementById("load-report") as HTMLElement).inert,
+    notice: (document.getElementById("licenses-modal") as HTMLElement).inert,
+    focused: document.activeElement?.closest(".consent-scrim")?.id ?? document.activeElement?.tagName ?? null,
+  }));
+  expect(held).toEqual({ report: false, notice: true, focused: "load-report" });
+
+  for (let i = 0; i < 8; i++) {
+    await page.keyboard.press("Tab");
+    const scrim = await page.evaluate(
+      () => document.activeElement?.closest(".consent-scrim")?.id ?? document.activeElement?.tagName ?? null,
+    );
+    expect(scrim === "load-report" || scrim === "BODY").toBe(true);
+  }
+
+  // Closing the gate hands the notice underneath back.
+  await page.click("#load-report-close");
+  await expect(page.locator("#load-report")).toBeHidden();
+  expect(await page.evaluate(() => (document.getElementById("licenses-modal") as HTMLElement).inert)).toBe(false);
+  await page.click("#licenses-close");
+  await expect(page.locator("#licenses-modal")).toBeHidden();
+});
+
 test("the licenses entry stays hidden in a plain browser", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#model-picker")).toBeVisible();

@@ -397,6 +397,33 @@ describe("holdAppInert", () => {
     releaseA();
     expect(app().inert).toBe(true); // b still holds it
   });
+
+  // The overlay ladder, not the claim order, says which one is in front: a decision
+  // gate is drawn over a tool modal whenever it opens, and a modal that opens on an
+  // await (the licenses notice, Device setup) claims AFTER the gate that arrived
+  // while it was loading. Taking the last claim as the top inerted the gate the
+  // operator was looking at and handed focus to the modal behind it.
+  it("leaves the modal the ladder draws on top reachable, not the last to claim", () => {
+    a.style.zIndex = "130"; // a decision gate
+    b.style.zIndex = "100"; // a tool modal, opened late
+    const releaseGate = holdAppInert(a);
+    holdAppInert(b);
+    expect(a.inert).toBe(false);
+    expect(b.inert).toBe(true);
+    // Closing the gate hands the one underneath back, exactly as the reverse order does.
+    releaseGate();
+    expect(b.inert).toBe(false);
+    expect(app().inert).toBe(true);
+  });
+
+  it("settles an equal z-index on document order, the tiebreak the painter uses", () => {
+    a.style.zIndex = "100";
+    b.style.zIndex = "100"; // b follows a in the document
+    holdAppInert(b);
+    holdAppInert(a);
+    expect(b.inert).toBe(false);
+    expect(a.inert).toBe(true);
+  });
 });
 
 function changeSelect(select: HTMLSelectElement, value: string): void {
