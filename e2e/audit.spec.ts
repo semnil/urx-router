@@ -14,7 +14,7 @@ const strip = (page: Page, name: string) => page.locator(".con-strip", { has: pa
 async function switchToJapanese(page: Page): Promise<void> {
   await page.click("#btn-prefs");
   await page.selectOption("#prefs-lang", "ja");
-  await page.click("#prefs-modal .consent-btn-primary");
+  await page.click("#prefs-modal .consent-btn-secondary");
 }
 
 test.describe("model switch clears the selection", () => {

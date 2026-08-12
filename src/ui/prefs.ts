@@ -12,7 +12,16 @@
 //   demo (Pages)   — those plus the export rows (the demo has no export)
 
 import { version } from "../../package.json";
-import { el, settingsChoice, settingsNote, settingsRow, settingsSection, settingsSelect, wireDismiss } from "./dom";
+import {
+  el,
+  holdAppInert,
+  settingsChoice,
+  settingsNote,
+  settingsRow,
+  settingsSection,
+  settingsSelect,
+  wireDismiss,
+} from "./dom";
 import { getLang, LANG_NAMES, LANGS, setLang, t } from "../i18n";
 import {
   EXPORT_SCALE_CHOICES,
@@ -81,6 +90,8 @@ export class PrefsPanel {
     keep: (target) => target !== this.scrim,
     close: () => this.requestClose(),
   });
+  /** Held while the modal is up; see holdAppInert. */
+  private releaseInert: (() => void) | null = null;
 
   constructor(private readonly hooks: PrefsHooks) {
     this.scrim = document.getElementById("prefs-modal") as HTMLElement;
@@ -89,11 +100,12 @@ export class PrefsPanel {
 
   open(): void {
     this.render();
+    this.releaseInert ??= holdAppInert(this.scrim);
     this.scrim.hidden = false;
     this.dismiss.attach();
     // preventScroll: the grid is the scrolling region (render() starts it at the
     // top); focusing the fixed Close action must not scroll anything into view.
-    this.box.querySelector<HTMLButtonElement>(".consent-btn-primary")?.focus({ preventScroll: true });
+    this.box.querySelector<HTMLButtonElement>(".consent-btn-secondary")?.focus({ preventScroll: true });
   }
 
   /** The one user-facing close: every dismissal path (Close button, outside
@@ -105,6 +117,8 @@ export class PrefsPanel {
 
   close(): void {
     this.dismiss.detach();
+    this.releaseInert?.();
+    this.releaseInert = null;
     this.scrim.hidden = true;
   }
 
@@ -310,7 +324,7 @@ export class PrefsPanel {
     grid.append(left, right);
 
     const actions = el("div", "consent-actions");
-    const close = el("button", "consent-btn-primary") as HTMLButtonElement;
+    const close = el("button", "consent-btn-secondary") as HTMLButtonElement;
     close.type = "button";
     close.textContent = m.close;
     close.addEventListener("click", () => this.requestClose());
@@ -328,7 +342,7 @@ export class PrefsPanel {
     // The Close button's disabled face makes the requestClose lock visible;
     // refresh() is deferred while checking, so the node cannot be swapped
     // out from under the flight.
-    const closeBtn = this.box.querySelector<HTMLButtonElement>(".consent-btn-primary")!;
+    const closeBtn = this.box.querySelector<HTMLButtonElement>(".consent-btn-secondary")!;
     this.checking = true;
     closeBtn.disabled = true;
     check.disabled = true;

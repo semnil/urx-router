@@ -40,6 +40,89 @@ export function scrubFloat(v: number): number {
   return Number(v.toFixed(4));
 }
 
+// Hold everything behind a modal out of the tab order for as long as it is up.
+// Every `aria-modal` surface claims this on open and releases on close; only the
+// consent gate used to, so the other six let a Tab walk into the graph underneath
+// while their scrim said the app was unreachable.
+//
+// "Everything behind" is not `#app` alone. The scrims are siblings of `#app`, not
+// children of it, so inerting the app does nothing about a modal stacked under
+// another modal — and they do stack: Preferences opens the licenses notice, and a
+// load report arrives over whatever raised it. So a claim carries its own scrim,
+// the one the page draws on top stays reachable, and every other claimed scrim is
+// inert alongside the app. Measured before this: Tab from a load report's Close
+// reached the Preferences rows behind it.
+//
+// A list rather than a counter, and release by identity rather than by popping,
+// because a lower modal can close first (the shell closes Preferences out from
+// under an update prompt). The release is idempotent for the same reason a
+// counter needed it: a close path that runs twice — Escape landing together with
+// the button click — must not drop a claim it no longer holds.
+interface InertClaim {
+  scrim: HTMLElement | null;
+}
+const inertClaims: InertClaim[] = [];
+
+/** Document order, the tiebreak the painter uses at equal z-index: the later
+ *  element is drawn over the earlier one. */
+function isAfter(a: HTMLElement, b: HTMLElement): boolean {
+  return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
+
+/**
+ * The claimed scrim the page actually draws on top — which the claim order does
+ * NOT answer. The overlay ladder in style.css puts a decision gate (z-index 130)
+ * over a tool modal (100), so a modal whose open is asynchronous — the licenses
+ * notice waits on a resource read, Device setup on a device read — claims last and
+ * is still drawn beneath a gate that arrived while it was loading. Claim order
+ * then inerted the gate, in front, and handed focus to the modal behind it.
+ *
+ * Read from the computed style rather than mapped from the scrim's classes, so the
+ * ladder stays written in the stylesheet alone: a rank table here would be a second
+ * copy of it, free to drift while both read as deliberate.
+ */
+function topScrim(): HTMLElement | null {
+  let top: HTMLElement | null = null;
+  let topZ = 0;
+  for (const { scrim } of inertClaims) {
+    if (!scrim) continue;
+    // `auto` — a scrim with no ladder entry, or a document with no stylesheet on it
+    // — ranks as 0, which leaves document order deciding, as it does on the page.
+    const z = Number.parseInt(getComputedStyle(scrim).zIndex, 10) || 0;
+    if (top === null || z > topZ || (z === topZ && isAfter(top, scrim))) {
+      top = scrim;
+      topZ = z;
+    }
+  }
+  return top;
+}
+
+function applyInert(): void {
+  const app = document.getElementById("app");
+  if (app) app.inert = inertClaims.length > 0;
+  const top = topScrim();
+  for (const claim of inertClaims) if (claim.scrim) claim.scrim.inert = claim.scrim !== top;
+}
+
+/** Claim the hold for one modal, and return its release. Pass the modal's own
+ *  scrim so the claim knows what must stay reachable while it is on top. */
+export function holdAppInert(scrim?: HTMLElement | null): () => void {
+  const claim: InertClaim = { scrim: scrim ?? null };
+  inertClaims.push(claim);
+  applyInert();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const at = inertClaims.indexOf(claim);
+    if (at >= 0) inertClaims.splice(at, 1);
+    // Cleared before the recompute: a scrim that no longer holds a claim is not
+    // in the loop that would clear it.
+    if (claim.scrim) claim.scrim.inert = false;
+    applyInert();
+  };
+}
+
 // Dismissal wiring for a transient overlay: a press outside it or Escape closes.
 // Capture phase, like the toolbar menus — console / graph handlers may stop
 // propagation, but a dismissal gesture must still reach the overlay. `keep`

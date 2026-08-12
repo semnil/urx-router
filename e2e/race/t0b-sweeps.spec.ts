@@ -919,7 +919,7 @@ test.describe("T0b baseline sweeps", () => {
       {
         label: "GATE · close with the Close button",
         run: async () => {
-          await dynBox(page).locator(".consent-btn-primary").click();
+          await dynBox(page).locator(".consent-btn-secondary").click();
           await expect(dynBox(page)).toBeHidden();
         },
         silent: true,
@@ -1209,7 +1209,7 @@ test.describe("T0b baseline sweeps", () => {
       {
         label: "Preferences: close",
         run: async () => {
-          await page.click("#prefs-modal .consent-btn-primary");
+          await page.click("#prefs-modal .consent-btn-secondary");
           await expect(page.locator("#prefs-modal")).toBeHidden();
         },
         silent: true,
@@ -1317,12 +1317,12 @@ test.describe("T0b baseline sweeps", () => {
     await mark(page, "lang-switch");
     await page.locator("#btn-prefs").dispatchEvent("click");
     await page.selectOption("#prefs-lang", "ja");
-    await page.locator("#prefs-modal .consent-btn-primary").dispatchEvent("click");
+    await page.locator("#prefs-modal .consent-btn-secondary").dispatchEvent("click");
 
     await mark(page, "theme-switch");
     await page.locator("#btn-prefs").dispatchEvent("click");
     await page.selectOption("#prefs-theme", "light");
-    await page.locator("#prefs-modal .consent-btn-primary").dispatchEvent("click");
+    await page.locator("#prefs-modal .consent-btn-secondary").dispatchEvent("click");
 
     // Keep dragging after the rebuild — this is the window listener writing through a
     // StripRef whose element is no longer in the document.
@@ -1378,7 +1378,7 @@ test.describe("T0b baseline sweeps", () => {
     await mark(page, "dyn-theme-switch");
     await page.locator("#btn-prefs").dispatchEvent("click");
     await page.selectOption("#prefs-theme", "dark");
-    await page.locator("#prefs-modal .consent-btn-primary").dispatchEvent("click");
+    await page.locator("#prefs-modal .consent-btn-secondary").dispatchEvent("click");
     await page.mouse.move(sBox.x + sBox.width * 0.72, sBox.y + sBox.height / 2);
     await page.waitForTimeout(60);
     const afterFlip = await slider.inputValue();

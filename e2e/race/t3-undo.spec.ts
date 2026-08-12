@@ -843,11 +843,11 @@ test.describe("T3 undo", () => {
     await mark(page, "lang");
     await page.click("#btn-prefs");
     await page.selectOption("#prefs-lang", "ja");
-    await page.click("#prefs-modal .consent-btn-primary");
+    await page.click("#prefs-modal .consent-btn-secondary");
     await expect(page.locator("#prefs-modal")).toBeHidden();
     await page.click("#btn-prefs");
     await page.selectOption("#prefs-lang", "en");
-    await page.click("#prefs-modal .consent-btn-primary");
+    await page.click("#prefs-modal .consent-btn-secondary");
     await expect(page.locator("#prefs-modal")).toBeHidden();
     await mark(page, "lang-done");
 
@@ -921,7 +921,7 @@ test.describe("T3 undo", () => {
     await expect(page.locator("#prefs-modal")).toBeVisible();
     record("(a) empty + modal", await undoOnce(page));
     expect(verdicts.at(-1)).toBe(NOTHING_TO_UNDO);
-    await page.click("#prefs-modal .consent-btn-primary");
+    await page.click("#prefs-modal .consent-btn-secondary");
     await expect(page.locator("#prefs-modal")).toBeHidden();
 
     // One entry every later condition is measured against.
@@ -935,7 +935,7 @@ test.describe("T3 undo", () => {
     await page.click("#btn-prefs");
     await expect(page.locator("#prefs-modal")).toBeVisible();
     record("(b) prefs modal", await undoOnce(page));
-    await page.click("#prefs-modal .consent-btn-primary");
+    await page.click("#prefs-modal .consent-btn-secondary");
     await expect(page.locator("#prefs-modal")).toBeHidden();
     expect(await faderReadout(page, "CH 1").textContent()).toBe(edited); // entry unspent
 

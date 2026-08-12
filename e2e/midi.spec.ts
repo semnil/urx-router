@@ -1066,7 +1066,7 @@ test("a tuning screen's controls arm under processor and band scopes", async ({ 
   await setLearn(page, win, false);
   await sendMidi(page, [0xb0, 40, 0], [0xb0, 40, 0]);
   await expect(row("Threshold").locator(".gt-val")).toHaveText("-72.0 dB");
-  await box.locator(".consent-btn-primary").click();
+  await box.locator(".consent-btn-secondary").click();
 });
 
 test("an EQ band binds to that band, not to the selected one", async ({ page }) => {

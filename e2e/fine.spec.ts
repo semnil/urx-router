@@ -65,7 +65,7 @@ test.describe("tuning-screen sliders", () => {
     // Threshold (1 dB grid) has no fine opt-in, on the same screen.
     const threshold = box.locator(".prefs-row", { hasText: "Threshold" });
     await expect(threshold.locator("input[type=range]")).not.toHaveAttribute("data-fine-step", /.+/);
-    await box.locator(".consent-btn-primary").click();
+    await box.locator(".consent-btn-secondary").click();
     // Nor does Q (0.1 native), on the EQ screen where it lives.
     await openScreen(page, /^EQ$/, "#btn-eq-screen");
     await box.locator("#dyn-band-lowmid").click(); // a peaking band, so Q is offered

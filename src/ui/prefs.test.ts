@@ -79,7 +79,7 @@ describe("PrefsPanel", () => {
       [...document.querySelectorAll<HTMLButtonElement>("#prefs-device-scope button")].every((b) => b.disabled),
     ).toBe(true);
     expect(row(t().prefs.preventSleep).classList.contains("locked")).toBe(true);
-    expect(document.activeElement).toBe(document.querySelector(".consent-btn-primary"));
+    expect(document.activeElement).toBe(document.querySelector(".consent-btn-secondary"));
 
     document.querySelector("#prefs-box")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
     expect(panel.isOpen()).toBe(true);
@@ -161,7 +161,7 @@ describe("PrefsPanel", () => {
     const title = document.querySelector("#prefs-title");
     (document.querySelector("#prefs-update-now") as HTMLButtonElement).click();
     expect(document.querySelector("#prefs-update-note")?.textContent).toBe(t().prefs.checking);
-    expect((document.querySelector(".consent-btn-primary") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.querySelector(".consent-btn-secondary") as HTMLButtonElement).disabled).toBe(true);
     panel.requestClose();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     panel.refresh();

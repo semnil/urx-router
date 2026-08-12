@@ -158,6 +158,30 @@ test("a clean screen closes without a confirm", async ({ page }) => {
   expect(await dialogsOf(page)).toEqual([]);
 });
 
+// The two dialog-action faces, on the one screen that shows both at once. The
+// amber edge on the confirming action is the half that had never rendered: the
+// shared `.consent-actions button` rule (0,1,1) out-specified the face rule
+// (0,1,0), so its shorthand `border` won and Apply carried the same edge as
+// Close. Comparing the two is what makes that a failure rather than a colour
+// nobody looks at.
+test("the confirming action wears the lit face, the leaving action the plain one", async ({ page }) => {
+  await stubTauriDevice(page, { values: DEVICE_VALUES });
+  await page.goto("/");
+  await openSetup(page);
+
+  const face = (sel: string) =>
+    page.locator(sel).evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { edge: s.borderTopColor, fill: s.backgroundImage === "none" ? s.backgroundColor : "gradient" };
+    });
+  const apply = await face("#device-setup-modal .consent-btn-primary");
+  const close = await face("#device-setup-modal .consent-btn-secondary");
+
+  expect(apply.edge).not.toBe(close.edge);
+  expect(apply.fill).not.toBe("gradient"); // the lit face is flat amber
+  expect(close.fill).toBe("gradient"); // the leaving action is the raised button
+});
+
 test("a failed read leaves the screen unopened", async ({ page }) => {
   // The standing device-link rule: a half-read baseline would invite applying a
   // diff against values that were never established.

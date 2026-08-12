@@ -159,7 +159,7 @@ test.describe("T7 meter", () => {
       await expect(dynReadout(page, "Gate GR")).toHaveText("-31.1");
 
       await mark(page, "close-gate");
-      await dynBox(page).locator(".consent-btn-primary").click();
+      await dynBox(page).locator(".consent-btn-secondary").click();
       await expect(dynBox(page)).toBeHidden();
       await expect.poll(() => regOf(page)).toContain(key(CH1_POST));
       await waitQuiet(page);
@@ -295,7 +295,7 @@ test.describe("T7 meter", () => {
       // still null, hands the slot back, and the console re-subscribes while the
       // screen's own registration is still outstanding.
       await mark(page, "close-comp");
-      await dynBox(page).locator(".consent-btn-primary").click();
+      await dynBox(page).locator(".consent-btn-secondary").click();
       await expect(dynBox(page)).toBeHidden();
       await mark(page, "screen-closed");
 
@@ -670,7 +670,7 @@ test.describe("T7 meter", () => {
 
       // The re-scope is not lost, only deferred: closing the screen hands the slot
       // back and the console registers the set its badges now claim.
-      await dynBox(page).locator(".consent-btn-primary").click();
+      await dynBox(page).locator(".consent-btn-secondary").click();
       await expect(dynBox(page)).toBeHidden();
       await expect.poll(() => regOf(page)).toContain(key(CH2_PREGATE));
     });
@@ -765,7 +765,7 @@ test.describe("T7 meter", () => {
       // Closing the screen hands the slot back even though there is no session to
       // stream on, and the next session must find the console able to register again
       // — a metersLent left latched would leave the whole rack dark for good.
-      await dynBox(page).locator(".consent-btn-primary").click();
+      await dynBox(page).locator(".consent-btn-secondary").click();
       await expect(dynBox(page)).toBeHidden();
       await mark(page, "relive");
       await goLive(page);

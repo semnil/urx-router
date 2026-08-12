@@ -175,6 +175,19 @@ test("the load report sits in front of an open tuning screen", async ({ page }) 
     [box.x + box.width / 2, box.y + box.height / 2],
   );
   expect(onTop).toBe("load-report");
+
+  // In front is only half of it — the keyboard has to agree. The scrims are siblings
+  // of #app rather than children, so inerting the app says nothing about the screen
+  // underneath: Tab used to walk out of the report and into the tuning screen's rows.
+  await page.locator("#load-report-close").focus();
+  for (let i = 0; i < 12; i++) {
+    await page.keyboard.press("Tab");
+    const scrim = await page.evaluate(
+      () => document.activeElement?.closest(".consent-scrim")?.id ?? document.activeElement?.tagName ?? null,
+    );
+    expect(scrim === "load-report" || scrim === "BODY").toBe(true);
+  }
+
   // The refused plan did not land, so the screen behind it still holds the old values.
   await page.locator("#load-report-close").click();
   await expect(bandRow(page, "Freq").locator(".param-val")).toHaveText("125 Hz");

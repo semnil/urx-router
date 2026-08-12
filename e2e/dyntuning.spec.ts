@@ -173,7 +173,7 @@ test("gate: opens from the inspector for a mono channel, scoped to that channel"
   await expect(box(page).locator(".gt-ch")).toHaveText("CH 1");
   // No in-screen channel switch: the scope is fixed by where it was opened from.
   await expect(box(page).locator("select")).toHaveCount(0);
-  await box(page).locator(".consent-btn-primary").click();
+  await box(page).locator(".consent-btn-secondary").click();
   await expect(box(page)).toBeHidden();
 });
 
@@ -217,7 +217,7 @@ test("the opener does not toggle the gate it sits beside", async ({ page }) => {
   const before = await gateChip.getAttribute("aria-pressed");
   await page.locator(".con-strip").nth(0).locator(".con-chip-open").first().click();
   await expect(box(page)).toBeVisible();
-  await box(page).locator(".consent-btn-primary").click();
+  await box(page).locator(".consent-btn-secondary").click();
   await expect(gateChip).toHaveAttribute("aria-pressed", before ?? "false");
 });
 
@@ -257,12 +257,12 @@ test("remembers the display mode across opens and reloads", async ({ page }) => 
   await openFromInspector(page, "ch1");
   await box(page).locator("#dyn-mode-curve").click();
   await expect(box(page).locator("#dyn-curve")).toBeVisible();
-  await box(page).locator(".consent-btn-primary").click();
+  await box(page).locator(".consent-btn-secondary").click();
 
   // Same session, reopened: still CURVE.
   await openFromInspector(page, "ch1");
   await expect(box(page).locator("#dyn-curve")).toBeVisible();
-  await box(page).locator(".consent-btn-primary").click();
+  await box(page).locator(".consent-btn-secondary").click();
 
   // And across a reload — the pick is stored, not just held in the instance.
   await page.reload();
@@ -329,7 +329,7 @@ test.describe("with a live session", () => {
     await expect.poll(() => page.evaluate(() => window.__dynTest.subscribes)).toBeGreaterThan(before);
 
     const taken = await page.evaluate(() => window.__dynTest.subscribes);
-    await box(page).locator(".consent-btn-primary").click();
+    await box(page).locator(".consent-btn-secondary").click();
     await expect(box(page)).toBeHidden();
     // Giving it back: the console re-registers its own set.
     await expect.poll(() => page.evaluate(() => window.__dynTest.subscribes)).toBeGreaterThan(taken);
@@ -417,7 +417,7 @@ test.describe("comp", () => {
     await openFromInspector(page, "ch1", "comp");
     await expect(box(page).locator(".gt-ch")).toHaveText("CH 1");
     await expect(box(page).locator("h2")).toContainText("Comp");
-    await box(page).locator(".consent-btn-primary").click();
+    await box(page).locator(".consent-btn-secondary").click();
 
     // The strip's second opener is COMP's, in chip order.
     await openFromConsole(page, 1);
@@ -455,7 +455,7 @@ test.describe("comp", () => {
     // labelled separately rather than read off the level lanes' ticks.
     await openFromInspector(page, "ch1", "comp");
     await expect(box(page).locator(".gt-grwrap.own .gt-scale")).toHaveCount(1);
-    await box(page).locator(".consent-btn-primary").click();
+    await box(page).locator(".consent-btn-secondary").click();
 
     await openFromInspector(page, "ch1", "gate");
     await expect(box(page).locator(".gt-grwrap.own")).toHaveCount(0);
@@ -465,12 +465,12 @@ test.describe("comp", () => {
     await openFromInspector(page, "ch1", "comp");
     await box(page).locator("#dyn-mode-curve").click();
     await expect(box(page).locator("#dyn-curve")).toBeVisible();
-    await box(page).locator(".consent-btn-primary").click();
+    await box(page).locator(".consent-btn-secondary").click();
 
     // The gate's own pick is untouched by the compressor's.
     await openFromInspector(page, "ch1", "gate");
     await expect(box(page).locator(".gt-ladders")).toBeVisible();
-    await box(page).locator(".consent-btn-primary").click();
+    await box(page).locator(".consent-btn-secondary").click();
 
     await openFromInspector(page, "ch1", "comp");
     await expect(box(page).locator("#dyn-curve")).toBeVisible();
@@ -690,7 +690,7 @@ test.describe("eq", () => {
   test("reopens on LOW, where a display mode is remembered instead", async ({ page }) => {
     await openFromInspector(page, "ch1", "eq");
     await box(page).locator("#dyn-band-high").click();
-    await box(page).locator(".consent-btn-primary").click();
+    await box(page).locator(".consent-btn-secondary").click();
     await openFromInspector(page, "ch1", "eq");
     // The bar is a cursor into the parameters, not a way of reading the processor: it
     // resets, where GATE's and COMP's LADDER/CURVE choice persists.
@@ -702,7 +702,7 @@ test.describe("eq", () => {
     await openFromInspector(page, "ch1", "eq");
     await expect(box(page).locator(".gt-cap-label .sub")).toHaveText(["111", "112"]);
     await expect(box(page).locator(".gt-slot.stereo")).toHaveCount(0);
-    await box(page).locator(".consent-btn-primary").click();
+    await box(page).locator(".consent-btn-secondary").click();
 
     // Stereo channel: its INPUT tap (101) is the pre-EQ point, PRE FADER (114) the post,
     // and both carry L and R — two bars in one lane, under one caption.
@@ -710,7 +710,7 @@ test.describe("eq", () => {
     await expect(box(page).locator(".gt-cap-label .sub")).toHaveText(["101", "114"]);
     await expect(box(page).locator(".gt-slot.stereo")).toHaveCount(2);
     await expect(box(page).locator(".gt-slot.stereo").first().locator(".gt-side")).toHaveCount(2);
-    await box(page).locator(".consent-btn-primary").click();
+    await box(page).locator(".consent-btn-secondary").click();
 
     // An output bus: the sum (104) and post-EQ (121) taps of the STEREO master.
     await openFromInspector(page, "bus.stereo", "eq");
@@ -765,7 +765,7 @@ test.describe("ducker", () => {
     // The factory plan keys every ducker from CH 1.
     await expect(keyCaption).toContainText("Key");
     await expect(keyCaption).toContainText("CH 1");
-    await page.locator("#dyn-screen-modal .consent-btn-primary").click();
+    await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 
     await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.ducker1:in"]').dispatchEvent("pointerdown");
     await page.keyboard.press("Delete");
@@ -896,7 +896,7 @@ test.describe("the note under the display fits the space reserved for it", () =>
           await page.click(second);
           await check();
         }
-        await box(page).locator(".consent-btn-primary").click();
+        await box(page).locator(".consent-btn-secondary").click();
       }
 
       await openFromInspector(page, "out.ducker1", "ducker");

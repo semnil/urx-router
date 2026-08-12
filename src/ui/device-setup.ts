@@ -15,6 +15,7 @@
 
 import {
   el,
+  holdAppInert,
   onOff,
   onWheelStep,
   settingsChoice,
@@ -84,6 +85,8 @@ export class DeviceSetupPanel {
     inert: () => this.busy,
     close: () => void this.requestClose(),
   });
+  /** Held while the modal is up; see holdAppInert. */
+  private releaseInert: (() => void) | null = null;
 
   constructor(private readonly hooks: DeviceSetupHooks) {
     this.scrim = document.getElementById("device-setup-modal") as HTMLElement;
@@ -97,6 +100,7 @@ export class DeviceSetupPanel {
     this.draft = structuredClone(this.baseline);
     this.bank = 0;
     this.render();
+    this.releaseInert ??= holdAppInert(this.scrim);
     this.scrim.hidden = false;
     this.dismiss.attach();
     this.box.querySelector<HTMLButtonElement>(".consent-btn-secondary")?.focus({ preventScroll: true });
@@ -121,6 +125,8 @@ export class DeviceSetupPanel {
 
   close(): void {
     this.dismiss.detach();
+    this.releaseInert?.();
+    this.releaseInert = null;
     this.scrim.hidden = true;
     this.box.replaceChildren();
   }

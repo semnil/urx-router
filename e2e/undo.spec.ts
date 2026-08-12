@@ -316,7 +316,7 @@ test("Ctrl+Z inside the name field belongs to the field, not to the plan", async
 test("Ctrl+Shift+Z does not flip fine-tuning mode", async ({ page }) => {
   await page.click("#btn-prefs");
   await page.click('#prefs-fine button:has-text("Latch")');
-  await page.click("#prefs-modal .consent-btn-primary");
+  await page.click("#prefs-modal .consent-btn-secondary");
   await expect(page.locator("#prefs-modal")).toBeHidden();
 
   // The latch flips on every bare Shift press, so the redo chord must not read as
@@ -341,7 +341,7 @@ test("an open dialog refuses the shortcut instead of reaching the board behind i
   await expect(status(page)).toHaveText("Close the open dialog before undoing");
   await expect(notePanel(page, "ch1")).toHaveCount(1);
 
-  await page.click("#prefs-modal .consent-btn-primary");
+  await page.click("#prefs-modal .consent-btn-secondary");
   await undo(page);
   await expect(notePanel(page, "ch1")).toHaveCount(0);
 });

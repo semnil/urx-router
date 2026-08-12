@@ -732,7 +732,7 @@ test.describe("Tzb tail", () => {
       // deliberately straddling would be the harness reporting its own gesture.
       // Bounded, and the count is printed: a press that needed a dozen attempts is a
       // different measurement from one that landed first try.
-      const button = page.locator("#dyn-screen-box .consent-btn-primary");
+      const button = page.locator("#dyn-screen-box .consent-btn-secondary");
       let b = await button.boundingBox();
       for (let i = 0; i < 20 && !b; i++) {
         boxRetries++;
@@ -779,7 +779,7 @@ test.describe("Tzb tail", () => {
 
     let closedOnSecond = closedOnFirst;
     if (!closedOnFirst) {
-      await page.locator("#dyn-screen-box .consent-btn-primary").click();
+      await page.locator("#dyn-screen-box .consent-btn-secondary").click();
       await page.waitForTimeout(200);
       closedOnSecond = await page.locator("#dyn-screen-modal").isHidden();
     }

@@ -14,7 +14,7 @@ const wires = (page: Page) => page.locator("#graph-host .wire-hit");
 async function pickPref(page: Page, selector: string, value: string): Promise<void> {
   await page.click("#btn-prefs");
   await page.selectOption(selector, value);
-  await page.click("#prefs-modal .consent-btn-primary");
+  await page.click("#prefs-modal .consent-btn-secondary");
 }
 
 const connect = (page: Page, fromRef: string, toRef: string): Promise<void> =>
@@ -122,7 +122,7 @@ test.describe("language", () => {
     await page.selectOption("#prefs-lang", "ja");
     await expect(page.locator("#prefs-title")).toHaveText("環境設定");
     await expect(page.locator("#prefs-lang")).toHaveValue("ja");
-    await page.click("#prefs-modal .consent-btn-primary");
+    await page.click("#prefs-modal .consent-btn-secondary");
 
     await expect(page.locator("#btn-view-graph")).toHaveText("グラフ");
     await expect(page.locator("#btn-hide-unused")).toHaveText("未接続を隠す");

@@ -103,7 +103,7 @@ test("the 1-knob level survives reopening the screen", async ({ page }) => {
   await row(page, "1-knob Level").locator("input[type=range]").fill("80");
   await expect(row(page, "1-knob Level").locator(".param-val")).toHaveText("80 %");
 
-  await box(page).locator(".consent-btn-primary").click();
+  await box(page).locator(".consent-btn-secondary").click();
   await node(page, "ch2").click();
   await openEq(page, "ch1");
   await expect(row(page, "1-knob Level").locator(".param-val")).toHaveText("80 %");
