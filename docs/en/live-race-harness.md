@@ -1320,7 +1320,9 @@ not repeat them.
   defined` in V8 (measured in node), so a search for the WebKit wording finds nothing in the Chromium
   half of the same failure. Anything such a callback needs arrives through its argument list, and
   that is the whole rule — `addInitScript` here, and equally `evaluate` / `evaluateHandle` /
-  `waitForFunction` / `locator.evaluate`, of which `e2e/race` alone has around thirty. The tuple is
+  `waitForFunction` / `locator.evaluate`, of which `e2e/race` alone has **186** (counted
+  2026-08-13: 142 `evaluate`, 39 `waitForFunction`, 3 `evaluateAll`, 2 `addInitScript`; 36 of them
+  inside `fake-device.ts`, 149 in the specs, 1 in `ui.ts`). The tuple is
   also the only crossing the type checker covers: the callback's annotation and the `as` cast name
   one tuple type, so an arity mismatch is a compile error, while a closure reference is not. It
   entered `main` with the pull request that wrote it and survived three further merges before a

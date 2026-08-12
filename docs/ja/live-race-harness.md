@@ -1235,7 +1235,9 @@ move のたびにコントロールがまだ文書内かを訊き、消えた場
   `FAKE_LAUNCH_FLAGS_OFF is not defined` (node で実測) なので、WebKit 側の文言で探しても同じ破綻の
   Chromium 側には出てこない。この種のコールバックが必要とするものは引数で渡す。規則はそれだけで、
   対象は `addInitScript` だけでなく `evaluate` / `evaluateHandle` / `waitForFunction` /
-  `locator.evaluate` も同じ — `e2e/race` だけで約 30 箇所ある。引数タプルは型検査が及ぶ唯一の
+  `locator.evaluate` も同じ — `e2e/race` だけで **186 箇所**ある (2026-08-13 計数: `evaluate` 142・
+  `waitForFunction` 39・`evaluateAll` 3・`addInitScript` 2。うち 36 は `fake-device.ts` 自身、
+  149 は spec 側、1 は `ui.ts`)。引数タプルは型検査が及ぶ唯一の
   越境路でもある: コールバック側の注釈と `as` キャストが同一のタプル型なので、要素数の不一致は
   コンパイルエラーになる。クロージャ参照にはその保護が無い。これを書いた PR とともに `main` に
   入り、バージョン更新で再びハーネスが走るまで、さらに 3 マージ分を生き延びた

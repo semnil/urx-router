@@ -323,10 +323,16 @@ describe("the desktop-only surfaces", () => {
   //
   // The pin is therefore on the PROPERTY and not on a layout. The name must be absent from
   // the serialised callback and present in the tuple handed to it; the answer is looked up
-  // through whatever that callback calls its third parameter, read out of the source rather
+  // through whatever that callback calls its LAST parameter, read out of the source rather
   // than hard-coded, so a rename is not a failure. What no text scan can see is whether the
   // list that arrives holds the right strings — the race tier is what answers that, and it
-  // runs on the version-bump PR alone, which is how the defect below survived four merges.
+  // runs on the version-bump PR alone, which is how the defect below entered `main` and
+  // survived three further merges.
+  //
+  // One family of the old fragility survives by design: the absence check reads code, so
+  // comments are stripped before it — writing the identifier in a comment inside the
+  // callback is not closing over it, and failing on that would be the third repeat of
+  // "a docs edit broke the pin", with a message that is false besides.
   it("keeps the settings import behind the flag, and the race fake never sets it", SLOW, async () => {
     await bootDevice();
     expect($("btn-open-settings").hidden).toBe(true);
@@ -347,17 +353,22 @@ describe("the desktop-only surfaces", () => {
     expect(open, "installFake no longer installs through addInitScript").toBeGreaterThan(-1);
     expect(args, "the init script's argument tuple moved").toBeGreaterThan(open);
     const body = fake.slice(open, args);
-    expect(body, "the init script closes over FAKE_LAUNCH_FLAGS_OFF instead of being handed it").not.toContain(
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    expect(code, "the init script closes over FAKE_LAUNCH_FLAGS_OFF instead of being handed it").not.toContain(
       "FAKE_LAUNCH_FLAGS_OFF",
     );
     expect(fake.slice(args, args + 200), "the init script is not handed the flag list").toContain(
       "FAKE_LAUNCH_FLAGS_OFF",
     );
 
-    // …and it still answers those commands false, through the parameter it arrived on.
-    const param = /addInitScript\(\s*\(\[[^\]]*,\s*([A-Za-z_$][\w$]*)\s*\]/.exec(body)?.[1];
+    // …and it still answers those commands false, through the parameter it arrived on. The
+    // name is escaped before it becomes a pattern: `$` is legal in an identifier and is an
+    // anchor in a regular expression, so `$flags` would otherwise match nothing and report
+    // the answer as missing.
+    const param = /addInitScript\(\s*\(\[[^\]]*,\s*([A-Za-z_$][\w$]*)\s*\]/.exec(code)?.[1];
     expect(param, "the init script's last parameter is not a plain binding").toBeTruthy();
-    expect(body).toMatch(new RegExp(`\\b${param}\\.includes\\(cmd\\)[\\s\\S]{0,80}?return false;`));
+    const name = String(param).replace(/[$]/g, "\\$&");
+    expect(code).toMatch(new RegExp(`(?<![\\w$])${name}\\.includes\\(cmd\\)[\\s\\S]{0,80}?return false;`));
   });
 });
 
