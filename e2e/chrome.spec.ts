@@ -126,7 +126,7 @@ test.describe("language", () => {
 
     await expect(page.locator("#btn-view-graph")).toHaveText("グラフ");
     await expect(page.locator("#btn-hide-unused")).toHaveText("未接続を隠す");
-    await expect(page.locator(".con-slp").first()).toHaveAttribute("title", "プリフェーダー送り");
+    await expect(page.locator(".con-slp").first()).toHaveAttribute("title", "Pre-fader send");
     // The separators do not follow the language: vertical writing mode makes a
     // full-width glyph move the rack's geometry, so they stay English everywhere.
     await expect(page.locator(".con-grouplabel").first()).toHaveText("INPUTS");

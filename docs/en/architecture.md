@@ -635,7 +635,12 @@ The language is switched from the Preferences modal (a dropdown of native names 
 the inspector, and the open modal itself.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
-> `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. **A row that reproduces a control
+> `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. **Those five apply to prose as much
+> as to labels** — a sentence, hint or tooltip that names one writes it in English, so the same term
+> cannot read `Ducker` in a heading and in kana in the line under it. It had split exactly that way:
+> the labels and the legend kept the English while seven `tr()` sentences transliterated it, and nothing
+> could catch it, because the `dev()` / `fixed()` / `tr()` marks force a string's *identity* and say
+> nothing about which words a translated sentence may use. **A row that reproduces a control
 > on one of the unit's own screens keeps that screen's English label, in every app language** — the unit
 > is English there whichever of its three display languages is selected. That was **read off the hardware
 > with its own Language set to Japanese**, screen by screen: GATE, COMP, EQ, DUCKER, OSCILLATOR, MONITOR
@@ -647,7 +652,7 @@ the inspector, and the open modal itself.
 > and pan / balance rows, the oscillator block with its bus assigns, the monitor block, the CH SETTING
 > name and colour, and the matching MIDI control names. It does **not** extend to the app's own vocabulary
 > — section headings, the legend, the node and connection kinds, status and error text are all translated,
-> and so is any sentence, hint or tooltip. A tooltip that spells out a device
+> and so is any sentence, hint or tooltip **outside the five terms above**. A tooltip that spells out a device
 > abbreviation keeps the unit's own wording (`C.INT` → `Cue Interrupt`), and so do the MIDI takeover
 > mode names (`Absolute` / `Pickup`), which name a controller behavior the same way the button
 > behaviors do. The CONSOLE strip group separators (`INPUTS` / `BUS / FX` / `MONITOR` / `MASTER`) stay
