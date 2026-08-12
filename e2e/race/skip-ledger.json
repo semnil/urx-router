@@ -39,7 +39,7 @@
     {
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "T3b undo > a sampleRate-touching entry is refused while live",
-      "unguarded": "The reason is that no sampleRate entry can exist while live — the readback's rerenderPlan resets both stacks and the rate picker is disabled from then on. t3-undo.spec.ts's refusal ladder asserts exactly that, but it is a race case, so it runs on the version-bump PR alone and cannot report an expired reason on an ordinary one. What would settle it: the same two facts pinned where every PR runs them — the rate picker's disabled state under a live session, and rerenderPlan clearing both stacks."
+      "unguarded": "The reason is that no sampleRate entry can exist while live: the rate picker is disabled from the session start (pinned by 'the live session > locks the model picker and the other device actions for its duration' in src/main.device.test.ts) and the readback re-authors the plan. The SECOND half is NOT pinned, and an attempt to pin it there was withdrawn on 2026-08-13 after instrumentation showed the test vacuous: driving a CONSOLE edit and reading the Edit menu's IPC state — set_edit_menu_state, the only observable of undo depth outside a trace build — reports canUndo true from an OPEN, uncommitted entry, while the stack itself stays at u=0 r=0 for the whole run. PlanHistory.record() and .reset() are never called, so deleting rerenderPlan's planHistory reset changes nothing the test can see and it passes either way. What would settle it: an observable that separates a committed entry from an open one — the depth on the VITE_TRACE probe — or a unit test over PlanHistory itself asserting reset() drops both stacks, together with a reading that the fetch path reaches it."
     },
     {
       "file": "e2e/race/t3b-undo.spec.ts",
@@ -59,7 +59,10 @@
     {
       "file": "e2e/race/t4b-midi.spec.ts",
       "title": "T4b midi > arming an id the catalog cannot bind is refused silently",
-      "unguarded": "The reason says 'unreachable from the UI in this build', which dates itself: it holds only while every id an arming surface passes is one the catalogue binds. Half of that is now pinned — 'control catalog > binds every id it lists for %s' in src/core/midi/controls.test.ts fails if the catalogue offers an id it then declines, on all three models. The other half is not: the arming surfaces build their own ids (console.ts computes them, dyn-screen.ts asks the processor's controlId hook) rather than reading listControls, so an id that reaches arm() from neither the catalogue nor a plan it describes is still possible. What would settle it: driving the CONSOLE and each tuning screen through their test-utils with a learn hook that records every arm() id, and binding each — after which this becomes a guardedBy naming that test."
+      "guardedBy": {
+        "file": "src/ui/midi-arm.contract.test.ts",
+        "title": "arming surfaces against the control catalog > CONSOLE arms only bindable ids on URX44V"
+      }
     },
     {
       "file": "e2e/race/t4b-midi.spec.ts",
