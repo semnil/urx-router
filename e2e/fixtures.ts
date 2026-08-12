@@ -69,9 +69,16 @@ async function collectOpenPages(
 /** A theme token as the engine resolves it. A face pin that compares two controls to
  *  each other still passes when the recipe vanishes and both fall back to the UA's,
  *  so such a pin needs one anchored value — and the anchor has to be a token rather
- *  than a literal, or it is rewritten every time the palette moves. */
-export const token = (page: Page, name: string): Promise<string> =>
-  page.evaluate((n) => {
+ *  than a literal, or it is rewritten every time the palette moves.
+ *
+ *  The transparent check is the anchor's own anchor. A `var()` naming a token that no
+ *  longer exists is invalid at computed-value time, so the probe falls back to the
+ *  initial `rgba(0, 0, 0, 0)` — and so does every declaration in the app that reads
+ *  the same token. Measured: rename `--ctl-bg` away and the probe, the model picker
+ *  and the inspector's select all report `rgba(0, 0, 0, 0)` together, which satisfies
+ *  an equality against controls that are painting nothing at all. */
+export async function token(page: Page, name: string): Promise<string> {
+  const value = await page.evaluate((n) => {
     const probe = document.createElement("span");
     probe.style.backgroundColor = `var(${n})`;
     document.body.append(probe);
@@ -79,6 +86,11 @@ export const token = (page: Page, name: string): Promise<string> =>
     probe.remove();
     return v;
   }, name);
+  expect(value, `${name} resolves to nothing — the token is gone, so any pin against it is vacuous`).not.toBe(
+    "rgba(0, 0, 0, 0)",
+  );
+  return value;
+}
 
 export { expect };
 export type { Locator, Page } from "@playwright/test";

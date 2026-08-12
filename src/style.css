@@ -204,12 +204,16 @@ body {
   padding: 0 16px;
   flex-shrink: 0;
   /* Buttons never wrap (white-space: nowrap); the rack scrolls horizontally instead,
-     so controls stay reachable at the min window width. No breakpoint is named here
-     on purpose: the width at which it starts to scroll is its intrinsic width, and
-     that moves with the engine, the language and the build. Measured in the browser
-     build: 853-886px across WebKit/Chromium x EN/JA; the desktop build adds the
-     FOLLOW USB badge and the Device menu on top. A single figure stood here for a
-     long time and was ~150px out. */
+     so controls stay reachable at the min window width. No figure is named here, and
+     that is the point: the width where it starts to scroll is the rack's intrinsic
+     width, which is a property of the CONFIGURATION rather than of this rule — it
+     moves with the engine, the language, and which build is running, and the three
+     builds do not carry the same controls. `pnpm dev` hides the device-only ones,
+     `build:demo` hides those and adds Share URL / Download JSON / Desktop app, and
+     the desktop build shows the FOLLOW USB badge and the Device menu. Measured, the
+     first two are about 280px apart. A single number stood here for a long time with
+     none of that beside it, so nothing could tell which configuration it described
+     or whether it had gone stale — which it had. */
   overflow-x: auto;
   background: var(--bar);
   border-bottom: 1px solid var(--line);
@@ -299,10 +303,13 @@ select#rate-picker,
    above pays for. Measured again in the shipping WKWebView against a real unit, with
    the rule in place: under a live session both pickers changed 476 / 475 pixels over
    their own boxes, mean luma 45.8 -> 40.8 and 39.8 -> 36.5, and returned to the
-   pre-session pixels exactly when it ended. Solving 0.7*content + 0.3*ground for the
-   ground gives 29.1 / 28.8 against the bar's own 29.5, so what is seen there is this
-   rule and not the engine. What that engine does with the rule WITHDRAWN is still
-   unmeasured — it decides whether the rule is redundant, not whether the lock reads. */
+   pre-session pixels exactly when it ended — so the lock READS in the shipping engine.
+   Solving 0.7*content + 0.3*ground for the ground gives 29.1 / 28.8 against the bar's
+   own 29.5, which is consistent with this rule doing it and does not prove it: the
+   arithmetic recovers the alpha, not who applied it, and an engine supplying 0.7 of
+   its own over the same ground would land on the same numbers. Separating them needs
+   the rule WITHDRAWN in that window, which has not been run — it decides whether the
+   rule is redundant, not whether the lock reads. */
 select#model-picker:disabled,
 select#rate-picker:disabled {
   opacity: 0.7;
