@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { LIVE_COMMANDS, stubTauriDevice } from "./tauri-stub";
 
 // microSD Rec track-pair slots hang in a chain under the SD Rec header; Track Count
 // (read-only on the device) gates how many are shown. Uses the default factory
@@ -63,4 +64,45 @@ test("a track-pair slot records its factory source as a no-param record assign",
   await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.sdrec.t1:in"]').dispatchEvent("pointerdown");
   await expect(page.locator("#inspector")).toContainText("SD Rec source select");
   await expect(page.locator("#inspector .param")).toHaveCount(0);
+});
+
+// Track Count is the device's while a live session holds it, so the inspector shows
+// it read-only. The lock has to stay VISIBLE, and that is not free: a select gets a
+// disabled look from the engine only while it is unstyled — measured in WebKit, the
+// engine the macOS build renders in, an unstyled one drops its text and border from
+// 0.847 to 0.247 alpha, and stops moving at all once a rule authors a colour and a
+// background. Joining the app's select recipe took that away, so the panel's own
+// read-only dim replaces it.
+//
+// The comparison is against what THIS engine does to a disabled select unaided,
+// measured on the page rather than assumed, because the two engines disagree and
+// this tier only runs one of them: Chromium dims one to 0.7 by itself, WebKit not at
+// all. Asserting merely "dimmer than when enabled" would ride Chromium's own 0.7 and
+// stay green with the rule deleted — in the engine where deleting it is invisible.
+test("Track Count is locked and stays visibly dimmed while a live session holds the device", async ({ page }) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS });
+  await page.goto("/"); // the stub installs through addInitScript, so it needs its own load
+  await node(page, "out.sdrec").click();
+  await expect(trackCount(page)).toBeEnabled();
+  const unaided = await page.evaluate(() => {
+    const probe = document.createElement("select");
+    probe.disabled = true;
+    document.body.append(probe);
+    const o = Number(getComputedStyle(probe).opacity);
+    probe.remove();
+    return o;
+  });
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+
+  await node(page, "out.sdrec").click();
+  await expect(trackCount(page)).toBeDisabled();
+  const locked = await trackCount(page).evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { opacity: Number(cs.opacity), cursor: cs.cursor };
+  });
+  expect(locked.opacity).toBeLessThan(unaided);
+  expect(locked.cursor).toBe("not-allowed");
 });
