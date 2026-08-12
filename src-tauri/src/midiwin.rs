@@ -123,8 +123,19 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // there is nothing here to correct and the remembered rectangle is applied once,
     // from numbers, exactly as the main window's is. A window that cannot be placed is
     // not worth failing an open for: the panel is up and usable either way.
+    //
+    // The parent decides which DISPLAY, and it has to: this is an AppKit child
+    // window, so it is translated with its parent one for one, and its remembered
+    // absolute position is therefore out of date by every move the parent has made
+    // since. Measured — a parent dragged from x=2344 to x=172 took this window from
+    // x=536 to x=-1636, off every display, where the window server still reported it
+    // on-screen and opaque and nothing was drawn. The remembered SIZE is still used.
     #[cfg(desktop)]
-    crate::restore_window(&win.as_ref().window(), MIN_INNER);
+    crate::restore_window(
+        &win.as_ref().window(),
+        MIN_INNER,
+        Some(&main.as_ref().window()),
+    );
     Ok(())
 }
 

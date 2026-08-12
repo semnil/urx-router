@@ -382,6 +382,7 @@ fn place_window<R: Runtime>(
     at: (i32, i32),
     inner: (u32, u32),
     min_inner: (f64, f64),
+    host_rect: Option<Rect>,
 ) -> tauri::Result<()> {
     if win.is_maximized()? || win.is_minimized()? || win.is_fullscreen()? {
         return Ok(());
@@ -398,7 +399,9 @@ fn place_window<R: Runtime>(
     // minimum overlaps the displays differently from the window that was actually
     // there — measured, a 1400x900 window on one display was inflated to 1920x1280
     // and the inflated rectangle then named the other one as its host.
-    let Some(host) = host_display(want, &displays) else {
+    // `host_rect` overrides which display is chosen, without touching the rectangle
+    // being placed — see `place_saved` for the window whose own position cannot pick.
+    let Some(host) = host_display(host_rect.unwrap_or(want), &displays) else {
         return Ok(());
     };
     // Land the whole thing once, and answer the scale the window came out at. Called
@@ -446,12 +449,21 @@ fn place_window<R: Runtime>(
 /// a rectangle and a scale; it should not also have to know that the saved size is the
 /// inner one and the saved position the outer one — which is exactly the pair
 /// `place_window` takes.
+/// `host_of` names a window whose display the restore must land on, for a window
+/// whose remembered POSITION cannot be trusted on its own. A child window is that
+/// case: AppKit translates it with its parent, one for one, so its absolute
+/// position drifts by every move the parent has made since — measured, a parent
+/// dragged 2172 pt left took the MIDI window from x=536 to x=-1636, off every
+/// display, where it stayed listed as on-screen and opaque and drew nothing. The
+/// remembered SIZE is still honoured; only the choice of display is taken from the
+/// host. `None` keeps the plain behaviour, where the rectangle picks its own.
 pub fn place_saved<R: Runtime>(
     win: &Window<R>,
     position: PhysicalPosition<i32>,
     size: PhysicalSize<u32>,
     saved_scale: Option<f64>,
     min_inner: (f64, f64),
+    host_of: Option<&Window<R>>,
 ) -> tauri::Result<()> {
     // The window's own scale factor is only the fallback for a rectangle nothing
     // recorded a scale for; the conversion below uses the recorded one where there is
@@ -461,7 +473,21 @@ pub fn place_saved<R: Runtime>(
         None => win.scale_factor()?,
     };
     let want = window_to_desk(position, size, scale);
-    place_window(win, (want.x, want.y), (want.width, want.height), min_inner)
+    let host_rect = match host_of {
+        Some(host) => Some(window_to_desk(
+            host.outer_position()?,
+            host.inner_size()?,
+            host.scale_factor()?,
+        )),
+        None => None,
+    };
+    place_window(
+        win,
+        (want.x, want.y),
+        (want.width, want.height),
+        min_inner,
+        host_rect,
+    )
 }
 
 /// Which display's scale factor a remembered PHYSICAL rectangle was measured at,
@@ -544,7 +570,15 @@ pub fn fit_window<R: Runtime>(win: &Window<R>, min_inner: (f64, f64)) -> tauri::
         win.inner_size()?,
         win.scale_factor()?,
     );
-    place_window(win, (want.x, want.y), (want.width, want.height), min_inner)
+    // No host override: this corrects a window that is already somewhere, so the
+    // rectangle it is at is exactly the right thing to pick its display with.
+    place_window(
+        win,
+        (want.x, want.y),
+        (want.width, want.height),
+        min_inner,
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -814,6 +848,43 @@ mod tests {
         let host = host_display(want, &mac_desk()).expect("a host");
         assert_eq!(host.work, MAC_BUILTIN);
         assert_eq!(fit(want, host.work), want, "already inside the work area");
+    }
+
+    // What `place_saved`'s `host_of` is for, in the arrangement that produced it:
+    // the MIDI window's remembered rectangle is on the built-in display, its parent
+    // is on the external one, and the placement has to follow the parent. The
+    // remembered SIZE survives; only the display is taken from the host.
+    #[test]
+    fn a_host_override_moves_the_placement_onto_the_hosts_display() {
+        let want = win(536, 116, 440, 620); // remembered, on the built-in
+        let parent = win(2344, -54, 1226, 837); // where the parent is now
+        assert_eq!(
+            host_display(want, &mac_desk()).expect("a host").work,
+            MAC_BUILTIN,
+            "without the override it picks its own display"
+        );
+
+        let host = host_display(parent, &mac_desk()).expect("a host");
+        assert_eq!(host.work, MAC_EXTERNAL);
+        // The MIDI window's own minimum (midiwin.rs), not the main window's: at
+        // 960x640 the 440x620 panel would be inflated past its remembered size and
+        // the assertion below would be measuring the minimum instead of the move.
+        let midi_min = (360.0, 320.0);
+        let landed = placement(
+            want,
+            host.work,
+            midi_min,
+            desk_per_logical(host.scale),
+            (0, 0),
+        );
+        assert_eq!(landed.width, 440, "the remembered size is kept");
+        assert_eq!(landed.height, 620);
+        assert_eq!(
+            fit(landed, MAC_EXTERNAL),
+            landed,
+            "and it is inside the parent's display"
+        );
+        assert_eq!(landed.overlap(&MAC_BUILTIN), 0, "no longer on the built-in");
     }
 
     // What the report described, said as a rectangle: one recorded on a display

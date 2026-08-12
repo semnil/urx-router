@@ -305,6 +305,8 @@ fn restore_main_window(app: &tauri::AppHandle) {
     restore_window(
         &win.as_ref().window(),
         configured_min_inner(app, MAIN_WINDOW),
+        // The main window answers to nothing: its remembered position is its own.
+        None,
     );
 }
 
@@ -315,7 +317,11 @@ fn restore_main_window(app: &tauri::AppHandle) {
 // on a 1.0 display whenever the window is born on a 2.0 one, before any correction
 // of ours gets a look at it.
 #[cfg(desktop)]
-pub(crate) fn restore_window(win: &tauri::Window, min_inner: (f64, f64)) {
+pub(crate) fn restore_window(
+    win: &tauri::Window,
+    min_inner: (f64, f64),
+    host_of: Option<&tauri::Window>,
+) {
     use tauri::Manager;
     let app = win.app_handle();
     // The window's own label rather than one passed in: both call sites would be
@@ -332,12 +338,14 @@ pub(crate) fn restore_window(win: &tauri::Window, min_inner: (f64, f64)) {
             // what every restore used to assume.
             let saved_scale = saved_window_scale(app, label)
                 .or_else(|| winfit::saved_rect_scale(win, position, size));
-            winfit::place_saved(win, position, size, saved_scale, min_inner).and_then(|()| {
-                if s.maximized {
-                    win.maximize()?;
-                }
-                Ok(())
-            })
+            winfit::place_saved(win, position, size, saved_scale, min_inner, host_of).and_then(
+                |()| {
+                    if s.maximized {
+                        win.maximize()?;
+                    }
+                    Ok(())
+                },
+            )
         }
         // Nothing saved is a first launch. The platform placed the window and
         // nothing has moved it, so its own reported rectangle is the truth — the
