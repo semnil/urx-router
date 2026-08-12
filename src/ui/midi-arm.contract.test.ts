@@ -93,17 +93,22 @@ describe("arming surfaces against the control catalog", () => {
     // drift shows up as a ring that arms nothing.
     const openers = [...ch.host.querySelectorAll<HTMLElement>(".con-panbtn")];
     expect(openers.length).toBeGreaterThan(0);
+    const pop = (): HTMLElement => {
+      const el = ch!.host.querySelector<HTMLElement>(".con-spop");
+      if (!el) throw new Error(".con-spop is missing — the popover host is built with the view");
+      return el;
+    };
     for (const btn of openers) {
+      // The click TOGGLES, so a popover already open would be closed by it and the pass
+      // would contribute nothing while the totals still matched. Each button therefore
+      // asserts its own contribution rather than trusting the run's total.
       btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-      const pop = ch.host.querySelector<HTMLElement>(".con-spop");
-      if (!pop) continue;
-      marked += armEverything(pop, armed).marked;
+      const opened = armEverything(pop(), armed);
+      expect(opened.marked, "a SEND PAN popover opened with no armable control").toBeGreaterThan(0);
+      marked += opened.marked;
     }
 
     const ids = [...new Set(armed)];
-    // …and the popovers really contributed. Without this the loop above can quietly
-    // find no popover and the case reverts to the initial-DOM scan it replaced.
-    expect(marked).toBeGreaterThan(first.marked);
     expect(marked).toBeGreaterThan(0);
     expect(ids.length).toBeGreaterThan(0);
     // Every marked control armed something: marking and arming are separate calls, and
@@ -142,6 +147,9 @@ describe("arming surfaces against the control catalog", () => {
       if (proc.controlId) {
         expect(marked).toBeGreaterThan(0);
         expect(ids.length).toBeGreaterThan(0);
+        // Same equality as the CONSOLE case: a screen that marks five rows and arms one
+        // is the defect, and only the counts show it.
+        expect(ids.length).toBe(marked);
         expect(ids.filter((id) => !bindControl(model, plan, id))).toEqual([]);
       } else {
         expect(marked).toBe(0);

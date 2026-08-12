@@ -12,6 +12,8 @@
 // a fixture that agrees with nothing.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { FAKE_LAUNCH_FLAGS_OFF } from "../e2e/race/fake-flags";
 import { $, bootApp, deviceCommands, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
@@ -303,17 +305,29 @@ describe("the desktop-only surfaces", () => {
   // nothing between them: the app hides the entry without the flag, and the race fake
   // never answers the flag true.
   //
-  // The second is read from the list the fake itself answers from (e2e/race/fake-flags.ts),
-  // not from its source text. An earlier version sliced the switch arm out of the file and
-  // was fragile in both directions: a comment containing "return" between the label and the
-  // arm would have failed a docs edit, and the group becoming the last arm would have
-  // widened the slice to the end of the file and passed on someone else's `return false`.
-  // The list is a module with no imports so this side can import it — the fake pulls in
-  // @playwright/test, which the src build's tsconfig would then have to compile.
+  // The second half is two statements, and BOTH are needed. The list the fake answers
+  // from is imported (`fake-flags.ts` has no imports of its own, so this side can take it
+  // without pulling Playwright's types into the src build) — but importing a list only
+  // says what the list holds. That the FAKE reads it is the other half, and nothing in
+  // the type system carries it: deleting the fake's `includes` block and its import
+  // compiles silently, and a guard that only checked the constant would stay green while
+  // the reason it exists for became false.
+  //
+  // So the fake's source is read for the usage — one occurrence of the name, not a slice
+  // of a switch arm. An earlier version cut the arm out by index and was fragile both
+  // ways: a comment containing "return" between the label and the arm failed on a docs
+  // edit, and the group becoming the last arm widened the cut to the end of the file and
+  // passed on someone else's `return false`.
   it("keeps the settings import behind the flag, and the race fake never sets it", SLOW, async () => {
     await bootDevice();
     expect($("btn-open-settings").hidden).toBe(true);
     expect(FAKE_LAUNCH_FLAGS_OFF).toContain("experimental_enabled");
+
+    const fake = readFileSync(resolve(process.cwd(), "e2e/race/fake-device.ts"), "utf8");
+    expect(fake, "the race fake no longer answers from FAKE_LAUNCH_FLAGS_OFF").toContain("FAKE_LAUNCH_FLAGS_OFF");
+    // …and it still answers them false. The list is a `readonly string[]` membership
+    // test there, so the arm is one `return false` rather than a per-flag branch.
+    expect(fake).toMatch(/FAKE_LAUNCH_FLAGS_OFF[\s\S]{0,200}?return false;/);
   });
 });
 

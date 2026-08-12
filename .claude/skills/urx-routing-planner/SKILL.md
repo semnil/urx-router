@@ -160,8 +160,10 @@ mirrors the app's own check exactly:
 python scripts/plan_tool.py validate plan.json
 ```
 
-It prints `OK` (the app will load it without complaint) or a problem report. It
-also prints `WARNING:` lines to stderr — always read them: for a wire or value the
+It prints `OK` or a problem report. `OK` alone means the app loads it without
+comment; `OK (N warning(s))` means read them first — one of them, the insert-FX slot
+conflict, is a plan the app opens only after asking (step 5 says what that looks
+like coming back). It prints those `WARNING:` lines to stderr — always read them: for a wire or value the
 app's loader would silently **drop** (an unknown `kind`, a mistyped `params` /
 node param — the plan loads, just without that piece), for wrong-`kind` wires, for
 Ducker params placed on a non-ducker node (move them to the channel's `out.duckerN`

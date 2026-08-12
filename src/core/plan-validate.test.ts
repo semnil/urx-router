@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { insertFxSlotProblems, planProblems, refusals } from "./plan-validate";
+import { insertFxSlotProblems, isRefusal, planProblems } from "./plan-validate";
 import { validatePlan } from "./routing";
 import { emptyPlan } from "./plan";
 import { getModel } from "../models";
@@ -99,7 +99,7 @@ describe("insertFxSlotProblems", () => {
 // reason true).
 describe("planProblems", () => {
   const u44v = getModel("URX44V");
-  const refused = (plan: ReturnType<typeof emptyPlan>) => refusals(u44v, plan);
+  const refused = (plan: ReturnType<typeof emptyPlan>) => planProblems(u44v, plan).filter(isRefusal);
 
   it("refuses a wire whose source resolves to no rule at all", () => {
     const plan = emptyPlan("URX44V");

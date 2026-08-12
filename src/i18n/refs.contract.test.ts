@@ -40,9 +40,10 @@ import { join, resolve } from "node:path";
 import { en } from "./en";
 
 // From the repo root, the way main.test-util.ts reads index.html. NOT
-// `new URL(..).pathname`: that is a URL path, so a Windows checkout resolves
-// `/G:/…` against the current drive and a directory with a space in it arrives
-// percent-encoded. Either way readdirSync throws, and only off-Ubuntu.
+// `new URL(..).pathname`: that is a URL path. A Windows checkout gets `/G:/…`, which
+// resolves against the current drive — that half is Windows-only. A directory with a
+// space in it arrives percent-encoded on every platform, which is the half that reaches
+// macOS and Linux too (reproduced locally). Either way readdirSync throws.
 const SRC = resolve(process.cwd(), "src");
 
 /** Every `.ts` under src/, minus the catalogs themselves and the test layer. */
@@ -76,13 +77,17 @@ function unreferenced(catalog: unknown, text: string): string[] {
   for (const [, name] of text.matchAll(/\.([A-Za-z_$][\w$]*)/g)) named.add(name);
   for (const [, name] of text.matchAll(/\[\s*["'`]([^"'`]+)["'`]\s*\]/g)) named.add(name);
   const wholesale = new Set<string>();
-  // `.foo[` — a member chosen at runtime.
-  for (const [, name] of text.matchAll(/\.([A-Za-z_$][\w$]*)\s*\??\s*\[/g)) wholesale.add(name);
-  // `...x.foo` — the namespace itself is taken away, to be indexed out of reach of
-  // this scan. The lookahead keeps a CALL from vouching for a namespace that shares its
-  // name: `...list.filter(…)` for the method, and `<` for the generic form
-  // (`...el.querySelectorAll<T>(…)`), which is why `<` is in there.
-  for (const [, name] of text.matchAll(/\.\.\.\s*[\w$]+(?:\.[\w$]+)*\.([\w$]+)\s*(?![\w$(<])/g)) wholesale.add(name);
+  // `.foo[` and `.foo?.[` pick a member at runtime. The optional-chaining punctuator is
+  // spelled out rather than made optional one character at a time: `\??` matched a bare
+  // `?`, which missed `?.[` entirely AND vouched for the namespace on the left of a
+  // ternary (`cond.ns ? [1] : [2]`) — both measured 2026-08-13.
+  for (const [, name] of text.matchAll(/\.([A-Za-z_$][\w$]*)\s*(?:\?\.)?\s*\[/g)) wholesale.add(name);
+  // `...x.foo` — the namespace itself is taken away, to be indexed out of reach of this
+  // scan. The lookahead rejects a match that is not the END of the property chain, which
+  // is three things at once: a CALL (`...list.filter(…)`), its generic form
+  // (`...el.querySelectorAll<T>(…)`), and a middle segment reached by backtracking —
+  // `[...a.b.c.filter(x)]` otherwise vouched for `c`, measured 2026-08-13.
+  for (const [, name] of text.matchAll(/\.\.\.\s*[\w$]+(?:\.[\w$]+)*\.([\w$]+)\s*(?![\w$(<.])/g)) wholesale.add(name);
 
   return leaves(catalog)
     .filter((path) => !path.slice(0, -1).some((seg) => wholesale.has(seg)) && !named.has(path[path.length - 1]))
@@ -112,6 +117,30 @@ describe("i18n catalog references", () => {
 
   it("takes a spread namespace as reaching all of it", () => {
     expect(unreferenced(catalog, "const all = { ...m.ns }; use(all[v], m.other.x);")).toEqual([]);
+  });
+
+  // Each rule below is one an edit has already broken: `?.[` was written as an optional
+  // `?` and matched neither the syntax it meant nor only the syntax it meant, and the
+  // chain lookahead was written without `.` and vouched for middle segments. Both went
+  // in without a case and both were wrong, which is what these are for.
+  it("takes an optional-chained index as reaching all of it", () => {
+    expect(unreferenced(catalog, "el.textContent = m.ns?.[kind]; use(m.other.x);")).toEqual([]);
+  });
+
+  it("does not let a ternary vouch for the namespace on its left", () => {
+    expect(unreferenced(catalog, "const v = cond.ns ? [1] : [2]; use(m.other.x);")).toEqual(["ns.alive", "ns.dead"]);
+  });
+
+  it("does not vouch for a middle segment of a spread chain", () => {
+    const deep = { c: { only: "a" }, other: { x: "c" } };
+    expect(unreferenced(deep, "const rows = [...a.b.c.filter((r) => r.on)]; use(m.other.x);")).toEqual(["c.only"]);
+  });
+
+  it("does not let a generic call spread vouch for a same-named namespace", () => {
+    const generics = { querySelectorAll: { only: "a" }, other: { x: "c" } };
+    expect(unreferenced(generics, "const all = [...el.querySelectorAll<HTMLElement>(sel)]; use(m.other.x);")).toEqual([
+      "querySelectorAll.only",
+    ]);
   });
 
   it("does not let an array method spread vouch for a same-named namespace", () => {

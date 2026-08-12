@@ -54,8 +54,3 @@ export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
 export function isRefusal(problem: LoadProblem): boolean {
   return problem.reason !== "insertFxSlot";
 }
-
-/** The refusing half of `planProblems`, for a caller that only wants that side. */
-export function refusals(model: DeviceModel, plan: Plan): LoadProblem[] {
-  return planProblems(model, plan).filter(isRefusal);
-}
