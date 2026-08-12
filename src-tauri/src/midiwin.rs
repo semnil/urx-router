@@ -87,11 +87,13 @@ pub fn notify_closed(app: &AppHandle) {
 /// does not — the window-state plugin restores that from the last session and
 /// `winfit` keeps the answer on a display.
 ///
-/// Built as a CHILD of the main window, which is what keeps it in front of it: on
-/// Windows an owned window is always above its owner in the z-order, and on macOS
-/// `addChildWindow` orders it above the parent within the app. Deliberately not
-/// "always on top" — that would put the panel above every other application for
-/// the whole session, which is a far larger promise than the one being made here.
+/// Owned by the main window on WINDOWS ONLY, where that keeps it above its owner in
+/// the z-order and minimizes it with the owner. On macOS the same call makes an
+/// AppKit child window, which was measured to be unusable here — the builder below
+/// says what was seen — so there it is an ordinary top-level window and staying in
+/// front is handled where it matters, while a learn is armed. Deliberately not
+/// "always on top" for the session: that would put the panel above every other
+/// application throughout, which is a far larger promise than the one being made.
 ///
 /// `async` on purpose: building a webview from a blocking command deadlocks on
 /// Windows.
@@ -146,12 +148,17 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // from numbers, exactly as the main window's is. A window that cannot be placed is
     // not worth failing an open for: the panel is up and usable either way.
     //
-    // The parent decides which DISPLAY, and it has to: this is an AppKit child
-    // window, so it is translated with its parent one for one, and its remembered
-    // absolute position is therefore out of date by every move the parent has made
-    // since. Measured — a parent dragged from x=2344 to x=172 took this window from
-    // x=536 to x=-1636, off every display, where the window server still reported it
-    // on-screen and opaque and nothing was drawn. The remembered SIZE is still used.
+    // The main window is passed as the host to fall back on, and only that: it decides
+    // the display for a remembered rectangle that lands on NO attached display, and
+    // nothing else. A rectangle that still has a display of its own is restored where
+    // it was — which is the requirement, and what an unconditional override broke.
+    //
+    // The fallback earns its place from what a window dragged by its owner ends up as.
+    // Measured while this was still an AppKit child on macOS: a parent moved from
+    // x=2344 to x=172 took this window from x=536 to x=-1636, off every display, where
+    // the window server still reported it on-screen and opaque and nothing was drawn.
+    // That relationship is gone on macOS and kept on Windows, where the same drag has
+    // not been measured.
     #[cfg(desktop)]
     crate::restore_window(
         &win.as_ref().window(),
