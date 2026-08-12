@@ -55,12 +55,18 @@
     {
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "T3b undo > a cancelled Fetch re-points the MIDI bound cache",
-      "unguarded": "Not a claim about the app: the case is skipped because it belongs with t4-midi.spec.ts's learn helpers rather than as a second copy here. Nothing can expire, and nothing settles it except writing it there. Listed so the count of unwritten cases is countable rather than buried."
+      "guardedBy": {
+        "file": "src/ui/midi.test.ts",
+        "title": "MidiControl > re-points the bound cache when the document is replaced under it"
+      }
     },
     {
       "file": "e2e/race/t4b-midi.spec.ts",
       "title": "T4b midi > Toggle (state) mode: a same-state message consumes the guard",
-      "unguarded": "The reason is that the harness has no observable that separates the two outcomes — in state mode the incoming value IS the state. It expires the moment one appears, and the trace probe is where that would come from. What would settle it: a reading in __urxTrace (or the fake's IPC) that distinguishes a consumed guard from an unconsumed one."
+      "guardedBy": {
+        "file": "src/core/midi/engine.test.ts",
+        "title": "feedback > consumes the echo one-shot in state mode too, where the message itself cannot show it"
+      }
     },
     {
       "file": "e2e/race/t4b-midi.spec.ts",

@@ -80,7 +80,9 @@ async function attached(): Promise<void> {
 
 function install() {
   const model = getModel("URX44V");
-  const plan = defaultPlan("URX44V");
+  // `let`, so a case can hand the hooks a different document mid-session the way a
+  // cancelled Fetch does. Every other case keeps the object this returns.
+  let plan = defaultPlan("URX44V");
   ensureFixedConnections(model, plan);
   let blocked: string | null = null;
   const hooks: MidiHooks = {
@@ -92,7 +94,14 @@ function install() {
     onStatus: vi.fn(),
   };
   const control = new MidiControl(hooks);
-  return { control, hooks, plan, setBlocked: (next: string | null) => void (blocked = next) };
+  return {
+    control,
+    hooks,
+    plan,
+    model,
+    setBlocked: (next: string | null) => void (blocked = next),
+    swapPlan: (next: typeof plan) => void (plan = next),
+  };
 }
 
 beforeEach(() => {
@@ -240,5 +249,43 @@ describe("MidiControl", () => {
     mocks.inputReceiver!([0xb0, 7, 0]);
     expect(hooks.onApplied).toHaveBeenCalledOnce();
     expect(hooks.onStatus).toHaveBeenCalledWith("busy");
+  });
+
+  // The bound-control memo is the one holder of a plan reference here — every other
+  // view resolves through getPlan() per use — and one path replaces the document
+  // without going through loadPlan: a cancelled Fetch restores its pre-read clone
+  // (main.ts), so onModelChanged never runs for it. If the memo did not notice, the
+  // controller would go on writing into a document nothing is showing: the fader on
+  // screen would sit still while the unit moved.
+  //
+  // `e2e/race/t3b-undo.spec.ts` skips its variant of this because driving it needs
+  // the learn helpers that live in t4-midi.spec.ts; this is the same subject asked of
+  // the memo directly, and it runs on every pull request.
+  const levelOf = (p: { connections: Array<{ from: string; to: string; params?: { level?: number } }> }): number =>
+    p.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!.params!.level!;
+
+  it("re-points the bound cache when the document is replaced under it", async () => {
+    seedMappings();
+    const { hooks, plan, model, swapPlan } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+
+    mocks.inputReceiver!([0xb0, 7, 127]);
+    expect(levelOf(plan)).toBe(10);
+
+    // The shape of a cancelled Fetch: a different Plan object, same model, restored
+    // outside every path that would announce it.
+    const restored = defaultPlan("URX44V");
+    ensureFixedConnections(model, restored);
+    const restoredBefore = levelOf(restored);
+    swapPlan(restored);
+
+    mocks.inputReceiver!([0xb0, 7, 64]);
+    expect(hooks.onApplied).toHaveBeenCalledTimes(2);
+    expect(levelOf(restored)).not.toBe(restoredBefore);
+    // …and the document that is gone was not written to a second time.
+    expect(levelOf(plan)).toBe(10);
   });
 });
