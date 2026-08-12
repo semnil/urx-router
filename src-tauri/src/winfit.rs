@@ -184,6 +184,16 @@ fn window_to_desk(position: PhysicalPosition<i32>, size: PhysicalSize<u32>, scal
     desk_rect(l.floor(), t.floor(), r.ceil(), b.ceil())
 }
 
+/// Whether a rectangle is on a display at all — any overlap with any work area.
+///
+/// Distinct from `host_display`, which always answers something: that one asks
+/// WHICH display a window belongs to, this one asks whether the question has an
+/// honest answer. A remembered rectangle that fails this is one whose display is
+/// gone, or one an OS-side move dragged off the desk.
+fn on_any_display(win: Rect, displays: &[Display]) -> bool {
+    displays.iter().any(|d| win.overlap(&d.work) > 0)
+}
+
 /// The display a window belongs to: the one it overlaps most, or — when it overlaps
 /// none, which is what a display being unplugged looks like — the one whose center
 /// is nearest.
@@ -473,13 +483,20 @@ pub fn place_saved<R: Runtime>(
         None => win.scale_factor()?,
     };
     let want = window_to_desk(position, size, scale);
+    // The host is a RESCUE, not a policy: it is consulted only when the remembered
+    // rectangle lands on no attached display at all. Overriding unconditionally
+    // discards a position the operator chose — measured, a window remembered at
+    // x=536 came back clamped to x=1512, the left edge of the parent's display,
+    // and "open it on the sub-display, close it, open it again" stopped returning
+    // it there. Remembering the position is the requirement; the parent only
+    // decides where a rectangle that has nowhere to go should land.
     let host_rect = match host_of {
-        Some(host) => Some(window_to_desk(
+        Some(host) if !on_any_display(want, &displays(win)?) => Some(window_to_desk(
             host.outer_position()?,
             host.inner_size()?,
             host.scale_factor()?,
         )),
-        None => None,
+        _ => None,
     };
     place_window(
         win,
@@ -584,8 +601,8 @@ pub fn fit_window<R: Runtime>(win: &Window<R>, min_inner: (f64, f64)) -> tauri::
 #[cfg(test)]
 mod tests {
     use super::{
-        at_least, desk_per_logical, desk_position, desk_size, fit, host_display, physical_per_desk,
-        placement, recover_scale, window_to_desk, work_to_desk, Display, Rect,
+        at_least, desk_per_logical, desk_position, desk_size, fit, host_display, on_any_display,
+        physical_per_desk, placement, recover_scale, window_to_desk, work_to_desk, Display, Rect,
     };
     use tauri::{PhysicalPosition, PhysicalSize};
 
@@ -855,13 +872,36 @@ mod tests {
     // is on the external one, and the placement has to follow the parent. The
     // remembered SIZE survives; only the display is taken from the host.
     #[test]
-    fn a_host_override_moves_the_placement_onto_the_hosts_display() {
-        let want = win(536, 116, 440, 620); // remembered, on the built-in
-        let parent = win(2344, -54, 1226, 837); // where the parent is now
+    fn a_remembered_rectangle_that_is_still_on_a_display_keeps_its_position() {
+        // The requirement the first version of the override broke: open it on one
+        // display, close it, open it again, and it comes back there — even when the
+        // parent is somewhere else. The rescue must not fire for a rectangle that
+        // has a display of its own.
+        let want = win(2344, 200, 440, 620); // on the external
+        assert!(on_any_display(want, &mac_desk()));
+        let host = host_display(want, &mac_desk()).expect("a host");
+        assert_eq!(host.work, MAC_EXTERNAL);
+        let midi_min = (360.0, 320.0);
         assert_eq!(
-            host_display(want, &mac_desk()).expect("a host").work,
-            MAC_BUILTIN,
-            "without the override it picks its own display"
+            placement(
+                want,
+                host.work,
+                midi_min,
+                desk_per_logical(host.scale),
+                (0, 0)
+            ),
+            want,
+            "nothing moves it"
+        );
+    }
+
+    #[test]
+    fn a_host_override_moves_the_placement_onto_the_hosts_display() {
+        let want = win(-1636, 268, 440, 620); // dragged off the desk by its parent
+        let parent = win(2344, -54, 1226, 837); // where the parent is now
+        assert!(
+            !on_any_display(want, &mac_desk()),
+            "the rescue only fires for a rectangle with nowhere to go"
         );
 
         let host = host_display(parent, &mac_desk()).expect("a host");
