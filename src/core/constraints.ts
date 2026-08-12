@@ -207,9 +207,10 @@ export function duckerBypassWarnings(model: DeviceModel, plan: Plan): string[] {
 // microSD Rec alone: state the caveat only where acting on it is possible.
 /** The monitor buses, in order — the only nodes carrying the device's [MONO]
  *  switch. The single home for these two ids: the console, the inspector and the
- *  MIDI catalog all used to spell them out again. Exported as the list rather
- *  than only as a predicate because a caller that has no plan — the inspector's
- *  repaint footprint — has to name every bus that could feed what it is showing. */
+ *  MIDI catalog each used to spell them out again. Exported rather than kept
+ *  private because the order is the y index the device addresses them by, so a
+ *  caller that needs "monitor 0 / monitor 1" reads it here instead of restating
+ *  the pair; `isMonitorBus` below is the membership question. */
 export const MONITOR_BUS_IDS = ["bus.mon1", "bus.mon2"] as const;
 const MONITOR_BUSES = new Set<string>(MONITOR_BUS_IDS);
 

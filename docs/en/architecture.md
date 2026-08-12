@@ -2569,17 +2569,23 @@ identical on every model's page:
 - **CUE Interrupt reaches the analog connectors too**, being upstream of both taps — **while it is
   on**, which is how it ships. With a MONITOR patched to MAIN OUT and the interrupt left on, engaging
   CUE anywhere replaces what the speakers carry. The patch wire's note says exactly that, conditional
-  clause included: it is a statement on the same footing as the MONO row rather than a warning, and
+  clause included: a statement on the same footing as the MONO row below rather than a warning, and
   unlike that row it does **not** read the switch — `sendlessNote` classifies a wire without the plan,
   by design, so the note states the mechanism rather than the current state.
 
 What the figure does **not** give is the MONO block's gain law, and that was measured on the unit
-(URX44V, 2026-08-13): it is a **power sum, (L+R)/√2**. Two states settle it, and one of them alone
-does not — driving STEREO L with a −30 dBFS tone and switching MONO on read **−33.0 on both lanes**,
-which a power sum and an energy sum `√((L²+R²)/2)` both produce; driving **both** lanes in phase read
-**−27.0**, which only the power sum does (an energy sum would not have moved).
+(URX44V, System 1.3.1.0, 2026-08-13, reading `129:0/1` — the monitor's own meter, downstream of MONO
+on the same figure). It is a **power sum, (L+R)/√2**, and it takes two states to say so:
 
-What that means for a mono check, which is the reason anyone reaches for it:
+| oscillator | MONO off | MONO on | delta |
+| --- | --- | --- | --- |
+| STEREO L alone, −30 dBFS | L −30.0, R at the floor | both lanes −33.0 | **−3.0 dB** |
+| both lanes in phase, −30 dBFS each | both −30.0 | both **−27.0** | **+3.0 dB** |
+
+Switching back returned L to −30.0 exactly, so the reading is the switch rather than drift. The first
+row alone does **not** identify the law — an energy sum `√((L²+R²)/2)` produces the same −3.0 there —
+and the second is what separates them, since an energy sum would not have moved. What it rules out on
+the way: a straight `L+R` (0 dB on the first row), an average `(L+R)/2` (−6.0) and a plain copy of L.
 
 | material | when MONO engages |
 | --- | --- |
@@ -2590,6 +2596,36 @@ What that means for a mono check, which is the reason anyone reaches for it:
 So the centre of a mix gets louder relative to its sides, which is the direction that flatters a mono
 fold-down rather than exposing it. No string in the app depends on the law; a person judging mono
 compatibility does.
+
+Nothing in a plan records whether the operator *wants* mono, so this is **stated, not warned about**.
+The inspector gives MAIN / LINE a standing **MONO row** — either the monitor that owns the switch and
+its state, or that this patch has no switch at all, with the routing change that gets one — and the
+patch wire carries the matching note. `outputMono` / `canPatchFromMonitor` in `core/constraints.ts` decide
+it; the wire's wording comes from `sendlessNote` in `ui/send-fields.ts`, which feeds the hover `<title>`
+and the selected-wire hint from **one** classifier, so the two carriers cannot drift apart (its union
+return type also refuses a new case until that case has its own wording). The row shows on an unpatched
+output too — the state a note on a wire can never reach, since there is no wire.
+
+Routing the hover through that classifier **widened it**: the title used to be keyed on the direct-out
+destinations alone, so a channel-sourced **ducker key** carried an explanation when selected and none on
+hover. It now carries the same sentence in both places, which is what the older comment already claimed
+for the taps. That is a behaviour change with no visible tell, so `e2e/directout.spec.ts` pins it by
+reading the panel's hint and comparing the wire's `<title>` against it rather than against a literal.
+
+The row is scoped to MAIN / LINE because they are the only outputs whose lock a routing change can
+remove: a USB output cannot take a MONITOR source at all (`device-model.md` §6), so a standing note
+there would be a lock nothing can unlock — the same reason `duckerBypassWarnings` leaves microSD Rec
+alone.
+
+**There is deliberately no warning card**, which is where this parts company with the Ducker bypass it
+otherwise mirrors. That one fires on a contradiction inside the plan (`duckerOn` true *and* a pre-fader
+tap to a live output). Here there is no contradiction to find: a STEREO patch on MAIN OUT is the factory
+arrangement, so a card keyed on it would fire on nearly every plan, and no tighter predicate exists —
+`mono` being on elsewhere does not imply this output should carry it, since an A/B rig deliberately
+keeps one output stereo while the other is summed, and a monitor bus feeding no analog output at all is
+an ordinary arrangement. The cost of stating rather than warning is that the notice is read only when
+the output or its wire is selected: unlike the Rec Point tap above, there is no always-visible geometry
+that could carry it, because MONO is a state of the path rather than a second route out of the node.
 
 ## Node labels
 

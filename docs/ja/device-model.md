@@ -87,7 +87,7 @@ flowchart LR
 
 接続種別 (`kind`):
 
-- `source` — 受け口は **1 本のみ** (セレクタ)。チャンネルの入力ソース選択、 Bus のソース選択。
+- `source` — 受け口は **1 本のみ** (セレクタ)。チャンネルの入力ソース選択、Bus のソース選択。
 - `patch` — 受け口は **1 本のみ** (出力パッチ / Signal Assign)。
 - `key` — 受け口は **1 本のみ** (Ducker のサイドチェイントリガ選択)。`source` と同じセレクタだが、
   モノペアのソースミラーリングを持たないため独立した種別とする (後述 §10)。
@@ -96,7 +96,7 @@ flowchart LR
 - `sendSwitch` — 受け口は **複数可** だが **ON/OFF のみ** (個別のレベル/パンを持たない Send)。MIX→STEREO の「TO ST」Send。
 
 > `source` / `patch` / `key` の受け口は選択ワイヤを 2 本受け付けない (ソースは 1 本のみ)。
-> `key` のワイヤはキャン Bus 上で `source` と同じ青のセレクタ色で描画される。
+> `key` のワイヤはキャンバス 上で `source` と同じ青のセレクタ色で描画される。
 
 ### 1. チャンネル入力ソース (`source`, 受け口 1 本)
 
@@ -200,7 +200,7 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
   - STEREO マスターと各 MIX Bus は**マスター BALANCE** も持つ — Bus 出力の L/R バランス (±63・中央 0。STEREO
     は param 583、MIX は 676 で Bus ごとに L/R instance 連動)。編集はグラフのインスペクタ (フェーダーの下) と
     CONSOLE の master / MIX ストリップ (`BAL` ノブ)。**Pan Link を ON にしても実機は BALANCE ラベルのまま**:
-    Pan Link は各 *Send* の pan をソースチャンネルに追従させるもので、 Bus 出力バランスとは独立。
+    Pan Link は各 *Send* の pan をソースチャンネルに追従させるもので、Bus 出力バランスとは独立。
 - OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`sendSwitch`、加算 Send ではなく ON/OFF
   アサイン。オシレーターは単一のグローバルレベルを持つ。ステレオ宛先はワイヤに独立 L/R
   (`oscL` / `oscR`) を保持し、FX Bus はモノ)
@@ -282,8 +282,8 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
 
 - Ducker 1–4 Source ← CH 1–N OUT / STEREO OUT / MIX 1 OUT / MIX 2 OUT (サイドチェーンのトリガ選択)
 - **チャンネルをキーにした場合、キーはそのチャンネルの CH OUT — ダイレクト出力と同じ Rec Point タップで、
-  フェーダー・ Ducker より前段** — なので、キー元チャンネルのフェーダー・ミュートはトリガーに影響しない。
- Bus キー (STEREO / MIX) はその Bus の OUT、すなわち**出力 insert FX の後**。ブロックダイアグラムは
+  フェーダー・Ducker より前段** — なので、キー元チャンネルのフェーダー・ミュートはトリガーに影響しない。
+  Bus キー (STEREO / MIX) はその Bus の OUT、すなわち**出力 insert FX の後**。ブロックダイアグラムは
   `STEREO OUT` / `MIX 1 OUT` / `MIX 2 OUT` のラベルを `INS FX` ブロックの外側に置いており、
   `DUCKER 1-4 SOURCE` ブロックはその名前を入力に取る。チャンネルをキーにしたワイヤ選択時にインスペクタが注記する。
 - **ステレオのキーは検出前に MONO へ加算される — 平均でも大きい側の採用でもなく、和。**
@@ -292,10 +292,10 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   したがって ducker がしきい値と比べる値は、相関のある素材では**片チャンネル単体より 6 dB 上**、
   無相関では 3 dB 上に来る — センターに定位した音は、同じ音をハードパンしたときには掛からない
   ducker を掛ける。MONO IN チャンネルだけがこのブロックを素通りする。
-- 各 Ducker は 1 つのステレオチャンネルに搭載されるため、 Ducker 1–4 は機種のステレオペアに順番に対応する: URX22 = CH 3/4・5/6・7/8・9/10、URX44 / URX44V = CH 5/6・7/8・9/10・11/12。盤面のノードラベルは単に `Ducker` とし、搭載先ペアは副題 (`CH 5/6 · Source`) に表示する。1–4 の序数はブロックダイアグラム上の列挙であり、ぶら下げ位置で搭載先 CH が分かるためノードには重ねて表示しない。
-- 表示上、 Ducker は独立した出力ではなく搭載先チャンネルに属するため、専用種別 `ducker` のノードとして対応ステレオチャンネルの真下にぶら下げて描く (配置・移動・非表示の挙動は [architecture.md](architecture.md) 参照)。
+- 各 Ducker は 1 つのステレオチャンネルに搭載されるため、Ducker 1–4 は機種のステレオペアに順番に対応する: URX22 = CH 3/4・5/6・7/8・9/10、URX44 / URX44V = CH 5/6・7/8・9/10・11/12。盤面のノードラベルは単に `Ducker` とし、搭載先ペアは副題 (`CH 5/6 · Source`) に表示する。1–4 の序数はブロックダイアグラム上の列挙であり、ぶら下げ位置で搭載先 CH が分かるためノードには重ねて表示しない。
+- 表示上、Ducker は独立した出力ではなく搭載先チャンネルに属するため、専用種別 `ducker` のノードとして対応ステレオチャンネルの真下にぶら下げて描く (配置・移動・非表示の挙動は [architecture.md](architecture.md) 参照)。
 - Ducker の ON/OFF (`duckerOn`、工場出荷は OFF) がオフのときは、ミュートしたチャンネルと同じくノードを減光し `OFF` タグを付ける (バイパスを示す。ミュートではないため `MUTE` ではなく `OFF`)。
-- Ducker はチャンネル主経路の **フェーダー後段** にあるため、STEREO 主経路と POST 送りはダック対象だが、**PRE (pre-fader) 送りはその手前でタップするためダックされない**。 Ducker ON のチャンネルに PRE 送りがある場合、インスペクタが固定接続の注記の隣にその旨を表示する (盤面には表示せず情報過多を避ける)。
+- Ducker はチャンネル主経路の **フェーダー後段** にあるため、STEREO 主経路と POST 送りはダック対象だが、**PRE (pre-fader) 送りはその手前でタップするためダックされない**。Ducker ON のチャンネルに PRE 送りがある場合、インスペクタが固定接続の注記の隣にその旨を表示する (盤面には表示せず情報過多を避ける)。
 
 ## 固定 (結線不可) の要素
 
@@ -306,12 +306,12 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   SSMCS モードでは選択肢から PRE EQ が外れ (モーフィング処理に独立した EQ 段がないため)、
   PRE EQ 選択中に SSMCS へ切り替えるとタップは PRE COMP へ移る (実機挙動。プランナーも同じ動作)。
   - **USB MAIN / SUB・microSD Rec へのチャンネルダイレクトアウトはこの Rec Point でタップする**
-    (= フェーダー・ Ducker より前段)。フェーダー / Ducker を通した信号をこれらの出力へ送るには
+    (= フェーダー・Ducker より前段)。フェーダー / Ducker を通した信号をこれらの出力へ送るには
     STEREO / MIX Bus を経由する必要がある (Bus は Ducker 後段)。プランナーはこれを注記で示す
     (`core/routing.ts` の `directOutTarget`): チャンネル → USB/SD のダイレクトアウト結線には
     Rec Point タップである旨を表示し、**Ducker が ON のチャンネルが USB ダイレクトアウトへ結線されて
     いる場合はインスペクタ上部に警告**を出す (`duckerBypassWarnings`)。microSD Rec はドライ収録が正当な
-    ため警告対象外で、Rec Point で段を選べる旨の中立な注記に留める。キャン Bus 上、これらの経路は右端の
+    ため警告対象外で、Rec Point で段を選べる旨の中立な注記に留める。キャンバス 上、これらの経路は右端の
     出力ではなく**チャンネル上辺の専用 Rec Point タップジャック**から出るため、迂回が図からも読み取れる。
     詳細は `architecture.md` の「Rec Point タップジャック」節を参照。
 - MONO IN は **COMP/EQ Type** (CH SETTING) で COMP→EQ と **SSMCS** (Sweet Spot Morphing Channel Strip)

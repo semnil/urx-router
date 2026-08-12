@@ -51,7 +51,7 @@ STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップ�
 
 - 列順は固定: FX 1, FX 2, MIX 1, MIX 2 (旧タブ順)。
 - 機種ごとのスロット集合 = `SEND_TARGETS` のうち Bus が機種に存在し、かつ非表示でないもの。
- Bus を棚上げ (hidden) すると**全ストリップ**からその列が落ちる (旧タブと同じ規則)。
+  Bus を棚上げ (hidden) すると**全ストリップ**からその列が落ちる (旧タブと同じ規則)。
   列位置は常に全ストリップで揃う。
 - その send を持たないストリップは該当列を空欄にする (例: FX チャンネルは MIX 1 / MIX 2 のみ)。
   send を全く持たないストリップ (MIX / MONITOR / STEREO / OSCILLATOR / STREAMING) は
