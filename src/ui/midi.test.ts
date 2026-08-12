@@ -252,15 +252,17 @@ describe("MidiControl", () => {
   });
 
   // The bound-control memo is the one holder of a plan reference here — every other
-  // view resolves through getPlan() per use — and one path replaces the document
-  // without going through loadPlan: a cancelled Fetch restores its pre-read clone
-  // (main.ts), so onModelChanged never runs for it. If the memo did not notice, the
+  // view resolves through getPlan() per use. If it did not notice a replacement, the
   // controller would go on writing into a document nothing is showing: the fader on
   // screen would sit still while the unit moved.
   //
-  // `e2e/race/t3b-undo.spec.ts` skips its variant of this because driving it needs
-  // the learn helpers that live in t4-midi.spec.ts; this is the same subject asked of
-  // the memo directly, and it runs on every pull request.
+  // ⚠️ This pins a BACKSTOP, not a live path. The replacement it was written for — a
+  // cancelled Fetch restoring a pre-read clone outside loadPlan — no longer happens
+  // (main.ts: the read runs against a private copy and the module plan object is never
+  // replaced), and loadPlan, the one replacement left, announces itself. So this case
+  // passing says the memo would survive a future silent replacement; it does not say
+  // one exists. `e2e/race/t3b-undo.spec.ts`'s variant is titled after the path that is
+  // gone, which is why the ledger does not name this as its guard.
   const levelOf = (p: { connections: Array<{ from: string; to: string; params?: { level?: number } }> }): number =>
     p.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!.params!.level!;
 

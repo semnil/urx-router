@@ -46,3 +46,16 @@ export type LoadProblem = PlanProblem | InsertFxSlotProblem;
 export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
   return [...validatePlan(model, plan), ...insertFxSlotProblems(model, plan)];
 }
+
+/** Which side of that split a problem falls on: true refuses the document, false warns
+ *  and offers to open it anyway. One seat, because the rule was written out three times
+ *  — the loader, the report's caller and a test — and moving a reason between the sides
+ *  in one of them would leave the others agreeing with the old split. */
+export function isRefusal(problem: LoadProblem): boolean {
+  return problem.reason !== "insertFxSlot";
+}
+
+/** The refusing half of `planProblems`, for a caller that only wants that side. */
+export function refusals(model: DeviceModel, plan: Plan): LoadProblem[] {
+  return planProblems(model, plan).filter(isRefusal);
+}

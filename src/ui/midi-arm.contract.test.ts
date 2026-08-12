@@ -33,8 +33,6 @@ import { DynScreen } from "./dyn-screen";
 import { DYN_PROCESSORS } from "./dyn-registry";
 import type { DynCtx } from "./dyn-screen";
 import { bindControl } from "../core/midi/controls";
-import { getModel } from "../models";
-import { defaultPlan } from "../models/initial-state";
 import { setLang, t } from "../i18n";
 
 /** Learn is on, nothing is armed or mapped: every armable control marks itself. */
@@ -48,7 +46,11 @@ const learnHooks = (armed: string[]) => ({
 
 /** Press every control the surface marked as armable. Returns how many it marked and
  *  the distinct ids they armed — the count separately, because a surface that marks
- *  nothing arms nothing, and the two mean opposite things. */
+ *  nothing arms nothing, and the two mean opposite things.
+ *
+ *  Marking and arming are separate calls at every site (`markMidi` and `armOnActivate`
+ *  or the view's own handler), so a control can carry the ring and reach nothing. The
+ *  callers below compare the two counts, which is the only way that shows. */
 function armEverything(root: HTMLElement, armed: string[]): { marked: number; ids: string[] } {
   const targets = root.querySelectorAll<HTMLElement>(".midi-target");
   for (const el of targets) {
@@ -80,9 +82,33 @@ describe("arming surfaces against the control catalog", () => {
   it.each(["URX22", "URX44", "URX44V"] as const)("CONSOLE arms only bindable ids on %s", (modelId) => {
     const armed: string[] = [];
     ch = consoleHost({ modelId, midi: learnHooks(armed) });
-    const { marked, ids } = armEverything(ch.host, armed);
+    let marked = 0;
+    const first = armEverything(ch.host, armed);
+    marked += first.marked;
+
+    // The SEND PAN knobs exist only while their popover is open, and the view keeps one
+    // open at a time — so each button is opened in turn and its own knobs pressed. They
+    // are the case with two independent statements of the same rule (the popover asks
+    // `isMixBus && hasSend`, the catalog lists mix1/mix2), which is exactly where a
+    // drift shows up as a ring that arms nothing.
+    const openers = [...ch.host.querySelectorAll<HTMLElement>(".con-panbtn")];
+    expect(openers.length).toBeGreaterThan(0);
+    for (const btn of openers) {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      const pop = ch.host.querySelector<HTMLElement>(".con-spop");
+      if (!pop) continue;
+      marked += armEverything(pop, armed).marked;
+    }
+
+    const ids = [...new Set(armed)];
+    // …and the popovers really contributed. Without this the loop above can quietly
+    // find no popover and the case reverts to the initial-DOM scan it replaced.
+    expect(marked).toBeGreaterThan(first.marked);
     expect(marked).toBeGreaterThan(0);
     expect(ids.length).toBeGreaterThan(0);
+    // Every marked control armed something: marking and arming are separate calls, and
+    // a ring on a control that arms nothing is the defect this file exists for.
+    expect(ids.length).toBe(marked);
     expect(ids.filter((id) => !bindControl(ch!.model, ch!.plan, id))).toEqual([]);
   });
 
@@ -101,8 +127,11 @@ describe("arming surfaces against the control catalog", () => {
       const armed: string[] = [];
       dh = dynHost({ midi: learnHooks(armed), plotSize: { w: 300, h: 120 } });
       const proc = DYN_PROCESSORS[kind];
-      const model = getModel("URX44V");
-      const ctxAt = (nodeId: string): DynCtx => ({ model, plan: defaultPlan("URX44V"), nodeId, sel: 0, m: t() });
+      // The host's own model and plan, not a fresh pair: `bind` is asked of one document
+      // and the assertion made against another otherwise, and they would drift silently
+      // the day a case passes `opts.plan`. (It also stopped ~88 throwaway clones.)
+      const { model, plan } = dh;
+      const ctxAt = (nodeId: string): DynCtx => ({ model, plan, nodeId, sel: 0, m: t() });
       const nodeId = model.nodes.map((n) => n.id).find((id) => proc.bind(ctxAt(id)) !== null);
       expect(nodeId, `${kind} binds no node of URX44V`).toBeTruthy();
 
@@ -113,7 +142,7 @@ describe("arming surfaces against the control catalog", () => {
       if (proc.controlId) {
         expect(marked).toBeGreaterThan(0);
         expect(ids.length).toBeGreaterThan(0);
-        expect(ids.filter((id) => !bindControl(model, dh!.plan, id))).toEqual([]);
+        expect(ids.filter((id) => !bindControl(model, plan, id))).toEqual([]);
       } else {
         expect(marked).toBe(0);
         expect(ids).toEqual([]);

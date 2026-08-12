@@ -1313,7 +1313,10 @@ fixed or withdrawn.
   eliminated, and `addInitScript` can only patch globals — it cannot reach `main.ts`'s module scope.
   The `VITE_TRACE=1` build is the answer to that constraint
 - The genuinely available observables are the DOM, the status line, `localStorage` and the IPC the
-  fake sees. Among those, the edit-menu state push is the only machine-readable undo-depth signal
+  fake sees. Among those, the edit-menu state push is the only machine-readable undo-depth signal —
+  and it reports an OPEN, uncommitted entry as depth, which is not the same question (measured
+  2026-08-13, where a guard written against it passed with the reset deleted). The `VITE_TRACE` build
+  answers the committed one: `trace-probe.ts` exposes `depth()` already
 - The epoch guard is enforced in Rust, so a JavaScript fake implementing it would only test the fake.
   Assert the epoch argument passed to disconnect, nothing more
 - The macOS native menu itself, real drag-and-drop path resolution and the OS-refusal semantics of the

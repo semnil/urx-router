@@ -252,10 +252,17 @@ export class MidiControl {
    *  over the plan object it was bound against and reads it lazily, so in-place
    *  edits stay live — but a REPLACEMENT of that object leaves the whole cache
    *  reading and writing a plan nothing else references. Identity, not the model,
-   *  is what makes it stale: a cancelled Fetch restores its pre-read clone
-   *  outside loadPlan (main.ts), so onModelChanged never runs for it. Every other
-   *  view resolves through getPlan() per use; this memo is the one holder. Only
-   *  hits are cached, so a send wired up later still binds on demand. */
+   *  is what makes it stale.
+   *
+   *  It was written for a cancelled Fetch, which used to restore a pre-read clone
+   *  outside loadPlan so onModelChanged never ran for it. That path is gone — the
+   *  read now runs against a private copy and the module plan object is never
+   *  replaced (main.ts) — and the one replacement left, loadPlan, does announce.
+   *  So this is a backstop with no producer today, kept because it is one
+   *  comparison and the failure it catches is silent: every binding keeps reading a
+   *  document nothing shows. Every other view resolves through getPlan() per use;
+   *  this memo is the one holder. Only hits are cached, so a send wired up later
+   *  still binds on demand. */
   private resolve(id: string): BoundControl | null {
     const plan = this.hooks.getPlan();
     if (plan !== this.boundPlan) {

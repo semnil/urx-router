@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { insertFxSlotProblems, planProblems } from "./plan-validate";
+import { insertFxSlotProblems, planProblems, refusals } from "./plan-validate";
 import { validatePlan } from "./routing";
 import { emptyPlan } from "./plan";
 import { getModel } from "../models";
@@ -99,15 +99,14 @@ describe("insertFxSlotProblems", () => {
 // reason true).
 describe("planProblems", () => {
   const u44v = getModel("URX44V");
-  const refusals = (plan: ReturnType<typeof emptyPlan>) =>
-    planProblems(u44v, plan).filter((p) => p.reason !== "insertFxSlot");
+  const refused = (plan: ReturnType<typeof emptyPlan>) => refusals(u44v, plan);
 
   it("refuses a wire whose source resolves to no rule at all", () => {
     const plan = emptyPlan("URX44V");
     const from = ref("nope", "out");
     const to = ref("ch1", "in");
     plan.connections.push({ from, to, kind: "source" });
-    expect(refusals(plan)).toEqual([{ from, to, reason: "noRule" }]);
+    expect(refused(plan)).toEqual([{ from, to, reason: "noRule" }]);
   });
 
   it("keeps a slot collision on the warning side, with no refusal to hide behind", () => {
@@ -115,7 +114,7 @@ describe("planProblems", () => {
     const [options] = [...INPUT_SLOTS.values()];
     plan.nodeParams["ch1"] = { insertFx: options[0].value };
     plan.nodeParams["ch3"] = { insertFx: options[0].value };
-    expect(refusals(plan)).toEqual([]);
+    expect(refused(plan)).toEqual([]);
     expect(planProblems(u44v, plan).map((p) => p.reason)).toEqual(["insertFxSlot"]);
   });
 });

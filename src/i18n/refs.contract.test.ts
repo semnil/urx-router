@@ -26,14 +26,24 @@
 // by key, so their members cannot be named from the text. Inside those, this check
 // is asleep and the inventory spec is the only guard.
 //
+// One reference form is NOT recognised and would be reported as unreferenced:
+// destructuring (`const { title } = t().ns`). No leaf is reached only that way today —
+// the house idiom binds the namespace and keeps the dots — so the check passes, but a
+// first such use fails here rather than silently. Adding it means following bindings,
+// which is a parser rather than a scan.
+//
 // Tests are excluded from the scan on purpose: a key referenced only by a test is
 // dead in the application, which is exactly what this is here to find.
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { en } from "./en";
 
-const SRC = new URL("..", import.meta.url).pathname;
+// From the repo root, the way main.test-util.ts reads index.html. NOT
+// `new URL(..).pathname`: that is a URL path, so a Windows checkout resolves
+// `/G:/…` against the current drive and a directory with a space in it arrives
+// percent-encoded. Either way readdirSync throws, and only off-Ubuntu.
+const SRC = resolve(process.cwd(), "src");
 
 /** Every `.ts` under src/, minus the catalogs themselves and the test layer. */
 function sources(dir: string, out: string[] = []): string[] {
@@ -67,11 +77,12 @@ function unreferenced(catalog: unknown, text: string): string[] {
   for (const [, name] of text.matchAll(/\[\s*["'`]([^"'`]+)["'`]\s*\]/g)) named.add(name);
   const wholesale = new Set<string>();
   // `.foo[` — a member chosen at runtime.
-  for (const [, name] of text.matchAll(/\.([A-Za-z_$][\w$]*)\s*\[/g)) wholesale.add(name);
+  for (const [, name] of text.matchAll(/\.([A-Za-z_$][\w$]*)\s*\??\s*\[/g)) wholesale.add(name);
   // `...x.foo` — the namespace itself is taken away, to be indexed out of reach of
-  // this scan. `(?![\w$(])` keeps `...list.filter(…)` from vouching for a namespace
-  // that happens to share a name with an array method; `filter` is one.
-  for (const [, name] of text.matchAll(/\.\.\.\s*[\w$]+(?:\.[\w$]+)*\.([\w$]+)\s*(?![\w$(])/g)) wholesale.add(name);
+  // this scan. The lookahead keeps a CALL from vouching for a namespace that shares its
+  // name: `...list.filter(…)` for the method, and `<` for the generic form
+  // (`...el.querySelectorAll<T>(…)`), which is why `<` is in there.
+  for (const [, name] of text.matchAll(/\.\.\.\s*[\w$]+(?:\.[\w$]+)*\.([\w$]+)\s*(?![\w$(<])/g)) wholesale.add(name);
 
   return leaves(catalog)
     .filter((path) => !path.slice(0, -1).some((seg) => wholesale.has(seg)) && !named.has(path[path.length - 1]))

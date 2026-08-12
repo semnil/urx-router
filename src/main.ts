@@ -20,7 +20,7 @@ import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
 import { clonePlanState, diffPlans, PlanWriteWitness, type PatchTouch } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
-import { planProblems } from "./core/plan-validate";
+import { isRefusal, planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
 import {
   baseName,
@@ -1574,9 +1574,9 @@ function loadFromText(text: string, path?: string): boolean | null {
     // Fetch → Save → reopen impossible for its own document. That one warns and
     // offers to open anyway.
     const problems = planProblems(getModel(next.modelId), next);
-    const refusals = problems.filter((p) => p.reason !== "insertFxSlot");
-    if (refusals.length > 0) {
-      showLoadReport(buildPlanReport(next.modelId, refusals, true));
+    const refused = problems.filter(isRefusal);
+    if (refused.length > 0) {
+      showLoadReport(buildPlanReport(next.modelId, refused, true));
       return false;
     }
     const finishLoad = (): boolean => {
