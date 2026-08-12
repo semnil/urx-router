@@ -548,7 +548,7 @@ export const en = {
     driven: tr("Device-driven"),
     gate: {
       title: dev("Gate"),
-      open: tr("Gate screen…"),
+      open: tr("Gate screen"),
       tapIn: dev("Pre Gate"),
       tapGr: dev("Gate GR"),
       tapOut: dev("Pre Comp"),
@@ -556,7 +556,7 @@ export const en = {
     },
     comp: {
       title: dev("Comp"),
-      open: tr("Comp screen…"),
+      open: tr("Comp screen"),
       tapIn: dev("Pre Comp"),
       tapGr: dev("Comp GR"),
       tapOut: dev("Pre EQ"),
@@ -564,7 +564,7 @@ export const en = {
     },
     eq: {
       title: dev("EQ"),
-      open: tr("EQ screen…"),
+      open: tr("EQ screen"),
       band: dev("Band"),
       unusedByType: tr("Unused by this type"),
       fixedBand: tr("Fixed on this band"),
@@ -575,7 +575,7 @@ export const en = {
     },
     ducker: {
       title: dev("Ducker"),
-      open: tr("Ducker screen…"),
+      open: tr("Ducker screen"),
       tapKey: (label: string): string => `Key · ${label}`,
       noKey: tr("Key · none"),
       tapIn: dev("Pre Ducker"),

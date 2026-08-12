@@ -444,8 +444,15 @@ per address, so a batch carrying more than one frame for an address keeps only t
 
 | Where | Control |
 | --- | --- |
-| GRAPH inspector, GATE / COMP / EQ section | A full-width button below the ON/OFF toggle |
-| CONSOLE strip | A narrow chip beside each processor chip the strip has |
+| GRAPH inspector, GATE / COMP / EQ section | A full-width button below the ON/OFF toggle, its label centred and a caret at the trailing edge |
+| CONSOLE strip | A narrow chip beside each processor chip the strip has, labelled `▸` |
+
+Both marks point right and both say the same thing, but they are drawn differently on purpose: each
+belongs to the family of the surface it sits on. The inspector's is built exactly like the section
+header's own disclosure chevron two rows above it — two adjacent borders rather than a glyph — and
+measured against that chevron it paints 174 painted pixels to its 180, so the two read as one mark at
+one weight. The CONSOLE chip is a glyph because its neighbours are glyphs. Matching the two to each
+other would break whichever panel it was matched into.
 
 All three sections are reduced to their ON toggle plus the launcher. A second copy of the sliders in the
 inspector is not just duplication: `dynFieldSlider` reads the params snapshot captured at render

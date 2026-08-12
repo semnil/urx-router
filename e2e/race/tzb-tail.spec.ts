@@ -715,7 +715,7 @@ test.describe("Tzb tail", () => {
     await setLatency(page, { get: 20, set: 25 });
 
     const openComp = async (): Promise<void> => {
-      await strip(page, "CH 1").locator('[aria-label="Comp screen…"]').click();
+      await strip(page, "CH 1").locator('[aria-label="Comp screen"]').click();
       await expect(page.locator("#dyn-screen-box")).toBeVisible();
     };
     /** Press and release the Close action as a pointer gesture, holding for `holdMs`.
@@ -1030,7 +1030,7 @@ test.describe("Tzb tail", () => {
 
       // The other two consumers of session-scoped state: the modal that borrows the
       // meter slot, and the view switch that rebuilds both surfaces.
-      await strip(page, "CH 1").locator('[aria-label="Gate screen…"]').click();
+      await strip(page, "CH 1").locator('[aria-label="Gate screen"]').click();
       await expect(page.locator("#dyn-screen-box")).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(page.locator("#dyn-screen-box")).toBeHidden();

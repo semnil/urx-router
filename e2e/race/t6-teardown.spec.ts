@@ -503,7 +503,7 @@ test.describe("T6 teardown", () => {
   test("a session started with a tuning screen open leaves the meter slot with the screen", async ({ page }) => {
     await page.click("#btn-view-console");
     await expect(faderReadout(page, "CH 1")).toBeVisible();
-    await strip(page, "CH 1").locator('[aria-label="Comp screen…"]').click();
+    await strip(page, "CH 1").locator('[aria-label="Comp screen"]').click();
     await expect(page.locator("#dyn-screen-box")).toBeVisible();
 
     // Not goLive(): the screen is modal and its scrim intercepts pointer events for
