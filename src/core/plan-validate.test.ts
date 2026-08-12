@@ -3,6 +3,7 @@ import { insertFxSlotProblems, planProblems } from "./plan-validate";
 import { validatePlan } from "./routing";
 import { emptyPlan } from "./plan";
 import { getModel } from "../models";
+import { ref } from "../models/types";
 import {
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
@@ -85,5 +86,36 @@ describe("insertFxSlotProblems", () => {
     plan.nodeParams["ch2"] = { insertFx: INSERT_FX_NONE };
     plan.nodeParams["ch3"] = {};
     expect(insertFxSlotProblems(u44v, plan)).toEqual([]);
+  });
+});
+
+// The two classes the loader splits on, asked of the composed function the loader
+// actually calls. `routing.test.ts` pins that validatePlan finds a ruleless wire;
+// what is here is that the finding survives composition with the slot census and
+// lands on the refusing side of the split — which is what makes a wire pointing at
+// something the model cannot resolve unreachable rather than a hole in an adopted
+// plan (`e2e/race/t2b-shape-change.spec.ts` skips its silent-hole case for exactly
+// this reason, and `e2e/race/skip-ledger.json` names this test as what keeps that
+// reason true).
+describe("planProblems", () => {
+  const u44v = getModel("URX44V");
+  const refusals = (plan: ReturnType<typeof emptyPlan>) =>
+    planProblems(u44v, plan).filter((p) => p.reason !== "insertFxSlot");
+
+  it("refuses a wire whose source resolves to no rule at all", () => {
+    const plan = emptyPlan("URX44V");
+    const from = ref("nope", "out");
+    const to = ref("ch1", "in");
+    plan.connections.push({ from, to, kind: "source" });
+    expect(refusals(plan)).toEqual([{ from, to, reason: "noRule" }]);
+  });
+
+  it("keeps a slot collision on the warning side, with no refusal to hide behind", () => {
+    const plan = emptyPlan("URX44V");
+    const [options] = [...INPUT_SLOTS.values()];
+    plan.nodeParams["ch1"] = { insertFx: options[0].value };
+    plan.nodeParams["ch3"] = { insertFx: options[0].value };
+    expect(refusals(plan)).toEqual([]);
+    expect(planProblems(u44v, plan).map((p) => p.reason)).toEqual(["insertFxSlot"]);
   });
 });

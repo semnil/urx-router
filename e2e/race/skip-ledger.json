@@ -31,7 +31,10 @@
     {
       "file": "e2e/race/t2b-shape-change.spec.ts",
       "title": "T2b shape-change > an unresolvable wire source produces a silent hole",
-      "unguarded": "The reason is that validatePlan rejects a wire with no matching routing rule before the plan is adopted, and no test asserts that: the load-side tests cover slot contention and the seeded-wire bijection, not a ruleless wire. A case in src/core/plan-validate.test.ts feeding a hand-built plan whose wire matches no rule, and asserting it is reported rather than adopted, would turn this into a guardedBy."
+      "guardedBy": {
+        "file": "src/core/plan-validate.test.ts",
+        "title": "planProblems > refuses a wire whose source resolves to no rule at all"
+      }
     },
     {
       "file": "e2e/race/t3b-undo.spec.ts",
@@ -56,7 +59,7 @@
     {
       "file": "e2e/race/t4b-midi.spec.ts",
       "title": "T4b midi > arming an id the catalog cannot bind is refused silently",
-      "unguarded": "The reason says 'unreachable from the UI in this build', which dates itself: it holds only while the control catalogue offers no id that arm() cannot bind. What would settle it: an assertion that every id the MIDI window can arm is one the catalogue binds — src/core/midi/controls.ts against the window's own list — which would make this a guardedBy."
+      "unguarded": "The reason says 'unreachable from the UI in this build', which dates itself: it holds only while every id an arming surface passes is one the catalogue binds. Half of that is now pinned — 'control catalog > binds every id it lists for %s' in src/core/midi/controls.test.ts fails if the catalogue offers an id it then declines, on all three models. The other half is not: the arming surfaces build their own ids (console.ts computes them, dyn-screen.ts asks the processor's controlId hook) rather than reading listControls, so an id that reaches arm() from neither the catalogue nor a plan it describes is still possible. What would settle it: driving the CONSOLE and each tuning screen through their test-utils with a learn hook that records every arm() id, and binding each — after which this becomes a guardedBy naming that test."
     },
     {
       "file": "e2e/race/t4b-midi.spec.ts",
