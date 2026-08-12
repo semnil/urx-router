@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, token, type Page } from "./fixtures";
 import { stubTauriBoot } from "./tauri-stub";
 import { drag, port } from "./graph-helpers";
 
@@ -209,6 +209,10 @@ test.describe("toolbar", () => {
         };
       });
     expect(await face("rate-picker")).toEqual(await face("model-picker"));
+    // The equality alone would also hold if the recipe vanished and BOTH fell back to
+    // the UA's menulist, so one value is anchored: the face is the theme's control
+    // ground, resolved on the page rather than spelled out as a literal.
+    expect((await face("model-picker")).backgroundColor).toBe(await token(page, "--ctl-bg"));
   });
 
   // The Device menu only shows under the Tauri shell; stub the bridge so its

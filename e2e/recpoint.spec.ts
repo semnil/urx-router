@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, token, type Page } from "./fixtures";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const recSelect = (page: Page) => page.locator("#inspector .param", { hasText: "Rec Point" }).locator("select");
@@ -73,6 +73,10 @@ test("a parameter select wears the app's own select face and fills its row", asy
         };
       });
   expect(await face("#inspector select")).toEqual(await face("select#model-picker"));
+  // The equality alone would also hold if the recipe vanished and BOTH fell back to
+  // the UA's menulist, so one value is anchored: the face is the theme's control
+  // ground, resolved on the page rather than spelled out as a literal.
+  expect((await face("#inspector select")).backgroundColor).toBe(await token(page, "--ctl-bg"));
 
   // Width is the panel's own, not the recipe's: the model picker hugs its content in
   // the toolbar, while a parameter row's control fills the row. Asked of the row

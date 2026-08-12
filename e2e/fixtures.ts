@@ -66,5 +66,19 @@ async function collectOpenPages(
   return readings;
 }
 
+/** A theme token as the engine resolves it. A face pin that compares two controls to
+ *  each other still passes when the recipe vanishes and both fall back to the UA's,
+ *  so such a pin needs one anchored value — and the anchor has to be a token rather
+ *  than a literal, or it is rewritten every time the palette moves. */
+export const token = (page: Page, name: string): Promise<string> =>
+  page.evaluate((n) => {
+    const probe = document.createElement("span");
+    probe.style.backgroundColor = `var(${n})`;
+    document.body.append(probe);
+    const v = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return v;
+  }, name);
+
 export { expect };
 export type { Locator, Page } from "@playwright/test";

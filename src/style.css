@@ -203,8 +203,13 @@ body {
   height: 56px;
   padding: 0 16px;
   flex-shrink: 0;
-  /* Buttons never wrap (white-space: nowrap); below ~1015px the rack scrolls
-     horizontally instead so controls stay reachable at the min window width. */
+  /* Buttons never wrap (white-space: nowrap); the rack scrolls horizontally instead,
+     so controls stay reachable at the min window width. No breakpoint is named here
+     on purpose: the width at which it starts to scroll is its intrinsic width, and
+     that moves with the engine, the language and the build. Measured in the browser
+     build: 853-886px across WebKit/Chromium x EN/JA; the desktop build adds the
+     FOLLOW USB badge and the Device menu on top. A single figure stood here for a
+     long time and was ~150px out. */
   overflow-x: auto;
   background: var(--bar);
   border-bottom: 1px solid var(--line);
@@ -255,10 +260,13 @@ body {
 
    The rate picker sits in the second .model-select of the same rack, one control
    away from the model picker, and was missed for as long because this list names
-   that one BY ID. It read as a different product: measured at 11px system-ui on
-   #1e1e1e in WebKit and at 13.3px Arial on #3b3b3b with square corners in
-   Chromium, in both themes. Anything added to the rack from here on is a
-   selector in this list, not an id beside it. */
+   that one BY ID. It read as a different product: 11px system-ui in WebKit, 13.3px
+   Arial with square corners in Chromium, in both themes. The face it was painted
+   with is not the face it computed — WebKit reported background-color
+   rgb(30,30,30) while painting #2f2f2f (light: white against #ebebeb), because the
+   UA draws a menulist with its own appearance; Chromium's rgb(59,59,59) and its
+   pixel agree. Anything added to the rack from here on is a selector in this list,
+   not an id beside it. */
 select#model-picker,
 select#rate-picker,
 .prefs-select,
@@ -274,19 +282,27 @@ select#rate-picker,
   cursor: pointer;
 }
 
-/* Locked while a live session holds the device (main.ts, syncDeviceActionUi). The
-   dim is lighter than the read-only vocabulary elsewhere (--row-lock-dim, 0.45) on
-   purpose: while live this control is the only surface naming the unit on the wire,
-   so it has to stay at least as readable as the label beside it. Measured against
-   that label's own contrast on the same strip (9.0:1 dark / 4.8:1 light), the value
-   text lands at 3.9 / 2.6 with 0.45 and at 7.9 / 5.1 with 0.7.
-   The rule is not optional decoration: WebKit applies NO disabled styling of its own
-   here, because the recipe above sets colour and background explicitly. Measured with
-   both states shot in one page, the locked and unlocked pickers came out byte-identical
-   there while Chromium dimmed its own way, so without this the lock is invisible.
-   The rate picker locks with it (main.ts, syncDeviceActionUi) and joined the recipe at
-   the same time, so it needs the same rule for the same reason — it had been getting
-   the UA's own dim, which the recipe has now taken away. */
+/* The two pickers lock on DIFFERENT conditions, and main.ts carries both: the rate
+   picker for any held link (a single write, a read, Compare, a .urxf import), the
+   model picker for a live SESSION alone, since a switch replaces the plan wholesale
+   and a session cannot survive that. They share this dim because both stay a READOUT
+   while locked — the model picker is the only surface naming the unit on the wire
+   (the tally prints the tag alone), and the rate picker reports what the device is
+   running at. 0.7 rather than the 0.45 the read-only vocabulary uses elsewhere is
+   measured against the label beside them on the same strip (9.0:1 dark / 4.8:1
+   light): the value text lands at 3.9 / 2.6 with 0.45 and at 7.9 / 5.1 with 0.7.
+
+   The rule is not optional decoration. Measured in Playwright's WebKit build with it
+   removed, a locked and an unlocked picker computed identical colour, border and
+   opacity, while Chromium supplied 0.7 of its own — an authored colour and background
+   are what stop that engine dimming a disabled select, which is the trade the recipe
+   above pays for. Measured again in the shipping WKWebView against a real unit, with
+   the rule in place: under a live session both pickers changed 476 / 475 pixels over
+   their own boxes, mean luma 45.8 -> 40.8 and 39.8 -> 36.5, and returned to the
+   pre-session pixels exactly when it ended. Solving 0.7*content + 0.3*ground for the
+   ground gives 29.1 / 28.8 against the bar's own 29.5, so what is seen there is this
+   rule and not the engine. What that engine does with the rule WITHDRAWN is still
+   unmeasured — it decides whether the rule is redundant, not whether the lock reads. */
 select#model-picker:disabled,
 select#rate-picker:disabled {
   opacity: 0.7;
@@ -1080,16 +1096,17 @@ input[type="range"]:focus-visible,
   width: 100%;
 }
 
-/* The one select the app locks: SD Rec track count, read-only while a live session
-   holds the device. The dim has to be authored because the engines disagree about
-   whether there is one — measured with the rule removed, Chromium dims a disabled
-   select to 0.7 on its own while WebKit, the engine the macOS build renders in,
-   leaves it at 1 with its colour and border untouched, so the lock is invisible
-   there. (Unstyled, WebKit does dim it — text and border drop from 0.847 to 0.247
-   alpha — and stops the moment the recipe above authors a colour and a background,
-   which is the same trade the model picker's own :disabled rule pays for.) The
-   value is the panel's read-only dim — the token the locked Preferences row takes,
-   which is the same 0.45 #inspector .toggle button:disabled writes as a literal. */
+/* The one select in this panel the app locks: SD Rec track count, read-only while a
+   live session holds the device. The dim has to be authored because the engines
+   disagree about whether there is one — measured in Playwright with the rule removed,
+   Chromium dims a disabled select to 0.7 on its own while its WebKit build leaves
+   colour, border and opacity unchanged. (Unstyled, that WebKit does dim it — text and
+   border drop from 0.847 to 0.247 alpha — and stops the moment the recipe above
+   authors a colour and a background, which is the trade the pickers' own :disabled
+   rule pays for. The reading from the shipping engine is beside that rule, on the
+   pickers; this select has not been shown locked there.) The value is the panel's
+   read-only dim — the token the locked Preferences row takes, which is the same 0.45
+   #inspector .toggle button:disabled writes as a literal. */
 #inspector select:disabled {
   opacity: var(--row-lock-dim);
   cursor: not-allowed;
