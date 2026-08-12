@@ -44,7 +44,10 @@
     {
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "T3b undo > a .urxf settings import empties both stacks",
-      "unguarded": "The reason is that e2e/race/fake-device.ts answers false for experimental_enabled, so the import is unreachable from the harness. Nothing asserts that: chrome.spec.ts's --experimental case drives the OTHER stub (e2e/tauri-stub.ts) and checks the Device menu's self-test entry, not this path. What would settle it: an ordinary-tier case asserting #btn-open-settings is hidden without --experimental, plus a reading that the race fake still answers false."
+      "guardedBy": {
+        "file": "src/main.device.test.ts",
+        "title": "the desktop-only surfaces > keeps the settings import behind the flag, and the race fake never sets it"
+      }
     },
     {
       "file": "e2e/race/t3b-undo.spec.ts",

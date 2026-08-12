@@ -12,6 +12,8 @@
 // a fixture that agrees with nothing.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { $, bootApp, deviceCommands, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
@@ -295,6 +297,31 @@ describe("the desktop-only surfaces", () => {
     await bootDevice({ experimental_enabled: true });
     await vi.waitFor(() => expect($("btn-selftest").hidden).toBe(false), { timeout: 10_000 });
     expect($("btn-compare").hidden).toBe(false);
+  });
+
+  // The settings-file import is one of them, and `e2e/race/t3b-undo.spec.ts` skips a
+  // case on it being unreachable from that harness — which rests on two facts with
+  // nothing between them: the app hides the entry without the flag, and the race fake
+  // never answers the flag true.
+  //
+  // The second is read out of the fixture's source rather than by running it. That is
+  // ugly and deliberate: the fake is a Playwright-side module that vitest cannot
+  // import, an E2E case cannot serve as a guard (see e2e/race/skip-ledger.json), and
+  // the alternative — asserting nothing about it — is what let the reason sit
+  // unexamined. What this cannot catch is the answer being reshaped rather than
+  // flipped; it fails loudly on a missing case label instead of passing quietly.
+  it("keeps the settings import behind the flag, and the race fake never sets it", SLOW, async () => {
+    await bootDevice();
+    expect($("btn-open-settings").hidden).toBe(true);
+
+    // From the repo root, the way main.test-util.ts reads index.html: `import.meta.url`
+    // is not a file: URL under this transform.
+    const fake = readFileSync(resolve(process.cwd(), "e2e/race/fake-device.ts"), "utf8");
+    const at = fake.indexOf('case "experimental_enabled":');
+    expect(at, "e2e/race/fake-device.ts no longer answers experimental_enabled by that name").toBeGreaterThan(0);
+    // The label's own arm, up to the next one: `return false` must be what it reaches.
+    const arm = fake.slice(at, fake.indexOf("case ", fake.indexOf("return", at)));
+    expect(arm, "the race fake's experimental_enabled arm no longer returns false").toContain("return false");
   });
 });
 
