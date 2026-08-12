@@ -846,11 +846,13 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         }
 
         // The launch flags, from the list a unit guard also reads (see fake-flags.ts).
-        // It arrives as an ARGUMENT, not as the import at the top of this file: this
-        // function is serialised and evaluated in the page, where a module-scope binding
-        // of the driver's is simply not there. Referring to the import directly compiles,
-        // type-checks and collects, and then throws "Can't find variable" at the first
-        // command the fake handles — which reads as a session that never comes up.
+        // It arrives as an ARGUMENT, not as the import at the top of this file. Every
+        // callback that crosses into the page — addInitScript here, and equally evaluate /
+        // evaluateHandle / waitForFunction / locator.evaluate — is serialised and run
+        // there, where a module-scope binding of the driver's does not exist. Naming the
+        // import inside one compiles, type-checks and collects, then throws at the first
+        // command the fake handles: "Can't find variable: X" in JavaScriptCore, "X is not
+        // defined" in V8. What that presents as is a session that never comes up.
         if (flagsOff.includes(cmd)) {
           done();
           return false;
