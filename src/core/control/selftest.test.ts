@@ -756,15 +756,17 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.device).toBe("URX22");
     expect(report.collisions).toEqual([]);
     expect(report.unverified.map((u) => u.key).sort()).toEqual(
-      ["dgain-urx22", "ducker-block", "hiz-channel", "input-ports", "stereo-block"].sort(),
+      ["dgain-urx22", "hiz-channel", "input-ports", "stereo-block"].sort(),
     );
     for (const u of report.unverified) {
       expect(u.outcome).not.toBe("collision");
-      // A round trip confirms every guess on a faithful device — including
-      // `ducker-block`, which is exactly why the report is not the whole story for it:
-      // that guess is about which PAIR a y addresses, and writing y then reading y back
-      // passes whichever pair it is. Its entry exists to keep the guess visible in the
-      // report, and PLAN.md's D-1 carries the LCD check that actually settles it.
+      // A round trip confirms every guess on a faithful device, which is why CONFIRMED
+      // is not the whole story for a guess about WHICH instance a y addresses: writing y
+      // and reading y back passes whichever one it is. `stereo-block` is still such a
+      // guess — its y is stereoIndexMap's, the same map `ducker-block` rode before it
+      // was accepted outside the round trip on 2026-08-13 (see duckerControl and the
+      // entry's own comment). So a CONFIRMED here means the ids take values, and says
+      // nothing about pair 0 being `ch_3_4` on a URX22.
       expect(u.outcome).toBe("confirmed");
     }
     expect(report.restored).toBe(true);
