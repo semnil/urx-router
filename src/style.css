@@ -1684,9 +1684,18 @@ input[type="range"]:focus-visible,
    sits at the trailing edge. Both halves are borrowed rather than invented — the
    trailing mark is the CONSOLE rack header's grammar (`.con-sh .ar`), and the
    caret is the section chevron's own construction
-   (`.insp-section > summary::after`) turned to point right, two adjacent borders
-   rather than a glyph so it holds its weight beside that chevron. CONSOLE opens
-   the same four screens from `.con-chip-open`, which points right too.
+   (`.insp-section > summary::after`) turned to point right.
+
+   Two adjacent borders rather than a glyph, and that is a decision rather than a
+   detail: `.con-chip-open` opens these same four screens from the CONSOLE and is
+   a `▸`, so the one action carries two different marks. They stay different
+   because each belongs to the family of the surface it is on. Measured against
+   the section chevron two rows above this button, the caret paints 174 painted
+   pixels to its 180 — one mark at one weight — while a `▸` at this size paints
+   134–142 in a box twice as tall, a denser shape that matches its CONSOLE
+   neighbours and not this one. Matching the two to each other breaks whichever
+   panel it is matched into.
+
    `::before` is an invisible twin: auto margins split the free space between the
    two, so without it the label would centre on the space beside the caret rather
    than on the button. */
