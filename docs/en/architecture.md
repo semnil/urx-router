@@ -92,7 +92,9 @@ carries a one-line map of the same directories and points here.
   a third lock reason reaches them without either UI file being edited; a caller rendering many menus at
   once passes in one `insertFxCensus` sweep instead of paying it per node). And Ducker bypass detection
   (`channelDuckerOn` = PRE-send notes, `duckerBypassWarnings` = pre-fader tap warnings for USB direct outs;
-  microSD Rec intentionally excluded) / `plan-validate.ts` the plan loader's single validation funnel,
+  microSD Rec intentionally excluded), and what an analog output's MONO reads as (`outputMono` /
+  `isAnalogOutput` — see "MONO on the analog outputs", which states rather than warns and says why)
+  / `plan-validate.ts` the plan loader's single validation funnel,
   `planProblems` (split out of `constraints.ts`, which is rate limits and nothing else: a rate limit warns
   about a plan the app authored, these check a plan built ELSEWHERE — a file, a `?plan=` link, a generator).
   `routing.ts` cannot host them (the cycle constraints → translate → routing). It runs from `loadFromText`
@@ -2537,6 +2539,37 @@ before the fader" alone.
 None of this reaches the plan: both jacks carry the channel's `ch:out` ref, so the saved JSON, the
 `?plan=` link and the device translation are unchanged by which jack a wire was drawn from. In the DOM
 the tap is addressed by `data-tap` (not `data-ref`), keeping a `[data-ref]` lookup single-element.
+
+## MONO on the analog outputs
+
+The device carries its [MONO] switch on the MONITOR buses alone (`device-model.md` §4). MAIN OUT and
+LINE OUT are pure source selectors with no parameters of their own, so whether a speaker output can be
+summed to mono is decided entirely by what it is patched from: a MONITOR patch brings the switch with
+it, a STEREO / MIX / STREAMING patch has none.
+
+Nothing in a plan records whether the operator *wants* mono, so this is **stated, not warned about**.
+The inspector gives MAIN / LINE a standing **MONO row** — either the monitor that owns the switch and
+its state, or that this patch has no switch at all, with the routing change that gets one — and the
+patch wire carries the matching note. `outputMono` / `isAnalogOutput` in `core/constraints.ts` decide
+it; the wire's wording comes from `sendlessNote` in `ui/send-fields.ts`, which feeds the hover `<title>`
+and the selected-wire hint from **one** classifier, so the two carriers cannot drift apart (its union
+return type also refuses a new case until that case has its own wording). The row shows on an unpatched
+output too — the state a note on a wire can never reach, since there is no wire.
+
+The row is scoped to MAIN / LINE because they are the only outputs whose lock a routing change can
+remove: a USB output cannot take a MONITOR source at all (`device-model.md` §6), so a standing note
+there would be a lock nothing can unlock — the same reason `duckerBypassWarnings` leaves microSD Rec
+alone.
+
+**There is deliberately no warning card**, which is where this parts company with the Ducker bypass it
+otherwise mirrors. That one fires on a contradiction inside the plan (`duckerOn` true *and* a pre-fader
+tap to a live output). Here there is no contradiction to find: a STEREO patch on MAIN OUT is the factory
+arrangement, so a card keyed on it would fire on nearly every plan, and no tighter predicate exists —
+`mono` being on elsewhere does not imply this output should carry it, since an A/B rig deliberately
+keeps one output stereo while the other is summed, and a monitor bus feeding no analog output at all is
+an ordinary arrangement. The cost of stating rather than warning is that the notice is read only when
+the output or its wire is selected: unlike the Rec Point tap above, there is no always-visible geometry
+that could carry it, because MONO is a state of the path rather than a second route out of the node.
 
 ## Node labels
 

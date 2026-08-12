@@ -496,3 +496,65 @@ describe("coverage sweep: every control of every selection", () => {
     }
   });
 });
+
+// MAIN / LINE OUT carry no MONO control of their own — the device puts [MONO] on
+// the MONITOR buses — so the row reports what the output's own patch decides, and
+// it is present whether or not that patch exists. It is a statement, not a warning:
+// every state below is legal, which is why nothing here is gated on a preference.
+
+describe("renderInspector — the analog outputs' MONO row", () => {
+  const model = getModel("URX44V");
+  const fieldValue = (label: string, host: HTMLElement = panel): string | undefined =>
+    [...host.querySelectorAll<HTMLElement>(".field")]
+      .find((f) => f.querySelector(".field-key")?.textContent === label)
+      ?.querySelector(".field-val")?.textContent ?? undefined;
+
+  const patched = (from: string, to: string, mono?: boolean): Plan => {
+    const plan = defaultPlan("URX44V");
+    plan.connections = plan.connections.filter((c) => !c.to.startsWith(`${to}:`));
+    plan.connections.push({ from: `${from}:out`, to: `${to}:in`, kind: "patch" });
+    if (mono !== undefined) plan.nodeParams[from] = { ...plan.nodeParams[from], mono };
+    return plan;
+  };
+
+  it("names the way out when the patch has no mono at all", () => {
+    renderInspector(panel, model, patched("bus.stereo", "out.main"), nodeSel("out.main"), act);
+    expect(fieldValue(t().inspector.mono)).toBe(t().inspector.monoUnavailable);
+    expect(panel.textContent).toContain(t().inspector.patchNoMono);
+  });
+
+  it("names the monitor that owns the switch, and drops the way-out note", () => {
+    renderInspector(panel, model, patched("bus.mon1", "out.main", true), nodeSel("out.main"), act);
+    expect(fieldValue(t().inspector.mono)).toContain(t().inspector.on);
+    expect(fieldValue(t().inspector.mono)).toContain("MONITOR 1");
+    expect(panel.textContent).not.toContain(t().inspector.patchNoMono);
+  });
+
+  it("distinguishes a monitor patch whose switch is off from one that has no switch", () => {
+    renderInspector(panel, model, patched("bus.mon2", "out.line", false), nodeSel("out.line"), act);
+    expect(fieldValue(t().inspector.mono)).toContain(t().inspector.off);
+    expect(fieldValue(t().inspector.mono)).not.toBe(t().inspector.monoUnavailable);
+  });
+
+  // An output with nothing patched into it still says where mono would come from —
+  // the case a warning keyed on a wire could never reach.
+  it("shows the row on an unpatched output", () => {
+    const plan = defaultPlan("URX44V");
+    plan.connections = plan.connections.filter((c) => !c.to.startsWith("out.main:"));
+    renderInspector(panel, model, plan, nodeSel("out.main"), act);
+    expect(fieldValue(t().inspector.mono)).toBe(t().inspector.monoUnavailable);
+  });
+
+  // Scope: the row belongs where a routing change can remove the lock. A USB output
+  // cannot take a MONITOR source at all, so a standing note there would be a lock
+  // nothing can unlock.
+  it("stays off the USB outputs and the buses", () => {
+    for (const id of ["out.usbmain_a", "out.usbsub", "bus.stereo", "bus.mon1"]) {
+      const host = document.createElement("div");
+      document.body.append(host);
+      renderInspector(host, model, defaultPlan("URX44V"), nodeSel(id), actions());
+      expect(fieldValue(t().inspector.mono, host)).toBeUndefined();
+      host.remove();
+    }
+  });
+});

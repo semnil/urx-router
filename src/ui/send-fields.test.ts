@@ -118,6 +118,23 @@ describe("sendlessNote", () => {
     expect(sendlessNote(model, "bus.stereo:out", "out.ducker1:in")).toBe("selectionOnly");
   });
 
+  // MONO is the MONITOR bus's switch, so which source an analog output is patched
+  // from decides whether that output can be mono at all.
+  it("says whether a MAIN / LINE patch can be switched to mono", () => {
+    expect(sendlessNote(model, "bus.mon1:out", "out.main:in")).toBe("patchViaMonitor");
+    expect(sendlessNote(model, "bus.mon2:out", "out.line:in")).toBe("patchViaMonitor");
+    expect(sendlessNote(model, "bus.stereo:out", "out.main:in")).toBe("patchNoMono");
+    expect(sendlessNote(model, "bus.mix1:out", "out.line:in")).toBe("patchNoMono");
+    expect(sendlessNote(model, "bus.stream:out", "out.main:in")).toBe("patchNoMono");
+  });
+
+  // A USB output cannot take a MONITOR source, so its MONO lock is not removable
+  // and it carries the direct-out note instead of a mono one.
+  it("leaves the USB outputs to the direct-out note", () => {
+    expect(sendlessNote(model, "bus.stereo:out", "out.usbmain_a:in")).toBe("selectionOnly");
+    expect(sendlessNote(model, "ch1:out", "out.usbmain_a:in")).toBe("directOutTap");
+  });
+
   it("falls back to the generic note for anything else", () => {
     expect(sendlessNote(model, "ch1:out", "bus.mix1:in")).toBe("selectionOnly");
   });
@@ -126,6 +143,8 @@ describe("sendlessNote", () => {
   // independent like core/*.
   it("answers with a message key rather than prose", () => {
     const key = sendlessNote(model, "ch1:out", "out.ducker1:in");
-    expect(["directOutTap", "sdRecTap", "duckerKeyTap", "selectionOnly"]).toContain(key);
+    expect(["directOutTap", "sdRecTap", "duckerKeyTap", "patchViaMonitor", "patchNoMono", "selectionOnly"]).toContain(
+      key,
+    );
   });
 });

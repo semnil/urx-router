@@ -420,6 +420,11 @@ export const ja: Messages = {
       "このチャンネルを Rec Point でタップして録音します (既定は pre-fader)。録音する段はチャンネルの Rec Point で選べます。",
     duckerKeyTap:
       "Ducker キー — キー元チャンネルの Rec Point (フェーダー・Ducker より前段) でタップ。そのチャンネルのフェーダー・ミュートはトリガーに影響しません。post-fader でトリガーするには STEREO / MIX Bus をキーにしてください。",
+    patchNoMono:
+      "MONO を持つのは MONITOR 1 / 2 だけです。この出力を MONITOR Bus からパッチすると、MONO に切り替えられます。",
+    patchViaMonitor: "この出力は MONITOR Bus の MONO スイッチに従います — 切り替えは MONITOR ノードで行います。",
+    monoUnavailable: "利用不可 — MONITOR 経由",
+    monoVia: (state: string, monitor: string): string => `${state} (${monitor} から)`,
     fixedConnection: "固定接続 — 常時有効で削除できません。",
     duckerPreSend:
       "このチャンネルの Ducker は ON ですが、この PRE (Pre-fader send) はその手前でタップするため Ducker が効きません。Ducker を含めるには POST に切り替えてください。",

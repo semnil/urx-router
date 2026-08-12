@@ -129,6 +129,8 @@ import {
   duckerBypassWarnings,
   insertFxAllRateLocked,
   insertFxMenu,
+  isAnalogOutput,
+  outputMono,
   rateConstraints,
 } from "../core/constraints";
 import { getSettings } from "../core/settings";
@@ -307,6 +309,26 @@ export function renderInspector(
     // The heading keeps the device identity (CH 1 …) so you always know which
     // physical strip you are patching; the Name field below holds the override.
     host.append(heading(fullLabel(node)), field(m.inspector.type, nodeKindLabel(node.kind)));
+
+    // MAIN / LINE OUT: a standing MONO row. The output itself has no MONO control
+    // — the device puts [MONO] on the MONITOR buses — so what this output can do
+    // is decided by what it is patched from, and the row is the one place that
+    // says so before the patch is drawn. Read-only on purpose: the switch keeps
+    // its single home on the MONITOR node, and the row names which one owns it.
+    if (isAnalogOutput(node.id)) {
+      const mono = outputMono(plan, node.id);
+      host.append(
+        field(
+          m.inspector.mono,
+          mono.via === "monitor"
+            ? m.inspector.monoVia(mono.on ? m.inspector.on : m.inspector.off, labelOf(mono.monitorId))
+            : m.inspector.monoUnavailable,
+        ),
+      );
+      // The unavailable state is the one that needs the way out spelled; the
+      // available one already names the node the switch lives on.
+      if (mono.via === "none") host.append(hint(m.inspector.patchNoMono));
+    }
 
     // Channel / bus strips carry a user-editable name (the device's CH SETTING
     // name); empty falls back to the model's default label.

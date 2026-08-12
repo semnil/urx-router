@@ -7,7 +7,8 @@
 import type { ConnectionKind, DeviceModel } from "../models/types";
 import { parseRef } from "../models/types";
 import type { Plan } from "../core/plan";
-import { directOutTarget, duckerKeySource, isBalLinkedPair, mixSendLocks, sendHasTap } from "../core/routing";
+import { directOutTarget, duckerKeySource, isBalLinkedPair, mixSendLocks, ruleKind, sendHasTap } from "../core/routing";
+import { isAnalogOutput, isMonitorBus } from "../core/constraints";
 import { fxChannelIndex, isStereoChannel } from "../core/control/translate";
 
 export type ParamField = "level" | "pan" | "tap";
@@ -57,14 +58,19 @@ export function sendFields(
  *  bus to include them); a microSD Rec tap records the Rec Point stage on purpose,
  *  so it points at Rec Point instead. A channel ducker key is the same pre-fader
  *  Rec Point tap, so the source channel's fader / mute do not move the trigger (a
- *  bus key is post-fader — no note). Anything else falls back to the generic note. */
+ *  bus key is post-fader — no note). A patch into MAIN / LINE OUT says whether the
+ *  path it takes can be switched to mono at all: MONO is the MONITOR bus's switch,
+ *  so a STEREO / MIX / STREAMING patch has none and the note names the routing
+ *  change that gets one. Anything else falls back to the generic note. */
 export function sendlessNote(
   model: DeviceModel,
   from: string,
   to: string,
-): "directOutTap" | "sdRecTap" | "duckerKeyTap" | "selectionOnly" {
+): "directOutTap" | "sdRecTap" | "duckerKeyTap" | "patchViaMonitor" | "patchNoMono" | "selectionOnly" {
   const directOut = directOutTarget(model, from, to);
   if (directOut === "usb") return "directOutTap";
   if (directOut === "sdRec") return "sdRecTap";
+  if (ruleKind(model, from, to) === "patch" && isAnalogOutput(parseRef(to).nodeId))
+    return isMonitorBus(parseRef(from).nodeId) ? "patchViaMonitor" : "patchNoMono";
   return duckerKeySource(model, from, to) === "channel" ? "duckerKeyTap" : "selectionOnly";
 }

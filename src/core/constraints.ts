@@ -197,6 +197,44 @@ export function duckerBypassWarnings(model: DeviceModel, plan: Plan): string[] {
   return hosts;
 }
 
+// The analog outputs speakers are patched to. They are the only destinations
+// where a missing MONO is a routing choice rather than a permanent fact: the
+// device carries [MONO] on the MONITOR buses alone (device-model.md §4), and a
+// MONITOR can be patched to MAIN / LINE — while a USB output cannot take a
+// MONITOR source at all (§6), so a standing "no MONO here" note there would be a
+// lock nothing can unlock. Scoping this the same way duckerBypassWarnings leaves
+// microSD Rec alone: state the caveat only where acting on it is possible.
+const ANALOG_OUTPUTS = new Set(["out.main", "out.line"]);
+const MONITOR_BUSES = new Set(["bus.mon1", "bus.mon2"]);
+
+export function isAnalogOutput(nodeId: string): boolean {
+  return ANALOG_OUTPUTS.has(nodeId);
+}
+
+export function isMonitorBus(nodeId: string): boolean {
+  return MONITOR_BUSES.has(nodeId);
+}
+
+/** How MONO reads on an analog output, decided by the source it is patched from.
+ *  `monitor` — the patch passes through MONITOR n, which owns the [MONO] switch
+ *  (`on` is that switch's state). `none` — patched from STEREO / MIX / STREAMING,
+ *  or not patched at all: nothing on this path can be switched to mono. */
+export type OutputMono = { via: "monitor"; monitorId: string; on: boolean } | { via: "none" };
+
+// Deliberately NOT a warning. Every state it reports is legal and common — a
+// STEREO patch on MAIN OUT is the factory arrangement — so a card would fire on
+// nearly every plan, and no tighter predicate exists: wanting mono on the
+// speakers never appears in the plan, and `mono` being on elsewhere does not
+// imply it (PHONES 1 / 2 are wired to the MONITOR buses, so a headphone-only
+// mono check is exactly that state, and an A/B rig deliberately keeps one output
+// stereo). The inspector states it as a standing row instead.
+export function outputMono(plan: Plan, outputId: string): OutputMono {
+  const wire = plan.connections.find((c) => parseRef(c.to).nodeId === outputId);
+  const source = wire ? parseRef(wire.from).nodeId : null;
+  if (!source || !isMonitorBus(source)) return { via: "none" };
+  return { via: "monitor", monitorId: source, on: plan.nodeParams[source]?.mono === true };
+}
+
 /** Human label for a rate, e.g. 44100 → "44.1 kHz". */
 export function formatRate(sampleRate: number): string {
   return `${sampleRate / 1000} kHz`;

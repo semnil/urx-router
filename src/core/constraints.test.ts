@@ -10,6 +10,9 @@ import {
   insertFxAllRateLocked,
   insertFxFree,
   insertFxMenu,
+  isAnalogOutput,
+  isMonitorBus,
+  outputMono,
 } from "./constraints";
 import type { InsertFxMenuEntry } from "./constraints";
 import { directOutTarget } from "./routing";
@@ -299,6 +302,75 @@ describe("channelDuckerOn", () => {
     plan.nodeParams["out.ducker1"] = { duckerOn: true }; // ducker1 hangs on ch_5_6
     expect(channelDuckerOn(u44v, plan, "ch_5_6")).toBe(true);
     expect(channelDuckerOn(u44v, plan, "ch_7_8")).toBe(false); // a different channel's ducker
+  });
+});
+
+describe("outputMono", () => {
+  const patch = (plan: ReturnType<typeof emptyPlan>, from: string, to: string): void => {
+    plan.connections.push({ from: ref(from, "out"), to: ref(to, "in"), kind: "patch" });
+  };
+
+  it("reports no mono on an unpatched output", () => {
+    expect(outputMono(emptyPlan("URX44V"), "out.main")).toEqual({ via: "none" });
+  });
+
+  // The factory arrangement. It is legal and common, which is why this state is
+  // stated rather than warned about.
+  it("reports no mono for a STEREO / MIX / STREAMING patch", () => {
+    for (const src of ["bus.stereo", "bus.mix1", "bus.stream"]) {
+      const plan = emptyPlan("URX44V");
+      patch(plan, src, "out.main");
+      expect(outputMono(plan, "out.main")).toEqual({ via: "none" });
+    }
+  });
+
+  it("names the monitor bus a patch passes through, and its switch state", () => {
+    const plan = emptyPlan("URX44V");
+    patch(plan, "bus.mon1", "out.main");
+    expect(outputMono(plan, "out.main")).toEqual({ via: "monitor", monitorId: "bus.mon1", on: false });
+    plan.nodeParams["bus.mon1"] = { mono: true };
+    expect(outputMono(plan, "out.main")).toEqual({ via: "monitor", monitorId: "bus.mon1", on: true });
+  });
+
+  // The A/B rig: MAIN through a mono-switched monitor, LINE straight from STEREO.
+  // Each output answers from its own patch, so the stereo half is not contaminated
+  // by the mono one — the reason no plan-wide predicate can call either a mistake.
+  it("answers per output", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.mon2"] = { mono: true };
+    patch(plan, "bus.mon2", "out.main");
+    patch(plan, "bus.stereo", "out.line");
+    expect(outputMono(plan, "out.main")).toEqual({ via: "monitor", monitorId: "bus.mon2", on: true });
+    expect(outputMono(plan, "out.line")).toEqual({ via: "none" });
+  });
+});
+
+describe("isAnalogOutput / isMonitorBus", () => {
+  // The scope rule: the row exists where a routing change can remove the lock. A
+  // USB output cannot take a MONITOR source at all, so it is not an analog output
+  // here however much it is an output.
+  it("covers MAIN / LINE and excludes the USB and microSD outputs", () => {
+    expect(isAnalogOutput("out.main")).toBe(true);
+    expect(isAnalogOutput("out.line")).toBe(true);
+    for (const id of ["out.usbmain_a", "out.usbmain_b", "out.usbsub", "out.sdrec.t1"])
+      expect(isAnalogOutput(id)).toBe(false);
+  });
+
+  it("covers both monitor buses and nothing else", () => {
+    expect(isMonitorBus("bus.mon1")).toBe(true);
+    expect(isMonitorBus("bus.mon2")).toBe(true);
+    for (const id of ["bus.stereo", "bus.mix1", "bus.stream", "out.main"]) expect(isMonitorBus(id)).toBe(false);
+  });
+
+  // Every id the two sets name has to exist on the models that carry it, or the
+  // row silently never renders. The URX22 has no LINE OUT, so it is checked on
+  // the models that do.
+  it("names nodes the models actually have", () => {
+    for (const id of ["out.main", "bus.mon1", "bus.mon2"])
+      for (const m of ["URX22", "URX44", "URX44V"] as const)
+        expect(getModel(m).nodes.some((n) => n.id === id)).toBe(true);
+    for (const m of ["URX44", "URX44V"] as const) expect(getModel(m).nodes.some((n) => n.id === "out.line")).toBe(true);
+    expect(getModel("URX22").nodes.some((n) => n.id === "out.line")).toBe(false);
   });
 });
 

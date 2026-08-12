@@ -27,6 +27,7 @@ import type { ExportOptions, SaveResult } from "../core/storage";
 import { oscAssign } from "../core/control/translate";
 import { SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
 import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale, notePanelHeight } from "./graph-text";
+import { sendlessNote } from "./send-fields";
 import { t } from "../i18n";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -1445,20 +1446,16 @@ export class Graph {
       e.stopPropagation();
       this.select({ type: "conn", from: conn.from, to: conn.to });
     });
-    // Explain a Rec Point tap on hover, in the same words the inspector puts on
-    // the wire when it is selected — the tap's stage is the one thing the geometry
-    // alone cannot say. Touch has no hover, so selecting still carries the note.
-    const tapTarget = directOutTarget(this.model, conn.from, conn.to);
-    if (tapTarget) {
-      // Keyed exhaustively rather than by a ternary: a new direct-out destination
-      // must then be given its own wording instead of silently inheriting the
-      // recording note.
-      const notes: Record<typeof tapTarget, string> = {
-        usb: t().inspector.directOutTap,
-        sdRec: t().inspector.sdRecTap,
-      };
+    // Explain on hover what the geometry alone cannot say — the stage a Rec Point
+    // tap takes, or whether a MAIN / LINE patch can be switched to mono — in the
+    // same words the inspector puts on the wire when it is selected. One classifier
+    // (sendlessNote) serves both, so hover and selection cannot drift apart, and
+    // its union return type refuses a new case until that case has its own wording.
+    // Touch has no hover, so selecting still carries the note.
+    const note = sendlessNote(this.model, conn.from, conn.to);
+    if (note !== "selectionOnly") {
       const title = document.createElementNS(SVGNS, "title");
-      title.textContent = notes[tapTarget];
+      title.textContent = t().inspector[note];
       hit.append(title);
     }
     g.append(hit);
