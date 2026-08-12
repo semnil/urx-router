@@ -25,12 +25,13 @@
 // every input port, so the trailing ports (usbsub / hdmi) are covered too.
 //
 // UNVERIFIED GUESSES: some device mappings are confirmed only on URX44V and remain
-// guesses on URX22/URX44 (see UNVERIFIED_MAPPINGS). A static audit first refutes
-// any guessed id a confirmed param already owns (its writes are suppressed so the
-// test never misaddresses hardware); the rest are exercised, and each round-trip
-// result is reported per guess — confirmed, refuted, or one of the four outcomes that
-// settle nothing (see UnverifiedOutcome) — so an owner can confirm them. This is the
-// live counterpart of that confirmation workflow.
+// guesses on URX22/URX44 (see UNVERIFIED_MAPPINGS). A static audit first refutes any
+// guessed id a confirmed param already owns — that outcome is `collision`, it settles
+// the guess before anything is written, and its writes are suppressed so the test never
+// misaddresses hardware. The rest are exercised, and each round-trip result is reported
+// per guess: confirmed, refuted, or one of the three the round trip did not settle (see
+// UnverifiedOutcome), so an owner can confirm them. This is the live counterpart of that
+// confirmation workflow.
 
 import type { DeviceModel } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
