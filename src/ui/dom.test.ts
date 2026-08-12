@@ -5,6 +5,7 @@ import {
   copyText,
   el,
   focusables,
+  holdAppInert,
   onOff,
   onWheelStep,
   popLeft,
@@ -336,6 +337,65 @@ describe("settings builders", () => {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     expect(inputValue).toHaveBeenCalledWith(1.5);
     expect(input.getAttribute("aria-valuetext")).toBe("1.5 dB");
+  });
+});
+
+describe("holdAppInert", () => {
+  // The scrims are siblings of #app, not children, so inerting the app alone says
+  // nothing about a modal stacked under another modal — which is how a Tab from a
+  // load report reached the Preferences rows behind it.
+  const app = (): HTMLElement => document.getElementById("app") as HTMLElement;
+  let a: HTMLElement;
+  let b: HTMLElement;
+
+  beforeEach(() => {
+    document.body.replaceChildren();
+    const appHost = el("div", "");
+    appHost.id = "app";
+    a = el("div", "consent-scrim");
+    b = el("div", "consent-scrim");
+    document.body.append(appHost, a, b);
+  });
+
+  // toBeFalsy for a value nothing has written yet: jsdom does not implement `inert`
+  // as an IDL attribute, so an untouched element reads undefined rather than false.
+  // Every later assertion is exact, because by then the helper has written it.
+  it("inerts the app while held, and gives it back on release", () => {
+    expect(app().inert).toBeFalsy();
+    const release = holdAppInert(a);
+    expect(app().inert).toBe(true);
+    expect(a.inert).toBeFalsy(); // the modal that holds it stays reachable
+    release();
+    expect(app().inert).toBe(false);
+  });
+
+  it("leaves only the topmost modal reachable", () => {
+    const releaseA = holdAppInert(a);
+    const releaseB = holdAppInert(b);
+    expect(a.inert).toBe(true); // the one underneath
+    expect(b.inert).toBe(false);
+    releaseB();
+    expect(a.inert).toBe(false); // back on top
+    expect(app().inert).toBe(true);
+    releaseA();
+    expect(app().inert).toBe(false);
+  });
+
+  it("releases by identity, so a lower modal can close first", () => {
+    const releaseA = holdAppInert(a);
+    holdAppInert(b);
+    releaseA();
+    expect(a.inert).toBe(false); // no longer holding anything
+    expect(b.inert).toBe(false); // still the top
+    expect(app().inert).toBe(true);
+  });
+
+  it("ignores a second release of the same claim", () => {
+    const releaseA = holdAppInert(a);
+    holdAppInert(b);
+    releaseA();
+    releaseA();
+    expect(app().inert).toBe(true); // b still holds it
   });
 });
 

@@ -36,7 +36,7 @@ export function askRateChoice(planRate: string, deviceRate: string, hiRateNote: 
   release.textContent = m.release(planRate);
   cancel.textContent = m.cancel;
 
-  const releaseInert = holdAppInert();
+  const releaseInert = holdAppInert(scrim);
   scrim.hidden = false;
   cancel.focus();
 

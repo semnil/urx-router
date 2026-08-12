@@ -94,7 +94,7 @@ export function showLicenses(html: string): void {
   body.replaceChildren(...sections);
   body.scrollTop = 0;
 
-  const release = holdAppInert();
+  const release = holdAppInert(scrim);
   scrim.hidden = false;
   close.focus();
 

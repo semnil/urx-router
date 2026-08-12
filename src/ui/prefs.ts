@@ -100,7 +100,7 @@ export class PrefsPanel {
 
   open(): void {
     this.render();
-    this.releaseInert ??= holdAppInert();
+    this.releaseInert ??= holdAppInert(this.scrim);
     this.scrim.hidden = false;
     this.dismiss.attach();
     // preventScroll: the grid is the scrolling region (render() starts it at the

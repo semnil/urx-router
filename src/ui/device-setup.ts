@@ -100,7 +100,7 @@ export class DeviceSetupPanel {
     this.draft = structuredClone(this.baseline);
     this.bank = 0;
     this.render();
-    this.releaseInert ??= holdAppInert();
+    this.releaseInert ??= holdAppInert(this.scrim);
     this.scrim.hidden = false;
     this.dismiss.attach();
     this.box.querySelector<HTMLButtonElement>(".consent-btn-secondary")?.focus({ preventScroll: true });

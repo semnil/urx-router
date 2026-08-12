@@ -28,7 +28,7 @@ export function showConsent(): Promise<boolean> {
   quit.textContent = m.quit;
 
   // Disable the app behind the scrim so it cannot be reached by keyboard/Tab.
-  const release = holdAppInert();
+  const release = holdAppInert(scrim);
   scrim.hidden = false;
   agree.focus();
 

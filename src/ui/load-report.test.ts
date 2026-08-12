@@ -16,6 +16,7 @@ import { showLoadReport } from "./load-report";
 
 function installDom(): void {
   document.body.innerHTML = `
+    <div id="app"></div>
     <div id="load-report" hidden>
       <h1 id="load-report-title"></h1>
       <p id="load-report-intro"></p>
@@ -87,6 +88,31 @@ describe("showLoadReport", () => {
     showLoadReport("second");
     expect(document.getElementById("load-report-proceed")).toBeNull();
     expect(document.getElementById("load-report-body")?.textContent).toBe("second");
+    (document.getElementById("load-report-close") as HTMLButtonElement).click();
+  });
+
+  // A re-show used to claim the app's inert hold a second time and release only the
+  // second, so proceeding from the re-shown report dismissed the modal and left the
+  // whole app unreachable until a reload.
+  it("gives the app back after a re-show, whichever action ends it", () => {
+    const app = (): HTMLElement => document.getElementById("app") as HTMLElement;
+    const run = vi.fn();
+    showLoadReport("first", { title: "First", intro: "First", proceed: { label: "Continue", run } });
+    expect(app().inert).toBe(true);
+
+    showLoadReport("second", { title: "Second", intro: "Second", proceed: { label: "Continue", run } });
+    expect(app().inert).toBe(true);
+    (document.getElementById("load-report-proceed") as HTMLButtonElement).click();
+    expect(run).toHaveBeenCalledOnce(); // the first show's handler is gone, not doubled
+    expect((document.getElementById("load-report") as HTMLElement).hidden).toBe(true);
+    expect(app().inert).toBe(false);
+
+    // And the same through Close, which is the path a re-show left bound twice.
+    showLoadReport("third");
+    showLoadReport("fourth");
+    expect(app().inert).toBe(true);
+    (document.getElementById("load-report-close") as HTMLButtonElement).click();
+    expect(app().inert).toBe(false);
   });
 });
 

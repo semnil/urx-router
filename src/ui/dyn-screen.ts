@@ -503,7 +503,7 @@ export class DynScreen {
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     this.peaks.clear();
     this.render();
-    this.releaseInert ??= holdAppInert();
+    this.releaseInert ??= holdAppInert(this.scrim);
     this.scrim.hidden = false;
     this.dismiss.attach();
     this.measure();

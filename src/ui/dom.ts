@@ -40,28 +40,52 @@ export function scrubFloat(v: number): number {
   return Number(v.toFixed(4));
 }
 
-// Hold the app behind a modal out of the tab order, for as long as any modal is
-// up. Every `aria-modal` surface claims this on open and releases on close; only
-// the consent gate used to, so the other six let a Tab walk into the graph
-// underneath while their scrim said the app was unreachable.
+// Hold everything behind a modal out of the tab order for as long as it is up.
+// Every `aria-modal` surface claims this on open and releases on close; only the
+// consent gate used to, so the other six let a Tab walk into the graph underneath
+// while their scrim said the app was unreachable.
 //
-// A depth count rather than a boolean, because these overlap: Preferences opens
-// the licenses notice on top of itself, and a load report can arrive over a
-// tuning screen. With a boolean the inner one's close hands the app back while
-// the outer is still showing. The release is idempotent for the same reason —
-// a close path that runs twice (Escape landing with the button click) would
-// otherwise decrement for a claim it no longer holds and release early.
-let modalDepth = 0;
-export function holdAppInert(): () => void {
+// "Everything behind" is not `#app` alone. The scrims are siblings of `#app`, not
+// children of it, so inerting the app does nothing about a modal stacked under
+// another modal — and they do stack: Preferences opens the licenses notice, and a
+// load report arrives over whatever raised it. So a claim carries its own scrim,
+// the stack decides which one is on top, and every other claimed scrim is inert
+// alongside the app. Measured before this: Tab from a load report's Close reached
+// the Preferences rows behind it.
+//
+// A stack rather than a counter, and release by identity rather than by popping,
+// because a lower modal can close first (the shell closes Preferences out from
+// under an update prompt). The release is idempotent for the same reason a
+// counter needed it: a close path that runs twice — Escape landing together with
+// the button click — must not drop a claim it no longer holds.
+interface InertClaim {
+  scrim: HTMLElement | null;
+}
+const inertClaims: InertClaim[] = [];
+
+function applyInert(): void {
   const app = document.getElementById("app");
-  modalDepth += 1;
-  if (app) app.inert = true;
+  if (app) app.inert = inertClaims.length > 0;
+  const top = inertClaims.length > 0 ? inertClaims[inertClaims.length - 1].scrim : null;
+  for (const claim of inertClaims) if (claim.scrim) claim.scrim.inert = claim.scrim !== top;
+}
+
+/** Claim the hold for one modal, and return its release. Pass the modal's own
+ *  scrim so the claim knows what must stay reachable while it is on top. */
+export function holdAppInert(scrim?: HTMLElement | null): () => void {
+  const claim: InertClaim = { scrim: scrim ?? null };
+  inertClaims.push(claim);
+  applyInert();
   let released = false;
   return () => {
     if (released) return;
     released = true;
-    modalDepth -= 1;
-    if (modalDepth === 0 && app) app.inert = false;
+    const at = inertClaims.indexOf(claim);
+    if (at >= 0) inertClaims.splice(at, 1);
+    // Cleared before the recompute: a scrim that no longer holds a claim is not
+    // in the loop that would clear it.
+    if (claim.scrim) claim.scrim.inert = false;
+    applyInert();
   };
 }
 
