@@ -379,7 +379,7 @@ fn configured_min_inner(app: &tauri::AppHandle, label: &str) -> (f64, f64) {
 /// tauri-plugin-window-state 2.4.1, and a bump that renames one is what
 /// `parse_saved_window`'s test exists to catch.
 #[cfg(desktop)]
-#[derive(serde::Deserialize, Clone, Copy)]
+#[derive(serde::Deserialize)]
 struct SavedWindow {
     x: i32,
     y: i32,
@@ -425,15 +425,6 @@ fn saved_window_state(app: &tauri::AppHandle, label: &str) -> Option<SavedWindow
     // and holds no usable entry for this label is a different thing — the schema
     // moved under us — and it is the one case worth a line, since the symptom
     // otherwise is only "the app quietly stopped remembering where it was".
-    // This session's own capture first: the file is only written at exit, so after a
-    // close-and-reopen it describes a moment two moves ago.
-    if let Some(state) = app.try_state::<ClosedWindowRects>() {
-        if let Ok(held) = state.0.lock() {
-            if let Some(rect) = held.get(label) {
-                return Some(*rect);
-            }
-        }
-    }
     let text = fs::read_to_string(dir.join(tauri_plugin_window_state::DEFAULT_FILENAME)).ok()?;
     let saved = parse_saved_window(&text, label);
     if saved.is_none() {
@@ -478,18 +469,6 @@ const WINDOW_STATE_FLAGS: tauri_plugin_window_state::StateFlags =
 #[derive(Default)]
 struct ClosedWindowScales(std::sync::Mutex<std::collections::HashMap<String, f64>>);
 
-/// The rectangles this session has captured for windows that have since closed.
-///
-/// Not redundant with the plugin's own cache — it is the only way to READ it. The
-/// plugin updates its cache at each close and writes the file once at exit, and the
-/// restore below reads the FILE, so within one session a window that is closed and
-/// opened again is restored to whatever the last exit wrote. Only one window can be
-/// closed and reopened without quitting (the MIDI control window), which is why this
-/// went unnoticed: it forgot every move as soon as it was closed.
-#[cfg(desktop)]
-#[derive(Default)]
-struct ClosedWindowRects(std::sync::Mutex<std::collections::HashMap<String, SavedWindow>>);
-
 /// Pull one label's scale out of the scale file's text. Pure for the same reason
 /// `parse_saved_window` is: it is the only part of this that can be tested without an
 /// app, a window or a display.
@@ -507,15 +486,6 @@ fn parse_window_scale(text: &str, label: &str) -> Option<f64> {
 #[cfg(desktop)]
 fn saved_window_scale(app: &tauri::AppHandle, label: &str) -> Option<f64> {
     use tauri::Manager;
-    // Captured this session, for the same reason the rectangle is — the two have to
-    // describe one moment or the conversion is done with the wrong scale.
-    if let Some(state) = app.try_state::<ClosedWindowScales>() {
-        if let Ok(held) = state.0.lock() {
-            if let Some(scale) = held.get(label) {
-                return Some(*scale);
-            }
-        }
-    }
     let dir = app.path().app_config_dir().ok()?;
     parse_window_scale(
         &fs::read_to_string(dir.join(WINDOW_SCALE_FILENAME)).ok()?,
@@ -526,31 +496,6 @@ fn saved_window_scale(app: &tauri::AppHandle, label: &str) -> Option<f64> {
 /// Capture one window's scale factor into the cache, at the moment the plugin captures
 /// its rectangle. No disk touched: the plugin does not write here either, and a write
 /// on the close path is a write during the close animation.
-/// Capture one window's rectangle as it closes, in the shape the restore reads.
-/// Outer position and inner size, which is the pair the plugin's file holds and the
-/// pair `winfit::place_saved` takes.
-#[cfg(desktop)]
-fn capture_window_rect(win: &tauri::Window) {
-    use tauri::Manager;
-    let (Ok(pos), Ok(size)) = (win.outer_position(), win.inner_size()) else {
-        return;
-    };
-    let rect = SavedWindow {
-        x: pos.x,
-        y: pos.y,
-        width: size.width,
-        height: size.height,
-        prev_x: pos.x,
-        prev_y: pos.y,
-        maximized: win.is_maximized().unwrap_or(false),
-    };
-    if let Some(state) = win.try_state::<ClosedWindowRects>() {
-        if let Ok(mut held) = state.0.lock() {
-            held.insert(win.label().to_string(), rect);
-        }
-    }
-}
-
 #[cfg(desktop)]
 fn capture_window_scale(win: &tauri::Window) {
     use tauri::Manager;
@@ -1067,7 +1012,6 @@ pub fn run() {
             #[cfg(desktop)]
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 capture_window_scale(window);
-                capture_window_rect(window);
                 // And put both on disk now. The plugin writes its file at
                 // `RunEvent::Exit` and nowhere else, so anything that ends the process
                 // without getting there loses every move since the last launch —
@@ -1106,7 +1050,6 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder
         .manage(ClosedWindowScales::default())
-        .manage(ClosedWindowRects::default())
         .plugin(reset_window_state_plugin())
         .plugin(window_state_plugin())
         .setup(|app| {
@@ -1153,6 +1096,17 @@ pub fn run() {
         // no page that knows the assertion exists. Nothing to salvage from a page that is
         // gone, and nothing to report to it.
         keepawake::release_owned_by(&app.state::<keepawake::KeepAwakeState>(), label);
+        // And the MIDI window's always-on-top pin, which the main page takes while a
+        // learn is armed. The window OUTLIVES this page, and the page that comes back
+        // starts with learn off — so it never calls the release, and the panel stays
+        // floating above every application for the rest of the run. Cleared from the
+        // shell rather than from the new page for the same reason the three holds above
+        // are: a page that is gone cannot release anything, and a page that never boots
+        // (a crash, a failed reload) would not either.
+        #[cfg(desktop)]
+        if label == MAIN_WINDOW {
+            let _ = midiwin::pin_midi_window(app.clone(), false);
+        }
     });
 
     // App-owned Edit > Undo / Redo (see build_menu). The click is forwarded to the

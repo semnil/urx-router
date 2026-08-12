@@ -103,24 +103,37 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     let main = app
         .get_webview_window(crate::MAIN_WINDOW)
         .ok_or_else(|| "midi-window: no main window".to_string())?;
-    let win = WebviewWindowBuilder::new(&app, MIDI_WINDOW, WebviewUrl::App("midi.html".into()))
-        .title(title)
-        .inner_size(440.0, 620.0)
-        .min_inner_size(MIN_INNER.0, MIN_INNER.1)
-        .resizable(true)
-        // NOT a child of the main window, though it was until this was measured. A
-        // child is only composited on its PARENT's display: put on any other one it
-        // stays listed on-screen at layer 0 with alpha 1.0 and draws nothing.
-        // Observed both ways on a two-display desk — parent external / child built-in,
-        // and parent built-in / child external — so it is the relationship and not an
-        // arrangement. It also gets translated with the parent one point for one,
-        // which is how a remembered position ends up off the desk entirely.
-        //
-        // What the parent bought was "cannot fall behind the main window"; that is
-        // paid for now by raising this window whenever the main one comes forward
-        // (`on_window_event` in lib.rs).
-        .build()
-        .map_err(|e| format!("midi-window: {e}"))?;
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+    let mut builder =
+        WebviewWindowBuilder::new(&app, MIDI_WINDOW, WebviewUrl::App("midi.html".into()))
+            .title(title)
+            .inner_size(440.0, 620.0)
+            .min_inner_size(MIN_INNER.0, MIN_INNER.1)
+            .resizable(true);
+    // NOT a child of the main window on macOS, though it was until this was measured.
+    // An AppKit child is only composited on its PARENT's display: put on any other one
+    // it stays listed on-screen at layer 0 with alpha 1.0 and draws nothing. Observed
+    // both ways on a two-display desk — parent external / child built-in, and parent
+    // built-in / child external — so it is the relationship and not an arrangement. It
+    // is also translated with the parent one point for one, which is how a remembered
+    // position ends up off the desk entirely.
+    //
+    // On Windows the same call means something else — a Win32 OWNER, which keeps this
+    // window above the main one and minimizes with it — and none of the above was
+    // measured there. Dropping it everywhere would have traded a defect nobody has seen
+    // on that platform for one nobody asked for, so the relationship stays where the
+    // evidence does not reach. `reference/work/windows-verify` item 2 carries what would
+    // settle whether macOS's finding applies there too.
+    //
+    // What the parent bought on macOS — that it cannot fall behind the main window — is
+    // paid for by pinning it while a learn is armed (`pin_midi_window`).
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder
+            .parent(&main)
+            .map_err(|e| format!("midi-window: {e}"))?;
+    }
+    let win = builder.build().map_err(|e| format!("midi-window: {e}"))?;
     // AFTER `build()` on purpose, and it is the only place this can go. A hook of our
     // own registered behind the window-state plugin's was tried and measured not to
     // work: inside a `window_created` hook the window still reports the position it
