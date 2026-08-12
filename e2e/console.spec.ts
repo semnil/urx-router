@@ -144,7 +144,7 @@ test("the MIX master BAL knob stays labeled BAL under Pan Link", async ({ page }
 });
 
 test("DUCKER and φL/φR appear on stereo channels only", async ({ page }) => {
-  // `exact` because the tuning-screen opener beside it is labelled "Ducker screen…",
+  // `exact` because the tuning-screen opener beside it is labelled "Ducker screen",
   // which a substring match also picks up.
   await expect(strip(page, "CH 5/6").getByRole("button", { name: "DUCKER", exact: true })).toBeVisible();
   await expect(strip(page, "CH 5/6").getByRole("button", { name: "φL" })).toBeVisible();

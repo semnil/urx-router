@@ -475,7 +475,7 @@ export const ja: Messages = {
     driven: "本体が制御中",
     gate: {
       title: "Gate",
-      open: "Gate 画面…",
+      open: "Gate 画面",
       tapIn: "Pre Gate",
       tapGr: "Gate GR",
       tapOut: "Pre Comp",
@@ -483,7 +483,7 @@ export const ja: Messages = {
     },
     comp: {
       title: "Comp",
-      open: "Comp 画面…",
+      open: "Comp 画面",
       tapIn: "Pre Comp",
       tapGr: "Comp GR",
       tapOut: "Pre EQ",
@@ -491,7 +491,7 @@ export const ja: Messages = {
     },
     eq: {
       title: "EQ",
-      open: "EQ 画面…",
+      open: "EQ 画面",
       band: "Band",
       unusedByType: "この型では無効",
       fixedBand: "このバンドは固定",
@@ -500,7 +500,7 @@ export const ja: Messages = {
     },
     ducker: {
       title: "Ducker",
-      open: "Ducker 画面…",
+      open: "Ducker 画面",
       tapKey: (label: string): string => `Key · ${label}`,
       noKey: "Key · なし",
       tapIn: "Pre Ducker",

@@ -1651,8 +1651,14 @@ input[type="range"]:focus-visible,
   outline-offset: 2px;
 }
 
-/* Inspector "hide this node" — a plain console button, distinct from .danger. */
-#inspector button.subtle {
+/* The inspector's plain console button, distinct from .danger: "hide this node"
+   and the tuning-screen launchers. The launchers carried no rule at all until
+   this list named them, so their whole face was the UA's own button — measured
+   at 16px with no tracking, square corners and an outset bevel, and a different
+   one per engine (a translucent white in WebKit, #6b6b6b in Chromium, silver in
+   WebKit light), since nothing here was reading a theme token. */
+#inspector button.subtle,
+#inspector button.gate-open {
   font-family: var(--mono);
   font-size: 12px;
   letter-spacing: 0.04em;
@@ -1664,12 +1670,52 @@ input[type="range"]:focus-visible,
   box-shadow: var(--ctl-shadow);
 }
 
-#inspector button.subtle:hover {
+#inspector button.subtle:hover,
+#inspector button.gate-open:hover {
   filter: brightness(1.12);
 }
 
-[data-theme="light"] #inspector button.subtle:hover {
+[data-theme="light"] #inspector button.subtle:hover,
+[data-theme="light"] #inspector button.gate-open:hover {
   filter: brightness(0.97);
+}
+
+/* A launcher wears that face as an opener: the label stays centred and a caret
+   sits at the trailing edge. Both halves are borrowed rather than invented — the
+   trailing mark is the CONSOLE rack header's grammar (`.con-sh .ar`), and the
+   caret is the section chevron's own construction
+   (`.insp-section > summary::after`) turned to point right, two adjacent borders
+   rather than a glyph so it holds its weight beside that chevron. CONSOLE opens
+   the same four screens from `.con-chip-open`, which points right too.
+   `::before` is an invisible twin: auto margins split the free space between the
+   two, so without it the label would centre on the space beside the caret rather
+   than on the button. */
+#inspector button.gate-open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 11px;
+  padding-right: 11px;
+}
+
+#inspector button.gate-open::before,
+#inspector button.gate-open::after {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+}
+
+#inspector button.gate-open::before {
+  margin-right: auto;
+}
+
+#inspector button.gate-open::after {
+  margin-left: auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  opacity: 0.65;
 }
 
 /* ---- narrow viewport (phones / tablet portrait) ---------------------------
@@ -4138,6 +4184,15 @@ button.consent-btn-primary {
   .dev-slider input[type="range"]::-webkit-slider-thumb {
     background: Canvas;
     border: 1px solid CanvasText;
+  }
+
+  /* The tuning-screen launcher's caret. Its two borders survive this mode intact
+     — that is why it is drawn from borders — but `opacity` is not one of the
+     properties the mode replaces, so it would keep the 0.65 that sets it a step
+     below the section chevron in the normal themes. There is no step to hold
+     here: both are CanvasText, and the dimmer one is only harder to see. */
+  #inspector button.gate-open::after {
+    opacity: 1;
   }
 
   /* Surfaces where the color IS the reading: the scribble's device colour, the
