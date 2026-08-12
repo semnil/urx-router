@@ -1379,6 +1379,18 @@ test.describe("T3b undo", () => {
   // `undoRateLive` as an unreachable refusal. There is no second route into the state
   // — a ?plan= link and a file load both go through loadPlan, which resets too — so
   // there is nothing here that could fail.
+  //
+  // What the ledger's guard names is the REFUSAL itself, in `src/ui/history.test.ts`:
+  // an entry touching the rate is held back while the rate is locked, the status says
+  // which of the two things it is, and the entry is not consumed. That is the subject
+  // this case would have driven, and it runs on every pull request. Two facts around
+  // it are pinned elsewhere and neither is what the guard watches: the picker's locked
+  // state (`src/main.device.test.ts`, "locks the model picker and the other device
+  // actions for its duration") and reset dropping both stacks (`history.test.ts`,
+  // "reset > drops both stacks"). What NOTHING holds is the step between them — that
+  // the readback path actually calls reset — and an attempt to pin it from the app
+  // entry was withdrawn as vacuous on 2026-08-13; `reference/work/e2e-flakes.md` and
+  // the ledger entry for the neighbouring case carry the measurement.
   test.skip("a sampleRate-touching entry is refused while live", () => {});
 
   // Reset path (g), a .urxf settings import, is behind the --experimental launch flag,

@@ -39,7 +39,10 @@
     {
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "T3b undo > a sampleRate-touching entry is refused while live",
-      "unguarded": "The reason is that no sampleRate entry can exist while live: the rate picker is disabled from the session start (pinned by 'the live session > locks the model picker and the other device actions for its duration' in src/main.device.test.ts) and the readback re-authors the plan. The SECOND half is NOT pinned, and an attempt to pin it there was withdrawn on 2026-08-13 after instrumentation showed the test vacuous: driving a CONSOLE edit and reading the Edit menu's IPC state — set_edit_menu_state, the only observable of undo depth outside a trace build — reports canUndo true from an OPEN, uncommitted entry, while the stack itself stays at u=0 r=0 for the whole run. PlanHistory.record() and .reset() are never called, so deleting rerenderPlan's planHistory reset changes nothing the test can see and it passes either way. What would settle it: an observable that separates a committed entry from an open one — the depth on the VITE_TRACE probe — or a unit test over PlanHistory itself asserting reset() drops both stacks, together with a reading that the fetch path reaches it."
+      "guardedBy": {
+        "file": "src/ui/history.test.ts",
+        "title": "refusals > refuses a rate change while a live session holds the rate"
+      }
     },
     {
       "file": "e2e/race/t3b-undo.spec.ts",
