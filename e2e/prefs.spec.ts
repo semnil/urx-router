@@ -51,6 +51,20 @@ test.describe("plain browser", () => {
     await expect(page.locator("#prefs-modal")).toBeHidden();
   });
 
+  // The scrim says the app is unreachable; `inert` is what makes that true for the
+  // keyboard. Only the consent gate used to claim it, so a Tab from any other modal
+  // walked into the graph behind it.
+  test("the app behind the modal is out of the tab order, and back in on close", async ({ page }) => {
+    const appInert = () => page.evaluate(() => (document.getElementById("app") as HTMLElement).inert);
+    expect(await appInert()).toBe(false);
+    await page.click("#btn-prefs");
+    await expect(page.locator("#prefs-modal")).toBeVisible();
+    expect(await appInert()).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#prefs-modal")).toBeHidden();
+    expect(await appInert()).toBe(false);
+  });
+
   test("a changed setting applies immediately and survives a reload", async ({ page }) => {
     await page.click("#btn-prefs");
     await page.click('#prefs-save-scope button:has-text("Scene only")');
