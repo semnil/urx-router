@@ -12,8 +12,8 @@
 // whose name collides with an unrelated property (`on`, `open`, `name`) therefore
 // passes on the collision. That is a miss, not a false alarm, and it is the shape
 // every gap below has but one: they lean into silence. **The exception is
-// destructuring**, four paragraphs down — the one form that makes this report a key
-// that IS in use. Read that before treating a failure here as settled.
+// destructuring**, in the paragraph headed THE EXCEPTION below — the one form that makes
+// this report a key that IS in use. Read that before treating a failure here as settled.
 //
 // Two forms reach a leaf without ever naming it, and both vouch for the namespace
 // they are applied to: a computed index (`t().error[err.code]`, `m.inspector[key]`)
