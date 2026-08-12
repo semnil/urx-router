@@ -167,6 +167,32 @@ test("a position indicator survives as a shape, not as a fill", async ({ page })
   for (const part of parts) await expectOutlined(page, part);
 });
 
+test("the tuning-screen launcher keeps its caret, at full strength", async ({ page }) => {
+  await page.locator('#graph-host g.node[data-id="ch1"]').click();
+  const sec = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^GATE$/ }) });
+  if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
+
+  const caret = () =>
+    page.locator("#btn-gate-screen").evaluate((el) => {
+      const a = getComputedStyle(el, "::after");
+      return { opacity: a.opacity, border: a.borderRightWidth, buttonBorder: getComputedStyle(el).borderTopStyle };
+    });
+
+  // The mark is drawn from two borders rather than a glyph or a background, which is
+  // the half of this that survives at all. What does NOT survive is the reason it is
+  // dimmed: in the normal themes 0.65 sets it a step below the section chevron beside
+  // it, and this mode paints both of them CanvasText, so the step has nothing left to
+  // encode and only costs legibility. `opacity` is not one of the properties the mode
+  // replaces, so it has to be given back by hand.
+  const normal = await caret();
+  expect(Number(normal.opacity)).toBeLessThan(1);
+  await page.emulateMedia({ forcedColors: "active" });
+  const forced = await caret();
+  expect(forced.opacity).toBe("1");
+  expect(forced.border).toBe(normal.border);
+  expect(forced.buttonBorder).toBe("solid");
+});
+
 test("the parts stay outlines in a send column that has been switched off", async ({ page }) => {
   await page.click("#btn-view-console");
   await expect(page.locator("#console-host")).toBeVisible();

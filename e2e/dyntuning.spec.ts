@@ -183,6 +183,52 @@ test("has no launcher on a stereo channel, which has no gate", async ({ page }) 
   await expect(page.locator("#btn-gate-screen")).toHaveCount(0);
 });
 
+// The launcher carried no rule at all for a long time, so its whole face was the
+// UA's own button — a different one per engine, reading no theme token. The pin is
+// relative rather than absolute: it asks that the launcher wear the SAME face as the
+// hide button one section below, which is the other inspector control on that recipe.
+// An absolute pin would have to be rewritten every time a token moves, and would not
+// have caught the original defect any earlier than this one does.
+test("the launcher wears the inspector's own button face, and marks itself as an opener", async ({ page }) => {
+  await node(page, "ch1").click();
+  const sec = section(page, /^GATE$/);
+  if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
+
+  const read = (sel: string) =>
+    page.locator(sel).evaluate((el) => {
+      const cs = getComputedStyle(el);
+      const after = getComputedStyle(el, "::after");
+      return {
+        face: {
+          fontFamily: cs.fontFamily,
+          fontSize: cs.fontSize,
+          letterSpacing: cs.letterSpacing,
+          backgroundImage: cs.backgroundImage,
+          borderTopColor: cs.borderTopColor,
+          borderRadius: cs.borderTopLeftRadius,
+          boxShadow: cs.boxShadow,
+        },
+        caret: { width: after.width, border: after.borderRightWidth },
+      };
+    });
+  const launcher = await read("#btn-gate-screen");
+  const hide = await read("#inspector button.subtle");
+  expect(launcher.face).toEqual(hide.face);
+
+  // What the launcher adds on top of that face: a caret at the trailing edge, built
+  // exactly like the section's own disclosure chevron — two borders rather than a
+  // glyph, which is also what survives forced colors. Compared against that chevron
+  // rather than against literals: the engine reports a used border width, so a 1.5px
+  // author value comes back as 1px here and would read as a defect in a pin that
+  // spelled the authored number out.
+  const chevron = await sec.locator("summary").evaluate((el) => {
+    const cs = getComputedStyle(el, "::after");
+    return { width: cs.width, border: cs.borderRightWidth };
+  });
+  expect(launcher.caret).toEqual(chevron);
+  expect(hide.caret.width).not.toBe(chevron.width);
+});
+
 test("opens from the CONSOLE strip, one opener per processor the strip actually has", async ({ page }) => {
   await page.click("#btn-view-console");
   const strips = page.locator(".con-strip");
