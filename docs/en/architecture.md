@@ -2386,6 +2386,14 @@ works by mouse wheel (desktop) and two-finger pinch (touch); both share one "zoo
 routine (`zoomAt` in `graph.ts`). `viewport-fit=cover` plus `env(safe-area-inset-bottom)` clears the
 notch / home indicator.
 
+**One control stays outside the comfortable target.** The same breakpoint gives the rack's and the
+inspector's controls a 40px minimum height, and a `<select>` does not take it: WebKit ignores
+`min-height` on a menulist, so a parameter row's dropdown keeps the platform's own height — measured
+19px there against 40 in Chromium, which does take it. The only way to make it take one is
+`appearance: none` plus a caret drawn as a background image (a select cannot host a pseudo-element),
+which would change every select in the app, on desktop too, for a phone target. The platform control
+is kept instead, and the same reason is why a parameter select is 19px tall beside a text input's 26.
+
 ## Node graph rendering constraints
 
 Four constraints on the SVG canvas do not read off the code, and an obvious change reintroduces each
