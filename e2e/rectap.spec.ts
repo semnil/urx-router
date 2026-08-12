@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "./fixtures";
-import { drag, port, tapJack } from "./graph-helpers";
+import { drag, port, tapJack, wire } from "./graph-helpers";
 
 // A channel has two source jacks. The right-edge output feeds the mixer stage
 // (bus sends, ducker keys); the Rec Point tap on the top edge feeds the direct
@@ -14,7 +14,6 @@ const DUCKER1_IN = "out.ducker1:in";
 
 const tapPin = (page: Page, nodeId: string) => page.locator(`[data-tap-pin="${nodeId}"]`);
 const outPin = (page: Page, ref: string) => page.locator(`[data-pin="${ref}"]`);
-const wire = (page: Page, from: string, to: string) => page.locator(`.wire-hit[data-from="${from}"][data-to="${to}"]`);
 // The painted jack of a node's right-edge output — the swatch beginConnect grows
 // to r=8 while highlighting a candidate (the hit disc keeps its own radius).
 const outJack = (page: Page, nodeId: string) =>

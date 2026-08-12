@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
-import { drag, port, tapJack } from "./graph-helpers";
+import { drag, port, selectWire, tapJack, wire } from "./graph-helpers";
 
 // A channel wired straight to a USB / SD direct out is tapped at its Rec Point,
 // upstream of the fader and Ducker. The inspector explains that on the wire
@@ -19,11 +19,6 @@ const connect = (page: Page, fromRef: string, toRef: string): Promise<void> =>
 // build one start where the app requires it.
 const connectFromTap = (page: Page, fromRef: string, toRef: string): Promise<void> =>
   drag(page, tapJack(page, fromRef), port(page, toRef));
-
-// dispatchEvent bypasses the overlapping wire-hit bands' pointer interception.
-async function selectWire(page: Page, from: string, to: string): Promise<void> {
-  await page.locator(`.wire-hit[data-from="${from}"][data-to="${to}"]`).dispatchEvent("pointerdown");
-}
 
 async function setDuckerOn(page: Page, on: boolean): Promise<void> {
   await duckerNode(page).click();
@@ -102,7 +97,7 @@ test("a channel-sourced ducker key explains it is a pre-fader tap", async ({ pag
   // wire had no tooltip at all while the panel explained it. Pinned because the gain
   // is silent: nothing else would notice the branch being narrowed again.
   const hint = await page.locator("#inspector .hint", { hasText: "Ducker key" }).innerText();
-  await expect(page.locator(`.wire-hit[data-from="ch1:out"][data-to="out.ducker1:in"] title`)).toHaveText(hint);
+  await expect(wire(page, "ch1:out", "out.ducker1:in").locator("title")).toHaveText(hint);
 });
 
 test("a bus-sourced ducker key gets no pre-fader note (it is post-fader)", async ({ page }) => {

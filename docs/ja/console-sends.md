@@ -31,7 +31,7 @@ STEREO と MONITOR バスは → STEREO send を持たないため MUTE チッ�
 ├─ ヘッド (変更なし) ────────────┤
 │ SENDS                     ▾   │  ヘッダ: ラベル / 一時読み値 / 開閉
 │ [F1]   [F2]   [M1]   [M2]     │  send 有効チップ (琥珀 = ON)
-│ [PRE]  [PRE]  [PRE]  [PRE]    │  プリフェーダートグル (琥珀 = PRE)
+│ [PRE]  [PRE]  [PRE]  [PRE]    │  Pre-fader send のトグル (琥珀 = PRE)
 │   ┃      ┃      ┃      ┃      │  縦ミニフェーダー (溝 + キャップ、
 │  ─╂──────╂──────╂──────╂─     │   2px の 0 dB 貫通 tick・可動域 ~80px)
 │   ┃      ┃      ┃      ┃      │
@@ -72,7 +72,7 @@ STEREO と MONITOR バスは → STEREO send を持たないため MUTE チッ�
   (追加マーカーは無い)、send が OFF の間も読める。
 - CH → FX の tap はデバイスに書けない: ライブ接続中は既存の `inspector.prePostLcdOnly`
   ツールチップ付きで read-only 表示 (`sendTapWritable`)。
-- ホバーツールチップ (新規 i18n キー) でプリフェーダーの意味を説明する
+- ホバーツールチップ (新規 i18n キー) でpre-faderの意味を説明する
   (C.INT ツールチップと同じ機構)。
 
 ### 列フェーダー

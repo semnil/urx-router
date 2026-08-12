@@ -640,9 +640,13 @@ the inspector, and the open modal itself.
 > `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. **Those five apply to prose as much
 > as to labels** — a sentence, hint or tooltip that names one writes it in English, so the same term
 > cannot read `Ducker` in a heading and in kana in the line under it. It had split exactly that way:
-> the labels and the legend kept the English while seven `tr()` sentences transliterated it, and nothing
-> could catch it, because the `dev()` / `fixed()` / `tr()` marks force a string's *identity* and say
-> nothing about which words a translated sentence may use. **A row that reproduces a control
+> the node kinds, the legend and the screen titles kept the English while **nine** strings in `ja.ts`
+> transliterated it — seven of them sentences, plus two that are labels rather than prose (the console
+> PRE tooltip and the Preferences warning row), which is why "the labels kept it" is true only of the
+> ones the type system pins. Nothing could catch any of it, because the `dev()` / `fixed()` / `tr()`
+> marks force a string's *identity* and say nothing about which words a translated sentence may use.
+> The rule reaches the Japanese documents for the same reason: they quote these labels.
+> **A row that reproduces a control
 > on one of the unit's own screens keeps that screen's English label, in every app language** — the unit
 > is English there whichever of its three display languages is selected. That was **read off the hardware
 > with its own Language set to Japanese**, screen by screen: GATE, COMP, EQ, DUCKER, OSCILLATOR, MONITOR
@@ -654,7 +658,11 @@ the inspector, and the open modal itself.
 > and pan / balance rows, the oscillator block with its bus assigns, the monitor block, the CH SETTING
 > name and colour, and the matching MIDI control names. It does **not** extend to the app's own vocabulary
 > — section headings, the legend, the node and connection kinds, status and error text are all translated,
-> and so is any sentence, hint or tooltip **outside the five terms above**. A tooltip that spells out a device
+> and so is any sentence, hint or tooltip — **except where it names one of the five terms above, or a
+> control from one of the unit's own screens**, both of which stay English wherever they appear. That
+> second half is why a translated sentence still writes `MONO`, `MONITOR`, `STEREO`, `Rec Point`,
+> `PRE` and `POST`: they are the unit's labels, and the rule below does not stop at the row that
+> reproduces one. A tooltip that spells out a device
 > abbreviation keeps the unit's own wording (`C.INT` → `Cue Interrupt`), and so do the MIDI takeover
 > mode names (`Absolute` / `Pickup`), which name a controller behavior the same way the button
 > behaviors do. The CONSOLE strip group separators (`INPUTS` / `BUS / FX` / `MONITOR` / `MASTER`) stay

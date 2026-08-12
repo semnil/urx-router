@@ -4,13 +4,14 @@
 // Phase 2 surfaces these as warnings only; it does not forbid the connections
 // themselves. Language-agnostic — the UI maps codes to messages.
 
-import { parseRef } from "../models/types";
+import { parseRef, ref } from "../models/types";
 import type { DeviceModel } from "../models/types";
 import { insertFxControl, isStereoChannel } from "./control/translate";
 import { INSERT_FX_NONE, insertFxAvailable } from "./control/params";
 import type { InsertFxOption, InsertFxSlot } from "./control/params";
 import type { Plan } from "./plan";
-import { directOutTarget, isStereoLinkedPair, partnerChannel } from "./routing";
+import { incomingConnection } from "./plan";
+import { directOutTarget, isStereoLinkedPair, partnerChannel, possibleSources } from "./routing";
 
 /** Selectable rates in Hz (44.1 kHz … 192 kHz). */
 export const SAMPLE_RATES = [44100, 48000, 88200, 96000, 176400, 192000];
@@ -204,20 +205,27 @@ export function duckerBypassWarnings(model: DeviceModel, plan: Plan): string[] {
 // MONITOR source at all (§6), so a standing "no MONO here" note there would be a
 // lock nothing can unlock. Scoping this the same way duckerBypassWarnings leaves
 // microSD Rec alone: state the caveat only where acting on it is possible.
-const ANALOG_OUTPUTS = new Set(["out.main", "out.line"]);
-
-/** The monitor buses, in order. Exported as the list rather than only as a predicate
- *  because a caller that has no plan — the inspector's repaint footprint — has to name
- *  every bus that could feed the output it is showing. */
+/** The monitor buses, in order — the only nodes carrying the device's [MONO]
+ *  switch. The single home for these two ids: the console, the inspector and the
+ *  MIDI catalog all used to spell them out again. Exported as the list rather
+ *  than only as a predicate because a caller that has no plan — the inspector's
+ *  repaint footprint — has to name every bus that could feed what it is showing. */
 export const MONITOR_BUS_IDS = ["bus.mon1", "bus.mon2"] as const;
 const MONITOR_BUSES = new Set<string>(MONITOR_BUS_IDS);
 
-export function isAnalogOutput(nodeId: string): boolean {
-  return ANALOG_OUTPUTS.has(nodeId);
-}
-
 export function isMonitorBus(nodeId: string): boolean {
   return MONITOR_BUSES.has(nodeId);
+}
+
+/** Whether this output's MONO lock is one a routing change can remove — which is
+ *  the same question as "may a MONITOR bus be patched here", so it is read from
+ *  the model's own rules rather than from a list of ids. MAIN / LINE OUT qualify;
+ *  a USB output cannot take a MONITOR source at all, so a standing note there
+ *  would be a lock nothing can unlock. A model that gains an output is covered by
+ *  whatever rules gave it one, which a hardcoded list would not be. */
+export function canPatchFromMonitor(model: DeviceModel, nodeId: string): boolean {
+  for (const from of possibleSources(model, ref(nodeId, "in"))) if (isMonitorBus(parseRef(from).nodeId)) return true;
+  return false;
 }
 
 /** How MONO reads on an analog output, decided by the source it is patched from.
@@ -234,7 +242,10 @@ export type OutputMono = { via: "monitor"; monitorId: string; on: boolean } | { 
 // mono check is exactly that state, and an A/B rig deliberately keeps one output
 // stereo). The inspector states it as a standing row instead.
 export function outputMono(plan: Plan, outputId: string): OutputMono {
-  const wire = plan.connections.find((c) => parseRef(c.to).nodeId === outputId);
+  // incomingConnection rather than a hand-rolled find: it is the shared lookup for
+  // a single-input receiver, it matches on the port and the kind, and it is what
+  // translate.ts resolves the same patch with.
+  const wire = incomingConnection(plan, ref(outputId, "in"), "patch");
   const source = wire ? parseRef(wire.from).nodeId : null;
   if (!source || !isMonitorBus(source)) return { via: "none" };
   // Truthiness, not `=== true`, because that is how the value reaches the device:

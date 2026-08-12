@@ -10,7 +10,7 @@ import {
   insertFxAllRateLocked,
   insertFxFree,
   insertFxMenu,
-  isAnalogOutput,
+  canPatchFromMonitor,
   isMonitorBus,
   outputMono,
 } from "./constraints";
@@ -358,15 +358,20 @@ describe("outputMono", () => {
   });
 });
 
-describe("isAnalogOutput / isMonitorBus", () => {
+describe("canPatchFromMonitor / isMonitorBus", () => {
   // The scope rule: the row exists where a routing change can remove the lock. A
   // USB output cannot take a MONITOR source at all, so it is not an analog output
   // here however much it is an output.
   it("covers MAIN / LINE and excludes the USB and microSD outputs", () => {
-    expect(isAnalogOutput("out.main")).toBe(true);
-    expect(isAnalogOutput("out.line")).toBe(true);
+    const m = getModel("URX44V");
+    expect(canPatchFromMonitor(m, "out.main")).toBe(true);
+    expect(canPatchFromMonitor(m, "out.line")).toBe(true);
     for (const id of ["out.usbmain_a", "out.usbmain_b", "out.usbsub", "out.sdrec.t1"])
-      expect(isAnalogOutput(id)).toBe(false);
+      expect(canPatchFromMonitor(m, id)).toBe(false);
+    // Read from the rules, so a model without LINE OUT answers from its own rules
+    // rather than from a list that has to remember the URX22 is different.
+    expect(canPatchFromMonitor(getModel("URX22"), "out.main")).toBe(true);
+    expect(canPatchFromMonitor(getModel("URX22"), "out.line")).toBe(false);
   });
 
   it("covers both monitor buses and nothing else", () => {

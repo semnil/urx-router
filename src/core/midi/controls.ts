@@ -7,6 +7,7 @@
 // composed by the UI from the node label + the scope + the param token.
 
 import type { DeviceModel } from "../../models/types";
+import { isMonitorBus } from "../constraints";
 import { LEVEL_OFF_DB, sendConnection, type EqBand, type NodeParams, type Plan, type PlanConnection } from "../plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../levels";
 import {
@@ -498,7 +499,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   const isChannel = node.kind === "channel";
   const isFx = id === "bus.fx1" || id === "bus.fx2";
   const isMix = id === "bus.mix1" || id === "bus.mix2";
-  const isMon = id === "bus.mon1" || id === "bus.mon2";
+  const isMon = isMonitorBus(id);
 
   if (id === "bus.osc") {
     // OSC drives its level via a knob and an ON button; no mute / sends.

@@ -20,28 +20,30 @@ import { setLang, t } from "../i18n";
 // decides whether to repaint has to know the footprint. These pin it.
 
 describe("inspectorNodes", () => {
+  const u44v = getModel("URX44V");
+
   it("reports nothing for an empty selection", () => {
-    expect(inspectorNodes(null)).toEqual([]);
+    expect(inspectorNodes(u44v, null)).toEqual([]);
   });
 
   it("reports the node itself for a node selection", () => {
-    expect(inspectorNodes({ type: "node", id: "ch1" })).toEqual(["ch1"]);
+    expect(inspectorNodes(u44v, { type: "node", id: "ch1" })).toEqual(["ch1"]);
   });
 
   // An analog output's MONO row reads a MONITOR bus's switch, so the footprint has to
   // carry a node the panel is not "showing". Without it a MIDI-driven MONO change
   // reaches the plan and the device while the row keeps reporting the old state.
   it("reports the monitor buses for an analog output, whose row reads them", () => {
-    expect(inspectorNodes({ type: "node", id: "out.main" })).toEqual(["out.main", "bus.mon1", "bus.mon2"]);
-    expect(inspectorNodes({ type: "node", id: "out.line" })).toEqual(["out.line", "bus.mon1", "bus.mon2"]);
+    expect(inspectorNodes(u44v, { type: "node", id: "out.main" })).toEqual(["out.main", "bus.mon1", "bus.mon2"]);
+    expect(inspectorNodes(u44v, { type: "node", id: "out.line" })).toEqual(["out.line", "bus.mon1", "bus.mon2"]);
     // Not every output: a USB output has no MONO row, so it has nothing extra to watch.
-    expect(inspectorNodes({ type: "node", id: "out.usbmain_a" })).toEqual(["out.usbmain_a"]);
+    expect(inspectorNodes(u44v, { type: "node", id: "out.usbmain_a" })).toEqual(["out.usbmain_a"]);
   });
 
   it("reports BOTH endpoints for a wire — the destination is why this exists", () => {
     // The destination bus's BUS Type / Pan Link decide which of the send controls the
     // panel draws at all; the source channel's Signal Type decides the pan's label.
-    expect(inspectorNodes({ type: "conn", from: "ch1:out", to: "bus.mix1:in" })).toEqual(["ch1", "bus.mix1"]);
+    expect(inspectorNodes(u44v, { type: "conn", from: "ch1:out", to: "bus.mix1:in" })).toEqual(["ch1", "bus.mix1"]);
   });
 });
 
@@ -535,8 +537,10 @@ describe("renderInspector — the analog outputs' MONO row", () => {
 
   it("names the monitor that owns the switch, and drops the way-out note", () => {
     renderInspector(panel, model, patched("bus.mon1", "out.main", true), nodeSel("out.main"), act);
-    expect(fieldValue(t().inspector.mono)).toContain(t().inspector.on);
-    expect(fieldValue(t().inspector.mono)).toContain("MONITOR 1");
+    // Exact, not toContain: "MONITOR" carries the letters of "ON", so a substring
+    // check for the ON state also passes on "OFF, from MONITOR 1" — an outputMono
+    // stuck at off would have kept this green.
+    expect(fieldValue(t().inspector.mono)).toBe(t().inspector.monoVia(t().inspector.on, "MONITOR 1"));
     expect(panel.textContent).not.toContain(t().inspector.patchNoMono);
   });
 

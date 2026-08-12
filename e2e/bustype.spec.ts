@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { selectWire } from "./graph-helpers";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
@@ -26,9 +27,6 @@ test("MIX bus shows BUS Type + Pan Link; FIXED hides Pan Link", async ({ page })
 
 // Select a wire by its endpoints. Every CH → bus send is a fixed (always-wired)
 // connection now, so it is picked by endpoint rather than created; dispatchEvent
-// bypasses the overlapping wire-hit bands' pointer interception.
-const selectWire = (page: Page, from: string, to: string) =>
-  page.locator(`.wire-hit[data-from="${from}"][data-to="${to}"]`).dispatchEvent("pointerdown");
 
 test("FIXED bus drops the send LEVEL and shows a hint", async ({ page }) => {
   await node(page, "bus.mix1").click();

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
-import { drag, faceplate, port } from "./graph-helpers";
+import { drag, faceplate, port, selectWire, wire } from "./graph-helpers";
 
 // MAIN / LINE OUT have no MONO control of their own — the device puts [MONO] on the
 // MONITOR buses — so whether an analog output can be switched to mono is decided by
@@ -15,12 +15,6 @@ const monoRow = (page: Page) =>
   page.locator("#inspector .field").filter({ has: page.locator('.field-key:text-is("MONO")') });
 
 const monoValue = (page: Page) => monoRow(page).locator(".field-val");
-
-const wire = (page: Page, from: string, to: string) => page.locator(`.wire-hit[data-from="${from}"][data-to="${to}"]`);
-
-// dispatchEvent bypasses the overlapping wire-hit bands' pointer interception.
-const selectWire = (page: Page, from: string, to: string): Promise<void> =>
-  wire(page, from, to).dispatchEvent("pointerdown");
 
 const connect = (page: Page, fromRef: string, toRef: string): Promise<void> =>
   drag(page, port(page, fromRef), port(page, toRef));
@@ -94,12 +88,16 @@ test("rewiring the output changes what the row reports", async ({ page }) => {
 });
 
 test("the hover note on the patch wire matches the selected one", async ({ page }) => {
-  // Touch has no hover, so the two carriers say the same sentence — one classifier
-  // feeds both, and this is what would catch them drifting apart.
+  // Touch has no hover, so the two carriers have to say the same sentence — one
+  // classifier feeds both. Read the panel's hint and compare the title against
+  // THAT, rather than against a literal: a literal on each side is two copies of
+  // one string and passes even when the two carriers have drifted apart, which is
+  // exactly what this case claims to catch.
   await connect(page, STEREO_OUT, MAIN_IN);
-  await expect(wire(page, STEREO_OUT, MAIN_IN).locator("title")).toHaveText(
-    "Only MONITOR 1 / 2 carry MONO. Patch this output from a MONITOR bus to switch it to mono.",
-  );
+  await selectWire(page, STEREO_OUT, MAIN_IN);
+  const hint = await page.locator("#inspector .hint", { hasText: "MONITOR" }).innerText();
+  expect(hint).toContain("Only MONITOR 1 / 2 carry MONO"); // the panel says what this test is about
+  await expect(wire(page, STEREO_OUT, MAIN_IN).locator("title")).toHaveText(hint);
 });
 
 test("a USB output gets no MONO row", async ({ page }) => {

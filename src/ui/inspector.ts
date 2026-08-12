@@ -129,7 +129,8 @@ import {
   duckerBypassWarnings,
   insertFxAllRateLocked,
   insertFxMenu,
-  isAnalogOutput,
+  isMonitorBus,
+  canPatchFromMonitor,
   MONITOR_BUS_IDS,
   outputMono,
   rateConstraints,
@@ -193,7 +194,7 @@ const HA_GAIN_DEFAULT_DB = -8;
  *  and the source channel's Signal Type / Ducker decide the pan label and the notes.
  *  Exported so a caller holding a changed node can ask whether the panel it is not
  *  rendering has gone stale, instead of restating the footprint at the call site. */
-export function inspectorNodes(selection: Selection): string[] {
+export function inspectorNodes(model: DeviceModel, selection: Selection): string[] {
   if (!selection) return [];
   if (selection.type !== "node") return [parseRef(selection.from).nodeId, parseRef(selection.to).nodeId];
   // An analog output's MONO row reports a MONITOR bus's switch, so a change on a node
@@ -201,7 +202,7 @@ export function inspectorNodes(selection: Selection): string[] {
   // exists for. Both buses are listed rather than the one the plan patches from: the
   // footprint may over-report (a repaint that was not needed) but must never under-
   // report, and reading the patch here would need the plan the caller has not got.
-  return isAnalogOutput(selection.id) ? [selection.id, ...MONITOR_BUS_IDS] : [selection.id];
+  return canPatchFromMonitor(model, selection.id) ? [selection.id, ...MONITOR_BUS_IDS] : [selection.id];
 }
 
 /** The gate a rebuild of `host` asks before running, so it cannot land inside an IME
@@ -322,7 +323,7 @@ export function renderInspector(
     // is decided by what it is patched from, and the row is the one place that
     // says so before the patch is drawn. Read-only on purpose: the switch keeps
     // its single home on the MONITOR node, and the row names which one owns it.
-    if (isAnalogOutput(node.id)) {
+    if (canPatchFromMonitor(model, node.id)) {
       const mono = outputMono(plan, node.id);
       host.append(
         field(
@@ -652,7 +653,7 @@ export function renderInspector(
 
     // Monitor bus ON (MONITOR_ON) + level (MONITOR_LEVEL) plus the CUE-interrupt /
     // MONO toggles. ON precedes the fader to match the device MONITOR screen order.
-    if (node.id === "bus.mon1" || node.id === "bus.mon2") {
+    if (isMonitorBus(node.id)) {
       const np = plan.nodeParams[node.id] ?? {};
       const ps = section(m.inspector.parameters, { key: "params" });
       ps.body.append(
