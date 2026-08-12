@@ -111,8 +111,13 @@ test.describe("language", () => {
     await page.click("#btn-view-console");
     // The first strip-group label is INPUTS (the rack's SENDS label stays English).
     await expect(page.locator(".con-grouplabel").first()).toHaveText("INPUTS");
-    // The console's own localized string is the PRE button's tooltip: the strip's
-    // visible text is device wording, which every language repeats verbatim.
+    // The console's own localized string is the power LED's accessible name — the
+    // strip's visible text is device wording, which every language repeats verbatim.
+    // The PRE tooltip used to stand in for this and can no longer: `Pre-fader send`
+    // is one of the five product terms the Japanese UI keeps in English, so the two
+    // sides of the switch became the same bytes and the assertion stopped proving
+    // that the console re-rendered at all. It is kept as the terminology pin instead.
+    await expect(page.locator(".con-scribble.power").first()).toHaveAttribute("aria-label", /on\/off$/);
     await expect(page.locator(".con-slp").first()).toHaveAttribute("title", "Pre-fader send");
 
     // The language dropdown lives in Preferences; picking 日本語 re-localizes the
@@ -126,6 +131,9 @@ test.describe("language", () => {
 
     await expect(page.locator("#btn-view-graph")).toHaveText("グラフ");
     await expect(page.locator("#btn-hide-unused")).toHaveText("未接続を隠す");
+    // The console re-rendered: its own string followed the language …
+    await expect(page.locator(".con-scribble.power").first()).toHaveAttribute("aria-label", /オン\/オフ$/);
+    // … while the product term did not, in the same rack, at the same moment.
     await expect(page.locator(".con-slp").first()).toHaveAttribute("title", "Pre-fader send");
     // The separators do not follow the language: vertical writing mode makes a
     // full-width glyph move the rack's geometry, so they stay English everywhere.
