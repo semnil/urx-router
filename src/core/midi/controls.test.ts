@@ -41,6 +41,23 @@ describe("control ids", () => {
 });
 
 describe("control catalog", () => {
+  // `arm()` refuses an id the catalog cannot bind, so an id the catalog OFFERS and
+  // then declines is a control that looks assignable and silently is not. Nothing
+  // asserted the two halves agree — the feedback round trip below walks the same
+  // list and skips what will not bind (`if (!c) continue`), which is right for what
+  // it measures and blind to this. It is also half of what keeps
+  // `e2e/race/t4b-midi.spec.ts`'s refusal case unreachable from the UI; the other
+  // half is that the arming surfaces only ever pass ids from this list, which is a
+  // property of console.ts / dyn-screen.ts and not pinned here.
+  it.each(["URX22", "URX44", "URX44V"] as const)("binds every id it lists for %s", (id) => {
+    const m = getModel(id);
+    const p = defaultPlan(id);
+    ensureFixedConnections(m, p);
+    const listed = listControls(m, p).map((c) => c.id);
+    expect(listed.length).toBeGreaterThan(0);
+    expect(listed.filter((cid) => !bindControl(m, p, cid))).toEqual([]);
+  });
+
   it("lists the console controls under fixed ids", () => {
     const ids = new Set(listControls(model, plan).map((c) => c.id));
     // channel strip: main fader / MUTE / PAN, HA + processing toggles, sends

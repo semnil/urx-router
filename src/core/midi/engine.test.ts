@@ -408,6 +408,41 @@ describe("feedback", () => {
     expect(applied).toEqual(["ch1/mute"]);
   });
 
+  // The one-shot consumption above is asked of edge mode, where a same-value message
+  // is a press and the flip is the observable. State mode has neither: the incoming
+  // value IS the state, so a same-state message is a no-op whether the guard ate it or
+  // the mode did — which is exactly why `e2e/race/t4b-midi.spec.ts` skips its variant
+  // as not falsifiable through any observable that harness has.
+  //
+  // Here it is falsifiable, but only with care: the guard matches on the value last
+  // SENT, so a follow-up carrying the other state gets through whether or not the echo
+  // disarmed it, and a case written that way passes for the wrong reason (measured
+  // while writing this). The discriminator has to repeat the SAME bytes after moving
+  // the control elsewhere by another route — the app's own edit, which sends no
+  // feedback and so leaves both the armed flag and lastSent as they were.
+  it("consumes the echo one-shot in state mode too, where the message itself cannot show it", () => {
+    const mute = fake("ch1/mute", "toggle", 0);
+    controls.set("ch1/mute", mute);
+    engine.setMappings([
+      { control: "ch1/mute", addr: { type: "cc", channel: 0, controller: 20 }, mode: "absolute", button: "state" },
+    ]);
+    mute.value = 1;
+    engine.feedback(); // confirm 127, arming the guard for this address
+    clock += 10;
+
+    engine.onMessage(encodeCc(0, 20, 127)); // the echo: same state, indistinguishable on its own
+    expect(mute.value).toBe(1);
+    expect(applied).toEqual([]);
+
+    // Something else clears it — an app-side edit, which does not re-arm the guard.
+    mute.value = 0;
+    clock += 100; // still well inside the 300 ms window
+
+    engine.onMessage(encodeCc(0, 20, 127)); // the same bytes again: a real press this time
+    expect(mute.value).toBe(1); // …which lands only because the echo disarmed the guard
+    expect(applied).toEqual(["ch1/mute"]);
+  });
+
   it("drops a note feedback echo the same way", () => {
     const mute = fake("ch1/mute", "toggle", 0);
     controls.set("ch1/mute", mute);

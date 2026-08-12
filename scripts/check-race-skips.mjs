@@ -29,8 +29,12 @@
 //                             that skips from inside its own body — `({ skip }) => skip()` —
 //                             is listed exactly like one that asserts, and reports as a skip.
 //                             A guard has to have RUN, so the state it ended in is what is
-//                             read. Its cost is the guard files alone (measured: 0.4 s for
-//                             the one file the ledger currently names).
+//                             read. Its cost is the guard files alone, and it scales with
+//                             how many the ledger names: 0.47 s for one file, 6.9 s for the
+//                             five it names now (measured 2026-08-13; nearly all of it is
+//                             main.device.test.ts booting the app 24 times). ci.yml runs the
+//                             whole unit suite in the same job anyway, so this is seconds
+//                             counted twice rather than minutes added.
 //
 // Which is why a guard must be a unit test. The same question about an E2E case can only be
 // answered by running the tier — the bundle built and served, minutes rather than seconds —

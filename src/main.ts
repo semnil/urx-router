@@ -20,7 +20,7 @@ import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
 import { clonePlanState, diffPlans, PlanWriteWitness, type PatchTouch } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
-import { planProblems } from "./core/plan-validate";
+import { isRefusal, planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
 import {
   baseName,
@@ -599,8 +599,9 @@ const followReads = new Set<AbortController>();
 // Everything device-follow has in flight for a plan that is being replaced. Called at
 // each wholesale reassignment of `plan`, and deliberately not from deactivateLive: with
 // the document still on screen, a read stopped half way leaves it a mix of device and
-// plan values with nothing marking which is which (the hazard the Fetch cancel restores
-// a pre-read clone to avoid), so a session that merely ends lets its read finish. A
+// plan values with nothing marking which is which — the hazard a Fetch avoids by reading
+// into a private copy, so cancelling one leaves the document on screen untouched — so a
+// session that merely ends lets its read finish. A
 // queued reflect goes too — it names nodes in the outgoing plan and its full path resets
 // the history of whatever replaced it; loadPlan re-renders the new plan whole anyway.
 function abandonFollowWork(): void {
@@ -1368,15 +1369,15 @@ function syncRateUi(): void {
 
 // Re-render the plan in place, without loadPlan's ownership side effects (it
 // clears dirty, leaves live sync, and re-seeds the persisted model/rate/hidden).
-// Used wherever the plan's contents changed under the same document — a device
-// readback, or restoring the one a cancelled read started from.
+// Used wherever the plan's contents changed under the same document: a Fetch, a live
+// session's readback, and a `.urxf` settings import — the three callers below.
 function rerenderPlan(): void {
   graph.setModel(getModel(modelId), plan);
   selection = null;
   syncRateUi(); // also re-renders the CONSOLE strips (applyRateConstraints)
-  // Every value here was re-authored — by the device, or by the pre-read clone a
-  // cancelled read restores — so the entries recorded against the old contents
-  // describe states this plan cannot return to.
+  // Every value here was re-authored — by the device or by the settings file — so the
+  // entries recorded against the old contents describe states this plan cannot return
+  // to.
   planHistory?.reset();
 }
 
@@ -1528,9 +1529,15 @@ function loadPlan(next: Plan): boolean {
 // its code: a wire prints "[reason] from -> to" (the routing ConnectError codes
 // and the plan's "nodeId:portId" refs), an insert-FX slot collision the contended
 // slot and every node claiming it — it has no endpoints to name.
-function buildPlanReport(model: string, problems: LoadProblem[]): string {
+//
+// The first line carries which of the two classes this is, because the report is
+// read away from the modal that framed it: pasted into the tool that generated
+// the plan, or into a message. A slot collision offers "load anyway" and the plan
+// does load, so a report of one that opened with "validation failed" told the
+// generating tool to fix a document the app had already accepted.
+function buildPlanReport(model: string, problems: LoadProblem[], refused: boolean): string {
   return [
-    "URX Router plan validation failed",
+    refused ? "URX Router plan validation failed" : "URX Router plan validation warnings",
     `model: ${model}`,
     `problems: ${problems.length}`,
     "",
@@ -1568,9 +1575,9 @@ function loadFromText(text: string, path?: string): boolean | null {
     // Fetch → Save → reopen impossible for its own document. That one warns and
     // offers to open anyway.
     const problems = planProblems(getModel(next.modelId), next);
-    const refusals = problems.filter((p) => p.reason !== "insertFxSlot");
-    if (refusals.length > 0) {
-      showLoadReport(buildPlanReport(next.modelId, refusals));
+    const refused = problems.filter(isRefusal);
+    if (refused.length > 0) {
+      showLoadReport(buildPlanReport(next.modelId, refused, true));
       return false;
     }
     const finishLoad = (): boolean => {
@@ -1588,7 +1595,7 @@ function loadFromText(text: string, path?: string): boolean | null {
     };
     if (problems.length > 0) {
       const m = t().loadReport;
-      showLoadReport(buildPlanReport(next.modelId, problems), {
+      showLoadReport(buildPlanReport(next.modelId, problems, false), {
         title: m.slotTitle,
         intro: m.slotIntro,
         // This one runs from the modal's click handler, outside the try below — which

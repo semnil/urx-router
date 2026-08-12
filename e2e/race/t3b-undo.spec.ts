@@ -1379,6 +1379,19 @@ test.describe("T3b undo", () => {
   // `undoRateLive` as an unreachable refusal. There is no second route into the state
   // — a ?plan= link and a file load both go through loadPlan, which resets too — so
   // there is nothing here that could fail.
+  //
+  // Facts are pinned around this, and none of them is a guard for the reason — the
+  // ledger entry stays `unguarded` and says why. The refusal that would fire if such an
+  // entry existed is asserted in `src/ui/history.test.ts`, but that test sets
+  // `rateLocked` itself, so it asserts the branch and not the unreachability. The picker
+  // being locked is asserted in `src/main.device.test.ts`.
+  //
+  // The step between them — the readback dropping both stacks — IS asserted, in
+  // `tzb-tail.spec.ts` (depth 3 before a Fetch, 0 after). That is this tier, which runs
+  // on the version-bump pull request alone, and a ledger guard has to be a unit test
+  // that runs on every one. The E2E reading is `depthOf` on the trace probe; there is no
+  // unit-side equivalent, and an attempt through the app entry was withdrawn as vacuous
+  // on 2026-08-13 (`reference/work/e2e-flakes.md`).
   test.skip("a sampleRate-touching entry is refused while live", () => {});
 
   // Reset path (g), a .urxf settings import, is behind the --experimental launch flag,
@@ -1387,9 +1400,13 @@ test.describe("T3b undo", () => {
   // would measure the harness rather than the app.
   test.skip("a .urxf settings import empties both stacks", () => {});
 
-  // Race variant 2 (a cancelled Fetch while a MIDI mapping is bound, so the BoundControl
-  // cache keeps writing into the discarded plan) needs the learn flow t4-midi.spec.ts
-  // drives. It belongs with that file's helpers rather than as a second, divergent copy
-  // here; the reset half of the same path is covered by the cancelled-Fetch arm above.
+  // Race variant 2 was written for a cancelled Fetch replacing the plan object, which
+  // left the BoundControl cache writing into the discarded one. That path is gone — the
+  // read runs against a private copy and the module plan object is never replaced
+  // (main.ts) — so the case is not merely unwritten, it is unwritable as titled. What
+  // survives is the memo's identity backstop, pinned at unit level in `src/ui/midi.test.ts`,
+  // which guards the backstop and not this case. Left registered so the count of unwritten cases stays
+  // countable; retitling it around a replacement that can still happen, or deleting it,
+  // is the open decision.
   test.skip("a cancelled Fetch re-points the MIDI bound cache", () => {});
 });

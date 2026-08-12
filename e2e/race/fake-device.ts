@@ -1,4 +1,5 @@
 import { expect } from "@playwright/test";
+import { FAKE_LAUNCH_FLAGS_OFF } from "./fake-flags";
 import type { Locator, Page } from "@playwright/test";
 
 // Fake URX device for the live-sync race harness (docs/{en,ja}/live-race-harness.md).
@@ -844,12 +845,13 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           throw new Error(refuse === "code400" ? "broker response 400" : "transport error");
         }
 
+        // The launch flags, from the list a unit guard also reads (see fake-flags.ts).
+        if ((FAKE_LAUNCH_FLAGS_OFF as readonly string[]).includes(cmd)) {
+          done();
+          return false;
+        }
+
         switch (cmd) {
-          case "experimental_enabled":
-          case "self_test_requested":
-          case "reset_storage_requested":
-            done();
-            return false;
           // The link ledger (core/control/link-stats.ts). Answered rather than left to
           // the `default` throw: the tracker swallows a failed reading as "the link has
           // gone", so a throw is not visible as a failure — it just puts every race

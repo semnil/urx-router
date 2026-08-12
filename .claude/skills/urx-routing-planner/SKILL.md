@@ -160,8 +160,10 @@ mirrors the app's own check exactly:
 python scripts/plan_tool.py validate plan.json
 ```
 
-It prints `OK` (the app will load it without complaint) or a problem report. It
-also prints `WARNING:` lines to stderr — always read them: for a wire or value the
+It prints `OK` or a problem report. `OK` alone means the app loads it without
+comment; `OK (N warning(s))` means read them first — one of them, the insert-FX slot
+conflict, is a plan the app opens only after asking (step 5 says what that looks
+like coming back). It prints those `WARNING:` lines to stderr — always read them: for a wire or value the
 app's loader would silently **drop** (an unknown `kind`, a mistyped `params` /
 node param — the plan loads, just without that piece), for wrong-`kind` wires, for
 Ducker params placed on a non-ducker node (move them to the channel's `out.duckerN`
@@ -192,6 +194,14 @@ Reason codes:
      the exact bound), and `modelId` must be one of the three models.
 
 Fix and re-validate until `OK`.
+
+A pasted report whose first line reads **`URX Router plan validation warnings`**
+is a different verdict: the app loaded that plan, or offered to. Only the
+insert-FX slot conflict arrives this way (`[insertFxSlot] <slot>: <node>, <node>`),
+and `plan_tool.py` reports it as a `WARNING:` line rather than in a report, so it
+never produces that header itself. Treat it as a question about intent — two nodes
+select into the one device-wide slot and the unit runs one at a time — not as a
+document to repair before it can be opened.
 
 **6. Flag the parameters that need care.** Two classes the validator warns about;
 `plan-schema.md` carries the detail, and both are worth surfacing to the user:

@@ -31,32 +31,44 @@
     {
       "file": "e2e/race/t2b-shape-change.spec.ts",
       "title": "T2b shape-change > an unresolvable wire source produces a silent hole",
-      "unguarded": "The reason is that validatePlan rejects a wire with no matching routing rule before the plan is adopted, and no test asserts that: the load-side tests cover slot contention and the seeded-wire bijection, not a ruleless wire. A case in src/core/plan-validate.test.ts feeding a hand-built plan whose wire matches no rule, and asserting it is reported rather than adopted, would turn this into a guardedBy."
+      "guardedBy": {
+        "file": "src/core/plan-validate.test.ts",
+        "title": "planProblems > refuses a wire whose source resolves to no rule at all"
+      }
     },
     {
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "T3b undo > a sampleRate-touching entry is refused while live",
-      "unguarded": "The reason is that no sampleRate entry can exist while live — the readback's rerenderPlan resets both stacks and the rate picker is disabled from then on. t3-undo.spec.ts's refusal ladder asserts exactly that, but it is a race case, so it runs on the version-bump PR alone and cannot report an expired reason on an ordinary one. What would settle it: the same two facts pinned where every PR runs them — the rate picker's disabled state under a live session, and rerenderPlan clearing both stacks."
+      "unguarded": "The reason is that no sampleRate entry can exist while live: the rate picker is disabled from the session start (pinned in src/main.device.test.ts) and the readback re-authors the plan. The refusal that would fire if such an entry existed is pinned too, in src/ui/history.test.ts — but that test sets rateLocked itself, so it asserts the branch, not the unreachability. The middle step — that the readback path drops both stacks — IS asserted, in e2e/race/tzb-tail.spec.ts (depth 3 before a Fetch, 0 after, with rerenderPlan named in the comment); it is just asserted in this tier, which runs on the version-bump pull request alone, and a guard here has to be a unit test that runs on every one. What would settle it: that same assertion at unit level. The E2E reading comes from depthOf on the VITE_TRACE probe, which has no unit-side equivalent — an attempt through the app entry was withdrawn on 2026-08-13 because set_edit_menu_state, the only observable outside a trace build, reports canUndo from an OPEN, uncommitted entry while the stack stays at u=0 r=0, so deleting rerenderPlan's reset changed nothing the test could see. The measurement is in reference/work/e2e-flakes.md."
     },
     {
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "T3b undo > a .urxf settings import empties both stacks",
-      "unguarded": "The reason is that e2e/race/fake-device.ts answers false for experimental_enabled, so the import is unreachable from the harness. Nothing asserts that: chrome.spec.ts's --experimental case drives the OTHER stub (e2e/tauri-stub.ts) and checks the Device menu's self-test entry, not this path. What would settle it: an ordinary-tier case asserting #btn-open-settings is hidden without --experimental, plus a reading that the race fake still answers false."
+      "guardedBy": {
+        "file": "src/main.device.test.ts",
+        "title": "the desktop-only surfaces > keeps the settings import behind the flag, and the race fake never sets it"
+      }
     },
     {
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "T3b undo > a cancelled Fetch re-points the MIDI bound cache",
-      "unguarded": "Not a claim about the app: the case is skipped because it belongs with t4-midi.spec.ts's learn helpers rather than as a second copy here. Nothing can expire, and nothing settles it except writing it there. Listed so the count of unwritten cases is countable rather than buried."
+      "unguarded": "Not a claim about the app, and now not a reachable one either: the case is titled after a path that is gone. A cancelled Fetch used to restore a pre-read clone outside loadPlan; the read runs against a private copy now and the module plan object is never replaced (main.ts), while loadPlan — the one replacement left — announces itself. What survives is the memo's identity backstop, pinned at unit level in src/ui/midi.test.ts; that test guards the backstop, NOT this case, which is why it is not named as the guard here. Listed so the count of unwritten cases stays countable. What would settle it: deciding whether to retitle the case around a replacement that can still happen, or delete it — an unwritten case for a path with no producer is a floor entry nobody can ever raise."
     },
     {
       "file": "e2e/race/t4b-midi.spec.ts",
       "title": "T4b midi > Toggle (state) mode: a same-state message consumes the guard",
-      "unguarded": "The reason is that the harness has no observable that separates the two outcomes — in state mode the incoming value IS the state. It expires the moment one appears, and the trace probe is where that would come from. What would settle it: a reading in __urxTrace (or the fake's IPC) that distinguishes a consumed guard from an unconsumed one."
+      "guardedBy": {
+        "file": "src/core/midi/engine.test.ts",
+        "title": "feedback > consumes the echo one-shot in state mode too, where the message itself cannot show it"
+      }
     },
     {
       "file": "e2e/race/t4b-midi.spec.ts",
       "title": "T4b midi > arming an id the catalog cannot bind is refused silently",
-      "unguarded": "The reason says 'unreachable from the UI in this build', which dates itself: it holds only while the control catalogue offers no id that arm() cannot bind. What would settle it: an assertion that every id the MIDI window can arm is one the catalogue binds — src/core/midi/controls.ts against the window's own list — which would make this a guardedBy."
+      "guardedBy": {
+        "file": "src/ui/midi-arm.contract.test.ts",
+        "title": "arming surfaces against the control catalog > CONSOLE arms only bindable ids on URX44V"
+      }
     },
     {
       "file": "e2e/race/t4b-midi.spec.ts",
@@ -69,7 +81,7 @@
     {
       "file": "e2e/race/t8-stress.spec.ts",
       "title": "T8 stress > a thirty-minute session leaks no subscription, timer or plan",
-      "unguarded": "Recorded in docs/{en,ja}/live-race-harness.md as a known gap: the four assertions need module-scope state (timer count, undo depth, MIDI cache size, reachable Plan objects) that none of the harness's four surfaces carries. What would settle it: those readings on the VITE_TRACE probe, after which the duration is the smaller obstacle."
+      "unguarded": "Recorded in docs/{en,ja}/live-race-harness.md as a known gap: the assertions need module-scope state that none of the harness's four surfaces carries. Costed on 2026-08-13 rather than left as a wish. Undo depth is ALREADY on the VITE_TRACE probe (trace-probe.ts's depth()); the MIDI bound-cache size is a Map on MidiControl and would be one hook; a subscription count is one counter in the control layer; armed timers would need the probe to wrap setTimeout/setInterval at boot, which is contained because the probe only exists in a trace build. The fifth — how many Plan objects a writer can still reach — needs a forced collection, and CDP's HeapProfiler.collectGarbage provides one without any launch flag (a Playwright CDP session is available to any Chromium project; the race project is Chromium), so a WeakRef count or Runtime.queryObjects is reachable in the Chromium-only race project. ⚠️ An earlier version of this entry called that impossible; it was not measured and was wrong. So all five readings are within reach and this is work rather than a dead end — what it is not is small: five readings, a probe surface for four of them, and a duration to choose."
     }
   ]
 }
