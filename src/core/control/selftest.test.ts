@@ -760,11 +760,13 @@ describe("unverified-guess workflow (URX22)", () => {
     );
     for (const u of report.unverified) {
       expect(u.outcome).not.toBe("collision");
-      // A round trip confirms every guess on a faithful device, which is why the report
+      // A round trip confirms every guess on a faithful device, which is why CONFIRMED
       // is not the whole story for a guess about WHICH instance a y addresses: writing y
-      // and reading y back passes whichever one it is. `ducker-block` was such a guess
-      // and was accepted on 2026-08-13 outside the round trip (see duckerControl); the
-      // ones left here are settled by the round trip itself.
+      // and reading y back passes whichever one it is. `stereo-block` is still such a
+      // guess — its y is stereoIndexMap's, the same map `ducker-block` rode before it
+      // was accepted outside the round trip on 2026-08-13 (see duckerControl and the
+      // entry's own comment). So a CONFIRMED here means the ids take values, and says
+      // nothing about pair 0 being `ch_3_4` on a URX22.
       expect(u.outcome).toBe("confirmed");
     }
     expect(report.restored).toBe(true);

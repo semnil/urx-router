@@ -1139,7 +1139,7 @@ function pushEqOneKnobCommands(out: VdCommand[], ctrl: EqOneKnobControl, ok: EqO
 /**
  * Resolve a ducker node's instance index (its parent stereo channel's stereo
  * position, via attachTo), or null if it is not a ducker. The ducker's enable
- * (258) and detail (260-263) all address this y. Confirmed on CH5/6 (research §12.27).
+ * (258) and detail (260-263) all address this y.
  *
  * All four positions were confirmed on a URX44V by sentinel write and LCD read-back
  * (y 0..3 = CH5/6, CH7/8, CH9/10, CH11/12). Pair 0 is a different channel on a URX22
@@ -2162,6 +2162,14 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
       }),
   },
   {
+    // Two guesses in one, and the round trip only settles the first: whether the
+    // invented ids take values at all, and WHICH stereo pair a `y` reaches. The y here
+    // is stereoIndexMap's, the same map the ducker block rode, so a faithful device
+    // answers CONFIRMED by writing y and reading y back whichever pair y points at.
+    // Pair 0 is `ch_5_6` on a URX44/URX44V and `ch_3_4` on a URX22, and only the
+    // URX44V has been read; the private ledger's D-1 carries the sentinel-write and
+    // LCD-read procedure that settles the other half, for both this and the ducker
+    // block it was written for.
     key: "stereo-block",
     label: "Stereo channel fader/on/pan block (266/267/268)",
     models: ["URX22", "URX44"],
