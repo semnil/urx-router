@@ -465,7 +465,7 @@ EQ の起動チップは mono CH で処理チップを 4 行目に入れるた�
 
 | モジュール | 持つもの |
 | --- | --- |
-| `src/ui/dyn-screen.ts` | ホスト: モーダル・レーン・メーターフィード・キャンバス ・`DynField[]` からの行 |
+| `src/ui/dyn-screen.ts` | ホスト: モーダル・レーン・メーターフィード・キャンバス・`DynField[]` からの行 |
 | `src/ui/dyn-chan.ts` | GATE / COMP が「MONO IN のチャンネルストリップ処理」として共有するもの — 束縛・サブオブジェクトのプラン I/O・表示バー |
 | `src/ui/dyn-plot.ts` | その 2 つが描く dB×dB 伝達プロット: `transferPlot()` が軸 3 定数とヒントから 5 つのフックを返す |
 | `src/ui/dyn-{gate,comp,eq}.ts` | descriptor — 差分だけ |

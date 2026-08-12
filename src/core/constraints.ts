@@ -205,13 +205,14 @@ export function duckerBypassWarnings(model: DeviceModel, plan: Plan): string[] {
 // MONITOR source at all (§6), so a standing "no MONO here" note there would be a
 // lock nothing can unlock. Scoping this the same way duckerBypassWarnings leaves
 // microSD Rec alone: state the caveat only where acting on it is possible.
-/** The monitor buses, in order — the only nodes carrying the device's [MONO]
- *  switch. The single home for these two ids: the console, the inspector and the
- *  MIDI catalog each used to spell them out again. Exported rather than kept
- *  private because the order is the y index the device addresses them by, so a
- *  caller that needs "monitor 0 / monitor 1" reads it here instead of restating
- *  the pair; `isMonitorBus` below is the membership question. */
-export const MONITOR_BUS_IDS = ["bus.mon1", "bus.mon2"] as const;
+// The monitor buses — the only nodes carrying the device's [MONO] switch, and the
+// single home for these two ids: the console, the inspector and the MIDI catalog
+// each used to spell them out again. Private: `isMonitorBus` is the question every
+// caller actually has, and an exported list would be a second way to ask it. It
+// was exported for one caller (the inspector's repaint footprint, which had to
+// name every bus that could feed the output it showed); that caller now reads the
+// plan and names the one it is patched from, so nothing outside is left.
+const MONITOR_BUS_IDS = ["bus.mon1", "bus.mon2"] as const;
 const MONITOR_BUSES = new Set<string>(MONITOR_BUS_IDS);
 
 export function isMonitorBus(nodeId: string): boolean {
