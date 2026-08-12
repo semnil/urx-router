@@ -66,7 +66,7 @@ test("a parameter select wears the app's own select face and fills its row", asy
           fontSize: cs.fontSize,
           color: cs.color,
           backgroundColor: cs.backgroundColor,
-          borderTopColor: cs.borderTopColor,
+          border: `${cs.borderTopWidth} ${cs.borderTopStyle} ${cs.borderTopColor}`,
           borderRadius: cs.borderTopLeftRadius,
           padding: cs.padding,
           cursor: cs.cursor,
@@ -78,12 +78,22 @@ test("a parameter select wears the app's own select face and fills its row", asy
   // the toolbar, while a parameter row's control fills the row. Asked of the row
   // rather than of a sibling control, so the pin does not depend on which other
   // controls this particular node happens to show.
+  //
+  // The select's own width is asserted first, and not as decoration: the two edge
+  // figures are DIFFERENCES, so a control that is not laid out at all — a collapsed
+  // section, display:none, a panel that never opened — reports 0 and 0 and satisfies
+  // the alignment without anything being aligned.
   const edges = await recSelect(page).evaluate((el) => {
     const s = el.getBoundingClientRect();
     const r = el.closest(".param")!.getBoundingClientRect();
-    return { left: Math.round(s.left - r.left), right: Math.round(r.right - s.right) };
+    return {
+      width: Math.round(s.width),
+      left: Math.round(s.left - r.left),
+      right: Math.round(r.right - s.right),
+    };
   });
-  expect(edges).toEqual({ left: 0, right: 0 });
+  expect(edges.width).toBeGreaterThan(100);
+  expect({ left: edges.left, right: edges.right }).toEqual({ left: 0, right: 0 });
 });
 
 test("rec point round-trips through save and open", async ({ page }, testInfo) => {

@@ -1077,9 +1077,10 @@ input[type="range"]:focus-visible,
    there. (Unstyled, WebKit does dim it — text and border drop from 0.847 to 0.247
    alpha — and stops the moment the recipe above authors a colour and a background,
    which is the same trade the model picker's own :disabled rule pays for.) The
-   value is the panel's read-only dim, as worn by #inspector .toggle button:disabled. */
+   value is the panel's read-only dim — the token the locked Preferences row takes,
+   which is the same 0.45 #inspector .toggle button:disabled writes as a literal. */
 #inspector select:disabled {
-  opacity: 0.45;
+  opacity: var(--row-lock-dim);
   cursor: not-allowed;
 }
 
