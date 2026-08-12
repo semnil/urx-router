@@ -339,7 +339,12 @@ describe("the desktop-only surfaces", () => {
     expect(FAKE_LAUNCH_FLAGS_OFF).toContain("experimental_enabled");
 
     const fake = readFileSync(resolve(process.cwd(), "e2e/race/fake-device.ts"), "utf8");
-    expect(fake, "the race fake no longer answers from FAKE_LAUNCH_FLAGS_OFF").toContain("FAKE_LAUNCH_FLAGS_OFF");
+    // Stripped ONCE, before any index is taken, so every read below is of code. Doing it
+    // per-assertion is how the two halves came apart: the absence half read stripped text
+    // while the presence half read the raw file, and a literal list with `// from
+    // FAKE_LAUNCH_FLAGS_OFF` beside it satisfied the pin while the list stopped crossing.
+    const code = fake.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    expect(code, "the race fake no longer answers from FAKE_LAUNCH_FLAGS_OFF").toContain("FAKE_LAUNCH_FLAGS_OFF");
 
     // The callback handed to addInitScript is serialised and evaluated in the PAGE, where
     // this module's bindings do not exist. Naming the import inside it compiles, type-checks
@@ -348,16 +353,15 @@ describe("the desktop-only surfaces", () => {
     // comes up rather than as an error. The argument tuple is the only channel that crosses,
     // and the only one the type checker covers: the callback's annotation and the `as` cast
     // are the same tuple type, so an arity mismatch is a compile error.
-    const open = fake.indexOf("addInitScript(");
-    const args = fake.indexOf("[cfg, opts.storage", open);
+    const open = code.indexOf("addInitScript(");
+    const args = code.indexOf("[cfg, opts.storage", open);
     expect(open, "installFake no longer installs through addInitScript").toBeGreaterThan(-1);
     expect(args, "the init script's argument tuple moved").toBeGreaterThan(open);
-    const body = fake.slice(open, args);
-    const code = body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-    expect(code, "the init script closes over FAKE_LAUNCH_FLAGS_OFF instead of being handed it").not.toContain(
+    const body = code.slice(open, args);
+    expect(body, "the init script closes over FAKE_LAUNCH_FLAGS_OFF instead of being handed it").not.toContain(
       "FAKE_LAUNCH_FLAGS_OFF",
     );
-    expect(fake.slice(args, args + 200), "the init script is not handed the flag list").toContain(
+    expect(code.slice(args, args + 200), "the init script is not handed the flag list").toContain(
       "FAKE_LAUNCH_FLAGS_OFF",
     );
 
@@ -365,10 +369,10 @@ describe("the desktop-only surfaces", () => {
     // name is escaped before it becomes a pattern: `$` is legal in an identifier and is an
     // anchor in a regular expression, so `$flags` would otherwise match nothing and report
     // the answer as missing.
-    const param = /addInitScript\(\s*\(\[[^\]]*,\s*([A-Za-z_$][\w$]*)\s*\]/.exec(code)?.[1];
+    const param = /addInitScript\(\s*\(\[[^\]]*,\s*([A-Za-z_$][\w$]*)\s*\]/.exec(body)?.[1];
     expect(param, "the init script's last parameter is not a plain binding").toBeTruthy();
     const name = String(param).replace(/[$]/g, "\\$&");
-    expect(code).toMatch(new RegExp(`(?<![\\w$])${name}\\.includes\\(cmd\\)[\\s\\S]{0,80}?return false;`));
+    expect(body).toMatch(new RegExp(`(?<![\\w$])${name}\\.includes\\(cmd\\)[\\s\\S]{0,80}?return false;`));
   });
 });
 
