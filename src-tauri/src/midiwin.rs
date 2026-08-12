@@ -108,8 +108,17 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
         .inner_size(440.0, 620.0)
         .min_inner_size(MIN_INNER.0, MIN_INNER.1)
         .resizable(true)
-        .parent(&main)
-        .map_err(|e| format!("midi-window: {e}"))?
+        // NOT a child of the main window, though it was until this was measured. A
+        // child is only composited on its PARENT's display: put on any other one it
+        // stays listed on-screen at layer 0 with alpha 1.0 and draws nothing.
+        // Observed both ways on a two-display desk — parent external / child built-in,
+        // and parent built-in / child external — so it is the relationship and not an
+        // arrangement. It also gets translated with the parent one point for one,
+        // which is how a remembered position ends up off the desk entirely.
+        //
+        // What the parent bought was "cannot fall behind the main window"; that is
+        // paid for now by raising this window whenever the main one comes forward
+        // (`on_window_event` in lib.rs).
         .build()
         .map_err(|e| format!("midi-window: {e}"))?;
     // AFTER `build()` on purpose, and it is the only place this can go. A hook of our
