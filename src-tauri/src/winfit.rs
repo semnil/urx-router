@@ -792,6 +792,45 @@ mod tests {
         assert_eq!(fit(raised, host.work), want);
     }
 
+    // The MIDI window's own saved rectangle from the same file, read out on
+    // 2026-08-12 after a report that it had come back off-screen: physical
+    // x=1072 y=232 880x1240, recorded at scale 2.0. Its whole restore is this
+    // path — the state plugin skips both windows — so if the numbers place it
+    // somewhere unreachable, they place it there with nothing to correct them.
+    //
+    // They do not: 880x1240 at 2.0 is 440x620 pt at (536, 116), inside the
+    // built-in display's work area, and the fit leaves it alone. So the
+    // rectangle that was on disk is not an explanation for the report, and
+    // whatever is has to be looked for somewhere this case does not reach —
+    // in what was on disk at the time, or in the placement's platform half.
+    #[test]
+    fn the_midi_windows_saved_rectangle_lands_on_the_built_in_display() {
+        let want = window_to_desk(
+            PhysicalPosition::new(1072, 232),
+            PhysicalSize::new(880, 1240),
+            2.0,
+        );
+        assert_eq!(want, win(536, 116, 440, 620));
+        let host = host_display(want, &mac_desk()).expect("a host");
+        assert_eq!(host.work, MAC_BUILTIN);
+        assert_eq!(fit(want, host.work), want, "already inside the work area");
+    }
+
+    // What the report described, said as a rectangle: one recorded on a display
+    // that is no longer attached. It is brought back rather than left where it
+    // was — `host_display` answers the nearest display when nothing overlaps, so
+    // there is no arrangement of attached displays for which the placement is a
+    // no-op. Only an empty display list does that.
+    #[test]
+    fn a_rectangle_off_every_display_is_brought_back_onto_one() {
+        let want = win(6000, 3000, 440, 620);
+        let host = host_display(want, &mac_desk()).expect("a host");
+        let landed = fit(want, host.work);
+        assert_ne!(landed, want);
+        assert_eq!(fit(landed, host.work), landed, "inside the work area now");
+        assert_eq!(host_display(win(0, 0, 440, 620), &[]), None, "no displays");
+    }
+
     #[test]
     fn the_minimum_is_measured_on_the_display_the_window_is_on() {
         // 1000x700 on the 1.0 external is over the 960x640 minimum.
