@@ -75,6 +75,7 @@ test("an illegal plan surfaces a copyable report and does not load", async ({ pa
   // The report names the violation reason and the exact connection refs, so it
   // can be pasted back to the tool that generated the plan.
   const body = page.locator("#load-report-body");
+  await expect(body).toContainText("URX Router plan validation failed");
   await expect(body).toContainText("problems: 1");
   await expect(body).toContainText("[noRule] ch1:out -> ch2:in");
   // The status line did not report a successful load.
@@ -91,6 +92,8 @@ test("an insert-FX slot conflict warns and loads on the operator's word", async 
   await expect(report(page)).toBeVisible();
   // Framed as a conflict to decide on, not as a failed load.
   await expect(page.locator("#load-report-title")).toHaveText("Plan has an insert-FX slot conflict");
+  // …including in the copyable body, which is read away from that title.
+  await expect(page.locator("#load-report-body")).toContainText("URX Router plan validation warnings");
   await expect(page.locator("#load-report-body")).toContainText("[insertFxSlot] amp: ch1, ch2");
   // Nothing has loaded while the decision is on screen.
   await expect(page.locator("#statusbar")).not.toContainText("Plan loaded");

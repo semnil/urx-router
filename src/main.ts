@@ -1528,9 +1528,15 @@ function loadPlan(next: Plan): boolean {
 // its code: a wire prints "[reason] from -> to" (the routing ConnectError codes
 // and the plan's "nodeId:portId" refs), an insert-FX slot collision the contended
 // slot and every node claiming it — it has no endpoints to name.
-function buildPlanReport(model: string, problems: LoadProblem[]): string {
+//
+// The first line carries which of the two classes this is, because the report is
+// read away from the modal that framed it: pasted into the tool that generated
+// the plan, or into a message. A slot collision offers "load anyway" and the plan
+// does load, so a report of one that opened with "validation failed" told the
+// generating tool to fix a document the app had already accepted.
+function buildPlanReport(model: string, problems: LoadProblem[], refused: boolean): string {
   return [
-    "URX Router plan validation failed",
+    refused ? "URX Router plan validation failed" : "URX Router plan validation warnings",
     `model: ${model}`,
     `problems: ${problems.length}`,
     "",
@@ -1570,7 +1576,7 @@ function loadFromText(text: string, path?: string): boolean | null {
     const problems = planProblems(getModel(next.modelId), next);
     const refusals = problems.filter((p) => p.reason !== "insertFxSlot");
     if (refusals.length > 0) {
-      showLoadReport(buildPlanReport(next.modelId, refusals));
+      showLoadReport(buildPlanReport(next.modelId, refusals, true));
       return false;
     }
     const finishLoad = (): boolean => {
@@ -1588,7 +1594,7 @@ function loadFromText(text: string, path?: string): boolean | null {
     };
     if (problems.length > 0) {
       const m = t().loadReport;
-      showLoadReport(buildPlanReport(next.modelId, problems), {
+      showLoadReport(buildPlanReport(next.modelId, problems, false), {
         title: m.slotTitle,
         intro: m.slotIntro,
         // This one runs from the modal's click handler, outside the try below — which
