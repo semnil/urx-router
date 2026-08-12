@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   closeInput: vi.fn(),
   closeMidiWindow: vi.fn(async () => {}),
   focusMidiWindow: vi.fn(async () => {}),
+  pinMidiWindow: vi.fn(async () => {}),
   midiCloseOutput: vi.fn(async () => {}),
   midiListInputs: vi.fn(async () => ["Controller In"]),
   midiListOutputs: vi.fn(async () => ["Controller Out"]),
@@ -28,6 +29,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../core/platform", () => ({
   closeMidiWindow: mocks.closeMidiWindow,
   focusMidiWindow: mocks.focusMidiWindow,
+  pinMidiWindow: mocks.pinMidiWindow,
   isTauri: () => mocks.tauri,
   midiCloseOutput: mocks.midiCloseOutput,
   midiListInputs: mocks.midiListInputs,
@@ -170,6 +172,9 @@ describe("MidiControl", () => {
     dispatch({ type: "learn", on: true });
     expect(control.learnActive()).toBe(true);
     expect(mocks.focusMidiWindow).toHaveBeenCalledOnce();
+    // And pinned for as long as the arming lasts — the click that follows is in
+    // the main window, which is what used to bury the panel.
+    expect(mocks.pinMidiWindow).toHaveBeenCalledWith(true);
 
     control.arm("ch1/level");
     expect(control.armedId()).toBe("ch1/level");

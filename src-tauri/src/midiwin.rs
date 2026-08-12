@@ -87,11 +87,13 @@ pub fn notify_closed(app: &AppHandle) {
 /// does not — the window-state plugin restores that from the last session and
 /// `winfit` keeps the answer on a display.
 ///
-/// Built as a CHILD of the main window, which is what keeps it in front of it: on
-/// Windows an owned window is always above its owner in the z-order, and on macOS
-/// `addChildWindow` orders it above the parent within the app. Deliberately not
-/// "always on top" — that would put the panel above every other application for
-/// the whole session, which is a far larger promise than the one being made here.
+/// Owned by the main window on WINDOWS ONLY, where that keeps it above its owner in
+/// the z-order and minimizes it with the owner. On macOS the same call makes an
+/// AppKit child window, which was measured to be unusable here — the builder below
+/// says what was seen — so there it is an ordinary top-level window and staying in
+/// front is handled where it matters, while a learn is armed. Deliberately not
+/// "always on top" for the session: that would put the panel above every other
+/// application throughout, which is a far larger promise than the one being made.
 ///
 /// `async` on purpose: building a webview from a blocking command deadlocks on
 /// Windows.
@@ -103,15 +105,37 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     let main = app
         .get_webview_window(crate::MAIN_WINDOW)
         .ok_or_else(|| "midi-window: no main window".to_string())?;
-    let win = WebviewWindowBuilder::new(&app, MIDI_WINDOW, WebviewUrl::App("midi.html".into()))
-        .title(title)
-        .inner_size(440.0, 620.0)
-        .min_inner_size(MIN_INNER.0, MIN_INNER.1)
-        .resizable(true)
-        .parent(&main)
-        .map_err(|e| format!("midi-window: {e}"))?
-        .build()
-        .map_err(|e| format!("midi-window: {e}"))?;
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+    let mut builder =
+        WebviewWindowBuilder::new(&app, MIDI_WINDOW, WebviewUrl::App("midi.html".into()))
+            .title(title)
+            .inner_size(440.0, 620.0)
+            .min_inner_size(MIN_INNER.0, MIN_INNER.1)
+            .resizable(true);
+    // NOT a child of the main window on macOS, though it was until this was measured.
+    // An AppKit child is only composited on its PARENT's display: put on any other one
+    // it stays listed on-screen at layer 0 with alpha 1.0 and draws nothing. Observed
+    // both ways on a two-display desk — parent external / child built-in, and parent
+    // built-in / child external — so it is the relationship and not an arrangement. It
+    // is also translated with the parent one point for one, which is how a remembered
+    // position ends up off the desk entirely.
+    //
+    // On Windows the same call means something else — a Win32 OWNER, which keeps this
+    // window above the main one and minimizes with it — and none of the above was
+    // measured there. Dropping it everywhere would have traded a defect nobody has seen
+    // on that platform for one nobody asked for, so the relationship stays where the
+    // evidence does not reach. `reference/work/windows-verify` item 2 carries what would
+    // settle whether macOS's finding applies there too.
+    //
+    // What the parent bought on macOS — that it cannot fall behind the main window — is
+    // paid for by pinning it while a learn is armed (`pin_midi_window`).
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder
+            .parent(&main)
+            .map_err(|e| format!("midi-window: {e}"))?;
+    }
+    let win = builder.build().map_err(|e| format!("midi-window: {e}"))?;
     // AFTER `build()` on purpose, and it is the only place this can go. A hook of our
     // own registered behind the window-state plugin's was tried and measured not to
     // work: inside a `window_created` hook the window still reports the position it
@@ -123,8 +147,24 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // there is nothing here to correct and the remembered rectangle is applied once,
     // from numbers, exactly as the main window's is. A window that cannot be placed is
     // not worth failing an open for: the panel is up and usable either way.
+    //
+    // The main window is passed as the host to fall back on, and only that: it decides
+    // the display for a remembered rectangle that lands on NO attached display, and
+    // nothing else. A rectangle that still has a display of its own is restored where
+    // it was — which is the requirement, and what an unconditional override broke.
+    //
+    // The fallback earns its place from what a window dragged by its owner ends up as.
+    // Measured while this was still an AppKit child on macOS: a parent moved from
+    // x=2344 to x=172 took this window from x=536 to x=-1636, off every display, where
+    // the window server still reported it on-screen and opaque and nothing was drawn.
+    // That relationship is gone on macOS and kept on Windows, where the same drag has
+    // not been measured.
     #[cfg(desktop)]
-    crate::restore_window(&win.as_ref().window(), MIN_INNER);
+    crate::restore_window(
+        &win.as_ref().window(),
+        MIN_INNER,
+        Some(&main.as_ref().window()),
+    );
     Ok(())
 }
 
@@ -146,6 +186,26 @@ pub fn close_midi_window(app: AppHandle) -> Result<(), String> {
 pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
     match app.get_webview_window(MIDI_WINDOW) {
         Some(win) => win.set_focus().map_err(|e| format!("midi-window: {e}")),
+        None => Ok(()),
+    }
+}
+
+/// Keep the MIDI control window above everything, or stop. Set while learn is armed
+/// and cleared when it disarms — the narrowest scope that answers the complaint.
+///
+/// Always-on-top rather than a raise on the main window's focus. That was tried and
+/// measured not to work: `set_always_on_top(true)` immediately followed by `(false)`
+/// leaves the window where it was, because on macOS it is a window LEVEL and putting
+/// the level back puts the order back, and Tauri exposes no order-front that keeps
+/// keystrokes where they are (`set_focus` is `makeKeyAndOrderFront:`). What this
+/// costs is that the panel floats above OTHER applications too — accepted for the
+/// seconds a learn is armed, which is why it is not left on.
+#[tauri::command]
+pub fn pin_midi_window(app: AppHandle, on: bool) -> Result<(), String> {
+    match app.get_webview_window(MIDI_WINDOW) {
+        Some(win) => win
+            .set_always_on_top(on)
+            .map_err(|e| format!("midi-window: {e}")),
         None => Ok(()),
     }
 }

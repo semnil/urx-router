@@ -305,6 +305,8 @@ fn restore_main_window(app: &tauri::AppHandle) {
     restore_window(
         &win.as_ref().window(),
         configured_min_inner(app, MAIN_WINDOW),
+        // The main window answers to nothing: its remembered position is its own.
+        None,
     );
 }
 
@@ -315,7 +317,11 @@ fn restore_main_window(app: &tauri::AppHandle) {
 // on a 1.0 display whenever the window is born on a 2.0 one, before any correction
 // of ours gets a look at it.
 #[cfg(desktop)]
-pub(crate) fn restore_window(win: &tauri::Window, min_inner: (f64, f64)) {
+pub(crate) fn restore_window(
+    win: &tauri::Window,
+    min_inner: (f64, f64),
+    host_of: Option<&tauri::Window>,
+) {
     use tauri::Manager;
     let app = win.app_handle();
     // The window's own label rather than one passed in: both call sites would be
@@ -332,12 +338,14 @@ pub(crate) fn restore_window(win: &tauri::Window, min_inner: (f64, f64)) {
             // what every restore used to assume.
             let saved_scale = saved_window_scale(app, label)
                 .or_else(|| winfit::saved_rect_scale(win, position, size));
-            winfit::place_saved(win, position, size, saved_scale, min_inner).and_then(|()| {
-                if s.maximized {
-                    win.maximize()?;
-                }
-                Ok(())
-            })
+            winfit::place_saved(win, position, size, saved_scale, min_inner, host_of).and_then(
+                |()| {
+                    if s.maximized {
+                        win.maximize()?;
+                    }
+                    Ok(())
+                },
+            )
         }
         // Nothing saved is a first launch. The platform placed the window and
         // nothing has moved it, so its own reported rectangle is the truth — the
@@ -443,6 +451,15 @@ fn saved_window_state(app: &tauri::AppHandle, label: &str) -> Option<SavedWindow
 // a window between our read and its own.
 #[cfg(desktop)]
 const WINDOW_SCALE_FILENAME: &str = ".window-scale.json";
+
+/// What the window-state plugin saves, named once. The plugin is registered with it
+/// and the flush below writes with it, and a pair that has to agree is a pair that
+/// can disagree.
+#[cfg(desktop)]
+const WINDOW_STATE_FLAGS: tauri_plugin_window_state::StateFlags =
+    tauri_plugin_window_state::StateFlags::POSITION
+        .union(tauri_plugin_window_state::StateFlags::SIZE)
+        .union(tauri_plugin_window_state::StateFlags::MAXIMIZED);
 
 /// The scale factors a session has captured for windows that have since closed. The
 /// plugin next door keeps its rectangles the same way — an in-memory cache updated at
@@ -555,9 +572,8 @@ fn save_window_scales(app: &tauri::AppHandle) {
 // at each capture and is therefore always self-consistent.
 #[cfg(desktop)]
 fn window_state_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    use tauri_plugin_window_state::StateFlags;
     tauri_plugin_window_state::Builder::new()
-        .with_state_flags(StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED)
+        .with_state_flags(WINDOW_STATE_FLAGS)
         .skip_initial_state(MAIN_WINDOW)
         .skip_initial_state(midiwin::MIDI_WINDOW)
         .build()
@@ -996,6 +1012,18 @@ pub fn run() {
             #[cfg(desktop)]
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 capture_window_scale(window);
+                // And put both on disk now. The plugin writes its file at
+                // `RunEvent::Exit` and nowhere else, so anything that ends the process
+                // without getting there loses every move since the last launch —
+                // measured: across a dozen `tauri dev` rebuild-restarts the file's
+                // mtime never moved, and the MIDI window came back to where it had
+                // been hours earlier. `save_window_state` re-reads the live windows
+                // before writing, so this does not depend on running after the
+                // plugin's own handler for the same event.
+                let app = window.app_handle();
+                use tauri_plugin_window_state::AppHandleExt;
+                let _ = app.save_window_state(WINDOW_STATE_FLAGS);
+                save_window_scales(app);
             }
             if !matches!(event, tauri::WindowEvent::Destroyed) {
                 return;
@@ -1068,6 +1096,17 @@ pub fn run() {
         // no page that knows the assertion exists. Nothing to salvage from a page that is
         // gone, and nothing to report to it.
         keepawake::release_owned_by(&app.state::<keepawake::KeepAwakeState>(), label);
+        // And the MIDI window's always-on-top pin, which the main page takes while a
+        // learn is armed. The window OUTLIVES this page, and the page that comes back
+        // starts with learn off — so it never calls the release, and the panel stays
+        // floating above every application for the rest of the run. Cleared from the
+        // shell rather than from the new page for the same reason the three holds above
+        // are: a page that is gone cannot release anything, and a page that never boots
+        // (a crash, a failed reload) would not either.
+        #[cfg(desktop)]
+        if label == MAIN_WINDOW {
+            let _ = midiwin::pin_midi_window(app.clone(), false);
+        }
     });
 
     // App-owned Edit > Undo / Redo (see build_menu). The click is forwarded to the
@@ -1127,6 +1166,7 @@ pub fn run() {
             midiwin::open_midi_window,
             midiwin::close_midi_window,
             midiwin::focus_midi_window,
+            midiwin::pin_midi_window,
             midiwin::midi_window_open,
             midiwin::midi_ui_attach_main,
             midiwin::midi_ui_attach_window,
