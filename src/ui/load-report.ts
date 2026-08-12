@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { copyText } from "./dom";
+import { copyText, holdAppInert } from "./dom";
 
 // Show a copyable report in the shared modal. The default framing is a plan-load
 // failure (a `?plan=` decode error or a routing validation failure); `opts`
@@ -44,6 +44,7 @@ export function showLoadReport(
     close.before(proceed);
   }
 
+  const release = holdAppInert();
   scrim.hidden = false;
   // Close keeps the focus even when proceeding is offered: the report is what the
   // operator has to read before deciding, so the decision is not one Return away.
@@ -64,6 +65,7 @@ export function showLoadReport(
     void copyText(report).then((ok) => (ok ? void (copy.textContent = m.copied) : selectBody()));
   };
   const onClose = (): void => {
+    release();
     scrim.hidden = true;
     copy.textContent = m.copy;
     copy.removeEventListener("click", onCopy);

@@ -40,6 +40,31 @@ export function scrubFloat(v: number): number {
   return Number(v.toFixed(4));
 }
 
+// Hold the app behind a modal out of the tab order, for as long as any modal is
+// up. Every `aria-modal` surface claims this on open and releases on close; only
+// the consent gate used to, so the other six let a Tab walk into the graph
+// underneath while their scrim said the app was unreachable.
+//
+// A depth count rather than a boolean, because these overlap: Preferences opens
+// the licenses notice on top of itself, and a load report can arrive over a
+// tuning screen. With a boolean the inner one's close hands the app back while
+// the outer is still showing. The release is idempotent for the same reason —
+// a close path that runs twice (Escape landing with the button click) would
+// otherwise decrement for a claim it no longer holds and release early.
+let modalDepth = 0;
+export function holdAppInert(): () => void {
+  const app = document.getElementById("app");
+  modalDepth += 1;
+  if (app) app.inert = true;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    modalDepth -= 1;
+    if (modalDepth === 0 && app) app.inert = false;
+  };
+}
+
 // Dismissal wiring for a transient overlay: a press outside it or Escape closes.
 // Capture phase, like the toolbar menus — console / graph handlers may stop
 // propagation, but a dismissal gesture must still reach the overlay. `keep`

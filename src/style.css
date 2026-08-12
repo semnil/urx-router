@@ -243,9 +243,14 @@ body {
   color: var(--text-dim);
 }
 
-/* The rack select recipe, shared with the Preferences selects. */
+/* The rack select recipe, shared with the Preferences selects and the MIDI
+   window's. That window is a separate OS window on this same stylesheet, and it
+   had grown its own near-copy (4px radius, --ctl-border) — near enough to read as
+   the same control and different enough to look like a slip when the two are open
+   side by side. */
 select#model-picker,
-.prefs-select {
+.prefs-select,
+.mw-body select {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--text);
@@ -364,7 +369,9 @@ button {
 
 /* The raised tool-button recipe, shared with the Preferences buttons. */
 .tools button,
-.prefs-btn {
+.prefs-btn,
+.mw-learnbtn,
+button.consent-btn-secondary {
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.06em;
@@ -377,18 +384,29 @@ button {
   box-shadow: var(--ctl-shadow);
 }
 
+/* The dialog actions join here rather than carrying their own states: a modal's
+   buttons are the same primitive as the toolbar's, and the two vocabularies had
+   drifted to "toolbar reacts, dialog does not". `filter` composes with whatever
+   face the button wears, so the lit Agree and the plain Close brighten alike
+   without either needing a second hover colour. */
 .tools button:hover,
-.prefs-btn:hover {
+.prefs-btn:hover,
+.mw-learnbtn:hover,
+.consent-actions button:hover:not(:disabled) {
   filter: brightness(1.12);
 }
 
 [data-theme="light"] .tools button:hover,
-[data-theme="light"] .prefs-btn:hover {
+[data-theme="light"] .prefs-btn:hover,
+[data-theme="light"] .mw-learnbtn:hover,
+[data-theme="light"] .consent-actions button:hover:not(:disabled) {
   filter: brightness(0.97);
 }
 
 .tools button:active,
-.prefs-btn:active {
+.prefs-btn:active,
+.mw-learnbtn:active,
+.consent-actions button:active:not(:disabled) {
   filter: brightness(0.9);
 }
 
@@ -621,6 +639,34 @@ select:focus-visible,
 .recent-row:focus-visible {
   outline: 2px solid var(--led);
   outline-offset: 2px;
+}
+
+/* The second focus vocabulary, and the reason there are two: an amber ring is
+   invisible on an amber face. A white outline with a dark halo reads on any of
+   them, and the halo is what makes it read in the light theme too — white alone
+   would vanish on the panel.
+
+   These eight surfaces carried no rule at all and were showing the UA's blue
+   ring. Three of them genuinely need the white (the lit faces: the primary
+   dialog action, an engaged Preferences toggle, the threshold cap). The other
+   five would work in amber, so two same-looking buttons — .prefs-btn and its
+   .tools button neighbour — now differ in ring colour alone; that is a known
+   cost of stating the rule once, and dropping those five selectors is all it
+   takes to reverse it. */
+.con-scribble.power:focus-visible,
+.consent-actions button:focus-visible,
+.prefs-toggle button:focus-visible,
+.prefs-btn:focus-visible,
+.lic-toggle:focus-visible,
+#follow-usb:focus-visible,
+input[type="range"]:focus-visible,
+.gt-cap:focus-visible,
+#load-report-body:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+  box-shadow:
+    var(--ctl-shadow),
+    0 0 0 4px rgba(0, 0, 0, 0.9);
 }
 
 /* ---- stage ---- */
@@ -1181,7 +1227,11 @@ select:focus-visible,
   width: 100%;
 }
 
-#inspector button.danger {
+/* The destructive-action recipe, shared with the MIDI window's per-assignment
+   delete. That one is not undoable either, and it was a bare dimmed glyph that
+   brightened on hover — the same face a decorative control wears. */
+#inspector button.danger,
+.mw-del {
   font-family: var(--mono);
   font-size: 12px;
   letter-spacing: 0.04em;
@@ -1192,11 +1242,13 @@ select:focus-visible,
   padding: 9px;
 }
 
-#inspector button.danger:hover {
+#inspector button.danger:hover,
+.mw-del:hover {
   filter: brightness(1.1);
 }
 
-[data-theme="light"] #inspector button.danger:hover {
+[data-theme="light"] #inspector button.danger:hover,
+[data-theme="light"] .mw-del:hover {
   filter: brightness(0.97);
 }
 
@@ -1759,8 +1811,7 @@ select:focus-visible,
 
 /* ---- console view (mixer-style level overview) ---- */
 
-#console-host,
-#dyn-screen-box {
+#console-host {
   --strip-w: 94px;
   /* Fixed for every strip, so the tallest head sets it. Four processing-chip rows on a
      mono channel (GATE / COMP / EQ each with their tuning-screen opener, then INS FX)
@@ -1781,6 +1832,14 @@ select:focus-visible,
   min-height: 0;
   overflow: hidden;
   background: var(--graph-bg);
+}
+/* The tuning screens draw the same faders and meters, so they need the groove —
+   and nothing else from the rule above. They used to take the whole tenancy,
+   which is how a modal ended up `flex: 1` inside its scrim: it stretched to the
+   viewport (1452px measured) and painted itself on the canvas colour instead of
+   the panel, while every other dialog sat in the shared box. */
+#dyn-screen-box {
+  --groove: color-mix(in srgb, var(--canvas-bg) 55%, #000 45%);
 }
 /* Meters and fader slots read as LEDs on black: keep the groove dark in light
    mode too, so amber set fills and green/red signal lanes stay high-contrast. */
@@ -1932,15 +1991,8 @@ select:focus-visible,
   cursor: pointer;
   user-select: none;
 }
-/* The shared amber focus ring vanishes on amber / orange scribbles; give the power
-   scribble a white outline with a dark halo so focus reads on any CH SETTING colour. */
-.con-scribble.power:focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: 1px;
-  box-shadow:
-    var(--ctl-shadow),
-    0 0 0 4px rgba(0, 0, 0, 0.9);
-}
+/* Its focus ring is the white-on-halo one, declared with the other seven surfaces
+   that need it beside the amber rule near the top of this file. */
 .con-chips {
   display: flex;
   flex-wrap: wrap;
@@ -2885,11 +2937,15 @@ select:focus-visible,
   font-weight: 600;
   color: var(--text);
 }
+/* Every modal's footer, separator included. It used to be named on two boxes, so
+   four dialogs had the line and three did not — a difference nothing decided. */
 .consent-actions {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  margin-top: 20px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
 }
 /* Three choices, each spelled out rather than labelled OK/Cancel, so they wrap
    onto a second row on a narrow window instead of being squeezed. */
@@ -2904,11 +2960,27 @@ select:focus-visible,
   cursor: pointer;
   border: 1px solid var(--ctl-border);
 }
-.consent-btn-secondary {
-  background: var(--ctl-bg);
-  color: var(--text-dim);
+/* An in-flight or unavailable action, wherever it appears — this used to be
+   written for one button in one modal, so the same disabled Close read as
+   clickable in every other dialog. */
+.consent-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
-.consent-btn-primary {
+/* Which face a dialog action wears is decided by what it does, not by how many
+   there are: an action that CONFIRMS (Agree / adopt / Apply) is the lit one, and
+   everything that leaves — Close, Cancel, Quit — wears the app's ordinary raised
+   button, declared with the toolbar's near the top of this file. Close used to be
+   the lit face in four dialogs, which put it in Preferences on the same face as
+   the "ON" toggles it sat beside. Demoting it to a flat, dimmed secondary was the
+   other option and was rejected: that face measured Lc 59.9 in the dark theme,
+   under the floor.
+   `button` qualifies the face selectors deliberately. The base rule above is
+   (0,1,1) and a bare `.consent-btn-primary` is (0,1,0), so its shorthand `border`
+   beat the face's `border-color` and the amber edge never rendered — from the
+   first release until this was measured. Matching the specificity puts the
+   decision back where it reads, on source order. */
+button.consent-btn-primary {
   background: var(--led-face);
   border-color: var(--led-ink);
   color: var(--on-accent-ink);
@@ -3014,7 +3086,7 @@ select:focus-visible,
 .licenses-box {
   display: flex;
   flex-direction: column;
-  width: min(920px, 100%);
+  width: min(1180px, 100%);
   overflow-y: hidden;
 }
 .prefs-grid {
@@ -3023,13 +3095,6 @@ select:focus-visible,
   gap: 0 32px;
   overflow-y: auto;
   min-height: 0;
-}
-/* Footer separator: the body scrolls beneath the pinned Close action. */
-.prefs-box .consent-actions,
-.licenses-box .consent-actions {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
 }
 @media (max-width: 860px) {
   .prefs-grid {
@@ -3137,9 +3202,10 @@ select:focus-visible,
   display: none;
 }
 /* In-flight disable (the update check): same treatment as a disabled menu
-   item. Locked rows stay out — they already dim wholesale. */
-.prefs-row:not(.locked) .prefs-btn:disabled,
-.prefs-box .consent-btn-primary:disabled {
+   item. Locked rows stay out — they already dim wholesale. The modal actions
+   are not listed here any more; they carry the same treatment from the
+   `.consent-actions button` recipe, which reaches every dialog. */
+.prefs-row:not(.locked) .prefs-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
@@ -3478,14 +3544,9 @@ select:focus-visible,
 .mw-ports > span {
   color: var(--text-dim);
 }
+/* Only what the narrow window needs on top of the shared select recipe: these two
+   let a long port name shrink inside its row instead of widening it. */
 .mw-body select {
-  font-family: inherit;
-  font-size: 12px;
-  padding: 3px 6px;
-  background: var(--ctl-bg);
-  color: var(--ctl-text);
-  border: 1px solid var(--ctl-border);
-  border-radius: 4px;
   min-width: 0;
   max-width: 100%;
 }
@@ -3494,17 +3555,12 @@ select:focus-visible,
   align-items: center;
   gap: 12px;
 }
+/* The face comes from the raised tool-button recipe above; LEARN keeps only its
+   own weight and width, which are what make it the one action in the section. */
 .mw-learnbtn {
   appearance: none;
-  border: 1px solid var(--ctl-border);
-  border-radius: 5px;
-  background: var(--ctl-bg2);
-  color: var(--ctl-text);
-  font-family: inherit;
-  font-size: 12px;
   font-weight: 600;
-  padding: 5px 16px;
-  cursor: pointer;
+  padding: 7px 16px;
 }
 .mw-learnbtn.on {
   border-color: var(--led-ink);
@@ -3570,17 +3626,12 @@ select:focus-visible,
   border-radius: 1px;
   background: var(--w-send);
 }
+/* Compact enough to sit in a table cell without setting the row height; the rest
+   of the face comes from the danger recipe. */
 .mw-del {
   appearance: none;
-  border: 0;
-  background: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 0 2px;
-}
-.mw-del:hover {
-  color: var(--text);
+  line-height: 1;
+  padding: 4px 8px;
 }
 .mw-empty {
   margin: 0;

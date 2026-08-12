@@ -87,7 +87,7 @@ describe("open / close", () => {
     const title = host.box.querySelector("#dyn-screen-title")!;
     expect(title.textContent).toContain(GATE.title(t()));
     expect(host.box.querySelector(".gt-ladders")).not.toBeNull();
-    expect(host.box.querySelector(".consent-btn-primary")).not.toBeNull();
+    expect(host.box.querySelector(".consent-btn-secondary")).not.toBeNull();
   });
 
   // `bind` answering null is how a processor says it does not exist on this node.
@@ -126,7 +126,7 @@ describe("open / close", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
-    host.box.querySelector<HTMLButtonElement>(".consent-btn-primary")!.click();
+    host.box.querySelector<HTMLButtonElement>(".consent-btn-secondary")!.click();
     expect(screen.isOpen()).toBe(false);
 
     screen.open(GATE, "ch1");
@@ -563,11 +563,11 @@ describe("localization", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
-    const en = host.box.querySelector<HTMLButtonElement>(".consent-btn-primary")!.textContent;
+    const en = host.box.querySelector<HTMLButtonElement>(".consent-btn-secondary")!.textContent;
 
     setLang("ja");
     screen.refresh();
-    expect(host.box.querySelector<HTMLButtonElement>(".consent-btn-primary")!.textContent).toBe(t().dynTuning.close);
-    expect(host.box.querySelector<HTMLButtonElement>(".consent-btn-primary")!.textContent).not.toBe(en);
+    expect(host.box.querySelector<HTMLButtonElement>(".consent-btn-secondary")!.textContent).toBe(t().dynTuning.close);
+    expect(host.box.querySelector<HTMLButtonElement>(".consent-btn-secondary")!.textContent).not.toBe(en);
   });
 });

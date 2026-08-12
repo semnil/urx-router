@@ -30,7 +30,7 @@
 // the previous one and the unsubscribe takes no address), so this screen takes the slot
 // for its lanes' addresses while open and hands it back on close.
 
-import { el, settingsRow, settingsSection, sliderRow, wheelStep, wireDismiss } from "./dom";
+import { el, holdAppInert, settingsRow, settingsSection, sliderRow, wheelStep, wireDismiss } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import { armOnActivate, markMidi } from "./midi-learn";
@@ -438,6 +438,8 @@ export class DynScreen {
     keep: (target) => target !== this.scrim,
     close: () => this.close(),
   });
+  /** Held while the modal is up; see holdAppInert. */
+  private releaseInert: (() => void) | null = null;
 
   /** A pointer is down on this screen, so nothing may rebuild its DOM: the control
    *  under the pointer would be replaced and the drag would end there. */
@@ -501,11 +503,12 @@ export class DynScreen {
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     this.peaks.clear();
     this.render();
+    this.releaseInert ??= holdAppInert();
     this.scrim.hidden = false;
     this.dismiss.attach();
     this.measure();
     this.startMeters();
-    this.box.querySelector<HTMLButtonElement>(".consent-btn-primary")?.focus({ preventScroll: true });
+    this.box.querySelector<HTMLButtonElement>(".consent-btn-secondary")?.focus({ preventScroll: true });
   }
 
   close(): void {
@@ -513,6 +516,8 @@ export class DynScreen {
     if (this.redrawRaf) cancelAnimationFrame(this.redrawRaf);
     this.redrawRaf = 0;
     this.dismiss.detach();
+    this.releaseInert?.();
+    this.releaseInert = null;
     this.scrim.hidden = true;
     this.stopMeters();
     this.hooks.regainMeters();
@@ -927,7 +932,7 @@ export class DynScreen {
     grid.append(this.displayColumn(proc), this.controlColumn(m));
 
     const actions = el("div", "consent-actions");
-    const close = el("button", "consent-btn-primary");
+    const close = el("button", "consent-btn-secondary");
     close.textContent = g.close;
     close.addEventListener("click", () => this.close());
     actions.append(close);

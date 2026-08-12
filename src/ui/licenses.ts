@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { el, wireDismiss } from "./dom";
+import { el, holdAppInert, wireDismiss } from "./dom";
 
 // Third-party license notice, rendered as app DOM. The bundled cargo-about page
 // (src-tauri/about.hbs output) is parsed — not embedded: an iframe would scroll
@@ -94,10 +94,12 @@ export function showLicenses(html: string): void {
   body.replaceChildren(...sections);
   body.scrollTop = 0;
 
+  const release = holdAppInert();
   scrim.hidden = false;
   close.focus();
 
   const onClose = (): void => {
+    release();
     dismiss.detach();
     scrim.hidden = true;
     // Release the rendered notice (thousands of nodes) — it is rebuilt from the

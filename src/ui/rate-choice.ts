@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { holdAppInert } from "./dom";
 
 /** What the operator chose when the plan's rate disagrees with a device that is
  *  slaved to its USB host. `adopt` takes the device's rate into the plan; `release`
@@ -35,6 +36,7 @@ export function askRateChoice(planRate: string, deviceRate: string, hiRateNote: 
   release.textContent = m.release(planRate);
   cancel.textContent = m.cancel;
 
+  const releaseInert = holdAppInert();
   scrim.hidden = false;
   cancel.focus();
 
@@ -43,6 +45,7 @@ export function askRateChoice(planRate: string, deviceRate: string, hiRateNote: 
   return new Promise<RateChoice>((resolve) => {
     const ac = new AbortController();
     const finish = (choice: RateChoice) => (): void => {
+      releaseInert();
       scrim.hidden = true;
       ac.abort();
       resolve(choice);

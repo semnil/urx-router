@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { holdAppInert } from "./dom";
 
 /**
  * Show the first-run consent gate and resolve true (agreed) or false (declined).
@@ -27,14 +28,13 @@ export function showConsent(): Promise<boolean> {
   quit.textContent = m.quit;
 
   // Disable the app behind the scrim so it cannot be reached by keyboard/Tab.
-  const app = document.getElementById("app") as HTMLElement;
-  app.inert = true;
+  const release = holdAppInert();
   scrim.hidden = false;
   agree.focus();
 
   return new Promise<boolean>((resolve) => {
     const close = (agreed: boolean): void => {
-      app.inert = false;
+      release();
       scrim.hidden = true;
       resolve(agreed);
     };

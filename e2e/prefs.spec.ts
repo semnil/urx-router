@@ -33,7 +33,7 @@ test.describe("plain browser", () => {
     // Version shows; the manual update check needs the desktop shell.
     await expect(page.locator("#prefs-version")).toContainText("URX Router");
     await expect(page.locator("#prefs-update-now")).toHaveCount(0);
-    await page.click("#prefs-modal .consent-btn-primary");
+    await page.click("#prefs-modal .consent-btn-secondary");
     await expect(page.locator("#prefs-modal")).toBeHidden();
   });
 
@@ -81,7 +81,7 @@ test.describe("plain browser", () => {
   test("fine-tuning latch: Shift toggles instead of holding", async ({ page }) => {
     await page.click("#btn-prefs");
     await page.click('#prefs-fine button:has-text("Latch")');
-    await page.click("#prefs-modal .consent-btn-primary");
+    await page.click("#prefs-modal .consent-btn-secondary");
     // One press latches fine mode on through the keyup...
     await page.keyboard.down("Shift");
     await page.keyboard.up("Shift");
@@ -110,7 +110,7 @@ test.describe("plain browser", () => {
     expect(metrics.boxClient).toBeLessThanOrEqual(metrics.viewport);
     expect(metrics.gridScroll).toBeGreaterThan(metrics.gridClient);
     // Close is pinned below the grid — visible and clickable without scrolling.
-    const close = page.locator("#prefs-modal .consent-btn-primary");
+    const close = page.locator("#prefs-modal .consent-btn-secondary");
     const closeBox = await close.boundingBox();
     expect(closeBox).not.toBeNull();
     expect(closeBox!.y + closeBox!.height).toBeLessThanOrEqual(420);
@@ -151,10 +151,10 @@ test("every dismissal locks while a check is in flight (stubbed Tauri)", async (
   await page.click("#prefs-modal", { position: { x: 8, y: 8 } });
   await page.keyboard.press("Escape");
   await expect(page.locator("#prefs-modal")).toBeVisible();
-  await expect(page.locator("#prefs-modal .consent-btn-primary")).toBeDisabled();
+  await expect(page.locator("#prefs-modal .consent-btn-secondary")).toBeDisabled();
   // Settled: the outcome lands and every dismissal returns.
   await expect(page.locator("#prefs-update-note")).toHaveText("Already up to date.");
-  await expect(page.locator("#prefs-modal .consent-btn-primary")).toBeEnabled();
+  await expect(page.locator("#prefs-modal .consent-btn-secondary")).toBeEnabled();
   await page.keyboard.press("Escape");
   await expect(page.locator("#prefs-modal")).toBeHidden();
 });

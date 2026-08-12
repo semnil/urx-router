@@ -438,7 +438,7 @@ test("the channel tuning screens show every processor, both displays and their n
       await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
       await inv.take(page, "#dyn-screen-modal");
     }
-    await page.locator("#dyn-screen-modal .consent-btn-primary").click();
+    await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
   }
 
   await openFromInspector("eq");
@@ -456,7 +456,7 @@ test("the channel tuning screens show every processor, both displays and their n
     .locator("button", { hasText: "ON" })
     .click();
   await inv.take(page, "#dyn-screen-modal");
-  await page.locator("#dyn-screen-modal .consent-btn-primary").click();
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 
   // DUCKER opens on the ducker node rather than on a channel, so it is reached from
   // that node's own inspector section. Both key states are driven: the default plan
@@ -467,7 +467,7 @@ test("the channel tuning screens show every processor, both displays and their n
 
   await openDucker();
   await inv.take(page, "#dyn-screen-modal");
-  await page.locator("#dyn-screen-modal .consent-btn-primary").click();
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 
   await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.ducker1:in"]').dispatchEvent("pointerdown");
   await page.keyboard.press("Delete");
@@ -543,7 +543,7 @@ test("the Preferences modal shows every section in both the browser and the desk
   // The refused hold, whose reason lands on the note under the row. The OS is only
   // asked while a session is up: with none running the toggle stores the preference
   // and nothing can refuse it.
-  await page.click("#prefs-modal .consent-btn-primary");
+  await page.click("#prefs-modal .consent-btn-secondary");
   await page.click("#btn-device");
   await page.click("#btn-live");
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");

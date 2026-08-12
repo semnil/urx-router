@@ -3,7 +3,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ copyText: vi.fn<(text: string) => Promise<boolean>>() }));
-vi.mock("./dom", () => ({ copyText: mocks.copyText }));
+// Only the clipboard is stubbed. The rest of ./dom stays real so that adding an
+// import to load-report.ts fails here as a missing behaviour, not as a missing
+// mock export — and so the modal's inert claim runs the code it ships with.
+vi.mock("./dom", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./dom")>()),
+  copyText: mocks.copyText,
+}));
 
 import { t } from "../i18n";
 import { showLoadReport } from "./load-report";
