@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "./fixtures";
-import { faceplate } from "./graph-helpers";
+import { faceplate, selectWire } from "./graph-helpers";
 
 // Positions below are compared with node(), pointer grabs measured with
 // faceplate() — the two boxes differ by the tap jack's overhang, so never mix them
@@ -63,8 +63,7 @@ test("BAL mode labels a send from the linked channel as BALANCE", async ({ page 
   await param(page, "PAN / BAL").locator("select").selectOption("1"); // BAL
 
   // The ch1 -> MIX 1 send is a fixed (always-wired) send; select it by endpoint.
-  // dispatchEvent bypasses the overlapping wire-hit bands' pointer interception.
-  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "ch1:out", "bus.mix1:in");
   await expect(page.locator("#inspector .param", { hasText: "Balance" })).toHaveCount(1);
   await expect(page.locator("#inspector .param-label span", { hasText: /^Pan$/ })).toHaveCount(0);
 });

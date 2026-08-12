@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { selectWire } from "./graph-helpers";
 
 // GRAPH <-> CONSOLE are two views of one plan. These tests cover that an edit made
 // in one view is read back in the other (both views funnel edits through
@@ -32,7 +33,7 @@ test("a rack send-fader edit is read back on the graph's CH -> MIX wire", async 
 
   // The same send level reads back on the graph's CH 1 -> MIX 1 wire.
   await page.click("#btn-view-graph");
-  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "ch1:out", "bus.mix1:in");
   await expect(page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val")).toHaveText("+10.0 dB");
 });
 
@@ -49,7 +50,7 @@ test("a console fader edit is read back on the graph's CH -> STEREO wire", async
   // The CH 1 main fader IS the CH1 -> STEREO send level; selecting that wire on
   // the graph must show the same +1.2 dB the console just set.
   await page.click("#btn-view-graph");
-  await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "ch1:out", "bus.stereo:in");
   await expect(page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val")).toHaveText("+1.2 dB");
 });
 

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { LIVE_COMMANDS, stubTauriDevice } from "./tauri-stub";
+import { selectWire } from "./graph-helpers";
 
 // microSD Rec track-pair slots hang in a chain under the SD Rec header; Track Count
 // (read-only on the device) gates how many are shown. Uses the default factory
@@ -61,7 +62,7 @@ test("a track slot can be shelved and restored via its chip, like a ducker", asy
 test("a track-pair slot records its factory source as a no-param record assign", async ({ page }) => {
   // Factory: track pair 1/2 records CH1/2 from the CH1 primary node — a record
   // source select (no level / pan / PRE-POST, unlike a bus send).
-  await page.locator('.wire-hit[data-from="ch1:out"][data-to="out.sdrec.t1:in"]').dispatchEvent("pointerdown");
+  await selectWire(page, "ch1:out", "out.sdrec.t1:in");
   await expect(page.locator("#inspector")).toContainText("SD Rec source select");
   await expect(page.locator("#inspector .param")).toHaveCount(0);
 });

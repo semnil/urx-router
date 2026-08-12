@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { selectWire } from "./graph-helpers";
 
 // UI-layer audit regressions: gaps the interaction probes surfaced that the rest
 // of the suite did not already pin. Each test locks in a verified-correct behaviour
@@ -49,7 +50,7 @@ test.describe("model switch clears the selection", () => {
 
   test("switching model drops a selected connection's inspector", async ({ page }) => {
     // Select the fixed CH1 -> STEREO wire: the inspector shows its routing (From/To).
-    await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]').dispatchEvent("pointerdown");
+    await selectWire(page, "ch1:out", "bus.stereo:in");
     await expect(page.locator("#inspector")).toContainText("Connection");
     expect(await page.locator("#inspector .param").count()).toBeGreaterThan(0);
 
@@ -154,7 +155,7 @@ test.describe("send-level fader snaps to the device grid", () => {
   });
 
   test("keyboard stepping floors at -inf and ceils at +10 dB", async ({ page }) => {
-    await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]').dispatchEvent("pointerdown");
+    await selectWire(page, "ch1:out", "bus.stereo:in");
     const levelRow = page.locator("#inspector .param", { hasText: "Level" }).first();
     const slider = levelRow.locator('input[type="range"]');
     // The index-based grid maps 0 = off (-inf) .. LEVEL_STEPS_DB.length = +10 dB.

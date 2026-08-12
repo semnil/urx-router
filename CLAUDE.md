@@ -139,7 +139,7 @@ the second set, and a one-shot action is consumed by the first caller (an HMR re
 | Fixture | Reach for it when |
 | --- | --- |
 | `e2e/tauri-stub.ts` | a spec needs the desktop shell: file IO, dialogs, device commands, or a whole live-sync session |
-| `e2e/graph-helpers.ts` | addressing the node graph — a jack by plan ref, a Rec Point tap jack, a faceplate rect, a drag, a wheel |
+| `e2e/graph-helpers.ts` | addressing the node graph — a jack by plan ref, a Rec Point tap jack, **a drawn wire by the refs it joins and the gesture that selects it** (the hit bands overlap, so a real click lands on whichever is on top rather than on the wire the test named, and the event is dispatched to the named band instead), a faceplate rect, a drag, a wheel. While nothing here named the wire pair, the ordinary tier had it hand-written in 18 places across 8 specs and forked into a named local 4 more times, comment and all; `e2e/race` still spells it out 10 times over 6 files |
 | `e2e/plan-param.ts` | seeding a plan through `?plan=` instead of clicking it together |
 | `e2e/inventory.ts` | asserting that a surface SHOWS something — it collects a container's visible text, its label-carrying attributes and its select options, and matches them against message-catalog keys |
 | `e2e/fixtures.ts` | adding an ordinary app E2E spec — import its shared Playwright exports so the explicit coverage command can collect native V8 readings without instrumenting the app bundle. It also carries colorToken, for a pin that has to anchor a computed colour to a **theme token** rather than to a literal: comparing two controls to each other passes when both stop being painted, and comparing to a hex has to be rewritten every time the palette moves |
