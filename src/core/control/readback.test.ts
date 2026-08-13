@@ -796,7 +796,7 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
   it("skips the name read for the sideEffect refetch, and only for it", async () => {
     mockVdGetFrom(new Map());
     vi.mocked(vdGetStr).mockImplementation((paramId: number, _x: number, y: number) =>
-      Promise.resolve(paramId === 18 && y === 0 ? "FromDevice" : ""),
+      Promise.resolve(paramId === 18 && y === 0 ? "FromDev" : ""),
     );
 
     // The refetch hands over what it just wrote. Names are untouched by it.
@@ -816,7 +816,7 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     const reconciled = emptyPlan("URX44V");
     reconciled.nodeNames.ch1 = "OperatorJustTypedThis";
     await applyDeviceState(model, reconciled, undefined, new Set(["ch1"]));
-    expect(reconciled.nodeNames.ch1).toBe("FromDevice");
+    expect(reconciled.nodeNames.ch1).toBe("FromDev");
     expect(vi.mocked(vdGetStr).mock.calls.some(([p]) => p === 18)).toBe(true);
   });
 
@@ -854,6 +854,24 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     expect(target.nodeColors["bus.stereo"]).toBe(COLOR_PALETTE[6].hex);
     // An unset colorable node reads the device default index 0 = Blue.
     expect(target.nodeColors.ch2).toBe(COLOR_PALETTE[0].hex);
+  });
+
+  // A name arrives bounded, like one typed into the app. The unit's own screen takes
+  // 8 characters, but the wire does not enforce that — measured on a URX44V, a
+  // 20-character name is stored and read back whole — so a device holding one would
+  // otherwise put it in the plan, draw a node label across its neighbours, and change
+  // length only after a save and reload. Bounding it here also lets the next converge
+  // settle the device on the same string instead of diffing forever against a name
+  // the emit would cut.
+  it("cuts a device name longer than the unit's own screen can produce", async () => {
+    mockVdGetFrom(new Map());
+    vi.mocked(vdGetStr).mockImplementation((paramId: number, _x: number, y: number) =>
+      Promise.resolve(paramId === 18 && y === 0 ? "12345678901234567890" : ""),
+    );
+
+    const plan = emptyPlan("URX44V");
+    await applyDeviceState(model, plan);
+    expect(plan.nodeNames.ch1).toBe("12345678");
   });
 });
 

@@ -164,9 +164,16 @@ test.describe("T1d name window", () => {
     // Delivered, not merely pushed: an address the session never registered is
     // refused, and a refusal is indistinguishable from an app that ignored it.
     const pushedAt = await page.evaluate(() => performance.now());
-    const why = await pushNameNotify(page, CH1_NAME, "FromTheLCD");
+    const why = await pushNameNotify(page, CH1_NAME, "FromLCD");
     expect(why).toEqual([""]);
-    await expect(node(page, "ch1").locator("text").first()).toHaveText("FromTheLCD");
+    await expect(node(page, "ch1").locator("text").first()).toHaveText("FromLCD");
+
+    // A name from the device is bounded like any other. The unit's own screen cannot
+    // produce one longer than 8 characters, but the wire carries whatever it is given
+    // (measured: a 20-character name is stored and read back whole), and an unbounded
+    // one in the plan draws this label across the nodes beside it.
+    expect(await pushNameNotify(page, CH1_NAME, "12345678901234567890")).toEqual([""]);
+    await expect(node(page, "ch1").locator("text").first()).toHaveText("12345678");
 
     // …and it is a DIRECT follow: no whole-device readback was provoked. An
     // unregistered or unrecognised address escalates to one, which is ~800 reads —
