@@ -8,6 +8,9 @@
 // sync mirrors them to the device exactly like the graph/inspector do.
 
 import type { DeviceModel } from "../models/types";
+// Aliased: `ref` is a local in several builders here (a SendColRef), and the port-ref
+// helper has to stay reachable inside them.
+import { ref as portRef } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
 import {
   LEVEL_MAX_DB,
@@ -891,7 +894,12 @@ export class Console {
     );
 
     // PRE button
-    const tapReadonly = this.live && !sendTapWritable(this.hooks.getModel(), m.id, target);
+    // Port refs, not bare node ids: the routing rules are keyed by `node:port`, so a bare
+    // id matches no rule and `sendTapWritable` answers false for every send — which while
+    // live locked every PRE chip (and dropped its MIDI binding), including the CH → MIX
+    // and FX-channel → MIX taps the device does accept.
+    const tapReadonly =
+      this.live && !sendTapWritable(this.hooks.getModel(), portRef(m.id, "out"), portRef(target, "in"));
     const preBtn = this.buildChip(
       m.id,
       t().console.pre,

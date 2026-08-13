@@ -483,12 +483,32 @@ describe("read-only columns", () => {
   });
 
   // While live, a CH → FX tap is LCD-only on the unit, so the PRE button explains
-  // itself instead of writing.
-  it("makes the PRE button read-only while live, with the reason as its title", () => {
-    h = consoleHost({ live: true });
-    const strip = h.strip("ch1").root;
-    const pre = [...strip.querySelectorAll<HTMLElement>(".con-scol .con-slp")][0];
-    expect(pre.title).toBe(t().inspector.prePostLcdOnly);
+  // itself instead of writing. A CH → MIX tap is NOT: the broker takes that write
+  // (max_value=1), and the graph inspector keeps it editable at the same moment.
+  //
+  // Both columns are asserted, because the lock is computed from the routing rules
+  // and those are keyed by `node:port` — asking with a bare node id matches no rule
+  // and answers "not writable" for EVERY send, which reads exactly like the FX column
+  // being right. The FX assertion alone was green through that, for two years.
+  it("locks the PRE button while live only where the unit refuses the write", () => {
+    // Learn is on so the MIDI half is visible too: the read-only branch passes no
+    // `midiId`, so a wrongly locked chip also silently stops being assignable.
+    h = consoleHost({
+      live: true,
+      midi: { learnActive: () => true, armedId: () => null, isMapped: () => false, addrOf: () => null, arm: () => {} },
+    });
+    const preOf = (target: string): HTMLElement =>
+      h.sendCol("ch1", target).fader.parentElement!.querySelector<HTMLElement>(".con-slp")!;
+
+    const fx = preOf("bus.fx1");
+    expect(fx.title).toBe(t().inspector.prePostLcdOnly);
+    expect(fx.classList.contains("readonly")).toBe(true);
+    expect(fx.classList.contains("midi-target")).toBe(false);
+
+    const mix = preOf("bus.mix1");
+    expect(mix.title).toBe(t().console.preHint);
+    expect(mix.classList.contains("readonly")).toBe(false);
+    expect(mix.classList.contains("midi-target")).toBe(true);
   });
 });
 
