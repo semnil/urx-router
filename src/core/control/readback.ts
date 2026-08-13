@@ -203,9 +203,18 @@ function mainSendConn(plan: Plan, nodeId: string): PlanConnection | undefined {
  *
  * Provenance tracks body-parameter groups (a node's own settings): each marks a
  * node `attempted` before reading and, if any of its body groups throws, the node
- * lands in `unread`. Wire/connection groups (sends, OSC assign, source/routing
- * selectors) carry routing, not a node's own state, so they never touch
- * provenance — a successful send must not mask a channel whose body read failed.
+ * lands in `unread`. A send or an OSC assign does not — those carry routing rather
+ * than a node's own state, and a successful send must not mask a channel whose body
+ * read failed.
+ *
+ * The EXCLUSIVE selectors are the deliberate exception, and every one of them takes
+ * it: source, routing, record slot and ducker key. Each of those leaves the plan's
+ * OWN wire in place when the read fails or names a port this build cannot decode —
+ * clearing it would be worse — so the node is still showing a plan value rather than
+ * the device's, which is exactly what the flag means. Without it the badge and the
+ * report's "nodes left at plan default" section said the node had been read in full,
+ * and a converge would be built on that.
+ *
  * The returned unreadNodes set is `attempted ∩ failed`, so the UI flags exactly
  * the nodes still showing a plan default rather than the live value.
  */
@@ -641,7 +650,13 @@ async function readPass(
       const src = port === null ? null : nodeForPort(model, port);
       if (src) setExclusiveConnection(plan, ref(src, "out"), ref(node.id, "in"), "key");
       else if (port === null) clearIncoming(plan, ref(node.id, "in"), "key");
-      else errors.push(`${node.label} key: unknown source port ${port}`);
+      else {
+        // Same rule as the input-source loop: an unmappable port leaves the plan's own
+        // wire in place, so the node has NOT been fully read and the provenance has to
+        // carry that.
+        failed.add(node.id);
+        errors.push(`${node.label} key: unknown source port ${port}`);
+      }
     } catch (e) {
       failed.add(node.id);
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
@@ -802,10 +817,18 @@ async function readPass(
         clearIncoming(plan, ref(node.id, "in"), "source");
         applied++;
       } else {
-        // Unknown port: leave the existing wire untouched rather than clearing it.
+        // Unknown port: leave the existing wire untouched rather than clearing it —
+        // and say so in the provenance, not only in `errors`. The wire the operator
+        // ends up looking at is the plan's own, unconfirmed, and the report's "nodes
+        // left at plan default" section is where that is stated. The routing-selector
+        // and record-slot loops below already flag theirs, with a comment saying the
+        // flag exists so a converge is not built on it; this loop kept the older
+        // errors-only shape and claimed the channel had been read in full.
+        failed.add(node.id);
         errors.push(`${node.label}: unknown source port ${port}`);
       }
     } catch (e) {
+      failed.add(node.id);
       errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }

@@ -116,6 +116,20 @@ export class DeviceFollow {
   // released everywhere that is: an armed source with no stream behind it would make
   // the settle report every write as unannounced for the rest of the session.
   private settleSource: (() => void) | null = null;
+  /**
+   * Which session a registration belongs to, bumped by `begin` and by `end`.
+   *
+   * `this.active` cannot stand in for it: it is a boolean, and it returns to `true`
+   * for a DIFFERENT session. A registration stalled at the broker (the stall ledger
+   * exists because this broker does stall) outlives the session that issued it, and
+   * the post-await guard then saw the NEW session's `true` and installed its dead
+   * handle over a live one — the real subscription orphaned with nobody left to
+   * unsubscribe it (registration pile-up at the broker is the exact failure
+   * `link-stats.ts` was built to investigate), notifies delivered twice while both
+   * lived, and a leaked settle sink arming idle reconciles across later sessions.
+   * live.ts names this defect as the reason its own `sessionGen` exists.
+   */
+  private gen = 0;
 
   constructor(private readonly hooks: DeviceFollowHooks) {}
 
@@ -127,12 +141,14 @@ export class DeviceFollow {
    *  the follow address set and its index are known. */
   async begin(): Promise<void> {
     this.active = true;
+    this.gen++;
     await this.subscribe();
   }
 
   /** Stop following and cancel any pending work. Does not touch the connection. */
   end(): void {
     this.active = false;
+    this.gen++;
     this.pending = false;
     this.pendingFull = false;
     this.clearWindow();
@@ -155,6 +171,7 @@ export class DeviceFollow {
   // registered this is a no-op rather than re-posting every address to the broker.
   private async subscribe(): Promise<void> {
     if (!this.active) return;
+    const gen = this.gen;
     const addrs = this.hooks.addrs();
     // The address order is deterministic (planToCommands order), so a plain join
     // is a stable identity for the set — no sort needed.
@@ -169,9 +186,12 @@ export class DeviceFollow {
     this.settleSource?.();
     this.settleSource = null;
     const unsub = await vdParamsSubscribe(addrs, (p) => this.onNotify(p));
-    // end() may have run while the registration was in flight; drop it rather
-    // than leaving a live subscription with no owner to unsubscribe it.
-    if (!this.active) {
+    // The session may have ended — or ended AND been restarted — while the
+    // registration was in flight. The generation is what tells those apart:
+    // `this.active` is true again in the second case, and installing this handle
+    // there would drop the new session's live subscription on the floor with nobody
+    // left to unsubscribe it.
+    if (this.gen !== gen) {
       unsub();
       return;
     }

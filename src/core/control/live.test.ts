@@ -1163,3 +1163,60 @@ describe("LiveSync read-only follow registrations", () => {
     for (const id of [...FX_TAP_IDS, 839]) expect(sent).not.toContain(id);
   });
 });
+
+// A device-follow read is issued for the node the operator moved on the hardware, and
+// that node's addresses can include ones this session's flush wrote tens of ms ago —
+// inside the measured 9-204 ms window in which the unit still answers a GET with the
+// PRE-write value. The read used to take that as device truth, and the unit's own
+// notify for our write (which would have repaired it) was consumed as an echo, so the
+// operator's toggle flipped back on screen and plan and snapshot agreed on a value the
+// device does not hold until the idle sweep re-read past the window.
+describe("LiveSync recentPending", () => {
+  it("hands a follow read the writes it must settle before reading them", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+    const [paramId, x, y] = vi.mocked(vdSet).mock.calls[0];
+    const k = addrKey(paramId, x, y);
+
+    // Scoped to the node the read covers: that address must be settled.
+    const scoped = live.recentPending(new Set(["ch1"]));
+    expect(scoped.written.has(k)).toBe(true);
+    expect(scoped.mustSettle.has(k)).toBe(true);
+    // A read of some OTHER node does not wait for it — it is not reading that address.
+    expect(live.recentPending(new Set(["ch2"])).mustSettle.has(k)).toBe(false);
+    // Unscoped = a whole-device read, which covers everything.
+    expect(live.recentPending().mustSettle.has(k)).toBe(true);
+
+    // The flush already armed the announcement watch for these writes; a second one
+    // here would report one silent write twice and arm two reconciles for it.
+    expect(scoped.mustAnnounce.size).toBe(0);
+  });
+
+  it("forgets a write once it is older than the settle window, and at a session boundary", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const [paramId, x, y] = vi.mocked(vdSet).mock.calls[0];
+    const k = addrKey(paramId, x, y);
+    expect(live.recentPending().written.has(k)).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 1);
+    expect(live.recentPending().written.has(k)).toBe(false);
+
+    // And a mark taken on one link means nothing on the next.
+    setCh1Fader(plan, -9);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(live.recentPending().written.size).toBeGreaterThan(0);
+    live.end();
+    expect(live.recentPending().written.size).toBe(0);
+  });
+});

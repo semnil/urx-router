@@ -629,7 +629,9 @@ export async function runSelfTest(
     for (let pass = 0; pass < passes; pass++) {
       const plan = perturbedPlan(model, original, pass, suppress);
       report.phase = "write";
-      const result = await phaseStep(sendConverging(model, plan, { settleMs, signal, trace: true }));
+      const result = await phaseStep(
+        sendConverging(model, plan, { settleMs, signal, trace: true, stopOnError: false }),
+      );
       if (!result) break;
       const { outcomes, residual } = result;
       // Reached the device — not `outcomes.length`, which also counts the commands
@@ -737,7 +739,7 @@ export async function runSelfTest(
       // the residual now covers the same set, so a unit that did re-derive would be
       // reported rather than passed over.
       const back = await phaseStep(
-        sendConverging(model, original, { settleMs, signal, trace: true, emit: RESTORE_EMIT }),
+        sendConverging(model, original, { settleMs, signal, trace: true, emit: RESTORE_EMIT, stopOnError: false }),
       );
       if (back) {
         report.diag.restoreRounds = back.trace.map((r) => ({

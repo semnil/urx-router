@@ -224,16 +224,35 @@ export class WriteSettle {
     timeoutMs: number,
     signal: AbortSignal | undefined,
   ): void {
-    if (!this.sinks.size) return;
+    // Who the report goes to is decided at the BOUND, from two facts rather than one:
+    // who was listening when the watch was armed, and who is listening when it fires.
+    // Asking either alone gets one of the two windows wrong, and both are real.
+    //
+    // Arming-time alone LOST the report. `DeviceFollow.subscribe()` releases its sink
+    // before the re-registration await and re-arms after, so a flush landing in that
+    // gap saw an empty set and armed nothing — and a write the unit silently discarded
+    // right there was never reported, so the idle repair never ran.
+    //
+    // Fire-time alone MISDELIVERS it. A watch armed under one session fires up to
+    // 300 ms later, by which point that session may have ended and another begun; the
+    // new session's sink then takes a report about writes it never issued and arms a
+    // full sweep it has no reason for.
+    //
+    // So: a sink that was listening at arm time gets the report if it is still
+    // listening. If nobody was — the re-registration gap, and nothing else — it goes
+    // to whoever is listening now, which is the same sink coming back.
+    const armed = new Set(this.sinks);
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
+      const to = armed.size ? [...this.sinks].filter((s) => armed.has(s)) : [...this.sinks];
+      if (!to.length) return;
       const silent = new Set<number>();
       for (const k of mustAnnounce) {
         const s = this.seen.get(k);
         const at = written.get(k);
         if (s === undefined || at === undefined || s.at <= at) silent.add(k);
       }
-      if (silent.size) for (const sink of [...this.sinks]) sink(silent);
+      if (silent.size) for (const sink of to) sink(silent);
     }, timeoutMs);
     const onAbort = (): void => clearTimeout(timer);
     signal?.addEventListener("abort", onAbort, { once: true });

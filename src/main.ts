@@ -112,6 +112,7 @@ import {
   readIntoPlan,
 } from "./core/control/readback";
 import type { MergedRead, ReadbackResult } from "./core/control/readback";
+import type { PendingWrites } from "./core/control/settle";
 import { parseUrxf, paramSourceOf, UrxfError } from "./core/control/urxf";
 import {
   compareCounts,
@@ -707,8 +708,15 @@ const follow =
           // flight is device truth the read's private copy predates, and the re-base
           // below rebuilds the whole snapshot from that copy.
           const since = live?.directMark();
+          // The session's own recent writes travel with the read. This node's addresses
+          // can include ones the flush wrote tens of ms ago, and a GET inside that
+          // window answers the PRE-write value — which the merge then takes as device
+          // truth while the unit's own notify for our write is consumed as an echo. The
+          // operator's toggle flips back on screen, and plan and snapshot agree on a
+          // value the device does not hold until the idle sweep re-reads past it.
+          const pending = live?.recentPending(nodeIds);
           const merged = await followRead("device-follow scoped readback", (into, signal) =>
-            applyNodeState(getModel(modelId), into, nodeIds, signal),
+            applyNodeState(getModel(modelId), into, nodeIds, signal, pending),
           );
           if (!merged) return;
           traceProbe?.sample("follow-scoped");
@@ -730,8 +738,11 @@ const follow =
         // Escalation / idle safety net: pull the whole device into the plan.
         reconcileAll: async () => {
           const since = live?.directMark();
+          // Unscoped: a whole-device read covers every address, so every recent write is
+          // one it must settle before reading (the scoped case above says why).
+          const pending = live?.recentPending();
           const merged = await followRead("device-follow readback", (into, signal) =>
-            applyDeviceStateScoped(into, signal),
+            applyDeviceStateScoped(into, signal, pending),
           );
           if (!merged) return;
           traceProbe?.sample("follow-full");
@@ -1442,7 +1453,11 @@ function reflectHistory(touch: PatchTouch): void {
 // the plan wholesale. The plan is a parameter rather than the module one because the
 // read spans seconds: re-reading it after the await would apply the outgoing document's
 // scene-external values to whatever replaced it.
-async function applyDeviceStateScoped(target: Plan, signal?: AbortSignal): Promise<ReadbackResult> {
+async function applyDeviceStateScoped(
+  target: Plan,
+  signal?: AbortSignal,
+  pending?: PendingWrites,
+): Promise<ReadbackResult> {
   // Counted at the operation, not at its callers: the broker only ever sees the ~800
   // commands this decomposes into, so `reads` is the one ledger row nothing downstream
   // can reconstruct — and a count derived at each call site is only right for as long
@@ -1450,7 +1465,7 @@ async function applyDeviceStateScoped(target: Plan, signal?: AbortSignal): Promi
   // session (the tracker guards it), so the Fetch button costs nothing here.
   linkLedger?.noteFullRead();
   const keep = getSettings().deviceScope === "scene" ? captureSceneExternal(target) : null;
-  const result = await applyDeviceState(getModel(modelId), target, signal);
+  const result = await applyDeviceState(getModel(modelId), target, signal, undefined, pending);
   if (keep) applySceneExternal(target, keep);
   return result;
 }

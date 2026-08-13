@@ -469,6 +469,21 @@ describe("cancellation", () => {
 
   // The converge loop re-checks between rounds, so a cancel does not buy another
   // full re-send of the plan.
+  // The loop's own exit condition is abort-on-first-read-error, so once one read has
+  // failed the rest of the sweep is issued to be thrown away — several hundred round
+  // trips on the exact link that is already too slow to answer. Diagnostics opt out:
+  // the self-test's verdict is per-address, and a sweep that stopped early would
+  // report everything after the failure as untested rather than as tested and passing.
+  it("abandons the seed sweep at its first read failure, unless a diagnostic asks not to", async () => {
+    vi.mocked(vdGet).mockRejectedValue(new Error("timeout"));
+    const abortShaped = await sendConverging(model, basePlan(), { settleMs: 0 });
+    expect(abortShaped.readErrors).toHaveLength(1);
+
+    vi.mocked(vdGet).mockClear();
+    const diagnostic = await sendConverging(model, basePlan(), { settleMs: 0, stopOnError: false });
+    expect(diagnostic.readErrors.length).toBeGreaterThan(1);
+  });
+
   it("stops the converge loop between rounds", async () => {
     const ctl = new AbortController();
     const plan = basePlan();

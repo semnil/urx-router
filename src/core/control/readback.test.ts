@@ -333,6 +333,10 @@ describe("applyDeviceState round-trip", () => {
     expect(wire).toBeDefined();
     expect(wire!.from).toBe("ch1:out");
     expect(result.errors.some((e) => e.includes(`unknown source port ${UNKNOWN_PORT}`))).toBe(true);
+    // …and says so in the provenance, not only in `errors`. The wire the operator is
+    // looking at is the PLAN's, unconfirmed, which is what "left at plan default"
+    // means — and the badge and the report read that set, not the error list.
+    expect(result.unreadNodes.has("out.ducker1")).toBe(true);
   });
 
   it("records an unknown input/routing source port without clearing its wire", async () => {
@@ -358,6 +362,10 @@ describe("applyDeviceState round-trip", () => {
     // The wire kept is the plan's own, not the device's, so the destination is
     // unread — otherwise a later converge writes it over the real routing.
     expect(result.unreadNodes.has("bus.stream")).toBe(true);
+    // The channel's input source is the same statement about the same kind of wire,
+    // and it used to be the one exclusive selector that did not make it: the report
+    // said CH1 had been read in full while its source wire was still the plan's.
+    expect(result.unreadNodes.has("ch1")).toBe(true);
   });
 
   it("marks a fixed send OFF (params.on=false) but keeps its wire when the device reports OFF", async () => {

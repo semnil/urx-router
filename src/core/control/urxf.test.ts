@@ -64,6 +64,23 @@ describe("parseUrxf", () => {
     expect(() => parseUrxf(bytes)).toThrow(expect.objectContaining({ code: "lengthMismatch" }));
   });
 
+  // The model string and a chunk's label are read at fixed offsets inside their
+  // record's extra block. Bounding them against the BUFFER only says the bytes exist
+  // somewhere in the file: a header declaring `extraLen: 0` parsed cleanly with `model`
+  // read straight out of the next record's tag ("#ChunkData"), and a short chunk gave a
+  // label cut from its own body. Both are values invented from a neighbour, which is
+  // what this parser's contract says it does not produce.
+  it("rejects a record whose extra block cannot hold the field read out of it", () => {
+    const short = (at: number): Uint8Array => {
+      const bytes = sample();
+      // extraLen is a BE u32 24 bytes into a record header.
+      new DataView(bytes.buffer).setUint32(at + 24, 0, false);
+      return bytes;
+    };
+    expect(() => parseUrxf(short(0))).toThrow(expect.objectContaining({ code: "truncated" }));
+    expect(() => parseUrxf(short(FILE_HEADER))).toThrow(expect.objectContaining({ code: "truncated" }));
+  });
+
   it("rejects a block whose magic is wrong", () => {
     const bytes = sample();
     // 24 bytes into the F block header, which is the magic. Note the neighbouring field
