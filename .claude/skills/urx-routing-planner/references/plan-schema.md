@@ -206,3 +206,11 @@ also gets 8. Nothing in the protocol enforces this (the broker stores a
 20-character name and reads it back unchanged), and nothing is reported here
 either, so `plan_tool.py validate` warns about each name it would shorten; emit a
 name within the bound rather than relying on the cut.
+
+The same rewrite drops **trailing** whitespace, after the cut rather than before
+it (so a name cut onto a space does not keep one). A leading space is kept — the
+unit's own stereo pair labels are right-aligned, so `" 5/ 6"` is the real name.
+This one is worth emitting correctly rather than leaving to the load: the unit
+stores a trailing space instead of padding it away, while every path that reads a
+name back trims one off, so a plan that keeps one never matches the device and the
+name is re-sent on every sync.

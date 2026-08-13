@@ -198,7 +198,7 @@ def collection_warnings(plan):
         for label, el in entries:
             if not ok(el):
                 out.append(f"{key}[{label}]: the app drops this on load — {why}")
-    out.extend(name_length_warnings(plan))
+    out.extend(name_warnings(plan))
     return out
 
 
@@ -210,8 +210,14 @@ def collection_warnings(plan):
 NODE_NAME_MAX_CHARS = 8
 
 
-def name_length_warnings(plan):
-    """The names the app would cut on load (and again on the way to the device)."""
+def name_warnings(plan):
+    """The names the app rewrites on load (and again on the way to the device).
+
+    Two rewrites, in this order: cut to the bound, then strip TRAILING whitespace.
+    A leading space survives — the unit right-aligns its stereo pair labels, so
+    " 5/ 6" is the real name — and the order matters, since cutting can land on a
+    space the trim then has to take.
+    """
     out = []
     names = plan.get("nodeNames")
     if not isinstance(names, dict):
@@ -224,6 +230,13 @@ def name_length_warnings(plan):
             out.append(
                 f"nodeNames[{node_id}]: the app cuts this to {NODE_NAME_MAX_CHARS} characters on load "
                 f"({size} given) — the unit's own name screen takes no more"
+            )
+        cut = value[:NODE_NAME_MAX_CHARS]
+        if cut != cut.rstrip():
+            out.append(
+                f"nodeNames[{node_id}]: the app strips the trailing whitespace from this on load — "
+                "the unit STORES a trailing space rather than padding it away, while every path that "
+                "reads a name back trims one off, so a plan keeping one is re-sent on every sync"
             )
     return out
 

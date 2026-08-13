@@ -550,9 +550,28 @@ export function clipNodeName(name: string): string {
   return chars.length <= NODE_NAME_MAX_CHARS ? name : chars.slice(0, NODE_NAME_MAX_CHARS).join("");
 }
 
+/** A node name as it is held in the plan and sent to the unit: cut to the field width,
+ *  then stripped of trailing padding. That order, not the reverse — trimming first can
+ *  hand the cut a string whose eighth character is a space, and the result ends in one
+ *  again (`1234567` + two spaces + `9` has nothing to trim, and cuts onto the first).
+ *
+ *  Trailing padding is dropped because the device link already reads names that way
+ *  (`readback.ts` says why it is trimEnd and not trim: the factory stereo labels really
+ *  are ` 5/ 6`, so a LEADING space is part of the name). A plan that keeps one the read
+ *  drops never converges: `diffNames` compares the trimmed device value against the
+ *  emitted one, so they differ on every sync and the name is rewritten forever. The
+ *  device does not end that loop — measured on a URX44V (2026-08-14), it stores and
+ *  returns a trailing space unchanged.
+ *
+ *  Not what the name field clips with. That runs on every keystroke, and trimming there
+ *  would eat the space in `A B` as it is typed. */
+export function normalizeNodeName(name: string): string {
+  return clipNodeName(name).trimEnd();
+}
+
 function nameRecord(v: unknown): Record<string, string> {
   const out = stringRecord(v);
-  for (const [k, name] of Object.entries(out)) out[k] = clipNodeName(name);
+  for (const [k, name] of Object.entries(out)) out[k] = normalizeNodeName(name);
   return out;
 }
 

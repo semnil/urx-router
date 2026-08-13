@@ -397,7 +397,13 @@ Two deliberate exceptions, both stated where they are made:
 GATE and COMP are MONO IN features, so those screens exist for CH1-4 (CH1-2 on URX22) only. The EQ
 exists wherever there is a 4-band PEQ: every mono channel outside SSMCS mode, every stereo channel,
 each MIX bus and the STEREO master. The node is fixed by where the screen was opened from — there is
-no in-screen node switch, so the subscribed address set is constant for the whole session.
+no in-screen node switch.
+
+The address set is **not** fixed with it. The DUCKER's key lane reads at the source's own Rec Point
+(above), so a Rec Point change under an open screen — from the graph inspector, an undo, or the unit's
+own front panel — moves that address while the screen stays on the node it was opened for. The screen
+therefore compares its address set on every rebind and re-subscribes when it differs; without that the
+key bar reads `—` until the screen is closed and reopened.
 
 The remaining confirmed GR meters are DUCKER (119) and the insert FX (132 input / 133 output). Their
 axes are **not** the mono channel index the gate's and comp's share — the ducker's is the stereo
