@@ -50,7 +50,7 @@ flowchart LR
 
   subgraph CH[Mixer channels]
     MONO["Mono CH<br/>Φ→HPF→GATE→COMP→EQ→INS FX"]
-    ST["Stereo CH<br/>EQ→INS FX→DUCKER"]
+    ST["Stereo CH<br/>EQ→DUCKER"]
   end
 
   subgraph BUS[Buses]

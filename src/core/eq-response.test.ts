@@ -212,3 +212,27 @@ describe("EQ response against the device", () => {
     expect(shelfDesignFreq(1000, -18, false)).toBeGreaterThan(1000);
   });
 });
+
+// The mid bands are fixed peaking on the unit — it rejects a type write there
+// (response_code 400) and the emit never sends one — so a type parked on one by a
+// hand-authored plan or a `?plan=` link describes nothing the hardware is running.
+// The plot used to honour it anyway, drawing a high-pass or a shelf for a band the
+// device runs as a bell, and contradicting the unit by up to the band's full gain.
+describe("a mid band is drawn as the peaking filter the device runs", () => {
+  it("ignores a PASS or SHELVING type on LOW-MID and HIGH-MID", () => {
+    for (const index of [1, 2]) {
+      const bell = bandResponse(band({ index, gain: 12, q: 1 }));
+      for (const type of [EQ_TYPE_PASS, EQ_TYPE_SHELVING]) {
+        const typed = bandResponse(band({ index, gain: 12, q: 1, type }));
+        for (const hz of [100, 500, 1000, 4000]) expect(typed(hz)).toBeCloseTo(bell(hz), 6);
+      }
+    }
+  });
+
+  it("still honours the type on LOW and HIGH, which the device does take", () => {
+    const lowPass = bandResponse(band({ index: 0, type: EQ_TYPE_PASS, freq: 1000 }));
+    expect(lowPass(100)).toBeLessThan(-20);
+    const highShelf = bandResponse(band({ index: 3, type: EQ_TYPE_SHELVING, freq: 1000, gain: 12, q: 0.71 }));
+    expect(highShelf(4000)).toBeGreaterThan(10);
+  });
+});

@@ -44,6 +44,27 @@ describe("level_gain grid", () => {
     expect(stepLevel(10, 1)).toBe(10);
   });
 
+  // Off-grid levels are real: the unit retains its own level_gain (measured 6/6) and a
+  // received level is deliberately not snapped, so a fader focused on a device-held
+  // value steps from between two detents. Snapping to the NEAREST first put the start
+  // point on the travel side half the time, and the step then jumped the adjacent
+  // detent — one keypress moving two detents' distance, with nothing to show it.
+  it("steps to the adjacent detent from a value between two of them", () => {
+    // -14.5 sits between -16 and -14, nearest -14: up must give -14, not -12.
+    expect(stepLevel(-14.5, 1)).toBe(-14);
+    expect(stepLevel(-14.5, -1)).toBe(-16);
+    // …and the mirror, where the nearest detent lies below.
+    expect(stepLevel(-15.5, -1)).toBe(-16);
+    expect(stepLevel(-15.5, 1)).toBe(-14);
+    // A value already on the grid is unaffected — the correction is for the snap
+    // having moved past the value, and there it has not moved at all.
+    expect(stepLevel(-16, 1)).toBe(-14);
+    expect(stepLevel(-14, -1)).toBe(-16);
+    // Multi-detent steps keep counting from the same neighbour.
+    expect(stepLevel(-14.5, 2)).toBe(-12);
+    expect(stepLevel(-14.5, -2)).toBe(-18);
+  });
+
   it("steps back up from off onto the floor detent (off is one notch below -96)", () => {
     // levelToPos(LEVEL_OFF_DB) is 0 (off), so a single step up lands on the lowest
     // real value, mirroring stepLevel(-96, -1) === off in the other direction.

@@ -172,11 +172,18 @@ const FLAT = (): number => 0;
 export function bandResponse(b: EqBandState, fs = EQ_RESPONSE_FS): (hz: number) => number {
   if (!b.on) return FLAT;
   const high = b.index === 3;
-  if (b.type === EQ_TYPE_PASS) {
+  // LOW-MID and HIGH-MID are fixed peaking on the unit: it rejects a type write there
+  // (response_code 400, measured), and the emit never sends one. A hand-authored plan
+  // can still park a type on one — the load funnel passes any finite numeric leaf — and
+  // the plot used to honour it, drawing a 2nd-order high-pass for a band the device is
+  // running as a bell. The curve then contradicts the hardware by up to the band's full
+  // gain, which is the one thing this drawing exists to not do.
+  const typed = b.index === 0 || b.index === 3;
+  if (typed && b.type === EQ_TYPE_PASS) {
     const c = passCoefs(b.freq, !high, fs);
     return (hz) => magDb(c, hz, fs);
   }
-  if (b.type === EQ_TYPE_SHELVING) {
+  if (typed && b.type === EQ_TYPE_SHELVING) {
     if (b.gain === 0) return FLAT;
     const c = shelfCoefs(shelfDesignFreq(b.freq, b.gain, high, fs), b.gain, high, fs);
     return (hz) => magDb(c, hz, fs);

@@ -65,7 +65,22 @@ export function levelToPos(db: number): number {
   return best + 1;
 }
 
-/** Step a level by `delta` grid detents (negative past the floor lands on off). */
+/**
+ * Step a level by `delta` grid detents (negative past the floor lands on off).
+ *
+ * Snapped in the direction of travel, not to the nearest detent. Off-grid levels are
+ * real here — the unit retains its own level_gain (measured 6/6) and a received level
+ * is deliberately not snapped — and from one of them the nearest detent can lie on the
+ * travel side, so `nearest + delta` overshoots the adjacent detent by one. From -14.5
+ * one ArrowUp used to land on -12, skipping -14; from -15.5 one ArrowDown gave -18,
+ * skipping -16. One keypress, two detents, silently.
+ */
 export function stepLevel(db: number, delta: number): number {
-  return posToLevel(levelToPos(db) + delta);
+  const pos = levelToPos(db);
+  const at = posToLevel(pos);
+  // Already on the grid (or already off), or moving away from the value: the nearest
+  // detent IS the one to step from. Only a snap that jumped PAST the level in the
+  // direction of travel has to be walked back one.
+  const overshot = delta > 0 ? at > db : at < db;
+  return posToLevel(pos + (overshot ? Math.sign(delta) * -1 : 0) + delta);
 }
