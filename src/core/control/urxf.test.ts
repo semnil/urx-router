@@ -4,8 +4,8 @@
 // the layout that builder writes.
 
 import { describe, expect, it } from "vitest";
-import { parseUrxf, paramSourceOf, UrxfError } from "./urxf";
-import { sampleUrxf as sample } from "./urxf.test-util";
+import { parseUrxf, paramSourceOf } from "./urxf";
+import { BLOCK_HEADER, buildUrxf, CHUNK_HEADER, FILE_HEADER, sampleUrxf as sample } from "./urxf.test-util";
 
 describe("parseUrxf", () => {
   it("reads the header, both chunks, and the scene label", () => {
@@ -42,7 +42,12 @@ describe("parseUrxf", () => {
 
   it("rejects a truncated file", () => {
     const bytes = sample();
-    expect(() => parseUrxf(bytes.subarray(0, bytes.length - 200))).toThrow(UrxfError);
+    // The code, not merely the class: every refusal below is a UrxfError, so `toThrow`
+    // alone would be satisfied by a file rejected for some other reason entirely — which
+    // is what an offset that drifted would produce.
+    expect(() => parseUrxf(bytes.subarray(0, bytes.length - 200))).toThrow(
+      expect.objectContaining({ code: "truncated" }),
+    );
   });
 
   // Σ(elemSize × count) == D length is the only integrity check the format offers,
@@ -51,16 +56,54 @@ describe("parseUrxf", () => {
   it("rejects a descriptor table that does not match the values block", () => {
     const bytes = sample();
     const view = new DataView(bytes.buffer);
-    // The first descriptor's elemSize (BE u16) sits 4 bytes into the F payload.
-    const fPayload = 72 + 104 + 32;
+    // The first descriptor's elemSize (BE u16) sits 4 bytes into the F payload. The three
+    // header sizes come from the builder rather than being written out here: they are its
+    // layout, and a literal copy would keep addressing an offset it had moved away from.
+    const fPayload = FILE_HEADER + CHUNK_HEADER + BLOCK_HEADER;
     view.setUint16(fPayload + 4, 8, false);
     expect(() => parseUrxf(bytes)).toThrow(expect.objectContaining({ code: "lengthMismatch" }));
   });
 
   it("rejects a block whose magic is wrong", () => {
     const bytes = sample();
-    new DataView(bytes.buffer).setUint32(72 + 104 + 24, 1, true);
+    // 24 bytes into the F block header, which is the magic. Note the neighbouring field
+    // (the payload length, 4 bytes further on) also refuses as `badBlock`, so this offset
+    // has to be right rather than merely close.
+    new DataView(bytes.buffer).setUint32(FILE_HEADER + CHUNK_HEADER + 24, 1, true);
     expect(() => parseUrxf(bytes)).toThrow(expect.objectContaining({ code: "badBlock" }));
+  });
+});
+
+// The builder's own guards. Each of the three is a mistake the FILE absorbs silently —
+// the bytes stay self-consistent and the parse succeeds — so without these a fixture can
+// state one thing and decode as another, and the reader takes the blame. Exercised here
+// because a guard nobody fires is indistinguishable from one whose bounds are wrong.
+describe("the fixture builder refuses what the format would swallow", () => {
+  const chunkOf =
+    (fields: Parameters<typeof buildUrxf>[0][number]["fields"]): (() => Uint8Array) =>
+    () =>
+      buildUrxf([{ chunk: "CURRENT", block: "CSF_BACKUP", label: "", fields }]);
+
+  it("refuses two records sharing one id", () => {
+    // Both records reach the file and the lengths still agree; the parse keeps the last.
+    expect(
+      chunkOf([
+        { id: 14, typecode: 1, elemSize: 2, values: [1] },
+        { id: 14, typecode: 1, elemSize: 2, values: [2] },
+      ]),
+    ).toThrow(/id 14 declared twice/);
+  });
+
+  it("refuses an id the descriptor cannot hold", () => {
+    expect(chunkOf([{ id: 70000, typecode: 1, elemSize: 2, values: [1] }])).toThrow(/not a u16/);
+  });
+
+  it("refuses a value wider than its element", () => {
+    expect(chunkOf([{ id: 14, typecode: 1, elemSize: 2, values: [70000] }])).toThrow(/does not fit 16 bits/);
+    // Signed and unsigned are separate ranges: -600 is fine as a signed 16-bit level and
+    // would otherwise be written as 64936 under an unsigned typecode.
+    expect(chunkOf([{ id: 14, typecode: 1, elemSize: 2, values: [-600] }])).toThrow(/does not fit 16 bits/);
+    expect(chunkOf([{ id: 14, typecode: 2, elemSize: 2, values: [-600] }])).not.toThrow();
   });
 });
 
