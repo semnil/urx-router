@@ -183,6 +183,16 @@ const connectAs = (model: string): Record<string, unknown> => ({
 const savedText = (shell: TauriShell): string =>
   String(shell.args[shell.invokes.indexOf("write_text_file")]?.contents ?? "");
 
+/** A store that answers the clock and refuses every other read, so a write reaches its
+ *  DIFF and stops there. The clock has to answer: a failed clock read ends the write one
+ *  gate earlier, which is main's own "writes nothing when the clock cannot be read". */
+const diffReadsFail = (a: Record<string, unknown>): number => {
+  if (a.paramId === PARAMS.FOLLOW_USB.id || a.paramId === PARAMS.SAMPLE_RATE.id) {
+    return clockReads(false, 48_000)(a);
+  }
+  throw new Error("read-refused");
+};
+
 describe("Fetch from device", () => {
   it("connects, reads the whole unit, and drops the link when it is done", SLOW, async () => {
     const shell = await bootDevice();
@@ -305,6 +315,9 @@ describe("the model the device turns out to be", () => {
     $("btn-fetch").click();
     await invoked(shell, "vd_disconnect");
 
+    // OFFERED, not assumed: this case boots agreeing to everything, so without naming the
+    // prompt it stays green over a build that drops the confirm and switches outright.
+    expect(confirms(shell)).toEqual([t().confirm.switchModel("URX22", "URX44V")]);
     expect($<HTMLSelectElement>("model-picker").value).toBe("URX22");
     expect(shell.count("vd_get")).toBeGreaterThan(50);
     // The whole frame: `fetchPartial` and `fetchedUnread` also name the model, so a read
@@ -326,6 +339,9 @@ describe("the model the device turns out to be", () => {
     expect(errors(shell)).toEqual([t().status.liveError(t().error.unknownModel("URX88"))]);
     expect(shell.count("vd_params_subscribe")).toBe(0);
     expect($("live-tally").hidden).toBe(true);
+    // The link was handed back, not merely disconnected: the holder is what locks the
+    // other device actions, and the disconnect above does not release it.
+    expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false);
   });
 
   it("abandons a live session quietly when the offered switch is declined", SLOW, async () => {
@@ -349,6 +365,7 @@ describe("the model the device turns out to be", () => {
     $("btn-live").click();
     await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
 
+    expect(confirms(shell)).toEqual([t().confirm.switchModel("URX22", "URX44V")]);
     expect($<HTMLSelectElement>("model-picker").value).toBe("URX22");
     expect(countFor(statusText(), (n) => t().status.liveOn("URX22", n))).toBeGreaterThan(50);
     // Registered against the switched plan, so the session follows the model the unit
@@ -612,16 +629,6 @@ describe("Write to device", () => {
     expect(statusText()).toContain(t().status.writeNoChanges);
   });
 
-  /** A store that answers the clock and refuses everything else, so the stop under test is
-   *  the DIFF's and not the clock read's — that one ends the write a gate earlier, and the
-   *  case for it is "writes nothing when the clock cannot be read" below. */
-  const diffReadsFail = (a: Record<string, unknown>): number => {
-    if (a.paramId === PARAMS.FOLLOW_USB.id || a.paramId === PARAMS.SAMPLE_RATE.id) {
-      return clockReads(false, 48_000)(a);
-    }
-    throw new Error("read-refused");
-  };
-
   // A parameter whose current value could not be read is one the write has no diff for,
   // so the sweep stops at the first rather than establishing values for a write that is
   // already canceled. `vd_set` at zero is the assertion: a read failure that let the write
@@ -640,6 +647,12 @@ describe("Write to device", () => {
     // the per-command failures in.
     await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 10_000 });
     expect(savedText(shell)).toContain("read-refused");
+
+    // The only thing it asked. Two regressions hide here otherwise: a read stop that
+    // still asked for the change count, and — the one nothing else covers — a read stop
+    // returning a sent/not-sent split instead of null, which would offer to run the write
+    // again and go on offering it, since the retry re-runs the same failing read.
+    expect(confirms(shell)).toEqual([t().confirm.deviceErrorExport]);
   });
 
   // The names are a second diff over a separate IPC, read AFTER the numeric sweep has
@@ -667,6 +680,9 @@ describe("Write to device", () => {
     expect(shell.count("vd_get")).toBeGreaterThan(100); // the numeric half did run
     expect(shell.count("vd_set")).toBe(0);
     expect(shell.count("vd_set_str")).toBe(0);
+    // Same as the numeric stop above: the report, and nothing else — no change count, and
+    // no offer to run again a write whose read would fail the same way.
+    await vi.waitFor(() => expect(confirms(shell)).toEqual([t().confirm.deviceErrorExport]), { timeout: 10_000 });
   });
 
   // A stopped send leaves the unit holding part of what was confirmed, and the offer to
@@ -691,7 +707,9 @@ describe("Write to device", () => {
     // the write succeeded: `report` is not cleared by the attempt that worked. Pinned as it
     // stands rather than left to be discovered — whether a retry that resolved the failure
     // should still report it is a product question, and this records the current answer.
-    expect(confirms(shell)).toContain(t().confirm.deviceErrorExport);
+    // Waited for, like its sibling below: the offer is raised after the disconnect this
+    // returned on.
+    await vi.waitFor(() => expect(confirms(shell)).toContain(t().confirm.deviceErrorExport), { timeout: 10_000 });
   });
 
   // Declining ends it where it stopped, and the status line is the whole report then, so
@@ -709,8 +727,10 @@ describe("Write to device", () => {
     expect(Number(sent)).toBe(0);
     expect(Number(notSent)).toBeGreaterThan(0);
     // The whole prompt, not just its count-free tail: that tail is satisfied by a prompt
-    // reporting the two counts the other way round.
+    // reporting the two counts the other way round. And exactly once — a decline has to
+    // end the loop rather than lead to the same question again.
     expect(confirms(shell)).toContain(t().confirm.writeRetry(0, Number(notSent)));
+    expect(confirms(shell).filter((m) => m.includes(RETRY_ASK))).toHaveLength(1);
     expect(shell.count("vd_set")).toBe(1); // stopped AT the failure, not after it
     expect(shell.count("vd_set_str")).toBe(0); // names are held back while it is stopped
   });
@@ -722,15 +742,7 @@ describe("Write to device", () => {
 describe("the failure report a device action offers", () => {
   /** A write that cancels on its first diff read, which is the cheapest way to a report. */
   const failingWrite = async (over: Record<string, unknown>): Promise<TauriShell> => {
-    const shell = await bootDevice({
-      ...over,
-      vd_get: (a: Record<string, unknown>) => {
-        if (a.paramId === PARAMS.FOLLOW_USB.id || a.paramId === PARAMS.SAMPLE_RATE.id) {
-          return clockReads(false, 48_000)(a);
-        }
-        throw new Error("read-refused");
-      },
-    });
+    const shell = await bootDevice({ ...over, vd_get: diffReadsFail });
     $("btn-write").click();
     await invoked(shell, "vd_disconnect");
     return shell;
@@ -799,6 +811,15 @@ describe("the macOS Edit menu", () => {
     // describing an app that was never asked to do anything.
     expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
     await vi.waitFor(() => expect(slider().getAttribute("aria-valuenow")).toBe("-8"), { timeout: 10_000 });
+    // The menu updates ITSELF, which is the whole reason this wiring exists: the menu is
+    // outside the document, so nothing repaints it. Without this the Redo item stays
+    // greyed out after an undo taken from the menu — usable once per launch — and only
+    // the edit-driven push above would be covered.
+    await vi.waitFor(
+      () =>
+        expect(shell.args[shell.invokes.lastIndexOf("set_edit_menu_state")]).toEqual({ canUndo: false, canRedo: true }),
+      { timeout: 10_000 },
+    );
     expect(shell.emit(EDIT_MENU_EVENT, EDIT_REDO_ID)).toBe(1);
     await vi.waitFor(() => expect(slider().getAttribute("aria-valuenow")).toBe("-7"), { timeout: 10_000 });
   });
