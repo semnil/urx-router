@@ -833,11 +833,11 @@ authored rule withdrawn through the stylesheet in each theme, the computed opaci
 unlike the ordinary themes, where that withdrawal leaves **0.7** of the engine's own, under forced colors
 it supplies **no opacity at all**. The authored dim is therefore the entire opacity signal in this mode,
 and the two mechanisms are additive rather than alternatives. The launcher caret goes the other way on
-purpose: this mode **drops** its authored dim and draws the caret at full strength
-(`e2e/forced-colors.spec.ts`), because that dim encoded a step against a NEIGHBOUR the mode flattens into
-one colour, leaving it nothing to say and a legibility cost to pay. A lock's dim encodes one control
-against its own unlocked state, which the mode leaves intact — so the two go opposite ways for the same
-reason.
+purpose, and the stylesheet has to say so by hand for the same reason: the mode would leave its authored
+dim standing, so the forced-colors block **drops** it and draws the caret at full strength
+(`e2e/forced-colors.spec.ts`). That dim encoded a step against a NEIGHBOUR, and the mode paints the two the
+same colour — leaving the step nothing to say and a legibility cost to pay. A lock's dim encodes one
+control against its own unlocked state, which the mode leaves intact, so the two go opposite ways.
 
 One assertion in that spec reads painted pixels rather than a computed style, and has to: a range
 input's track and thumb are `::-webkit-` pseudo elements whose author declarations this engine does not
@@ -1149,7 +1149,7 @@ same way the meter / param / MIDI-input streams already reach the frontend — w
 `invoke`, so the second window needs no capability beyond core. Where it sits is the shell's to remember (see
 "Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by
 platform — a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where the AppKit
-parent it used to have was measured and dropped (see "Window geometry"). Closing the
+parent it used to have was measured and dropped. Closing the
 main window closes it; closing it drops learn mode, which would otherwise stay armed against a control nothing
 on screen names.
 

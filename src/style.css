@@ -1154,8 +1154,9 @@ input[type="range"]:focus-visible,
    screen. Unlocked, its face matches the rack's model picker on colour, background,
    border colour, border width, radius, font family, font size and padding — that engine
    keeps the authored `padding: 5px 10px` where Playwright's WebKit computes it to `0px`
-   on a menulist select, which is a difference the recipe's own comment carries and
-   `e2e/recpoint.spec.ts` deliberately does not pin. The value is the panel's read-only dim —
+   on a menulist select (measured the same day). `e2e/recpoint.spec.ts` compares that
+   padding only against the model picker's, deliberately, so an engine computing `0px`
+   on both still passes. The value is the panel's read-only dim —
    the token the locked Preferences row takes, which is the same 0.45
    #inspector .toggle button:disabled writes as a literal. */
 #inspector select:disabled {
