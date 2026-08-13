@@ -121,11 +121,13 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // position ends up off the desk entirely.
     //
     // On Windows the same call means something else — a Win32 OWNER, which keeps this
-    // window above the main one and minimizes with it — and none of the above was
-    // measured there. Dropping it everywhere would have traded a defect nobody has seen
-    // on that platform for one nobody asked for, so the relationship stays where the
-    // evidence does not reach. `reference/work/windows-verify` item 2 carries what would
-    // settle whether macOS's finding applies there too.
+    // window above the main one and minimizes with it — and both halves of the macOS
+    // finding were then measured there and are ABSENT: on a two-display desk this window
+    // is drawn in full on the display the main window is not on, and moving the main
+    // window 829x1431 px onto the other display left it where it was, to the pixel. So
+    // the relationship costs on that platform nothing it costs on this one, and the
+    // `#[cfg]` is the measurement rather than a gap in it (architecture.md, "The MIDI
+    // window is an owned window on Windows", carries the table and the rest of the run).
     //
     // What the parent bought on macOS — that it cannot fall behind the main window — is
     // paid for by pinning it while a learn is armed (`pin_midi_window`).
@@ -200,6 +202,11 @@ pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
 /// keystrokes where they are (`set_focus` is `makeKeyAndOrderFront:`). What this
 /// costs is that the panel floats above OTHER applications too — accepted for the
 /// seconds a learn is armed, which is why it is not left on.
+///
+/// On Windows this window still has an owner, and the two compose rather than one
+/// standing in for the other: measured from the panel's own learn button, arming set
+/// `WS_EX_TOPMOST` (0x110 -> 0x118) and disarming cleared it, with the order against
+/// the owner unchanged in both states. So nothing here needs a `#[cfg]`.
 #[tauri::command]
 pub fn pin_midi_window(app: AppHandle, on: bool) -> Result<(), String> {
     match app.get_webview_window(MIDI_WINDOW) {

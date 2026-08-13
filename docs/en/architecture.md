@@ -817,6 +817,16 @@ the meter island keeps its three zones. The tuning-screen lane and the slider tr
 same way (2026-08-08, hcblack and hcwhite) — both were found broken there and are fixed and re-measured
 under both themes.
 
+**A locked control is a question this block does not answer**, because `opacity` is one of the few things
+forced colors leaves alone, so the read-only dims written elsewhere are supposed to survive it. Measured
+2026-08-13 in WebView2 151.0.4129.78 across all four Windows contrast themes: the locked inspector select
+is distinguishable in pixels under every one — 714–719 of the 8544 pixels over its own box, mean luma
+48.8 → 36.6 (hcblack), 236.3 → 245.3 (hcwhite), 64.7 → 53.1 (hc1) and 19.2 → 5.6 (hc2) — so the dim reads
+and nothing forced-colors-specific is needed for it. The engine also substitutes on its own here: a
+disabled select's text and border become `GrayText`, and, unlike the ordinary themes where it supplies
+**0.7** of its own, under forced colors it supplies **no opacity at all**. The authored 0.45 is therefore
+the entire opacity signal in this mode, and the two mechanisms are additive rather than alternatives.
+
 One assertion in that spec reads painted pixels rather than a computed style, and has to: a range
 input's track and thumb are `::-webkit-` pseudo elements whose author declarations this engine does not
 report through `getComputedStyle`. The rule that draws the track computes to `0px none` while the track
@@ -886,6 +896,17 @@ unit, live, before the operator had moved. The channel tuning screens' threshold
 (`dyn-screen.ts`: the cap's own listener grabs it, the slot's jumps and defers to the cap with
 `e.target === cap`), so the two surfaces now share one press grammar — the CONSOLE fader was the one that
 did not have it.
+
+The E2E tiers pin this in Playwright's Chromium and WebKit; **the shipping WebView2 was measured separately**
+(2026-08-13, debug build, runtime 151.0.4129.78, 1280x800 viewport, URX44V), because that engine is not the
+one either tier runs. Presses at the cap's top edge, centre and bottom edge left the readout unchanged; a
+press at 80% of the fader's height put the cap centre **0.013 px** from the pointer against a half-detent
+tolerance of 2.05 px; and a three-detent drag from a grab moved the cap 12.313 px for the 12.3 px asked.
+Identical for the `mouse`, `pen` and `touch` pointer types — the tiers only exercise the first. One thing
+belongs to touch alone: a **double-tap is a `dblclick` there**, so two taps on the cap inside the
+double-click interval hit the factory reset above. Measured with its control (two taps 150 ms apart reset a
+-3.2 dB fader to 0.0; the same two 700 ms apart left it at -3.2), which is what separates it from "any two
+taps reset it".
 
 **Fine-tuning (hold Shift)** — the controls whose device parameter has a verified fine grid tighten their
 step while Shift is held, mirroring the hardware's (undocumented) push-and-turn fine mode: the inspector's
@@ -2350,24 +2371,41 @@ macOS afterwards across the five cases in the table above, all unchanged. The ra
 number here were taken in `reference/work/windows-verify/`, whose settled sections are folded into this
 document and then deleted; they are read back out of that file's history.
 
-**The MIDI window is a child of the main window**, which is what keeps it in front: on Windows an owned
-window is always above its owner in the z-order, and on macOS `addChildWindow` orders it above the parent
-within the app. Deliberately not "always on top", which would put the panel above every other application
-for the whole session. `focus_midi_window` still exists and is still called when learn turns on — raising
-the app above another application is a different thing from ordering these two windows against each other.
+**The MIDI window is an owned window on Windows and an independent one on macOS** — the `.parent(&main)`
+call sits behind `#[cfg(target_os = "windows")]`. On Windows that ownership is what keeps the panel in
+front: an owned window is always above its owner in the z-order. `addChildWindow` did the same on macOS
+until what it cost there was measured, and the relationship was dropped; what holds the panel in front
+there now is `pin_midi_window`, for as long as a learn is armed. "Always on top" for the whole session was
+deliberately not taken on either platform. `focus_midi_window` still exists and is still called when learn
+turns on — raising the app above another application is a different thing from ordering these two windows
+against each other.
 
-What being a child costs, measured on both platforms — and **the two do not agree**:
+What the relationship costs, measured on both platforms — and **the two do not agree**, which is why it is
+kept on one and dropped on the other:
 
-| | macOS | Windows |
+| | macOS (AppKit child) | Windows (Win32 owner) |
 | --- | --- | --- |
-| Stays above its owner | yes | yes, even with the owner activated and raised |
+| Stays above its owner | yes | yes — with the owner raised programmatically, and with it activated by a real click |
 | Hidden while the owner is minimized | yes | yes |
+| **Composited on another display** | **no** — reported on-screen at layer 0 and alpha 1.0, drawn on neither | **yes**, drawn in full |
 | **Moves with the owner** | **yes**, the same delta to the pixel | **no**, it stays where it is |
 
-The Windows answer is structural rather than incidental: the panel is a top-level **owned** window, not a
-child of the main window's client area, and the window manager only moves the latter with its parent — so
-there is nothing that could implement the follow, whatever issues the move. Measured through a drag's own
-message sequence as well as a plain programmatic move.
+The bottom two rows are what the `#[cfg]` rests on: on macOS both are defects an operator meets (a panel
+listed as on-screen and painted nowhere, and one dragged off the desk by the main window), and neither
+exists on Windows. The Windows answers are structural rather than incidental: the panel is a top-level
+**owned** window, not a child of the main window's client area, and the window manager only moves the
+latter with its parent — so there is nothing that could implement the follow, whatever issues the move.
+Measured through a drag's own message sequence as well as a plain programmatic move.
+
+The Windows column was re-measured whole on 2026-08-13 (debug build, WebView2 151.0.4129.78, a 2560x1440
+primary and a 1920x1080 secondary, both at 100%), including the two rows that were already here. The
+top row is two measurements rather than one, because **a probe cannot activate a window across processes**:
+the foreground lock makes `SetForegroundWindow` a silent no-op, so the raise half is programmatic and the
+activation half has to be an operator's click. Windows refuses to break the order from either side —
+`SetWindowPos(main, HWND_TOP)` leaves the panel above it, and `SetWindowPos(midi, main)` and `HWND_BOTTOM`
+leave it above too. `pin_midi_window` composes with the ownership rather than replacing it: arming the
+learn from the panel's own button set `WS_EX_TOPMOST` (extended style 0x110 → 0x118) and disarming cleared
+it, with the owner order unchanged either way.
 
 `--reset-storage` clears the remembered geometry as well as `localStorage` — both files, since a scale left
 behind for a rectangle that no longer exists would be read against the next rectangle written under that
