@@ -53,6 +53,24 @@ test("the name field cuts a typed name to what the unit can hold", async ({ page
   await expect(node(page, "ch1").locator("text").first()).toHaveText("あ".repeat(8));
 });
 
+// A trailing space is not part of a name — the unit stores one rather than padding it
+// away, while every path that reads a name back trims one off, so a plan holding one is
+// re-sent to the device on every sync. It is dropped at the COMMIT rather than in the
+// box: the box's clip runs on every keystroke, and trimming there would eat the space in
+// "A B" as it is typed. Both halves are visible here, and only here — the canvas trims
+// the label it draws, so it shows the same text either way.
+test("a name keeps its inner space and loses its trailing one", async ({ page }) => {
+  await node(page, "ch1").click();
+  await nameInput(page).pressSequentially("A B ", { delay: 0 });
+  // Still in the box, so the next character can land after it.
+  await expect(nameInput(page)).toHaveValue("A B ");
+
+  // Re-selecting rebuilds the field out of the plan, which is where the commit landed.
+  await node(page, "ch2").click();
+  await node(page, "ch1").click();
+  await expect(nameInput(page)).toHaveValue("A B");
+});
+
 test("the labels toggle defaults to model labels and flips both ways", async ({ page }) => {
   await node(page, "ch1").click();
   await nameInput(page).fill("VocalMic");
