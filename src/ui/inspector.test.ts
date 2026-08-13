@@ -309,18 +309,17 @@ describe("node controls report their edits", () => {
     expect(act.onRenameNode).toHaveBeenCalledWith("ch1", "Kick");
   });
 
-  // The device's CH SETTING name is a fixed-width byte field. The panel does not
-  // re-render on a rename (that is what keeps focus while typing), so cutting the
-  // value only on the way out would leave the box showing text the plan does not
-  // hold. `maxlength` cannot stand in for it: it counts UTF-16 units, so 63 of it
-  // admits 63 Japanese characters — 189 bytes.
-  it("cuts a name to the device's field width in the box as well as in the report", () => {
+  // The unit's own name screen takes 8 characters. The panel does not re-render on a
+  // rename (that is what keeps focus while typing), so cutting the value only on the
+  // way out would leave the box showing text the plan does not hold — and a name past
+  // the bound also draws a node label across its neighbours on the canvas.
+  it("cuts a name to what the unit can hold, in the box as well as in the report", () => {
     renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
     const field = panel.querySelector<HTMLInputElement>('input[type="text"]')!;
     field.value = "あ".repeat(60);
     field.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(field.value).toBe("あ".repeat(21));
-    expect(act.onRenameNode).toHaveBeenCalledWith("ch1", "あ".repeat(21));
+    expect(field.value).toBe("あ".repeat(8));
+    expect(act.onRenameNode).toHaveBeenCalledWith("ch1", "あ".repeat(8));
   });
 
   // Assigning `value` moves the caret to the end of the field. Without putting it
@@ -331,10 +330,10 @@ describe("node controls report their edits", () => {
     renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
     const field = panel.querySelector<HTMLInputElement>('input[type="text"]')!;
     // A name at the bound, with one character just typed at the head.
-    field.value = `y${"x".repeat(63)}`;
+    field.value = `y${"x".repeat(8)}`;
     field.setSelectionRange(1, 1);
     field.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(field.value).toBe(`y${"x".repeat(62)}`);
+    expect(field.value).toBe(`y${"x".repeat(7)}`);
     expect(field.selectionStart).toBe(1);
   });
 
@@ -348,8 +347,8 @@ describe("node controls report their edits", () => {
     field.dispatchEvent(new Event("input", { bubbles: true }));
     expect(field.value).toBe("あ".repeat(60));
     field.dispatchEvent(new Event("compositionend", { bubbles: true }));
-    expect(field.value).toBe("あ".repeat(21));
-    expect(act.onRenameNode).toHaveBeenLastCalledWith("ch1", "あ".repeat(21));
+    expect(field.value).toBe("あ".repeat(8));
+    expect(act.onRenameNode).toHaveBeenLastCalledWith("ch1", "あ".repeat(8));
   });
 
   it("recolors a node from a swatch and clears it from the none swatch", () => {

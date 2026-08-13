@@ -7,7 +7,7 @@ import { parseRef, ref } from "../models/types";
 import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, migrateFxEffectParams } from "./control/fx-effect";
 import { insertFxFamilyOf, qualifyInsertFxParams } from "./control/insert-fx-effect";
-import { NODE_NAME_MAX_BYTES } from "./control/params";
+import { NODE_NAME_MAX_CHARS } from "./control/params";
 import { stripSceneExternal } from "./scene-scope";
 
 // LEVEL fader / send range in dB (the device level_gain table, shared by every
@@ -538,25 +538,16 @@ function stringRecord(v: unknown): Record<string, string> {
   return out;
 }
 
-/** Cut a node name to what the device's fixed-width CH SETTING field can hold.
- *  Counted in UTF-8 bytes (`NODE_NAME_MAX_BYTES` carries the width and where it was
- *  established) and cut on a code-point boundary, so the result is never half a
- *  character. Names are the one plan string that leaves the app on the device link,
- *  and they leave it uncut — the numeric leaves have `boundRaw` between them and the
- *  wire, and nothing played that part for strings. Notes and colors are the app's own
- *  and stay unbounded. */
+/** Cut a node name to what the unit's own CH SETTING screen can produce
+ *  (`NODE_NAME_MAX_CHARS` carries the limit and how it was established). Counted in
+ *  code points via the string iterator, so a surrogate pair is one character and the
+ *  result is never half of one. Names are the one plan string that leaves the app on
+ *  the device link, and they left it uncut — the numeric leaves have `boundRaw`
+ *  between them and the wire, and nothing played that part for strings. Notes and
+ *  colors are the app's own and stay unbounded. */
 export function clipNodeName(name: string): string {
-  const enc = new TextEncoder();
-  if (enc.encode(name).length <= NODE_NAME_MAX_BYTES) return name;
-  let out = "";
-  let bytes = 0;
-  for (const ch of name) {
-    const n = enc.encode(ch).length;
-    if (bytes + n > NODE_NAME_MAX_BYTES) break;
-    out += ch;
-    bytes += n;
-  }
-  return out;
+  const chars = [...name];
+  return chars.length <= NODE_NAME_MAX_CHARS ? name : chars.slice(0, NODE_NAME_MAX_CHARS).join("");
 }
 
 function nameRecord(v: unknown): Record<string, string> {

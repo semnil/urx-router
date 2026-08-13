@@ -716,15 +716,19 @@ export const SWEET_SPOT_DATA_OPTIONS = [
   { value: 34, label: "28 ZK Filter" },
 ];
 
-// A CH SETTING name is a fixed-width field on the device, not a free string: the
-// unit's own settings file stores param 18 (mono) and 206 (stereo) as ASCII in
-// 64-byte elements, NUL-padded, and a reader cuts at the first NUL. So 63 bytes is
-// what a name can carry and still terminate. The broker publishes no bound at all
-// for these (their descriptors have empty min/max), which is why the width comes
-// from a device-written file rather than from the parameter list. Counted in UTF-8
-// bytes because that is what goes on the wire — a multi-byte character spends more
-// than one of the 63.
-export const NODE_NAME_MAX_BYTES = 63;
+// A CH SETTING name is bounded by what the unit lets anyone type into it: its own
+// text-input screen takes at most **8 characters** (`ch 1xxxx`). Nothing else in the
+// stack enforces that. Measured on a URX44V (2026-08-14): the broker accepts and
+// stores a 20-character name and a 4-character Japanese one, and reads both back
+// unchanged; their descriptors publish no bound at all (empty min/max); and the
+// unit's settings file holds the name in a 64-byte NUL-padded ASCII element, which
+// is the container, not the limit. Reading the container as the limit is the mistake
+// this constant replaces — a 63-character name is writable, and it drew a node label
+// that ran across its neighbours on the canvas.
+//
+// Counted in code points, so a name stays within what the unit's own screen could
+// have produced whatever the script. 8 of any script fits the 64-byte element.
+export const NODE_NAME_MAX_CHARS = 8;
 
 // Rec Point: the per-channel signal-path tap fed to the channel's recording /
 // direct out (block diagram: "Rec Point" selector -> CH OUT). Labels are the

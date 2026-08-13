@@ -264,9 +264,9 @@ app and tooling parse, not prose:
 - node ids and `from`/`to` refs (`ch1`, `bus.mix1:out`, `out.usbmain_a:in`),
 - the plan JSON — all keys and string values (`"kind": "send"`, `"modelId"`),
   except `nodeNames`, which is a user-facing label and may be in any language
-  (e.g. `"ch1": "ボーカル"`) — held as UTF-8, and **cut to 63 UTF-8 bytes** on load,
-  which is the device's CH SETTING field width (21 Japanese characters; the cut
-  falls on a code-point boundary and `plan_tool.py validate` names each one),
+  (e.g. `"ch1": "ボーカル"`) — held as UTF-8, and **cut to 8 characters** on load,
+  which is what the unit's own CH SETTING name screen takes (`plan_tool.py validate`
+  names each name it would shorten),
 - the `?plan=` deep link,
 - the validator's reason codes (`noRule`, `singleInput`, `duplicate`, and the
   document-level ones in step 5).

@@ -202,12 +202,12 @@ def collection_warnings(plan):
     return out
 
 
-# The device's CH SETTING name is a fixed 64-byte NUL-padded ASCII field, so the app
-# cuts a longer name to 63 UTF-8 BYTES on a code-point boundary. This is the one
-# collection entry the loader rewrites instead of dropping, and it is silent, so a
-# generated name that would be shortened is worth saying out loud. Bytes, not
-# characters: a Japanese name fits 21.
-NODE_NAME_MAX_BYTES = 63
+# The unit's own CH SETTING name screen takes at most 8 CHARACTERS (`ch 1xxxx`), so
+# the app cuts a longer name there. Nothing in the protocol enforces it — the broker
+# stores a 20-character name and reads it back unchanged — which is why a generated
+# name is worth warning about: it loads shortened, silently, and this is the one
+# collection entry the loader rewrites instead of dropping.
+NODE_NAME_MAX_CHARS = 8
 
 
 def name_length_warnings(plan):
@@ -219,11 +219,11 @@ def name_length_warnings(plan):
     for node_id, value in names.items():
         if not isinstance(value, str):
             continue
-        size = len(value.encode("utf-8"))
-        if size > NODE_NAME_MAX_BYTES:
+        size = len(value)
+        if size > NODE_NAME_MAX_CHARS:
             out.append(
-                f"nodeNames[{node_id}]: the app cuts this to {NODE_NAME_MAX_BYTES} UTF-8 bytes on load "
-                f"({size} bytes) — the device's CH SETTING name field holds no more"
+                f"nodeNames[{node_id}]: the app cuts this to {NODE_NAME_MAX_CHARS} characters on load "
+                f"({size} given) — the unit's own name screen takes no more"
             )
     return out
 

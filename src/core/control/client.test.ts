@@ -26,7 +26,7 @@ import {
   setFollowUsb,
 } from "./client";
 import { planToCommands, planToNameWrites, type VdCommand } from "./translate";
-import { NODE_NAME_MAX_BYTES, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
+import { NODE_NAME_MAX_CHARS, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { PORT_REF_NONE } from "./vd";
 
 const model = getModel("URX44V");
@@ -501,12 +501,11 @@ describe("planToNameWrites bounds what reaches the wire", () => {
     const carried = planToNameWrites(model, plan)[0].value;
     const target = Object.keys(plan.nodeNames).find((id) => plan.nodeNames[id] === carried)!;
     plan.nodeNames[target] = "あ".repeat(200);
-    const enc = new TextEncoder();
     const writes = planToNameWrites(model, plan);
     expect(writes.length).toBeGreaterThan(0);
-    for (const w of writes) expect(enc.encode(w.value).length).toBeLessThanOrEqual(NODE_NAME_MAX_BYTES);
+    for (const w of writes) expect([...w.value].length).toBeLessThanOrEqual(NODE_NAME_MAX_CHARS);
     // Cut on a code-point boundary, so the wire never carries half a character.
-    expect(writes.find((w) => w.value.startsWith("あ"))!.value).toBe("あ".repeat(21));
+    expect(writes.find((w) => w.value.startsWith("あ"))!.value).toBe("あ".repeat(NODE_NAME_MAX_CHARS));
   });
 });
 

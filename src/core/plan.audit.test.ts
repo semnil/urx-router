@@ -388,36 +388,37 @@ describe("mixed mutator sequence + persistence round-trip (URX44V)", () => {
   });
 });
 
-// A CH SETTING name is a fixed-width field on the device (ASCII, 64-byte elements,
-// NUL-padded — read off a unit-written settings file, since the broker publishes no
-// bound for these at all), and names are the one plan string that leaves the app over
-// the device link. The numeric leaves have `boundRaw` between them and the wire;
-// nothing played that part for strings, so a crafted plan's multi-kilobyte name
-// loaded silently and rode `vd_set_str` uncut.
-describe("node names are bounded by the device's own field width", () => {
-  const bytes = (s: string): number => new TextEncoder().encode(s).length;
+// A CH SETTING name is bounded by what the unit's own text-input screen can produce:
+// 8 characters. Nothing else in the stack enforces it — measured on a URX44V, the
+// broker stores a 20-character name and reads it back unchanged, and the settings
+// file's 64-byte element is the container rather than the limit. Names are the one
+// plan string that leaves the app over the device link; the numeric leaves have
+// `boundRaw` between them and the wire and nothing played that part for strings, so
+// a crafted plan's multi-kilobyte name loaded silently and rode `vd_set_str` uncut —
+// and a 63-character one drew a node label across its neighbours on the canvas.
+describe("node names are bounded by what the unit can hold", () => {
+  const chars = (s: string): number => [...s].length;
 
   // Both sides of the bound, or "keeps what fits" passes at any width.
-  it("keeps a name that fits, to the last byte the field can terminate, and cuts the next", () => {
-    const exact = "x".repeat(63);
-    expect(bytes(exact)).toBe(63);
+  it("keeps a name of exactly the unit's limit, and cuts the next character", () => {
+    const exact = "ch 1xxxx";
+    expect(chars(exact)).toBe(8);
     expect(clipNodeName(exact)).toBe(exact);
-    // 64 bytes fills the element with no room for the NUL a reader cuts at.
-    expect(clipNodeName("x".repeat(64))).toBe(exact);
+    expect(clipNodeName(`${exact}y`)).toBe(exact);
   });
 
-  it("cuts a longer name to the field width", () => {
-    const long = "y".repeat(500);
-    expect(bytes(clipNodeName(long))).toBe(63);
+  it("cuts a longer name to the limit", () => {
+    expect(clipNodeName("y".repeat(500))).toBe("y".repeat(8));
   });
 
-  // Cutting by string length would split a multi-byte character and put a lone
-  // surrogate / a half sequence on the wire.
-  it("cuts multi-byte text on a code-point boundary, never mid-character", () => {
+  // Counted in code points, so a surrogate pair is one character and is never split.
+  // Byte-counting would also make the limit depend on the script, which the unit's
+  // own screen does not.
+  it("counts characters rather than bytes, and never splits one", () => {
     for (const unit of ["あ", "🎸", "Ø"]) {
       const cut = clipNodeName(unit.repeat(200));
-      expect(bytes(cut)).toBeLessThanOrEqual(63);
-      expect(cut).toBe(unit.repeat(cut.length / unit.length));
+      expect(chars(cut)).toBe(8);
+      expect(cut).toBe(unit.repeat(8));
       // A cut that lost half a character re-encodes to U+FFFD rather than to itself.
       // (A `startsWith` check does not catch it: a lone high surrogate IS a prefix of
       // the pair it came from, so the split character passes as whole.)
@@ -433,7 +434,7 @@ describe("node names are bounded by the device's own field width", () => {
       nodeNames: { ch1: "z".repeat(4000), ch2: "Kick" },
     });
     const plan = deserialize(doc);
-    expect(bytes(plan.nodeNames["ch1"])).toBe(63);
+    expect(plan.nodeNames["ch1"]).toBe("z".repeat(8));
     // An ordinary name is untouched — the guard bounds, it does not rewrite.
     expect(plan.nodeNames["ch2"]).toBe("Kick");
   });

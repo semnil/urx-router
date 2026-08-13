@@ -199,9 +199,10 @@ expected, say) falls back to empty and loses every entry. Nothing is reported to
 the user when this happens, so `plan_tool.py validate` warns about each one.
 
 **One entry is rewritten rather than dropped.** A `nodeNames` value longer than
-**63 UTF-8 bytes** is CUT to that length on a code-point boundary — the device's
-CH SETTING name is a fixed 64-byte NUL-padded field, and the name is written to
-the unit over the device link. A name is measured in bytes, not characters, so a
-Japanese name fits 21 characters and an emoji-carrying one fewer. Nothing is
-reported here either, so `plan_tool.py validate` warns about each name it would
-shorten; emit a name within the bound rather than relying on the cut.
+**8 characters** is CUT to that length — the unit's own CH SETTING name screen
+takes no more (`ch 1xxxx`), and a longer name also draws a node label across its
+neighbours on the canvas. Counted in characters, not bytes, so a Japanese name
+also gets 8. Nothing in the protocol enforces this (the broker stores a
+20-character name and reads it back unchanged), and nothing is reported here
+either, so `plan_tool.py validate` warns about each name it would shorten; emit a
+name within the bound rather than relying on the cut.
