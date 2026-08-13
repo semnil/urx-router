@@ -32,6 +32,27 @@ test("the name field sets the device name; the canvas shows it only in device-na
   await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
 });
 
+// The unit's own CH SETTING name screen takes 8 characters, so the app cuts there.
+// `fill()` assigns `.value` and would skip the field's own handling, so the typing
+// path is driven for real: the box's own state (rather than the plan's) is only
+// observable here. The canvas label is asserted beside it because a name past the
+// bound is what drew a label across the neighbouring nodes.
+test("the name field cuts a typed name to what the unit can hold", async ({ page }) => {
+  await node(page, "ch1").click();
+  await page.click("#btn-view");
+  await page.locator("#btn-labels").click();
+
+  await nameInput(page).pressSequentially("1234567890".repeat(2), { delay: 0 });
+  await expect(nameInput(page)).toHaveValue("12345678");
+  await expect(node(page, "ch1").locator("text").first()).toHaveText("12345678");
+
+  // Counted in characters, not bytes — a Japanese name gets the same 8.
+  await nameInput(page).fill("");
+  await nameInput(page).pressSequentially("あ".repeat(12), { delay: 0 });
+  await expect(nameInput(page)).toHaveValue("あ".repeat(8));
+  await expect(node(page, "ch1").locator("text").first()).toHaveText("あ".repeat(8));
+});
+
 test("the labels toggle defaults to model labels and flips both ways", async ({ page }) => {
   await node(page, "ch1").click();
   await nameInput(page).fill("VocalMic");

@@ -6,6 +6,7 @@ import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
 import { applyPairTransition, mirrorBalPair, mirrorLinkedInsertFx, mixSendLocks, partnerChannel } from "./core/routing";
 import {
+  clipNodeName,
   decodePlanParam,
   deserializeDocument,
   emptyPlan,
@@ -675,11 +676,17 @@ const follow =
           const node = live?.lookupName(paramId, x, y);
           if (node === undefined) return undefined;
           authorFromDevice(node, () => {
-            const trimmed = value.trimEnd();
+            // Bounded like every other way a name enters the plan. The unit's own
+            // screen cannot produce one longer than this, so an arriving name is
+            // normally within it — but the wire accepts and stores longer, and an
+            // unbounded name in the plan draws a label across its neighbours.
+            const trimmed = clipNodeName(value.trimEnd());
             if (trimmed) plan.nodeNames[node] = trimmed;
             else delete plan.nodeNames[node];
-            // The snapshot moves with the plan, so the next flush finds no diff and
-            // does not write the operator's own board edit back off the board.
+            // The snapshot takes the device's OWN value, not the clipped one: the two
+            // agreeing is what stops a flush from writing the operator's board edit
+            // back off the board, and where they disagree the next flush is what
+            // settles the device on the bounded name.
             live?.noteDirectName(paramId, y, value);
             return true;
           });
@@ -1125,7 +1132,9 @@ const inspectorActions = {
   // Rename mutates in place and repaints the node label without re-rendering the
   // inspector, so the text input keeps focus while typing. Empty clears the override.
   onRenameNode: (id: string, name: string) => {
-    if (name.trim()) plan.nodeNames[id] = name;
+    // Clipped to the device's field width here as well as in the field itself: this
+    // is reachable from callers other than that box, and a name goes to the unit.
+    if (name.trim()) plan.nodeNames[id] = clipNodeName(name);
     else delete plan.nodeNames[id];
     markChanged();
     graph.repaintNodes();

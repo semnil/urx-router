@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  clipNodeName,
   emptyPlan,
   ensureFixedConnections,
   serialize,
@@ -384,5 +385,57 @@ describe("mixed mutator sequence + persistence round-trip (URX44V)", () => {
     expect(restored.connections).toEqual(plan.connections);
     // Exactly one source into ch1 (the second select replaced the first).
     expect(restored.connections.filter((c) => c.to === ref("ch1", "in") && c.kind === "source")).toHaveLength(1);
+  });
+});
+
+// A CH SETTING name is bounded by what the unit's own text-input screen can produce:
+// 8 characters. Nothing else in the stack enforces it — measured on a URX44V, the
+// broker stores a 20-character name and reads it back unchanged, and the settings
+// file's 64-byte element is the container rather than the limit. Names are the one
+// plan string that leaves the app over the device link; the numeric leaves have
+// `boundRaw` between them and the wire and nothing played that part for strings, so
+// a crafted plan's multi-kilobyte name loaded silently and rode `vd_set_str` uncut —
+// and a 63-character one drew a node label across its neighbours on the canvas.
+describe("node names are bounded by what the unit can hold", () => {
+  const chars = (s: string): number => [...s].length;
+
+  // Both sides of the bound, or "keeps what fits" passes at any width.
+  it("keeps a name of exactly the unit's limit, and cuts the next character", () => {
+    const exact = "ch 1xxxx";
+    expect(chars(exact)).toBe(8);
+    expect(clipNodeName(exact)).toBe(exact);
+    expect(clipNodeName(`${exact}y`)).toBe(exact);
+  });
+
+  it("cuts a longer name to the limit", () => {
+    expect(clipNodeName("y".repeat(500))).toBe("y".repeat(8));
+  });
+
+  // Counted in code points, so a surrogate pair is one character and is never split.
+  // Byte-counting would also make the limit depend on the script, which the unit's
+  // own screen does not.
+  it("counts characters rather than bytes, and never splits one", () => {
+    for (const unit of ["あ", "🎸", "Ø"]) {
+      const cut = clipNodeName(unit.repeat(200));
+      expect(chars(cut)).toBe(8);
+      expect(cut).toBe(unit.repeat(8));
+      // A cut that lost half a character re-encodes to U+FFFD rather than to itself.
+      // (A `startsWith` check does not catch it: a lone high surrogate IS a prefix of
+      // the pair it came from, so the split character passes as whole.)
+      expect(new TextDecoder("utf-8", { fatal: true }).decode(new TextEncoder().encode(cut))).toBe(cut);
+    }
+  });
+
+  it("applies the bound at the load funnel, so a crafted document cannot carry one past it", () => {
+    const doc = JSON.stringify({
+      format: PLAN_FORMAT,
+      version: PLAN_VERSION,
+      modelId: "URX44V",
+      nodeNames: { ch1: "z".repeat(4000), ch2: "Kick" },
+    });
+    const plan = deserialize(doc);
+    expect(plan.nodeNames["ch1"]).toBe("z".repeat(8));
+    // An ordinary name is untouched — the guard bounds, it does not rewrite.
+    expect(plan.nodeNames["ch2"]).toBe("Kick");
   });
 });

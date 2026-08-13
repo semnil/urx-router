@@ -104,7 +104,12 @@ test.beforeEach(async ({ page }) => {
       meterChannel: null,
       paramChannel: null,
       meterAddrs: [],
-      mem: {},
+      // `vd_get` answers 0 for an address nobody seeded, and 0 is a real value for an
+      // enum: CH 1's Rec Point (137:0:0) would read as PRE GATE, which the readback
+      // then puts in the plan. The DUCKER key lane reads the tap that names, so a case
+      // about its address would be measuring the stub. Seed the factory value (4 =
+      // PRE FADER) and let a case that cares about another stage set it for itself.
+      mem: { "137:0:0": 4 },
       gets: 0,
       subscribes: 0,
       unsubscribes: 0,
@@ -892,6 +897,21 @@ test.describe("ducker", () => {
           [120, 1],
           [119, 0],
         ]);
+    });
+
+    // The block diagram makes the `Rec Point` selector's output the signal it labels
+    // `CH OUT`, and `DUCKER 1-4 SOURCE` takes `CH n OUT` — so the key tap moves with
+    // the source channel's Rec Point. The registered address is the only tell: the
+    // lane's caption names the source channel, not the stage.
+    test("registers the key tap the source's Rec Point names", async ({ page }) => {
+      await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
+      await page
+        .locator("#inspector .param", { hasText: "Rec Point" })
+        .locator("select")
+        .selectOption({ label: "PRE GATE" });
+      await openDucker(page);
+      // 106 = CH 1 PRE GATE, in place of 113 PRE FADER. The rest is unchanged.
+      await expect.poll(() => page.evaluate(() => window.__dynTest.meterAddrs[0])).toEqual([106, 0]);
     });
 
     test("ducker 3 meters its own reduction, not its host channel's pair index", async ({ page }) => {

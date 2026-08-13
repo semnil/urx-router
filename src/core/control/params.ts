@@ -716,6 +716,20 @@ export const SWEET_SPOT_DATA_OPTIONS = [
   { value: 34, label: "28 ZK Filter" },
 ];
 
+// A CH SETTING name is bounded by what the unit lets anyone type into it: its own
+// text-input screen takes at most **8 characters** (`ch 1xxxx`). Nothing else in the
+// stack enforces that. Measured on a URX44V (2026-08-14): the broker accepts and
+// stores a 20-character name and a 4-character Japanese one, and reads both back
+// unchanged; their descriptors publish no bound at all (empty min/max); and the
+// unit's settings file holds the name in a 64-byte NUL-padded ASCII element, which
+// is the container, not the limit. Reading the container as the limit is the mistake
+// this constant replaces — a 63-character name is writable, and it drew a node label
+// that ran across its neighbours on the canvas.
+//
+// Counted in code points, so a name stays within what the unit's own screen could
+// have produced whatever the script. 8 of any script fits the 64-byte element.
+export const NODE_NAME_MAX_CHARS = 8;
+
 // Rec Point: the per-channel signal-path tap fed to the channel's recording /
 // direct out (block diagram: "Rec Point" selector -> CH OUT). Labels are the
 // device CH SETTING strings (confirmed on device by user). MONO IN exposes all

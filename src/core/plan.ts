@@ -7,6 +7,7 @@ import { parseRef, ref } from "../models/types";
 import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, migrateFxEffectParams } from "./control/fx-effect";
 import { insertFxFamilyOf, qualifyInsertFxParams } from "./control/insert-fx-effect";
+import { NODE_NAME_MAX_CHARS } from "./control/params";
 import { stripSceneExternal } from "./scene-scope";
 
 // LEVEL fader / send range in dB (the device level_gain table, shared by every
@@ -444,7 +445,7 @@ export function deserializeDocument(text: string): PlanDocument {
     positions: posRecord(data.positions),
     connections: Array.isArray(data.connections) ? data.connections.filter(isPlanConnection) : [],
     nodeParams: sanitizeNodeParams(data.nodeParams, version),
-    nodeNames: stringRecord(data.nodeNames),
+    nodeNames: nameRecord(data.nodeNames),
     nodeColors: stringRecord(data.nodeColors),
     hidden: stringArray(data.hidden),
     notes: stringRecord(data.notes),
@@ -534,6 +535,24 @@ function stringRecord(v: unknown): Record<string, string> {
   if (!isPlainRecord(v)) return {};
   const out: Record<string, string> = {};
   for (const [k, val] of Object.entries(v)) if (typeof val === "string") out[k] = val;
+  return out;
+}
+
+/** Cut a node name to what the unit's own CH SETTING screen can produce
+ *  (`NODE_NAME_MAX_CHARS` carries the limit and how it was established). Counted in
+ *  code points via the string iterator, so a surrogate pair is one character and the
+ *  result is never half of one. Names are the one plan string that leaves the app on
+ *  the device link, and they left it uncut — the numeric leaves have `boundRaw`
+ *  between them and the wire, and nothing played that part for strings. Notes and
+ *  colors are the app's own and stay unbounded. */
+export function clipNodeName(name: string): string {
+  const chars = [...name];
+  return chars.length <= NODE_NAME_MAX_CHARS ? name : chars.slice(0, NODE_NAME_MAX_CHARS).join("");
+}
+
+function nameRecord(v: unknown): Record<string, string> {
+  const out = stringRecord(v);
+  for (const [k, name] of Object.entries(out)) out[k] = clipNodeName(name);
   return out;
 }
 

@@ -13,7 +13,7 @@ import type {
   SsmcsBand,
   SsmcsParams,
 } from "../core/plan";
-import { SSMCS_INITIAL } from "../core/plan";
+import { clipNodeName, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
 import { formatHz, fxEffectTypes, fxParams, resolveFxEffectType } from "../core/control/fx-effect";
 import {
@@ -348,8 +348,12 @@ export function renderInspector(
     // name); empty falls back to the model's default label.
     if (node.kind === "channel" || node.kind === "bus") {
       host.append(
-        textInput(m.inspector.name, plan.nodeNames[node.id] ?? "", fullLabel(node), (v) =>
-          actions.onRenameNode(node.id, v),
+        textInput(
+          m.inspector.name,
+          plan.nodeNames[node.id] ?? "",
+          fullLabel(node),
+          (v) => actions.onRenameNode(node.id, v),
+          clipNodeName,
         ),
       );
     }
@@ -1830,13 +1834,55 @@ function colorSwatches(
 
 // A labeled single-line text field. Reports every keystroke (trimmed by the
 // caller) without re-rendering, so it keeps focus while typing.
-function textInput(label: string, value: string, placeholder: string, onInput: (v: string) => void): HTMLElement {
+//
+// `clip` bounds the value the caller is handed AND the value the box shows, which
+// has to be one act: the caller does not re-render this row (that is what keeps
+// focus), so a caller that cut the value on its own would leave the field showing
+// text the plan does not hold — until some unrelated re-render silently shortened
+// it under the operator. `maxlength` cannot do this job alone, because it counts
+// UTF-16 units while the device's field is a byte count: 63 of it admits 63
+// Japanese characters, which are 189 bytes.
+//
+// Held during an IME composition and applied at its end. Rewriting `value` mid
+// composition takes the text out from under the conversion candidates.
+function textInput(
+  label: string,
+  value: string,
+  placeholder: string,
+  onInput: (v: string) => void,
+  clip?: (v: string) => string,
+): HTMLElement {
   const { row } = paramBlock(label, "");
   const input = document.createElement("input");
   input.type = "text";
   input.value = value;
   input.placeholder = placeholder;
-  input.addEventListener("input", () => onInput(input.value));
+  let composing = false;
+  const report = (): void => {
+    if (clip && !composing) {
+      const cut = clip(input.value);
+      if (cut !== input.value) {
+        // Assigning `value` moves the caret to the end of the field, so an edit made
+        // in the MIDDLE of a name already at the bound would take the operator's next
+        // keystroke to the tail instead of continuing where they were. The cut comes
+        // off the tail, so the caret keeps its own position unless it was past the
+        // new end.
+        const at = input.selectionStart;
+        input.value = cut;
+        if (at !== null) {
+          const p = Math.min(at, cut.length);
+          input.setSelectionRange(p, p);
+        }
+      }
+    }
+    onInput(input.value);
+  };
+  input.addEventListener("compositionstart", () => void (composing = true));
+  input.addEventListener("compositionend", () => {
+    composing = false;
+    report();
+  });
+  input.addEventListener("input", report);
   row.append(input);
   return row;
 }

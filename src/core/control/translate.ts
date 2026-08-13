@@ -20,7 +20,7 @@ import type {
   SsmcsBand,
   SsmcsParams,
 } from "../plan";
-import { incomingConnection } from "../plan";
+import { clipNodeName, incomingConnection } from "../plan";
 import {
   FX_CHANNEL_NODE_INDEX,
   FX_EFFECT_ARRAY_PARAM,
@@ -2073,6 +2073,11 @@ export interface NameWrite {
  * numeric VdCommand path), sent via the string IPC. Emitted only for nodes the
  * plan gives an explicit name; an unnamed node is left as the device has it
  * (mirrors how an uncolored node is not written). Each linked instance is set.
+ *
+ * Cut to the device's field width here, which is where `boundRaw` sits for the
+ * numeric leaves — the load funnel and the rename bound their own inputs, but a
+ * name also reaches the plan from a device read and from the unit's own rename,
+ * and this is the one place all of them pass through on the way to the wire.
  */
 export function planToNameWrites(model: DeviceModel, plan: Plan): NameWrite[] {
   const out: NameWrite[] = [];
@@ -2081,7 +2086,7 @@ export function planToNameWrites(model: DeviceModel, plan: Plan): NameWrite[] {
     if (!name) continue;
     const nc = nameControl(model, node.id);
     if (!nc) continue;
-    for (const y of nc.instances) out.push({ param: nc.param, y, value: name });
+    for (const y of nc.instances) out.push({ param: nc.param, y, value: clipNodeName(name) });
   }
   // SSMCS Sweet Spot Data preset (param 91): a 4-digit zero-padded string, so it
   // rides this string-write path. MONO IN channels in SSMCS mode that carry an

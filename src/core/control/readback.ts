@@ -17,7 +17,7 @@ import type {
   SsmcsBand,
   SsmcsParams,
 } from "../plan";
-import { clearIncoming, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
+import { clearIncoming, clipNodeName, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
 import { applyPatchInContext, clonePlanState, diffPlans, dropAuthored, readableContestKey } from "../plan-history";
 import type { PlanPatch, PlanWriteWitness } from "../plan-history";
 import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
@@ -531,7 +531,12 @@ async function readPass(
         // labels, so the factory name really is " 5/ 6" and a leading-space strip
         // would write the shortened form back on the next sync. Trailing padding
         // is still dropped so an all-blank name reads as empty.
-        const name = (await vdGetStr(nc.param, 0, nc.instances[0])).trimEnd();
+        // Bounded on the way IN as well as on the way out: the unit's name screen
+        // takes 8 characters but the wire does not enforce that (a 20-character name
+        // is storable and reads back whole), and an unbounded one in the plan draws a
+        // node label across its neighbours. Clipping here also lets the next converge
+        // settle it on the device instead of diffing against a name emit would cut.
+        const name = clipNodeName((await vdGetStr(nc.param, 0, nc.instances[0])).trimEnd());
         if (name) plan.nodeNames[node.id] = name;
         else delete plan.nodeNames[node.id];
         applied++;

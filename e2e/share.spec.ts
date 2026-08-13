@@ -9,7 +9,7 @@ const markedPlan = {
   version: 1,
   modelId: "URX44V",
   connections: [],
-  nodeNames: { ch1: "SHARED-MARK" },
+  nodeNames: { ch1: "SHARED" },
 };
 
 // The share / download buttons ship hidden outside the demo build; the dev
@@ -52,8 +52,8 @@ test("Share URL copies a ?plan= link that round-trips the plan", async ({ page }
   // re-encoded from the live plan state.
   await page.locator('#graph-host g.node[data-id="ch1"]').click();
   const nameInput = page.locator("#inspector input[type='text']");
-  await expect(nameInput).toHaveValue("SHARED-MARK");
-  await nameInput.fill("EDITED-MARK");
+  await expect(nameInput).toHaveValue("SHARED");
+  await nameInput.fill("EDITED");
   await page.locator("#btn-share").click();
   await expect(page.locator("#statusbar")).toContainText("Share URL copied");
   const copied = await page.evaluate(() => (window as { __copied?: string[] }).__copied ?? []);
@@ -72,14 +72,14 @@ test("Share URL copies a ?plan= link that round-trips the plan", async ({ page }
     nodeNames: Record<string, string>;
   };
   expect(decoded.modelId).toBe("URX44V");
-  expect(decoded.nodeNames.ch1).toBe("EDITED-MARK");
+  expect(decoded.nodeNames.ch1).toBe("EDITED");
   expect(decoded.connections.length).toBeGreaterThan(0);
   // The emitted link loads cleanly through the deep-link entry, edit included.
   await page.goto(link);
   await expect(page.locator("#statusbar")).toContainText("Plan loaded");
   await expect(page.locator("#load-report")).toBeHidden();
   await page.locator('#graph-host g.node[data-id="ch1"]').click();
-  await expect(page.locator("#inspector input[type='text']")).toHaveValue("EDITED-MARK");
+  await expect(page.locator("#inspector input[type='text']")).toHaveValue("EDITED");
 });
 
 test("share falls back to the address bar when the clipboard rejects", async ({ page }) => {
@@ -117,6 +117,6 @@ test("Download JSON saves a plan file the desktop app can open", async ({ page }
   // the loaded plan's content intact.
   expect(saved.format).toBe("urx-router-plan");
   expect(saved.modelId).toBe("URX44V");
-  expect(saved.nodeNames.ch1).toBe("SHARED-MARK");
+  expect(saved.nodeNames.ch1).toBe("SHARED");
   await expect(page.locator("#statusbar")).toContainText("Plan JSON downloaded");
 });

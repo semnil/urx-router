@@ -198,6 +198,33 @@ def collection_warnings(plan):
         for label, el in entries:
             if not ok(el):
                 out.append(f"{key}[{label}]: the app drops this on load — {why}")
+    out.extend(name_length_warnings(plan))
+    return out
+
+
+# The unit's own CH SETTING name screen takes at most 8 CHARACTERS (`ch 1xxxx`), so
+# the app cuts a longer name there. Nothing in the protocol enforces it — the broker
+# stores a 20-character name and reads it back unchanged — which is why a generated
+# name is worth warning about: it loads shortened, silently, and this is the one
+# collection entry the loader rewrites instead of dropping.
+NODE_NAME_MAX_CHARS = 8
+
+
+def name_length_warnings(plan):
+    """The names the app would cut on load (and again on the way to the device)."""
+    out = []
+    names = plan.get("nodeNames")
+    if not isinstance(names, dict):
+        return out
+    for node_id, value in names.items():
+        if not isinstance(value, str):
+            continue
+        size = len(value)
+        if size > NODE_NAME_MAX_CHARS:
+            out.append(
+                f"nodeNames[{node_id}]: the app cuts this to {NODE_NAME_MAX_CHARS} characters on load "
+                f"({size} given) — the unit's own name screen takes no more"
+            )
     return out
 
 

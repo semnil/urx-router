@@ -311,10 +311,20 @@ arrives from somewhere else entirely. Every difference below follows from that.
 
 | Lane | Address | Notes |
 | --- | --- | --- |
-| Key | the key source's own tap | **One bar, whatever the source's width.** Carries the threshold cap |
+| Key | the key source's own tap — a channel's **moves with its Rec Point** (see below), a bus's is its POST | **One bar, whatever the source's width.** Carries the threshold cap |
 | Pre Ducker | `116 : 2p, 2p+1` | The host channel, post-fader. Stereo, so two bars |
 | Post | `120 : 2p, 2p+1` | The host's output. **The reduction is drawn in this slot** |
 | Ducker GR | `119 : p` | No column of its own (`DynLane.sameSlot`); keeps its own readout tile |
+
+**Which tap the key lane reads.** The block diagram settles it: the `Rec Point` selector's output is
+the very signal it labels `CH OUT`, and `DUCKER 1-4 SOURCE` takes `CH 1-4 OUT` / `CH 5/6-11/12 OUT` as
+its inputs. So a channel key is read at **that channel's current Rec Point** — PRE GATE / PRE COMP /
+PRE EQ / PRE INS FX / PRE FADER on a mono strip, PRE EQ or PRE FADER on a stereo one, where PRE EQ is
+the INPUT meter because the stereo strip's EQ is the first thing in its chain. Every one of those sits
+ahead of the source's own fader and ducker, which is why moving the source's fader does not move the
+trigger. A bus key is the bus's own OUT, after its output insert FX. The lane read PRE FADER for every
+channel source until 2026-08-13; a source set to any other Rec Point then showed a signal the detector
+was not listening to, off by whatever the stages in between were doing.
 
 **Why the key lane is one bar.** Measured on a URX44V: the unit sums a stereo key's two sides before
 its detector — a correlated pair reads 6.02 dB above either side alone, not 3 dB (a power sum) and
@@ -345,7 +355,7 @@ they use.
 ### Envelope
 
 x is logarithmic time spanning both controls at once (attack from 0.092 ms, decay to 5 s); y is gain,
-0 at the top down to the range control's -72 dB floor. Three straight segments: down to the range
+0 at the top down to the range control's -70 dB floor. Three straight segments: down to the range
 over `attack`, held, back to unity over `decay`.
 
 **Straight, and with no live overlay.** The release is an exponential approach whose tail is
@@ -566,7 +576,7 @@ capture.
 | DUCKER's reduction merged into KEY or PRE DUCKER | Measured: a reduction grows down from 0 and a level grows up from the floor, so they collide when `level + |reduction| > 0 dBFS`. On an input lane that is the normal case — at the factory range the block covers 93% of the ruler and the bar's top is unreadable |
 | A live overlay on the envelope | Once the reduction became a block on the POST bar a few pixels away, an overlay was a second display of one quantity. A time axis gives a live reading no position, so it could only slide up and down |
 | A Ladder / Envelope toggle on DUCKER | Both are on screen at once, as the EQ's are, so nothing chooses between them and the heading would name a choice that does not exist |
-| Widening DUCKER's ruler to -72 dB so the merged reduction keeps its depth | Buys the deep end of the range control at the cost of every other lane's resolution, and the bottom 12 dB is dead for the KEY lane — the threshold cannot go there |
+| Widening DUCKER's ruler to -70 dB so the merged reduction keeps its depth | Buys the deep end of the range control at the cost of every other lane's resolution, and the bottom 10 dB is dead for the KEY lane — the threshold cannot go there |
 | Shortening the note's copy to stop it clipping | The container was the defect, not the copy: at one reserved line the shipped COMP and EQ notes already wrapped below ~1150 px of window (~1300 px in Japanese). Shortening only moves the width at which the next one is cut |
 | An in-screen channel selector | Every switch would re-register the address set, and the screen is opened per channel from a per-channel control anyway |
 | A gesture on the CONSOLE GATE chip (double-click / right-click) | Double-click is the factory reset elsewhere in the view and `wireActivate` has no `detail` guard; right-click is unused app-wide but collides with the macOS native menu on Ctrl+click |

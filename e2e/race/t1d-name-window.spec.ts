@@ -92,7 +92,7 @@ test.describe("T1d name window", () => {
     // event is the same path a typed character takes.
     await page.evaluate(() => {
       const input = document.querySelector("#inspector input[type='text']") as HTMLInputElement;
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "OperatorTyped");
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "OpTyped");
       input.dispatchEvent(new Event("input", { bubbles: true }));
       (document.querySelector("[data-race-knob]") as HTMLElement).click();
     });
@@ -117,7 +117,7 @@ test.describe("T1d name window", () => {
     // The device took the rename: this is about what the app does with the READ, not
     // about the write.
     const heldNames = await memStrOf(page);
-    expect(heldNames[CH1_NAME]).toBe("OperatorTyped");
+    expect(heldNames[CH1_NAME]).toBe("OpTyped");
 
     // And the plan still carries it. Before the fix the refetch's name read answered
     // the pre-write name, `readPass` wrote that into `plan.nodeNames`, and live.ts's
@@ -136,7 +136,7 @@ test.describe("T1d name window", () => {
     await expect(page.locator("#dyn-screen-box")).toBeHidden();
     await page.click("#btn-view");
     await page.locator("#btn-labels").click();
-    await expect(node(page, "ch1").locator("text").first()).toHaveText("OperatorTyped");
+    await expect(node(page, "ch1").locator("text").first()).toHaveText("OpTyped");
 
     // The scripted staleness was never spent, which is the mechanism rather than the
     // symptom: the refetch did not read the name at all. A pass that read it and
@@ -164,9 +164,16 @@ test.describe("T1d name window", () => {
     // Delivered, not merely pushed: an address the session never registered is
     // refused, and a refusal is indistinguishable from an app that ignored it.
     const pushedAt = await page.evaluate(() => performance.now());
-    const why = await pushNameNotify(page, CH1_NAME, "FromTheLCD");
+    const why = await pushNameNotify(page, CH1_NAME, "FromLCD");
     expect(why).toEqual([""]);
-    await expect(node(page, "ch1").locator("text").first()).toHaveText("FromTheLCD");
+    await expect(node(page, "ch1").locator("text").first()).toHaveText("FromLCD");
+
+    // A name from the device is bounded like any other. The unit's own screen cannot
+    // produce one longer than 8 characters, but the wire carries whatever it is given
+    // (measured: a 20-character name is stored and read back whole), and an unbounded
+    // one in the plan draws this label across the nodes beside it.
+    expect(await pushNameNotify(page, CH1_NAME, "12345678901234567890")).toEqual([""]);
+    await expect(node(page, "ch1").locator("text").first()).toHaveText("12345678");
 
     // …and it is a DIRECT follow: no whole-device readback was provoked. An
     // unregistered or unrecognised address escalates to one, which is ~800 reads —
@@ -181,12 +188,12 @@ test.describe("T1d name window", () => {
     await page.click("#btn-view-graph");
     await node(page, "ch1").click();
     await mark(page, "own-rename");
-    await nameInput(page).fill("TypedInTheApp");
+    await nameInput(page).fill("TypedApp");
     await settleAfter(page, "own-rename", 600);
     const held = await memStrOf(page);
-    expect(held[CH1_NAME]).toBe("TypedInTheApp");
-    const why2 = await pushNameNotify(page, CH1_NAME, "TypedInTheApp");
+    expect(held[CH1_NAME]).toBe("TypedApp");
+    const why2 = await pushNameNotify(page, CH1_NAME, "TypedApp");
     expect(why2).toEqual([""]);
-    await expect(node(page, "ch1").locator("text").first()).toHaveText("TypedInTheApp");
+    await expect(node(page, "ch1").locator("text").first()).toHaveText("TypedApp");
   });
 });

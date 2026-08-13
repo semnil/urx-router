@@ -309,6 +309,48 @@ describe("node controls report their edits", () => {
     expect(act.onRenameNode).toHaveBeenCalledWith("ch1", "Kick");
   });
 
+  // The unit's own name screen takes 8 characters. The panel does not re-render on a
+  // rename (that is what keeps focus while typing), so cutting the value only on the
+  // way out would leave the box showing text the plan does not hold — and a name past
+  // the bound also draws a node label across its neighbours on the canvas.
+  it("cuts a name to what the unit can hold, in the box as well as in the report", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const field = panel.querySelector<HTMLInputElement>('input[type="text"]')!;
+    field.value = "あ".repeat(60);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(field.value).toBe("あ".repeat(8));
+    expect(act.onRenameNode).toHaveBeenCalledWith("ch1", "あ".repeat(8));
+  });
+
+  // Assigning `value` moves the caret to the end of the field. Without putting it
+  // back, an edit made in the middle of a name already at the bound sent the next
+  // keystroke to the tail — worse than the `maxlength` this replaced, which refused
+  // the insertion and left the caret alone.
+  it("keeps the caret where the edit was when the cut comes off the tail", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const field = panel.querySelector<HTMLInputElement>('input[type="text"]')!;
+    // A name at the bound, with one character just typed at the head.
+    field.value = `y${"x".repeat(8)}`;
+    field.setSelectionRange(1, 1);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(field.value).toBe(`y${"x".repeat(7)}`);
+    expect(field.selectionStart).toBe(1);
+  });
+
+  // Rewriting `value` mid-composition takes the text out from under the IME's
+  // conversion candidates, so the cut is held until the composition ends.
+  it("holds the cut until an IME composition ends", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const field = panel.querySelector<HTMLInputElement>('input[type="text"]')!;
+    field.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+    field.value = "あ".repeat(60);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(field.value).toBe("あ".repeat(60));
+    field.dispatchEvent(new Event("compositionend", { bubbles: true }));
+    expect(field.value).toBe("あ".repeat(8));
+    expect(act.onRenameNode).toHaveBeenLastCalledWith("ch1", "あ".repeat(8));
+  });
+
   it("recolors a node from a swatch and clears it from the none swatch", () => {
     renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
     const swatches = [...panel.querySelectorAll<HTMLButtonElement>("button.swatch")];

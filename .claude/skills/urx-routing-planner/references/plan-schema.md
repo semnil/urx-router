@@ -197,3 +197,12 @@ string, and a `positions` entry needs both `x` and `y` as finite numbers. A
 collection that is not the right container at all (an array where an object is
 expected, say) falls back to empty and loses every entry. Nothing is reported to
 the user when this happens, so `plan_tool.py validate` warns about each one.
+
+**One entry is rewritten rather than dropped.** A `nodeNames` value longer than
+**8 characters** is CUT to that length — the unit's own CH SETTING name screen
+takes no more (`ch 1xxxx`), and a longer name also draws a node label across its
+neighbours on the canvas. Counted in characters, not bytes, so a Japanese name
+also gets 8. Nothing in the protocol enforces this (the broker stores a
+20-character name and reads it back unchanged), and nothing is reported here
+either, so `plan_tool.py validate` warns about each name it would shorten; emit a
+name within the bound rather than relying on the cut.

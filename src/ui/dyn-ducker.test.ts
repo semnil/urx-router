@@ -92,6 +92,68 @@ describe("binding", () => {
     expect(DUCKER_DYN.bind(ctxFor(DUCKER, plan))!.lanes[0].label).toBe(t().dynTuning.ducker.tapKey(label));
   });
 
+  // The block diagram makes the `Rec Point` selector's output the thing it labels
+  // `CH OUT`, and DUCKER 1-4 SOURCE takes `CH n OUT` — so the tap the key lane reads
+  // MOVES with the source channel's Rec Point. It read PRE FADER for every channel
+  // source until this was fixed.
+  describe("key tap follows the source's Rec Point", () => {
+    // `recPoint: undefined` DELETES the key rather than skipping the write: the factory
+    // plan seeds 4 on every mono channel, so a skipped write left the "no Rec Point"
+    // case re-running the PRE FADER one under another name — green either way.
+    const keyTapOf = (recPoint: number | undefined, from = "ch1"): string | undefined => {
+      const plan = defaultPlan("URX44V");
+      const conn = plan.connections.find((c) => c.kind === "key" && c.to === ref(DUCKER, "in"))!;
+      conn.from = ref(from, "out");
+      const np = { ...plan.nodeParams[from] };
+      if (recPoint === undefined) delete np.recPoint;
+      else np.recPoint = recPoint;
+      plan.nodeParams[from] = np;
+      return DUCKER_DYN.bind(ctxFor(DUCKER, plan))!.lanes[0].tap?.key;
+    };
+
+    it("reads a mono source at each of its five Rec Point stages", () => {
+      expect(keyTapOf(0)).toBe("pregate");
+      expect(keyTapOf(1)).toBe("precomp");
+      expect(keyTapOf(2)).toBe("preeq");
+      expect(keyTapOf(3)).toBe("preinsfx");
+      expect(keyTapOf(4)).toBe("prefader");
+    });
+
+    // PRE FADER is the device default, so an unset Rec Point is that tap. This is not
+    // only a crafted-plan case: the factory plan seeds no `recPoint` on the STEREO
+    // channels at all, so keying a ducker from CH 7/8 takes it on a fresh plan.
+    it("falls back to PRE FADER when the source names no Rec Point", () => {
+      expect(keyTapOf(undefined)).toBe("prefader");
+      expect(keyTapOf(undefined, "ch_7_8")).toBe("prefader");
+    });
+
+    // A stereo strip has no discrete PRE EQ tap — its EQ is the first thing in the
+    // chain, so INPUT is that point. Resolving it through `tapFor` alone would take
+    // that module's fallback to the most downstream tap, which here is POST: after
+    // the source's own ducker, the one reading this lane must never show.
+    it("reads a stereo source's PRE EQ at its INPUT meter, not at POST", () => {
+      expect(keyTapOf(2, "ch_7_8")).toBe("input");
+      expect(keyTapOf(2, "ch_7_8")).not.toBe("post");
+      expect(keyTapOf(4, "ch_7_8")).toBe("prefader");
+    });
+
+    // A mono-only Rec Point on a stereo strip names a tap that strip has not got. The
+    // inspector cannot offer that pairing, but nothing range-checks an enum on load, so
+    // a hand-edited plan, a `?plan=` link or an unexpected device value all reach it.
+    // The last resort has to be PRE FADER: falling through to `tapFor` would answer
+    // POST, which is after the source's own ducker.
+    it("keeps a stereo source off POST when its Rec Point names a tap it has not got", () => {
+      for (const rp of [0, 1, 3]) expect(keyTapOf(rp, "ch_7_8")).toBe("prefader");
+    });
+
+    // A bus key is the bus's own OUT, after its output insert FX — a bus has no Rec
+    // Point, and POST is that point.
+    it("reads a bus key at its POST tap", () => {
+      expect(keyTapOf(undefined, "bus.mix1")).toBe("post");
+      expect(keyTapOf(0, "bus.mix1")).toBe("post");
+    });
+  });
+
   // Nothing wired is a state the unit has and reports as engaged-at-unity, so the
   // lane says so rather than drawing an empty bar that reads as silence.
   it("says so when no key is wired, and leaves the lane tapless", () => {
@@ -146,9 +208,14 @@ describe("envelope plot", () => {
   const geo = DUCKER_DYN.plotGeo(W, H, ctxFor(DUCKER));
   const TOK: Record<string, string> = {};
 
+  // The floor is the range control's deepest setting and nothing beyond it. The
+  // ducker shares the broker's `range` table with the GATE, whose floor is -72, and
+  // reading the axis off that shared table drew 2 dB the control cannot reach — so
+  // -72 landing PAST the floor is half of what this pins.
   it("puts unity at the top of the gain axis and the deepest range at its floor", () => {
     expect(geo.py(0)).toBeCloseTo(geo.pad.t, 5);
-    expect(geo.py(-72)).toBeCloseTo(H - geo.pad.b, 5);
+    expect(geo.py(-70)).toBeCloseTo(H - geo.pad.b, 5);
+    expect(geo.py(-72)).toBeGreaterThan(H - geo.pad.b);
     expect(geo.py(-36)).toBeGreaterThan(geo.py(0));
   });
 
@@ -163,8 +230,25 @@ describe("envelope plot", () => {
   it("draws a tick per decade and a gain rule per label", () => {
     const r = recorder();
     DUCKER_DYN.drawAxes(r.ctx, geo, TOK, ctxFor(DUCKER));
-    // Six time ticks + five gain rules, each a stroked path plus its label.
-    expect(r.texts.length).toBeGreaterThanOrEqual(12);
+    // Six time ticks + six gain rules, each a stroked path plus its label, and the
+    // axis name. Exact, because >= 12 was satisfied by the five-rule list this
+    // replaced — the count is the half that says the floor gained a label.
+    expect(r.texts).toHaveLength(13);
+  });
+
+  // The host clips `drawCurve` and NOT `drawAxes` (dyn-screen: the tick labels belong
+  // in the gutters the padding reserves), so a gain rule below the floor is painted
+  // into the time-label band instead of being discarded. The rule list outlived the
+  // floor once already — it kept -72 when the floor moved to -70, which put a
+  // full-width rule ~8 px past the bottom edge and left the real floor unlabelled.
+  it("keeps every gain rule and its label inside the plot, and labels the floor", () => {
+    const r = recorder();
+    DUCKER_DYN.drawAxes(r.ctx, geo, TOK, ctxFor(DUCKER));
+    const floor = H - geo.pad.b;
+    for (const y of r.ys) expect(y).toBeLessThanOrEqual(floor + 1);
+    for (const tx of r.texts) expect(tx.y).toBeLessThanOrEqual(floor + 14);
+    // The deepest range the control can take is the axis end, so it carries a label.
+    expect(r.texts.some((tx) => Math.abs(tx.y - (geo.py(-70) + 3)) < 0.51)).toBe(true);
   });
 
   it("draws attack down to the range floor and decay back to unity", () => {
