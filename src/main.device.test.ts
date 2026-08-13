@@ -1719,21 +1719,26 @@ describe("importing a settings file", () => {
 
 // Drag & drop, the DESKTOP delivery: the shell intercepts the drop before the webview
 // sees it, so it arrives as an event carrying a real path rather than as anything the DOM
-// produces. `e2e/dropzone.spec.ts` drives the browser half — the advert, the plan-only
-// caption, the two refusals — through DOM drag events, and dispatches no shell event.
+// produces. Two suites already stand either side of what that reaches — `e2e/dropzone.spec.ts`
+// drives the browser delivery end to end through DOM drag events, and `src/ui/dropzone.test.ts`
+// drives the shell adapter against a mocked `listenEvent` — so what is left is the ENTRY's
+// own wiring: which caption, which refusal, and what the `.json` registration does with a
+// real path.
 //
-// Which leaves more than a second delivery untested. What main.ts installs reads what is
-// registered AT THE MOMENT of the drag, and the `.urxf` registration sits behind
-// `experimentalEnabled()`, which resolves false off Tauri: the caption naming a settings
-// file and the refusal naming one are both unreachable from a browser, which is why
-// `e2e/inventory.spec.ts` records `dropzone.planOrSettings` as never shown there.
+// The `.urxf` half of that wiring cannot be reached from a browser at all: it is registered
+// behind `experimentalEnabled()`, which resolves false off Tauri, so a caption naming a
+// settings file and a refusal naming one are unreachable there — which is why
+// `e2e/inventory.spec.ts` records `dropzone.planOrSettings` under `neverShown`. What that
+// registration DOES is pinned by the live-session refusal above, which drives a dropped
+// `.urxf` into the import flow.
 describe("dropping a file onto the window", () => {
   const PLAN_PATH = "C:/urx/dropped.json";
 
-  /** What a dropped path reads back as. The sample rate is what makes it recognisable on
-   *  screen: an emptied `connections` would not — `loadPlan` puts the model's fixed wires
-   *  back through `ensureFixedConnections`, so a board drawn from a plan carrying none
-   *  counts the same as the default one. */
+  /** What a dropped path reads back as. The sample rate is the witness because it is read
+   *  straight off the file: an emptied `connections` moves the board too, but only by the
+   *  difference `ensureFixedConnections` leaves after putting the model's fixed wires back
+   *  (measured on URX44V: 77 wires on the default plan, 48 on this one), so reading it
+   *  means predicting that restoration. */
   const droppedPlan = JSON.stringify({
     format: "urx-router-plan",
     version: 1,
@@ -1748,60 +1753,55 @@ describe("dropping a file onto the window", () => {
   const wires = (): number => $("graph-host").querySelectorAll(".wire-hit").length;
 
   /**
-   * Wait until the shell has taken the app's registration for `event`.
+   * Let a drop that was going to act get as far as its first read.
    *
-   * The three drag handlers are installed off a promise chain nothing awaits, so an emit
-   * that beats it is delivered to nobody — and `emit` would answer 0 for a reason no
-   * build has. Each event is waited for by name: they are registered in one `Promise.all`
-   * whose members settle in no particular order.
+   * `take()` hands the file to its handler synchronously, but the flow behind it awaits a
+   * discard confirm before it reads anything — so in the emit's own tick an ACCEPTED drop
+   * has read nothing and moved nothing either. Measured: immediately after the accepted
+   * drop below, `read_text_file` is 0 and the rate picker still says 48000. Every "and
+   * nothing happened" assertion here is therefore taken after this, or it is satisfied by
+   * the very behaviour it exists to refuse.
    */
-  async function listening(shell: TauriShell, event: string): Promise<void> {
-    await vi.waitFor(
-      () => {
-        const taken = shell.invokes.some(
-          (cmd, i) =>
-            cmd === "plugin:event|listen" && (shell.args[i] as { event?: string } | undefined)?.event === event,
-        );
-        if (!taken) throw new Error(`no handler registered for ${event} yet`);
-      },
-      { timeout: 10_000, interval: 20 },
-    );
-  }
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 100));
 
-  /** Boot with the experimental settings-file import armed — the registration that puts
-   *  `.urxf` on the drop target. Revealing the menu entry and adding the extension are
-   *  two statements of one block, so the entry showing means the extension is taken. */
-  const bootArmed = async (): Promise<TauriShell> => {
-    const shell = await bootDevice({ experimental_enabled: true });
-    await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
-    return shell;
-  };
+  /** Wait for the experimental gate to arm the settings-file import — the registration that
+   *  puts `.urxf` on the drop target. The reveal of the menu entry and that registration are
+   *  two statements of one synchronous block (only the link-stats view sits between them),
+   *  so the entry showing means the extension is taken. */
+  const armed = (): Promise<void> =>
+    vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
 
-  it("advertises what a drop can bring in, and takes the advert back down", SLOW, async () => {
+  it("raises the advert on a drag, and takes it back down", SLOW, async () => {
     const shell = await bootDevice();
-    await listening(shell, "tauri://drag-enter");
     expect(advert().hidden).toBe(true);
 
     // One handler, not zero: an event nobody listens for would leave every assertion
     // below describing an app that was never asked to do anything.
     expect(shell.emit("tauri://drag-enter")).toBe(1);
     expect(advert().hidden).toBe(false);
-    // The plan-only caption. An ordinary desktop build has the settings import unarmed,
-    // and the caption names what is registered rather than what the build could register.
-    expect(caption()).toBe(t().dropzone.plan);
 
-    await listening(shell, "tauri://drag-leave");
     expect(shell.emit("tauri://drag-leave")).toBe(1);
     expect(advert().hidden).toBe(true);
   });
 
   // The caption is re-read on every drag rather than composed once, which is what lets a
-  // gate that settles after startup change it. `e2e/inventory.spec.ts` records
-  // `dropzone.planOrSettings` as never shown on the DOM drag path, so a display of it is
-  // what this case adds.
-  it("names the settings file once the experimental import has armed the drop", SLOW, async () => {
-    const shell = await bootArmed();
-    await listening(shell, "tauri://drag-enter");
+  // gate that settles after startup change it — so the gate is held open here and released
+  // mid-case. Two boots could not say this: a build that composed the caption at its first
+  // drag would print the right string in each of them, and be wrong only where the answer
+  // changes under a page that is already up. `e2e/inventory.spec.ts` records
+  // `dropzone.planOrSettings` as never shown on the DOM drag path, so this is also the one
+  // place it is displayed.
+  it("re-reads the caption, so arming the settings import changes what it offers", SLOW, async () => {
+    let arm = (): void => {};
+    const gate = new Promise<boolean>((resolve) => void (arm = () => resolve(true)));
+    const shell = await bootDevice({ experimental_enabled: () => gate });
+
+    expect(shell.emit("tauri://drag-enter")).toBe(1);
+    expect(caption()).toBe(t().dropzone.plan);
+    expect(shell.emit("tauri://drag-leave")).toBe(1);
+
+    arm();
+    await armed();
     expect(shell.emit("tauri://drag-enter")).toBe(1);
     expect(caption()).toBe(t().dropzone.planOrSettings);
   });
@@ -1810,7 +1810,6 @@ describe("dropping a file onto the window", () => {
   // this build would have taken, and nothing is read to find that out.
   it("refuses an extension nothing is registered for, by name and before reading", SLOW, async () => {
     const shell = await bootDevice();
-    await listening(shell, "tauri://drag-drop");
     expect(shell.emit("tauri://drag-enter")).toBe(1);
     const board = wires();
     expect(board).toBeGreaterThan(0);
@@ -1820,8 +1819,10 @@ describe("dropping a file onto the window", () => {
     // The advert comes down with the refusal — left up it would cover the app, and the
     // status line saying why would be behind it.
     expect(advert().hidden).toBe(true);
+
     // Matched to a handler before the file was opened, so an extension nothing takes
     // cannot arrive later as a parse error, and the plan on the board is untouched.
+    await settle();
     expect(shell.count("read_text_file")).toBe(0);
     expect(shell.count("read_binary_file")).toBe(0);
     expect(wires()).toBe(board);
@@ -1832,10 +1833,11 @@ describe("dropping a file onto the window", () => {
   // what the app will not guess — so what it can be held to is that neither was opened.
   it("refuses more than one file at a time, and reads none of them", SLOW, async () => {
     const shell = await bootDevice({ read_text_file: () => droppedPlan });
-    await listening(shell, "tauri://drag-drop");
 
     expect(shell.emit("tauri://drag-drop", { paths: [PLAN_PATH, "C:/urx/second.json"] })).toBe(1);
     expect(statusText()).toBe(t().status.dropMultiple);
+
+    await settle();
     expect(shell.count("read_text_file")).toBe(0);
     expect(rate()).toBe("48000"); // the plan on the board, untouched
   });
@@ -1843,10 +1845,13 @@ describe("dropping a file onto the window", () => {
   // Same refusal with the import armed, and it has to name the second extension: the
   // message that does not is a build lying about what it accepts.
   it("names the settings file in the refusal too, once the import is armed", SLOW, async () => {
-    const shell = await bootArmed();
-    await listening(shell, "tauri://drag-drop");
+    const shell = await bootDevice({ experimental_enabled: true });
+    await armed();
+
     expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/notes.txt"] })).toBe(1);
     expect(statusText()).toBe(t().status.dropUnsupportedSettings("notes.txt"));
+
+    await settle();
     expect(shell.count("read_binary_file")).toBe(0);
   });
 
@@ -1855,7 +1860,6 @@ describe("dropping a file onto the window", () => {
   // and remembered in the recent list.
   it("opens a dropped plan and remembers where it came from", SLOW, async () => {
     const shell = await bootDevice({ read_text_file: () => droppedPlan });
-    await listening(shell, "tauri://drag-drop");
     expect(rate()).toBe("48000"); // the plan the drop replaces
 
     expect(shell.emit("tauri://drag-drop", { paths: [PLAN_PATH] })).toBe(1);
