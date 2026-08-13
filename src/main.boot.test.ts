@@ -24,7 +24,8 @@ vi.mock("./core/storage", async (importOriginal) => {
   };
 });
 
-import { openTextDocument, saveTextDocument } from "./core/storage";
+import { openTextDocument, readTextByPath, saveTextDocument } from "./core/storage";
+import { t } from "./i18n";
 import { $, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 
 // The boot fixture — the markup, the globals and the module import — is
@@ -201,6 +202,119 @@ describe("file flow", () => {
     $("btn-new").click();
     await vi.waitFor(() => expect($("graph-host").querySelector("svg")).not.toBeNull());
     expect($("graph-host").querySelectorAll("g.node[data-id]").length).toBeGreaterThan(5);
+  });
+});
+
+// What a document the app cannot open — or can only partly vouch for — does on its way
+// in. The two classes are split deliberately and surface differently, and the split is
+// what these pin: an illegal wire is a plan this app cannot represent and is REFUSED,
+// while an insert-FX slot claimed twice is a plan the app itself writes after a device
+// readback, so refusing that one made Fetch → Save → reopen impossible for its own
+// document. Every case asserts the board is untouched, because the board exists before
+// the decode is attempted and a load that silently did nothing looks identical.
+describe("a document the loader will not simply open", () => {
+  const nodes = (): number => $("graph-host").querySelectorAll("g.node[data-id]").length;
+
+  /** A plan document with `edit` applied to its parsed form, so a case can put something
+   *  in a file that no app gesture can author. */
+  async function documentWith(edit: (plan: Record<string, unknown>) => void): Promise<string> {
+    const { serialize } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const doc = JSON.parse(serialize(defaultPlan("URX44V"))) as Record<string, unknown>;
+    // The plan sits under its own key or at the root depending on the document version;
+    // whichever it is, the object the model id lives on is the one to edit.
+    edit((doc.plan ?? doc) as Record<string, unknown>);
+    return JSON.stringify(doc);
+  }
+
+  it("refuses a plan for a model it does not know, naming the model", async () => {
+    await boot();
+    const before = nodes();
+    vi.mocked(openTextDocument).mockResolvedValueOnce({
+      text: await documentWith((plan) => void (plan.modelId = "URX99")),
+      path: "/x/alien.json",
+    });
+    $("btn-open").click();
+
+    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
+    expect(String(vi.mocked(alert).mock.calls.at(-1)![0])).toContain("URX99");
+    expect(nodes()).toBe(before);
+    expect($("load-report").hidden).toBe(true); // a refusal is the dialog, not the report
+  });
+
+  // A copyable report rather than a dialog, because it is read away from the modal that
+  // framed it — pasted into the tool that generated the plan. Its first line carries
+  // WHICH of the two classes it is, and that is the half a substring match on the
+  // problem list would miss.
+  // A wire the same plan already carries. Duplicated from a REAL connection rather than
+  // invented out of two port names: a wire whose refs do not resolve is silently dropped
+  // on the way in (deserialize's own rule), so an invented one leaves nothing for the
+  // routing check to object to and the report never opens — measured.
+  it("reports a wire the plan carries twice as a validation failure", async () => {
+    await boot();
+    const before = nodes();
+    let wire = "";
+    const text = await documentWith((plan) => {
+      const conns = plan.connections as Array<Record<string, unknown>>;
+      wire = `${String(conns[0].from)} -> ${String(conns[0].to)}`;
+      conns.push({ ...conns[0] });
+    });
+    vi.mocked(openTextDocument).mockResolvedValueOnce({ text, path: "/x/illegal.json" });
+    $("btn-open").click();
+
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false));
+    expect($("load-report-body").textContent?.split("\n")[0]).toBe("URX Router plan validation failed");
+    expect($("load-report-body").textContent).toContain(`[duplicate] ${wire}`);
+    expect(nodes()).toBe(before);
+    // A refusal offers no way past itself — that button belongs to the warning class.
+    expect($("load-report").querySelector("#load-report-proceed")).toBeNull();
+  });
+
+  // The warning class: reported, and openable anyway from the report itself. Two mono
+  // channels are given the same 1-of insert-FX slot — the screens cannot author that
+  // (the menu locks a slot another node holds), so it can only arrive from outside.
+  it("warns about an insert-FX slot claimed twice, and opens the plan anyway on request", async () => {
+    await boot();
+    vi.mocked(openTextDocument).mockResolvedValueOnce({
+      text: await documentWith((plan) => {
+        const params = plan.nodeParams as Record<string, Record<string, unknown>>;
+        // Pitch Fix, whose slot is device-wide 1-of. ch1 and ch3 rather than ch1/ch2:
+        // a STEREO-linked pair shares one claim, and the census would collapse them.
+        params.ch1 = { ...params.ch1, insertFx: 512 };
+        params.ch3 = { ...params.ch3, insertFx: 512 };
+      }),
+      path: "/x/contended.json",
+    });
+    $("btn-open").click();
+
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false));
+    expect($("load-report-body").textContent?.split("\n")[0]).toBe("URX Router plan validation warnings");
+    expect($("load-report-body").textContent).toContain("[insertFxSlot]");
+
+    // "Load anyway" is offered on this class and only this class, and it loads.
+    const proceed = $("load-report").querySelector<HTMLButtonElement>("#load-report-proceed");
+    expect(proceed).not.toBeNull();
+    proceed!.click();
+    await vi.waitFor(() => expect(statusText()).toContain("contended.json"));
+  });
+
+  // A recent entry whose file no longer opens is dropped without a prompt, so the status
+  // line has to say so — the list mutated under the operator. Seeded through the stored
+  // list rather than by saving first: what is under test is the removal, and a save would
+  // put this case's outcome behind the save path's own behaviour.
+  it("drops a recent entry whose file no longer reads, and says so", async () => {
+    const entry = { path: "/x/gone.json", name: "gone.json", modelId: "URX44V" };
+    await boot({ "urx-recent": JSON.stringify([entry]) });
+    const row = $("inspector").querySelector<HTMLButtonElement>(".recent-row");
+    expect(row, "the seeded recent entry is on screen").not.toBeNull();
+
+    vi.mocked(readTextByPath).mockRejectedValueOnce(new Error("ENOENT"));
+    row!.click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.recentRemoved("gone.json")));
+    // Removed from the list as well as reported — keeping it would only reproduce the
+    // same error on the next press.
+    expect($("inspector").querySelector(".recent-row")).toBeNull();
+    expect(localStorage.getItem("urx-recent")).not.toContain("gone.json");
   });
 });
 
