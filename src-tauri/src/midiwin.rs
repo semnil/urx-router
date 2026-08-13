@@ -124,8 +124,8 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // window above the main one and minimizes with it — and both halves of the macOS
     // finding were then measured there and are ABSENT: on a two-display desk this window
     // is drawn in full on the display the main window is not on, and moving the main
-    // window across to the other display left it where it was, to the pixel. So the
-    // relationship costs on Windows none of what it costs on macOS, and the `#[cfg]`
+    // window across to the other display left it where it was, to the pixel. So on
+    // Windows the relationship costs none of what it costs on macOS, and the `#[cfg]`
     // is the measurement rather than a gap in it (architecture.md, "Window geometry",
     // carries the table, the rig and the rest of the run).
     //

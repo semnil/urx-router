@@ -460,7 +460,7 @@ fn place_window<R: Runtime>(
 /// inner one and the saved position the outer one — which is exactly the pair
 /// `place_window` takes.
 /// `host_of` names a window whose display the restore must land on, for a window
-/// whose remembered POSITION cannot pick one for itself. It EARNED that from an
+/// whose remembered POSITION cannot pick one for itself. It EARNED its place from an
 /// AppKit child, translated with its parent one for one so its absolute position
 /// drifted by every move the parent had made since — measured, a parent dragged
 /// 2172 pt left took the MIDI window from x=536 to x=-1636, off every display, where

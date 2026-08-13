@@ -2387,11 +2387,10 @@ the reverse direction returns the remembered rectangle exactly. On macOS the des
 factor does not change, so the loop runs once and nothing about that platform's path moves — re-measured on
 macOS afterwards across the five cases in the table above, all unchanged. The raw readings behind the
 2026-08-09 numbers were taken in `reference/work/windows-verify/`, whose settled sections are folded into
-this document and then deleted; they are read back out of that file's history. **The 2026-08-13 run's are
-not** — its sections were deleted with their results still reading "not measured" — so the folded text is
-all there is: this document for the fader press, the MIDI window and the forced-colors half of the locked
-select, and `src/style.css` for the dropdown and that lock's ordinary-theme half, beside the screenshots
-that directory keeps.
+this document and then deleted; they are read back out of that ledger's history. **The 2026-08-13 run's are
+not**, so the folded text is all there is: this document for the fader press, the MIDI window and the
+forced-colors half of the locked select, and `src/style.css` for the dropdown and that lock's
+ordinary-theme half, beside the screenshots that directory keeps.
 
 **The MIDI window is an owned window on Windows and an independent one on macOS** — the `.parent(&main)`
 call sits behind `#[cfg(target_os = "windows")]`. On Windows that ownership is what keeps the panel in
@@ -2414,7 +2413,7 @@ kept on one and dropped on the other:
 
 The bottom two rows are what the `#[cfg]` rests on: on macOS both are defects an operator meets (a panel
 listed as on-screen and painted nowhere, and one dragged off the desk by the main window), and neither
-exists on Windows. The Windows answers are structural rather than incidental: the panel is a top-level
+exists on Windows. The Windows answer to the last row is structural rather than incidental: the panel is a top-level
 **owned** window, not a child of the main window's client area, and the window manager only moves the
 latter with its parent — so there is nothing that could implement the follow, whatever issues the move.
 Measured through a drag's own message sequence as well as a plain programmatic move.
