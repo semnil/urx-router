@@ -1717,6 +1717,159 @@ describe("importing a settings file", () => {
   });
 });
 
+// Drag & drop, the DESKTOP delivery: the shell intercepts the drop before the webview
+// sees it, so it arrives as an event carrying a real path rather than as anything the DOM
+// produces. `e2e/dropzone.spec.ts` drives the browser half — the advert, the plan-only
+// caption, the two refusals — through DOM drag events, and dispatches no shell event.
+//
+// Which leaves more than a second delivery untested. What main.ts installs reads what is
+// registered AT THE MOMENT of the drag, and the `.urxf` registration sits behind
+// `experimentalEnabled()`, which resolves false off Tauri: the caption naming a settings
+// file and the refusal naming one are both unreachable from a browser, which is why
+// `e2e/inventory.spec.ts` records `dropzone.planOrSettings` as never shown there.
+describe("dropping a file onto the window", () => {
+  const PLAN_PATH = "C:/urx/dropped.json";
+
+  /** What a dropped path reads back as. The sample rate is what makes it recognisable on
+   *  screen: an emptied `connections` would not — `loadPlan` puts the model's fixed wires
+   *  back through `ensureFixedConnections`, so a board drawn from a plan carrying none
+   *  counts the same as the default one. */
+  const droppedPlan = JSON.stringify({
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    sampleRate: 96_000,
+    connections: [],
+  });
+
+  const advert = (): HTMLElement => $("dropzone");
+  const caption = (): string => $("dropzone-label").textContent ?? "";
+  const rate = (): string => $<HTMLSelectElement>("rate-picker").value;
+  const wires = (): number => $("graph-host").querySelectorAll(".wire-hit").length;
+
+  /**
+   * Wait until the shell has taken the app's registration for `event`.
+   *
+   * The three drag handlers are installed off a promise chain nothing awaits, so an emit
+   * that beats it is delivered to nobody — and `emit` would answer 0 for a reason no
+   * build has. Each event is waited for by name: they are registered in one `Promise.all`
+   * whose members settle in no particular order.
+   */
+  async function listening(shell: TauriShell, event: string): Promise<void> {
+    await vi.waitFor(
+      () => {
+        const taken = shell.invokes.some(
+          (cmd, i) =>
+            cmd === "plugin:event|listen" && (shell.args[i] as { event?: string } | undefined)?.event === event,
+        );
+        if (!taken) throw new Error(`no handler registered for ${event} yet`);
+      },
+      { timeout: 10_000, interval: 20 },
+    );
+  }
+
+  /** Boot with the experimental settings-file import armed — the registration that puts
+   *  `.urxf` on the drop target. Revealing the menu entry and adding the extension are
+   *  two statements of one block, so the entry showing means the extension is taken. */
+  const bootArmed = async (): Promise<TauriShell> => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
+    return shell;
+  };
+
+  it("advertises what a drop can bring in, and takes the advert back down", SLOW, async () => {
+    const shell = await bootDevice();
+    await listening(shell, "tauri://drag-enter");
+    expect(advert().hidden).toBe(true);
+
+    // One handler, not zero: an event nobody listens for would leave every assertion
+    // below describing an app that was never asked to do anything.
+    expect(shell.emit("tauri://drag-enter")).toBe(1);
+    expect(advert().hidden).toBe(false);
+    // The plan-only caption. An ordinary desktop build has the settings import unarmed,
+    // and the caption names what is registered rather than what the build could register.
+    expect(caption()).toBe(t().dropzone.plan);
+
+    await listening(shell, "tauri://drag-leave");
+    expect(shell.emit("tauri://drag-leave")).toBe(1);
+    expect(advert().hidden).toBe(true);
+  });
+
+  // The caption is re-read on every drag rather than composed once, which is what lets a
+  // gate that settles after startup change it. `e2e/inventory.spec.ts` records
+  // `dropzone.planOrSettings` as never shown on the DOM drag path, so a display of it is
+  // what this case adds.
+  it("names the settings file once the experimental import has armed the drop", SLOW, async () => {
+    const shell = await bootArmed();
+    await listening(shell, "tauri://drag-enter");
+    expect(shell.emit("tauri://drag-enter")).toBe(1);
+    expect(caption()).toBe(t().dropzone.planOrSettings);
+  });
+
+  // A refused drop is a routine "not that file": the status line says which file and what
+  // this build would have taken, and nothing is read to find that out.
+  it("refuses an extension nothing is registered for, by name and before reading", SLOW, async () => {
+    const shell = await bootDevice();
+    await listening(shell, "tauri://drag-drop");
+    expect(shell.emit("tauri://drag-enter")).toBe(1);
+    const board = wires();
+    expect(board).toBeGreaterThan(0);
+
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/notes.txt"] })).toBe(1);
+    expect(statusText()).toBe(t().status.dropUnsupported("notes.txt"));
+    // The advert comes down with the refusal — left up it would cover the app, and the
+    // status line saying why would be behind it.
+    expect(advert().hidden).toBe(true);
+    // Matched to a handler before the file was opened, so an extension nothing takes
+    // cannot arrive later as a parse error, and the plan on the board is untouched.
+    expect(shell.count("read_text_file")).toBe(0);
+    expect(shell.count("read_binary_file")).toBe(0);
+    expect(wires()).toBe(board);
+    expect(dialogs(shell)).toEqual([]); // the status line, not a modal
+  });
+
+  // The other refusal. Its message names no file — which one was meant to win is exactly
+  // what the app will not guess — so what it can be held to is that neither was opened.
+  it("refuses more than one file at a time, and reads none of them", SLOW, async () => {
+    const shell = await bootDevice({ read_text_file: () => droppedPlan });
+    await listening(shell, "tauri://drag-drop");
+
+    expect(shell.emit("tauri://drag-drop", { paths: [PLAN_PATH, "C:/urx/second.json"] })).toBe(1);
+    expect(statusText()).toBe(t().status.dropMultiple);
+    expect(shell.count("read_text_file")).toBe(0);
+    expect(rate()).toBe("48000"); // the plan on the board, untouched
+  });
+
+  // Same refusal with the import armed, and it has to name the second extension: the
+  // message that does not is a build lying about what it accepts.
+  it("names the settings file in the refusal too, once the import is armed", SLOW, async () => {
+    const shell = await bootArmed();
+    await listening(shell, "tauri://drag-drop");
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/notes.txt"] })).toBe(1);
+    expect(statusText()).toBe(t().status.dropUnsupportedSettings("notes.txt"));
+    expect(shell.count("read_binary_file")).toBe(0);
+  });
+
+  // The accepted half, and the part a browser drop cannot have: the shell hands over a
+  // real path, so the plan lands the way File > Open lands one — named on the status line
+  // and remembered in the recent list.
+  it("opens a dropped plan and remembers where it came from", SLOW, async () => {
+    const shell = await bootDevice({ read_text_file: () => droppedPlan });
+    await listening(shell, "tauri://drag-drop");
+    expect(rate()).toBe("48000"); // the plan the drop replaces
+
+    expect(shell.emit("tauri://drag-drop", { paths: [PLAN_PATH] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.openedFrom("dropped.json")), { timeout: 10_000 });
+    // The dropped document is what is on screen, not just what the status line names.
+    expect(rate()).toBe("96000");
+    expect(shell.count("read_text_file")).toBe(1);
+
+    const rows = [...$("inspector").querySelectorAll(".recent-row")].map((row) => row.textContent ?? "");
+    expect(rows.some((text) => text.includes("dropped.json"))).toBe(true);
+    expect(localStorage.getItem("urx-recent")).toContain(PLAN_PATH);
+  });
+});
+
 describe("the --reset-storage launch", () => {
   // The flag arrives async — after the synchronous init has already read localStorage —
   // so the only way to re-init clean is to clear and reload once. jsdom cannot navigate
