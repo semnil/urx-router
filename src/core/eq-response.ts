@@ -144,7 +144,14 @@ export function shelfDesignFreq(nominal: number, gainDb: number, high: boolean, 
   if (target <= 0) return nominal;
   const at = (f: number): number => Math.abs(magDb(shelfCoefs(f, gainDb, high, fs), nominal, fs));
   let lo = nominal / 20;
-  let hi = nominal * 20;
+  // Kept under Nyquist. `shelfCoefs` past fs/2 aliases (w0 wraps mod 2π), and where
+  // nominal × 20 lands near a multiple of fs the aliased shelf degenerates to a flat
+  // full-gain plateau — `rising` then compares two near-equal values and the bisection
+  // walks the wrong bracket. Measured over the inspector's own 1001-value frequency
+  // grid × 8 gains × 2 shelf directions: 71 of 16016 settings drew more than the
+  // model's 2 dB tolerance off at their own nominal frequency, and a HIGH shelf at
+  // 11996 Hz / +12 dB read 6.0 dB where the measured convention requires 9.
+  let hi = Math.min(nominal * 20, fs / 2 - 1);
   const rising = at(hi) > at(lo);
   for (let i = 0; i < 40; i++) {
     const mid = Math.sqrt(lo * hi);

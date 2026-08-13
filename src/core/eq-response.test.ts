@@ -176,6 +176,30 @@ describe("EQ response against the device", () => {
     for (const hz of [20, 200, 1000, 5000, 20000]) expect(off(hz)).toBe(0);
   });
 
+  // The convention above ("the nominal frequency is |gain| - 3 dB") is a property of
+  // every shelf, not of the 300-1000 Hz band the measured datasets happen to sit in.
+  // It used to fail high up: the bisection bracket ran to nominal × 20, which is past
+  // Nyquist for any nominal over 1200 Hz, and `shelfCoefs` aliases there (w0 wraps mod
+  // 2π). Where the bracket landed near a multiple of fs the aliased shelf flattened to
+  // full gain, so the "which way does the magnitude move" probe compared two near-equal
+  // plateau values and the solver walked the wrong bracket. The frequencies below are
+  // the app's own slider detents nearest each such multiple; at 11996 Hz / +12 dB the
+  // curve read 6.0 dB where the convention requires 9.
+  it("holds the shelf convention up where the bracket used to cross Nyquist", () => {
+    for (const hz of [2399, 7195, 9617, 11996, 16828, 19188]) {
+      for (const gain of [6, 12, 18, -6, -12, -18]) {
+        for (const high of [true, false]) {
+          const at = eqResponse([band({ index: high ? 3 : 0, type: EQ_TYPE_SHELVING, freq: hz, gain, q: 0.71 })])(hz);
+          const want = Math.sign(gain) * (Math.abs(gain) - 3);
+          expect(
+            Math.abs(at - want),
+            `${high ? "HIGH" : "LOW"} ${hz} Hz ${gain} dB: model ${at.toFixed(1)}`,
+          ).toBeLessThanOrEqual(TOL);
+        }
+      }
+    }
+  });
+
   it("leaves a shelf's design frequency at the nominal when there is no plateau to find", () => {
     // |gain| ≤ 3 dB has no -3 dB point below its own plateau, so there is nothing to
     // solve and the nominal frequency is used as-is.
