@@ -1068,9 +1068,7 @@ describe("the device self-test", () => {
     }
   });
 
-  // A run that cannot open its own link surfaces as a dialog and lets the latch go. The
-  // dialog count starts at one because the confirm is itself a dialog, so the assertion is
-  // "a second one arrived" rather than "one did".
+  // A run that cannot open its own link surfaces as a dialog and lets the latch go.
   it("reports a run that cannot open its own link, and holds nothing afterwards", SLOW, async () => {
     const log = captureWarnings();
     try {
@@ -1081,11 +1079,11 @@ describe("the device self-test", () => {
       });
       const btn = await selfTestBtn();
       btn.click();
-      // The REPORT, not a second dialog: the confirm this run already raised is why a
-      // count had to say "more than one" here, and counting says nothing about what the
-      // second one told the operator. What it says is the DIAGNOSIS rather than a
+      // Read as an ERROR rather than counted. This run raises a confirm of its own first,
+      // so a count here could only say "more than one arrived" and nothing about what the
+      // second one told the operator. What it tells them is the DIAGNOSIS rather than a
       // self-test frame — `connectFailureStatus` recognises this failure and replaces the
-      // wrapper with the message that tells the operator what to do about it.
+      // wrapper with the message that says what to do about it.
       await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 15_000 });
       expect(errors(shell).at(-1)).toBe(t().error.shell.noDevice);
       expect(log.lines.some((l) => l.startsWith("[self-test] ERROR"))).toBe(true);
@@ -1238,6 +1236,24 @@ describe("importing a settings file", () => {
     $("btn-open-settings").click();
     await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 15_000 });
     expect(shell.count("read_binary_file")).toBe(1); // read, then refused — not the reverse
+
+    // WHICH question was asked. This message is the app's only statement that a settings
+    // file names no unit and that the model on screen is the operator's to check, and
+    // nothing else in the repository pins it — the inventory spec puts the shell's native
+    // confirms out of scope, so a version that dropped the model from that sentence would
+    // ask the operator to vouch for nothing.
+    expect(confirms(shell)).toEqual([t().confirm.importSettings("backup.urxf", "URX44V")]);
+
+    // And that nothing landed. The status line cannot say so — the decline branch writes it
+    // itself — and the apply mutates the plan in place without touching the shell, so no
+    // command count can see it either. The "?" badge is the witness: it is drawn only from
+    // the unread set an import or a readback leaves behind, and the accept case above pins
+    // its non-zero side on the same surface.
+    const flagged = [...$("graph-host").querySelectorAll("g.node[data-id]")].filter((g) =>
+      [...g.querySelectorAll("text")].some((el) => el.textContent === "?"),
+    );
+    expect(flagged).toHaveLength(0);
+    expect(errors(shell)).toEqual([]); // abandoned, not failed
   });
 
   // A dismissed file dialog is not a failure and not a cancel of anything: nothing was
