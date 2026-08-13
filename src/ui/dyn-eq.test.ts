@@ -21,6 +21,7 @@ import { DYN_PROCESSORS } from "./dyn-registry";
 import { dynHost } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import type { MidiLearnHooks } from "./midi-learn";
+import { deserialize, serialize } from "../core/plan";
 import { setLang, t } from "../i18n";
 
 const EQ = DYN_PROCESSORS.eq;
@@ -159,6 +160,31 @@ describe("what an edit writes back", () => {
     nudgeSlider(t().inspector.eqGain, 6, PARAMS());
     expect(host.plan.nodeParams["ch1"]!.eqBands![1].q).toBe(q);
     expect(host.plan.nodeParams["ch1"]!.eqBands![1].gain).toBe(3);
+  });
+
+  // A plan that carries no eqBands at all is ordinary — `emptyPlan`, a generated
+  // `?plan=` document and the E2E empty seed all start there. Editing a band other
+  // than the first used to grow the array by direct assignment, leaving holes below
+  // it; `JSON.stringify` writes a hole as `null`, and the load funnel drops a whole
+  // collection for one bad element — so reopening the saved file lost every band,
+  // the edited one included, with nothing reported. The live mirror skips empty slots,
+  // so the session itself looked fine and only the round trip lost it.
+  it("fills the bands below the edited one, so the array survives a save and reopen", () => {
+    host = dynHost();
+    delete host.plan.nodeParams["ch1"]!.eqBands;
+    open();
+    selectBand(3);
+    nudgeSlider(t().inspector.eqGain, 6, PARAMS());
+
+    const bands = host.plan.nodeParams["ch1"]!.eqBands!;
+    expect(bands).toHaveLength(4);
+    expect(bands.every((b) => b !== undefined)).toBe(true);
+    // The mechanism, not just the shape: a hole serializes as null and the loader
+    // discards the collection it is in.
+    expect(JSON.parse(JSON.stringify(bands))).not.toContain(null);
+
+    const reopened = deserialize(serialize(host.plan));
+    expect(reopened.nodeParams["ch1"]?.eqBands?.[3]?.gain).toBe(bands[3].gain);
   });
 
   it("writes the 1-knob level as a number, not a string", () => {
