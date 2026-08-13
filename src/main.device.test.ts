@@ -1750,17 +1750,21 @@ describe("dropping a file onto the window", () => {
   const advert = (): HTMLElement => $("dropzone");
   const caption = (): string => $("dropzone-label").textContent ?? "";
   const rate = (): string => $<HTMLSelectElement>("rate-picker").value;
-  const wires = (): number => $("graph-host").querySelectorAll(".wire-hit").length;
 
   /**
    * Let a drop that was going to act get as far as its first read.
    *
-   * `take()` hands the file to its handler synchronously, but the flow behind it awaits a
-   * discard confirm before it reads anything — so in the emit's own tick an ACCEPTED drop
-   * has read nothing and moved nothing either. Measured: immediately after the accepted
-   * drop below, `read_text_file` is 0 and the rate picker still says 48000. Every "and
-   * nothing happened" assertion here is therefore taken after this, or it is satisfied by
-   * the very behaviour it exists to refuse.
+   * `take()` hands the file to its handler synchronously, but every read behind it sits past
+   * an `await`, so in the emit's own tick an ACCEPTED drop has read nothing and moved
+   * nothing either — measured: `read_text_file` is 0 and the rate picker still says 48000
+   * immediately after the drop that goes on to load. Every "and nothing happened" assertion
+   * here is taken after this, or it is satisfied by the very behaviour it exists to refuse.
+   *
+   * What the `await` buys is exact: a timer callback runs only once the microtask queue is
+   * empty, and that path holds no timer of its own. What the 100 ms buys is a guess, against
+   * a read that some day arrives on a timer — so the accepted case asserts the read HAS
+   * landed by then. A refusal cannot make that assertion (an absence has no command to wait
+   * on), which is why the window is pinned there rather than here.
    */
   const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -1811,8 +1815,6 @@ describe("dropping a file onto the window", () => {
   it("refuses an extension nothing is registered for, by name and before reading", SLOW, async () => {
     const shell = await bootDevice();
     expect(shell.emit("tauri://drag-enter")).toBe(1);
-    const board = wires();
-    expect(board).toBeGreaterThan(0);
 
     expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/notes.txt"] })).toBe(1);
     expect(statusText()).toBe(t().status.dropUnsupported("notes.txt"));
@@ -1820,13 +1822,29 @@ describe("dropping a file onto the window", () => {
     // status line saying why would be behind it.
     expect(advert().hidden).toBe(true);
 
-    // Matched to a handler before the file was opened, so an extension nothing takes
-    // cannot arrive later as a parse error, and the plan on the board is untouched.
+    // Matched to a handler before the file was opened, so an extension nothing takes cannot
+    // arrive later as a parse error. Neither read command is in the stub's table, so a build
+    // that read this file would be REFUSED by the shell and report it — which is what the
+    // dialog assertion catches, and why these three are worth having together.
     await settle();
     expect(shell.count("read_text_file")).toBe(0);
     expect(shell.count("read_binary_file")).toBe(0);
-    expect(wires()).toBe(board);
     expect(dialogs(shell)).toEqual([]); // the status line, not a modal
+  });
+
+  // Same refusal with the settings import armed, and it has to name the second extension:
+  // the message that does not is a build lying about what it accepts. It also says the
+  // match is by extension rather than a fallback — `.txt` is refused with a handler present.
+  it("names the settings file in that refusal too, once the import is armed", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await armed();
+
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/notes.txt"] })).toBe(1);
+    expect(statusText()).toBe(t().status.dropUnsupportedSettings("notes.txt"));
+
+    await settle();
+    expect(shell.count("read_binary_file")).toBe(0);
+    expect(dialogs(shell)).toEqual([]);
   });
 
   // The other refusal. Its message names no file — which one was meant to win is exactly
@@ -1842,35 +1860,58 @@ describe("dropping a file onto the window", () => {
     expect(rate()).toBe("48000"); // the plan on the board, untouched
   });
 
-  // Same refusal with the import armed, and it has to name the second extension: the
-  // message that does not is a build lying about what it accepts.
-  it("names the settings file in the refusal too, once the import is armed", SLOW, async () => {
-    const shell = await bootDevice({ experimental_enabled: true });
-    await armed();
-
-    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/notes.txt"] })).toBe(1);
-    expect(statusText()).toBe(t().status.dropUnsupportedSettings("notes.txt"));
-
-    await settle();
-    expect(shell.count("read_binary_file")).toBe(0);
-  });
-
   // The accepted half, and the part a browser drop cannot have: the shell hands over a
   // real path, so the plan lands the way File > Open lands one — named on the status line
-  // and remembered in the recent list.
+  // and remembered in the recent list. That last half is reached from nowhere else in the
+  // entry suites: the other file flows mock `core/storage`, so this is the only case in
+  // which a real path travels from a read to `rememberRecent` and into localStorage.
   it("opens a dropped plan and remembers where it came from", SLOW, async () => {
     const shell = await bootDevice({ read_text_file: () => droppedPlan });
     expect(rate()).toBe("48000"); // the plan the drop replaces
 
     expect(shell.emit("tauri://drag-drop", { paths: [PLAN_PATH] })).toBe(1);
+    // The window the refusals above measure their absences in — asserted from the one side
+    // that can: by the time a settle is over, the drop that WAS going to read has read.
+    await settle();
+    expect(shell.count("read_text_file")).toBe(1);
+
     await vi.waitFor(() => expect(statusText()).toBe(t().status.openedFrom("dropped.json")), { timeout: 10_000 });
     // The dropped document is what is on screen, not just what the status line names.
     expect(rate()).toBe("96000");
-    expect(shell.count("read_text_file")).toBe(1);
 
     const rows = [...$("inspector").querySelectorAll(".recent-row")].map((row) => row.textContent ?? "");
     expect(rows.some((text) => text.includes("dropped.json"))).toBe(true);
     expect(localStorage.getItem("urx-recent")).toContain(PLAN_PATH);
+  });
+
+  // The other side of that memory: the entry remembers a path only once the plan behind it
+  // has actually loaded. A list that collected every path dropped at it would offer rows
+  // that reproduce the same failure on every press.
+  it("does not remember a dropped file that would not open", SLOW, async () => {
+    const shell = await bootDevice({ read_text_file: () => "{" });
+
+    expect(shell.emit("tauri://drag-drop", { paths: [PLAN_PATH] })).toBe(1);
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
+
+    expect(localStorage.getItem("urx-recent") ?? "").not.toContain(PLAN_PATH);
+    expect($("inspector").querySelector(".recent-row")).toBeNull();
+  });
+
+  // The `.urxf` registration's payload, which the live-session refusal above cannot reach:
+  // that flow returns before it calls the reader at all. Declined at the confirm, because
+  // reaching the confirm is already the whole claim — the bytes were read and parsed by
+  // then — and the file name in that question comes from the drop's own payload, while the
+  // menu entry composes it from the dialog's path instead.
+  it("reads a dropped settings file, and names it where the operator vouches for the model", SLOW, async () => {
+    const bytes = sampleUrxf();
+    const shell = await bootDevice({ experimental_enabled: true, read_binary_file: () => bytes.buffer }, false);
+    await armed();
+
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/backup.urxf"] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 15_000 });
+
+    expect(shell.count("read_binary_file")).toBe(1);
+    expect(confirms(shell)).toEqual([t().confirm.importSettings("backup.urxf", "URX44V")]);
   });
 });
 
