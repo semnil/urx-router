@@ -99,13 +99,42 @@ async fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> 
 /// no longer helps — there is nothing left to abort back to. The rename is
 /// atomic on the same filesystem, which a sibling temp guarantees.
 fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
-    let tmp = format!("{path}.tmp");
-    if let Err(e) = fs::write(&tmp, bytes) {
-        // A partial write can still leave a stray temp file behind (a full disk
-        // truncates mid-write); remove it so the failure strands nothing.
-        let _ = fs::remove_file(&tmp);
-        return Err(io_error(&e));
+    // A unique sibling, created exclusively. `{path}.tmp` is a name two writers to the
+    // same destination both open — a double-fired save, or a dev build and an installed
+    // one exporting to the same file — and the second `write` truncates under the first,
+    // so whichever `rename` lands last can install a mixed body over the target: exactly
+    // the corruption an atomic write exists to prevent. It also destroyed a pre-existing
+    // operator file that happened to be named `plan.json.tmp`.
+    let mut tmp = String::new();
+    let mut file = None;
+    for n in 0..64u32 {
+        let candidate = format!("{path}.{}.{n}.tmp", std::process::id());
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(f) => {
+                tmp = candidate;
+                file = Some(f);
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(io_error(&e)),
+        }
     }
+    let Some(mut file) = file else {
+        return Err("io-error: could not create a temporary file".into());
+    };
+    {
+        use std::io::Write;
+        if let Err(e) = file.write_all(bytes).and_then(|()| file.flush()) {
+            drop(file);
+            let _ = fs::remove_file(&tmp);
+            return Err(io_error(&e));
+        }
+    }
+    drop(file);
     if let Err(e) = fs::rename(&tmp, path) {
         let _ = fs::remove_file(&tmp);
         return Err(io_error(&e));
@@ -206,6 +235,15 @@ fn rotate_link_log(path: &std::path::Path, prev: &std::path::Path, max: u64) -> 
 async fn append_link_log(app: tauri::AppHandle, line: String) -> Result<String, String> {
     use std::io::Write;
     use tauri::Manager;
+    // One line means one line. The ledger reads an ABSENT session-end record as
+    // "nothing closed this session", so a `line` carrying a newline — a serializer bug,
+    // or any caller that is not the one this was written for — writes several records
+    // in one call and can forge or split exactly the evidence the file exists to keep.
+    // Other control characters go with it: they cannot appear in the JSON this emits and
+    // they make a ledger line unreadable in a terminal.
+    if line.chars().any(|c| c.is_control()) {
+        return Err("bad-request: link log line carries a control character".into());
+    }
     let dir = app.path().app_log_dir().map_err(file_io)?;
     let path = dir.join("link-ledger.jsonl");
     let prev = dir.join("link-ledger.1.jsonl");
@@ -649,6 +687,11 @@ async fn vd_connect(
     webview: tauri::Webview,
     state: State<'_, vd::VdState>,
 ) -> Result<vd::Connection, String> {
+    // Taken BEFORE the handshake, which runs up to ~9 s. A page load inside that window
+    // is a teardown for a page that no longer exists, and it cannot cancel this connect
+    // — it finds nothing installed yet — so without the generation the session installed
+    // under the same label afterwards, orphaned under the page that replaced it.
+    let gen = state.page_gen(webview.label());
     let (tx, device, counters) = tauri::async_runtime::spawn_blocking(vd::open)
         .await
         .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())??;
@@ -656,7 +699,11 @@ async fn vd_connect(
     // vd_disconnect so a delayed teardown of an earlier session cannot close it.
     // The label identifies its OWNER, which is what decides whether a later page
     // load may tear it down (see the on_page_load hook in `run`).
-    let epoch = state.install(tx, counters, webview.label());
+    let epoch = state
+        .install_for_page(tx, counters, webview.label(), gen)
+        .ok_or_else(|| {
+            "vd-page-gone: the page that asked for this connection reloaded".to_string()
+        })?;
     Ok(vd::Connection { device, epoch })
 }
 
@@ -821,8 +868,8 @@ fn midi_open_input(
 }
 
 #[tauri::command]
-fn midi_close_input(state: State<midi::MidiState>) {
-    midi::close_input(&state);
+fn midi_close_input(webview: tauri::Webview, state: State<midi::MidiState>) {
+    midi::close_input(&state, webview.label());
 }
 
 #[tauri::command]
@@ -835,8 +882,8 @@ fn midi_open_output(
 }
 
 #[tauri::command]
-fn midi_close_output(state: State<midi::MidiState>) {
-    midi::close_output(&state);
+fn midi_close_output(webview: tauri::Webview, state: State<midi::MidiState>) {
+    midi::close_output(&state, webview.label());
 }
 
 #[tauri::command]
@@ -993,7 +1040,12 @@ const EDIT_REDO_ID: &str = "edit-redo";
 #[cfg(target_os = "macos")]
 const EDIT_MENU_EVENT: &str = "menu://edit";
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
+// No mobile entry point: this crate is desktop-only and cannot be built for one. `mod
+// vd` and `mod midi` are unconditional while their contents are not — `vd::open` reaches
+// `imp::worker`, which is `#[cfg(desktop)]`, and `midi.rs` uses `midir`, which is
+// target-gated in Cargo.toml — so an android/ios build fails on unresolved names. The
+// attribute promised a build that has never existed; gating the two modules instead
+// would mean carrying a mobile arm nothing compiles or runs.
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -1088,6 +1140,9 @@ pub fn run() {
         // nothing to remember.
         let app = webview.app_handle();
         let label = webview.label();
+        // Bumped first: a connect still in flight for the page being replaced is torn
+        // down by its own install refusing, since this teardown has nothing to find.
+        app.state::<vd::VdState>().note_page_load(label);
         vd::shutdown_owned_by(&app.state::<vd::VdState>(), label);
         midi::close_owned_by(&app.state::<midi::MidiState>(), label);
         // The idle-sleep hold belongs here for the same reason and is the least visible of

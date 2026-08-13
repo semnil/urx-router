@@ -31,7 +31,12 @@ pub fn set(state: &KeepAwakeState, owner: &str, on: bool) -> Result<(), String> 
         if held.is_none() {
             *held = Some((owner.to_string(), imp::acquire()?));
         }
-    } else {
+    } else if held.as_ref().is_some_and(|(who, _)| who == owner) {
+        // Released only by the webview that took it — the same rule the page-load
+        // teardown already applies, retrofitted onto the direct command. Without it a
+        // second webview could drop main's hold mid-Live-sync while main's UI went on
+        // asserting one; and the inverse, a second caller's `on` recorded under MAIN's
+        // label, meant main's next reload released a hold the other still wanted.
         *held = None;
     }
     Ok(())

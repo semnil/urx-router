@@ -16,6 +16,7 @@
 // the MIDI bridge (midir) are desktop-only crates, so mobile targets do not
 // build the hardware control surface at all.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
@@ -286,6 +287,39 @@ struct Conn {
 #[derive(Default)]
 pub struct VdState {
     conn: Mutex<Conn>,
+    /// A per-webview page generation, bumped by every page load. Ownership is recorded
+    /// by webview LABEL, and a reloaded page carries the same label as the one it
+    /// replaced — so the teardown a page load runs cannot cancel a `vd_connect` that is
+    /// still in flight for the DEAD page. `open()` takes up to ~9 s (discovery, sync,
+    /// device), and inside that window a reload (HMR, crash recovery, --reset-storage)
+    /// ran a teardown that found nothing installed and then let the connect install
+    /// under the NEW page's label: an open vdp socket the page holds no epoch for,
+    /// `vd_link_stats` reporting a live ledger on a page that never connected, and
+    /// `sender()` resolving for a session the page believes does not exist.
+    pages: Mutex<HashMap<String, u64>>,
+}
+
+impl VdState {
+    /// The current generation for `label` — taken before a connect, and compared after.
+    pub fn page_gen(&self, label: &str) -> u64 {
+        *self
+            .pages
+            .lock()
+            .unwrap()
+            .entry(label.to_string())
+            .or_insert(0)
+    }
+
+    /// A page load: everything in flight for that label belongs to the page that is
+    /// gone.
+    pub fn note_page_load(&self, label: &str) {
+        *self
+            .pages
+            .lock()
+            .unwrap()
+            .entry(label.to_string())
+            .or_insert(0) += 1;
+    }
 }
 
 /// Spawn the worker and perform the broker handshake (blocking). Returns the
@@ -308,6 +342,25 @@ impl VdState {
     /// Install a freshly opened connection, shutting down any prior worker, and
     /// return the generation assigned to it. The caller hands this epoch back to
     /// disconnect so a delayed teardown of an earlier session cannot close this one.
+    /// Install a freshly opened session, unless the page that asked for it has since
+    /// reloaded — in which case the worker is shut down instead of being handed to its
+    /// replacement, and the caller is told so.
+    pub fn install_for_page(
+        &self,
+        tx: Sender<Cmd>,
+        counters: Arc<LinkCounters>,
+        owner: &str,
+        gen: u64,
+    ) -> Option<u64> {
+        if self.page_gen(owner) != gen {
+            let mut dead = Conn::default();
+            dead.tx = Some(tx);
+            stop(&mut dead, None);
+            return None;
+        }
+        Some(self.install(tx, counters, owner))
+    }
+
     pub fn install(&self, tx: Sender<Cmd>, counters: Arc<LinkCounters>, owner: &str) -> u64 {
         let mut c = self.conn.lock().unwrap();
         stop(&mut c, None);
@@ -968,7 +1021,13 @@ mod imp {
                 .get("vdpport")
                 .and_then(Value::as_u64)
                 .ok_or_else(|| "broker-no-vdpport: the device list carried no port".to_string())?;
-            return Ok((port as u16, str_or(dev, "model", "URX")));
+            // Checked, not truncated. A broker answer above 65535 (a bug or a schema
+            // change) used to cast down silently — 65537 becomes 1 — and the connect
+            // then failed naming a port the broker never advertised, which sends the
+            // next reader looking in the wrong place entirely.
+            let port = u16::try_from(port)
+                .map_err(|_| format!("broker-bad-response: vdpport {port} is out of range"))?;
+            return Ok((port, str_or(dev, "model", "URX")));
         }
         Err("broker-no-vdpport: the device list did not answer".into())
     }
@@ -996,6 +1055,9 @@ mod imp {
     /// is reused because a fresh `[0u8; 8192]` per read means memsetting 8 KB for
     /// every ~100-byte frame, and this link carries roughly 200 frames a second for
     /// as long as a session is up.
+    /// Ceiling on one un-terminated line (see read_json).
+    const MAX_PENDING: usize = 1 << 20;
+
     struct LineReader {
         pending: Vec<u8>,
         chunk: Vec<u8>,
@@ -1025,7 +1087,21 @@ mod imp {
                     // Disjoint field borrows: reading into `chunk` and appending to
                     // `pending` in one statement is fine, and a temporary between
                     // them would put back the copy this reader exists to avoid.
-                    Ok(n) => self.pending.extend_from_slice(&self.chunk[..n]),
+                    Ok(n) => {
+                        self.pending.extend_from_slice(&self.chunk[..n]);
+                        // A peer that never sends a newline would otherwise grow this
+                        // buffer at socket speed for the life of the session — a silent
+                        // memory climb rather than an error anyone can act on. The bound
+                        // is far above any real frame (the largest this protocol carries
+                        // is a device list of a few KiB), so reaching it means the peer
+                        // is not speaking this protocol.
+                        if self.pending.len() > MAX_PENDING {
+                            return Err(format!(
+                                "broker-bad-response: {} bytes with no line break",
+                                self.pending.len()
+                            ));
+                        }
+                    }
                     Err(e)
                         if matches!(
                             e.kind(),

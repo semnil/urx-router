@@ -29,6 +29,12 @@ pub struct MidiUiState {
     to_window: Mutex<Option<Channel<String>>>,
     /// Set for the main window's lifetime; the MIDI window's intents land here.
     to_main: Mutex<Option<Channel<String>>>,
+    /// Held for the whole of `open_midi_window`, so the existence check and the build
+    /// are one step. The command is async and runs as its own task, so two rapid
+    /// gestures interleaved: both saw the window absent, one `build()` won and the
+    /// other returned a `midi-window: …` error for a window that was up — an error
+    /// dialog for a success.
+    opening: tauri::async_runtime::Mutex<()>,
 }
 
 // A relay send that finds no receiver is not an error: the MIDI window may have just
@@ -98,7 +104,12 @@ pub fn notify_closed(app: &AppHandle) {
 /// `async` on purpose: building a webview from a blocking command deadlocks on
 /// Windows.
 #[tauri::command]
-pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), String> {
+pub async fn open_midi_window(
+    app: AppHandle,
+    state: tauri::State<'_, MidiUiState>,
+    title: String,
+) -> Result<(), String> {
+    let _open = state.opening.lock().await;
     if let Some(win) = app.get_webview_window(MIDI_WINDOW) {
         return win.set_focus().map_err(|e| format!("midi-window: {e}"));
     }
