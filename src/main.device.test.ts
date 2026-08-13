@@ -1863,9 +1863,10 @@ describe("dropping a file onto the window", () => {
 
   // The accepted half, and the part a browser drop cannot have: the shell hands over a
   // real path, so the plan lands the way File > Open lands one — named on the status line
-  // and remembered in the recent list. That last half is reached from nowhere else in the
-  // entry suites: the other file flows mock `core/storage`, so this is the only case in
-  // which a real path travels from a read to `rememberRecent` and into localStorage.
+  // and remembered in the recent list. That last half is asserted nowhere else in the entry
+  // suites — `main.boot.test.ts`'s Open case reaches `rememberRecent` and then reads only the
+  // status line — and the path here is the only one that arrived from a read: the other file
+  // flows mock `core/storage`, so the path they carry is the mock's own.
   it("opens a dropped plan and remembers where it came from", SLOW, async () => {
     const shell = await bootDevice({ read_text_file: () => droppedPlan });
     expect(rate()).toBe("48000"); // the plan the drop replaces
