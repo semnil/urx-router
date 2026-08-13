@@ -331,19 +331,26 @@ select#rate-picker,
    own 29.5, which is consistent with this rule doing it and does not prove it: the
    arithmetic recovers the alpha, not who applied it, and an engine supplying 0.7 of
    its own over the same ground would land on the same numbers. Separating them needs
-   the rule WITHDRAWN in that window, which has not been run on macOS — it decides
-   whether the rule is redundant, not whether the lock reads. It needs no rebuild
-   either: deleting the rule from `document.styleSheets` at runtime is the whole
-   experiment, and that is how it was run in the shipping WebView2 (2026-08-13) — on
-   the INSPECTOR's 0.45 rule below rather than on this one, because only there do the
-   authored and supplied numbers differ, so one reading separates them. WebView2
-   supplied 0.7 of its own, which is both the Chromium reading above and the number
-   this rule authors, so against that engine this rule's opacity declaration is
-   duplicating it and only the `cursor` one is not — read on the inspector's select,
-   with nothing here separating one disabled select from another. The rule earns its
-   place from PLAYWRIGHT's WebKit above, which supplies nothing; what the shipping
-   WKWebView supplies is the withdrawal nobody has run there. Under forced colors
-   WebView2 behaves differently again (architecture.md, "Windows high contrast"). */
+   the rule WITHDRAWN in that window, and both shipping engines have now been read that
+   way. It needs no rebuild either: deleting the rule from `document.styleSheets` at
+   runtime is the whole experiment, and that is how it was run in the shipping WebView2
+   (2026-08-13) — on the INSPECTOR's 0.45 rule below rather than on this one, because
+   only there do the authored and supplied numbers differ, so one reading separates
+   them. WebView2 supplied 0.7 of its own, which is both the Chromium reading above and
+   the number this rule authors, so against that engine this rule's opacity declaration
+   is duplicating it and only the `cursor` one is not — read on the inspector's select,
+   with nothing here separating one disabled select from another. Under forced colors
+   WebView2 behaves differently again (architecture.md, "Windows high contrast").
+
+   macOS answers the other way. Same day, shipping WKWebView (desktop dev build), both
+   pickers held disabled and this rule withdrawn: locked and unlocked came back
+   IDENTICAL — 0 pixels over either box, in both themes, computed opacity 1 while
+   `disabled` stayed true. That engine supplies nothing, so here the rule is the whole
+   signal and withdrawing it stops the lock reading, exactly as in Playwright's WebKit.
+   The two engines therefore disagree about whether this declaration is redundant, and
+   the rule earns its place from the one that supplies nothing. The lock was forced
+   rather than driven from a device, which changes nothing about what is painted; what
+   that run does not cover is the packaged build. */
 select#model-picker:disabled,
 select#rate-picker:disabled {
   opacity: 0.7;
@@ -1144,11 +1151,18 @@ input[type="range"]:focus-visible,
    colour, border and opacity unchanged. (Unstyled, that WebKit does dim it — text and
    border drop from 0.847 to 0.247 alpha — and stops the moment the recipe above
    authors a colour and a background, which is the trade the pickers' own :disabled
-   rule pays for. The reading from macOS's shipping engine is beside that rule, on the
-   pickers; this select has not been shown locked there.) Shown locked in the shipping
-   WebView2 (2026-08-13, debug build): it computes --row-lock-dim with the rule in place
-   and the engine's own 0.7 with it withdrawn, so the authored value is the one on
-   screen. Unlocked, its face matches the rack's model picker on colour, background,
+   rule pays for.) Shown locked in macOS's shipping WKWebView (2026-08-13, dev build):
+   with this rule it moved 19,932 pixels over its own box, mean luma 32.9 -> 26.9, and
+   with the rule withdrawn it was identical to unlocked — 0 pixels, computed opacity 1,
+   so that engine adds nothing and the authored value is the only dim. The select shown
+   there was a channel's insert-FX selector rather than the Track Count row, whose node
+   was not on that profile's board: the same rule, on one of the rows the app never
+   locks. Shown locked in the shipping WebView2 (2026-08-13, debug build): it computes
+   --row-lock-dim with the rule in place and the engine's own 0.7 with it withdrawn, so
+   the authored value is the one on screen. Both shipping engines were read on THIS
+   rule, and they answer differently about what a withdrawal leaves — WebView2 0.7,
+   WKWebView nothing; the pickers' rule above was read in WKWebView only.
+   Unlocked, its face matches the rack's model picker on colour, background,
    border colour, border width, radius, font family, font size and padding — that engine
    keeps the authored `padding: 5px 10px` where Playwright's WebKit computes it to `0px`
    on a menulist select (measured the same day). `e2e/recpoint.spec.ts` compares that
