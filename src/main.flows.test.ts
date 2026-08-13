@@ -25,7 +25,8 @@ vi.mock("./core/storage", async (importOriginal) => {
   };
 });
 
-import { downloadText, exportSvgToPdf, exportSvgToPng } from "./core/storage";
+import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
+import { downloadText, exportSvgToPdf, exportSvgToPng, saveTextDocument } from "./core/storage";
 import { t } from "./i18n";
 import { $, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 
@@ -41,6 +42,37 @@ const status = statusText;
 /** Press a chord on the document, the way the app's own key handler receives one. */
 const chord = (key: string, init: KeyboardEventInit = {}): void =>
   void document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }));
+
+/**
+ * Replace the shared `matchMedia` stub with one whose colour-scheme answer can be
+ * flipped and announced, and return the flipper. Must be called BEFORE the boot: the
+ * app attaches its listener while the module runs.
+ *
+ * The shared stub cannot do this and deliberately so — it answers a fixed "light" and its
+ * addEventListener is a no-op — which leaves auto mode with no way to be told the OS
+ * moved. Every query except the colour-scheme one keeps answering false, so nothing else
+ * that consults matchMedia changes behaviour because this is installed.
+ */
+function installFlippableColorScheme(): (dark: boolean) => void {
+  let dark = false;
+  const listeners = new Set<() => void>();
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    get matches(): boolean {
+      return query.includes("dark") ? dark : false;
+    },
+    media: query,
+    onchange: null,
+    addEventListener: (_: string, fn: () => void) => void listeners.add(fn),
+    removeEventListener: (_: string, fn: () => void) => void listeners.delete(fn),
+    addListener() {},
+    removeListener() {},
+    dispatchEvent: () => false,
+  }));
+  return (next: boolean) => {
+    dark = next;
+    for (const fn of listeners) fn();
+  };
+}
 
 beforeEach(() => {
   installAppGlobals();
@@ -343,6 +375,298 @@ describe("what the browser build does not offer", () => {
         expect(status().length).toBeGreaterThan(frame.length); // the reason is named
         expect(vi.mocked(alert).mock.calls.length).toBe(dialogsBefore);
       }
+    });
+  }
+});
+
+describe("saving a plan", () => {
+  // A dismissed save dialog is a routine outcome, not a failure — the status line, and
+  // nothing else. The distinction that matters is against the case below: both leave the
+  // plan unsaved, and only one of them is worth a modal.
+  it("reports a dismissed save dialog on the status line", async () => {
+    await boot();
+    vi.mocked(saveTextDocument).mockResolvedValueOnce({ saved: false });
+    $("btn-save").click();
+    await vi.waitFor(() => expect(status()).toBe(t().status.canceled));
+    expect(vi.mocked(alert)).not.toHaveBeenCalled();
+  });
+
+  // A write that FAILED must surface as a modal and keep the plan dirty: a silent
+  // rejection would read as a successful save, which is the one misreport that loses work.
+  it("raises a modal for a save that failed", async () => {
+    await boot();
+    vi.mocked(saveTextDocument).mockRejectedValueOnce(new Error("disk-full"));
+    $("btn-save").click();
+    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
+    // showError clears the status line first, so a stale progress message cannot linger
+    // behind the dialog and read as the outcome.
+    expect(status()).toBe("");
+  });
+
+  // A save that landed somewhere unnamed: the browser download path returns no path, and
+  // there is nothing to put on the recent list. The two save messages are separate keys
+  // precisely because one of them can name the file and the other cannot.
+  it("reports a save that reports no path", async () => {
+    await boot();
+    vi.mocked(saveTextDocument).mockResolvedValueOnce({ saved: true });
+    $("btn-save").click();
+    await vi.waitFor(() => expect(status()).toBe(t().status.planSaved));
+  });
+});
+
+describe("what the share link does when the codec will not run", () => {
+  // A webview without the deflate-raw codec is a browser limitation rather than a broken
+  // plan, and the codec says so with a typed error the app translates as such. Anything
+  // else is framed as a share failure. Both arms are here because they surface through the
+  // same modal and only the TEXT tells them apart — the whole point of the typed error.
+  it("names the browser floor when the compressor cannot be constructed", async () => {
+    vi.stubGlobal(
+      "CompressionStream",
+      class {
+        constructor() {
+          throw new Error("deflate-raw unsupported");
+        }
+      },
+    );
+    await boot();
+    $("btn-share").click();
+    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalledWith(t().error.planUrlUnsupported));
+    expect(location.search).not.toContain("plan="); // nothing was put in the bar either
+  });
+
+  it("frames any other encoding failure as a share failure", async () => {
+    await boot();
+    // The codec constructs, then the pipe it feeds fails. `Blob.stream` is what the
+    // encoder pipes from (see plan.ts pipeBytes) and jsdom does not ship it — the suite's
+    // own beforeEach adds it — so removing it again is the platform failing rather than a
+    // mock of one.
+    const stream = Blob.prototype.stream;
+    delete (Blob.prototype as { stream?: unknown }).stream;
+    try {
+      $("btn-share").click();
+      await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
+      const [message] = vi.mocked(alert).mock.calls.at(-1)!;
+      expect(String(message)).not.toBe(t().error.planUrlUnsupported);
+      expect(String(message).startsWith(t().status.shareUrlError(""))).toBe(true);
+    } finally {
+      Blob.prototype.stream = stream;
+    }
+  });
+});
+
+describe("the theme", () => {
+  /** Pick a theme mode through the Preferences row that owns it. */
+  const pickTheme = (mode: string): void => {
+    $("btn-prefs").click();
+    const sel = $<HTMLSelectElement>("prefs-theme");
+    sel.value = mode;
+    sel.dispatchEvent(new Event("change"));
+  };
+
+  it("applies and announces an explicit choice", async () => {
+    await boot();
+    pickTheme("dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(status()).toBe(t().status.themeDark);
+    expect(localStorage.getItem("urx-theme")).toBe("dark");
+
+    pickTheme("light");
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(status()).toBe(t().status.themeLight);
+  });
+
+  // Auto says "follow the OS", so its message names the mode rather than the resolved
+  // theme — the resolved one can change afterwards with no press at all, which is the
+  // case below.
+  it("announces auto as auto rather than as the theme it resolved to", async () => {
+    await boot();
+    pickTheme("dark");
+    pickTheme("auto");
+    expect(status()).toBe(t().status.themeAuto);
+    expect(document.documentElement.dataset.theme).toBe("light"); // the stub's OS is light
+  });
+
+  // The OS scheme moving under an open app has to repaint the surfaces CSS variables
+  // cannot repaint on their own (the SVG board, a tuning screen's canvas). Unreachable
+  // through the shared globals — their matchMedia takes a listener and never calls it —
+  // so this case installs one that can be told the OS moved.
+  it("follows the OS scheme while in auto, and stops following once a choice is made", async () => {
+    const setOsDark = installFlippableColorScheme();
+    await boot();
+    expect(document.documentElement.dataset.theme).toBe("light");
+
+    setOsDark(true);
+    expect(document.documentElement.dataset.theme).toBe("dark");
+
+    // An explicit choice takes over: the OS moving back must not undo it.
+    pickTheme("dark");
+    setOsDark(false);
+    expect(document.documentElement.dataset.theme).toBe("dark");
+  });
+});
+
+describe("switching language at runtime", () => {
+  // The language row lives inside Preferences, so the switch happens with that modal open
+  // and it has to be rebuilt in the new language — along with the toolbar labels, the
+  // inspector and the board's chrome.
+  //
+  // The frames are read from the app's OWN i18n module rather than from this file's import
+  // of it. `bootApp` resets the module registry, so the two are different instances: the
+  // one this file bound at its top is still on English after the app has switched, and
+  // asserting against it compares a Japanese status line with an English frame. Imported
+  // after the boot, the registry hands back the instance `main.ts` is using.
+  it("relabels the app and says which language it is now in", async () => {
+    await boot();
+    const { t: appT, LANG_NAMES } = await import("./i18n");
+    const modelLabel = $("lbl-model").textContent;
+    $("btn-prefs").click();
+    const sel = $<HTMLSelectElement>("prefs-lang");
+    sel.value = "ja";
+    sel.dispatchEvent(new Event("change"));
+
+    await vi.waitFor(() => expect(document.documentElement.lang).toBe("ja"));
+    expect($("lbl-model").textContent).not.toBe(modelLabel);
+    expect(status()).toBe(appT().status.language(LANG_NAMES.ja));
+    // The modal was rebuilt rather than left showing the language that just left, so its
+    // own row label is the Japanese one and the select is still on screen.
+    expect($("prefs-lang").isConnected).toBe(true);
+    expect($("prefs-modal").textContent).toContain(appT().prefs.language);
+  });
+});
+
+// The edit funnel every inspector control writes through: which repaint an edit earns,
+// and the device behaviours the app mirrors offline so the plan never holds a value the
+// unit would have reset.
+describe("editing a node through the inspector", () => {
+  /** Select a node on the board. Dispatched rather than clicked because in jsdom every
+   *  rect measures zero, so a real click resolves to nothing at all; the node's own panel
+   *  rect is the target the graph's helpers use for the same reason. */
+  const selectNode = (id: string): void => {
+    const face = $("graph-host").querySelector<SVGElement>(`g.node[data-id="${id}"] rect`)!;
+    face.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+    face.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+  };
+
+  /** The inspector row a label names. Addressed by the `data-param-label` the panel
+   *  stamps, and with the label read out of the catalog: an index would move whenever a
+   *  lock removed a control above it, and a typed-in label would fail in Japanese. */
+  const row = (label: string): HTMLElement => {
+    const found = $("inspector").querySelector<HTMLElement>(`.param[data-param-label="${label}"]`);
+    expect(found, `the inspector shows a "${label}" row`).not.toBeNull();
+    return found!;
+  };
+
+  const nodeText = (id: string): string => $("graph-host").querySelector(`g.node[data-id="${id}"]`)?.textContent ?? "";
+
+  // Renaming mutates in place and repaints only the node's label, so the field keeps
+  // focus while typing — which is the reason it is not a re-render, and the half a
+  // board-only assertion would miss.
+  it("renames a node without rebuilding the panel, and clears the override on empty", async () => {
+    // Booted on the DEVICE label source, which is what draws the plan's own names on the
+    // board. The default is the model's fixed labels, and against those a rename repaints
+    // a label that cannot show it — measured: the node kept reading "CH 1" while the plan
+    // held the new name, so the case passed for nothing on the clear half and failed on
+    // the set half for a reason that was not the funnel.
+    await boot({ "urx-labels": "device" });
+    selectNode("ch1");
+    const field = row(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+    const fallback = field.placeholder; // the model's own label, shown as the placeholder
+    expect(fallback).not.toBe("");
+
+    field.focus();
+    field.value = "PROBE";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(nodeText("ch1")).toContain("PROBE");
+    expect(document.activeElement).toBe(field); // the panel was not rebuilt under the cursor
+
+    // Whitespace is empty: the override is cleared rather than the node being named " ".
+    field.value = "   ";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(nodeText("ch1")).not.toContain("PROBE");
+  });
+
+  // Recolor DOES re-render — the active swatch ring has to move — so every read below goes
+  // through the rebuilt row rather than through the elements captured before the click.
+  //
+  // Which swatch starts selected is not assumed: the factory seed already colours the
+  // input channels, so a case written from "nothing is picked yet" was asserting about a
+  // plan this app does not start with.
+  it("recolors a node and clears the override again", async () => {
+    await boot();
+    selectNode("ch1");
+    const swatches = (): HTMLButtonElement[] => [
+      ...row(t().inspector.color).querySelectorAll<HTMLButtonElement>("button.swatch"),
+    ];
+    const none = (): HTMLButtonElement => swatches().find((s) => s.classList.contains("swatch-none"))!;
+    const pickedAt = (): number => swatches().findIndex((s) => s.classList.contains("sel"));
+    const before = pickedAt();
+    expect(before).toBeGreaterThan(-1); // exactly one ring is on, whichever it is
+
+    const other = swatches().findIndex((s, i) => i !== before && !s.classList.contains("swatch-none"));
+    swatches()[other].click();
+    await vi.waitFor(() => expect(pickedAt()).toBe(other));
+
+    // null clears the override, which is a different write from picking a colour and has
+    // to leave the node with no colour rather than with the first one on the strip.
+    none().click();
+    await vi.waitFor(() => expect(none().classList.contains("sel")).toBe(true));
+    expect(pickedAt()).toBe(swatches().indexOf(none()));
+  });
+
+  // SSMCS and COMP→EQ are exclusive on a MONO IN channel and share the DSP: switching the
+  // type on the unit loads the destination chain's FACTORY values, so the app mirrors that
+  // rather than leaving the plan holding a bank the device has already reset.
+  //
+  // The Rec Point is what makes the mirror observable from outside: SSMCS has no discrete
+  // EQ stage, so the device drops PRE EQ from the list and moves a selected PRE EQ tap to
+  // PRE COMP. Every read re-queries — the type change re-renders the panel, and the
+  // elements captured before it belong to a panel that is gone.
+  it("moves a PRE EQ rec point to PRE COMP when the channel enters SSMCS", async () => {
+    await boot();
+    selectNode("ch1");
+    const recPoint = (): HTMLSelectElement => row(t().inspector.recPoint).querySelector<HTMLSelectElement>("select")!;
+    recPoint().value = String(REC_POINT_PRE_EQ);
+    recPoint().dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(recPoint().value).toBe(String(REC_POINT_PRE_EQ)));
+
+    const type = row(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    type.value = String(COMP_EQ_SSMCS);
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => expect(recPoint().value).toBe(String(REC_POINT_PRE_COMP)));
+    // …and the stage that no longer exists is off the list, so it cannot be chosen again.
+    expect([...recPoint().options].map((o) => o.value)).not.toContain(String(REC_POINT_PRE_EQ));
+  });
+});
+
+describe("menu keyboard navigation", () => {
+  const items = (): HTMLButtonElement[] => [...$("file-menu").querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+
+  it("jumps to the first and last item with Home and End", async () => {
+    await boot();
+    $("btn-file").click();
+    const list = items();
+    expect(list.length).toBeGreaterThan(1);
+
+    chord("End");
+    expect(document.activeElement).toBe(list[list.length - 1]);
+    chord("Home");
+    expect(document.activeElement).toBe(list[0]);
+  });
+
+  // The trigger opens from the keyboard as well as from a press, and each of the three
+  // keys is its own arm — a version of this that only pressed Enter would leave the other
+  // two able to scroll the page instead.
+  for (const key of ["ArrowDown", "Enter", " "]) {
+    it(`opens the menu on ${key === " " ? "Space" : key} and focuses its first item`, async () => {
+      await boot();
+      const trigger = $("btn-file");
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      trigger.dispatchEvent(event);
+      expect($("file-menu").hidden).toBe(false);
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+      expect(document.activeElement).toBe(items()[0]);
+      expect(event.defaultPrevented).toBe(true); // Space must not scroll the page
     });
   }
 });
