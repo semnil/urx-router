@@ -418,6 +418,13 @@ export class DynScreen {
   private readoutCols = 3;
   private unsub: (() => void) | null = null;
   private raf = 0;
+  /** The address set the current registration covers, and a counter that supersedes
+   *  one still in flight. `addrs()` is not constant for the session — the DUCKER's KEY
+   *  lane reads the tap its source channel's Rec Point names, so a follow, an undo or
+   *  a plan load can move it — and a registration that outlives the lanes streams an
+   *  address nothing reads while the lane it belongs to sits at the floor. */
+  private subSig = "";
+  private subGen = 0;
 
   /** Live readings, folded per lane, written by paint() and read by the overlay. */
   private readings = new Map<string, number | null>();
@@ -534,6 +541,17 @@ export class DynScreen {
     // a screen left open on a bank the plan no longer emits would keep writing
     // into it — so it is decided before anything else.
     if (!this.rebind()) return;
+    // A lane's tap can move without the screen closing: the DUCKER's KEY lane reads
+    // the tap its source channel's Rec Point names, and a front-panel change, an undo
+    // or a plan load all reach here. The registration is taken at `open`, so without
+    // this the lane would ask the store for an address the broker was never told to
+    // stream — a bar at the floor and a readout at "—", which is the one reading this
+    // screen must never show for a signal that is present. Checked before the grabbed
+    // early return, since the rebuild is what waits for a gesture, not the feed.
+    if (this.hooks.isLive() && this.addrSig() !== this.subSig) {
+      this.stopMeters();
+      this.startMeters();
+    }
     // Device follow runs on its own clock, and under COMP 1-knob it runs on every
     // step of a drag — the unit recomputes threshold / ratio / gain and announces
     // them, which comes back here. Rebuilding then would replace the control being
@@ -596,8 +614,9 @@ export class DynScreen {
 
   // ---------------------------------------------------------------- meters
 
-  /** The addresses this screen streams, in lane order. Pure: the lanes are resolved
-   *  by `bind`, since the node is fixed for the session. */
+  /** The addresses this screen streams, in lane order. Resolved from the lanes `bind`
+   *  produced, which `rebind` re-resolves against the current plan — so this moves
+   *  when a lane's tap does. */
   private addrs(): Array<[number, number]> {
     const out: Array<[number, number]> = [];
     for (const lane of this.lanes) {
@@ -606,8 +625,20 @@ export class DynScreen {
     return out;
   }
 
+  /** The address set as one comparable string, in lane order. */
+  private addrSig(): string {
+    return this.addrs()
+      .map((a) => `${a[0]}:${a[1]}`)
+      .join(",");
+  }
+
   private startMeters(): void {
     if (!this.hooks.isLive()) return;
+    // Stamped synchronously, before the round trip: a re-scope that arrives while the
+    // registration is still in flight is then visible to `refresh` as a difference
+    // rather than being compared against the set this call is about to install.
+    const gen = ++this.subGen;
+    this.subSig = this.addrSig();
     // Take the slot before subscribing: the broker replaces the previous
     // registration silently, so the console must be told rather than discover it.
     this.hooks.releaseMeters();
@@ -628,7 +659,10 @@ export class DynScreen {
       }
     })
       .then((unsub) => {
-        if (this.isOpen()) this.unsub = unsub;
+        // Superseded while in flight (a re-scope, or a close) — drop the handle here
+        // rather than installing it over the live one, which would leak the older
+        // registration at the broker.
+        if (this.isOpen() && gen === this.subGen) this.unsub = unsub;
         else unsub();
       })
       .catch((e: unknown) => this.hooks.onMeterError(e instanceof Error ? e.message : String(e)));
@@ -649,6 +683,10 @@ export class DynScreen {
   private stopMeters(): void {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
+    // Supersede a registration still in flight, so its handle is dropped rather than
+    // installed after this teardown.
+    this.subGen++;
+    this.subSig = "";
     this.unsub?.();
     this.unsub = null;
     this.store.clear();

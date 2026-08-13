@@ -238,6 +238,44 @@ describe("meter subscription", () => {
     expect(meterMocks.subscribe).toHaveBeenCalledTimes(2);
   });
 
+  // The screen took its registration at `open` on the premise that a node's address
+  // set is fixed for the session. The DUCKER's KEY lane broke that: it reads the tap
+  // its SOURCE channel's Rec Point names, and a front-panel change, an undo or a plan
+  // load all arrive as a refresh. Without re-subscribing, the lane asks the store for
+  // an address the broker was never told to stream — a bar at the floor and a readout
+  // at "—" for a signal that is present, until the screen is closed and reopened.
+  it("re-subscribes when a lane's tap moves under the open screen", async () => {
+    host = dynHost({ live: true });
+    const screen = new DynScreen(host.hooks);
+    screen.open(DYN_PROCESSORS.ducker, "out.ducker1");
+    await Promise.resolve();
+    expect(meterMocks.subscribe).toHaveBeenCalledTimes(1);
+    // CH 1 is ducker 1's key source in the factory plan; 113 is its PRE FADER tap.
+    expect(subscribedAddrs()[0]).toEqual([113, 0]);
+
+    // The unit's own Rec Point moves to PRE GATE, which the follow puts in the plan.
+    host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], recPoint: 0 };
+    screen.refresh();
+    await Promise.resolve();
+    expect(meterMocks.unsub).toHaveBeenCalledTimes(1);
+    expect(meterMocks.subscribe).toHaveBeenCalledTimes(2);
+    expect(subscribedAddrs()[0]).toEqual([106, 0]);
+  });
+
+  // A refresh that leaves every tap where it was must not re-register: a follow can
+  // deliver these at ~20 Hz, and the broker replaces the registration each time.
+  it("leaves the registration alone when a refresh moves no tap", async () => {
+    host = dynHost({ live: true });
+    const screen = new DynScreen(host.hooks);
+    screen.open(DYN_PROCESSORS.ducker, "out.ducker1");
+    await Promise.resolve();
+    screen.refresh();
+    screen.refresh();
+    await Promise.resolve();
+    expect(meterMocks.subscribe).toHaveBeenCalledTimes(1);
+    expect(meterMocks.unsub).not.toHaveBeenCalled();
+  });
+
   it("ignores a live-sync change while the screen is closed", () => {
     host = dynHost({ live: true });
     const screen = new DynScreen(host.hooks);
