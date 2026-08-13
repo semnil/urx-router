@@ -10,9 +10,12 @@
 // The Tauri half matters because `isTauri()` is what gates the whole device layer.
 // Left undefined, `main.ts` runs its browser path and roughly half the module is
 // unreachable — which is not "untested code", it is code no unit test could reach at
-// all. `tauriShell()` installs the same two pieces `e2e/tauri-stub.ts` installs for
-// the E2E tier (an `invoke` over a command table, and a `Channel` class), so the two
-// tiers drive the same seam rather than two different inventions.
+// all. `tauriShell()` installs the same pieces `e2e/tauri-stub.ts` installs for the E2E
+// tier — an `invoke` over a command table, a `Channel` class, and a `transformCallback`
+// that KEEPS what it is handed — so the two tiers drive the same seam rather than two
+// different inventions. That last one is not decoration: the shell delivers drag & drop
+// and the macOS Edit menu as events rather than as anything the DOM produces, so a
+// fixture that discarded the callback left those flows registered and unreachable.
 
 import { vi } from "vitest";
 import { readFileSync } from "node:fs";
@@ -43,6 +46,14 @@ export interface TauriShell {
   channels: Array<{ onmessage: (data: unknown) => void }>;
   /** How many times `cmd` was invoked. */
   count: (cmd: string) => number;
+  /** Deliver a shell event to every handler the app registered for it, and answer how
+   *  many there were. The desktop shell intercepts drag & drop and the macOS Edit menu
+   *  before the webview sees them, so those arrive as events rather than as anything the
+   *  DOM can be made to produce — without this they are registered and unreachable, and
+   *  a case can only assert the halves of those flows that a menu button also reaches.
+   *  Returning the count keeps "nothing was listening" from reading as "the handler ran
+   *  and did nothing". */
+  emit: (event: string, payload?: unknown) => number;
 }
 
 /** The boot-time queries every launch answers, and the registrations a Live session
@@ -140,15 +151,26 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     }
   }
 
+  // The shell's event callbacks, kept rather than discarded. `listenEvent` hands the
+  // function to `transformCallback` and then names the id it gets back when it registers,
+  // so holding both halves is what makes an event deliverable at all.
+  const callbacks = new Map<number, (message: unknown) => void>();
+  const listeners = new Map<string, number[]>();
+  let nextCallback = 1;
+
   (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
     Channel,
     transformCallback: (fn: (payload: unknown) => void) => {
-      void fn;
-      return 1;
+      const id = nextCallback++;
+      callbacks.set(id, fn as (message: unknown) => void);
+      return id;
     },
     invoke: (cmd: string, a?: Record<string, unknown>) => {
       invokes.push(cmd);
       args.push(a);
+      if (cmd === "plugin:event|listen" && typeof a?.event === "string" && typeof a.handler === "number") {
+        listeners.set(a.event, [...(listeners.get(a.event) ?? []), a.handler]);
+      }
       if (once.has(cmd)) {
         const err = once.get(cmd);
         once.delete(cmd);
@@ -156,7 +178,15 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
       }
       if (!(cmd in table)) return Promise.reject(new Error(`stub: unhandled command ${cmd}`));
       const v = table[cmd];
-      return Promise.resolve(typeof v === "function" ? (v as (x: Record<string, unknown>) => unknown)(a ?? {}) : v);
+      if (typeof v !== "function") return Promise.resolve(v);
+      // A table function that throws synchronously has to REJECT, not throw out of
+      // `invoke`: the real IPC always returns a promise, so a caller that only attaches
+      // `.catch` would survive the device and blow up here.
+      try {
+        return Promise.resolve((v as (x: Record<string, unknown>) => unknown)(a ?? {}));
+      } catch (err) {
+        return Promise.reject(err);
+      }
     },
   };
 
@@ -167,6 +197,13 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     answer: (cmd, value) => void (table[cmd] = value),
     failOnce: (cmd, err) => void once.set(cmd, err),
     count: (cmd) => invokes.filter((c) => c === cmd).length,
+    emit: (event, payload) => {
+      const ids = listeners.get(event) ?? [];
+      // The shape `listenEvent` unwraps: it reads `.payload` off the message and hands
+      // that to the app's handler.
+      for (const id of ids) callbacks.get(id)?.({ event, id, payload });
+      return ids.length;
+    },
   };
 }
 
