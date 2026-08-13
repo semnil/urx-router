@@ -548,6 +548,28 @@ describe("diffNames", () => {
     expect((await diffNames(model, plan)).writes).toEqual([]);
   });
 
+  // The other side of that trim, and the one that could not converge. The trim above
+  // is one-sided, so it only closes the gap when the PLAN side is clean — and a name
+  // ending in a space survived every gate into the plan. The device does not settle it
+  // either: measured on a URX44V (2026-08-14), `"SPCTEST "` is stored and read back
+  // unchanged rather than padded away. So the comparison differed on every sync and
+  // re-sent the name forever, invisibly — each round reports one write and succeeds at
+  // it, and the two names render identically wherever they are shown.
+  it("does not re-send a name forever because the plan side carried the padding", async () => {
+    const plan = namedPlan();
+    for (const id of Object.keys(plan.nodeNames)) plan.nodeNames[id] += " ";
+    const writes = planToNameWrites(model, plan);
+    expect(writes.length).toBeGreaterThan(0);
+    // Nothing leaves for the wire still carrying it — that value is what the device
+    // then holds, and what the trimmed read is compared against.
+    for (const w of writes) expect(w.value).toBe(w.value.trimEnd());
+    // The device holds exactly what emit sent it.
+    vi.mocked(vdGetStr).mockImplementation((param, _x, y) =>
+      Promise.resolve(writes.find((w) => w.param === param && w.y === y)?.value ?? ""),
+    );
+    expect((await diffNames(model, plan)).writes).toEqual([]);
+  });
+
   // Matching diffPlan: an unreadable name is reported and left out, so the caller
   // aborts rather than writing over a name it could not read.
   it("leaves an unreadable name out of the writes and records the error", async () => {

@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import {
   clipNodeName,
+  normalizeNodeName,
   emptyPlan,
   ensureFixedConnections,
   serialize,
@@ -437,5 +438,44 @@ describe("node names are bounded by what the unit can hold", () => {
     expect(plan.nodeNames["ch1"]).toBe("z".repeat(8));
     // An ordinary name is untouched — the guard bounds, it does not rewrite.
     expect(plan.nodeNames["ch2"]).toBe("Kick");
+  });
+
+  // The second half of what a stored name is. The device keeps a trailing space rather
+  // than treating it as padding (measured on a URX44V, 2026-08-14: `"SPCTEST "` is
+  // stored and read back unchanged), while every read path trims one off — so a plan
+  // holding one is never equal to what the device answers, and the name is re-sent on
+  // every sync forever. Nothing shows it: the two render identically.
+  it("drops trailing padding from a stored name, and keeps a leading space", () => {
+    expect(normalizeNodeName("Kick ")).toBe("Kick");
+    expect(normalizeNodeName("Kick\t\n ")).toBe("Kick");
+    // trimEnd and not trim: the device right-aligns the numbers in the stereo pair
+    // labels, so a LEADING space is part of the factory name and stripping it would
+    // write the shortened form back on the next sync.
+    expect(normalizeNodeName(" 5/ 6")).toBe(" 5/ 6");
+    // All blank is no name at all — the callers delete the key on an empty result.
+    expect(normalizeNodeName("    ")).toBe("");
+  });
+
+  // Cut first, then trim. The other order hands the cut a string whose eighth character
+  // is a space and has no second pass to remove it.
+  it("cannot leave a trailing space behind by cutting onto one", () => {
+    const cutsOntoASpace = "1234567  9";
+    expect(chars(cutsOntoASpace)).toBeGreaterThan(8);
+    expect(normalizeNodeName(cutsOntoASpace)).toBe("1234567");
+    // The order that does not work, pinned so the reason survives the next rewrite:
+    // trimming first finds nothing to trim, and the cut then ends on the space.
+    expect(clipNodeName(cutsOntoASpace.trimEnd())).toBe("1234567 ");
+  });
+
+  it("applies that at the load funnel too", () => {
+    const doc = JSON.stringify({
+      format: PLAN_FORMAT,
+      version: PLAN_VERSION,
+      modelId: "URX44V",
+      nodeNames: { ch1: "Kick ", ch2: " 5/ 6" },
+    });
+    const plan = deserialize(doc);
+    expect(plan.nodeNames["ch1"]).toBe("Kick");
+    expect(plan.nodeNames["ch2"]).toBe(" 5/ 6");
   });
 });

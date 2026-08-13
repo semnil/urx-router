@@ -3034,6 +3034,17 @@ applied again at the emit site: a name reaches the plan from a device read and f
 the unit itself, neither of which passes this funnel. Notes and colours are the app's own and stay
 unbounded.
 
+The cut carries a second rule, and the order between them is load-bearing: **trailing whitespace is
+stripped after the cut**, never before. A leading space is kept — the unit right-aligns the numbers
+in its stereo pair labels, so the factory name really is ` 5/ 6`, and stripping both ends would write
+the shortened form back on the next sync. Trailing is stripped because the unit does not treat it as
+padding: measured on a URX44V (2026-08-14), a name written with a trailing space is stored and read
+back with it, while every path that reads a name into the plan trims one off. A plan holding one is
+therefore never equal to what the device answers, and the name is re-sent on every sync — forever,
+and invisibly, since the two render identically and each round reports one write that then succeeds.
+Stripping after the cut is what stops the cut from creating one: a name whose eighth character is a
+space has nothing to trim before the cut and ends on that space after it.
+
 A scene-scoped save (Preferences > Plan files) additionally writes `"scope": "scene"`, omits
 `sampleRate`, and strips the scene-external state (the monitor / oscillator node params, the
 streaming delay and color, and every patch / record / monitor- or streaming-source / OSC-assign

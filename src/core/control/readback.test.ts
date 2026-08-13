@@ -873,6 +873,23 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     await applyDeviceState(model, plan);
     expect(plan.nodeNames.ch1).toBe("12345678");
   });
+
+  // …and the cut must not put back the padding the read just dropped. Trimming before
+  // cutting finds nothing to trim on a name whose last character is not a space, and
+  // the cut then lands on one — a trailing space in the plan, arriving by the very
+  // path that exists to keep one out. It does not settle either: the device stores a
+  // trailing space unchanged (measured on a URX44V, 2026-08-14) while this read trims
+  // one off, so the emitted name and the device value differ on every sync.
+  it("does not put a trailing space in the plan by cutting onto one", async () => {
+    mockVdGetFrom(new Map());
+    vi.mocked(vdGetStr).mockImplementation((paramId: number, _x: number, y: number) =>
+      Promise.resolve(paramId === 18 && y === 0 ? "1234567  9" : ""),
+    );
+
+    const plan = emptyPlan("URX44V");
+    await applyDeviceState(model, plan);
+    expect(plan.nodeNames.ch1).toBe("1234567");
+  });
 });
 
 describe("formatReadbackReport", () => {

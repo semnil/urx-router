@@ -636,6 +636,34 @@ describe("editing a node through the inspector", () => {
     expect(saved.nodeNames?.ch1).toBeUndefined();
   });
 
+  // Trailing padding is not part of a name, and the FIELD is not where it is dropped: its
+  // clip runs on every keystroke, so trimming there would eat the space in "A B" as it is
+  // typed. It goes at the commit — which is why this reads the saved document. The board
+  // cannot tell the two apart (a trailing space renders as nothing, and the graph trims
+  // what it draws anyway), so neither can the operator. What it changes is what leaves the
+  // app: the unit stores a trailing space rather than padding it away, while every read
+  // path trims one off, so a plan holding one never matches the device and the name is
+  // re-sent on every sync.
+  it("stores a name with its trailing padding dropped, while an inner space survives", async () => {
+    await boot({ "urx-labels": "device" });
+    selectNode("ch1");
+    const field = row(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+    field.focus();
+    field.value = "A B ";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    // The field keeps what was typed — the caret is still after the space, and the next
+    // character has to be able to land after it.
+    expect(field.value).toBe("A B ");
+
+    const saves = vi.mocked(saveTextDocument).mock.calls.length;
+    $("btn-save").click();
+    await vi.waitFor(() => expect(vi.mocked(saveTextDocument).mock.calls.length).toBe(saves + 1), APP_SETTLE);
+    const saved = JSON.parse(vi.mocked(saveTextDocument).mock.calls.at(-1)![1]) as {
+      nodeNames?: Record<string, string>;
+    };
+    expect(saved.nodeNames?.ch1).toBe("A B");
+  });
+
   // Recolor DOES re-render — the active swatch ring has to move — so every read below goes
   // through the rebuilt row rather than through the elements captured before the click.
   //

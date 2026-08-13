@@ -17,7 +17,13 @@ import type {
   SsmcsBand,
   SsmcsParams,
 } from "../plan";
-import { clearIncoming, clipNodeName, ensureFixedConnections, removeConnection, setExclusiveConnection } from "../plan";
+import {
+  clearIncoming,
+  ensureFixedConnections,
+  normalizeNodeName,
+  removeConnection,
+  setExclusiveConnection,
+} from "../plan";
 import { applyPatchInContext, clonePlanState, diffPlans, dropAuthored, readableContestKey } from "../plan-history";
 import type { PlanPatch, PlanWriteWitness } from "../plan-history";
 import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
@@ -527,16 +533,16 @@ async function readPass(
       const nc = nameControl(model, node.id);
       if (!nc) continue;
       try {
-        // trimEnd, not trim: the device right-aligns numbers in the stereo pair
-        // labels, so the factory name really is " 5/ 6" and a leading-space strip
-        // would write the shortened form back on the next sync. Trailing padding
-        // is still dropped so an all-blank name reads as empty.
-        // Bounded on the way IN as well as on the way out: the unit's name screen
+        // Normalized on the way IN as well as on the way out. The unit's name screen
         // takes 8 characters but the wire does not enforce that (a 20-character name
         // is storable and reads back whole), and an unbounded one in the plan draws a
-        // node label across its neighbours. Clipping here also lets the next converge
-        // settle it on the device instead of diffing against a name emit would cut.
-        const name = clipNodeName((await vdGetStr(nc.param, 0, nc.instances[0])).trimEnd());
+        // node label across its neighbours; normalizing here also lets the next
+        // converge settle it on the device instead of diffing against a name emit
+        // would cut. Trailing padding goes with it — trimEnd and not trim, because the
+        // device right-aligns numbers in the stereo pair labels, so the factory name
+        // really is " 5/ 6" and a leading-space strip would write the shortened form
+        // back on the next sync. An all-blank name reads as empty and clears the key.
+        const name = normalizeNodeName(await vdGetStr(nc.param, 0, nc.instances[0]));
         if (name) plan.nodeNames[node.id] = name;
         else delete plan.nodeNames[node.id];
         applied++;
