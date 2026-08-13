@@ -215,5 +215,8 @@ export const DUCKER_DYN: DynProcessor = {
 };
 
 /** The gain axis floor: the range control's own deepest setting, so the plot shows
- *  every value range can take and no more. */
-const RANGE_FLOOR_DB = -72;
+ *  every value range can take and no more. The ducker shares the broker's `range`
+ *  table with the GATE, whose floor is -72, but the device stops the ducker at -70
+ *  (confirmed on the unit's own LCD) — reading the floor off the shared table drew
+ *  2 dB the control cannot reach. */
+const RANGE_FLOOR_DB = -70;

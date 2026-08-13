@@ -345,7 +345,7 @@ they use.
 ### Envelope
 
 x is logarithmic time spanning both controls at once (attack from 0.092 ms, decay to 5 s); y is gain,
-0 at the top down to the range control's -72 dB floor. Three straight segments: down to the range
+0 at the top down to the range control's -70 dB floor. Three straight segments: down to the range
 over `attack`, held, back to unity over `decay`.
 
 **Straight, and with no live overlay.** The release is an exponential approach whose tail is
@@ -566,7 +566,7 @@ capture.
 | DUCKER's reduction merged into KEY or PRE DUCKER | Measured: a reduction grows down from 0 and a level grows up from the floor, so they collide when `level + |reduction| > 0 dBFS`. On an input lane that is the normal case — at the factory range the block covers 93% of the ruler and the bar's top is unreadable |
 | A live overlay on the envelope | Once the reduction became a block on the POST bar a few pixels away, an overlay was a second display of one quantity. A time axis gives a live reading no position, so it could only slide up and down |
 | A Ladder / Envelope toggle on DUCKER | Both are on screen at once, as the EQ's are, so nothing chooses between them and the heading would name a choice that does not exist |
-| Widening DUCKER's ruler to -72 dB so the merged reduction keeps its depth | Buys the deep end of the range control at the cost of every other lane's resolution, and the bottom 12 dB is dead for the KEY lane — the threshold cannot go there |
+| Widening DUCKER's ruler to -70 dB so the merged reduction keeps its depth | Buys the deep end of the range control at the cost of every other lane's resolution, and the bottom 10 dB is dead for the KEY lane — the threshold cannot go there |
 | Shortening the note's copy to stop it clipping | The container was the defect, not the copy: at one reserved line the shipped COMP and EQ notes already wrapped below ~1150 px of window (~1300 px in Japanese). Shortening only moves the width at which the next one is cut |
 | An in-screen channel selector | Every switch would re-register the address set, and the screen is opened per channel from a per-channel control anyway |
 | A gesture on the CONSOLE GATE chip (double-click / right-click) | Double-click is the factory reset elsewhere in the view and `wireActivate` has no `detail` guard; right-click is unused app-wide but collides with the macOS native menu on Ctrl+click |

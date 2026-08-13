@@ -146,9 +146,14 @@ describe("envelope plot", () => {
   const geo = DUCKER_DYN.plotGeo(W, H, ctxFor(DUCKER));
   const TOK: Record<string, string> = {};
 
+  // The floor is the range control's deepest setting and nothing beyond it. The
+  // ducker shares the broker's `range` table with the GATE, whose floor is -72, and
+  // reading the axis off that shared table drew 2 dB the control cannot reach — so
+  // -72 landing PAST the floor is half of what this pins.
   it("puts unity at the top of the gain axis and the deepest range at its floor", () => {
     expect(geo.py(0)).toBeCloseTo(geo.pad.t, 5);
-    expect(geo.py(-72)).toBeCloseTo(H - geo.pad.b, 5);
+    expect(geo.py(-70)).toBeCloseTo(H - geo.pad.b, 5);
+    expect(geo.py(-72)).toBeGreaterThan(H - geo.pad.b);
     expect(geo.py(-36)).toBeGreaterThan(geo.py(0));
   });
 
