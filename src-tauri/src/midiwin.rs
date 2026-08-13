@@ -155,16 +155,14 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // nothing else. A rectangle that still has a display of its own is restored where
     // it was — which is the requirement, and what an unconditional override broke.
     //
-    // The fallback earns its place from what a window dragged by its owner ends up as.
+    // The fallback EARNED its place from what a window dragged by its owner ends up as.
     // Measured while this was still an AppKit child on macOS: a parent moved from
     // x=2344 to x=172 took this window from x=536 to x=-1636, off every display, where
     // the window server still reported it on-screen and opaque and nothing was drawn.
-    // That relationship is gone on macOS. It is kept on Windows, and the same drag WAS
-    // measured there (above): this window does not follow its owner at all. So the case
-    // the fallback is still answering is the one stated two paragraphs up — a remembered
-    // rectangle that lands on no attached display. The drag this paragraph records
-    // reaches neither platform as things stand: macOS no longer has the parent it took,
-    // and on Windows the owner was measured (2026-08-13) not to move this window.
+    // That drag reaches neither platform as things stand — macOS no longer has the
+    // parent it took, and on Windows the owner was measured (2026-08-13, above) not to
+    // move this window at all — so what the fallback still answers is the case in the
+    // paragraph above: a remembered rectangle that lands on no attached display.
     #[cfg(desktop)]
     crate::restore_window(
         &win.as_ref().window(),
@@ -209,10 +207,11 @@ pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
 /// seconds a learn is armed, which is why it is not left on.
 ///
 /// On Windows this window still has an owner, and the two compose rather than one
-/// standing in for the other: measured from the panel's own learn button, arming set
-/// `WS_EX_TOPMOST` (the extended style went 0x110 -> 0x118) and disarming cleared it,
-/// with the order against the owner unchanged in both states. So nothing here needs
-/// a `#[cfg]`.
+/// standing in for the other: measured from the panel's own learn button, arming turned
+/// the `WS_EX_TOPMOST` bit (0x8) on and disarming turned it back off — the extended
+/// style went 0x110 -> 0x118 -> 0x110, the rest of it being whatever else that window
+/// carries — with the order against the owner unchanged in both states. So nothing here
+/// needs a `#[cfg]`.
 #[tauri::command]
 pub fn pin_midi_window(app: AppHandle, on: bool) -> Result<(), String> {
     match app.get_webview_window(MIDI_WINDOW) {

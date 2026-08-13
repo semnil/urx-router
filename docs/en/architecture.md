@@ -822,10 +822,12 @@ forced colors leaves alone, so the read-only dims written elsewhere are supposed
 2026-08-13 in WebView2 151.0.4129.78 (debug build, 1280x800 viewport, URX44V) on the inspector's SD Rec
 track-count select, locked by setting the property rather than by holding a session — the same paint path —
 across all four Windows contrast themes: it is separable in pixels under every one, 714–719 of the 8544
-pixels its box covers at that viewport, mean luma 48.8 → 36.6 (hcblack), 236.3 → 245.3 (hcwhite),
-64.7 → 53.1 (hc1) and 19.2 → 5.6 (hc2). On hcwhite the locked face moves TOWARD its ground instead of away
-from it, which is the same signal in the other direction. So the difference survives the mode and this
-block needs no restatement of the lock; whether it *reads* to an operator was not measured. The engine also
+pixels in the rectangle captured around it (its box plus a 2 px margin — the box itself is 263x28),
+mean luma 48.8 → 36.6 (hcblack), 236.3 → 245.3 (hcwhite), 64.7 → 53.1 (hc1) and 19.2 → 5.6 (hc2). Every
+theme's locked face moves toward its own ground, which is what an alpha blend does; hcwhite is the only one
+where that shows as a **rise**, because it is the only theme whose ground is brighter than the control. So
+the difference survives the mode and this block needs no restatement of the lock; whether it *reads* to an
+operator was not measured. The engine also
 substitutes on its own here: a disabled select's text and border become `GrayText`, and, unlike the
 ordinary themes where it supplies **0.7** of its own, under forced colors it supplies **no opacity at
 all**. The authored dim is therefore the entire opacity signal in this mode, and the two mechanisms are
@@ -905,10 +907,11 @@ unit, live, before the operator had moved. The channel tuning screens' threshold
 did not have it.
 
 The ordinary tier pins this in Playwright's Chromium (`e2e/console.spec.ts`) and **nothing pins it in
-WebKit** — the race tier's three `@webkit` cases are about a strip rebuilt under a live pointer and about
-the chord/focus matrix, not about the press. **The shipping WebView2 was measured separately**
+WebKit** — every `@webkit` case in the race tier is about a strip rebuilt under a live pointer or about the
+chord/focus matrix, not about the press. **The shipping WebView2 was measured separately**
 (2026-08-13, debug build, runtime 151.0.4129.78, 1280x800 viewport, URX44V), because that engine is not the
-one any tier runs. Presses at the cap's top edge, centre and bottom edge left the readout unchanged; a
+one any tier runs. From two detents above the factory value, so a stray reset could not read as "the press
+changed nothing": presses at the cap's top edge, centre and bottom edge left the readout unchanged; a
 press at 80% of the fader's height put the cap centre **0.013 px** from the pointer against a half-detent
 tolerance of 2.05 px; and a three-detent drag from a grab moved the cap 12.313 px for the 12.3 px asked.
 Identical for the `mouse`, `pen` and `touch` pointer types — the tiers only exercise the first. One thing
@@ -1141,13 +1144,15 @@ window pushes and reports intents back (`ui/midi-protocol.ts`); everything that 
 `ui/midi.ts`. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
 `invoke`, so the second window needs no capability beyond core. Where it sits is the shell's to remember (see
-"Window geometry"), and it is built as a **child** of the main window, so it cannot fall behind it. Closing the
+"Window geometry"), and so is what keeps it in front of the main window — a Win32 **owner** on Windows, and
+a pin held while learn is armed on macOS, which is where the relationship was dropped. Closing the
 main window closes it; closing it drops learn mode, which would otherwise stay armed against a control nothing
 on screen names.
 
 Because it is a window rather than an overlay it can drift behind ANOTHER APPLICATION, so two things bring the binding back
-to where the operator is looking: it **raises itself when learn turns on** (a plain `set_focus`, not
-always-on-top — that would cover the app for a session to solve a problem lasting a gesture), and every bound
+to where the operator is looking: it **raises itself when learn turns on** (`set_focus`, and always-on-top
+for exactly as long as the learn is armed — never for the session, which would cover the app to solve a
+problem lasting a gesture), and every bound
 control carries **its address as a tooltip** (`CH 1 CC 21`), which costs no layout and is readable with the
 window closed.
 
@@ -1181,8 +1186,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   that count back at zero — so finished opens are counted too and the count is compared across the trip.
   `src-tauri/src/midiwin.rs` adds the window itself: `open_midi_window` (async on purpose —
   building a webview from a blocking command deadlocks on Windows), `close_midi_window`, `focus_midi_window`,
-  `midi_window_open`, and the four relay commands. The window is built as a **child of the main window**, so
-  it cannot fall behind it; see "Window geometry".
+  `midi_window_open`, `pin_midi_window`, and the four relay commands. What keeps it in front of the main
+  window differs by platform — a Win32 **owner** on Windows, the learn-time pin on macOS; see "Window
+  geometry".
 - **Mapping (core/midi/)** — pure, language-agnostic logic. `message.ts` decodes/encodes CC / note / pitch
   bend; `mapping.ts` holds the free-mapping model (address, take-in mode) plus persistence validation (a
   persisted mapping in the removed "relative" take-in mode migrates to absolute on load, and the STEREO /
@@ -2392,9 +2398,9 @@ against each other.
 What the relationship costs, measured on both platforms — and **the two do not agree**, which is why it is
 kept on one and dropped on the other:
 
-| | macOS (AppKit child) | Windows (Win32 owner) |
+| | macOS (AppKit child — **dropped**) | Windows (Win32 owner — in place) |
 | --- | --- | --- |
-| Stays above its owner | yes | yes — with the owner raised programmatically, and with it activated by a real click |
+| Stays above its owner | yes | yes — measured with the owner activated by a real click |
 | Hidden while the owner is minimized | yes | yes |
 | **Composited on another display** | **no** — reported on-screen at layer 0 and alpha 1.0, drawn on neither | **yes**, drawn in full |
 | **Moves with the owner** | **yes**, the same delta to the pixel | **no**, it stays where it is |
@@ -2406,16 +2412,21 @@ exists on Windows. The Windows answers are structural rather than incidental: th
 latter with its parent — so there is nothing that could implement the follow, whatever issues the move.
 Measured through a drag's own message sequence as well as a plain programmatic move.
 
-Three of the four Windows cells were measured on 2026-08-13 (debug build, WebView2 151.0.4129.78, a
-2560x1440 primary and a 1920x1080 secondary, both at 100%) — every row except **hidden while the owner is
-minimized**, which stands on the 2026-08-08 run and was not re-run. The
-top row is two measurements rather than one, because **a probe cannot activate a window across processes**:
-the foreground lock makes `SetForegroundWindow` a silent no-op, so the raise half is programmatic and the
-activation half has to be an operator's click. Windows refuses to break the order from either side —
-`SetWindowPos(main, HWND_TOP)` leaves the panel above it, and `SetWindowPos(midi, main)` and `HWND_BOTTOM`
-leave it above too. `pin_midi_window` composes with the ownership rather than replacing it: arming the
-learn from the panel's own button set `WS_EX_TOPMOST` (extended style 0x110 → 0x118) and disarming cleared
-it, with the owner order unchanged either way.
+The macOS column is what the relationship cost while it was there; what that platform does now, with the
+panel independent, is not measured here. Three of the four Windows cells were measured on 2026-08-13 (debug
+build, WebView2 151.0.4129.78, a 2560x1440 primary and a 1920x1080 secondary, both at 100%) — every row
+except **hidden while the owner is minimized**, which stands on the 2026-08-08 run and was not re-run.
+
+The top row is an operator's click rather than a probe's call, because **a probe cannot activate a window
+across processes**: the foreground lock makes `SetForegroundWindow` a silent no-op. Two programmatic
+attempts to break the order from the other side back it up, and one of them carries its own control:
+`SetWindowPos(midi, HWND_BOTTOM)` **did** move the pair down the global z-order — so the call was not
+inert — and left the panel above the main window all the same, as did `SetWindowPos(midi, main)`. The
+symmetric attempt, `SetWindowPos(main, HWND_TOP)`, left the order alone too, but that reading is **not**
+evidence: an earlier run recorded the same call moving nothing at all, so "the panel stayed above" and "the
+call did nothing" are not separated there. `pin_midi_window` composes with the ownership rather than
+replacing it: arming the learn from the panel's own button turned on `WS_EX_TOPMOST` (bit 0x8; the extended
+style went 0x110 → 0x118) and disarming turned it back off, with the owner order unchanged either way.
 
 `--reset-storage` clears the remembered geometry as well as `localStorage` — both files, since a scale left
 behind for a rectangle that no longer exists would be read against the next rectangle written under that
