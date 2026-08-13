@@ -693,13 +693,13 @@ describe("menu keyboard navigation", () => {
     ...$("file-menu").querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled]):not([hidden])'),
   ];
 
-  // What this does NOT establish: that End lands somewhere the operator can see. The
-  // File menu's last entry is Licenses, which a browser build hides through
-  // `data-control-hide` — and that sets `style.display`, not the `hidden` attribute, so it
-  // stays in the list the app navigates. jsdom focuses a non-rendered button happily; a
-  // real engine refuses, so there End would move focus nowhere. The mismatch is the app's
-  // (one surface hides by display, the other filters by attribute) and is not this
-  // branch's to settle.
+  // What this does NOT establish: that End lands somewhere the operator can see. jsdom
+  // focuses a non-rendered button happily where a real engine refuses, so a build-time
+  // hide this selector does not filter would pass here and strand focus in the app — which
+  // is what the File menu's last entry, the desktop-only Licenses, did while
+  // `data-control-hide` set `style.display` rather than the `hidden` attribute. The hides
+  // are on the attribute now (`main.ts`), and the half only an engine can answer is pinned
+  // in `e2e/licenses.spec.ts`.
   it("jumps to the first and last item with Home and End", async () => {
     await boot();
     $("btn-file").click();
