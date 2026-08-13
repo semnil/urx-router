@@ -13,8 +13,9 @@
 // carries the fold and the constant; here the lane just asks for it.
 
 import { DUCKER_FIELDS, duckerControl, formatDyn } from "../core/control/translate";
+import { REC_POINT_DEFAULT } from "../core/control/params";
 import { DYN_ATTACK_MIN_MS, DUCKER_DECAY_MAX_MS } from "../core/control/vd";
-import { duckerKeyDb, grAddr, tapFor } from "../core/meters";
+import { duckerKeyDb, grAddr, tapFor, tapsFor } from "../core/meters";
 import { incomingConnection } from "../core/plan";
 import type { NodeParams } from "../core/plan";
 import { parseRef, ref } from "../models/types";
@@ -39,12 +40,35 @@ const T_MAX_MS = DUCKER_DECAY_MAX_MS;
 const T_TICKS = [0.1, 1, 10, 100, 1000, 5000];
 const ENV_PAD = { l: 44, r: 14, t: 14, b: 28 };
 
+/** The meter tap each Rec Point setting names, in the tap vocabulary of `meters.ts`.
+ *  A stereo strip carries no discrete PRE EQ tap because its EQ is the first thing in
+ *  the chain, so its INPUT meter is that point (the second entry is reached only there). */
+const REC_POINT_TAPS: Record<number, readonly string[]> = {
+  0: ["pregate"],
+  1: ["precomp"],
+  2: ["preeq", "input"],
+  3: ["preinsfx"],
+  4: ["prefader"],
+};
+
 /** Which meter tap a key source is read at, by what the block diagram calls its OUT.
- *  A channel key is its Rec Point tap — ahead of that channel's own fader and ducker,
- *  so the source's fader does not move the trigger. A bus key is the bus's own OUT,
- *  i.e. after its output insert FX (the diagram prints `STEREO OUT` / `MIX n OUT`
- *  beyond the `INS FX` block, and those are the names the DUCKER SOURCE block takes). */
-const keyTapKey = (nodeId: string): string => (nodeId.startsWith("bus.") ? "post" : "prefader");
+ *  A channel key is its Rec Point tap — the `Rec Point` selector's output is the very
+ *  thing the diagram labels `CH OUT`, and `DUCKER 1-4 SOURCE` takes `CH n OUT` — so the
+ *  tap MOVES with that channel's Rec Point setting, and it sits ahead of the channel's
+ *  own fader and ducker either way. A bus key is the bus's own OUT, i.e. after its
+ *  output insert FX (the diagram prints `STEREO OUT` / `MIX n OUT` beyond the `INS FX`
+ *  block, and those are the names the DUCKER SOURCE block takes).
+ *
+ *  Resolved against the node's own tap list rather than handed to `tapFor`, which falls
+ *  back to the most downstream tap for a key a node does not have — on a stereo source
+ *  that fallback is POST, i.e. after its ducker, which is the one reading this lane must
+ *  never show. */
+const keyTapKey = (nodeId: string, np: NodeParams | undefined, modelId?: string): string => {
+  if (nodeId.startsWith("bus.")) return "post";
+  const wanted = REC_POINT_TAPS[np?.recPoint ?? REC_POINT_DEFAULT] ?? REC_POINT_TAPS[REC_POINT_DEFAULT];
+  const keys = new Set(tapsFor(nodeId, modelId).map((t) => t.key));
+  return wanted.find((k) => keys.has(k)) ?? "prefader";
+};
 
 /** The node this ducker's key wire starts at, or null when nothing is wired — which is
  *  a state the unit has and reports as engaged-at-unity, so the lane says so rather
@@ -90,7 +114,7 @@ export const DUCKER_DYN: DynProcessor = {
       key: "key",
       label: src ? text.tapKey(channelLabel(ctx.model, src)) : text.noKey,
       kind: "level",
-      tap: src ? (tapFor(src, keyTapKey(src), ctx.model.id) ?? null) : null,
+      tap: src ? (tapFor(src, keyTapKey(src, ctx.plan.nodeParams[src], ctx.model.id), ctx.model.id) ?? null) : null,
       // Threshold and this lane are the same coordinate BECAUSE the lane is folded to
       // what the detector reads. Offsetting the cap instead would break the one thing
       // the cap mechanism rests on.

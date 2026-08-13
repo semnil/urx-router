@@ -311,10 +311,20 @@ arrives from somewhere else entirely. Every difference below follows from that.
 
 | Lane | Address | Notes |
 | --- | --- | --- |
-| Key | the key source's own tap | **One bar, whatever the source's width.** Carries the threshold cap |
+| Key | the key source's own tap — a channel's **moves with its Rec Point** (see below), a bus's is its POST | **One bar, whatever the source's width.** Carries the threshold cap |
 | Pre Ducker | `116 : 2p, 2p+1` | The host channel, post-fader. Stereo, so two bars |
 | Post | `120 : 2p, 2p+1` | The host's output. **The reduction is drawn in this slot** |
 | Ducker GR | `119 : p` | No column of its own (`DynLane.sameSlot`); keeps its own readout tile |
+
+**Which tap the key lane reads.** The block diagram settles it: the `Rec Point` selector's output is
+the very signal it labels `CH OUT`, and `DUCKER 1-4 SOURCE` takes `CH 1-4 OUT` / `CH 5/6-11/12 OUT` as
+its inputs. So a channel key is read at **that channel's current Rec Point** — PRE GATE / PRE COMP /
+PRE EQ / PRE INS FX / PRE FADER on a mono strip, PRE EQ or PRE FADER on a stereo one, where PRE EQ is
+the INPUT meter because the stereo strip's EQ is the first thing in its chain. Every one of those sits
+ahead of the source's own fader and ducker, which is why moving the source's fader does not move the
+trigger. A bus key is the bus's own OUT, after its output insert FX. The lane read PRE FADER for every
+channel source until 2026-08-13; a source set to any other Rec Point then showed a signal the detector
+was not listening to, off by whatever the stages in between were doing.
 
 **Why the key lane is one bar.** Measured on a URX44V: the unit sums a stereo key's two sides before
 its detector — a correlated pair reads 6.02 dB above either side alone, not 3 dB (a power sum) and

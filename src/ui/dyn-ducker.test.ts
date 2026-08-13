@@ -92,6 +92,51 @@ describe("binding", () => {
     expect(DUCKER_DYN.bind(ctxFor(DUCKER, plan))!.lanes[0].label).toBe(t().dynTuning.ducker.tapKey(label));
   });
 
+  // The block diagram makes the `Rec Point` selector's output the thing it labels
+  // `CH OUT`, and DUCKER 1-4 SOURCE takes `CH n OUT` — so the tap the key lane reads
+  // MOVES with the source channel's Rec Point. It read PRE FADER for every channel
+  // source until this was fixed.
+  describe("key tap follows the source's Rec Point", () => {
+    const keyTapOf = (recPoint?: number, from = "ch1"): string | undefined => {
+      const plan = defaultPlan("URX44V");
+      const conn = plan.connections.find((c) => c.kind === "key" && c.to === ref(DUCKER, "in"))!;
+      conn.from = ref(from, "out");
+      if (recPoint !== undefined) plan.nodeParams[from] = { ...plan.nodeParams[from], recPoint };
+      return DUCKER_DYN.bind(ctxFor(DUCKER, plan))!.lanes[0].tap?.key;
+    };
+
+    it("reads a mono source at each of its five Rec Point stages", () => {
+      expect(keyTapOf(0)).toBe("pregate");
+      expect(keyTapOf(1)).toBe("precomp");
+      expect(keyTapOf(2)).toBe("preeq");
+      expect(keyTapOf(3)).toBe("preinsfx");
+      expect(keyTapOf(4)).toBe("prefader");
+    });
+
+    // PRE FADER is the device default, so an unset Rec Point is that tap — which is
+    // also what every source used to get regardless.
+    it("falls back to PRE FADER when the source names no Rec Point", () => {
+      expect(keyTapOf(undefined)).toBe("prefader");
+    });
+
+    // A stereo strip has no discrete PRE EQ tap — its EQ is the first thing in the
+    // chain, so INPUT is that point. Resolving it through `tapFor` alone would take
+    // that module's fallback to the most downstream tap, which here is POST: after
+    // the source's own ducker, the one reading this lane must never show.
+    it("reads a stereo source's PRE EQ at its INPUT meter, not at POST", () => {
+      expect(keyTapOf(2, "ch_7_8")).toBe("input");
+      expect(keyTapOf(2, "ch_7_8")).not.toBe("post");
+      expect(keyTapOf(4, "ch_7_8")).toBe("prefader");
+    });
+
+    // A bus key is the bus's own OUT, after its output insert FX — a bus has no Rec
+    // Point, and POST is that point.
+    it("reads a bus key at its POST tap", () => {
+      expect(keyTapOf(undefined, "bus.mix1")).toBe("post");
+      expect(keyTapOf(0, "bus.mix1")).toBe("post");
+    });
+  });
+
   // Nothing wired is a state the unit has and reports as engaged-at-unity, so the
   // lane says so rather than drawing an empty bar that reads as silence.
   it("says so when no key is wired, and leaves the lane tapless", () => {
