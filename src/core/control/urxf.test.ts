@@ -1,132 +1,11 @@
-// .urxf reader. The fixtures are built here rather than checked in: the format's
-// two-level endianness (BE record/descriptor headers, LE block headers and values)
-// is the thing under test, so the builder writes each field explicitly instead of
-// echoing whatever the reader does.
+// .urxf reader. The fixtures are built rather than checked in, and the builder lives in
+// `urxf.test-util.ts` — shared with the app entry's settings-import cases, and independent
+// of `urxf.ts` on purpose (its header says why). The byte offsets this file pokes at are
+// the layout that builder writes.
 
 import { describe, expect, it } from "vitest";
-import { parseUrxf, paramSourceOf, UrxfError } from "./urxf";
-
-interface Field {
-  id: number;
-  typecode: number;
-  elemSize: number;
-  /** Numbers for typecode 1/2, strings for typecode 4. */
-  values: number[] | string[];
-}
-
-function cstring(text: string, width: number): Uint8Array {
-  const bytes = new Uint8Array(width);
-  bytes.set(new TextEncoder().encode(text).subarray(0, width));
-  return bytes;
-}
-
-function concat(parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((n, p) => n + p.length, 0);
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const part of parts) {
-    out.set(part, at);
-    at += part.length;
-  }
-  return out;
-}
-
-/** F table (BIG-endian) + D values (LITTLE-endian), each in its own block. */
-function buildChunkBody(name: string, fields: Field[]): Uint8Array {
-  const descriptors: Uint8Array[] = [];
-  const values: Uint8Array[] = [];
-  for (const field of fields) {
-    const array = field.values.length !== 1;
-    const record = new DataView(new ArrayBuffer(array ? 8 : 6));
-    record.setUint16(0, field.id, false);
-    record.setUint8(2, array ? 0x40 : 0x00);
-    record.setUint8(3, field.typecode);
-    record.setUint16(4, field.elemSize, false);
-    if (array) record.setUint16(6, field.values.length, false);
-    descriptors.push(new Uint8Array(record.buffer));
-
-    for (const value of field.values) {
-      if (typeof value === "string") {
-        values.push(cstring(value, field.elemSize));
-        continue;
-      }
-      const cell = new DataView(new ArrayBuffer(field.elemSize));
-      const signed = field.typecode === 2;
-      if (field.elemSize === 1) signed ? cell.setInt8(0, value) : cell.setUint8(0, value);
-      else if (field.elemSize === 2) signed ? cell.setInt16(0, value, true) : cell.setUint16(0, value, true);
-      else signed ? cell.setInt32(0, value, true) : cell.setUint32(0, value, true);
-      values.push(new Uint8Array(cell.buffer));
-    }
-  }
-  const block = (prefix: string, payload: Uint8Array): Uint8Array => {
-    const header = new Uint8Array(32);
-    header.set(cstring(prefix + name, 24));
-    const view = new DataView(header.buffer);
-    view.setUint32(24, 10000, true);
-    view.setUint32(28, payload.length, true);
-    return concat([header, payload]);
-  };
-  return concat([block("F_", concat(descriptors)), block("D_", concat(values))]);
-}
-
-function buildChunk(chunkName: string, blockName: string, label: string, fields: Field[]): Uint8Array {
-  const body = buildChunkBody(blockName, fields);
-  const header = new Uint8Array(36 + 68);
-  header.set(cstring("#ChunkData", 12));
-  header.set(cstring(chunkName, 12), 12);
-  const view = new DataView(header.buffer);
-  view.setUint32(24, 68, false);
-  view.setUint32(28, body.length, false);
-  view.setUint32(36, chunkName === "CURRENT" ? 64 : 1, true);
-  header.set(cstring(label, 64), 40);
-  return concat([header, body]);
-}
-
-interface ChunkSpec {
-  chunk: string;
-  block: string;
-  label: string;
-  fields: Field[];
-}
-
-function buildUrxf(chunks: ChunkSpec[], model = "URX"): Uint8Array {
-  const header = new Uint8Array(36 + 36);
-  header.set(cstring("#YAMAHA MBDFProjectFile", 24));
-  const view = new DataView(header.buffer);
-  view.setUint32(24, 36, false); // extraLen
-  view.setUint32(28, 0, false); // dataLen — chunks are siblings
-  header.set(cstring(model, 16), 36);
-
-  const parts: Uint8Array[] = [header];
-  for (const spec of chunks) {
-    const record = buildChunk(spec.chunk, spec.block, spec.label, spec.fields);
-    parts.push(record);
-    // Records are NUL-padded up to the next 4-byte boundary.
-    const pad = (4 - (record.length % 4)) % 4;
-    if (pad) parts.push(new Uint8Array(pad));
-  }
-  const end = new Uint8Array(36);
-  end.set(cstring("#END", 24));
-  parts.push(end);
-  return concat(parts);
-}
-
-const CURRENT_FIELDS: Field[] = [
-  { id: 18, typecode: 4, elemSize: 16, values: ["ch 1", "ch 2"] }, // channel names
-  { id: 22, typecode: 1, elemSize: 4, values: [2147483904] }, // bitmask: unsigned, not negative
-  { id: 96, typecode: 1, elemSize: 2, values: [184] },
-  { id: 139, typecode: 2, elemSize: 2, values: [-600, 0, 300] }, // signed level_gain
-  { id: 545, typecode: 2, elemSize: 2, values: [10, 11] }, // x-axis band 0
-  { id: 546, typecode: 2, elemSize: 2, values: [20, 21] }, // ...flattened band 1
-];
-
-const SCENE_FIELDS: Field[] = [{ id: 96, typecode: 1, elemSize: 2, values: [200] }];
-
-const sample = (): Uint8Array =>
-  buildUrxf([
-    { chunk: "CURRENT", block: "CSF_BACKUP", label: "", fields: CURRENT_FIELDS },
-    { chunk: "SCENE", block: "SCENE", label: "My Data 1", fields: SCENE_FIELDS },
-  ]);
+import { parseUrxf, paramSourceOf } from "./urxf";
+import { BLOCK_HEADER, buildUrxf, CHUNK_HEADER, FILE_HEADER, sampleUrxf as sample } from "./urxf.test-util";
 
 describe("parseUrxf", () => {
   it("reads the header, both chunks, and the scene label", () => {
@@ -163,7 +42,12 @@ describe("parseUrxf", () => {
 
   it("rejects a truncated file", () => {
     const bytes = sample();
-    expect(() => parseUrxf(bytes.subarray(0, bytes.length - 200))).toThrow(UrxfError);
+    // The code, not merely the class: every refusal the PARSER raises is a UrxfError, so
+    // `toThrow` alone would be satisfied by a file rejected for some other reason entirely
+    // — which is what an offset that drifted would produce.
+    expect(() => parseUrxf(bytes.subarray(0, bytes.length - 200))).toThrow(
+      expect.objectContaining({ code: "truncated" }),
+    );
   });
 
   // Σ(elemSize × count) == D length is the only integrity check the format offers,
@@ -172,16 +56,76 @@ describe("parseUrxf", () => {
   it("rejects a descriptor table that does not match the values block", () => {
     const bytes = sample();
     const view = new DataView(bytes.buffer);
-    // The first descriptor's elemSize (BE u16) sits 4 bytes into the F payload.
-    const fPayload = 72 + 104 + 32;
+    // The first descriptor's elemSize (BE u16) sits 4 bytes into the F payload. The three
+    // header sizes come from the builder rather than being written out here: they are its
+    // layout, and a literal copy would keep addressing an offset it had moved away from.
+    const fPayload = FILE_HEADER + CHUNK_HEADER + BLOCK_HEADER;
     view.setUint16(fPayload + 4, 8, false);
     expect(() => parseUrxf(bytes)).toThrow(expect.objectContaining({ code: "lengthMismatch" }));
   });
 
   it("rejects a block whose magic is wrong", () => {
     const bytes = sample();
-    new DataView(bytes.buffer).setUint32(72 + 104 + 24, 1, true);
+    // 24 bytes into the F block header, which is the magic. Note the neighbouring field
+    // (the payload length, 4 bytes further on) also refuses as `badBlock`, so this offset
+    // has to be right rather than merely close.
+    new DataView(bytes.buffer).setUint32(FILE_HEADER + CHUNK_HEADER + 24, 1, true);
     expect(() => parseUrxf(bytes)).toThrow(expect.objectContaining({ code: "badBlock" }));
+  });
+});
+
+// The builder's own guards. Each is a mistake the FILE takes without complaint — the
+// bytes stay self-consistent and the parse succeeds, or the string is quietly cut — so
+// without them a fixture can state one thing and decode as another, and the reader takes
+// the blame. Exercised here because a guard nobody fires cannot be told from one whose
+// bounds are wrong. No count in this sentence on purpose: the last one that was here went
+// stale the moment two more were added.
+describe("the fixture builder refuses what the format would swallow", () => {
+  const chunkOf =
+    (fields: Parameters<typeof buildUrxf>[0][number]["fields"]): (() => Uint8Array) =>
+    () =>
+      buildUrxf([{ chunk: "CURRENT", block: "CSF_BACKUP", label: "", fields }]);
+
+  it("refuses two records sharing one id", () => {
+    // Both records reach the file and the lengths still agree; the parse keeps the last.
+    expect(
+      chunkOf([
+        { id: 14, typecode: 1, elemSize: 2, values: [1] },
+        { id: 14, typecode: 1, elemSize: 2, values: [2] },
+      ]),
+    ).toThrow(/id 14 declared twice/);
+  });
+
+  it("refuses an id the descriptor cannot hold", () => {
+    expect(chunkOf([{ id: 70000, typecode: 1, elemSize: 2, values: [1] }])).toThrow(/not a u16/);
+  });
+
+  it("refuses a value wider than its element", () => {
+    expect(chunkOf([{ id: 14, typecode: 1, elemSize: 2, values: [70000] }])).toThrow(/does not fit 16 bits/);
+    // Signed and unsigned are separate ranges: -600 is fine as a signed 16-bit level and
+    // would otherwise be written as 64936 under an unsigned typecode.
+    expect(chunkOf([{ id: 14, typecode: 1, elemSize: 2, values: [-600] }])).toThrow(/does not fit 16 bits/);
+    expect(chunkOf([{ id: 14, typecode: 2, elemSize: 2, values: [-600] }])).not.toThrow();
+  });
+
+  // The string arm reaches the same rule one call down, in `cstring`. Without it this is
+  // the one typecode where over-wide is still TRUNCATION rather than a refusal: the file
+  // parses, and the case reading the name back asserts the short form.
+  it("refuses a name wider than its element rather than cutting it", () => {
+    expect(chunkOf([{ id: 18, typecode: 4, elemSize: 4, values: ["ch 1 long name"] }])).toThrow(
+      /is 14 bytes, past the 4/,
+    );
+    // Bytes, not characters: two of these are 3 bytes each in UTF-8, so cutting at 4 would
+    // land mid-sequence and decode as U+FFFD.
+    expect(chunkOf([{ id: 18, typecode: 4, elemSize: 4, values: ["ああ"] }])).toThrow(/is 6 bytes, past the 4/);
+    expect(chunkOf([{ id: 18, typecode: 4, elemSize: 4, values: ["ch 1"] }])).not.toThrow();
+  });
+
+  // An array record with a count of 0 is as absent from the device-written files as a
+  // count of 1 is. It builds a file that parses, and the gap only shows up later as a
+  // source read failing on "no element 0".
+  it("refuses a field carrying no values", () => {
+    expect(chunkOf([{ id: 14, typecode: 1, elemSize: 2, values: [] }])).toThrow(/carries no values/);
   });
 });
 
