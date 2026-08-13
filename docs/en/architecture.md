@@ -819,13 +819,20 @@ under both themes.
 
 **A locked control is a question this block does not answer**, because `opacity` is one of the few things
 forced colors leaves alone, so the read-only dims written elsewhere are supposed to survive it. Measured
-2026-08-13 in WebView2 151.0.4129.78 across all four Windows contrast themes: the locked inspector select
-is distinguishable in pixels under every one — 714–719 of the 8544 pixels over its own box, mean luma
-48.8 → 36.6 (hcblack), 236.3 → 245.3 (hcwhite), 64.7 → 53.1 (hc1) and 19.2 → 5.6 (hc2) — so the dim reads
-and nothing forced-colors-specific is needed for it. The engine also substitutes on its own here: a
-disabled select's text and border become `GrayText`, and, unlike the ordinary themes where it supplies
-**0.7** of its own, under forced colors it supplies **no opacity at all**. The authored 0.45 is therefore
-the entire opacity signal in this mode, and the two mechanisms are additive rather than alternatives.
+2026-08-13 in WebView2 151.0.4129.78 (debug build, 1280x800 viewport, URX44V) on the inspector's SD Rec
+track-count select, locked by setting the property rather than by holding a session — the same paint path —
+across all four Windows contrast themes: it is separable in pixels under every one, 714–719 of the 8544
+pixels its box covers at that viewport, mean luma 48.8 → 36.6 (hcblack), 236.3 → 245.3 (hcwhite),
+64.7 → 53.1 (hc1) and 19.2 → 5.6 (hc2). On hcwhite the locked face moves TOWARD its ground instead of away
+from it, which is the same signal in the other direction. So the difference survives the mode and this
+block needs no restatement of the lock; whether it *reads* to an operator was not measured. The engine also
+substitutes on its own here: a disabled select's text and border become `GrayText`, and, unlike the
+ordinary themes where it supplies **0.7** of its own, under forced colors it supplies **no opacity at
+all**. The authored dim is therefore the entire opacity signal in this mode, and the two mechanisms are
+additive rather than alternatives. The launcher caret goes the other way on purpose — its authored dim is
+given back at full strength here (`e2e/forced-colors.spec.ts`) because it encoded a step against a
+NEIGHBOUR that this mode flattens, while a lock's dim encodes one control against its own unlocked state,
+which the mode leaves intact.
 
 One assertion in that spec reads painted pixels rather than a computed style, and has to: a range
 input's track and thumb are `::-webkit-` pseudo elements whose author declarations this engine does not
@@ -897,9 +904,11 @@ unit, live, before the operator had moved. The channel tuning screens' threshold
 `e.target === cap`), so the two surfaces now share one press grammar — the CONSOLE fader was the one that
 did not have it.
 
-The E2E tiers pin this in Playwright's Chromium and WebKit; **the shipping WebView2 was measured separately**
+The ordinary tier pins this in Playwright's Chromium (`e2e/console.spec.ts`) and **nothing pins it in
+WebKit** — the race tier's three `@webkit` cases are about a strip rebuilt under a live pointer and about
+the chord/focus matrix, not about the press. **The shipping WebView2 was measured separately**
 (2026-08-13, debug build, runtime 151.0.4129.78, 1280x800 viewport, URX44V), because that engine is not the
-one either tier runs. Presses at the cap's top edge, centre and bottom edge left the readout unchanged; a
+one any tier runs. Presses at the cap's top edge, centre and bottom edge left the readout unchanged; a
 press at 80% of the fader's height put the cap centre **0.013 px** from the pointer against a half-detent
 tolerance of 2.05 px; and a three-detent drag from a grab moved the cap 12.313 px for the 12.3 px asked.
 Identical for the `mouse`, `pen` and `touch` pointer types — the tiers only exercise the first. One thing
@@ -2397,8 +2406,9 @@ exists on Windows. The Windows answers are structural rather than incidental: th
 latter with its parent — so there is nothing that could implement the follow, whatever issues the move.
 Measured through a drag's own message sequence as well as a plain programmatic move.
 
-The Windows column was re-measured whole on 2026-08-13 (debug build, WebView2 151.0.4129.78, a 2560x1440
-primary and a 1920x1080 secondary, both at 100%), including the two rows that were already here. The
+Three of the four Windows cells were measured on 2026-08-13 (debug build, WebView2 151.0.4129.78, a
+2560x1440 primary and a 1920x1080 secondary, both at 100%) — every row except **hidden while the owner is
+minimized**, which stands on the 2026-08-08 run and was not re-run. The
 top row is two measurements rather than one, because **a probe cannot activate a window across processes**:
 the foreground lock makes `SetForegroundWindow` a silent no-op, so the raise half is programmatic and the
 activation half has to be an operator's click. Windows refuses to break the order from either side —

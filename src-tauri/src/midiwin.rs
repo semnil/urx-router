@@ -124,10 +124,10 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // window above the main one and minimizes with it — and both halves of the macOS
     // finding were then measured there and are ABSENT: on a two-display desk this window
     // is drawn in full on the display the main window is not on, and moving the main
-    // window 829x1431 px onto the other display left it where it was, to the pixel. So
-    // the relationship costs on that platform nothing it costs on this one, and the
-    // `#[cfg]` is the measurement rather than a gap in it (architecture.md, "The MIDI
-    // window is an owned window on Windows", carries the table and the rest of the run).
+    // window across to the other display left it where it was, to the pixel. So the
+    // relationship costs on that platform nothing it costs on this one, and the `#[cfg]`
+    // is the measurement rather than a gap in it (architecture.md, "Window geometry",
+    // carries the table, the rig and the rest of the run).
     //
     // What the parent bought on macOS — that it cannot fall behind the main window — is
     // paid for by pinning it while a learn is armed (`pin_midi_window`).
@@ -159,8 +159,12 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // Measured while this was still an AppKit child on macOS: a parent moved from
     // x=2344 to x=172 took this window from x=536 to x=-1636, off every display, where
     // the window server still reported it on-screen and opaque and nothing was drawn.
-    // That relationship is gone on macOS and kept on Windows, where the same drag has
-    // not been measured.
+    // That relationship is gone on macOS. It is kept on Windows, and the same drag WAS
+    // measured there (above): this window does not follow its owner at all. So the case
+    // the fallback is still answering is the one stated two paragraphs up — a remembered
+    // rectangle that lands on no attached display. The drag this paragraph records
+    // reaches neither platform as things stand: macOS no longer has the parent it took,
+    // and on Windows the owner was measured (2026-08-13) not to move this window.
     #[cfg(desktop)]
     crate::restore_window(
         &win.as_ref().window(),
@@ -181,9 +185,10 @@ pub fn close_midi_window(app: AppHandle) -> Result<(), String> {
 }
 
 /// Raise the MIDI window to the front. Called when learn turns on, so the panel
-/// comes forward for the one moment its contents matter. Being a child of the main
-/// window puts it in front of THAT already; what this still does is bring the app
-/// itself forward when another application is covering both.
+/// comes forward for the one moment its contents matter. Ordering it against the MAIN
+/// window is already handled — by the Win32 owner on Windows, by `pin_midi_window` on
+/// macOS — so what this still does on both is bring the app itself forward when
+/// another application is covering the two.
 #[tauri::command]
 pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
     match app.get_webview_window(MIDI_WINDOW) {
@@ -205,8 +210,9 @@ pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
 ///
 /// On Windows this window still has an owner, and the two compose rather than one
 /// standing in for the other: measured from the panel's own learn button, arming set
-/// `WS_EX_TOPMOST` (0x110 -> 0x118) and disarming cleared it, with the order against
-/// the owner unchanged in both states. So nothing here needs a `#[cfg]`.
+/// `WS_EX_TOPMOST` (the extended style went 0x110 -> 0x118) and disarming cleared it,
+/// with the order against the owner unchanged in both states. So nothing here needs
+/// a `#[cfg]`.
 #[tauri::command]
 pub fn pin_midi_window(app: AppHandle, on: bool) -> Result<(), String> {
     match app.get_webview_window(MIDI_WINDOW) {

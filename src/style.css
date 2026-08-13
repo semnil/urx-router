@@ -277,18 +277,17 @@ body {
    with #22ff22 / #ff00c8 forced onto the select, the rows still came back greyscale
    (channel spread 1-3) on rgb(20,20,20) / rgb(21,21,21) rather than --ctl-bg. On
    Windows WebView2 draws the popup itself and DOES take the authored face — measured
-   2026-08-13, its ground is rgb(34,28,19), --ctl-bg to the byte, and an enabled row's
-   brightest text pixel is rgb(241,232,214), the authored colour exactly. What decides
-   the rule either way is that the ENGINE dims a disabled option on whatever ground it
-   used, so the lock reads without help: on that Windows ground the disabled row peaks
-   at a neutral rgb(170,170,170) against the enabled rows' rgb(241,232,214) (macOS: row
-   ink 2.13 against 7.6-8.5 in Chromium, 6.42 against 7.7-9.9 in WebKit). The selected
-   row is the one thing that stays the system's on both — a rgb(195,195,195) highlight
-   backplate under rgb(48,46,43) text on Windows, which is why no contrast pair here is
-   authored against it. Note the popup cannot be opened from outside while the window is
-   INACTIVE — a real click, `showPicker()` under a user gesture and Alt+ArrowDown all
-   leave it shut, and it is a native widget outside the page's compositor, so
-   `Page.captureScreenshot` cannot see it either. */
+   2026-08-13 in the dark theme, its ground is rgb(34,28,19), --ctl-bg to the byte, and
+   an enabled row's brightest text pixel is rgb(241,232,214), the authored colour
+   exactly. What decides the rule either way is that the ENGINE dims a disabled option
+   on whatever ground it used, so the lock reads without help: on that Windows ground
+   the disabled row peaks at a neutral rgb(170,170,170) against the enabled rows'
+   rgb(241,232,214) (macOS: row ink 2.13 against 7.6-8.5 in Chromium, 6.42 against
+   7.7-9.9 in WebKit). The selected row is the one thing that stays the system's on
+   both — a rgb(195,195,195) highlight backplate under rgb(48,46,43) text on Windows,
+   which is why no contrast pair here is authored against it. Photographing this popup
+   takes a different instrument from every other reading in this file; CLAUDE.md's
+   "Reading the REAL webview from outside" says which and why. */
 select#model-picker,
 select#rate-picker,
 .prefs-select,
@@ -329,11 +328,15 @@ select#rate-picker,
    the rule WITHDRAWN in that window, which has not been run on macOS — it decides
    whether the rule is redundant, not whether the lock reads. It needs no rebuild
    either: deleting the rule from `document.styleSheets` at runtime is the whole
-   experiment, which is how it was run in the shipping WebView2 (2026-08-13). There the
-   engine supplies 0.7 of its own in the ordinary themes — so the authored value is what
-   shows, and withdrawing it changes the reading — while under forced colors it supplies
-   no opacity at all and substitutes GrayText instead (architecture.md, "Windows high
-   contrast"). */
+   experiment, and that is how it was run in the shipping WebView2 (2026-08-13) — on
+   the INSPECTOR's 0.45 rule below rather than on this one. There the engine supplied
+   0.7 of its own, which is both the Chromium reading above and the number this rule
+   authors: in that engine the opacity half of this rule is redundant and only the
+   cursor does work, and it earns its place from the WebKit above, which supplies
+   nothing. Withdrawing THIS rule could not have decided anything anyway, on any
+   engine that supplies 0.7 — authored and supplied are the same number, which is the
+   arithmetic above one more time. Under forced colors that engine behaves differently
+   again (architecture.md, "Windows high contrast"). */
 select#model-picker:disabled,
 select#rate-picker:disabled {
   opacity: 0.7;
@@ -1136,11 +1139,14 @@ input[type="range"]:focus-visible,
    authors a colour and a background, which is the trade the pickers' own :disabled
    rule pays for. The reading from macOS's shipping engine is beside that rule, on the
    pickers; this select has not been shown locked there.) Shown locked in the shipping
-   WebView2 (2026-08-13, debug build): it computes this 0.45 with the rule in place and
-   the engine's own 0.7 with it withdrawn, so the authored value is the one on screen,
-   and the face matches the rack's model picker on all seven of colour, background,
-   border, border width, radius, font and padding — that engine keeps the authored
-   padding, unlike the WebKit measured above. The value is the panel's read-only dim —
+   WebView2 (2026-08-13, debug build): it computes --row-lock-dim with the rule in place
+   and the engine's own 0.7 with it withdrawn, so the authored value is the one on
+   screen, and the face matches the rack's model picker on colour, background, border
+   colour, border width, radius, font family, font size and padding — including the
+   authored `padding: 5px 10px`, which that engine keeps and Playwright's WebKit drops
+   on a menulist select (a 263x28 box against 263x19, measured the same day). What the
+   check asks is that the two selects agree with EACH OTHER, not that either box is a
+   particular size. The value is the panel's read-only dim —
    the token the locked Preferences row takes, which is the same 0.45
    #inspector .toggle button:disabled writes as a literal. */
 #inspector select:disabled {
