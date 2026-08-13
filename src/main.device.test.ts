@@ -681,13 +681,20 @@ describe("the update check", () => {
     }
   });
 
-  // An update on offer is a confirm, and declining it must download nothing. The
-  // updater's own commands are the observable — a declined check leaves no trace on
+  // An update on offer is a confirm, and declining it must download nothing. The updater's
+  // own commands are the observable for the decline — a declined check leaves no trace on
   // screen, so asserting the status would be asserting on the boot line.
+  //
+  // But everything after the wait is a zero, and a case whose whole verdict is absences
+  // passes on any flow that never got as far as asking: an offer that regressed into an
+  // error report, a version the frame failed to name, `checkUpdate` throwing after its
+  // dialog. So the ASKING is pinned first, by message and by version.
   it("downloads nothing when the offered update is declined", SLOW, async () => {
     const shell = await bootDevice({ "plugin:updater|check": { rid: 7, version: "9.9.9" } }, false);
-    await invoked(shell, "plugin:dialog|message");
+    await vi.waitFor(() => expect(confirms(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
     await new Promise((r) => setTimeout(r, 100));
+    expect(confirms(shell)).toEqual([t().confirm.update("9.9.9")]);
+    expect(errors(shell)).toEqual([]);
     expect(shell.count("plugin:updater|download_and_install")).toBe(0);
     expect(shell.count("plugin:process|restart")).toBe(0);
   });
@@ -1074,7 +1081,13 @@ describe("the device self-test", () => {
       });
       const btn = await selfTestBtn();
       btn.click();
-      await vi.waitFor(() => expect(shell.count("plugin:dialog|message")).toBeGreaterThan(1), { timeout: 15_000 });
+      // The REPORT, not a second dialog: the confirm this run already raised is why a
+      // count had to say "more than one" here, and counting says nothing about what the
+      // second one told the operator. What it says is the DIAGNOSIS rather than a
+      // self-test frame — `connectFailureStatus` recognises this failure and replaces the
+      // wrapper with the message that tells the operator what to do about it.
+      await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 15_000 });
+      expect(errors(shell).at(-1)).toBe(t().error.shell.noDevice);
       expect(log.lines.some((l) => l.startsWith("[self-test] ERROR"))).toBe(true);
       expect(btn.textContent).toBe(t().toolbar.selfTest);
       expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false);
@@ -1138,7 +1151,11 @@ describe("the device self-test", () => {
           throw new Error("no-device");
         },
       });
-      await vi.waitFor(() => expect(shell.count("plugin:dialog|message")).toBeGreaterThan(0), { timeout: 15_000 });
+      // The log line says the run failed; this says the operator was told, and told what.
+      // The two are separate surfaces on purpose — a headless launch reads the log — so a
+      // regression that kept the log and dropped the dialog leaves nothing on screen.
+      await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 15_000 });
+      expect(errors(shell).at(-1)).toBe(t().error.shell.noDevice);
       expect(log.lines.some((l) => l.startsWith("[prepare-modified] ERROR"))).toBe(true);
       expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false);
     } finally {
