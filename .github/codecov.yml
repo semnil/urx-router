@@ -39,3 +39,22 @@ coverage:
         threshold: 0.05%
     patch:
       default: {}
+
+# The message catalogs, kept out of the merged reading. `ignore` is applied to every
+# upload, so it covers the E2E half too — the vitest and monocart filters exclude them as
+# well, so that the local table and the uploaded LCOV describe the same set rather than
+# two. vitest.config.ts carries the reason.
+#
+# `ignore` is a top-level key rather than a member of `coverage.status`, so it drops the
+# files from the report before EITHER status is computed — `patch` as much as `project`.
+# That is the intent: a pull request that adds ja formatters would otherwise be read on
+# lines nothing calls, which is the same figure this excludes everywhere else.
+#
+# This is a one-time INCREASE (the excluded lines were mostly unhit), so the `project`
+# status above passes on the commit that lands it; the base commit keeps the number it was
+# processed with. Codecov's validator (POST https://codecov.io/validate) answers Valid! and
+# expands the two entries to `^src/i18n/en.ts.*` / `^src/i18n/ja.ts.*` — repo-relative and
+# anchored, so the pair names those two files and nothing else in the tree.
+ignore:
+  - "src/i18n/en.ts"
+  - "src/i18n/ja.ts"

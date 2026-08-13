@@ -24,7 +24,28 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts", "src/**/*.test-util.ts", "src/**/*.d.ts"],
+      // The message catalogs are excluded here, in .github/codecov.yml (the merged
+      // reading) and in e2e/coverage-options.ts (the E2E half's LCOV). This is the one
+      // place the reason is written; the other two point here.
+      //
+      // V8 counts no line for a string leaf — a catalog is one object literal, and the
+      // only executable lines in the file are the formatter bodies (102 in each, plus
+      // en.ts's three marker helpers). The percentage is therefore not "how much of the
+      // catalog is checked" but "how many formatters some test happened to call":
+      // measured 2026-08-13 on 238389c, ja.ts 19 of 103 lines and en.ts 84 of 108, where
+      // every other directory reads 95-100% of lines (core, control, midi, models, ui)
+      // and src itself reads 85.4 (main.ts at 85.47, midi-window.ts at 0). All of those
+      // are the line column, the one the two catalog figures are counted in.
+      // The suite runs in English, so ja.ts's figure is a statement about the language
+      // the tests run in.
+      //
+      // What holds the catalogs instead, none of it a percentage: refs.contract.test.ts
+      // (every leaf is reached from the app's own sources), e2e/inventory.spec.ts (every
+      // message a surface claims is on screen), and en.ts's dev() / fixed() / tr() marks,
+      // which make ja.ts fail to compile if it drops a key or translates a device row.
+      // What none of them check is that a formatter substitutes its arguments — a ja
+      // entry that loses its `${n}` is caught by nothing today, here or before this.
+      exclude: ["src/**/*.test.ts", "src/**/*.test-util.ts", "src/**/*.d.ts", "src/i18n/en.ts", "src/i18n/ja.ts"],
     },
   },
 });
