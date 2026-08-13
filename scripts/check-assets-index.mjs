@@ -81,9 +81,9 @@ const PROSE_TOKENS = new Map([
   ["Runtime.evaluate", "a DevTools-protocol method"],
   ["Input.dispatchMouseEvent", "a DevTools-protocol method"],
   ["Page.captureScreenshot", "a DevTools-protocol method"],
-  // Two token groups from the same row: one of the three routes that will not open a
-  // popup on an inactive window, and the Win32 pair behind "a probe cannot activate a
-  // window across processes".
+  // Four more from the same row: the DOM method and the evaluate parameter that name
+  // one of the three routes leaving the popup shut on an inactive window, and the Win32
+  // pair behind "a probe cannot activate a window across processes".
   [
     "showPicker()",
     "a DOM method, named as one of the routes that does not open the popup while the window is inactive",

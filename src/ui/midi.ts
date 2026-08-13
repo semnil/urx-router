@@ -542,9 +542,11 @@ export class MidiControl {
     // answer to what was just done, so bring it forward if it drifted behind.
     if (on) this.raiseWindow();
     // And KEEP it in front for as long as the arming lasts: the next thing the
-    // operator does is click the control being armed, in the main window, which
-    // put the panel behind it and left the hint unreadable at the one moment it
-    // is the instruction.
+    // operator does is click the control being armed, in the main window, which on
+    // macOS put the panel behind it and left the hint unreadable at the one moment
+    // it is the instruction. On Windows the owner already prevents that (measured
+    // 2026-08-13 with a real click; architecture.md, "Window geometry"), so there the
+    // pin is what holds the panel above OTHER applications for the same seconds.
     if (this.windowOpen) void pinMidiWindow(on).catch(() => {});
   }
 

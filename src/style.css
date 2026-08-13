@@ -273,10 +273,12 @@ body {
    not an id beside it.
 
    The DROPDOWN this opens is a different surface on each platform, and neither needs
-   `option` authored. Nothing in this list disables an option often: the two that ever
-   do are both `#inspector select`, the Insert FX menu (a type over the rate's ceiling,
-   or whose 1-of slot is taken) and the insert-FX pitch scale, and both readings below
-   were taken elsewhere with a row disabled BY HAND. On macOS the popup is the
+   `option` authored. The two selects in this list that ever disable an option are the
+   Insert FX menu (a type over the rate's ceiling, or whose 1-of slot is taken) and the
+   insert-FX pitch scale, both `#inspector select`. The Windows reading below was taken
+   on neither: it used the SD Rec track-count select, which disables none of its own,
+   with a row disabled BY HAND. The macOS session did not record which control it read.
+   On macOS the popup is the
    platform's own menu and takes none of this: with #22ff22 / #ff00c8 forced onto the
    select, the rows still came back greyscale (channel spread 1-3) on rgb(20,20,20) /
    rgb(21,21,21) rather than --ctl-bg. On Windows WebView2 draws the popup itself and
@@ -1149,12 +1151,11 @@ input[type="range"]:focus-visible,
    pickers; this select has not been shown locked there.) Shown locked in the shipping
    WebView2 (2026-08-13, debug build): it computes --row-lock-dim with the rule in place
    and the engine's own 0.7 with it withdrawn, so the authored value is the one on
-   screen, and the face matches the rack's model picker on colour, background, border
-   colour, border width, radius, font family, font size and padding — including the
-   authored `padding: 5px 10px`, which that engine keeps while Playwright's WebKit
-   computes it to `0px` on a menulist select (measured the same day). `e2e/recpoint.spec.ts`
-   asks nothing about the padding itself — only that the two selects agree — so an engine
-   computing `0px` on both passes it. The value is the panel's read-only dim —
+   screen. Unlocked, its face matches the rack's model picker on colour, background,
+   border colour, border width, radius, font family, font size and padding — that engine
+   keeps the authored `padding: 5px 10px` where Playwright's WebKit computes it to `0px`
+   on a menulist select, which is a difference the recipe's own comment carries and
+   `e2e/recpoint.spec.ts` deliberately does not pin. The value is the panel's read-only dim —
    the token the locked Preferences row takes, which is the same 0.45
    #inspector .toggle button:disabled writes as a literal. */
 #inspector select:disabled {

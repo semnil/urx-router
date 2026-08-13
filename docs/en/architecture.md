@@ -832,10 +832,12 @@ also substitutes on its own here: a disabled select's text and border become `Gr
 authored rule withdrawn through the stylesheet in each theme, the computed opacity came back **1** — so
 unlike the ordinary themes, where that withdrawal leaves **0.7** of the engine's own, under forced colors
 it supplies **no opacity at all**. The authored dim is therefore the entire opacity signal in this mode,
-and the two mechanisms are additive rather than alternatives. The launcher caret goes the other way on purpose — its authored dim is
-given back at full strength here (`e2e/forced-colors.spec.ts`) because it encoded a step against a
-NEIGHBOUR that this mode flattens, while a lock's dim encodes one control against its own unlocked state,
-which the mode leaves intact.
+and the two mechanisms are additive rather than alternatives. The launcher caret goes the other way on
+purpose: this mode **drops** its authored dim and draws the caret at full strength
+(`e2e/forced-colors.spec.ts`), because that dim encoded a step against a NEIGHBOUR the mode flattens into
+one colour, leaving it nothing to say and a legibility cost to pay. A lock's dim encodes one control
+against its own unlocked state, which the mode leaves intact — so the two go opposite ways for the same
+reason.
 
 One assertion in that spec reads painted pixels rather than a computed style, and has to: a range
 input's track and thumb are `::-webkit-` pseudo elements whose author declarations this engine does not
@@ -1146,8 +1148,8 @@ window pushes and reports intents back (`ui/midi-protocol.ts`); everything that 
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
 `invoke`, so the second window needs no capability beyond core. Where it sits is the shell's to remember (see
 "Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by
-platform — a Win32 **owner** on Windows, a pin held while learn is armed on macOS, which is where the
-relationship was dropped. Closing the
+platform — a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where the AppKit
+parent it used to have was measured and dropped (see "Window geometry"). Closing the
 main window closes it; closing it drops learn mode, which would otherwise stay armed against a control nothing
 on screen names.
 
@@ -2386,11 +2388,10 @@ factor does not change, so the loop runs once and nothing about that platform's 
 macOS afterwards across the five cases in the table above, all unchanged. The raw readings behind the
 2026-08-09 numbers were taken in `reference/work/windows-verify/`, whose settled sections are folded into
 this document and then deleted; they are read back out of that file's history. **The 2026-08-13 run's are
-not**: it folded and deleted its sections without ever writing its results into them, so what the history
-holds is three sections whose result still reads "not measured" — the fourth item it settled, the select
-dropdown, was never a section of its own. That run's numbers live in this document (the fader press, the
-MIDI window, the forced-colors lock) and in `src/style.css` (the dropdown), beside the screenshots that
-directory keeps.
+not** — its sections were deleted with their results still reading "not measured" — so the folded text is
+all there is: this document for the fader press, the MIDI window and the forced-colors half of the locked
+select, and `src/style.css` for the dropdown and that lock's ordinary-theme half, beside the screenshots
+that directory keeps.
 
 **The MIDI window is an owned window on Windows and an independent one on macOS** — the `.parent(&main)`
 call sits behind `#[cfg(target_os = "windows")]`. On Windows that ownership is what keeps the panel in
