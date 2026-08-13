@@ -26,7 +26,7 @@ vi.mock("./core/storage", async (importOriginal) => {
 
 import { openTextDocument, readTextByPath, saveTextDocument } from "./core/storage";
 import { t } from "./i18n";
-import { $, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
+import { $, APP_SETTLE, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 
 // The boot fixture — the markup, the globals and the module import — is
 // `main.test-util.ts`, shared with the other two entry suites. `tauri: false` is the
@@ -143,7 +143,7 @@ describe("model and rate pickers", () => {
     const picker = $<HTMLSelectElement>("model-picker");
     picker.value = "URX22";
     picker.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(localStorage.getItem("urx-model")).toBe("URX22"));
+    await vi.waitFor(() => expect(localStorage.getItem("urx-model")).toBe("URX22"), APP_SETTLE);
     expect(status()).toContain("URX22");
   });
 
@@ -153,7 +153,7 @@ describe("model and rate pickers", () => {
     const other = [...rate.options].find((o) => o.value !== rate.value)!;
     rate.value = other.value;
     rate.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(localStorage.getItem("urx-rate")).toBe(other.value));
+    await vi.waitFor(() => expect(localStorage.getItem("urx-rate")).toBe(other.value), APP_SETTLE);
   });
 });
 
@@ -162,7 +162,7 @@ describe("file flow", () => {
     await boot();
     const before = status();
     $("btn-open").click();
-    await vi.waitFor(() => expect(openTextDocument).toHaveBeenCalled());
+    await vi.waitFor(() => expect(openTextDocument).toHaveBeenCalled(), APP_SETTLE);
     expect(status()).toBe(before);
   });
 
@@ -175,7 +175,7 @@ describe("file flow", () => {
       path: "/x/loaded.json",
     });
     $("btn-open").click();
-    await vi.waitFor(() => expect(status()).toContain("loaded"));
+    await vi.waitFor(() => expect(status()).toContain("loaded"), APP_SETTLE);
     expect($<HTMLSelectElement>("model-picker").value).toBe("URX22");
   });
 
@@ -186,21 +186,21 @@ describe("file flow", () => {
     const nodes = $("graph-host").querySelectorAll("g.node[data-id]").length;
     vi.mocked(openTextDocument).mockResolvedValueOnce({ text: "{", path: "/x/bad.json" });
     $("btn-open").click();
-    await vi.waitFor(() => expect(vi.mocked(openTextDocument)).toHaveBeenCalled());
+    await vi.waitFor(() => expect(vi.mocked(openTextDocument)).toHaveBeenCalled(), APP_SETTLE);
     expect($("graph-host").querySelectorAll("g.node[data-id]").length).toBe(nodes);
   });
 
   it("saves through the shell and reports where it landed", async () => {
     await boot();
     $("btn-save").click();
-    await vi.waitFor(() => expect(saveTextDocument).toHaveBeenCalled());
+    await vi.waitFor(() => expect(saveTextDocument).toHaveBeenCalled(), APP_SETTLE);
     expect(status()).toContain("plan.json");
   });
 
   it("starts a new plan", async () => {
     await boot();
     $("btn-new").click();
-    await vi.waitFor(() => expect($("graph-host").querySelector("svg")).not.toBeNull());
+    await vi.waitFor(() => expect($("graph-host").querySelector("svg")).not.toBeNull(), APP_SETTLE);
     expect($("graph-host").querySelectorAll("g.node[data-id]").length).toBeGreaterThan(5);
   });
 });
@@ -240,7 +240,7 @@ describe("a document the loader will not simply open", () => {
     });
     $("btn-open").click();
 
-    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
+    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled(), APP_SETTLE);
     expect(String(vi.mocked(alert).mock.calls.at(-1)![0])).toContain("URX99");
     expect(nodes()).toBe(before);
     // The node count is a weak witness on its own — the document is built from this very
@@ -273,7 +273,7 @@ describe("a document the loader will not simply open", () => {
     vi.mocked(openTextDocument).mockResolvedValueOnce({ text, path: "/x/illegal.json" });
     $("btn-open").click();
 
-    await vi.waitFor(() => expect($("load-report").hidden).toBe(false));
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), APP_SETTLE);
     expect($("load-report-body").textContent?.split("\n")[0]).toBe("URX Router plan validation failed");
     expect($("load-report-body").textContent).toContain(`[duplicate] ${wire}`);
     expect(nodes()).toBe(before);
@@ -308,7 +308,7 @@ describe("a document the loader will not simply open", () => {
     });
     $("btn-open").click();
 
-    await vi.waitFor(() => expect($("load-report").hidden).toBe(false));
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), APP_SETTLE);
     expect($("load-report-body").textContent?.split("\n")[0]).toBe("URX Router plan validation warnings");
     expect($("load-report-body").textContent).toContain("[insertFxSlot]");
 
@@ -316,7 +316,7 @@ describe("a document the loader will not simply open", () => {
     const proceed = $("load-report").querySelector<HTMLButtonElement>("#load-report-proceed");
     expect(proceed).not.toBeNull();
     proceed!.click();
-    await vi.waitFor(() => expect(statusText()).toContain("contended.json"));
+    await vi.waitFor(() => expect(statusText()).toContain("contended.json"), APP_SETTLE);
   });
 
   // A recent entry whose file no longer opens is dropped without a prompt, so the status
@@ -331,7 +331,7 @@ describe("a document the loader will not simply open", () => {
 
     vi.mocked(readTextByPath).mockRejectedValueOnce(new Error("ENOENT"));
     row!.click();
-    await vi.waitFor(() => expect(statusText()).toBe(t().status.recentRemoved("gone.json")));
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.recentRemoved("gone.json")), APP_SETTLE);
     // Removing the entry is not the whole of it: WHY it would not open has to reach the
     // operator too, or the list mutates with no stated reason. `showLoadError` is that
     // surface, and off Tauri it lands on window.alert carrying the underlying failure.
