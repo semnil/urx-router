@@ -68,8 +68,13 @@ const coverageOptions: CoverageReportOptions = {
   // The preview server also exposes Vite helpers and source maps. Only application
   // chunks carry source ranges worth merging with the frontend unit report.
   entryFilter: (entry) => entry.type !== "css" && /\/assets\/[^/]+\.js(?:$|\?)/.test(entry.url),
+  // The message catalogs are excluded from the frontend unit report as well (the reason is
+  // in vitest.config.ts) and from the merged reading (.github/codecov.yml). Both halves
+  // filter them so that a file is either in the coverage set or out of it, rather than in
+  // one upload and not the other.
   sourceFilter: (sourcePath) => {
     const source = repoSourcePath(sourcePath);
+    if (source === "src/i18n/en.ts" || source === "src/i18n/ja.ts") return false;
     return source.startsWith("src/") && source.endsWith(".ts") && !source.endsWith(".d.ts");
   },
   sourcePath: repoSourcePath,
