@@ -21,6 +21,7 @@ import { formatRate } from "./core/constraints";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { PARAMS } from "./core/control/params";
 import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
+import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
 
 /** Long enough for a whole-device read (676 reads through the stub) plus a teardown. */
@@ -135,6 +136,58 @@ function followUsbWrites(shell: TauriShell): number[] {
   });
 }
 
+/**
+ * Answer each confirm by what it SAYS, so a case can decline exactly one of several.
+ * Answering by call order breaks the moment a flow gains or loses a prompt — and it
+ * breaks by answering the wrong question, not by failing to answer.
+ */
+function byMessage(agree: (message: string) => boolean): (a: Record<string, unknown>) => string {
+  return (a) => (agree(String(a.message ?? "")) ? "Ok" : "Cancel");
+}
+
+/** The part of a prompt after its question mark, which is the part that carries no
+ *  count — so two attempts asking the same question with different numbers match one
+ *  needle. Never empty for the two prompts below, so it cannot match everything. */
+const invariantOf = (prompt: string): string => prompt.replace(/^[\s\S]*?\?\s*/, "");
+const WRITE_ASK = invariantOf(t().confirm.write(1));
+const RETRY_ASK = invariantOf(t().confirm.writeRetry(1, 1));
+
+/**
+ * The count a status line was formatted with: the number in the line for which the
+ * message function reproduces the line exactly. The assertion beside it then pins the
+ * whole FRAME — a neighbouring message carrying the same count cannot satisfy it — while
+ * the count itself stays derived rather than hard-coded.
+ *
+ * Reading a number out by position is wrong in both directions here, because model names
+ * carry digits: `fetchedDevice` prints the count before the model (`Fetched 139 settings
+ * from URX22`) and `liveOn` prints it after (`… · URX22 · 139 settings read`), so "the
+ * first number" and "the last number" each pick up `22` in one of them.
+ *
+ * NaN when nothing reconstructs the line, which fails the magnitude check beside it.
+ */
+const countFor = (line: string, frame: (n: number) => string): number =>
+  (line.match(/\d+/g)?.map(Number) ?? []).find((n) => frame(n) === line) ?? NaN;
+
+/** The two commands a report save travels. Deliberately absent from `deviceCommands`: a
+ *  device action that saves a file unasked is a defect, so a case that expects a save has
+ *  to opt in, and one that does not gets the stub's refusal. */
+const SAVES: Record<string, unknown> = { "plugin:dialog|save": "/tmp/report.md", write_text_file: null };
+
+/** A connected unit that is not the model on screen. */
+const connectAs = (model: string): Record<string, unknown> => ({
+  vd_connect: { model, label: model, firmware: SUPPORTED_SYSTEM_FIRMWARE, epoch: 1 },
+});
+
+/** A store that answers the clock and refuses every other read, so a write reaches its
+ *  DIFF and stops there. The clock has to answer: a failed clock read ends the write one
+ *  gate earlier, which is main's own "writes nothing when the clock cannot be read". */
+const diffReadsFail = (a: Record<string, unknown>): number => {
+  if (a.paramId === PARAMS.FOLLOW_USB.id || a.paramId === PARAMS.SAMPLE_RATE.id) {
+    return clockReads(false, 48_000)(a);
+  }
+  throw new Error("read-refused");
+};
+
 describe("Fetch from device", () => {
   it("connects, reads the whole unit, and drops the link when it is done", SLOW, async () => {
     const shell = await bootDevice();
@@ -207,6 +260,112 @@ describe("Fetch from device", () => {
     await invoked(shell, "vd_disconnect");
     expect(shell.count("plugin:dialog|message")).toBe(0);
     expect(SUPPORTED_SYSTEM_FIRMWARE).toBeTruthy();
+  });
+});
+
+/**
+ * What the app does when the unit on the link is not the model on screen.
+ *
+ * Write and compare REFUSE (pinned in "Write to device" below) — they act on the plan as
+ * it stands. Fetch and Live sync instead OFFER to switch the UI to a fresh plan of the
+ * device's model, and that offer has three answers, none of which was driven before.
+ */
+describe("the model the device turns out to be", () => {
+  // A model this build carries no parameter map for is the arm that never raises the
+  // dialog at all: there is nothing to switch to, so the read never starts.
+  it("refuses to fetch from a model this build does not know, and reads nothing", SLOW, async () => {
+    const shell = await bootDevice(connectAs("URX88"));
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+
+    // As a refusal, not as a question: the same words raised as a confirm would satisfy a
+    // case that only looked at the text.
+    expect(errors(shell)).toEqual([t().status.fetchError(t().error.unknownModel("URX88"))]);
+    expect(confirms(shell)).toEqual([]);
+    expect(shell.count("vd_get")).toBe(0);
+    expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
+  });
+
+  // Declining. The prompt has to be named: every stop in this flow lands on the same
+  // "Canceled", and this case boots declining EVERY confirm, so without naming it the
+  // case would stay green over a decline that landed somewhere else entirely.
+  it("leaves the plan on screen alone when the offered switch is declined", SLOW, async () => {
+    const shell = await bootDevice(connectAs("URX22"), false);
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+
+    expect(confirms(shell)).toEqual([t().confirm.switchModel("URX22", "URX44V")]);
+    expect(statusText()).toBe(t().status.canceled);
+    // What the decline left behind: the plan on screen unreplaced, and a sweep that never
+    // started.
+    expect(shell.count("vd_get")).toBe(0);
+    expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
+  });
+
+  // Taken, the offer has to actually switch — otherwise the read that follows maps the
+  // device's channels onto the wrong ones, which is the whole reason the offer exists.
+  // This is the arm that makes the declined case above mean something.
+  it("switches to the device's model when the offer is taken, then reads it", SLOW, async () => {
+    const shell = await bootDevice(connectAs("URX22"));
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+
+    // OFFERED, not assumed: this case boots agreeing to everything, so without naming the
+    // prompt it stays green over a build that drops the confirm and switches outright.
+    expect(confirms(shell)).toEqual([t().confirm.switchModel("URX22", "URX44V")]);
+    expect($<HTMLSelectElement>("model-picker").value).toBe("URX22");
+    expect(shell.count("vd_get")).toBeGreaterThan(50);
+    // The whole frame: `fetchPartial` and `fetchedUnread` also name the model, so a read
+    // that landed on either must not pass as a clean one.
+    await vi.waitFor(
+      () => expect(countFor(statusText(), (n) => t().status.fetchedDevice("URX22", n))).toBeGreaterThan(50),
+      { timeout: 10_000 },
+    );
+  });
+
+  // The same three answers on the Live-sync side, where they end differently: the unknown
+  // model is a failure (a dialog) while the decline is user-neutral (the status line), and
+  // both have to give the connection back.
+  it("refuses a live session on a model this build does not know", SLOW, async () => {
+    const shell = await bootDevice(connectAs("URX88"));
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+
+    expect(errors(shell)).toEqual([t().status.liveError(t().error.unknownModel("URX88"))]);
+    expect(shell.count("vd_params_subscribe")).toBe(0);
+    expect($("live-tally").hidden).toBe(true);
+    // The link was handed back, not merely disconnected: the holder is what locks the
+    // other device actions, and the disconnect above does not release it.
+    expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false);
+  });
+
+  it("abandons a live session quietly when the offered switch is declined", SLOW, async () => {
+    const shell = await bootDevice(connectAs("URX22"), false);
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+
+    expect(confirms(shell)).toEqual([t().confirm.switchModel("URX22", "URX44V")]);
+    expect(errors(shell)).toEqual([]); // a decline is not a failure
+    expect(statusText()).toBe(t().status.canceled);
+    expect(shell.count("vd_params_subscribe")).toBe(0);
+    // The link was handed back, not merely dropped: the next action can take it.
+    expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false);
+  });
+
+  // Taken on the live path, which the fetch case is not a substitute for: here the
+  // replacement plan is what `live.begin()` snapshots as device truth, so a switch that
+  // half-happened would enshrine the wrong model for the session's whole duration.
+  it("switches to the device's model when a live session offers it", SLOW, async () => {
+    const shell = await bootDevice(connectAs("URX22"));
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+
+    expect(confirms(shell)).toEqual([t().confirm.switchModel("URX22", "URX44V")]);
+    expect($<HTMLSelectElement>("model-picker").value).toBe("URX22");
+    expect(countFor(statusText(), (n) => t().status.liveOn("URX22", n))).toBeGreaterThan(50);
+    // Registered against the switched plan, so the session follows the model the unit
+    // actually is rather than the one that was on screen.
+    expect(shell.count("vd_params_subscribe")).toBe(1);
   });
 });
 
@@ -307,6 +466,35 @@ describe("the live session", () => {
     await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
     expect(shell.count("vd_connect")).toBe(1);
     expect(shell.count("vd_params_subscribe")).toBe(1);
+  });
+
+  // The failure that lands PAST the point of no return. `live.begin()` flips the sync on
+  // before the two awaited registrations, so a throw from either leaves a session that is
+  // half up: sync active, `liveSessionUp` still false. Tearing only the connection down
+  // there leaves `live.isActive()` true, and every later click routes into
+  // deactivateLive's early return — a toggle that does nothing for the rest of the launch.
+  //
+  // The second click is therefore the case, not a coda to it: the teardown is only
+  // observable as the session that follows it. `failOnce` is what lets that second click
+  // succeed, so a dead toggle fails here rather than timing out against a shell that
+  // refuses everything.
+  it("tears a half-started session down, and leaves the toggle live", SLOW, async () => {
+    const shell = await bootDevice();
+    shell.failOnce("vd_watch_link", new Error("watch-refused"));
+    $("btn-live").click();
+
+    // follow.begin() had already registered; failLive is what gives that back. That is the
+    // FIRST of its four steps and the dialog is the last, so the disconnect between them
+    // is what the assertions wait on rather than a dialog three steps past the wait.
+    await vi.waitFor(() => expect(shell.count("vd_params_unsubscribe")).toBe(1), { timeout: 25_000 });
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell)).toEqual([t().status.liveError("watch-refused")]);
+    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect($("live-tally").hidden).toBe(true);
+
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    expect(shell.count("vd_params_subscribe")).toBe(2);
   });
 
   it("reports a session that cannot start, and leaves the toggle off", SLOW, async () => {
@@ -434,6 +622,200 @@ describe("Write to device", () => {
     $("btn-write").click();
     await invoked(shell, "vd_disconnect", 2);
     expect(statusText()).toContain(t().status.writeNoChanges);
+  });
+
+  // A parameter whose current value could not be read is one the write has no diff for,
+  // so the sweep stops at the first rather than establishing values for a write that is
+  // already canceled. `vd_set` at zero is the assertion: a read failure that let the write
+  // proceed would send the plan over a device state nobody confirmed.
+  it("cancels the write when the device's current values cannot be read", SLOW, async () => {
+    const shell = await bootDevice({ ...SAVES, vd_get: diffReadsFail });
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    // Exactly one: the sweep is asked to stop at the first failure, so the count is the
+    // pin on that rather than an incidental number.
+    expect(statusText()).toBe(t().status.writeReadFailed(1));
+    expect(shell.count("vd_set")).toBe(0);
+
+    // …and the reason is offered as a file, since a packaged build has no console to read
+    // the per-command failures in.
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 10_000 });
+    const saved = shell.args[shell.invokes.indexOf("write_text_file")];
+    expect(String(saved?.contents ?? "")).toContain("read-refused");
+
+    // The only thing it asked. Two regressions hide here otherwise: a read stop that
+    // still asked for the change count, and — the one nothing else covers — a read stop
+    // returning a sent/not-sent split instead of null, which would offer to run the write
+    // again and go on offering it, since the retry re-runs the same failing read.
+    expect(confirms(shell)).toEqual([t().confirm.deviceErrorExport]);
+  });
+
+  // The names are a second diff over a separate IPC, read AFTER the numeric sweep has
+  // already succeeded — so this is the arm where everything the write needs is in hand but
+  // the names, and it still must not send.
+  //
+  // Unlike the numeric sweep, `diffNames` takes no stop-on-first-error: it reads every
+  // name and collects one failure per read. The status count is pinned against that read
+  // count — an independent observable — and the floor is the other half, because the two
+  // move together if the sweep ever gains a stop: 1 === 1 would stay green while the
+  // operator's number fell from the whole name set to one. Measured here: 17 name reads.
+  it("cancels the write when a channel name cannot be read", SLOW, async () => {
+    const shell = await bootDevice({
+      ...SAVES,
+      vd_get: clockReads(false, 48_000),
+      vd_get_str: () => {
+        throw new Error("name-read-refused");
+      },
+    });
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    expect(shell.count("vd_get_str")).toBeGreaterThan(5); // the sweep did not stop at the first
+    expect(statusText()).toBe(t().status.writeReadFailed(shell.count("vd_get_str")));
+    expect(shell.count("vd_get")).toBeGreaterThan(100); // the numeric half did run
+    expect(shell.count("vd_set")).toBe(0);
+    expect(shell.count("vd_set_str")).toBe(0);
+    // Same as the numeric stop above: the report, and nothing else — no change count, and
+    // no offer to run again a write whose read would fail the same way.
+    await vi.waitFor(() => expect(confirms(shell)).toEqual([t().confirm.deviceErrorExport]), { timeout: 10_000 });
+  });
+
+  // A stopped send leaves the unit holding part of what was confirmed, and the offer to
+  // run it again is what turns that into something the operator can act on. The retry
+  // re-diffs, so what already landed drops out by itself — which is exactly why it must
+  // NOT ask for the change count a second time: that count would be a different number
+  // about a different set, asked after the operator already agreed to the write.
+  it("offers to run a stopped write again, and does not re-ask the change count", SLOW, async () => {
+    const shell = await bootDevice(SAVES);
+    shell.failOnce("vd_set", new Error("nak"));
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    expect(confirms(shell).filter((m) => m.includes(RETRY_ASK))).toHaveLength(1);
+    expect(confirms(shell).filter((m) => m.includes(WRITE_ASK))).toHaveLength(1);
+    expect(countFor(statusText(), (n) => t().status.written(n))).toBeGreaterThan(10);
+    // The names went out on the successful attempt — they are held back while the numeric
+    // phase is stopped, so this also says the retry reached the end.
+    expect(shell.count("vd_set_str")).toBeGreaterThan(0);
+
+    // And the report the FIRST attempt built is still offered, after a status line saying
+    // the write succeeded: `report` is not cleared by the attempt that worked. Pinned as it
+    // stands rather than left to be discovered — whether a retry that resolved the failure
+    // should still report it is a product question, and this records the current answer.
+    // Waited for, like its sibling below: the offer is raised after the disconnect this
+    // returned on.
+    await vi.waitFor(() => expect(confirms(shell)).toContain(t().confirm.deviceErrorExport), { timeout: 10_000 });
+  });
+
+  // Declining ends it where it stopped, and the status line is the whole report then, so
+  // it has to carry both halves of the split. The offer itself is asserted too: every
+  // other assertion here is set inside `attemptWrite` before it returns, so all of them
+  // hold over a build with no retry loop at all.
+  it("stops where it stopped when the retry is declined", SLOW, async () => {
+    const shell = await bootDevice({ ...SAVES, "plugin:dialog|message": byMessage((m) => !m.includes(RETRY_ASK)) });
+    shell.failOnce("vd_set", new Error("nak"));
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    const [sent, notSent] = (/: (\d+) sent, (\d+) not sent/.exec(statusText()) ?? []).slice(1).map(Number);
+    expect(statusText()).toBe(t().status.writeStopped(sent, notSent));
+    expect(sent).toBe(0);
+    expect(notSent).toBeGreaterThan(0);
+    // The whole prompt, not just its count-free tail: that tail is satisfied by a prompt
+    // reporting the two counts the other way round. And exactly once — a decline has to
+    // end the loop rather than lead to the same question again.
+    expect(confirms(shell)).toContain(t().confirm.writeRetry(0, notSent));
+    expect(confirms(shell).filter((m) => m.includes(RETRY_ASK))).toHaveLength(1);
+    expect(shell.count("vd_set")).toBe(1); // stopped AT the failure, not after it
+    expect(shell.count("vd_set_str")).toBe(0); // names are held back while it is stopped
+  });
+});
+
+// Offered after the disconnect rather than during it (why, in `offerErrorReport`'s own
+// comment in main.ts). The write's read-failure case above covers the arm where the offer
+// is taken and a file appears; these are the two that leave nothing behind.
+describe("the failure report a device action offers", () => {
+  /** A write that cancels on its first diff read, which is the cheapest way to a report. */
+  const failingWrite = async (over: Record<string, unknown>): Promise<TauriShell> => {
+    const shell = await bootDevice({ ...over, vd_get: diffReadsFail });
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    return shell;
+  };
+
+  it("writes no file when the offer is declined", SLOW, async () => {
+    const shell = await failingWrite({
+      ...SAVES,
+      "plugin:dialog|message": byMessage((m) => m !== t().confirm.deviceErrorExport),
+    });
+    // Waited for rather than slept past: the offer is raised after the disconnect this
+    // returned on, and once its confirm resolves the decline is decided synchronously.
+    await vi.waitFor(() => expect(confirms(shell)).toContain(t().confirm.deviceErrorExport), { timeout: 10_000 });
+    expect(shell.count("plugin:dialog|save")).toBe(0);
+    expect(shell.count("write_text_file")).toBe(0);
+    expect(statusText()).toBe(t().status.writeReadFailed(1)); // the write's own verdict stands
+  });
+
+  // A rejected save must surface like a failed plan save. Swallowed, it would read as a
+  // saved report — the status line still shows the write's verdict and no file exists.
+  it("surfaces a save that fails, rather than leaving it read as saved", SLOW, async () => {
+    const shell = await failingWrite({
+      "plugin:dialog|save": () => {
+        throw new Error("disk-full");
+      },
+    });
+    await vi.waitFor(() => expect(errors(shell)).toContain(t().status.saveError("disk-full")), { timeout: 10_000 });
+    expect(shell.count("write_text_file")).toBe(0);
+  });
+});
+
+// The macOS Edit menu lives outside the document, so a click on it arrives as a webview
+// event rather than as a DOM one. `edit-menu.test.ts` pins the module against mocked
+// hooks; what is only true HERE is that those hooks reach the plan's history at all —
+// they are built before `planHistory` exists and read it lazily, so a wiring that resolved
+// it eagerly would capture null and the menu would silently do nothing.
+describe("the macOS Edit menu", () => {
+  it("routes a menu click into the plan's history, both ways", SLOW, async () => {
+    const shell = await bootDevice();
+    $("btn-view-console").click();
+    const slider = (): HTMLElement => $("console-host").querySelector<HTMLElement>('.con-strip [role="slider"]')!;
+    /** Wait until the NEWEST push to the native menu says exactly this. */
+    const menuState = async (state: { canUndo: boolean; canRedo: boolean }): Promise<void> => {
+      await vi.waitFor(() => expect(shell.args[shell.invokes.lastIndexOf("set_edit_menu_state")]).toEqual(state), {
+        timeout: 10_000,
+      });
+    };
+    const before = slider().getAttribute("aria-valuenow");
+
+    // UP, not down: the first control on the strip is the analog gain knob, and the default
+    // plan has it at the bottom of its range, so a step down writes the value it already
+    // holds and the case would fail on its own premise. Both values are asserted rather
+    // than described, so the reason survives a factory default that moves or a strip head
+    // that is reordered.
+    expect(before, "the first strip control is no longer the gain knob at its floor").toBe("-8");
+    // Keyup as well as keydown: an arrow key is an entry boundary, so this commits the edit
+    // at once instead of leaving the case waiting on the idle backstop.
+    for (const type of ["keydown", "keyup"]) {
+      slider().dispatchEvent(new KeyboardEvent(type, { key: "ArrowUp", bubbles: true, cancelable: true }));
+    }
+    expect(slider().getAttribute("aria-valuenow")).toBe("-7");
+
+    // The depth reached the native menu — the other half of the wiring, and the half that
+    // decides whether the item is clickable at all.
+    await menuState({ canUndo: true, canRedo: false });
+
+    // One handler, not zero: an event nobody listens for would leave every assertion below
+    // describing an app that was never asked to do anything.
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    await vi.waitFor(() => expect(slider().getAttribute("aria-valuenow")).toBe("-8"), { timeout: 10_000 });
+    // The menu updates ITSELF, which is the whole reason this wiring exists: the menu is
+    // outside the document, so nothing repaints it. Without this the Redo item stays
+    // greyed out after an undo taken from the menu — usable once per launch — and only
+    // the edit-driven push above would be covered.
+    await menuState({ canUndo: false, canRedo: true });
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_REDO_ID)).toBe(1);
+    await vi.waitFor(() => expect(slider().getAttribute("aria-valuenow")).toBe("-7"), { timeout: 10_000 });
   });
 });
 
