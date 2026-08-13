@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  clipNodeName,
   emptyPlan,
   ensureFixedConnections,
   serialize,
@@ -384,5 +385,52 @@ describe("mixed mutator sequence + persistence round-trip (URX44V)", () => {
     expect(restored.connections).toEqual(plan.connections);
     // Exactly one source into ch1 (the second select replaced the first).
     expect(restored.connections.filter((c) => c.to === ref("ch1", "in") && c.kind === "source")).toHaveLength(1);
+  });
+});
+
+// A CH SETTING name is a fixed-width field on the device (ASCII, 64-byte elements,
+// NUL-padded — read off a unit-written settings file, since the broker publishes no
+// bound for these at all), and names are the one plan string that leaves the app over
+// the device link. The numeric leaves have `boundRaw` between them and the wire;
+// nothing played that part for strings, so a crafted plan's multi-kilobyte name
+// loaded silently and rode `vd_set_str` uncut.
+describe("node names are bounded by the device's own field width", () => {
+  const bytes = (s: string): number => new TextEncoder().encode(s).length;
+
+  it("keeps a name that fits, to the last byte the field can terminate", () => {
+    const exact = "x".repeat(63);
+    expect(bytes(exact)).toBe(63);
+    expect(clipNodeName(exact)).toBe(exact);
+  });
+
+  it("cuts a longer name to the field width", () => {
+    const long = "y".repeat(500);
+    expect(bytes(clipNodeName(long))).toBe(63);
+  });
+
+  // Cutting by string length would split a multi-byte character and put a lone
+  // surrogate / a half sequence on the wire.
+  it("cuts multi-byte text on a code-point boundary, never mid-character", () => {
+    for (const unit of ["あ", "🎸", "Ø"]) {
+      const cut = clipNodeName(unit.repeat(200));
+      expect(bytes(cut)).toBeLessThanOrEqual(63);
+      expect(cut).toBe(unit.repeat(cut.length / unit.length));
+      expect([...cut].every((ch) => ch === [...unit][0] || unit.startsWith(ch))).toBe(true);
+      // A cut that lost a byte of the last character would not re-encode to itself.
+      expect(new TextDecoder("utf-8", { fatal: true }).decode(new TextEncoder().encode(cut))).toBe(cut);
+    }
+  });
+
+  it("applies the bound at the load funnel, so a crafted document cannot carry one past it", () => {
+    const doc = JSON.stringify({
+      format: PLAN_FORMAT,
+      version: PLAN_VERSION,
+      modelId: "URX44V",
+      nodeNames: { ch1: "z".repeat(4000), ch2: "Kick" },
+    });
+    const plan = deserialize(doc);
+    expect(bytes(plan.nodeNames["ch1"])).toBe(63);
+    // An ordinary name is untouched — the guard bounds, it does not rewrite.
+    expect(plan.nodeNames["ch2"]).toBe("Kick");
   });
 });

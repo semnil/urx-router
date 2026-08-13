@@ -68,6 +68,7 @@ import {
   COMP_EQ_OPTIONS,
   COMP_KNEE_OPTIONS,
   INSERT_FX_NONE,
+  NODE_NAME_MAX_BYTES,
   OSC_MODE_BURST,
   OSC_MODE_OPTIONS,
   OSC_MODE_SINE,
@@ -348,8 +349,12 @@ export function renderInspector(
     // name); empty falls back to the model's default label.
     if (node.kind === "channel" || node.kind === "bus") {
       host.append(
-        textInput(m.inspector.name, plan.nodeNames[node.id] ?? "", fullLabel(node), (v) =>
-          actions.onRenameNode(node.id, v),
+        textInput(
+          m.inspector.name,
+          plan.nodeNames[node.id] ?? "",
+          fullLabel(node),
+          (v) => actions.onRenameNode(node.id, v),
+          NODE_NAME_MAX_BYTES,
         ),
       );
     }
@@ -1829,13 +1834,22 @@ function colorSwatches(
 }
 
 // A labeled single-line text field. Reports every keystroke (trimmed by the
-// caller) without re-rendering, so it keeps focus while typing.
-function textInput(label: string, value: string, placeholder: string, onInput: (v: string) => void): HTMLElement {
+// caller) without re-rendering, so it keeps focus while typing. `maxChars` stops
+// typing at the field's own bound rather than letting the caller cut the value
+// afterwards, which would leave the box showing text the plan does not hold.
+function textInput(
+  label: string,
+  value: string,
+  placeholder: string,
+  onInput: (v: string) => void,
+  maxChars?: number,
+): HTMLElement {
   const { row } = paramBlock(label, "");
   const input = document.createElement("input");
   input.type = "text";
   input.value = value;
   input.placeholder = placeholder;
+  if (maxChars !== undefined) input.maxLength = maxChars;
   input.addEventListener("input", () => onInput(input.value));
   row.append(input);
   return row;

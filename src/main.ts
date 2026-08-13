@@ -6,6 +6,7 @@ import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
 import { applyPairTransition, mirrorBalPair, mirrorLinkedInsertFx, mixSendLocks, partnerChannel } from "./core/routing";
 import {
+  clipNodeName,
   decodePlanParam,
   deserializeDocument,
   emptyPlan,
@@ -1125,7 +1126,10 @@ const inspectorActions = {
   // Rename mutates in place and repaints the node label without re-rendering the
   // inspector, so the text input keeps focus while typing. Empty clears the override.
   onRenameNode: (id: string, name: string) => {
-    if (name.trim()) plan.nodeNames[id] = name;
+    // Clipped to the device's field width here as well as at load: the field's own
+    // maxlength counts UTF-16 units, so a paste of multi-byte text can still arrive
+    // over the byte bound.
+    if (name.trim()) plan.nodeNames[id] = clipNodeName(name);
     else delete plan.nodeNames[id];
     markChanged();
     graph.repaintNodes();
