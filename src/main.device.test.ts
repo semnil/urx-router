@@ -20,6 +20,9 @@ import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { PARAMS } from "./core/control/params";
+import { nameControl } from "./core/control/translate";
+import { getModel } from "./models";
+import { faceplate } from "./ui/graph.test-util";
 import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
 import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
@@ -51,6 +54,19 @@ async function invoked(shell: TauriShell, cmd: string, n = 1, timeout = 25_000):
 }
 
 const live = (): HTMLButtonElement => document.getElementById("btn-live") as HTMLButtonElement;
+
+/** Select a node the way a click does, so the inspector renders for it. */
+const selectNode = (id: string): void => {
+  const face = faceplate($("graph-host"), id)!;
+  face.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+  face.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+};
+
+/** The notify channel the live session registered, taken from the subscribe's own
+ *  arguments rather than by position. */
+const notifyChannel = (shell: TauriShell): { onmessage: (d: unknown) => void } =>
+  (shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { channel: { onmessage: (d: unknown) => void } })
+    .channel;
 
 /**
  * A `vd_get` that answers the two clock parameters and nothing else, so a case can
@@ -507,6 +523,40 @@ describe("the live session", () => {
     expect(live().getAttribute("aria-pressed")).toBe("false");
     expect($("live-tally").hidden).toBe(true);
     expect($<HTMLSelectElement>("model-picker").disabled).toBe(false);
+  });
+
+  // A rename made on the unit itself arrives on the string path, and this is the only
+  // place the app's own `applyName` runs: follow.test.ts stubs the hook, and the race
+  // harness reads the canvas label, which is trimmed on the way out and reads the same
+  // whatever the plan holds.
+  //
+  // It is normalized like a name typed into the app — cut to the bound, and THEN
+  // stripped of trailing padding. The order is the half this pins: a name whose eighth
+  // character is a space has nothing to trim before the cut, so trimming first leaves
+  // one in the plan, and a plan name carrying a trailing space is re-sent on every sync
+  // (the unit stores it, every read trims it off, and the two never match).
+  //
+  // The wire is what makes such a name reachable at all: the unit's own name screen
+  // takes 8 characters, but a 20-character name is storable and reads back whole
+  // (measured on a URX44V), so a longer one gets here from another client.
+  //
+  // Read off the inspector, which shows the plan's own string.
+  it("normalizes a rename arriving from the unit, its padding as well as its length", SLOW, async () => {
+    const shell = await bootDevice();
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+
+    const nc = nameControl(getModel("URX44V"), "ch1")!;
+    notifyChannel(shell).onmessage([{ param_id: nc.param, x: 0, y: 0, value: 0, value_str: "1234567  9" }]);
+
+    // Asserted immediately, and deliberately not awaited: the notify is delivered and
+    // applied synchronously, while the idle net a followed change arms fires a full
+    // reconcile 900 ms later — and this stub never took the write, so that sweep reads
+    // the name back as empty and clears it. A `waitFor` here would therefore report an
+    // empty field for a name that had arrived correctly, and would let a wrong value be
+    // polled away instead of failing.
+    selectNode("ch1");
+    expect($("inspector").querySelector<HTMLInputElement>('input[type="text"]')?.value).toBe("1234567");
   });
 });
 
