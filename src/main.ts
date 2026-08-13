@@ -2897,6 +2897,20 @@ if (!DEMO) {
       setStatus(t().status.canceled);
       return;
     }
+    // Re-checked HERE, not only at the flow's entry. This is the one wholesale plan
+    // replacement that does not go through `loadPlan` — it mutates the module plan in
+    // place — so it has no share of that backstop, and the entry check is separated
+    // from the mutation by two confirm dialogs. The UI stays clickable during those
+    // (the confirm's own comment says so), so an operator can start a Fetch or Live
+    // sync in between: the read raises the latch and spends seconds merging into the
+    // same plan object this is about to overwrite key by key. Neither side reports
+    // anything, the import does not pass `markChanged` so the write witness has no
+    // entry for it, and what is left is a mixture with a history and a live snapshot
+    // that describe neither half.
+    if (flow.deviceReadInFlight) {
+      setStatus(t().status.busyDeviceRead);
+      return;
+    }
     let result: ReadbackResult;
     try {
       result = await applySourceState(getModel(modelId), plan, paramSourceOf(current));
