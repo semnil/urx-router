@@ -28,7 +28,7 @@ vi.mock("./core/storage", async (importOriginal) => {
 import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
 import { downloadText, exportSvgToPdf, exportSvgToPng, saveTextDocument } from "./core/storage";
 import { t } from "./i18n";
-import { $, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
+import { $, APP_SETTLE, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 import { faceplate } from "./ui/graph.test-util";
 
 const nodes = (): number => $("graph-host").querySelectorAll("g.node[data-id]").length;
@@ -126,7 +126,7 @@ describe("the share link", () => {
     });
     await boot();
     $("btn-share").click();
-    await vi.waitFor(() => expect(written).toHaveLength(1));
+    await vi.waitFor(() => expect(written).toHaveLength(1), APP_SETTLE);
 
     const param = new URL(written[0]).searchParams.get("plan");
     expect(param).toBeTruthy();
@@ -150,8 +150,8 @@ describe("the share link", () => {
     });
     await boot();
     $("btn-share").click();
-    await vi.waitFor(() => expect(location.search).toContain("plan="));
-    await vi.waitFor(() => expect(status()).toBe(t().status.shareUrlInBar));
+    await vi.waitFor(() => expect(location.search).toContain("plan="), APP_SETTLE);
+    await vi.waitFor(() => expect(status()).toBe(t().status.shareUrlInBar), APP_SETTLE);
     expect(vi.mocked(alert)).not.toHaveBeenCalled();
   });
 });
@@ -175,7 +175,7 @@ describe("the deep link", () => {
     const param = await encodePlanParam(plan, {});
     history.replaceState(null, "", `/?plan=${encodeURIComponent(param)}`);
     await boot();
-    await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"));
+    await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"), APP_SETTLE);
 
     // The rate, off its default.
     expect($<HTMLSelectElement>("rate-picker").value).toBe("96000");
@@ -204,7 +204,7 @@ describe("the deep link", () => {
     history.replaceState(null, "", "/?plan=z%40%40%40");
     await boot();
 
-    await vi.waitFor(() => expect($("load-report").hidden).toBe(false));
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), APP_SETTLE);
     expect($("load-report-body").textContent).toBe(t().error.badPlanUrl);
     // …and only then is "the board is untouched" worth asserting.
     expect(nodes()).toBeGreaterThan(5);
@@ -219,7 +219,7 @@ describe("the deep link", () => {
     history.replaceState(null, "", "/?plan=not-a-plan");
     await boot();
 
-    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
+    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled(), APP_SETTLE);
     expect($("load-report").hidden).toBe(true);
     expect(nodes()).toBeGreaterThan(5);
     expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
@@ -230,14 +230,14 @@ describe("image export", () => {
   it("exports the board as PNG and says where it landed", async () => {
     await boot();
     $("btn-export").click();
-    await vi.waitFor(() => expect(exportSvgToPng).toHaveBeenCalled());
+    await vi.waitFor(() => expect(exportSvgToPng).toHaveBeenCalled(), APP_SETTLE);
     expect(status()).toContain("board.png");
   });
 
   it("exports the board as PDF", async () => {
     await boot();
     $("btn-export-pdf").click();
-    await vi.waitFor(() => expect(exportSvgToPdf).toHaveBeenCalled());
+    await vi.waitFor(() => expect(exportSvgToPdf).toHaveBeenCalled(), APP_SETTLE);
     expect(status()).toContain("board.pdf");
   });
 
@@ -247,13 +247,13 @@ describe("image export", () => {
     await boot();
     vi.mocked(exportSvgToPng).mockRejectedValueOnce(new Error("canvas-unavailable"));
     $("btn-export").click();
-    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
+    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled(), APP_SETTLE);
   });
 
   it("downloads the plan as JSON", async () => {
     await boot();
     $("btn-download").click();
-    await vi.waitFor(() => expect(downloadText).toHaveBeenCalled());
+    await vi.waitFor(() => expect(downloadText).toHaveBeenCalled(), APP_SETTLE);
     const [name, text] = vi.mocked(downloadText).mock.calls.at(-1)!;
     expect(String(name)).toBe("URX44V-plan.json");
     // The claim the demo rests on: what this writes is what a desktop save writes, so
@@ -287,7 +287,7 @@ describe("the board's own actions", () => {
     const chip = $("graph-host").querySelector<HTMLButtonElement>(".shelf-chips .chip");
     expect(chip).not.toBeNull();
     chip!.click();
-    await vi.waitFor(() => expect(nodes()).toBeGreaterThan(hidden));
+    await vi.waitFor(() => expect(nodes()).toBeGreaterThan(hidden), APP_SETTLE);
   });
 });
 
@@ -299,7 +299,7 @@ describe("the modals", () => {
     expect(scrim).not.toBeNull();
     expect(scrim!.hidden).toBe(false);
     chord("Escape");
-    await vi.waitFor(() => expect(scrim!.hidden).toBe(true));
+    await vi.waitFor(() => expect(scrim!.hidden).toBe(true), APP_SETTLE);
   });
 
   // The notice is a bundled resource fetched at click time, and jsdom serves no
@@ -310,7 +310,7 @@ describe("the modals", () => {
   it("reports a licence notice it cannot read, rather than opening an empty modal", async () => {
     await boot();
     $("btn-licenses").click();
-    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
+    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled(), APP_SETTLE);
     expect($("licenses-modal").hidden).toBe(true);
   });
 });
@@ -328,13 +328,21 @@ describe("undo and redo", () => {
     const edited = $("console-host").querySelector('.con-strip [role="slider"]')!.getAttribute("aria-valuenow");
 
     chord("z", { ctrlKey: true });
-    await vi.waitFor(() =>
-      expect($("console-host").querySelector('.con-strip [role="slider"]')!.getAttribute("aria-valuenow")).toBe(before),
+    await vi.waitFor(
+      () =>
+        expect($("console-host").querySelector('.con-strip [role="slider"]')!.getAttribute("aria-valuenow")).toBe(
+          before,
+        ),
+      APP_SETTLE,
     );
 
     chord("z", { ctrlKey: true, shiftKey: true });
-    await vi.waitFor(() =>
-      expect($("console-host").querySelector('.con-strip [role="slider"]')!.getAttribute("aria-valuenow")).toBe(edited),
+    await vi.waitFor(
+      () =>
+        expect($("console-host").querySelector('.con-strip [role="slider"]')!.getAttribute("aria-valuenow")).toBe(
+          edited,
+        ),
+      APP_SETTLE,
     );
   });
 
@@ -381,7 +389,7 @@ describe("what the browser build does not offer", () => {
       expect(() => el!.click()).not.toThrow();
 
       if (channel === "dialog") {
-        await vi.waitFor(() => expect(vi.mocked(alert).mock.calls.length).toBe(dialogsBefore + 1));
+        await vi.waitFor(() => expect(vi.mocked(alert).mock.calls.length).toBe(dialogsBefore + 1), APP_SETTLE);
       } else {
         // The frame is read out of the catalog rather than typed in, so a Japanese run
         // asserts the same thing. An empty reason yields the frame directly, so no
@@ -391,7 +399,7 @@ describe("what the browser build does not offer", () => {
         // `startsWith("")` is true of everything, so an entry that stopped framing its
         // reason would make the next line pass for nothing.
         expect(frame).not.toBe("");
-        await vi.waitFor(() => expect(status()).not.toBe(statusBefore));
+        await vi.waitFor(() => expect(status()).not.toBe(statusBefore), APP_SETTLE);
         expect(status().startsWith(frame)).toBe(true);
         expect(status().length).toBeGreaterThan(frame.length); // the reason is named
         expect(vi.mocked(alert).mock.calls.length).toBe(dialogsBefore);
@@ -408,7 +416,7 @@ describe("saving a plan", () => {
     await boot();
     vi.mocked(saveTextDocument).mockResolvedValueOnce({ saved: false });
     $("btn-save").click();
-    await vi.waitFor(() => expect(status()).toBe(t().status.canceled));
+    await vi.waitFor(() => expect(status()).toBe(t().status.canceled), APP_SETTLE);
     expect(vi.mocked(alert)).not.toHaveBeenCalled();
   });
 
@@ -425,7 +433,7 @@ describe("saving a plan", () => {
 
     vi.mocked(saveTextDocument).mockRejectedValueOnce(new Error("disk-full"));
     $("btn-save").click();
-    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
+    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled(), APP_SETTLE);
     // The modal carries the CAUSE, not just the fact. "Reached a dialog but lost why" is
     // its own failure, and a generic frame reads to the operator as a save that failed for
     // no stated reason.
@@ -449,7 +457,7 @@ describe("saving a plan", () => {
     await boot();
     vi.mocked(saveTextDocument).mockResolvedValueOnce({ saved: true });
     $("btn-save").click();
-    await vi.waitFor(() => expect(status()).toBe(t().status.planSaved));
+    await vi.waitFor(() => expect(status()).toBe(t().status.planSaved), APP_SETTLE);
   });
 });
 
@@ -469,7 +477,7 @@ describe("what the share link does when the codec will not run", () => {
     );
     await boot();
     $("btn-share").click();
-    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalledWith(t().error.planUrlUnsupported));
+    await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalledWith(t().error.planUrlUnsupported), APP_SETTLE);
     expect(location.search).not.toContain("plan="); // nothing was put in the bar either
   });
 
@@ -483,7 +491,7 @@ describe("what the share link does when the codec will not run", () => {
     delete (Blob.prototype as { stream?: unknown }).stream;
     try {
       $("btn-share").click();
-      await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
+      await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled(), APP_SETTLE);
       const [message] = vi.mocked(alert).mock.calls.at(-1)!;
       expect(String(message)).not.toBe(t().error.planUrlUnsupported);
       expect(String(message).startsWith(t().status.shareUrlError(""))).toBe(true);
@@ -563,7 +571,7 @@ describe("switching language at runtime", () => {
     sel.value = "ja";
     sel.dispatchEvent(new Event("change"));
 
-    await vi.waitFor(() => expect(document.documentElement.lang).toBe("ja"));
+    await vi.waitFor(() => expect(document.documentElement.lang).toBe("ja"), APP_SETTLE);
     expect($("lbl-model").textContent).not.toBe(modelLabel);
     expect(status()).toBe(appT().status.language(LANG_NAMES.ja));
     // The modal was rebuilt rather than left showing the language that just left, so its
@@ -621,7 +629,7 @@ describe("editing a node through the inspector", () => {
     // with no `nodeNames.ch1`, which is exactly what this asserts.
     const saves = vi.mocked(saveTextDocument).mock.calls.length;
     $("btn-save").click();
-    await vi.waitFor(() => expect(vi.mocked(saveTextDocument).mock.calls.length).toBe(saves + 1));
+    await vi.waitFor(() => expect(vi.mocked(saveTextDocument).mock.calls.length).toBe(saves + 1), APP_SETTLE);
     const saved = JSON.parse(vi.mocked(saveTextDocument).mock.calls.at(-1)![1]) as {
       nodeNames?: Record<string, string>;
     };
@@ -648,12 +656,12 @@ describe("editing a node through the inspector", () => {
 
     const other = swatches().findIndex((s, i) => i !== before && !s.classList.contains("swatch-none"));
     swatches()[other].click();
-    await vi.waitFor(() => expect(pickedAt()).toBe(other));
+    await vi.waitFor(() => expect(pickedAt()).toBe(other), APP_SETTLE);
 
     // null clears the override, which is a different write from picking a colour and has
     // to leave the node with no colour rather than with the first one on the strip.
     none().click();
-    await vi.waitFor(() => expect(none().classList.contains("sel")).toBe(true));
+    await vi.waitFor(() => expect(none().classList.contains("sel")).toBe(true), APP_SETTLE);
     expect(pickedAt()).toBe(swatches().indexOf(none()));
   });
 
@@ -670,13 +678,13 @@ describe("editing a node through the inspector", () => {
     const recPoint = (): HTMLSelectElement => row(t().inspector.recPoint).querySelector<HTMLSelectElement>("select")!;
     recPoint().value = String(REC_POINT_PRE_EQ);
     recPoint().dispatchEvent(new Event("change", { bubbles: true }));
-    await vi.waitFor(() => expect(recPoint().value).toBe(String(REC_POINT_PRE_EQ)));
+    await vi.waitFor(() => expect(recPoint().value).toBe(String(REC_POINT_PRE_EQ)), APP_SETTLE);
 
     const type = row(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
     type.value = String(COMP_EQ_SSMCS);
     type.dispatchEvent(new Event("change", { bubbles: true }));
 
-    await vi.waitFor(() => expect(recPoint().value).toBe(String(REC_POINT_PRE_COMP)));
+    await vi.waitFor(() => expect(recPoint().value).toBe(String(REC_POINT_PRE_COMP)), APP_SETTLE);
     // …and the stage that no longer exists is off the list, so it cannot be chosen again.
     expect([...recPoint().options].map((o) => o.value)).not.toContain(String(REC_POINT_PRE_EQ));
   });
