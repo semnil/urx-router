@@ -1312,6 +1312,44 @@ function inspectorFocusKey(el: HTMLElement): string {
   return [label, el.tagName, type, el.className, el.textContent?.slice(0, 24) ?? ""].join("|");
 }
 
+/**
+ * Those keys made unique, by appending each control's ordinal among the ones sharing
+ * its key.
+ *
+ * The label is not a discriminator on its own, because rows legitimately repeat one:
+ * SSMCS mode puts a side-chain Q / Frequency / Gain beside three EQ bands' own, so four
+ * sliders carry `Frequency|INPUT|range||`, and every section toggle carries the empty
+ * label. `find` returns the FIRST match, so the restore did not drop focus — which is
+ * the documented fallback and would have been fine — it handed focus to a different
+ * filter's slider, and the operator's next ArrowUp edited that one and wrote it to the
+ * device.
+ *
+ * Built for the whole host in ONE pass, and used from both ends of the rebuild: keying
+ * each element by scanning its siblings would be quadratic on a path that repeats at
+ * ~20 Hz during device follow, which is what the key's own note is about.
+ */
+function inspectorFocusKeys(): Map<HTMLElement, string> {
+  const els = focusables(inspectorHost);
+  const seen = new Map<string, number>();
+  const counts = new Map<string, number>();
+  for (const el of els) {
+    const k = inspectorFocusKey(el);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const out = new Map<HTMLElement, string>();
+  for (const el of els) {
+    const k = inspectorFocusKey(el);
+    if ((counts.get(k) ?? 0) < 2) {
+      out.set(el, k);
+      continue;
+    }
+    const n = seen.get(k) ?? 0;
+    seen.set(k, n + 1);
+    out.set(el, `${k}|#${n}`);
+  }
+  return out;
+}
+
 // The scroll offset a rebuild has to carry over. Tracked from the element's own scroll
 // event instead of read back at rebuild time: the reflect that rebuilds this panel has
 // just dirtied layout (repaintDirtyNodes / refreshStrip), so a read there flushes it
@@ -1360,9 +1398,12 @@ function rebuildInspector(): void {
     (active) => {
       if (ownsNativeUndo(active) && active instanceof HTMLInputElement)
         carried.caret = [active.selectionStart, active.selectionEnd];
-      return inspectorFocusKey(active);
+      return inspectorFocusKeys().get(active);
     },
-    (key) => focusables(inspectorHost).find((el) => inspectorFocusKey(el) === key),
+    (key) => {
+      const keys = inspectorFocusKeys();
+      return focusables(inspectorHost).find((el) => keys.get(el) === key);
+    },
     () => inspectorScrollTop,
   );
   renderInspector(
@@ -3281,6 +3322,13 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     graph.deleteSelection();
   } else if (e.key === "Escape") {
+    // Gated like the Delete branch above, and for the same reason. A modal closes on
+    // Escape in the capture phase without stopping propagation, so this bubble-phase
+    // handler then ran too and cleared the graph's selection — and the inspector's
+    // contents with it — for an Escape addressed to Preferences, the licences notice or
+    // Device setup. The same key closing a console popover cleared the hidden graph's
+    // selection behind the console view.
+    if (graphHost.hidden || modalOpen()) return;
     graph.clearSelection();
   }
 });

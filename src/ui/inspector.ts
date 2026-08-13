@@ -243,20 +243,35 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   let composing = false;
   let pending = false;
   const end = (): void => {
-    if (!composing) return;
+    if (!busy()) return;
     composing = false;
     if (!pending) return;
     pending = false;
     rebuild();
   };
+  // An open `<select>` picker is the second kind of in-flight input a rebuild destroys,
+  // and `replaceChildren` closes it instantly — so while any followed parameter on the
+  // node moved (an external MIDI sweep, a device-side knob), the reflect ran at up to
+  // 20 Hz and the Rec Point / Signal Type / INS FX dropdowns simply could not be opened.
+  // Focus is restored to the fresh select afterwards, but an open picker is not
+  // restorable state.
+  //
+  // Read off `document.activeElement` rather than tracked with a flag: a picker fires no
+  // "opened" event for the page to latch, while focus is observable — a select inside
+  // this host holds it for as long as its popup can be open. It ends on the same
+  // `focusout`, and on `change`, which is what a picker dismissal produces.
+  const openPicker = (): boolean =>
+    document.activeElement instanceof HTMLSelectElement && host.contains(document.activeElement);
+  const busy = (): boolean => composing || openPicker();
   host.addEventListener("compositionstart", () => {
     composing = true;
   });
   host.addEventListener("compositionend", end);
+  host.addEventListener("change", end);
   host.addEventListener("focusout", end);
   return {
     held: () => {
-      if (!composing) return false;
+      if (!busy()) return false;
       pending = true;
       return true;
     },

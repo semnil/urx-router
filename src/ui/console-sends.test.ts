@@ -648,3 +648,54 @@ describe("the meter stream", () => {
     spy.mockRestore();
   });
 });
+
+// A drag that is CANCELLED fires no `pointerup` — touch-scroll takeover, a native
+// context menu, an alert. Teardown bound to `pointerup` alone left the move listener
+// installed on the window, and the control is still connected, so every later pointer
+// movement (the operator's next, unrelated gesture) re-entered the handler with the
+// stale press origin, wrote a level into the plan and committed it to the live device.
+// The second half is the pointer id: with no filter, a second pointer's moves drove
+// this control while something else was being dragged.
+describe("a drag that does not end in a pointerup", () => {
+  const press = (el: HTMLElement, pointerId: number): void => {
+    const box = el.getBoundingClientRect();
+    el.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        pointerId,
+        clientY: box.top + box.height / 2,
+        clientX: box.left + box.width / 2,
+      }),
+    );
+  };
+
+  it("stops writing when the browser cancels it", () => {
+    h = consoleHost();
+    const col = h.sendCol("ch1", "bus.mix1");
+    press(col.fader, 1);
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 0, pointerId: 1 }));
+    const during = level("ch1", "bus.mix1");
+    window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1 }));
+
+    // Whatever moves next is somebody else's gesture.
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 400, pointerId: 1 }));
+    expect(level("ch1", "bus.mix1")).toBe(during);
+  });
+
+  it("ignores a second pointer's moves while it is tracking the first", () => {
+    h = consoleHost();
+    const col = h.sendCol("ch1", "bus.mix1");
+    press(col.fader, 1);
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 0, pointerId: 1 }));
+    const during = level("ch1", "bus.mix1");
+
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 400, pointerId: 2 }));
+    expect(level("ch1", "bus.mix1")).toBe(during);
+    // …and the other pointer's release does not end this drag either.
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 2 }));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 40, pointerId: 1 }));
+    expect(level("ch1", "bus.mix1")).not.toBe(during);
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
+  });
+});

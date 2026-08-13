@@ -365,7 +365,13 @@ export class DeviceSetupPanel {
       val.textContent = input.value;
     });
     input.addEventListener("change", () => this.edit({ brightness: Number(input.value) }));
-    onWheelStep(input, (dir) => this.edit({ brightness: Number(input.value) + dir }));
+    // Stepped from the DRAFT, not from the element. `onWheelStep` calls back once per
+    // configured wheel step, and the first `edit()` re-renders and replaces this input —
+    // so calls 2..n read a detached element whose value never moved and compute the same
+    // target. With Preferences > wheel steps at 3, brightness moved by one detent per
+    // notch instead of three (and re-rendered three times doing it). Every other slider
+    // here goes through the shared helper and honours the preference.
+    onWheelStep(input, (dir) => this.edit({ brightness: this.draft.brightness + dir }));
     wrap.append(input, val);
     return wrap;
   }

@@ -168,17 +168,36 @@ function trackDrag(
 ): void {
   control.setPointerCapture(e.pointerId);
   if (opts.seed) onMove(e);
+  // Filtered by pointer id, and ended on `pointercancel` as well as `pointerup`.
+  //
+  // A cancelled drag fires no `pointerup` at all — touch-scroll takeover, a native
+  // context menu, an alert (graph.ts documents the same set) — so teardown bound to
+  // `pointerup` alone left the move listener installed. The control is still connected,
+  // so every LATER pointer movement, including the operator's next unrelated gesture,
+  // re-entered `onMove` with the stale `startY`/`startFrac`, wrote a level into the plan
+  // and committed it to the live device; the SENDS header readout stayed latched too.
+  // It ended only at the next `pointerup` anywhere.
+  //
+  // The id filter is the second half of the same defect: with none, a second pointer's
+  // moves drove this control while the operator was dragging something else.
+  const mine = (ev: PointerEvent): boolean => ev.pointerId === e.pointerId;
   const move = (ev: PointerEvent): void => {
+    if (!mine(ev)) return;
     if (!control.isConnected) return end();
     onMove(ev);
   };
+  const stop = (ev: PointerEvent): void => {
+    if (mine(ev)) end();
+  };
   const end = (): void => {
     window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", end);
+    window.removeEventListener("pointerup", stop);
+    window.removeEventListener("pointercancel", stop);
     opts.onEnd?.();
   };
   window.addEventListener("pointermove", move);
-  window.addEventListener("pointerup", end);
+  window.addEventListener("pointerup", stop);
+  window.addEventListener("pointercancel", stop);
 }
 
 // A three-bar meter glyph (rising heights), coloured by the host's currentColor
@@ -1652,10 +1671,22 @@ export class Console {
 
   // The tallest head (a mono channel carries the most chips + two knobs) sets the
   // fixed head height for every strip. Measure it by laying out the strips off-screen
-  // with auto-height heads, then cache by model + hidden set (the only inputs that
-  // change which strips exist).
+  // with auto-height heads, then cache by everything that changes what a head CONTAINS.
+  //
+  // Model + hidden set alone was not that. The opener chips a head carries also depend
+  // on each channel's COMP/EQ type — an SSMCS channel has no GATE/COMP/EQ openers, so a
+  // plan seeded in SSMCS measured a shorter head — and on the sample rate, which moves
+  // the same rows across the 96 kHz boundary via the EQ opener. Switching a channel back
+  // to COMP->EQ added a chip row that the cached height had no space for, and the head
+  // stayed clipped for the rest of the session (a model switch, a hide/show or a reload
+  // were the only things that healed it).
   private mainHeadHeight(): number {
-    const key = this.hooks.getModel().id + "|" + [...this.hooks.getPlan().hidden].sort().join(",");
+    const plan = this.hooks.getPlan();
+    const types = this.hooks
+      .getModel()
+      .nodes.map((n) => plan.nodeParams[n.id]?.compEqType)
+      .join(",");
+    const key = [this.hooks.getModel().id, [...plan.hidden].sort().join(","), plan.sampleRate, types].join("|");
     if (this.headH.key === key) return this.headH.px;
     const savedRefs = this.refs;
     this.refs = new Map(); // buildStrip registers refs/listeners; keep them off the live map
