@@ -9,7 +9,7 @@ const markedPlan = {
   version: 1,
   modelId: "URX44V",
   connections: [],
-  nodeNames: { ch1: "DROPPED-MARK" },
+  nodeNames: { ch1: "DROPPED" },
 };
 
 /** Dispatch the drag sequence a real drop produces, with `files` attached. */
@@ -43,7 +43,7 @@ test("dropping a plan file loads it", async ({ page }) => {
   await dropFiles(page, [{ name: "marked.json", body: JSON.stringify(markedPlan) }]);
   await expect(page.locator("#statusbar")).toContainText("Plan loaded");
   await page.locator('#graph-host g.node[data-id="ch1"]').click();
-  await expect(page.locator("#inspector input[type='text']")).toHaveValue("DROPPED-MARK");
+  await expect(page.locator("#inspector input[type='text']")).toHaveValue("DROPPED");
 });
 
 test("the overlay names what can be dropped, and clears once the drop lands", async ({ page }) => {
@@ -79,7 +79,7 @@ test("dropping several files at once is refused rather than guessed at", async (
   await expect(page.locator("#statusbar")).toContainText("Drop one file at a time");
   // Neither plan may have been loaded.
   await page.locator('#graph-host g.node[data-id="ch1"]').click();
-  await expect(page.locator("#inspector input[type='text']")).not.toHaveValue("DROPPED-MARK");
+  await expect(page.locator("#inspector input[type='text']")).not.toHaveValue("DROPPED");
 });
 
 // A drop that fails to parse is a failed action, so it surfaces as the same modal

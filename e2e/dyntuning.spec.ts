@@ -104,7 +104,12 @@ test.beforeEach(async ({ page }) => {
       meterChannel: null,
       paramChannel: null,
       meterAddrs: [],
-      mem: {},
+      // `vd_get` answers 0 for an address nobody seeded, and 0 is a real value for an
+      // enum: CH 1's Rec Point (137:0:0) would read as PRE GATE, which the readback
+      // then puts in the plan. The DUCKER key lane reads the tap that names, so a case
+      // about its address would be measuring the stub. Seed the factory value (4 =
+      // PRE FADER) and let a case that cares about another stage set it for itself.
+      mem: { "137:0:0": 4 },
       gets: 0,
       subscribes: 0,
       unsubscribes: 0,
