@@ -1224,10 +1224,20 @@ function applyStaticI18n(): void {
 }
 applyStaticI18n();
 
+// Both build-time hides below set the `hidden` attribute rather than an inline
+// display, because that attribute is what the rest of the app reads to mean
+// "not here": the menus' roving focus list filters on `[hidden]`, so an entry
+// hidden any other way stays in the list, and End — or either arrow's wrap —
+// hands focus to a control that is not on screen, which a real engine refuses
+// to take: focus stays where it was. The browser build's File menu ends in the
+// desktop-only Licenses entry, so that was all three of its gestures.
+// `[hidden] { display: none !important }` in style.css is what makes the
+// attribute win over an author `display`.
+
 // The GitHub Pages demo is a viewer only: hide file persistence and image export.
 if (DEMO) {
   for (const el of document.querySelectorAll<HTMLElement>("[data-demo-hide]")) {
-    el.style.display = "none";
+    el.hidden = true;
   }
   // The demo is a viewer; surface a link to the desktop app (full file IO,
   // image export, and live device control) so visitors can find it.
@@ -1241,7 +1251,7 @@ if (DEMO) {
 // demo, where they could only fail.
 if (!isTauri()) {
   for (const el of document.querySelectorAll<HTMLElement>("[data-control-hide]")) {
-    el.style.display = "none";
+    el.hidden = true;
   }
 }
 

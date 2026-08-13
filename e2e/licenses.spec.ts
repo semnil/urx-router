@@ -154,3 +154,25 @@ test("the licenses entry stays hidden in a plain browser", async ({ page }) => {
   await expect(page.locator("#btn-open")).toBeVisible(); // the menu itself is open
   await expect(page.locator("#btn-licenses")).toBeHidden();
 });
+
+// Hidden to the keyboard as well as to the eye. The entry is last in the File menu, so
+// the roving focus asks about it three times — End, and each arrow's wrap — and each one
+// lands on the entry above it instead. Only a real engine can answer this: it refuses to
+// focus an unrendered button, where jsdom focuses one happily, so a display-hidden entry
+// left in the list reads as "End did nothing" here and as a pass in a unit test.
+test("the hidden entry is out of the File menu's keyboard rotation", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toBeVisible();
+  await page.click("#btn-file");
+  await expect(page.locator("#btn-new")).toBeFocused(); // opening focuses the first item
+
+  await page.keyboard.press("End");
+  await expect(page.locator("#btn-export-pdf")).toBeFocused();
+  // Down off the last visible entry wraps to the first, rather than stopping on a
+  // hidden one...
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator("#btn-new")).toBeFocused();
+  // ...and up off the first wraps back to that same last visible entry.
+  await page.keyboard.press("ArrowUp");
+  await expect(page.locator("#btn-export-pdf")).toBeFocused();
+});
