@@ -81,6 +81,16 @@ const PROSE_TOKENS = new Map([
   ["Runtime.evaluate", "a DevTools-protocol method"],
   ["Input.dispatchMouseEvent", "a DevTools-protocol method"],
   ["Page.captureScreenshot", "a DevTools-protocol method"],
+  // Four more from the same row: the DOM method and the evaluate parameter that name
+  // one of the three routes leaving the popup shut on an inactive window, and the Win32
+  // pair behind "a probe cannot activate a window across processes".
+  [
+    "showPicker()",
+    "a DOM method, named as one of the routes that does not open the popup while the window is inactive",
+  ],
+  ["userGesture", "a DevTools-protocol parameter of Runtime.evaluate"],
+  ["SetForegroundWindow", "a Win32 call, named as the one the foreground lock silently refuses"],
+  ["GetForegroundWindow", "a Win32 call, named as what an armed capture polls"],
 ]);
 
 // The same discipline for docs/{en,ja}, keyed `<document>|<token>`: the English and

@@ -460,11 +460,14 @@ fn place_window<R: Runtime>(
 /// inner one and the saved position the outer one — which is exactly the pair
 /// `place_window` takes.
 /// `host_of` names a window whose display the restore must land on, for a window
-/// whose remembered POSITION cannot be trusted on its own. A child window is that
-/// case: AppKit translates it with its parent, one for one, so its absolute
-/// position drifts by every move the parent has made since — measured, a parent
-/// dragged 2172 pt left took the MIDI window from x=536 to x=-1636, off every
-/// display, where it stayed listed as on-screen and opaque and drew nothing. The
+/// whose remembered POSITION cannot pick one for itself. It EARNED its place from an
+/// AppKit child, translated with its parent one for one so its absolute position
+/// drifted by every move the parent had made since — measured, a parent dragged
+/// 2172 pt left took the MIDI window from x=536 to x=-1636, off every display, where
+/// it stayed listed as on-screen and opaque and drew nothing. That relationship is
+/// gone on macOS and the Windows owner was measured not to move the window at all
+/// (`midiwin.rs` carries both), so what is left is the case it still answers: a
+/// rectangle that lands on no attached display because the desk changed under it. The
 /// remembered SIZE is still honoured; only the choice of display is taken from the
 /// host. `None` keeps the plain behaviour, where the rectangle picks its own.
 pub fn place_saved<R: Runtime>(

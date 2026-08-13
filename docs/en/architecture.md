@@ -470,7 +470,7 @@ carries a one-line map of the same directories and points here.
   removes it from the candidates, which is a different claim; see `docs/{en,ja}/known-issues.md`) + the MIDI
   control window and the relay between it and the main window (`midiwin.rs`: `open_midi_window` — async on
   purpose, since building a webview from a blocking command deadlocks on Windows — `close_midi_window`,
-  `focus_midi_window`, `midi_window_open`, and four Channel relay commands; the main window's
+  `focus_midi_window`, `pin_midi_window`, `midi_window_open`, and four Channel relay commands; the main window's
   destruction closes it, and its own closing drops learn mode) + where each window was and whether it is
   still on a display (`winfit.rs` + `tauri-plugin-window-state`; see "Window geometry") + MIDI bridge commands
   (`midi_list_inputs/outputs`; `midi_open_input` delivers received bursts over a Tauri Channel;
@@ -817,6 +817,28 @@ the meter island keeps its three zones. The tuning-screen lane and the slider tr
 same way (2026-08-08, hcblack and hcwhite) — both were found broken there and are fixed and re-measured
 under both themes.
 
+**A locked control is a question this block does not answer**, because `opacity` is one of the few things
+forced colors leaves alone, so the read-only dims written elsewhere are supposed to survive it. Measured
+2026-08-13 in WebView2 151.0.4129.78 (debug build, 1280x800 viewport, URX44V) on the inspector's SD Rec
+track-count select, locked by setting the property rather than by holding a session — the same paint path —
+across all four Windows contrast themes: it is separable in pixels under every one, 714–719 of the 8544
+pixels in the rectangle captured around it (its box plus a 2 px margin — the box itself is 263x28), and
+mean luma over that whole rectangle 48.8 → 36.6 (hcblack), 236.3 → 245.3 (hcwhite), 64.7 → 53.1 (hc1) and
+19.2 → 5.6 (hc2). Every theme's locked face moves toward its own ground — which is what both the authored
+alpha and the substitution below do — and hcwhite is the only one where that shows as a **rise**, because
+it is the only theme whose ground is brighter than the control. So the difference survives the mode and
+this block needs no restatement of the lock; whether it *reads* to an operator was not measured. The engine
+also substitutes on its own here: a disabled select's text and border become `GrayText`, and, with the
+authored rule withdrawn through the stylesheet in each theme, the computed opacity came back **1**, where
+the same withdrawal in the ordinary themes leaves **0.7** of the engine's own — so under forced colors the
+engine supplies none of its own, and the authored dim is the whole opacity signal, added to that
+substitution rather than replacing it. The launcher caret goes the other way on purpose, and the
+stylesheet has to say so by hand for the same reason: the mode would leave its authored dim standing, so
+the forced-colors block **drops** it and draws the caret at full strength (`e2e/forced-colors.spec.ts`).
+That dim encoded a step against a NEIGHBOUR, and the mode paints the two the same colour — leaving the
+step nothing to say and a legibility cost to pay; a lock's dim encodes one control against its own
+unlocked state, which the mode leaves intact.
+
 One assertion in that spec reads painted pixels rather than a computed style, and has to: a range
 input's track and thumb are `::-webkit-` pseudo elements whose author declarations this engine does not
 report through `getComputedStyle`. The rule that draws the track computes to `0px none` while the track
@@ -886,6 +908,20 @@ unit, live, before the operator had moved. The channel tuning screens' threshold
 (`dyn-screen.ts`: the cap's own listener grabs it, the slot's jumps and defers to the cap with
 `e.target === cap`), so the two surfaces now share one press grammar — the CONSOLE fader was the one that
 did not have it.
+
+The ordinary tier pins this in Playwright's Chromium (`e2e/console.spec.ts`) and **nothing pins it in
+WebKit** — every `@webkit` case in the race tier is about a strip rebuilt under a live pointer or about the
+chord/focus matrix, not about the press. **The shipping WebView2 was measured separately** (2026-08-13,
+debug build, runtime 151.0.4129.78, 1280x800 viewport, URX44V), because that engine is not the one any
+tier runs. From two detents above the factory value, so a stray reset could not read as "the press changed
+nothing": presses at the cap's top edge, centre and bottom edge left the readout unchanged; a press at 80%
+of the fader's height (164 px there) put the cap centre **0.013 px** from the pointer against a half-detent
+tolerance of 2.05 px; and a three-detent drag from a grab moved the cap 12.313 px for the 12.3 px asked.
+Identical for the `mouse`, `pen` and `touch` pointer types — the tiers only exercise the first. One thing
+belongs to touch alone: a **double-tap is a `dblclick` there**, so two taps on the cap inside the
+double-click interval hit the factory reset above. Measured with its control (two taps 150 ms apart reset a
+-3.2 dB fader to 0.0; the same two 700 ms apart left it at -3.2), which is what separates it from "any two
+taps reset it".
 
 **Fine-tuning (hold Shift)** — the controls whose device parameter has a verified fine grid tighten their
 step while Shift is held, mirroring the hardware's (undocumented) push-and-turn fine mode: the inspector's
@@ -1111,15 +1147,17 @@ window pushes and reports intents back (`ui/midi-protocol.ts`); everything that 
 `ui/midi.ts`. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
 `invoke`, so the second window needs no capability beyond core. Where it sits is the shell's to remember (see
-"Window geometry"), and it is built as a **child** of the main window, so it cannot fall behind it. Closing the
-main window closes it; closing it drops learn mode, which would otherwise stay armed against a control nothing
-on screen names.
+"Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by platform —
+a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where the AppKit parent it used to
+have was measured and dropped. Closing the main window closes it; closing it drops learn mode, which would
+otherwise stay armed against a control nothing on screen names.
 
-Because it is a window rather than an overlay it can drift behind ANOTHER APPLICATION, so two things bring the binding back
-to where the operator is looking: it **raises itself when learn turns on** (a plain `set_focus`, not
-always-on-top — that would cover the app for a session to solve a problem lasting a gesture), and every bound
-control carries **its address as a tooltip** (`CH 1 CC 21`), which costs no layout and is readable with the
-window closed.
+Because it is a window rather than an overlay it can drift behind another application — and on macOS, where
+it has no owner, behind the MAIN window the moment the operator clicks the control being armed. Two things
+bring the binding back to where the operator is looking: it **raises itself when learn turns on**
+(`set_focus`, and always-on-top for exactly as long as the learn is armed — never for the session, which
+would cover the app to solve a problem lasting a gesture), and every bound control carries **its address as
+a tooltip** (`CH 1 CC 21`), which costs no layout and is readable with the window closed.
 
 It deliberately does **not** raise itself when a binding lands, which is measured rather than assumed (macOS,
 2026-08-01). A click on a window that is not active does not reach the webview: wry's `acceptsFirstMouse:`
@@ -1151,8 +1189,7 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   that count back at zero — so finished opens are counted too and the count is compared across the trip.
   `src-tauri/src/midiwin.rs` adds the window itself: `open_midi_window` (async on purpose —
   building a webview from a blocking command deadlocks on Windows), `close_midi_window`, `focus_midi_window`,
-  `midi_window_open`, and the four relay commands. The window is built as a **child of the main window**, so
-  it cannot fall behind it; see "Window geometry".
+  `midi_window_open`, `pin_midi_window`, and the four relay commands; see "Window geometry".
 - **Mapping (core/midi/)** — pure, language-agnostic logic. `message.ts` decodes/encodes CC / note / pitch
   bend; `mapping.ts` holds the free-mapping model (address, take-in mode) plus persistence validation (a
   persisted mapping in the removed "relative" take-in mode migrates to absolute on load, and the STEREO /
@@ -2346,28 +2383,53 @@ against the app's own `outer_size`): a rectangle remembered on the 100% display 
 one now lands entirely inside its work area and reproduces byte for byte over three further launches, and
 the reverse direction returns the remembered rectangle exactly. On macOS the desk is in points and the scale
 factor does not change, so the loop runs once and nothing about that platform's path moves — re-measured on
-macOS afterwards across the five cases in the table above, all unchanged. The raw readings behind every
-number here were taken in `reference/work/windows-verify/`, whose settled sections are folded into this
-document and then deleted; they are read back out of that file's history.
+macOS afterwards across the five cases in the table above, all unchanged. The raw readings behind the
+2026-08-09 numbers were taken in `reference/work/windows-verify/`, whose settled sections are folded into
+this document and then deleted; they are read back out of that ledger's history. **The 2026-08-13 run's are
+not**, so the folded text is all there is: this document for the fader press, the MIDI window and the
+forced-colors half of the locked select, and `src/style.css` for the dropdown and that lock's
+ordinary-theme half, beside the screenshots that directory keeps.
 
-**The MIDI window is a child of the main window**, which is what keeps it in front: on Windows an owned
-window is always above its owner in the z-order, and on macOS `addChildWindow` orders it above the parent
-within the app. Deliberately not "always on top", which would put the panel above every other application
-for the whole session. `focus_midi_window` still exists and is still called when learn turns on — raising
-the app above another application is a different thing from ordering these two windows against each other.
+**The MIDI window is an owned window on Windows and an independent one on macOS** — the `.parent(&main)`
+call sits behind `#[cfg(target_os = "windows")]`. On Windows that ownership is what keeps the panel in
+front: an owned window is always above its owner in the z-order. `addChildWindow` did the same on macOS
+until what it cost there was measured, and the relationship was dropped; what holds the panel in front
+there now is `pin_midi_window`, for as long as a learn is armed. "Always on top" for the whole session was
+deliberately not taken on either platform. `focus_midi_window` still exists and is still called when learn
+turns on — raising this window above another application is a different thing from ordering these two
+windows against each other.
 
-What being a child costs, measured on both platforms — and **the two do not agree**:
+What the relationship costs, measured on both platforms — and **the two do not agree**:
 
-| | macOS | Windows |
+| | macOS (AppKit child — **dropped**) | Windows (Win32 owner — in place) |
 | --- | --- | --- |
-| Stays above its owner | yes | yes, even with the owner activated and raised |
+| Stays above its owner | yes | yes — measured with the owner activated by a real click |
 | Hidden while the owner is minimized | yes | yes |
+| **Composited on another display** | **no** — reported on-screen at layer 0 and alpha 1.0, drawn on neither | **yes**, drawn in full |
 | **Moves with the owner** | **yes**, the same delta to the pixel | **no**, it stays where it is |
 
-The Windows answer is structural rather than incidental: the panel is a top-level **owned** window, not a
-child of the main window's client area, and the window manager only moves the latter with its parent — so
-there is nothing that could implement the follow, whatever issues the move. Measured through a drag's own
-message sequence as well as a plain programmatic move.
+The bottom two rows are what the `#[cfg]` rests on: on macOS both are defects an operator meets, and
+neither exists on Windows. The Windows answer to the last row is structural rather than incidental: the
+panel is a top-level **owned** window, not a child of the main window's client area, and the window manager
+only moves the latter with its parent — so there is nothing that could implement the follow, whatever
+issues the move. Measured through a drag's own message sequence as well as a plain programmatic move.
+
+The macOS column is what the relationship cost while it was there; what that platform does now, with the
+panel independent, is not measured here. Three of the four Windows cells were measured on 2026-08-13 (debug
+build, WebView2 151.0.4129.78, a 2560x1440 primary and a 1920x1080 secondary, both at 100%) — every row
+except **hidden while the owner is minimized**, which stands on the 2026-08-08 run and was not re-run.
+
+The top row is an operator's click rather than a probe's call, because **a probe cannot activate a window
+across processes**: the foreground lock makes `SetForegroundWindow` a silent no-op. Two programmatic
+attempts to break the order from the other side back it up, and one of them carries its own control:
+`SetWindowPos(midi, HWND_BOTTOM)` **did** move the pair down the global z-order — so a call against that
+window was not inert — and left the panel above the main window all the same. `SetWindowPos(midi, main)`
+left it above too, and inherits that control by acting on the same window. The symmetric attempt,
+`SetWindowPos(main, HWND_TOP, SWP_NOACTIVATE)`, left the order alone too, but that reading is **not**
+evidence: an earlier run recorded the same call moving nothing at all, so "the panel stayed above" and "the
+call did nothing" are not separated there. `pin_midi_window` composes with the ownership rather than
+replacing it: arming the learn from the panel's own button turned on `WS_EX_TOPMOST` (bit 0x8; the extended
+style went 0x110 → 0x118) and disarming turned it back off, with the owner order unchanged either way.
 
 `--reset-storage` clears the remembered geometry as well as `localStorage` — both files, since a scale left
 behind for a rectangle that no longer exists would be read against the next rectangle written under that

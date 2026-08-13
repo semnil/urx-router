@@ -121,11 +121,12 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // position ends up off the desk entirely.
     //
     // On Windows the same call means something else — a Win32 OWNER, which keeps this
-    // window above the main one and minimizes with it — and none of the above was
-    // measured there. Dropping it everywhere would have traded a defect nobody has seen
-    // on that platform for one nobody asked for, so the relationship stays where the
-    // evidence does not reach. `reference/work/windows-verify` item 2 carries what would
-    // settle whether macOS's finding applies there too.
+    // window above the main one and minimizes with it — and both halves of the macOS
+    // finding were then measured there and are ABSENT: on a two-display desk this window
+    // is drawn in full on the display the main window is not on, and moving the main
+    // window across to the other display left it where it was, to the pixel. The
+    // `#[cfg]` is therefore the measurement rather than a gap in it (architecture.md,
+    // "Window geometry", carries the table, the rig and the rest of the run).
     //
     // What the parent bought on macOS — that it cannot fall behind the main window — is
     // paid for by pinning it while a learn is armed (`pin_midi_window`).
@@ -153,12 +154,15 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // nothing else. A rectangle that still has a display of its own is restored where
     // it was — which is the requirement, and what an unconditional override broke.
     //
-    // The fallback earns its place from what a window dragged by its owner ends up as.
+    // The fallback EARNED its place from what a window dragged by its owner ends up as.
     // Measured while this was still an AppKit child on macOS: a parent moved from
     // x=2344 to x=172 took this window from x=536 to x=-1636, off every display, where
     // the window server still reported it on-screen and opaque and nothing was drawn.
-    // That relationship is gone on macOS and kept on Windows, where the same drag has
-    // not been measured.
+    // That drag reaches neither platform as things stand — macOS no longer has the
+    // parent it took, and on Windows the owner was measured (2026-08-13, above) not to
+    // move this window at all — so what the fallback still answers is the case in the
+    // paragraph above, now reached by the desk changing under the rectangle rather than
+    // by the window being dragged off a display.
     #[cfg(desktop)]
     crate::restore_window(
         &win.as_ref().window(),
@@ -179,9 +183,10 @@ pub fn close_midi_window(app: AppHandle) -> Result<(), String> {
 }
 
 /// Raise the MIDI window to the front. Called when learn turns on, so the panel
-/// comes forward for the one moment its contents matter. Being a child of the main
-/// window puts it in front of THAT already; what this still does is bring the app
-/// itself forward when another application is covering both.
+/// comes forward for the one moment its contents matter. What HOLDS it in front of the
+/// main window from there is the Win32 owner on Windows and `pin_midi_window` on macOS —
+/// armed by the same gesture, one call after this one (`ui/midi.ts`) — so what this still
+/// does is bring THIS window forward when another application is covering it.
 #[tauri::command]
 pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
     match app.get_webview_window(MIDI_WINDOW) {
@@ -200,6 +205,13 @@ pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
 /// keystrokes where they are (`set_focus` is `makeKeyAndOrderFront:`). What this
 /// costs is that the panel floats above OTHER applications too — accepted for the
 /// seconds a learn is armed, which is why it is not left on.
+///
+/// On Windows this window still has an owner, and the two compose rather than one
+/// standing in for the other: measured from the panel's own learn button, arming turned
+/// the `WS_EX_TOPMOST` bit (0x8) on and disarming turned it back off — the extended
+/// style went 0x110 -> 0x118 -> 0x110, the rest of it being whatever else that window
+/// carries — with the order against the owner unchanged in both states. So nothing here
+/// needs a `#[cfg]`.
 #[tauri::command]
 pub fn pin_midi_window(app: AppHandle, on: bool) -> Result<(), String> {
     match app.get_webview_window(MIDI_WINDOW) {
