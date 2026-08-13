@@ -26,7 +26,7 @@ import {
   setFollowUsb,
 } from "./client";
 import { planToCommands, planToNameWrites, type VdCommand } from "./translate";
-import { PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
+import { NODE_NAME_MAX_BYTES, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { PORT_REF_NONE } from "./vd";
 
 const model = getModel("URX44V");
@@ -485,6 +485,28 @@ describe("cancellation", () => {
         signal: ctl.signal,
       }),
     ).rejects.toThrow();
+  });
+});
+
+// The emit site is where `boundRaw` bounds the numeric leaves, and it is the one
+// place every name passes on the way to the wire. The load funnel and the rename
+// bound their own inputs, but a name also reaches the plan from a device read
+// (`readback`) and from a rename made on the unit's own LCD, neither of which goes
+// through either — so a plan holding an over-long name must still not emit one.
+describe("planToNameWrites bounds what reaches the wire", () => {
+  it("cuts a name no gate upstream of it happened to bound", () => {
+    const plan = namedPlan();
+    // `namedPlan` names every node, but only some carry a name control — so take the
+    // target from what the emit actually writes rather than from the plan's keys.
+    const carried = planToNameWrites(model, plan)[0].value;
+    const target = Object.keys(plan.nodeNames).find((id) => plan.nodeNames[id] === carried)!;
+    plan.nodeNames[target] = "あ".repeat(200);
+    const enc = new TextEncoder();
+    const writes = planToNameWrites(model, plan);
+    expect(writes.length).toBeGreaterThan(0);
+    for (const w of writes) expect(enc.encode(w.value).length).toBeLessThanOrEqual(NODE_NAME_MAX_BYTES);
+    // Cut on a code-point boundary, so the wire never carries half a character.
+    expect(writes.find((w) => w.value.startsWith("あ"))!.value).toBe("あ".repeat(21));
   });
 });
 

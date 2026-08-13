@@ -309,6 +309,34 @@ describe("node controls report their edits", () => {
     expect(act.onRenameNode).toHaveBeenCalledWith("ch1", "Kick");
   });
 
+  // The device's CH SETTING name is a fixed-width byte field. The panel does not
+  // re-render on a rename (that is what keeps focus while typing), so cutting the
+  // value only on the way out would leave the box showing text the plan does not
+  // hold. `maxlength` cannot stand in for it: it counts UTF-16 units, so 63 of it
+  // admits 63 Japanese characters — 189 bytes.
+  it("cuts a name to the device's field width in the box as well as in the report", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const field = panel.querySelector<HTMLInputElement>('input[type="text"]')!;
+    field.value = "あ".repeat(60);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(field.value).toBe("あ".repeat(21));
+    expect(act.onRenameNode).toHaveBeenCalledWith("ch1", "あ".repeat(21));
+  });
+
+  // Rewriting `value` mid-composition takes the text out from under the IME's
+  // conversion candidates, so the cut is held until the composition ends.
+  it("holds the cut until an IME composition ends", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const field = panel.querySelector<HTMLInputElement>('input[type="text"]')!;
+    field.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+    field.value = "あ".repeat(60);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(field.value).toBe("あ".repeat(60));
+    field.dispatchEvent(new Event("compositionend", { bubbles: true }));
+    expect(field.value).toBe("あ".repeat(21));
+    expect(act.onRenameNode).toHaveBeenLastCalledWith("ch1", "あ".repeat(21));
+  });
+
   it("recolors a node from a swatch and clears it from the none swatch", () => {
     renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
     const swatches = [...panel.querySelectorAll<HTMLButtonElement>("button.swatch")];

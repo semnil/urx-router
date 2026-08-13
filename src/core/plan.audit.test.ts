@@ -397,10 +397,13 @@ describe("mixed mutator sequence + persistence round-trip (URX44V)", () => {
 describe("node names are bounded by the device's own field width", () => {
   const bytes = (s: string): number => new TextEncoder().encode(s).length;
 
-  it("keeps a name that fits, to the last byte the field can terminate", () => {
+  // Both sides of the bound, or "keeps what fits" passes at any width.
+  it("keeps a name that fits, to the last byte the field can terminate, and cuts the next", () => {
     const exact = "x".repeat(63);
     expect(bytes(exact)).toBe(63);
     expect(clipNodeName(exact)).toBe(exact);
+    // 64 bytes fills the element with no room for the NUL a reader cuts at.
+    expect(clipNodeName("x".repeat(64))).toBe(exact);
   });
 
   it("cuts a longer name to the field width", () => {
@@ -415,8 +418,9 @@ describe("node names are bounded by the device's own field width", () => {
       const cut = clipNodeName(unit.repeat(200));
       expect(bytes(cut)).toBeLessThanOrEqual(63);
       expect(cut).toBe(unit.repeat(cut.length / unit.length));
-      expect([...cut].every((ch) => ch === [...unit][0] || unit.startsWith(ch))).toBe(true);
-      // A cut that lost a byte of the last character would not re-encode to itself.
+      // A cut that lost half a character re-encodes to U+FFFD rather than to itself.
+      // (A `startsWith` check does not catch it: a lone high surrogate IS a prefix of
+      // the pair it came from, so the split character passes as whole.)
       expect(new TextDecoder("utf-8", { fatal: true }).decode(new TextEncoder().encode(cut))).toBe(cut);
     }
   });

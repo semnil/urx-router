@@ -13,7 +13,7 @@ import type {
   SsmcsBand,
   SsmcsParams,
 } from "../core/plan";
-import { SSMCS_INITIAL } from "../core/plan";
+import { clipNodeName, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
 import { formatHz, fxEffectTypes, fxParams, resolveFxEffectType } from "../core/control/fx-effect";
 import {
@@ -68,7 +68,6 @@ import {
   COMP_EQ_OPTIONS,
   COMP_KNEE_OPTIONS,
   INSERT_FX_NONE,
-  NODE_NAME_MAX_BYTES,
   OSC_MODE_BURST,
   OSC_MODE_OPTIONS,
   OSC_MODE_SINE,
@@ -354,7 +353,7 @@ export function renderInspector(
           plan.nodeNames[node.id] ?? "",
           fullLabel(node),
           (v) => actions.onRenameNode(node.id, v),
-          NODE_NAME_MAX_BYTES,
+          clipNodeName,
         ),
       );
     }
@@ -1834,23 +1833,44 @@ function colorSwatches(
 }
 
 // A labeled single-line text field. Reports every keystroke (trimmed by the
-// caller) without re-rendering, so it keeps focus while typing. `maxChars` stops
-// typing at the field's own bound rather than letting the caller cut the value
-// afterwards, which would leave the box showing text the plan does not hold.
+// caller) without re-rendering, so it keeps focus while typing.
+//
+// `clip` bounds the value the caller is handed AND the value the box shows, which
+// has to be one act: the caller does not re-render this row (that is what keeps
+// focus), so a caller that cut the value on its own would leave the field showing
+// text the plan does not hold — until some unrelated re-render silently shortened
+// it under the operator. `maxlength` cannot do this job alone, because it counts
+// UTF-16 units while the device's field is a byte count: 63 of it admits 63
+// Japanese characters, which are 189 bytes.
+//
+// Held during an IME composition and applied at its end. Rewriting `value` mid
+// composition takes the text out from under the conversion candidates.
 function textInput(
   label: string,
   value: string,
   placeholder: string,
   onInput: (v: string) => void,
-  maxChars?: number,
+  clip?: (v: string) => string,
 ): HTMLElement {
   const { row } = paramBlock(label, "");
   const input = document.createElement("input");
   input.type = "text";
   input.value = value;
   input.placeholder = placeholder;
-  if (maxChars !== undefined) input.maxLength = maxChars;
-  input.addEventListener("input", () => onInput(input.value));
+  let composing = false;
+  const report = (): void => {
+    if (clip && !composing) {
+      const cut = clip(input.value);
+      if (cut !== input.value) input.value = cut;
+    }
+    onInput(input.value);
+  };
+  input.addEventListener("compositionstart", () => void (composing = true));
+  input.addEventListener("compositionend", () => {
+    composing = false;
+    report();
+  });
+  input.addEventListener("input", report);
   row.append(input);
   return row;
 }

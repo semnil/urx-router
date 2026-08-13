@@ -3022,6 +3022,15 @@ a generator or an older build out of the plan, where they would break routing in
 formatter that throws on them — a note written as an object used to load cleanly and then take the
 canvas down on its first paint.
 
+One value is **rewritten** rather than dropped, and it is the only one: a **node name** is cut to
+the device's CH SETTING field width (63 UTF-8 bytes, on a code-point boundary — the unit stores the
+name in a 64-byte NUL-padded element). Dropping would lose a name for being long, and keeping would
+put on the wire a string the field cannot hold; the name is also the one plan string that leaves the
+app over the device link, where the numeric leaves have `boundRaw` and strings had nothing. The cut
+is applied again at the emit site, because a name also reaches the plan from a device read and from
+a rename made on the unit itself, neither of which passes this funnel. Notes and colours are the
+app's own and stay unbounded.
+
 A scene-scoped save (Preferences > Plan files) additionally writes `"scope": "scene"`, omits
 `sampleRate`, and strips the scene-external state (the monitor / oscillator node params, the
 streaming delay and color, and every patch / record / monitor- or streaming-source / OSC-assign

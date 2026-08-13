@@ -32,6 +32,27 @@ test("the name field sets the device name; the canvas shows it only in device-na
   await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
 });
 
+// The device's CH SETTING name is a fixed 64-byte field, so the app cuts a name to
+// 63 UTF-8 bytes. `fill()` assigns `.value` and would skip the field's own handling,
+// so the typing path is driven for real: the box's own state (rather than the plan's)
+// is only observable here.
+test("the name field cuts a typed name to the device's field width", async ({ page }) => {
+  await node(page, "ch1").click();
+  await page.click("#btn-view");
+  await page.locator("#btn-labels").click();
+
+  // ASCII: one byte per character, so the bound falls at 63 characters.
+  await nameInput(page).pressSequentially("x".repeat(70), { delay: 0 });
+  await expect(nameInput(page)).toHaveValue("x".repeat(63));
+  await expect(node(page, "ch1").locator("text").first()).toHaveText("x".repeat(63));
+
+  // Multi-byte: 3 bytes each, so 21 fit — the count a UTF-16 maxlength would miss.
+  await nameInput(page).fill("");
+  await nameInput(page).pressSequentially("あ".repeat(30), { delay: 0 });
+  await expect(nameInput(page)).toHaveValue("あ".repeat(21));
+  await expect(node(page, "ch1").locator("text").first()).toHaveText("あ".repeat(21));
+});
+
 test("the labels toggle defaults to model labels and flips both ways", async ({ page }) => {
   await node(page, "ch1").click();
   await nameInput(page).fill("VocalMic");
