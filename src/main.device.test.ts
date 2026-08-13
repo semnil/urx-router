@@ -326,6 +326,45 @@ describe("Write to device", () => {
     expect(shell.count("vd_set")).toBe(0);
   });
 
+  // The confirm the case above never reaches: with the device already on the plan's rate
+  // and its clock its own, the rate question does not arise and the change count is the
+  // first thing asked. It is the last thing between one press and hundreds of parameters
+  // landing on real hardware, and nothing in this repository drove it before — deleting
+  // the confirm outright used to leave the whole suite green.
+  it("asks how many changes it is about to write, and sends nothing when that is declined", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: clockReads(false, 48_000) }, false);
+    $("btn-write").click();
+    await vi.waitFor(() => expect(confirms(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
+    await new Promise((r) => setTimeout(r, 200));
+
+    // The count is read out of the message and put back, so the whole frame is pinned
+    // rather than a substring — and the frame is the write confirm's own, not the rate
+    // one the case above gets.
+    const asked = confirms(shell).at(-1)!;
+    const n = Number(/\d+/.exec(asked)?.[0]);
+    expect(n).toBeGreaterThan(10);
+    expect(asked).toBe(t().confirm.write(n));
+    expect(shell.count("vd_set")).toBe(0);
+    expect(shell.count("vd_set_str")).toBe(0);
+  });
+
+  // A device of another model is REFUSED rather than offered a switch: write acts on the
+  // plan as it stands, so its channels would map onto the wrong hardware. (Fetch and Live
+  // sync offer the switch instead — they replace the plan.) This guard is shared by write,
+  // compare and both device-setup actions, and nothing exercised it before.
+  it("refuses to write onto a device of another model, naming both", SLOW, async () => {
+    const shell = await bootDevice({
+      vd_connect: { model: "URX22", label: "URX22", firmware: SUPPORTED_SYSTEM_FIRMWARE, epoch: 1 },
+    });
+    $("btn-write").click();
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
+    expect(errors(shell).at(-1)).toContain(t().error.modelMismatch("URX22", "URX44V"));
+    // Refused before anything went out, and the link it opened is let go rather than held.
+    expect(shell.count("vd_set")).toBe(0);
+    expect(confirms(shell)).toEqual([]);
+    await invoked(shell, "vd_disconnect");
+  });
+
   // "Wrote N" and "wrote, but N did not take" are both reached with writes on the
   // wire, so a case that counts `vd_set` cannot tell them apart — and against a stub
   // that answers every read 0 it is the SECOND one that runs, every time, since the
@@ -1178,6 +1217,28 @@ describe("importing a settings file", () => {
     $("btn-live").click();
     await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
     expect($<HTMLButtonElement>("btn-open-settings").disabled).toBe(true);
+  });
+
+  // The other half of that refusal, and the one a disabled button cannot cover: on desktop
+  // a drop is intercepted by the shell and arrives as an event, so it reaches the import
+  // flow without going near the menu entry. The registration itself is inside the
+  // experimental gate, which is why this can only be driven with the import armed.
+  it("refuses a settings file DROPPED onto the window while a live session is up", SLOW, async () => {
+    const shell = await bootImport(sampleUrxf());
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    const reads = shell.count("read_binary_file");
+
+    // One handler, not zero: an event nobody listens for would make every assertion below
+    // pass by describing an app that was never asked to do anything.
+    expect(shell.emit("tauri://drag-drop", { paths: [PATH] })).toBe(1);
+
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
+    expect(errors(shell).at(-1)).toBe(t().error.notWhileLive);
+    // Refused before the file was even read, and the session it would have disrupted is
+    // still up.
+    expect(shell.count("read_binary_file")).toBe(reads);
+    expect(live().getAttribute("aria-pressed")).toBe("true");
   });
 });
 
