@@ -210,9 +210,11 @@ describe("file flow", () => {
 // what these pin: an illegal wire is a plan this app cannot represent and is REFUSED,
 // while an insert-FX slot claimed twice is a plan the app itself writes after a device
 // readback, so refusing that one made Fetch → Save → reopen impossible for its own
-// document. The two REFUSAL cases assert the board is untouched, because the board exists
-// before the decode is attempted and a load that silently did nothing looks identical; the
-// warning case deliberately loads, which is the whole of what separates them.
+// document. The two REFUSAL cases assert the board is untouched AND that the status line
+// never names the file: the board exists before the decode is attempted, and since both
+// documents are built from this model's own default plan, a load would repaint the same
+// nodes — so the count alone cannot fail. The warning case deliberately loads, which is
+// the whole of what separates them.
 describe("a document the loader will not simply open", () => {
   const nodes = (): number => $("graph-host").querySelectorAll("g.node[data-id]").length;
 
@@ -241,6 +243,10 @@ describe("a document the loader will not simply open", () => {
     await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
     expect(String(vi.mocked(alert).mock.calls.at(-1)![0])).toContain("URX99");
     expect(nodes()).toBe(before);
+    // The node count is a weak witness on its own — the document is built from this very
+    // model's default plan, so a load would paint the same nodes — and the status line is
+    // the one thing only a load produces.
+    expect(statusText()).not.toContain("alien.json");
     expect($("load-report").hidden).toBe(true); // a refusal is the dialog, not the report
   });
 
@@ -271,6 +277,13 @@ describe("a document the loader will not simply open", () => {
     expect($("load-report-body").textContent?.split("\n")[0]).toBe("URX Router plan validation failed");
     expect($("load-report-body").textContent).toContain(`[duplicate] ${wire}`);
     expect(nodes()).toBe(before);
+    // Same weak-witness problem as the model case, and the same answer: only a load names
+    // the file it opened. Without this, regressing the refusal to "report AND load" would
+    // leave every assertion here green — the report is up either way, the node count does
+    // not move, and the proceed button belongs to the other class regardless. That the
+    // status DOES name the file on a load is not assumed: the warning case below pins it
+    // positively, on the same surface, after its Load anyway.
+    expect(statusText()).not.toContain("illegal.json");
     // A refusal offers no way past itself — that button belongs to the warning class.
     expect($("load-report").querySelector("#load-report-proceed")).toBeNull();
   });

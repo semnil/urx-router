@@ -771,9 +771,10 @@ describe("the Follow USB badge", () => {
     badge().click();
     await vi.waitFor(() => expect(confirms(shell).length).toBe(asked + 1), { timeout: 10_000 });
     await new Promise((r) => setTimeout(r, 100));
-    // The dialog is read by ARGUMENT, not counted: a flow that threw on its way to the
-    // confirm would raise an error dialog instead, write nothing and leave the badge
-    // where it was — satisfying the three assertions below without ever asking.
+    // Both the wait above and the assertions below go through `confirms()`, which reads
+    // the dialog's ARGUMENTS. A count-based version of this case could not separate
+    // "asked" from "threw on the way to asking": the second raises a dialog too, writes
+    // nothing, and leaves the badge where it was.
     expect(confirms(shell).at(-1)).toBe(t().confirm.followUsbOn);
     expect(errors(shell)).toEqual([]);
     expect(followUsbWrites(shell)).toEqual([]);
@@ -835,13 +836,19 @@ describe("the Follow USB badge", () => {
     $("btn-live").click();
     await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
 
+    const armedAt = shell.invokes.length;
     shell.failOnce("vd_set", new Error("link-gone"));
     badge().click();
     await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 10_000 });
     expect(badge().dataset.state).toBe("unknown");
     // The failure that took the session down was THIS write. `failOnce` arms the next
-    // `vd_set` from anyone, and the session has writers of its own — without this the
-    // case would pass on a session that fell over for an unrelated reason.
+    // `vd_set` from anyone and the session has writers of its own, so the count alone
+    // would let the case pass on a session that fell over for an unrelated reason. The
+    // ledger is ordered, so the first write after the arming point settles which one it
+    // caught — no predicate on the latch needed.
+    const refused = shell.invokes.indexOf("vd_set", armedAt);
+    expect(refused).toBeGreaterThan(-1);
+    expect(shell.args[refused]?.paramId).toBe(PARAMS.FOLLOW_USB.id);
     expect(followUsbWrites(shell)).toHaveLength(1);
   });
 });

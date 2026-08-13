@@ -29,6 +29,7 @@ import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/cont
 import { downloadText, exportSvgToPdf, exportSvgToPng, saveTextDocument } from "./core/storage";
 import { t } from "./i18n";
 import { $, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
+import { faceplate } from "./ui/graph.test-util";
 
 const nodes = (): number => $("graph-host").querySelectorAll("g.node[data-id]").length;
 
@@ -45,11 +46,11 @@ const chord = (key: string, init: KeyboardEventInit = {}): void =>
 
 /** Select a node on the board. The graph selects on `pointerdown` and resolves the node
  *  with `closest(".node")`, so the gesture has to be dispatched — `.click()` reaches no
- *  handler at all — and it is aimed at the node's own panel rect rather than at the group,
- *  which is what `graph.test-util.ts` targets for the same reason: the group's box extends
- *  over the jacks that stand on its top edge. */
+ *  handler at all. The target comes from the graph suite's own locator rather than a
+ *  second copy of the selector; its header carries why the faceplate rect and not the
+ *  group is what a press must land on. */
 const selectNode = (id: string): void => {
-  const face = $("graph-host").querySelector<SVGElement>(`g.node[data-id="${id}"] rect`)!;
+  const face = faceplate($("graph-host"), id)!;
   face.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
   face.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
 };
@@ -425,6 +426,10 @@ describe("saving a plan", () => {
     vi.mocked(saveTextDocument).mockRejectedValueOnce(new Error("disk-full"));
     $("btn-save").click();
     await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
+    // The modal carries the CAUSE, not just the fact. "Reached a dialog but lost why" is
+    // its own failure, and a generic frame reads to the operator as a save that failed for
+    // no stated reason.
+    expect(String(vi.mocked(alert).mock.calls.at(-1)![0])).toBe(t().status.saveError("disk-full"));
     // showError clears the status line first, so a stale progress message cannot linger
     // behind the dialog and read as the outcome.
     expect(status()).toBe("");
@@ -609,8 +614,14 @@ describe("editing a node through the inspector", () => {
     expect(nodeText("ch1")).not.toContain("PROBE");
     expect(nodeText("ch1")).toContain(fallback);
 
+    // Waited on THIS call, by count. The module mock outlives `vi.resetModules()` (mocked
+    // module ids are exempt from it) and three earlier cases in this file press Save, so
+    // `toHaveBeenCalled()` is already true on entry — `waitFor` would return without
+    // waiting and `.at(-1)` would read whichever document ran last. That is a clean plan
+    // with no `nodeNames.ch1`, which is exactly what this asserts.
+    const saves = vi.mocked(saveTextDocument).mock.calls.length;
     $("btn-save").click();
-    await vi.waitFor(() => expect(saveTextDocument).toHaveBeenCalled());
+    await vi.waitFor(() => expect(vi.mocked(saveTextDocument).mock.calls.length).toBe(saves + 1));
     const saved = JSON.parse(vi.mocked(saveTextDocument).mock.calls.at(-1)![1]) as {
       nodeNames?: Record<string, string>;
     };
@@ -682,6 +693,13 @@ describe("menu keyboard navigation", () => {
     ...$("file-menu").querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled]):not([hidden])'),
   ];
 
+  // What this does NOT establish: that End lands somewhere the operator can see. The
+  // File menu's last entry is Licenses, which a browser build hides through
+  // `data-control-hide` — and that sets `style.display`, not the `hidden` attribute, so it
+  // stays in the list the app navigates. jsdom focuses a non-rendered button happily; a
+  // real engine refuses, so there End would move focus nowhere. The mismatch is the app's
+  // (one surface hides by display, the other filters by attribute) and is not this
+  // branch's to settle.
   it("jumps to the first and last item with Home and End", async () => {
     await boot();
     $("btn-file").click();

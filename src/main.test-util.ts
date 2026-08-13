@@ -181,10 +181,12 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
         return Promise.reject(err);
       }
       if (!(cmd in table)) return Promise.reject(new Error(`stub: unhandled command ${cmd}`));
-      // Recorded only once the registration has actually succeeded — below the two
-      // failure checks, not above them. A shell that refused the registration leaves the
-      // app's own `.catch` arm holding no handler, so a case that models that refusal and
-      // then delivered the event anyway would be describing a state nothing produces.
+      // Below the two failure checks, not above them: a registration the shell refused
+      // (`failOnce`, or a command nobody taught this stub about) leaves the app's own
+      // `.catch` arm holding no handler, so recording it there and then delivering the
+      // event would describe a state nothing produces. A table function that throws is
+      // NOT covered by this — the recording is above the call — but nothing answers this
+      // command with a function today.
       if (cmd === "plugin:event|listen" && typeof a?.event === "string" && typeof a.handler === "number") {
         listeners.set(a.event, [...(listeners.get(a.event) ?? []), a.handler]);
       }

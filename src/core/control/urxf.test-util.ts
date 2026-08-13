@@ -45,9 +45,10 @@ export const BLOCK_HEADER = 32;
  * (the counts that occur are 2, 4, 8, 12, 16, 32, 64 and 108). An empty list is refused
  * rather than encoded, for the same reason and from the same scan.
  *
- * The strings are checked too, one call down in `cstring`: an ASCII value that does not
- * fit its element is refused rather than cut, so this type's `elemSize` being open on that
- * arm costs a compile error rather than a silently shortened name.
+ * The strings are checked too, one call down in `cstring`. Nothing can check them here —
+ * TypeScript cannot relate a string literal's UTF-8 length to `elemSize`, which is why
+ * that arm's element size stays open — so an ASCII value that does not fit is refused
+ * while the file is being built rather than cut down to something a case asserts against.
  */
 export type Field =
   | { readonly id: number; readonly typecode: 1 | 2; readonly elemSize: 1 | 2 | 4; readonly values: readonly number[] }
@@ -65,12 +66,13 @@ export interface ChunkSpec {
 
 /** Fixed-width text, refusing what will not fit rather than cutting it.
  *
- *  This is the file's only truncator, and it is reached by every string in it — a
- *  parameter's ASCII value, a scene label, a block name, the model. Cutting silently is
- *  how a fixture ends up declaring "ch 1 long name" and encoding "ch 1 long", after which
- *  the case that reads it back asserts the short form and the reader looks wrong. The
- *  width is bytes, not characters, so a multi-byte character that straddles the end would
- *  otherwise be cut mid-sequence and decode as U+FFFD. */
+ *  Every string in the file goes through here — a parameter's ASCII value, a scene label,
+ *  a block name, the model — so this is the one place the file could have cut one down,
+ *  and it does not. Cutting silently is how a fixture ends up declaring "ch 1 long name"
+ *  and encoding "ch 1 long", after which the case that reads it back asserts the short
+ *  form and the reader looks wrong. The width is bytes, not characters, so a multi-byte
+ *  character that straddles the end would otherwise be cut mid-sequence and decode as
+ *  U+FFFD. */
 function cstring(text: string, width: number): Uint8Array {
   if (!Number.isInteger(width) || width < 1) throw new RangeError(`urxf fixture: width ${width} is not a size`);
   const encoded = new TextEncoder().encode(text);

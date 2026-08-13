@@ -74,10 +74,12 @@ describe("parseUrxf", () => {
   });
 });
 
-// The builder's own guards. Each of the three is a mistake the FILE absorbs silently —
-// the bytes stay self-consistent and the parse succeeds — so without these a fixture can
-// state one thing and decode as another, and the reader takes the blame. Exercised here
-// because a guard nobody fires is indistinguishable from one whose bounds are wrong.
+// The builder's own guards. Each is a mistake the FILE takes without complaint — the
+// bytes stay self-consistent and the parse succeeds, or the string is quietly cut — so
+// without them a fixture can state one thing and decode as another, and the reader takes
+// the blame. Exercised here because a guard nobody fires cannot be told from one whose
+// bounds are wrong. No count in this sentence on purpose: the last one that was here went
+// stale the moment two more were added.
 describe("the fixture builder refuses what the format would swallow", () => {
   const chunkOf =
     (fields: Parameters<typeof buildUrxf>[0][number]["fields"]): (() => Uint8Array) =>
