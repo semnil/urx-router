@@ -829,15 +829,15 @@ alpha and the substitution below do — and hcwhite is the only one where that s
 it is the only theme whose ground is brighter than the control. So the difference survives the mode and
 this block needs no restatement of the lock; whether it *reads* to an operator was not measured. The engine
 also substitutes on its own here: a disabled select's text and border become `GrayText`, and, with the
-authored rule withdrawn through the stylesheet in each theme, the computed opacity came back **1** — so
-unlike the ordinary themes, where that withdrawal leaves **0.7** of the engine's own, under forced colors
-it supplies **no opacity at all**. The authored dim is therefore the entire opacity signal in this mode,
-and the two mechanisms are additive rather than alternatives. The launcher caret goes the other way on
-purpose, and the stylesheet has to say so by hand for the same reason: the mode would leave its authored
-dim standing, so the forced-colors block **drops** it and draws the caret at full strength
-(`e2e/forced-colors.spec.ts`). That dim encoded a step against a NEIGHBOUR, and the mode paints the two the
-same colour — leaving the step nothing to say and a legibility cost to pay. A lock's dim encodes one
-control against its own unlocked state, which the mode leaves intact, so the two go opposite ways.
+authored rule withdrawn through the stylesheet in each theme, the computed opacity came back **1**, where
+the same withdrawal in the ordinary themes leaves **0.7** of the engine's own — so under forced colors the
+engine supplies none of its own, and the authored dim is the whole opacity signal, added to that
+substitution rather than replacing it. The launcher caret goes the other way on purpose, and the
+stylesheet has to say so by hand for the same reason: the mode would leave its authored dim standing, so
+the forced-colors block **drops** it and draws the caret at full strength (`e2e/forced-colors.spec.ts`).
+That dim encoded a step against a NEIGHBOUR, and the mode paints the two the same colour — leaving the
+step nothing to say and a legibility cost to pay; a lock's dim encodes one control against its own
+unlocked state, which the mode leaves intact.
 
 One assertion in that spec reads painted pixels rather than a computed style, and has to: a range
 input's track and thumb are `::-webkit-` pseudo elements whose author declarations this engine does not
@@ -911,12 +911,12 @@ did not have it.
 
 The ordinary tier pins this in Playwright's Chromium (`e2e/console.spec.ts`) and **nothing pins it in
 WebKit** — every `@webkit` case in the race tier is about a strip rebuilt under a live pointer or about the
-chord/focus matrix, not about the press. **The shipping WebView2 was measured separately**
-(2026-08-13, debug build, runtime 151.0.4129.78, 1280x800 viewport, URX44V), because that engine is not the
-one any tier runs. From two detents above the factory value, so a stray reset could not read as "the press
-changed nothing": presses at the cap's top edge, centre and bottom edge left the readout unchanged; a
-press at 80% of the fader's height (164 px there) put the cap centre **0.013 px** from the pointer against
-a half-detent tolerance of 2.05 px; and a three-detent drag from a grab moved the cap 12.313 px for the 12.3 px asked.
+chord/focus matrix, not about the press. **The shipping WebView2 was measured separately** (2026-08-13,
+debug build, runtime 151.0.4129.78, 1280x800 viewport, URX44V), because that engine is not the one any
+tier runs. From two detents above the factory value, so a stray reset could not read as "the press changed
+nothing": presses at the cap's top edge, centre and bottom edge left the readout unchanged; a press at 80%
+of the fader's height (164 px there) put the cap centre **0.013 px** from the pointer against a half-detent
+tolerance of 2.05 px; and a three-detent drag from a grab moved the cap 12.313 px for the 12.3 px asked.
 Identical for the `mouse`, `pen` and `touch` pointer types — the tiers only exercise the first. One thing
 belongs to touch alone: a **double-tap is a `dblclick` there**, so two taps on the cap inside the
 double-click interval hit the factory reset above. Measured with its control (two taps 150 ms apart reset a
@@ -1147,19 +1147,17 @@ window pushes and reports intents back (`ui/midi-protocol.ts`); everything that 
 `ui/midi.ts`. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
 `invoke`, so the second window needs no capability beyond core. Where it sits is the shell's to remember (see
-"Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by
-platform — a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where the AppKit
-parent it used to have was measured and dropped. Closing the
-main window closes it; closing it drops learn mode, which would otherwise stay armed against a control nothing
-on screen names.
+"Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by platform —
+a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where the AppKit parent it used to
+have was measured and dropped. Closing the main window closes it; closing it drops learn mode, which would
+otherwise stay armed against a control nothing on screen names.
 
 Because it is a window rather than an overlay it can drift behind another application — and on macOS, where
 it has no owner, behind the MAIN window the moment the operator clicks the control being armed. Two things
 bring the binding back to where the operator is looking: it **raises itself when learn turns on**
 (`set_focus`, and always-on-top for exactly as long as the learn is armed — never for the session, which
-would cover the app to solve a problem lasting a gesture), and every bound
-control carries **its address as a tooltip** (`CH 1 CC 21`), which costs no layout and is readable with the
-window closed.
+would cover the app to solve a problem lasting a gesture), and every bound control carries **its address as
+a tooltip** (`CH 1 CC 21`), which costs no layout and is readable with the window closed.
 
 It deliberately does **not** raise itself when a binding lands, which is measured rather than assumed (macOS,
 2026-08-01). A click on a window that is not active does not reach the webview: wry's `acceptsFirstMouse:`
@@ -2401,8 +2399,7 @@ deliberately not taken on either platform. `focus_midi_window` still exists and 
 turns on — raising this window above another application is a different thing from ordering these two
 windows against each other.
 
-What the relationship costs, measured on both platforms — and **the two do not agree**, which is why it is
-kept on one and dropped on the other:
+What the relationship costs, measured on both platforms — and **the two do not agree**:
 
 | | macOS (AppKit child — **dropped**) | Windows (Win32 owner — in place) |
 | --- | --- | --- |
@@ -2411,12 +2408,11 @@ kept on one and dropped on the other:
 | **Composited on another display** | **no** — reported on-screen at layer 0 and alpha 1.0, drawn on neither | **yes**, drawn in full |
 | **Moves with the owner** | **yes**, the same delta to the pixel | **no**, it stays where it is |
 
-The bottom two rows are what the `#[cfg]` rests on: on macOS both are defects an operator meets (a panel
-listed as on-screen and painted nowhere, and one dragged off the desk by the main window), and neither
-exists on Windows. The Windows answer to the last row is structural rather than incidental: the panel is a top-level
-**owned** window, not a child of the main window's client area, and the window manager only moves the
-latter with its parent — so there is nothing that could implement the follow, whatever issues the move.
-Measured through a drag's own message sequence as well as a plain programmatic move.
+The bottom two rows are what the `#[cfg]` rests on: on macOS both are defects an operator meets, and
+neither exists on Windows. The Windows answer to the last row is structural rather than incidental: the
+panel is a top-level **owned** window, not a child of the main window's client area, and the window manager
+only moves the latter with its parent — so there is nothing that could implement the follow, whatever
+issues the move. Measured through a drag's own message sequence as well as a plain programmatic move.
 
 The macOS column is what the relationship cost while it was there; what that platform does now, with the
 panel independent, is not measured here. Three of the four Windows cells were measured on 2026-08-13 (debug
@@ -2428,8 +2424,8 @@ across processes**: the foreground lock makes `SetForegroundWindow` a silent no-
 attempts to break the order from the other side back it up, and one of them carries its own control:
 `SetWindowPos(midi, HWND_BOTTOM)` **did** move the pair down the global z-order — so a call against that
 window was not inert — and left the panel above the main window all the same. `SetWindowPos(midi, main)`
-left it above too, and inherits that control by acting on the same window. The
-symmetric attempt, `SetWindowPos(main, HWND_TOP, SWP_NOACTIVATE)`, left the order alone too, but that reading is **not**
+left it above too, and inherits that control by acting on the same window. The symmetric attempt,
+`SetWindowPos(main, HWND_TOP, SWP_NOACTIVATE)`, left the order alone too, but that reading is **not**
 evidence: an earlier run recorded the same call moving nothing at all, so "the panel stayed above" and "the
 call did nothing" are not separated there. `pin_midi_window` composes with the ownership rather than
 replacing it: arming the learn from the panel's own button turned on `WS_EX_TOPMOST` (bit 0x8; the extended

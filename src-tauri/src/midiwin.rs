@@ -124,10 +124,9 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // window above the main one and minimizes with it — and both halves of the macOS
     // finding were then measured there and are ABSENT: on a two-display desk this window
     // is drawn in full on the display the main window is not on, and moving the main
-    // window across to the other display left it where it was, to the pixel. So on
-    // Windows the relationship costs none of what it costs on macOS, and the `#[cfg]`
-    // is the measurement rather than a gap in it (architecture.md, "Window geometry",
-    // carries the table, the rig and the rest of the run).
+    // window across to the other display left it where it was, to the pixel. The
+    // `#[cfg]` is therefore the measurement rather than a gap in it (architecture.md,
+    // "Window geometry", carries the table, the rig and the rest of the run).
     //
     // What the parent bought on macOS — that it cannot fall behind the main window — is
     // paid for by pinning it while a learn is armed (`pin_midi_window`).
@@ -162,9 +161,8 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // That drag reaches neither platform as things stand — macOS no longer has the
     // parent it took, and on Windows the owner was measured (2026-08-13, above) not to
     // move this window at all — so what the fallback still answers is the case in the
-    // paragraph above: a remembered rectangle that lands on no attached display, which
-    // is now reached by the desk changing under it rather than by the window being
-    // dragged off one.
+    // paragraph above, now reached by the desk changing under the rectangle rather than
+    // by the window being dragged off a display.
     #[cfg(desktop)]
     crate::restore_window(
         &win.as_ref().window(),
