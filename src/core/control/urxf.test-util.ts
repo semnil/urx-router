@@ -2,9 +2,10 @@
 //
 // The format's two-level endianness (BE record/descriptor headers, LE block headers and
 // values) is the thing `urxf.test.ts` puts under test, so this builder **writes every
-// field explicitly rather than calling anything in `urxf.ts`**. That is what makes it an
-// independent witness: a builder that shared the reader's own encoder would agree with it
-// however wrong both were, and the reader's suite would pass on a byte layout no unit
+// field explicitly rather than importing anything from `urxf.ts`**. That is what makes it
+// an independent witness: `urxf.ts` reads and does not write, so what it would share is
+// its offsets and its endianness flags, and a builder taking those from the reader would
+// agree with it however wrong both were — the suite would pass on a byte layout no unit
 // writes. Every offset and every endianness flag below is therefore a duplicate on
 // purpose, and the format notes in the private reference repository
 // (`reference/work/urxf/urxf-file-format.md`) are what they are duplicated FROM.
@@ -41,25 +42,43 @@ export const BLOCK_HEADER = 32;
  * `values.length !== 1` makes it an array record. A single value is therefore always the
  * 6-byte scalar record, which is what the hardware writes: across the 35 device-written
  * files in the private reference repository there is no array record with a count of 1
- * (the counts that occur are 2, 4, 8, 12, 16, 32, 64 and 108).
+ * (the counts that occur are 2, 4, 8, 12, 16, 32, 64 and 108). An empty list is refused
+ * rather than encoded, for the same reason and from the same scan.
+ *
+ * The strings are checked too, one call down in `cstring`: an ASCII value that does not
+ * fit its element is refused rather than cut, so this type's `elemSize` being open on that
+ * arm costs a compile error rather than a silently shortened name.
  */
 export type Field =
-  | { id: number; typecode: 1 | 2; elemSize: 1 | 2 | 4; values: readonly number[] }
-  | { id: number; typecode: 4; elemSize: number; values: readonly string[] };
+  | { readonly id: number; readonly typecode: 1 | 2; readonly elemSize: 1 | 2 | 4; readonly values: readonly number[] }
+  | { readonly id: number; readonly typecode: 4; readonly elemSize: number; readonly values: readonly string[] };
 
 /** A chunk. The name is the format's own vocabulary rather than a free string: the extra
  *  word below switches on it, and so does the app when it looks for the live settings —
  *  so a typo would build a file that parses cleanly and then refuses as "no CURRENT". */
 export interface ChunkSpec {
-  chunk: "CURRENT" | "SCENE";
-  block: string;
-  label: string;
-  fields: readonly Field[];
+  readonly chunk: "CURRENT" | "SCENE";
+  readonly block: string;
+  readonly label: string;
+  readonly fields: readonly Field[];
 }
 
+/** Fixed-width text, refusing what will not fit rather than cutting it.
+ *
+ *  This is the file's only truncator, and it is reached by every string in it — a
+ *  parameter's ASCII value, a scene label, a block name, the model. Cutting silently is
+ *  how a fixture ends up declaring "ch 1 long name" and encoding "ch 1 long", after which
+ *  the case that reads it back asserts the short form and the reader looks wrong. The
+ *  width is bytes, not characters, so a multi-byte character that straddles the end would
+ *  otherwise be cut mid-sequence and decode as U+FFFD. */
 function cstring(text: string, width: number): Uint8Array {
+  if (!Number.isInteger(width) || width < 1) throw new RangeError(`urxf fixture: width ${width} is not a size`);
+  const encoded = new TextEncoder().encode(text);
+  if (encoded.length > width) {
+    throw new RangeError(`urxf fixture: "${text}" is ${encoded.length} bytes, past the ${width} it is written into`);
+  }
   const bytes = new Uint8Array(width);
-  bytes.set(new TextEncoder().encode(text).subarray(0, width));
+  bytes.set(encoded);
   return bytes;
 }
 
@@ -77,12 +96,19 @@ function concat(parts: Uint8Array[]): Uint8Array {
 /**
  * What the type cannot say, checked while building.
  *
- * All three are silent in the file rather than loud: a duplicate id leaves both records in
- * the bytes with the lengths still consistent, and the parse simply drops the earlier one;
- * an id past u16 wraps into a different parameter; a value too wide for its element is
- * truncated to something a case then asserts against. Each would present as a fixture that
- * "just does not decode the way the notes say", which is the reader's alibi rather than
- * the builder's.
+ * Every one of these is silent in the file rather than loud — the bytes stay
+ * self-consistent, the length checks still balance, and the parse succeeds — so each would
+ * present as a fixture that "just does not decode the way the notes say", which is the
+ * reader's alibi rather than the builder's:
+ *
+ * - a duplicate id leaves both records in the bytes and the parse drops the earlier one;
+ * - an id past u16 wraps into a different parameter;
+ * - a numeric value too wide for its element is truncated to something a case then asserts
+ *   against (a string too wide for its element is refused by `cstring`, one call down);
+ * - an empty value list becomes an array record with a count of 0, which no unit writes:
+ *   the same scan that found no count of 1 across the 35 device-written files found no
+ *   count of 0 either, and the parse then answers the parameter with an empty list, which
+ *   surfaces later as "no element 0" from a source read.
  */
 function checkFields(fields: readonly Field[]): void {
   const seen = new Set<number>();
@@ -92,6 +118,7 @@ function checkFields(fields: readonly Field[]): void {
     }
     if (seen.has(field.id)) throw new RangeError(`urxf fixture: id ${field.id} declared twice in one chunk`);
     seen.add(field.id);
+    if (field.values.length === 0) throw new RangeError(`urxf fixture: id ${field.id} carries no values`);
     if (field.typecode === 4) continue;
     const bits = field.elemSize * 8;
     const min = field.typecode === 2 ? -(2 ** (bits - 1)) : 0;
@@ -145,7 +172,12 @@ function buildChunkBody(name: string, fields: readonly Field[]): Uint8Array {
   return concat([block("F_", concat(descriptors)), block("D_", concat(values))]);
 }
 
-function buildChunk(chunkName: string, blockName: string, label: string, fields: readonly Field[]): Uint8Array {
+function buildChunk(
+  chunkName: ChunkSpec["chunk"],
+  blockName: string,
+  label: string,
+  fields: readonly Field[],
+): Uint8Array {
   const body = buildChunkBody(blockName, fields);
   const header = new Uint8Array(CHUNK_HEADER);
   header.set(cstring("#ChunkData", 12));
@@ -158,9 +190,10 @@ function buildChunk(chunkName: string, blockName: string, label: string, fields:
   return concat([header, body]);
 }
 
-/** A whole settings file. `model` is the header's model field, which reads "URX" for
- *  every variant on a real unit — the file names no variant, which is why the import
- *  makes the operator vouch for the selected one. */
+/** A whole settings file. `model` is the header's model field: the file names no variant,
+ *  which is why the import makes the operator vouch for the selected one — the reason is
+ *  stated where the import is implemented. Every device-written sample here reads "URX",
+ *  and all of them came off a URX44V. */
 export function buildUrxf(chunks: readonly ChunkSpec[], model = "URX"): Uint8Array {
   const header = new Uint8Array(FILE_HEADER);
   header.set(cstring("#YAMAHA MBDFProjectFile", 24));

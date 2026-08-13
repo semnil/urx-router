@@ -96,11 +96,21 @@ function captureWarnings(): { lines: string[]; restore: () => void } {
  * every count-and-outcome assertion identically.
  */
 function dialogs(shell: TauriShell): Array<{ message?: string; kind?: string; buttons?: string }> {
-  return shell.invokes.flatMap((cmd, i) =>
+  const raised = shell.invokes.flatMap((cmd, i) =>
     cmd === "plugin:dialog|message"
       ? [(shell.args[i] ?? {}) as { message?: string; kind?: string; buttons?: string }]
       : [],
   );
+  // The two lists below have to partition this one. They are total today — `platform.ts`
+  // has exactly the two producers — and this keeps it so: a dialog matching neither filter
+  // falls out of BOTH, and `expect(errors(shell)).toEqual([])` would then read as "nothing
+  // was raised" with the dialog sitting in the trace.
+  for (const d of raised) {
+    if (d.buttons !== "OkCancel" && d.kind !== "error") {
+      throw new Error(`dialog is neither a confirm nor an error: ${JSON.stringify(d)}`);
+    }
+  }
+  return raised;
 }
 
 /** The messages of the dialogs that ASKED (OK / Cancel), in order. */
@@ -333,19 +343,50 @@ describe("Write to device", () => {
   // the confirm outright used to leave the whole suite green.
   it("asks how many changes it is about to write, and sends nothing when that is declined", SLOW, async () => {
     const shell = await bootDevice({ vd_get: clockReads(false, 48_000) }, false);
+    // A message that reconstructs to itself under `confirm.write` IS the write confirm.
+    // Waiting on "some confirm appeared" is not enough: with the confirm gone the write
+    // runs on, fails to converge and offers to save a failure report — which is an
+    // OkCancel dialog too, so the wait would be satisfied by the very regression the case
+    // exists to catch, and the failure would name a NaN instead of a missing dialog.
+    const written = (): string | undefined =>
+      confirms(shell).find((m) => {
+        const n = Number(/\d+/.exec(m)?.[0]);
+        return Number.isFinite(n) && m === t().confirm.write(n);
+      });
     $("btn-write").click();
-    await vi.waitFor(() => expect(confirms(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
+    await vi.waitFor(() => expect(written()).toBeDefined(), { timeout: 10_000 });
     await new Promise((r) => setTimeout(r, 200));
 
     // The count is read out of the message and put back, so the whole frame is pinned
-    // rather than a substring — and the frame is the write confirm's own, not the rate
-    // one the case above gets.
-    const asked = confirms(shell).at(-1)!;
-    const n = Number(/\d+/.exec(asked)?.[0]);
+    // rather than a substring. What that cannot pin is the number itself — the expectation
+    // is built from the same digits — so a `total` that dropped one of its two terms would
+    // still render a well-formed frame.
+    const n = Number(/\d+/.exec(written()!)?.[0]);
     expect(n).toBeGreaterThan(10);
-    expect(asked).toBe(t().confirm.write(n));
+    // And exactly one confirm: the decline has to end the flow rather than lead to another
+    // question.
+    expect(confirms(shell)).toHaveLength(1);
     expect(shell.count("vd_set")).toBe(0);
     expect(shell.count("vd_set_str")).toBe(0);
+  });
+
+  // The other half of the same pre-flight, one gate earlier. An unread firmware version is
+  // a HARD stop, and not the same thing as a mismatched one: a mismatch is a confirm the
+  // operator can wave through (and a preference can suppress), while an unread version
+  // means the check deciding whether this build's parameter mappings apply at all could
+  // not be made. Proceeding writes hundreds of values with that check switched off.
+  it("refuses to write to a unit whose firmware version it could not read", SLOW, async () => {
+    const shell = await bootDevice({
+      vd_connect: { model: "URX44V", label: "URX44V", firmware: null, epoch: 1 },
+    });
+    $("btn-write").click();
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
+    expect(errors(shell)).toEqual([t().error.firmwareUnread]);
+    // Refused outright rather than asked: the mismatch arm one line below DOES ask, and a
+    // regression that routed the null through it would leave a case counting dialogs green.
+    expect(confirms(shell)).toEqual([]);
+    expect(shell.count("vd_set")).toBe(0);
+    await invoked(shell, "vd_disconnect");
   });
 
   // A device of another model is REFUSED rather than offered a switch: write acts on the
@@ -358,7 +399,10 @@ describe("Write to device", () => {
     });
     $("btn-write").click();
     await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
-    expect(errors(shell).at(-1)).toContain(t().error.modelMismatch("URX22", "URX44V"));
+    // The whole frame, not a substring of it: the guard is shared with compare and the two
+    // device-setup actions, each wrapping the same mismatch text in its own message, so a
+    // refusal that reported write's failure as compare's would pass a `toContain`.
+    expect(errors(shell)).toEqual([t().status.writeError(t().error.modelMismatch("URX22", "URX44V"))]);
     // Refused before anything went out, and the link it opened is let go rather than held.
     expect(shell.count("vd_set")).toBe(0);
     expect(confirms(shell)).toEqual([]);
@@ -868,6 +912,11 @@ describe("the sample rate a write happens at", () => {
     await invoked(shell, "vd_disconnect");
     await new Promise((r) => setTimeout(r, 100));
     expect(shell.count("vd_set")).toBe(1); // the refused policy write, and nothing after it
+    // The write that was refused was the POLICY one, and the failure reached the operator.
+    // Aborting in silence is the other way this ends, and it looks the same from the
+    // counts: nothing on screen, nothing on the wire.
+    expect(followUsbWrites(shell)).toEqual([0]);
+    expect(errors(shell).at(-1)).toBe(t().status.writeError(t().error.followUsbWrite("refused")));
   });
 
   // Above 96 kHz whole features drop out, so adopting names them before the choice is
@@ -903,10 +952,14 @@ describe("the sample rate a write happens at", () => {
       },
     });
     $("btn-write").click();
-    await vi.waitFor(() => expect(shell.count("plugin:dialog|message")).toBeGreaterThan(0), { timeout: 10_000 });
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
     await new Promise((r) => setTimeout(r, 100));
     expect(modal().hidden).toBe(true); // fail-closed, not "ask the operator instead"
     expect(shell.count("vd_set")).toBe(0);
+    // Reported as the clock read failing, rather than as whatever the flow hit next: the
+    // three-way staying down and no writes going out are equally true of a flow that fell
+    // over somewhere else entirely.
+    expect(errors(shell).at(-1)).toBe(t().status.writeError(t().error.clockUnread("timeout")));
   });
 });
 

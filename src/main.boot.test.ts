@@ -250,9 +250,11 @@ describe("a document the loader will not simply open", () => {
   // The wire is duplicated from a REAL connection rather than invented out of two port
   // names because `duplicate` is the reason under test and only an existing wire can be
   // duplicated. An invented pair is not dropped on the way in — measured: the loader's
-  // filter is `isPlanConnection`, which checks SHAPE (a `kind` in `CONNECTION_KINDS`, two
-  // string refs), so a wire carrying a valid kind and two refs that resolve to nothing
-  // survives the load and reports as `noRule`. Dropping happens to a wire with no kind.
+  // filter is `isPlanConnection`, which checks SHAPE (a plain record, two string refs, a
+  // `kind` in `CONNECTION_KINDS`, valid params) and never whether a ref resolves, so a
+  // wire carrying a valid kind and two refs that name nothing survives the load and
+  // reports as `noRule`. What gets dropped is a wire that fails one of those shape
+  // checks — an absent kind is the one the measurement used.
   it("reports a wire the plan carries twice as a validation failure", async () => {
     await boot();
     const before = nodes();
@@ -281,8 +283,11 @@ describe("a document the loader will not simply open", () => {
     vi.mocked(openTextDocument).mockResolvedValueOnce({
       text: await documentWith((plan) => {
         const params = plan.nodeParams as Record<string, Record<string, unknown>>;
-        // Pitch Fix, whose slot is device-wide 1-of. ch1 and ch3 rather than ch1/ch2:
-        // a STEREO-linked pair shares one claim, and the census would collapse them.
+        // Pitch Fix, whose slot is device-wide 1-of. ch1 and ch3 rather than ch1/ch2 so
+        // the case does not depend on the pair's link state: the census collapses a
+        // STEREO-linked pair into one claim, and while the default plan has the pair
+        // unlinked (so ch1/ch2 would report the same today), a default that linked them
+        // would silently turn this into a plan with no contention at all.
         params.ch1 = { ...params.ch1, insertFx: 512 };
         params.ch3 = { ...params.ch3, insertFx: 512 };
       }),

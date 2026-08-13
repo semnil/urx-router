@@ -42,9 +42,9 @@ describe("parseUrxf", () => {
 
   it("rejects a truncated file", () => {
     const bytes = sample();
-    // The code, not merely the class: every refusal below is a UrxfError, so `toThrow`
-    // alone would be satisfied by a file rejected for some other reason entirely — which
-    // is what an offset that drifted would produce.
+    // The code, not merely the class: every refusal the PARSER raises is a UrxfError, so
+    // `toThrow` alone would be satisfied by a file rejected for some other reason entirely
+    // — which is what an offset that drifted would produce.
     expect(() => parseUrxf(bytes.subarray(0, bytes.length - 200))).toThrow(
       expect.objectContaining({ code: "truncated" }),
     );
@@ -104,6 +104,26 @@ describe("the fixture builder refuses what the format would swallow", () => {
     // would otherwise be written as 64936 under an unsigned typecode.
     expect(chunkOf([{ id: 14, typecode: 1, elemSize: 2, values: [-600] }])).toThrow(/does not fit 16 bits/);
     expect(chunkOf([{ id: 14, typecode: 2, elemSize: 2, values: [-600] }])).not.toThrow();
+  });
+
+  // The string arm reaches the same rule one call down, in `cstring`. Without it this is
+  // the one typecode where over-wide is still TRUNCATION rather than a refusal: the file
+  // parses, and the case reading the name back asserts the short form.
+  it("refuses a name wider than its element rather than cutting it", () => {
+    expect(chunkOf([{ id: 18, typecode: 4, elemSize: 4, values: ["ch 1 long name"] }])).toThrow(
+      /is 14 bytes, past the 4/,
+    );
+    // Bytes, not characters: two of these are 3 bytes each in UTF-8, so cutting at 4 would
+    // land mid-sequence and decode as U+FFFD.
+    expect(chunkOf([{ id: 18, typecode: 4, elemSize: 4, values: ["ああ"] }])).toThrow(/is 6 bytes, past the 4/);
+    expect(chunkOf([{ id: 18, typecode: 4, elemSize: 4, values: ["ch 1"] }])).not.toThrow();
+  });
+
+  // An array record with a count of 0 is as absent from the device-written files as a
+  // count of 1 is. It builds a file that parses, and the gap only shows up later as a
+  // source read failing on "no element 0".
+  it("refuses a field carrying no values", () => {
+    expect(chunkOf([{ id: 14, typecode: 1, elemSize: 2, values: [] }])).toThrow(/carries no values/);
   });
 });
 

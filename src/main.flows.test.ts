@@ -43,9 +43,11 @@ const status = statusText;
 const chord = (key: string, init: KeyboardEventInit = {}): void =>
   void document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }));
 
-/** Select a node on the board. Dispatched rather than clicked because in jsdom every
- *  rect measures zero, so a real click resolves to nothing at all; the node's own panel
- *  rect is the target the graph's helpers use for the same reason. */
+/** Select a node on the board. The graph selects on `pointerdown` and resolves the node
+ *  with `closest(".node")`, so the gesture has to be dispatched — `.click()` reaches no
+ *  handler at all — and it is aimed at the node's own panel rect rather than at the group,
+ *  which is what `graph.test-util.ts` targets for the same reason: the group's box extends
+ *  over the jacks that stand on its top edge. */
 const selectNode = (id: string): void => {
   const face = $("graph-host").querySelector<SVGElement>(`g.node[data-id="${id}"] rect`)!;
   face.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
@@ -593,14 +595,26 @@ describe("editing a node through the inspector", () => {
     expect(nodeText("ch1")).toContain("PROBE");
     expect(document.activeElement).toBe(field); // the panel was not rebuilt under the cursor
 
-    // Whitespace is empty: the override is cleared rather than the node being named " ".
-    // Asserted as the fallback coming BACK, not merely as PROBE going away — a guard that
-    // regressed from `name.trim()` to `name` would store "   ", and the node would render a
-    // blank label that satisfies an absence check just as well.
+    // Whitespace is empty: the override is CLEARED rather than the node being named "   ".
+    //
+    // Read off the saved document, because the board cannot tell the two apart: the graph
+    // trims the name it draws (`deviceName` is `nodeNames?.[id]?.trim() || undefined`), so
+    // a guard regressing from `name.trim()` to `name` would store "   " and repaint the
+    // model's label exactly as clearing does — byte for byte. Every DOM assertion here,
+    // including the fallback coming back, passes under that regression. What it changes is
+    // what leaves the app: the plan file, the `?plan=` link and the device write would all
+    // carry a channel named "   ".
     field.value = "   ";
     field.dispatchEvent(new Event("input", { bubbles: true }));
     expect(nodeText("ch1")).not.toContain("PROBE");
     expect(nodeText("ch1")).toContain(fallback);
+
+    $("btn-save").click();
+    await vi.waitFor(() => expect(saveTextDocument).toHaveBeenCalled());
+    const saved = JSON.parse(vi.mocked(saveTextDocument).mock.calls.at(-1)![1]) as {
+      nodeNames?: Record<string, string>;
+    };
+    expect(saved.nodeNames?.ch1).toBeUndefined();
   });
 
   // Recolor DOES re-render — the active swatch ring has to move — so every read below goes
@@ -658,9 +672,12 @@ describe("editing a node through the inspector", () => {
 });
 
 describe("menu keyboard navigation", () => {
-  // The same filter the entry's own key handler applies. Without it a hidden entry (the
-  // File menu carries one — the experimental settings import) joins the list here but not
-  // there, and Home / End would be asserted against a different first and last item.
+  // The same selector the entry's own key handler applies, so this addresses the list the
+  // app navigates rather than a wider one of its own. The File menu already carries a
+  // hidden entry — the experimental settings import — which sits between two visible ones,
+  // so today the two lists happen to share a first and a last item; an entry added at
+  // either end would separate them, and only this file would still be asserting on the
+  // wrong one.
   const items = (): HTMLButtonElement[] => [
     ...$("file-menu").querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled]):not([hidden])'),
   ];

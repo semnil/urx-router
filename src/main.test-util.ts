@@ -10,12 +10,14 @@
 // The Tauri half matters because `isTauri()` is what gates the whole device layer.
 // Left undefined, `main.ts` runs its browser path and roughly half the module is
 // unreachable — which is not "untested code", it is code no unit test could reach at
-// all. `tauriShell()` installs the same pieces `e2e/tauri-stub.ts` installs for the E2E
-// tier — an `invoke` over a command table, a `Channel` class, and a `transformCallback`
-// that KEEPS what it is handed — so the two tiers drive the same seam rather than two
-// different inventions. That last one is not decoration: the shell delivers drag & drop
-// and the macOS Edit menu as events rather than as anything the DOM produces, so a
-// fixture that discarded the callback left those flows registered and unreachable.
+// all. `tauriShell()` installs the same two pieces `e2e/tauri-stub.ts` installs for the
+// E2E tier (an `invoke` over a command table, and a `Channel` class), so the two tiers
+// drive the same seam rather than two different inventions. It installs one more that the
+// app tier's stub does not: a `transformCallback` that KEEPS what it is handed. That comes
+// from `e2e/race/fake-device.ts`, which states the reason — without it `listenEvent`
+// returns early — and the shell delivers drag & drop and the macOS Edit menu as events
+// rather than as anything the DOM produces, so those flows are otherwise unreachable from
+// a unit case. (In the ordinary E2E tier they are not even registered.)
 
 import { vi } from "vitest";
 import { readFileSync } from "node:fs";
@@ -47,12 +49,17 @@ export interface TauriShell {
   /** How many times `cmd` was invoked. */
   count: (cmd: string) => number;
   /** Deliver a shell event to every handler the app registered for it, and answer how
-   *  many there were. The desktop shell intercepts drag & drop and the macOS Edit menu
-   *  before the webview sees them, so those arrive as events rather than as anything the
-   *  DOM can be made to produce — without this they are registered and unreachable, and
-   *  a case can only assert the halves of those flows that a menu button also reaches.
-   *  Returning the count keeps "nothing was listening" from reading as "the handler ran
-   *  and did nothing". */
+   *  many handlers actually took it. The desktop shell intercepts drag & drop and the
+   *  macOS Edit menu before the webview sees them, so those arrive as events rather than
+   *  as anything the DOM can be made to produce — without this they are registered and
+   *  unreachable, and a case can only assert the halves of those flows that a menu button
+   *  also reaches.
+   *
+   *  The count answers ONE question: was anything listening. It cannot say the handler
+   *  did anything, and it does not look at `payload` — a payload shaped wrong for the
+   *  event still delivers and still counts, and the handler will read it as empty. A case
+   *  whose outcome is an ABSENCE has to pin something else as well, or it passes on a
+   *  delivery the app ignored. */
   emit: (event: string, payload?: unknown) => number;
 }
 
@@ -168,15 +175,19 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     invoke: (cmd: string, a?: Record<string, unknown>) => {
       invokes.push(cmd);
       args.push(a);
-      if (cmd === "plugin:event|listen" && typeof a?.event === "string" && typeof a.handler === "number") {
-        listeners.set(a.event, [...(listeners.get(a.event) ?? []), a.handler]);
-      }
       if (once.has(cmd)) {
         const err = once.get(cmd);
         once.delete(cmd);
         return Promise.reject(err);
       }
       if (!(cmd in table)) return Promise.reject(new Error(`stub: unhandled command ${cmd}`));
+      // Recorded only once the registration has actually succeeded — below the two
+      // failure checks, not above them. A shell that refused the registration leaves the
+      // app's own `.catch` arm holding no handler, so a case that models that refusal and
+      // then delivered the event anyway would be describing a state nothing produces.
+      if (cmd === "plugin:event|listen" && typeof a?.event === "string" && typeof a.handler === "number") {
+        listeners.set(a.event, [...(listeners.get(a.event) ?? []), a.handler]);
+      }
       const v = table[cmd];
       if (typeof v !== "function") return Promise.resolve(v);
       // A table function that throws synchronously has to REJECT, not throw out of
@@ -198,11 +209,19 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     failOnce: (cmd, err) => void once.set(cmd, err),
     count: (cmd) => invokes.filter((c) => c === cmd).length,
     emit: (event, payload) => {
-      const ids = listeners.get(event) ?? [];
-      // The shape `listenEvent` unwraps: it reads `.payload` off the message and hands
-      // that to the app's handler.
-      for (const id of ids) callbacks.get(id)?.({ event, id, payload });
-      return ids.length;
+      let delivered = 0;
+      for (const id of listeners.get(event) ?? []) {
+        const fn = callbacks.get(id);
+        if (!fn) continue;
+        // The shape `listenEvent` unwraps: it reads `.payload` off the message and hands
+        // that to the app's handler.
+        fn({ event, id, payload });
+        delivered += 1;
+      }
+      // Deliveries, not registrations: the count exists so "nothing was listening" cannot
+      // read as "the handler ran and did nothing", and a registration whose callback is
+      // missing is the first of those wearing the shape of the second.
+      return delivered;
     },
   };
 }
