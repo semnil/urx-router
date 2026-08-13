@@ -340,15 +340,18 @@ export interface Plan {
 }
 
 export const PLAN_FORMAT = "urx-router-plan";
-// 2: the FX-channel parameters that several effect families shared under one bare
-// name (hpf / lpf / hiRatio …) are stored under family-qualified names. A document
-// this build writes carries only the qualified names, which an older build reads as
-// absent — so it is tagged 2 and refused there rather than silently loading factory
-// defaults for those parameters and writing them at the unit.
-// 3: the same rule applied to the two remaining places one stored value could be
-// read under a law it was not written under — the Ping Pong delay time (its own key
-// beside Mono Delay's, one slot under two laws) and the insert-FX engine slots (keyed
-// by family, so a selector change cannot hand them to the next effect).
+// 2: every place one stored value could be read under a law it was not written under
+// now carries a qualified key. Three re-keyings, all under this one number — the
+// FX-channel parameters several effect families shared under one bare name (hpf /
+// lpf / hiRatio …), the Ping Pong delay time (its own key beside Mono Delay's, one
+// slot under two laws), and the insert-FX engine slots (keyed by family, so a
+// selector change cannot hand them to the next effect). A document this build writes
+// carries only the qualified names, which an older build reads as absent — so it is
+// tagged 2 and refused there rather than silently loading factory defaults for those
+// parameters and writing them at the unit.
+//
+// The last two landed before any version-2 writer shipped, which is why they are not
+// a version of their own: nothing ever wrote a document that needed telling apart.
 export const PLAN_VERSION = 2;
 
 // Language-agnostic load failures. The UI maps the code to a localized message.
@@ -443,7 +446,7 @@ export function deserializeDocument(text: string): PlanDocument {
     modelId: data.modelId as ModelId,
     sampleRate: SAMPLE_RATES.includes(data.sampleRate as number) ? (data.sampleRate as number) : DEFAULT_SAMPLE_RATE,
     positions: posRecord(data.positions),
-    connections: Array.isArray(data.connections) ? data.connections.filter(isPlanConnection) : [],
+    connections: Array.isArray(data.connections) ? data.connections.filter(isPlanConnection).map(rebuildConn) : [],
     nodeParams: sanitizeNodeParams(data.nodeParams, version),
     nodeNames: nameRecord(data.nodeNames),
     nodeColors: stringRecord(data.nodeColors),
@@ -525,6 +528,26 @@ function isPlainRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/**
+ * The one key that is not a data key. `JSON.parse` gives a document an own
+ * `"__proto__"` property, but assigning it onto a fresh `{}` goes through the
+ * INHERITED accessor and replaces that object's prototype instead of storing an
+ * entry — and every collection deserialize rebuilds is built by assignment.
+ *
+ * What that buys a crafted plan is a set of parameters the app can see and the rest
+ * of the stack cannot. `{"nodeParams":{"ch1":{"__proto__":{"on":false}}}}` makes
+ * `plan.nodeParams.ch1.on` read `false` by inheritance: the graph and console draw
+ * CH1 muted and a live sync writes CH_ON 0 to the unit, while `Object.keys(ch1)` is
+ * empty — so `serialize` writes `"ch1": {}`, `diffPlans` and the write witness (both
+ * own-key walks) see no change, and undo has nothing to revert. Saving and reopening
+ * then produces an unmuted plan that no longer matches what the last sync wrote.
+ *
+ * Skipped rather than sanitized: no plan has ever had a legitimate `__proto__` node,
+ * parameter or wire, so dropping the entry is the same "absence is the default state"
+ * rule the other guards here take.
+ */
+const PROTO_KEY = "__proto__";
+
 // The element-level guards for the collections whose values deserialize used to take
 // on trust once the container was an object. The container check alone let a note
 // written as `{}` through, and the graph reaches every note on every render
@@ -534,7 +557,7 @@ function isPlainRecord(v: unknown): v is Record<string, unknown> {
 function stringRecord(v: unknown): Record<string, string> {
   if (!isPlainRecord(v)) return {};
   const out: Record<string, string> = {};
-  for (const [k, val] of Object.entries(v)) if (typeof val === "string") out[k] = val;
+  for (const [k, val] of Object.entries(v)) if (typeof val === "string" && k !== PROTO_KEY) out[k] = val;
   return out;
 }
 
@@ -587,7 +610,7 @@ function posRecord(v: unknown): Record<string, NodePos> {
   if (!isPlainRecord(v)) return {};
   const out: Record<string, NodePos> = {};
   for (const [k, p] of Object.entries(v)) {
-    if (!isPlainRecord(p)) continue;
+    if (!isPlainRecord(p) || k === PROTO_KEY) continue;
     if (finiteNum(p.x) && finiteNum(p.y)) out[k] = { x: p.x, y: p.y };
   }
   return out;
@@ -656,6 +679,7 @@ function sanitizeParamValue(v: unknown): unknown {
 function sanitizeParamRecord(rec: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(rec)) {
+    if (k === PROTO_KEY) continue;
     const clean = sanitizeParamValue(v);
     if (clean !== undefined) out[k] = clean;
   }
@@ -667,7 +691,7 @@ function sanitizeNodeParams(v: unknown, version: number): Record<string, NodePar
   const out: Record<string, NodeParams> = {};
   for (const [nodeId, np] of Object.entries(v)) {
     // A non-record entry carries nothing recoverable — drop the node outright.
-    if (!isPlainRecord(np)) continue;
+    if (!isPlainRecord(np) || nodeId === PROTO_KEY) continue;
     const clean = sanitizeParamRecord(np) as NodeParams;
     // Every load path (file open, recent files, ?plan= deep link, drop) reaches
     // deserialize, so this is where a plan written with keys an effect no longer
@@ -692,6 +716,33 @@ function sanitizeNodeParams(v: unknown, version: number): Record<string, NodePar
   return out;
 }
 
+/**
+ * A kept wire, rebuilt from its four known fields rather than passed through.
+ *
+ * The node side has always done this — `sanitizeParamRecord` builds a fresh record and
+ * drops a leaf it does not recognise as a boolean or a number — while the wire side
+ * filtered and kept the parsed object, so an unknown key of any type rode every clone,
+ * diff and save forever. Nothing crashed on it (emit reads named keys, and the
+ * `Number.isFinite` firewalls hold), which is why it survived: it is an asymmetry
+ * between the two collection guards rather than a wrong value.
+ *
+ * `params` goes through the same rebuild, so the extras cannot hide one level down.
+ */
+function rebuildConn(c: PlanConnection): PlanConnection {
+  const out: PlanConnection = { from: c.from, to: c.to, kind: c.kind };
+  if (c.params) {
+    const p: ConnParams = {};
+    if (c.params.level !== undefined) p.level = c.params.level;
+    if (c.params.pan !== undefined) p.pan = c.params.pan;
+    if (c.params.tap !== undefined) p.tap = c.params.tap;
+    if (c.params.on !== undefined) p.on = c.params.on;
+    if (c.params.oscL !== undefined) p.oscL = c.params.oscL;
+    if (c.params.oscR !== undefined) p.oscR = c.params.oscR;
+    out.params = p;
+  }
+  return out;
+}
+
 function isPlanConnection(v: unknown): v is PlanConnection {
   if (!isPlainRecord(v)) return false;
   return (
@@ -706,10 +757,42 @@ export function hasConnection(plan: Plan, from: string, to: string): boolean {
   return plan.connections.some((c) => c.from === from && c.to === to);
 }
 
+/**
+ * A wire's `kind` restated from the rule table, for every wire that has a rule.
+ *
+ * The kind is a function of (from, to) — the invariant plan-history states and nothing
+ * enforced. A document can carry a real pair under the wrong kind, and the load funnel
+ * passes it: a rule exists, the receiver is not over-subscribed, the pair is not
+ * duplicated. What follows is silent and severe, because every consumer trusts a
+ * different one of the two encodings. `isSceneExternalConnection` reads the STORED kind,
+ * so an output patch written as `"send"` is no longer scene-external and a scene-scoped
+ * save takes device-wide state with it; the emit looks the wire up by RULE kind
+ * (`incomingConnection(..., "patch")`), finds nothing, and writes the selector out as
+ * NONE — live sync tells the unit there is no patch while the graph draws one.
+ *
+ * Rewritten rather than refused: the field is redundant, so a disagreement is noise
+ * with no operator intent behind it, and refusing a document over a value the app can
+ * derive would lose a plan that is otherwise entirely legal. A wire with NO rule is
+ * left exactly as it is — that one is `validatePlan`'s to refuse, and quietly restating
+ * a kind there would hide it.
+ */
+function normalizeConnectionKinds(model: DeviceModel, plan: Plan): void {
+  for (const c of plan.connections) {
+    const kind = model.rules.find((r) => r.from === c.from && r.to === c.to)?.kind;
+    if (kind !== undefined && c.kind !== kind) c.kind = kind;
+  }
+}
+
 // Materialize the model's fixed (non-removable) wires into the plan when missing,
 // so they show pre-connected and survive plans saved before they existed. Idempotent
 // and leaves any existing entry (with its level/pan) untouched.
+//
+// It also restates every wire's kind from the rule table (above). That rides here
+// rather than in a funnel of its own because this is the one call every path that
+// installs a plan already makes — the boot, the loader, and a device readback — so the
+// two cannot drift apart by someone adding a fourth path and forgetting one of them.
 export function ensureFixedConnections(model: DeviceModel, plan: Plan): void {
+  normalizeConnectionKinds(model, plan);
   for (const rule of model.rules) {
     if (!rule.fixed || hasConnection(plan, rule.from, rule.to)) continue;
     const conn: PlanConnection = { from: rule.from, to: rule.to, kind: rule.kind };

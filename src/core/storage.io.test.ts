@@ -171,6 +171,29 @@ describe("text and binary documents", () => {
     input.remove();
     await expect(openTextDocument(JSON_FILTER)).resolves.toBeNull();
   });
+
+  // null means "no file was chosen". A read that FAILS has to be told apart from that,
+  // or an unreadable file arrives at the caller as a dismissed picker: no status line,
+  // no dialog, nothing at all. The native path already rejects the same failure.
+  it("rejects a browser-picked file it could not read, rather than reporting a cancel", async () => {
+    const input = document.createElement("input");
+    input.id = "file-input";
+    input.type = "file";
+    document.body.append(input);
+    vi.spyOn(input, "click").mockImplementation(() => {});
+    // Fail the read itself: the reader errors instead of loading.
+    vi.spyOn(FileReader.prototype, "readAsText").mockImplementation(function (this: FileReader) {
+      queueMicrotask(() => this.onerror?.(new ProgressEvent("error") as ProgressEvent<FileReader>));
+    });
+
+    const failing = openTextDocument(JSON_FILTER);
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["x"], "x.json")] });
+    input.dispatchEvent(new Event("change"));
+    await expect(failing).rejects.toThrow();
+
+    vi.mocked(FileReader.prototype.readAsText).mockRestore();
+    input.remove();
+  });
 });
 
 describe("SVG export", () => {

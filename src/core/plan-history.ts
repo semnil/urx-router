@@ -20,7 +20,6 @@
 // so apply order does not matter and inverting only swaps each entry's direction.
 
 import type { NodePos, Plan, PlanConnection } from "./plan";
-import { removeConnection } from "./plan";
 import { parseRef } from "../models/types";
 
 /** How one Plan field takes part in a patch. Documentation and a tsc trip-wire:
@@ -389,10 +388,13 @@ export function applyPatch(plan: Plan, patch: PlanPatch): string[] {
         const found = plan.connections.findIndex((c) => wireKey(c.from, c.to) === e.key);
         if (!e.after.present) {
           if (found < 0) missing.push(`connections ${e.key}`);
-          else {
-            const [from, to] = e.key.split(WIRE_SEP);
-            removeConnection(plan, from, to);
-          }
+          // Removed at the index just found, rather than by re-splitting the key back
+          // into refs. The split is correct only while no ref can contain a NUL, and
+          // that rests on a refusal implemented two modules away (`planProblems` finds
+          // no rule for such a ref, so the document never loads) — a guard this file
+          // cannot see and does not state. Re-deriving what it already holds buys
+          // nothing, and would silently remove nothing if that guard ever moved.
+          else plan.connections.splice(found, 1);
           break;
         }
         // Re-created at the index it held, so the wires' draw order and a saved

@@ -22,6 +22,7 @@ import {
   PlanError,
   LEVEL_OFF_DB,
 } from "./plan";
+import type { Plan } from "./plan";
 import { DEFAULT_SAMPLE_RATE } from "./constraints";
 import { MODELS, MODEL_IDS } from "../models/index";
 import { defaultPlan } from "../models/initial-state";
@@ -477,5 +478,103 @@ describe("node names are bounded by what the unit can hold", () => {
     const plan = deserialize(doc);
     expect(plan.nodeNames["ch1"]).toBe("Kick");
     expect(plan.nodeNames["ch2"]).toBe(" 5/ 6");
+  });
+});
+
+// `JSON.parse` gives a document an own `"__proto__"` property, but assigning it onto
+// a fresh `{}` goes through the inherited accessor and replaces that object's
+// prototype instead of storing an entry — and every collection the loader rebuilds is
+// built by assignment. What a crafted plan buys with it is a set of values the app
+// reads and the rest of the stack cannot see: an own-key walk finds nothing, so
+// serialize, the differ and the write witness all report an empty record while the
+// graph, the console and the device emit read the inherited values.
+describe("a hostile key cannot hand a rebuilt record its prototype", () => {
+  // Written as JSON TEXT, not through an object literal. `{ __proto__: … }` in source
+  // sets the literal's own prototype, so `JSON.stringify` of it emits `{}` and the case
+  // would test nothing while passing — the document has to reach `JSON.parse`, which is
+  // what produces the own `"__proto__"` property this is about.
+  const load = (body: string): Plan =>
+    deserialize(`{"format":"${PLAN_FORMAT}","version":${PLAN_VERSION},"modelId":"URX44V",${body}}`);
+
+  it("drops it from a node's parameters instead of muting the channel", () => {
+    const plan = load('"nodeParams":{"ch1":{"__proto__":{"on":false,"gain":70}}}');
+    // The inherited read is what the emit and the views would have taken.
+    expect(plan.nodeParams["ch1"]?.on).toBeUndefined();
+    expect(Object.getPrototypeOf(plan.nodeParams["ch1"] ?? {})).toBe(Object.prototype);
+  });
+
+  it("drops it as a node id, a name, a colour and a position", () => {
+    const plan = load(
+      '"nodeParams":{"__proto__":{"on":false}},"nodeNames":{"__proto__":"x"},' +
+        '"nodeColors":{"__proto__":"#000000"},"positions":{"__proto__":{"x":1,"y":2}}',
+    );
+    for (const rec of [plan.nodeParams, plan.nodeNames, plan.nodeColors, plan.positions]) {
+      expect(Object.getPrototypeOf(rec)).toBe(Object.prototype);
+      expect(Object.keys(rec)).toHaveLength(0);
+    }
+    // The record is a plain object again: nothing reads a phantom entry off it.
+    expect((plan.nodeNames as Record<string, unknown>)["on"]).toBeUndefined();
+  });
+});
+
+// The node side rebuilds a sanitized copy and drops a leaf it does not recognise; the
+// wire side used to filter and keep the parsed object, so an unknown key of any type
+// rode every clone, diff and save forever. Nothing crashed on it — which is why it
+// lasted — but the two collection guards disagreed about what a loaded document may
+// contain.
+describe("a loaded wire carries its four known fields and nothing else", () => {
+  it("drops extras beside the wire and inside its params", () => {
+    const doc = JSON.stringify({
+      format: PLAN_FORMAT,
+      version: PLAN_VERSION,
+      modelId: "URX44V",
+      connections: [
+        {
+          from: ref("ch1", "out"),
+          to: ref("bus.stereo", "in"),
+          kind: "send",
+          junk: { a: "x" },
+          params: { level: -6, extra: "str" },
+        },
+      ],
+    });
+    const c = deserialize(doc).connections.find((w) => w.from === ref("ch1", "out"))!;
+    expect(Object.keys(c).sort()).toEqual(["from", "kind", "params", "to"]);
+    expect(Object.keys(c.params!)).toEqual(["level"]);
+    expect(c.params!.level).toBe(-6);
+  });
+
+  it("keeps a wire with no params as a wire with no params", () => {
+    const doc = JSON.stringify({
+      format: PLAN_FORMAT,
+      version: PLAN_VERSION,
+      modelId: "URX44V",
+      connections: [{ from: ref("ch1", "out"), to: ref("bus.mix1", "in"), kind: "send" }],
+    });
+    const c = deserialize(doc).connections.find((w) => w.to === ref("bus.mix1", "in"))!;
+    expect("params" in c).toBe(false);
+  });
+});
+
+// The kind is a function of (from, to), stated as an invariant and enforced nowhere.
+// A document carrying a real pair under the wrong kind passed the whole load funnel —
+// a rule exists, the receiver is not over-subscribed, the pair is not duplicated — and
+// then each consumer trusted a different one of the two encodings.
+describe("a wire's kind is restated from the rule table", () => {
+  it("rewrites a kind the rules disagree with, and leaves a ruleless wire alone", () => {
+    const plan = emptyPlan("URX44V");
+    // A real output-patch pair, stored as a send. Read as a send it is no longer
+    // scene-external (a scene-scoped save would take the output patch with it), while
+    // the emit looks it up as a patch, finds nothing, and writes the selector NONE.
+    const patch = MODELS.URX44V.rules.find((r) => r.kind === "patch")!;
+    plan.connections.push({ from: patch.from, to: patch.to, kind: "send" });
+    plan.connections.push({ from: "nowhere:out", to: "nothing:in", kind: "send" });
+
+    ensureFixedConnections(MODELS.URX44V, plan);
+
+    expect(plan.connections.find((c) => c.from === patch.from && c.to === patch.to)!.kind).toBe("patch");
+    // No rule, no restatement: that wire is validatePlan's to refuse, and quietly
+    // giving it a kind here would hide it.
+    expect(plan.connections.find((c) => c.from === "nowhere:out")!.kind).toBe("send");
   });
 });
