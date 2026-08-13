@@ -210,8 +210,9 @@ describe("file flow", () => {
 // what these pin: an illegal wire is a plan this app cannot represent and is REFUSED,
 // while an insert-FX slot claimed twice is a plan the app itself writes after a device
 // readback, so refusing that one made Fetch → Save → reopen impossible for its own
-// document. Every case asserts the board is untouched, because the board exists before
-// the decode is attempted and a load that silently did nothing looks identical.
+// document. The two REFUSAL cases assert the board is untouched, because the board exists
+// before the decode is attempted and a load that silently did nothing looks identical; the
+// warning case deliberately loads, which is the whole of what separates them.
 describe("a document the loader will not simply open", () => {
   const nodes = (): number => $("graph-host").querySelectorAll("g.node[data-id]").length;
 
@@ -221,9 +222,10 @@ describe("a document the loader will not simply open", () => {
     const { serialize } = await import("./core/plan");
     const { defaultPlan } = await import("./models/initial-state");
     const doc = JSON.parse(serialize(defaultPlan("URX44V"))) as Record<string, unknown>;
-    // The plan sits under its own key or at the root depending on the document version;
-    // whichever it is, the object the model id lives on is the one to edit.
-    edit((doc.plan ?? doc) as Record<string, unknown>);
+    // `serialize` writes the plan's fields at the document root — the `plan` key belongs to
+    // the in-memory `PlanDocument` the loader returns, not to the file — so this edits the
+    // root object itself.
+    edit(doc);
     return JSON.stringify(doc);
   }
 
@@ -242,14 +244,15 @@ describe("a document the loader will not simply open", () => {
     expect($("load-report").hidden).toBe(true); // a refusal is the dialog, not the report
   });
 
-  // A copyable report rather than a dialog, because it is read away from the modal that
-  // framed it — pasted into the tool that generated the plan. Its first line carries
-  // WHICH of the two classes it is, and that is the half a substring match on the
-  // problem list would miss.
-  // A wire the same plan already carries. Duplicated from a REAL connection rather than
-  // invented out of two port names: a wire whose refs do not resolve is silently dropped
-  // on the way in (deserialize's own rule), so an invented one leaves nothing for the
-  // routing check to object to and the report never opens — measured.
+  // The report's first line carries WHICH of the two classes it is, and that is the half a
+  // substring match on the problem list would miss.
+  //
+  // The wire is duplicated from a REAL connection rather than invented out of two port
+  // names because `duplicate` is the reason under test and only an existing wire can be
+  // duplicated. An invented pair is not dropped on the way in — measured: the loader's
+  // filter is `isPlanConnection`, which checks SHAPE (a `kind` in `CONNECTION_KINDS`, two
+  // string refs), so a wire carrying a valid kind and two refs that resolve to nothing
+  // survives the load and reports as `noRule`. Dropping happens to a wire with no kind.
   it("reports a wire the plan carries twice as a validation failure", async () => {
     await boot();
     const before = nodes();
@@ -311,6 +314,11 @@ describe("a document the loader will not simply open", () => {
     vi.mocked(readTextByPath).mockRejectedValueOnce(new Error("ENOENT"));
     row!.click();
     await vi.waitFor(() => expect(statusText()).toBe(t().status.recentRemoved("gone.json")));
+    // Removing the entry is not the whole of it: WHY it would not open has to reach the
+    // operator too, or the list mutates with no stated reason. `showLoadError` is that
+    // surface, and off Tauri it lands on window.alert carrying the underlying failure.
+    expect(vi.mocked(alert)).toHaveBeenCalled();
+    expect(String(vi.mocked(alert).mock.calls.at(-1)![0])).toContain("ENOENT");
     // Removed from the list as well as reported — keeping it would only reproduce the
     // same error on the next press.
     expect($("inspector").querySelector(".recent-row")).toBeNull();

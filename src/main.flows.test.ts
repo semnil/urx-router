@@ -43,15 +43,33 @@ const status = statusText;
 const chord = (key: string, init: KeyboardEventInit = {}): void =>
   void document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }));
 
+/** Select a node on the board. Dispatched rather than clicked because in jsdom every
+ *  rect measures zero, so a real click resolves to nothing at all; the node's own panel
+ *  rect is the target the graph's helpers use for the same reason. */
+const selectNode = (id: string): void => {
+  const face = $("graph-host").querySelector<SVGElement>(`g.node[data-id="${id}"] rect`)!;
+  face.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+  face.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+};
+
+/** The inspector row a label names. Addressed by the `data-param-label` the panel
+ *  stamps, and with the label read out of the catalog: an index would move whenever a
+ *  lock removed a control above it, and a typed-in label would fail in Japanese. */
+const row = (label: string): HTMLElement => {
+  const found = $("inspector").querySelector<HTMLElement>(`.param[data-param-label="${label}"]`);
+  expect(found, `the inspector shows a "${label}" row`).not.toBeNull();
+  return found!;
+};
+
 /**
  * Replace the shared `matchMedia` stub with one whose colour-scheme answer can be
  * flipped and announced, and return the flipper. Must be called BEFORE the boot: the
  * app attaches its listener while the module runs.
  *
- * The shared stub cannot do this and deliberately so — it answers a fixed "light" and its
- * addEventListener is a no-op — which leaves auto mode with no way to be told the OS
- * moved. Every query except the colour-scheme one keeps answering false, so nothing else
- * that consults matchMedia changes behaviour because this is installed.
+ * The shared stub cannot do this: it answers a fixed "light" and its addEventListener is a
+ * no-op, which leaves auto mode with no way to be told the OS moved. Every query except the
+ * colour-scheme one keeps answering false, so nothing else that consults matchMedia changes
+ * behaviour because this is installed.
  */
 function installFlippableColorScheme(): (dark: boolean) => void {
   let dark = false;
@@ -393,14 +411,28 @@ describe("saving a plan", () => {
 
   // A write that FAILED must surface as a modal and keep the plan dirty: a silent
   // rejection would read as a successful save, which is the one misreport that loses work.
-  it("raises a modal for a save that failed", async () => {
+  it("raises a modal for a save that failed, and leaves the plan unsaved", async () => {
     await boot();
+    // Edited first, because `confirmDiscard` returns early on a clean plan: without this
+    // the closing assertion would be absent whether or not the failed save cleared the flag.
+    selectNode("ch1");
+    const field = row(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+    field.value = "PROBE";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+
     vi.mocked(saveTextDocument).mockRejectedValueOnce(new Error("disk-full"));
     $("btn-save").click();
     await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled());
     // showError clears the status line first, so a stale progress message cannot linger
     // behind the dialog and read as the outcome.
     expect(status()).toBe("");
+
+    // The half no dialog can show. `dirty = false` runs on the success path only, so File >
+    // New still has to ask before discarding; a failed save that cleared the flag would drop
+    // the work with no prompt, which is the loss this case is named for.
+    vi.mocked(confirm).mockClear();
+    $("btn-new").click();
+    expect(vi.mocked(confirm)).toHaveBeenCalled();
   });
 
   // A save that landed somewhere unnamed: the browser download path returns no path, and
@@ -538,24 +570,6 @@ describe("switching language at runtime", () => {
 // and the device behaviours the app mirrors offline so the plan never holds a value the
 // unit would have reset.
 describe("editing a node through the inspector", () => {
-  /** Select a node on the board. Dispatched rather than clicked because in jsdom every
-   *  rect measures zero, so a real click resolves to nothing at all; the node's own panel
-   *  rect is the target the graph's helpers use for the same reason. */
-  const selectNode = (id: string): void => {
-    const face = $("graph-host").querySelector<SVGElement>(`g.node[data-id="${id}"] rect`)!;
-    face.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
-    face.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
-  };
-
-  /** The inspector row a label names. Addressed by the `data-param-label` the panel
-   *  stamps, and with the label read out of the catalog: an index would move whenever a
-   *  lock removed a control above it, and a typed-in label would fail in Japanese. */
-  const row = (label: string): HTMLElement => {
-    const found = $("inspector").querySelector<HTMLElement>(`.param[data-param-label="${label}"]`);
-    expect(found, `the inspector shows a "${label}" row`).not.toBeNull();
-    return found!;
-  };
-
   const nodeText = (id: string): string => $("graph-host").querySelector(`g.node[data-id="${id}"]`)?.textContent ?? "";
 
   // Renaming mutates in place and repaints only the node's label, so the field keeps
@@ -580,9 +594,13 @@ describe("editing a node through the inspector", () => {
     expect(document.activeElement).toBe(field); // the panel was not rebuilt under the cursor
 
     // Whitespace is empty: the override is cleared rather than the node being named " ".
+    // Asserted as the fallback coming BACK, not merely as PROBE going away — a guard that
+    // regressed from `name.trim()` to `name` would store "   ", and the node would render a
+    // blank label that satisfies an absence check just as well.
     field.value = "   ";
     field.dispatchEvent(new Event("input", { bubbles: true }));
     expect(nodeText("ch1")).not.toContain("PROBE");
+    expect(nodeText("ch1")).toContain(fallback);
   });
 
   // Recolor DOES re-render — the active swatch ring has to move — so every read below goes
@@ -600,7 +618,8 @@ describe("editing a node through the inspector", () => {
     const none = (): HTMLButtonElement => swatches().find((s) => s.classList.contains("swatch-none"))!;
     const pickedAt = (): number => swatches().findIndex((s) => s.classList.contains("sel"));
     const before = pickedAt();
-    expect(before).toBeGreaterThan(-1); // exactly one ring is on, whichever it is
+    expect(before).toBeGreaterThan(-1); // some ring is on, whichever it is
+    expect(swatches().filter((s) => s.classList.contains("sel"))).toHaveLength(1); // and only one
 
     const other = swatches().findIndex((s, i) => i !== before && !s.classList.contains("swatch-none"));
     swatches()[other].click();
@@ -613,9 +632,8 @@ describe("editing a node through the inspector", () => {
     expect(pickedAt()).toBe(swatches().indexOf(none()));
   });
 
-  // SSMCS and COMP→EQ are exclusive on a MONO IN channel and share the DSP: switching the
-  // type on the unit loads the destination chain's FACTORY values, so the app mirrors that
-  // rather than leaving the plan holding a bank the device has already reset.
+  // Why the app mirrors the unit's own reset when the type changes is `resetCompEqBank`'s
+  // rule, stated where it is implemented; this pins what that rule looks like from outside.
   //
   // The Rec Point is what makes the mirror observable from outside: SSMCS has no discrete
   // EQ stage, so the device drops PRE EQ from the list and moves a selected PRE EQ tap to
@@ -640,7 +658,12 @@ describe("editing a node through the inspector", () => {
 });
 
 describe("menu keyboard navigation", () => {
-  const items = (): HTMLButtonElement[] => [...$("file-menu").querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+  // The same filter the entry's own key handler applies. Without it a hidden entry (the
+  // File menu carries one — the experimental settings import) joins the list here but not
+  // there, and Home / End would be asserted against a different first and last item.
+  const items = (): HTMLButtonElement[] => [
+    ...$("file-menu").querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled]):not([hidden])'),
+  ];
 
   it("jumps to the first and last item with Home and End", async () => {
     await boot();
@@ -666,7 +689,8 @@ describe("menu keyboard navigation", () => {
       expect($("file-menu").hidden).toBe(false);
       expect(trigger.getAttribute("aria-expanded")).toBe("true");
       expect(document.activeElement).toBe(items()[0]);
-      expect(event.defaultPrevented).toBe(true); // Space must not scroll the page
+      // The key must not also reach the page's own default action (Space scrolls).
+      expect(event.defaultPrevented).toBe(true);
     });
   }
 });

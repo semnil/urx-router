@@ -17,6 +17,7 @@ import { resolve } from "node:path";
 import { FAKE_LAUNCH_FLAGS_OFF } from "../e2e/race/fake-flags";
 import { $, bootApp, deviceCommands, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
+import { formatRate } from "./core/constraints";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { PARAMS } from "./core/control/params";
 import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
@@ -55,10 +56,12 @@ const live = (): HTMLButtonElement => document.getElementById("btn-live") as HTM
  * state the unit's clock policy and rate outright.
  *
  * It REPLACES the write-then-read store `deviceCommands` installs rather than layering
- * over it, which is a deliberate loss: every flow below decides what to do before any
- * value goes out, so what the reads answer afterwards only changes whether the write
- * that follows converges — never the decision under test. A case that needs both has
- * to compose them itself, and should say why.
+ * over it, which is a deliberate loss: in the cases that reach for it, the decision under
+ * test is taken before any value goes out, so what the reads answer afterwards only
+ * changes whether the write that follows converges. That is a property of THOSE cases and
+ * not of the file — a case that reads back after a write has to compose the two stores
+ * itself, and should say why. It also means a `vd_set` count taken under this store says
+ * how much was sent, never that the write converged.
  */
 function clockReads(followUsb: boolean, sampleRate: number): (a: Record<string, unknown>) => number {
   return (a) =>
@@ -71,7 +74,7 @@ function clockReads(followUsb: boolean, sampleRate: number): (a: Record<string, 
  * Both halves matter. The self-test and the audit writer report through the log rather
  * than through a surface — that is deliberate, so a headless launch can be read from the
  * dev server — so the log IS the observable for those runs. And left unsilenced, one of
- * them puts a thousand-line report into the test output.
+ * them floods the test output with its whole per-parameter report.
  */
 function captureWarnings(): { lines: string[]; restore: () => void } {
   const lines: string[] = [];
@@ -80,6 +83,37 @@ function captureWarnings(): { lines: string[]; restore: () => void } {
   });
   return { lines, restore: () => void spy.mockRestore() };
 }
+
+/**
+ * Every dialog the shell was asked to raise, in order, with the arguments that say which
+ * kind it was.
+ *
+ * `confirmDialog` and `errorDialog` share ONE command — `plugin:dialog|message` — and
+ * differ only in their arguments (`buttons: "OkCancel"` against `kind: "error"`). So a
+ * case that counts invocations cannot tell "asked the operator" from "reported a
+ * failure", which is exactly the pair a refusal case exists to keep apart: a flow that
+ * threw before reaching its confirm raises one dialog too, writes nothing, and satisfies
+ * every count-and-outcome assertion identically.
+ */
+function dialogs(shell: TauriShell): Array<{ message?: string; kind?: string; buttons?: string }> {
+  return shell.invokes.flatMap((cmd, i) =>
+    cmd === "plugin:dialog|message"
+      ? [(shell.args[i] ?? {}) as { message?: string; kind?: string; buttons?: string }]
+      : [],
+  );
+}
+
+/** The messages of the dialogs that ASKED (OK / Cancel), in order. */
+const confirms = (shell: TauriShell): string[] =>
+  dialogs(shell)
+    .filter((d) => d.buttons === "OkCancel")
+    .map((d) => d.message ?? "");
+
+/** The messages of the dialogs that REPORTED a failure, in order. */
+const errors = (shell: TauriShell): string[] =>
+  dialogs(shell)
+    .filter((d) => d.kind === "error")
+    .map((d) => d.message ?? "");
 
 /** Every value written to Follow USB, in order. Read off the ledger by ADDRESS: the
  *  policy is one write among hundreds a plan write sends, so counting `vd_set` cannot
@@ -279,11 +313,16 @@ describe("the live session", () => {
 });
 
 describe("Write to device", () => {
-  it("asks before writing, and writes nothing when declined", SLOW, async () => {
+  // The store answers every unwritten address 0, the clock included, so the device reads
+  // as being on a rate the plan is not — and the RATE confirm is what comes up. Named for
+  // it, because the write-count confirm is a different dialog on a later line and the
+  // case below is the one that reaches it.
+  it("asks before writing at a rate the device is not on, and writes nothing when declined", SLOW, async () => {
     const shell = await bootDevice({}, false); // decline every confirm
     $("btn-write").click();
-    await vi.waitFor(() => expect(shell.count("plugin:dialog|message")).toBeGreaterThan(0), { timeout: 10_000 });
+    await vi.waitFor(() => expect(confirms(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
     await new Promise((r) => setTimeout(r, 200));
+    expect(confirms(shell).at(-1)).toBe(t().confirm.reclock(formatRate(0), formatRate(48_000)));
     expect(shell.count("vd_set")).toBe(0);
   });
 
@@ -570,11 +609,16 @@ describe("the update check", () => {
     expect(shell.count("plugin:process|restart")).toBe(0);
   });
 
-  // Accepted: the Preferences modal is closed first (its scrim would hide the download
-  // status), the status says what is happening, and the app restarts into the new
-  // bundle. The restart never resolves in the real shell — the process is gone — so the
-  // stub holds too, which is also what keeps the status line readable at the end.
-  it("closes the modal, downloads and restarts when the update is accepted", SLOW, async () => {
+  // Accepted: the status says what is happening and the app restarts into the new bundle.
+  // The restart never resolves in the real shell — the process is gone — so the stub holds
+  // too, which is also what keeps the status line readable at the end.
+  //
+  // The accept arm also closes the Preferences modal, and this case does NOT cover that:
+  // it drives the LAUNCH check, where `prefs.close()` is a documented no-op because the
+  // modal was never open. Closing it matters only for a check started from inside
+  // Preferences, which nothing here reaches — so the title claims the two halves that are
+  // asserted below and not the third.
+  it("downloads and restarts when the update is accepted", SLOW, async () => {
     const shell = await bootDevice({
       "plugin:updater|check": { rid: 7, version: "9.9.9" },
       "plugin:updater|download_and_install": null,
@@ -601,6 +645,10 @@ describe("the update check", () => {
     // "Downloading…" is gone rather than merely covered.
     await vi.waitFor(() => expect(statusText()).toBe(""), { timeout: 10_000 });
     expect(shell.count("plugin:process|restart")).toBe(0);
+    // An error dialog, and the one that names this failure. A cleared status line on its
+    // own is also what a silent swallow leaves behind.
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
+    expect(errors(shell).at(-1)).toBe(t().prefs.updateCheckFailed);
   });
 });
 
@@ -636,10 +684,15 @@ describe("the Follow USB badge", () => {
 
     // Counted from here: the first press is a read and raises no dialog, so an absolute
     // count would be asserting about the wrong press.
-    const confirms = shell.count("plugin:dialog|message");
+    const asked = confirms(shell).length;
     badge().click();
-    await vi.waitFor(() => expect(shell.count("plugin:dialog|message")).toBe(confirms + 1), { timeout: 10_000 });
+    await vi.waitFor(() => expect(confirms(shell).length).toBe(asked + 1), { timeout: 10_000 });
     await new Promise((r) => setTimeout(r, 100));
+    // The dialog is read by ARGUMENT, not counted: a flow that threw on its way to the
+    // confirm would raise an error dialog instead, write nothing and leave the badge
+    // where it was — satisfying the three assertions below without ever asking.
+    expect(confirms(shell).at(-1)).toBe(t().confirm.followUsbOn);
+    expect(errors(shell)).toEqual([]);
     expect(followUsbWrites(shell)).toEqual([]);
     expect(badge().dataset.state).toBe("off");
   });
@@ -655,8 +708,8 @@ describe("the Follow USB badge", () => {
     expect(followUsbWrites(shell)).toEqual([1]);
   });
 
-  // Turning it OFF changes nothing on the unit immediately — it only makes the rate
-  // picker authoritative again — so it is not worth a confirm. Driven from a unit that
+  // Why OFF is not worth a confirm is stated where the asymmetry is implemented (the
+  // Follow USB toggle in main.ts); this pins that it holds. Driven from a unit that
   // answers ON, which is also the only way to reach that arm at all. Every confirm
   // DECLINES here, so a confirm that appeared would abort the write and fail the case
   // rather than let it pass.
@@ -692,8 +745,8 @@ describe("the Follow USB badge", () => {
   });
 
   // A write that fails on the session's link is a mirror that did not complete, so it
-  // takes the session down with it. The badge goes back to unknown: it was asserting
-  // something about a device on the other end of a link that has just gone away.
+  // takes the session down with it; why the badge then goes back to unknown rather than
+  // holding its last reading is stated where that reset is implemented.
   it("takes the session down when the write fails on its link", SLOW, async () => {
     const shell = await bootDevice({ vd_get: clockReads(true, 48_000) });
     $("btn-live").click();
@@ -703,6 +756,10 @@ describe("the Follow USB badge", () => {
     badge().click();
     await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 10_000 });
     expect(badge().dataset.state).toBe("unknown");
+    // The failure that took the session down was THIS write. `failOnce` arms the next
+    // `vd_set` from anyone, and the session has writers of its own — without this the
+    // case would pass on a session that fell over for an unrelated reason.
+    expect(followUsbWrites(shell)).toHaveLength(1);
   });
 });
 
@@ -717,8 +774,9 @@ describe("the sample rate a write happens at", () => {
   }
 
   // The rate is the one plan value the device can accept and then undo on its own: with
-  // Follow USB on it re-clocks and is dragged back to the host's rate about a second
-  // later (measured on hardware). So the disagreement is a three-way rather than a
+  // Follow USB on it re-clocks and is then dragged back to the host's rate. The interval
+  // that was measured on hardware is in architecture.md "Sample rate and Follow USB" and
+  // is deliberately not restated here. So the disagreement is a three-way rather than a
   // yes/no, and none of the three answers may be inferred.
   it("cancels the whole write when the three-way is dismissed", SLOW, async () => {
     const shell = await bootDevice({ vd_get: clockReads(true, 96_000) });
@@ -868,10 +926,15 @@ describe("the device self-test", () => {
     const shell = await bootExperimental({}, false);
     const btn = await selfTestBtn();
     btn.click();
-    await vi.waitFor(() => expect(shell.count("plugin:dialog|message")).toBeGreaterThan(0), { timeout: 10_000 });
+    await vi.waitFor(() => expect(dialogs(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
     await new Promise((r) => setTimeout(r, 100));
     expect(shell.count("vd_set")).toBe(0);
     expect(btn.textContent).toBe(t().toolbar.selfTest); // the run never started
+    // It ASKED. A run that threw on its way to the confirm would report an error dialog,
+    // write nothing and leave the label alone — the two assertions above cannot separate
+    // "declined" from "never got that far".
+    expect(confirms(shell)).toHaveLength(1);
+    expect(errors(shell)).toEqual([]);
   });
 
   // The menu entry doubles as its own cancel: the run is minutes of serial round-trips and
@@ -1021,15 +1084,20 @@ describe("importing a settings file", () => {
   // counted rather than swallowed, and the nodes still showing their plan default have to be
   // flagged as such on the board. Same provenance rule as a device fetch.
   //
-  // The frame is rebuilt from the numbers in it rather than matched as a substring, so a
-  // message that dropped one of the three counts fails here.
+  // The frame is rebuilt from the numbers in it rather than matched as a substring, so the
+  // message that renders them is pinned by KEY. Rebuilding cannot pin the numbers
+  // themselves — the expectation is built from the same digits — so the count of them is
+  // asserted separately: `settingsPartial` renders its third figure as an optional tail,
+  // and a regression that dropped that tail while nodes were genuinely unread would
+  // reconstruct to the shorter string and pass.
   it("reads what the file carries, counts what it does not, and writes nothing", SLOW, async () => {
     const shell = await bootImport(sampleUrxf());
     $("btn-open-settings").click();
     await vi.waitFor(() => expect(statusText()).not.toContain("URX44V"), { timeout: 15_000 });
 
     const counts = [...statusText().matchAll(/\d+/g)].map((m) => Number(m[0]));
-    expect(statusText()).toBe(t().status.settingsPartial(counts[0], counts[1], counts[2] ?? 0));
+    expect(counts).toHaveLength(3); // applied, failed, and the unread tail that is optional
+    expect(statusText()).toBe(t().status.settingsPartial(counts[0], counts[1], counts[2]));
     expect(counts[0]).toBeGreaterThan(0); // something landed
     expect(counts[1]).toBeGreaterThan(0); // and the rest is reported
 
@@ -1075,10 +1143,12 @@ describe("importing a settings file", () => {
   it("reports a file that is not a settings file", SLOW, async () => {
     const shell = await bootImport(new Uint8Array(128));
     $("btn-open-settings").click();
-    await vi.waitFor(() => expect(shell.count("plugin:dialog|message")).toBeGreaterThan(0), { timeout: 15_000 });
-    // Reported before anything was asked: a file that cannot be read must not first
-    // prompt to discard the plan it was never going to replace.
-    expect(shell.count("plugin:dialog|message")).toBe(1);
+    await vi.waitFor(() => expect(dialogs(shell).length).toBeGreaterThan(0), { timeout: 15_000 });
+    // Exactly one dialog, and it REPORTED rather than asked: the six `error.urxf` reasons
+    // share one surface, so naming the reason is what keeps this case distinct from the
+    // one below rather than both passing on "some dialog appeared".
+    expect(dialogs(shell)).toHaveLength(1);
+    expect(errors(shell)).toEqual([t().status.settingsError(t().error.urxf.notUrxf)]);
   });
 
   // A well-formed file carrying only stored scenes. CURRENT is the unit's live settings and
@@ -1087,19 +1157,20 @@ describe("importing a settings file", () => {
   it("reports a settings file with no CURRENT chunk", SLOW, async () => {
     const shell = await bootImport(buildUrxf([{ chunk: "SCENE", block: "SCENE", label: "My Data 1", fields: [] }]));
     $("btn-open-settings").click();
-    await vi.waitFor(() => expect(shell.count("plugin:dialog|message")).toBeGreaterThan(0), { timeout: 15_000 });
+    await vi.waitFor(() => expect(dialogs(shell).length).toBeGreaterThan(0), { timeout: 15_000 });
     expect(statusText()).toBe(""); // showError cleared the line rather than leaving progress on it
     expect(shell.count("vd_connect")).toBe(0);
+    // The reason, not just a refusal: collapsing the six `error.urxf` messages into one,
+    // or mapping this file onto `notUrxf`, would leave both cases green.
+    expect(errors(shell)).toEqual([t().status.settingsError(t().error.urxf.noCurrent)]);
   });
 
   // Replacing every value at once is what Live sync cannot follow, so the import is closed
   // for a session's duration — the same rule fetch and write follow.
   //
-  // This covers the MENU half only. The flow states the refusal a second time for the drop
-  // target, and that half is out of reach here: on desktop a drop arrives as a webview
-  // event delivered through `transformCallback`, and the shell stub hands the callback no
-  // way back in. Reaching it means teaching the stub to deliver one, which is a fixture
-  // change rather than a case — so the in-flow refusal is the E2E tier's to cover.
+  // The menu entry is closed by being DISABLED, which is what this case reads. That is not
+  // the whole guard: a drop reaches the same flow without passing the button, so the flow
+  // states the refusal a second time in code, and the case below drives that half.
   it("closes the import while a live session is up", SLOW, async () => {
     await bootImport(sampleUrxf());
     expect($<HTMLButtonElement>("btn-open-settings").disabled).toBe(false);
