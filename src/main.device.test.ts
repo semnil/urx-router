@@ -1722,15 +1722,16 @@ describe("importing a settings file", () => {
 // produces. Two suites already stand either side of what that reaches — `e2e/dropzone.spec.ts`
 // drives the browser delivery end to end through DOM drag events, and `src/ui/dropzone.test.ts`
 // drives the shell adapter against a mocked `listenEvent` — so what is left is the ENTRY's
-// own wiring: which caption, which refusal, and what the `.json` registration does with a
-// real path.
+// own wiring: which caption, which refusal, and what each of its two registrations does with
+// a real path.
 //
 // The `.urxf` half of that wiring cannot be reached from a browser at all: it is registered
 // behind `experimentalEnabled()`, which resolves false off Tauri, so a caption naming a
 // settings file and a refusal naming one are unreachable there — which is why
-// `e2e/inventory.spec.ts` records `dropzone.planOrSettings` under `neverShown`. What that
-// registration DOES is pinned by the live-session refusal above, which drives a dropped
-// `.urxf` into the import flow.
+// `e2e/inventory.spec.ts` records `dropzone.planOrSettings` under `neverShown`. The
+// live-session refusal above pins that a dropped `.urxf` reaches the import flow at all; what
+// the registration HANDS it is pinned by the last case here, because that flow refuses and
+// returns before it calls the reader.
 describe("dropping a file onto the window", () => {
   const PLAN_PATH = "C:/urx/dropped.json";
 
