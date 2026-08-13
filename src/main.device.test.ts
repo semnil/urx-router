@@ -141,10 +141,9 @@ function followUsbWrites(shell: TauriShell): number[] {
  * Answering by call order breaks the moment a flow gains or loses a prompt — and it
  * breaks by answering the wrong question, not by failing to answer.
  */
-const byMessage =
-  (agree: (message: string) => boolean) =>
-  (a: Record<string, unknown>): string =>
-    agree(String(a.message ?? "")) ? "Ok" : "Cancel";
+function byMessage(agree: (message: string) => boolean): (a: Record<string, unknown>) => string {
+  return (a) => (agree(String(a.message ?? "")) ? "Ok" : "Cancel");
+}
 
 /** The part of a prompt after its question mark, which is the part that carries no
  *  count — so two attempts asking the same question with different numbers match one
@@ -178,10 +177,6 @@ const SAVES: Record<string, unknown> = { "plugin:dialog|save": "/tmp/report.md",
 const connectAs = (model: string): Record<string, unknown> => ({
   vd_connect: { model, label: model, firmware: SUPPORTED_SYSTEM_FIRMWARE, epoch: 1 },
 });
-
-/** The contents of the first text file the app wrote. */
-const savedText = (shell: TauriShell): string =>
-  String(shell.args[shell.invokes.indexOf("write_text_file")]?.contents ?? "");
 
 /** A store that answers the clock and refuses every other read, so a write reaches its
  *  DIFF and stops there. The clock has to answer: a failed clock read ends the write one
@@ -646,7 +641,8 @@ describe("Write to device", () => {
     // …and the reason is offered as a file, since a packaged build has no console to read
     // the per-command failures in.
     await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 10_000 });
-    expect(savedText(shell)).toContain("read-refused");
+    const saved = shell.args[shell.invokes.indexOf("write_text_file")];
+    expect(String(saved?.contents ?? "")).toContain("read-refused");
 
     // The only thing it asked. Two regressions hide here otherwise: a read stop that
     // still asked for the change count, and — the one nothing else covers — a read stop
@@ -722,14 +718,14 @@ describe("Write to device", () => {
     $("btn-write").click();
     await invoked(shell, "vd_disconnect");
 
-    const [, sent, notSent] = /: (\d+) sent, (\d+) not sent/.exec(statusText()) ?? [];
-    expect(statusText()).toBe(t().status.writeStopped(Number(sent), Number(notSent)));
-    expect(Number(sent)).toBe(0);
-    expect(Number(notSent)).toBeGreaterThan(0);
+    const [sent, notSent] = (/: (\d+) sent, (\d+) not sent/.exec(statusText()) ?? []).slice(1).map(Number);
+    expect(statusText()).toBe(t().status.writeStopped(sent, notSent));
+    expect(sent).toBe(0);
+    expect(notSent).toBeGreaterThan(0);
     // The whole prompt, not just its count-free tail: that tail is satisfied by a prompt
     // reporting the two counts the other way round. And exactly once — a decline has to
     // end the loop rather than lead to the same question again.
-    expect(confirms(shell)).toContain(t().confirm.writeRetry(0, Number(notSent)));
+    expect(confirms(shell)).toContain(t().confirm.writeRetry(0, notSent));
     expect(confirms(shell).filter((m) => m.includes(RETRY_ASK))).toHaveLength(1);
     expect(shell.count("vd_set")).toBe(1); // stopped AT the failure, not after it
     expect(shell.count("vd_set_str")).toBe(0); // names are held back while it is stopped
@@ -784,6 +780,12 @@ describe("the macOS Edit menu", () => {
     const shell = await bootDevice();
     $("btn-view-console").click();
     const slider = (): HTMLElement => $("console-host").querySelector<HTMLElement>('.con-strip [role="slider"]')!;
+    /** Wait until the NEWEST push to the native menu says exactly this. */
+    const menuState = async (state: { canUndo: boolean; canRedo: boolean }): Promise<void> => {
+      await vi.waitFor(() => expect(shell.args[shell.invokes.lastIndexOf("set_edit_menu_state")]).toEqual(state), {
+        timeout: 10_000,
+      });
+    };
     const before = slider().getAttribute("aria-valuenow");
 
     // UP, not down: the first control on the strip is the analog gain knob, and the default
@@ -801,11 +803,7 @@ describe("the macOS Edit menu", () => {
 
     // The depth reached the native menu — the other half of the wiring, and the half that
     // decides whether the item is clickable at all.
-    await vi.waitFor(
-      () =>
-        expect(shell.args[shell.invokes.lastIndexOf("set_edit_menu_state")]).toEqual({ canUndo: true, canRedo: false }),
-      { timeout: 10_000 },
-    );
+    await menuState({ canUndo: true, canRedo: false });
 
     // One handler, not zero: an event nobody listens for would leave every assertion below
     // describing an app that was never asked to do anything.
@@ -815,11 +813,7 @@ describe("the macOS Edit menu", () => {
     // outside the document, so nothing repaints it. Without this the Redo item stays
     // greyed out after an undo taken from the menu — usable once per launch — and only
     // the edit-driven push above would be covered.
-    await vi.waitFor(
-      () =>
-        expect(shell.args[shell.invokes.lastIndexOf("set_edit_menu_state")]).toEqual({ canUndo: false, canRedo: true }),
-      { timeout: 10_000 },
-    );
+    await menuState({ canUndo: false, canRedo: true });
     expect(shell.emit(EDIT_MENU_EVENT, EDIT_REDO_ID)).toBe(1);
     await vi.waitFor(() => expect(slider().getAttribute("aria-valuenow")).toBe("-7"), { timeout: 10_000 });
   });
