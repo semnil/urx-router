@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   closeMidiWindow: vi.fn(async () => {}),
   focusMidiWindow: vi.fn(async () => {}),
   pinMidiWindow: vi.fn(async () => {}),
+  midiCloseInput: vi.fn(() => {}),
   midiCloseOutput: vi.fn(async () => {}),
   midiListInputs: vi.fn(async () => ["Controller In"]),
   midiListOutputs: vi.fn(async () => ["Controller Out"]),
@@ -31,6 +32,7 @@ vi.mock("../core/platform", () => ({
   focusMidiWindow: mocks.focusMidiWindow,
   pinMidiWindow: mocks.pinMidiWindow,
   isTauri: () => mocks.tauri,
+  midiCloseInput: mocks.midiCloseInput,
   midiCloseOutput: mocks.midiCloseOutput,
   midiListInputs: mocks.midiListInputs,
   midiListOutputs: mocks.midiListOutputs,
@@ -289,5 +291,139 @@ describe("MidiControl", () => {
     expect(levelOf(restored)).not.toBe(restoredBefore);
     // …and the document that is gone was not written to a second time.
     expect(levelOf(plan)).toBe(10);
+  });
+});
+
+describe("MidiControl, the races and vocabularies around a port", () => {
+  // Completion order used to decide instead of selection order. A slow open is exactly
+  // what a wedged port gives you — and exactly when the operator is re-picking — so the
+  // open landed after their "None" and installed itself over it: the select read None
+  // while the port stayed open on the shell, delivering into the engine and editing the
+  // plan, and it was saved and restored at the next boot.
+  it("lets the operator's later choice win over an open still in flight", async () => {
+    const { control } = install();
+    void control;
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().inputs).toEqual(["Controller In"]));
+
+    let land!: () => void;
+    const stalled = new Promise<void>((r) => (land = r));
+    mocks.midiOpenInput.mockImplementationOnce(async (_port: string, onMessage: (bytes: number[]) => void) => {
+      mocks.inputReceiver = onMessage;
+      await stalled;
+      return mocks.closeInput;
+    });
+
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.midiOpenInput).toHaveBeenCalled());
+    dispatch({ type: "port", dir: "in", name: null });
+    await vi.waitFor(() => expect(lastState().input).toBeNull());
+
+    land();
+    await vi.waitFor(() => expect(mocks.closeInput).toHaveBeenCalled());
+    // The stalled open closed ITSELF rather than taking the slot the operator cleared.
+    expect(lastState().input).toBeNull();
+    expect(JSON.parse(localStorage.getItem("urx-midi")!).input).toBeUndefined();
+  });
+
+  // `midi_close_input` closes whatever the shell holds and takes no argument, so
+  // holding a closer buys nothing — and conditioning the close on holding one is a
+  // gap: after a reconcile adopts a port the shell already had, there is no closer.
+  it("closes the shell's input even with no closer of its own in hand", async () => {
+    mocks.midiOpenPorts.mockResolvedValueOnce(["Controller In", null]);
+    const { control } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().input).toBe("Controller In"));
+    void control;
+
+    dispatch({ type: "port", dir: "in", name: null });
+    await vi.waitFor(() => expect(mocks.midiCloseInput).toHaveBeenCalled());
+    expect(lastState().input).toBeNull();
+  });
+
+  // The relay's own header says it can deliver a previous session's messages, and
+  // `parseRelay` checks the envelope rather than the field vocabulary. The engine reads
+  // any non-"pickup" mode as absolute, so an unknown value looked fine for the session
+  // and then `sanitizeMappings` dropped the WHOLE binding at the next boot, silently.
+  it("refuses a mode or button value this build does not have", async () => {
+    seedMappings();
+    const { control } = install();
+    await attached();
+    dispatch({ type: "ready" });
+
+    dispatch({ type: "mode", control: "ch1/level", mode: "relative" } as unknown as MidiUiIntent);
+    expect(JSON.parse(localStorage.getItem("urx-midi")!).models.URX44V[0].mode).toBe("absolute");
+    dispatch({ type: "button", control: "ch1/level", button: "latch" } as unknown as MidiUiIntent);
+    expect(JSON.parse(localStorage.getItem("urx-midi")!).models.URX44V[0].button).toBeUndefined();
+    expect(control.isMapped("ch1/level")).toBe(true);
+  });
+
+  // Pickup state is owned by the address head, and only the head ever creates it — so a
+  // member set to Pickup behind an Absolute head reads `engaged = false` for ever and
+  // never moves, with nothing on screen to say why. The mode is a property of the
+  // physical control, so setting it sets it for everything on that address.
+  it("gives every binding on one address the same take-in mode", async () => {
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({
+        models: {
+          URX44V: [
+            { control: "ch1/level", addr: { type: "cc", channel: 0, controller: 7 }, mode: "absolute" },
+            { control: "ch2/level", addr: { type: "cc", channel: 0, controller: 7 }, mode: "absolute" },
+            { control: "ch3/level", addr: { type: "cc", channel: 0, controller: 9 }, mode: "absolute" },
+          ],
+        },
+      }),
+    );
+    install();
+    await attached();
+    dispatch({ type: "ready" });
+
+    dispatch({ type: "mode", control: "ch2/level", mode: "pickup" });
+    const stored = JSON.parse(localStorage.getItem("urx-midi")!).models.URX44V as Array<{
+      control: string;
+      mode: string;
+    }>;
+    expect(stored.find((m) => m.control === "ch1/level")!.mode).toBe("pickup");
+    expect(stored.find((m) => m.control === "ch2/level")!.mode).toBe("pickup");
+    // …and only that address: a binding on another controller is untouched.
+    expect(stored.find((m) => m.control === "ch3/level")!.mode).toBe("absolute");
+  });
+});
+
+// On a reflecting transport our own feedback comes straight back, and the learn branch
+// in `onMessage` runs BEFORE the receive-side echo guard — so the engine took that echo
+// as the operator's gesture and bound the armed control to whatever address the
+// feedback used. A plan edit from anywhere is enough to start it (device follow, undo,
+// a graph-inspector edit), and on a note the bind is instant with no quiet gap.
+describe("MidiControl learn and feedback", () => {
+  it("sends no feedback while a learn is armed, and resyncs when it ends", async () => {
+    seedMappings();
+    const { control, plan } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().outputs).toEqual(["Controller Out"]));
+    dispatch({ type: "port", dir: "out", name: "Controller Out" });
+    await vi.waitFor(() => expect(lastState().output).toBe("Controller Out"));
+    mocks.midiSend.mockClear();
+
+    // A plan edit from anywhere — this stands for a device-follow apply, an undo, or a
+    // graph-inspector drag. Without one the pass has nothing to send and the case would
+    // pass whether or not the suspension exists.
+    const send = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    send.params = { ...send.params, level: -12 };
+
+    dispatch({ type: "learn", on: true });
+    control.arm("ch2/level");
+    control.scheduleFeedback();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(mocks.midiSend).not.toHaveBeenCalled();
+
+    // Ending the arming brings the controller back into agreement, which is what makes
+    // the suspension free: nothing is lost, only deferred.
+    dispatch({ type: "learn", on: false });
+    await vi.waitFor(() => expect(mocks.midiSend).toHaveBeenCalled());
   });
 });

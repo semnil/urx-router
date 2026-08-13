@@ -487,7 +487,19 @@ export async function midiOpenInput(port: string, onMessage: (bytes: number[]) =
     for (const m of batch) onMessage(m.bytes);
   });
   await invoke<void>("midi_open_input", { port, channel });
-  return () => void invoke<void>("midi_close_input").catch(() => {});
+  return midiCloseInput;
+}
+
+/** Close whatever input the shell holds, with no closer in hand.
+ *
+ *  `midi_close_input` takes no argument — it closes the held slot — so holding a
+ *  closer function buys nothing, and CONDITIONING the close on holding one is a real
+ *  gap: after `reconcileOpenPorts` adopts a port the shell already had, there is no
+ *  closer, and the operator's next "None" then closed nothing at all. The select said
+ *  None while the shell kept delivering into the engine. */
+export function midiCloseInput(): void {
+  if (!isTauri()) return;
+  void invoke<void>("midi_close_input").catch(() => {});
 }
 
 // ---- MIDI control window -------------------------------------------------
