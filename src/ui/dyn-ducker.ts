@@ -185,7 +185,7 @@ export const DUCKER_DYN: DynProcessor = {
       c.fillText(ms >= 1000 ? `${ms / 1000} s` : `${ms} ms`, g.px(ms), g.h - g.pad.b + 13);
     }
     c.textAlign = "right";
-    for (const db of [0, -18, -36, -54, -72]) {
+    for (const db of GAIN_RULES) {
       c.beginPath();
       c.moveTo(g.pad.l, g.py(db) + 0.5);
       c.lineTo(g.w - g.pad.r, g.py(db) + 0.5);
@@ -239,8 +239,16 @@ export const DUCKER_DYN: DynProcessor = {
 };
 
 /** The gain axis floor: the range control's own deepest setting, so the plot shows
- *  every value range can take and no more. The ducker shares the broker's `range`
- *  table with the GATE, whose floor is -72, but the device stops the ducker at -70
- *  (confirmed on the unit's own LCD) — reading the floor off the shared table drew
+ *  every value range can take and no more. Read from the field catalogue rather than
+ *  written down again — this constant WAS a second copy, and it held -72, the floor
+ *  of the broker `range` table the ducker shares with the GATE. The device stops the
+ *  ducker two steps short of it (confirmed on the unit's own LCD), so the axis drew
  *  2 dB the control cannot reach. */
-const RANGE_FLOOR_DB = -70;
+const RANGE_FLOOR_DB = DUCKER_FIELDS.find((f) => f.key === "range")!.min;
+
+/** The gain rules, spanning the floor in equal steps so the deepest range carries a
+ *  label. Derived for the same reason the floor is: a hand-written list outlived the
+ *  floor it was drawn against, and `drawAxes` runs outside the host's clip (only
+ *  `drawCurve` is clipped), so a rule past the floor is painted into the tick-label
+ *  band rather than discarded. */
+const GAIN_RULES = Array.from({ length: 6 }, (_, i) => Math.round((RANGE_FLOOR_DB * i) / 5));

@@ -97,11 +97,17 @@ describe("binding", () => {
   // MOVES with the source channel's Rec Point. It read PRE FADER for every channel
   // source until this was fixed.
   describe("key tap follows the source's Rec Point", () => {
-    const keyTapOf = (recPoint?: number, from = "ch1"): string | undefined => {
+    // `recPoint: undefined` DELETES the key rather than skipping the write: the factory
+    // plan seeds 4 on every mono channel, so a skipped write left the "no Rec Point"
+    // case re-running the PRE FADER one under another name — green either way.
+    const keyTapOf = (recPoint: number | undefined, from = "ch1"): string | undefined => {
       const plan = defaultPlan("URX44V");
       const conn = plan.connections.find((c) => c.kind === "key" && c.to === ref(DUCKER, "in"))!;
       conn.from = ref(from, "out");
-      if (recPoint !== undefined) plan.nodeParams[from] = { ...plan.nodeParams[from], recPoint };
+      const np = { ...plan.nodeParams[from] };
+      if (recPoint === undefined) delete np.recPoint;
+      else np.recPoint = recPoint;
+      plan.nodeParams[from] = np;
       return DUCKER_DYN.bind(ctxFor(DUCKER, plan))!.lanes[0].tap?.key;
     };
 
@@ -113,10 +119,12 @@ describe("binding", () => {
       expect(keyTapOf(4)).toBe("prefader");
     });
 
-    // PRE FADER is the device default, so an unset Rec Point is that tap — which is
-    // also what every source used to get regardless.
+    // PRE FADER is the device default, so an unset Rec Point is that tap. This is not
+    // only a crafted-plan case: the factory plan seeds no `recPoint` on the STEREO
+    // channels at all, so keying a ducker from CH 7/8 takes it on a fresh plan.
     it("falls back to PRE FADER when the source names no Rec Point", () => {
       expect(keyTapOf(undefined)).toBe("prefader");
+      expect(keyTapOf(undefined, "ch_7_8")).toBe("prefader");
     });
 
     // A stereo strip has no discrete PRE EQ tap — its EQ is the first thing in the
@@ -127,6 +135,15 @@ describe("binding", () => {
       expect(keyTapOf(2, "ch_7_8")).toBe("input");
       expect(keyTapOf(2, "ch_7_8")).not.toBe("post");
       expect(keyTapOf(4, "ch_7_8")).toBe("prefader");
+    });
+
+    // A mono-only Rec Point on a stereo strip names a tap that strip has not got. The
+    // inspector cannot offer that pairing, but nothing range-checks an enum on load, so
+    // a hand-edited plan, a `?plan=` link or an unexpected device value all reach it.
+    // The last resort has to be PRE FADER: falling through to `tapFor` would answer
+    // POST, which is after the source's own ducker.
+    it("keeps a stereo source off POST when its Rec Point names a tap it has not got", () => {
+      for (const rp of [0, 1, 3]) expect(keyTapOf(rp, "ch_7_8")).toBe("prefader");
     });
 
     // A bus key is the bus's own OUT, after its output insert FX — a bus has no Rec
@@ -213,8 +230,23 @@ describe("envelope plot", () => {
   it("draws a tick per decade and a gain rule per label", () => {
     const r = recorder();
     DUCKER_DYN.drawAxes(r.ctx, geo, TOK, ctxFor(DUCKER));
-    // Six time ticks + five gain rules, each a stroked path plus its label.
+    // Six time ticks + six gain rules, each a stroked path plus its label.
     expect(r.texts.length).toBeGreaterThanOrEqual(12);
+  });
+
+  // The host clips `drawCurve` and NOT `drawAxes` (dyn-screen: the tick labels belong
+  // in the gutters the padding reserves), so a gain rule below the floor is painted
+  // into the time-label band instead of being discarded. The rule list outlived the
+  // floor once already — it kept -72 when the floor moved to -70, which put a
+  // full-width rule ~8 px past the bottom edge and left the real floor unlabelled.
+  it("keeps every gain rule and its label inside the plot, and labels the floor", () => {
+    const r = recorder();
+    DUCKER_DYN.drawAxes(r.ctx, geo, TOK, ctxFor(DUCKER));
+    const floor = H - geo.pad.b;
+    for (const y of r.ys) expect(y).toBeLessThanOrEqual(floor + 1);
+    for (const tx of r.texts) expect(tx.y).toBeLessThanOrEqual(floor + 14);
+    // The deepest range the control can take is the axis end, so it carries a label.
+    expect(r.texts.some((tx) => Math.abs(tx.y - (geo.py(-70) + 3)) < 0.51)).toBe(true);
   });
 
   it("draws attack down to the range floor and decay back to unity", () => {
