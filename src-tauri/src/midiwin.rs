@@ -187,8 +187,8 @@ pub fn close_midi_window(app: AppHandle) -> Result<(), String> {
 /// Raise the MIDI window to the front. Called when learn turns on, so the panel
 /// comes forward for the one moment its contents matter. What HOLDS it in front of the
 /// main window from there is the Win32 owner on Windows and `pin_midi_window` on macOS —
-/// armed by the same gesture, one call after this one (`ui/midi.ts`) — so what this adds
-/// on both is bringing the app itself forward when another application covers the two.
+/// armed by the same gesture, one call after this one (`ui/midi.ts`) — so what this still
+/// does is bring THIS window forward when another application is covering it.
 #[tauri::command]
 pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
     match app.get_webview_window(MIDI_WINDOW) {
