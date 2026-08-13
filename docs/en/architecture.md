@@ -470,7 +470,7 @@ carries a one-line map of the same directories and points here.
   removes it from the candidates, which is a different claim; see `docs/{en,ja}/known-issues.md`) + the MIDI
   control window and the relay between it and the main window (`midiwin.rs`: `open_midi_window` — async on
   purpose, since building a webview from a blocking command deadlocks on Windows — `close_midi_window`,
-  `focus_midi_window`, `midi_window_open`, and four Channel relay commands; the main window's
+  `focus_midi_window`, `pin_midi_window`, `midi_window_open`, and four Channel relay commands; the main window's
   destruction closes it, and its own closing drops learn mode) + where each window was and whether it is
   still on a display (`winfit.rs` + `tauri-plugin-window-state`; see "Window geometry") + MIDI bridge commands
   (`midi_list_inputs/outputs`; `midi_open_input` delivers received bursts over a Tauri Channel;
@@ -822,8 +822,9 @@ forced colors leaves alone, so the read-only dims written elsewhere are supposed
 2026-08-13 in WebView2 151.0.4129.78 (debug build, 1280x800 viewport, URX44V) on the inspector's SD Rec
 track-count select, locked by setting the property rather than by holding a session — the same paint path —
 across all four Windows contrast themes: it is separable in pixels under every one, 714–719 of the 8544
-pixels in the rectangle captured around it (its box plus a 2 px margin — the box itself is 263x28),
-mean luma 48.8 → 36.6 (hcblack), 236.3 → 245.3 (hcwhite), 64.7 → 53.1 (hc1) and 19.2 → 5.6 (hc2). Every
+pixels in the rectangle captured around it (its box plus a 2 px margin — the box itself is 263x28), and
+mean luma over that whole rectangle 48.8 → 36.6 (hcblack), 236.3 → 245.3 (hcwhite), 64.7 → 53.1 (hc1) and
+19.2 → 5.6 (hc2). Every
 theme's locked face moves toward its own ground, which is what an alpha blend does; hcwhite is the only one
 where that shows as a **rise**, because it is the only theme whose ground is brighter than the control. So
 the difference survives the mode and this block needs no restatement of the lock; whether it *reads* to an
@@ -1144,8 +1145,9 @@ window pushes and reports intents back (`ui/midi-protocol.ts`); everything that 
 `ui/midi.ts`. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
 `invoke`, so the second window needs no capability beyond core. Where it sits is the shell's to remember (see
-"Window geometry"), and so is what keeps it in front of the main window — a Win32 **owner** on Windows, and
-a pin held while learn is armed on macOS, which is where the relationship was dropped. Closing the
+"Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by
+platform — a Win32 **owner** on Windows, a pin held while learn is armed on macOS, which is where the
+relationship was dropped. Closing the
 main window closes it; closing it drops learn mode, which would otherwise stay armed against a control nothing
 on screen names.
 
@@ -2420,9 +2422,10 @@ except **hidden while the owner is minimized**, which stands on the 2026-08-08 r
 The top row is an operator's click rather than a probe's call, because **a probe cannot activate a window
 across processes**: the foreground lock makes `SetForegroundWindow` a silent no-op. Two programmatic
 attempts to break the order from the other side back it up, and one of them carries its own control:
-`SetWindowPos(midi, HWND_BOTTOM)` **did** move the pair down the global z-order — so the call was not
-inert — and left the panel above the main window all the same, as did `SetWindowPos(midi, main)`. The
-symmetric attempt, `SetWindowPos(main, HWND_TOP)`, left the order alone too, but that reading is **not**
+`SetWindowPos(midi, HWND_BOTTOM)` **did** move the pair down the global z-order — so a call against that
+window was not inert — and left the panel above the main window all the same. `SetWindowPos(midi, main)`
+left it above too, and inherits that control by acting on the same window. The
+symmetric attempt, `SetWindowPos(main, HWND_TOP, SWP_NOACTIVATE)`, left the order alone too, but that reading is **not**
 evidence: an earlier run recorded the same call moving nothing at all, so "the panel stayed above" and "the
 call did nothing" are not separated there. `pin_midi_window` composes with the ownership rather than
 replacing it: arming the learn from the panel's own button turned on `WS_EX_TOPMOST` (bit 0x8; the extended

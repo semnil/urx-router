@@ -162,7 +162,9 @@ pub async fn open_midi_window(app: AppHandle, title: String) -> Result<(), Strin
     // That drag reaches neither platform as things stand — macOS no longer has the
     // parent it took, and on Windows the owner was measured (2026-08-13, above) not to
     // move this window at all — so what the fallback still answers is the case in the
-    // paragraph above: a remembered rectangle that lands on no attached display.
+    // paragraph above: a remembered rectangle that lands on no attached display, which
+    // is now reached by the desk changing under it rather than by the window being
+    // dragged off one.
     #[cfg(desktop)]
     crate::restore_window(
         &win.as_ref().window(),
@@ -183,10 +185,10 @@ pub fn close_midi_window(app: AppHandle) -> Result<(), String> {
 }
 
 /// Raise the MIDI window to the front. Called when learn turns on, so the panel
-/// comes forward for the one moment its contents matter. Ordering it against the MAIN
-/// window is already handled — by the Win32 owner on Windows, by `pin_midi_window` on
-/// macOS — so what this still does on both is bring the app itself forward when
-/// another application is covering the two.
+/// comes forward for the one moment its contents matter. What HOLDS it in front of the
+/// main window from there is the Win32 owner on Windows and `pin_midi_window` on macOS —
+/// armed by the same gesture, one call after this one (`ui/midi.ts`) — so what this adds
+/// on both is bringing the app itself forward when another application covers the two.
 #[tauri::command]
 pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
     match app.get_webview_window(MIDI_WINDOW) {

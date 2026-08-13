@@ -273,9 +273,11 @@ body {
    not an id beside it.
 
    The DROPDOWN this opens is a different surface on each platform, and neither needs
-   `option` authored — read on the inspector's SD Rec track-count select, the one place
-   in this list that ever disables an option. On macOS it is the platform's own menu
-   and takes none of this:
+   `option` authored. Read on the inspector's SD Rec track-count select with a row
+   disabled BY HAND for the measurement — that select never disables one of its own;
+   the two that do are both `#inspector select`, the Insert FX menu (a type over the
+   rate's ceiling, or whose 1-of slot is taken) and the insert-FX pitch scale. On macOS
+   the popup is the platform's own menu and takes none of this:
    with #22ff22 / #ff00c8 forced onto the select, the rows still came back greyscale
    (channel spread 1-3) on rgb(20,20,20) / rgb(21,21,21) rather than --ctl-bg. On
    Windows WebView2 draws the popup itself and DOES take the authored face — measured
@@ -332,18 +334,19 @@ select#rate-picker,
    whether the rule is redundant, not whether the lock reads. It needs no rebuild
    either: deleting the rule from `document.styleSheets` at runtime is the whole
    experiment, and that is how it was run in the shipping WebView2 (2026-08-13) — on
-   the INSPECTOR's 0.45 rule below rather than on this one, because there the authored
-   and supplied numbers differ and one reading separates them. That engine supplied 0.7
-   of its own, which is both the Chromium reading above and the number this rule
-   authors, so the opacity half of this rule is redundant there and only the cursor does
-   work — read on the inspector's select, with nothing here separating one disabled
-   select from another. It earns its place from PLAYWRIGHT's WebKit above, which
-   supplies nothing; whether the shipping WKWebView does the same is the withdrawal that
-   has not been run there. Withdrawing THIS rule would answer the same question — after
-   it is gone only the engine can be supplying anything — but with authored and supplied
-   at 0.7 the opacity reading alone would not show the deletion landed; the `cursor`
-   falling back to the recipe's `pointer` is what would. Under forced colors that engine
-   behaves differently again (architecture.md, "Windows high contrast"). */
+   the INSPECTOR's 0.45 rule below rather than on this one, because only there do the
+   authored and supplied numbers differ, so one reading separates them. Withdrawing THIS
+   rule in that engine would answer the redundancy question just as directly, but with
+   authored and supplied both at 0.7 the opacity reading could not show the deletion had
+   landed at all; the `cursor` falling back to the recipe's `pointer` is what would.
+   WebView2 supplied 0.7 of its own, which is both the Chromium reading above and the
+   number this rule authors, so against that engine this rule's opacity declaration is
+   duplicating it and only the `cursor` one is not — read on the inspector's select,
+   with nothing here separating one disabled select from another. The rule earns its
+   place from PLAYWRIGHT's WebKit above, which supplies nothing; whether the shipping
+   WKWebView does the same is the withdrawal that has not been run there. Under forced
+   colors WebView2 behaves differently again (architecture.md, "Windows high
+   contrast"). */
 select#model-picker:disabled,
 select#rate-picker:disabled {
   opacity: 0.7;
@@ -1151,8 +1154,8 @@ input[type="range"]:focus-visible,
    screen, and the face matches the rack's model picker on colour, background, border
    colour, border width, radius, font family, font size and padding — including the
    authored `padding: 5px 10px`, which that engine keeps while Playwright's WebKit
-   computes it to `0px` on a menulist select (measured the same day; the boxes come out
-   263x28 against 263x19). What `e2e/recpoint.spec.ts` asks is that the two selects
+   computes it to `0px` on a menulist select (measured the same day). What
+   `e2e/recpoint.spec.ts` asks is that the two selects
    agree with EACH OTHER, not that either box is a particular size. The value is the
    panel's read-only dim —
    the token the locked Preferences row takes, which is the same 0.45

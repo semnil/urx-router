@@ -81,8 +81,9 @@ const PROSE_TOKENS = new Map([
   ["Runtime.evaluate", "a DevTools-protocol method"],
   ["Input.dispatchMouseEvent", "a DevTools-protocol method"],
   ["Page.captureScreenshot", "a DevTools-protocol method"],
-  // The same row's two dead ends: the three routes that will not open a popup on an
-  // inactive window, and the Win32 pair behind "a probe cannot activate a window".
+  // Two token groups from the same row: one of the three routes that will not open a
+  // popup on an inactive window, and the Win32 pair behind "a probe cannot activate a
+  // window across processes".
   ["showPicker()", "a DOM method, named as one of the routes that does NOT open the popup"],
   ["userGesture", "a DevTools-protocol parameter of Runtime.evaluate"],
   ["SetForegroundWindow", "a Win32 call, named as the one the foreground lock silently refuses"],
