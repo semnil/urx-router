@@ -1861,7 +1861,19 @@ function textInput(
   const report = (): void => {
     if (clip && !composing) {
       const cut = clip(input.value);
-      if (cut !== input.value) input.value = cut;
+      if (cut !== input.value) {
+        // Assigning `value` moves the caret to the end of the field, so an edit made
+        // in the MIDDLE of a name already at the bound would take the operator's next
+        // keystroke to the tail instead of continuing where they were. The cut comes
+        // off the tail, so the caret keeps its own position unless it was past the
+        // new end.
+        const at = input.selectionStart;
+        input.value = cut;
+        if (at !== null) {
+          const p = Math.min(at, cut.length);
+          input.setSelectionRange(p, p);
+        }
+      }
     }
     onInput(input.value);
   };

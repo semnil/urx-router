@@ -230,8 +230,10 @@ describe("envelope plot", () => {
   it("draws a tick per decade and a gain rule per label", () => {
     const r = recorder();
     DUCKER_DYN.drawAxes(r.ctx, geo, TOK, ctxFor(DUCKER));
-    // Six time ticks + six gain rules, each a stroked path plus its label.
-    expect(r.texts.length).toBeGreaterThanOrEqual(12);
+    // Six time ticks + six gain rules, each a stroked path plus its label, and the
+    // axis name. Exact, because >= 12 was satisfied by the five-rule list this
+    // replaced — the count is the half that says the floor gained a label.
+    expect(r.texts).toHaveLength(13);
   });
 
   // The host clips `drawCurve` and NOT `drawAxes` (dyn-screen: the tick labels belong

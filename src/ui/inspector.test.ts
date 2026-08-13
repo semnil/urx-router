@@ -323,6 +323,21 @@ describe("node controls report their edits", () => {
     expect(act.onRenameNode).toHaveBeenCalledWith("ch1", "あ".repeat(21));
   });
 
+  // Assigning `value` moves the caret to the end of the field. Without putting it
+  // back, an edit made in the middle of a name already at the bound sent the next
+  // keystroke to the tail — worse than the `maxlength` this replaced, which refused
+  // the insertion and left the caret alone.
+  it("keeps the caret where the edit was when the cut comes off the tail", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const field = panel.querySelector<HTMLInputElement>('input[type="text"]')!;
+    // A name at the bound, with one character just typed at the head.
+    field.value = `y${"x".repeat(63)}`;
+    field.setSelectionRange(1, 1);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(field.value).toBe(`y${"x".repeat(62)}`);
+    expect(field.selectionStart).toBe(1);
+  });
+
   // Rewriting `value` mid-composition takes the text out from under the IME's
   // conversion candidates, so the cut is held until the composition ends.
   it("holds the cut until an IME composition ends", () => {

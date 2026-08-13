@@ -1126,9 +1126,8 @@ const inspectorActions = {
   // Rename mutates in place and repaints the node label without re-rendering the
   // inspector, so the text input keeps focus while typing. Empty clears the override.
   onRenameNode: (id: string, name: string) => {
-    // Clipped to the device's field width here as well as at load: the field's own
-    // maxlength counts UTF-16 units, so a paste of multi-byte text can still arrive
-    // over the byte bound.
+    // Clipped to the device's field width here as well as in the field itself: this
+    // is reachable from callers other than that box, and a name goes to the unit.
     if (name.trim()) plan.nodeNames[id] = clipNodeName(name);
     else delete plan.nodeNames[id];
     markChanged();
