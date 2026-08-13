@@ -2386,9 +2386,10 @@ factor does not change, so the loop runs once and nothing about that platform's 
 macOS afterwards across the five cases in the table above, all unchanged. The raw readings behind the
 numbers above were taken in `reference/work/windows-verify/`, whose settled sections are folded into this
 document and then deleted; they are read back out of that file's history. **The 2026-08-13 readings below
-are not**: that run folded and deleted its sections without ever writing its results into them, so the
-history holds four items that still say "not measured" and this document is where the numbers live, beside
-the screenshots that directory keeps.
+are not**: that run folded and deleted its sections without ever writing its results into them, so what
+the history holds is three sections whose result still reads "not measured" — the fourth item it settled,
+the dropdown, was never a section of its own — and this document is where the numbers live, beside the
+screenshots that directory keeps.
 
 **The MIDI window is an owned window on Windows and an independent one on macOS** — the `.parent(&main)`
 call sits behind `#[cfg(target_os = "windows")]`. On Windows that ownership is what keeps the panel in
@@ -2396,8 +2397,8 @@ front: an owned window is always above its owner in the z-order. `addChildWindow
 until what it cost there was measured, and the relationship was dropped; what holds the panel in front
 there now is `pin_midi_window`, for as long as a learn is armed. "Always on top" for the whole session was
 deliberately not taken on either platform. `focus_midi_window` still exists and is still called when learn
-turns on — raising the app above another application is a different thing from ordering these two windows
-against each other.
+turns on — raising this window above another application is a different thing from ordering these two
+windows against each other.
 
 What the relationship costs, measured on both platforms — and **the two do not agree**, which is why it is
 kept on one and dropped on the other:
