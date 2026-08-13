@@ -1153,8 +1153,8 @@ input[type="range"]:focus-visible,
    colour, border width, radius, font family, font size and padding — including the
    authored `padding: 5px 10px`, which that engine keeps while Playwright's WebKit
    computes it to `0px` on a menulist select (measured the same day). `e2e/recpoint.spec.ts`
-   asks only that the two selects agree with each other, so an engine computing `0px` on
-   both passes it. The value is the panel's read-only dim —
+   asks nothing about the padding itself — only that the two selects agree — so an engine
+   computing `0px` on both passes it. The value is the panel's read-only dim —
    the token the locked Preferences row takes, which is the same 0.45
    #inspector .toggle button:disabled writes as a literal. */
 #inspector select:disabled {

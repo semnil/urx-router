@@ -2384,12 +2384,13 @@ one now lands entirely inside its work area and reproduces byte for byte over th
 the reverse direction returns the remembered rectangle exactly. On macOS the desk is in points and the scale
 factor does not change, so the loop runs once and nothing about that platform's path moves — re-measured on
 macOS afterwards across the five cases in the table above, all unchanged. The raw readings behind the
-numbers above were taken in `reference/work/windows-verify/`, whose settled sections are folded into this
-document and then deleted; they are read back out of that file's history. **The 2026-08-13 readings below
-are not**: that run folded and deleted its sections without ever writing its results into them, so what
-the history holds is three sections whose result still reads "not measured" — the fourth item it settled,
-the dropdown, was never a section of its own — and this document is where the numbers live, beside the
-screenshots that directory keeps.
+2026-08-09 numbers were taken in `reference/work/windows-verify/`, whose settled sections are folded into
+this document and then deleted; they are read back out of that file's history. **The 2026-08-13 run's are
+not**: it folded and deleted its sections without ever writing its results into them, so what the history
+holds is three sections whose result still reads "not measured" — the fourth item it settled, the select
+dropdown, was never a section of its own. That run's numbers live in this document (the fader press, the
+MIDI window, the forced-colors lock) and in `src/style.css` (the dropdown), beside the screenshots that
+directory keeps.
 
 **The MIDI window is an owned window on Windows and an independent one on macOS** — the `.parent(&main)`
 call sits behind `#[cfg(target_os = "windows")]`. On Windows that ownership is what keeps the panel in
