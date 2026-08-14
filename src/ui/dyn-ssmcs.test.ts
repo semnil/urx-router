@@ -20,7 +20,7 @@ vi.mock("../core/meters", async (importOriginal) => {
 
 import { dynHost, readouts, rowsByKey } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
-import { NAMED_TOKENS, vals } from "./dyn-plot.test-util";
+import { NAMED_TOKENS, recorder, vals } from "./dyn-plot.test-util";
 import { DynScreen } from "./dyn-screen";
 import { SSMCS_COMP_DYN, SSMCS_DYN, SSMCS_EQ_DYN } from "./dyn-ssmcs";
 import { COMP_DYN } from "./dyn-comp";
@@ -145,13 +145,28 @@ describe("the MAIN face", () => {
   });
 
   it("writes an edit to the strip's own values", () => {
+    // A value the factory capture does NOT hold, so "preserved" and "reset to factory"
+    // are different readings — and read WITHOUT a fallback, or a patch that wiped the
+    // sub-object would satisfy the assertion with the constant it names.
+    h!.plan.nodeParams[ssmcsChannel] = {
+      ...h!.plan.nodeParams[ssmcsChannel],
+      ssmcs: { ...SSMCS_INITIAL, comp: { ...SSMCS_INITIAL.comp, attack: 200 } },
+    };
     const rows = rowsByKey(h!.box);
     slide(rows.get("morphing")!, 62);
     expect(strip(h!).morphing).toBe(62);
     slide(rows.get("outGain")!, 200);
     expect(strip(h!).outGain).toBe(200);
     // The nested sub-objects the plan already held survive a top-level write.
-    expect(strip(h!).comp?.attack ?? SSMCS_INITIAL.comp.attack).toBe(SSMCS_INITIAL.comp.attack);
+    expect(strip(h!).comp?.attack).toBe(200);
+    expect(strip(h!).sc?.freq).toBe(SSMCS_INITIAL.sc.freq);
+  });
+
+  it("writes the preset the selector picked", () => {
+    const preset = h!.box.querySelector<HTMLSelectElement>("select")!;
+    preset.value = "14";
+    preset.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(strip(h!).sweetSpotData).toBe(14);
   });
 
   it("prints Comp Drive through the device's own curve, and Morphing as its raw position", () => {
@@ -181,6 +196,16 @@ describe("the COMP face", () => {
     expect(at(t().inspector.dyn.ratio)).toBeLessThan(at(t().inspector.dyn.knee));
     expect(at(t().inspector.dyn.knee)).toBeLessThan(at(t().inspector.ssmcs.sideChain));
     expect(at(t().inspector.ssmcs.sideChain)).toBeLessThan(at(t().inspector.q));
+  });
+
+  it("switches the side-chain filter from the row between the two groups", () => {
+    const off = [...h!.box.querySelectorAll<HTMLButtonElement>(".prefs-row .prefs-toggle button")].find(
+      (b) => b.textContent === "OFF",
+    )!;
+    off.click();
+    expect(strip(h!).sc?.on).toBe(false);
+    // The compressor's own values are in a different sub-object and are not disturbed.
+    expect(strip(h!).comp?.ratio).toBe(SSMCS_INITIAL.comp.ratio);
   });
 
   it("has no threshold cap on its input meter", () => {
@@ -242,7 +267,21 @@ describe("the EQ face", () => {
     slide(rowsByKey(h!.box).get("freq")!, 100);
     expect(strip(h!).eq?.high?.freq).toBe(100);
     expect(strip(h!).eq?.mid?.gain).toBe(243);
-    expect(strip(h!).eq?.low?.freq ?? SSMCS_INITIAL.eq.low.freq).toBe(SSMCS_INITIAL.eq.low.freq);
+    expect(strip(h!).eq?.low?.freq).toBe(SSMCS_INITIAL.eq.low.freq);
+  });
+
+  it("toggles the band the bar has selected", () => {
+    band("MID").click();
+    h!.box.querySelectorAll<HTMLButtonElement>(".prefs-row .prefs-toggle button")[1].click(); // OFF
+    expect(strip(h!).eq?.mid?.on).toBe(false);
+    expect(strip(h!).eq?.low?.on).toBe(SSMCS_INITIAL.eq.low.on);
+  });
+
+  it("offers each band its own frequency floor as well as its ceiling", () => {
+    band("LOW").click();
+    expect(rowsByKey(h!.box).get("freq")!.min).toBe("4");
+    band("MID").click();
+    expect(rowsByKey(h!.box).get("freq")!.min).toBe("4");
   });
 
   it("offers each band its own frequency range", () => {
@@ -283,6 +322,15 @@ describe("moving between the faces", () => {
     expect(title()).not.toContain(t().dynTuning.comp.title);
     expect(face("comp").getAttribute("aria-pressed")).toBe("true");
     expect(face("main").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("keeps the face segment out of the heading the dialog names itself with", () => {
+    // #dyn-screen-modal carries aria-labelledby="dyn-screen-title", so a button inside
+    // that heading joins the dialog's accessible name.
+    const heading = h!.box.querySelector("#dyn-screen-title")!;
+    expect(heading.querySelectorAll("button").length).toBe(0);
+    expect(heading.textContent).toBe(`CH 1${t().inspector.ssmcs.title}`);
+    expect(face("comp").isConnected).toBe(true);
   });
 
   it("stays open on the same channel rather than closing and reopening", () => {
@@ -326,12 +374,55 @@ describe("what the curves draw", () => {
     proc.drawCurve(h!.canvas.ctx, geo, vals(), NAMED_TOKENS, ctx);
   };
 
-  it("labels the reduction the ratio buys at full scale", () => {
+  /** The curve's own points, on a recorder nothing else has drawn into. */
+  const curveYs = (proc: DynProcessor, sel = 0): number[] => {
+    const ctx = ctxOf(h!, sel);
+    const rec = recorder();
+    proc.drawCurve(rec.ctx, proc.plotGeo(700, 320, ctx), vals(), NAMED_TOKENS, ctx);
+    return rec.ys.slice(0, 121); // the 120-segment stroke, before any annotation
+  };
+
+  /** Put the strip's compressor at one setting, everything else factory. */
+  const withComp = (comp: Partial<typeof SSMCS_INITIAL.comp>): void => {
+    h!.plan.nodeParams[ssmcsChannel] = {
+      ...h!.plan.nodeParams[ssmcsChannel],
+      ssmcs: { ...SSMCS_INITIAL, comp: { ...SSMCS_INITIAL.comp, ...comp } },
+    };
+  };
+
+  it("labels the reduction the ratio buys at full scale, with the gain terms taken back out", () => {
     draw(SSMCS_COMP_DYN);
-    // At the factory settings the curve leaves 14.4 dB of reduction at 0 dBFS once the
-    // drive's gain and the makeup are taken back out. The label is the annotation's,
-    // and the only text drawn in the reduction token.
-    expect(h!.canvas.texts.filter((tx) => tx.style === "--gr").length).toBe(1);
+    // Factory: threshold raw 100 -> -24 dBFS, ratio raw 30 -> 2.50:1, so 0 dBFS comes out
+    // at -24 + 24/2.5 = -14.4. The VALUE is the assertion — a count passes whatever number
+    // the model computed, which is how a wrong threshold constant would have gone unseen.
+    const gr = h!.canvas.texts.filter((tx) => tx.style === "--gr");
+    expect(gr.map((tx) => tx.text)).toEqual(["-14.4 dB"]);
+  });
+
+  /**
+   * The curve has no step in it.
+   *
+   * A compressor's transfer curve bends; it does not jump. The first version of this
+   * model interpolated the knee with a quadratic centred between the two measured edges
+   * while the leg above it stayed anchored to the threshold — and for an ASYMMETRIC knee
+   * those two do not meet, so the drawing carried a vertical step at the upper edge
+   * (0.84 dB at the factory settings, 1.8 dB on Soft). Nothing saw it: the only
+   * assertions on this plot were a label count.
+   *
+   * The bound is the 1:1 leg's own rise, which every sample below the knee already has,
+   * so a step of any size fails and the ordinary slope does not.
+   */
+  it.each([
+    ["Soft", 0],
+    ["Medium", 1],
+  ])("bends rather than steps through a %s knee", (_name, knee) => {
+    withComp({ knee });
+    const ys = curveYs(SSMCS_COMP_DYN);
+    const steps = ys.slice(1).map((y, i) => Math.abs(y - ys[i]));
+    const unity = (320 - 14 - 28) / (18 - -54) / ((0 - -54) / 120) ** -1; // px per sample on the 1:1 leg
+    expect(Math.max(...steps)).toBeLessThanOrEqual(unity + 0.01);
+    // The positive control: a curve that never bent would pass the bound trivially.
+    expect(Math.min(...steps)).toBeLessThan(unity - 0.5);
   });
 
   it("draws no reduction label when the drive has the compressor switched out", () => {

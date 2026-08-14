@@ -13,13 +13,13 @@
 // Why the plan's own SSMCS sliders in the inspector are not enough, and why the rows here
 // are never locked while Morphing runs, are in docs/{en,ja}/channel-tuning.md.
 //
-// Two device facts shape the drawing, both measured on a URX44V (2026-08-14):
+// Two device facts shape the drawing:
 //   - the internal stage taps are the ones already in the meter table: 108 into the
 //     compressor, 110 its reduction, 111 between the compressor and the EQ, 112 after
 //     the EQ. 111 is a live tap in this mode, not a dead one;
 //   - the compressor's knee is ASYMMETRIC, and its EQ's peaking Q is not the 4-band's,
 //     so neither block's constants may be carried across. The numbers are below and in
-//     eq-response.ts; where they came from is in the private reference tree.
+//     eq-response.ts.
 
 import { COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS, SWEET_SPOT_DATA_OPTIONS } from "../core/control/params";
 import { COMP_EQ_COMP_FIRST } from "../core/control/params";
@@ -149,14 +149,13 @@ function inSsmcsMode(ctx: DynCtx): boolean {
 
 /**
  * How far the knee reaches above and below the threshold, by knee setting (0 Soft /
- * 1 Medium / 2 Hard). It is NOT symmetric — Medium opens 2.1x further above than below,
- * Soft 1.5x — so the shipped `KNEE_WIDTH_DB` in dyn-comp.ts, which is one width per
- * setting, cannot express this one and must not be reused here. The other bank's
- * constants are its own for the same reason: they are different DSP.
+ * 1 Medium / 2 Hard). It is NOT symmetric, so the shipped `KNEE_WIDTH_DB` in dyn-comp.ts
+ * — one width per setting — cannot express this one and must not be reused here. The
+ * other bank's constants are its own for the same reason: they are different DSP.
  *
- * What stays an assumption is the curvature BETWEEN the edges, which takes the standard
- * quadratic interpolation — the same assumption the shipped COMP curve carries, and why
- * neither curve is drawn in a line style that would claim otherwise.
+ * What stays an assumption is the shape BETWEEN the edges, which takes the cubic below;
+ * the shipped COMP curve carries the same kind of assumption, and why neither curve is
+ * drawn in a line style that would claim otherwise.
  */
 const KNEE_REACH_DB: readonly (readonly [number, number])[] = [
   [17.0, 11.0],
@@ -184,25 +183,47 @@ function transferOf(v: StripValues): { out: (inDb: number) => number; gain: (inD
   const driveGain = drive * 0.04;
   const makeup = (v.comp.makeup - 100) * 0.06;
   const [up, down] = kneeReach(v.comp.knee);
-  const width = up + down;
-  // The knee's midpoint, which is not the threshold: its edges land on the two measured
-  // reaches instead of straddling the threshold evenly.
-  const centre = thr + (up - down) / 2;
-  // The makeup is a compressing-only term, so it comes in across the knee rather than
-  // switching on at its edge.
+  // The knee's two edges, which do not straddle the threshold evenly: below it the curve
+  // is still unity, above it the asymptote.
+  const lo = thr - down;
+  const hi = thr + up;
+  const width = hi - lo;
+  const hiOut = thr + up / ratio;
+  const inKnee = (inDb: number): boolean => width > 0 && inDb > lo && inDb < hi;
+  // How far through the knee an input is. The makeup only applies while compressing, so
+  // it comes in across the knee rather than stepping in at an edge.
+  const frac = (inDb: number): number => (inDb - lo) / width;
+  // A Hard knee has no width for the makeup to come in across, so it steps at the corner
+  // by the whole makeup amount. That follows from the two measurements this rests on —
+  // the knee is 0 dB wide on Hard, and the makeup applies only while compressing — and
+  // whether the unit steps there is the open row in the private probe plan.
   const gain = (inDb: number): number => {
     if (drive === 0) return 0;
-    const dc = inDb - centre;
-    if (width > 0 && Math.abs(dc) <= width / 2) return driveGain + makeup * ((dc + width / 2) / width);
-    return dc <= 0 ? driveGain : driveGain + makeup;
+    if (inKnee(inDb)) return driveGain + makeup * frac(inDb);
+    return inDb <= lo ? driveGain : driveGain + makeup;
+  };
+  /**
+   * Between the edges: a cubic through both, carrying the slope each side already has —
+   * 1 below, 1/ratio above.
+   *
+   * A quadratic cannot do it here. Its endpoint is fixed by its two slopes, so for an
+   * ASYMMETRIC knee it lands (1 - 1/ratio)(up - down)/2 away from the asymptote — 0.84 dB
+   * at the factory settings, which the curve drew as a vertical step at the upper edge.
+   * The shipped COMP screen's quadratic is not wrong for the same reason: that block's
+   * knee is one symmetric width, where the two agree.
+   */
+  const knee = (inDb: number): number => {
+    const t = frac(inDb);
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return (
+      (2 * t3 - 3 * t2 + 1) * lo + (t3 - 2 * t2 + t) * width + (-2 * t3 + 3 * t2) * hiOut + (t3 - t2) * (width / ratio)
+    );
   };
   const out = (inDb: number): number => {
     if (drive === 0) return inDb;
-    const dc = inDb - centre;
-    if (width > 0 && Math.abs(dc) <= width / 2) {
-      return inDb + ((1 / ratio - 1) * (dc + width / 2) ** 2) / (2 * width) + gain(inDb);
-    }
-    return (dc <= 0 ? inDb : thr + (inDb - thr) / ratio) + gain(inDb);
+    if (inKnee(inDb)) return knee(inDb) + gain(inDb);
+    return (inDb <= lo ? inDb : thr + (inDb - thr) / ratio) + gain(inDb);
   };
   return { out, gain };
 }
