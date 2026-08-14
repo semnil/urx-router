@@ -3146,15 +3146,22 @@ mode, so it would pop a dialog mid-auto-update. The `LICENSE.txt` on the agreeme
 
 Releases are automated by `.github/workflows/release.yml`. Pushing a `vX.Y.Z`
 tag — or, for a prerelease, `vX.Y.Z-` followed by `alpha`, `beta` or `rc` and then
-digits and dots only (`v1.9.0-rc1`, `v1.9.0-rc.2`; **not** `v1.9.0-rc-2`, which
-`check-tag` fails the run on) — runs five jobs: `check-tag`
-validates the tag, `create-release` opens a **draft** GitHub Release, `licenses`
+digits and dots only (`v1.9.0-rc1`, `v1.9.0-rc.2`; **not** `v1.9.0-rc-2`) — runs
+five jobs: `check-tag` validates the tag and fails the run on one outside those
+forms, `create-release` opens a **draft** GitHub Release, `licenses`
 generates the bundled notice once (see "Third-party licenses" below), and a
 `build` matrix (`macos-14` / `windows-latest`) packages each platform with
 [`tauri-action`](https://github.com/tauri-apps/tauri-action) and attaches the
 bundles to the draft. The draft is left for manual review before publishing. A
 manual `workflow_dispatch` run builds without creating a release, uploading the
 bundles as job artifacts only (to verify the packaging pipeline).
+
+Those forms are decided in one file, `scripts/release-tag-shape.sh`. `check-tag`
+runs it on the tag it was given, and `.github/workflows/tag-release.yml` — which
+turns a merged version bump into that tag — runs it **before** pushing anything.
+So a version the release path would decline is refused while it is still text in
+`package.json`, rather than after it has become a tag a published release could
+point at and which therefore cannot be moved.
 
 The `build` matrix restores its Rust cache read-only: a run can restore caches from its own ref or the
 default branch only, and every tag is its own scope, so a cache saved during a release is unreachable

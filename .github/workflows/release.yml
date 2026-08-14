@@ -14,12 +14,14 @@ name: Release
 #
 # No E2E runs here. The harness runs on the pull requests race.yml's trigger names, the
 # version bump among them, so it sits in front of the tag rather than behind it.
-# The tag patterns track what `check-tag` accepts, as closely as GitHub's filter glob can:
-# it has no alternation, so the three prerelease prefixes are three lines. Where the two
-# lists still disagree — the glob cannot express `check-tag`'s trailing `*([0-9.])`, so
-# `v1.0.0-alphafoo` reaches the job — the run goes RED on `check-tag` and creates nothing.
-# A tag OUTSIDE the glob starts no run at all, which is the quiet half and the reason to
-# keep the two lists close rather than to widen this one.
+# What a release tag looks like is decided in scripts/release-tag-shape.sh, which check-tag
+# below runs and tag-release.yml runs before it pushes one. The globs here are the one copy
+# that cannot be folded in there, since a trigger filter cannot run a script; they track it
+# as closely as GitHub's filter glob can, which has no alternation, so the three prerelease
+# prefixes are three lines. Where the two still disagree — the glob cannot express the
+# script's trailing `*([0-9.])`, so `v1.0.0-alphafoo` reaches the job — the run goes RED on
+# `check-tag` and creates nothing. A tag OUTSIDE the glob starts no run at all, which is the
+# quiet half and the reason to keep the two lists close rather than to widen this one.
 on:
   push:
     tags:
@@ -58,41 +60,39 @@ jobs:
       prerelease: ${{ steps.check.outputs.prerelease }}
       validTag: ${{ steps.check.outputs.validTag }}
     steps:
+      # For scripts/release-tag-shape.sh, which the step below asks. Checked out at this
+      # run's own ref, so a tag is judged by the copy the tagged commit carries.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: check
-        # Accept vX.Y.Z as stable and vX.Y.Z-{alpha,beta,rc}* as prerelease. A tag ref in
-        # neither form FAILS this job, which takes create-release, build and release-gate
-        # out with it and turns the run red. What it replaces is a green run that packaged
-        # into job artifacts and created no Release — a tag that looks released until
-        # someone opens the Releases page.
+        # A tag ref that script declines FAILS this job, which takes create-release, build
+        # and release-gate out with it and turns the run red. What it replaces is a green
+        # run that packaged into job artifacts and created no Release — a tag that looks
+        # released until someone opens the Releases page.
         #
         # Gated on the REF TYPE, not the event: tag-release.yml reaches this workflow by
         # dispatching it on the tag it just created, and that has to mean the same thing
         # as a tag push. A dispatch on a BRANCH has no tag to read, stays false and stays
         # SUCCESSFUL — that is the packaging check, and it is the one path this job must
         # not fail.
+        #
+        # `2>&1` puts both of the script's answers in one variable: accepted, it writes
+        # `true` or `false` on stdout and nothing on stderr, so `shape` is the prerelease
+        # flag; declined, stdout is empty and stderr carries the forms, so `shape` is the
+        # message to annotate with.
         run: |
           if [[ "${GITHUB_REF_TYPE}" != 'tag' ]]; then
             echo 'validTag=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          shopt -s extglob
-          tag="${GITHUB_REF_NAME#v}"
-          case "${tag}" in
-            +([0-9]).+([0-9]).+([0-9]) )
-              echo 'validTag=true' >> "$GITHUB_OUTPUT"
-              echo 'prerelease=false' >> "$GITHUB_OUTPUT"
-              echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-              ;;
-            +([0-9]).+([0-9]).+([0-9])-@(alpha|beta|rc)*([0-9.]) )
-              echo 'validTag=true' >> "$GITHUB_OUTPUT"
-              echo 'prerelease=true' >> "$GITHUB_OUTPUT"
-              echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "::error::${GITHUB_REF_NAME} is not a tag this workflow releases — the forms it takes are vX.Y.Z and vX.Y.Z-alpha/-beta/-rc followed by digits and dots"
-              exit 1
-              ;;
-          esac
+          if ! shape=$(bash scripts/release-tag-shape.sh "${GITHUB_REF_NAME}" 2>&1); then
+            echo "::error::${shape}"
+            exit 1
+          fi
+          {
+            echo 'validTag=true'
+            echo "prerelease=${shape}"
+            echo "version=${GITHUB_REF_NAME}"
+          } >> "$GITHUB_OUTPUT"
 
   # `licenses` as well as the tag check, so a notice that cannot be generated stops the
   # draft from existing rather than leaving an empty one behind.
