@@ -327,6 +327,42 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     expect(JSON.parse(localStorage.getItem("urx-midi")!).input).toBeUndefined();
   });
 
+  // The A -> B case, which is the one a per-completion guard cannot fix: the shell's
+  // open REPLACES whatever is held and its close closes whatever is held, neither
+  // taking a port — so with two opens in flight the slot ends up holding whichever
+  // finished last, and a stale continuation "cleaning up after itself" closes the port
+  // that superseded it. The intents are run one at a time instead.
+  it("opens the port chosen last, not the open that finished last", async () => {
+    mocks.midiListInputs.mockResolvedValue(["A", "B"]);
+    const { control } = install();
+    void control;
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().inputs).toEqual(["A", "B"]));
+
+    const opened: string[] = [];
+    let land!: () => void;
+    const stalled = new Promise<void>((r) => (land = r));
+    mocks.midiOpenInput.mockImplementation(async (port: string, onMessage: (bytes: number[]) => void) => {
+      mocks.inputReceiver = onMessage;
+      if (port === "A") await stalled;
+      opened.push(port);
+      return mocks.closeInput;
+    });
+
+    dispatch({ type: "port", dir: "in", name: "A" });
+    // A is genuinely in flight before B is chosen — the shape a per-completion guard
+    // cannot fix, since by then the shell already holds A.
+    await vi.waitFor(() => expect(mocks.midiOpenInput).toHaveBeenCalledWith("A", expect.any(Function)));
+    dispatch({ type: "port", dir: "in", name: "B" });
+    land();
+    await vi.waitFor(() => expect(lastState().input).toBe("B"));
+    // B's open ran AFTER A's finished, so the shell's slot ends on B. Racing them left
+    // it on whichever resolved last.
+    expect(opened).toEqual(["A", "B"]);
+    expect(JSON.parse(localStorage.getItem("urx-midi")!).input).toBe("B");
+  });
+
   // `midi_close_input` closes whatever the shell holds and takes no argument, so
   // holding a closer buys nothing — and conditioning the close on holding one is a
   // gap: after a reconcile adopts a port the shell already had, there is no closer.

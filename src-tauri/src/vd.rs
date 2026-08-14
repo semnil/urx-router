@@ -312,7 +312,12 @@ impl VdState {
 
     /// A page load: everything in flight for that label belongs to the page that is
     /// gone.
+    ///
+    /// Takes the CONNECTION lock first and holds it across the bump. That is the whole
+    /// atomicity argument: `install_for_page` acquires the same two locks in the same
+    /// order, so a page load cannot land between its check and its install.
     pub fn note_page_load(&self, label: &str) {
+        let _conn = self.conn.lock().unwrap();
         *self
             .pages
             .lock()
@@ -352,13 +357,32 @@ impl VdState {
         owner: &str,
         gen: u64,
     ) -> Option<u64> {
-        if self.page_gen(owner) != gen {
-            let mut dead = Conn::default();
-            dead.tx = Some(tx);
+        // Both under the connection lock, in that order (see note_page_load): asking and
+        // installing have to be one step. Split, a page load landing between them ran a
+        // teardown that found nothing installed yet, and this then installed the dead
+        // page's session behind it — the exact orphan the generation exists to prevent,
+        // reintroduced in the window the check was meant to close.
+        let mut c = self.conn.lock().unwrap();
+        let current = *self
+            .pages
+            .lock()
+            .unwrap()
+            .entry(owner.to_string())
+            .or_insert(0);
+        if current != gen {
+            let mut dead = Conn {
+                tx: Some(tx),
+                ..Conn::default()
+            };
             stop(&mut dead, None);
             return None;
         }
-        Some(self.install(tx, counters, owner))
+        stop(&mut c, None);
+        c.tx = Some(tx);
+        c.counters = counters;
+        c.owner = Some(owner.to_string());
+        c.epoch += 1;
+        Some(c.epoch)
     }
 
     pub fn install(&self, tx: Sender<Cmd>, counters: Arc<LinkCounters>, owner: &str) -> u64 {
@@ -2383,5 +2407,42 @@ mod tests {
             .is_some());
         assert!(sender(&state).is_ok());
         shutdown_owned_by(&state, "main");
+    }
+
+    // …and the reload landing DURING the install, which the caller-side interleaving
+    // above cannot reach. Asserted as the LOCK ORDERING rather than by racing the two:
+    // a race is timing-dependent, and measured, 200 rounds of it passed with the check
+    // and the install back under separate locks — a test that cannot fail on the defect
+    // is not coverage of it.
+    //
+    // What must hold is that `note_page_load` cannot complete while the connection lock
+    // is held, since `install_for_page` holds that lock across its check AND its
+    // install. Without it a page load lands between the two: the teardown behind it
+    // finds nothing to shut down, and the dead page's session is installed afterwards
+    // with no page holding its epoch.
+    #[test]
+    fn a_page_load_cannot_land_while_the_connection_lock_is_held() {
+        let state = std::sync::Arc::new(VdState::default());
+        let held = state.conn.lock().unwrap();
+
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let bumping = std::sync::Arc::clone(&state);
+        let flag = std::sync::Arc::clone(&done);
+        let t = std::thread::spawn(move || {
+            bumping.note_page_load("main");
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            !done.load(std::sync::atomic::Ordering::SeqCst),
+            "a page load must wait for the connection lock, or it can land between a \
+             connect's check and its install"
+        );
+
+        drop(held);
+        t.join().unwrap();
+        assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(state.page_gen("main"), 1);
     }
 }

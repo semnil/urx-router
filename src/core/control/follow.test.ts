@@ -446,13 +446,38 @@ describe("DeviceFollow", () => {
 
     release(staleUnsub);
     await first;
-    // The stalled one unsubscribed ITSELF rather than replacing the live handle.
-    expect(staleUnsub).toHaveBeenCalledTimes(1);
+    // Dropped WITHOUT unsubscribing. The handle is not per-subscription — the command
+    // takes no argument and acts on the current connection — so calling it here would
+    // have torn down the new session's stream while Live stayed on.
+    expect(staleUnsub).not.toHaveBeenCalled();
     expect(liveUnsub).not.toHaveBeenCalled();
 
-    // …and the live session is still the one that gets torn down.
+    // …and the live session is still the one that gets torn down, by its own handle.
     follow.end();
     expect(liveUnsub).toHaveBeenCalledTimes(1);
+    expect(staleUnsub).not.toHaveBeenCalled();
+  });
+
+  // The other half of the same guard: with NOTHING running, the stalled registration is
+  // the only thing holding the stream and this is the call that releases it. `end()`
+  // does not touch the connection, so it can still be up.
+  it("releases a registration that resolved after its session ended and none followed", async () => {
+    let release!: (v: () => void) => void;
+    const stalled = new Promise<() => void>((r) => (release = r));
+    const staleUnsub = vi.fn();
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async (addrs, onUpdate) => {
+      void real(addrs, onUpdate);
+      return stalled;
+    });
+
+    const follow = followFor({});
+    const first = follow.begin();
+    follow.end();
+    release(staleUnsub);
+    await first;
+    expect(staleUnsub).toHaveBeenCalledTimes(1);
   });
 
   // The settle cannot tell a re-registration from a new session — from there both are

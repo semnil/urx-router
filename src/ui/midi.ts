@@ -126,6 +126,8 @@ export class MidiControl {
    *  and cannot answer this: they say whether one is happening, not whether the one
    *  that just finished is still the one the operator asked for. */
   private portGen = { in: 0, out: 0 };
+  /** The tail of each direction's intent chain (see `queuePort`). */
+  private portQueue = { in: Promise.resolve(), out: Promise.resolve() };
   private bound = new Map<string, BoundControl>();
   // The plan object every entry in `bound` was bound against.
   private boundPlan: Plan | null = null;
@@ -389,7 +391,6 @@ export class MidiControl {
 
   private async openInput(port: string): Promise<void> {
     this.opensInFlight++;
-    const gen = this.portGen.in;
     try {
       // The Rust side replaces any prior input, so no explicit close first.
       const close = await midiOpenInput(port, (bytes) => {
@@ -399,20 +400,9 @@ export class MidiControl {
         this.probe?.rx(bytes);
         this.engine.onMessage(bytes);
       });
-      // The operator chose something else while this open was in flight — "None", or
-      // another port. Completion order used to decide instead of selection order, so a
-      // slow open (which is exactly what a wedged port gives you, and exactly when the
-      // operator is re-picking) installed itself over their choice: the select read
-      // None while the port stayed open on the shell, delivering into the engine and
-      // editing the plan, and it was saved and restored at the next boot.
-      if (gen !== this.portGen.in) {
-        close();
-        return;
-      }
       this.closeInput = close;
       this.inputPort = port;
     } catch (err) {
-      if (gen !== this.portGen.in) return;
       this.closeInput = null;
       this.inputPort = null;
       this.say(midiErrorStatus(err, t().midi.inputError));
@@ -424,13 +414,8 @@ export class MidiControl {
 
   private async openOutput(port: string): Promise<void> {
     this.opensInFlight++;
-    const gen = this.portGen.out;
     try {
       await midiOpenOutput(port);
-      // Same rule as the input (above). Here the aftermath is a feedback pass fired
-      // into a port the operator has closed, a spurious "output stalled", and the
-      // closed port saved as their choice.
-      if (gen !== this.portGen.out) return;
       this.outputPort = port;
       // Re-picking a port is the operator's retry: a streak carried over from the
       // previous connection would let one later failure trip the limit on a good one.
@@ -443,7 +428,6 @@ export class MidiControl {
       if (this.outputStalled) this.say("");
       this.runFeedback(true); // align motor faders / LEDs with the plan at once
     } catch (err) {
-      if (gen !== this.portGen.out) return;
       this.outputPort = null;
       this.say(midiErrorStatus(err, t().midi.outputError));
     } finally {
@@ -481,8 +465,39 @@ export class MidiControl {
     this.outputPort = output;
   }
 
-  private async setInputPort(port: string | null): Promise<void> {
-    this.portGen.in++;
+  /**
+   * Run one port intent per direction, in the order the operator chose them, skipping
+   * any that a later choice has already superseded.
+   *
+   * Serialized rather than raced-and-guarded, because the shell's side is not
+   * addressable: `midi_open_input` REPLACES whatever is held and `midi_close_input`
+   * closes whatever is held, neither taking a port. So two opens in flight leave the
+   * slot holding whichever finished last — not whichever was chosen last — and a stale
+   * continuation "cleaning up after itself" closes the port that superseded it. There
+   * is no token to compare; the only fix is not to have two in flight.
+   *
+   * The skip is what makes A -> B -> None end at None with one close, instead of
+   * replaying every intermediate choice against the hardware.
+   */
+  private queuePort(
+    dir: "in" | "out",
+    run: (port: string | null) => Promise<void>,
+    port: string | null,
+  ): Promise<void> {
+    const gen = ++this.portGen[dir];
+    const next = this.portQueue[dir].then(async () => {
+      if (gen !== this.portGen[dir]) return;
+      await run(port);
+    });
+    this.portQueue[dir] = next.catch(() => {});
+    return next;
+  }
+
+  private setInputPort(port: string | null): Promise<void> {
+    return this.queuePort("in", (port) => this.applyInputPort(port), port);
+  }
+
+  private async applyInputPort(port: string | null): Promise<void> {
     if (port) await this.openInput(port);
     else {
       // Always closes natively. The closer is the fast path, not the condition: after a
@@ -501,8 +516,11 @@ export class MidiControl {
     this.pushState();
   }
 
-  private async setOutputPort(port: string | null): Promise<void> {
-    this.portGen.out++;
+  private setOutputPort(port: string | null): Promise<void> {
+    return this.queuePort("out", (port) => this.applyOutputPort(port), port);
+  }
+
+  private async applyOutputPort(port: string | null): Promise<void> {
     if (port) await this.openOutput(port);
     else this.closeOutput();
     this.savePorts();

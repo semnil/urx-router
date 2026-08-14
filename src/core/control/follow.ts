@@ -192,7 +192,18 @@ export class DeviceFollow {
     // there would drop the new session's live subscription on the floor with nobody
     // left to unsubscribe it.
     if (this.gen !== gen) {
-      unsub();
+      // Dropped, and unsubscribed ONLY when nothing has taken over. The handle is not
+      // per-subscription: `vd_params_unsubscribe` takes no argument and acts on the
+      // CURRENT connection, so calling it while a newer session is registered tears
+      // down THAT session's stream — Live stays on, device follow goes deaf, and the
+      // next sync writes over what the operator did on the hardware.
+      //
+      // With a session running, the old registration needs no cleanup anyway: a new
+      // session is a new `vd_connect`, and the worker that held this registration was
+      // stopped with the connection it belonged to. With none running, the connection
+      // may still be up (`end()` deliberately does not touch it), and this is the call
+      // that releases the stream — which is what it always was.
+      if (!this.active) unsub();
       return;
     }
     this.unsub = unsub;
