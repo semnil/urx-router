@@ -11,6 +11,7 @@ import { clonePlanState } from "../plan-history";
 vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdSet, vdSetStr, vdGet, vdGetStr } from "../platform";
+import { COMP_EQ_SSMCS } from "./params";
 import { addrKey, planToCommands } from "./translate";
 import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
@@ -636,7 +637,41 @@ function setCh1OneKnob(plan: Plan, patch: { on?: boolean; level?: number }): voi
   };
 }
 
+// The SSMCS strip's morphing knob recomputes the whole strip on the device — measured on
+// a URX44V (2026-08-14): seventeen addresses across 96…117 announced 21 ms after the
+// write, including the comp's ratio and knee. The plan mirrors those rather than authoring
+// them, so this is a refetch; a converge would push its pre-morph copies back and undo the
+// morph with nothing on screen to say so. The mode itself is in the plan from the start
+// here — setting it is a converge param, and this case is about the morphing write alone.
+function setCh1Morphing(plan: Plan, morphing: number): void {
+  plan.nodeParams.ch1 = {
+    ...plan.nodeParams.ch1,
+    compEqType: COMP_EQ_SSMCS,
+    ssmcs: { ...plan.nodeParams.ch1?.ssmcs, morphing },
+  };
+}
+
 describe("LiveSync sideEffect refetch", () => {
+  it("reads the node back after a morphing write instead of pushing the strip back", async () => {
+    const plan = basePlan();
+    setCh1CompEqType(plan, COMP_EQ_SSMCS);
+    const refetched: string[][] = [];
+    const live = liveFor(plan, async (nodes) => {
+      refetched.push([...nodes]);
+      return null;
+    });
+    live.begin();
+    setCh1Morphing(plan, 60);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(refetched).toEqual([["ch1"]]);
+    // A converge would have re-read the write scope through vdGet and re-sent it, which
+    // is what would put the pre-morph ratio and knee back on the device.
+    expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
+  });
+
   it("reads the owner node back instead of converging", async () => {
     const plan = basePlan();
     const refetched: string[][] = [];

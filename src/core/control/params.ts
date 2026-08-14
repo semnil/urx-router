@@ -132,8 +132,14 @@ export const PARAMS = {
   SSMCS_ON: { id: 89, encoding: "bool" },
   /** SSMCS Comp Drive (raw 0..200; display = raw/20). */
   SSMCS_COMP_DRIVE: { id: 95, encoding: "raw" },
-  /** SSMCS Morphing position (raw 0..120). */
-  SSMCS_MORPHING: { id: 93, encoding: "raw" },
+  /** SSMCS Morphing position (raw 0..120). A "refetch", for the same reason the EQ
+   *  1-knob is one and measured the same way (2026-08-14, URX44V): writing it makes the
+   *  unit recompute the strip's runtime values and announce them 21 ms later — seventeen
+   *  addresses across 96…117, block-wise rather than by delta, three of them carrying
+   *  values that did not change. Those are the plan's to mirror rather than to author, so
+   *  pushing back would undo the morph; two of them are the comp's ratio and knee, which
+   *  a converge would send in their pre-morph state with nothing on screen to say so. */
+  SSMCS_MORPHING: { id: 93, encoding: "raw", sideEffect: "refetch" },
   /** SSMCS Out Gain (raw 0..360; 180 = 0 dB). */
   SSMCS_OUT_GAIN: { id: 117, encoding: "raw" },
   /** SSMCS comp attack (raw 57..283; logarithmic 0.092..80 ms). */
@@ -293,7 +299,14 @@ export const PARAMS = {
   /** SSMCS Sweet Spot Data preset index (MONO IN, SSMCS mode), at the channel input
    *  index. A 4-digit zero-padded STRING ("0001".."0034"; "0035"+ clamps to "0001"),
    *  so it rides the string-write path (vd_set_str / vd_get_str), not the numeric
-   *  catalog. Confirmed by live read (91:0:0 = "0001"). */
+   *  catalog. Confirmed by live read (91:0:0 = "0001").
+   *
+   *  NOT marked `sideEffect` even though selecting a preset plainly recomputes the same
+   *  runtime values SSMCS_MORPHING does. Two things are missing and a declaration alone
+   *  would fix neither: it has not been MEASURED here (the morphing write was, and this
+   *  one was only assumed to match it), and the string-write path does not read this
+   *  catalog — `planToNameWrites` emits no owning node, and live.ts's name loop consults
+   *  neither CONVERGE nor REFETCH. Marking it would look like a fix and do nothing. */
   SWEET_SPOT_DATA: { id: 91, encoding: "raw" },
   // CH → MIX/FX bus send. The actual ids are computed per channel/bus in
   // translate.ts; these anchors are the MIX1 mono slot and only name the command
