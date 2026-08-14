@@ -2823,7 +2823,9 @@ Windows は NSIS だけを生成し、MSI (WiX) は作らない。WiX はスタ�
 自動更新の途中でダイアログが出てしまう。同意ページに出す `LICENSE.txt` は英語のままで、翻訳しない。
 
 リリースは `.github/workflows/release.yml` で自動化する。`vX.Y.Z` タグ (プレリリースは
-`vX.Y.Z-{alpha,beta,rc}*`) を push すると 4 ジョブが走る: `check-tag` がタグを検証し、
+`vX.Y.Z-` に続けて `alpha` / `beta` / `rc`、その後は数字とドットのみ。`v1.9.0-rc1` や
+`v1.9.0-rc.2` は通り、`v1.9.0-rc-2` は `check-tag` が run を失敗させる) を push すると
+5 ジョブが走る: `check-tag` がタグを検証し、
 `create-release` が **draft** の GitHub Release を作り、`licenses` が同梱する通知を 1 回だけ生成し
 (後述の「サードパーティライセンス」)、`build` マトリクス (`macos-14` /
 `windows-latest`) が各プラットフォームを [`tauri-action`](https://github.com/tauri-apps/tauri-action)
