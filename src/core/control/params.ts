@@ -359,12 +359,20 @@ export const PARAMS = {
    *  so it rides the string-write path (vd_set_str / vd_get_str), not the numeric
    *  catalog. Confirmed by live read (91:0:0 = "0001").
    *
-   *  NOT marked `sideEffect` even though selecting a preset plainly recomputes the same
-   *  runtime values SSMCS_MORPHING does. Two things are missing and a declaration alone
-   *  would fix neither: it has not been MEASURED here (the morphing write was, and this
-   *  one was only assumed to match it), and the string-write path does not read this
-   *  catalog — `planToNameWrites` emits no owning node, and live.ts's name loop consults
-   *  neither CONVERGE nor REFETCH. Marking it would look like a fix and do nothing. */
+   *  NOT marked `sideEffect`, and the reason is now ONE thing rather than two. Selecting a
+   *  preset does recompute what SSMCS_MORPHING recomputes — measured on a URX44V (2026-08-15)
+   *  rather than assumed to match it: a preset write announced the same seventeen addresses
+   *  `SSMCS_MORPHING.drives` names, plus `93` itself, which it takes back to 0. So the plan
+   *  holds pre-preset values for eighteen addresses the unit has just moved, and no repair
+   *  runs; a later converge reads that divergence and writes the plan's copies back, undoing
+   *  the preset the way it would have undone a morph.
+   *
+   *  What is still missing is the path, not the fact: `planToNameWrites` emits no owning node,
+   *  and live.ts's name loop consults neither CONVERGE nor REFETCH, so a declaration here
+   *  would look like a fix and do nothing. The measurement also left the eventual repair a
+   *  question this catalog cannot answer — a string write is NOT echoed on its own address
+   *  (the eighteen arrived, its own did not), so the settle boundary every other refetch head
+   *  ends on does not exist for this one. */
   SWEET_SPOT_DATA: { id: 91, encoding: "raw" },
   // CH → MIX/FX bus send. The actual ids are computed per channel/bus in
   // translate.ts; these anchors are the MIX1 mono slot and only name the command
