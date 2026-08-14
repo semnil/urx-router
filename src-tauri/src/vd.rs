@@ -344,12 +344,16 @@ pub fn open() -> Result<(Sender<Cmd>, DeviceSummary, Arc<LinkCounters>), String>
 }
 
 impl VdState {
-    /// Install a freshly opened connection, shutting down any prior worker, and
-    /// return the generation assigned to it. The caller hands this epoch back to
-    /// disconnect so a delayed teardown of an earlier session cannot close this one.
-    /// Install a freshly opened session, unless the page that asked for it has since
-    /// reloaded — in which case the worker is shut down instead of being handed to its
-    /// replacement, and the caller is told so.
+    /// Install a freshly opened session, shutting down any prior worker, and return the
+    /// generation assigned to it — unless the page that asked for it has since reloaded,
+    /// in which case the worker is shut down instead of being handed to its replacement
+    /// and the caller is told so. The epoch goes back to `disconnect`, so a delayed
+    /// teardown of an earlier session cannot close this one.
+    ///
+    /// The only way in. It had an unguarded twin for a while — the same body without the
+    /// generation check, kept because the tests predated the check and still called it —
+    /// which meant every case about what an install DOES was driving a function the app
+    /// no longer used, and the two bodies were free to drift with nothing comparing them.
     pub fn install_for_page(
         &self,
         tx: Sender<Cmd>,
@@ -383,16 +387,6 @@ impl VdState {
         c.owner = Some(owner.to_string());
         c.epoch += 1;
         Some(c.epoch)
-    }
-
-    pub fn install(&self, tx: Sender<Cmd>, counters: Arc<LinkCounters>, owner: &str) -> u64 {
-        let mut c = self.conn.lock().unwrap();
-        stop(&mut c, None);
-        c.tx = Some(tx);
-        c.counters = counters;
-        c.owner = Some(owner.to_string());
-        c.epoch += 1;
-        c.epoch
     }
 }
 
@@ -2495,8 +2489,22 @@ mod tests {
     // dummy worker channels, so they reproduce the exact interleaving deterministi-
     // cally on any host (no broker, no websocket, no threads).
     use super::{disconnect, sender, shutdown_owned_by, Cmd, LinkCounters, VdState};
-    use std::sync::mpsc;
+    use std::sync::mpsc::{self, Sender};
     use std::sync::Arc;
+
+    /// Install the way a page that has not reloaded does: the generation taken and
+    /// handed straight back. Through the shipped function rather than beside it — the
+    /// cases below are about what an install DOES, and a test-only twin of its body is
+    /// a second answer to that with nothing holding the two together.
+    ///
+    /// The reload arm is not a parameter here: what it does instead of installing is
+    /// the subject of two cases of its own, which call `install_for_page` directly.
+    fn install(state: &VdState, tx: Sender<Cmd>) -> u64 {
+        let gen = state.page_gen("main");
+        state
+            .install_for_page(tx, Arc::new(LinkCounters::default()), "main", gen)
+            .expect("a page that has not reloaded installs")
+    }
 
     // A page load ends what THAT page holds. The app has two webviews, and the second
     // one's load used to end the first one's session — measured: opening the MIDI
@@ -2507,7 +2515,7 @@ mod tests {
     fn a_page_load_ends_only_the_session_that_page_opened() {
         let state = VdState::default();
         let (tx, rx) = mpsc::channel::<Cmd>();
-        state.install(tx, Arc::new(LinkCounters::default()), "main");
+        install(&state, tx);
 
         shutdown_owned_by(&state, "midi");
         sender(&state).expect("another window's load leaves this session alone");
@@ -2532,11 +2540,11 @@ mod tests {
 
         // Live session connects.
         let (live_tx, _live_rx) = mpsc::channel::<Cmd>();
-        let live_epoch = state.install(live_tx, Arc::new(LinkCounters::default()), "main");
+        let live_epoch = install(&state, live_tx);
 
         // A later write connects before the live teardown's disconnect runs.
         let (write_tx, write_rx) = mpsc::channel::<Cmd>();
-        let write_epoch = state.install(write_tx, Arc::new(LinkCounters::default()), "main");
+        let write_epoch = install(&state, write_tx);
         assert_ne!(
             live_epoch, write_epoch,
             "each install gets a fresh generation"
@@ -2558,7 +2566,7 @@ mod tests {
     fn matching_disconnect_closes() {
         let state = VdState::default();
         let (tx, _rx) = mpsc::channel::<Cmd>();
-        let epoch = state.install(tx, Arc::new(LinkCounters::default()), "main");
+        let epoch = install(&state, tx);
 
         disconnect(&state, epoch);
 
@@ -2573,9 +2581,9 @@ mod tests {
     fn install_shuts_prior_worker() {
         let state = VdState::default();
         let (tx1, rx1) = mpsc::channel::<Cmd>();
-        state.install(tx1, Arc::new(LinkCounters::default()), "main");
+        install(&state, tx1);
         let (tx2, _rx2) = mpsc::channel::<Cmd>();
-        state.install(tx2, Arc::new(LinkCounters::default()), "main");
+        install(&state, tx2);
         assert!(
             matches!(rx1.recv(), Ok(Cmd::Shutdown { .. })),
             "prior worker told to stop"
