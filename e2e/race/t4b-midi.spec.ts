@@ -544,13 +544,33 @@ test.describe("T4b midi", () => {
 
   // ===========================================================================
   // midi-toggle-echo-window-ladder — a one-shot guard, armed per ADDRESS when a
-  // toggle's feedback goes out, that decides genuineness by value and by a 300 ms
+  // toggle's feedback goes out, that decides genuineness by value and by a time
   // window. It cannot tell a loopback from a press.
   // ===========================================================================
 
+  /** `ECHO_MS` in `src/core/midi/engine.ts`, restated because a spec cannot import the
+   *  app's modules. The four cases that turn on the window — the toggle ladder, the
+   *  mismatched-value differential, the one-shot pair and the fader ladder — place
+   *  their rungs against this rather than against a literal, which is what they lacked
+   *  when the constant moved: it went 300 -> 50 (sized
+   *  from a measured 0.13-5 ms echo latency, where 300 ms was eating real presses) and
+   *  three rungs that named 300 kept asserting the old window — the ladder's inner ones
+   *  failed, while the two cases that only claim "inside the window" went on passing at
+   *  a phase that is now outside it, one of them landing on the boundary itself
+   *  (measured: first message eaten at an achieved 50 ms, the ladder's own 50 ms rung
+   *  applied at 51). Neither was a failure; both had stopped testing what they say.
+   *
+   *  The comparison is `>=`, so a message AT the window is outside it. */
+  const ECHO_WINDOW_MS = 50;
+  /** How far a rung is placed from the window's edge. The bracket a phase is measured
+   *  as spans 0-1 ms on this machine (achieved 50..51, 290..291), so 10 ms is the same
+   *  absolute margin the 300 ms ladder ran at — and the phase assertion in each case,
+   *  not its verdict, is what fails if a loaded renderer spends it. */
+  const EDGE_MARGIN_MS = 10;
+
   /** Install a send-time stamp on the fake's outgoing byte log, so a phase can be
    *  measured from the emit itself rather than from when the driver noticed it —
-   *  the ladder straddles 300 ms and a polling error would decide the verdict. */
+   *  a polling error of a few ms would otherwise decide a rung near the edge. */
   const stampSends = (page: Page): Promise<void> =>
     page.evaluate(() => {
       const w = window as unknown as { __sendAt: number[] };
@@ -613,7 +633,7 @@ test.describe("T4b midi", () => {
 
   /** Push a MIDI message from INSIDE the page and return its phase from the last
    *  outgoing feedback emit. A driver `pushMidi` is a round trip whose lateness is
-   *  unbounded, so a case whose verdict turns on "inside the 300 ms echo window"
+   *  unbounded, so a case whose verdict turns on "inside the echo window"
    *  cannot measure the push from outside — under driver lag it would be measuring the
    *  window expiring rather than the thing it claims. */
   const pushAtPhase = (page: Page, bytes: number[]): Promise<number> =>
@@ -624,8 +644,11 @@ test.describe("T4b midi", () => {
       return performance.now() - at;
     }, bytes);
 
-  for (const d of [50, 250, 290, 310, 400]) {
-    const inWindow = d < 300;
+  // Three rungs inside the window and two outside, the innermost and outermost placed
+  // one margin from the edge — the shape the 300 ms ladder ran at (50 / 250 / 290 |
+  // 310 / 400), scaled to the window rather than kept at those numbers.
+  for (const d of [10, 25, ECHO_WINDOW_MS - EDGE_MARGIN_MS, ECHO_WINDOW_MS + EDGE_MARGIN_MS, 400]) {
+    const inWindow = d < ECHO_WINDOW_MS;
     const verb = inWindow ? "eaten" : "applied";
     test(`a matching message ${d} ms after the feedback emit is ${verb}`, async ({ page }) => {
       await boot(page, [{ control: "ch1/mute", addr: CC7, mode: "absolute" }], {
@@ -653,13 +676,13 @@ test.describe("T4b midi", () => {
       );
 
       // The phase is only interpretable if the WHOLE bracket landed on the intended
-      // side of the 300 ms guard window — the app samples its own clock somewhere
-      // inside it, so a bracket that straddles the edge decides nothing. Placed against
-      // the far end for a rung inside the window and the near end for one outside, so
-      // the assertion is against whichever bound can cross first. D=290 sits 10 ms from
-      // the edge and this is the assertion that has to fail, rather than the verdict
-      // below, when a loaded renderer spends that 10 ms between the two samples.
-      expect((inWindow ? phaseHigh : phaseLow) < 300).toBe(inWindow);
+      // side of the guard window — the app samples its own clock somewhere inside it,
+      // so a bracket that straddles the edge decides nothing. Placed against the far
+      // end for a rung inside the window and the near end for one outside, so the
+      // assertion is against whichever bound can cross first. The two rungs a margin
+      // from the edge are why: this is the assertion that has to fail, rather than the
+      // verdict below, when a loaded renderer spends that margin between the samples.
+      expect((inWindow ? phaseHigh : phaseLow) < ECHO_WINDOW_MS).toBe(inWindow);
       // …and if the emit the phase is measured from is the one that armed the guard.
       expect((await midiSentOf(page))[armIdx]).toEqual([0xb0, 7, 127]);
 
@@ -677,10 +700,15 @@ test.describe("T4b midi", () => {
   }
 
   test("a value the guard does not recognise defeats it at the same phase", async ({ page }) => {
-    // The differential for the ladder's D=50 rung: one variable changed, the raw
+    // The differential for the ladder's innermost rung: one variable changed, the raw
     // value. The guard compares against lastSent, so a controller that echoes at a
     // different resolution (or a plugin that re-sends its own state) flips the
     // toggle back inside the window the ladder shows as protected.
+    //
+    // The phase has to be the LADDER'S, and it stopped being so when the window moved:
+    // this case kept pushing at 50 ms, which the ladder no longer shows as protected,
+    // so it went on passing while comparing against nothing. Its rung is named from the
+    // same ladder now.
     await boot(page, [{ control: "ch1/mute", addr: CC7, mode: "absolute" }], { input: "Fake In", output: "Fake Out" });
     await expect.poll(async () => (await midiSentOf(page)).length).toBeGreaterThan(0);
 
@@ -689,7 +717,7 @@ test.describe("T4b midi", () => {
     await mark(page, "ui-mute");
     await muteChip(page, "CH 1").click();
     await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
-    const [, phaseHigh] = await loopbackAfter(page, 50, 64, armIdx); // ≥ 64 = an on-value, ≠ lastSent 127
+    const [, phaseHigh] = await loopbackAfter(page, 10, 64, armIdx); // ≥ 64 = an on-value, ≠ lastSent 127
     await page.waitForTimeout(150);
 
     const state = await muteChip(page, "CH 1").getAttribute("aria-pressed");
@@ -698,7 +726,7 @@ test.describe("T4b midi", () => {
 
     // The far end of the bracket: this rung claims the message was inside the window,
     // so the bound that can cross the edge first is the one to place it against.
-    expect(phaseHigh).toBeLessThan(300);
+    expect(phaseHigh).toBeLessThan(ECHO_WINDOW_MS);
     expect(state).toBe("false"); // flipped back — the guard did not fire
   });
 
@@ -714,8 +742,13 @@ test.describe("T4b midi", () => {
     await mark(page, "ui-mute");
     await muteChip(page, "CH 1").click();
     await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
-    const [, achieved] = await loopbackAfter(page, 50, 127, armIdx); // the bracket's far end
-    await page.waitForTimeout(50);
+    // Both messages have to land inside ONE window, and the state read between them
+    // costs a driver round trip — measured at ~5 ms (the second message landed at
+    // 105 ms with the first at 50 and a 50 ms sleep between). That was free against a
+    // 300 ms window and is a fraction of a 50 ms one, so the first rung goes near zero
+    // and the sleep goes: the second then lands around 15 ms with 35 to spare, and if
+    // a loaded renderer spends that, the phase assertion below is what fails.
+    const [, achieved] = await loopbackAfter(page, 5, 127, armIdx); // the bracket's far end
     const afterFirst = await muteChip(page, "CH 1").getAttribute("aria-pressed");
     // Pushed in-page and stamped, like the first one: the claim is that the guard was
     // SPENT, and under driver lag an unmeasured push measures the window expiring
@@ -730,10 +763,10 @@ test.describe("T4b midi", () => {
         ` MUTE after first=${afterFirst} after second=${afterSecond}`,
     );
 
-    expect(achieved).toBeLessThan(300);
+    expect(achieved).toBeLessThan(ECHO_WINDOW_MS);
     expect(afterFirst).toBe("true"); // eaten
     // Both messages inside one window — the precondition the "one-shot" claim rests on.
-    expect(secondPhase).toBeLessThan(300);
+    expect(secondPhase).toBeLessThan(ECHO_WINDOW_MS);
     expect(afterSecond).toBe("false"); // applied — the guard was spent on the first
   });
 
@@ -752,8 +785,8 @@ test.describe("T4b midi", () => {
   // that mark belongs to the echo and to nothing else.
   // ===========================================================================
 
-  for (const d of [50, 400]) {
-    const inWindow = d < 300;
+  for (const d of [ECHO_WINDOW_MS - EDGE_MARGIN_MS, 400]) {
+    const inWindow = d < ECHO_WINDOW_MS;
     test(`a fader's loopback ${d} ms after the emit ${inWindow ? "leaves the unit alone" : "slams it to full scale"}`, async ({
       page,
     }) => {
@@ -817,7 +850,7 @@ test.describe("T4b midi", () => {
       // Same phase discipline as the toggle ladder: a bracket straddling the window's
       // edge decides nothing, so each rung is placed against the bound that can cross
       // first. The emit the phase is measured from has to be the arming one.
-      expect((inWindow ? phaseHigh : phaseLow) < 300).toBe(inWindow);
+      expect((inWindow ? phaseHigh : phaseLow) < ECHO_WINDOW_MS).toBe(inWindow);
       expect((await midiSentOf(page)).at(-1)).toEqual([0x90, 60, 127]);
 
       if (inWindow) {

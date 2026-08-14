@@ -240,6 +240,18 @@ export async function applyDeviceState(
    *  entry against them would freeze this read's own writes into it. It is a deferral,
    *  not a discard, and it is bounded by the settle's own window. */
   pending?: PendingWrites,
+  /** Read every group EXCEPT the node names. The live-sync refetch sets it, for the
+   *  reason the name section in readPass gives; nothing else does.
+   *
+   *  Explicit rather than inferred from `pending`, which is what it was until a follow
+   *  reconcile started carrying pending writes of its own. `recentPending()` returns an
+   *  object whether or not the session has written anything, so "pending was supplied"
+   *  became true for both reconciles and the names stopped being read AT ALL — a rename
+   *  made on the unit never reached the plan again, with no error and no diff, since the
+   *  skip also removes the read that would have disagreed. Caught by the race harness's
+   *  group count (T5 concentration: 8 groups per mono channel where the pin says 9),
+   *  which is the only thing that counts them. */
+  skipNames = false,
 ): Promise<ReadbackResult> {
   // Only `mustSettle` — the addresses inside this read's scope — may hold it open, and
   // it holds for all of them: a changed write ends its own wait at its notify, one that
@@ -255,11 +267,7 @@ export async function applyDeviceState(
         signal,
       })
     : undefined;
-  // `pending` marks the one caller that has just written the device: Live sync's
-  // sideEffect refetch. That is also exactly the caller whose name read would sit
-  // inside the name path's own staleness window, so it is the caller that skips
-  // names — see the name section in readPass.
-  return readPass(writeOverlay(LIVE_SOURCE, announced), model, plan, signal, only, pending !== undefined);
+  return readPass(writeOverlay(LIVE_SOURCE, announced), model, plan, signal, only, skipNames);
 }
 
 /**
@@ -532,9 +540,13 @@ async function readPass(
   // nothing left to retry. Unlike a numeric revert it does not even oscillate,
   // so nothing draws attention to it.
   //
-  // A rename made on the unit still arrives: device follow's scoped reconcile and
-  // the idle full reconcile both run this pass with no `pending`, as do Fetch,
-  // compare and the self-test.
+  // A rename made on the unit still arrives, because every other caller reads names:
+  // device follow's two reconciles, Fetch, compare and the self-test. That used to be
+  // stated as "they pass no `pending`", the flag being inferred from it — and then the
+  // scoped reconcile started carrying the session's recent writes, both reconciles
+  // began skipping names, and a rename made on the unit stopped arriving anywhere. The
+  // flag is now the caller's own word, so a second caller acquiring pending writes
+  // cannot silently take this branch with it.
   if (!skipNames) {
     for (const node of model.nodes) {
       signal?.throwIfAborted();
@@ -932,10 +944,14 @@ export async function applyNodeState(
   plan: Plan,
   nodeIds: ReadonlySet<string>,
   signal?: AbortSignal,
-  /** See applyDeviceState — the live-sync refetch's own writes. */
+  /** See applyDeviceState — writes the caller made immediately before this read. Both
+   *  of this function's callers have them: the live-sync refetch's own, and device
+   *  follow's scoped reconcile carrying whatever the session wrote recently. */
   pending?: PendingWrites,
+  /** See applyDeviceState. The refetch passes it; the reconcile does not. */
+  skipNames = false,
 ): Promise<ReadbackResult> {
-  return applyDeviceState(model, plan, signal, nodeIds, pending);
+  return applyDeviceState(model, plan, signal, nodeIds, pending, skipNames);
 }
 
 /** What a merged device read produced. */

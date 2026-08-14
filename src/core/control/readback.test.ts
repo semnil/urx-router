@@ -806,26 +806,37 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     vi.mocked(vdGetStr).mockImplementation((paramId: number, _x: number, y: number) =>
       Promise.resolve(paramId === 18 && y === 0 ? "FromDev" : ""),
     );
+    const pending = { written: new Map(), mustSettle: new Set<number>(), mustAnnounce: new Set<number>() };
+    const readNames = (): boolean => vi.mocked(vdGetStr).mock.calls.some(([p]) => p === 18);
 
-    // The refetch hands over what it just wrote. Names are untouched by it.
+    // The refetch hands over what it just wrote AND asks for the skip. Names untouched.
     const refetched = emptyPlan("URX44V");
     refetched.nodeNames.ch1 = "OperatorJustTypedThis";
-    await applyDeviceState(model, refetched, undefined, new Set(["ch1"]), {
-      written: new Map(),
-      mustSettle: new Set(),
-      mustAnnounce: new Set(),
-    });
+    await applyDeviceState(model, refetched, undefined, new Set(["ch1"]), pending, true);
     expect(refetched.nodeNames.ch1).toBe("OperatorJustTypedThis");
-    expect(vi.mocked(vdGetStr).mock.calls.some(([p]) => p === 18)).toBe(false);
+    expect(readNames()).toBe(false);
 
-    // Every other caller passes no pending set and still reads names, which is
-    // how a rename made on the unit reaches the app at all.
+    // Every other caller reads names, which is how a rename made on the unit reaches
+    // the app at all.
     vi.mocked(vdGetStr).mockClear();
     const reconciled = emptyPlan("URX44V");
     reconciled.nodeNames.ch1 = "OperatorJustTypedThis";
     await applyDeviceState(model, reconciled, undefined, new Set(["ch1"]));
     expect(reconciled.nodeNames.ch1).toBe("FromDev");
-    expect(vi.mocked(vdGetStr).mock.calls.some(([p]) => p === 18)).toBe(true);
+    expect(readNames()).toBe(true);
+
+    // …INCLUDING a caller that carries pending writes, which device follow's reconciles
+    // now do. This arm is the one that was missing: the skip used to be inferred from
+    // `pending`, and the case above stood in for every non-refetch caller by passing
+    // none — which the reconcile stopped doing without anything here noticing. A rename
+    // made on the unit then reached nothing, in silence, because the skip also removes
+    // the read that would have disagreed. Only the race harness's group count saw it.
+    vi.mocked(vdGetStr).mockClear();
+    const settled = emptyPlan("URX44V");
+    settled.nodeNames.ch1 = "OperatorJustTypedThis";
+    await applyDeviceState(model, settled, undefined, new Set(["ch1"]), pending);
+    expect(settled.nodeNames.ch1).toBe("FromDev");
+    expect(readNames()).toBe(true);
   });
 
   // The device's own stereo pair labels are right-aligned in a 2-character field

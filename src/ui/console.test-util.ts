@@ -68,6 +68,14 @@ export interface ConsoleHostOptions {
    *  the jump-to-the-press path would never run. Positioned at the fader's top, which
    *  is where a cap sits at full level. */
   capBox?: { width: number; height: number };
+  /** Measure a `.con-head` by what it CONTAINS instead of by the single box, for the
+   *  one question that is about a measurement rather than about a gesture: the view
+   *  measures the tallest head and caches the answer, so a case about that cache needs
+   *  a height that moves when the head's contents do. jsdom lays nothing out, so this
+   *  is a stand-in and only its MONOTONICITY in chip count is faithful — the real head
+   *  is a two-column grid whose row count is what actually grows. Off by default: every
+   *  other suite wants one predictable box. */
+  headHeight?: (head: HTMLElement) => number;
   /** Skip `show()` — for a test about what an unshown view does. */
   hidden?: boolean;
 }
@@ -82,6 +90,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
     live = false,
     box = { width: 34, height: 120 },
     capBox = { width: 24, height: 14 },
+    headHeight,
   } = opts;
 
   const host = document.createElement("div");
@@ -113,7 +122,12 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
   const offsets = ["offsetWidth", "offsetHeight"] as const;
   const realOffsets = offsets.map((p) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, p));
   Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get: () => box.width });
-  Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, get: () => box.height });
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get(this: HTMLElement): number {
+      return headHeight && this.classList.contains("con-head") ? headHeight(this) : box.height;
+    },
+  });
 
   // Manual frame clock — the meter loop re-queues itself every frame, so a real rAF
   // would spin.

@@ -1675,11 +1675,22 @@ export class Console {
   //
   // Model + hidden set alone was not that. The opener chips a head carries also depend
   // on each channel's COMP/EQ type — an SSMCS channel has no GATE/COMP/EQ openers, so a
-  // plan seeded in SSMCS measured a shorter head — and on the sample rate, which moves
-  // the same rows across the 96 kHz boundary via the EQ opener. Switching a channel back
-  // to COMP->EQ added a chip row that the cached height had no space for, and the head
-  // stayed clipped for the rest of the session (a model switch, a hide/show or a reload
-  // were the only things that healed it).
+  // plan seeded in SSMCS measured a shorter head, and switching it back to COMP->EQ added
+  // a chip row the cached height had no space for: the head then stayed clipped until
+  // something rebuilt the view under a different key (a model switch, a hide/show, a
+  // reload).
+  //
+  // The sample rate is in the key too, and it earns its place differently. Measured
+  // 2026-08-14 over URX44V / URX44 / URX22 at 48 / 96 / 176.4 / 192 kHz, on each one's
+  // default plan (17 / 17 / 15 heads), the rate moved no head in that set — chip count,
+  // grid row count and element count come back identical at every rate. It does change
+  // what a stereo channel's head CARRIES: above 96 kHz the EQ opener goes and the chip
+  // beside it turns read-only. What absorbs that is the parity spacer, appended so a
+  // group's last chip never stretches to full width — it takes the freed slot, and a
+  // two-column group of 7-plus-spacer is the same number of rows as one of 8. So the term
+  // is here for the shape of that compensation rather than for a height seen to move: it
+  // costs one re-measure per rate change, and either rule changing without it is the
+  // clipped head above, in silence.
   private mainHeadHeight(): number {
     const plan = this.hooks.getPlan();
     const types = this.hooks

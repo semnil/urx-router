@@ -558,6 +558,48 @@ describe("the live session", () => {
     selectNode("ch1");
     expect($("inspector").querySelector<HTMLInputElement>('input[type="text"]')?.value).toBe("1234567");
   });
+
+  // The other route a rename made on the unit takes, and the one the app has to ASK
+  // for: a device-side change reconciles the node it touched, and that read covers the
+  // node's name. It is what carries a rename the app was never told about — a notify
+  // that did not arrive, or a change made on the unit's own screen in a way that emits
+  // none — and the whole-device idle sweep behind it carries the same thing.
+  //
+  // Pinned HERE, at the entry, because the skip that removed it is a decision about
+  // WHICH CALLER is reading. readback.test.ts had a case for it and stayed green: it
+  // stood in for the reconcile by calling with no pending writes, which is what the
+  // reconcile used to do — and then the reconcile started carrying them, the skip was
+  // inferred from exactly that, and names stopped being read by either reconcile with
+  // nothing in this repository disagreeing. Only the race harness's group count saw it.
+  //
+  // The name has to appear AFTER the session's starting read, or the starting read
+  // would be what put it in the plan and this would pass with the reconcile removed.
+  // Eight characters, so what lands is the name rather than the clip — the bound is
+  // the unit's own name screen, and a longer one comes back cut (pinned above).
+  it("reads a name off the unit in the reconcile a device-side change triggers", SLOW, async () => {
+    const nc = nameControl(getModel("URX44V"), "ch1")!;
+    let renamedOnUnit = false;
+    const shell = await bootDevice({
+      vd_get_str: (a: Record<string, unknown>) =>
+        renamedOnUnit && a.paramId === nc.param && a.y === 0 ? "UnitName" : "",
+    });
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+
+    renamedOnUnit = true;
+    // A scoped (non-direct) parameter: its notify is not applied on its own, it makes
+    // the follow re-read the node — which is the read under test.
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.HPF_FREQ.id, x: 0, y: 0, value: 40 }]);
+
+    selectNode("ch1");
+    await vi.waitFor(
+      () => {
+        selectNode("ch1"); // the reconcile re-renders; re-select so the field is current
+        expect($("inspector").querySelector<HTMLInputElement>('input[type="text"]')?.value).toBe("UnitName");
+      },
+      { timeout: 25_000, interval: 50 },
+    );
+  });
 });
 
 describe("Write to device", () => {

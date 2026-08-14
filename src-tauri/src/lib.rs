@@ -1267,6 +1267,58 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    // A mobile entry point and the gating of the desktop-only modules are one decision,
+    // and no build this project makes can say so: an attribute compiled for a target
+    // nothing here targets is invisible to `cargo test`, to CI and to both installers.
+    // What was in the file was `#[cfg_attr(mobile, tauri::mobile_entry_point)]` beside
+    // unconditional `mod vd;` / `mod midi;` whose CONTENTS are desktop-only — `vd::open`
+    // reaches `imp::worker` (`#[cfg(desktop)]`) and `midi.rs` uses `midir` (target-gated
+    // in Cargo.toml) — so the attribute named a build that fails on unresolved names.
+    // The attribute went; this holds the pair, so re-adding one without the other is a
+    // failure here rather than a discovery on someone's first mobile build.
+    //
+    // Read as text because that is the only reading available: a `#[cfg]` this target
+    // does not satisfy leaves nothing to inspect at runtime. That puts this test IN the
+    // file it reads, which is a trap it fell into twice while being written — the plain
+    // search matched its own string literal, and then its own function name. So the
+    // entry point is looked for among ATTRIBUTE LINES only, which is what it is; prose,
+    // identifiers and literals cannot reach that set however they are spelled.
+    //
+    // Only the refusing direction has been run: gating the two modules for real does not
+    // compile here, since the command list reaches into both. So the arm this test would
+    // PERMIT is a statement about the text, not a build anyone has made.
+    #[test]
+    fn a_mobile_arm_would_require_the_desktop_only_modules_to_be_gated() {
+        let code = include_str!("lib.rs")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let attrs = code
+            .lines()
+            .map(str::trim_start)
+            .filter(|l| l.starts_with("#["))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // The gate check below looks for a formatted declaration, so a rename would let
+        // it pass by finding nothing. Fail on the file shape instead.
+        for m in ["vd", "midi"] {
+            assert!(
+                code.contains(&format!("mod {m};")),
+                "this crate is expected to declare `mod {m};` — if it moved, this test moves with it"
+            );
+        }
+
+        let declares_mobile = attrs.contains("mobile_entry_point");
+        let gated = |m: &str| code.contains(&format!("#[cfg(desktop)]\nmod {m};"));
+        assert!(
+            !declares_mobile || (gated("vd") && gated("midi")),
+            "a mobile entry point obliges `mod vd;` and `mod midi;` to be `#[cfg(desktop)]`, \
+             or an android/ios build fails on unresolved names"
+        );
+    }
+
     // The main window's label is declared in tauri.conf.json and named again by the
     // capability file and by MAIN_WINDOW; nothing at runtime notices when one of the
     // three moves, because a capability that matches no window simply grants nothing

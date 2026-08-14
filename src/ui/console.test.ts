@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import { Console } from "./console";
+import { consoleHost, type ConsoleHost } from "./console.test-util";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
+import { COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
+import type { Plan } from "../core/plan";
 
 describe("Console UI", () => {
   it("threads modelId URX22 correctly to resolve meters (e.g. ch_3_4 input tap)", () => {
@@ -142,5 +145,98 @@ describe("Console UI", () => {
 
     consoleInstance.hide();
     document.body.removeChild(host);
+  });
+});
+
+// Every head is clamped to the tallest one, measured off-screen once and cached. What
+// the cache is keyed by decides whether a head that grew a row gets the space: keyed by
+// model and hidden set alone, switching a channel back to COMP->EQ added a chip row the
+// remembered height had no room for, and the head stayed clipped until something rebuilt
+// the view under a different key (a model switch, a hide/show, a reload).
+//
+// jsdom lays nothing out, so the height comes from `headHeight` (console.test-util.ts):
+// a stand-in that counts the head's chips. Only its direction is faithful — a head with
+// more chips measures taller — which is the whole of what the cache key has to track.
+// It doubles as the re-measure counter, since a call to it IS the view laying the strips
+// out again; that is the only observable for a key term that changes no height, which is
+// what the sample rate was measured to be (console.ts, `mainHeadHeight`).
+describe("the head-height cache", () => {
+  const chips = (head: HTMLElement): number => head.querySelectorAll(".con-chip").length;
+  const px = (head: HTMLElement): number => 40 + 12 * chips(head);
+  const headH = (h: ConsoleHost): string => h.host.style.getPropertyValue("--head-h");
+  /** The tallest head as the stand-in measures it now, whatever the cache says. */
+  const tallest = (h: ConsoleHost): number =>
+    Math.max(...[...h.host.querySelectorAll<HTMLElement>(".con-head")].map(px));
+
+  let h: ConsoleHost;
+  let measures = 0;
+  /** Mount with the content-derived head height, counting each off-screen measure. */
+  const mount = (plan: Plan): ConsoleHost => {
+    measures = 0;
+    return consoleHost({
+      modelId: "URX44V",
+      plan,
+      headHeight: (head) => {
+        measures++;
+        return px(head);
+      },
+    });
+  };
+  /** Every mono channel's COMP/EQ type at once — one channel's would not move the
+   *  tallest head, since the others keep the openers it lost. */
+  const setCompEq = (plan: Plan, type: number): void => {
+    for (const [id, np] of Object.entries(plan.nodeParams))
+      if (np?.compEqType !== undefined) plan.nodeParams[id] = { ...np, compEqType: type };
+  };
+
+  afterEach(() => h?.restore());
+
+  // The finding's own direction: an SSMCS channel carries no COMP or EQ opener, so a
+  // plan seeded in SSMCS measures short, and switching back to COMP->EQ is what needs
+  // the room the cached height did not have.
+  it("re-measures when the COMP/EQ type changes, and the height moves", () => {
+    const plan = defaultPlan("URX44V");
+    setCompEq(plan, COMP_EQ_SSMCS);
+    h = mount(plan);
+    const short = headH(h);
+    expect(short).toBe(`${tallest(h)}px`);
+
+    setCompEq(plan, COMP_EQ_COMP_FIRST);
+    h.view.refresh();
+
+    expect(headH(h)).toBe(`${tallest(h)}px`);
+    expect(Number.parseInt(headH(h))).toBeGreaterThan(Number.parseInt(short));
+  });
+
+  // The rate is the other key term, and it is in the key for a different reason: it
+  // changes what a stereo head CARRIES (above 96 kHz the EQ opener goes) without changing
+  // its height, because the parity spacer takes the freed slot. So what a rate change has
+  // to produce is the re-measure — the height it lands on is the same one.
+  it("re-measures when the sample rate changes, at the same height", () => {
+    const plan = defaultPlan("URX44V");
+    h = mount(plan);
+    const at48 = headH(h);
+    const measuredOnce = measures;
+    expect(measuredOnce).toBeGreaterThan(0);
+
+    plan.sampleRate = 192000;
+    h.view.refresh();
+
+    expect(measures).toBeGreaterThan(measuredOnce);
+    expect(headH(h)).toBe(at48);
+    expect(headH(h)).toBe(`${tallest(h)}px`);
+  });
+
+  // …and it is still a cache. A re-render that changes none of its inputs must not pay
+  // for a second off-screen build of every strip — which is the cost the key exists to
+  // avoid, and what a key of "everything" would give up.
+  it("does not re-measure when nothing that shapes a head changed", () => {
+    h = mount(defaultPlan("URX44V"));
+    const measuredOnce = measures;
+    expect(measuredOnce).toBeGreaterThan(0);
+
+    h.view.refresh();
+
+    expect(measures).toBe(measuredOnce);
   });
 });
