@@ -27,7 +27,8 @@ on:
 # A push to main is a group of ONE: `github.event.pull_request.number` is empty off a pull
 # request, so a push run keys on `github.run_id` and joins nothing. It has to.
 # tag-release.yml reads this workflow's conclusion on main, so a main run dropped from a
-# shared group is a version bump that never gets tagged, with nothing red to read.
+# shared group can leave a version bump untagged, with nothing red to read. Most main runs
+# carry no bump and tag-release ends on its own; the one that does is the whole release.
 # `cancel-in-progress: false` is not an alternative here: `concurrency.queue` defaults to
 # `single`, which replaces a pending run in a shared group.
 concurrency:
