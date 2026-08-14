@@ -765,6 +765,27 @@ describe("LiveSync follow re-registration", () => {
     expect(calls).toEqual([]);
   });
 
+  // A plan whose emitted set moved with no `sideEffect` head behind it, so the flush
+  // reaches neither a converge nor a refetch and so no capture. Built by hand, because no
+  // gesture produces one today: every connection the default plan carries is fixed routing
+  // the graph refuses to cut ("Fixed connection — cannot be removed"), and of the 310
+  // routes the model would let an operator draw, the emitted set moves for none. The flush
+  // compares the set against the follow list rather than trusting that to stay true.
+  it("asks after a flush that reshaped the set with no converge or refetch in it", async () => {
+    const plan = basePlan();
+    const calls: string[] = [];
+    const live = liveFor(plan, undefined, () => calls.push("reregister"));
+    live.begin();
+    const before = live.followAddrs().length;
+    plan.connections = plan.connections.filter((c) => !(c.from === "ch_5_6:out" && c.to === "bus.mix1:in"));
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(500);
+    // The premise: the set really moved, and by the send's own addresses.
+    expect(live.followAddrs().length).toBeLessThan(before);
+    expect(calls).toEqual(["reregister"]);
+  });
+
   // …and it is the LATCH that keeps it quiet, not the gesture. Once a flush has captured, a
   // flush that captures nothing must still ask nothing — otherwise every window for the rest
   // of the session rebuilds the address list and hands it to the callee, once per step of a

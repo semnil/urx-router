@@ -23,7 +23,7 @@ import {
   nameControl,
   planToNameWrites,
 } from "./translate";
-import type { SharedOwners, NameWrite, WriteScope } from "./translate";
+import type { SharedOwners, NameWrite, VdCommand, WriteScope } from "./translate";
 import { reachedAndFailed, sendConverging } from "./client";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
@@ -522,18 +522,43 @@ export class LiveSync {
     const device = deviceView ? this.commandValues(model, deviceView, scope) : null;
     this.snapshot.clear();
     this.nameSnapshot.clear();
-    this.index.clear();
-    const addrs: Array<[number, number, number]> = [];
-    for (const c of planToCommands(model, plan, scope)) {
+    const commands = planToCommands(model, plan, scope);
+    for (const c of commands) {
       const k = cmdAddr(c);
       // An address the view does not carry grew after the read was issued (a structural
       // edit made during it). It is a pending write, not device truth, so it is left out
       // of the snapshot entirely and the next diff sends it.
       const known = device ? device.get(k) : c.vdValue;
       if (known !== undefined) this.snapshot.set(k, known);
+    }
+    this.rebuildFollowSet(model, plan, scope, commands);
+    for (const w of planToNameWrites(model, deviceView ?? plan)) this.nameSnapshot.set(nameKey(w), w.value);
+    if (since === undefined) return;
+    // Restore what the view could not know: a notify the device sent after the read was
+    // issued. Confined to the addresses this capture registered, so the shape still comes
+    // from the live plan alone.
+    for (const [k, entry] of this.directJournal) {
+      if (entry.at > since && this.index.has(k)) this.snapshot.set(k, entry.value);
+    }
+  }
+
+  /**
+   * Rebuild the follow address set and its index from `commands`, and mark it for
+   * re-registration. The SNAPSHOT is not touched: this runs mid-flush for an edit that
+   * reshapes the set without a device read behind it, where the snapshot must go on
+   * holding what the device was last known to have.
+   *
+   * Called from `capture()` with its own command list, and from `flush()` when the
+   * emitted set moved under an edit that reaches no capture at all — a send wire is the
+   * one that does, since no SEND_* param carries a `sideEffect`.
+   */
+  private rebuildFollowSet(model: DeviceModel, plan: Plan, scope: WriteScope, commands: VdCommand[]): void {
+    this.index.clear();
+    const addrs: Array<[number, number, number]> = [];
+    for (const c of commands) {
       addrs.push([c.paramId, c.x, c.y]);
       const direct = (PARAMS as Record<string, ParamSpec>)[c.name].follow === "direct";
-      this.index.set(k, { name: c.name, node: c.node, direct });
+      this.index.set(cmdAddr(c), { name: c.name, node: c.node, direct });
     }
     // Name addresses join the registration set. They are not in `planToCommands`
     // (the app writes names through a separate string path), so for the life of the
@@ -586,14 +611,22 @@ export class LiveSync {
     }
     this.followAddrList = addrs;
     this.followSetStale = true;
-    for (const w of planToNameWrites(model, deviceView ?? plan)) this.nameSnapshot.set(nameKey(w), w.value);
-    if (since === undefined) return;
-    // Restore what the view could not know: a notify the device sent after the read was
-    // issued. Confined to the addresses this capture registered, so the shape still comes
-    // from the live plan alone.
-    for (const [k, entry] of this.directJournal) {
-      if (entry.at > since && this.index.has(k)) this.snapshot.set(k, entry.value);
+  }
+
+  /**
+   * Whether `commands` is the emitted set the follow list was last built from. The
+   * numeric addresses are its prefix, in command order, so this is an integer compare per
+   * address and no string building — cheaper than the identity join the follow layer does
+   * when it is asked to re-register.
+   */
+  private followSetMatches(commands: VdCommand[]): boolean {
+    if (this.followAddrList.length < commands.length) return false;
+    for (let i = 0; i < commands.length; i++) {
+      const a = this.followAddrList[i];
+      const c = commands[i];
+      if (a[0] !== c.paramId || a[1] !== c.x || a[2] !== c.y) return false;
     }
+    return true;
   }
 
   /** Resolve an incoming device notify address to its catalog name, owner node,
@@ -667,6 +700,16 @@ export class LiveSync {
       const writes = new Map<number, { mark: number; node?: string; changed: boolean }>();
       const scope = this.scope();
       const commands = planToCommands(model, plan, scope);
+      // The set can only be rebuilt by a capture, and a flush reaches one only through a
+      // `sideEffect` param's converge or refetch epilogue — so an edit that moves the set
+      // with no such head in it would leave the registration behind until something
+      // reconciled. No gesture produces one today (every default connection is fixed
+      // routing the graph refuses to cut, and none of the 310 routes an operator could
+      // draw moves the set), which is a property of the current model rather than of this
+      // layer: the comparison is an integer per address and holds it by construction.
+      // Taken before the first await so the rebuild cannot interleave with a capture, and
+      // the snapshot is left alone — nothing has been read.
+      if (!this.followSetMatches(commands)) this.rebuildFollowSet(model, plan, scope, commands);
       // Both lists below are frozen at flush start; the snapshots they are diffed against
       // are not. Any await can let a device-side change land (noteDirect's one entry, or a
       // reconcile's whole capture), and what a frozen list carries is then older than what

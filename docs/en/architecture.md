@@ -1639,11 +1639,15 @@ path ahead of its converge, and the registration that covers it is posted at the
 the settle has spent its bound. It is registered only while the plan carries a preset, i.e. while the channel is
 in SSMCS mode.
 
-**The set is re-registered by the flush that changes it — when that flush CAPTURES.** `capture()` is what rebuilds
-the set, and a flush reaches it only through a `sideEffect` param's converge or refetch epilogue. A COMP/EQ mode
-change does. **A send wire does not**: `SEND_LEVEL` / `SEND_PAN` / `SEND_ON` / `SEND_TAP` carry no `sideEffect`, so
-drawing or cutting one moves the emitted set — measured, 5 addresses for one CH → MIX send — and leaves the
-registration where it was until something reconciles. That window is still open for wires.
+**The set is re-registered by the flush that changes it.** `capture()` is what rebuilds the set, and a flush
+reaches one only through a `sideEffect` param's converge or refetch epilogue — a COMP/EQ mode change does, and
+nothing without such a head does. So the flush also **compares the emitted set against the follow list before its
+first await**, and rebuilds the list (not the snapshot — nothing has been read) when they differ. That comparison
+has no reachable trigger today, and the measurement is why it exists rather than why it does not: `SEND_LEVEL` /
+`SEND_PAN` / `SEND_ON` / `SEND_TAP` carry no `sideEffect`, so a wire edit is the shape that would move the set with
+no capture behind it — but **every connection the default plan carries is fixed routing the graph refuses to cut**,
+and of the **310 routes** the model would let an operator draw, the emitted set moves for **none**. The property
+holds by construction instead of by that inventory staying true.
 
 Nothing asked the follow layer to re-subscribe from a flush at all, so an address a mode change added stayed
 unheard until the next reconcile happened to run. The flush now asks at its END, never inside itself: a
