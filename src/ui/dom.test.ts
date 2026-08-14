@@ -365,6 +365,25 @@ describe("holdInertOnBlur", () => {
     expect(input.disabled).toBe(true);
   });
 
+  it("forgets what it believed was down when the window comes back", () => {
+    const input = range();
+    // A touch drag whose release the window never heard: the app switch takes the
+    // foreground, the finger comes up over another application, and a touch id is never
+    // reused, so nothing will ever arrive to clear it.
+    input.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 7 }));
+    window.dispatchEvent(new FocusEvent("blur"));
+    window.dispatchEvent(new FocusEvent("focus"));
+    expect(input.disabled).toBe(false);
+
+    // An ordinary press afterwards, pressed and released in front of the app. Its release
+    // has to be believed: a stranded id leaves the count above zero forever, so nothing
+    // this press registered is ever taken down.
+    input.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 8 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 8 }));
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(input.disabled).toBe(false);
+  });
+
   it("ignores a wheel notch while the row is held inert", () => {
     const input = range();
     wheelStep(input);

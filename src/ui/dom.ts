@@ -313,6 +313,24 @@ function trackPointers(): void {
   // is why a touch release lost outside the window still needs the operator to press
   // again (see the hold's own note in the docs).
   window.addEventListener("pointermove", (e) => void (e.buttons === 0 && drop(e.pointerId)), true);
+  // The window coming back clears the whole set, because a release taken by another
+  // application is never delivered here and a touch id is never reused — so an id lost that
+  // way would sit in the set for the rest of the session, and the count would never reach
+  // zero again. What that costs is everything downstream of the count: a later press's
+  // release is not believed, so the listeners it registered are never taken down and a blur
+  // long afterwards disables a row nobody is touching (Device setup's commits its draft
+  // doing it). Safe to forget: the set decides only when a hold may be released, a hold only
+  // ever begins with a blur, and every hold is released by this same event anyway. A pointer
+  // genuinely still down re-registers on its next press.
+  //
+  // Not `capture: true`, unlike the four above: an element's own `focus` does not bubble
+  // but does propagate down, so a capturing window listener fires every time focus moves
+  // anywhere on the page — which would forget the pointer the operator is pressing WITH.
+  window.addEventListener("focus", () => {
+    if (pressedPointers.size === 0) return;
+    pressedPointers.clear();
+    for (const fn of [...pressEnded]) fn();
+  });
 }
 
 /** Forget every pointer this believes is down. For suites: a case that presses without
