@@ -649,8 +649,10 @@ the four merges between those two figures and 75 are what the third leak above w
 
 The required workflows run in parallel, so a merge waits for the slowest of them, which on those 75 is
 this one. Playwright shards by case count and the expensive tiers land together, so its wall clock is
-the slowest shard's rather than a third of the machine time above. No wall-clock reading is kept here:
-runner variance moves it between runs, so a figure written down is a figure that was true once.
+the slowest shard's rather than a third of the machine time above. No **runner** reading is kept for it
+— a CI clock moves between runs, so a figure written down is a figure that was true once. The local
+one, taken on a known machine in isolation, stays in its own table above and is the only wall clock
+this document states.
 
 `race.yml` carries **no trigger filter at all**, so `detect` runs on every pull request. That is what
 makes `race-required` usable as a merge condition: a workflow skipped by a trigger filter reports no
