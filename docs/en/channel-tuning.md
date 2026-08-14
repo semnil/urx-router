@@ -88,6 +88,20 @@ tokens only `--groove` is actually read here; `--strip-w` / `--head-h` are inher
 └──────────────────────────────────────────────────────────────┘
 ```
 
+**The control column is capped at 400 px rather than given half.** `.prefs-grid` splits its shell down
+the middle, and a tuning screen's controls do not need that: a parameter row is a fixed-width slider
+plus its label, and the readout tiles stretch to whatever column they are given. Measured with the
+column set to `max-content`, the widest any screen actually asks for is 392 px — the 4-band EQ and the
+SSMCS EQ face in English, where the tag pill on a locked Q row decides it — against 297–350 px for the
+rest, in both languages. The cap is scoped to `#dyn-screen-box`, so Preferences and the device setup
+keep their halves. What it returns to the display column is 149 px: the 4-band EQ's plot goes
+369 → 518 px and the SSMCS MAIN face's canvas 547 → 696 px.
+
+The cost lands on the screens with no plot. GATE, COMP and the SSMCS COMP face in LADDER centre a lane
+rack inside a full-width frame, so a wider column widens the black either side of it. The frame's edges
+do not move and no value reads differently — a pull request that changes this carries a LADDER crop as
+well as a plot one.
+
 ### Display modes
 
 Two modes over one control set, switched from a tab in the section header — directly above the
@@ -377,6 +391,87 @@ POST bar a few pixels to the right, the rule was a second display of one quantit
 the two, since a time axis gives a live reading no position. COMP keeps its dot because its plot maps
 input to output, where a live level does have one.
 
+## SSMCS
+
+The Sweet Spot Morphing Channel Strip is the bank a MONO IN channel's COMP/EQ type switches to in
+place of the compressor and the 4-band PEQ. It is one processor with more in it than one screen can
+show, so it takes **three faces of one screen** rather than three screens:
+
+| Face | Bar | Display | Rows | Taps |
+| --- | --- | --- | --- | --- |
+| MAIN | none | the compressor's transfer curve and the EQ's response, side by side on one canvas | Sweet Spot Data / Comp Drive / Morphing / Out Gain | 108 → 110 → 111 → 112 |
+| COMP | LADDER / CURVE | the lane rack or the transfer curve | Attack / Release / Ratio / Knee / Side Chain / Q / Freq / Gain | 108 → 110 → 111 |
+| EQ | LOW / MID / HIGH | the response and the lanes at once | Band / Q / Freq / Gain | 111 → 112 |
+
+The faces are moved between from a segment at the right end of the **title row**, and the title stays
+`[CH 1] SSMCS` on all three. Naming each face would print `[CH 1] Comp` and `[CH 1] EQ` — the shipped
+COMP and EQ screens' titles exactly — and nothing would then say which of the channel's two banks is
+on screen. The title row is also the only row a face segment can sit in without colliding with the
+display column's own bar, which on the EQ face selects a band.
+
+Moving between faces does not close the screen. The three faces are one piece of work on one channel —
+turn Morphing, read the reduction, touch Mid, go back to Comp Drive — and closing and reopening between
+each step would rebuild the modal and hand the meter slot back and take it again. The panel's height
+may differ per face (4 / 8 / 4 rows); the host's "no row is ever removed" invariant forbids an *edit*
+moving the layout under the pointer, and the segment that moves between faces sits above the grid, so
+nothing under the pointer is replaced by pressing it.
+
+**The address set is a subset relation, not an identity.** MAIN's four taps are the union of the other
+two faces', so a face change either narrows the registration or widens it back, and the same comparison
+the DUCKER's moving key tap needs (below, "Scope") carries it.
+
+**The internal stages are the taps that already exist.** Measured on a URX44V: 108 into the compressor,
+110 its reduction, 111 between the compressor and the EQ, 112 after the EQ. 111 is a live tap in this
+mode — driving the SSMCS Mid band to +18 dB moved 112 by 7 dB and left 108 and 111 where they were.
+That is why MAIN carries four lanes rather than three: the transfer curve's live dot has to point at
+the compressor's own output, and 112 would put the EQ's gain on the compressor's curve.
+
+### The lane ruler, and what it does not carry
+
+-60 dB floor, 6 dB steps — the ruler the 4-band EQ screen uses, because these stages carry programme
+level. GATE and COMP use -72 / -54 because those are their thresholds' domains; **this bank exposes no
+value in dBFS at all**, so there is nothing for a fader cap to ride and the rack has no gesture. The
+corner is driven by an internal value the unit never shows.
+
+The GR lane is the COMP screen's: address 110, its own 0…-24 dB scale, on the COMP face only. On MAIN
+the same reduction is the gap between the transfer curve and unity under the live dot, plus its readout
+tile.
+
+### The two curves
+
+Both are drawn from measured models, and neither is drawn in a line style that would claim one is less
+certain than the other — they are both measurements, and dashing one of them would say in a picture
+that it is the less reliable. What stays an assumption is the curvature between a knee's edges, which
+is the same assumption the shipped COMP curve carries.
+
+- **The compressor.** Its threshold is an internal value driven by Comp Drive, and the drive adds gain
+  of its own below the knee — so that one knob moves the corner *and* lifts the output, which is what
+  the operator sees on the OUT lane. A drive of zero is not a threshold pushed out of range: it
+  disables the compressor. The knee is **asymmetric**, opening further above the threshold than below,
+  so `dyn-comp.ts`'s `KNEE_WIDTH_DB` — one symmetric width per setting — cannot express it and must not
+  be reused. The full-scale reduction annotation is read off the drawn curve with the gain terms taken
+  back out, not off the asymptote, so a knee still open at 0 dBFS is labelled with what it does there.
+- **The EQ.** Three fixed bands: LOW shelving, MID peaking, HIGH shelving. The shelf convention is the
+  4-band model's — the nominal frequency is the point 3 dB below the plateau — and the peaking Q is
+  **not**: the 4-band's "the unit's Q is twice the biquad Q" was refuted here, and the two factors sit
+  adjacent in `eq-response.ts` so neither can be carried to the other block by accident. A band switched
+  off leaves the response and keeps its marker, which sits on the composite curve at its own frequency:
+  selected-but-not-contributing is two states, and one picture reads both.
+
+### What the rows never do
+
+They are never locked while Morphing runs. Morphing and a Sweet Spot preset are a **recomputation**,
+not a continuing drive: the device rewrites the compressor, side-chain, EQ and Out Gain values the
+moment one is written, and from the next moment they are the operator's again — the unit's own screen
+accepts an edit immediately too. That is what makes them unlike the EQ's 1-knob, whose rows are reserved
+out of sight for as long as it is on. The repair is a read (`ParamSpec.sideEffect: "refetch"`, and the
+`drives` list beside it), not a lock.
+
+The EQ face carries no filter-type row. All three bands are fixed, so the row would be the same locked
+one-value row on every band — which is not why the 4-band screen keeps its Type row (there, two of four
+bands are typed, and dropping it would change the panel's height per band). The two shelves' Q row does
+stay, locked and tagged, for exactly that reason.
+
 ## Off the scale is off the frame
 
 Every plot draws its curve at the **true** value, and the host **clips it to the plot area**. Clamping
@@ -405,10 +500,16 @@ Two deliberate exceptions, both stated where they are made:
 
 ## Scope
 
-GATE and COMP are MONO IN features, so those screens exist for CH1-4 (CH1-2 on URX22) only. The EQ
-exists wherever there is a 4-band PEQ: every mono channel outside SSMCS mode, every stereo channel,
-each MIX bus and the STEREO master. The node is fixed by where the screen was opened from — there is
-no in-screen node switch.
+GATE is a MONO IN feature, so that screen exists for CH1-4 (CH1-2 on URX22) only. COMP is the same
+channels **in COMP->EQ mode**, and the SSMCS faces are the same channels in the other mode — the two
+banks are exclusive, so a channel offers one set or the other and never both. The EQ exists wherever
+there is a 4-band PEQ: every mono channel outside SSMCS mode, every stereo channel, each MIX bus and
+the STEREO master. The node is fixed by where the screen was opened from — there is no in-screen node
+switch.
+
+Neither is the PROCESSOR fixed, for one bank. The SSMCS faces move between each other from the title
+row (above), which is a processor switch inside one open screen — but never a node switch, because a
+screen is opened from a per-channel control in the first place.
 
 The address set is **not** fixed with it. The DUCKER's key lane reads at the source's own Rec Point
 (above), so a Rec Point change under an open screen — from the graph inspector, an undo, or the unit's
@@ -523,8 +624,14 @@ per address, so a batch carrying more than one frame for an address keeps only t
 
 | Where | Control |
 | --- | --- |
-| GRAPH inspector, GATE / COMP / EQ section | A full-width button below the ON/OFF toggle, its label centred and a caret at the trailing edge |
+| GRAPH inspector, GATE / SSMCS / COMP / EQ section | A full-width button below the ON/OFF toggle, its label centred and a caret at the trailing edge |
 | CONSOLE strip | A narrow chip beside each processor chip the strip has, labelled `▸` |
+
+In SSMCS mode the same four sections and the same four chips are there, and what changes is which
+screen each opens: the SSMCS section opens the MAIN face, and the COMP and EQ sections open the COMP
+and EQ faces of the same bank. They keep the shipped screens' own labels ("Comp screen", "EQ screen")
+rather than gaining their own: the launcher sits in the same section and on the same chip, and a
+channel never carries both banks, so the label names exactly one thing on it.
 
 Both marks point right and both say the same thing, but they are drawn differently on purpose: each
 belongs to the family of the surface it sits on. The inspector's is built exactly like the section
@@ -548,8 +655,12 @@ The EQ's opener takes a fourth chip row on a mono channel, which the head has to
 inner height is 254 px, a chip row costs 24 px, and the CH3/CH4 strips — the ones with a Hi-Z chip —
 had 0.9 px of slack at the old 252 px. `--head-h` is 276 px, which takes 24 px from the fader zone on
 every strip, including those with no chips at all. The opener is not offered where the rate has the
-EQ forced off (the toggle beside it is read-only there), nor in SSMCS mode, where the EQ chip belongs
-to the morphing strip and there is no 4-band PEQ to open.
+EQ forced off, since the toggle beside it is read-only there.
+
+**A strip in SSMCS mode is one chip pair taller still.** The morphing strip's own master and its
+opener take a fifth row, so switching a mono channel's bank moves the head — which is why the height
+is measured per plan rather than cached per model. It moved the other way before this bank had a
+screen to open: an SSMCS channel then carried no COMP or EQ opener at all.
 
 ## MIDI assignment
 
@@ -570,6 +681,12 @@ and the same learn gesture the CONSOLE strips use (`ui/midi-learn.ts`; the catal
   every open. `DynProcessor.controlId` is where a descriptor answers which id one of its value keys
   has — the host stays ignorant of which processor it is showing, and answers `null` for a key with no
   control.
+- **The SSMCS scopes mirror the plan's own nesting** — `@ssmcs` for Comp Drive / Morphing / Out Gain,
+  `@ssmcs.comp`, `@ssmcs.sc` and `@ssmcs.eq.low` … `@ssmcs.eq.high` — so an id reads as the path to the
+  value it edits, and a side-chain Q is told from a band's by the scope rather than by a second token.
+  Its master ON takes the bare node scope the other section masters take. The two shelves' Q rows and
+  the Sweet Spot Data preset are not offered: a shelf has no Q parameter at all, and the preset is an
+  enum selector.
 - **The grid is the field table's.** A MIDI value and a dragged slider both resolve a position first
   (`dynToPos` / `dynFromPos` in `control/translate.ts`), so the two cannot land on different values of
   one grid.
@@ -598,9 +715,10 @@ Where each piece lives follows from that:
 | `src/ui/dyn-screen.ts` | the host: modal, lanes, meter feed, canvas, rows from a `DynField[]` |
 | `src/ui/dyn-chan.ts` | what GATE and COMP share as MONO IN channel-strip processors — their binding, their sub-object plan I/O, their display bar |
 | `src/ui/dyn-plot.ts` | the dB-in / dB-out transfer plot those two draw: `transferPlot()` returns the five hooks it answers, from three axis constants and a hint |
-| `src/ui/dyn-{gate,comp,eq}.ts` | the descriptors — only what differs |
-| `src/core/control/translate.ts` | every field table, including the EQ's (`eqBandFields`), so a measured fine grid or range sits beside the others rather than in a UI file |
-| `src/core/eq-response.ts` | the measured filter model, tested against the device sweeps |
+| `src/ui/dyn-freq-plot.ts` | the frequency-against-gain plot the two EQs share: its geometry, its grid, and the band markers — the same pill in the same face on both, since only the band set and the filter model differ |
+| `src/ui/dyn-{gate,comp,eq,ducker,ssmcs}.ts` | the descriptors — only what differs |
+| `src/core/control/translate.ts` | every field table, including the EQ's (`eqBandFields`) and the SSMCS strip's, so a measured fine grid or range sits beside the others rather than in a UI file |
+| `src/core/eq-response.ts` | both measured filter models, tested against the device sweeps |
 
 The EQ's reserved-block line is DOM the descriptor puts in its own `rows.tail`, not a host hook: it
 is absolutely positioned (so it costs no height) with `pointer-events: none` — a label that swallows
@@ -655,6 +773,16 @@ capture.
 | Leaving the COMP knee out of the curve | The selector would change nothing on screen — the same failure the gate's output axis already cost us. Measuring the widths was cheaper than shipping a control with no feedback |
 | A second instance of the screen for COMP | Both would bind the same modal host and the same single meter slot; the processor is chosen per open instead |
 | T / R / G grips dragged on the COMP curve, as the unit does it | Built, then removed. A press that missed a grip fell through to the threshold drag beneath it, so pressing the gain grip moved the threshold; and the grips were drawn clamped inside the plot while hit-tested at their true position, which put the two ~13 px apart at the axis ends. Underneath both defects, three grips on one plot cannot tell which value a press meant |
+| All eighteen SSMCS rows on one screen | The rows alone are ~18 × 42 px ≈ 756 px against `.consent-box`'s `max-height: calc(100vh - 48px)`, which is 752 px at the 800 px window floor — over before the four headings, the title and the action row are added, and into the internal scroll every shipped screen avoids |
+| A fourth SSMCS face for the side chain, as the unit splits it | The unit splits it because its LCD is small. Eight rows fit one panel here, and the Side Chain toggle doubles as the divider the filter's three rows sit under |
+| The face switch in the display column's heading | It would take the same row as the EQ face's band bar, and again as a third bar once the COMP face has LADDER / CURVE. The title row has room and nothing to collide with |
+| A lane rack on the SSMCS MAIN face | Two plots and a rack in one column leave each plot ~152 px of drawing area at a fixed 320 px height, so the same +6 dB bell reads at three times the slope it has on the EQ face. The lanes are still subscribed and still printed as readouts without one — the host builds lane elements only when a descriptor asks for them |
+| Widening the display column by giving the readout tiles fewer columns | Measured: the MAIN face's control column is 350 px with the tiles in two columns and 350 px with them in three. A grid of `1fr` tracks fills its parent; what asks for width is the parameter row's fixed-width slider. The observation that the column had slack was right and the lever was wrong — the split between the columns is the lever |
+| Merging the SSMCS GR into the OUT slot (`sameSlot`, as the DUCKER does) | The only way to fit a rack beside two plots before the column split changed; unnecessary once it did, and worse than useless here, since MAIN and COMP read the same address set and a rack that reassembled itself per face would move under a switch that is supposed to be a move |
+| A Type row on the SSMCS EQ face, locked, as the 4-band screen keeps its own | The 4-band keeps it because two of its four bands are typed and dropping it would change the panel's height per band. All three bands here are fixed, so the row would be the same locked one-value row every time and contributes nothing to the height being constant |
+| Out Gain on all three SSMCS faces, as the unit's status bar shows it | The unit repeats it because it is what the encoder is assigned to. Repeating it here only adds occasions for the same value to look different on two faces |
+| Locking the SSMCS COMP / EQ rows while Morphing is engaged | Morphing is a recomputation, not a continuing drive: ownership returns to the operator the moment it is written, and the unit's own screen accepts an edit immediately. Locking would forbid what the hardware allows |
+| Drawing the SSMCS plots from the 4-band EQ's measured model | Extrapolation to a different DSP block. The 4-band model needed three corrections that only came out of measuring, which is the whole argument against drawing one unmeasured |
 
 ## Accepted trade-offs / watch items
 
@@ -674,7 +802,10 @@ Identical to the inspector's: `onUpdateNodeParams` merges the patch into the pro
 `plan.nodeParams[id]` and calls `markChanged()`, which flags the plan dirty, schedules the live mirror
 and feeds MIDI feedback. A STEREO-linked pair in BAL mode mirrors the group to its partner like any
 other node parameter. Where those values live is the descriptor's business: GATE and COMP keep one
-sub-object each, the EQ spreads across `eqBands[i]` and `eqOneKnob` and routes a patch by key.
+sub-object each, the EQ spreads across `eqBands[i]` and `eqOneKnob` and routes a patch by key, and the
+SSMCS faces flatten a nested shape (`ssmcs`, `ssmcs.comp`, `ssmcs.sc`, `ssmcs.eq.<band>`) onto one
+record and split a patch back apart by key — which is why its side-chain filter's three values are
+prefixed there and un-prefixed in a control id, where the scope does that job.
 
 **A 1-knob write comes back as a read.** `ParamSpec.sideEffect` distinguishes two repairs, because
 they differ in who owns what the device just moved:
