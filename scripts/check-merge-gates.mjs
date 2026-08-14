@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Verifies that every status check the branch ruleset requires can actually be reported
-// on every pull request.
+// on every pull request, and — over EVERY workflow, not only those a required context
+// lives in — that a precondition one job declares is shared by the chain beneath it.
 //
 // GitHub's rule, and the whole reason this file exists: a workflow skipped by a TRIGGER
 // filter (`on.pull_request.paths`) produces no check run at all, so a required check it
@@ -169,6 +170,48 @@ const condition = (job) => {
 // The check-run name is the job's `name:` when it has one, and the job id otherwise —
 // which is what the ruleset matches on.
 const contextOf = (id, job) => unquote(job.children.get("name")?.value ?? "") || id;
+
+// The whole `if:`, including the continuation lines of a block scalar. `condition()` above
+// reads the node's VALUE, which for `if: >-` is the indicator and nothing else — every
+// term would be invisible to a rule that asked it. This one takes the node's own lines,
+// drops the key and the indicator, and joins.
+function conditionText(root, job) {
+  const node = job.children.get("if");
+  if (!node) return null;
+  const lines = textOf(root, node).split("\n");
+  const first = lines[0].replace(/^\s*if:\s*/, "").replace(/^[>|][-+]?\d*\s*$/, "");
+  return [first, ...lines.slice(1)]
+    .join(" ")
+    .replace(/\$\{\{|\}\}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// The `needs.<job>.result == 'success'` terms a condition requires OUTRIGHT — joined by
+// `&&` at the top level, so a term inside parentheses does not count. `(A == 'success' ||
+// A == 'skipped')` says the opposite of a requirement about A and must not be read as one.
+function requiredSuccesses(condition) {
+  const terms = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < condition.length; i++) {
+    const ch = condition[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (depth === 0 && ch === "&" && condition[i + 1] === "&") {
+      terms.push(condition.slice(start, i));
+      i++;
+      start = i + 1;
+    }
+  }
+  terms.push(condition.slice(start));
+  const out = new Set();
+  for (const term of terms) {
+    const match = /^\s*needs\.([A-Za-z_][\w-]*)\.result\s*==\s*'success'\s*$/.exec(term);
+    if (match) out.add(match[1]);
+  }
+  return out;
+}
 
 // Does a concurrency group key give every run of its own a group of its own?
 //
@@ -429,6 +472,56 @@ function checkJob(workflow, id, job, context) {
         `gate \`${context}\` never reads \`needs.*.result\` or never runs \`exit 1\` — with \`if: always()\` it reports success ` +
           `whatever its dependencies did, which makes it a required check that cannot fail`,
       );
+    }
+  }
+}
+
+// --- preconditions a consumer declares ------------------------------------------
+
+// Everything above speaks for the jobs a required context waits on, in workflows that
+// trigger on `pull_request`. This speaks for every workflow, because what it catches is
+// not about a merge gate: it is a job declaring a precondition that the jobs beneath it do
+// not share.
+//
+// If job B will not run unless X succeeded, then a job B also needs — one that runs BEFORE
+// B without waiting for X — can still run on a run where X failed, and produce something B
+// will never use. `release.yml` was exactly that: `build` required `licenses`,
+// `create-release` did not, so a failed notice still created the draft that `build` would
+// then never fill, and publishing that draft is what ships the demo.
+//
+// Deliberately its own traversal rather than a relaxation of the gate above: that path is
+// entered only for a required context, and its rules (4 in particular, `needs:` without
+// `if: always()`) are statements about a merge gate that misfire on an ordinary job.
+function checkPreconditionChains(workflows) {
+  for (const workflow of workflows) {
+    if (!workflow.root || workflow.jobs.size === 0) continue;
+    const needsOf = new Map();
+    for (const [id, job] of workflow.jobs) needsOf.set(id, listOf(job.children.get("needs")));
+    // Transitive, because a chain satisfies the requirement as well as a direct edge does.
+    const reaches = (from, target, seen = new Set()) => {
+      for (const next of needsOf.get(from) ?? []) {
+        if (next === target) return true;
+        if (seen.has(next)) continue;
+        seen.add(next);
+        if (reaches(next, target, seen)) return true;
+      }
+      return false;
+    };
+    for (const [id, job] of workflow.jobs) {
+      const cond = conditionText(workflow.root, job);
+      if (!cond) continue;
+      for (const target of requiredSuccesses(cond)) {
+        for (const sibling of needsOf.get(id) ?? []) {
+          if (sibling === target || requiredSuccesses(cond).has(sibling)) continue;
+          if (reaches(sibling, target)) continue;
+          finding(
+            `${workflow.path} (${sibling})`,
+            `runs ahead of \`${id}\`, which will not run unless \`${target}\` succeeded — but \`${sibling}\` ` +
+              `does not wait for \`${target}\`, so on a run where \`${target}\` fails it still runs and produces ` +
+              `something nothing consumes. Add \`${target}\` to \`${sibling}\`'s \`needs:\``,
+          );
+        }
+      }
     }
   }
 }
@@ -701,6 +794,7 @@ export function inspect({ workflowSources, manifestSource, ruleset = null }) {
   const required = readManifest(manifestSource);
   const workflows = readWorkflows(workflowSources);
   const seen = checkWorkflows(workflows, required);
+  checkPreconditionChains(workflows);
   const notes = ruleset ? compareRulesets(ruleset, required, integrationId) : [];
   return { findings: findings.slice(), required, workflows, seen, notes };
 }
@@ -748,7 +842,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   const silent = prWorkflows.filter((workflow) => ![...run.seen.values()].includes(workflow.path));
   console.log(
     `OK: ${run.required.size} required context(s) over ${prWorkflows.length} pull-request workflow(s), ` +
-      `all reportable on every pull request`,
+      `all reportable on every pull request; declared preconditions hold across ${run.workflows.length} workflow(s)`,
   );
   for (const [context, path] of run.seen) console.log(`    ${context} <- ${path}`);
   if (silent.length) console.log(`    advisory only (no required context): ${silent.map((w) => w.path).join(", ")}`);
