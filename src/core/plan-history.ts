@@ -96,6 +96,15 @@ export interface PatchTouch {
 export const MAX_ENTRIES = 100;
 
 // A ref is "nodeId:portId", so NUL cannot occur in either half of a wire key.
+//
+// Nothing in this module enforces that, and which module does is the part worth
+// knowing: `deserialize` accepts any string for a wire's `from`/`to`, and what refuses
+// one carrying a NUL is the load funnel two files away — such a ref matches no routing
+// rule, so `planProblems` reports `noRule` and the document never opens. The invariant
+// is real and held elsewhere, which is why nothing that SPLITS a key may rest on it to
+// be correct: the two splitters below feed a label and a node-id set, and the one place
+// that used to re-derive a wire from its key in order to MUTATE the plan no longer does
+// — it splices the index it already holds.
 const WIRE_SEP = "\u0000";
 
 /** A contest key with its wire join undone, for anything that SHOWS one.
