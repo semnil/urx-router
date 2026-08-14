@@ -252,18 +252,28 @@ function peel(term) {
 // subtraction.
 const NEEDS_SUCCESS = /^needs(?:\.([A-Za-z_][\w-]*)|\[\s*(['"])([^'"]+)\2\s*\])\.result\s*==\s*'success'$/;
 
-// What a condition requires OUTRIGHT, and the terms it could not read. Naming the second
-// set is the point: the alternative is a rule that quietly requires less than the author
-// wrote, which is the direction that ships the defect this traversal exists for.
-//
-//   a top-level `||` anywhere        the whole condition is a disjunction: nothing required
-//   `( … || … )` as a term           says the OPPOSITE of a requirement about that job
-//   `(needs.x.result == 'success')`  the requirement it looks like, once peeled
-//   anything else naming a needs result and 'success' is refused rather than dropped
-function requiredSuccesses(expr) {
+// A branch that can never be the one that holds contributes nothing to what a disjunction
+// requires. `false` is the only such branch this reader recognises, and recognising it is
+// what keeps `X || false` — which is `X` — from reading as "requires nothing".
+const isFalseLiteral = (term) => term === "false";
+
+// A conjunction requires the UNION of its terms. A disjunction requires the INTERSECTION
+// of what its branches require: whichever branch holds, a job in every branch's set had to
+// have succeeded. `X || always()` requires nothing because one branch requires nothing;
+// `(a && X) || (b && X)` requires X because both do.
+function evaluate(expr, unreadable) {
+  const branches = topLevelSplit(expr, "||");
+  if (branches.length > 1) {
+    const sets = [];
+    for (const branch of branches) {
+      const term = peel(branch);
+      if (isFalseLiteral(term)) continue;
+      sets.push(evaluate(term, unreadable));
+    }
+    if (sets.length === 0) return new Set();
+    return sets.reduce((acc, set) => new Set([...acc].filter((job) => set.has(job))));
+  }
   const required = new Set();
-  const unreadable = [];
-  if (topLevelSplit(expr, "||").length > 1) return { required, unreadable };
   for (const raw of topLevelSplit(expr, "&&")) {
     const term = peel(raw);
     const match = NEEDS_SUCCESS.exec(term);
@@ -271,9 +281,24 @@ function requiredSuccesses(expr) {
       required.add(match[1] ?? match[3]);
       continue;
     }
-    if (topLevelSplit(term, "||").length > 1) continue;
+    // A parenthesised disjunction is not opaque: it requires whatever all of its branches
+    // do, which for `(X == 'success' || X == 'skipped')` is nothing and for a group that
+    // repeats a term in every branch is that term.
+    if (topLevelSplit(term, "||").length > 1) {
+      for (const job of evaluate(term, unreadable)) required.add(job);
+      continue;
+    }
     if (/needs[.[]/.test(term) && /'success'/.test(term)) unreadable.push(term);
   }
+  return required;
+}
+
+// What a condition requires OUTRIGHT, and the terms it could not read. Naming the second
+// set is the point: the alternative is a rule that quietly requires less than the author
+// wrote, which is the direction that ships the defect this traversal exists for.
+function requiredSuccesses(expr) {
+  const unreadable = [];
+  const required = evaluate(expr, unreadable);
   return { required, unreadable };
 }
 

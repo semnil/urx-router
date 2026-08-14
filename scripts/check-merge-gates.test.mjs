@@ -566,10 +566,24 @@ jobs:
     expect(chainFindings(chain("[check, notice]", cond))).toEqual([]);
   });
 
-  // A top-level `||` makes the whole condition a disjunction: it requires nothing, so the
-  // rule has nothing to say rather than something wrong to say.
-  it("requires nothing from a condition joined at the top level by ||", () => {
+  // A disjunction requires what EVERY branch that can hold requires. Treating a top-level
+  // `||` as "requires nothing" was wrong in the direction that matters: `X || false` is
+  // `X`, and a group repeating the same term in every branch requires it too.
+  it("requires nothing when one branch requires nothing", () => {
     expect(chainFindings(chain("check", "needs.notice.result == 'success' || always()"))).toEqual([]);
+  });
+
+  const BOTH = "needs.check.result == 'success' && needs.notice.result == 'success'";
+  it.each([
+    ["a branch that can never hold", `(${BOTH}) || false`],
+    ["branches that agree", `(${BOTH}) || (!cancelled() && ${BOTH})`],
+    [
+      "a parenthesised group whose branches agree",
+      alsoCheck("((always() && needs.notice.result == 'success') || (needs.notice.result == 'success'))"),
+    ],
+  ])("still requires what survives %s", (_name, cond) => {
+    expect(chainFindings(chain("check", cond)).join("\n")).toContain("Add `notice` to `draft`'s `needs:`");
+    expect(chainFindings(chain("[check, notice]", cond))).toEqual([]);
   });
 
   // The one direction a reader must not take quietly: a term it cannot parse is a
