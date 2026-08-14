@@ -687,6 +687,33 @@ describe("LiveSync sideEffect refetch", () => {
     expect(drives).not.toContain("SSMCS_MORPHING");
   });
 
+  // Registration is a SECOND thing from the flush's refetch, and it was missing in a way a
+  // re-subscribe could never fix: capture() builds the candidate set, and it read
+  // planToNameWrites only for the name snapshot — so a catalog string address was in no list
+  // at all, however often the follow layer re-subscribed. Pinned on `followAddrs()`, which is
+  // the list itself, rather than on what a session happens to have subscribed by some moment.
+  it("offers the preset address for registration, indexed to its owner node", () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      compEqType: COMP_EQ_SSMCS,
+      ssmcs: { ...structuredClone(SSMCS_INITIAL), sweetSpotData: 1 },
+    };
+    const live = liveFor(plan);
+    live.begin();
+    const preset: [number, number, number] = [PARAMS.SWEET_SPOT_DATA.id, 0, 0];
+    expect(live.followAddrs()).toContainEqual(preset);
+    // And routed like a value rather than like a name: a notify for it re-reads ch1, which is
+    // what a preset changed on the unit needs. A name resolves through a different index and
+    // would answer undefined here.
+    expect(live.lookup(...preset)).toEqual({ name: "SWEET_SPOT_DATA", node: "ch1", direct: false });
+
+    // Only while the plan carries one: in COMP->EQ mode there is no preset to follow.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: 0 };
+    live.begin();
+    expect(live.followAddrs()).not.toContainEqual(preset);
+  });
+
   // The preset is a refetch head on the STRING path, which the flush's name loop used to walk
   // without consulting either set — so declaring it alone would have changed nothing. This
   // pins the PATH rather than the declaration: it fails if the loop stops reading the flag,

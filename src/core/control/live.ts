@@ -534,6 +534,20 @@ export class LiveSync {
         this.nameIndex.set(addrKey(nc.param, 0, y), node.id);
       }
     }
+    // The string writes that ARE a catalog row — the SSMCS preset — join it too. Without
+    // this they were in no list at all rather than merely unsubscribed: this method is what
+    // builds the candidate set, and it read `planToNameWrites` only for the name snapshot,
+    // so a catalog string address could never become a candidate however many times the
+    // follow layer re-subscribed. Indexed to the owner rather than into `nameIndex`: it is
+    // not a name, so a notify for it takes that node's scoped read instead of being placed
+    // directly. That is what makes a preset changed ON the unit followable, and what lets
+    // the flush's own settle end on the unit's announcement rather than at its bound.
+    for (const w of planToNameWrites(model, deviceView ?? plan)) {
+      if (w.name === undefined || w.node === undefined) continue;
+      addrs.push([w.param, 0, w.y]);
+      const direct = (PARAMS as Record<string, ParamSpec>)[w.name].follow === "direct";
+      this.index.set(addrKey(w.param, 0, w.y), { name: w.name, node: w.node, direct });
+    }
     // Addresses the app READS but never writes, enumerated by translate beside the emit
     // decision they mirror. Same consumer shape as the loop above: register, and index to
     // the node whose scoped read repairs the value. The registration is therefore no
@@ -719,15 +733,14 @@ export class LiveSync {
             for (const n of drives) names.add(n);
           }
           // The read may not start before the unit has spoken for this address — the rule the
-          // numeric writes take. TODAY that resolves at the BOUND rather than on the notify,
-          // and not because the unit is silent: it announces the preset write on its own
-          // address first (params.ts). The app does not hear it, because the registration set
-          // is only refreshed by a reconcile, so an address the plan grew from an app-side
-          // edit is unregistered until then and the bridge drops its notify. That is a
-          // property of the whole SSMCS block rather than of this param — entering the mode
-          // leaves its numeric addresses unregistered too (measured, t2b) — so it is not
-          // fixed here. Either way the read does not start inside the write's staleness
-          // window, which is what this line is for. It goes into
+          // numeric writes take. The unit does announce the preset write on its own address,
+          // first (params.ts), and capture() now puts that address in the candidate set so
+          // the app can hear it. What it does NOT decide is WHEN the follow layer subscribes
+          // to a candidate: that happens after a reconcile, so an address the plan grew from
+          // an app-side edit — this one and the numeric SSMCS block alike (measured, t2b) —
+          // is unheard until one runs, and this wait resolves at its bound instead. Either
+          // way the read does not start inside the write's staleness window, which is what
+          // this line is for. It goes into
           // `mustSettle` ALONE and not into the `written` map: that map is what the read
           // overlays its answers from, it is numeric, and a string notify carries its text in
           // a different field — so an entry there would answer a numeric read with a number
