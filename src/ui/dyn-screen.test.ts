@@ -594,6 +594,52 @@ describe("refresh", () => {
     window.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true }));
     expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
   });
+
+  // The third end, and the one no pointer event announces. Measured 2026-08-14 on
+  // Chromium (driven over its own DevTools socket) and on the shipping WKWebView: a
+  // window that loses the foreground with the button down gets `blur`, gets no
+  // `pointercancel`, and keeps the pointer capture. console.ts's trackDrag has the
+  // readings.
+  it("treats a window blur as a release", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const slider = rowsByKey(host.box).get("threshold")!;
+    host.box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    screen.refresh();
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
+  });
+
+  // And the cap, whose gate is that surviving capture rather than a flag the release
+  // above clears: without an ender of its own it kept writing thresholds to the plan
+  // and the live unit for every later move.
+  it("stops the threshold cap at a window blur", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const cap = host.box.querySelector<HTMLElement>("#dyn-threshold-cap")!;
+    const thr = (): number => (host.plan.nodeParams["ch1"]?.gate as { threshold: number }).threshold;
+
+    // jsdom gives the lane no box and no capture, and this is the one case that drags
+    // the cap — so both are answered here rather than in every screen's fixture.
+    const realRect = Element.prototype.getBoundingClientRect;
+    const realCapture = Element.prototype.setPointerCapture;
+    Element.prototype.getBoundingClientRect = () => ({ top: 0, height: 200 }) as DOMRect;
+    Element.prototype.setPointerCapture = function (): void {};
+    try {
+      cap.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientY: 40, pointerId: 1 }));
+      cap.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientY: 80, pointerId: 1 }));
+      const moved = thr();
+
+      window.dispatchEvent(new FocusEvent("blur"));
+      cap.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientY: 150, pointerId: 1 }));
+      expect(thr()).toBe(moved);
+    } finally {
+      Element.prototype.getBoundingClientRect = realRect;
+      Element.prototype.setPointerCapture = realCapture;
+    }
+  });
 });
 
 describe("localization", () => {

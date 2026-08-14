@@ -189,15 +189,35 @@ function trackDrag(
   const stop = (ev: PointerEvent): void => {
     if (mine(ev)) end();
   };
+  // Losing the window is the third way a press ends, and the drag outlives it. Measured
+  // 2026-08-14 in both engines: with the button down and the pointer captured, taking the
+  // OS foreground away fires `blur`, fires no `pointercancel`, and KEEPS the capture — on
+  // Chromium over its own DevTools socket, and on the shipping WKWebView (macOS 26.6.1,
+  // packaged 1.8.3), where the fader went on following the pointer while another app was
+  // frontmost, writing levels to the plan and out to the unit the whole time. Ending it
+  // here was then confirmed in the same engine: the same gesture left the value where the
+  // window was lost.
+  //
+  // Playwright cannot see any of it — it emulates focus, so a page reports itself focused
+  // whatever the foreground is, which is why no E2E tier caught this and why the pins are
+  // in the unit suite. On macOS the release itself still arrived (the button was let go
+  // over another app and the drag ended there), so what this closes on that platform is
+  // the writing done while the window is away rather than a drag standing forever — and
+  // history.ts already ends its press at a blur, so those writes were also landing in a
+  // NEW undo entry.
   const end = (): void => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", stop);
     window.removeEventListener("pointercancel", stop);
+    window.removeEventListener("blur", end);
     opts.onEnd?.();
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", stop);
   window.addEventListener("pointercancel", stop);
+  // Not `capture: true`: blur does not bubble, so a capturing listener would also be
+  // handed every field's own blur inside the strip and end the drag on the first one.
+  window.addEventListener("blur", end);
 }
 
 // A three-bar meter glyph (rising heights), coloured by the host's currentColor

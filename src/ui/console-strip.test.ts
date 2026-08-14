@@ -131,6 +131,33 @@ describe("the main fader", () => {
     window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
   });
 
+  // The other end with no pointerup behind it. Measured 2026-08-14 on Chromium (over its
+  // own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): a
+  // window that loses the foreground with the button down gets `blur`, no `pointercancel`,
+  // and keeps the capture — so the drag went on writing levels to the plan and out to the
+  // unit while another application was frontmost. Playwright emulates focus, so no E2E
+  // tier can hold this.
+  it("ends a fader drag when the window loses focus, but not when a control inside it does", () => {
+    h = consoleHost();
+    const fader = h.strip("ch1").fader!;
+    fader.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 100, pointerId: 1 }),
+    );
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 70, pointerId: 1 }));
+    const moved = main("ch1");
+
+    // An element's own blur reaches the window in the capture phase only, and the drag
+    // must survive it: focus moves inside the strip while a press is down.
+    fader.dispatchEvent(new FocusEvent("blur"));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 50, pointerId: 1 }));
+    const stillDragging = main("ch1");
+    expect(stillDragging).not.toBe(moved);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 20, pointerId: 1 }));
+    expect(main("ch1")).toBe(stillDragging);
+  });
+
   it("steps on a wheel notch and resets on a double-click", () => {
     h = consoleHost();
     const fader = h.strip("ch1").fader!;

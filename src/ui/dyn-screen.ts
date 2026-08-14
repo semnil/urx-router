@@ -464,6 +464,9 @@ export class DynScreen {
   private grabbed = false;
   /** A refresh arrived while grabbed and still has to happen. */
   private refreshPending = false;
+  /** How to end the drag currently in flight, for the ends that carry no pointer event
+   *  of their own. Set by the gesture, cleared by whichever end runs first. */
+  private endDrag: (() => void) | null = null;
 
   constructor(private readonly hooks: DynScreenHooks) {
     this.scrim = document.getElementById("dyn-screen-modal") as HTMLElement;
@@ -475,6 +478,7 @@ export class DynScreen {
       this.grabbed = true;
     });
     const release = (): void => {
+      this.endDrag?.();
       if (!this.grabbed) return;
       this.grabbed = false;
       if (!this.refreshPending) return;
@@ -483,6 +487,15 @@ export class DynScreen {
     };
     window.addEventListener("pointerup", release);
     window.addEventListener("pointercancel", release);
+    // A window blur is the third end. The two registered above carry a pointer event;
+    // this one carries none, so it needs the ender the gesture left behind. Measured
+    // 2026-08-14 on Chromium and on the shipping WKWebView: losing the foreground with
+    // the button down fires `blur`, fires no `pointercancel` and keeps the capture — so
+    // the cap and plot drags below stayed armed, with that surviving capture routing
+    // every later move straight to them. console.ts's trackDrag carries the readings.
+    // Not `capture: true`: that would also catch the cap's and the canvas's own element
+    // blur, which happens whenever focus moves inside the screen.
+    window.addEventListener("blur", release);
   }
 
   isOpen(): boolean {
@@ -1183,6 +1196,7 @@ export class DynScreen {
       cap.setPointerCapture(e.pointerId);
       rect = slot.getBoundingClientRect();
       dragging = true;
+      this.endDrag = end;
       e.preventDefault();
     });
     cap.addEventListener("pointermove", (e) => {
@@ -1191,6 +1205,7 @@ export class DynScreen {
     const end = (): void => {
       dragging = false;
       rect = null;
+      if (this.endDrag === end) this.endDrag = null;
     };
     cap.addEventListener("pointerup", end);
     cap.addEventListener("pointercancel", end);
@@ -1264,6 +1279,13 @@ export class DynScreen {
     cv.addEventListener("pointerdown", (e) => {
       cv.setPointerCapture(e.pointerId);
       apply(e);
+      // The move gate below is the capture itself, which a blur leaves standing, so
+      // this drag ends by dropping it.
+      const away = (): void => {
+        end(e);
+        if (this.endDrag === away) this.endDrag = null;
+      };
+      this.endDrag = away;
     });
     cv.addEventListener("pointermove", (e) => {
       if (cv.hasPointerCapture(e.pointerId)) apply(e);
