@@ -49,6 +49,13 @@
 //                       0.35 ms (measured 2026-08, URX44V, sub-millisecond clock and
 //                       arrival order, because the burst fits inside one millisecond and
 //                       a millisecond clock reports it as a tie).
+//   COMP_ONE_KNOB       recomputes threshold / ratio / makeup (35 / 36 / 38) to unity;
+//                       written address first by 0.046 ms, none ahead of it.
+//   COMP_ONE_KNOB_LEVEL recomputes the same three from the level; written address first
+//                       by 0.111 ms, none ahead of it. ⚠️ Measuring it needs the knob left
+//                       ON — a level write is inert while it is off, and a run that
+//                       restored the knob before writing the level reported no dependents
+//                       at all.
 //
 // Both put the boundary before the dependents by well under the flight time of the first
 // read the refetch then issues, which is what makes ending on it safe. Every sideEffect:

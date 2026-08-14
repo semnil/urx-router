@@ -1337,8 +1337,21 @@ describe("reset chains (sideEffect heads vs converge groups)", () => {
     "FX_EFFECT_TYPE", // -> the FX_EFFECT_PARAM array
     "SIGNAL_TYPE", // -> the SECONDARY channel's state, so a group cannot express it
     "PAN_BAL", // -> CH_PAN + every SEND_PAN; its order is pinned above
+    // The COMP 1-knob, ungrouped for now and NOT for the reason above. Its chain has the
+    // EQ 1-knob's shape rather than this block's — writing 42 discards 43 (measured), so a
+    // converge round that re-sent the head alone would discard the level again, which is
+    // exactly what earned the EQ triple its group. What is missing is the observation: the
+    // EQ's grouping came from watching a converge leave a residual, and nobody has seen
+    // this bank do it. Ungrouped is therefore the recorded state of knowledge, not a
+    // finding. What would settle it is in the private ledger (C-2).
+    "COMP_ONE_KNOB",
+    "COMP_ONE_KNOB_LEVEL",
   ]);
 
+  // ⚠️ This only sees what the DEFAULT plan emits. A sideEffect head that needs a
+  // non-default plan to appear at all — SSMCS_MORPHING needs a channel switched to the
+  // morphing strip — is invisible here and reaches no decision. Adding one means recording
+  // it by hand, because nothing fails when you do not.
   it("accounts for every emitted sideEffect param", () => {
     const emitted = new Set<string>();
     for (const id of MODEL_IDS) {

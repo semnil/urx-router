@@ -253,10 +253,21 @@ export const PARAMS = {
   COMP_RELEASE: { id: 40, encoding: "releaseTime" },
   /** COMP Auto Makeup ON (auto-drives the makeup gain). */
   COMP_AUTO_MAKEUP: { id: 41, encoding: "bool" },
+  // The COMP 1-knob drives threshold / ratio / makeup from its level, and the unit
+  // announces the recomputation: measured 2026-08 on a URX44V, turning it ON moved
+  // 35 / 36 / 38 to unity and a level change moved all three again, both within 0.05-0.12
+  // ms of the written address's own notify and with none of them ahead of it. So both are
+  // a "refetch" for the same reason the EQ 1-knob is — the plan mirrors those three while
+  // the knob is on (the screen locks their rows) and pushing back would fight the device.
+  //
+  // Unlike the EQ, translate.ts keeps EMITTING them while the knob is on. That is left
+  // alone deliberately: with the refetch in place the plan holds what the unit computed,
+  // so emitting them writes the values the device already has, and a full write from a
+  // saved file still lands on the unit's own computation because the level is written too.
   /** COMP 1-knob ON (drives all comp params from the 1-knob level). */
-  COMP_ONE_KNOB: { id: 42, encoding: "bool" },
+  COMP_ONE_KNOB: { id: 42, encoding: "bool", sideEffect: "refetch" },
   /** COMP 1-knob level (0 … 100, raw). */
-  COMP_ONE_KNOB_LEVEL: { id: 43, encoding: "enum" },
+  COMP_ONE_KNOB_LEVEL: { id: 43, encoding: "enum", sideEffect: "refetch" },
   /** Ducker ON (sidechain; one per stereo channel, indexed by stereo position). */
   DUCKER_ON: { id: 258, encoding: "bool" },
   /** Ducker threshold (dB). */

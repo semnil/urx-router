@@ -651,6 +651,19 @@ function setCh1Morphing(plan: Plan, morphing: number): void {
   };
 }
 
+// The COMP 1-knob drives threshold / ratio / makeup on the device and announces the
+// recomputation (measured 2026-08: the written address goes fresh 0.046 ms before the
+// three dependents when the knob is switched on, 0.111 ms before them on a level change,
+// with none ahead of it). The plan mirrors those three while the knob is on — the screen
+// locks their rows — so this is a refetch, and a converge would push the pre-write copies
+// back over what the knob just computed.
+function setCh1CompOneKnob(plan: Plan, patch: { oneKnob?: boolean; oneKnobLevel?: number }): void {
+  plan.nodeParams.ch1 = {
+    ...plan.nodeParams.ch1,
+    comp: { ...plan.nodeParams.ch1?.comp, ...patch },
+  };
+}
+
 describe("LiveSync sideEffect refetch", () => {
   // The measured membership, pinned by address rather than by count: the morph recomputes
   // every CONTINUOUS value in the strip and none of the five ON switches. Both directions
@@ -737,6 +750,42 @@ describe("LiveSync sideEffect refetch", () => {
     expect(seen).toEqual([{ ratio: morphed, scOn: 0 }]);
     // And the converge still did its own job: the pan the selector slammed is back.
     expect(device.get(PAN)).toBe(planPan);
+  });
+
+  it("reads the node back after a comp 1-knob level write", async () => {
+    const plan = basePlan();
+    setCh1CompOneKnob(plan, { oneKnob: true, oneKnobLevel: 20 });
+    const refetched: string[][] = [];
+    const live = liveFor(plan, async (nodes) => {
+      refetched.push([...nodes]);
+      return null;
+    });
+    live.begin();
+    setCh1CompOneKnob(plan, { oneKnobLevel: 70 });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(refetched).toEqual([["ch1"]]);
+    expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
+  });
+
+  it("reads the node back when the comp 1-knob is switched on", async () => {
+    const plan = basePlan();
+    setCh1CompOneKnob(plan, { oneKnob: false, oneKnobLevel: 20 });
+    const refetched: string[][] = [];
+    const live = liveFor(plan, async (nodes) => {
+      refetched.push([...nodes]);
+      return null;
+    });
+    live.begin();
+    setCh1CompOneKnob(plan, { oneKnob: true });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(refetched).toEqual([["ch1"]]);
+    expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
   });
 
   it("reads the node back after a morphing write instead of pushing the strip back", async () => {
