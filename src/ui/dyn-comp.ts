@@ -44,9 +44,26 @@ const OUT_TICKS = [18, 6, -6, -18, -30, -42, -54];
  * immediately, Medium ~8 dB later, Soft ~20 dB later — so these are twice the
  * measured reach under the usual symmetric-knee model.
  *
- * Only the lower edge is measured; this source could not push the detector far
- * enough above the threshold to see where full ratio is reached, so the curvature
- * between the edges is the standard quadratic interpolation and is an assumption.
+ * MEDIUM's 16 has since been measured the other way round, and holds: with the
+ * threshold held at -30 dB, the SIGNAL was walked past it in 1 dB steps (33 points,
+ * ratio 4:1, makeup +6) and each candidate width fitted to the result with the
+ * detector-versus-meter offset left free — it shifts every point equally, so fixing
+ * it would be read as shape. The residual is a parabola with its minimum at 16 dB:
+ * 8 dB is 71% worse and rejected, 12 and 20 are 27% and 10% worse, and 18 sits
+ * within 0.3% and is NOT separated from it (nor does it need to be, at the width of
+ * a drawn line). Soft and Hard were not re-measured this way and remain doubled
+ * reaches.
+ *
+ * The symmetry itself is a per-block property, not a house rule. The SSMCS strip's
+ * compressor — the other bank on the same channel — was measured directly in 2026-08
+ * and its knee is ASYMMETRIC, opening 2.1x further above the threshold than below on
+ * Medium, with a full width of 8 dB where doubling the lower reach had predicted 14.
+ * So neither bank's constants may be carried across to the other, and a single width
+ * per setting cannot express the SSMCS one at all.
+ *
+ * What stays an assumption here is the curvature BETWEEN the edges: the standard
+ * quadratic interpolation. The signal-side fit above cannot separate it from nearby
+ * shapes at 1 dB of meter quantization.
  */
 const KNEE_WIDTH_DB = [40, 16, 0];
 
