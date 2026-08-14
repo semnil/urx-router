@@ -371,7 +371,11 @@ const live = DEMO
       // it, so committing an entry there would freeze this read's own writes into it —
       // and the refusal is a deferral, bounded by the settle's own window.
       refetchNodes: async (nodeIds, pending) => {
-        const merged = await followRead("1-knob readback", (into, signal) =>
+        // Named for the hook, not for a member of it: the EQ 1-knob was the only
+        // sideEffect: "refetch" param when this was written, and SSMCS morphing now takes
+        // the same path. A diagnostic that names one of them puts the wrong cause in the
+        // log for the other.
+        const merged = await followRead("side-effect refetch", (into, signal) =>
           // The one caller that skips the names, and it says so itself — the reconciles
           // below carry pending writes too, and reading names is what makes a rename
           // made on the unit arrive (readback.ts's name section).
@@ -390,7 +394,7 @@ const live = DEMO
         // entries or as 1 describing only its tail.
         planHistory?.absorb(merged.devicePatch);
         requestReflect();
-        assertReadComplete(merged, "1-knob readback issues:");
+        assertReadComplete(merged, "side-effect refetch issues:");
         return merged.deviceView;
       },
     });

@@ -36,14 +36,29 @@
 //     writes acked in 0-1 ms and produced none). The wait must time out rather than
 //     hang, and the address must not be read before it does.
 //
-// One side-effect family needs no boundary of its own: writing EQ_ONE_KNOB_LEVEL makes
-// the unit recompute the four EQ_BAND_GAIN registers of the same node, and those moved
-// 1-2 ms after the written address itself went fresh (4 clean samples). That is a
-// sideEffect: "refetch" family, and it is the ONLY one measured — every sideEffect:
+// The side-effect family that needs no boundary of its own has TWO measured members, and
+// the boundary is only sound while every member is measured — the written address's own
+// notify ends the wait, so a dependent that lands before it would be read stale:
+//
+//   EQ_ONE_KNOB_LEVEL   recomputes the four EQ_BAND_GAIN registers of the same node;
+//                       they moved 1-2 ms AFTER the written address went fresh
+//                       (4 clean samples).
+//   SSMCS_MORPHING      recomputes seventeen addresses across the strip (96…117); the
+//                       written address arrived FIRST — 0.085 ms ahead of the earliest
+//                       dependent, none ahead of it — and the whole block landed within
+//                       0.35 ms (measured 2026-08, URX44V, sub-millisecond clock and
+//                       arrival order, because the burst fits inside one millisecond and
+//                       a millisecond clock reports it as a tie).
+//
+// Both put the boundary before the dependents by well under the flight time of the first
+// read the refetch then issues, which is what makes ending on it safe. Every sideEffect:
 // "converge" head (COMP_EQ_TYPE, SIGNAL_TYPE, PAN_BAL, the insert-FX and FX type
-// selectors) resets values whose latency after the head's own notify nobody has
-// measured. So a notify boundary is used where the write is read back by a refetch,
-// and NOT where a converge round re-reads: client.ts keeps its blind window.
+// selectors) resets values whose latency after the head's own notify nobody has measured.
+// So a notify boundary is used where the write is read back by a refetch, and NOT where a
+// converge round re-reads: client.ts keeps its blind window.
+//
+// A THIRD member needs the same measurement before it is added, not the assumption that
+// the family behaves alike.
 
 import { addrKey } from "./translate";
 
