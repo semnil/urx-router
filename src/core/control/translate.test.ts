@@ -1363,13 +1363,13 @@ describe("reset chains (sideEffect heads vs converge groups)", () => {
     "FX_EFFECT_TYPE", // -> the FX_EFFECT_PARAM array
     "SIGNAL_TYPE", // -> the SECONDARY channel's state, so a group cannot express it
     "PAN_BAL", // -> CH_PAN + every SEND_PAN; its order is pinned above
-    // The COMP 1-knob, ungrouped for now and NOT for the reason above. Its chain has the
-    // EQ 1-knob's shape rather than this block's — writing 42 discards 43 (measured), so a
-    // converge round that re-sent the head alone would discard the level again, which is
-    // exactly what earned the EQ triple its group. What is missing is the observation: the
-    // EQ's grouping came from watching a converge leave a residual, and nobody has seen
-    // this bank do it. Ungrouped is therefore the recorded state of knowledge, not a
-    // finding. What would settle it is in the private ledger (C-2).
+    // The COMP 1-knob, ungrouped for the same reason as the rest after all. Its chain LOOKS
+    // like the EQ 1-knob's — writing 42 discards 43 (measured), the shape that earned the EQ
+    // triple its group — but it is two links where the EQ's is three, and two is what one
+    // extra round settles. Driven rather than reasoned: `client.test.ts` walks it from the
+    // state that produces the longest path and it converges in round 2, with nothing further
+    // discarded once the level lands (the values the level recomputes are not emitted at all
+    // while the knob is on).
     "COMP_ONE_KNOB",
     "COMP_ONE_KNOB_LEVEL",
   ]);
