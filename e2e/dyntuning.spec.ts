@@ -542,18 +542,22 @@ test.describe("comp", () => {
     await expect(box(page).locator("h2")).toContainText("Comp");
   });
 
-  test("has no launcher where the channel has no compressor", async ({ page }) => {
+  test("has no launcher where the channel has no compressor, and hands the section over where another bank has one", async ({
+    page,
+  }) => {
     // Stereo channels have no COMP section at all.
     await node(page, "ch_5_6").click();
     await expect(page.locator("#btn-comp-screen")).toHaveCount(0);
-    // Nor does a mono channel switched to SSMCS, where the morphing strip replaces
-    // the compressor — the section stays, but its own controls do.
+    // A mono channel switched to SSMCS keeps the section, because the morphing strip
+    // has a compressor of its own — what changes is which screen the launcher opens.
     await node(page, "ch1").click();
     const type = page.locator("#inspector .param", { hasText: "COMP/EQ Type" }).locator("select");
     await type.selectOption({ label: "SSMCS" });
     await expect(page.locator("#btn-comp-screen")).toHaveCount(0);
+    await expect(page.locator("#btn-ssmcsComp-screen")).toHaveCount(1);
     await page.click("#btn-view-console");
-    await expect(page.locator(".con-strip").nth(0).locator(".con-chip-open")).toHaveCount(1);
+    // GATE, SSMCS, COMP and EQ each carry one, so this strip has four openers.
+    await expect(page.locator(".con-strip").nth(0).locator(".con-chip-open")).toHaveCount(4);
   });
 
   test("carries the compressor's own ladder domain", async ({ page }) => {

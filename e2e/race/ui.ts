@@ -20,14 +20,29 @@ export const faderReadout = (page: Page, name: string): Locator => readoutOf(str
 
 export const faderOf = (page: Page, name: string): Locator => strip(page, name).locator(".con-fader");
 
-/** Select a node and open its EQ tuning screen from the inspector. */
-export async function openEqScreen(page: Page, id: string): Promise<void> {
+/** Select a node and open one of its tuning screens from the inspector. `section` names
+ *  the inspector section the launcher sits in and `button` the launcher's own id — the two
+ *  differ for the morphing bank, whose COMP and EQ faces open from the same sections the
+ *  COMP->EQ bank's screens open from. */
+export async function openDynScreen(page: Page, id: string, section: RegExp, button: string): Promise<void> {
   await graphNode(page, id).click();
-  const sec = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^EQ$/ }) });
+  const sec = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: section }) });
   if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
-  await sec.locator("#btn-eq-screen").click();
+  await sec.locator(`#${button}`).click();
   await expect(page.locator("#dyn-screen-box")).toBeVisible();
 }
+
+/** Select a node and open its EQ tuning screen from the inspector. */
+export const openEqScreen = (page: Page, id: string): Promise<void> => openDynScreen(page, id, /^EQ$/, "btn-eq-screen");
+
+/** Select a node and open the morphing strip's MAIN face, where its preset and the three
+ *  morphing sliders are. */
+export const openSsmcsScreen = (page: Page, id: string): Promise<void> =>
+  openDynScreen(page, id, /^SSMCS$/, "btn-ssmcs-screen");
+
+/** A tuning screen's row, by the exact label it prints. */
+export const screenRow = (page: Page, label: string): Locator =>
+  page.locator("#dyn-screen-box .prefs-row").filter({ has: page.getByText(label, { exact: true }) });
 
 /** CH_FADER, mono channel block, y = input index. */
 export const CH1_FADER = "139:0:0";

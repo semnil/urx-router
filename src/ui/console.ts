@@ -17,6 +17,7 @@ import {
   LEVEL_MIN_DB,
   LEVEL_OFF_DB,
   sendConnection,
+  SSMCS_INITIAL,
   type NodeParams,
   type Plan,
   type PlanConnection,
@@ -37,7 +38,8 @@ import {
   type MeterTap,
 } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
-import { COMP_EQ_COMP_FIRST } from "../core/control/params";
+import { COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
+import { dynOpenLabel } from "./dyn-registry";
 import type { DynKind } from "./dyn-registry";
 import { markMidi } from "./midi-learn";
 import type { MidiLearnHooks } from "./midi-learn";
@@ -1388,8 +1390,9 @@ export class Console {
     const chip = el("div", "con-chip con-chip-open");
     chip.textContent = "▸";
     chip.setAttribute("role", "button");
-    chip.title = t().dynTuning[kind].open;
-    chip.setAttribute("aria-label", t().dynTuning[kind].open);
+    const label = dynOpenLabel(kind, t());
+    chip.title = label;
+    chip.setAttribute("aria-label", label);
     this.wireActivate(chip, undefined, () => this.hooks.onOpenDynScreen?.(kind, id));
     return chip;
   }
@@ -1857,13 +1860,35 @@ export class Console {
       // take a third row.
       boolChip(proc, "GATE", "gateOn", false);
       proc.append(this.dynOpenChip("gate", m.id));
-      boolChip(proc, "COMP", "compOn", false);
-      // No COMP screen in SSMCS: the morphing strip replaces the compressor. Asked
-      // of channelDynamics rather than re-derived here, so the opener cannot appear
-      // for a screen that would refuse to open.
+      // Which COMP/EQ bank the channel runs decides which screen the COMP and EQ chips
+      // open, and whether the SSMCS chip is there at all. Asked of channelDynamics
+      // rather than re-derived here, so an opener cannot appear for a screen that
+      // would refuse to open.
       const plan = this.hooks.getPlan();
       const dyn = channelDynamics(this.hooks.getModel(), m.id, plan.nodeParams[m.id]?.compEqType ?? COMP_EQ_COMP_FIRST);
-      if (dyn?.comp) proc.append(this.dynOpenChip("comp", m.id));
+      // The morphing strip's own master, between GATE and COMP as the inspector orders
+      // them and as the unit chains them. It lives one level down in the plan, so it
+      // gets its own writer rather than boolChip's flat one.
+      if (dyn && !dyn.comp) {
+        const ssmcsOn = (): boolean => planOf().ssmcs?.on ?? SSMCS_INITIAL.on;
+        this.makeChip(
+          m.id,
+          proc,
+          "SSMCS",
+          false,
+          ssmcsOn(),
+          () => {
+            const next = !ssmcsOn();
+            const np = this.nodeParamsOf(m.id);
+            np.ssmcs = { ...np.ssmcs, on: next };
+            return next;
+          },
+          { midiId: controlId(m.id, "ssmcsOn") },
+        );
+        proc.append(this.dynOpenChip("ssmcs", m.id));
+      }
+      boolChip(proc, "COMP", "compOn", false);
+      proc.append(this.dynOpenChip(dyn?.comp ? "comp" : "ssmcsComp", m.id));
     }
     const rate = this.hooks.getPlan().sampleRate;
     if (m.hasEq) {
@@ -1876,12 +1901,13 @@ export class Console {
       else {
         boolChip(proc, t().console.eq, "eqOn", true);
         // The tuning screen's opener, as GATE and COMP have. Not offered where the
-        // rate has the EQ forced off (the toggle beside it is read-only there), nor in
-        // SSMCS mode, where the EQ chip is the morphing strip's and there is no 4-band
-        // PEQ to open. It costs a slot in the two-per-row grid, so the processing chips
-        // take a fourth row and `--head-h` carries it.
+        // rate has the EQ forced off (the toggle beside it is read-only there). In
+        // SSMCS mode the EQ chip is the morphing strip's, so it opens that bank's EQ
+        // face instead. It costs a slot in the two-per-row grid, so the processing
+        // chips take a fourth row and `--head-h` carries it.
         const eqType = this.hooks.getPlan().nodeParams[m.id]?.compEqType ?? COMP_EQ_COMP_FIRST;
         if (hasEq(model, m.id, eqType)) proc.append(this.dynOpenChip("eq", m.id));
+        else if (eqType === COMP_EQ_SSMCS && m.isMono) proc.append(this.dynOpenChip("ssmcsEq", m.id));
       }
     }
     if (insertFxControl(model, m.id)) {

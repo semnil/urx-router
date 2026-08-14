@@ -400,7 +400,7 @@ test("the device setup screen shows every page, on the model that has it and the
 test("the channel tuning screens show every processor, both displays and their notes", async ({ page }) => {
   const inv = inventoryOf("dynScreen");
   // The inspector's own section headings, as dyntuning.spec.ts addresses them.
-  const SECTION_OF = { gate: /^GATE$/, comp: /^COMP$/, eq: /^EQ$/, ducker: /^Ducker$/ };
+  const SECTION_OF = { gate: /^GATE$/, comp: /^COMP$/, eq: /^EQ$/, ducker: /^Ducker$/, ssmcs: /^SSMCS$/ };
 
   await page.addInitScript(() => {
     localStorage.setItem("urx-lang", "en");
@@ -475,6 +475,25 @@ test("the channel tuning screens show every processor, both displays and their n
   await page.keyboard.press("Delete");
   await openDucker();
   await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+
+  // The morphing strip replaces COMP and the 4-band EQ, so its three faces are reached
+  // by switching the channel's bank first. Once open they move between each other from
+  // the title row, which is where the face labels are.
+  await page.locator('#graph-host g.node[data-id="ch1"]').click();
+  await page.locator("#inspector .param", { hasText: "COMP/EQ Type" }).locator("select").selectOption("1");
+  await openFromInspector("ssmcs");
+  await inv.take(page, "#dyn-screen-modal");
+  await page.click("#dyn-face-ssmcs-comp");
+  await inv.take(page, "#dyn-screen-modal");
+  await page.click("#dyn-mode-curve");
+  await inv.take(page, "#dyn-screen-modal");
+  await page.click("#dyn-face-ssmcs-eq");
+  // A shelf band is what tags a Q row as unread; MID is the one that reads it.
+  for (const band of ["low", "mid", "high"]) {
+    await page.click(`#dyn-ssmcs-band-${band}`);
+    await inv.take(page, "#dyn-screen-modal");
+  }
 
   expectComplete("dynScreen", inv);
 });

@@ -4,6 +4,24 @@ const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-i
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
 const typeSelect = (page: Page) => param(page, "COMP/EQ Type").locator("select");
 
+const box = (page: Page) => page.locator("#dyn-screen-box");
+/** A screen row by its EXACT label: "Q" substring-matches nothing else here, but
+ *  "Gain" matches "Out Gain" and picking by DOM order would follow an inserted row. */
+const screenRow = (page: Page, label: string) =>
+  box(page)
+    .locator(".prefs-row")
+    .filter({ has: page.getByText(label, { exact: true }) });
+
+/** Switch a mono channel into the morphing bank and open the face named. */
+const openFace = async (page: Page, kind: "ssmcs" | "ssmcsComp" | "ssmcsEq", section: RegExp) => {
+  await node(page, "ch1").click();
+  if ((await typeSelect(page).inputValue()) !== "1") await typeSelect(page).selectOption("1");
+  const sec = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: section }) });
+  if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
+  await sec.locator(`#btn-${kind}-screen`).click();
+  await expect(box(page)).toBeVisible();
+};
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("urx-lang", "en");
@@ -14,22 +32,28 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 });
 
-test("switching a mono channel to SSMCS swaps in the morphing-strip controls", async ({ page }) => {
+test("switching a mono channel to SSMCS swaps the inspector's sections and their launchers", async ({ page }) => {
   await node(page, "ch1").click();
   const sel = typeSelect(page);
   await expect(sel).toHaveValue("0"); // COMP->EQ
 
-  // COMP->EQ mode: none of the SSMCS Main controls are present.
-  await expect(param(page, "Sweet Spot Data")).toHaveCount(0);
-  await expect(param(page, "Comp Drive")).toHaveCount(0);
+  // COMP->EQ mode: the shipped screens' launchers, and no SSMCS section at all.
+  await expect(page.locator("#btn-comp-screen")).toHaveCount(1);
+  await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(0);
 
   await sel.selectOption("1"); // SSMCS
-  await expect(param(page, "Sweet Spot Data")).toHaveCount(1);
-  await expect(param(page, "Comp Drive")).toHaveCount(1);
-  await expect(param(page, "Morphing")).toHaveCount(1);
-  await expect(param(page, "Out Gain")).toHaveCount(1);
-  // The SSMCS comp section carries a Side Chain filter (unique to SSMCS mode).
-  await expect(param(page, "Side Chain")).toHaveCount(1);
+  // Each of the three sections offers its own face, and the two shipped screens' own
+  // launchers are gone — a channel carries one bank, never both.
+  await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(1);
+  await expect(page.locator("#btn-ssmcsComp-screen")).toHaveCount(1);
+  await expect(page.locator("#btn-ssmcsEq-screen")).toHaveCount(1);
+  await expect(page.locator("#btn-comp-screen")).toHaveCount(0);
+  await expect(page.locator("#btn-eq-screen")).toHaveCount(0);
+
+  // The values themselves live on the screen now: a copy here would read a snapshot
+  // taken at render time and write it back on the next drag.
+  await expect(param(page, "Sweet Spot Data")).toHaveCount(0);
+  await expect(param(page, "Comp Drive")).toHaveCount(0);
 
   // The SSMCS Main section sits between GATE and COMP.
   const titles = await page.locator("#inspector summary").allInnerTexts();
@@ -40,25 +64,11 @@ test("switching a mono channel to SSMCS swaps in the morphing-strip controls", a
   expect(gate).toBeLessThan(ssmcs);
   expect(ssmcs).toBeLessThan(comp);
 
-  // Switching to SSMCS turns the COMP/EQ sections ON, so they open (their ON
-  // state seeds true from the device).
+  // Back to COMP->EQ takes the SSMCS section away and resets to COMP off / EQ on.
+  await sel.selectOption("0");
+  await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(0);
   const compSection = page.locator("#inspector details").filter({ has: page.locator("summary", { hasText: "COMP" }) });
   const eqSection = page.locator("#inspector details").filter({ has: page.locator("summary", { hasText: "EQ" }) });
-  await expect(compSection).toHaveAttribute("open", "");
-  await expect(eqSection).toHaveAttribute("open", "");
-
-  // Sweet Spot Data lists all 34 presets and defaults to the first. The SSMCS
-  // section opens by default (its ON state seeds true from the device).
-  const ssd = param(page, "Sweet Spot Data").locator("select");
-  await expect(ssd.locator("option")).toHaveCount(34);
-  await expect(ssd).toHaveValue("1");
-  await ssd.selectOption("14"); // 08 MR Vocal
-  await expect(ssd).toHaveValue("14");
-
-  // Back to COMP->EQ removes the SSMCS controls and resets to COMP off / EQ on.
-  await sel.selectOption("0");
-  await expect(param(page, "Sweet Spot Data")).toHaveCount(0);
-  await expect(param(page, "Comp Drive")).toHaveCount(0);
   await expect(compSection).not.toHaveAttribute("open", ""); // COMP off → folded
   await expect(eqSection).toHaveAttribute("open", ""); // EQ on → open
 });
@@ -66,18 +76,17 @@ test("switching a mono channel to SSMCS swaps in the morphing-strip controls", a
 test("re-entering an SSMCS/COMP->EQ mode resets that bank to factory", async ({ page }) => {
   // The device treats the two chains as exclusive and reloads the destination
   // chain's factory values on every switch; the planner mirrors that offline.
-  await node(page, "ch1").click();
-  const sel = typeSelect(page);
-  await sel.selectOption("1"); // SSMCS
-  const ssd = param(page, "Sweet Spot Data").locator("select");
+  await openFace(page, "ssmcs", /^SSMCS$/);
+  const ssd = screenRow(page, "Sweet Spot Data").locator("select");
   await expect(ssd).toHaveValue("1"); // factory "01 Basic"
   await ssd.selectOption("14"); // 08 MR Vocal
   await expect(ssd).toHaveValue("14");
+  await box(page).locator(".consent-btn-secondary").click();
 
   // Leave SSMCS and come back: the morphing strip reloads factory, not "08 MR Vocal".
-  await sel.selectOption("0"); // COMP->EQ
-  await sel.selectOption("1"); // SSMCS again
-  await expect(param(page, "Sweet Spot Data").locator("select")).toHaveValue("1");
+  await typeSelect(page).selectOption("0"); // COMP->EQ
+  await openFace(page, "ssmcs", /^SSMCS$/);
+  await expect(screenRow(page, "Sweet Spot Data").locator("select")).toHaveValue("1");
 });
 
 test("toggling the SSMCS value reverts its fold to follow the on-state", async ({ page }) => {
@@ -106,5 +115,94 @@ test("toggling the SSMCS value reverts its fold to follow the on-state", async (
 test("SSMCS is a MONO IN feature — stereo channels have no COMP/EQ Type", async ({ page }) => {
   await node(page, "ch_5_6").click();
   await expect(typeSelect(page)).toHaveCount(0);
-  await expect(param(page, "Sweet Spot Data")).toHaveCount(0);
+  await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(0);
+});
+
+test.describe("the tuning screen's three faces", () => {
+  const face = (page: Page, name: "main" | "comp" | "eq") => box(page).locator(`#dyn-face-ssmcs-${name}`);
+
+  test("moves between the faces from the title row, on one title and one channel", async ({ page }) => {
+    await openFace(page, "ssmcs", /^SSMCS$/);
+    const title = box(page).locator("#dyn-screen-title");
+    await expect(title).toContainText("CH 1");
+    await expect(title).toContainText("SSMCS");
+    await expect(face(page, "main")).toHaveAttribute("aria-pressed", "true");
+
+    await face(page, "comp").click();
+    await expect(box(page)).toBeVisible(); // moved, not closed and reopened
+    await expect(face(page, "comp")).toHaveAttribute("aria-pressed", "true");
+    // Naming each face would print the shipped COMP screen's title, and nothing would
+    // then say which of the channel's two banks is on screen.
+    await expect(title).toContainText("SSMCS");
+    await expect(title).toContainText("CH 1");
+
+    await face(page, "eq").click();
+    await expect(box(page).locator("#dyn-ssmcs-band-low")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("each section's launcher opens its own face", async ({ page }) => {
+    await openFace(page, "ssmcsComp", /^COMP$/);
+    await expect(face(page, "comp")).toHaveAttribute("aria-pressed", "true");
+    await box(page).locator(".consent-btn-secondary").click();
+
+    await openFace(page, "ssmcsEq", /^EQ$/);
+    await expect(face(page, "eq")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("the face is not carried to the next open", async ({ page }) => {
+    await openFace(page, "ssmcs", /^SSMCS$/);
+    await face(page, "eq").click();
+    await box(page).locator(".consent-btn-secondary").click();
+    await openFace(page, "ssmcs", /^SSMCS$/);
+    await expect(face(page, "main")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("MAIN shows both curves and four readouts, with no lane rack", async ({ page }) => {
+    await openFace(page, "ssmcs", /^SSMCS$/);
+    await expect(box(page).locator("#dyn-curve")).toBeVisible();
+    await expect(box(page).locator(".gt-ladderbox")).toHaveCount(0);
+    await expect(box(page).locator(".gt-ro")).toHaveCount(4);
+    // Four tiles take two columns.
+    await expect(box(page).locator(".gt-readouts")).toHaveClass(/two/);
+  });
+
+  test("COMP reads its eight rows in the unit's own order", async ({ page }) => {
+    await openFace(page, "ssmcsComp", /^COMP$/);
+    const labels = await box(page).locator(".prefs-row .lbl").allInnerTexts();
+    expect(labels).toEqual(["Attack", "Release", "Ratio", "Knee", "Side Chain", "Q", "Freq", "Gain"]);
+    // The bank's corner is an internal value the unit never shows, so the lane rack
+    // carries no fader cap — the one gesture the rack otherwise has.
+    await expect(box(page).locator(".gt-cap")).toHaveCount(0);
+  });
+
+  test("the EQ face keeps four rows and one height on every band", async ({ page }) => {
+    await openFace(page, "ssmcsEq", /^EQ$/);
+    const height = () => box(page).evaluate((el) => el.getBoundingClientRect().height);
+    const first = await height();
+    for (const band of ["low", "mid", "high"] as const) {
+      await box(page).locator(`#dyn-ssmcs-band-${band}`).click();
+      const labels = await box(page).locator(".prefs-row .lbl").allInnerTexts();
+      expect(labels, band).toEqual(["Band", "Q", "Freq", "Gain"]);
+      // A shelf has no Q at all; the row stays and says so, so the panel does not move
+      // under the pointer that just pressed the band beside it.
+      const locked = band !== "mid";
+      await expect(screenRow(page, "Q"), band).toHaveClass(locked ? /locked/ : /^((?!locked).)*$/);
+      expect(await height(), band).toBe(first);
+    }
+  });
+});
+
+test("the CONSOLE strip offers the morphing strip's own chips", async ({ page }) => {
+  await node(page, "ch1").click();
+  await typeSelect(page).selectOption("1");
+  await page.click("#btn-view-console");
+  const strip = page.locator(".con-strip").nth(0); // CH 1, the first strip in the rack
+  // GATE, SSMCS, COMP and EQ each carry a toggle and an opener, in the unit's own
+  // chain order.
+  await expect(strip.locator(".con-chip", { hasText: /^SSMCS$/ })).toHaveCount(1);
+  await expect(strip.locator('.con-chip-open[aria-label="SSMCS screen"]')).toHaveCount(1);
+  await expect(strip.locator('.con-chip-open[aria-label="Comp screen"]')).toHaveCount(1);
+  await expect(strip.locator('.con-chip-open[aria-label="EQ screen"]')).toHaveCount(1);
+  await strip.locator('.con-chip-open[aria-label="SSMCS screen"]').click();
+  await expect(box(page).locator("#dyn-face-ssmcs-main")).toHaveAttribute("aria-pressed", "true");
 });

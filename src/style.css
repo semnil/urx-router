@@ -3883,6 +3883,25 @@ button.consent-btn-primary {
   align-items: center;
   gap: 10px;
 }
+/* The face segment sits at the right end of the title row, where it cannot collide
+   with the display column's own bar (the EQ face's selects a band). */
+.gt-faces {
+  margin-left: auto;
+}
+/* Cap the control column rather than halving the modal. A parameter row is a
+   fixed-width slider plus its label, and the readout tiles stretch to whatever column
+   they are given, so the half the shared `.prefs-grid` hands these screens was standing
+   space and the plots are what wants it. Scoped to this modal: Preferences and the
+   device setup use their halves. The narrow-window rule is restated because the one
+   above it matches `.prefs-grid` alone and loses to this selector. */
+#dyn-screen-box .prefs-grid {
+  grid-template-columns: 1fr 400px;
+}
+@media (max-width: 860px) {
+  #dyn-screen-box .prefs-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .gt-ch {
   font-size: 11px;
   color: var(--on-accent-ink);

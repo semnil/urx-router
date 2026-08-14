@@ -593,6 +593,18 @@ export const en = {
       ),
       plotHint: tr("The curve is the EQ's response; each marker shows a band's frequency."),
     },
+    // The morphing strip's three faces share one title and one launcher label; the
+    // segment beside the title names the face. Its COMP face reuses the COMP screen's
+    // tap names, hint and Knee row, and its EQ face the 4-band screen's plot hint and
+    // band-bar heading — the same device points, said once.
+    ssmcs: {
+      open: tr("SSMCS screen"),
+      faceMain: dev("MAIN"),
+      faceComp: dev("COMP"),
+      faceEq: dev("EQ"),
+      tapOut: dev("Pre Ins FX"),
+      mainHint: tr("Comp Drive and Morphing move both curves at once; the dot is the live level on the compressor."),
+    },
     ducker: {
       title: dev("Ducker"),
       open: tr("Ducker screen"),

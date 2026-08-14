@@ -724,26 +724,34 @@ describe("editing a node through the inspector", () => {
   // EQ stage, so the device drops PRE EQ from the list and moves a selected PRE EQ tap to
   // PRE COMP. Every read re-queries — the type change re-renders the panel, and the
   // elements captured before it belong to a panel that is gone.
-  // The focus-restore key is the row LABEL plus generic element facts, and SSMCS mode
-  // is where labels legitimately repeat: a side-chain Q / Frequency / Gain beside three
-  // EQ bands' own. `find` returns the first match, so a follow reflect — which rebuilds
-  // this panel at up to ~20 Hz — did not DROP focus (the documented fallback, and
-  // harmless) but handed it to a DIFFERENT filter's slider, where the operator's next
-  // ArrowUp edited that one and wrote it to the device.
-  it("restores focus to the same one of several identically labelled sliders", async () => {
+  // The focus-restore key is the row LABEL plus generic element facts, and a section's
+  // ON/OFF row is where labels legitimately repeat: its name is in the heading above it,
+  // so the row carries none and a channel's GATE / COMP / EQ toggles are one key between
+  // them. `find` returns the first match, so a follow reflect — which rebuilds this panel
+  // at up to ~20 Hz — did not DROP focus, which is the outcome `inspectorFocusKeys` in
+  // src/main.ts states for a key with no match; it handed focus to a DIFFERENT section's
+  // control, where the operator's next keypress operated that one and wrote it to the
+  // device.
+  it("restores focus to the same one of several identically labelled controls", async () => {
     await boot();
     selectNode("ch1");
-    const type = row(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
-    type.value = String(COMP_EQ_SSMCS);
-    type.dispatchEvent(new Event("change", { bubbles: true }));
 
-    const sliders = (): HTMLInputElement[] => [
-      ...$("inspector").querySelectorAll<HTMLInputElement>(
-        `.param[data-param-label="${t().inspector.frequency}"] input[type="range"]`,
-      ),
+    // The largest group of controls sharing one focus key, found the way the key is
+    // built rather than by naming a section: an unlabelled row's discriminators are the
+    // element's own facts, and two rows in the same state are then indistinguishable.
+    const groupKey = (el: HTMLElement): string =>
+      [el.closest<HTMLElement>(".param")?.dataset.paramLabel ?? "", el.tagName, el.className, el.textContent].join("|");
+    const unlabelled = (): HTMLElement[] => [
+      ...$("inspector").querySelectorAll<HTMLElement>('.param[data-param-label=""] .toggle button'),
     ];
-    await vi.waitFor(() => expect(sliders().length).toBeGreaterThan(1), APP_SETTLE);
-    const before = sliders();
+    await vi.waitFor(() => expect(unlabelled().length).toBeGreaterThan(1), APP_SETTLE);
+    const counts = new Map<string, number>();
+    for (const el of unlabelled()) counts.set(groupKey(el), (counts.get(groupKey(el)) ?? 0) + 1);
+    const shared = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    expect(shared[1], "no two inspector controls share a focus key").toBeGreaterThan(1);
+
+    const group = (): HTMLElement[] => unlabelled().filter((el) => groupKey(el) === shared[0]);
+    const before = group();
     const at = before.length - 1; // the last, which a first-match restore cannot reach
     before[at].focus();
     expect(document.activeElement).toBe(before[at]);
@@ -752,7 +760,7 @@ describe("editing a node through the inspector", () => {
     // re-renders (the active ring has to move) and leaves every row where it was.
     $("inspector").querySelectorAll<HTMLButtonElement>("button.swatch")[1].click();
 
-    const after = sliders();
+    const after = group();
     expect(after[at]).not.toBe(before[at]); // the panel really was rebuilt
     expect(document.activeElement).toBe(after[at]);
   });

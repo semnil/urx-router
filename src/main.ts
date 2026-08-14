@@ -1330,12 +1330,12 @@ function inspectorFocusKey(el: HTMLElement): string {
  * its key.
  *
  * The label is not a discriminator on its own, because rows legitimately repeat one:
- * SSMCS mode puts a side-chain Q / Frequency / Gain beside three EQ bands' own, so four
- * sliders carry `Frequency|INPUT|range||`, and every section toggle carries the empty
- * label. `find` returns the FIRST match, so the restore did not drop focus — which is
- * the documented fallback and would have been fine — it handed focus to a different
- * filter's slider, and the operator's next ArrowUp edited that one and wrote it to the
- * device.
+ * every section's ON/OFF row carries the EMPTY label, since its name is in the section
+ * heading above it, so a channel's GATE / COMP / EQ toggles are one key between them.
+ * `find` returns the FIRST match, so the restore did not drop focus — which is the
+ * documented fallback and would have been fine — it handed focus to a different
+ * section's control, and the operator's next keypress operated that one and wrote it to
+ * the device.
  *
  * Built for the whole host in ONE pass, and used from both ends of the rebuild: keying
  * each element by scanning its siblings would be quadratic on a path that repeats at

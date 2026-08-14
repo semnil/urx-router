@@ -191,21 +191,24 @@ describe("the head-height cache", () => {
 
   afterEach(() => h?.restore());
 
-  // The finding's own direction: an SSMCS channel carries no COMP or EQ opener, so a
-  // plan seeded in SSMCS measures short, and switching back to COMP->EQ is what needs
-  // the room the cached height did not have.
+  // The type change moves the head because it changes how many chips a mono strip
+  // carries. An SSMCS channel carries one more pair than a COMP->EQ one — the morphing
+  // strip's own master and its opener — so a plan seeded in SSMCS measures TALL, and
+  // switching to COMP->EQ frees the slots again. The direction was the other way round
+  // while the morphing strip had no screen to open, which is why the height is measured
+  // per plan rather than cached per model.
   it("re-measures when the COMP/EQ type changes, and the height moves", () => {
     const plan = defaultPlan("URX44V");
     setCompEq(plan, COMP_EQ_SSMCS);
     h = mount(plan);
-    const short = headH(h);
-    expect(short).toBe(`${tallest(h)}px`);
+    const tall = headH(h);
+    expect(tall).toBe(`${tallest(h)}px`);
 
     setCompEq(plan, COMP_EQ_COMP_FIRST);
     h.view.refresh();
 
     expect(headH(h)).toBe(`${tallest(h)}px`);
-    expect(Number.parseInt(headH(h))).toBeGreaterThan(Number.parseInt(short));
+    expect(Number.parseInt(headH(h))).toBeLessThan(Number.parseInt(tall));
   });
 
   // The rate is the other key term, and it is in the key for a different reason: it

@@ -517,6 +517,14 @@ export const ja: Messages = {
       oneKnobDrives: "4 バンドは 1-knob のレベルからデバイスが計算します。カーブが追従するのはライブ同期中のみです。",
       plotHint: "曲線は EQ の周波数特性、各マーカーは各バンドの周波数を示します。",
     },
+    ssmcs: {
+      open: "SSMCS 画面",
+      faceMain: "MAIN",
+      faceComp: "COMP",
+      faceEq: "EQ",
+      tapOut: "Pre Ins FX",
+      mainHint: "Comp Drive と Morphing は 2 つの曲線を同時に動かします。点はコンプ上のライブレベルです。",
+    },
     ducker: {
       title: "Ducker",
       open: "Ducker 画面",

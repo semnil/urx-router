@@ -191,6 +191,20 @@ export interface DynRowCtx extends DynCtx {
 export interface DynRows {
   lead?: HTMLElement[];
   tail?: HTMLElement[];
+  /** Rows placed immediately before the slider whose key names them, for a panel whose
+   *  fields fall into groups the device reads in that order. The SSMCS COMP face is the
+   *  one: its side-chain filter's three sliders follow the compressor's, and the Side
+   *  Chain toggle that opens them is what tells the reader where one group ends. `lead`
+   *  would put that toggle above rows it does not govern. */
+  before?: Record<string, HTMLElement[]>;
+}
+
+/** One sibling face of a bank the screen moves between without closing. */
+export interface DynFace {
+  proc: DynProcessor;
+  label: (m: Messages) => string;
+  /** The segment button's element id, so a test and a launcher name the same thing. */
+  id: string;
 }
 
 export interface DynProcessor {
@@ -244,6 +258,11 @@ export interface DynProcessor {
   /** A label for a field whose key the shared `inspector.dyn` table does not name (or
    *  names differently — COMP's `gain` is a makeup gain, the EQ's is a band gain). */
   fieldLabel?: (f: DynField, m: Messages) => string | undefined;
+  /** The display text for a field whose value is not readable from the number alone —
+   *  a raw broker integer, which reaches a millisecond, a ratio or a hertz only through
+   *  a device curve. Undefined falls back to the field's unit, which is what the one
+   *  raw value that IS its own display (the morphing position) takes. */
+  fieldText?: (f: DynField, v: number) => string | undefined;
   /** The MIDI control id one of this processor's value keys is addressable by, or
    *  null where there is none (the enum selectors are deliberately not mappable).
    *  Which processor and which band a key belongs to is the descriptor's business —
@@ -290,6 +309,20 @@ export interface DynProcessor {
    *  value: with several, a press has to guess which one was meant, and one that missed a
    *  grip fell through to this drag (pressing COMP's gain grip moved the threshold). */
   plotDragsCap?: true;
+  /**
+   * The faces of one bank, when a processor is more than the screen can show at once.
+   * A segment in the title row moves between them without closing, so the modal is not
+   * rebuilt and the meter slot is not handed back and taken again for what is one
+   * continuous piece of work on one channel.
+   *
+   * Absent for every processor that is a whole processor: GATE, COMP, the 4-band EQ and
+   * DUCKER are separate things tuned at separate times, and closing one to open another
+   * is what that is.
+   *
+   * A thunk because the faces name each other, and a module's constants are not yet
+   * initialised while its first one is being built.
+   */
+  faces?: () => readonly DynFace[];
 }
 
 /** Peak hold, in notify frames (100 ms each). Nothing on the device sets this —
@@ -540,9 +573,12 @@ export class DynScreen {
     };
   }
 
-  /** Open one processor for one node. The screen is scoped to what it was opened from
-   *  and stays there — no in-screen node or processor switch, so the subscribed
-   *  address set is fixed for the whole session. */
+  /** Open one processor for one node. The NODE is what the screen is scoped to and stays
+   *  on: there is no in-screen channel switch, because a channel's controls are what a
+   *  screen is opened from. The processor can move between the faces of one bank
+   *  (`faces`), and a lane's tap can move under an open screen (the DUCKER's KEY), so
+   *  the subscribed address set is compared and re-taken in `refresh` rather than being
+   *  fixed for the session. */
   open(proc: DynProcessor, nodeId: string): void {
     const sel = proc.persistSel ? (this.sels[proc.key] ?? 0) : 0;
     const bound = proc.bind({ ...this.ctx(), nodeId, sel });
@@ -647,9 +683,16 @@ export class DynScreen {
       const v = this.val(f.key);
       if (dynFromPos(f, Number(input.value)) !== v) input.value = String(dynToPos(f, v));
       const out = this.box.querySelector<HTMLElement>(`[data-dyn-val="${f.key}"]`);
-      if (out) setLevelText(out, dynValueText(f, v));
+      if (out) setLevelText(out, this.valueText(f, v));
     }
     this.syncCap();
+  }
+
+  /** What a field's value reads as. The descriptor gets first refusal, because a raw
+   *  broker integer becomes a millisecond or a hertz only through a device curve; what
+   *  it declines falls through to the field's own unit. */
+  private valueText(f: DynField, v: number): string {
+    return this.p().fieldText?.(f, v) ?? dynValueText(f, v);
   }
 
   /** Live sync turned on/off while this screen is open. It holds the meter slot
@@ -1016,6 +1059,8 @@ export class DynScreen {
     const name = el("span", "");
     name.textContent = proc.title(m);
     title.append(ch, name);
+    const faces = proc.faces?.();
+    if (faces) title.append(this.faceBar(faces, proc, m));
 
     const grid = el("div", "prefs-grid");
     grid.append(this.displayColumn(proc), this.controlColumn(m));
@@ -1039,6 +1084,44 @@ export class DynScreen {
     col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }, ctx));
     col.append(this.hintLine(proc, ctx));
     return col;
+  }
+
+  /**
+   * The face segment, in the title row rather than over the display: the EQ face's own
+   * bar selects a band, and two segmented bars in one heading is what a reader has to
+   * tell apart. Above the grid, so pressing one cannot move the row under the pointer.
+   */
+  private faceBar(faces: readonly DynFace[], proc: DynProcessor, m: Messages): HTMLElement {
+    const seg = el("span", "udk-banks gt-modes gt-faces");
+    for (const face of faces) {
+      const b = el("button", "") as HTMLButtonElement;
+      b.id = face.id;
+      b.textContent = face.label(m);
+      b.setAttribute("aria-pressed", String(face.proc === proc));
+      b.addEventListener("click", () => this.showFace(face.proc));
+      seg.append(b);
+    }
+    return seg;
+  }
+
+  /**
+   * Move to a sibling face. The screen stays open on the same node, so the modal, the
+   * app-wide inert hold and the meter registration all survive; what changes is which
+   * descriptor answers, and with it the fields, the lanes and the address set.
+   *
+   * `refresh` does the rest — it re-binds, re-subscribes when the addresses moved, and
+   * rebuilds — so the address comparison is not written a second time here. The peak
+   * holds go, because a lane key means a different tap on the next face and a hold
+   * carried across would print one tap's peak under another's caption.
+   */
+  private showFace(next: DynProcessor): void {
+    if (!this.proc || next === this.proc) return;
+    const sel = next.persistSel ? (this.sels[next.key] ?? 0) : 0;
+    if (!next.bind({ ...this.ctx(), sel })) return;
+    this.proc = next;
+    this.sel = sel;
+    this.peaks.clear();
+    this.refresh();
   }
 
   /** The segmented bar over the display, in the heading of the section it sits in. */
@@ -1359,7 +1442,11 @@ export class DynScreen {
     };
     const extra = proc.rows?.(rowCtx);
     if (extra?.lead) params.append(...extra.lead);
-    for (const f of this.fields) params.append(this.paramRow(f, label(f), value(f.key), this.states.get(f.key)));
+    for (const f of this.fields) {
+      const before = extra?.before?.[f.key];
+      if (before) params.append(...before);
+      params.append(this.paramRow(f, label(f), value(f.key), this.states.get(f.key)));
+    }
     if (extra?.tail) params.append(...extra.tail);
 
     const ro = settingsSection(g.readouts);
@@ -1432,7 +1519,7 @@ export class DynScreen {
     }
 
     const show = (v: number): void => {
-      const text = dynValueText(f, v);
+      const text = this.valueText(f, v);
       // GATE range's -∞ notch: the mono font draws ∞ at x-height, so it goes
       // through the shared wrapper like every other dB readout in the app.
       setLevelText(val, text);
