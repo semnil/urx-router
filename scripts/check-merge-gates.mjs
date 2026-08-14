@@ -9,7 +9,9 @@
 // the jobs and never on the trigger. The third case is the quiet one: a job skipped
 // because something in its `needs:` failed ALSO reports success, so an aggregating gate
 // has to run with `if: always()` and read `needs.*.result` itself rather than lean on
-// `needs:` to fail it.
+// `needs:` to fail it. The fourth arrived with `concurrency:`: a CANCELLED run reports
+// neither success nor failure, so nothing turns red and the pull request merely stops
+// being mergeable — which is why a group that cancels has to be keyed per run.
 //
 //   node scripts/check-merge-gates.mjs            check .github/workflows against the manifest
 //   node scripts/check-merge-gates.mjs --ruleset  also diff the manifest against the live branch
@@ -168,6 +170,39 @@ const condition = (job) => {
 // which is what the ruleset matches on.
 const contextOf = (id, job) => unquote(job.children.get("name")?.value ?? "") || id;
 
+// Does a concurrency group key give every run of its own a group of its own?
+//
+// An ALLOWLIST of two shapes rather than a search for `github.run_id`, because a substring
+// is not a guarantee: `${{ github.ref }}-${{ github.run_id == 0 }}` mentions the run id and
+// evaluates to the same string for every run, and so does `${{ 0 && github.run_id }}`. Both
+// passed a substring test. Deciding the general case means evaluating GitHub's expression
+// language, so this refuses everything it cannot read instead — which is the same trade the
+// reader above makes, and it fails toward "say something" rather than toward silence.
+//
+//   ${{ github.run_id }}                              a run id on its own
+//   ${{ github.event.pull_request.number || … }}      the house idiom
+//   ${{ github.head_ref || … }}                       GitHub's own documented example
+//
+// The left-hand side is an allowlist too, and that is the half it is easy to get wrong:
+// `||` falls through on a FALSY left side, so the fallback only reaches `github.run_id`
+// when the left side is empty off a pull request. `github.ref` is set on every event, so
+// `${{ github.ref || github.run_id }}` mentions the run id and never uses it — every push
+// to a branch lands in one group. Both names below are empty outside a pull request;
+// anything else has to be shown to be, which is a judgement, so it is refused with the
+// accepted forms named.
+const PER_RUN_LEFT = ["github.event.pull_request.number", "github.head_ref"];
+const PER_RUN = new RegExp(
+  String.raw`\$\{\{\s*(?:(?:` +
+    PER_RUN_LEFT.map((name) => name.replace(/\./g, String.raw`\.`)).join("|") +
+    String.raw`)\s*\|\|\s*)?github\.run_id\s*\}\}`,
+);
+const perRunKey = (group) => PER_RUN.test(group);
+
+// `concurrency.queue` takes `single` (the default) or `max`, and `max` cannot be combined
+// with cancelling — GitHub rejects the workflow. Checked on its own, before anything about
+// the key, because a workflow that will not run reports no context at all.
+const QUEUE_VALUES = new Set(["single", "max"]);
+
 // --- the workflows ------------------------------------------------------------
 
 function readWorkflowSources() {
@@ -307,7 +342,81 @@ function checkJob(workflow, id, job, context) {
       `\`${context}\` does not wait for ${uncovered.join(", ")}, so a failure there blocks nothing — add them to \`needs:\` (with \`if: always()\`)`,
     );
   }
-  // 6. A gate that waits for everything and then fails on nothing is the worst outcome
+  // 6. A cancelled run is the FOURTH way a required context fails to arrive, and the one
+  //    the header above had no reason to name until concurrency reached these workflows.
+  //    GitHub accepts `success`, `skipped` and `neutral` as a satisfied required check;
+  //    `cancelled` is neither that nor a failure, so nothing goes red — the pull request
+  //    simply stops being mergeable. A group that cancels therefore has to be one that no
+  //    OTHER run reporting the same context on the same commit can join, and the key that
+  //    guarantees it is a per-run one. Keyed by the ref instead, a `workflow_dispatch` on
+  //    a pull request's branch joins that pull request's own run (CLAUDE.md tells the
+  //    operator to make exactly that dispatch), and a push to the default branch joins the
+  //    next push — which is how a cancelled CI run on main would leave tag-release.yml's
+  //    `conclusion == 'success'` false and a version bump untagged.
+  //
+  //    Coarse in the same way rule 7 below is: it asks whether `github.run_id` appears in
+  //    the key, not what the whole expression evaluates to.
+  //    Both levels, because a group on the JOB cancels the same check run a group on the
+  //    workflow would.
+  for (const [level, node] of [
+    ["workflow", workflow.root.children.get("concurrency")],
+    ["job", job.children.get("concurrency")],
+  ]) {
+    if (!node) continue;
+    // The flow form (`concurrency: { group: …, cancel-in-progress: true }`) is stored as
+    // a VALUE with no children, so every read below would find nothing and this rule
+    // would report the safest possible answer about a group it never saw. Refused for
+    // the same reason `pull_request:` in flow form is refused above.
+    if (node.value) {
+      finding(
+        where,
+        `${level} \`concurrency:\` for \`${context}\` carries an inline value; write it in block form (\`group:\` and ` +
+          `\`cancel-in-progress:\` on their own lines) so this checker can see the key — one it cannot see is one it ` +
+          `will report as absent`,
+      );
+      continue;
+    }
+    const group = node.children.get("group")?.value ?? "";
+    const cancel = unquote(node.children.get("cancel-in-progress")?.value ?? "");
+    const queue = unquote(node.children.get("queue")?.value ?? "");
+    // NOT `=== "true"`. GitHub takes an expression here, and reading `${{ … }}` as "does
+    // not cancel" would pass exactly the arrangement this rule exists to refuse. Absent
+    // is the documented default of false; anything else counts as cancelling.
+    const cancels = cancel !== "" && cancel !== "false";
+    // The block has to be legal before it can be safe. Both of these are checked whatever
+    // the key is: an unknown value and the forbidden pairing are workflow errors, and a
+    // workflow GitHub refuses to run reports no check run at all — the "Expected" forever
+    // outcome this whole file exists to keep out, arriving by a different door.
+    if (queue && !QUEUE_VALUES.has(queue)) {
+      finding(
+        where,
+        `${level} \`concurrency.queue\` for \`${context}\` is \`${queue}\`; the documented values are ` +
+          `${[...QUEUE_VALUES].map((v) => `\`${v}\``).join(" and ")}`,
+      );
+    }
+    if (queue === "max" && cancels) {
+      finding(
+        where,
+        `${level} \`concurrency\` for \`${context}\` combines \`queue: max\` with \`cancel-in-progress: ${cancel}\`, ` +
+          `which GitHub rejects — they describe opposite treatments of a run already in the group`,
+      );
+    }
+    // `cancel-in-progress: false` is NOT on its own a group nothing is lost from.
+    // `concurrency.queue` defaults to `single`, which keeps one pending run and cancels it
+    // when the next arrives, so a shared group drops runs either way; `queue: max` is what
+    // raises that to 100.
+    const keepsPending = queue === "max";
+    if ((cancels || !keepsPending) && !perRunKey(group)) {
+      finding(
+        where,
+        `\`${context}\` comes from a ${level} whose concurrency group \`${group}\` can drop a run and is not keyed ` +
+          `per run — two runs reporting it on one commit share the group, and the dropped one leaves the context at ` +
+          `\`cancelled\`, which satisfies no merge. Key the non-pull-request case on \`github.run_id\`` +
+          (cancels ? "" : ", or add `queue: max` so a pending run is not replaced"),
+      );
+    }
+  }
+  // 7. A gate that waits for everything and then fails on nothing is the worst outcome
   //    here: a required check that is green by construction. The rules above are all
   //    about the job's own keys and cannot see that, because the failing part lives in a
   //    step. This one reads the job's text — coarse on purpose, since the alternative is

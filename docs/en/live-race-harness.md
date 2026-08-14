@@ -571,8 +571,8 @@ it into:
 | Tier | Machine time | Slowest test | Runs from |
 | --- | --- | --- | --- |
 | `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, sharded three ways, on every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside) |
-| `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways |
-| `race-webkit` | 2.1 min | 48 s | `race.yml`, its own job |
+| `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways, on every PR except a documentation-only one, and on the version bump |
+| `race-webkit` | 2.1 min | 48 s | `race.yml`, its own job, on the same condition |
 
 **Read the ordinary tier's figure as a range rather than a budget.** The same 428 cases measured 5.2
 minutes in another run the same day, a fifth under the reading above — runner variance, not a change in
@@ -586,41 +586,108 @@ the ordinary tier's had drifted 45 cases past what this table claimed before any
 nothing about the tiering follows from them. What cut the boundary is the time.
 
 The harness is **about four fifths of the E2E machine time on its own** (79% of the ordinary-plus-race
-readings above), which is what took it off the ordinary PR tier: at six and a half minutes the ordinary
-suite is cheaper to run per-PR than to run after the merge, and at twenty-five it is not. Both figures
-have grown since the tiering was cut and the ratio has barely moved, which is the part the boundary
-actually rests on.
+readings above), which is why it is a workflow of its own with a condition in front of it rather than
+three more shards in `ci.yml`: at six and a half minutes the ordinary suite is cheaper to run on every
+pull request than to run after the merge, and at twenty-five it is worth asking first whether this
+pull request can break it. Both figures have grown since the tiering was cut and the ratio has barely
+moved, which is the part the boundary actually rests on.
 
-Where it runs instead is **the one pull request that changes the app version**. That PR carries nothing
-else, and merging it is what tags a release (`tag-release.yml`), so the harness sits directly in front
-of the only commit a user ever installs. In front of the tag rather than behind it: a release-time run
-would report on a tag that already exists. A `paths: package.json` filter would not have said "version
-bump" either — Dependabot edits that file weekly — so `race.yml`'s `detect` job compares the `version`
-field across the PR and the shards run only when it moved.
+Where it runs is **every pull request except one whose diff is documentation alone, and the one that
+changes the app version**. Two clauses, and `detect` evaluates and prints both rather than returning
+on the first: a version bump edits `package.json`, which is not documentation, so it satisfies the
+first clause as well and an early return would leave the version comparison with no path to it while
+it still read as the thing that keeps the harness in front of a release. It is kept because it is
+exactly that statement, and because it survives anyone narrowing the first clause. In front of the tag
+rather than behind it, since a release-time run would report on a tag that already exists. A
+`paths: package.json` filter on the trigger would not have said "version bump" either — Dependabot
+edits that file weekly — which is why the comparison is a job and not a filter.
+
+**The first clause is an exclusion because three attempts to write it as a watch list each leaked.**
+The list is worth reading as a sequence, because each entry was added only after the gap was pointed
+out, and every one of them was a pull request that could break the harness while `race-required`
+stayed green:
+
+| the list said | what it left out | why that file matters |
+| --- | --- | --- |
+| `src/**` and `e2e/race/**` | `e2e/graph-helpers.ts` | `t0b-sweeps.spec.ts` and `t2b-shape-change.spec.ts` import it, and CLAUDE.md's asset table asks the harness to consolidate onto it |
+| — | `playwright.config.ts` | the `race` and `race-webkit` projects are declared there and nowhere else |
+| + those two | `pnpm-lock.yaml` | it pins the Playwright version, which `.github/actions/playwright-version` turns into the container image both harness jobs run in |
+| + `package.json` and the lockfile | `race.yml` itself, `.github/actions/install-browsers/`, `.env.trace`, `vite.config.ts`, `scripts/e2e-serve.mjs` | the job definition, the browser install, the trace build flag, the bundle the tier serves, and the server that serves it |
+
+`src/**` was the whole of the directory from the start, for the same class of reason: the one
+recorded accident — a `page.selectOption` that stopped resolving under a live-session lock and rode 17
+merges with this gate green — came from a pull request that touched only `src/main.ts`. What the
+harness reads simply does not have a boundary anyone has drawn correctly on the first try, and the
+failure mode of a list is a dependency nobody added to it. The failure mode of an exclusion is a run
+nobody needed, so that is the direction the clause now fails in. `detect` applies the same rule, in
+the same order, with the same exception as `ci.yml`'s `preflight`: documentation is `docs/**` and
+`*.md`, except the generated `references/model-*.md`, which `skill-export.test.ts` diffs against its
+generator and which therefore counts as code.
+
+`detect` reads `git diff --name-only` against the base rather than the API's file list — it already
+fetches the whole history for the version read, and a diff carries no truncation ceiling, which is a
+guard `ci.yml`'s `preflight` needs and this job does not. Two flags on that diff were measured rather
+than assumed, and since the question became an exclusion they no longer guard the same direction.
+**`--no-renames` is the one that still stops a silent skip**: rename detection prints a moved file at
+its destination alone, so moving a module into `docs/` would print one documentation path and the
+whole diff would read as documentation-only. **`-z` now fails the other way**: git C-quotes any path
+it cannot print literally — a non-ASCII byte, but also a `"`, a backslash or a control byte — and a
+quoted path matches neither `docs/*` nor `*.md`, so it reads as code and the harness runs. It is kept
+so the rule tests real paths rather than a rendering of them. Measured: `core.quotePath=false` closes
+only the non-ASCII third of the quoting, and `-z` does not imply `--no-renames`. `-z` costs a
+temporary file, since a NUL cannot survive a shell variable.
+
+**A comment-only diff is not excluded either.** That exclusion was measured before being dropped:
+over the 80 most recent first-parent merges on `main` (measured 2026-08-14), 42 touched `src/**`, and
+normalizing each changed file through esbuild with comments and whitespace stripped left 3 of those 42
+identical on both sides. It would have saved 3 runs, in exchange for a normalizer whose verdict has to
+be correct in the direction that skips.
+
+**What the trigger costs a merge.** Measured 2026-08-14 from run `31794858430` (`workflow_dispatch` on
+main, conclusion success) — wall clock this time, not machine time:
+
+| Job | Wall clock |
+| --- | --- |
+| `detect` | 9 s |
+| `race-webkit` | 2m00s |
+| `race` shard 2 / shard 3 / shard 1 | 3m08s / 5m08s / 7m02s |
+| `race-required` | 3 s |
+| the workflow end to end | **7m23s** |
+
+Playwright shards by case count and the expensive tiers land together, so the workflow's wall clock is
+the slowest shard's rather than a third of the machine time. Beside it, `ci.yml`'s last 40
+pull-request runs (same date) have a median of 3m02s, with 38 of the 40 between 2m32s and 3m56s and
+the other 2 being doc-only runs where the expensive jobs do not run. The required workflows run in
+parallel, so a merge waits for the slowest of them: **about three minutes before this trigger, about
+seven and a half on a pull request the harness runs on**. Over the same 80 merges, that is **75** —
+the 5 it skips are the documentation-only ones. The two watch lists this replaced would have run on
+52 and on 61 of them, and the four merges between those two figures and 75 are what the third leak
+above would have cost.
 
 `race.yml` carries **no trigger filter at all**, so `detect` runs on every pull request. That is what
 makes `race-required` usable as a merge condition: a workflow skipped by a trigger filter reports no
-check run, so the version-bump PR could never wait for a check the other pull requests do not even
-have. Away from that one PR the two harness jobs skip on their own condition, which reports success in
-seconds — the arrangement, and why a required check has to be able to report on every pull request, is
-in CLAUDE.md's "What a merge waits for".
+check run, so a pull request the harness does not run on could never carry the check the others wait
+for. On those the two harness jobs skip on their own condition, which reports success in seconds — the
+arrangement, and why a required check has to be able to report on every pull request, is in CLAUDE.md's
+"What a merge waits for".
 
-Against a branch, on demand — **available, not required**, for pulling the verdict forward before a
-version PR exists:
+Against a branch, on demand — for pulling a verdict forward, or re-running one:
 
 ```sh
 gh workflow run race.yml --ref <branch>
 ```
 
-The bargain that buys: **no pull request is obliged to run the harness**, and an ordinary merge does
-not, so a break surfaces at the version PR or at whatever manual run someone chose to make, rather
-than at the merge that caused it, and `git log` over the live-sync
-surface is what narrows it. Every pull request does wait for `race-required`, but away from the
-version PR that is a gate over **two** skipped jobs, green in seconds: `detect` runs, and `race` and
-`race-webkit` skip on their own condition — **a matrix job whose own `if:` is false is not expanded**,
-so `race` reports once rather than three times. What the merge condition buys is that the release
-cannot be tagged over a red harness, not that every branch pays for one. WebKit is a separate browser download, so it is its own job rather than a
+What the skip still costs is a reading: **`race-required` is the same green whether the harness passed
+or was skipped**, since a job skipped by `if:` reports success and a required context has no third
+colour to be shown in. On a pull request that touches neither path and does not move the version, that
+green is a gate over **two** skipped jobs — `detect` runs, and `race` and `race-webkit` skip on their
+own condition, `race` as one job because **a matrix job whose own `if:` is false is not expanded**, so
+it reports once rather than three times. `detect`'s log is what distinguishes the two, and it prints
+its reason on both sides. WebKit is a separate browser download, so it is its own job rather than a
 fourth shard — paying for it three times would cost more than the cases do.
+
+A pull request pushed again abandons the run in flight (`concurrency` in `race.yml`, whose header
+carries why the group key falls back to `github.run_id` rather than to the ref).
 
 ### Observables
 
@@ -1296,9 +1363,10 @@ not repeat them.
   `picker.disabled = liveSessionUp` locked the model picker for a live session's duration — a deliberate
   guard rail, correct on its own terms. The two cases that switched model mid-session
   (`teardown-flow-refusals`'s unguarded half, `teardown-model-switch-during-flush`) were then waiting on a
-  `selectOption` that could never resolve. Nothing reported it: the harness runs on the version-bump PR
-  alone, so every later PR's `race` job reported success **by being skipped**, and the break surfaced only
-  on an on-demand dispatch. Two properties turned "late" into "invisible" — a skipped job reports success,
+  `selectOption` that could never resolve. Nothing reported it: the harness ran on the version-bump PR
+  alone at the time, so every later PR's `race` job reported success **by being skipped**, and the break
+  surfaced only on an on-demand dispatch. This is the accident the trigger was later widened over — it
+  now also fires on a PR touching `src/**`, which is where that change lived ("Where each tier runs"). Two properties turned "late" into "invisible" — a skipped job reports success,
   and a case whose PREMISE has been removed fails as a **timeout** rather than as an assertion, so the
   failure text names the locator and not the reason (`locator resolved to <select disabled
   id="model-picker">` is the whole diagnosis, and it reads like an infrastructure hang). When a case's

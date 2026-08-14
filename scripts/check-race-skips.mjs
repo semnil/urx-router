@@ -176,6 +176,11 @@ const problems = [];
 const tally = (map, k) => map.set(k, (map.get(k) ?? 0) + 1);
 
 const collected = playwright("race");
+// The `@webkit`-tagged subset, in its own project, which race.yml runs as its own job. It
+// is listed separately rather than filtered out of the above because the tag is what
+// selects it: a case leaves this project by losing a tag, which deletes no line a reader
+// would notice and leaves the `race` floor below satisfied at its full count.
+const collectedWebkit = playwright("race-webkit");
 const raceNames = new Map();
 for (const c of collected) tally(raceNames, key(c.file, c.title));
 
@@ -205,21 +210,33 @@ const ledger = JSON.parse(readFileSync(join(repo, LEDGER), "utf8"));
 // failure this guards against is loss. Every file now above its floor is printed at the
 // end in the ledger's own shape, so raising one deliberately is a copy-paste rather than
 // arithmetic.
+//
+// Once per project. The WebKit one is why this is a loop: `race-webkit` is a separate job
+// in race.yml and a separate entry in the tier table, and nothing here asked it anything
+// until now — the `race` floor cannot see it, because a case leaves that project by losing
+// its `@webkit` tag while the file keeps every case it had.
 {
-  const floors = ledger.collect?.minCases ?? {};
-  const actual = new Map();
-  for (const c of collected) tally(actual, c.file);
-  for (const [file, min] of Object.entries(floors)) {
-    const n = actual.get(file) ?? 0;
-    if (n < min) {
-      problems.push(
-        `${file}: collects ${n} case(s), below the floor of ${min} in ${LEDGER} — ` +
-          `a case that stops being collected is a check that stops running`,
-      );
+  for (const [field, project, cases] of [
+    ["minCases", "race", collected],
+    ["minCasesWebkit", "race-webkit", collectedWebkit],
+  ]) {
+    const floors = ledger.collect?.[field] ?? {};
+    const actual = new Map();
+    for (const c of cases) tally(actual, c.file);
+    for (const [file, min] of Object.entries(floors)) {
+      const n = actual.get(file) ?? 0;
+      if (n < min) {
+        problems.push(
+          `${file}: --project=${project} collects ${n} case(s), below the floor of ${min} in ` +
+            `${LEDGER} collect.${field} — a case that stops being collected is a check that stops running`,
+        );
+      }
     }
-  }
-  for (const file of actual.keys()) {
-    if (!(file in floors)) problems.push(`${LEDGER}: ${file} is collected but has no collect.minCases floor`);
+    for (const file of actual.keys()) {
+      if (!(file in floors)) {
+        problems.push(`${LEDGER}: ${file} is collected by --project=${project} but has no collect.${field} floor`);
+      }
+    }
   }
 }
 
@@ -297,13 +314,18 @@ if (problems.length) {
 // raised by pasting these lines, so the alternative is counting by hand. Silent when
 // every floor is exact, which is the state the ledger is committed in.
 {
-  const floors = ledger.collect?.minCases ?? {};
-  const actual = new Map();
-  for (const c of collected) tally(actual, c.file);
-  const grown = [...actual].filter(([f, n]) => n > (floors[f] ?? 0)).sort();
-  if (grown.length) {
-    console.log(`    ${grown.length} file(s) now above their floor — paste to raise:`);
-    for (const [f, n] of grown) console.log(`      ${JSON.stringify(f)}: ${n},`);
+  for (const [field, cases] of [
+    ["minCases", collected],
+    ["minCasesWebkit", collectedWebkit],
+  ]) {
+    const floors = ledger.collect?.[field] ?? {};
+    const actual = new Map();
+    for (const c of cases) tally(actual, c.file);
+    const grown = [...actual].filter(([f, n]) => n > (floors[f] ?? 0)).sort();
+    if (grown.length) {
+      console.log(`    ${grown.length} file(s) now above their collect.${field} floor — paste to raise:`);
+      for (const [f, n] of grown) console.log(`      ${JSON.stringify(f)}: ${n},`);
+    }
   }
 }
 

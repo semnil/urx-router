@@ -2,8 +2,10 @@ name: Post-merge
 
 # Heavier jobs that run only after a change lands on main, to keep PR feedback
 # fast. The frontend build/unit gate and the ordinary E2E suite both run per-PR in
-# ci.yml; the live-sync race harness runs from race.yml, on demand and beside a
-# release build, because it is 22 minutes of machine time against that suite's 3.5.
+# ci.yml; the live-sync race harness runs from race.yml, whose own header says when.
+# What each tier costs is measured once in docs/{en,ja}/live-race-harness.md ("Where
+# each tier runs") and is not restated here, because the copy that used to sit in this
+# comment had drifted against it.
 # Doc-only changes don't affect the dependency license set or the Rust build.
 on:
   push:
@@ -11,6 +13,14 @@ on:
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
+
+# Keyed by the branch, so merges landing in quick succession leave only the newest run.
+# Nothing waits on this workflow — tag-release.yml watches CI, not this — so a cancelled
+# run costs that commit its license gate and its cache warm, both of which the next merge
+# performs on a tree that contains the cancelled commit's changes.
+concurrency:
+  group: post-merge-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   licenses:

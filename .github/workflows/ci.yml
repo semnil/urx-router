@@ -2,7 +2,8 @@ name: CI
 
 # Lightweight checks on every PR and on pushes to main: the build, the unit tests and
 # the ordinary E2E suite. Third-party license generation runs post-merge (post-merge.yml)
-# and the live-sync race harness runs from race.yml, which nothing triggers per-merge.
+# and the live-sync race harness is race.yml's, which decides for itself which pull
+# requests it runs on.
 # Doc-only changes (Markdown, docs/) don't affect the build or tests, so the expensive
 # jobs skip them — except the skill's generated model references, which
 # skill-export.test.ts diffs against the generator, so an .md-only edit there
@@ -19,6 +20,24 @@ on:
   pull_request:
   push:
     branches: [main]
+
+# Pushing again to a pull request abandons the run already in flight. The key's shape, and
+# why a cancelled run is not the same as a skipped one, are in race.yml's own block.
+#
+# What is specific here is the OTHER half of the trigger. A push to main must never share
+# a group with anything, and the reason is a condition rather than a judgement:
+# tag-release.yml's `tag` job carries `if: github.event.workflow_run.conclusion ==
+# 'success' && ...`, and it is this workflow's completion on main that it waits for. A
+# main run cancelled by a following merge therefore reports `cancelled`, that condition is
+# false, and the merge's version bump is not tagged — with no failed check anywhere to
+# read, since nothing failed. `github.run_id` is unique per run, so every push run is a
+# group of one. Keying the fallback to `github.ref` instead would put all of main in one
+# group, and `cancel-in-progress: false` would not have covered that: `concurrency.queue`
+# defaults to `single`, so a PENDING run in a shared group is cancelled and replaced by the
+# next arrival. The key is what keeps main out of a shared group at all.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   # The path filter, moved off the trigger. Cheap enough to sit in front of everything:
@@ -162,7 +181,8 @@ jobs:
       # has — docs.yml, where the other three checks live, deliberately has none. Nothing
       # is lost by not running it there: a Markdown/docs-only change, which is what this
       # workflow skips, cannot move a spec or a guarantor. Beside the race tier itself it
-      # would be worse than useless, since that tier runs on the version-bump PR alone.
+      # would report on a smaller set of pull requests, since that tier's trigger skips one
+      # whose diff touches neither src/ nor e2e/race/ nor the version.
       - run: pnpm check:skips
       - run: pnpm test:coverage
       - name: Upload frontend coverage

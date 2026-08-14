@@ -12,14 +12,31 @@ name: Release
 # it always was — a packaging check that builds the bundles as job artifacts and
 # creates nothing.
 #
-# No E2E runs here. The harness runs on the version-bump PR (race.yml), in front of the
-# tag rather than behind it.
+# No E2E runs here. The harness runs on the pull requests race.yml's trigger names, the
+# version bump among them, so it sits in front of the tag rather than behind it.
 on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - 'v[0-9]+.[0-9]+.[0-9]+-*'
   workflow_dispatch:
+
+# Keyed by the ref, which for both triggers is the tag: a re-dispatch of a tag already
+# building queues instead of running beside it, so two runs cannot assemble the same draft
+# Release at once. `cancel-in-progress` stays false — the installers are what this
+# produces, and a build killed part-way leaves a draft holding some platforms and not
+# others.
+#
+# `queue: max` is the other half of that, and without it the promise above holds for one
+# run only: `concurrency.queue` defaults to `single`, which keeps at most ONE run pending
+# and cancels it when the next arrives, so a third dispatch on one tag would drop the
+# queued second — a run that produces nothing and shows grey. `max` raises the ceiling to
+# 100 and runs them in arrival order. It cannot be combined with `cancel-in-progress: true`,
+# which is why only the two workflows that do not cancel can carry it.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: write

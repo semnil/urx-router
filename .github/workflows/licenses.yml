@@ -9,6 +9,15 @@ name: Licenses
 on:
   workflow_call:
 
+# `github.run_id` inside a called workflow is the CALLER's run id, so each invocation is
+# a group of one. That is the point: post-merge.yml and release.yml both call this, and a
+# group they shared would let a merge landing during a release build cancel the very
+# artifact that build consumes (`if-no-files-found: error` on the upload below is the
+# other half of that path).
+concurrency:
+  group: licenses-${{ github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   licenses:
     runs-on: ubuntu-latest
