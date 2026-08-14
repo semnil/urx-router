@@ -218,3 +218,30 @@ jobs:
             src-tauri/target/**/bundle/dmg/*.dmg
             src-tauri/target/**/bundle/nsis/*.exe
           if-no-files-found: error
+
+  # The run's own verdict, said in terms of the tag. Nothing waits on this workflow's
+  # conclusion — tag-release.yml dispatches it and ends — and a tag whose release failed
+  # leaves no trace on the Releases page, which is the one page the operator is required to
+  # visit (publishing the draft is what fires pages.yml). Without this job the only surface
+  # is a red run whose job names say "create-release" and "build" rather than which tag has
+  # no installers.
+  #
+  # Scoped to a tag run: on a dispatch that packages into artifacts there is no release to
+  # be missing. `always()` so it reports on a cancelled run too, which is a run that
+  # produced no draft like any other.
+  release-gate:
+    needs: [check-tag, create-release, licenses, build]
+    if: always() && needs.check-tag.outputs.validTag == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail unless the tag produced a draft with installers
+        if: needs.create-release.result != 'success' || needs.build.result != 'success'
+        env:
+          LICENSES: ${{ needs.licenses.result }}
+          CREATE: ${{ needs.create-release.result }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          echo "::error::${GITHUB_REF_NAME} was tagged but no complete draft Release exists"
+          echo "::error::licenses=${LICENSES} create-release=${CREATE} build=${BUILD}"
+          exit 1
