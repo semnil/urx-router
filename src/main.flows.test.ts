@@ -302,6 +302,30 @@ describe("the modals", () => {
     await vi.waitFor(() => expect(scrim!.hidden).toBe(true), APP_SETTLE);
   });
 
+  // A modal closes on Escape in the capture phase without stopping propagation, so the
+  // window handler ran too and cleared the graph's selection — and the inspector's
+  // contents with it — for an Escape addressed to Preferences. The Delete branch beside
+  // it has always carried the guard; this one had neither half of it.
+  it("closes a modal with Escape without emptying the inspector behind it", async () => {
+    await boot();
+    selectNode("ch1");
+    const shown = $("inspector").textContent ?? "";
+    expect(shown.length).toBeGreaterThan(0);
+
+    $("btn-prefs").click();
+    const scrim = document.querySelector<HTMLElement>(".prefs-scrim, #prefs-modal")!;
+    expect(scrim.hidden).toBe(false);
+    chord("Escape");
+    await vi.waitFor(() => expect(scrim.hidden).toBe(true), APP_SETTLE);
+
+    // The selection the Escape was not addressed to is still there.
+    expect($("inspector").textContent).toBe(shown);
+
+    // …and an Escape the graph IS the addressee of still clears it.
+    chord("Escape");
+    expect($("inspector").textContent).not.toBe(shown);
+  });
+
   // The notice is a bundled resource fetched at click time, and jsdom serves no
   // files — so what this reaches is the failure arm. Worth a case of its own: the
   // arm is a `.catch` rather than a rejection handler precisely so a notice that

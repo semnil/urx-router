@@ -3318,6 +3318,26 @@ function modalOpen(): boolean {
   return !!document.querySelector(".consent-scrim:not([hidden])");
 }
 
+/**
+ * Whether a modal was open when the Escape now being handled STARTED.
+ *
+ * Asking `modalOpen()` in the bubble-phase handler answers about the wrong moment: a
+ * modal dismisses in the capture phase without stopping propagation, so by the time the
+ * window handler runs the modal has already gone and the test says "no modal" — and the
+ * graph's selection, and the inspector's contents with it, were cleared for an Escape
+ * addressed to Preferences, the licences notice or Device setup. This listener is
+ * registered in the capture phase on `window`, which is the first thing the event
+ * reaches, so it records the state the operator's key was actually aimed at.
+ */
+let escapeConsumed = false;
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (e.key === "Escape") escapeConsumed = modalOpen();
+  },
+  true,
+);
+
 window.addEventListener("keydown", (e) => {
   // Undo / redo first, and with its own target test: `typing` below is too broad
   // for it (a focused range slider or the model picker owns no undo stack of its
@@ -3342,7 +3362,7 @@ window.addEventListener("keydown", (e) => {
     // contents with it — for an Escape addressed to Preferences, the licences notice or
     // Device setup. The same key closing a console popover cleared the hidden graph's
     // selection behind the console view.
-    if (graphHost.hidden || modalOpen()) return;
+    if (graphHost.hidden || modalOpen() || escapeConsumed) return;
     graph.clearSelection();
   }
 });
