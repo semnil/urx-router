@@ -326,6 +326,8 @@ function trackPointers(): void {
   // Not `capture: true`, unlike the four above: an element's own `focus` does not bubble
   // but does propagate down, so a capturing window listener fires every time focus moves
   // anywhere on the page — which would forget the pointer the operator is pressing WITH.
+  // Measured 2026-08-14, both engines: `el.focus()` reaches only the capturing window
+  // listener, while a focus event at the window reaches both.
   window.addEventListener("focus", () => {
     if (pressedPointers.size === 0) return;
     pressedPointers.clear();
