@@ -9,26 +9,35 @@ name: Race harness
 # ~800 sequential commands — so it stays its own workflow rather than being folded into
 # the ordinary tier.
 #
-# It runs on a pull request that touches `src/**`, `e2e/**` or `playwright.config.ts`, and
-# on the one that changes the app version. Two clauses, because neither implies the other.
-# The first is what the harness reads and what it drives, and the recorded accident is why
-# it is the whole of `src/**` rather than the live-sync files alone: a `page.selectOption`
-# that stopped resolving under a session lock rode 17 merges with this gate green, from a
-# pull request that touched only `src/main.ts`. `e2e/**` rather than `e2e/race/**` for the
-# same reason one level out — the harness's specs import `e2e/graph-helpers.ts` — and
-# `playwright.config.ts` because the `race` and `race-webkit` projects are defined there,
-# and `pnpm check:skips` collects only the `race` one. The second clause is kept because a
-# version-bump PR carries nothing else (see CLAUDE.md) and therefore touches none of those
-# paths — dropping it would take the harness out from in front of the only commit a user
-# ever installs, which is a stronger place than the release itself, where a red result
-# would arrive after the tag already exists.
+# It runs on a pull request that touches `src/**`, `e2e/**`, `playwright.config.ts`,
+# `package.json` or `pnpm-lock.yaml`, and on the one that changes the app version. Two
+# clauses. The first is what the harness reads and what it drives, and the recorded
+# accident is why it is the whole of `src/**` rather than the live-sync files alone: a
+# `page.selectOption` that stopped resolving under a session lock rode 17 merges with this
+# gate green, from a pull request that touched only `src/main.ts`. `e2e/**` rather than
+# `e2e/race/**` for the same reason one level out — the harness's specs import
+# `e2e/graph-helpers.ts`. `playwright.config.ts` because the `race` and `race-webkit`
+# projects are declared there and nowhere else. `pnpm-lock.yaml` because it decides the
+# Playwright version, which .github/actions/playwright-version turns into the container
+# image tag both harness jobs run in.
 #
-# `paths:` on the trigger says neither thing. It cannot ask whether the version moved —
-# `paths: package.json` catches Dependabot's weekly npm edits instead — and it would skip
-# the WHOLE workflow, which reports no check run at all and leaves `race-required` at
-# "Expected" forever. So the trigger carries no filter, `detect` runs on every pull
-# request and decides there, and away from both clauses the two harness jobs skip on their
-# own condition, which reports success in seconds.
+# The second clause no longer decides any pull request on its own: `package.json` is in
+# the path set and a version bump is an edit to it, so the paths reach that PR first.
+# `detect` therefore evaluates and prints both rather than returning on the first —
+# see the note above the final `if`. It is kept because it is the written statement that
+# the harness stands in front of the only commit a user ever installs, and because it is
+# what survives anyone narrowing the paths. In front of the tag rather than behind it,
+# where a red result would arrive after the tag already exists.
+#
+# The cost of the last two paths was taken deliberately: Dependabot's npm ecosystem runs
+# weekly, and every one of its pull requests moves `pnpm-lock.yaml`, so each now spends a
+# harness run. That is the trade for a browser build never changing under the suite
+# unmeasured, and it is why `paths:` on the trigger is still the wrong instrument — not
+# because it would catch Dependabot, but because it cannot ask whether the version moved,
+# and because it would skip the WHOLE workflow, which reports no check run at all and
+# leaves `race-required` at "Expected" forever. So the trigger carries no filter, `detect`
+# runs on every pull request and decides there, and away from both clauses the two harness
+# jobs skip on their own condition, which reports success in seconds.
 #
 # Also runnable on demand against any branch:
 #
@@ -88,13 +97,16 @@ jobs:
           # guards against them). A diff against the base has no ceiling to guard.
           #
           # Two flags, each measured in a scratch repository rather than added on
-          # principle. `core.quotePath=false`: git prints a path carrying any byte
-          # outside ASCII C-quoted — `"src/\346\227\245..."` — and that leading quote
-          # defeats a `src/` match, so the harness would skip AND print a reason that is
-          # false. `--no-renames`: rename detection prints a moved file at its
-          # DESTINATION alone, so `git mv src/x.ts scripts/x.ts` reads as no src/ change;
-          # with the flag both paths are listed.
-          if ! files=$(git -c core.quotePath=false diff --name-only --no-renames "${BASE_SHA}" HEAD); then
+          # principle. `-z`: git C-quotes a path it cannot print literally — any byte
+          # outside ASCII, but also a `"`, a backslash or a control byte — and the
+          # leading quote of `"src/\346\227\245..."` defeats a `src/` match, so the
+          # harness would skip AND print a reason that is false. `core.quotePath=false`
+          # covers the non-ASCII third of that; `-z` covers all of it, at the price of a
+          # file, since a NUL cannot survive a shell variable. `--no-renames`: rename
+          # detection prints a moved file at its DESTINATION alone, so lifting a module
+          # out of src/ reads as no src/ change; measured, `-z` does not imply it.
+          list=$(mktemp)
+          if ! git diff --name-only --no-renames -z "${BASE_SHA}" HEAD > "${list}"; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
             echo "could not diff against ${BASE_SHA} — running the harness rather than guessing"
             exit 0
@@ -108,18 +120,13 @@ jobs:
           # Both fold toward not running, which is the direction this whole job is
           # written against.
           #
-          # e2e/ whole rather than e2e/race/: the harness's specs import
-          # e2e/graph-helpers.ts. playwright.config.ts is where the race and race-webkit
-          # projects are declared at all. pnpm-lock.yaml decides the Playwright version,
-          # which .github/actions/playwright-version turns into the container image tag
-          # both harness jobs run in — so a dependency bump changes the browser build
-          # under the suite, and package.json carries the scripts that drive it.
+          # Why each path is in the set is in this file's header, beside what it costs.
           touched=false
-          while IFS= read -r file; do
+          while IFS= read -r -d '' file; do
             case "${file}" in
               src/* | e2e/* | playwright.config.ts | package.json | pnpm-lock.yaml) touched=true ;;
             esac
-          done <<< "${files}"
+          done < "${list}"
           head=$(jq -r .version package.json)
           # Read in two steps, not one pipeline: a pipeline's status is its LAST
           # command's, so `git show ... | jq` returns an empty string and exit 0 when git

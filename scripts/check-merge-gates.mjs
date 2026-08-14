@@ -323,14 +323,36 @@ function checkJob(workflow, id, job, context) {
   //
   //    Coarse in the same way rule 7 below is: it asks whether `github.run_id` appears in
   //    the key, not what the whole expression evaluates to.
-  const concurrency = workflow.root.children.get("concurrency");
-  if (concurrency) {
-    const group = concurrency.children.get("group")?.value ?? "";
-    const cancels = unquote(concurrency.children.get("cancel-in-progress")?.value ?? "") === "true";
+  //    Both levels, because a group on the JOB cancels the same check run a group on the
+  //    workflow would.
+  for (const [level, node] of [
+    ["workflow", workflow.root.children.get("concurrency")],
+    ["job", job.children.get("concurrency")],
+  ]) {
+    if (!node) continue;
+    // The flow form (`concurrency: { group: …, cancel-in-progress: true }`) is stored as
+    // a VALUE with no children, so every read below would find nothing and this rule
+    // would report the safest possible answer about a group it never saw. Refused for
+    // the same reason `pull_request:` in flow form is refused above.
+    if (node.value) {
+      finding(
+        where,
+        `${level} \`concurrency:\` for \`${context}\` carries an inline value; write it in block form (\`group:\` and ` +
+          `\`cancel-in-progress:\` on their own lines) so this checker can see the key — one it cannot see is one it ` +
+          `will report as absent`,
+      );
+      continue;
+    }
+    const group = node.children.get("group")?.value ?? "";
+    const cancel = unquote(node.children.get("cancel-in-progress")?.value ?? "");
+    // NOT `=== "true"`. GitHub takes an expression here, and reading `${{ … }}` as "does
+    // not cancel" would pass exactly the arrangement this rule exists to refuse. Absent
+    // is the documented default of false; anything else counts as cancelling.
+    const cancels = cancel !== "" && cancel !== "false";
     if (cancels && !group.includes("github.run_id")) {
       finding(
         where,
-        `\`${context}\` comes from a workflow whose concurrency group \`${group}\` cancels in progress and is not keyed ` +
+        `\`${context}\` comes from a ${level} whose concurrency group \`${group}\` cancels in progress and is not keyed ` +
           `per run — two runs reporting it on one commit share the group, and the cancelled one leaves the context at ` +
           `\`cancelled\`, which satisfies no merge. Key the non-pull-request case on \`github.run_id\``,
       );

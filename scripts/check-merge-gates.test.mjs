@@ -125,6 +125,32 @@ describe("the arrangement a merge condition needs", () => {
     expect(findingsOf(text).join("\n")).toContain("cancels in progress and is not keyed per run");
   });
 
+  // The same rule at the other level, and in the two forms that would otherwise be read
+  // as "no group at all" or "does not cancel".
+  it("rejects a ref-keyed cancelling group declared on the job rather than the workflow", () => {
+    const text = HEALTHY.replace(
+      "  gate:\n    needs:",
+      "  gate:\n    concurrency:\n      group: gate-${{ github.ref }}\n      cancel-in-progress: true\n    needs:",
+    );
+    expect(findingsOf(text).join("\n")).toContain("cancels in progress and is not keyed per run");
+  });
+
+  it("treats an expression `cancel-in-progress` as cancelling rather than as false", () => {
+    const text = HEALTHY.replace(
+      "jobs:\n",
+      "concurrency:\n  group: gate-${{ github.ref }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\njobs:\n",
+    );
+    expect(findingsOf(text).join("\n")).toContain("cancels in progress and is not keyed per run");
+  });
+
+  it("refuses an inline `concurrency:` rather than reading it as no group", () => {
+    const text = HEALTHY.replace(
+      "jobs:\n",
+      "concurrency: { group: 'gate-${{ github.ref }}', cancel-in-progress: true }\njobs:\n",
+    );
+    expect(findingsOf(text).join("\n")).toContain("carries an inline value");
+  });
+
   it("accepts a group that falls back to the run id, and one that does not cancel at all", () => {
     const withRunId = HEALTHY.replace(
       "jobs:\n",
