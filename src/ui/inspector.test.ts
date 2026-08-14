@@ -108,6 +108,45 @@ describe("compositionGate", () => {
     expect(gate.held()).toBe(false);
   });
 
+  // An open `<select>` picker is the second kind of in-flight input a rebuild destroys,
+  // and `replaceChildren` closes it instantly — so while any followed parameter on the
+  // node moved (an external MIDI sweep, a device-side knob) the reflect ran at up to
+  // 20 Hz and the Rec Point / Signal Type / INS FX dropdowns could not be opened at all.
+  it("holds a rebuild while a select inside it has focus, and runs one when it ends", () => {
+    let rebuilds = 0;
+    const el = document.createElement("div");
+    const sel = document.createElement("select");
+    sel.append(document.createElement("option"));
+    el.append(sel);
+    document.body.replaceChildren(el);
+    const gate = compositionGate(el, () => rebuilds++);
+
+    expect(gate.held()).toBe(false); // nothing open yet
+    sel.focus();
+    expect(gate.held()).toBe(true);
+    expect(gate.held()).toBe(true);
+    expect(rebuilds).toBe(0);
+
+    // A picker dismissal is a change, a blur, or both.
+    sel.blur();
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(rebuilds).toBe(1);
+    expect(gate.held()).toBe(false);
+  });
+
+  // …and a select somewhere ELSE on the page is not this panel's business.
+  it("does not hold for a select outside the host", () => {
+    let rebuilds = 0;
+    const el = document.createElement("div");
+    el.append(document.createElement("input"));
+    const outside = document.createElement("select");
+    outside.append(document.createElement("option"));
+    document.body.replaceChildren(el, outside);
+    const gate = compositionGate(el, () => rebuilds++);
+    outside.focus();
+    expect(gate.held()).toBe(false);
+  });
+
   it("runs nothing on an end that held no rebuild", () => {
     let rebuilds = 0;
     const el = host();

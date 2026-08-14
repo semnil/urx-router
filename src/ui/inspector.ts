@@ -242,10 +242,13 @@ export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Select
 export function compositionGate(host: HTMLElement, rebuild: () => void): { held: () => boolean } {
   let composing = false;
   let pending = false;
+  // Runs the held rebuild once the gate is no longer busy — asked on the event that
+  // ENDS the busy state, by which point it has already ended. A composition clears its
+  // own flag here; a picker's "open" is read off focus and has cleared itself before
+  // the blur reaches us, so testing the flag alone would have dropped the rebuild.
   const end = (): void => {
-    if (!busy()) return;
     composing = false;
-    if (!pending) return;
+    if (!pending || busy()) return;
     pending = false;
     rebuild();
   };

@@ -213,4 +213,21 @@ mod tests {
             "its own page load releases it, as it always did"
         );
     }
+
+    // The direct command took the same rule on, later. Without it a second webview
+    // could drop main's hold mid-Live-sync while main's UI went on asserting one.
+    #[test]
+    fn only_the_owner_can_release_the_hold_through_the_command() {
+        let state = KeepAwakeState::default();
+        set(&state, "main", true).expect("the hold must be available to test the release");
+
+        set(&state, "midi", false).expect("a non-owner's release is a no-op, not an error");
+        assert!(
+            state.held.lock().unwrap().is_some(),
+            "another window's set(false) leaves this hold alone"
+        );
+
+        set(&state, "main", false).expect("the owner releases its own hold");
+        assert!(state.held.lock().unwrap().is_none());
+    }
 }

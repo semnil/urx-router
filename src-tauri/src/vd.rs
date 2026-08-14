@@ -2350,4 +2350,38 @@ mod tests {
             "prior worker told to stop"
         );
     }
+
+    // Ownership is recorded by webview LABEL, and a page load keeps the label — so the
+    // teardown a load runs cannot cancel a connect still in flight for the dead page.
+    // `open()` takes up to ~9 s (discovery, sync, device), and inside that window a
+    // reload's teardown found nothing installed and the connect then installed under the
+    // NEW page: an open vdp socket it holds no epoch for, and `vd_link_stats` reporting
+    // a live ledger on a page that never connected.
+    #[test]
+    fn a_connect_that_outlived_its_page_is_not_installed_under_its_replacement() {
+        let state = VdState::default();
+        let gen = state.page_gen("main");
+
+        // The page reloads while the handshake is in flight.
+        state.note_page_load("main");
+
+        let (tx, rx) = mpsc::channel::<Cmd>();
+        let installed = state.install_for_page(tx, Arc::new(LinkCounters::default()), "main", gen);
+        assert!(installed.is_none(), "the page that asked for it is gone");
+        assert!(
+            sender(&state).is_err(),
+            "nothing was installed for the page that replaced it"
+        );
+        // …and the worker it opened was told to stop rather than left running.
+        assert!(matches!(rx.recv(), Ok(Cmd::Shutdown { .. })));
+
+        // The same connect, with no reload under it, installs as it always did.
+        let gen = state.page_gen("main");
+        let (tx2, _rx2) = mpsc::channel::<Cmd>();
+        assert!(state
+            .install_for_page(tx2, Arc::new(LinkCounters::default()), "main", gen)
+            .is_some());
+        assert!(sender(&state).is_ok());
+        shutdown_owned_by(&state, "main");
+    }
 }

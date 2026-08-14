@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BRIGHTNESS_MAX, defaultDeviceSetup, type DeviceSetup } from "../core/control/device-setup";
 import { getModel } from "../models";
 import { DeviceSetupPanel, type DeviceSetupHooks } from "./device-setup";
+import { resetSettingsCache } from "../core/settings";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
@@ -58,6 +59,26 @@ describe("DeviceSetupPanel", () => {
     expect(document.querySelector("#device-setup-box")?.childElementCount).toBe(0);
     panel.refresh();
     expect(document.querySelector("#device-setup-box")?.childElementCount).toBe(0);
+  });
+
+  // `onWheelStep` calls back once per configured wheel step, and the first `edit()`
+  // re-renders and REPLACES the slider — so calls 2..n used to read the detached old
+  // element, whose value had not moved, and compute the same target. One notch moved
+  // brightness by a single detent whatever the preference said, and re-rendered three
+  // times doing it. Every other slider here honours it through the shared helper.
+  // (WHEEL_STEP_CHOICES is 1 / 2 / 4, so 4 is the setting that separates the two.)
+  it("steps brightness by the whole wheel-steps preference, not by one", () => {
+    localStorage.setItem("urx-settings", JSON.stringify({ wheelSteps: 4 }));
+    resetSettingsCache();
+    const { panel } = install();
+    panel.open({ ...defaultDeviceSetup(), brightness: 4 });
+
+    const slider = document.querySelector("#device-setup-brightness") as HTMLInputElement;
+    slider.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }));
+
+    // Read off the re-rendered element, since the one above is detached by now.
+    const after = document.querySelector("#device-setup-brightness") as HTMLInputElement;
+    expect(Number(after.value)).toBe(8);
   });
 
   it("marks a committed edit, sends its exact diff, and moves the baseline only after success", async () => {

@@ -231,6 +231,12 @@ fn rotate_link_log(path: &std::path::Path, prev: &std::path::Path, max: u64) -> 
 // quit) shows up after the app is gone, so a session that rewrote the file would erase
 // the evidence of the one before it. It is also why the path is fixed rather than
 // chosen: nothing about it is a document the operator saves.
+/// Whether `line` is ONE ledger line. Named rather than inlined so it can be tested:
+/// the command around it needs an AppHandle and a real log directory.
+fn link_log_line_ok(line: &str) -> bool {
+    !line.chars().any(char::is_control)
+}
+
 #[tauri::command]
 async fn append_link_log(app: tauri::AppHandle, line: String) -> Result<String, String> {
     use std::io::Write;
@@ -241,7 +247,7 @@ async fn append_link_log(app: tauri::AppHandle, line: String) -> Result<String, 
     // in one call and can forge or split exactly the evidence the file exists to keep.
     // Other control characters go with it: they cannot appear in the JSON this emits and
     // they make a ledger line unreadable in a terminal.
-    if line.chars().any(|c| c.is_control()) {
+    if !link_log_line_ok(&line) {
         return Err("bad-request: link log line carries a control character".into());
     }
     let dir = app.path().app_log_dir().map_err(file_io)?;
@@ -1406,6 +1412,107 @@ mod tests {
         assert!(
             !TAKEN.load(Ordering::SeqCst),
             "an unasked action stays available"
+        );
+    }
+
+    // `{path}.tmp` was a name two writers to one destination both opened — a
+    // double-fired save, or a dev build and an installed one exporting to the same
+    // file — so the second truncated under the first and the later rename installed a
+    // mixed body. It also destroyed a pre-existing operator file of that name.
+    #[test]
+    fn an_atomic_write_leaves_a_sibling_named_tmp_alone() {
+        let dir = std::env::temp_dir().join(format!("urx-atomic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("plan.json");
+        let decoy = dir.join("plan.json.tmp");
+        std::fs::write(&decoy, b"the operator's own file").unwrap();
+
+        super::write_atomic(target.to_str().unwrap(), b"{}").unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"{}");
+        assert_eq!(
+            std::fs::read(&decoy).unwrap(),
+            b"the operator's own file",
+            "the fixed temp name destroyed this; a unique one cannot"
+        );
+        // …and nothing of ours is left behind.
+        let strays: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "plan.json" && n != "plan.json.tmp")
+            .collect();
+        assert!(strays.is_empty(), "left behind: {strays:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The ledger reads an ABSENT session-end record as "nothing closed this session",
+    // so a line carrying a newline writes several records in one call and can forge or
+    // split exactly the evidence the file exists to keep.
+    #[test]
+    fn a_link_log_line_carrying_a_control_character_is_refused() {
+        assert!(super::link_log_line_ok("{\"ok\":true}"));
+        assert!(!super::link_log_line_ok("{\"a\":1}\n{\"end\":true}"));
+        assert!(!super::link_log_line_ok("{\"a\":\"\u{7}\"}"));
+    }
+
+    // The app's ACL is three hand-kept lists — build.rs's command set, the handler in
+    // `run`, and the capability files — and nothing at runtime notices when one moves:
+    // a capability naming a command that does not exist grants nothing, and a command
+    // absent from build.rs simply has no permission to be denied by. Which is how the
+    // MIDI window came to reach every app command while its own capability said it
+    // reached none.
+    #[test]
+    fn every_app_command_is_declared_and_granted_to_the_window_that_may_call_it() {
+        let build = include_str!("../build.rs");
+        let lib = include_str!("lib.rs");
+        let handler = lib
+            .split("generate_handler![")
+            .nth(1)
+            .and_then(|s| s.split(']').next())
+            .expect("the invoke handler list");
+        let commands: Vec<String> = handler
+            .split(',')
+            .map(|s| s.trim().trim_start_matches("midiwin::").to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert!(commands.len() > 30, "read {} commands", commands.len());
+
+        let main: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        let granted: Vec<&str> = main["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        for cmd in &commands {
+            assert!(
+                build.contains(&format!("\"{cmd}\"")),
+                "{cmd} is in the handler but not declared in build.rs, so no permission exists for it"
+            );
+            let perm = format!("allow-{}", cmd.replace('_', "-"));
+            assert!(
+                granted.contains(&perm.as_str()),
+                "the main window is not granted {perm}"
+            );
+        }
+
+        // …and the MIDI window is granted the relay pair and nothing else. Its whole
+        // description rests on this: it is a view of the main window's state.
+        let midi: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/midi-window.json")).unwrap();
+        let mut midi_perms: Vec<&str> = midi["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter(|p| p.starts_with("allow-"))
+            .collect();
+        midi_perms.sort_unstable();
+        assert_eq!(
+            midi_perms,
+            vec!["allow-midi-ui-attach-window", "allow-midi-ui-to-main"]
         );
     }
 }
