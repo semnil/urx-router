@@ -229,7 +229,7 @@ describe("holdInertOnBlur", () => {
     input.max = "100";
     input.value = "50";
     document.body.append(input);
-    holdInertOnBlur(input, live);
+    holdInertOnBlur(input, { live });
     return input;
   };
   const press = (el: HTMLElement): void =>
@@ -287,6 +287,77 @@ describe("holdInertOnBlur", () => {
     up();
     expect(replacement.disabled).toBe(true);
     expect(document.activeElement).not.toBe(replacement);
+  });
+  it("answers only the pointer that armed it, so a second one cannot re-arm the row", () => {
+    const input = range();
+    press(input);
+    window.dispatchEvent(new FocusEvent("blur"));
+    // A finger resting while a mouse moves, or a hovering pen: no buttons of its own.
+    window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 99, buttons: 0 }));
+    expect(input.disabled).toBe(true);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 99 }));
+    expect(input.disabled).toBe(true);
+    up();
+    expect(input.disabled).toBe(false);
+  });
+
+  it("does not take focus back from whatever the operator touched next", () => {
+    const input = range();
+    const other = document.createElement("input");
+    other.type = "text";
+    document.body.append(other);
+    press(input);
+    input.focus();
+    window.dispatchEvent(new FocusEvent("blur"));
+    // The press that ends the hold is often the next gesture, on another control.
+    other.focus();
+    up();
+    expect(input.disabled).toBe(false);
+    expect(document.activeElement).toBe(other);
+  });
+
+  it("holds the row the surface rebuilt, when the rebuild lands on the same blur", () => {
+    const replacement = document.createElement("input");
+    replacement.type = "range";
+    const input = range(() => replacement);
+    // A surface registers its blur listener when it is built, so it runs FIRST and the
+    // element this gesture started on is already detached by the time the hold applies.
+    window.addEventListener("blur", () => input.replaceWith(replacement));
+    press(input);
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(replacement.disabled).toBe(true);
+    up();
+    expect(replacement.disabled).toBe(false);
+  });
+
+  it("commits through `beforeDisable` before anything is held", () => {
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = "0";
+    input.max = "100";
+    input.value = "50";
+    document.body.append(input);
+    const committed: Array<{ value: string; disabled: boolean }> = [];
+    holdInertOnBlur(input, { beforeDisable: () => committed.push({ value: input.value, disabled: input.disabled }) });
+    press(input);
+    input.value = "70";
+    window.dispatchEvent(new FocusEvent("blur"));
+    // Chromium fires the pending `change` at the disable and WebKit fires none, so the
+    // caller commits here — with the value still readable and the row not yet inert.
+    expect(committed).toEqual([{ value: "70", disabled: false }]);
+    expect(input.disabled).toBe(true);
+  });
+
+  it("ignores a wheel notch while the row is held inert", () => {
+    const input = range();
+    wheelStep(input);
+    press(input);
+    window.dispatchEvent(new FocusEvent("blur"));
+    input.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }));
+    expect(input.value).toBe("50");
+    up();
+    input.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }));
+    expect(input.value).not.toBe("50");
   });
 });
 

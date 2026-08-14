@@ -167,6 +167,12 @@ export function wheelStep(slider: HTMLInputElement, blocked?: () => boolean | un
   onWheelStep(
     slider,
     (dir) => {
+      // A disabled slider takes no pointer input, but the wheel is delivered to it anyway
+      // (measured in both engines) — and this is the app's own write path, not the
+      // engine's, so nothing else would stop it. That matters while `holdInertOnBlur` has
+      // a row held inert: macOS delivers scroll to an unfocused window, so a notch over
+      // the background app would write the value the app just declared out of reach.
+      if (slider.disabled) return;
       const step = Number(slider.step) || 1;
       const lo = Number(slider.min);
       const hi = Number(slider.max);
@@ -200,27 +206,51 @@ export function wheelStep(slider: HTMLInputElement, blocked?: () => boolean | un
  * nothing of their own to dim — a row shot enabled and disabled is byte-identical in both.
  *
  * `live` names the row as it is NOW, for a surface that rebuilds: the same blur can land a
- * repaint that replaces this element, and focus has to return to what is on screen rather
- * than to a detached node. Whatever that row's own `disabled` says is left alone — a
- * rebuilt row can be locked (COMP's 1-knob hands its threshold to the device), and clearing
- * that would put a device-driven value back under the pointer.
+ * repaint that replaces this element — and it lands FIRST, since a surface registers its
+ * own blur listener when it is built and this one is registered per press. So the hold is
+ * applied to whatever `live` answers rather than to the element the gesture started on,
+ * which is by then detached and no longer what the pointer is over. Whatever that row's own
+ * `disabled` says when it is already true is left alone — a rebuilt row can be locked
+ * (COMP's 1-knob hands its threshold to the device), and clearing that would put a
+ * device-driven value back under the pointer.
+ *
+ * `beforeDisable` is for a row that commits on `change` rather than on `input` — Device
+ * setup's brightness is the only one. Measured 2026-08-14, disabling a range mid-drag makes
+ * Chromium fire that pending `change` at the disable and WebKit fire none at all, so the
+ * value the operator dragged to is either committed early or lost outright; the caller
+ * commits it here instead, before anything is disabled, and `live` is resolved after that
+ * in case the commit rebuilt the row.
  */
-export function holdInertOnBlur(input: HTMLInputElement, live?: () => HTMLInputElement | null): void {
-  input.addEventListener("pointerdown", () => {
+export function holdInertOnBlur(
+  input: HTMLInputElement,
+  opts: { live?: () => HTMLInputElement | null; beforeDisable?: () => void } = {},
+): void {
+  input.addEventListener("pointerdown", (e) => {
+    const id = e.pointerId;
     const onBlur = (): void => {
       disarm();
-      // A rebuild that beat us to it already ended the drag by removing the element.
-      if (!input.isConnected || input.disabled) return;
-      const focused = document.activeElement === input;
-      input.disabled = true;
-      const back = (ev?: PointerEvent): void => {
-        if (ev?.type === "pointermove" && ev.buttons !== 0) return;
+      opts.beforeDisable?.();
+      const held = opts.live?.() ?? input;
+      // Already gone or already inert: the surface ended the drag its own way.
+      if (!held.isConnected || held.disabled) return;
+      const focused = document.activeElement === held || document.activeElement === input;
+      held.disabled = true;
+      const back = (ev: PointerEvent): void => {
+        // This gesture's pointer only. A second one — a finger resting while a mouse moves,
+        // a pen hovering — reports no buttons of its own, and answering it would re-arm the
+        // row while the operator is still holding it.
+        if (ev.pointerId !== id) return;
+        if (ev.type === "pointermove" && ev.buttons !== 0) return;
         window.removeEventListener("pointerup", back);
         window.removeEventListener("pointercancel", back);
         window.removeEventListener("pointermove", back);
-        input.disabled = false;
-        const now = live?.() ?? input;
-        if (focused && now.isConnected && !now.disabled) now.focus();
+        held.disabled = false;
+        const now = opts.live?.() ?? held;
+        // Only if nothing else took focus meanwhile: the press that ends the hold is often
+        // the operator's next gesture on another control, and stealing focus back from it
+        // puts their arrow keys on a plan value they are no longer looking at.
+        const idle = document.activeElement === null || document.activeElement === document.body;
+        if (focused && idle && now.isConnected && !now.disabled) now.focus();
       };
       window.addEventListener("pointerup", back);
       window.addEventListener("pointercancel", back);

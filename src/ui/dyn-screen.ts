@@ -1441,7 +1441,7 @@ export class DynScreen {
     // The resolver is this screen's own half: the same blur clears `grabbed`, so a refresh
     // the press deferred runs and rebuilds this column, and focus has to return to the row
     // that is on screen rather than to the element the gesture started on.
-    holdInertOnBlur(input, () => this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`));
+    holdInertOnBlur(input, { live: () => this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`) });
     ctl.append(input, val);
     // The device's push-and-turn fine grid is confirmed for a few values only (the
     // COMP makeup gain, the EQ band gains), so the field table says which (see

@@ -718,6 +718,26 @@ describe("refresh", () => {
     expect(document.activeElement).not.toBe(row);
   });
 
+  // The wiring itself, on the path with no rebuild racing it: the row this screen builds
+  // has to be the one `holdInertOnBlur` holds, and give its focus back at the release.
+  // Without this the whole file passes with the call deleted — jsdom has no native drag to
+  // end, so every other case here is blind to the site.
+  it("holds a value row inert while the window is away, focus and all", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const row = rowsByKey(host.box).get("threshold")!;
+
+    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    row.focus();
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(row.disabled).toBe(true);
+
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+    expect(row.disabled).toBe(false);
+    expect(document.activeElement).toBe(row);
+  });
+
   // A rebuilt row carries its own disabled state, and the restore must not talk it out of
   // it: turning COMP's 1-knob on hands threshold / ratio / gain / knee to the device, and
   // a locked row disables its controls. Re-enabling one here would put a device-driven

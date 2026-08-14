@@ -1,4 +1,4 @@
-import { expect, test as base, type BrowserContext, type Page } from "@playwright/test";
+import { expect, test as base, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import coverageOptions from "./coverage-options";
 
 interface CoverageHarness {
@@ -96,6 +96,44 @@ export async function colorToken(page: Page, name: string): Promise<string> {
     `${name} is declared as "${declared}", which does not paint — colorToken resolves colour tokens only`,
   ).not.toBe("rgba(0, 0, 0, 0)");
   return resolved;
+}
+
+/** Drive one native slider through the gesture `holdInertOnBlur` exists for: press, drag,
+ *  lose the window, keep the button down through a focus return, release, and press again.
+ *  The DRAG is real (only an engine can drive a native slider) and only the blur is
+ *  dispatched — Playwright emulates focus, so no tier can take the OS foreground away. The
+ *  measurements the shape rests on are in `ui/dom.ts`. Shared because three specs drive it
+ *  on four different builders, and a per-spec copy is what let two of them assert the
+ *  frozen value alone — which the treatment measured to RESUME on the unit also satisfies. */
+export async function heldThroughBlur(page: Page, slider: Locator): Promise<void> {
+  await expect(slider).toHaveCount(1);
+  const b = (await slider.boundingBox())!;
+  const y = b.y + b.height / 2;
+  const at = (f: number): number => b.x + b.width * f;
+
+  await page.mouse.move(at(0.25), y);
+  await page.mouse.down();
+  await page.mouse.move(at(0.4), y);
+  const dragged = await slider.inputValue();
+
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
+  await page.mouse.move(at(0.8), y);
+  expect(await slider.inputValue()).toBe(dragged);
+  await expect(slider).toBeDisabled();
+
+  // Focus returning is not the re-arm: the button is still down, and on the unit that is
+  // where the row picked its drag back up.
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await page.mouse.move(at(0.95), y);
+  expect(await slider.inputValue()).toBe(dragged);
+
+  await page.mouse.up();
+  await expect(slider).toBeEnabled();
+  await page.mouse.move(at(0.6), y);
+  await page.mouse.down();
+  await page.mouse.move(at(0.65), y);
+  await page.mouse.up();
+  expect(await slider.inputValue()).not.toBe(dragged);
 }
 
 export { expect };

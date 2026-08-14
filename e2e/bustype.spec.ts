@@ -90,6 +90,9 @@ async function heldThroughBlur(page: Page, slider: ReturnType<Page["locator"]>):
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
   await page.mouse.move(b.x + b.width * 0.8, y);
   expect(await slider.inputValue()).toBe(dragged);
+  // The state itself, not only the frozen value: removing the element and re-adding it
+  // freezes the value too, and that is the treatment measured to RESUME on the unit.
+  await expect(slider).toBeDisabled();
 
   // Focus returning is not the re-arm — the button is still down.
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));

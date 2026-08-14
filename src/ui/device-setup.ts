@@ -373,7 +373,16 @@ export class DeviceSetupPanel {
     // notch instead of three (and re-rendered three times doing it). Every other slider
     // here goes through the shared helper and honours the preference.
     onWheelStep(input, (dir) => this.edit({ brightness: this.draft.brightness + dir }));
-    holdInertOnBlur(input, () => this.box.querySelector<HTMLInputElement>("#device-setup-brightness"));
+    // This row is the app's only slider that commits on `change`, and an engine will not
+    // synthesize that change when the control is disabled — Chromium fires it early, at
+    // the disable, and WebKit fires none at all (measured 2026-08-14), which loses the
+    // value the operator dragged to. So the commit is made here, from the element, before
+    // anything is held.
+    holdInertOnBlur(input, {
+      beforeDisable: () => this.edit({ brightness: Number(input.value) }),
+      live: () => this.box.querySelector<HTMLInputElement>("#device-setup-brightness"),
+    });
+
     wrap.append(input, val);
     return wrap;
   }
