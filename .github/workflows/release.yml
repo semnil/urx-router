@@ -14,11 +14,19 @@ name: Release
 #
 # No E2E runs here. The harness runs on the pull requests race.yml's trigger names, the
 # version bump among them, so it sits in front of the tag rather than behind it.
+# The tag patterns track what `check-tag` accepts, as closely as GitHub's filter glob can:
+# it has no alternation, so the three prerelease prefixes are three lines. A tag the filter
+# admits and `check-tag` then declines produces a green run that creates nothing, so the
+# two lists disagreeing is the thing to avoid; `-*` used to admit every suffix there is,
+# which made `v1.5.2-hotfix1` exactly that. What the glob still cannot express is
+# `check-tag`'s trailing `*([0-9.])`, so `v1.0.0-alphafoo` remains in that shape.
 on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
-      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+      - 'v[0-9]+.[0-9]+.[0-9]+-alpha*'
+      - 'v[0-9]+.[0-9]+.[0-9]+-beta*'
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc*'
   workflow_dispatch:
 
 # Keyed by the ref, which for both triggers is the tag: a re-dispatch of a tag already
