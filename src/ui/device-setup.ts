@@ -372,7 +372,16 @@ export class DeviceSetupPanel {
     // target. With Preferences > wheel steps at 3, brightness moved by one detent per
     // notch instead of three (and re-rendered three times doing it). Every other slider
     // here goes through the shared helper and honours the preference.
-    onWheelStep(input, (dir) => this.edit({ brightness: this.draft.brightness + dir }));
+    // Stepping the draft is also why the shared `wheelStep` guard does not cover this row:
+    // `wheel` is delivered to a disabled range in both engines, and macOS delivers scroll to
+    // an unfocused window, so while `holdInertOnBlur` holds this row a notch over the
+    // background app would write the value just declared out of reach — and `edit()` would
+    // put a live row back under the still-held pointer.
+    onWheelStep(
+      input,
+      (dir) => this.edit({ brightness: this.draft.brightness + dir }),
+      () => input.disabled,
+    );
     // This row is the app's only slider that commits on `change`, and an engine will not
     // synthesize that change when the control is disabled — Chromium fires it early, at
     // the disable, and WebKit fires none at all (measured 2026-08-14), which loses the

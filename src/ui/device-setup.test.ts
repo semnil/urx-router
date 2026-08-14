@@ -81,6 +81,34 @@ describe("DeviceSetupPanel", () => {
     expect(Number(after.value)).toBe(8);
   });
 
+  // The row's own wheel wiring steps the DRAFT rather than the element, so it does not go
+  // through the shared `wheelStep` and does not inherit its inert guard. `wheel` reaches a
+  // disabled range in both engines, and macOS delivers scroll to an unfocused window — so
+  // without a guard of its own a notch over the background app writes the value the app
+  // just declared out of reach, and the re-render puts a live row back under the still-held
+  // pointer.
+  it("ignores a wheel notch while brightness is held inert", () => {
+    localStorage.clear(); // the case above leaves a wheel-steps preference behind
+    resetSettingsCache();
+    const { panel } = install();
+    panel.open({ ...defaultDeviceSetup(), brightness: 4 });
+
+    const slider = document.querySelector("#device-setup-brightness") as HTMLInputElement;
+    slider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    window.dispatchEvent(new FocusEvent("blur"));
+    const held = document.querySelector("#device-setup-brightness") as HTMLInputElement;
+    expect(held.disabled).toBe(true);
+
+    held.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }));
+    expect(Number((document.querySelector("#device-setup-brightness") as HTMLInputElement).value)).toBe(4);
+
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+    const freed = document.querySelector("#device-setup-brightness") as HTMLInputElement;
+    expect(freed.disabled).toBe(false);
+    freed.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }));
+    expect(Number((document.querySelector("#device-setup-brightness") as HTMLInputElement).value)).toBe(5);
+  });
+
   it("marks a committed edit, sends its exact diff, and moves the baseline only after success", async () => {
     const flight = deferred<boolean>();
     const { panel, hooks } = install();
