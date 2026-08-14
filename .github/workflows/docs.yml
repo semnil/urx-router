@@ -16,6 +16,14 @@ on:
   push:
     branches: [main]
 
+# Seconds either way, so this buys little on its own; it is here so that every workflow
+# states what it does under a second push rather than leaving one to read as an oversight.
+# The key's shape is race.yml's, and `github.run_id` keeps push runs in a group of one for
+# the reason ci.yml gives.
+concurrency:
+  group: docs-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   docs-required:
     runs-on: ubuntu-latest

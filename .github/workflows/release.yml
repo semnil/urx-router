@@ -21,6 +21,15 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+-*'
   workflow_dispatch:
 
+# Keyed by the ref, which for both triggers is the tag: a re-dispatch of a tag already
+# building waits instead of running beside it, so two runs cannot assemble the same draft
+# Release at once. `cancel-in-progress` stays false — the installers are what this
+# produces, and a build killed part-way leaves a draft holding some platforms and not
+# others. Distinct tags never share the group, so nothing queues in ordinary use.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 

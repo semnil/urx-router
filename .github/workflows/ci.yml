@@ -21,6 +21,23 @@ on:
   push:
     branches: [main]
 
+# Pushing again to a pull request abandons the run already in flight. The key's shape, and
+# why a cancelled run is not the same as a skipped one, are in race.yml's own block.
+#
+# What is specific here is the OTHER half of the trigger. A push to main must never share
+# a group with anything, and the reason is a condition rather than a judgement:
+# tag-release.yml's `tag` job carries `if: github.event.workflow_run.conclusion ==
+# 'success' && ...`, and it is this workflow's completion on main that it waits for. A
+# main run cancelled by a following merge therefore reports `cancelled`, that condition is
+# false, and the merge's version bump is not tagged — with no failed check anywhere to
+# read, since nothing failed. `github.run_id` is unique per run, so every push run is a
+# group of one. Keying the fallback to `github.ref` instead would put all of main in one
+# group, and a PENDING run in a shared group is cancelled by default with no way to turn
+# that off — so `cancel-in-progress: false` would not have covered it either.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   # The path filter, moved off the trigger. Cheap enough to sit in front of everything:
   # no install, no build, and the file list comes from the API rather than from a diff,

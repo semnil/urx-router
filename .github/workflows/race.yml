@@ -34,6 +34,23 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Pushing again to a pull request abandons the run already in flight. This is the
+# expensive tier and it now runs on ordinary pull requests, so a review carrying several
+# pushes would otherwise pay for it once per push.
+#
+# `|| github.run_id` is the load-bearing half rather than a fallback. Keyed by the ref, a
+# `workflow_dispatch` would share a group with the pull-request run on the same branch —
+# and a cancelled run leaves its check run at `cancelled`, which is not one of the
+# statuses that satisfy a required check (those are `success`, `skipped` and `neutral`).
+# Both runs report `race-required` on the same head commit, so a cancellation there blocks
+# the merge until something re-reports. `run_id` is unique per run, so every
+# non-pull-request run is a group of one and cancels nothing. `cancel-in-progress: false`
+# would not be enough on its own: a PENDING run in a shared group is cancelled by default,
+# and that half cannot be turned off.
+concurrency:
+  group: race-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   # A cheap gate in front of the harness jobs. A manual dispatch always runs: there is no
   # base to compare against, and asking for it IS the intent.

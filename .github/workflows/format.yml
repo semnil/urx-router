@@ -31,8 +31,12 @@ on:
 permissions:
   contents: read
 
+# The `|| github.run_id` half is inert while `pull_request` is the only trigger, and it is
+# written anyway so that adding a second trigger does not put every run of it into one
+# group named `format-` — see race.yml, which carries what a cancelled run costs a
+# required check.
 concurrency:
-  group: format-${{ github.event.pull_request.number }}
+  group: format-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:

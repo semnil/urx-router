@@ -655,6 +655,9 @@ it reports once rather than three times. `detect`'s log is what distinguishes th
 its reason on both sides. WebKit is a separate browser download, so it is its own job rather than a
 fourth shard — paying for it three times would cost more than the cases do.
 
+A pull request pushed again abandons the run in flight (`concurrency` in `race.yml`, whose header
+carries why the group key falls back to `github.run_id` rather than to the ref).
+
 ### Observables
 
 Invariants 1 / 2 / 4 / 8 / 12 / 16 are statements about IPC that either happened or did not, so they

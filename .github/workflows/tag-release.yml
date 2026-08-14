@@ -29,6 +29,14 @@ on:
     types: [completed]
     branches: [main]
 
+# Keyed by the commit CI reported on, so two merges landing together get a group each and
+# neither cancels the other. A shared group would let the second one end the first before
+# it tags, and this workflow is what turns a merged version bump into a release — so the
+# group exists to state that nothing here may be superseded, rather than to save anything.
+concurrency:
+  group: tag-release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
 permissions:
   contents: write # create and push the tag
   actions: write # dispatch release.yml
