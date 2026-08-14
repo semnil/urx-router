@@ -88,6 +88,12 @@ jobs:
   # pages.yml, so the demo would go live against a release with no binaries. Depending on
   # it here means the draft is never created: a `needs:` failure skips this job, and a tag
   # with no release is a state someone re-runs rather than one they publish.
+  #
+  # The `if:` below carries NO status check function, and that is what makes the sentence
+  # above true: without one GitHub applies an implicit `success()`, so a `needs:` job that
+  # failed, was cancelled or was skipped all take this job out. Writing `always() &&` or
+  # `!cancelled() &&` in front of it — which reads like the neighbouring `build` and would
+  # look like a tidy-up — restores the empty draft.
   create-release:
     needs: [check-tag, licenses]
     if: needs.check-tag.outputs.validTag == 'true'
@@ -122,10 +128,21 @@ jobs:
 
   build:
     needs: [check-tag, create-release, licenses]
-    # Run even when create-release is skipped (manual dispatch), as long as the
-    # tag check itself succeeded. The notice is a bundle input, so its job has
-    # to have succeeded; always() would otherwise let a failed one through.
-    if: always() && needs.check-tag.result == 'success' && needs.licenses.result == 'success'
+    # Run even when create-release is SKIPPED (a manual dispatch, or a tag ref check-tag
+    # declines), as long as the tag check itself succeeded. The notice is a bundle input,
+    # so its job has to have succeeded; always() would otherwise let a failed one through.
+    #
+    # create-release must not have FAILED, which is a different thing from skipped and
+    # used to be waved through: a 422 from `createRelease` on a tag whose Release already
+    # exists left this job building, signing and notarizing both installers, then handing
+    # tauri-action an empty releaseId — at the pinned SHA that prints "No releaseId or
+    # tagName provided, skipping all uploads..." and exits 0 — while the artifact fallback
+    # below sat behind `validTag != 'true'` and did not run either. Roughly an hour across
+    # two runners, nothing kept, and this job GREEN beside a red create-release, which
+    # reads as "the build is fine, the release object failed".
+    if: >-
+      always() && needs.check-tag.result == 'success' && needs.licenses.result == 'success'
+      && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
