@@ -372,7 +372,10 @@ const live = DEMO
       // and the refusal is a deferral, bounded by the settle's own window.
       refetchNodes: async (nodeIds, pending) => {
         const merged = await followRead("1-knob readback", (into, signal) =>
-          applyNodeState(getModel(modelId), into, nodeIds, signal, pending),
+          // The one caller that skips the names, and it says so itself — the reconciles
+          // below carry pending writes too, and reading names is what makes a rename
+          // made on the unit arrive (readback.ts's name section).
+          applyNodeState(getModel(modelId), into, nodeIds, signal, pending, true),
         );
         // The plan this read was issued for is gone (a file flow replaced it): its
         // values belong to a document nothing shows, and no snapshot can describe it.
