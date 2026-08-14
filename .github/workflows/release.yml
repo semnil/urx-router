@@ -62,12 +62,21 @@ jobs:
     steps:
       # For scripts/release-tag-shape.sh, which the step below asks. Checked out at this
       # run's own ref, so a tag is judged by the copy the tagged commit carries.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      #
+      # Skipped on a branch, because the step below returns before it reads the script
+      # there — and because this job is the one path that must not fail on a dispatch that
+      # only packages. A checkout can fail on a bad day, and a failed check-tag is a
+      # condition `release-gate` is built to report, so an unconditional one would let a
+      # transient network error annotate a branch run with "was tagged but no complete
+      # draft Release exists".
+      - if: github.ref_type == 'tag'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: check
-        # A tag ref that script declines FAILS this job, which takes create-release, build
-        # and release-gate out with it and turns the run red. What it replaces is a green
-        # run that packaged into job artifacts and created no Release — a tag that looks
-        # released until someone opens the Releases page.
+        # A tag ref that script declines FAILS this job, which takes create-release and
+        # build out with it and turns the run red — `release-gate` is the one job that
+        # still runs, deliberately, and it is what reports the failure. What this replaces
+        # is a green run that packaged into job artifacts and created no Release — a tag
+        # that looks released until someone opens the Releases page.
         #
         # Gated on the REF TYPE, not the event: tag-release.yml reaches this workflow by
         # dispatching it on the tag it just created, and that has to mean the same thing
@@ -75,17 +84,30 @@ jobs:
         # SUCCESSFUL — that is the packaging check, and it is the one path this job must
         # not fail.
         #
-        # `2>&1` puts both of the script's answers in one variable: accepted, it writes
-        # `true` or `false` on stdout and nothing on stderr, so `shape` is the prerelease
-        # flag; declined, stdout is empty and stderr carries the forms, so `shape` is the
-        # message to annotate with.
+        # The script's two streams are kept apart: stdout is the answer, stderr is the
+        # message. Merging them would make anything the shell itself writes — a locale
+        # warning is the ordinary one — into the `prerelease` value written below, and
+        # `create-release` compares that value to the string `true`, so a polluted one
+        # publishes a prerelease as a normal Release. That draft is what `latest` resolves
+        # to, and the updater endpoint in src-tauri/tauri.conf.json points at `latest`.
+        #
+        # Status 1 is a verdict on the tag. Anything else — the script missing, not
+        # readable, killed, or answering something that is neither `true` nor `false` — is
+        # this check being broken, and says so instead of blaming the tag.
         run: |
           if [[ "${GITHUB_REF_TYPE}" != 'tag' ]]; then
             echo 'validTag=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if ! shape=$(bash scripts/release-tag-shape.sh "${GITHUB_REF_NAME}" 2>&1); then
-            echo "::error::${shape}"
+          why=$(mktemp)
+          shape=$(bash scripts/release-tag-shape.sh "${GITHUB_REF_NAME}" 2>"${why}") && status=0 || status=$?
+          message=$(tr '\n' ' ' < "${why}")
+          if (( status == 1 )); then
+            echo "::error::${message}"
+            exit 1
+          fi
+          if (( status != 0 )) || [[ "${shape}" != 'true' && "${shape}" != 'false' ]]; then
+            echo "::error::the release tag shape check could not run: exit ${status}, answered '${shape//$'\n'/ }' ${message}"
             exit 1
           fi
           {
