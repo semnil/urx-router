@@ -266,16 +266,22 @@ test.describe("T2b shape-change", () => {
   // shape-string-path-writes. Names and Sweet Spot Data leave through vd_set_str, which
   // has no numeric snapshot entry and no sideEffect classification.
   //
-  // PINNED DEFECT, HALF RESOLVED — rewritten rather than deleted, which is the rule for
-  // a pin whose subject changed. This case used to assert that NEITHER address was
-  // registered, and drew the conclusion "a rename cannot be followed". That was true of
-  // the app, not of the unit: the URX does announce a rename (measured on a URX44V, one
-  // notify on the renamed address), and the app simply never registered the address, so
-  // `Subs::absorb` dropped it. Names are now registered and followed directly, so the
-  // name half is pinned the other way round here and its behaviour is owned by
-  // `t1d-name-window`. **Sweet Spot Data is unchanged and still unregistered** — the
-  // consequential half of the original finding stands, and this case keeps it.
-  test("Sweet Spot Data bypasses the diff engine: no snapshot, no registration, no repair", async ({ page }) => {
+  // PINNED DEFECT, NOW RESOLVED ON BOTH HALVES — rewritten rather than deleted, twice,
+  // which is the rule for a pin whose subject changed.
+  //
+  // It first asserted that NEITHER address was registered and concluded "a rename cannot
+  // be followed". That was true of the app and not of the unit: the URX announces a
+  // rename (measured on a URX44V), and the app had simply never registered the address,
+  // so `Subs::absorb` dropped it. Names were registered and the name half flipped.
+  //
+  // Sweet Spot Data has now gone the same way, and for the same reason: the unit
+  // announces a preset write on its own address FIRST, 0.319 ms ahead of the seventeen
+  // strip values it recomputes (measured). What was missing was again the app — the
+  // string path emitted no owner and consulted no sideEffect set, so the catalog could
+  // not classify the write and nothing repaired the plan. It is a `refetch` head now, so
+  // this case pins the repair rather than its absence. What is UNCHANGED, and still worth
+  // a line, is that the string path has no numeric snapshot entry.
+  test("Sweet Spot Data is registered and repaired, and still has no numeric snapshot entry", async ({ page }) => {
     expect(await hasProbe(page)).toBe(true);
     await goLive(page);
     await graphNode(page, "ch1").click();
@@ -286,7 +292,9 @@ test.describe("T2b shape-change", () => {
     // the app at all. Asserted rather than dropped: if it ever stops being registered,
     // renames go silently unfollowed again and only this line would say so.
     expect(regAtStart.has(CH1_NAME)).toBe(true);
-    // Sweet Spot Data still is not, and that is the half this case is about.
+    // Sweet Spot Data is not registered YET — the plan has no preset until the channel is
+    // in SSMCS mode, so this is the mode gate rather than the old blanket absence. Phase 3
+    // switches the mode and asserts it appears.
     expect(regAtStart.has(CH1_SWEET_SPOT)).toBe(false);
 
     // Phase 1 — eight characters at 90 ms, then a blur. The idle backstop is suppressed
@@ -412,10 +420,9 @@ test.describe("T2b shape-change", () => {
     await expect(param(page, "Sweet Spot Data")).toHaveCount(1);
     await settleAfter(page, "to-ssmcs", 1800);
 
-    // The device recomputes the strip from the preset: from here its Morphing value is
-    // its own, whatever the app writes, so the plan and the unit disagree on a numeric
-    // SSMCS param. Only a READ can discover that, which is what the next assertion
-    // prices — the preset write schedules none.
+    // The device recomputes the strip from the preset, so the plan and the unit disagree on
+    // a numeric SSMCS param until something reads. Only a READ can discover it, which is
+    // what the assertions below price — the preset write now schedules one.
     await divergeAt(page, CH1_SSMCS_MORPHING, 77);
     const regBeforePreset = regKeys(await paramAddrsOf(page));
     await mark(page, "sweet-spot");
@@ -446,21 +453,34 @@ test.describe("T2b shape-change", () => {
       ),
     );
 
-    // PINNED, and the reason the two writes are one case. The preset rides the string
-    // path, so it carries no sideEffect flag and cannot carry one — the classification
-    // keys off the numeric catalog. The result is an ABSENCE and is therefore measured
-    // with settleAfter, not waitQuiet: after the device rewrote the strip, the app
-    // issues NO read at all. Nothing is scheduled to repair the plan.
+    // One write, and a read that follows it. The read is what the `refetch` declaration
+    // buys: the device rewrote the strip, and the plan now finds out.
     expect(presetStr.length).toBe(1);
-    expect(presetReads).toHaveLength(0);
-    expect(snapAfter?.[CH1_SWEET_SPOT]).toBeUndefined();
+    expect(presetReads.length).toBeGreaterThan(0);
+    // SCOPED, not a whole-device sweep — the repair is one node's worth. The bound is set
+    // against the converge control below, which reads the write scope and is an order of
+    // magnitude larger; a full reconcile arriving here instead would fail this.
+    expect(presetReads.length).toBeLessThan(200);
+    // STILL NOT REGISTERED, and the finding is wider than this param: the numeric SSMCS
+    // addresses the same mode change added are not registered either. The registration set
+    // is rebuilt on capture but only re-SUBSCRIBED after a reconcile, so an address the
+    // plan grew from an app-side edit stays unheard until one runs. Two consequences, both
+    // pinned here: the flush's settle for a preset write resolves at its bound rather than
+    // on the unit's own announcement, and a preset changed ON the unit is not followed.
+    // The repair above does not depend on either — it is scheduled by the declaration.
     expect(regBeforePreset.has(CH1_SWEET_SPOT)).toBe(false);
-    // The control that proves the absence is a property of the string path and not of a
-    // quiet session: COMP/EQ Type, a numeric converge param on the same node, did read.
+    expect(regBeforePreset.has(CH1_SSMCS_MORPHING)).toBe(false);
+    // UNCHANGED and still the string path's own property: no numeric snapshot entry. The
+    // snapshot is built from the numeric emit, which this write is not part of.
+    expect(snapAfter?.[CH1_SWEET_SPOT]).toBeUndefined();
+    // The control keeps its job, now as a scale rather than as a contrast: COMP/EQ Type is
+    // a numeric CONVERGE param on the same node, and a converge reads the whole write
+    // scope where a refetch reads one node.
     const ssmcsAt = markTime(trace, "to-ssmcs")!;
     const convergeReads = getsOf(trace).filter((g) => g.start > ssmcsAt && g.start < presetAt);
     console.log(`control — COMP/EQ Type (numeric, converge) read ${convergeReads.length} address(es)`);
     expect(convergeReads.length).toBeGreaterThan(100);
+    expect(presetReads.length).toBeLessThan(convergeReads.length);
   });
 
   // shape-routing-wire-selectors, reachable portion. The catalog pairs the deliberate

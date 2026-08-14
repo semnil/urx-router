@@ -719,7 +719,15 @@ export class LiveSync {
             for (const n of drives) names.add(n);
           }
           // The read may not start before the unit has spoken for this address — the rule the
-          // numeric writes take, and the unit does speak, first (params.ts). It goes into
+          // numeric writes take. TODAY that resolves at the BOUND rather than on the notify,
+          // and not because the unit is silent: it announces the preset write on its own
+          // address first (params.ts). The app does not hear it, because the registration set
+          // is only refreshed by a reconcile, so an address the plan grew from an app-side
+          // edit is unregistered until then and the bridge drops its notify. That is a
+          // property of the whole SSMCS block rather than of this param — entering the mode
+          // leaves its numeric addresses unregistered too (measured, t2b) — so it is not
+          // fixed here. Either way the read does not start inside the write's staleness
+          // window, which is what this line is for. It goes into
           // `mustSettle` ALONE and not into the `written` map: that map is what the read
           // overlays its answers from, it is numeric, and a string notify carries its text in
           // a different field — so an entry there would answer a numeric read with a number
