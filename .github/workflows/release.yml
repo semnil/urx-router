@@ -59,10 +59,17 @@ jobs:
       validTag: ${{ steps.check.outputs.validTag }}
     steps:
       - id: check
-        # Accept vX.Y.Z as stable and vX.Y.Z-{alpha,beta,rc}* as prerelease.
+        # Accept vX.Y.Z as stable and vX.Y.Z-{alpha,beta,rc}* as prerelease. A tag ref in
+        # neither form FAILS this job, which takes create-release, build and release-gate
+        # out with it and turns the run red. What it replaces is a green run that packaged
+        # into job artifacts and created no Release — a tag that looks released until
+        # someone opens the Releases page.
+        #
         # Gated on the REF TYPE, not the event: tag-release.yml reaches this workflow by
         # dispatching it on the tag it just created, and that has to mean the same thing
-        # as a tag push. A dispatch on a branch has no tag to read and stays false.
+        # as a tag push. A dispatch on a BRANCH has no tag to read, stays false and stays
+        # SUCCESSFUL — that is the packaging check, and it is the one path this job must
+        # not fail.
         run: |
           if [[ "${GITHUB_REF_TYPE}" != 'tag' ]]; then
             echo 'validTag=false' >> "$GITHUB_OUTPUT"
@@ -82,7 +89,8 @@ jobs:
               echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
               ;;
             *)
-              echo 'validTag=false' >> "$GITHUB_OUTPUT"
+              echo "::error::${GITHUB_REF_NAME} is not a tag this workflow releases — the forms it takes are vX.Y.Z and vX.Y.Z-alpha/-beta/-rc followed by digits and dots"
+              exit 1
               ;;
           esac
 
