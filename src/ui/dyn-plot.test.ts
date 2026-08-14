@@ -43,6 +43,37 @@ describe("plot drawing stays off the frame instead of on its edge", () => {
     expect(Math.max(...r.ys)).toBeLessThanOrEqual(floorY(gateGeo));
   });
 
+  it("draws the Soft knee at its measured width, not the doubled reach it replaced", () => {
+    // The one thing the constant decides, pinned where it decides the most. At the
+    // threshold itself the quadratic knee sits (1/ratio - 1) * w/8 below unity, so the
+    // curve's depth there IS the width: -4.875 dB at 52, -3.75 dB at 40. Everything else
+    // in this suite passes either way, which is how 40 survived a measurement that had
+    // already contradicted it.
+    //
+    // 52 is the measured value (reference/work/vd/vd-params.md, signal-side sweep,
+    // 2026-08): the residual minimum is 51 dB and 50 / 52 / 54 are indistinguishable, so
+    // the source takes the round middle. Written out here rather than imported — importing
+    // the constant would make this agree with any value it is given.
+    const SOFT_KNEE_DB = 52;
+    const compGeo = COMP_DYN.plotGeo(W, H, {} as never);
+    const thr = -30;
+    const ratio = 4;
+    const r = recorder();
+    COMP_DYN.drawCurve(r.ctx, compGeo, vals({ threshold: thr, ratio, gain: 0, knee: 0 }), TOK, {} as never);
+
+    // The response is sampled on a fixed grid from the input floor to 0 dBFS; the
+    // annotation adds two more points after it. Asserted rather than assumed, so a change
+    // to the sampling fails here instead of silently moving which point is read.
+    const SAMPLES = 121;
+    expect(r.ys.length).toBe(SAMPLES + 2);
+    const lo = COMP_DYN.loDb;
+    const at = (db: number): number => r.ys[Math.round(((db - lo) / (0 - lo)) * (SAMPLES - 1))];
+    const inAtThreshold = lo + Math.round(((thr - lo) / (0 - lo)) * (SAMPLES - 1)) * ((0 - lo) / (SAMPLES - 1));
+    const d = inAtThreshold - thr;
+    const depth = ((1 / ratio - 1) * (d + SOFT_KNEE_DB / 2) ** 2) / (2 * SOFT_KNEE_DB);
+    expect(at(thr)).toBeCloseTo(compGeo.py(inAtThreshold + depth), 1);
+  });
+
   it("leaves a compressor's response inside its own axes at every setting", () => {
     // Not a clamp: makeup gain only adds and the knee interpolation only subtracts, so the
     // -54…+18 axes contain the response. Checked at the extremes rather than assumed.
