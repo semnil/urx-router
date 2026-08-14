@@ -164,6 +164,34 @@ describe("the arrangement a merge condition needs", () => {
     expect(findingsOf(text).join("\n")).toContain("can drop a run and is not keyed per run");
   });
 
+  // The FALLBACK only reaches the run id when the left side is empty off a pull request.
+  // `github.ref` is set on every event, so this key mentions the run id and never uses one.
+  it("rejects a fallback whose left side is truthy on a push", () => {
+    const text = HEALTHY.replace(
+      "jobs:\n",
+      "concurrency:\n  group: gate-${{ github.ref || github.run_id }}\n  cancel-in-progress: true\njobs:\n",
+    );
+    expect(findingsOf(text).join("\n")).toContain("can drop a run and is not keyed per run");
+  });
+
+  // A `concurrency` block has to be legal before it can be safe: GitHub refuses the
+  // workflow, and a workflow that does not run reports no check run at all.
+  it("rejects a queue value GitHub does not define", () => {
+    const text = HEALTHY.replace(
+      "jobs:\n",
+      "concurrency:\n  group: gate-${{ github.run_id }}\n  cancel-in-progress: false\n  queue: bogus\njobs:\n",
+    );
+    expect(findingsOf(text).join("\n")).toContain("the documented values are");
+  });
+
+  it("rejects `queue: max` combined with cancelling, even under a per-run key", () => {
+    const text = HEALTHY.replace(
+      "jobs:\n",
+      "concurrency:\n  group: gate-${{ github.run_id }}\n  cancel-in-progress: true\n  queue: max\njobs:\n",
+    );
+    expect(findingsOf(text).join("\n")).toContain("which GitHub rejects");
+  });
+
   // `cancel-in-progress: false` is not on its own a group nothing is lost from: the
   // default `queue: single` replaces the pending run instead.
   it("rejects a shared group that does not cancel but also does not queue", () => {
@@ -179,6 +207,7 @@ describe("the arrangement a merge condition needs", () => {
     for (const group of [
       "gate-${{ github.run_id }}",
       "gate-${{ github.event.pull_request.number || github.run_id }}",
+      "gate-${{ github.head_ref || github.run_id }}",
     ]) {
       const text = HEALTHY.replace("jobs:\n", `concurrency:\n  group: ${group}\n  cancel-in-progress: true\njobs:\n`);
       expect(findingsOf(text)).toEqual([]);

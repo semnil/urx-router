@@ -179,10 +179,29 @@ const contextOf = (id, job) => unquote(job.children.get("name")?.value ?? "") ||
 // language, so this refuses everything it cannot read instead — which is the same trade the
 // reader above makes, and it fails toward "say something" rather than toward silence.
 //
-//   ${{ github.run_id }}                     a run id on its own
-//   ${{ <context path> || github.run_id }}   the house idiom: a per-PR key, run id otherwise
-const PER_RUN = /\$\{\{\s*(?:[A-Za-z_][\w.-]*\s*\|\|\s*)?github\.run_id\s*\}\}/;
+//   ${{ github.run_id }}                              a run id on its own
+//   ${{ github.event.pull_request.number || … }}      the house idiom
+//   ${{ github.head_ref || … }}                       GitHub's own documented example
+//
+// The left-hand side is an allowlist too, and that is the half it is easy to get wrong:
+// `||` falls through on a FALSY left side, so the fallback only reaches `github.run_id`
+// when the left side is empty off a pull request. `github.ref` is set on every event, so
+// `${{ github.ref || github.run_id }}` mentions the run id and never uses it — every push
+// to a branch lands in one group. Both names below are empty outside a pull request;
+// anything else has to be shown to be, which is a judgement, so it is refused with the
+// accepted forms named.
+const PER_RUN_LEFT = ["github.event.pull_request.number", "github.head_ref"];
+const PER_RUN = new RegExp(
+  String.raw`\$\{\{\s*(?:(?:` +
+    PER_RUN_LEFT.map((name) => name.replace(/\./g, String.raw`\.`)).join("|") +
+    String.raw`)\s*\|\|\s*)?github\.run_id\s*\}\}`,
+);
 const perRunKey = (group) => PER_RUN.test(group);
+
+// `concurrency.queue` takes `single` (the default) or `max`, and `max` cannot be combined
+// with cancelling — GitHub rejects the workflow. Checked on its own, before anything about
+// the key, because a workflow that will not run reports no context at all.
+const QUEUE_VALUES = new Set(["single", "max"]);
 
 // --- the workflows ------------------------------------------------------------
 
@@ -364,10 +383,28 @@ function checkJob(workflow, id, job, context) {
     // not cancel" would pass exactly the arrangement this rule exists to refuse. Absent
     // is the documented default of false; anything else counts as cancelling.
     const cancels = cancel !== "" && cancel !== "false";
+    // The block has to be legal before it can be safe. Both of these are checked whatever
+    // the key is: an unknown value and the forbidden pairing are workflow errors, and a
+    // workflow GitHub refuses to run reports no check run at all — the "Expected" forever
+    // outcome this whole file exists to keep out, arriving by a different door.
+    if (queue && !QUEUE_VALUES.has(queue)) {
+      finding(
+        where,
+        `${level} \`concurrency.queue\` for \`${context}\` is \`${queue}\`; the documented values are ` +
+          `${[...QUEUE_VALUES].map((v) => `\`${v}\``).join(" and ")}`,
+      );
+    }
+    if (queue === "max" && cancels) {
+      finding(
+        where,
+        `${level} \`concurrency\` for \`${context}\` combines \`queue: max\` with \`cancel-in-progress: ${cancel}\`, ` +
+          `which GitHub rejects — they describe opposite treatments of a run already in the group`,
+      );
+    }
     // `cancel-in-progress: false` is NOT on its own a group nothing is lost from.
     // `concurrency.queue` defaults to `single`, which keeps one pending run and cancels it
     // when the next arrives, so a shared group drops runs either way; `queue: max` is what
-    // raises that to 100, and it cannot be combined with cancelling.
+    // raises that to 100.
     const keepsPending = queue === "max";
     if ((cancels || !keepsPending) && !perRunKey(group)) {
       finding(
