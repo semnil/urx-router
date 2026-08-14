@@ -145,6 +145,28 @@ export class DeviceFollow {
     await this.subscribe();
   }
 
+  /**
+   * Re-register against the CURRENT address set, if it has moved.
+   *
+   * Cheap to call and safe to call often: `subscribe` compares the set's identity and
+   * returns without touching the broker when it is unchanged. What it must NOT be is
+   * `begin()` — that bumps the generation, which is how an in-flight registration tells
+   * "my session ended" from "it is still mine", so bumping it for a refresh would make a
+   * registration still in flight drop its own handle with the session still active, and
+   * leave the subscription it stood for orphaned at the broker.
+   *
+   * Errors go the same way a reconcile's do, rather than into a floating rejection: the
+   * caller is a live flush that has already returned.
+   */
+  async refresh(): Promise<void> {
+    try {
+      await this.subscribe();
+    } catch (e) {
+      this.active = false;
+      this.hooks.onError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   /** Stop following and cancel any pending work. Does not touch the connection. */
   end(): void {
     this.active = false;

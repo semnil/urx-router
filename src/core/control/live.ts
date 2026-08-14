@@ -112,6 +112,13 @@ export interface LiveSyncHooks {
    *  capture below recorded it as device truth, and the unit's own notify for our write
    *  then failed isEcho and was reconciled as a device-side change. */
   refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites) => Promise<Plan | null>;
+  /** The follow address set may have moved — re-register against it. Called at the END of a
+   *  flush whose capture rebuilt the set, never inside one: a re-registration unsubscribes
+   *  before it subscribes, so running it mid-flush would drop the very notifies the refetch's
+   *  settle is waiting for. Idempotent on the callee's side (DeviceFollow.refresh compares
+   *  the set), so this says "it may have changed" rather than "it did". Absent = nothing
+   *  follows this session (the browser build). */
+  reregister?: () => void;
 }
 
 /** One address's writes that are acked but not yet announced, oldest first. `at` is a
@@ -149,6 +156,12 @@ export class LiveSync {
   // triples, built alongside the snapshot so the registration needs no key re-parse.
   // Wider than the writable set: names and the read-only follows are in here too.
   private followAddrList: Array<[number, number, number]> = [];
+  // A capture rebuilt the follow address set, so the follow layer's registration may be
+  // describing the previous one. Consumed at the end of the flush rather than where it is
+  // set: capture() runs INSIDE a flush (after the converge, after the refetch), and a
+  // re-registration unsubscribes before it subscribes — doing that mid-flush would drop the
+  // notifies the refetch's own settle is waiting for.
+  private followSetStale = false;
   // Address → {name, owner node, direct?} for the writable parameter set, built
   // with the snapshot from the same planToCommands pass. Lets device-follow route
   // an incoming notify to a direct apply or a scoped readback with no key re-parse.
@@ -275,6 +288,9 @@ export class LiveSync {
     // Same session boundary: a mark taken on a previous link means nothing on this one.
     this.recentWrites.clear();
     this.capture(deviceView);
+    // The caller subscribes for this session itself (main.ts: live.begin then follow.begin),
+    // so the capture above is already accounted for and must not make the next flush ask again.
+    this.followSetStale = false;
     this.active = true;
     this.sessionGen++;
   }
@@ -569,6 +585,7 @@ export class LiveSync {
       this.index.set(addrKey(f.param, f.x, f.y), { name: f.name, node: f.node, direct });
     }
     this.followAddrList = addrs;
+    this.followSetStale = true;
     for (const w of planToNameWrites(model, deviceView ?? plan)) this.nameSnapshot.set(nameKey(w), w.value);
     if (since === undefined) return;
     // Restore what the view could not know: a notify the device sent after the read was
@@ -871,6 +888,13 @@ export class LiveSync {
         // await — on the read node or any other — stays a diff. Null = the plan it read
         // into is gone, and there is nothing a snapshot could describe.
         if (deviceView) this.capture(deviceView, since);
+      }
+      // Before onSent, and unconditional on `sent`: a flush that sent nothing can still have
+      // captured (a converge's own re-read is not a send), and the set it rebuilt is just as
+      // stale. The callee compares the set, so this costs nothing when it has not moved.
+      if (this.followSetStale) {
+        this.followSetStale = false;
+        this.hooks.reregister?.();
       }
       if (sent) this.hooks.onSent(sent);
       // After onSent because the status line is last-writer-wins, and never from

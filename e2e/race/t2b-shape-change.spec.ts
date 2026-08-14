@@ -285,10 +285,9 @@ test.describe("T2b shape-change", () => {
   // not classify the write and nothing repaired the plan. It is a `refetch` head now, so
   // this case pins the repair rather than its absence.
   //
-  // Two things are UNCHANGED and each still gets a line: the string path has no numeric
-  // snapshot entry, and neither this address nor the numeric SSMCS block is SUBSCRIBED at
-  // the moment the mode change adds them — they are candidates, and the subscribe waits for
-  // a reconcile.
+  // One thing is UNCHANGED and still gets a line: the string path has no numeric snapshot
+  // entry. The registration is not that thing any more — the mode change's own flush now
+  // subscribes to what it added, this address and the numeric SSMCS block alike.
   test("Sweet Spot Data is repaired by a refetch, and subscribes no earlier than the numeric block", async ({
     page,
   }) => {
@@ -471,18 +470,18 @@ test.describe("T2b shape-change", () => {
     // against the converge control below, which reads the write scope and is an order of
     // magnitude larger; a full reconcile arriving here instead would fail this.
     expect(presetReads.length).toBeLessThan(200);
-    // NOT SUBSCRIBED YET — and the finding is the timing, not the address. Both of these are
-    // in the candidate set the moment the mode change put them in the plan (`followAddrs`,
-    // pinned in live.test.ts); what has not happened is a re-SUBSCRIBE, which the follow
-    // layer does after a reconcile. So an address an app-side edit added stays unheard until
-    // one runs, and the preset and the numeric morphing address are in that state together —
-    // which is why both are asserted here rather than one.
+    // SUBSCRIBED, both of them, by the flush that added them. This pinned the opposite twice
+    // — first because a catalog string address was in no candidate set at all, then because
+    // nothing asked the follow layer to re-register after a flush's capture rebuilt the set.
+    // The second held the numeric address too, which is why both are asserted here: they were
+    // in that state together and they leave it together.
     //
-    // Two consequences: the flush's settle for a preset write resolves at its bound rather
-    // than on the unit's own announcement, and a preset changed ON the unit is not followed
-    // until then. The repair above depends on neither — the declaration schedules it.
-    expect(regBeforePreset.has(CH1_SWEET_SPOT)).toBe(false);
-    expect(regBeforePreset.has(CH1_SSMCS_MORPHING)).toBe(false);
+    // What it buys is what the two assertions below could not see on their own: the flush's
+    // settle for a preset write can end on the unit's own announcement instead of its bound,
+    // and a preset changed ON the unit is followed from the moment the mode change lands
+    // rather than at whatever reconcile happens next.
+    expect(regBeforePreset.has(CH1_SWEET_SPOT)).toBe(true);
+    expect(regBeforePreset.has(CH1_SSMCS_MORPHING)).toBe(true);
     // UNCHANGED and still the string path's own property: no numeric snapshot entry. The
     // snapshot is built from the numeric emit, which this write is not part of.
     expect(snapAfter?.[CH1_SWEET_SPOT]).toBeUndefined();

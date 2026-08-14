@@ -1611,9 +1611,10 @@ snapshot from a device read, and a device read cannot contradict a later word fr
 **The name path has the same window, and the numeric repair cannot reach it.** Measured on a URX44V: a channel
 name written and then polled every 4 ms answered the PREVIOUS name for 81 ms. `writeOverlay` answers an address
 out of what the unit ANNOUNCED for it, and no name announcement can reach it: names are not emitted by
-`planToCommands` but written on the string path (`vdSetStr`), and that loop records nothing in the flush's write
-ledger, so a name address is never in the `PendingWrites` handle the overlay is built from. A settle would always
-spend its whole bound, and answering from the send is what this section forbids. The notify itself does arrive —
+`planToCommands` but written on the string path (`vdSetStr`), and that loop records a NAME in nothing the
+overlay is built from — it records a mark for a catalog string write (the SSMCS preset, as `boundaryMarks`), and a
+name is not one, so a name address is never in the `PendingWrites` handle. A settle on one would always spend its
+whole bound, and answering from the send is what this section forbids. The notify itself does arrive —
 name addresses joined the registration set when the follow learned to carry a device-side rename, which is the
 paragraph below; before that they were in no registration and `Subs::absorb` dropped every one of them. So the refetch does not read names at
 all: the read exists to collect what the unit RECOMPUTED, and no parameter write makes the unit recompute a name.
@@ -1630,7 +1631,21 @@ model has, not from what the plan currently holds: a node the operator has not n
 same, and a stereo pair is registered at both of its `instances`, so both are real addresses rather than an
 extrapolation from a numeric sequence. `planToNameWrites` is the write side of that same identity and is
 deliberately not the same set — it skips a node the plan holds no name for, and it carries one string that is not
-a name at all (the SSMCS Sweet Spot preset, param 91), which nothing registers and no rename notify can concern.
+a name at all: the SSMCS Sweet Spot preset (param 91). That one **is** registered, and separately, because it is a
+catalog row rather than a name — it resolves through the numeric index to its owner node, so a preset changed on
+the unit takes that node's scoped read instead of a direct placement, and the flush's own write of it can end its
+settle on the unit's announcement. It is registered only while the plan carries a preset, i.e. while the channel
+is in SSMCS mode.
+
+**The set is re-registered by the flush that changes it.** Only a structural edit moves it — a COMP/EQ mode
+change, a wire — and the flush that carries such an edit rebuilds the set in its own capture. Nothing asked the
+follow layer to re-subscribe there, so an address the edit added stayed unheard until the next reconcile happened
+to run, which for the SSMCS block meant the mode change's own preset write could not hear its answer. The flush
+now asks at its END, never inside itself: a re-registration unsubscribes before it subscribes, and doing that
+mid-flush would drop the notifies the refetch's settle is waiting for. `DeviceFollow.refresh` compares the set's
+identity and returns without touching the broker when it has not moved, so an ordinary flush costs one comparison
+and no traffic; it is deliberately not `begin`, whose generation bump is how an in-flight registration tells a
+dead session from a live one.
 
 **Two read-only addresses join for the same reason**, and the name path is their precedent rather than a
 coincidence: an address the app only READS was in no registration, so the unit's announcement reached nobody and

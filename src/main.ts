@@ -397,6 +397,12 @@ const live = DEMO
         assertReadComplete(merged, "side-effect refetch issues:");
         return merged.deviceView;
       },
+      // The flush's capture rebuilt the follow address set — re-register against it. Only a
+      // STRUCTURAL edit moves that set (a mode change, a wire), so this is a no-op on the
+      // ordinary flush and DeviceFollow.refresh is what decides. Fire-and-forget on purpose:
+      // the flush has returned, and refresh routes its own failures to onError rather than
+      // leaving a floating rejection.
+      reregister: () => void follow?.refresh(),
     });
 
 const graph = new Graph(graphHost, getModel(modelId), plan, {
