@@ -462,11 +462,20 @@ shot enabled and disabled is byte-identical in both.
 **This is not the tuning screen's rule but the app's**: `holdInertOnBlur` in `ui/dom.ts` carries it, and
 every `<input type="range">` goes through it — the tuning rows, both of the inspector's slider builders,
 the shared `sliderRow`, and Device setup's brightness — for the same reason `wheelStep` is shared. What
-this screen adds is the resolver: the same blur clears `grabbed`, so a refresh the press deferred runs
-and rebuilds this column, and the restore has to ask for the row that is on screen rather than the one
-the gesture started on. A rebuilt row keeps whatever `disabled` state the rebuild gave it — COMP's 1-knob
-coming on hands threshold / ratio / gain / knee to the device and locks those rows — and it does not get
-focus back, because no rebuild in this app restores focus.
+this screen adds is where a deferred refresh lands. The blur ends the gestures this view runs itself but
+leaves `grabbed` set, because the press is still in flight and a rebuild under it would hand the
+still-held pointer a live control — the state the hold exists to prevent. So the deferral lasts as long
+as the press, and the refresh runs at whichever comes last: this screen's own pointer release, or the
+release of the last row held anywhere in the app. The hold in turn asks for the row that is on screen
+rather than the one the gesture started on, since a rebuild may already have replaced it. A rebuilt row
+keeps whatever `disabled` state the rebuild gave it — COMP's 1-knob coming on hands threshold / ratio /
+gain / knee to the device and locks those rows — and it does not get focus back, because no rebuild in
+this app restores focus.
+
+The inspector defers on the same signal, through the gate that already waits out an IME composition and
+an open `<select>` picker. That one is worth naming because a held row is the only one of the three with
+no end event of its own: a composition ends, a picker closes, and a hold ends on a pointer release the
+panel never hears — so the gate subscribes to the hold bookkeeping directly.
 
 ## Meter subscription ownership
 
