@@ -79,6 +79,14 @@ const regKeys = (addrs: Array<[number, number, number]>): Set<string> => new Set
 const fullReadsAfter = (trace: TraceEvent[], at: number): number =>
   getsOf(trace).filter((g) => g.addr === RATE_ADDR && g.start > at).length;
 
+/** Device-authored reflects that landed after `at` — what a reconcile reports when it
+ *  applies, scoped or whole-device. `follow.ts` re-registers after either, so a case that
+ *  attributes a registration move to a FLUSH has to show none of these ran in its window.
+ *  Not `fullReadsAfter`: a converge's own read pass walks the whole write set, RATE_ADDR
+ *  included, so that counter cannot tell a converge from a reconcile. */
+const deviceReflectsAfter = (trace: TraceEvent[], at: number): number =>
+  trace.filter((e) => e.kind === "status" && e.t > at && (e.detail ?? "").includes("← device")).length;
+
 const setsAfter = (trace: TraceEvent[], addr: string, at: number): number[] =>
   setsOf(trace)
     .filter((s) => s.addr === addr && s.start > at)
@@ -332,8 +340,12 @@ test.describe("T2 shape-change", () => {
         .map((s) => s.addr!),
     );
     // The premise: the flush really did write the bands, so "no orphans" is the
-    // registration having caught up rather than nothing having been sent.
+    // registration having caught up rather than nothing having been sent…
     expect(bands.filter((a) => written.has(a)).sort()).toEqual([...bands].sort());
+    // …and the flush is what caught it up. A reconcile landing inside the settle wait
+    // re-registers through follow.ts's own post-reconcile subscribe, which would satisfy
+    // the pair below whatever the flush did.
+    expect(deviceReflectsAfter(trace, off2)).toBe(0);
     const orphans = bands.filter((a) => written.has(a) && !regNow.has(a));
     console.log(`after 1-Knob OFF: ${orphans.length} band address(es) written but not registered`);
     expect(orphans).toEqual([]);
@@ -417,6 +429,9 @@ test.describe("T2 shape-change", () => {
     const regAfterSwap = regKeys(regAfterSwapAddrs);
     const swapOrphans = [CH1_SSMCS_COMP_ON, CH1_SSMCS_EQ_ON].filter((a) => byAddr.has(a) && !regAfterSwap.has(a));
     console.log(`swap flush: ${swapOrphans.length} new-bank address(es) written but not registered`);
+    // Attributed to the swap's own flush: no reconcile landed inside the wait, and one
+    // would have re-registered through follow.ts whatever the flush did.
+    expect(deviceReflectsAfter(trace, at)).toBe(0);
     expect(swapOrphans).toEqual([]);
     expect(regAfterSwap.has(CH1_COMP_ON)).toBe(false);
     expect(ch1EqBandAddrs().filter((a) => regAfterSwap.has(a))).toEqual([]);
