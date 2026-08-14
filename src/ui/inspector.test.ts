@@ -9,6 +9,7 @@ import { defaultPlan } from "../models/initial-state";
 import { emptyPlan } from "../core/plan";
 import type { Plan } from "../core/plan";
 import { resetSettingsCache } from "../core/settings";
+import { holdInertOnBlur, resetPointerTracking } from "./dom";
 import { insertFxMenu } from "../core/constraints";
 import { insertFxControl } from "../core/control/translate";
 import { COMP_EQ_SSMCS, INSERT_FX_NONE } from "../core/control/params";
@@ -147,6 +148,59 @@ describe("compositionGate", () => {
     expect(gate.held()).toBe(false);
   });
 
+  // The third thing the gate holds for is a slider row held inert while the window is
+  // away, and it is the one with no end event of its own: the two above are released by
+  // the composition's end, a change or a focusout, and a hold ends on a pointer release
+  // the panel never hears about. Without this the panel keeps whatever it was showing when
+  // the press began until some later update happens to find the gate free — a MIDI move
+  // and a device-side knob both reach the plan and the unit while the panel says otherwise.
+  it("runs the held rebuild when the last inert hold ends", () => {
+    let rebuilds = 0;
+    const el = host();
+    const slider = document.createElement("input");
+    slider.type = "range";
+    el.append(slider);
+    holdInertOnBlur(slider);
+    const gate = compositionGate(el, () => rebuilds++);
+
+    slider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(slider.disabled).toBe(true);
+    expect(gate.held()).toBe(true); // a device- or MIDI-driven value arrived meanwhile
+    expect(rebuilds).toBe(0);
+
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+    expect(slider.disabled).toBe(false);
+    expect(rebuilds).toBe(1);
+    expect(gate.held()).toBe(false);
+  });
+
+  // …and it releases only its own kind. The other two share a backstop that clears
+  // `composing` on any end, since a composition can go away without one; a hold's release
+  // is no evidence of that, and taking it as one lands the next rebuild inside a live
+  // composition — the thing the gate was built for.
+  it("does not read a hold's release as the end of a composition", () => {
+    let rebuilds = 0;
+    const el = host();
+    const slider = document.createElement("input");
+    slider.type = "range";
+    el.append(slider);
+    holdInertOnBlur(slider);
+    const gate = compositionGate(el, () => rebuilds++);
+
+    fire(el, "compositionstart");
+    slider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(gate.held()).toBe(true);
+
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+    expect(rebuilds).toBe(0);
+    expect(gate.held()).toBe(true);
+
+    fire(el, "compositionend");
+    expect(rebuilds).toBe(1);
+  });
+
   it("runs nothing on an end that held no rebuild", () => {
     let rebuilds = 0;
     const el = host();
@@ -233,6 +287,10 @@ function driveEverything(host: HTMLElement): void {
 beforeEach(() => {
   localStorage.clear();
   resetSettingsCache();
+  // The gate subscribes to the app-wide hold bookkeeping, which is module state on a
+  // window that outlives the file: without this, every gate an earlier case built is
+  // still listening and runs its own rebuild when a later case releases a hold.
+  resetPointerTracking();
   resetSectionCache();
   setLang("en");
   panel = document.createElement("div");
