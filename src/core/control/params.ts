@@ -368,9 +368,11 @@ export const PARAMS = {
    *  SUBSCRIBED to 91, so the filter that keeps another client's traffic out was answering;
    *  a zero from an address nobody registered says nothing at all.)
    *
-   *  What it does NOT leave is an unrepaired plan. The dependent notifies are not echoes of
-   *  anything we wrote, so device-follow takes them, and eighteen distinct controls is past
-   *  MAX_CONCENTRATION — it escalates to a full reconcile once the burst settles (follow.ts).
+   *  What it does NOT leave is an unrepaired plan. The announcement is block-wise, so how many
+   *  of the eighteen carry a CHANGED value depends on the preset pair — and only those reach
+   *  device-follow: `isEcho` drops a notify equal to the snapshot as readily as one of our own
+   *  writes. Those drive a scoped reconcile of the owning node, escalating to a full one past
+   *  MAX_CONCENTRATION; either way the plan is repaired once the burst settles (follow.ts).
    *  The defect is narrower and is a RACE: a converge that runs before that reconcile reads a
    *  plan still holding pre-preset values and writes them back, undoing the preset the way it
    *  would have undone a morph before `drives` existed.
