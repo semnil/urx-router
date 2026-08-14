@@ -131,6 +131,10 @@ export class DeviceFollow {
    */
   private gen = 0;
 
+  /** The registration currently on the wire and the generation that issued it — see
+   *  `subscribe`. */
+  private subscribeInFlight: { gen: number; tail: Promise<void> } | null = null;
+
   constructor(private readonly hooks: DeviceFollowHooks) {}
 
   isActive(): boolean {
@@ -191,7 +195,40 @@ export class DeviceFollow {
   // Register the current follow address set for notifies. The set rarely changes
   // (only a structural plan edit alters it), so when it matches what is already
   // registered this is a no-op rather than re-posting every address to the broker.
-  private async subscribe(): Promise<void> {
+  // Serialized, and that is what lets the identity check below mean anything: the check
+  // reads `this.unsub`, which is nulled BEFORE the await, so a call entering while
+  // another is on the wire cannot short-circuit however unchanged the set is. Two
+  // registrations under one generation then both pass the post-await guard and both
+  // install — the later handle and settle source overwriting the earlier without
+  // releasing it, which leaks a sink into `writeSettle`'s module singleton that `end()`
+  // cannot reach — and `registeredKey` ends up naming the call that STARTED last while
+  // the broker holds the one that FINISHED last. Every later call then short-circuits on
+  // a set the broker does not hold, which is this file's own defect class.
+  //
+  // `refresh()` is what made that reachable: `begin()` is awaited at session start and
+  // `runReconcile`'s call is inside `reconciling`, but a flush ends whenever it ends.
+  // Queued rather than dropped, so `begin()` still returns only once ITS registration has
+  // landed, and a queued call reads the address set when its turn comes rather than when
+  // it was asked. With nothing in flight the registration is issued in this same tick, as
+  // it was before: the cases that end a session between `begin()` and its await depend on
+  // that, and a `.then()` on an already-resolved promise would defer it past the `end()`
+  // and register nothing at all.
+  private subscribe(): Promise<void> {
+    // Within ONE generation only. A new session must not wait behind a registration
+    // stalled at the broker — overtaking it is what the generation guard is for, and
+    // `begin()` has bumped past it by the time it gets here — so a queue that spanned
+    // sessions would hand a stall the power to stop the next session registering at all.
+    const prev = this.subscribeInFlight?.gen === this.gen ? this.subscribeInFlight.tail : null;
+    const run = prev ? prev.then(() => this.subscribeOne()) : this.subscribeOne();
+    const entry = { gen: this.gen, tail: run.catch(() => {}) };
+    this.subscribeInFlight = entry;
+    void entry.tail.then(() => {
+      if (this.subscribeInFlight === entry) this.subscribeInFlight = null;
+    });
+    return run;
+  }
+
+  private async subscribeOne(): Promise<void> {
     if (!this.active) return;
     const gen = this.gen;
     const addrs = this.hooks.addrs();

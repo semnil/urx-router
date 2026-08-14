@@ -369,12 +369,12 @@ describe("DeviceFollow", () => {
     expect(follow.isActive()).toBe(false);
   });
 
-  it("leaves a registration still in flight belonging to this session", async () => {
-    // The generation is how an in-flight registration tells "my session ended" from
-    // "still mine", so a refresh that bumped it would make begin()'s call discard its
-    // own handle with the session live. Held in flight, refreshed on top: the first
-    // call's handle is installed when it arrives, which `end()` is what shows — it
-    // releases the handle it holds and nothing else has one.
+  it("waits for a registration already on the wire instead of starting a second", async () => {
+    // The identity check reads `this.unsub`, which is nulled before the await — so a
+    // refresh entering while begin()'s registration is in flight cannot short-circuit,
+    // and an unserialized one issues a second registration for the SAME set. Both then
+    // install: the later handle and settle source overwrite the earlier without
+    // releasing it, and the earlier is unreachable for the life of the page.
     let release!: (v: () => void) => void;
     const stalled = new Promise<() => void>((r) => (release = r));
     const firstUnsub = vi.fn();
@@ -387,11 +387,43 @@ describe("DeviceFollow", () => {
 
     const follow = followFor();
     const first = follow.begin();
-    await follow.refresh();
+    const refreshed = follow.refresh(); // queued behind it, not issued alongside
     release(firstUnsub);
     await first;
+    await refreshed;
+    // One registration, because by the time the refresh runs the set has not moved.
+    expect(h.subscribeCalls).toBe(1);
+    // …and the handle the session holds is the one that was issued, released once.
     follow.end();
     expect(firstUnsub).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes against the set as it stands when its turn comes, not when it was asked", async () => {
+    // The other half of serializing: a refresh queued behind a stalled registration must
+    // register what the plan holds by the time it runs. The set moves while it waits.
+    let release!: (v: () => void) => void;
+    const stalled = new Promise<() => void>((r) => (release = r));
+    let addrs: Array<[number, number, number]> = [ADDR];
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async (a, onUpdate) => {
+      void real(a, onUpdate);
+      return stalled;
+    });
+
+    const follow = followFor({ addrs: () => addrs });
+    const first = follow.begin(); // stalled at the broker
+    addrs = [ADDR, [140, 0, 0]]; // …and the set moves while it waits
+    const refreshed = follow.refresh();
+    await Promise.resolve(); // give an unqueued call the chance to issue
+    // It waited: an unserialized refresh reaches its own await in this tick.
+    expect(h.subscribeCalls).toBe(1);
+    release(() => {});
+    await first;
+    await refreshed;
+    // …and when its turn came it registered the set as it stands, not as it was asked.
+    expect(h.subscribeCalls).toBe(2);
+    expect(h.addrs).toEqual([ADDR, [140, 0, 0]]);
   });
 
   it("stops and reports when a re-registration fails", async () => {
