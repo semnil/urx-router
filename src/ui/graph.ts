@@ -623,6 +623,16 @@ export class Graph {
     this.svg.addEventListener("pointermove", (e) => this.onPointerMove(e));
     this.svg.addEventListener("pointerup", (e) => this.onPointerUp(e));
     this.svg.addEventListener("pointercancel", (e) => this.onPointerCancel(e));
+    // Losing the window is the fourth way an interaction ends, and the engine announces
+    // it with a `blur` and nothing else: measured 2026-08-14 on Chromium and on the
+    // shipping WKWebView, the foreground moving away with the button down fires no
+    // `pointercancel` and keeps the pointer capture, so a node drag went on writing
+    // positions while another application was frontmost — into a second undo entry at
+    // that, since history.ts ends its press at the same blur. console.ts's `trackDrag`
+    // carries the readings; the CONSOLE and tuning-screen drags end at this event too.
+    // Window-lifetime, like the view itself: the app builds one Graph and never takes it
+    // down. A suite that builds several takes them back through `recordWindowListeners`.
+    window.addEventListener("blur", () => this.cancelInteraction());
     this.svg.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
 
     // The initial fitView() in the constructor can measure a stale viewport size

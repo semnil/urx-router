@@ -103,11 +103,28 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
   let changes = 0;
 
   // jsdom has no pointer capture. The view calls it on every drag opener, and an
-  // unimplemented method would end the gesture before its first move.
+  // unimplemented method would end the gesture before its first move. Tracked per
+  // element and pointer id rather than answered as a no-op: the drag drops the capture
+  // where it ends, and a stub that forgets which element holds what cannot tell a case
+  // whether that happened.
+  const captured = new WeakMap<Element, Set<number>>();
+  const idsOf = (el: Element): Set<number> => {
+    const ids = captured.get(el) ?? new Set<number>();
+    captured.set(el, ids);
+    return ids;
+  };
   const realCapture = Element.prototype.setPointerCapture;
   const realRelease = Element.prototype.releasePointerCapture;
-  Element.prototype.setPointerCapture = function (): void {};
-  Element.prototype.releasePointerCapture = function (): void {};
+  const realHas = Element.prototype.hasPointerCapture;
+  Element.prototype.setPointerCapture = function (this: Element, id: number): void {
+    idsOf(this).add(id);
+  };
+  Element.prototype.releasePointerCapture = function (this: Element, id: number): void {
+    idsOf(this).delete(id);
+  };
+  Element.prototype.hasPointerCapture = function (this: Element, id: number): boolean {
+    return idsOf(this).has(id);
+  };
 
   // Every element measures as the same box, a fader cap excepted — the one control the
   // view measures *against another*. `getBoundingClientRect` drives the fader travel,
@@ -194,8 +211,18 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
       windowScope.release();
       view.hide();
       host.remove();
-      Element.prototype.setPointerCapture = realCapture;
-      Element.prototype.releasePointerCapture = realRelease;
+      // Deleted rather than assigned back where jsdom defines nothing: assigning
+      // `undefined` leaves an own property, so `"hasPointerCapture" in el` answers true
+      // for the rest of the process and anything feature-detecting takes another branch.
+      const proto = Element.prototype as unknown as Record<string, unknown>;
+      for (const [p, real] of [
+        ["setPointerCapture", realCapture],
+        ["releasePointerCapture", realRelease],
+        ["hasPointerCapture", realHas],
+      ] as const) {
+        if (real) proto[p] = real;
+        else delete proto[p];
+      }
       Element.prototype.getBoundingClientRect = realRect;
       for (const [i, p] of offsets.entries()) {
         if (realOffsets[i]) Object.defineProperty(HTMLElement.prototype, p, realOffsets[i]);

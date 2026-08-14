@@ -295,7 +295,7 @@ carries a one-line map of the same directories and points here.
   typing into a textarea / `history.ts` undo / redo (`Ctrl/Cmd+Z`,
   `Ctrl/Cmd+Shift+Z`, `Ctrl/Cmd+Y`): gesture boundaries, the keyboard predicate, and the apply sequence over
   `core/plan-history.ts`. One entry runs from the first edit to the first boundary
-  (`pointerup`/`pointercancel` a macrotask later, so a `click`-handler edit lands inside it — and the next
+  (`pointerup`/`pointercancel`/a window `blur` a macrotask later, so a `click`-handler edit lands inside it — and the next
   `pointerdown` lands that commit first, or a late macrotask merges two clicks; a stepping-key `keyup`
   outside a text field and `focusout`, both committed **at once**, since nothing is dispatched after them on
   the gesture's behalf and deferring lets an autorepeat outrun the macrotask; a re-arming 300 ms idle

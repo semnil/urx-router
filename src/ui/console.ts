@@ -198,9 +198,12 @@ function trackDrag(
   // here was then confirmed in the same engine: the same gesture left the value where the
   // window was lost.
   //
-  // Playwright cannot see any of it — it emulates focus, so a page reports itself focused
-  // whatever the foreground is, which is why no E2E tier caught this and why the pins are
-  // in the unit suite. On macOS the release itself still arrived (the button was let go
+  // No E2E tier caught it and none can reproduce it: Playwright emulates focus, so a page
+  // under it reports itself focused whatever the foreground is. A spec could still
+  // dispatch a synthetic blur — what puts the pins in the unit suite is what they read
+  // (a plan value and the element's capture), not the event.
+  //
+  // On macOS the release itself still arrived (the button was let go
   // over another app and the drag ended there), so what this closes on that platform is
   // the writing done while the window is away rather than a drag standing forever — and
   // history.ts already ends its press at a blur, so those writes were also landing in a
@@ -210,6 +213,12 @@ function trackDrag(
     window.removeEventListener("pointerup", stop);
     window.removeEventListener("pointercancel", stop);
     window.removeEventListener("blur", end);
+    // The capture goes with the gesture. On the two pointer ends the engine drops it
+    // anyway; on the blur end nothing does, and an engine that also loses the release
+    // would leave this control holding the capture for that pointer id — routing the
+    // operator's next press to a fader they are not pressing. The tuning screens' plot
+    // drag already ended this way; this is the same answer for the other two.
+    if (control.hasPointerCapture(e.pointerId)) control.releasePointerCapture(e.pointerId);
     opts.onEnd?.();
   };
   window.addEventListener("pointermove", move);

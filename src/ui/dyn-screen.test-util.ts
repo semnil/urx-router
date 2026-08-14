@@ -59,6 +59,9 @@ export interface DynHostOptions {
  * hooks a `DynScreen` is constructed with. Call `restore()` in an afterEach: the
  * canvas and frame stubs are global.
  */
+/** The height every element measures, so a cap press at a given clientY is one value. */
+export const LANE_H = 200;
+
 export function dynHost(opts: DynHostOptions = {}): DynHost {
   const { modelId = "URX44V", live = false, plotSize = { w: 600, h: 320 } } = opts;
 
@@ -94,6 +97,42 @@ export function dynHost(opts: DynHostOptions = {}): DynHost {
   const realSize = sizeProps.map((p) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, p));
   Object.defineProperty(HTMLCanvasElement.prototype, "clientWidth", { configurable: true, get: () => plotSize.w });
   Object.defineProperty(HTMLCanvasElement.prototype, "clientHeight", { configurable: true, get: () => plotSize.h });
+
+  // jsdom implements none of the three pointer-capture methods, and the screen's two
+  // drags need all of them: the cap takes a capture on press, and the plot GATES ITS
+  // OWN MOVE HANDLER on `hasPointerCapture` — so an absent method throws on press and
+  // a stub answering a constant false ends the gesture before its first move, both of
+  // which look like "the drag did nothing" rather than like a missing fixture. Tracked
+  // per element and per pointer id, so releasing really stops that drag and nothing
+  // else, which is what lets a case tell an ended gesture from a live one.
+  const captured = new WeakMap<Element, Set<number>>();
+  const idsOf = (el: Element): Set<number> => {
+    const ids = captured.get(el) ?? new Set<number>();
+    captured.set(el, ids);
+    return ids;
+  };
+  const pointerProps = ["setPointerCapture", "hasPointerCapture", "releasePointerCapture"] as const;
+  const realPointer = pointerProps.map((p) => Object.getOwnPropertyDescriptor(Element.prototype, p));
+  Element.prototype.setPointerCapture = function (this: Element, id: number): void {
+    idsOf(this).add(id);
+  };
+  Element.prototype.hasPointerCapture = function (this: Element, id: number): boolean {
+    return idsOf(this).has(id);
+  };
+  Element.prototype.releasePointerCapture = function (this: Element, id: number): void {
+    idsOf(this).delete(id);
+  };
+
+  // One box for every element: the modal has layout in a browser and none in jsdom, and
+  // the cap's own gesture divides by its lane's height — an unmeasured lane puts every
+  // press at the same clamped end of the scale, so a case about a value that moved
+  // cannot be written at all. The number is arbitrary; what matters is that it is
+  // stable, so a press at a given clientY always lands on the same value.
+  const realRect = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function (): DOMRect {
+    const r = { x: 0, y: 0, left: 0, top: 0, width: plotSize.w, height: LANE_H };
+    return { ...r, right: r.width, bottom: r.height, toJSON: () => r } as DOMRect;
+  };
 
   // Manual frame clock. The screen's meter loop re-queues itself every frame, so a
   // real rAF would either spin or never run; this hands a test one pass at a time.
@@ -162,6 +201,15 @@ export function dynHost(opts: DynHostOptions = {}): DynHost {
     restore: () => {
       windowScope.stop();
       windowScope.release();
+      Element.prototype.getBoundingClientRect = realRect;
+      // Deleted rather than assigned back when the property was absent to begin with:
+      // assigning `undefined` leaves an own property, so `"setPointerCapture" in el`
+      // answers true for the rest of the process and anything feature-detecting takes
+      // a different branch in a later file.
+      for (const [i, p] of pointerProps.entries()) {
+        if (realPointer[i]) Object.defineProperty(Element.prototype, p, realPointer[i]);
+        else delete (Element.prototype as unknown as Record<string, unknown>)[p];
+      }
       HTMLCanvasElement.prototype.getContext = realGetContext;
       globalThis.requestAnimationFrame = realRaf;
       globalThis.cancelAnimationFrame = realCancel;

@@ -393,6 +393,26 @@ describe("node drag", () => {
     expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
   });
 
+  // Losing the window ends it, like `pointercancel` above. Measured 2026-08-14 on
+  // Chromium and on the shipping WKWebView: the foreground moving away with the button
+  // down fires `blur` and no `pointercancel`, and keeps the capture — so the node kept
+  // following the pointer while another application was frontmost, and since history.ts
+  // ends its press at that same blur, the rest of the travel landed in a second undo
+  // entry. console.ts's `trackDrag` carries the readings.
+  it("ends a node drag when the window loses focus", () => {
+    fx = graphFixture();
+    const rect = faceplate(fx.host, "ch1")!;
+    const at = (type: string, x: number, y: number): PointerEvent =>
+      new PointerEvent(type, { pointerId: 1, clientX: x, clientY: y, bubbles: true, cancelable: true });
+    rect.dispatchEvent(at("pointerdown", 100, 100));
+    fx.svg.dispatchEvent(at("pointermove", 260, 180));
+    const moved = JSON.stringify(fx.plan.positions?.["ch1"]);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    fx.svg.dispatchEvent(at("pointermove", 500, 400));
+    expect(JSON.stringify(fx.plan.positions?.["ch1"])).toBe(moved);
+  });
+
   // The double-press detector times pointerdown to pointerdown and was not invalidated
   // when the first press became a drag — so a flick-drag released at ~250 ms and grabbed
   // again at ~300 ms to keep positioning opened the note editor instead, and on a

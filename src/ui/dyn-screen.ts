@@ -1192,10 +1192,12 @@ export class DynScreen {
       this.setCapFromFrac(1 - (clientY - r.top) / r.height);
     };
     let dragging = false;
+    let pointer: number | null = null;
     cap.addEventListener("pointerdown", (e) => {
       cap.setPointerCapture(e.pointerId);
       rect = slot.getBoundingClientRect();
       dragging = true;
+      pointer = e.pointerId;
       this.endDrag = end;
       e.preventDefault();
     });
@@ -1206,6 +1208,10 @@ export class DynScreen {
       dragging = false;
       rect = null;
       if (this.endDrag === end) this.endDrag = null;
+      // Dropped with the gesture, for the reason console.ts's trackDrag states: the blur
+      // end is the one no engine follows with a release of its own.
+      if (pointer !== null && cap.hasPointerCapture(pointer)) cap.releasePointerCapture(pointer);
+      pointer = null;
     };
     cap.addEventListener("pointerup", end);
     cap.addEventListener("pointercancel", end);

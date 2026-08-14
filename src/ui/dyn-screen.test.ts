@@ -614,31 +614,65 @@ describe("refresh", () => {
   // And the cap, whose gate is that surviving capture rather than a flag the release
   // above clears: without an ender of its own it kept writing thresholds to the plan
   // and the live unit for every later move.
-  it("stops the threshold cap at a window blur", () => {
+  it("stops the threshold cap at a window blur, but not at a blur inside the screen", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
     const cap = host.box.querySelector<HTMLElement>("#dyn-threshold-cap")!;
     const thr = (): number => (host.plan.nodeParams["ch1"]?.gate as { threshold: number }).threshold;
+    const at = (type: string, clientY: number): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, clientY, pointerId: 1 });
 
-    // jsdom gives the lane no box and no capture, and this is the one case that drags
-    // the cap — so both are answered here rather than in every screen's fixture.
-    const realRect = Element.prototype.getBoundingClientRect;
-    const realCapture = Element.prototype.setPointerCapture;
-    Element.prototype.getBoundingClientRect = () => ({ top: 0, height: 200 }) as DOMRect;
-    Element.prototype.setPointerCapture = function (): void {};
-    try {
-      cap.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientY: 40, pointerId: 1 }));
-      cap.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientY: 80, pointerId: 1 }));
-      const moved = thr();
+    const start = thr();
+    cap.dispatchEvent(at("pointerdown", 40));
+    cap.dispatchEvent(at("pointermove", 80));
+    const moved = thr();
+    expect(moved).not.toBe(start);
 
-      window.dispatchEvent(new FocusEvent("blur"));
-      cap.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientY: 150, pointerId: 1 }));
-      expect(thr()).toBe(moved);
-    } finally {
-      Element.prototype.getBoundingClientRect = realRect;
-      Element.prototype.setPointerCapture = realCapture;
-    }
+    // The cap carries a tabIndex and every row beside it is focusable, so focus moves
+    // inside the modal while a press is down. The release is registered without
+    // `capture: true` for exactly this: a capturing window listener is handed those
+    // blurs too, and would end the drag — and clear `grabbed`, letting a queued
+    // refresh replace the control under the pointer.
+    cap.dispatchEvent(new FocusEvent("blur"));
+    cap.dispatchEvent(at("pointermove", 120));
+    const stillDragging = thr();
+    expect(stillDragging).not.toBe(moved);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    cap.dispatchEvent(at("pointermove", 150));
+    expect(thr()).toBe(stillDragging);
+    expect(cap.hasPointerCapture(1)).toBe(false);
+  });
+
+  // The third drag on this screen, and the one with no flag to clear: its move handler
+  // asks the engine whether it still holds the capture, and a blur leaves that answer
+  // true — so the ender drops the capture instead.
+  it("stops the plot drag at a window blur", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    // GATE opens on the ladder; the curve is the mode that drags.
+    host.box.querySelector<HTMLButtonElement>("#dyn-mode-curve")!.click();
+    host.frame();
+    const cv = host.box.querySelector<HTMLCanvasElement>("#dyn-curve")!;
+    const thr = (): number => (host.plan.nodeParams["ch1"]?.gate as { threshold: number }).threshold;
+    // offsetX is what the plot reads and the constructor does not take it.
+    const at = (type: string, offsetX: number): PointerEvent => {
+      const ev = new PointerEvent(type, { bubbles: true, pointerId: 1 });
+      Object.defineProperty(ev, "offsetX", { value: offsetX });
+      return ev;
+    };
+
+    const start = thr();
+    cv.dispatchEvent(at("pointerdown", 200));
+    cv.dispatchEvent(at("pointermove", 300));
+    const moved = thr();
+    expect(moved).not.toBe(start);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    cv.dispatchEvent(at("pointermove", 500));
+    expect(thr()).toBe(moved);
   });
 });
 
