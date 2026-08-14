@@ -46,17 +46,15 @@ on:
 # expensive tier and it now runs on ordinary pull requests, so a review carrying several
 # pushes would otherwise pay for it once per push.
 #
-# `|| github.run_id` is the load-bearing half rather than a fallback. Keyed by the ref, a
-# `workflow_dispatch` would share a group with the pull-request run on the same branch —
-# and a cancelled run leaves its check run at `cancelled`, which is not one of the
-# statuses that satisfy a required check (those are `success`, `skipped` and `neutral`).
-# Both runs report `race-required` on the same head commit, so a cancellation there blocks
-# the merge until something re-reports. `run_id` is unique per run, so every
-# non-pull-request run is a group of one and cancels nothing. `cancel-in-progress: false`
-# would not be enough on its own: `concurrency.queue` defaults to `single`, so a PENDING
-# run in a shared group is cancelled and replaced when the next one arrives. `queue: max`
-# raises that to 100 — and it cannot be combined with `cancel-in-progress: true`, so it is
-# not available here. A key nothing else joins is.
+# Every run that is not a pull-request run is a group of ONE:
+# `github.event.pull_request.number` is empty on those, so the key falls to
+# `github.run_id` and they cancel nothing. A `workflow_dispatch` on a branch reports
+# `race-required` on the same head commit a pull-request run does, and a cancelled run
+# leaves that check at `cancelled` — not one of the statuses that satisfy a required check
+# (`success`, `skipped`, `neutral`), so the merge is blocked until something re-reports.
+# `cancel-in-progress: false` is not an alternative here: `concurrency.queue` defaults to
+# `single`, which replaces a pending run in a shared group, and `queue: max` cannot be
+# combined with `cancel-in-progress: true`.
 concurrency:
   group: race-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
