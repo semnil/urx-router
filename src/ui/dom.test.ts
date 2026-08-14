@@ -6,6 +6,7 @@ import {
   el,
   focusables,
   holdAppInert,
+  holdInertOnBlur,
   onOff,
   onWheelStep,
   popLeft,
@@ -212,6 +213,80 @@ describe("wheel helpers", () => {
     expect(range.value).toBe("1");
     expect(input).toHaveBeenCalledOnce();
     expect(scrubFloat(2.7000000000000002)).toBe(2.7);
+  });
+});
+
+describe("holdInertOnBlur", () => {
+  // Every native range in the app is wired through this, so the cases live with the helper
+  // rather than with any one surface. The reading behind it: the engine owns a native
+  // drag, so no listener the app drops ends it — measured on the shipping WKWebView, a
+  // slider dragged with the button held went on writing while another application was
+  // frontmost, and it RESUMED when focus came back if the treatment only ended it once.
+  const range = (live?: () => HTMLInputElement | null): HTMLInputElement => {
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = "0";
+    input.max = "100";
+    input.value = "50";
+    document.body.append(input);
+    holdInertOnBlur(input, live);
+    return input;
+  };
+  const press = (el: HTMLElement): void =>
+    void el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+  const up = (): void => void window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+
+  it("disables the control while the window is away and re-arms it when the button comes up", () => {
+    const input = range();
+    press(input);
+    input.focus();
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(input.disabled).toBe(true);
+
+    // Focus returning is deliberately NOT the re-arm: with the button still down the
+    // engine picked the drag back up, which is the reading this shape exists for.
+    window.dispatchEvent(new FocusEvent("focus"));
+    expect(input.disabled).toBe(true);
+
+    up();
+    expect(input.disabled).toBe(false);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("re-arms on a move that reports no buttons, the release the window never heard", () => {
+    const input = range();
+    press(input);
+    window.dispatchEvent(new FocusEvent("blur"));
+    window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, buttons: 1 }));
+    expect(input.disabled).toBe(true);
+    window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, buttons: 0 }));
+    expect(input.disabled).toBe(false);
+  });
+
+  it("does nothing to a drag that ended normally, or to a blur with no press behind it", () => {
+    const input = range();
+    press(input);
+    up();
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(input.disabled).toBe(false);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(input.disabled).toBe(false);
+  });
+
+  it("leaves the live row's own disabled state alone, and does not focus a locked one", () => {
+    const replacement = document.createElement("input");
+    replacement.type = "range";
+    replacement.disabled = true; // what a rebuild does to a row the device has taken over
+    const input = range(() => replacement);
+    press(input);
+    input.focus();
+    window.dispatchEvent(new FocusEvent("blur"));
+    // The surface rebuilt the row while the press was still down.
+    input.replaceWith(replacement);
+    up();
+    expect(replacement.disabled).toBe(true);
+    expect(document.activeElement).not.toBe(replacement);
   });
 });
 

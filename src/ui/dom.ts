@@ -179,6 +179,67 @@ export function wheelStep(slider: HTMLInputElement, blocked?: () => boolean | un
   );
 }
 
+/**
+ * End a native slider's drag when the window goes away, and keep it ended until the
+ * button comes up. Wired on every `<input type="range">` in the app, for the same reason
+ * `wheelStep` is: they either all behave this way or the operator has to remember which.
+ *
+ * The engine owns a native drag, so unhooking a listener does nothing — measured on the
+ * shipping WKWebView (2026-08-14), a row dragged with the button held went on writing
+ * into the plan and out to the unit while another application was frontmost, and the drags
+ * the app runs itself (the CONSOLE faders, the tuning screens' cap and plot, the node
+ * graph) end at the same `blur` for the same reading. Of the treatments measured, only
+ * `disabled` both ends the drag and refuses to be re-acquired: taking the element out of
+ * the document and putting it back ends it too, but on the unit the row RESUMED under the
+ * still-held button once focus returned, and `pointer-events: none` never ended it at all.
+ *
+ * So: disabled at the blur, and held that way until a `pointerup`, a `pointercancel`, or a
+ * `pointermove` reporting no buttons — the release the window never heard. Not until focus
+ * returns; that was tried and is what resumed. It costs nothing on screen, since these
+ * sliders are authored (`appearance: none`, own track and thumb) and the engines have
+ * nothing of their own to dim — a row shot enabled and disabled is byte-identical in both.
+ *
+ * `live` names the row as it is NOW, for a surface that rebuilds: the same blur can land a
+ * repaint that replaces this element, and focus has to return to what is on screen rather
+ * than to a detached node. Whatever that row's own `disabled` says is left alone — a
+ * rebuilt row can be locked (COMP's 1-knob hands its threshold to the device), and clearing
+ * that would put a device-driven value back under the pointer.
+ */
+export function holdInertOnBlur(input: HTMLInputElement, live?: () => HTMLInputElement | null): void {
+  input.addEventListener("pointerdown", () => {
+    const onBlur = (): void => {
+      disarm();
+      // A rebuild that beat us to it already ended the drag by removing the element.
+      if (!input.isConnected || input.disabled) return;
+      const focused = document.activeElement === input;
+      input.disabled = true;
+      const back = (ev?: PointerEvent): void => {
+        if (ev?.type === "pointermove" && ev.buttons !== 0) return;
+        window.removeEventListener("pointerup", back);
+        window.removeEventListener("pointercancel", back);
+        window.removeEventListener("pointermove", back);
+        input.disabled = false;
+        const now = live?.() ?? input;
+        if (focused && now.isConnected && !now.disabled) now.focus();
+      };
+      window.addEventListener("pointerup", back);
+      window.addEventListener("pointercancel", back);
+      window.addEventListener("pointermove", back);
+    };
+    // An ordinary release needs none of this: the engine ends its own drag, and doing it
+    // here would leave the row disabled after every finished gesture — the re-arming
+    // listener above is added during that pointerup's dispatch and never sees it.
+    const disarm = (): void => {
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("pointerup", disarm);
+      window.removeEventListener("pointercancel", disarm);
+    };
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("pointerup", disarm);
+    window.addEventListener("pointercancel", disarm);
+  });
+}
+
 /** How close a floating popover may come to the window edge, on either axis. */
 const POP_INSET = 6;
 
@@ -402,6 +463,7 @@ export function sliderRow(opts: {
     opts.onInput(v);
   });
   wheelStep(input);
+  holdInertOnBlur(input);
   ctl.append(input, val);
   return settingsRow(opts.label, ctl, opts.row);
 }

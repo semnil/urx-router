@@ -17,6 +17,7 @@ import {
   el,
   holdAppInert,
   onOff,
+  holdInertOnBlur,
   onWheelStep,
   settingsChoice,
   settingsNote,
@@ -372,6 +373,7 @@ export class DeviceSetupPanel {
     // notch instead of three (and re-rendered three times doing it). Every other slider
     // here goes through the shared helper and honours the preference.
     onWheelStep(input, (dir) => this.edit({ brightness: this.draft.brightness + dir }));
+    holdInertOnBlur(input, () => this.box.querySelector<HTMLInputElement>("#device-setup-brightness"));
     wrap.append(input, val);
     return wrap;
   }

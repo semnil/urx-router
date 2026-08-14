@@ -692,9 +692,13 @@ describe("refresh", () => {
   });
 
   // The same blur that holds the row inert also clears `grabbed`, so a refresh the press
-  // had deferred runs and rebuilds the column. The restore has to find the row that is on
-  // screen now: re-arming the replaced one put the operator's focus on a detached node.
-  it("restores the row on screen when a blur also lands a deferred refresh", () => {
+  // had deferred runs and rebuilds the column — and that rebuild is what ends the drag
+  // here, by removing the element the engine was tracking. What must not happen is a row
+  // left disabled by the treatment, or focus parked on the node that was replaced. Focus
+  // is not moved to the new row: no rebuild in this app restores focus (the CONSOLE and
+  // the inspector do not either), and doing it on this path alone would make the blur the
+  // one repaint that behaves differently.
+  it("leaves no disabled row and no focus on a detached node when a blur lands a deferred refresh", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
@@ -710,7 +714,8 @@ describe("refresh", () => {
     const now = rowsByKey(host.box).get("threshold")!;
     expect(now).not.toBe(row);
     expect(now.disabled).toBe(false);
-    expect(document.activeElement).toBe(now);
+    expect(row.isConnected).toBe(false);
+    expect(document.activeElement).not.toBe(row);
   });
 
   // A rebuilt row carries its own disabled state, and the restore must not talk it out of

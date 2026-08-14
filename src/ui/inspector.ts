@@ -139,7 +139,7 @@ import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
 import { setLevelText } from "./glyph";
-import { wheelStep } from "./dom";
+import { holdInertOnBlur, wheelStep } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import type { DynKind } from "./dyn-registry";
 import {
@@ -1132,6 +1132,7 @@ function rangeSlider(
     onInput(v);
   });
   wheelStep(slider);
+  holdInertOnBlur(slider);
   row.append(slider);
   return row;
 }
@@ -1700,6 +1701,7 @@ function snappedSlider(
     onChange(v);
   });
   wheelStep(slider);
+  holdInertOnBlur(slider);
   row.append(slider);
   return row;
 }

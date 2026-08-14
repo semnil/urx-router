@@ -454,6 +454,15 @@ with the row, since disabling drops it. It costs nothing on screen: the slider i
 (`appearance: none`, its own track and thumb), so the engines have nothing of their own to dim — the row
 shot enabled and disabled is byte-identical in both.
 
+**This is not the tuning screen's rule but the app's**: `holdInertOnBlur` in `ui/dom.ts` carries it, and
+every `<input type="range">` goes through it — the tuning rows, both of the inspector's slider builders,
+the shared `sliderRow`, and Device setup's brightness — for the same reason `wheelStep` is shared. What
+this screen adds is the resolver: the same blur clears `grabbed`, so a refresh the press deferred runs
+and rebuilds this column, and the restore has to ask for the row that is on screen rather than the one
+the gesture started on. A rebuilt row keeps whatever `disabled` state the rebuild gave it — COMP's 1-knob
+coming on hands threshold / ratio / gain / knee to the device and locks those rows — and it does not get
+focus back, because no rebuild in this app restores focus.
+
 ## Meter subscription ownership
 
 The broker has **one meter subscription slot process-wide**: `vd_meters_subscribe` replaces the
