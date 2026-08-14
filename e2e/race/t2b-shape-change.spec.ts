@@ -34,9 +34,12 @@ import { CH1_FADER, CH2_FADER, faderOf, faderReadout, graphNode } from "./ui";
 //
 // What this file adds over T2 is the three shapes T2 had no case for:
 //   - a write on node A that re-authors node B (Signal Type STEREO),
-//   - writes that leave the numeric diff engine entirely (Sweet Spot Data: no snapshot
-//     entry, no registration, no side-effect classification. Names left it the same way
-//     until they were registered and given a direct follow — see t1d-name-window),
+//   - writes that leave the numeric diff engine (Sweet Spot Data: no snapshot entry, and
+//     for a long time no registration and no side-effect classification either. Names left
+//     that state first — registered and given a direct follow, see t1d-name-window — and
+//     the preset has since followed, as a refetch head resolved to its owner node. What is
+//     left of the original shape is the snapshot entry, and the subscribe timing it shares
+//     with the numeric block),
 //   - the deliberate NONE sentinel of a routing selector, and the write/read
 //     asymmetry of the SD Rec pair that hides a half-applied write.
 //
@@ -263,8 +266,9 @@ test.describe("T2b shape-change", () => {
     expect(ch2After).toBe(ch2Before);
   });
 
-  // shape-string-path-writes. Names and Sweet Spot Data leave through vd_set_str, which
-  // has no numeric snapshot entry and no sideEffect classification.
+  // shape-string-path-writes. Names and Sweet Spot Data leave through vd_set_str, so neither
+  // has a numeric snapshot entry. Both are classified now — a name by its own follow path, the
+  // preset as a `refetch` head — which is what this case has been rewritten twice to track.
   //
   // PINNED DEFECT, NOW RESOLVED ON BOTH HALVES — rewritten rather than deleted, twice,
   // which is the rule for a pin whose subject changed.

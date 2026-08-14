@@ -750,12 +750,14 @@ export class LiveSync {
           // is unheard until one runs, and this wait resolves at its bound instead. Either
           // way the read does not start inside the write's staleness window, which is what
           // this line is for. It goes into
-          // `mustSettle` ALONE and not into the `written` map: that map is what the read
-          // overlays its answers from, it is numeric, and a string notify carries its text in
-          // a different field — so an entry there would answer a numeric read with a number
-          // the unit never sent. Having no mark means the wait cannot be ended by a notify
-          // that predates the write, which is right here: this loop only writes a value the
-          // device does not already hold, so an announcement is owed.
+          // `mustSettle`, with its mark travelling as `boundaryMarks` rather than in the
+          // `written` map: that map is what the read overlays its answers from, it is numeric,
+          // and a string notify carries its text in a different field — so an entry there
+          // would answer a numeric read with a number the unit never sent. The mark is
+          // separate but not optional: without one the wait is held unconditionally
+          // (settle.ts), so an announcement that arrived while the rest of this flush ran —
+          // which is the ordinary case, the unit answers in about 15 ms — would be missed and
+          // the read would spend the whole bound anyway.
           nameSettle.set(addrKey(w.param, 0, w.y), nameMark);
         }
       }
