@@ -1284,9 +1284,22 @@ mod tests {
     // entry point is looked for among ATTRIBUTE LINES only, which is what it is; prose,
     // identifiers and literals cannot reach that set however they are spelled.
     //
-    // Only the refusing direction has been run: gating the two modules for real does not
-    // compile here, since the command list reaches into both. So the arm this test would
-    // PERMIT is a statement about the text, not a build anyone has made.
+    // Both directions have been run (2026-08-14, macOS). The attribute put back on its
+    // own fails this test; put back WITH `#[cfg(desktop)]` on the two `mod` lines, the
+    // crate compiles and `cargo test` reports 74 passed, 0 failed — `desktop` is true on
+    // this target, so that gate changes nothing about what is built here. An earlier
+    // version of this comment said that arm did not compile. It was written without
+    // running it, and is false.
+    //
+    // The same run established what the pin does NOT reach, which is the more useful
+    // half: its condition is necessary and not sufficient. With those two `mod` lines
+    // behind a cfg that is false here (`target_os = "android"` stands in for the mobile
+    // build), the crate fails with 70 errors, every one E0433 on `vd` or `midi` — the
+    // command registrations, the managed state and the window-event handlers all still
+    // name them, spread through the file rather than gathered in `run()`. So a green run
+    // here is not "a mobile build works"; it is the one half that can be stated in text.
+    // Swapping the gate for a false cfg is how to get the rest of the list: the compiler
+    // enumerates every site, which no text scan here could do without going stale.
     #[test]
     fn a_mobile_arm_would_require_the_desktop_only_modules_to_be_gated() {
         let code = include_str!("lib.rs")
@@ -1315,7 +1328,8 @@ mod tests {
         assert!(
             !declares_mobile || (gated("vd") && gated("midi")),
             "a mobile entry point obliges `mod vd;` and `mod midi;` to be `#[cfg(desktop)]`, \
-             or an android/ios build fails on unresolved names"
+             or an android/ios build fails on unresolved names. Necessary, not sufficient — \
+             see the comment for what else that build still needs and how to list it"
         );
     }
 
