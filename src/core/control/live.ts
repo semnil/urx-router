@@ -889,9 +889,12 @@ export class LiveSync {
         // into is gone, and there is nothing a snapshot could describe.
         if (deviceView) this.capture(deviceView, since);
       }
-      // Before onSent, and unconditional on `sent`: a flush that sent nothing can still have
-      // captured (a converge's own re-read is not a send), and the set it rebuilt is just as
-      // stale. The callee compares the set, so this costs nothing when it has not moved.
+      // Before onSent, and unconditional on `sent`. A converge cannot be the reason — its
+      // flag is set after `sent++`, so a flush that sent nothing never reaches one — but
+      // `resync()` captures OUTSIDE any flush (the caller runs it after every device-side
+      // reconcile), and the latch it leaves is consumed by whichever flush comes next,
+      // whatever that one sends. The callee compares the set, so this costs nothing when
+      // it has not moved.
       if (this.followSetStale) {
         this.followSetStale = false;
         this.hooks.reregister?.();

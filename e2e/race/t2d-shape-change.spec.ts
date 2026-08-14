@@ -14,7 +14,7 @@ import {
   hasProbe,
   type TraceEvent,
 } from "./fake-device";
-import { analyze, report, timeline, markTime, setsOf, getsOf, type Span } from "./analyze";
+import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter, type Span } from "./analyze";
 import { graphNode } from "./ui";
 
 // T2d shape-change — the two catalog cases whose shape change is a RE-TYPING rather
@@ -272,6 +272,9 @@ test.describe("T2d shape-change", () => {
     // call below would describe another one. The flush that re-typed the array
     // subscribed to what it typed, so the emitted set is inside the registration and the
     // clause has nothing to report.
+    // Attributed to the flush: no reconcile landed inside the settle wait, and one would
+    // have re-registered through follow.ts whatever the flush did.
+    expect(deviceReflectsAfter(trace, changeAt)).toBe(0);
     const regAfterChangeAddrs = await paramAddrsOf(page);
     const snapAfterChange = await snapshotOf(page);
     const grownOf = (registration: Array<[number, number, number]>) =>

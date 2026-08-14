@@ -193,6 +193,18 @@ export const marksOf = (trace: TraceEvent[]): TraceEvent[] => trace.filter((e) =
 export const markTime = (trace: TraceEvent[], detail: string): number | undefined =>
   trace.find((e) => e.kind === "mark" && e.detail === detail)?.t;
 
+/**
+ * Device-authored reflects that landed after `at` — what a reconcile reports when it
+ * applies, scoped or whole-device.
+ *
+ * `follow.ts` re-registers after either, so a case attributing a registration move to a
+ * FLUSH has to show that none of these ran inside the wait it read the registration
+ * after. Counting whole-device READS instead cannot do it: a converge's own read pass
+ * walks the entire write set, the full-read marker address included.
+ */
+export const deviceReflectsAfter = (trace: TraceEvent[], at: number): number =>
+  trace.filter((e) => e.kind === "status" && e.t > at && (e.detail ?? "").includes("← device")).length;
+
 export const setsOf = (trace: TraceEvent[]): Span[] => spans(trace).filter((s) => s.cmd === "vd_set");
 
 export const getsOf = (trace: TraceEvent[]): Span[] => spans(trace).filter((s) => s.cmd === "vd_get");

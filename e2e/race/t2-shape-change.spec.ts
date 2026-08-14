@@ -15,7 +15,7 @@ import {
   ignoreWrites,
   type TraceEvent,
 } from "./fake-device";
-import { analyze, report, timeline, markTime, setsOf, getsOf } from "./analyze";
+import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter } from "./analyze";
 import { graphNode, openEqScreen, strip } from "./ui";
 
 // T2 shape-change — the parameters that reshape the WRITABLE ADDRESS SET rather
@@ -78,14 +78,6 @@ const regKeys = (addrs: Array<[number, number, number]>): Set<string> => new Set
 /** Whole-device reconciles that began after `at` (see RATE_ADDR). */
 const fullReadsAfter = (trace: TraceEvent[], at: number): number =>
   getsOf(trace).filter((g) => g.addr === RATE_ADDR && g.start > at).length;
-
-/** Device-authored reflects that landed after `at` — what a reconcile reports when it
- *  applies, scoped or whole-device. `follow.ts` re-registers after either, so a case that
- *  attributes a registration move to a FLUSH has to show none of these ran in its window.
- *  Not `fullReadsAfter`: a converge's own read pass walks the whole write set, RATE_ADDR
- *  included, so that counter cannot tell a converge from a reconcile. */
-const deviceReflectsAfter = (trace: TraceEvent[], at: number): number =>
-  trace.filter((e) => e.kind === "status" && e.t > at && (e.detail ?? "").includes("← device")).length;
 
 const setsAfter = (trace: TraceEvent[], addr: string, at: number): number[] =>
   setsOf(trace)
@@ -225,9 +217,10 @@ test.describe("T2 shape-change", () => {
     console.log(`one REFUSED notify on a dropped band address (53): ${droppedCost} full reconcile(s)`);
     console.log(`one notify on a KEPT address (48, 1-Knob level): ${keptCost} full reconcile(s)`);
 
-    // The differential. The refused notify reaches nothing — no settle, no idle net,
-    // and `DeviceFollow.armIdle` is reachable only from inside `onNotify`, so a
-    // stimulus the bridge drops costs zero rather than a sweep. The kept address is
+    // The differential. The refused notify reaches nothing — no settle, no idle net.
+    // `onNotify` is where a delivered notify arms both, and it never runs; the other way
+    // in (the write settle's own sink, `follow.ts` arms `armIdle` from it) needs a write
+    // the unit did not announce, and nothing is in flight here. The kept address is
     // delivered, resolves to ch1 and takes a scoped read, leaving the idle net's own
     // sweep behind it.
     expect(droppedCost).toBe(0);

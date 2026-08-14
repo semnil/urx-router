@@ -23,7 +23,7 @@ import {
   hasProbe,
   type TraceEvent,
 } from "./fake-device";
-import { analyze, report, timeline, markTime, setsOf, getsOf } from "./analyze";
+import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter } from "./analyze";
 import { CH1_FADER, CH2_FADER, faderOf, faderReadout, graphNode } from "./ui";
 
 // T2b shape-change — the twelve T2 cases t2-shape-change.spec.ts did not reach
@@ -433,6 +433,10 @@ test.describe("T2b shape-change", () => {
     // a numeric SSMCS param until something reads. Only a READ can discover it, which is
     // what the assertions below price — the preset write now schedules one.
     await divergeAt(page, CH1_SSMCS_MORPHING, 77);
+    // Read against the mode-change flush alone: no reconcile landed in its settle wait,
+    // and one would have re-registered through follow.ts whatever the flush did.
+    const modeTrace = await traceOf(page);
+    const modeAt = markTime(modeTrace, "to-ssmcs")!;
     const regBeforePreset = regKeys(await paramAddrsOf(page));
     await mark(page, "sweet-spot");
     await param(page, "Sweet Spot Data").locator("select").selectOption("9");
@@ -480,6 +484,7 @@ test.describe("T2b shape-change", () => {
     // settle for a preset write can end on the unit's own announcement instead of its bound,
     // and a preset changed ON the unit is followed from the moment the mode change lands
     // rather than at whatever reconcile happens next.
+    expect(deviceReflectsAfter(modeTrace, modeAt)).toBe(0);
     expect(regBeforePreset.has(CH1_SWEET_SPOT)).toBe(true);
     expect(regBeforePreset.has(CH1_SSMCS_MORPHING)).toBe(true);
     // UNCHANGED and still the string path's own property: no numeric snapshot entry. The

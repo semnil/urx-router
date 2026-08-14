@@ -1633,19 +1633,29 @@ extrapolation from a numeric sequence. `planToNameWrites` is the write side of t
 deliberately not the same set — it skips a node the plan holds no name for, and it carries one string that is not
 a name at all: the SSMCS Sweet Spot preset (param 91). That one **is** registered, and separately, because it is a
 catalog row rather than a name — it resolves through the numeric index to its owner node, so a preset changed on
-the unit takes that node's scoped read instead of a direct placement, and the flush's own write of it can end its
-settle on the unit's announcement. It is registered only while the plan carries a preset, i.e. while the channel
-is in SSMCS mode.
+the unit takes that node's scoped read instead of a direct placement, and a write of it can end its settle on the
+unit's announcement. Not the write that PUTS it there: the mode change's own flush writes the preset on the string
+path ahead of its converge, and the registration that covers it is posted at the end of that same flush — after
+the settle has spent its bound. It is registered only while the plan carries a preset, i.e. while the channel is
+in SSMCS mode.
 
-**The set is re-registered by the flush that changes it.** Only a structural edit moves it — a COMP/EQ mode
-change, a wire — and the flush that carries such an edit rebuilds the set in its own capture. Nothing asked the
-follow layer to re-subscribe there, so an address the edit added stayed unheard until the next reconcile happened
-to run, which for the SSMCS block meant the mode change's own preset write could not hear its answer. The flush
-now asks at its END, never inside itself: a re-registration unsubscribes before it subscribes, and doing that
-mid-flush would drop the notifies the refetch's settle is waiting for. `DeviceFollow.refresh` compares the set's
-identity and returns without touching the broker when it has not moved, so an ordinary flush costs one comparison
-and no traffic; it is deliberately not `begin`, whose generation bump is how an in-flight registration tells a
-dead session from a live one.
+**The set is re-registered by the flush that changes it — when that flush CAPTURES.** `capture()` is what rebuilds
+the set, and a flush reaches it only through a `sideEffect` param's converge or refetch epilogue. A COMP/EQ mode
+change does. **A send wire does not**: `SEND_LEVEL` / `SEND_PAN` / `SEND_ON` / `SEND_TAP` carry no `sideEffect`, so
+drawing or cutting one moves the emitted set — measured, 5 addresses for one CH → MIX send — and leaves the
+registration where it was until something reconciles. That window is still open for wires.
+
+Nothing asked the follow layer to re-subscribe from a flush at all, so an address a mode change added stayed
+unheard until the next reconcile happened to run. The flush now asks at its END, never inside itself: a
+re-registration unsubscribes before it subscribes, and doing that mid-flush would drop the notifies the refetch's
+settle is waiting for. `DeviceFollow.refresh` compares the set's identity and returns without touching the broker
+when it has not moved, so an ordinary flush costs one comparison and no traffic; it is deliberately not `begin`,
+whose generation bump is how an in-flight registration tells a dead session from a live one. Registrations run one
+at a time within a generation: `refresh` is fire-and-forget from a flush and shares no lock with the other two
+callers, and two of them in flight under one generation each install a handle and a settle source over the
+other's. The overwritten handle costs nothing (`vd_params_unsubscribe` takes no argument and acts on the
+connection, so either handle releases the stream); the overwritten settle source is a sink left in `writeSettle`'s
+module singleton that `end()` cannot reach, which is the pairing this section's own registration invariant states.
 
 **Two read-only addresses join for the same reason**, and the name path is their precedent rather than a
 coincidence: an address the app only READS was in no registration, so the unit's announcement reached nobody and

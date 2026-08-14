@@ -893,7 +893,8 @@ agreement, zero findings.
   cannot receive. **The fake now mirrors `absorb`** — `pushNotify` filters per entry against the set
   the session registered, traces a refusal as its own `notify-drop` kind, and only `pushBulkChange`
   bypasses it — so those cases now measure the refusal instead. The consequence is worse than the
-  price it replaced: `DeviceFollow.armIdle()` is reachable only from inside `onNotify`, so a session
+  price it replaced: a session's idle sweep is armed from inside `onNotify` (the write settle's own sink
+  is the other way in, and it needs a write the unit did not announce), so a session
   that receives no deliverable notify has no idle safety net either. The change is invisible with
   nothing scheduled to discover it
 - **CLOSED — "the registration lags a converge/refetch flush, and that window is the reachable

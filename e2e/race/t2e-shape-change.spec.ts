@@ -18,7 +18,7 @@ import {
   type InstallOptions,
   type TraceEvent,
 } from "./fake-device";
-import { analyze, report, timeline, markTime, setsOf, getsOf } from "./analyze";
+import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter } from "./analyze";
 import { graphNode, strip } from "./ui";
 
 // T2e shape-change — the two catalog cases whose subject is a constraint that lives in
@@ -661,6 +661,9 @@ test.describe("T2e shape-change", () => {
     // a reconcile only, which left the app writing an address a device-side flip of which
     // it could not hear. It is the growth half of the file header's snapshot /
     // registration asymmetry, and what it now asserts is that the two sets agree.
+    // Attributed to the flush: no reconcile landed inside the settle wait, and one would
+    // have re-registered through follow.ts whatever the flush did.
+    expect(deviceReflectsAfter(trace, ampAt)).toBe(0);
     expect(regAfterAmp.has(insertFxOnAddr(1))).toBe(true);
     expect(ampWrites.map((s) => s.addr)).toEqual([insertFxAddr(1), insertFxOnAddr(1)]);
     // …and the two nodes whose MENUS the gesture just changed got no insert-FX write of
