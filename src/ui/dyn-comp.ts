@@ -100,6 +100,7 @@ export const COMP_DYN: DynProcessor = {
       grKind: "comp",
       inTapKey: "precomp",
       outTapKey: "preeq",
+      cap: "threshold",
       grFullDb: 24,
     }),
   bar: displayBar,

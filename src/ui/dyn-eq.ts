@@ -38,7 +38,6 @@ import {
   EQ_TYPE_SHELVING,
   COMP_EQ_COMP_FIRST,
 } from "../core/control/params";
-import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ } from "../core/control/vd";
 import { eqBandFields, EQ_BAND_NAMES, eqBandHasType, hasEq, isStereoChannel } from "../core/control/translate";
 import { channelEqUnavailable } from "../core/constraints";
 import { eqResponse } from "../core/eq-response";
@@ -47,9 +46,11 @@ import { controlId, eqBandScope, EQ_SCOPE } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
 import { tapFor } from "../core/meters";
 import type { EqBand, NodeParams } from "../core/plan";
-import { el, onOff, settingsRow, settingsSection, settingsSelect } from "./dom";
+import { el, onOff, settingsRow, settingsSection } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { PLOT_FONT, oneKnobLevelRow, splitDisplay } from "./dyn-screen";
+import { enumRow } from "./dyn-chan";
+import { drawBandMarkers, drawFreqAxes, drawFreqCurve, freqGeo } from "./dyn-freq-plot";
+import { oneKnobLevelRow, splitDisplay } from "./dyn-screen";
 import type { DynCtx, DynLane, DynPlotGeo, DynProcessor } from "./dyn-screen";
 
 /** Level-lane ruler. The stages either side of an EQ are programme level, so the ruler
@@ -57,22 +58,6 @@ import type { DynCtx, DynLane, DynPlotGeo, DynProcessor } from "./dyn-screen";
  *  drag on these meters — an EQ's gains are not in dBFS). */
 const LO_DB = -60;
 const TICK_STEP = 6;
-
-/** Gain axis: exactly the band gain range, so a maxed band touches the frame. */
-const GAIN_TICKS = [18, 12, 6, 0, -6, -12, -18];
-const GAIN_TOP = GAIN_TICKS[0];
-const GAIN_BOTTOM = GAIN_TICKS[GAIN_TICKS.length - 1];
-/** Decade gridlines, plus the halves an EQ is actually talked about in. */
-const FREQ_TICKS = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
-const FREQ_LABELS: Record<number, string> = {
-  20: "20",
-  100: "100",
-  1000: "1k",
-  10000: "10k",
-  20000: "20k",
-};
-
-const PAD = { l: 40, r: 12, t: 12, b: 26 };
 
 /** One band's values, defaulted the way the device defaults them. The plot and the sliders
  *  read the same function, so they cannot drift on what "unset" means. */
@@ -102,27 +87,6 @@ function eqTapKeys(nodeId: string): { in: string; out: string } {
 
 /** Whether the device is driving this node's bands right now. */
 const oneKnobOn = (ctx: DynCtx): boolean => ctx.plan.nodeParams[ctx.nodeId]?.eqOneKnob?.on === true;
-
-/** A row whose control is a dropdown over the catalog's `{ value, label }` options — the
- *  shape every enum in `params.ts` takes, spelled once instead of per row. */
-function enumRow(
-  label: string,
-  options: readonly { value: number; label: string }[],
-  current: number,
-  apply: (v: number) => void,
-  opts?: SettingsRowOptions,
-): HTMLElement {
-  return settingsRow(
-    label,
-    settingsSelect(
-      options.map((o) => o.value),
-      current,
-      (v) => options.find((o) => o.value === v)?.label ?? String(v),
-      apply,
-    ),
-    opts,
-  );
-}
 
 export const EQ_DYN: DynProcessor = {
   key: "eq",
@@ -339,9 +303,9 @@ export const EQ_DYN: DynProcessor = {
 
   display: splitDisplay,
 
-  plotGeo: geo,
+  plotGeo: (w, h) => freqGeo(w, h),
 
-  drawAxes: drawFreqAxes,
+  drawAxes: (c, g, tok) => drawFreqAxes(c, g, tok),
 
   drawCurve: (c, g, _v, tok, ctx) => {
     // Above 96 kHz a stereo channel's EQ is acoustically bypassed (measured), so the
@@ -352,61 +316,7 @@ export const EQ_DYN: DynProcessor = {
   },
 };
 
-function geo(w: number, h: number): DynPlotGeo {
-  const span = Math.log(EQ_FREQ_MAX_HZ / EQ_FREQ_MIN_HZ);
-  return {
-    w,
-    h,
-    pad: PAD,
-    px: (hz) => PAD.l + ((Math.log(hz) - Math.log(EQ_FREQ_MIN_HZ)) / span) * (w - PAD.l - PAD.r),
-    py: (db) => PAD.t + ((GAIN_TOP - db) / (GAIN_TOP - GAIN_BOTTOM)) * (h - PAD.t - PAD.b),
-  };
-}
-
-function drawFreqAxes(c: CanvasRenderingContext2D, g: DynPlotGeo, tok: Record<string, string>): void {
-  c.font = PLOT_FONT;
-  c.lineWidth = 1;
-  c.strokeStyle = tok["--plot-line"];
-  c.fillStyle = tok["--plot-faint"];
-  c.textAlign = "center";
-  for (const hz of FREQ_TICKS) {
-    c.beginPath();
-    c.moveTo(g.px(hz) + 0.5, g.pad.t);
-    c.lineTo(g.px(hz) + 0.5, g.h - g.pad.b);
-    c.stroke();
-    const label = FREQ_LABELS[hz];
-    if (label) c.fillText(label, g.px(hz), g.h - g.pad.b + 13);
-  }
-  c.textAlign = "right";
-  for (const db of GAIN_TICKS) {
-    c.beginPath();
-    c.moveTo(g.pad.l, g.py(db) + 0.5);
-    c.lineTo(g.w - g.pad.r, g.py(db) + 0.5);
-    c.stroke();
-    c.fillText(String(db), g.pad.l - 6, g.py(db) + 3);
-  }
-  // 0 dB is the line the curve is read against, so it is drawn again on top.
-  c.strokeStyle = tok["--plot-dim"];
-  c.beginPath();
-  c.moveTo(g.pad.l, g.py(0) + 0.5);
-  c.lineTo(g.w - g.pad.r, g.py(0) + 0.5);
-  c.stroke();
-  c.fillStyle = tok["--plot-dim"];
-  c.textAlign = "left";
-  c.fillText("Hz", g.w - g.pad.r - 16, g.h - g.pad.b + 24);
-  c.save();
-  c.translate(11, g.h - g.pad.b - 2);
-  c.rotate(-Math.PI / 2);
-  c.fillText("dB", 0, 0);
-  c.restore();
-}
-
-/** The composite response, and one marker per band.
- *
- *  A marker sits at its band's own frequency and at the **composite** value there, so it
- *  is always on the curve: a pass filter has no gain to place it by, and two overlapping
- *  bands would otherwise plant their markers off the line the operator is reading. Each
- *  is a letter in a pill, not a grip — nothing here is draggable. */
+/** The composite response, and one marker per band. */
 function drawResponse(
   c: CanvasRenderingContext2D,
   g: DynPlotGeo,
@@ -416,62 +326,23 @@ function drawResponse(
   inert: boolean,
 ): void {
   const resp = eqResponse(bands);
-  const onScale = (db: number): boolean => db <= GAIN_TOP && db >= GAIN_BOTTOM;
-  const x0 = g.pad.l;
-  const x1 = g.w - g.pad.r;
-  const span = Math.log(EQ_FREQ_MAX_HZ / EQ_FREQ_MIN_HZ);
-  const hzAt = (x: number): number => Math.exp(Math.log(EQ_FREQ_MIN_HZ) + ((x - x0) / (x1 - x0)) * span);
-
   c.save();
   if (inert) c.globalAlpha = 0.3;
-  // Drawn at its true value: the host clips the plot area, so where the response runs past
-  // the -18 dB floor — which a high-pass or low-pass does within an octave of its corner —
-  // it leaves the frame instead of lying along the bottom edge as a response the filter
-  // does not have.
-  c.strokeStyle = tok["--led"];
-  c.lineWidth = 2;
-  c.beginPath();
-  // Sampled per pixel: the curve is redrawn only when a parameter, the size or the
-  // theme changes, and a sharp Q 16 bell is a few pixels wide at this scale.
-  for (let x = x0; x <= x1; x++) {
-    const y = g.py(resp(hzAt(x)));
-    if (x === x0) c.moveTo(x, y);
-    else c.lineTo(x, y);
-  }
-  c.stroke();
-
-  c.font = PLOT_FONT;
-  c.textAlign = "center";
-  c.textBaseline = "middle";
-  c.lineWidth = 1.5;
-  for (const b of bands) {
-    const db = resp(b.freq);
-    // Off the scale is off the frame, for a marker as much as for the curve: pinning it
-    // to the floor would mark a frequency at a level the response never reaches there.
-    if (!onScale(db)) continue;
-    const x = g.px(b.freq);
-    const y = g.py(db);
-    const active = b.index === sel;
-    const label = MARKER_LABELS[b.index];
-    // A pill sized to its own label, not a circle: "LM" and "HM" do not fit a disc
-    // wide enough for "L" without the letters touching the edge.
-    const w = Math.max(15, c.measureText(label).width + 9);
-    const h = active ? 15 : 13;
-    c.globalAlpha = inert ? 0.3 : b.on ? 1 : 0.35;
-    // The ink follows the face. The selected marker is the lit face, so it takes the
-    // dark ink every lit face takes; the rest are the dim face and keep the plot's
-    // ink. Printing --plot-ink on --led left the selected letter at APCA Lc 16.1.
-    c.fillStyle = active ? tok["--led-face"] : tok["--plot-dim"];
-    c.beginPath();
-    c.roundRect(x - w / 2, y - h / 2, w, h, h / 2);
-    c.fill();
-    c.strokeStyle = tok["--plot-ink"];
-    c.stroke();
-    c.fillStyle = active ? tok["--on-accent-ink"] : tok["--plot-ink"];
-    c.fillText(label, x, y + 0.5);
-  }
+  drawFreqCurve(c, g, tok, resp);
   c.restore();
-  c.textBaseline = "alphabetic";
+  drawBandMarkers(
+    c,
+    g,
+    tok,
+    bands.map((b) => ({
+      label: MARKER_LABELS[b.index],
+      hz: b.freq,
+      db: resp(b.freq),
+      on: b.on,
+      active: b.index === sel,
+    })),
+    inert,
+  );
 }
 
 /** Marker letters: LOW / LOW-MID / HIGH-MID / HIGH, initials only — the band's full

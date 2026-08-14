@@ -10,10 +10,12 @@
 import { channelDynamics } from "../core/control/translate";
 import type { ChannelDynamics, DynField } from "../core/control/translate";
 import { COMP_EQ_COMP_FIRST } from "../core/control/params";
+import { settingsRow, settingsSelect } from "./dom";
+import type { SettingsRowOptions } from "./dom";
 import { grAddr, tapFor } from "../core/meters";
 import type { GrKind } from "../core/meters";
 import type { NodeParams } from "../core/plan";
-import type { DynBinding, DynCtx } from "./dyn-screen";
+import type { DynBinding, DynCtx, DynLane } from "./dyn-screen";
 
 export function bindChannelStrip(
   ctx: DynCtx,
@@ -24,9 +26,18 @@ export function bindChannelStrip(
     grKind: GrKind;
     inTapKey: string;
     outTapKey: string;
+    /** The value key the input lane carries a fader cap for, or null where the
+     *  processor has none. Stated rather than defaulted: a cap is only possible where
+     *  the processor exposes a value in the meter's own dBFS, and the SSMCS strip does
+     *  not — its knee is driven by an internal value the unit never shows. Answering
+     *  that with a missing option would read as an oversight in the caller that omits
+     *  it, which is the one thing a lane rack's only gesture must not be. */
+    cap: string | null;
     /** GR lane full scale, when the reduction's own domain is far shallower than the
      *  level ruler. */
     grFullDb?: number;
+    /** Extra lanes after the three, for a face that meters further down the strip. */
+    extraLanes?: DynLane[];
   },
 ): DynBinding | null {
   const np = ctx.plan.nodeParams[ctx.nodeId];
@@ -44,10 +55,11 @@ export function bindChannelStrip(
         tap: tapFor(ctx.nodeId, o.inTapKey, ctx.model.id) ?? null,
         // The threshold rides the input meter: its dB and the meter's dBFS are the
         // same coordinate, which is what earns the rack its one gesture.
-        cap: "threshold",
+        ...(o.cap ? { cap: o.cap } : {}),
       },
       { key: "gr", label: text.tapGr, kind: "gr", gr: grAddr(o.grKind, ctx.nodeId, ctx.model.id), fullDb: o.grFullDb },
       { key: "out", label: text.tapOut, kind: "level", tap: tapFor(ctx.nodeId, o.outTapKey, ctx.model.id) ?? null },
+      ...(o.extraLanes ?? []),
     ],
   };
 }
@@ -78,6 +90,27 @@ export function displayBar(ctx: DynCtx): { label: string; items: readonly { labe
       { label: ctx.m.dynTuning.modeCurve, id: "dyn-mode-curve" },
     ],
   };
+}
+
+/** A row whose control is a dropdown over the catalog's `{ value, label }` options — the
+ *  shape every enum in `params.ts` takes, spelled once instead of per row. */
+export function enumRow(
+  label: string,
+  options: readonly { value: number; label: string }[],
+  current: number,
+  apply: (v: number) => void,
+  opts?: SettingsRowOptions,
+): HTMLElement {
+  return settingsRow(
+    label,
+    settingsSelect(
+      options.map((o) => o.value),
+      current,
+      (v) => options.find((o) => o.value === v)?.label ?? String(v),
+      apply,
+    ),
+    opts,
+  );
 }
 
 /** LADDER is index 0, CURVE index 1. */
