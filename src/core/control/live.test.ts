@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
-import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
+import { SSMCS_INITIAL, emptyPlan, ensureFixedConnections, type Plan } from "../plan";
 import { clonePlanState } from "../plan-history";
 
 // LiveSync drives the device through platform.vdSet / vdSetStr and re-reads via
@@ -11,7 +11,7 @@ import { clonePlanState } from "../plan-history";
 vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdSet, vdSetStr, vdGet, vdGetStr } from "../platform";
-import { COMP_EQ_SSMCS } from "./params";
+import { COMP_EQ_SSMCS, PARAMS } from "./params";
 import { addrKey, planToCommands } from "./translate";
 import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
@@ -652,6 +652,93 @@ function setCh1Morphing(plan: Plan, morphing: number): void {
 }
 
 describe("LiveSync sideEffect refetch", () => {
+  // The measured membership, pinned by address rather than by count: the morph recomputes
+  // every CONTINUOUS value in the strip and none of the five ON switches. Both directions
+  // matter — a missing one leaves the converge undoing it, and a spurious one stops the
+  // converge from restoring a switch the operator turned off.
+  it("declares exactly the strip values the morph drives", () => {
+    const drives = PARAMS.SSMCS_MORPHING.drives ?? [];
+    const ids = drives.map((n) => (PARAMS as Record<string, { id: number }>)[n].id).sort((a, b) => a - b);
+    expect(ids).toEqual([96, 97, 98, 99, 100, 101, 103, 104, 105, 108, 109, 111, 112, 113, 115, 116, 117]);
+    // The five the morph left alone are the SC and EQ on/off switches.
+    const onSwitches = ["SSMCS_SC_ON", "SSMCS_EQ_ON", "SSMCS_EQ_LOW_ON", "SSMCS_EQ_MID_ON", "SSMCS_EQ_HIGH_ON"];
+    expect(onSwitches.map((n) => (PARAMS as Record<string, { id: number }>)[n].id)).toEqual([102, 106, 107, 110, 114]);
+    for (const n of onSwitches) expect(drives).not.toContain(n);
+  });
+
+  // A converge and a refetch can land in one flush — PAN/BAL and the morphing knob inside
+  // one 120 ms window is enough — and the converge runs first. It makes the unit match the
+  // plan across the whole write scope, so every strip value the unit has just recomputed
+  // goes back at its pre-morph value and the refetch reads what the converge left: a unit
+  // holding a morph position whose strip belongs to a different position, with nothing on
+  // screen to say so.
+  //
+  // The two 1-knobs are closed a step earlier — the plan stops emitting what they drive —
+  // but the inspector edits the SSMCS strip directly, so the plan really does author these
+  // and the converge has to be told instead (ParamSpec.drives).
+  it("leaves the unit's morph alone when a converge shares the flush", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      compEqType: COMP_EQ_SSMCS,
+      panBal: 0,
+      ssmcs: { ...structuredClone(SSMCS_INITIAL), morphing: 0 },
+    };
+    const every = planToCommands(model, plan);
+    const cmd = (name: string): (typeof every)[number] => every.find((c) => c.name === name && c.node === "ch1")!;
+    const key = (name: string): number => {
+      const c = cmd(name);
+      return addrKey(c.paramId, c.x, c.y);
+    };
+    const MORPH = key("SSMCS_MORPHING");
+    // A value the morph drives, and one it does not — the second only shows that an edit
+    // made in the same window still reaches the unit, since an over-wide exclusion would
+    // stop the converge RESTORING such a value rather than stop the flush writing it. The
+    // membership pin above is what fails on a widened set.
+    const RATIO = key("SSMCS_COMP_RATIO");
+    const SC_ON = key("SSMCS_SC_ON");
+    const morphed = cmd("SSMCS_COMP_RATIO").vdValue + 54;
+    const PAN = key("CH_PAN");
+    const planPan = cmd("CH_PAN").vdValue;
+
+    const device = new Map<number, number>(every.map((c) => [addrKey(c.paramId, c.x, c.y), c.vdValue]));
+    vi.mocked(vdSet).mockImplementation(async (paramId: number, x: number, y: number, v: number) => {
+      const k = addrKey(paramId, x, y);
+      device.set(k, v);
+      // The selector hard-pans the pair (measured) — that reset is what the converge is FOR,
+      // and it has to still be pushed back while the morph's own values are left alone.
+      if (k === key("PAN_BAL")) device.set(PAN, 63);
+      if (k === MORPH) device.set(RATIO, morphed);
+    });
+    vi.mocked(vdGet).mockImplementation(async (paramId: number, x: number, y: number) => {
+      const v = device.get(addrKey(paramId, x, y));
+      if (v === undefined) throw new Error(`fake device holds no ${paramId}:${x}:${y}`);
+      return v;
+    });
+
+    const seen: Array<{ ratio?: number; scOn?: number }> = [];
+    const live = liveFor(plan, async () => {
+      seen.push({ ratio: device.get(RATIO), scOn: device.get(SC_ON) });
+      return null;
+    });
+    live.begin();
+
+    // One window carrying both, plus an edit to a strip value the morph does NOT drive.
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      panBal: 1,
+      ssmcs: { ...plan.nodeParams.ch1?.ssmcs, morphing: 60, sc: { ...plan.nodeParams.ch1?.ssmcs?.sc, on: false } },
+    };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(vi.mocked(vdGet).mock.calls.length).toBeGreaterThan(0); // the converge really ran
+    expect(seen).toEqual([{ ratio: morphed, scOn: 0 }]);
+    // And the converge still did its own job: the pan the selector slammed is back.
+    expect(device.get(PAN)).toBe(planPan);
+  });
+
   it("reads the node back after a morphing write instead of pushing the strip back", async () => {
     const plan = basePlan();
     setCh1CompEqType(plan, COMP_EQ_SSMCS);

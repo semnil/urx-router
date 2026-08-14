@@ -693,6 +693,29 @@ took this path; this is the same repair for our own write. A refetch is also one
 rather than a converge round, so the flush window is not held open for a whole convergence — which is
 what made a drag on the 1-knob level wait for the pointer to stop.
 
+**A refetch does not survive a converge, so one of them has to give way.** Both repairs can land in
+one flush — PAN/BAL and the morphing knob inside one 120 ms window is enough — and the converge runs
+first. It makes the unit match the plan across the whole write scope, so every address the plan still
+emits and the unit has just recomputed goes back at its pre-write value, and the refetch that follows
+reads what the converge left. Nothing on screen says so, and the unit keeps a morph position whose
+strip belongs to a different position.
+
+Which way it gives depends on **who authors the values**:
+
+| The plan… | What closes it | Heads |
+| --- | --- | --- |
+| only **mirrors** them | the plan stops emitting those addresses while the head is engaged, so nothing can push them back | EQ 1-knob (its four bands), COMP 1-knob (`COMP_ONE_KNOB_DRIVEN`) |
+| genuinely **authors** them | the head declares what it hands to the device (`ParamSpec.drives`) and the converge is told to leave exactly those alone, for that flush and that node | SSMCS Morphing |
+
+The first is the better one wherever it is available — an address the plan never sends cannot be
+pushed back by anything, and there is no list to keep correct. Morphing cannot take it: the inspector
+edits the strip's values directly, so the plan really does author them, and only a converge that has
+been told can tell the two apart. Its list is measured rather than assumed — every continuous value
+in the strip and none of the five ON switches, which the morph leaves to the operator — and pinned by
+address in `live.test.ts`. The exclusion applies to the converge's reads **and** to its round sends,
+because group expansion would otherwise carry an excluded address back in on a sibling's difference
+without it ever having been compared.
+
 It is **not free**, and the cost is measurable. The unit does not answer for a write at the moment it
 acks it (`docs/en/architecture.md`, "A write is not readable when it is acked"), and the refetch is
 issued in that same millisecond — so the read waits the write out from inside the flush, and one

@@ -48,9 +48,15 @@ const DEBOUNCE_MS = 120;
 // would fight it. See ParamSpec.sideEffect.
 const CONVERGE = new Set<string>();
 const REFETCH = new Set<string>();
+// What each refetch head hands to the device, for the flush that carries both repairs
+// (ParamSpec.drives). Empty for a head whose driven addresses the plan stops emitting.
+const DRIVES = new Map<string, readonly string[]>();
 for (const [name, spec] of Object.entries(PARAMS as Record<string, ParamSpec>)) {
   if (spec.sideEffect === "converge") CONVERGE.add(name);
-  else if (spec.sideEffect === "refetch") REFETCH.add(name);
+  else if (spec.sideEffect === "refetch") {
+    REFETCH.add(name);
+    if (spec.drives?.length) DRIVES.set(name, spec.drives);
+  }
 }
 
 // The address key comes from translate.ts, which uses the same one to decide which
@@ -597,6 +603,12 @@ export class LiveSync {
       let sent = 0;
       let sideEffect = false;
       const refetch = new Set<string>();
+      // Per node, the command names a refetch head written in THIS flush handed to the
+      // device (ParamSpec.drives). Only a converge in the same flush reads it: it would
+      // otherwise send the plan's pre-write copies of exactly these, undoing what the head
+      // just computed. Scoped to the node, because the same names on another channel are
+      // that channel's own and the converge is right about them.
+      const driven = new Map<string, Set<string>>();
       // What this flush wrote and the device acked, keyed the way the snapshot is
       // (translate.addrKey). Handed to the refetch, whose read would otherwise be issued
       // inside the window in which the unit still answers these addresses with the
@@ -660,7 +672,15 @@ export class LiveSync {
         this.recentWrites.set(k, { mark, node: c.node, at: Date.now() });
         sent++;
         if (CONVERGE.has(c.name)) sideEffect = true;
-        else if (REFETCH.has(c.name) && c.node) refetch.add(c.node);
+        else if (REFETCH.has(c.name) && c.node) {
+          refetch.add(c.node);
+          const drives = DRIVES.get(c.name);
+          if (drives) {
+            let names = driven.get(c.node);
+            if (!names) driven.set(c.node, (names = new Set()));
+            for (const n of drives) names.add(n);
+          }
+        }
       }
       // The name loop needs the same guard for the same reason: capture() rebuilds the NAME
       // snapshot too, so a reconcile resolving inside one of these awaits leaves the frozen
@@ -708,7 +728,21 @@ export class LiveSync {
           mustSettle: new Set(writes.keys()),
           mustAnnounce: new Set(),
         };
-        const r = await sendConverging(model, converged, { scope: this.scope(), pending: seedPending });
+        // The addresses a refetch head in this same flush has just handed to the device.
+        // Resolved here rather than in the loop because a command that names one of them
+        // can come BEFORE the head that drives it, and `driven` is only complete once the
+        // loop has finished. `converged` is a clone of the same plan, so its command list
+        // carries the same addresses.
+        const exclude = new Set<number>();
+        if (driven.size)
+          for (const c of commands) {
+            if (c.node !== undefined && driven.get(c.node)?.has(c.name)) exclude.add(cmdAddr(c));
+          }
+        const r = await sendConverging(model, converged, {
+          scope: this.scope(),
+          pending: seedPending,
+          exclude: exclude.size ? exclude : undefined,
+        });
         // Same rule as the send loops, and before the failure check on purpose: once the
         // session is gone there is nobody left to report a failed converge to, and the
         // capture below would write a dead plan's values into a rebuilt snapshot.
