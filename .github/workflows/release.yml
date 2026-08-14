@@ -15,11 +15,11 @@ name: Release
 # No E2E runs here. The harness runs on the pull requests race.yml's trigger names, the
 # version bump among them, so it sits in front of the tag rather than behind it.
 # The tag patterns track what `check-tag` accepts, as closely as GitHub's filter glob can:
-# it has no alternation, so the three prerelease prefixes are three lines. A tag the filter
-# admits and `check-tag` then declines produces a green run that creates nothing, so the
-# two lists disagreeing is the thing to avoid; `-*` used to admit every suffix there is,
-# which made `v1.5.2-hotfix1` exactly that. What the glob still cannot express is
-# `check-tag`'s trailing `*([0-9.])`, so `v1.0.0-alphafoo` remains in that shape.
+# it has no alternation, so the three prerelease prefixes are three lines. Where the two
+# lists still disagree — the glob cannot express `check-tag`'s trailing `*([0-9.])`, so
+# `v1.0.0-alphafoo` reaches the job — the run goes RED on `check-tag` and creates nothing.
+# A tag OUTSIDE the glob starts no run at all, which is the quiet half and the reason to
+# keep the two lists close rather than to widen this one.
 on:
   push:
     tags:
@@ -59,10 +59,17 @@ jobs:
       validTag: ${{ steps.check.outputs.validTag }}
     steps:
       - id: check
-        # Accept vX.Y.Z as stable and vX.Y.Z-{alpha,beta,rc}* as prerelease.
+        # Accept vX.Y.Z as stable and vX.Y.Z-{alpha,beta,rc}* as prerelease. A tag ref in
+        # neither form FAILS this job, which takes create-release, build and release-gate
+        # out with it and turns the run red. What it replaces is a green run that packaged
+        # into job artifacts and created no Release — a tag that looks released until
+        # someone opens the Releases page.
+        #
         # Gated on the REF TYPE, not the event: tag-release.yml reaches this workflow by
         # dispatching it on the tag it just created, and that has to mean the same thing
-        # as a tag push. A dispatch on a branch has no tag to read and stays false.
+        # as a tag push. A dispatch on a BRANCH has no tag to read, stays false and stays
+        # SUCCESSFUL — that is the packaging check, and it is the one path this job must
+        # not fail.
         run: |
           if [[ "${GITHUB_REF_TYPE}" != 'tag' ]]; then
             echo 'validTag=false' >> "$GITHUB_OUTPUT"
@@ -82,7 +89,8 @@ jobs:
               echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
               ;;
             *)
-              echo 'validTag=false' >> "$GITHUB_OUTPUT"
+              echo "::error::${GITHUB_REF_NAME} is not a tag this workflow releases — the forms it takes are vX.Y.Z and vX.Y.Z-alpha/-beta/-rc followed by digits and dots"
+              exit 1
               ;;
           esac
 
@@ -137,8 +145,10 @@ jobs:
   build:
     needs: [check-tag, create-release, licenses]
     # Runs when create-release SUCCEEDED (a tag with a draft to upload to) or was SKIPPED
-    # (a manual dispatch, or a tag ref check-tag declines — both package into job
-    # artifacts instead). It does not run when create-release FAILED: there would be no
+    # (a manual dispatch, which packages into job artifacts instead — the other way
+    # create-release used to be skipped, a tag ref check-tag declines, now fails check-tag
+    # and takes this job out with it). It does not run when create-release FAILED: there
+    # would be no
     # draft to upload to, so this job would sign and notarize both installers and keep
     # neither, and report success doing it.
     #
@@ -239,17 +249,26 @@ jobs:
   # produced no draft like any other.
   release-gate:
     needs: [check-tag, create-release, licenses, build]
-    if: always() && needs.check-tag.outputs.validTag == 'true'
+    # A failed check-tag writes no outputs, so `validTag` is empty and the tag half of this
+    # condition cannot carry it. Without the result clause the one failure class this
+    # workflow reports on a tag — a ref check-tag declines — would skip this job, and a job
+    # skipped by `if:` reports success.
+    if: >-
+      always() && (needs.check-tag.result == 'failure'
+      || needs.check-tag.outputs.validTag == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Fail unless the tag produced a draft with installers
-        if: needs.create-release.result != 'success' || needs.build.result != 'success'
+        if: >-
+          needs.check-tag.result != 'success' || needs.create-release.result != 'success'
+          || needs.build.result != 'success'
         env:
+          CHECK: ${{ needs.check-tag.result }}
           LICENSES: ${{ needs.licenses.result }}
           CREATE: ${{ needs.create-release.result }}
           BUILD: ${{ needs.build.result }}
         run: |
           echo "::error::${GITHUB_REF_NAME} was tagged but no complete draft Release exists"
-          echo "::error::licenses=${LICENSES} create-release=${CREATE} build=${BUILD}"
+          echo "::error::check-tag=${CHECK} licenses=${LICENSES} create-release=${CREATE} build=${BUILD}"
           exit 1

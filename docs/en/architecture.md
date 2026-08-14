@@ -3145,7 +3145,9 @@ deliberately off: it is `MUI_LANGDLL_DISPLAY` in `.onInit`, which — unlike a p
 mode, so it would pop a dialog mid-auto-update. The `LICENSE.txt` on the agreement page stays English.
 
 Releases are automated by `.github/workflows/release.yml`. Pushing a `vX.Y.Z`
-tag (or `vX.Y.Z-{alpha,beta,rc}*` for a prerelease) runs four jobs: `check-tag`
+tag — or, for a prerelease, `vX.Y.Z-` followed by `alpha`, `beta` or `rc` and then
+digits and dots only (`v1.9.0-rc1`, `v1.9.0-rc.2`; **not** `v1.9.0-rc-2`, which
+`check-tag` fails the run on) — runs five jobs: `check-tag`
 validates the tag, `create-release` opens a **draft** GitHub Release, `licenses`
 generates the bundled notice once (see "Third-party licenses" below), and a
 `build` matrix (`macos-14` / `windows-latest`) packages each platform with
