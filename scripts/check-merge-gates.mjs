@@ -252,6 +252,15 @@ function peel(term) {
 // subtraction.
 const NEEDS_SUCCESS = /^needs(?:\.([A-Za-z_][\w-]*)|\[\s*(['"])([^'"]+)\2\s*\])\.result\s*==\s*'success'$/;
 
+// The complement of a requirement is not one: `X.result != 'success'` holds precisely when
+// X did NOT succeed, so a condition carrying it requires nothing of X. Named here rather
+// than left to the unreadable-term guard below, which reports any term mentioning a needs
+// result and 'success' — the right answer for a form whose meaning is unknown, the wrong
+// one for a form whose meaning is known to be "nothing". `release-gate` in release.yml is
+// written this way so a CANCELLED dependency reaches it, which `== 'failure'` does not
+// match.
+const NEEDS_NOT_SUCCESS = /^needs(?:\.([A-Za-z_][\w-]*)|\[\s*(['"])([^'"]+)\2\s*\])\.result\s*!=\s*'success'$/;
+
 // A branch that can never be the one that holds contributes nothing to what a disjunction
 // requires. `false` is the only such branch this reader recognises, and recognising it is
 // what keeps `X || false` — which is `X` — from reading as "requires nothing".
@@ -288,6 +297,7 @@ function evaluate(expr, unreadable) {
       for (const job of evaluate(term, unreadable)) required.add(job);
       continue;
     }
+    if (NEEDS_NOT_SUCCESS.test(term)) continue;
     if (/needs[.[]/.test(term) && /'success'/.test(term)) unreadable.push(term);
   }
   return required;

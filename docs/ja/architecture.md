@@ -2824,13 +2824,19 @@ Windows は NSIS だけを生成し、MSI (WiX) は作らない。WiX はスタ�
 
 リリースは `.github/workflows/release.yml` で自動化する。`vX.Y.Z` タグ (プレリリースは
 `vX.Y.Z-` に続けて `alpha` / `beta` / `rc`、その後は数字とドットのみ。`v1.9.0-rc1` や
-`v1.9.0-rc.2` は通り、`v1.9.0-rc-2` は `check-tag` が run を失敗させる) を push すると
-5 ジョブが走る: `check-tag` がタグを検証し、
+`v1.9.0-rc.2` は通り、`v1.9.0-rc-2` は通らない) を push すると
+5 ジョブが走る: `check-tag` がタグを検証し、この形から外れたタグでは run を失敗させる。
 `create-release` が **draft** の GitHub Release を作り、`licenses` が同梱する通知を 1 回だけ生成し
 (後述の「サードパーティライセンス」)、`build` マトリクス (`macos-14` /
 `windows-latest`) が各プラットフォームを [`tauri-action`](https://github.com/tauri-apps/tauri-action)
 でパッケージし draft に添付する。draft は公開前に手動レビューする。手動 `workflow_dispatch`
 実行ではリリースを作らず、成果物を job artifact としてのみ残す (パッケージ検証用)。
+
+この形を決めているのは `scripts/release-tag-shape.sh` の 1 ファイルだけである。`check-tag` は
+渡されたタグをこれに掛け、`.github/workflows/tag-release.yml` — マージされたバージョン更新を
+そのタグに変えるワークフロー — は push の **前** にこれを掛ける。リリース経路が受け付けない
+バージョンは、公開済み Release が指しうるため動かせなくなるタグになる前に、`package.json` の
+文字列の段階で拒否される。
 
 `build` マトリクスは Rust キャッシュを復元専用で使う: 復元できるのは自分の ref かデフォルトブランチの
 キャッシュだけで、タグはそれぞれ別スコープになるため、リリース中に保存したキャッシュは次のリリース

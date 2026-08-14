@@ -593,4 +593,16 @@ jobs:
     expect(findings.join("\n")).toContain("in a form this checker will not read");
     expect(findings.filter((f) => /runs ahead of/.test(f))).toEqual([]);
   });
+
+  // `!= 'success'` is the complement of a requirement, so it requires nothing — and it has
+  // to be READ as nothing rather than refused, since the refusal above matches any term
+  // naming a needs result and 'success'. Shown beside the mutation it is the good half of:
+  // the same job asserted rather than negated, which requires it and makes the rule fire.
+  it("reads `!= 'success'` as requiring nothing instead of refusing it", () => {
+    const negated = findingsOf(chain("check", "always() && needs.notice.result != 'success'"));
+    expect(negated.filter((f) => /will not read/.test(f))).toEqual([]);
+    expect(negated.filter((f) => /runs ahead of/.test(f))).toEqual([]);
+    const asserted = chainFindings(chain("check", "always() && needs.notice.result == 'success'"));
+    expect(asserted.join("\n")).toContain("runs ahead of `bundle`");
+  });
 });

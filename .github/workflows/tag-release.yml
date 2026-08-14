@@ -22,7 +22,9 @@ name: Tag release
 # and behaves exactly as it would on a tag push — which is what check-tag reads.
 #
 # Everything here is a no-op unless this push actually moved the version, so it is safe
-# on every green CI run on main.
+# on every green CI run on main. The one merge that is not a no-op either pushes a tag or
+# fails: a version the release path would decline stops the job before the push, since a
+# tag is the one thing here that cannot be taken back without a hand on it.
 on:
   workflow_run:
     workflows: [CI]
@@ -91,7 +93,34 @@ jobs:
             echo "version unchanged at ${version} — not a release"
             exit 0
           fi
-          echo "version ${prev} -> ${version}"
+          # The shape gate, in front of the push rather than behind it. release.yml's
+          # check-tag asks the same script the same question, but it can only ask once the
+          # tag exists — and this job refuses to move a tag that is already there. Asking
+          # here is what keeps a version in a channel the release path declines from
+          # costing a pushed tag, a red release run whose actor is the bot rather than a
+          # person, and a manual `git push --delete` to recover.
+          #
+          # Status 1 is a verdict on the version, and the operator's fix is in package.json.
+          # Anything else — a missing or unreadable script, a killed one, an answer that is
+          # neither `true` nor `false` — is this check being broken, and pointing that at
+          # package.json would send them to the one file that is not at fault.
+          #
+          # The annotation runs the message through `tr` because `tag` comes from
+          # package.json, whose strings can hold a real newline; a second line inside an
+          # `::error::` is read by the runner as another workflow command.
+          why=$(mktemp)
+          shape=$(bash scripts/release-tag-shape.sh "${tag}" 2>"${why}") && status=0 || status=$?
+          message=$(tr '\n' ' ' < "${why}")
+          if (( status == 1 )); then
+            echo "::error::${message}"
+            echo "::error::refusing to tag ${HEAD_SHA} — correct the version in package.json and merge another bump"
+            exit 1
+          fi
+          if (( status != 0 )) || [[ "${shape}" != 'true' && "${shape}" != 'false' ]]; then
+            echo "::error::the release tag shape check could not run: exit ${status}, answered '${shape//$'\n'/ }' ${message}"
+            exit 1
+          fi
+          echo "version ${prev} -> ${version} (prerelease=${shape})"
           # An existing tag means the release already happened (a re-run of this
           # workflow, or a tag pushed by hand). Moving it would repoint a published
           # release at a different commit, so stop instead.
