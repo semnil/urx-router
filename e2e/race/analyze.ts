@@ -327,9 +327,11 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
     // first flush after the structural edit always sends it and records it. Subtracting
     // the registration therefore names every address the app is ACTIVELY WRITING whose
     // device-side change the bridge would drop — the mirror of invariant 12 and the more
-    // dangerous direction, because follow.subscribe() re-posts only at begin() and after
-    // a completed reconcile, so an app-side structural edit leaves the window open until
-    // something reconciles.
+    // dangerous direction. A flush whose capture moved the set re-registers at its own
+    // end (live.ts followSetStale → DeviceFollow.refresh), so a clean reading is the
+    // registration having caught up inside the gesture that moved it; while subscribe()
+    // ran at begin() and after a reconcile only, a structural edit left this open until
+    // something reconciled.
     //
     // A STATE predicate over two same-instant readings, not a scan over events, so
     // `registrationWindow` does not apply and `snapshot` must be read beside
@@ -372,7 +374,7 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
           inv: 6,
           class: "product",
           name: "grown window",
-          detail: `${grown.length} address(es) the plan emits but the ${reg.size}-address registration does not hold, so a device-side change to them is undeliverable until the next reconcile: ${grown.slice(0, 6).join(", ")}`,
+          detail: `${grown.length} address(es) the plan emits but the ${reg.size}-address registration does not hold, so a device-side change to them is undeliverable until the registration catches up: ${grown.slice(0, 6).join(", ")}`,
         });
       }
     }

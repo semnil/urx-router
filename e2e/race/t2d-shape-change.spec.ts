@@ -255,28 +255,39 @@ test.describe("T2d shape-change", () => {
     expect(readSlotsAfter).toEqual(asc(DELAY_SLOTS));
     // The three new slots were written…
     for (const s of DELAY_ONLY) expect(changeSlots.has(s)).toBe(true);
-    // …to addresses the broker is not registered for. DeviceFollow re-registers at
-    // begin() and after a reconcile only, so a flush that re-types the array leaves the
-    // registration describing the family that is gone. Hand-computed over this flush
-    // alone: the registration is a snapshot of one instant, and the same question asked
-    // against the whole run's writes would answer with an artefact.
+    // …at a moment the broker was still registered for the family that is going. The
+    // re-registration runs at the END of the flush (live.ts followSetStale), after the
+    // sends and after the converge's own read, so a write to a newly typed slot is
+    // ahead of the subscription that covers it — within one flush, not until the next
+    // reconcile. Hand-computed against the PRE-change registration for that reason, and
+    // over this flush alone: the registration is a snapshot of one instant, and the same
+    // question asked against the whole run's writes would answer with an artefact.
     const orphans = [...new Set(changeArray.map((s) => s.addr!))].filter((a) => !regBefore.has(a));
     console.log(`type change: ${orphans.length} array address(es) written but not registered: ${orphans.join(", ")}`);
     expect(orphans.sort()).toEqual(DELAY_ONLY.map(arr).sort());
 
-    // The same fact as a STATE rather than as a set of writes — invariant 6's clause B.
-    // Both halves are read HERE, between the change and the undo, because that is the
-    // only instant the window is open: the undo takes the delay family back out, so the
-    // pair read at the analyze() call below would describe a window that has shut. A
-    // converge re-captures the live snapshot but never re-subscribes, which is exactly
-    // why the two readings disagree.
+    // The state the flush LEAVES, read as invariant 6's clause B. Both halves are read
+    // HERE, between the change and the undo, because that is the instant this claim is
+    // about: the undo takes the delay family back out, so the pair read at the analyze()
+    // call below would describe another one. The flush that re-typed the array
+    // subscribed to what it typed, so the emitted set is inside the registration and the
+    // clause has nothing to report.
     const regAfterChangeAddrs = await paramAddrsOf(page);
     const snapAfterChange = await snapshotOf(page);
-    const grownAfterChange = analyze([], { registration: regAfterChangeAddrs, snapshot: snapAfterChange }).filter(
-      (f) => f.inv === 6 && f.name === "grown window",
-    );
+    const grownOf = (registration: Array<[number, number, number]>) =>
+      analyze([], { registration, snapshot: snapAfterChange }).filter((f) => f.inv === 6 && f.name === "grown window");
+    const grownAfterChange = grownOf(regAfterChangeAddrs);
     console.log(report("fx effect type slot family (grown window)", grownAfterChange));
-    expect(grownAfterChange).toHaveLength(1);
+    expect(grownAfterChange).toEqual([]);
+
+    // The control, without which the line above is a clause that cannot fire passing for
+    // one that did not. The same snapshot against the registration as it stood before the
+    // change — the pairing the app used to leave behind — reports the three slots the new
+    // family added, so what silenced the clause is the flush's own re-registration.
+    const staleGrown = grownOf(regBeforeAddrs);
+    console.log(report("fx effect type slot family (pre-change registration)", staleGrown));
+    expect(staleGrown).toHaveLength(1);
+    for (const s of DELAY_ONLY) expect(staleGrown[0].detail).toContain(arr(s));
 
     // The shared slots are where the re-typing bites, and what the trace shows is that
     // nothing carries across the families: each descriptor key names its own family

@@ -5,7 +5,6 @@ import {
   mark,
   pushNotify,
   pushNotifyDelivered,
-  pushBulkChange,
   notifyDropsOf,
   traceOf,
   paramAddrsOf,
@@ -108,6 +107,14 @@ test.describe("T2 shape-change", () => {
   // that makes the device recompute the four bands is the same boolean that removes
   // those bands' addresses from the app's write set — so the device's own answer is
   // announced to an address nobody is listening on.
+  //
+  // The blindness is the same; what carries it moved. The flush that reshapes the write
+  // set now re-registers against it (live.ts followSetStale → DeviceFollow.refresh), so
+  // the bands leave the REGISTRATION with the write set instead of lingering in it until
+  // some later reconcile. A band announcement is refused at the bridge rather than
+  // delivered to an app that cannot place it — and what keeps the app in step is the
+  // address the toggle does NOT drop: 1-Knob level (48) stays registered and carries
+  // `sideEffect: "refetch"`, so the app follows the CAUSE of the recomputation.
   test("EQ 1-Knob blinds the app to the bands it just made the device recompute", async ({ page }) => {
     await goLive(page);
     await openEqScreen(page, "ch1");
@@ -138,11 +145,15 @@ test.describe("T2 shape-change", () => {
     // re-read, and 766 (full-read only) was not.
     expect(getsOf(trace).filter((g) => g.addr === BAND0_GAIN && g.start > on1).length).toBeGreaterThan(0);
     expect(fullReadsAfter(trace, on1)).toBe(0);
-    // …and the registration did not move. DeviceFollow re-registers at begin() and
-    // after a reconcile only, so a flush that reshapes the write set leaves the broker
-    // registered for addresses the app no longer tracks. Pinned as current behaviour:
-    // this is the design's "registration lag" (invariant 6), observed not verified.
-    expect([...regAfterOn].sort()).toEqual([...regBefore].sort());
+    // …and the registration moved WITH the write set, in the same flush and by exactly
+    // the bands. Stated as the two differences rather than as a size, so an address
+    // that left and another that arrived cannot cancel out: nothing was added, and what
+    // left is the band block and nothing else.
+    const wentOut = [...regBefore].filter((a) => !regAfterOn.has(a)).sort();
+    const cameIn = [...regAfterOn].filter((a) => !regBefore.has(a));
+    console.log(`ON flush: registration ${regBefore.size} → ${regAfterOn.size}, ${wentOut.length} address(es) left`);
+    expect(wentOut).toEqual([...bands].sort());
+    expect(cameIn).toEqual([]);
 
     // Phase 2 — 1-Knob OFF. The bands re-enter the write set and are all emitted,
     // because the snapshot taken while 1-Knob was on holds no entry for them. The
@@ -154,104 +165,120 @@ test.describe("T2 shape-change", () => {
     trace = await traceOf(page);
     const offAt = markTime(trace, "oneknob-off")!;
     expect(setsAfter(trace, BAND0_GAIN, offAt)).toContain(300);
+    // The other direction of the same flush, and the one the re-registration exists
+    // for: an address the edit ADDED is subscribed by that edit's own flush, so a band
+    // moved on the unit from here is followed rather than waiting for a reconcile.
+    const regAfterOff = regKeys(await paramAddrsOf(page));
+    expect(bands.filter((a) => !regAfterOff.has(a))).toEqual([]);
 
     // Phase 3 — 1-Knob ON again, then the differential that decides the blind spot.
     await mark(page, "oneknob-on-2");
     await oneKnobFace(page, 0).click();
     await settleAfter(page, "oneknob-on-2", 1200);
 
-    // Phase 3a — ONE notify on a band address the ON flush just dropped from the write
-    // set. A single notify touches one logical control, so MAX_CONCENTRATION (> 3
-    // distinct node:name pairs in a settle window, follow.ts) is not in play: the only
-    // thing that can escalate this to a whole-device read is live.lookup failing to
-    // resolve the address. The broker still has it registered — phase 1 measured that —
-    // so the notify does arrive; the app is deaf to it, not unaware of it.
+    // Phase 3a — ONE notify on a band address the ON flush just dropped. It is out of
+    // the write set AND out of the registration, together and in the same flush, so the
+    // bridge refuses it: the announcement reaches the page at all only for an address
+    // the session registered (fake-device.ts, mirroring vd.rs Subs::absorb). The
+    // refusal is the assertion, which is why `pushNotify` is used for its verdict
+    // rather than `pushNotifyDelivered` — the latter throws on exactly this.
     const regBeforeProbe = regKeys(await paramAddrsOf(page));
-    expect(regBeforeProbe.has(BAND0_GAIN)).toBe(true);
+    expect(regBeforeProbe.has(BAND0_GAIN)).toBe(false);
     await mark(page, "probe-dropped");
-    await pushNotify(page, [[53, 0, 0, 300]]);
+    const droppedWhy = await pushNotify(page, [[53, 0, 0, 300]]);
     await settleAfter(page, "probe-dropped", 1800);
     trace = await traceOf(page);
     const droppedAt = markTime(trace, "probe-dropped")!;
     const droppedCost = fullReadsAfter(trace, droppedAt);
     const regAfterProbe = regKeys(await paramAddrsOf(page));
     const stillRegistered = bands.filter((a) => regAfterProbe.has(a));
+    expect(droppedWhy).toEqual(["unregistered"]);
 
-    // Phase 3b — the control: ONE notify, same shape, same node, on an address that is
-    // still in the write set while 1-Knob is ON (EQ_ONE_KNOB_LEVEL, 48). Both probes
-    // touch exactly one logical control, so neither can hit the concentration cliff;
-    // what differs is whether live.lookup resolves the address. (Probe A's reconcile
-    // ran in between, so the registration is 18 addresses smaller here — that changes
-    // which notifies the broker would deliver, not what the app does with this one.)
+    // Phase 3b — the control: ONE notify, same shape, same node, on the address the
+    // toggle did NOT drop (EQ_ONE_KNOB_LEVEL, 48). Both probes touch exactly one
+    // logical control, so neither can hit MAX_CONCENTRATION (> 3 distinct node:name
+    // pairs in a settle window, follow.ts); what differs is whether the session is
+    // registered for the address at all. This one is the recomputation's CAUSE and is
+    // a `sideEffect: "refetch"` param, so following it is what keeps the bands in step
+    // while their own addresses are unsubscribed.
     expect(regAfterProbe.has(ONE_KNOB_LEVEL)).toBe(true);
     await mark(page, "probe-registered");
-    await pushNotify(page, [[48, 0, 0, 60]]);
+    // Delivery asserted, not assumed: this arm prices what the app DOES with a notify,
+    // and a refused one leaves it in the state "nothing happened" leaves it in.
+    await pushNotifyDelivered(page, [[48, 0, 0, 60]]);
     await settleAfter(page, "probe-registered", 1800);
     trace = await traceOf(page);
     const keptAt = markTime(trace, "probe-registered")!;
     const keptCost = fullReadsAfter(trace, keptAt);
 
     console.log(timeline(trace, { from: on1 - 50 }));
-    console.log(
-      `registration: ${regBefore.size} before → ${regAfterOn.size} after the ON flush` +
-        ` → ${regAfterProbe.size} after the first reconcile`,
-    );
+    console.log(`registration: ${regBefore.size} before → ${regAfterOn.size} after the ON flush`);
     console.log(`band addresses: ${bands.length} total, ${stillRegistered.length} still registered`);
-    console.log(`one notify on a DROPPED band address (53): ${droppedCost} full reconcile(s)`);
+    console.log(`one REFUSED notify on a dropped band address (53): ${droppedCost} full reconcile(s)`);
     console.log(`one notify on a KEPT address (48, 1-Knob level): ${keptCost} full reconcile(s)`);
 
-    // The differential. The dropped address resolves to nothing, so the settle window
-    // escalates to a whole-device read and the idle net (armed by the same notify, and
-    // not cancelled by the settle) runs a second one behind it. The kept address
-    // resolves to ch1 and takes a scoped read, so only the idle net's sweep is left.
-    expect(droppedCost).toBe(2);
+    // The differential. The refused notify reaches nothing — no settle, no idle net,
+    // and `DeviceFollow.armIdle` is reachable only from inside `onNotify`, so a
+    // stimulus the bridge drops costs zero rather than a sweep. The kept address is
+    // delivered, resolves to ch1 and takes a scoped read, leaving the idle net's own
+    // sweep behind it.
+    expect(droppedCost).toBe(0);
     expect(keptCost).toBe(1);
-    // Only once a reconcile has run does the registration follow the write set — and
-    // then all 18 band addresses are gone from it.
+    // The registration both probes were pushed against is the ON flush's own: no
+    // reconcile ran between them, and the bands are out of it from the flush onward.
     expect(stillRegistered).toEqual([]);
     expect(regBefore.size - regAfterProbe.size).toBe(bands.length);
 
     // Phase 3c — the same recomputation announced the way the device actually announces
-    // it, as a four-address burst. The cost is measured, but it is OVER-DETERMINED and
-    // therefore no evidence about the blind spot: four distinct controls on one node
-    // exceed MAX_CONCENTRATION, so a full sweep would be forced even if every one of
-    // those addresses still resolved. Phase 3a/3b is what decides that question.
+    // it, as a four-address burst, with the addresses registered so it is delivered.
+    // Pushed with 1-Knob OFF: while it is ON these four addresses are in no
+    // registration and the bridge refuses the burst, as 3a measured one address at a
+    // time. There is no window to re-open any more — the flush that drops them from the
+    // write set drops them from the registration in the same breath.
     //
-    // The dropped window has to be re-opened first. Phase 3a's own escalation ended in
-    // a reconcile, and follow.ts re-registers after one, so the bands are out of the
-    // registration by now — the bridge would refuse this burst outright (see
-    // fake-device.ts). OFF puts the bands back into the write set, the sentinel forces a
-    // reconcile that re-registers them, and ON drops them from live.ts's index only:
-    // capture() runs on the refetch, follow.subscribe() does not. That is the genuine
-    // shape of the window, and it costs one extra whole-device sweep to reach.
+    // MAX_CONCENTRATION is NOT reached, and this is the phase that measures it: follow.ts
+    // counts `node:name` pairs, and the catalog names a band parameter rather than a band
+    // (EQ_BAND_GAIN / EQ_BAND_FREQ, translate.ts), so four addresses across two bands are
+    // two controls. The four cost one scoped read plus the idle net's sweep — not the two
+    // whole-device sweeps the same burst cost while the addresses resolved to nothing.
+    await mark(page, "burst-off");
     await oneKnobFace(page, 1).click();
-    await mark(page, "reopen-window");
-    await pushBulkChange(page);
-    await settleAfter(page, "reopen-window", 1800);
-    await mark(page, "reopen-on");
-    await oneKnobFace(page, 0).click();
-    await settleAfter(page, "reopen-on", 1200);
+    await settleAfter(page, "burst-off", 1200);
     const regAtBurst = await paramAddrsOf(page);
     const regBeforeBurst = regKeys(regAtBurst);
-    const burstAddrs = ["53:0:0", "52:0:0", "58:0:0", "57:0:0"];
-    expect(burstAddrs.filter((a) => regBeforeBurst.has(a))).toEqual(burstAddrs);
-
-    await mark(page, "band-burst");
-    await pushNotifyDelivered(page, [
+    const burst: Array<[number, number, number, number]> = [
       [53, 0, 0, 310],
       [52, 0, 0, 240],
       [58, 0, 0, -150],
       [57, 0, 0, 900],
-    ]);
-    // Long quiet: the settle (300 ms) and the idle net (900 ms) both fire, and each
-    // whole-device sweep runs for seconds.
+    ];
+    const burstAddrs = burst.map(([id, x, y]) => `${id}:${x}:${y}`);
+    expect(burstAddrs.filter((a) => regBeforeBurst.has(a))).toEqual(burstAddrs);
+    // …and each value is a genuine change. With the bands back in the write set the
+    // snapshot holds an entry for every one of them, so a pushed value that happened to
+    // equal it would be classified as our own echo and drop that address out of the
+    // burst — the cost would then be measuring a shorter burst than the one written here.
+    const snapAtBurst = await snapshotOf(page);
+    expect(burst.filter(([id, x, y, v]) => snapAtBurst?.[`${id}:${x}:${y}`] === v)).toEqual([]);
+
+    await mark(page, "band-burst");
+    await pushNotifyDelivered(page, burst);
+    // Long quiet: the settle (300 ms) and the idle net (900 ms) both fire.
     await settleAfter(page, "band-burst", 1800);
 
     trace = await traceOf(page);
     const burstAt = markTime(trace, "band-burst")!;
     const reconciles = fullReadsAfter(trace, burstAt);
-    console.log(`full reconciles caused by the 4-notify burst: ${reconciles}`);
-    expect(reconciles).toBe(2);
+    // The settle's own read, identified as the reads of a band address that precede the
+    // first whole-device one. Without it "1 full read" is equally the reading of a settle
+    // that did nothing and an idle net that swept afterwards.
+    const firstFullAt = getsOf(trace).find((g) => g.addr === RATE_ADDR && g.start > burstAt)?.start ?? Infinity;
+    const scopedReads = getsOf(trace).filter(
+      (g) => g.addr === BAND0_GAIN && g.start > burstAt && g.start < firstFullAt,
+    );
+    console.log(`4-notify burst: ${scopedReads.length} scoped read(s), then ${reconciles} full reconcile(s)`);
+    expect(scopedReads.length).toBeGreaterThan(0);
+    expect(reconciles).toBe(1);
 
     // Invariants 6 and 12 over the burst window only. The registration is a snapshot of
     // one instant; run against the whole trace it counts writes that were perfectly well
@@ -261,27 +288,34 @@ test.describe("T2 shape-change", () => {
     // BEFORE the burst, for the same reason: the two reconciles the burst provoked have
     // re-registered since, without the 18 band addresses (1-Knob is on), so an
     // end-of-window snapshot describes a set none of these notifies was pushed against.
-    // No `snapshot` for the same reason, and one of its own: clause B is a state
-    // predicate and its two halves must be read at ONE instant, so pairing the
-    // pre-burst registration with a live snapshot read now would answer for neither.
-    // At burstAt 1-Knob is ON — the case asserts just above that the four band
-    // addresses ARE still registered — so the emitted set is the reduced one and the
-    // difference clause B reports would be empty anyway. Phase 4 is the direction that
-    // has something to say.
+    // No `snapshot`, for a reason of its own: clause B is a state predicate and its two
+    // halves must be read at ONE instant, so pairing the pre-burst registration with a
+    // live snapshot read now would answer for neither. Phase 4 reads such a pair.
+    // Clause A subtracts the refusal phase 3a's assertion is about; leaving it in would
+    // report the case as one that measured nothing, in the one phase whose subject is
+    // that it measures a refusal.
     console.log(
       report(
         "eq 1-knob registration blindspot",
-        analyze(trace, { registration: regAtBurst, registrationWindow: { from: burstAt } }),
+        analyze(trace, {
+          registration: regAtBurst,
+          registrationWindow: { from: burstAt },
+          expectedDrops: [BAND0_GAIN],
+        }),
       ),
     );
 
-    // Phase 4 — the mirror image, and invariant 6 clause B's firing case. 1-Knob OFF
-    // puts the bands back into the write set, and the app writes all 18 of them to
-    // addresses it is no longer registered for: a device-side change to any of them is
-    // unfollowable until something reconciles. Nothing reconciles here — a refetch
-    // re-captures the live snapshot but never re-subscribes — so the window is open at
-    // the instant the pair below is read, which is what makes this the one case that
-    // can prove the clause is not an assertion that can only pass.
+    // Phase 4 — the mirror image: the flush that ADDS the bands back. The app writes all
+    // 18 of them, and the same flush registers for them, so the pair read at one instant
+    // below holds nothing clause B can report. That is the fix's own subject, and it is
+    // an assertion that could only ever pass if the clause could fire — which the
+    // control below establishes on the same run and the same data.
+    await mark(page, "oneknob-on-3");
+    await oneKnobFace(page, 0).click();
+    await settleAfter(page, "oneknob-on-3", 1200);
+    // The registration as it stands BEFORE the flush that grows the emitted set. This is
+    // the stale half the code used to leave in place, kept for the control below.
+    const regBeforeGrowth = await paramAddrsOf(page);
     await mark(page, "oneknob-off-2");
     await oneKnobFace(page, 1).click();
     await settleAfter(page, "oneknob-off-2", 1200);
@@ -297,23 +331,34 @@ test.describe("T2 shape-change", () => {
         .filter((s) => s.start > off2)
         .map((s) => s.addr!),
     );
+    // The premise: the flush really did write the bands, so "no orphans" is the
+    // registration having caught up rather than nothing having been sent.
+    expect(bands.filter((a) => written.has(a)).sort()).toEqual([...bands].sort());
     const orphans = bands.filter((a) => written.has(a) && !regNow.has(a));
     console.log(`after 1-Knob OFF: ${orphans.length} band address(es) written but not registered`);
-    expect(orphans.length).toBe(bands.length);
+    expect(orphans).toEqual([]);
 
     // The same fact decided by the analyzer rather than by hand, so the pin and the
-    // clause cannot disagree about it. Only clause B is asserted: clauses A and C are
+    // clause cannot disagree about it. Only clause B is read: clauses A and C are
     // scanned over the whole trace here, which spans three earlier phases pushed
     // against registrations this one does not describe.
-    const grown = analyze(trace, { registration: regAddrsNow, snapshot: snapNow }).filter(
-      (f) => f.inv === 6 && f.name === "grown window",
-    );
+    const grownOf = (registration: Array<[number, number, number]>) =>
+      analyze(trace, { registration, snapshot: snapNow }).filter((f) => f.inv === 6 && f.name === "grown window");
+    const grown = grownOf(regAddrsNow);
     console.log(report("eq 1-knob grown window", grown));
-    expect(grown).toHaveLength(1);
-    // Exactly the bands, and nothing else: the refetch's re-capture rebuilt the emitted
-    // set around them while the registration stayed where the last reconcile left it.
-    expect(grown[0].detail).toContain(`${bands.length} address(es)`);
-    const grownAddrs = new Set(Object.keys(snapNow ?? {}).filter((a) => !regNow.has(a)));
+    expect(grown).toEqual([]);
+
+    // The control, without which the assertion above passes for a clause that cannot
+    // fire. The same snapshot against the registration as it stood one flush earlier —
+    // which is exactly the pairing the app used to leave behind, since `subscribe()` ran
+    // at begin() and after a reconcile only. It reports the 18 bands, so the clause is
+    // live and what silenced it is the flush's own re-registration.
+    const stale = grownOf(regBeforeGrowth);
+    console.log(report("eq 1-knob grown window (pre-flush registration)", stale));
+    expect(stale).toHaveLength(1);
+    expect(stale[0].detail).toContain(`${bands.length} address(es)`);
+    const regStale = regKeys(regBeforeGrowth);
+    const grownAddrs = new Set(Object.keys(snapNow ?? {}).filter((a) => !regStale.has(a)));
     expect([...grownAddrs].sort()).toEqual([...bands].sort());
   });
 
@@ -358,21 +403,23 @@ test.describe("T2 shape-change", () => {
     expect(byAddr.has(CH1_COMP_ON)).toBe(false);
     for (const a of ch1EqBandAddrs()) expect(byAddr.has(a)).toBe(false);
 
-    // The new bank was written to addresses the broker is not registered for. No
-    // reconcile has run since the swap, and a flush does not re-register, so the two
-    // writes above went to a bank the app cannot yet be told about. Hand-computed over
-    // the swap flush alone — the registration is a snapshot, so the same question asked
-    // against the whole run's writes would answer with an artefact.
+    // The registration swapped banks with the write set, in the swap's own flush. Both
+    // directions, since a bank swap is the one gesture that moves the set both ways at
+    // once: the two addresses just written are registered, and the bank they replaced is
+    // not. Hand-computed over the swap flush alone — the registration is a snapshot, so
+    // the same question asked against the whole run's writes would answer with an
+    // artefact.
     const regAfterSwapAddrs = await paramAddrsOf(page);
     // The emitted set at the same instant, for invariant 6's clause B below. Read here
-    // rather than at the analyze() call: two later reconciles re-register the new bank
-    // (this case asserts they do), so an end-of-run reading would describe a window
-    // that has since closed.
+    // rather than at the analyze() call, which is where a pair belonging to two
+    // different instants stops answering for either.
     const snapAfterSwap = await snapshotOf(page);
     const regAfterSwap = regKeys(regAfterSwapAddrs);
     const swapOrphans = [CH1_SSMCS_COMP_ON, CH1_SSMCS_EQ_ON].filter((a) => byAddr.has(a) && !regAfterSwap.has(a));
     console.log(`swap flush: ${swapOrphans.length} new-bank address(es) written but not registered`);
-    expect(swapOrphans).toEqual([CH1_SSMCS_COMP_ON, CH1_SSMCS_EQ_ON]);
+    expect(swapOrphans).toEqual([]);
+    expect(regAfterSwap.has(CH1_COMP_ON)).toBe(false);
+    expect(ch1EqBandAddrs().filter((a) => regAfterSwap.has(a))).toEqual([]);
 
     // One undo entry puts the whole bank back: the switch's own plan write plus the
     // bank reset the funnel performs AFTER markChanged (the diff is taken at the
@@ -405,28 +452,31 @@ test.describe("T2 shape-change", () => {
     await settleAfter(page, "to-ssmcs-again", 1800);
 
     // A notify on the ABANDONED bank address vs one on the new bank, same burst
-    // shape, one variable changed. The old one has no node any more.
+    // shape, one variable changed: the second swap left the old bank in no write set
+    // and, from that same flush, in no registration.
     await mark(page, "old-bank-notify");
-    await pushNotify(page, [[34, 0, 0, 1]]);
+    const oldWhy = await pushNotify(page, [[34, 0, 0, 1]]);
     await settleAfter(page, "old-bank-notify", 1800);
     trace = await traceOf(page);
     const oldAt = markTime(trace, "old-bank-notify")!;
     const oldCost = fullReadsAfter(trace, oldAt);
+    expect(oldWhy).toEqual(["unregistered"]);
 
     await mark(page, "new-bank-notify");
-    await pushNotify(page, [[94, 0, 0, 1]]);
+    await pushNotifyDelivered(page, [[94, 0, 0, 1]]);
     await settleAfter(page, "new-bank-notify", 1800);
     trace = await traceOf(page);
     const newAt = markTime(trace, "new-bank-notify")!;
     const newCost = fullReadsAfter(trace, newAt);
     const regAfter = regKeys(await paramAddrsOf(page));
 
-    console.log(`notify on the abandoned bank (34): ${oldCost} full reconcile(s)`);
+    console.log(`notify on the abandoned bank (34): ${oldCost} full reconcile(s), refused as ${oldWhy.join("/")}`);
     console.log(`notify on the live bank (94): ${newCost} full reconcile(s)`);
     console.log(`registration: ${regBefore.size} → ${regAfter.size}`);
 
-    // The abandoned address resolves to nothing, so it escalates: settle + idle net.
-    expect(oldCost).toBe(2);
+    // The abandoned address is refused at the bridge, so it costs nothing at all: the
+    // settle and the idle net are both armed from inside onNotify, which never runs.
+    expect(oldCost).toBe(0);
     // The live bank address resolves to ch1 and is not follow:"direct", so it takes a
     // scoped read — the idle net still runs its one full sweep behind it.
     expect(newCost).toBe(1);
@@ -437,12 +487,11 @@ test.describe("T2 shape-change", () => {
     // registration and count the pre-swap COMP->EQ writes, which were correctly
     // registered when they were sent.
     //
-    // Invariant 6's clause B says the other half of it, from the pair taken at the swap:
-    // the finding is TRUE and is the same fact `swapOrphans` proves by hand above, but
-    // stated over the whole emitted set rather than the two addresses this case names —
-    // every SSMCS address the plan now emits is one a device-side move could not be
-    // delivered on until something reconciles. Reported, not asserted, because the
-    // window is the case's subject and closing it is what the later phases measure.
+    // Invariant 6's clause B says the other half of it, from the pair taken at the swap,
+    // and it is the whole-emitted-set form of what `swapOrphans` checks by hand for the
+    // two addresses this case names. Reported rather than asserted: the case's own
+    // assertions are what decide the swap, and this is the analyzer's reading of the
+    // same instant.
     console.log(
       report(
         "comp/eq bank swap",
