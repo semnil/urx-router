@@ -673,6 +673,46 @@ describe("refresh", () => {
     expect(host.box.querySelector('[data-dyn-val="threshold"]')?.textContent).toContain("-21");
   });
 
+  // The row's treatment is for the blur end alone. Run on an ordinary release it left the
+  // row disabled after every finished drag — and the listener that would re-arm it is
+  // added DURING that pointerup's own dispatch, so it does not see it: the row stayed dead
+  // until some later event happened to fire, and a press meanwhile landed on nothing.
+  it("leaves a value row usable after an ordinary release", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const row = rowsByKey(host.box).get("threshold")!;
+
+    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    row.focus();
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+
+    expect(row.disabled).toBe(false);
+    expect(document.activeElement).toBe(row);
+  });
+
+  // The same blur that holds the row inert also clears `grabbed`, so a refresh the press
+  // had deferred runs and rebuilds the column. The restore has to find the row that is on
+  // screen now: re-arming the replaced one put the operator's focus on a detached node.
+  it("restores the row on screen when a blur also lands a deferred refresh", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const row = rowsByKey(host.box).get("threshold")!;
+
+    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    row.focus();
+    host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], gate: { threshold: -21 } };
+    screen.refresh(); // deferred while the pointer is down
+    window.dispatchEvent(new FocusEvent("blur"));
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+
+    const now = rowsByKey(host.box).get("threshold")!;
+    expect(now).not.toBe(row);
+    expect(now.disabled).toBe(false);
+    expect(document.activeElement).toBe(now);
+  });
+
   // The third drag on this screen, and the one with no flag to clear: its move handler
   // asks the engine whether it still holds the capture, and a blur leaves that answer
   // true — so the ender drops the capture instead.

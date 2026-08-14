@@ -285,6 +285,9 @@ export interface DynProcessor {
 /** Peak hold, in notify frames (100 ms each). Nothing on the device sets this —
  *  the level meters hold in hardware and GR holds not at all — so it is a UI
  *  choice: long enough to read a value that arrived while looking elsewhere. */
+/** Which end a drag reached: the pointer said so, or the window went away. */
+type DragEnd = "pointer" | "blur";
+
 const PEAK_HOLD_FRAMES = 12;
 
 /** Repaint cap. The feed is 10 Hz; this only bounds how soon a new frame reaches
@@ -464,9 +467,9 @@ export class DynScreen {
   private grabbed = false;
   /** A refresh arrived while grabbed and still has to happen. */
   private refreshPending = false;
-  /** How to end the drag currently in flight, for the ends that carry no pointer event
-   *  of their own. Set by the gesture, cleared by whichever end runs first. */
-  private endDrag: (() => void) | null = null;
+  /** How to end the drag currently in flight. Set by the gesture, cleared by whichever end
+   *  runs first, and told which end that was — a value row treats the two differently. */
+  private endDrag: ((reason: DragEnd) => void) | null = null;
 
   constructor(private readonly hooks: DynScreenHooks) {
     this.scrim = document.getElementById("dyn-screen-modal") as HTMLElement;
@@ -477,16 +480,20 @@ export class DynScreen {
     this.box.addEventListener("pointerdown", () => {
       this.grabbed = true;
     });
-    const release = (): void => {
-      this.endDrag?.();
+    // The ender is told WHICH end this is. Two of the three drags tear down the same way
+    // either way, but a value row does not: on a blur it has to be held inert (see
+    // paramRow), and doing that on an ordinary release would leave the row disabled after
+    // every drag the operator finishes normally.
+    const release = (reason: DragEnd) => (): void => {
+      this.endDrag?.(reason);
       if (!this.grabbed) return;
       this.grabbed = false;
       if (!this.refreshPending) return;
       this.refreshPending = false;
       this.refresh();
     };
-    window.addEventListener("pointerup", release);
-    window.addEventListener("pointercancel", release);
+    window.addEventListener("pointerup", release("pointer"));
+    window.addEventListener("pointercancel", release("pointer"));
     // A window blur is the third end. The two registered above carry a pointer event;
     // this one carries none, so it needs the ender the gesture left behind. Measured
     // 2026-08-14 on Chromium and on the shipping WKWebView: losing the foreground with
@@ -495,7 +502,7 @@ export class DynScreen {
     // every later move straight to them. console.ts's trackDrag carries the readings.
     // Not `capture: true`: that would also catch the cap's and the canvas's own element
     // blur, which happens whenever focus moves inside the screen.
-    window.addEventListener("blur", release);
+    window.addEventListener("blur", release("blur"));
   }
 
   isOpen(): boolean {
@@ -1445,9 +1452,13 @@ export class DynScreen {
     // drops it (Chromium focuses a range on press and reports the blur, WebKit does
     // neither, so there it restores nothing).
     input.addEventListener("pointerdown", () => {
-      const ender = (): void => {
+      const ender = (reason: DragEnd): void => {
         if (this.endDrag === ender) this.endDrag = null;
-        if (input.disabled) return;
+        // An ordinary release ends the engine's drag by itself and needs nothing from
+        // here; treating it like a blur left the row disabled after every finished drag,
+        // and the listener armed below cannot see the very `pointerup` it was added
+        // during, so the row stayed dead until some later event happened to re-arm it.
+        if (reason !== "blur" || input.disabled) return;
         const focused = document.activeElement === input;
         input.disabled = true;
         // Held until the BUTTON comes up, not until the window comes back. Measured on
@@ -1463,7 +1474,13 @@ export class DynScreen {
           window.removeEventListener("pointercancel", back);
           window.removeEventListener("pointermove", back);
           input.disabled = false;
-          if (focused) input.focus();
+          // The row on screen may no longer be this element: the same blur clears
+          // `grabbed`, so a refresh deferred by the press runs and rebuilds the column.
+          // Re-arming the one that was replaced would leave the operator's focus on a
+          // node nothing can reach, so the restore asks the screen for the live row.
+          const live = this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`) ?? input;
+          live.disabled = false;
+          if (focused) live.focus();
         };
         window.addEventListener("pointerup", back);
         window.addEventListener("pointercancel", back);

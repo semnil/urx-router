@@ -365,6 +365,15 @@ test("a value row stops following the pointer once the window is gone", async ({
 
   const b = (await slider.boundingBox())!;
   const y = b.y + b.height / 2;
+
+  // An ordinary drag first: the treatment is for the blur end alone, and applying it to
+  // every release left the row disabled after each finished gesture.
+  await page.mouse.move(b.x + b.width * 0.3, y);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width * 0.4, y);
+  await page.mouse.up();
+  await expect(slider).toBeEnabled();
+
   await page.mouse.move(b.x + b.width * 0.2, y);
   await page.mouse.down();
   await page.mouse.move(b.x + b.width * 0.35, y);
