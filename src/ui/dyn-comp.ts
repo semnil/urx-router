@@ -44,15 +44,18 @@ const OUT_TICKS = [18, 6, -6, -18, -30, -42, -54];
  * immediately, Medium ~8 dB later, Soft ~20 dB later — so these are twice the
  * measured reach under the usual symmetric-knee model.
  *
- * MEDIUM's 16 has since been measured the other way round, and holds: with the
- * threshold held at -30 dB, the SIGNAL was walked past it in 1 dB steps (33 points,
- * ratio 4:1, makeup +6) and each candidate width fitted to the result with the
- * detector-versus-meter offset left free — it shifts every point equally, so fixing
- * it would be read as shape. The residual is a parabola with its minimum at 16 dB:
- * 8 dB is 71% worse and rejected, 12 and 20 are 27% and 10% worse, and 18 sits
- * within 0.3% and is NOT separated from it (nor does it need to be, at the width of
- * a drawn line). Soft and Hard were not re-measured this way and remain doubled
- * reaches.
+ * All three have since been measured the other way round — the threshold held and the
+ * SIGNAL walked past it in 1 dB steps, which is the direction the curve is read in —
+ * and fitted together against ONE detector-versus-meter offset (1.10 dB, 113 points),
+ * since that offset belongs to the rig rather than to the knee selector. Medium and Hard
+ * came back as they were. SOFT DID NOT: its residual minimum is 51 dB against the 40 that
+ * doubling gave, which fits 62% worse, so the constant carries the measurement.
+ *
+ * The doubling worked for Medium and failed for Soft because the knee is not symmetric:
+ * a 20 dB lower reach against a 51 dB total leaves about 31 dB above the threshold. What
+ * a symmetric model can be fitted to is therefore the best symmetric APPROXIMATION, which
+ * is exactly what this constant has to hold — 50, 52 and 54 dB are indistinguishable
+ * (0.275 / 0.274 / 0.283), so it takes the round middle.
  *
  * The symmetry itself is a per-block property, not a house rule. The SSMCS strip's
  * compressor — the other bank on the same channel — was measured directly in 2026-08
@@ -65,7 +68,7 @@ const OUT_TICKS = [18, 6, -6, -18, -30, -42, -54];
  * quadratic interpolation. The signal-side fit above cannot separate it from nearby
  * shapes at 1 dB of meter quantization.
  */
-const KNEE_WIDTH_DB = [40, 16, 0];
+const KNEE_WIDTH_DB = [52, 16, 0];
 
 const kneeWidth = (knee: number): number => KNEE_WIDTH_DB[knee] ?? KNEE_WIDTH_DB[COMP_KNEE_DEFAULT];
 
