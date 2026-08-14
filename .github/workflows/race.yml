@@ -6,26 +6,28 @@ name: Race harness
 # boundary is in that document ("Where each tier runs") and stated nowhere else — a copy
 # in a comment is exactly what went stale elsewhere in this repository. That cost is what
 # is being measured rather than overhead — several cases provoke whole-device readbacks of
-# ~800 sequential commands — so the answer is to run it somewhere other than on every PR,
-# not to make it cheaper.
+# ~800 sequential commands — so it stays its own workflow rather than being folded into
+# the ordinary tier.
 #
-# It runs on the ONE pull request that changes the app version. That PR carries nothing
-# else (see CLAUDE.md), and merging it is what tags a release, so the harness sits
-# directly in front of the only commit a user ever installs — a stronger place than the
-# release itself, where a red result would arrive after the tag already exists.
+# It runs on a pull request that touches `src/**` or `e2e/race/**`, and on the one that
+# changes the app version. Two clauses, because neither implies the other. The first is
+# where a live-sync break comes from, and the recorded accident is why it is the whole of
+# `src/**` rather than the live-sync files alone: a `page.selectOption` that stopped
+# resolving under a session lock rode 17 merges with this gate green, from a pull request
+# that touched only `src/main.ts`. The second is kept because a version-bump PR carries
+# nothing else (see CLAUDE.md) and therefore touches neither path — dropping it would take
+# the harness out from in front of the only commit a user ever installs, which is a
+# stronger place than the release itself, where a red result would arrive after the tag
+# already exists.
 #
-# `paths: package.json` would not mean "version bump" either: Dependabot's npm ecosystem
-# edits package.json every week for dependencies. The `detect` job reads the `version`
-# field on both sides of the PR, and the harness runs only when it actually moved.
+# `paths:` on the trigger says neither thing. It cannot ask whether the version moved —
+# `paths: package.json` catches Dependabot's weekly npm edits instead — and it would skip
+# the WHOLE workflow, which reports no check run at all and leaves `race-required` at
+# "Expected" forever. So the trigger carries no filter, `detect` runs on every pull
+# request and decides there, and away from both clauses the two harness jobs skip on their
+# own condition, which reports success in seconds.
 #
-# The trigger carries no filter at all, and `detect` runs on every pull request as a
-# result. That is what makes `race-required` a usable merge condition: a workflow skipped
-# by a trigger filter reports no check run, so the version-bump PR could never wait for a
-# check the other pull requests do not even have. Away from that one PR the two harness
-# jobs skip on their own condition, which reports success in seconds.
-#
-# Also runnable on demand against any branch, which is how the live-sync surface gets
-# checked before a version PR exists:
+# Also runnable on demand against any branch:
 #
 #   gh workflow run race.yml --ref <branch>
 on:
@@ -33,21 +35,21 @@ on:
   workflow_dispatch:
 
 jobs:
-  # A cheap gate in front of ~25 minutes of runner time. A manual dispatch always runs:
-  # there is no base to compare against, and asking for it IS the intent.
+  # A cheap gate in front of the harness jobs. A manual dispatch always runs: there is no
+  # base to compare against, and asking for it IS the intent.
   detect:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     outputs:
-      bumped: ${{ steps.check.outputs.bumped }}
+      run: ${{ steps.check.outputs.run }}
       playwright: ${{ steps.pw.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The base commit has to be in the local history for `git show` to read
-          # package.json out of it.
+          # The base commit has to be in the local history for the diff and the `git show`
+          # below to read anything out of it.
           fetch-depth: 0
       - id: check
         # The SHA travels in the environment rather than inline: the value here is a hex
@@ -57,7 +59,21 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [[ "${GITHUB_EVENT_NAME}" != 'pull_request' ]]; then
-            echo 'bumped=true' >> "$GITHUB_OUTPUT"
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # `git diff` rather than the API's file list. This job already has the whole
+          # history for the version read below, and both endpoints ci.yml has to use
+          # instead truncate without saying so (that job carries the ceilings and the
+          # guards against them). A diff against the base has no ceiling to guard.
+          if ! files=$(git diff --name-only "${BASE_SHA}" HEAD); then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+            echo "could not diff against ${BASE_SHA} — running the harness rather than guessing"
+            exit 0
+          fi
+          if printf '%s\n' "${files}" | grep -qE '^(src/|e2e/race/)'; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+            echo 'the pull request touches src/ or e2e/race/ — running the harness'
             exit 0
           fi
           head=$(jq -r .version package.json)
@@ -67,17 +83,17 @@ jobs:
           # become "always run" — the cheap direction to be wrong in, but not one to
           # arrive at by accident. Say so and run.
           if ! base_json=$(git show "${BASE_SHA}:package.json"); then
-            echo 'bumped=true' >> "$GITHUB_OUTPUT"
+            echo 'run=true' >> "$GITHUB_OUTPUT"
             echo "could not read package.json at ${BASE_SHA} — running the harness rather than guessing"
             exit 0
           fi
           base=$(printf '%s' "${base_json}" | jq -r .version)
           echo "version: ${base} (base) -> ${head} (head)"
           if [[ "${base}" != "${head}" ]]; then
-            echo 'bumped=true' >> "$GITHUB_OUTPUT"
+            echo 'run=true' >> "$GITHUB_OUTPUT"
           else
-            echo 'bumped=false' >> "$GITHUB_OUTPUT"
-            echo 'package.json changed but the version did not — the harness is skipped'
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo 'no src/ or e2e/race/ change and the version did not move — the harness is skipped'
           fi
       # Both harness jobs run inside the official Playwright image; the tag comes from
       # here. See .github/actions/playwright-version for why it is a job's output.
@@ -86,15 +102,15 @@ jobs:
 
   race:
     needs: detect
-    if: needs.detect.outputs.bumped == 'true'
+    if: needs.detect.outputs.run == 'true'
     runs-on: ubuntu-latest
     # Same image as the WebKit job below, for the same reason and at the same measured
     # cost — see that job's header. The shards' own exposure is the smaller one (36
     # sequential .deb fetches against WebKit's 201, and the three of them were unharmed
-    # by the degradation that killed WebKit), so what settles it here is that this
-    # workflow runs on the version-bump PR: every mirror request in it sits in front of
-    # a release. One environment for all four jobs also means the workflow states one
-    # rule rather than two.
+    # by the degradation that killed WebKit), so what settles it here is that a run of
+    # this workflow sits in front of a merge — and on the version-bump PR, in front of a
+    # release. One environment for all four jobs also means the workflow states one rule
+    # rather than two.
     container: mcr.microsoft.com/playwright:v${{ needs.detect.outputs.playwright }}-noble
     # Several times what the slowest shard takes — and it is the SLOWEST that has to fit,
     # since Playwright shards by case count and the expensive tiers land together
@@ -147,7 +163,7 @@ jobs:
   # docs/{en,ja}/live-race-harness.md, not here.
   race-webkit:
     needs: detect
-    if: needs.detect.outputs.bumped == 'true'
+    if: needs.detect.outputs.run == 'true'
     runs-on: ubuntu-latest
     # The one job in this repository that does not build its environment out of the
     # Ubuntu mirror. `--with-deps webkit` fetches an order of magnitude more .debs than
@@ -193,11 +209,16 @@ jobs:
           retention-days: 7
 
   # The single context this workflow contributes to the branch ruleset
-  # (.github/required-checks.json). Away from the version-bump PR it is a few seconds of
-  # green over two skipped jobs — `detect` runs, and `race` and `race-webkit` skip on their
-  # own condition, `race` as ONE job because a matrix whose job-level `if:` is false is
-  # never expanded. On that PR it is what stops a release from being tagged over a red
-  # harness — which is the one merge in this repository that ships something.
+  # (.github/required-checks.json). On a pull request that touches neither trigger path
+  # nor the version it is a few seconds of green over two skipped jobs — `detect` runs,
+  # and `race` and `race-webkit` skip on their own condition, `race` as ONE job because a
+  # matrix whose job-level `if:` is false is never expanded. Everywhere else it is what
+  # stops the merge, and on the version-bump PR what stops a release from being tagged
+  # over a red harness.
+  #
+  # Because the skip and the pass report the same colour, this context alone does not say
+  # WHICH of the two happened. `detect`'s log does, and it prints the reason on both
+  # sides.
   #
   # `always()` and an explicit read of the results, because a job skipped by a failed
   # dependency reports SUCCESS to a required check: with a bare `needs:` this gate would

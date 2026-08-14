@@ -113,8 +113,8 @@ UPDATE_SKILL=1 pnpm test skill-export
   通常の E2E スイート・`cargo test` を実行する — この作業は原則として Markdown / docs のみの変更では省略される。例外は
   スキルの生成物であるモデル参照 (`.claude/skills/urx-routing-planner/references/model-*.md`) で、
   Markdown だが生成器との差分を検査するため通常 CI も走る。サードパーティライセンスの生成は
-  マージ後に走り、ライブ同期のレース診断ハーネスはバージョンを変更するプルリクエストでのみ走って
-  全 PR では走らない。
+  マージ後に走る。ライブ同期のレース診断ハーネスは、差分が `src/` か `e2e/race/` を触る
+  プルリクエストと、バージョンを変更するプルリクエストで走る — 約 7 分、他のチェックと並列。
 - 文書と設定の検査は上記に関わらず**すべての**プルリクエストで走る — Markdown テーブルの整合性・
   再利用アセット索引・`pnpm check:gates`。
 - マージは `ci-required` / `docs-required` / `format` / `race-required` の 4 つを待つ。いずれもすべての

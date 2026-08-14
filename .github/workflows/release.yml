@@ -12,8 +12,8 @@ name: Release
 # it always was — a packaging check that builds the bundles as job artifacts and
 # creates nothing.
 #
-# No E2E runs here. The harness runs on the version-bump PR (race.yml), in front of the
-# tag rather than behind it.
+# No E2E runs here. The harness runs on the pull requests race.yml's trigger names, the
+# version bump among them, so it sits in front of the tag rather than behind it.
 on:
   push:
     tags:

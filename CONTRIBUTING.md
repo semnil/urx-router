@@ -125,8 +125,9 @@ CI diffs the generated files, so an out-of-date bundle fails the build.
   request. The exception is the skill's generated model references
   (`.claude/skills/urx-routing-planner/references/model-*.md`): they are Markdown, but they
   are diffed against their generator, so they run it too. Third-party license generation
-  runs after merge, and the live-sync race harness runs on the pull request that changes
-  the version, not on every one.
+  runs after merge. The live-sync race harness runs on a pull request whose diff touches
+  `src/` or `e2e/race/`, and on the one that changes the version — about seven minutes,
+  in parallel with the rest.
 - The document and configuration checks run on **every** pull request regardless — Markdown
   table integrity, the reusable-assets index and `pnpm check:gates`.
 - A merge waits for `ci-required`, `docs-required`, `format` and `race-required`. Each

@@ -2,7 +2,8 @@ name: CI
 
 # Lightweight checks on every PR and on pushes to main: the build, the unit tests and
 # the ordinary E2E suite. Third-party license generation runs post-merge (post-merge.yml)
-# and the live-sync race harness runs from race.yml, which nothing triggers per-merge.
+# and the live-sync race harness is race.yml's, which decides for itself which pull
+# requests it runs on.
 # Doc-only changes (Markdown, docs/) don't affect the build or tests, so the expensive
 # jobs skip them — except the skill's generated model references, which
 # skill-export.test.ts diffs against the generator, so an .md-only edit there
@@ -162,7 +163,8 @@ jobs:
       # has — docs.yml, where the other three checks live, deliberately has none. Nothing
       # is lost by not running it there: a Markdown/docs-only change, which is what this
       # workflow skips, cannot move a spec or a guarantor. Beside the race tier itself it
-      # would be worse than useless, since that tier runs on the version-bump PR alone.
+      # would report on a smaller set of pull requests, since that tier's trigger skips one
+      # whose diff touches neither src/ nor e2e/race/ nor the version.
       - run: pnpm check:skips
       - run: pnpm test:coverage
       - name: Upload frontend coverage
