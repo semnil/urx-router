@@ -7,6 +7,7 @@ import { listControls } from "../src/core/midi/controls";
 import { getModel } from "../src/models";
 import { defaultPlan } from "../src/models/initial-state";
 import { selectWire } from "./graph-helpers";
+import { COMP_EQ_SSMCS } from "../src/core/control/params";
 
 // Display-item coverage for every dialog, window, menu and popover: each one is
 // driven through the states it has, and everything the message catalog holds for
@@ -672,7 +673,12 @@ test("the console popovers name what they set", async ({ page }) => {
 // separately below, for the two messages only a shared address prints.
 function everyControlMapping(): Array<Record<string, unknown>> {
   const model = getModel("URX44V");
-  const controls = listControls(model, defaultPlan("URX44V"));
+  const plan = defaultPlan("URX44V");
+  // ONE mono channel into the morphing bank, so both banks' scopes are in the list:
+  // a default plan carries no SSMCS channel, and switching every mono channel would
+  // take COMP and the 4-band EQ out instead.
+  plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+  const controls = listControls(model, plan);
   return controls.map((c, i) => ({
     control: c.id,
     addr: { type: "cc", channel: Math.floor(i / 128) % 16, controller: i % 128 },
