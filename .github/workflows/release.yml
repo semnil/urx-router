@@ -271,12 +271,18 @@ jobs:
   # produced no draft like any other.
   release-gate:
     needs: [check-tag, create-release, licenses, build]
-    # A failed check-tag writes no outputs, so `validTag` is empty and the tag half of this
-    # condition cannot carry it. Without the result clause the one failure class this
-    # workflow reports on a tag — a ref check-tag declines — would skip this job, and a job
-    # skipped by `if:` reports success.
+    # A check-tag that did not succeed writes no outputs, so `validTag` is empty and the tag
+    # half of this condition cannot carry it. Without the result clause the one failure
+    # class this workflow reports on a tag — a ref check-tag declines — would skip this job,
+    # and a job skipped by `if:` reports success.
+    #
+    # `!= 'success'` rather than `== 'failure'` so a CANCELLED check-tag lands here too: a
+    # cancelled job's result is neither, and it would otherwise leave a run that pushed a
+    # tag and built nothing with no red face anywhere. A branch dispatch is untouched —
+    # check-tag succeeds there with validTag false, so both halves stay false and this job
+    # is skipped, which is what keeps the packaging check quiet.
     if: >-
-      always() && (needs.check-tag.result == 'failure'
+      always() && (needs.check-tag.result != 'success'
       || needs.check-tag.outputs.validTag == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
