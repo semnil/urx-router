@@ -713,6 +713,31 @@ describe("refresh", () => {
     expect(document.activeElement).toBe(now);
   });
 
+  // A rebuilt row carries its own disabled state, and the restore must not talk it out of
+  // it: turning COMP's 1-knob on hands threshold / ratio / gain / knee to the device, and
+  // a locked row disables its controls. Re-enabling one here would put a device-driven
+  // value back under the operator's pointer.
+  it("leaves a row the rebuild locked disabled, and does not focus it", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(COMP, "ch1");
+    const row = rowsByKey(host.box).get("threshold")!;
+
+    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    row.focus();
+    // What device follow does when the unit's 1-knob comes on under the operator's hand.
+    const comp = host.plan.nodeParams["ch1"]?.comp as Record<string, unknown>;
+    host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], comp: { ...comp, oneKnob: true } };
+    screen.refresh(); // deferred while the pointer is down
+    window.dispatchEvent(new FocusEvent("blur"));
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+
+    const now = rowsByKey(host.box).get("threshold")!;
+    expect(now).not.toBe(row);
+    expect(now.disabled).toBe(true);
+    expect(document.activeElement).not.toBe(now);
+  });
+
   // The third drag on this screen, and the one with no flag to clear: its move handler
   // asks the engine whether it still holds the capture, and a blur leaves that answer
   // true — so the ender drops the capture instead.

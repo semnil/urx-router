@@ -1473,14 +1473,15 @@ export class DynScreen {
           window.removeEventListener("pointerup", back);
           window.removeEventListener("pointercancel", back);
           window.removeEventListener("pointermove", back);
+          // Undone only on the element this disabled. The row on screen may no longer be
+          // that one: the same blur clears `grabbed`, so a refresh the press deferred runs
+          // and rebuilds the column — and a rebuilt row carries its own disabled state,
+          // which is not ours to clear. COMP's 1-knob coming on under the operator's hand
+          // hands threshold / ratio / gain / knee to the device and locks those rows, so
+          // re-enabling one would put a device-driven value back under the pointer.
           input.disabled = false;
-          // The row on screen may no longer be this element: the same blur clears
-          // `grabbed`, so a refresh deferred by the press runs and rebuilds the column.
-          // Re-arming the one that was replaced would leave the operator's focus on a
-          // node nothing can reach, so the restore asks the screen for the live row.
           const live = this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`) ?? input;
-          live.disabled = false;
-          if (focused) live.focus();
+          if (focused && !live.disabled) live.focus();
         };
         window.addEventListener("pointerup", back);
         window.addEventListener("pointercancel", back);
