@@ -464,9 +464,11 @@ every `<input type="range">` goes through it — the tuning rows, both of the in
 the shared `sliderRow`, and Device setup's brightness — for the same reason `wheelStep` is shared. What
 this screen adds is where a deferred refresh lands. The blur ends the gestures this view runs itself but
 leaves `grabbed` set, because the press is still in flight and a rebuild under it would hand the
-still-held pointer a live control — the state the hold exists to prevent. So the deferral lasts as long
-as the press, and the refresh runs at whichever comes last: this screen's own pointer release, or the
-release of the last row held anywhere in the app. The hold in turn asks for the row that is on screen
+still-held pointer a live control — the state the hold exists to prevent. So the deferral outlives the
+blur, and the refresh runs at the **first** release to arrive: this screen's own `pointerup` or
+`pointercancel`, or the end of the last hold anywhere in the app — which the window coming back also
+produces, so a return with the button still down lands it there. Whichever runs first clears `grabbed`;
+the others find it already cleared. The hold in turn asks for the row that is on screen
 rather than the one the gesture started on, since a rebuild may already have replaced it. A rebuilt row
 keeps whatever `disabled` state the rebuild gave it — COMP's 1-knob coming on hands threshold / ratio /
 gain / knee to the device and locks those rows — and it does not get focus back, because no rebuild in
