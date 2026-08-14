@@ -170,6 +170,20 @@ const condition = (job) => {
 // which is what the ruleset matches on.
 const contextOf = (id, job) => unquote(job.children.get("name")?.value ?? "") || id;
 
+// Does a concurrency group key give every run of its own a group of its own?
+//
+// An ALLOWLIST of two shapes rather than a search for `github.run_id`, because a substring
+// is not a guarantee: `${{ github.ref }}-${{ github.run_id == 0 }}` mentions the run id and
+// evaluates to the same string for every run, and so does `${{ 0 && github.run_id }}`. Both
+// passed a substring test. Deciding the general case means evaluating GitHub's expression
+// language, so this refuses everything it cannot read instead — which is the same trade the
+// reader above makes, and it fails toward "say something" rather than toward silence.
+//
+//   ${{ github.run_id }}                     a run id on its own
+//   ${{ <context path> || github.run_id }}   the house idiom: a per-PR key, run id otherwise
+const PER_RUN = /\$\{\{\s*(?:[A-Za-z_][\w.-]*\s*\|\|\s*)?github\.run_id\s*\}\}/;
+const perRunKey = (group) => PER_RUN.test(group);
+
 // --- the workflows ------------------------------------------------------------
 
 function readWorkflowSources() {
@@ -345,16 +359,23 @@ function checkJob(workflow, id, job, context) {
     }
     const group = node.children.get("group")?.value ?? "";
     const cancel = unquote(node.children.get("cancel-in-progress")?.value ?? "");
+    const queue = unquote(node.children.get("queue")?.value ?? "");
     // NOT `=== "true"`. GitHub takes an expression here, and reading `${{ … }}` as "does
     // not cancel" would pass exactly the arrangement this rule exists to refuse. Absent
     // is the documented default of false; anything else counts as cancelling.
     const cancels = cancel !== "" && cancel !== "false";
-    if (cancels && !group.includes("github.run_id")) {
+    // `cancel-in-progress: false` is NOT on its own a group nothing is lost from.
+    // `concurrency.queue` defaults to `single`, which keeps one pending run and cancels it
+    // when the next arrives, so a shared group drops runs either way; `queue: max` is what
+    // raises that to 100, and it cannot be combined with cancelling.
+    const keepsPending = queue === "max";
+    if ((cancels || !keepsPending) && !perRunKey(group)) {
       finding(
         where,
-        `\`${context}\` comes from a ${level} whose concurrency group \`${group}\` cancels in progress and is not keyed ` +
-          `per run — two runs reporting it on one commit share the group, and the cancelled one leaves the context at ` +
-          `\`cancelled\`, which satisfies no merge. Key the non-pull-request case on \`github.run_id\``,
+        `\`${context}\` comes from a ${level} whose concurrency group \`${group}\` can drop a run and is not keyed ` +
+          `per run — two runs reporting it on one commit share the group, and the dropped one leaves the context at ` +
+          `\`cancelled\`, which satisfies no merge. Key the non-pull-request case on \`github.run_id\`` +
+          (cancels ? "" : ", or add `queue: max` so a pending run is not replaced"),
       );
     }
   }

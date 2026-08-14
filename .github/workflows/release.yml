@@ -25,13 +25,18 @@ on:
 # building queues instead of running beside it, so two runs cannot assemble the same draft
 # Release at once. `cancel-in-progress` stays false — the installers are what this
 # produces, and a build killed part-way leaves a draft holding some platforms and not
-# others. Distinct tags never share the group, so nothing queues in ordinary use, and that
-# matters beyond tidiness: `false` holds only ONE run pending, and a third run on the same
-# tag would cancel the queued second. Three concurrent runs on one tag is a hand-made
-# situation, and this is what it would do.
+# others.
+#
+# `queue: max` is the other half of that, and without it the promise above holds for one
+# run only: `concurrency.queue` defaults to `single`, which keeps at most ONE run pending
+# and cancels it when the next arrives, so a third dispatch on one tag would drop the
+# queued second — a run that produces nothing and shows grey. `max` raises the ceiling to
+# 100 and runs them in arrival order. It cannot be combined with `cancel-in-progress: true`,
+# which is why only the two workflows that do not cancel can carry it.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: write

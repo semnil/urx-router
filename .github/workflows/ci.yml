@@ -32,8 +32,9 @@ on:
 # false, and the merge's version bump is not tagged — with no failed check anywhere to
 # read, since nothing failed. `github.run_id` is unique per run, so every push run is a
 # group of one. Keying the fallback to `github.ref` instead would put all of main in one
-# group, and a PENDING run in a shared group is cancelled by default with no way to turn
-# that off — so `cancel-in-progress: false` would not have covered it either.
+# group, and `cancel-in-progress: false` would not have covered that: `concurrency.queue`
+# defaults to `single`, so a PENDING run in a shared group is cancelled and replaced by the
+# next arrival. The key is what keeps main out of a shared group at all.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true

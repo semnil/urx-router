@@ -57,8 +57,10 @@ on:
 # Both runs report `race-required` on the same head commit, so a cancellation there blocks
 # the merge until something re-reports. `run_id` is unique per run, so every
 # non-pull-request run is a group of one and cancels nothing. `cancel-in-progress: false`
-# would not be enough on its own: a PENDING run in a shared group is cancelled by default,
-# and that half cannot be turned off.
+# would not be enough on its own: `concurrency.queue` defaults to `single`, so a PENDING
+# run in a shared group is cancelled and replaced when the next one arrives. `queue: max`
+# raises that to 100 — and it cannot be combined with `cancel-in-progress: true`, so it is
+# not available here. A key nothing else joins is.
 concurrency:
   group: race-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
