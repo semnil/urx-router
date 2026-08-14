@@ -706,7 +706,16 @@ Which way it gives depends on **who authors the values**:
 | The plan… | What closes it | Heads |
 | --- | --- | --- |
 | only **mirrors** them | the plan stops emitting those addresses while the head is engaged, so nothing can push them back | EQ 1-knob (its four bands), COMP 1-knob (`COMP_ONE_KNOB_DRIVEN`, which is also the set the COMP screen locks and tags, so the writer and the screen cannot disagree about who owns a row) |
-| genuinely **authors** them | the head declares what it hands to the device (`ParamSpec.drives`) and the converge is told to leave exactly those alone, for that flush and that node | SSMCS Morphing |
+| genuinely **authors** them | the head declares what it hands to the device (`ParamSpec.drives`) and the converge is told to leave exactly those alone, for that flush and that node | SSMCS Morphing, SSMCS Sweet Spot Data |
+
+**One of those heads is a string.** Selecting a Sweet Spot Data preset recomputes the same
+seventeen values a morph does, and the preset is a 4-digit string, so it rides the name-write
+path rather than the numeric one. That path used to walk past both sets, which is why the
+catalog could not simply declare it: a `NameWrite` now carries its catalog name and its owner
+node, and the flush's name loop reads the flag off it. What the preset does **not** do is move
+the morph position — it is announced with the burst whatever it holds, and parking Morphing at
+62 before the write showed it announced and read back as 62 — so `drives` names the seventeen
+and not `93`, or a converge would be stopped from restoring a morph the operator set.
 
 The first is the better one wherever it is available — an address the plan never sends cannot be
 pushed back by anything, and there is no list to keep correct. Morphing cannot take it: the inspector

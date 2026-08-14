@@ -609,6 +609,10 @@ export class LiveSync {
       // just computed. Scoped to the node, because the same names on another channel are
       // that channel's own and the converge is right about them.
       const driven = new Map<string, Set<string>>();
+      // Addresses the NAME loop wrote that the refetch may not start before hearing about.
+      // Separate from `writes` because that map is numeric and the read overlays answers
+      // from it; see the name loop.
+      const nameSettle = new Set<number>();
       // What this flush wrote and the device acked, keyed the way the snapshot is
       // (translate.addrKey). Handed to the refetch, whose read would otherwise be issued
       // inside the window in which the unit still answers these addresses with the
@@ -703,6 +707,27 @@ export class LiveSync {
         this.nameSnapshot.set(k, value);
         this.notePending(this.pendingNames, k, value);
         sent++;
+        // A string write can be a sideEffect head too: the SSMCS preset recomputes the strip
+        // exactly as the morphing knob does. Only REFETCH is consulted — no string param is a
+        // converge head, and a branch nothing reaches is a claim no test can hold.
+        if (w.name !== undefined && w.node !== undefined && REFETCH.has(w.name)) {
+          refetch.add(w.node);
+          const drives = DRIVES.get(w.name);
+          if (drives) {
+            let names = driven.get(w.node);
+            if (!names) driven.set(w.node, (names = new Set()));
+            for (const n of drives) names.add(n);
+          }
+          // The read may not start before the unit has spoken for this address — the rule the
+          // numeric writes take, and the unit does speak, first (params.ts). It goes into
+          // `mustSettle` ALONE and not into the `written` map: that map is what the read
+          // overlays its answers from, it is numeric, and a string notify carries its text in
+          // a different field — so an entry there would answer a numeric read with a number
+          // the unit never sent. Having no mark means the wait cannot be ended by a notify
+          // that predates the write, which is right here: this loop only writes a value the
+          // device does not already hold, so an announcement is owed.
+          nameSettle.add(addrKey(w.param, 0, w.y));
+        }
       }
       this.lastFlushConverged = sideEffect;
       if (sideEffect) {
@@ -801,6 +826,7 @@ export class LiveSync {
           if (w.node !== undefined && refetch.has(w.node)) mustSettle.add(k);
           else if (w.changed) mustAnnounce.add(k);
         }
+        for (const k of nameSettle) mustSettle.add(k);
         const deviceView = await this.hooks.refetchNodes(refetch, { written, mustSettle, mustAnnounce });
         if (this.sessionGen !== gen) return;
         // The read ran against its own copy of the plan (readback.readIntoPlan), so the

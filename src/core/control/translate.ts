@@ -2077,11 +2077,21 @@ export function planToFollowOnlyAddrs(model: DeviceModel, scope: WriteScope = "a
   return out.filter((f) => (PARAMS[f.name] as ParamSpec).sceneExternal !== true);
 }
 
-/** One string write: the CH SETTING name for a node, on a single instance. */
+/** One string write: a node's CH SETTING name, or the SSMCS preset index. */
 export interface NameWrite {
   param: number;
   y: number;
   value: string;
+  /** The catalog entry this write is, for the string writes that ARE one. A node's name
+   *  is not — its address comes from `nameControl` and it has no `PARAMS` row — so it
+   *  carries neither this nor `node`, and the live flush treats it as it always has.
+   *  Present so a string write can be a `sideEffect` head at all: the flush reads the
+   *  flag off this rather than reverse-mapping a param id back to a catalog row. */
+  name?: ParamName;
+  /** The node that owns the write, for the reason `VdCommand.node` exists: a `"refetch"`
+   *  head is repaired by re-reading its owner, and a write with no owner names nothing
+   *  to read. */
+  node?: string;
 }
 
 /**
@@ -2115,7 +2125,13 @@ export function planToNameWrites(model: DeviceModel, plan: Plan): NameWrite[] {
     if ((np?.compEqType ?? COMP_EQ_COMP_FIRST) !== COMP_EQ_SSMCS) continue;
     const cc = channelControl(model, node.id);
     if (!cc?.hasMicStrip) continue;
-    out.push({ param: PARAMS.SWEET_SPOT_DATA.id, y: cc.y, value: sweetSpotDataToStr(idx) });
+    out.push({
+      param: PARAMS.SWEET_SPOT_DATA.id,
+      y: cc.y,
+      value: sweetSpotDataToStr(idx),
+      name: "SWEET_SPOT_DATA",
+      node: node.id,
+    });
   }
   return out;
 }
