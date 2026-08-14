@@ -22,7 +22,13 @@ import {
   EQ_BAND_NAMES,
 } from "../control/translate";
 import type { DynField } from "../control/translate";
-import { COMP_EQ_COMP_FIRST, EQ_TYPE_PASS, EQ_TYPE_PEAKING, EQ_TYPE_SHELVING } from "../control/params";
+import {
+  COMP_EQ_COMP_FIRST,
+  COMP_ONE_KNOB_DRIVEN,
+  EQ_TYPE_PASS,
+  EQ_TYPE_PEAKING,
+  EQ_TYPE_SHELVING,
+} from "../control/params";
 import { mixSendLocks } from "../routing";
 import { channelEqUnavailable } from "../constraints";
 import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../control/vd";
@@ -386,8 +392,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         // nothing while it is off. Same rules the screen's rows render under.
         const comp = (): Record<string, unknown> => (plan.nodeParams[id]?.comp ?? {}) as Record<string, unknown>;
         const oneOn = (): boolean => comp().oneKnob === true;
-        const driven = new Set(["threshold", "ratio", "gain"]);
-        for (const f of dyn.comp) out.push(subDyn("comp", COMP_SCOPE, f, driven.has(f.key) ? oneOn : undefined));
+        for (const f of dyn.comp)
+          out.push(subDyn("comp", COMP_SCOPE, f, COMP_ONE_KNOB_DRIVEN.has(f.key) ? oneOn : undefined));
         out.push(subFlag("comp", COMP_SCOPE, "autoMakeup", "autoMakeup", false, oneOn));
         out.push(subFlag("comp", COMP_SCOPE, "oneKnob", "oneKnob", false));
         out.push(

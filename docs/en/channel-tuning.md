@@ -143,8 +143,9 @@ editable value and the gesture cannot be misread.
 **printed beside it** and set apart from the level pair. That is not the alternative rejected for
 the gate below, which was a second *unlabelled* scale under the *shared* ticks.
 
-**Some values belong to the device while it drives them.** With 1-knob on, the unit computes
-threshold / ratio / gain from a single level; with Auto Makeup on, it computes the gain. Each
+**Some values belong to the device while it drives them.** With 1-knob on, the unit owns
+threshold / ratio / gain / knee — it computes the first three from a single level, and takes the
+knee when the knob engages; with Auto Makeup on, it computes the gain. Each
 recomputation is announced per address (measured), so those rows stay on screen and keep updating —
 tagged, dimmed and read-only — rather than being hidden or recomputed here.
 
@@ -683,10 +684,10 @@ they differ in who owns what the device just moved:
 | `"converge"` | values the plan **authors** (a COMP/EQ type change clears the channel-strip toggles) | push them back — a converge round over the write scope |
 | `"refetch"` | values the plan only **mirrors** (the EQ 1-knob recomputes all four bands) | read the owner node back, and re-base the snapshot from it |
 
-The EQ 1-knob's three parameters are the refetch case. Converging them would write the operator's
-stale manual curve straight over the device's own computation, and nothing announces the
-recomputation: the notify registration is an address list, and the band addresses leave it while
-1-knob is on (the plan stops emitting them). So `live.ts` calls the same device→plan inverse the
+Both 1-knobs are the refetch case — the EQ's three parameters and the COMP's two. Converging them
+would write the operator's stale manual curve straight over the device's own computation, and
+nothing announces the recomputation: the notify registration is an address list, and the band
+addresses leave it while 1-knob is on (the plan stops emitting them). So `live.ts` calls the same device→plan inverse the
 device-follow scoped path uses, then re-captures the snapshot — without which every value the read
 brought in would read as a pending edit on the next diff. A device-side turn of the same knob already
 took this path; this is the same repair for our own write. A refetch is also one read of one node
@@ -704,7 +705,7 @@ Which way it gives depends on **who authors the values**:
 
 | The plan… | What closes it | Heads |
 | --- | --- | --- |
-| only **mirrors** them | the plan stops emitting those addresses while the head is engaged, so nothing can push them back | EQ 1-knob (its four bands), COMP 1-knob (`COMP_ONE_KNOB_DRIVEN`) |
+| only **mirrors** them | the plan stops emitting those addresses while the head is engaged, so nothing can push them back | EQ 1-knob (its four bands), COMP 1-knob (`COMP_ONE_KNOB_DRIVEN`, which is also the set the COMP screen locks and tags, so the writer and the screen cannot disagree about who owns a row) |
 | genuinely **authors** them | the head declares what it hands to the device (`ParamSpec.drives`) and the converge is told to leave exactly those alone, for that flush and that node | SSMCS Morphing |
 
 The first is the better one wherever it is available — an address the plan never sends cannot be

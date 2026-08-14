@@ -343,6 +343,35 @@ describe("sendConverging", () => {
     expect(vi.mocked(vdSet).mock.calls.some(([id]) => id === 46)).toBe(true);
   });
 
+  // Does the COMP 1-knob chain need a group, the way the EQ 1-knob's does? Writing 42
+  // discards 43 to 0 (measured), which is the same shape — and the EQ's group exists because
+  // that shape ran the round budget out. This settles it by driving the chain rather than by
+  // reasoning from the shape: the device below models the discard, and the case starts from
+  // the state that produces the longest walk (only the ON differs, so round 1 sends 42 alone
+  // and creates the difference at 43 that round 2 has to repair).
+  //
+  // It converges, in two rounds, inside the budget — so no group. The EQ's chain is three
+  // links (46 discards 47, 47 discards 48) and that is what a 3-round budget cannot walk;
+  // this one is two. Nothing further is discarded once 43 lands, because the values the level
+  // recomputes are not emitted at all while the knob is on.
+  it("walks the COMP 1-knob chain to convergence without a group", async () => {
+    const table = installDevice();
+    const inner = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      const wasOn = table.get(`42:${x}:${y}`) ?? 0;
+      await inner(id, x, y, v);
+      if (id === 42 && v === 1 && wasOn !== 1) table.set(`43:${x}:${y}`, 0); // the measured discard
+    });
+    table.set("43:0:0", 70); // the level the plan wants is already there; only the ON differs
+    const plan = dirtyPlan();
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], comp: { oneKnob: true, oneKnobLevel: 70 } };
+
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+    expect(r.residual).toEqual([]);
+    expect(r.rounds).toBe(2);
+    expect([table.get("42:0:0"), table.get("43:0:0")]).toEqual([1, 70]);
+  });
+
   // A re-diff that cannot read the device leaves the residual unknowable, so the
   // loop ends and surfaces why rather than sending another round blind.
   it("stops and reports readErrors when a re-diff cannot read the device", async () => {

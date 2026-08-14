@@ -42,6 +42,7 @@ import {
   COMP_EQ_SSMCS,
   COMP_KNEE_DEFAULT,
   COMP_KNEE_OPTIONS,
+  COMP_ONE_KNOB_DRIVEN,
   DELAY_FRAME_RATE_DEFAULT,
   DELAY_FRAME_RATE_OPTIONS,
   denormalizeInsertFx,
@@ -1632,8 +1633,23 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     if (dyn) {
       if (np.gate) pushDynCommands(out, dyn.gate, dyn.y, np.gate as Record<string, number | undefined>);
       if (dyn.comp && np.comp) {
-        pushDynCommands(out, dyn.comp, dyn.y, np.comp as Record<string, number | undefined>);
-        if (np.comp.knee !== undefined)
+        // While the COMP 1-knob is on the device owns the values in COMP_ONE_KNOB_DRIVEN,
+        // so they are skipped for the same reason the EQ bands are above. Emitting them is
+        // not merely redundant: anything that re-sends the plan's copy after the knob has
+        // computed puts the operator's pre-knob values back on the unit, which is what a
+        // converge sharing the flush does (it reads the unit, sees the computed values
+        // differ from the plan, and writes the plan's). Attack, release and auto-makeup
+        // stay authored — the knob leaves those where the operator put them.
+        const comp = np.comp;
+        const deviceDriven = (key: string): boolean =>
+          !emit.includeDeviceDriven && comp.oneKnob === true && COMP_ONE_KNOB_DRIVEN.has(key);
+        pushDynCommands(
+          out,
+          dyn.comp.filter((f) => !deviceDriven(f.key)),
+          dyn.y,
+          comp as Record<string, number | undefined>,
+        );
+        if (np.comp.knee !== undefined && !deviceDriven("knee"))
           out.push(command("COMP_KNEE", dyn.y, boundEnum(np.comp.knee, COMP_KNEE_OPTIONS, COMP_KNEE_DEFAULT)));
         if (np.comp.autoMakeup !== undefined) out.push(command("COMP_AUTO_MAKEUP", dyn.y, np.comp.autoMakeup ? 1 : 0));
         if (np.comp.oneKnob !== undefined) out.push(command("COMP_ONE_KNOB", dyn.y, np.comp.oneKnob ? 1 : 0));

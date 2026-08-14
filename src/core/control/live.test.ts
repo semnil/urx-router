@@ -651,6 +651,20 @@ function setCh1Morphing(plan: Plan, morphing: number): void {
   };
 }
 
+// The COMP 1-knob drives the values in COMP_ONE_KNOB_DRIVEN on the device and announces the
+// recomputation (measured 2026-08: the written address goes fresh 0.046 ms before the four
+// dependents when the knob is switched on — threshold, ratio, makeup and the knee — and
+// 0.111 ms before the three a level change moves, which are the same minus the knee; none
+// ahead of it in either direction). The plan mirrors them while the knob is on — the screen
+// locks those rows — so this is a refetch, and a converge would push the pre-write copies
+// back over what the knob just computed.
+function setCh1CompOneKnob(plan: Plan, patch: { oneKnob?: boolean; oneKnobLevel?: number }): void {
+  plan.nodeParams.ch1 = {
+    ...plan.nodeParams.ch1,
+    comp: { ...plan.nodeParams.ch1?.comp, ...patch },
+  };
+}
+
 describe("LiveSync sideEffect refetch", () => {
   // The measured membership, pinned by address rather than by count: the morph recomputes
   // every CONTINUOUS value in the strip and none of the five ON switches. Both directions
@@ -737,6 +751,118 @@ describe("LiveSync sideEffect refetch", () => {
     expect(seen).toEqual([{ ratio: morphed, scOn: 0 }]);
     // And the converge still did its own job: the pan the selector slammed is back.
     expect(device.get(PAN)).toBe(planPan);
+  });
+
+  it("reads the node back after a comp 1-knob level write", async () => {
+    const plan = basePlan();
+    setCh1CompOneKnob(plan, { oneKnob: true, oneKnobLevel: 20 });
+    const refetched: string[][] = [];
+    const live = liveFor(plan, async (nodes) => {
+      refetched.push([...nodes]);
+      return null;
+    });
+    live.begin();
+    setCh1CompOneKnob(plan, { oneKnobLevel: 70 });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(refetched).toEqual([["ch1"]]);
+    expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
+  });
+
+  it("reads the node back when the comp 1-knob is switched on", async () => {
+    const plan = basePlan();
+    setCh1CompOneKnob(plan, { oneKnob: false, oneKnobLevel: 20 });
+    const refetched: string[][] = [];
+    const live = liveFor(plan, async (nodes) => {
+      refetched.push([...nodes]);
+      return null;
+    });
+    live.begin();
+    setCh1CompOneKnob(plan, { oneKnob: true });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(refetched).toEqual([["ch1"]]);
+    expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
+  });
+
+  // A converge and a refetch can land in one flush — PAN/BAL and the 1-knob level inside
+  // the same 120 ms window is enough — and the converge runs first. It makes the unit match
+  // the plan across the whole write scope, so any address the plan still emits AND the unit
+  // has just recomputed is written back at its pre-write value; the refetch that follows
+  // then reads what the converge left. Nothing on screen says so, and the unit is left with
+  // a 1-knob level whose three values belong to a different level (a level write moves
+  // threshold, ratio and makeup; the knee only moves when the knob is switched on).
+  //
+  // What keeps it out is that the plan stops emitting the whole driven set while the knob is
+  // on (translate.ts) — so this is the flush-level pin under that gate, and removing the gate
+  // fails here rather than only in the translate suite.
+  it("leaves the unit's 1-knob computation alone when a converge shares the flush", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      panBal: 0,
+      comp: { ...plan.nodeParams.ch1?.comp, oneKnob: true, oneKnobLevel: 20, threshold: -18, ratio: 3, gain: 6 },
+    };
+    // Through the escape hatch: the gate under test is what keeps these three out of the
+    // ordinary emit, and the fake device holds every address regardless of who authors it.
+    const every = planToCommands(model, plan, "all", { includeDeviceDriven: true });
+    const addr = (name: string): number => {
+      const c = every.find((x) => x.name === name && x.node === "ch1")!;
+      return addrKey(c.paramId, c.x, c.y);
+    };
+    const THR = addr("COMP_THRESHOLD");
+    const RAT = addr("COMP_RATIO");
+    const GAIN = addr("COMP_GAIN");
+    const LEVEL = addr("COMP_ONE_KNOB_LEVEL");
+
+    // The unit: seeded from the plan the session opened on, and recomputing the three the
+    // knob drives when the level is written (the measured shape — a level change moved all
+    // three, announced 0.111 ms behind the level's own notify).
+    const device = new Map<number, number>(every.map((c) => [addrKey(c.paramId, c.x, c.y), c.vdValue]));
+    vi.mocked(vdSet).mockImplementation(async (paramId: number, x: number, y: number, v: number) => {
+      const k = addrKey(paramId, x, y);
+      device.set(k, v);
+      if (k === LEVEL) {
+        device.set(THR, -2700);
+        device.set(RAT, 350);
+        device.set(GAIN, 630);
+      }
+    });
+    // Refuses an address it was never seeded with rather than answering 0: the seed covers
+    // every address the plan can emit, so a miss is this case addressing the wrong one, and
+    // a zero would be read as a device value and quietly change what the converge sends.
+    vi.mocked(vdGet).mockImplementation(async (paramId: number, x: number, y: number) => {
+      const v = device.get(addrKey(paramId, x, y));
+      if (v === undefined) throw new Error(`fake device holds no ${paramId}:${x}:${y}`);
+      return v;
+    });
+
+    const atRefetch: Array<Array<number | undefined>> = [];
+    const live = liveFor(plan, async () => {
+      atRefetch.push([device.get(THR), device.get(RAT), device.get(GAIN)]);
+      return null;
+    });
+    live.begin();
+
+    // One window carrying both: PAN/BAL (converge) and the 1-knob level (refetch).
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      panBal: 1,
+      comp: { ...plan.nodeParams.ch1?.comp, oneKnobLevel: 70 },
+    };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(5000);
+
+    // The converge really ran — otherwise this case would pass for the wrong reason.
+    expect(vi.mocked(vdGet).mock.calls.length).toBeGreaterThan(0);
+    expect(atRefetch).toEqual([[-2700, 350, 630]]);
+    // And it is still what the unit holds once the flush is over.
+    expect([device.get(THR), device.get(RAT), device.get(GAIN)]).toEqual([-2700, 350, 630]);
   });
 
   it("reads the node back after a morphing write instead of pushing the strip back", async () => {

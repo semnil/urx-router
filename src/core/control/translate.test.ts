@@ -634,6 +634,32 @@ describe("planToCommands", () => {
     expect(lvl.vdValue).toBe(50);
   });
 
+  it("skips the COMP values the 1-knob drives while it is on", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    const comp = { threshold: -18, ratio: 3, gain: 6, knee: 1, attack: 20, release: 150, autoMakeup: false };
+    plan.nodeParams.ch1 = { comp: { ...comp, oneKnob: true, oneKnobLevel: 50 } };
+    const on = planToCommands(model, plan).filter((c) => c.node === "ch1");
+    const has = (list: typeof on, name: string): boolean => list.some((c) => c.name === name);
+    for (const name of ["COMP_THRESHOLD", "COMP_RATIO", "COMP_GAIN", "COMP_KNEE"]) expect(has(on, name)).toBe(false);
+    // Only those four. The knob leaves attack, release and Auto Makeup where the operator
+    // put them, so they stay authored — and the knob's own two params are the write.
+    for (const name of ["COMP_ATTACK", "COMP_RELEASE", "COMP_AUTO_MAKEUP"]) expect(has(on, name)).toBe(true);
+    expect(has(on, "COMP_ONE_KNOB")).toBe(true);
+    expect(has(on, "COMP_ONE_KNOB_LEVEL")).toBe(true);
+
+    // Off: the plan authors all four again.
+    plan.nodeParams.ch1 = { comp: { ...comp, oneKnob: false, oneKnobLevel: 50 } };
+    const off = planToCommands(model, plan).filter((c) => c.node === "ch1");
+    for (const name of ["COMP_THRESHOLD", "COMP_RATIO", "COMP_GAIN", "COMP_KNEE"]) expect(has(off, name)).toBe(true);
+
+    // The escape hatch reaches them while it is on, for a caller that wants every
+    // address the unit holds rather than the ones the plan authors.
+    plan.nodeParams.ch1 = { comp: { ...comp, oneKnob: true, oneKnobLevel: 50 } };
+    const all = planToCommands(model, plan, "all", { includeDeviceDriven: true }).filter((c) => c.node === "ch1");
+    for (const name of ["COMP_THRESHOLD", "COMP_RATIO", "COMP_GAIN", "COMP_KNEE"]) expect(has(all, name)).toBe(true);
+  });
+
   it("drops COMP detail in SSMCS mode but keeps GATE", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
@@ -1337,8 +1363,21 @@ describe("reset chains (sideEffect heads vs converge groups)", () => {
     "FX_EFFECT_TYPE", // -> the FX_EFFECT_PARAM array
     "SIGNAL_TYPE", // -> the SECONDARY channel's state, so a group cannot express it
     "PAN_BAL", // -> CH_PAN + every SEND_PAN; its order is pinned above
+    // The COMP 1-knob, ungrouped for the same reason as the rest after all. Its chain LOOKS
+    // like the EQ 1-knob's — writing 42 discards 43 (measured), the shape that earned the EQ
+    // triple its group — but it is two links where the EQ's is three, and two is what one
+    // extra round settles. Driven rather than reasoned: `client.test.ts` walks it from the
+    // state that produces the longest path and it converges in round 2, with nothing further
+    // discarded once the level lands (the values the level recomputes are not emitted at all
+    // while the knob is on).
+    "COMP_ONE_KNOB",
+    "COMP_ONE_KNOB_LEVEL",
   ]);
 
+  // ⚠️ This only sees what the DEFAULT plan emits. A sideEffect head that needs a
+  // non-default plan to appear at all — SSMCS_MORPHING needs a channel switched to the
+  // morphing strip — is invisible here and reaches no decision. Adding one means recording
+  // it by hand, because nothing fails when you do not.
   it("accounts for every emitted sideEffect param", () => {
     const emitted = new Set<string>();
     for (const id of MODEL_IDS) {

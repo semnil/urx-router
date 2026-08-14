@@ -49,6 +49,16 @@
 //                       0.35 ms (measured 2026-08, URX44V, sub-millisecond clock and
 //                       arrival order, because the burst fits inside one millisecond and
 //                       a millisecond clock reports it as a tie).
+//   COMP_ONE_KNOB       recomputes threshold / ratio / makeup (35 / 36 / 38) to unity and
+//                       takes the knee (37) to Medium; written address first by 0.046 ms,
+//                       none ahead of it. The knee is the one a first run missed: it was in
+//                       the probe's capture list and not in its WATCH list, so its notify
+//                       was counted as another client's traffic.
+//   COMP_ONE_KNOB_LEVEL recomputes the three, leaving the knee where the knob put it; written address first
+//                       by 0.111 ms, none ahead of it. ⚠️ Measuring it needs the knob left
+//                       ON — a level write is inert while it is off, and a run that
+//                       restored the knob before writing the level reported no dependents
+//                       at all.
 //
 // Both put the boundary before the dependents by well under the flight time of the first
 // read the refetch then issues, which is what makes ending on it safe. Every sideEffect:

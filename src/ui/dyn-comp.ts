@@ -19,7 +19,7 @@
 
 import { onOff, settingsChoice, settingsRow } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS } from "../core/control/params";
+import { COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS, COMP_ONE_KNOB_DRIVEN } from "../core/control/params";
 import { COMP_SCOPE, controlId } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
 import { bindChannelStrip, displayBar, subObjectIo } from "./dyn-chan";
@@ -124,7 +124,9 @@ export const COMP_DYN: DynProcessor = {
   rowStates: (ctx, vals) => {
     const out = new Map<string, SettingsRowOptions>();
     const one = vals.oneKnob === true;
-    const driven = one ? ["threshold", "ratio", "gain", "knee"] : vals.autoMakeup ? ["gain"] : [];
+    // The 1-knob's set is the one the writer stops emitting, read from there rather than
+    // spelled again: a row tagged "driven" while the plan still sends it is the drift.
+    const driven = one ? [...COMP_ONE_KNOB_DRIVEN] : vals.autoMakeup ? ["gain"] : [];
     for (const k of driven) out.set(k, { tag: ctx.m.dynTuning.driven, locked: true });
     out.set(one ? "autoMakeup" : "oneKnobLevel", { locked: true });
     return out;
