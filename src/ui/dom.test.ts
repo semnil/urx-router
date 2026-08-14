@@ -6,6 +6,7 @@ import {
   el,
   focusables,
   holdAppInert,
+  holdInertOnBlur,
   onOff,
   onWheelStep,
   popLeft,
@@ -212,6 +213,187 @@ describe("wheel helpers", () => {
     expect(range.value).toBe("1");
     expect(input).toHaveBeenCalledOnce();
     expect(scrubFloat(2.7000000000000002)).toBe(2.7);
+  });
+});
+
+describe("holdInertOnBlur", () => {
+  // Every native range in the app is wired through this, so the cases live with the helper
+  // rather than with any one surface. The reading behind it: the engine owns a native
+  // drag, so no listener the app drops ends it — measured on the shipping WKWebView, a
+  // slider dragged with the button held went on writing while another application was
+  // frontmost, and it RESUMED when focus came back if the treatment only ended it once.
+  const range = (live?: () => HTMLInputElement | null): HTMLInputElement => {
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = "0";
+    input.max = "100";
+    input.value = "50";
+    document.body.append(input);
+    holdInertOnBlur(input, { live });
+    return input;
+  };
+  const press = (el: HTMLElement): void =>
+    void el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+  const up = (): void => void window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+
+  it("disables the control while the window is away and re-arms it when the button comes up", () => {
+    const input = range();
+    press(input);
+    input.focus();
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(input.disabled).toBe(true);
+
+    // Still held while the app is in the background: the value cannot move, which is the
+    // whole point. (Coming back is its own release — the case below — measured safe on the
+    // unit. What was measured to RESUME there, and is not what this does, is detaching the
+    // element and putting it back.)
+    window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, buttons: 1 }));
+    expect(input.disabled).toBe(true);
+
+    up();
+    expect(input.disabled).toBe(false);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("releases the hold when the window comes back, even with the button still down", () => {
+    const input = range();
+    press(input);
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(input.disabled).toBe(true);
+
+    // Measured on the shipping WKWebView (2026-08-14) as well as both engines here:
+    // re-enabling under a still-held button does not hand the drag back, which is what
+    // makes this release safe — and it is the only one that always arrives. A release the
+    // window never hears is never counted, and a touch id is never reused, so without
+    // this the row would stay inert with nothing left to clear it.
+    window.dispatchEvent(new FocusEvent("focus"));
+    expect(input.disabled).toBe(false);
+  });
+
+  it("re-arms on a move that reports no buttons, the release the window never heard", () => {
+    const input = range();
+    press(input);
+    window.dispatchEvent(new FocusEvent("blur"));
+    window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, buttons: 1 }));
+    expect(input.disabled).toBe(true);
+    window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, buttons: 0 }));
+    expect(input.disabled).toBe(false);
+  });
+
+  it("does nothing to a drag that ended normally, or to a blur with no press behind it", () => {
+    const input = range();
+    press(input);
+    up();
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(input.disabled).toBe(false);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(input.disabled).toBe(false);
+  });
+
+  it("leaves the live row's own disabled state alone, and does not focus a locked one", () => {
+    const replacement = document.createElement("input");
+    replacement.type = "range";
+    replacement.disabled = true; // what a rebuild does to a row the device has taken over
+    const input = range(() => replacement);
+    press(input);
+    input.focus();
+    window.dispatchEvent(new FocusEvent("blur"));
+    // The surface rebuilt the row while the press was still down.
+    input.replaceWith(replacement);
+    up();
+    expect(replacement.disabled).toBe(true);
+    expect(document.activeElement).not.toBe(replacement);
+  });
+  it("answers only the pointer that armed it, so a second one cannot re-arm the row", () => {
+    const input = range();
+    press(input);
+    window.dispatchEvent(new FocusEvent("blur"));
+    // A finger resting while a mouse moves, or a hovering pen: no buttons of its own.
+    window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 99, buttons: 0 }));
+    expect(input.disabled).toBe(true);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 99 }));
+    expect(input.disabled).toBe(true);
+    up();
+    expect(input.disabled).toBe(false);
+  });
+
+  it("does not take focus back from whatever the operator touched next", () => {
+    const input = range();
+    const other = document.createElement("input");
+    other.type = "text";
+    document.body.append(other);
+    press(input);
+    input.focus();
+    window.dispatchEvent(new FocusEvent("blur"));
+    // The press that ends the hold is often the next gesture, on another control.
+    other.focus();
+    up();
+    expect(input.disabled).toBe(false);
+    expect(document.activeElement).toBe(other);
+  });
+
+  it("holds the row the surface rebuilt, when the rebuild lands on the same blur", () => {
+    const replacement = document.createElement("input");
+    replacement.type = "range";
+    const input = range(() => replacement);
+    // A surface registers its blur listener when it is built, so it runs FIRST and the
+    // element this gesture started on is already detached by the time the hold applies.
+    window.addEventListener("blur", () => input.replaceWith(replacement));
+    press(input);
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(replacement.disabled).toBe(true);
+    up();
+    expect(replacement.disabled).toBe(false);
+  });
+
+  it("commits through `beforeDisable` before anything is held", () => {
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = "0";
+    input.max = "100";
+    input.value = "50";
+    document.body.append(input);
+    const committed: Array<{ value: string; disabled: boolean }> = [];
+    holdInertOnBlur(input, { beforeDisable: () => committed.push({ value: input.value, disabled: input.disabled }) });
+    press(input);
+    input.value = "70";
+    window.dispatchEvent(new FocusEvent("blur"));
+    // Chromium fires the pending `change` at the disable and WebKit fires none, so the
+    // caller commits here — with the value still readable and the row not yet inert.
+    expect(committed).toEqual([{ value: "70", disabled: false }]);
+    expect(input.disabled).toBe(true);
+  });
+
+  it("forgets what it believed was down when the window comes back", () => {
+    const input = range();
+    // A touch drag whose release the window never heard: the app switch takes the
+    // foreground, the finger comes up over another application, and a touch id is never
+    // reused, so nothing will ever arrive to clear it.
+    input.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 7 }));
+    window.dispatchEvent(new FocusEvent("blur"));
+    window.dispatchEvent(new FocusEvent("focus"));
+    expect(input.disabled).toBe(false);
+
+    // An ordinary press afterwards, pressed and released in front of the app. Its release
+    // has to be believed: a stranded id leaves the count above zero forever, so nothing
+    // this press registered is ever taken down.
+    input.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 8 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 8 }));
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(input.disabled).toBe(false);
+  });
+
+  it("ignores a wheel notch while the row is held inert", () => {
+    const input = range();
+    wheelStep(input);
+    press(input);
+    window.dispatchEvent(new FocusEvent("blur"));
+    input.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }));
+    expect(input.value).toBe("50");
+    up();
+    input.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }));
+    expect(input.value).not.toBe("50");
   });
 });
 

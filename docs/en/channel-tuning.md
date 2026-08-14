@@ -447,12 +447,35 @@ problem in three ways, each measured:
 | Detach + re-insert | Ends the drag — but only until focus returns. On the unit the row **resumed** under the still-held button |
 | `disabled` | Ends it, and cannot be re-acquired while it lasts |
 
-So a row that loses the window is disabled, and stays disabled **until the button comes up** — a
-`pointerup`, a `pointercancel`, or a `pointermove` reporting no buttons, which is the release the window
-never heard. Not until focus returns: that was tried and is what let the row resume. Focus is restored
+So a row that loses the window is disabled, and stays disabled **until the press is over or the window
+comes back** — a `pointerup`, a `pointercancel`, a `pointermove` reporting no buttons (the release the
+window never heard), or the app regaining focus. Ending it at the blur alone was not enough: with the
+DETACH treatment the row resumed under the still-held button when focus returned, which is what sent that
+treatment back. Disabling does not resume — measured in both engines and confirmed by hand on the unit —
+which is what makes the return a safe release, and it is the one signal that always arrives: a release
+lost outside the window is never counted, and a touch pointer id is never reused, so without it a row
+could stay inert with nothing left to clear it. Focus is restored
 with the row, since disabling drops it. It costs nothing on screen: the slider is authored
 (`appearance: none`, its own track and thumb), so the engines have nothing of their own to dim — the row
 shot enabled and disabled is byte-identical in both.
+
+**This is not the tuning screen's rule but the app's**: `holdInertOnBlur` in `ui/dom.ts` carries it, and
+every `<input type="range">` goes through it — the tuning rows, both of the inspector's slider builders,
+the shared `sliderRow`, and Device setup's brightness — for the same reason `wheelStep` is shared. What
+this screen adds is where a deferred refresh lands. The blur ends the gestures this view runs itself but
+leaves `grabbed` set, because the press is still in flight and a rebuild under it would hand the
+still-held pointer a live control — the state the hold exists to prevent. So the deferral lasts as long
+as the press, and the refresh runs at whichever comes last: this screen's own pointer release, or the
+release of the last row held anywhere in the app. The hold in turn asks for the row that is on screen
+rather than the one the gesture started on, since a rebuild may already have replaced it. A rebuilt row
+keeps whatever `disabled` state the rebuild gave it — COMP's 1-knob coming on hands threshold / ratio /
+gain / knee to the device and locks those rows — and it does not get focus back, because no rebuild in
+this app restores focus.
+
+The inspector defers on the same signal, through the gate that already waits out an IME composition and
+an open `<select>` picker. That one is worth naming because a held row is the only one of the three with
+no end event of its own: a composition ends, a picker closes, and a hold ends on a pointer release the
+panel never hears — so the gate subscribes to the hold bookkeeping directly.
 
 ## Meter subscription ownership
 

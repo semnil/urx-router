@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, heldThroughBlur, type Page } from "./fixtures";
 
 // The EQ 1-knob, on the tuning screen where it lives (the inspector keeps the section's
 // ON toggle and a launcher). What it does on the device is measured and recorded in
@@ -107,4 +107,13 @@ test("the 1-knob level survives reopening the screen", async ({ page }) => {
   await node(page, "ch2").click();
   await openEq(page, "ch1");
   await expect(row(page, "1-knob Level").locator(".param-val")).toHaveText("80 %");
+});
+
+// The 1-knob Level row is built by `sliderRow` (ui/dom.ts) — the one range builder that
+// neither the inspector's case nor the tuning rows' own case reaches. Same wiring, same
+// gesture; the shared helper carries what it asserts and why.
+test("the 1-knob Level row is held inert when the window goes away", async ({ page }) => {
+  await openEq(page, "ch1");
+  await oneKnob(page).locator("button", { hasText: "ON" }).click();
+  await heldThroughBlur(page, row(page, "1-knob Level").locator("input[type=range]"));
 });

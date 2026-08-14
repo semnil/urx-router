@@ -42,6 +42,23 @@ const sendMidi = (page: Page, ...msgs: number[][]) =>
     window.__midiTest.inChannel!.onmessage(list.map((bytes) => ({ bytes })));
   }, msgs);
 
+/** Wait page-side for `bytes` to be the last feedback out, then feed it straight back in
+ *  as an echo — no driver round trip between the two, so the echo lands inside the
+ *  engine's guard window the way a reflecting transport's does. */
+const echoLastFeedback = (page: Page, bytes: number[]): Promise<number> =>
+  page.evaluate(async (expected) => {
+    const deadline = performance.now() + 2000;
+    while (performance.now() < deadline) {
+      if (window.__midiTest.sent.at(-1)?.join() === expected.join()) {
+        const sentAt = performance.now();
+        window.__midiTest.inChannel!.onmessage([{ bytes: expected }]);
+        return performance.now() - sentAt;
+      }
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error(`feedback ${expected.join()} never went out`);
+  }, bytes);
+
 /** Open the MIDI control window from the Device menu and attach to it. The shell
  *  command is stubbed, so the second page is opened here — the app's own state
  *  reaches it over the faked relay exactly as it would over the real one. */
@@ -789,8 +806,13 @@ test("a toggle ignores the echo of its own feedback", async ({ page }) => {
 
   await muteChip().click(); // mute via the UI
   await expect(muteChip()).toHaveClass(/\bon\b/);
-  await expect.poll(() => page.evaluate(() => window.__midiTest.sent.at(-1))).toEqual([0xb0, 20, 127]); // feedback out
-  await sendMidi(page, [0xb0, 20, 127]); // the echo
+  // Echoed page-side, in the task that sees the feedback go out. Bridging that over the
+  // driver — poll for `sent`, then send — puts the echo ~250 ms after the feedback
+  // (measured on this spec), well past the engine's 50 ms guard, so the case asserted the
+  // guard against a message it is not meant to catch and failed wherever the poll was
+  // slower than the window. A reflecting transport answers in 0.13-5 ms, which is what
+  // the guard is sized from and what this reproduces.
+  await echoLastFeedback(page, [0xb0, 20, 127]);
   await page.waitForTimeout(150);
   await expect(muteChip()).toHaveClass(/\bon\b/); // still muted
   // The echo is consumed one-shot: an equal press right after it is a real

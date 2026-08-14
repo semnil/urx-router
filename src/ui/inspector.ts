@@ -139,7 +139,7 @@ import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
 import { setLevelText } from "./glyph";
-import { wheelStep } from "./dom";
+import { holdInertOnBlur, isHoldingInert, onInertHoldsEnd, wheelStep } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import type { DynKind } from "./dyn-registry";
 import {
@@ -246,11 +246,14 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   // ENDS the busy state, by which point it has already ended. A composition clears its
   // own flag here; a picker's "open" is read off focus and has cleared itself before
   // the blur reaches us, so testing the flag alone would have dropped the rebuild.
-  const end = (): void => {
-    composing = false;
+  const flush = (): void => {
     if (!pending || busy()) return;
     pending = false;
     rebuild();
+  };
+  const end = (): void => {
+    composing = false;
+    flush();
   };
   // An open `<select>` picker is the second kind of in-flight input a rebuild destroys,
   // and `replaceChildren` closes it instantly — so while any followed parameter on the
@@ -265,7 +268,16 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   // `focusout`, and on `change`, which is what a picker dismissal produces.
   const openPicker = (): boolean =>
     document.activeElement instanceof HTMLSelectElement && host.contains(document.activeElement);
-  const busy = (): boolean => composing || openPicker();
+  // A row held inert is the third kind of in-flight input a rebuild destroys, and the
+  // worst of the three: replacing it hands the still-held pointer a live control, which
+  // is the state the hold exists to prevent. Same seam, one more reason.
+  const busy = (): boolean => composing || openPicker() || isHoldingInert();
+  // …and the only one of the three with no end event of its own: a hold ends on a pointer
+  // release this host never sees, so nothing here would fire and a rebuild held during it
+  // would wait for whatever the operator happened to do next. `flush` rather than `end`,
+  // which also clears `composing` — a backstop the two input kinds need and this one must
+  // not take, since a hold can end while a composition is genuinely still in flight.
+  onInertHoldsEnd(flush);
   host.addEventListener("compositionstart", () => {
     composing = true;
   });
@@ -1132,6 +1144,7 @@ function rangeSlider(
     onInput(v);
   });
   wheelStep(slider);
+  holdInertOnBlur(slider);
   row.append(slider);
   return row;
 }
@@ -1700,6 +1713,7 @@ function snappedSlider(
     onChange(v);
   });
   wheelStep(slider);
+  holdInertOnBlur(slider);
   row.append(slider);
   return row;
 }

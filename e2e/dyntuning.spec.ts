@@ -382,12 +382,16 @@ test("a value row stops following the pointer once the window is gone", async ({
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
   await page.mouse.move(b.x + b.width * 0.8, y);
   expect(await value()).toBe(dragged);
+  // The state itself: a frozen value alone would also pass for the detach treatment that
+  // was measured to resume on the unit.
+  await expect(slider).toBeDisabled();
 
-  // The half the first attempt got wrong, found on the unit: coming back with the button
-  // STILL DOWN resumed the row, which the operator read as "not moving smoothly and not
-  // held either". The press stays dead until the button comes up, so a focus return
-  // changes nothing.
+  // The half the first attempt got wrong, found on the unit: with the DETACH treatment,
+  // coming back with the button still down resumed the row — "not moving smoothly and not
+  // held either". Disabling does not, so the return releases the hold and the value still
+  // does not move under the held pointer.
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await expect(slider).toBeEnabled();
   await page.mouse.move(b.x + b.width * 0.95, y);
   expect(await value()).toBe(dragged);
 

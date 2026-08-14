@@ -11,6 +11,7 @@
 
 import { recorder } from "./dyn-plot.test-util";
 import { recordWindowListeners } from "./listener-scope.test-util";
+import { resetPointerTracking } from "./dom";
 import type { Recorder } from "./dyn-plot.test-util";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
@@ -199,6 +200,7 @@ export function dynHost(opts: DynHostOptions = {}): DynHost {
     pending: () => queue.size,
     canvas: rec,
     restore: () => {
+      resetPointerTracking();
       windowScope.stop();
       windowScope.release();
       Element.prototype.getBoundingClientRect = realRect;

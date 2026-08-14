@@ -15,6 +15,7 @@
 // second addressing scheme the view would not keep in step.
 
 import { recordWindowListeners } from "./listener-scope.test-util";
+import { resetPointerTracking } from "./dom";
 import { Console } from "./console";
 import type { ConsoleHooks, ConsoleMidiHooks } from "./console";
 import { getModel } from "../models";
@@ -207,6 +208,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
     },
     frame,
     restore: () => {
+      resetPointerTracking();
       windowScope.stop();
       windowScope.release();
       view.hide();

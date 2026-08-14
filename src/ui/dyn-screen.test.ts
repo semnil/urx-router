@@ -595,19 +595,22 @@ describe("refresh", () => {
     expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
   });
 
-  // The third end, and the one no pointer event announces. Measured 2026-08-14 on
-  // Chromium (driven over its own DevTools socket) and on the shipping WKWebView: a
-  // window that loses the foreground with the button down gets `blur`, gets no
-  // `pointercancel`, and keeps the pointer capture. console.ts's trackDrag has the
-  // readings.
-  it("treats a window blur as a release", () => {
+  // A blur ends the GESTURES this view runs, but it is not a release: the press is still
+  // in flight, and rebuilding under it would hand the still-held pointer a live control —
+  // which for a native row is the state `holdInertOnBlur` exists to prevent. So the
+  // deferral lasts as long as the press does, and the repaint lands at the release.
+  it("keeps a deferred repaint waiting through a blur, and lands it at the release", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
     const slider = rowsByKey(host.box).get("threshold")!;
-    host.box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    host.box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
     screen.refresh();
+
     window.dispatchEvent(new FocusEvent("blur"));
+    expect(rowsByKey(host.box).get("threshold")).toBe(slider);
+
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
     expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
   });
 
@@ -651,23 +654,27 @@ describe("refresh", () => {
   // left this file green). It lives in `e2e/dyntuning.spec.ts` instead, where the drag is
   // real and only the blur is dispatched.
   //
-  // The MIDI question: a message applied while the window is away has to reach the
-  // screen. It arrives through the same `refresh()` the deferral above holds, so the
-  // blur RELEASES it rather than blocking it — a value that would have waited for the
-  // operator's release now lands at the blur.
-  it("lets a device- or MIDI-driven value reach the screen at the blur", () => {
+  // The MIDI question: a message applied while the window is away still reaches the plan
+  // and the unit; what waits is the repaint, for as long as the press does. The operator
+  // is looking at another application for that interval by definition — it begins when
+  // this window lost the foreground — and it ends when they let go, which they can do
+  // without coming back (a release reaches a background window; measured on the unit).
+  it("lands a device- or MIDI-driven value on the screen when the press ends", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
     const before = rowsByKey(host.box).get("threshold")!;
 
     // A press defers the repaint: the control under the pointer must not be replaced.
-    host.box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    host.box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
     host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], gate: { threshold: -21 } };
     screen.refresh();
     expect(rowsByKey(host.box).get("threshold")).toBe(before);
 
     window.dispatchEvent(new FocusEvent("blur"));
+    expect(rowsByKey(host.box).get("threshold")).toBe(before);
+
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
     const after = rowsByKey(host.box).get("threshold")!;
     expect(after).not.toBe(before);
     expect(host.box.querySelector('[data-dyn-val="threshold"]')?.textContent).toContain("-21");
@@ -692,9 +699,13 @@ describe("refresh", () => {
   });
 
   // The same blur that holds the row inert also clears `grabbed`, so a refresh the press
-  // had deferred runs and rebuilds the column. The restore has to find the row that is on
-  // screen now: re-arming the replaced one put the operator's focus on a detached node.
-  it("restores the row on screen when a blur also lands a deferred refresh", () => {
+  // had deferred runs and rebuilds the column — and that rebuild is what ends the drag
+  // here, by removing the element the engine was tracking. What must not happen is a row
+  // left disabled by the treatment, or focus parked on the node that was replaced. Focus
+  // is not moved to the new row: no rebuild in this app restores focus (the CONSOLE and
+  // the inspector do not either), and doing it on this path alone would make the blur the
+  // one repaint that behaves differently.
+  it("leaves no disabled row and no focus on a detached node when a blur lands a deferred refresh", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
@@ -710,7 +721,28 @@ describe("refresh", () => {
     const now = rowsByKey(host.box).get("threshold")!;
     expect(now).not.toBe(row);
     expect(now.disabled).toBe(false);
-    expect(document.activeElement).toBe(now);
+    expect(row.isConnected).toBe(false);
+    expect(document.activeElement).not.toBe(row);
+  });
+
+  // The wiring itself, on the path with no rebuild racing it: the row this screen builds
+  // has to be the one `holdInertOnBlur` holds, and give its focus back at the release.
+  // Without this the whole file passes with the call deleted — jsdom has no native drag to
+  // end, so every other case here is blind to the site.
+  it("holds a value row inert while the window is away, focus and all", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const row = rowsByKey(host.box).get("threshold")!;
+
+    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    row.focus();
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(row.disabled).toBe(true);
+
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+    expect(row.disabled).toBe(false);
+    expect(document.activeElement).toBe(row);
   });
 
   // A rebuilt row carries its own disabled state, and the restore must not talk it out of

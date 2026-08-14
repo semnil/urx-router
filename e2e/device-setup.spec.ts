@@ -213,3 +213,37 @@ test("rows for a page the model does not have are locked, not hidden", async ({ 
   await page.click("#device-setup-apply");
   expect(await writesOf(page)).toEqual([[BRIGHTNESS, 2]]);
 });
+
+// Brightness is the app's only slider that commits on `change` rather than on `input`, so
+// the app-wide "hold a native slider inert when the window goes away" treatment
+// (`holdInertOnBlur`) cannot simply disable it: measured 2026-08-14, disabling a range
+// mid-drag makes Chromium fire that pending change at the disable and WebKit fire none at
+// all, which loses the value the operator dragged to. The row commits from its own value
+// first, then is held. This case drives the real drag; only the blur is dispatched, since
+// Playwright emulates focus.
+test("a brightness drag interrupted by a window blur is committed, and the row is held", async ({ page }) => {
+  await stubTauriDevice(page, { values: DEVICE_VALUES }); // brightness 4
+  await page.goto("/");
+  await openSetup(page);
+
+  const slider = page.locator("#device-setup-brightness");
+  const b = (await slider.boundingBox())!;
+  const y = b.y + b.height / 2;
+  await page.mouse.move(b.x + b.width * 0.2, y);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width * 0.8, y);
+  const dragged = await slider.inputValue();
+  expect(dragged).not.toBe("4");
+
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
+  await expect(slider).toBeDisabled();
+  // The value the operator left it on is pending, not lost — and still not written.
+  await expect(page.locator("#device-setup-pending")).toHaveText("1 unapplied change");
+  await expect(page.locator("#device-setup-apply")).toBeEnabled();
+  expect(await writesOf(page)).toEqual([]);
+
+  await page.mouse.up();
+  await expect(page.locator("#device-setup-brightness")).toBeEnabled();
+  await page.click("#device-setup-apply");
+  expect(await writesOf(page)).toEqual([[BRIGHTNESS, Number(dragged)]]);
+});
