@@ -253,17 +253,12 @@ export const PARAMS = {
   COMP_RELEASE: { id: 40, encoding: "releaseTime" },
   /** COMP Auto Makeup ON (auto-drives the makeup gain). */
   COMP_AUTO_MAKEUP: { id: 41, encoding: "bool" },
-  // The COMP 1-knob drives threshold / ratio / makeup from its level, and the unit
-  // announces the recomputation: measured 2026-08 on a URX44V, turning it ON moved
-  // 35 / 36 / 38 to unity and a level change moved all three again, both within 0.05-0.12
-  // ms of the written address's own notify and with none of them ahead of it. So both are
-  // a "refetch" for the same reason the EQ 1-knob is — the plan mirrors those three while
-  // the knob is on (the screen locks their rows) and pushing back would fight the device.
-  //
-  // Unlike the EQ, translate.ts keeps EMITTING them while the knob is on. That is left
-  // alone deliberately: with the refetch in place the plan holds what the unit computed,
-  // so emitting them writes the values the device already has, and a full write from a
-  // saved file still lands on the unit's own computation because the level is written too.
+  // The COMP 1-knob drives the values in COMP_ONE_KNOB_DRIVEN below, and the unit announces
+  // the recomputation: measured on a URX44V (2026-08), turning it ON moved 35 / 36 / 37 / 38
+  // and a level change afterwards moved 35 / 36 / 38 again, every one of them within 0.13 ms
+  // of the written address's own notify and none ahead of it. So both are a "refetch" for
+  // the same reason the EQ 1-knob is — the plan mirrors those values while the knob is on,
+  // and pushing them back would fight the device.
   /** COMP 1-knob ON (drives all comp params from the 1-knob level). */
   COMP_ONE_KNOB: { id: 42, encoding: "bool", sideEffect: "refetch" },
   /** COMP 1-knob level (0 … 100, raw). */
@@ -910,6 +905,21 @@ export const COMP_KNEE_OPTIONS = [
   { value: 1, label: "Medium" },
   { value: 2, label: "Hard" },
 ];
+
+/**
+ * The COMP values the device's 1-knob owns while it is on, by their `NodeParams.comp` key.
+ *
+ * One list with two consumers, which must not be allowed to disagree: `translate.ts` stops
+ * EMITTING these (a value the plan re-sends after the knob computed it puts the operator's
+ * pre-knob copy back on the unit), and the COMP tuning screen locks and tags the same rows.
+ * A screen that says "the device owns this" over a writer that keeps sending it is the
+ * defect either copy drifting produces.
+ *
+ * Confirmed on a URX44V (2026-08): switching the knob on moved all four (the knee Soft ->
+ * Medium); moving the level afterwards moved the first three and left the knee where the
+ * knob had put it. Attack, release and Auto Makeup did not move and stay plan-authored.
+ */
+export const COMP_ONE_KNOB_DRIVEN: ReadonlySet<string> = new Set(["threshold", "ratio", "gain", "knee"]);
 
 // Oscillator mode (param 712). Frequency control applies to Sine Wave; Burst
 // Noise adds width (param 714) / interval (param 715), both confirmed by live
