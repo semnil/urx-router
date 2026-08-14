@@ -753,7 +753,9 @@ Live sync 中のみ) が各 dBFS 読み値を対応する dB 目盛と同じ位�
 `-10` の桁を縦に揃える)。上部のスクリブルは **ノード名 + 実機 CH SETTING 名** の 2 行 (MONITOR Bus は CH SETTING 名を持たないため、2 行目はリンク先の PHONES 出力名 `Phone 1` / `Phone 2` を表示する)。名前の左には **電源 LED** を置き、スクリブル全体がノード master ON/OFF のボタンになる (下記の inactive 減光を参照)。その下にトグルチップを
 2 列グリッドで 2 グループ置く: ①チャンネル/入力 (HA) — **MUTE** は → STEREO send を持つストリップ (チャンネル・FX チャンネル・MIX Bus) のみが持ち、その固定 → STEREO send の ON/OFF を切り替える (**入力/FX チャンネルは → STEREO アサイン ON**〈ファーム V1.3・フェーダー後段の SEND TO STEREO スイッチ〉、**MIX Bus は MIX → STEREO の TO ST スイッチ**〈`params.on`、muted = TO ST OFF〉)。ノード master (CH_ON / FX チャンネル ON / MIX 675) ではなく、それは電源 LED が担う。STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップを持たず、master ON は電源 LED のみ。MONITOR Bus はさらに **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`、工場 ON) と **MONO** (`mono` → `MONITOR_MONO`、工場 OFF) のチップを持つ。モノ MIC CH は +48 / φ / HPF (CH3/4 は Hi-Z)、
 ステレオ CH は φL / φR (`channelControl` の `phases`/フラグで判定) ②処理チェーン — GATE → COMP → EQ →
-INS FX、ステレオ CH は EQ + DUCKER (直下に吊るした ducker ノードの `duckerOn` をトグル)。チップが奇数の
+INS FX、ステレオ CH は EQ + DUCKER (直下に吊るした ducker ノードの `duckerOn` をトグル)。SSMCS モードの
+mono CH は GATE と COMP の間に **SSMCS** を持つ — モーフィングストリップ自身のマスターで、値がプランの
+1 段下 (`ssmcs.on`) にある唯一のヘッドチップなので、フラットキーのチップ書込ではなくストリップが自前で書く。チップが奇数の
 グループは不可視スペーサで最後のチップが全幅化しないようにする。最下段に回転つまみ
 (`addKnob`/`wireKnob`、ドラッグ/矢印キー) — チャンネルは **Gain と PAN/BAL** (CH→STEREO Send の pan、
 L63–C–R63)、STEREO マスターと MIX Bus は **マスター BALANCE** (Bus 出力の L/R バランス、`nodeParams.pan` →

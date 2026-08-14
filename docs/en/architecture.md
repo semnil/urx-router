@@ -888,7 +888,9 @@ bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships 
 `MONITOR_MONO`, ships OFF) chips. Then +48 / φ /
 HPF on mono MIC channels (Hi-Z on CH3/4) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
 chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
-node hung under them). An odd group gets an invisible spacer so its last chip never stretches to
+node hung under them). A mono channel in SSMCS mode carries **SSMCS** between GATE and COMP — the morphing
+strip's own master, and the one head chip whose value is a level down in the plan (`ssmcs.on`), so the strip
+writes it itself rather than through the flat-key chip writer. An odd group gets an invisible spacer so its last chip never stretches to
 full width. At the bottom (knobs bottom-aligned) are rotary knobs (`addKnob`/`wireKnob`, drag / arrow keys)
 — channel **Gain and PAN/BAL** (the CH→STEREO send's pan, L63–C–R63), the **master BALANCE** on the STEREO
 master and MIX buses (the bus output's L/R balance, `nodeParams.pan` → STEREO 583 / MIX 676; it keeps the
