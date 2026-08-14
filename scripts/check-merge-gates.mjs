@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Verifies that every status check the branch ruleset requires can actually be reported
-// on every pull request.
+// on every pull request, and — over EVERY workflow, not only those a required context
+// lives in — that a precondition one job declares is shared by the chain beneath it.
 //
 // GitHub's rule, and the whole reason this file exists: a workflow skipped by a TRIGGER
 // filter (`on.pull_request.paths`) produces no check run at all, so a required check it
@@ -169,6 +170,137 @@ const condition = (job) => {
 // The check-run name is the job's `name:` when it has one, and the job id otherwise —
 // which is what the ruleset matches on.
 const contextOf = (id, job) => unquote(job.children.get("name")?.value ?? "") || id;
+
+// The whole `if:`, including the continuation lines of a block scalar. `condition()` above
+// reads the node's VALUE, which for `if: >-` is the indicator and nothing else — every
+// term would be invisible to a rule that asked it. This one takes the node's own lines,
+// drops the key and the indicator, and joins.
+function conditionText(root, job) {
+  const node = job.children.get("if");
+  if (!node) return null;
+  const lines = textOf(root, node).split("\n");
+  const first = lines[0].replace(/^\s*if:\s*/, "").replace(/^[>|][-+]?\d*\s*$/, "");
+  return [first, ...lines.slice(1)]
+    .join(" ")
+    .replace(/\$\{\{|\}\}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Splits on a top-level operator: one inside parentheses or inside quotes is not one.
+function topLevelSplit(expr, op) {
+  const parts = [];
+  let depth = 0;
+  let quote = null;
+  let start = 0;
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+    } else if (ch === "(") {
+      depth++;
+    } else if (ch === ")") {
+      depth--;
+    } else if (depth === 0 && expr.startsWith(op, i)) {
+      parts.push(expr.slice(start, i));
+      i += op.length - 1;
+      start = i + 1;
+    }
+  }
+  parts.push(expr.slice(start));
+  return parts;
+}
+
+// Drops parentheses that wrap the WHOLE term, however many layers. `(a) && (b)` keeps
+// both; `((a))` becomes `a`. A redundant group is a group like any other in GitHub's
+// expression language, so a reader that did not peel would take `(needs.x.result ==
+// 'success')` for something other than the requirement it is.
+function peel(term) {
+  let out = term.trim();
+  for (;;) {
+    if (!out.startsWith("(") || !out.endsWith(")")) return out;
+    let depth = 0;
+    let quote = null;
+    let wrapsWhole = true;
+    for (let i = 0; i < out.length; i++) {
+      const ch = out[i];
+      if (quote) {
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"') quote = ch;
+      else if (ch === "(") depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth === 0 && i < out.length - 1) {
+          wrapsWhole = false;
+          break;
+        }
+      }
+    }
+    if (!wrapsWhole) return out;
+    out = out.slice(1, -1).trim();
+  }
+}
+
+// `needs.<id>.result == 'success'` in either accessor form. The bracket form exists
+// because a job id may carry a hyphen, which a dotted path in an expression reads as a
+// subtraction.
+const NEEDS_SUCCESS = /^needs(?:\.([A-Za-z_][\w-]*)|\[\s*(['"])([^'"]+)\2\s*\])\.result\s*==\s*'success'$/;
+
+// A branch that can never be the one that holds contributes nothing to what a disjunction
+// requires. `false` is the only such branch this reader recognises, and recognising it is
+// what keeps `X || false` — which is `X` — from reading as "requires nothing".
+const isFalseLiteral = (term) => term === "false";
+
+// A conjunction requires the UNION of its terms. A disjunction requires the INTERSECTION
+// of what its branches require: whichever branch holds, a job in every branch's set had to
+// have succeeded. `X || always()` requires nothing because one branch requires nothing;
+// `(a && X) || (b && X)` requires X because both do.
+function evaluate(expr, unreadable) {
+  const branches = topLevelSplit(expr, "||");
+  if (branches.length > 1) {
+    const sets = [];
+    for (const branch of branches) {
+      const term = peel(branch);
+      if (isFalseLiteral(term)) continue;
+      sets.push(evaluate(term, unreadable));
+    }
+    if (sets.length === 0) return new Set();
+    return sets.reduce((acc, set) => new Set([...acc].filter((job) => set.has(job))));
+  }
+  const required = new Set();
+  for (const raw of topLevelSplit(expr, "&&")) {
+    const term = peel(raw);
+    const match = NEEDS_SUCCESS.exec(term);
+    if (match) {
+      required.add(match[1] ?? match[3]);
+      continue;
+    }
+    // A parenthesised disjunction is not opaque: it requires whatever all of its branches
+    // do, which for `(X == 'success' || X == 'skipped')` is nothing and for a group that
+    // repeats a term in every branch is that term.
+    if (topLevelSplit(term, "||").length > 1) {
+      for (const job of evaluate(term, unreadable)) required.add(job);
+      continue;
+    }
+    if (/needs[.[]/.test(term) && /'success'/.test(term)) unreadable.push(term);
+  }
+  return required;
+}
+
+// What a condition requires OUTRIGHT, and the terms it could not read. Naming the second
+// set is the point: the alternative is a rule that quietly requires less than the author
+// wrote, which is the direction that ships the defect this traversal exists for.
+function requiredSuccesses(expr) {
+  const unreadable = [];
+  const required = evaluate(expr, unreadable);
+  return { required, unreadable };
+}
 
 // Does a concurrency group key give every run of its own a group of its own?
 //
@@ -429,6 +561,65 @@ function checkJob(workflow, id, job, context) {
         `gate \`${context}\` never reads \`needs.*.result\` or never runs \`exit 1\` — with \`if: always()\` it reports success ` +
           `whatever its dependencies did, which makes it a required check that cannot fail`,
       );
+    }
+  }
+}
+
+// --- preconditions a consumer declares ------------------------------------------
+
+// Everything above speaks for the jobs a required context waits on, in workflows that
+// trigger on `pull_request`. This speaks for every workflow, because what it catches is
+// not about a merge gate: it is a job declaring a precondition that the jobs beneath it do
+// not share.
+//
+// If job B will not run unless X succeeded, then a job B also needs — one that runs BEFORE
+// B without waiting for X — can still run on a run where X failed, and produce something B
+// will never use. `release.yml` was exactly that: `build` required `licenses`,
+// `create-release` did not, so a failed notice still created the draft that `build` would
+// then never fill, and publishing that draft is what ships the demo.
+//
+// Deliberately its own traversal rather than a relaxation of the gate above: that path is
+// entered only for a required context, and its rules (4 in particular, `needs:` without
+// `if: always()`) are statements about a merge gate that misfire on an ordinary job.
+function checkPreconditionChains(workflows) {
+  for (const workflow of workflows) {
+    if (!workflow.root || workflow.jobs.size === 0) continue;
+    const needsOf = new Map();
+    for (const [id, job] of workflow.jobs) needsOf.set(id, listOf(job.children.get("needs")));
+    // Transitive, because a chain satisfies the requirement as well as a direct edge does.
+    const reaches = (from, target, seen = new Set()) => {
+      for (const next of needsOf.get(from) ?? []) {
+        if (next === target) return true;
+        if (seen.has(next)) continue;
+        seen.add(next);
+        if (reaches(next, target, seen)) return true;
+      }
+      return false;
+    };
+    for (const [id, job] of workflow.jobs) {
+      const cond = conditionText(workflow.root, job);
+      if (!cond) continue;
+      const { required, unreadable } = requiredSuccesses(cond);
+      for (const term of unreadable) {
+        finding(
+          `${workflow.path} (${id})`,
+          `\`if:\` names a \`needs\` result and 'success' in a form this checker will not read: \`${term}\`. ` +
+            `Write it as \`needs.<job>.result == 'success'\` joined by \`&&\`, or the rule below requires less ` +
+            `than the condition does and says nothing about the difference`,
+        );
+      }
+      for (const target of required) {
+        for (const sibling of needsOf.get(id) ?? []) {
+          if (sibling === target || required.has(sibling)) continue;
+          if (reaches(sibling, target)) continue;
+          finding(
+            `${workflow.path} (${sibling})`,
+            `runs ahead of \`${id}\`, which will not run unless \`${target}\` succeeded — but \`${sibling}\` ` +
+              `does not wait for \`${target}\`, so on a run where \`${target}\` fails it still runs and produces ` +
+              `something nothing consumes. Add \`${target}\` to \`${sibling}\`'s \`needs:\``,
+          );
+        }
+      }
     }
   }
 }
@@ -701,6 +892,7 @@ export function inspect({ workflowSources, manifestSource, ruleset = null }) {
   const required = readManifest(manifestSource);
   const workflows = readWorkflows(workflowSources);
   const seen = checkWorkflows(workflows, required);
+  checkPreconditionChains(workflows);
   const notes = ruleset ? compareRulesets(ruleset, required, integrationId) : [];
   return { findings: findings.slice(), required, workflows, seen, notes };
 }
@@ -748,7 +940,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   const silent = prWorkflows.filter((workflow) => ![...run.seen.values()].includes(workflow.path));
   console.log(
     `OK: ${run.required.size} required context(s) over ${prWorkflows.length} pull-request workflow(s), ` +
-      `all reportable on every pull request`,
+      `all reportable on every pull request; declared preconditions hold across ${run.workflows.length} workflow(s)`,
   );
   for (const [context, path] of run.seen) console.log(`    ${context} <- ${path}`);
   if (silent.length) console.log(`    advisory only (no required context): ${silent.map((w) => w.path).join(", ")}`);

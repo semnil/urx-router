@@ -14,11 +14,19 @@ name: Release
 #
 # No E2E runs here. The harness runs on the pull requests race.yml's trigger names, the
 # version bump among them, so it sits in front of the tag rather than behind it.
+# The tag patterns track what `check-tag` accepts, as closely as GitHub's filter glob can:
+# it has no alternation, so the three prerelease prefixes are three lines. A tag the filter
+# admits and `check-tag` then declines produces a green run that creates nothing, so the
+# two lists disagreeing is the thing to avoid; `-*` used to admit every suffix there is,
+# which made `v1.5.2-hotfix1` exactly that. What the glob still cannot express is
+# `check-tag`'s trailing `*([0-9.])`, so `v1.0.0-alphafoo` remains in that shape.
 on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
-      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+      - 'v[0-9]+.[0-9]+.[0-9]+-alpha*'
+      - 'v[0-9]+.[0-9]+.[0-9]+-beta*'
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc*'
   workflow_dispatch:
 
 # Keyed by the ref, which for both triggers is the tag: a re-dispatch of a tag already
@@ -78,8 +86,24 @@ jobs:
               ;;
           esac
 
+  # `licenses` as well as the tag check, so a notice that cannot be generated stops the
+  # draft from existing rather than leaving an empty one behind.
+  #
+  # `build` already refuses to run without it (`needs.licenses.result == 'success'` below),
+  # but a job skipped by `if:` reports SUCCESS, so that refusal is silent — and nothing
+  # waits on this workflow's conclusion. What the operator would find is a draft Release
+  # holding no .dmg, no NSIS setup and no latest.json, and publishing a draft is what fires
+  # pages.yml, so the demo would go live against a release with no binaries. Depending on
+  # it here means the draft is never created: a `needs:` failure skips this job, and a tag
+  # with no release is a state someone re-runs rather than one they publish.
+  #
+  # The `if:` below carries NO status check function, and that is what makes the sentence
+  # above true: without one GitHub applies an implicit `success()`, so a `needs:` job that
+  # failed, was cancelled or was skipped all take this job out. Writing `always() &&` or
+  # `!cancelled() &&` in front of it — which reads like the neighbouring `build` and would
+  # look like a tidy-up — restores the empty draft.
   create-release:
-    needs: check-tag
+    needs: [check-tag, licenses]
     if: needs.check-tag.outputs.validTag == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -112,10 +136,20 @@ jobs:
 
   build:
     needs: [check-tag, create-release, licenses]
-    # Run even when create-release is skipped (manual dispatch), as long as the
-    # tag check itself succeeded. The notice is a bundle input, so its job has
-    # to have succeeded; always() would otherwise let a failed one through.
-    if: always() && needs.check-tag.result == 'success' && needs.licenses.result == 'success'
+    # Runs when create-release SUCCEEDED (a tag with a draft to upload to) or was SKIPPED
+    # (a manual dispatch, or a tag ref check-tag declines — both package into job
+    # artifacts instead). It does not run when create-release FAILED: there would be no
+    # draft to upload to, so this job would sign and notarize both installers and keep
+    # neither, and report success doing it.
+    #
+    # `!cancelled()` rather than `always()`: both override the implicit success() that
+    # would otherwise skip this job whenever create-release is skipped, and `!cancelled()`
+    # additionally leaves the job out when the whole run is cancelled, where what
+    # `needs.create-release.result` reads as is not something this file wants to depend on.
+    # The notice is a bundle input, so its job has to have succeeded either way.
+    if: >-
+      !cancelled() && needs.check-tag.result == 'success' && needs.licenses.result == 'success'
+      && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
@@ -192,3 +226,30 @@ jobs:
             src-tauri/target/**/bundle/dmg/*.dmg
             src-tauri/target/**/bundle/nsis/*.exe
           if-no-files-found: error
+
+  # The run's own verdict, said in terms of the tag. Nothing waits on this workflow's
+  # conclusion — tag-release.yml dispatches it and ends — and a tag whose release failed
+  # leaves no trace on the Releases page, which is the one page the operator is required to
+  # visit (publishing the draft is what fires pages.yml). Without this job the only surface
+  # is a red run whose job names say "create-release" and "build" rather than which tag has
+  # no installers.
+  #
+  # Scoped to a tag run: on a dispatch that packages into artifacts there is no release to
+  # be missing. `always()` so it reports on a cancelled run too, which is a run that
+  # produced no draft like any other.
+  release-gate:
+    needs: [check-tag, create-release, licenses, build]
+    if: always() && needs.check-tag.outputs.validTag == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail unless the tag produced a draft with installers
+        if: needs.create-release.result != 'success' || needs.build.result != 'success'
+        env:
+          LICENSES: ${{ needs.licenses.result }}
+          CREATE: ${{ needs.create-release.result }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          echo "::error::${GITHUB_REF_NAME} was tagged but no complete draft Release exists"
+          echo "::error::licenses=${LICENSES} create-release=${CREATE} build=${BUILD}"
+          exit 1

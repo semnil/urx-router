@@ -491,3 +491,106 @@ if (!rubyAvailable) {
     "check-merge-gates: ruby is absent, so the fnmatch differential did not run — the table alone was checked",
   );
 }
+
+// A precondition one job declares is a precondition of the chain beneath it. This rule runs
+// over every workflow, not only the ones a required context lives in, so its fixture carries
+// no pull-request trigger at all — which is the case that produced it. `if:` is written as a
+// folded block scalar, also on purpose: a node's VALUE for `if: >-` is the indicator alone,
+// so a rule that read the value would find no terms in the very shape that produced this.
+describe("a precondition declared by a consumer", () => {
+  const chain = (draftNeeds, bundleIf) => `name: R
+on:
+  push:
+    tags:
+      - 'v*'
+jobs:
+  notice:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo notice
+  draft:
+    needs: ${draftNeeds}
+    if: needs.check.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo draft
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo check
+  bundle:
+    needs: [check, draft, notice]
+    if: >-
+      ${bundleIf}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo bundle
+`;
+
+  const REQUIRES_NOTICE = "!cancelled() && needs.check.result == 'success' && needs.notice.result == 'success'";
+  // The fixture's own manifest context is reported missing every time, since nothing here
+  // triggers on a pull request. That is the manifest rule doing its job; this block is about
+  // the chain rule's findings.
+  const chainFindings = (text) => findingsOf(text).filter((f) => /runs ahead of/.test(f));
+
+  it("rejects a job that runs ahead of one requiring what it does not wait for", () => {
+    const findings = chainFindings(chain("check", REQUIRES_NOTICE)).join("\n");
+    expect(findings).toContain("runs ahead of `bundle`");
+    expect(findings).toContain("Add `notice` to `draft`'s `needs:`");
+  });
+
+  it("accepts it once the chain carries the precondition", () => {
+    expect(chainFindings(chain("[check, notice]", REQUIRES_NOTICE))).toEqual([]);
+  });
+
+  // `(A == 'success' || A == 'skipped')` says the opposite of a requirement about A. Read as
+  // one it would make every job vacuously satisfy the rule, so the pair below is what says
+  // the reader distinguishes them: the same term fires at the top level and not inside.
+  it("does not read a disjunction as a requirement, and does read the same term outside one", () => {
+    const inside = "!cancelled() && (needs.notice.result == 'success' || needs.notice.result == 'skipped')";
+    expect(chainFindings(chain("check", inside))).toEqual([]);
+    const outside = "!cancelled() && needs.notice.result == 'success'";
+    expect(chainFindings(chain("check", outside)).join("\n")).toContain("Add `notice` to `draft`'s `needs:`");
+  });
+
+  // Parentheses are a legal grouping, so a requirement wearing them is still one. Reading
+  // only the bare shape lost the requirement AND, with it, put a job the condition does
+  // require into the "not required" set — which fired on a chain that was correct.
+  const alsoCheck = (term) => `!cancelled() && needs.check.result == 'success' && ${term}`;
+  it.each([
+    ["redundant parentheses", alsoCheck("(needs.notice.result == 'success')")],
+    ["two layers of them", alsoCheck("((needs.notice.result == 'success'))")],
+    ["the bracket accessor", alsoCheck("needs['notice'].result == 'success'")],
+  ])("reads a requirement written with %s", (_name, cond) => {
+    expect(chainFindings(chain("check", cond)).join("\n")).toContain("Add `notice` to `draft`'s `needs:`");
+    expect(chainFindings(chain("[check, notice]", cond))).toEqual([]);
+  });
+
+  // A disjunction requires what EVERY branch that can hold requires. Treating a top-level
+  // `||` as "requires nothing" was wrong in the direction that matters: `X || false` is
+  // `X`, and a group repeating the same term in every branch requires it too.
+  it("requires nothing when one branch requires nothing", () => {
+    expect(chainFindings(chain("check", "needs.notice.result == 'success' || always()"))).toEqual([]);
+  });
+
+  const BOTH = "needs.check.result == 'success' && needs.notice.result == 'success'";
+  it.each([
+    ["a branch that can never hold", `(${BOTH}) || false`],
+    ["branches that agree", `(${BOTH}) || (!cancelled() && ${BOTH})`],
+    [
+      "a parenthesised group whose branches agree",
+      alsoCheck("((always() && needs.notice.result == 'success') || (needs.notice.result == 'success'))"),
+    ],
+  ])("still requires what survives %s", (_name, cond) => {
+    expect(chainFindings(chain("check", cond)).join("\n")).toContain("Add `notice` to `draft`'s `needs:`");
+    expect(chainFindings(chain("[check, notice]", cond))).toEqual([]);
+  });
+
+  // The one direction a reader must not take quietly: a term it cannot parse is a
+  // requirement it may be dropping, and dropping one is how the rule stops firing.
+  it("refuses a needs-result term it cannot read rather than dropping it", () => {
+    const findings = findingsOf(chain("check", "!cancelled() && contains(needs.notice.result, 'success')"));
+    expect(findings.join("\n")).toContain("in a form this checker will not read");
+    expect(findings.filter((f) => /runs ahead of/.test(f))).toEqual([]);
+  });
+});
