@@ -1447,10 +1447,13 @@ export class DynScreen {
     // about to bind, so the same gate the console's faders carry applies here.
     wheelStep(input, () => this.hooks.midi?.learnActive());
     // Every native range in the app ends its drag at a window blur and stays inert until
-    // the button comes up; `holdInertOnBlur` carries the treatment and the measurements.
-    // The resolver is this screen's own half: the same blur clears `grabbed`, so a refresh
-    // the press deferred runs and rebuilds this column, and focus has to return to the row
-    // that is on screen rather than to the element the gesture started on.
+    // the press is over or the window comes back; `holdInertOnBlur` carries the treatment
+    // and the measurements. This screen's own half is the row named below: the blur leaves
+    // `grabbed` set, since the press is still in flight, so the refresh it deferred runs at
+    // the later of this screen's release and the last hold's — and by then a rebuild may
+    // have replaced this element. `live` is what the hold disables and what it gives focus
+    // back to, so both reach the row that is on screen rather than the one the gesture
+    // started on.
     holdInertOnBlur(input, { live: () => this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`) });
     ctl.append(input, val);
     // The device's push-and-turn fine grid is confirmed for a few values only (the
