@@ -264,6 +264,7 @@ export async function applyDeviceState(
     ? await writeSettle.settle(pending.written, {
         mustSettle: pending.mustSettle,
         mustAnnounce: pending.mustAnnounce,
+        boundaryMarks: pending.boundaryMarks,
         signal,
       })
     : undefined;

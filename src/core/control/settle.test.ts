@@ -171,6 +171,59 @@ describe("WriteSettle waiting", () => {
 // flush writes a fader on some other node beside the 1-knob that made it refetch: the
 // read touches only the 1-knob's node, so that is the boundary it holds for, and the
 // fader is answered only if the unit got round to announcing it anyway.
+describe("WriteSettle boundary marks", () => {
+  // A write whose VALUE must not be overlaid, but whose timing still bounds the read: the
+  // flush's string writes (the SSMCS preset). They cannot go in `written` — that map is what
+  // readback answers numeric reads from, and a string notify carries its text in a different
+  // field — so their mark travels separately.
+  //
+  // Without one, `settle` finds no mark for the address and waits unconditionally, so an
+  // announcement that had ALREADY arrived does not end the wait. That is the ordinary case
+  // rather than an edge: the unit answers a preset write ~15 ms after the ack, and the flush
+  // still has its remaining writes and its converge to get through before the read is issued.
+  it("ends on an announcement that arrived before the wait began", async () => {
+    const { settle } = armed();
+    const at = settle.mark();
+    settle.note(NOTIFY); // the unit answered while the flush was still going
+    const wait = settle.settle(new Map(), {
+      mustSettle: new Set([ADDR]),
+      boundaryMarks: new Map([[ADDR, at]]),
+    });
+    // Resolves without the window being spent — nothing advances the clock here.
+    await expect(wait).resolves.toBeDefined();
+  });
+
+  // The mark still decides: a notify that PREDATES the write is not that write's answer, so
+  // the wait is held for a fresh one and ends at the bound when none comes.
+  it("ignores an announcement older than the mark", async () => {
+    const { settle } = armed();
+    settle.note(NOTIFY);
+    const at = settle.mark();
+    let done = false;
+    const wait = settle
+      .settle(new Map(), { mustSettle: new Set([ADDR]), boundaryMarks: new Map([[ADDR, at]]) })
+      .then(() => (done = true));
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS - 1);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    await wait;
+    expect(done).toBe(true);
+  });
+
+  // And the value never reaches the caller: `announced` is built from `written` alone, so a
+  // numeric read is never answered from a string address's notify.
+  it("does not report the value of a boundary-only address", async () => {
+    const { settle } = armed();
+    const at = settle.mark();
+    settle.note(NOTIFY);
+    const announced = await settle.settle(new Map(), {
+      mustSettle: new Set([ADDR]),
+      boundaryMarks: new Map([[ADDR, at]]),
+    });
+    expect(announced.has(ADDR)).toBe(false);
+  });
+});
+
 describe("WriteSettle scope", () => {
   it("ends the wait on the named address alone, and leaves the rest unanswered", async () => {
     const { settle } = armed();

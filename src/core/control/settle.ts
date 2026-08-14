@@ -105,6 +105,13 @@ export interface SettleOptions {
    *  repair is. Class (b) — a write that may be a no-op — must stay out of it, or a
    *  legitimate silence would order a whole-device sweep every time. */
   mustAnnounce?: ReadonlySet<number>;
+  /** Marks for addresses that bound the wait but whose VALUE must not be reported: the
+   *  flush's string writes. They cannot travel in `written` — that map is what a numeric
+   *  read is answered from, and a string notify carries its text in a different field — but
+   *  without a mark the wait cannot tell this write's announcement from an older one, so it
+   *  waits unconditionally and an answer that arrived while the flush was still running is
+   *  missed. Consulted for the mark only; `announced` is still built from `written` alone. */
+  boundaryMarks?: ReadonlyMap<number, number>;
 }
 
 /**
@@ -123,6 +130,9 @@ export interface PendingWrites {
    *  scope, which it is going to read off the unit for any it cannot answer from an
    *  announcement. */
   mustSettle: ReadonlySet<number>;
+  /** Marks for addresses the read must wait for but whose value it must not be answered
+   *  from — the flush's string writes. See SettleOptions.boundaryMarks. */
+  boundaryMarks?: ReadonlyMap<number, number>;
   /** The subset outside that scope which the unit owes an announcement (see
    *  SettleOptions.mustAnnounce). This read neither confirms nor repairs them — it does
    *  not look at them at all — so the one repair available is the reconcile a silent
@@ -198,7 +208,7 @@ export class WriteSettle {
    * device rather than answering it from what was sent.
    */
   async settle(written: ReadonlyMap<number, number>, opts: SettleOptions = {}): Promise<ReadonlyMap<number, number>> {
-    const { signal, timeoutMs = SETTLE_TIMEOUT_MS, mustSettle, mustAnnounce } = opts;
+    const { signal, timeoutMs = SETTLE_TIMEOUT_MS, mustSettle, mustAnnounce, boundaryMarks } = opts;
     signal?.throwIfAborted();
     // The settle is switched off (the unit tests, whose mock device has no asynchronous
     // anything to settle). Nothing was waited for, so nothing was announced: switching
@@ -217,7 +227,7 @@ export class WriteSettle {
     const waitFor = new Set<number>();
     for (const k of named) {
       const s = this.seen.get(k);
-      const at = written.get(k);
+      const at = written.get(k) ?? boundaryMarks?.get(k);
       if (s === undefined || at === undefined || s.at <= at) waitFor.add(k);
     }
     if (mustAnnounce?.size) this.watchAnnouncements(written, mustAnnounce, timeoutMs, signal);

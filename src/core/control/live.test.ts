@@ -712,6 +712,22 @@ describe("LiveSync sideEffect refetch", () => {
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: 0 };
     live.begin();
     expect(live.followAddrs()).not.toContainEqual(preset);
+
+    // And the SHAPE comes from the live plan even when a device view is handed over. A view
+    // predates the read it was taken for, so an edit made during that read is in the plan and
+    // not in it — taking the shape from the view would drop the address a person just chose
+    // until some later reconcile. The numeric block is the control: it is present either way,
+    // which is what makes this a statement about the string path rather than about resync.
+    const stale = clonePlanState(plan);
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      compEqType: COMP_EQ_SSMCS,
+      ssmcs: { ...structuredClone(SSMCS_INITIAL), sweetSpotData: 3 },
+    };
+    live.resync(stale);
+    const morph = planToCommands(model, plan).find((c) => c.name === "SSMCS_MORPHING" && c.node === "ch1")!;
+    expect(live.followAddrs()).toContainEqual([morph.paramId, morph.x, morph.y]);
+    expect(live.followAddrs()).toContainEqual(preset);
   });
 
   // The preset is a refetch head on the STRING path, which the flush's name loop used to walk
@@ -727,9 +743,11 @@ describe("LiveSync sideEffect refetch", () => {
     };
     const nodes: string[][] = [];
     const held: number[][] = [];
+    const marks: Array<ReadonlyMap<number, number> | undefined> = [];
     const live = liveFor(plan, async (n, pending) => {
       nodes.push([...n]);
       held.push([...pending.mustSettle]);
+      marks.push(pending.boundaryMarks);
       return null;
     });
     live.begin();
@@ -748,6 +766,12 @@ describe("LiveSync sideEffect refetch", () => {
     expect(nodes).toEqual([["ch1"]]);
     // And the read may not start before the unit has spoken for the address it wrote.
     expect(held).toEqual([[addrKey(PARAMS.SWEET_SPOT_DATA.id, 0, 0)]]);
+    // With the MARK taken before that write, not just the address. Without it the wait
+    // cannot tell this write's announcement from an older one, so an answer that arrived
+    // while the flush was still running — the ordinary case, the unit replies in ~15 ms —
+    // is missed and the read waits out the whole bound instead.
+    expect([...(marks[0] ?? new Map()).keys()]).toEqual([addrKey(PARAMS.SWEET_SPOT_DATA.id, 0, 0)]);
+    expect(typeof [...(marks[0] ?? new Map()).values()][0]).toBe("number");
   });
 
   // A converge and a refetch can land in one flush — PAN/BAL and the morphing knob inside

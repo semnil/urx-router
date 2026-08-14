@@ -542,7 +542,13 @@ export class LiveSync {
     // not a name, so a notify for it takes that node's scoped read instead of being placed
     // directly. That is what makes a preset changed ON the unit followable, and what lets
     // the flush's own settle end on the unit's announcement rather than at its bound.
-    for (const w of planToNameWrites(model, deviceView ?? plan)) {
+    //
+    // From the LIVE plan, not the view — the same split the numeric loop above takes, where
+    // the SHAPE is the plan's and only the VALUES come from the view. A view predates the
+    // read it was taken for, so an edit made during that read is in the plan and not in it;
+    // building the candidate set from the view would drop the address until some later
+    // reconcile, which for a string address means the preset a person just chose is unheard.
+    for (const w of planToNameWrites(model, plan)) {
       if (w.name === undefined || w.node === undefined) continue;
       addrs.push([w.param, 0, w.y]);
       const direct = (PARAMS as Record<string, ParamSpec>)[w.name].follow === "direct";
@@ -623,10 +629,10 @@ export class LiveSync {
       // just computed. Scoped to the node, because the same names on another channel are
       // that channel's own and the converge is right about them.
       const driven = new Map<string, Set<string>>();
-      // Addresses the NAME loop wrote that the refetch may not start before hearing about.
-      // Separate from `writes` because that map is numeric and the read overlays answers
-      // from it; see the name loop.
-      const nameSettle = new Set<number>();
+      // Addresses the NAME loop wrote that the refetch may not start before hearing about,
+      // each at the mark taken before its own write. Separate from `writes` because that map
+      // is numeric and the read overlays answers from it; see the name loop.
+      const nameSettle = new Map<number, number>();
       // What this flush wrote and the device acked, keyed the way the snapshot is
       // (translate.addrKey). Handed to the refetch, whose read would otherwise be issued
       // inside the window in which the unit still answers these addresses with the
@@ -716,6 +722,9 @@ export class LiveSync {
         const value = freshNames ? freshNames.get(k) : w.value;
         if (value === undefined) continue;
         if (this.nameSnapshot.get(k) === value) continue;
+        // Before the write, for the reason the numeric loop takes one: only a notify after
+        // it can be this write's announcement.
+        const nameMark = writeSettle.mark();
         await vdSetStr(w.param, 0, w.y, value);
         if (this.sessionGen !== gen) return;
         this.nameSnapshot.set(k, value);
@@ -747,7 +756,7 @@ export class LiveSync {
           // the unit never sent. Having no mark means the wait cannot be ended by a notify
           // that predates the write, which is right here: this loop only writes a value the
           // device does not already hold, so an announcement is owed.
-          nameSettle.add(addrKey(w.param, 0, w.y));
+          nameSettle.set(addrKey(w.param, 0, w.y), nameMark);
         }
       }
       this.lastFlushConverged = sideEffect;
@@ -847,8 +856,13 @@ export class LiveSync {
           if (w.node !== undefined && refetch.has(w.node)) mustSettle.add(k);
           else if (w.changed) mustAnnounce.add(k);
         }
-        for (const k of nameSettle) mustSettle.add(k);
-        const deviceView = await this.hooks.refetchNodes(refetch, { written, mustSettle, mustAnnounce });
+        for (const k of nameSettle.keys()) mustSettle.add(k);
+        const deviceView = await this.hooks.refetchNodes(refetch, {
+          written,
+          mustSettle,
+          mustAnnounce,
+          ...(nameSettle.size ? { boundaryMarks: nameSettle } : {}),
+        });
         if (this.sessionGen !== gen) return;
         // The read ran against its own copy of the plan (readback.readIntoPlan), so the
         // copy is what the device holds: re-base from it and an edit made during the
