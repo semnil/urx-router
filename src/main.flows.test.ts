@@ -724,6 +724,39 @@ describe("editing a node through the inspector", () => {
   // EQ stage, so the device drops PRE EQ from the list and moves a selected PRE EQ tap to
   // PRE COMP. Every read re-queries — the type change re-renders the panel, and the
   // elements captured before it belong to a panel that is gone.
+  // The focus-restore key is the row LABEL plus generic element facts, and SSMCS mode
+  // is where labels legitimately repeat: a side-chain Q / Frequency / Gain beside three
+  // EQ bands' own. `find` returns the first match, so a follow reflect — which rebuilds
+  // this panel at up to ~20 Hz — did not DROP focus (the documented fallback, and
+  // harmless) but handed it to a DIFFERENT filter's slider, where the operator's next
+  // ArrowUp edited that one and wrote it to the device.
+  it("restores focus to the same one of several identically labelled sliders", async () => {
+    await boot();
+    selectNode("ch1");
+    const type = row(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    type.value = String(COMP_EQ_SSMCS);
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const sliders = (): HTMLInputElement[] => [
+      ...$("inspector").querySelectorAll<HTMLInputElement>(
+        `.param[data-param-label="${t().inspector.frequency}"] input[type="range"]`,
+      ),
+    ];
+    await vi.waitFor(() => expect(sliders().length).toBeGreaterThan(1), APP_SETTLE);
+    const before = sliders();
+    const at = before.length - 1; // the last, which a first-match restore cannot reach
+    before[at].focus();
+    expect(document.activeElement).toBe(before[at]);
+
+    // An edit that rebuilds the panel without changing its shape: a colour swatch
+    // re-renders (the active ring has to move) and leaves every row where it was.
+    $("inspector").querySelectorAll<HTMLButtonElement>("button.swatch")[1].click();
+
+    const after = sliders();
+    expect(after[at]).not.toBe(before[at]); // the panel really was rebuilt
+    expect(document.activeElement).toBe(after[at]);
+  });
+
   it("moves a PRE EQ rec point to PRE COMP when the channel enters SSMCS", async () => {
     await boot();
     selectNode("ch1");
