@@ -363,6 +363,65 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     expect(JSON.parse(localStorage.getItem("urx-midi")!).input).toBe("B");
   });
 
+  // The boot restore is the third writer of the port slots, after the two intents, and
+  // the window is usable while it is still in flight — a saved port that opens slowly is
+  // exactly the wedged one the operator is re-picking away from. Outside the queue it
+  // completed after their choice and installed itself over it: the shell held A, the
+  // select said B, and A went back into the store for the next boot.
+  it("lets a choice made during the boot restore win over the port being restored", async () => {
+    localStorage.setItem("urx-midi", JSON.stringify({ input: "A" }));
+    mocks.midiListInputs.mockResolvedValue(["A", "B"]);
+
+    const opened: string[] = [];
+    let land!: () => void;
+    const stalled = new Promise<void>((r) => (land = r));
+    mocks.midiOpenInput.mockImplementation(async (port: string, onMessage: (bytes: number[]) => void) => {
+      mocks.inputReceiver = onMessage;
+      if (port === "A") await stalled;
+      opened.push(port);
+      return mocks.closeInput;
+    });
+
+    install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(mocks.midiOpenInput).toHaveBeenCalledWith("A", expect.any(Function)));
+
+    // The operator picks B while the restore of A is still in flight.
+    dispatch({ type: "port", dir: "in", name: "B" });
+    land();
+
+    await vi.waitFor(() => expect(lastState().input).toBe("B"));
+    expect(opened).toEqual(["A", "B"]); // B's open ran after A's, so the shell ends on B
+    expect(JSON.parse(localStorage.getItem("urx-midi")!).input).toBe("B");
+  });
+
+  // …and "None" during the restore means none, rather than the saved port coming back.
+  it("lets None during the boot restore stand", async () => {
+    localStorage.setItem("urx-midi", JSON.stringify({ input: "A" }));
+    mocks.midiListInputs.mockResolvedValue(["A", "B"]);
+
+    let land!: () => void;
+    const stalled = new Promise<void>((r) => (land = r));
+    mocks.midiOpenInput.mockImplementation(async (port: string, onMessage: (bytes: number[]) => void) => {
+      mocks.inputReceiver = onMessage;
+      if (port === "A") await stalled;
+      return mocks.closeInput;
+    });
+
+    install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(mocks.midiOpenInput).toHaveBeenCalledWith("A", expect.any(Function)));
+
+    dispatch({ type: "port", dir: "in", name: null });
+    land();
+
+    await vi.waitFor(() => expect(mocks.closeInput).toHaveBeenCalled());
+    expect(lastState().input).toBeNull();
+    expect(JSON.parse(localStorage.getItem("urx-midi")!).input).toBeUndefined();
+  });
+
   // `midi_close_input` closes whatever the shell holds and takes no argument, so
   // holding a closer buys nothing — and conditioning the close on holding one is a
   // gap: after a reconcile adopts a port the shell already had, there is no closer.

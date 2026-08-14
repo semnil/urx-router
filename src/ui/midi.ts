@@ -385,8 +385,18 @@ export class MidiControl {
     // showing a controller that was never actually opened, and the operator only
     // finds out when a fader does nothing. The failure goes to the status line,
     // not a dialog — nothing was interrupted, it just did not come back.
-    if (s.input) void this.openInput(s.input);
-    if (s.output) void this.openOutput(s.output);
+    //
+    // Through the same per-direction queue an operator's choice goes through, and for
+    // the same reason: the MIDI window is usable while this is still in flight, and a
+    // saved port that opens slowly is exactly the wedged one. Left outside the queue it
+    // completed after the operator had picked B or "None" and installed itself over
+    // their choice — in the shell's slot, in this state, and back into the store.
+    //
+    // Queued rather than routed through `setInputPort`: a restore must not SAVE. That
+    // path writes the result back, so a saved port merely unplugged right now would be
+    // erased from the store by its own failed restore and never tried again.
+    if (s.input) void this.queuePort("in", (port) => (port ? this.openInput(port) : Promise.resolve()), s.input);
+    if (s.output) void this.queuePort("out", (port) => (port ? this.openOutput(port) : Promise.resolve()), s.output);
   }
 
   private async openInput(port: string): Promise<void> {
