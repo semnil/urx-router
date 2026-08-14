@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, heldThroughBlur, type Page } from "./fixtures";
 import { selectWire } from "./graph-helpers";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
@@ -76,34 +76,3 @@ test("a send slider stops at a window blur and stays stopped while the button is
   // log-scaled one, Pan the plain `rangeSlider` every node-level control also uses.
   for (const label of ["Level", "Pan"]) await heldThroughBlur(page, param(page, label).locator("input[type=range]"));
 });
-
-async function heldThroughBlur(page: Page, slider: ReturnType<Page["locator"]>): Promise<void> {
-  await expect(slider).toHaveCount(1);
-
-  const b = (await slider.boundingBox())!;
-  const y = b.y + b.height / 2;
-  await page.mouse.move(b.x + b.width * 0.25, y);
-  await page.mouse.down();
-  await page.mouse.move(b.x + b.width * 0.4, y);
-  const dragged = await slider.inputValue();
-
-  await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
-  await page.mouse.move(b.x + b.width * 0.8, y);
-  expect(await slider.inputValue()).toBe(dragged);
-  // The state itself, not only the frozen value: removing the element and re-adding it
-  // freezes the value too, and that is the treatment measured to RESUME on the unit.
-  await expect(slider).toBeDisabled();
-
-  // Focus returning is not the re-arm — the button is still down.
-  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-  await page.mouse.move(b.x + b.width * 0.95, y);
-  expect(await slider.inputValue()).toBe(dragged);
-
-  await page.mouse.up();
-  await expect(slider).toBeEnabled();
-  await page.mouse.move(b.x + b.width * 0.6, y);
-  await page.mouse.down();
-  await page.mouse.move(b.x + b.width * 0.65, y);
-  await page.mouse.up();
-  expect(await slider.inputValue()).not.toBe(dragged);
-}
