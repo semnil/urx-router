@@ -770,6 +770,26 @@ export class Graph {
       if (this.isHidden(a) || this.isHidden(b)) continue;
       this.redrawStereoLink(a, b);
     }
+    this.repaintCandidates();
+  }
+
+  /** Re-light the connect-drag candidates after every port element has been replaced.
+   *  Their highlight lives only in those elements, so a redraw landing mid-drag —
+   *  a device-follow reflect, a repaint — left the operator finishing the connection
+   *  with no legality cues. */
+  private repaintCandidates(): void {
+    const c = this.connect;
+    if (c?.mode !== "connecting") return;
+    let legal =
+      c.dir === "out" ? legalTargets(this.model, this.plan, c.ref) : legalSources(this.model, this.plan, c.ref);
+    let possible = c.dir === "out" ? possibleTargets(this.model, c.ref) : possibleSources(this.model, c.ref);
+    if (c.dir === "out") {
+      const fromThisJack = (rs: Set<string>): Set<string> =>
+        new Set([...rs].filter((r) => this.isRecPointTap(c.ref, r) === c.tap));
+      legal = fromThisJack(legal);
+      possible = fromThisJack(possible);
+    }
+    this.paintCandidates(c.ref, c.dir, legal, possible);
   }
 
   /** Snap a pair's partner next to the kept node when STEREO-linking, so the heart
@@ -1818,6 +1838,12 @@ export class Graph {
       this.cancelLongPress();
     }
     if (this.dragNode) {
+      // The press became a drag, so it is no longer half of a double-press. The
+      // detector times pointerdown-to-pointerdown and was not invalidated here, so a
+      // flick-drag released at ~250 ms and grabbed again at ~300 ms to keep positioning
+      // opened the note editor instead — and on a collapsed note that also un-collapsed
+      // it and marked the plan changed.
+      if (!this.dragNode.moved) this.lastNodeClick = null;
       this.dragNode.moved = true;
       const p = this.clientToContent(e);
       this.plan.positions[this.dragNode.id] = {
@@ -2037,10 +2063,30 @@ export class Graph {
     // Gate: outputs open on any possible route (occupied targets still highlight);
     // inputs open only on a legal source, so a full input falls back to wire-select.
     if (dir === "out" ? !possible.size : !legal.size) return false;
-    // Reset every port to its default look, then light the partners: legal ones
-    // filled, occupied-but-possible ones outline-only. Dragging back from an input
-    // lights each source at the jack that route would actually leave from, so a
-    // channel offers its tap for a USB / microSD target and its output otherwise.
+    this.paintCandidates(from, dir, legal, possible);
+    this.tempWire = document.createElementNS(SVGNS, "path");
+    this.tempWire.classList.add("overlay-temp");
+    this.tempWire.style.pointerEvents = "none";
+    this.tempWire.setAttribute("fill", "none");
+    this.tempWire.setAttribute("stroke", this.palette.tempWire);
+    this.tempWire.setAttribute("stroke-width", "2");
+    this.tempWire.setAttribute("stroke-dasharray", "5 4");
+    this.overlay.append(this.tempWire);
+    return true;
+  }
+
+  /** Reset every port to its default look, then light the partners: legal ones filled,
+   *  occupied-but-possible ones outline-only. Dragging back from an input lights each
+   *  source at the jack that route would actually leave from, so a channel offers its
+   *  tap for a USB / microSD target and its output otherwise.
+   *
+   *  Its own method because the highlight state lives ONLY in these elements, and a
+   *  render replaces every one of them: a device-follow reflect landing mid-drag left
+   *  the operator finishing the connection with no legality cues at all — the drag
+   *  itself survives (the state is ref-based and elementFromPoint resolves the fresh
+   *  hit discs), so nothing failed, it just went dark. On a dense board those cues are
+   *  the whole affordance. `repaintCandidates` re-runs it after a render. */
+  private paintCandidates(from: string, dir: PortDirection, legal: Set<string>, possible: Set<string>): void {
     this.clearPortHighlights();
     for (const r of possible) {
       const el = dir === "out" ? this.portEls.get(r) : this.sourceJack(r, from);
@@ -2053,15 +2099,6 @@ export class Graph {
         el.setAttribute("stroke", this.palette.possibleStroke);
       }
     }
-    this.tempWire = document.createElementNS(SVGNS, "path");
-    this.tempWire.classList.add("overlay-temp");
-    this.tempWire.style.pointerEvents = "none";
-    this.tempWire.setAttribute("fill", "none");
-    this.tempWire.setAttribute("stroke", this.palette.tempWire);
-    this.tempWire.setAttribute("stroke-width", "2");
-    this.tempWire.setAttribute("stroke-dasharray", "5 4");
-    this.overlay.append(this.tempWire);
-    return true;
   }
 
   private updateTempWire(from: string, dir: PortDirection, tap: boolean, to: Pt): void {

@@ -420,6 +420,87 @@ describe("DeviceFollow", () => {
     follow.end();
   });
 
+  // A registration stalled at the broker outlives the session that issued it. The
+  // post-await guard used to ask `this.active`, which is a boolean and is `true`
+  // again for a DIFFERENT session — so the stale handle was installed over the live
+  // one, leaving the real subscription with nobody to unsubscribe it (a registration
+  // pile-up at the broker is the failure link-stats.ts was built to investigate),
+  // notifies delivered twice while both lived, and a settle sink arming reconciles
+  // across later sessions.
+  it("drops a registration that resolved after its session ended and another began", async () => {
+    let release!: (v: () => void) => void;
+    const stalled = new Promise<() => void>((r) => (release = r));
+    const staleUnsub = vi.fn();
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async (addrs, onUpdate) => {
+      void real(addrs, onUpdate);
+      return stalled;
+    });
+
+    const follow = followFor({});
+    const first = follow.begin();
+    follow.end();
+    await follow.begin(); // the second session registers for real
+    const liveUnsub = h.unsub;
+
+    release(staleUnsub);
+    await first;
+    // Dropped WITHOUT unsubscribing. The handle is not per-subscription — the command
+    // takes no argument and acts on the current connection — so calling it here would
+    // have torn down the new session's stream while Live stayed on.
+    expect(staleUnsub).not.toHaveBeenCalled();
+    expect(liveUnsub).not.toHaveBeenCalled();
+
+    // …and the live session is still the one that gets torn down, by its own handle.
+    follow.end();
+    expect(liveUnsub).toHaveBeenCalledTimes(1);
+    expect(staleUnsub).not.toHaveBeenCalled();
+  });
+
+  // The other half of the same guard: with NOTHING running, the stalled registration is
+  // the only thing holding the stream and this is the call that releases it. `end()`
+  // does not touch the connection, so it can still be up.
+  it("releases a registration that resolved after its session ended and none followed", async () => {
+    let release!: (v: () => void) => void;
+    const stalled = new Promise<() => void>((r) => (release = r));
+    const staleUnsub = vi.fn();
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async (addrs, onUpdate) => {
+      void real(addrs, onUpdate);
+      return stalled;
+    });
+
+    const follow = followFor({});
+    const first = follow.begin();
+    follow.end();
+    release(staleUnsub);
+    await first;
+    expect(staleUnsub).toHaveBeenCalledTimes(1);
+  });
+
+  // The settle cannot tell a re-registration from a new session — from there both are
+  // a release followed by an arm — so a watch armed under the old session can fire
+  // into the new one's sink. The stamp is what stops it arming a sweep that session
+  // has no reason for.
+  it("ignores a settle report armed under a session that has since ended", async () => {
+    const reconcileAll = vi.fn(async () => {});
+    const follow = followFor({ reconcileAll });
+    await follow.begin();
+    const k = addrKey(9002, 0, 0);
+    const settled = writeSettle.settle(new Map([[k, writeSettle.mark()]]), {
+      mustSettle: new Set(),
+      mustAnnounce: new Set([k]),
+    });
+    follow.end();
+    await follow.begin(); // a new session arms its own sink
+    await settled;
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 900);
+    expect(reconcileAll).not.toHaveBeenCalled();
+    follow.end();
+  });
+
   it("does nothing on a notify before begin", async () => {
     const reconcileNodes = vi.fn(async () => {});
     followFor({ reconcileNodes });

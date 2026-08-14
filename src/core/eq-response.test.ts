@@ -176,6 +176,30 @@ describe("EQ response against the device", () => {
     for (const hz of [20, 200, 1000, 5000, 20000]) expect(off(hz)).toBe(0);
   });
 
+  // The convention above ("the nominal frequency is |gain| - 3 dB") is a property of
+  // every shelf, not of the 300-1000 Hz band the measured datasets happen to sit in.
+  // It used to fail high up: the bisection bracket ran to nominal × 20, which is past
+  // Nyquist for any nominal over 1200 Hz, and `shelfCoefs` aliases there (w0 wraps mod
+  // 2π). Where the bracket landed near a multiple of fs the aliased shelf flattened to
+  // full gain, so the "which way does the magnitude move" probe compared two near-equal
+  // plateau values and the solver walked the wrong bracket. The frequencies below are
+  // the app's own slider detents nearest each such multiple; at 11996 Hz / +12 dB the
+  // curve read 6.0 dB where the convention requires 9.
+  it("holds the shelf convention up where the bracket used to cross Nyquist", () => {
+    for (const hz of [2399, 7195, 9617, 11996, 16828, 19188]) {
+      for (const gain of [6, 12, 18, -6, -12, -18]) {
+        for (const high of [true, false]) {
+          const at = eqResponse([band({ index: high ? 3 : 0, type: EQ_TYPE_SHELVING, freq: hz, gain, q: 0.71 })])(hz);
+          const want = Math.sign(gain) * (Math.abs(gain) - 3);
+          expect(
+            Math.abs(at - want),
+            `${high ? "HIGH" : "LOW"} ${hz} Hz ${gain} dB: model ${at.toFixed(1)}`,
+          ).toBeLessThanOrEqual(TOL);
+        }
+      }
+    }
+  });
+
   it("leaves a shelf's design frequency at the nominal when there is no plateau to find", () => {
     // |gain| ≤ 3 dB has no -3 dB point below its own plateau, so there is nothing to
     // solve and the nominal frequency is used as-is.
@@ -186,5 +210,29 @@ describe("EQ response against the device", () => {
     expect(shelfDesignFreq(1000, 18, false)).toBeGreaterThan(1000);
     expect(shelfDesignFreq(1000, -18, true)).toBeLessThan(1000);
     expect(shelfDesignFreq(1000, -18, false)).toBeGreaterThan(1000);
+  });
+});
+
+// The mid bands are fixed peaking on the unit — it rejects a type write there
+// (response_code 400) and the emit never sends one — so a type parked on one by a
+// hand-authored plan or a `?plan=` link describes nothing the hardware is running.
+// The plot used to honour it anyway, drawing a high-pass or a shelf for a band the
+// device runs as a bell, and contradicting the unit by up to the band's full gain.
+describe("a mid band is drawn as the peaking filter the device runs", () => {
+  it("ignores a PASS or SHELVING type on LOW-MID and HIGH-MID", () => {
+    for (const index of [1, 2]) {
+      const bell = bandResponse(band({ index, gain: 12, q: 1 }));
+      for (const type of [EQ_TYPE_PASS, EQ_TYPE_SHELVING]) {
+        const typed = bandResponse(band({ index, gain: 12, q: 1, type }));
+        for (const hz of [100, 500, 1000, 4000]) expect(typed(hz)).toBeCloseTo(bell(hz), 6);
+      }
+    }
+  });
+
+  it("still honours the type on LOW and HIGH, which the device does take", () => {
+    const lowPass = bandResponse(band({ index: 0, type: EQ_TYPE_PASS, freq: 1000 }));
+    expect(lowPass(100)).toBeLessThan(-20);
+    const highShelf = bandResponse(band({ index: 3, type: EQ_TYPE_SHELVING, freq: 1000, gain: 12, q: 0.71 }));
+    expect(highShelf(4000)).toBeGreaterThan(10);
   });
 });

@@ -112,6 +112,7 @@ import {
   readIntoPlan,
 } from "./core/control/readback";
 import type { MergedRead, ReadbackResult } from "./core/control/readback";
+import type { PendingWrites } from "./core/control/settle";
 import { parseUrxf, paramSourceOf, UrxfError } from "./core/control/urxf";
 import {
   compareCounts,
@@ -707,8 +708,15 @@ const follow =
           // flight is device truth the read's private copy predates, and the re-base
           // below rebuilds the whole snapshot from that copy.
           const since = live?.directMark();
+          // The session's own recent writes travel with the read. This node's addresses
+          // can include ones the flush wrote tens of ms ago, and a GET inside that
+          // window answers the PRE-write value — which the merge then takes as device
+          // truth while the unit's own notify for our write is consumed as an echo. The
+          // operator's toggle flips back on screen, and plan and snapshot agree on a
+          // value the device does not hold until the idle sweep re-reads past it.
+          const pending = live?.recentPending(nodeIds);
           const merged = await followRead("device-follow scoped readback", (into, signal) =>
-            applyNodeState(getModel(modelId), into, nodeIds, signal),
+            applyNodeState(getModel(modelId), into, nodeIds, signal, pending),
           );
           if (!merged) return;
           traceProbe?.sample("follow-scoped");
@@ -730,8 +738,11 @@ const follow =
         // Escalation / idle safety net: pull the whole device into the plan.
         reconcileAll: async () => {
           const since = live?.directMark();
+          // Unscoped: a whole-device read covers every address, so every recent write is
+          // one it must settle before reading (the scoped case above says why).
+          const pending = live?.recentPending();
           const merged = await followRead("device-follow readback", (into, signal) =>
-            applyDeviceStateScoped(into, signal),
+            applyDeviceStateScoped(into, signal, pending),
           );
           if (!merged) return;
           traceProbe?.sample("follow-full");
@@ -1301,6 +1312,44 @@ function inspectorFocusKey(el: HTMLElement): string {
   return [label, el.tagName, type, el.className, el.textContent?.slice(0, 24) ?? ""].join("|");
 }
 
+/**
+ * Those keys made unique, by appending each control's ordinal among the ones sharing
+ * its key.
+ *
+ * The label is not a discriminator on its own, because rows legitimately repeat one:
+ * SSMCS mode puts a side-chain Q / Frequency / Gain beside three EQ bands' own, so four
+ * sliders carry `Frequency|INPUT|range||`, and every section toggle carries the empty
+ * label. `find` returns the FIRST match, so the restore did not drop focus — which is
+ * the documented fallback and would have been fine — it handed focus to a different
+ * filter's slider, and the operator's next ArrowUp edited that one and wrote it to the
+ * device.
+ *
+ * Built for the whole host in ONE pass, and used from both ends of the rebuild: keying
+ * each element by scanning its siblings would be quadratic on a path that repeats at
+ * ~20 Hz during device follow, which is what the key's own note is about.
+ */
+function inspectorFocusKeys(): Map<HTMLElement, string> {
+  const els = focusables(inspectorHost);
+  const seen = new Map<string, number>();
+  const counts = new Map<string, number>();
+  for (const el of els) {
+    const k = inspectorFocusKey(el);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const out = new Map<HTMLElement, string>();
+  for (const el of els) {
+    const k = inspectorFocusKey(el);
+    if ((counts.get(k) ?? 0) < 2) {
+      out.set(el, k);
+      continue;
+    }
+    const n = seen.get(k) ?? 0;
+    seen.set(k, n + 1);
+    out.set(el, `${k}|#${n}`);
+  }
+  return out;
+}
+
 // The scroll offset a rebuild has to carry over. Tracked from the element's own scroll
 // event instead of read back at rebuild time: the reflect that rebuilds this panel has
 // just dirtied layout (repaintDirtyNodes / refreshStrip), so a read there flushes it
@@ -1349,9 +1398,12 @@ function rebuildInspector(): void {
     (active) => {
       if (ownsNativeUndo(active) && active instanceof HTMLInputElement)
         carried.caret = [active.selectionStart, active.selectionEnd];
-      return inspectorFocusKey(active);
+      return inspectorFocusKeys().get(active);
     },
-    (key) => focusables(inspectorHost).find((el) => inspectorFocusKey(el) === key),
+    (key) => {
+      const keys = inspectorFocusKeys();
+      return focusables(inspectorHost).find((el) => keys.get(el) === key);
+    },
     () => inspectorScrollTop,
   );
   renderInspector(
@@ -1442,7 +1494,11 @@ function reflectHistory(touch: PatchTouch): void {
 // the plan wholesale. The plan is a parameter rather than the module one because the
 // read spans seconds: re-reading it after the await would apply the outgoing document's
 // scene-external values to whatever replaced it.
-async function applyDeviceStateScoped(target: Plan, signal?: AbortSignal): Promise<ReadbackResult> {
+async function applyDeviceStateScoped(
+  target: Plan,
+  signal?: AbortSignal,
+  pending?: PendingWrites,
+): Promise<ReadbackResult> {
   // Counted at the operation, not at its callers: the broker only ever sees the ~800
   // commands this decomposes into, so `reads` is the one ledger row nothing downstream
   // can reconstruct — and a count derived at each call site is only right for as long
@@ -1450,7 +1506,7 @@ async function applyDeviceStateScoped(target: Plan, signal?: AbortSignal): Promi
   // session (the tracker guards it), so the Fetch button costs nothing here.
   linkLedger?.noteFullRead();
   const keep = getSettings().deviceScope === "scene" ? captureSceneExternal(target) : null;
-  const result = await applyDeviceState(getModel(modelId), target, signal);
+  const result = await applyDeviceState(getModel(modelId), target, signal, undefined, pending);
   if (keep) applySceneExternal(target, keep);
   return result;
 }
@@ -2841,6 +2897,20 @@ if (!DEMO) {
       setStatus(t().status.canceled);
       return;
     }
+    // Re-checked HERE, not only at the flow's entry. This is the one wholesale plan
+    // replacement that does not go through `loadPlan` — it mutates the module plan in
+    // place — so it has no share of that backstop, and the entry check is separated
+    // from the mutation by two confirm dialogs. The UI stays clickable during those
+    // (the confirm's own comment says so), so an operator can start a Fetch or Live
+    // sync in between: the read raises the latch and spends seconds merging into the
+    // same plan object this is about to overwrite key by key. Neither side reports
+    // anything, the import does not pass `markChanged` so the write witness has no
+    // entry for it, and what is left is a mixture with a history and a live snapshot
+    // that describe neither half.
+    if (flow.deviceReadInFlight) {
+      setStatus(t().status.busyDeviceRead);
+      return;
+    }
     let result: ReadbackResult;
     try {
       result = await applySourceState(getModel(modelId), plan, paramSourceOf(current));
@@ -3248,6 +3318,26 @@ function modalOpen(): boolean {
   return !!document.querySelector(".consent-scrim:not([hidden])");
 }
 
+/**
+ * Whether a modal was open when the Escape now being handled STARTED.
+ *
+ * Asking `modalOpen()` in the bubble-phase handler answers about the wrong moment: a
+ * modal dismisses in the capture phase without stopping propagation, so by the time the
+ * window handler runs the modal has already gone and the test says "no modal" — and the
+ * graph's selection, and the inspector's contents with it, were cleared for an Escape
+ * addressed to Preferences, the licences notice or Device setup. This listener is
+ * registered in the capture phase on `window`, which is the first thing the event
+ * reaches, so it records the state the operator's key was actually aimed at.
+ */
+let escapeConsumed = false;
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (e.key === "Escape") escapeConsumed = modalOpen();
+  },
+  true,
+);
+
 window.addEventListener("keydown", (e) => {
   // Undo / redo first, and with its own target test: `typing` below is too broad
   // for it (a focused range slider or the model picker owns no undo stack of its
@@ -3266,6 +3356,13 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     graph.deleteSelection();
   } else if (e.key === "Escape") {
+    // Gated like the Delete branch above, and for the same reason. A modal closes on
+    // Escape in the capture phase without stopping propagation, so this bubble-phase
+    // handler then ran too and cleared the graph's selection — and the inspector's
+    // contents with it — for an Escape addressed to Preferences, the licences notice or
+    // Device setup. The same key closing a console popover cleared the hidden graph's
+    // selection behind the console view.
+    if (graphHost.hidden || modalOpen() || escapeConsumed) return;
     graph.clearSelection();
   }
 });

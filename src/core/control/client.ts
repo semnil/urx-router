@@ -318,6 +318,21 @@ export interface ConvergeOptions {
   emit?: EmitOptions;
   /** Keep a per-round record (see ConvergeRound). Diagnostics only. */
   trace?: boolean;
+  /**
+   * Abandon a sweep at its first read failure instead of finishing it.
+   *
+   * Defaults to ON, because this loop's own exit condition is abort-on-first-read-
+   * error: once one read has failed the collected errors end the loop and tear the
+   * session down, so the several hundred remaining round trips are issued to be
+   * thrown away. On a degraded link short of the Rust stall limit, that is exactly
+   * the slow path — which is the case `DiffOptions.stopOnError` was added for, in
+   * those words.
+   *
+   * The self-test turns it OFF deliberately: its verdict is per-address, so a sweep
+   * that stopped early would report every address after the failure as untested
+   * rather than as tested and passing (`SelfTestMismatch` states that contract).
+   */
+  stopOnError?: boolean;
 }
 
 /**
@@ -353,6 +368,7 @@ export async function sendConverging(
     scope = "all",
     emit = {},
     trace: wantTrace = false,
+    stopOnError = true,
   } = opts;
   const outcomes: SendOutcome[] = [];
   const readErrors: string[] = [];
@@ -372,7 +388,7 @@ export async function sendConverging(
         timeoutMs: settleMs,
         signal,
       });
-    const seed = await diffPlan(model, plan, { signal, scope, emit });
+    const seed = await diffPlan(model, plan, { signal, scope, emit, stopOnError });
     readErrors.push(...seed.errors);
     unread.push(...seed.unread);
     residual = seed.diffs;
@@ -405,7 +421,7 @@ export async function sendConverging(
     // its own window. No converge head's reset latency is measured either — only the
     // "refetch" family's, which never reaches this loop.
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
-    const next = await diffPlan(model, plan, { signal, scope, emit });
+    const next = await diffPlan(model, plan, { signal, scope, emit, stopOnError });
     readErrors.push(...next.errors);
     unread.push(...next.unread);
     residual = next.diffs;

@@ -149,6 +149,31 @@ describe("captureSceneExternal / applySceneExternal", () => {
     expect(next.nodeParams["ch1"]?.on).toBe(false);
     expect(next.notes["ch1"]).toBe("keep me");
   });
+
+  // The wire array's order is the wires' SVG draw order and the order a saved document
+  // serializes in. Filter-then-append moved every scene-external wire to the tail, on
+  // every fetch, live start and full reconcile while the device scope is "scene" — and
+  // the keyed differ ignores an index move by design, so nothing recorded it: no undo
+  // entry, no witness, and the next save simply diffed against the previous file for an
+  // edit the operator never made.
+  it("leaves the wire order alone, and appends only genuinely new wires", () => {
+    const current = defaultPlan("URX44V");
+    const next = defaultPlan("URX44V");
+    const before = next.connections.map((c) => `${c.from} ${c.to}`);
+    expect(next.connections.some(isSceneExternalConnection)).toBe(true);
+
+    applySceneExternal(next, captureSceneExternal(current));
+    expect(next.connections.map((c) => `${c.from} ${c.to}`)).toEqual(before);
+
+    // One the receiving plan does not have goes to the end, which is where a wire the
+    // operator has never seen belongs.
+    const captured = captureSceneExternal(current);
+    const dropped = next.connections.findIndex(isSceneExternalConnection);
+    const key = `${next.connections[dropped].from} ${next.connections[dropped].to}`;
+    next.connections.splice(dropped, 1);
+    applySceneExternal(next, captured);
+    expect(next.connections.map((c) => `${c.from} ${c.to}`).at(-1)).toBe(key);
+  });
 });
 
 describe("scene-scoped plan documents", () => {

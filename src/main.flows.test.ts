@@ -302,6 +302,30 @@ describe("the modals", () => {
     await vi.waitFor(() => expect(scrim!.hidden).toBe(true), APP_SETTLE);
   });
 
+  // A modal closes on Escape in the capture phase without stopping propagation, so the
+  // window handler ran too and cleared the graph's selection — and the inspector's
+  // contents with it — for an Escape addressed to Preferences. The Delete branch beside
+  // it has always carried the guard; this one had neither half of it.
+  it("closes a modal with Escape without emptying the inspector behind it", async () => {
+    await boot();
+    selectNode("ch1");
+    const shown = $("inspector").textContent ?? "";
+    expect(shown.length).toBeGreaterThan(0);
+
+    $("btn-prefs").click();
+    const scrim = document.querySelector<HTMLElement>(".prefs-scrim, #prefs-modal")!;
+    expect(scrim.hidden).toBe(false);
+    chord("Escape");
+    await vi.waitFor(() => expect(scrim.hidden).toBe(true), APP_SETTLE);
+
+    // The selection the Escape was not addressed to is still there.
+    expect($("inspector").textContent).toBe(shown);
+
+    // …and an Escape the graph IS the addressee of still clears it.
+    chord("Escape");
+    expect($("inspector").textContent).not.toBe(shown);
+  });
+
   // The notice is a bundled resource fetched at click time, and jsdom serves no
   // files — so what this reaches is the failure arm. Worth a case of its own: the
   // arm is a `.catch` rather than a rejection handler precisely so a notice that
@@ -700,6 +724,39 @@ describe("editing a node through the inspector", () => {
   // EQ stage, so the device drops PRE EQ from the list and moves a selected PRE EQ tap to
   // PRE COMP. Every read re-queries — the type change re-renders the panel, and the
   // elements captured before it belong to a panel that is gone.
+  // The focus-restore key is the row LABEL plus generic element facts, and SSMCS mode
+  // is where labels legitimately repeat: a side-chain Q / Frequency / Gain beside three
+  // EQ bands' own. `find` returns the first match, so a follow reflect — which rebuilds
+  // this panel at up to ~20 Hz — did not DROP focus (the documented fallback, and
+  // harmless) but handed it to a DIFFERENT filter's slider, where the operator's next
+  // ArrowUp edited that one and wrote it to the device.
+  it("restores focus to the same one of several identically labelled sliders", async () => {
+    await boot();
+    selectNode("ch1");
+    const type = row(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    type.value = String(COMP_EQ_SSMCS);
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const sliders = (): HTMLInputElement[] => [
+      ...$("inspector").querySelectorAll<HTMLInputElement>(
+        `.param[data-param-label="${t().inspector.frequency}"] input[type="range"]`,
+      ),
+    ];
+    await vi.waitFor(() => expect(sliders().length).toBeGreaterThan(1), APP_SETTLE);
+    const before = sliders();
+    const at = before.length - 1; // the last, which a first-match restore cannot reach
+    before[at].focus();
+    expect(document.activeElement).toBe(before[at]);
+
+    // An edit that rebuilds the panel without changing its shape: a colour swatch
+    // re-renders (the active ring has to move) and leaves every row where it was.
+    $("inspector").querySelectorAll<HTMLButtonElement>("button.swatch")[1].click();
+
+    const after = sliders();
+    expect(after[at]).not.toBe(before[at]); // the panel really was rebuilt
+    expect(document.activeElement).toBe(after[at]);
+  });
+
   it("moves a PRE EQ rec point to PRE COMP when the channel enters SSMCS", async () => {
     await boot();
     selectNode("ch1");

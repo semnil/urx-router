@@ -124,8 +124,14 @@ pub fn open_input(
     Ok(())
 }
 
-pub fn close_input(state: &MidiState) {
-    *state.input.lock().unwrap() = None;
+/// Close the input, if `label` is the webview that opened it. Ownership is checked for
+/// the reason the page-load teardown checks it: another window closing main's port
+/// leaves main delivering into nothing while its select still names the port.
+pub fn close_input(state: &MidiState, label: &str) {
+    let mut slot = state.input.lock().unwrap();
+    if slot.as_ref().is_some_and(|p| p.owner == label) {
+        *slot = None;
+    }
 }
 
 /// Close whichever ports `label` opened, and leave any other page's alone. The
@@ -179,8 +185,12 @@ pub fn open_output(state: &MidiState, owner: &str, port: String) -> Result<(), S
     Ok(())
 }
 
-pub fn close_output(state: &MidiState) {
-    *state.output.lock().unwrap() = None;
+/// The output twin of `close_input`.
+pub fn close_output(state: &MidiState, label: &str) {
+    let mut slot = state.output.lock().unwrap();
+    if slot.as_ref().is_some_and(|p| p.owner == label) {
+        *slot = None;
+    }
 }
 
 /// Send one raw message out of the open output port (controller feedback:

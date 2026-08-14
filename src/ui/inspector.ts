@@ -242,21 +242,39 @@ export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Select
 export function compositionGate(host: HTMLElement, rebuild: () => void): { held: () => boolean } {
   let composing = false;
   let pending = false;
+  // Runs the held rebuild once the gate is no longer busy — asked on the event that
+  // ENDS the busy state, by which point it has already ended. A composition clears its
+  // own flag here; a picker's "open" is read off focus and has cleared itself before
+  // the blur reaches us, so testing the flag alone would have dropped the rebuild.
   const end = (): void => {
-    if (!composing) return;
     composing = false;
-    if (!pending) return;
+    if (!pending || busy()) return;
     pending = false;
     rebuild();
   };
+  // An open `<select>` picker is the second kind of in-flight input a rebuild destroys,
+  // and `replaceChildren` closes it instantly — so while any followed parameter on the
+  // node moved (an external MIDI sweep, a device-side knob), the reflect ran at up to
+  // 20 Hz and the Rec Point / Signal Type / INS FX dropdowns simply could not be opened.
+  // Focus is restored to the fresh select afterwards, but an open picker is not
+  // restorable state.
+  //
+  // Read off `document.activeElement` rather than tracked with a flag: a picker fires no
+  // "opened" event for the page to latch, while focus is observable — a select inside
+  // this host holds it for as long as its popup can be open. It ends on the same
+  // `focusout`, and on `change`, which is what a picker dismissal produces.
+  const openPicker = (): boolean =>
+    document.activeElement instanceof HTMLSelectElement && host.contains(document.activeElement);
+  const busy = (): boolean => composing || openPicker();
   host.addEventListener("compositionstart", () => {
     composing = true;
   });
   host.addEventListener("compositionend", end);
+  host.addEventListener("change", end);
   host.addEventListener("focusout", end);
   return {
     held: () => {
-      if (!composing) return false;
+      if (!busy()) return false;
       pending = true;
       return true;
     },

@@ -577,11 +577,17 @@ const LEGACY_FX_PARAM_KEYS = ["initialDelay", "diffusion", "hpf", "lpf", "hiRati
  *  does not offer is read as that channel's factory type here and written as that type
  *  by translate.ts. A key the resolved type does not have is left as it is.
  *
- *  Two steps, each gated on the version that introduced its keys:
- *   - < 2: the bare names several families shared (hpf / lpf / hiRatio …).
- *   - < 3: the delay time, when the saved type is Ping Pong. From 3 on a `delay` key
- *     beside a Ping Pong type is the MONO value parked under its own key, so re-keying
- *     it then would be the very re-interpretation the split exists to prevent. */
+ *  Two re-keyings, both under ONE gate — `< 2`:
+ *   - the bare names several families shared (hpf / lpf / hiRatio …);
+ *   - the delay time, when the saved type is Ping Pong.
+ *
+ *  One gate rather than two because both landed before any build that writes either
+ *  shipped: the released app is version 1, so no document exists that needs them told
+ *  apart. The boundary is the safety property, not a formality — from 2 on, a `delay`
+ *  key beside a Ping Pong type is the MONO value parked under its own name, and a
+ *  wider gate would re-key it: raw/14.976 ms read as raw/10 ms, which is exactly the
+ *  re-interpretation the key split exists to prevent, and translate would then write
+ *  that value to the hardware. */
 export function migrateFxEffectParams(
   fx: { type?: number; params?: Record<string, number> },
   fxIndex: number,

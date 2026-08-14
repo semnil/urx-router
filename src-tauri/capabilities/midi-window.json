@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "midi-window",
-  "description": "Core access for the MIDI control window. It is a view of the main window's state: no dialogs, no updater, no process control, and no device or file access of its own.",
-  "windows": ["midi"],
-  "permissions": ["core:default"]
+  "description": "The MIDI control window's access. It is a view of the main window's state: the relay pair below is every app command it may invoke, so it has no device, file, dialog, updater or process access of its own — enforced now rather than described.",
+  "windows": [
+    "midi"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-midi-ui-attach-window",
+    "allow-midi-ui-to-main"
+  ]
 }

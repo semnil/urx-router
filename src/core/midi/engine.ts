@@ -55,7 +55,14 @@ const RECENT_MS = 300;
 // keeps an equal real press right after the echo alive (edge-mode presses are
 // always 127, so a blanket window would eat them). Which addresses are armed, and
 // why the 14-bit ones are not, is decided in feedback().
-const ECHO_MS = 300;
+// Sized from the phenomenon, not from a round number. Measured echo latency on the
+// reflecting transports this guard exists for is 0.13-5 ms (echo-repro.test.ts), and
+// 300 ms was 60-2300x that — long enough to eat a REAL press on a plain controller
+// where no echo will ever arrive to disarm it. Every physical edge press re-armed the
+// trap through its own LED confirm: press at t=0, confirm (127) at t≈120, a second
+// press at t≈200-420 sends 127 again, equals `lastSent`, and is consumed as the echo.
+// The intervening release (0) does not disarm it, since 0 ≠ 127.
+const ECHO_MS = 50;
 
 interface PickupState {
   engaged: boolean;
@@ -70,6 +77,11 @@ export class MidiEngine {
   private lastSent = new Map<string, number>(); // last raw value fed back per address
   private lastRecv = new Map<string, number>(); // last receive time per address
   private lastFedAt = new Map<string, number>(); // echo guard: last feedback send-time per address
+  /** What the guard expects that echo to carry. Separate from `lastSent`, which is the
+   *  feedback CACHE: a cc14 emission arms the two plain-CC addresses it lands on, and
+   *  writing those bytes into their cache would make each of those bindings re-emit its
+   *  own unchanged value on the next pass. */
+  private lastFedValue = new Map<string, number>();
   private learn: { pendingCc: CcEvent | null } | null = null;
   // Whether the current gated window has already been reported. Cleared by
   // gateReleased(), and by the first message that is allowed through.
@@ -446,7 +458,33 @@ export class MidiEngine {
       // of this decision rather than an aside, so it is pinned in controls.test.ts.
       // Asked of the address' resolution rather than of its type: the property is what
       // decides, and `wireSteps` is the one place a new address type has to choose.
-      if (wireSteps(mapping.addr) === 127) this.lastFedAt.set(key, now);
+      if (wireSteps(mapping.addr) === 127) {
+        this.lastFedAt.set(key, now);
+        this.lastFedValue.set(key, raw);
+      }
+      // …but a cc14 EMISSION still lands on the plain-CC address space, which the
+      // decision above never covers: it asks about the address being emitted, and the
+      // two bytes go out as CC n and CC n+32. A knob learned as plain CC 39 while a
+      // fader is learned as cc14 7/39 (learn can create both) therefore takes the
+      // fader's LSB as a value edit — applied, and written to the unit while live —
+      // and its own corrective feedback echoes back into the fader's unguarded LSB
+      // half, where it re-assembles with the fader's stale MSB. Each side then edits
+      // the other at the debounce cadence until the two snapped values happen to
+      // coincide. Arming the plain-CC entries the emission actually touches is what
+      // stops the first step of that.
+      if (mapping.addr.type === "cc14") {
+        const half = (controller: number, value: number): void => {
+          const k = addrKey({ type: "cc", channel: mapping.addr.channel, controller });
+          if (!this.byKey.has(k)) return;
+          // The GUARD only. `lastSent` is that address' own feedback cache, and writing
+          // this byte into it would make the plain binding re-emit its unchanged value
+          // on the next pass, once per cc14 move.
+          this.lastFedAt.set(k, now);
+          this.lastFedValue.set(k, value);
+        };
+        half(mapping.addr.controller, (raw >> 7) & 0x7f);
+        half(mapping.addr.controller + 32, raw & 0x7f);
+      }
       // The physical control no longer matches the plan (the change came from
       // elsewhere): a non-motorized fader must pick the value up again.
       this.pickup.delete(key);
@@ -467,7 +505,7 @@ export class MidiEngine {
       return false;
     }
     const raw = ev.type === "note" ? (ev.on ? 127 : 0) : ev.value;
-    if (raw !== this.lastSent.get(key)) return false;
+    if (raw !== this.lastFedValue.get(key)) return false;
     this.lastFedAt.delete(key); // one echo per sent message — disarm on the match
     return true;
   }
@@ -481,6 +519,7 @@ export class MidiEngine {
   forgetFeedback(): void {
     this.lastSent.clear();
     this.lastFedAt.clear();
+    this.lastFedValue.clear();
   }
 
   // `raw` is already what this address puts on the wire (wireRaw), so this only has

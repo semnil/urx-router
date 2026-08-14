@@ -483,12 +483,32 @@ describe("read-only columns", () => {
   });
 
   // While live, a CH → FX tap is LCD-only on the unit, so the PRE button explains
-  // itself instead of writing.
-  it("makes the PRE button read-only while live, with the reason as its title", () => {
-    h = consoleHost({ live: true });
-    const strip = h.strip("ch1").root;
-    const pre = [...strip.querySelectorAll<HTMLElement>(".con-scol .con-slp")][0];
-    expect(pre.title).toBe(t().inspector.prePostLcdOnly);
+  // itself instead of writing. A CH → MIX tap is NOT: the broker takes that write
+  // (max_value=1), and the graph inspector keeps it editable at the same moment.
+  //
+  // Both columns are asserted, because the lock is computed from the routing rules
+  // and those are keyed by `node:port` — asking with a bare node id matches no rule
+  // and answers "not writable" for EVERY send, which reads exactly like the FX column
+  // being right. The FX assertion alone was green through that, for two years.
+  it("locks the PRE button while live only where the unit refuses the write", () => {
+    // Learn is on so the MIDI half is visible too: the read-only branch passes no
+    // `midiId`, so a wrongly locked chip also silently stops being assignable.
+    h = consoleHost({
+      live: true,
+      midi: { learnActive: () => true, armedId: () => null, isMapped: () => false, addrOf: () => null, arm: () => {} },
+    });
+    const preOf = (target: string): HTMLElement =>
+      h.sendCol("ch1", target).fader.parentElement!.querySelector<HTMLElement>(".con-slp")!;
+
+    const fx = preOf("bus.fx1");
+    expect(fx.title).toBe(t().inspector.prePostLcdOnly);
+    expect(fx.classList.contains("readonly")).toBe(true);
+    expect(fx.classList.contains("midi-target")).toBe(false);
+
+    const mix = preOf("bus.mix1");
+    expect(mix.title).toBe(t().console.preHint);
+    expect(mix.classList.contains("readonly")).toBe(false);
+    expect(mix.classList.contains("midi-target")).toBe(true);
   });
 });
 
@@ -626,5 +646,56 @@ describe("the meter stream", () => {
     h.view.hide();
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+// A drag that is CANCELLED fires no `pointerup` — touch-scroll takeover, a native
+// context menu, an alert. Teardown bound to `pointerup` alone left the move listener
+// installed on the window, and the control is still connected, so every later pointer
+// movement (the operator's next, unrelated gesture) re-entered the handler with the
+// stale press origin, wrote a level into the plan and committed it to the live device.
+// The second half is the pointer id: with no filter, a second pointer's moves drove
+// this control while something else was being dragged.
+describe("a drag that does not end in a pointerup", () => {
+  const press = (el: HTMLElement, pointerId: number): void => {
+    const box = el.getBoundingClientRect();
+    el.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        pointerId,
+        clientY: box.top + box.height / 2,
+        clientX: box.left + box.width / 2,
+      }),
+    );
+  };
+
+  it("stops writing when the browser cancels it", () => {
+    h = consoleHost();
+    const col = h.sendCol("ch1", "bus.mix1");
+    press(col.fader, 1);
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 0, pointerId: 1 }));
+    const during = level("ch1", "bus.mix1");
+    window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1 }));
+
+    // Whatever moves next is somebody else's gesture.
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 400, pointerId: 1 }));
+    expect(level("ch1", "bus.mix1")).toBe(during);
+  });
+
+  it("ignores a second pointer's moves while it is tracking the first", () => {
+    h = consoleHost();
+    const col = h.sendCol("ch1", "bus.mix1");
+    press(col.fader, 1);
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 0, pointerId: 1 }));
+    const during = level("ch1", "bus.mix1");
+
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 400, pointerId: 2 }));
+    expect(level("ch1", "bus.mix1")).toBe(during);
+    // …and the other pointer's release does not end this drag either.
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 2 }));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 40, pointerId: 1 }));
+    expect(level("ch1", "bus.mix1")).not.toBe(during);
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
   });
 });

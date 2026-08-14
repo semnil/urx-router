@@ -48,7 +48,7 @@ flowchart LR
 
   subgraph CH[ミキサーチャンネル]
     MONO["モノ CH<br/>Φ→HPF→GATE→COMP→EQ→INS FX"]
-    ST["ステレオ CH<br/>EQ→INS FX→DUCKER"]
+    ST["ステレオ CH<br/>EQ→DUCKER"]
   end
 
   subgraph BUS[Bus]

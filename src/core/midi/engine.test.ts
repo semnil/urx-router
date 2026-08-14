@@ -379,7 +379,7 @@ describe("feedback", () => {
     mute.value = 1; // muted via the UI
     engine.feedback();
     expect(sent).toEqual([encodeCc(0, 20, 127)]);
-    clock += 50;
+    clock += 5; // inside the window: the measured echo latency is 0.13-5 ms
     engine.onMessage(encodeCc(0, 20, 127)); // the echo
     expect(mute.value).toBe(1);
     expect(applied).toEqual([]);
@@ -450,7 +450,7 @@ describe("feedback", () => {
     mute.value = 1;
     engine.feedback();
     expect(sent).toEqual([encodeNote(0, 60, true)]);
-    clock += 50;
+    clock += 5; // inside the window: the measured echo latency is 0.13-5 ms
     engine.onMessage(encodeNote(0, 60, true)); // the echo
     expect(mute.value).toBe(1);
     clock += 400;
@@ -459,8 +459,11 @@ describe("feedback", () => {
   });
 
   it("only guards echoes within the echo window; a later equal message flips the toggle", () => {
-    // The receive-side echo guard spans ECHO_MS (300 ms). A same-value message
-    // that arrives after the window is treated as a genuine press, not an echo.
+    // The receive-side echo guard spans ECHO_MS. A same-value message that arrives
+    // after the window is treated as a genuine press, not an echo — which is what the
+    // window has to be short enough to allow: on a controller that never echoes, every
+    // physical press arms the guard through its own LED confirm, so a window far wider
+    // than the measured 0.13-5 ms echo latency swallows the operator's next press.
     const mute = fake("ch1/mute", "toggle", 0);
     controls.set("ch1/mute", mute);
     map("ch1/mute", { type: "cc", channel: 0, controller: 20 });
@@ -473,10 +476,30 @@ describe("feedback", () => {
     expect(applied).toEqual(["ch1/mute"]);
   });
 
+  // The window's size is the property, not merely that one exists. A plain controller
+  // with no loopback never sends an echo to consume the guard, and every physical edge
+  // press re-arms it through its own LED confirm — so a double-tap lands inside it and
+  // the second press is dropped as "the echo". Measured echo latency on the transports
+  // this guard is for is 0.13-5 ms; a double-tap is 200 ms and up.
+  it("lets a double-tap through, which is what keeps the window near the measured echo", () => {
+    const mute = fake("ch1/mute", "toggle", 0);
+    controls.set("ch1/mute", mute);
+    map("ch1/mute", { type: "cc", channel: 0, controller: 20 });
+
+    clock = 0;
+    engine.onMessage(encodeCc(0, 20, 127)); // first press
+    expect(mute.value).toBe(1);
+    clock = 120;
+    engine.feedback(); // the LED confirm, which arms the guard with 127
+    clock = 200; // the second tap of a double-tap
+    engine.onMessage(encodeCc(0, 20, 127));
+    expect(mute.value).toBe(0);
+  });
+
   // Finer than the 7 bits a plain CC carries, and a power of two so the fake's own
   // snapping is exact — the tuning screens' grids in the shape that matters here.
   const FINE = 1 / 256;
-  const ECHO_WINDOW = 300; // ECHO_MS in engine.ts, which does not export it
+  const ECHO_WINDOW = 50; // ECHO_MS in engine.ts, which does not export it
 
   it("drops a continuous control's feedback echo, which a fine grid would take as an edit", () => {
     // The measured case (2026-08-09): a plan grid finer than the 7 bits the value
@@ -641,7 +664,7 @@ describe("gang (several controls on one address)", () => {
     expect([a.value, b.value]).toEqual([1, 1]);
     engine.feedback(); // the head arms the address' echo guard
     expect(sent).toEqual([encodeCc(0, 20, 127)]);
-    clock += 50;
+    clock += 5; // inside the window: the measured echo latency is 0.13-5 ms
     engine.onMessage(encodeCc(0, 20, 127)); // the echo: neither member may flip
     expect([a.value, b.value]).toEqual([1, 1]);
     clock += 400;
@@ -661,5 +684,39 @@ describe("gang (several controls on one address)", () => {
     engine.onMessage(encodeCc(0, 7, 70)); // crosses the head value → both engage
     expect(a.value).toBeCloseTo(0.55, 5);
     expect(b.value).toBeCloseTo(0.55, 5);
+  });
+});
+
+// A cc14 EMISSION lands on the plain-CC address space as well: the two bytes go out as
+// CC n and CC n+32. The arming decision asks about the address being emitted, so it
+// never covered them — and a knob learned as plain CC 39 beside a fader learned as
+// cc14 7/39 (learn creates both) took the fader's LSB as a value edit, applied it, and
+// wrote it to the unit while live. Its own corrective feedback then echoed back into
+// the fader's unguarded LSB half.
+describe("cc14 feedback and a plain-CC binding on the same controller", () => {
+  it("arms the plain-CC guards the emission actually touches", () => {
+    const fader = fake("ch1/level", "continuous", 0, 1 / 16383);
+    const knob = fake("ch2/level", "continuous", 0.5);
+    controls.set(fader.id, fader);
+    controls.set(knob.id, knob);
+    map(fader.id, { type: "cc14", channel: 0, controller: 7 });
+    map(knob.id, { type: "cc", channel: 0, controller: 39 });
+
+    // A first pass sends both, so each address' cache holds its own value.
+    engine.feedback();
+    sent.length = 0;
+
+    // Now only the FADER moves: the pass emits the cc14 pair alone, and its LSB byte
+    // goes out on CC 39 — the knob's address, which the knob itself did not send.
+    fader.value = ((64 << 7) | 32) / 16383;
+    engine.feedback();
+    expect(sent).toEqual([encodeCc(0, 7, 64), encodeCc(0, 39, 32)]);
+
+    // That LSB coming back off a reflecting bus must not edit the knob.
+    const before = knob.value;
+    clock += 5;
+    engine.onMessage(encodeCc(0, 39, 32));
+    expect(knob.value).toBe(before);
+    expect(applied).not.toContain(knob.id);
   });
 });

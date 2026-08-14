@@ -78,6 +78,14 @@ export function parseUrxf(bytes: Uint8Array): UrxfFile {
   if (header.tag !== FILE_TAG) throw new UrxfError("notUrxf", header.tag);
   // The file header's extra block holds the model string and a per-save id; the
   // chunks are siblings that follow it, not its children (dataLen is 0).
+  //
+  // Bounded against the record's OWN declared extra block, not just against the buffer.
+  // `require` only says the bytes exist somewhere in the file, so a header declaring
+  // `extraLen: 0` used to parse cleanly with `model` read straight out of the next
+  // record's tag ("#ChunkData") — a value invented from a neighbour, which is the one
+  // thing this parser's contract says it does not do.
+  require(bytes, RECORD_HEADER, 16, 0);
+  if (header.extraLen < 16) throw new UrxfError("truncated", `header extra ${header.extraLen} < 16`);
   const model = readCString(bytes, RECORD_HEADER, 16);
   const chunks: UrxfChunk[] = [];
 
@@ -88,6 +96,10 @@ export function parseUrxf(bytes: Uint8Array): UrxfFile {
     if (rec.tag !== CHUNK_TAG) throw new UrxfError("truncated", `record "${rec.tag}" at ${at}`);
     const body = at + RECORD_HEADER + rec.extraLen;
     require(bytes, body, rec.dataLen, at);
+    // Same rule as the header's model: the label sits at +4 in the chunk's own extra
+    // block and needs 64 bytes of it. A chunk declaring less used to yield a label cut
+    // out of whatever followed — its own body, or the next record's header.
+    if (rec.extraLen < 68) throw new UrxfError("truncated", `chunk extra ${rec.extraLen} < 68 at ${at}`);
     chunks.push({
       name: readCString(bytes, at + 12, 12),
       label: readCString(bytes, at + RECORD_HEADER + 4, 64),

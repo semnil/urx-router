@@ -99,13 +99,42 @@ async fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> 
 /// no longer helps — there is nothing left to abort back to. The rename is
 /// atomic on the same filesystem, which a sibling temp guarantees.
 fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
-    let tmp = format!("{path}.tmp");
-    if let Err(e) = fs::write(&tmp, bytes) {
-        // A partial write can still leave a stray temp file behind (a full disk
-        // truncates mid-write); remove it so the failure strands nothing.
-        let _ = fs::remove_file(&tmp);
-        return Err(io_error(&e));
+    // A unique sibling, created exclusively. `{path}.tmp` is a name two writers to the
+    // same destination both open — a double-fired save, or a dev build and an installed
+    // one exporting to the same file — and the second `write` truncates under the first,
+    // so whichever `rename` lands last can install a mixed body over the target: exactly
+    // the corruption an atomic write exists to prevent. It also destroyed a pre-existing
+    // operator file that happened to be named `plan.json.tmp`.
+    let mut tmp = String::new();
+    let mut file = None;
+    for n in 0..64u32 {
+        let candidate = format!("{path}.{}.{n}.tmp", std::process::id());
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(f) => {
+                tmp = candidate;
+                file = Some(f);
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(io_error(&e)),
+        }
     }
+    let Some(mut file) = file else {
+        return Err("io-error: could not create a temporary file".into());
+    };
+    {
+        use std::io::Write;
+        if let Err(e) = file.write_all(bytes).and_then(|()| file.flush()) {
+            drop(file);
+            let _ = fs::remove_file(&tmp);
+            return Err(io_error(&e));
+        }
+    }
+    drop(file);
     if let Err(e) = fs::rename(&tmp, path) {
         let _ = fs::remove_file(&tmp);
         return Err(io_error(&e));
@@ -202,10 +231,25 @@ fn rotate_link_log(path: &std::path::Path, prev: &std::path::Path, max: u64) -> 
 // quit) shows up after the app is gone, so a session that rewrote the file would erase
 // the evidence of the one before it. It is also why the path is fixed rather than
 // chosen: nothing about it is a document the operator saves.
+/// Whether `line` is ONE ledger line. Named rather than inlined so it can be tested:
+/// the command around it needs an AppHandle and a real log directory.
+fn link_log_line_ok(line: &str) -> bool {
+    !line.chars().any(char::is_control)
+}
+
 #[tauri::command]
 async fn append_link_log(app: tauri::AppHandle, line: String) -> Result<String, String> {
     use std::io::Write;
     use tauri::Manager;
+    // One line means one line. The ledger reads an ABSENT session-end record as
+    // "nothing closed this session", so a `line` carrying a newline — a serializer bug,
+    // or any caller that is not the one this was written for — writes several records
+    // in one call and can forge or split exactly the evidence the file exists to keep.
+    // Other control characters go with it: they cannot appear in the JSON this emits and
+    // they make a ledger line unreadable in a terminal.
+    if !link_log_line_ok(&line) {
+        return Err("bad-request: link log line carries a control character".into());
+    }
     let dir = app.path().app_log_dir().map_err(file_io)?;
     let path = dir.join("link-ledger.jsonl");
     let prev = dir.join("link-ledger.1.jsonl");
@@ -649,6 +693,11 @@ async fn vd_connect(
     webview: tauri::Webview,
     state: State<'_, vd::VdState>,
 ) -> Result<vd::Connection, String> {
+    // Taken BEFORE the handshake, which runs up to ~9 s. A page load inside that window
+    // is a teardown for a page that no longer exists, and it cannot cancel this connect
+    // — it finds nothing installed yet — so without the generation the session installed
+    // under the same label afterwards, orphaned under the page that replaced it.
+    let gen = state.page_gen(webview.label());
     let (tx, device, counters) = tauri::async_runtime::spawn_blocking(vd::open)
         .await
         .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())??;
@@ -656,7 +705,11 @@ async fn vd_connect(
     // vd_disconnect so a delayed teardown of an earlier session cannot close it.
     // The label identifies its OWNER, which is what decides whether a later page
     // load may tear it down (see the on_page_load hook in `run`).
-    let epoch = state.install(tx, counters, webview.label());
+    let epoch = state
+        .install_for_page(tx, counters, webview.label(), gen)
+        .ok_or_else(|| {
+            "vd-page-gone: the page that asked for this connection reloaded".to_string()
+        })?;
     Ok(vd::Connection { device, epoch })
 }
 
@@ -821,8 +874,8 @@ fn midi_open_input(
 }
 
 #[tauri::command]
-fn midi_close_input(state: State<midi::MidiState>) {
-    midi::close_input(&state);
+fn midi_close_input(webview: tauri::Webview, state: State<midi::MidiState>) {
+    midi::close_input(&state, webview.label());
 }
 
 #[tauri::command]
@@ -835,8 +888,8 @@ fn midi_open_output(
 }
 
 #[tauri::command]
-fn midi_close_output(state: State<midi::MidiState>) {
-    midi::close_output(&state);
+fn midi_close_output(webview: tauri::Webview, state: State<midi::MidiState>) {
+    midi::close_output(&state, webview.label());
 }
 
 #[tauri::command]
@@ -993,7 +1046,12 @@ const EDIT_REDO_ID: &str = "edit-redo";
 #[cfg(target_os = "macos")]
 const EDIT_MENU_EVENT: &str = "menu://edit";
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
+// No mobile entry point: this crate is desktop-only and cannot be built for one. `mod
+// vd` and `mod midi` are unconditional while their contents are not — `vd::open` reaches
+// `imp::worker`, which is `#[cfg(desktop)]`, and `midi.rs` uses `midir`, which is
+// target-gated in Cargo.toml — so an android/ios build fails on unresolved names. The
+// attribute promised a build that has never existed; gating the two modules instead
+// would mean carrying a mobile arm nothing compiles or runs.
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -1088,6 +1146,9 @@ pub fn run() {
         // nothing to remember.
         let app = webview.app_handle();
         let label = webview.label();
+        // Bumped first: a connect still in flight for the page being replaced is torn
+        // down by its own install refusing, since this teardown has nothing to find.
+        app.state::<vd::VdState>().note_page_load(label);
         vd::shutdown_owned_by(&app.state::<vd::VdState>(), label);
         midi::close_owned_by(&app.state::<midi::MidiState>(), label);
         // The idle-sleep hold belongs here for the same reason and is the least visible of
@@ -1351,6 +1412,107 @@ mod tests {
         assert!(
             !TAKEN.load(Ordering::SeqCst),
             "an unasked action stays available"
+        );
+    }
+
+    // `{path}.tmp` was a name two writers to one destination both opened — a
+    // double-fired save, or a dev build and an installed one exporting to the same
+    // file — so the second truncated under the first and the later rename installed a
+    // mixed body. It also destroyed a pre-existing operator file of that name.
+    #[test]
+    fn an_atomic_write_leaves_a_sibling_named_tmp_alone() {
+        let dir = std::env::temp_dir().join(format!("urx-atomic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("plan.json");
+        let decoy = dir.join("plan.json.tmp");
+        std::fs::write(&decoy, b"the operator's own file").unwrap();
+
+        super::write_atomic(target.to_str().unwrap(), b"{}").unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"{}");
+        assert_eq!(
+            std::fs::read(&decoy).unwrap(),
+            b"the operator's own file",
+            "the fixed temp name destroyed this; a unique one cannot"
+        );
+        // …and nothing of ours is left behind.
+        let strays: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "plan.json" && n != "plan.json.tmp")
+            .collect();
+        assert!(strays.is_empty(), "left behind: {strays:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The ledger reads an ABSENT session-end record as "nothing closed this session",
+    // so a line carrying a newline writes several records in one call and can forge or
+    // split exactly the evidence the file exists to keep.
+    #[test]
+    fn a_link_log_line_carrying_a_control_character_is_refused() {
+        assert!(super::link_log_line_ok("{\"ok\":true}"));
+        assert!(!super::link_log_line_ok("{\"a\":1}\n{\"end\":true}"));
+        assert!(!super::link_log_line_ok("{\"a\":\"\u{7}\"}"));
+    }
+
+    // The app's ACL is three hand-kept lists — build.rs's command set, the handler in
+    // `run`, and the capability files — and nothing at runtime notices when one moves:
+    // a capability naming a command that does not exist grants nothing, and a command
+    // absent from build.rs simply has no permission to be denied by. Which is how the
+    // MIDI window came to reach every app command while its own capability said it
+    // reached none.
+    #[test]
+    fn every_app_command_is_declared_and_granted_to_the_window_that_may_call_it() {
+        let build = include_str!("../build.rs");
+        let lib = include_str!("lib.rs");
+        let handler = lib
+            .split("generate_handler![")
+            .nth(1)
+            .and_then(|s| s.split(']').next())
+            .expect("the invoke handler list");
+        let commands: Vec<String> = handler
+            .split(',')
+            .map(|s| s.trim().trim_start_matches("midiwin::").to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert!(commands.len() > 30, "read {} commands", commands.len());
+
+        let main: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        let granted: Vec<&str> = main["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        for cmd in &commands {
+            assert!(
+                build.contains(&format!("\"{cmd}\"")),
+                "{cmd} is in the handler but not declared in build.rs, so no permission exists for it"
+            );
+            let perm = format!("allow-{}", cmd.replace('_', "-"));
+            assert!(
+                granted.contains(&perm.as_str()),
+                "the main window is not granted {perm}"
+            );
+        }
+
+        // …and the MIDI window is granted the relay pair and nothing else. Its whole
+        // description rests on this: it is a view of the main window's state.
+        let midi: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/midi-window.json")).unwrap();
+        let mut midi_perms: Vec<&str> = midi["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter(|p| p.starts_with("allow-"))
+            .collect();
+        midi_perms.sort_unstable();
+        assert_eq!(
+            midi_perms,
+            vec!["allow-midi-ui-attach-window", "allow-midi-ui-to-main"]
         );
     }
 }

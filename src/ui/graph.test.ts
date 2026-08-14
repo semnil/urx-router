@@ -393,6 +393,24 @@ describe("node drag", () => {
     expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
   });
 
+  // The double-press detector times pointerdown to pointerdown and was not invalidated
+  // when the first press became a drag — so a flick-drag released at ~250 ms and grabbed
+  // again at ~300 ms to keep positioning opened the note editor instead, and on a
+  // collapsed note that also un-collapsed it and marked the plan changed.
+  it("does not open the note editor when a just-dragged node is grabbed again", () => {
+    fx = graphFixture();
+    const rect = faceplate(fx.host, "ch1")!;
+    drag(rect, { x: 260, y: 180 });
+    // The second grab, well inside the 350 ms double-press window.
+    press(rect);
+    expect(fx.host.querySelector("textarea")).toBeNull();
+
+    // …and a genuine double press, with no drag between, still opens it.
+    press(rect);
+    press(rect);
+    expect(fx.host.querySelector("textarea")).not.toBeNull();
+  });
+
   // A press that never moved is a selection, not a drag; reporting a change would
   // mark the plan dirty for a click.
   it("reports nothing for a press that never moved", () => {

@@ -182,6 +182,26 @@ export class LiveSync {
   // no notifies, no advance — and that is exactly when an unannounced write should be
   // forgotten. SETTLE_TIMEOUT_MS is borrowed for the LENGTH, not the axis.
   private readonly pendingValues = new Map<number, PendingQueue<number>>();
+  /**
+   * Every address this session wrote recently, with the settle mark taken before its
+   * own `vdSet` — the same record the flush builds for its own refetch, kept at session
+   * scope so the DEVICE-FOLLOW reads can have it too.
+   *
+   * They need it for the reason the refetch does. A follow reconcile reads whatever
+   * node the operator's hardware gesture touched, and that node's addresses can include
+   * ones this session's flush wrote 40 ms ago — inside the measured 9-204 ms window in
+   * which the unit still answers a GET with the PRE-write value. The read then takes
+   * that stale value as device truth, and the unit's own notify for our write, which
+   * would have repaired it, is consumed as an echo instead. What the operator sees is
+   * their toggle flipping back for ~0.6 s until the idle full reconcile re-reads past
+   * the window — and in between, plan and snapshot agree on a value the device does not
+   * hold, which is harness invariant 3 clause B exactly.
+   *
+   * Retained by wall clock, like `pendingValues` and for the same reason: a sequence
+   * bound never expires on a quiet link, which is precisely when a stale entry should
+   * be forgotten.
+   */
+  private readonly recentWrites = new Map<number, { mark: number; node?: string; at: number }>();
   // The name twin. Separate for the reason isEchoName is separate — names live in their
   // own snapshot and key on `${param}:${y}` with no x. Its measured overtake margin is
   // wider (ack+1-102 ms), so this half is a structural twin rather than a reachable
@@ -246,6 +266,8 @@ export class LiveSync {
     // reopen the hole this queue exists to close. The retention bounds that judgement.
     this.pendingValues.clear();
     this.pendingNames.clear();
+    // Same session boundary: a mark taken on a previous link means nothing on this one.
+    this.recentWrites.clear();
     this.capture(deviceView);
     this.active = true;
     this.sessionGen++;
@@ -266,6 +288,35 @@ export class LiveSync {
    *  private clone predates, and is restored over the rebuild. */
   directMark(): number {
     return this.directSeq;
+  }
+
+  /**
+   * What this session wrote recently, shaped for a device read's settle (see
+   * `recentWrites`). `nodes` scopes it the way the flush's own refetch handle is
+   * scoped: an address belonging to a node the read covers goes in `mustSettle`, so the
+   * read waits it out rather than answering from inside its staleness window; pass
+   * nothing for a whole-device read, where every address is in scope.
+   *
+   * `mustAnnounce` is deliberately empty. It is the flush's obligation and the flush
+   * already armed it for these same writes — arming a second watch here would report
+   * one silent write twice and arm two reconciles for it.
+   *
+   * Expired entries are dropped as they are met, so the map cannot grow across a long
+   * session on its own.
+   */
+  recentPending(nodes?: ReadonlySet<string>): PendingWrites {
+    const now = Date.now();
+    const written = new Map<number, number>();
+    const mustSettle = new Set<number>();
+    for (const [k, w] of this.recentWrites) {
+      if (now - w.at > SETTLE_TIMEOUT_MS) {
+        this.recentWrites.delete(k);
+        continue;
+      }
+      written.set(k, w.mark);
+      if (!nodes || (w.node !== undefined && nodes.has(w.node))) mustSettle.add(k);
+    }
+    return { written, mustSettle, mustAnnounce: new Set() };
   }
 
   /** Patch one snapshot entry to a device-reported value (a direct follow notify),
@@ -361,6 +412,7 @@ export class LiveSync {
     this.sessionGen++;
     this.pendingValues.clear();
     this.pendingNames.clear();
+    this.recentWrites.clear();
     this.pending = false;
     this.lastFlushConverged = false;
     this.collapsedKey = "";
@@ -605,6 +657,7 @@ export class LiveSync {
         this.snapshot.set(k, value);
         this.notePending(this.pendingValues, k, value);
         writes.set(k, { mark, node: c.node, changed: had !== undefined });
+        this.recentWrites.set(k, { mark, node: c.node, at: Date.now() });
         sent++;
         if (CONVERGE.has(c.name)) sideEffect = true;
         else if (REFETCH.has(c.name) && c.node) refetch.add(c.node);

@@ -72,10 +72,24 @@ export function applySceneExternal(plan: Plan, state: SceneExternalState): void 
   setNodeField(plan, SDREC_NODE, "sdRecTrackCount", state.sdRecTrackCount);
   if (state.streamColor === undefined) delete plan.nodeColors[STREAM_NODE];
   else plan.nodeColors[STREAM_NODE] = state.streamColor;
-  plan.connections = [
-    ...plan.connections.filter((c) => !isSceneExternalConnection(c)),
-    ...structuredClone(state.connections),
-  ];
+  // Replaced where they sit, and only the genuinely new ones appended. Filter-then-
+  // append moved every scene-external wire to the tail of the array — which is the
+  // wires' SVG draw order and the order a save serializes in — on every fetch, live
+  // start and full reconcile while the device scope is "scene". The keyed differ
+  // ignores an index move by design, so nothing recorded it: no undo entry, no
+  // witness, and the next save simply diffed against the previous file for an edit
+  // the operator never made.
+  const incoming = structuredClone(state.connections);
+  const kept: PlanConnection[] = [];
+  for (const c of plan.connections) {
+    if (!isSceneExternalConnection(c)) {
+      kept.push(c);
+      continue;
+    }
+    const at = incoming.findIndex((n) => n.from === c.from && n.to === c.to);
+    if (at >= 0) kept.push(incoming.splice(at, 1)[0]);
+  }
+  plan.connections = [...kept, ...incoming];
 }
 
 /** A copy of `plan` with every scene-external value removed — what a scene-scoped

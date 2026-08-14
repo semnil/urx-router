@@ -99,8 +99,14 @@ async function saveBlob(defaultName: string, blob: Blob, filter: FileFilter): Pr
   return { saved: true };
 }
 
+/** Resolves the file's text, or null when the operator canceled. A read that FAILS
+ *  rejects instead: null means "no file was chosen", and letting a failed read take
+ *  that seat made an unreadable file indistinguishable from a dismissed picker —
+ *  no status line, no dialog, nothing. The Tauri path already surfaces the same
+ *  failure as a rejected `read_text_file`, and every caller of this one is inside a
+ *  try/catch that reports the reason. Browser build only (the demo has no file IO). */
 function pickTextFile(): Promise<string | null> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const input = document.getElementById("file-input") as HTMLInputElement | null;
     if (!input) return resolve(null);
     const cleanup = (): void => {
@@ -114,7 +120,7 @@ function pickTextFile(): Promise<string | null> {
       if (!file) return resolve(null);
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => resolve(null);
+      reader.onerror = () => reject(reader.error ?? new Error("file read failed"));
       reader.readAsText(file);
     };
     // Canceling the picker fires "cancel", never "change", so without this the

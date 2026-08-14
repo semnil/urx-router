@@ -191,6 +191,13 @@ export const EQ_DYN: DynProcessor = {
     }
     if (Object.keys(bandPatch).length) {
       const bands = (np?.eqBands ?? []).slice();
+      // Filled dense up to the edited band, never assigned past the end of a shorter
+      // array. Writing `bands[3]` onto a plan that carries no eqBands leaves holes at
+      // 0-2, `JSON.stringify` writes those as `null`, and the load funnel's rule — one
+      // bad element drops the whole collection — then discards every band on reopen,
+      // including the edited one. Nothing shows it during the session: the live mirror
+      // skips empty slots, so it is lost only across a round trip.
+      for (let i = 0; i <= ctx.sel; i++) bands[i] ??= {};
       bands[ctx.sel] = { ...bands[ctx.sel], ...bandPatch };
       out.eqBands = bands;
     }

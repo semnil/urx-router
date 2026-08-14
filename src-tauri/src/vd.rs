@@ -16,6 +16,7 @@
 // the MIDI bridge (midir) are desktop-only crates, so mobile targets do not
 // build the hardware control surface at all.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
@@ -286,6 +287,44 @@ struct Conn {
 #[derive(Default)]
 pub struct VdState {
     conn: Mutex<Conn>,
+    /// A per-webview page generation, bumped by every page load. Ownership is recorded
+    /// by webview LABEL, and a reloaded page carries the same label as the one it
+    /// replaced — so the teardown a page load runs cannot cancel a `vd_connect` that is
+    /// still in flight for the DEAD page. `open()` takes up to ~9 s (discovery, sync,
+    /// device), and inside that window a reload (HMR, crash recovery, --reset-storage)
+    /// ran a teardown that found nothing installed and then let the connect install
+    /// under the NEW page's label: an open vdp socket the page holds no epoch for,
+    /// `vd_link_stats` reporting a live ledger on a page that never connected, and
+    /// `sender()` resolving for a session the page believes does not exist.
+    pages: Mutex<HashMap<String, u64>>,
+}
+
+impl VdState {
+    /// The current generation for `label` — taken before a connect, and compared after.
+    pub fn page_gen(&self, label: &str) -> u64 {
+        *self
+            .pages
+            .lock()
+            .unwrap()
+            .entry(label.to_string())
+            .or_insert(0)
+    }
+
+    /// A page load: everything in flight for that label belongs to the page that is
+    /// gone.
+    ///
+    /// Takes the CONNECTION lock first and holds it across the bump. That is the whole
+    /// atomicity argument: `install_for_page` acquires the same two locks in the same
+    /// order, so a page load cannot land between its check and its install.
+    pub fn note_page_load(&self, label: &str) {
+        let _conn = self.conn.lock().unwrap();
+        *self
+            .pages
+            .lock()
+            .unwrap()
+            .entry(label.to_string())
+            .or_insert(0) += 1;
+    }
 }
 
 /// Spawn the worker and perform the broker handshake (blocking). Returns the
@@ -308,6 +347,44 @@ impl VdState {
     /// Install a freshly opened connection, shutting down any prior worker, and
     /// return the generation assigned to it. The caller hands this epoch back to
     /// disconnect so a delayed teardown of an earlier session cannot close this one.
+    /// Install a freshly opened session, unless the page that asked for it has since
+    /// reloaded — in which case the worker is shut down instead of being handed to its
+    /// replacement, and the caller is told so.
+    pub fn install_for_page(
+        &self,
+        tx: Sender<Cmd>,
+        counters: Arc<LinkCounters>,
+        owner: &str,
+        gen: u64,
+    ) -> Option<u64> {
+        // Both under the connection lock, in that order (see note_page_load): asking and
+        // installing have to be one step. Split, a page load landing between them ran a
+        // teardown that found nothing installed yet, and this then installed the dead
+        // page's session behind it — the exact orphan the generation exists to prevent,
+        // reintroduced in the window the check was meant to close.
+        let mut c = self.conn.lock().unwrap();
+        let current = *self
+            .pages
+            .lock()
+            .unwrap()
+            .entry(owner.to_string())
+            .or_insert(0);
+        if current != gen {
+            let mut dead = Conn {
+                tx: Some(tx),
+                ..Conn::default()
+            };
+            stop(&mut dead, None);
+            return None;
+        }
+        stop(&mut c, None);
+        c.tx = Some(tx);
+        c.counters = counters;
+        c.owner = Some(owner.to_string());
+        c.epoch += 1;
+        Some(c.epoch)
+    }
+
     pub fn install(&self, tx: Sender<Cmd>, counters: Arc<LinkCounters>, owner: &str) -> u64 {
         let mut c = self.conn.lock().unwrap();
         stop(&mut c, None);
@@ -968,7 +1045,13 @@ mod imp {
                 .get("vdpport")
                 .and_then(Value::as_u64)
                 .ok_or_else(|| "broker-no-vdpport: the device list carried no port".to_string())?;
-            return Ok((port as u16, str_or(dev, "model", "URX")));
+            // Checked, not truncated. A broker answer above 65535 (a bug or a schema
+            // change) used to cast down silently — 65537 becomes 1 — and the connect
+            // then failed naming a port the broker never advertised, which sends the
+            // next reader looking in the wrong place entirely.
+            let port = u16::try_from(port)
+                .map_err(|_| format!("broker-bad-response: vdpport {port} is out of range"))?;
+            return Ok((port, str_or(dev, "model", "URX")));
         }
         Err("broker-no-vdpport: the device list did not answer".into())
     }
@@ -996,6 +1079,9 @@ mod imp {
     /// is reused because a fresh `[0u8; 8192]` per read means memsetting 8 KB for
     /// every ~100-byte frame, and this link carries roughly 200 frames a second for
     /// as long as a session is up.
+    /// Ceiling on one un-terminated line (see read_json).
+    const MAX_PENDING: usize = 1 << 20;
+
     struct LineReader {
         pending: Vec<u8>,
         chunk: Vec<u8>,
@@ -1025,7 +1111,21 @@ mod imp {
                     // Disjoint field borrows: reading into `chunk` and appending to
                     // `pending` in one statement is fine, and a temporary between
                     // them would put back the copy this reader exists to avoid.
-                    Ok(n) => self.pending.extend_from_slice(&self.chunk[..n]),
+                    Ok(n) => {
+                        self.pending.extend_from_slice(&self.chunk[..n]);
+                        // A peer that never sends a newline would otherwise grow this
+                        // buffer at socket speed for the life of the session — a silent
+                        // memory climb rather than an error anyone can act on. The bound
+                        // is far above any real frame (the largest this protocol carries
+                        // is a device list of a few KiB), so reaching it means the peer
+                        // is not speaking this protocol.
+                        if self.pending.len() > MAX_PENDING {
+                            return Err(format!(
+                                "broker-bad-response: {} bytes with no line break",
+                                self.pending.len()
+                            ));
+                        }
+                    }
                     Err(e)
                         if matches!(
                             e.kind(),
@@ -2273,5 +2373,76 @@ mod tests {
             matches!(rx1.recv(), Ok(Cmd::Shutdown { .. })),
             "prior worker told to stop"
         );
+    }
+
+    // Ownership is recorded by webview LABEL, and a page load keeps the label — so the
+    // teardown a load runs cannot cancel a connect still in flight for the dead page.
+    // `open()` takes up to ~9 s (discovery, sync, device), and inside that window a
+    // reload's teardown found nothing installed and the connect then installed under the
+    // NEW page: an open vdp socket it holds no epoch for, and `vd_link_stats` reporting
+    // a live ledger on a page that never connected.
+    #[test]
+    fn a_connect_that_outlived_its_page_is_not_installed_under_its_replacement() {
+        let state = VdState::default();
+        let gen = state.page_gen("main");
+
+        // The page reloads while the handshake is in flight.
+        state.note_page_load("main");
+
+        let (tx, rx) = mpsc::channel::<Cmd>();
+        let installed = state.install_for_page(tx, Arc::new(LinkCounters::default()), "main", gen);
+        assert!(installed.is_none(), "the page that asked for it is gone");
+        assert!(
+            sender(&state).is_err(),
+            "nothing was installed for the page that replaced it"
+        );
+        // …and the worker it opened was told to stop rather than left running.
+        assert!(matches!(rx.recv(), Ok(Cmd::Shutdown { .. })));
+
+        // The same connect, with no reload under it, installs as it always did.
+        let gen = state.page_gen("main");
+        let (tx2, _rx2) = mpsc::channel::<Cmd>();
+        assert!(state
+            .install_for_page(tx2, Arc::new(LinkCounters::default()), "main", gen)
+            .is_some());
+        assert!(sender(&state).is_ok());
+        shutdown_owned_by(&state, "main");
+    }
+
+    // …and the reload landing DURING the install, which the caller-side interleaving
+    // above cannot reach. Asserted as the LOCK ORDERING rather than by racing the two:
+    // a race is timing-dependent, and measured, 200 rounds of it passed with the check
+    // and the install back under separate locks — a test that cannot fail on the defect
+    // is not coverage of it.
+    //
+    // What must hold is that `note_page_load` cannot complete while the connection lock
+    // is held, since `install_for_page` holds that lock across its check AND its
+    // install. Without it a page load lands between the two: the teardown behind it
+    // finds nothing to shut down, and the dead page's session is installed afterwards
+    // with no page holding its epoch.
+    #[test]
+    fn a_page_load_cannot_land_while_the_connection_lock_is_held() {
+        let state = std::sync::Arc::new(VdState::default());
+        let held = state.conn.lock().unwrap();
+
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let bumping = std::sync::Arc::clone(&state);
+        let flag = std::sync::Arc::clone(&done);
+        let t = std::thread::spawn(move || {
+            bumping.note_page_load("main");
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            !done.load(std::sync::atomic::Ordering::SeqCst),
+            "a page load must wait for the connection lock, or it can land between a \
+             connect's check and its install"
+        );
+
+        drop(held);
+        t.join().unwrap();
+        assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(state.page_gen("main"), 1);
     }
 }

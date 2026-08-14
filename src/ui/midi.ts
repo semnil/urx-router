@@ -20,6 +20,7 @@ import {
   midiCloseOutput,
   midiListInputs,
   midiListOutputs,
+  midiCloseInput,
   midiOpenInput,
   midiOpenOutput,
   midiOpenPorts,
@@ -37,7 +38,16 @@ import {
   type ControlKind,
   type ControlParam,
 } from "../core/midi/controls";
-import { addrLabel, addrShort, sanitizeMappings, type MidiAddr, type MidiMapping } from "../core/midi/mapping";
+import {
+  addrKey,
+  addrLabel,
+  addrShort,
+  BUTTON_MODES,
+  sanitizeMappings,
+  TAKE_MODES,
+  type MidiAddr,
+  type MidiMapping,
+} from "../core/midi/mapping";
 import { midiProbe } from "./midi-probe";
 import { mirrorBalPair } from "../core/routing";
 import { parseRelay } from "./midi-protocol";
@@ -111,6 +121,13 @@ export class MidiControl {
    *  began and ended inside its own round trip — where the in-flight count is back to
    *  zero and the answer it is holding is already out of date. */
   private opensDone = 0;
+  /** Which port choice, per direction, an in-flight open belongs to — bumped by every
+   *  selection. `opensInFlight` / `opensDone` count opens for the reconcile's benefit
+   *  and cannot answer this: they say whether one is happening, not whether the one
+   *  that just finished is still the one the operator asked for. */
+  private portGen = { in: 0, out: 0 };
+  /** The tail of each direction's intent chain (see `queuePort`). */
+  private portQueue = { in: Promise.resolve(), out: Promise.resolve() };
   private bound = new Map<string, BoundControl>();
   // The plan object every entry in `bound` was bound against.
   private boundPlan: Plan | null = null;
@@ -368,21 +385,32 @@ export class MidiControl {
     // showing a controller that was never actually opened, and the operator only
     // finds out when a fader does nothing. The failure goes to the status line,
     // not a dialog — nothing was interrupted, it just did not come back.
-    if (s.input) void this.openInput(s.input);
-    if (s.output) void this.openOutput(s.output);
+    //
+    // Through the same per-direction queue an operator's choice goes through, and for
+    // the same reason: the MIDI window is usable while this is still in flight, and a
+    // saved port that opens slowly is exactly the wedged one. Left outside the queue it
+    // completed after the operator had picked B or "None" and installed itself over
+    // their choice — in the shell's slot, in this state, and back into the store.
+    //
+    // Queued rather than routed through `setInputPort`: a restore must not SAVE. That
+    // path writes the result back, so a saved port merely unplugged right now would be
+    // erased from the store by its own failed restore and never tried again.
+    if (s.input) void this.queuePort("in", (port) => (port ? this.openInput(port) : Promise.resolve()), s.input);
+    if (s.output) void this.queuePort("out", (port) => (port ? this.openOutput(port) : Promise.resolve()), s.output);
   }
 
   private async openInput(port: string): Promise<void> {
     this.opensInFlight++;
     try {
       // The Rust side replaces any prior input, so no explicit close first.
-      this.closeInput = await midiOpenInput(port, (bytes) => {
+      const close = await midiOpenInput(port, (bytes) => {
         this.traceLog?.(`rx [${bytes.join(" ")}]`);
         // Stamped before the engine runs, so the arrival time is the message's own and
         // not the time its decision finished being taken.
         this.probe?.rx(bytes);
         this.engine.onMessage(bytes);
       });
+      this.closeInput = close;
       this.inputPort = port;
     } catch (err) {
       this.closeInput = null;
@@ -447,10 +475,47 @@ export class MidiControl {
     this.outputPort = output;
   }
 
-  private async setInputPort(port: string | null): Promise<void> {
+  /**
+   * Run one port intent per direction, in the order the operator chose them, skipping
+   * any that a later choice has already superseded.
+   *
+   * Serialized rather than raced-and-guarded, because the shell's side is not
+   * addressable: `midi_open_input` REPLACES whatever is held and `midi_close_input`
+   * closes whatever is held, neither taking a port. So two opens in flight leave the
+   * slot holding whichever finished last — not whichever was chosen last — and a stale
+   * continuation "cleaning up after itself" closes the port that superseded it. There
+   * is no token to compare; the only fix is not to have two in flight.
+   *
+   * The skip is what makes A -> B -> None end at None with one close, instead of
+   * replaying every intermediate choice against the hardware.
+   */
+  private queuePort(
+    dir: "in" | "out",
+    run: (port: string | null) => Promise<void>,
+    port: string | null,
+  ): Promise<void> {
+    const gen = ++this.portGen[dir];
+    const next = this.portQueue[dir].then(async () => {
+      if (gen !== this.portGen[dir]) return;
+      await run(port);
+    });
+    this.portQueue[dir] = next.catch(() => {});
+    return next;
+  }
+
+  private setInputPort(port: string | null): Promise<void> {
+    return this.queuePort("in", (port) => this.applyInputPort(port), port);
+  }
+
+  private async applyInputPort(port: string | null): Promise<void> {
     if (port) await this.openInput(port);
     else {
-      this.closeInput?.();
+      // Always closes natively. The closer is the fast path, not the condition: after a
+      // reconcile adopts a port the shell already held there IS no closer, and asking
+      // for one here left "None" closing nothing — the select read None while the shell
+      // went on delivering into the engine, until some later open replaced the slot.
+      if (this.closeInput) this.closeInput();
+      else midiCloseInput();
       this.closeInput = null;
       this.inputPort = null;
     }
@@ -461,7 +526,11 @@ export class MidiControl {
     this.pushState();
   }
 
-  private async setOutputPort(port: string | null): Promise<void> {
+  private setOutputPort(port: string | null): Promise<void> {
+    return this.queuePort("out", (port) => this.applyOutputPort(port), port);
+  }
+
+  private async applyOutputPort(port: string | null): Promise<void> {
     if (port) await this.openOutput(port);
     else this.closeOutput();
     this.savePorts();
@@ -511,6 +580,24 @@ export class MidiControl {
     // — a Live-sync start, a port open, a model switch — lands in the log the same way
     // and the three are comparable against each other.
     if (resync) this.probe?.mark("midi:resync");
+    // Nothing goes out while a learn is armed. On a reflecting transport (the shared
+    // IAC bus, or a controller that re-sends its state when feedback moves it — both
+    // device classes the echo guard exists for) our own feedback comes straight back,
+    // and the learn branch in `onMessage` runs BEFORE the receive-side echo guard: the
+    // engine would take that echo as the operator's gesture and bind the armed control
+    // to whatever address the feedback happened to use. A plan edit from anywhere —
+    // device follow, undo, the graph inspector — is enough to start it, and if the fed
+    // address is a note the bind is instant, with no quiet gap to notice it in.
+    //
+    // Suspending the SEND rather than teaching the learn path about echoes: the guard
+    // protects `apply()` and is keyed per mapping address, so it can only ever answer
+    // for addresses that are already bound — which is not the question learn is asking.
+    // Nothing is lost by waiting: `setLearn(false)` resyncs, so the controller is
+    // brought back into agreement the moment the arming ends.
+    if (this.engine.isLearning()) {
+      this.probe?.note(`feedback suspended — learn armed (resync=${resync})`);
+      return;
+    }
     if (!this.outputPort) {
       this.probe?.note(`feedback skipped — no output port (resync=${resync})`);
       return;
@@ -535,6 +622,11 @@ export class MidiControl {
       this.engine.cancelLearn();
       window.clearTimeout(this.learnFlushTimer);
       this.learnFlushTimer = 0;
+      // Feedback was suspended for the whole arming (see runFeedback), so the
+      // controller may be showing values the plan has moved past. A resync rather than
+      // an ordinary pass: the sent cache is still whatever it was before the arming,
+      // and only a forced re-send brings every LED and motor fader back into line.
+      this.resyncFeedback();
     }
     this.hooks.onLearnChanged();
     this.pushState();
@@ -679,11 +771,19 @@ export class MidiControl {
         this.applyMappings(this.engine.getMappings().filter((x) => x.control !== intent.control));
         this.hooks.onLearnChanged(); // drop the mapped dot on the arming surfaces
         return;
+      // The two intents whose payload is a VOCABULARY rather than a shape. `parseRelay`
+      // checks the envelope, and the relay's own header says it can deliver a previous
+      // session's messages — a version-skewed window (dev / HMR, or one that outlived a
+      // main reload) can send a mode value this build does not have. The engine treats
+      // any non-"pickup" mode as absolute, so the session looks fine; the next boot's
+      // `sanitizeMappings` then fails `oneOf(TAKE_MODES, …)` and drops the whole
+      // binding with nothing said. Refused here instead, where the value is still
+      // attributable to the message that carried it.
       case "mode":
-        this.patchMapping(intent.control, { mode: intent.mode });
+        if (TAKE_MODES.includes(intent.mode)) this.patchMapping(intent.control, { mode: intent.mode });
         return;
       case "button":
-        this.patchMapping(intent.control, { button: intent.button });
+        if (BUTTON_MODES.includes(intent.button)) this.patchMapping(intent.control, { button: intent.button });
         return;
       case "port":
         void (intent.dir === "in" ? this.setInputPort(intent.name) : this.setOutputPort(intent.name));
@@ -752,7 +852,21 @@ export class MidiControl {
   }
 
   private patchMapping(control: string, patch: Partial<MidiMapping>): void {
-    this.applyMappings(this.engine.getMappings().map((x) => (x.control === control ? { ...x, ...patch } : x)));
+    const all = this.engine.getMappings();
+    // A take-in mode is a property of the physical control, not of one binding. The
+    // engine owns pickup state per ADDRESS and only the head ever creates it, so a
+    // member set to Pickup behind an Absolute head reads `engaged = false` for ever and
+    // never moves at all — no indication, nothing to retry. (A toggle head is the same
+    // shape: `isHead` is hard-false for toggles.) The window offers the select on every
+    // row including linked ones, so the fix is to make the choice mean what the engine
+    // assumes it means: one mode for everything on that address.
+    //
+    // `button` is deliberately NOT ganged: it decides how one binding reads an incoming
+    // press, and two controls behind one button may legitimately want edge and state.
+    const at = patch.mode !== undefined ? all.find((x) => x.control === control) : undefined;
+    const gangKey = at ? addrKey(at.addr) : null;
+    const hit = (x: MidiMapping): boolean => x.control === control || (gangKey !== null && addrKey(x.addr) === gangKey);
+    this.applyMappings(all.map((x) => (hit(x) ? { ...x, ...patch } : x)));
   }
 }
 

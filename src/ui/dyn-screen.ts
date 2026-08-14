@@ -402,6 +402,17 @@ export class DynScreen {
   private plotDirty = true;
   /** A pending coalesced redraw, for when no meter loop is running. */
   private redrawRaf = 0;
+  /** Watches the plot canvas for a size change while the screen is open.
+   *
+   *  Its CSS width is a percentage and the modal follows the viewport, so a window
+   *  resize changes the canvas' box with no repaint path of its own — measure() ran at
+   *  open / refresh / rebuild and nowhere else. The static layer then stayed at the old
+   *  w×h and was stretched by CSS (blurred, wrong aspect), and worse: a press on the
+   *  GATE curve maps `offsetX` — in the NEW width — through the geometry cached for the
+   *  old one, so the threshold that gets written is not the one the operator clicked,
+   *  and while live it goes to the unit. A ResizeObserver rather than a window `resize`
+   *  listener: it also catches a DPR change and a layout shift that is not a resize. */
+  private plotResize: ResizeObserver | null = null;
   private plotSize = { w: 0, h: 0 };
   private geoCache: DynPlotGeo | null = null;
   /** Theme tokens the plot draws with. Read once per render, not per frame:
@@ -514,6 +525,7 @@ export class DynScreen {
     this.scrim.hidden = false;
     this.dismiss.attach();
     this.measure();
+    this.watchPlotSize();
     this.startMeters();
     this.box.querySelector<HTMLButtonElement>(".consent-btn-secondary")?.focus({ preventScroll: true });
   }
@@ -526,6 +538,8 @@ export class DynScreen {
     this.releaseInert?.();
     this.releaseInert = null;
     this.scrim.hidden = true;
+    this.plotResize?.disconnect();
+    this.plotResize = null;
     this.stopMeters();
     this.hooks.regainMeters();
     this.hooks.onClosed();
@@ -567,6 +581,8 @@ export class DynScreen {
     }
     this.render();
     this.measure();
+    // render() replaced the canvas, so the size watch has to be re-attached to it.
+    this.watchPlotSize();
   }
 
   /** Re-resolve what this node has. False (and closed) when the processor is gone — a
@@ -1201,6 +1217,19 @@ export class DynScreen {
 
   /** Measure the canvas once, after the modal is visible. Doing it in the frame
    *  loop is a forced layout read straight after that frame's DOM writes. */
+  /** Re-attach the size watch to whatever canvas the current render produced. Called on
+   *  open and after every rebuild, since `render()` replaces the element. A no-op where
+   *  ResizeObserver is absent (jsdom without a polyfill), which costs only the resize
+   *  case those environments cannot produce anyway. */
+  private watchPlotSize(): void {
+    this.plotResize?.disconnect();
+    this.plotResize = null;
+    const cv = this.canvas;
+    if (!cv || typeof ResizeObserver === "undefined") return;
+    this.plotResize = new ResizeObserver(() => this.measure());
+    this.plotResize.observe(cv);
+  }
+
   measure(): void {
     const cv = this.canvas;
     if (!cv) return;
@@ -1329,6 +1358,8 @@ export class DynScreen {
     if (!this.rebind()) return;
     this.render();
     this.measure();
+    // render() replaced the canvas, so the size watch has to be re-attached to it.
+    this.watchPlotSize();
   }
 
   private paramRow(f: DynField, label: string, value: number, opts: SettingsRowOptions | undefined): HTMLElement {
