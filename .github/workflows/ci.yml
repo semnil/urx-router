@@ -21,20 +21,16 @@ on:
   push:
     branches: [main]
 
-# Pushing again to a pull request abandons the run already in flight. The key's shape, and
-# why a cancelled run is not the same as a skipped one, are in race.yml's own block.
+# Pushing again to a pull request abandons the run already in flight. The key's shape is
+# race.yml's; what is specific here is the other half of the trigger.
 #
-# What is specific here is the OTHER half of the trigger. A push to main must never share
-# a group with anything, and the reason is a condition rather than a judgement:
-# tag-release.yml's `tag` job carries `if: github.event.workflow_run.conclusion ==
-# 'success' && ...`, and it is this workflow's completion on main that it waits for. A
-# main run cancelled by a following merge therefore reports `cancelled`, that condition is
-# false, and the merge's version bump is not tagged — with no failed check anywhere to
-# read, since nothing failed. `github.run_id` is unique per run, so every push run is a
-# group of one. Keying the fallback to `github.ref` instead would put all of main in one
-# group, and `cancel-in-progress: false` would not have covered that: `concurrency.queue`
-# defaults to `single`, so a PENDING run in a shared group is cancelled and replaced by the
-# next arrival. The key is what keeps main out of a shared group at all.
+# A push to main is a group of ONE: `github.event.pull_request.number` is empty off a pull
+# request, so a push run keys on `github.run_id` and joins nothing. It has to.
+# tag-release.yml reads this workflow's conclusion on main, so a main run dropped from a
+# shared group can leave a version bump untagged, with nothing red to read. Most main runs
+# carry no bump and tag-release ends on its own; the one that does is the whole release.
+# `cancel-in-progress: false` is not an alternative here: `concurrency.queue` defaults to
+# `single`, which replaces a pending run in a shared group.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
