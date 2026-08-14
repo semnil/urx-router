@@ -49,6 +49,13 @@ test("switching a mono channel to SSMCS swaps the inspector's sections and their
   await expect(page.locator("#btn-ssmcsEq-screen")).toHaveCount(1);
   await expect(page.locator("#btn-comp-screen")).toHaveCount(0);
   await expect(page.locator("#btn-eq-screen")).toHaveCount(0);
+  // Entering the bank turns both sections ON, and a section follows its on-state, so both
+  // unfold. Asserted in this direction as well as on the way back: the app mirrors the
+  // unit's own reset here, and only one of the two directions was left covered.
+  const compSec = page.locator("#inspector details").filter({ has: page.locator("summary", { hasText: "COMP" }) });
+  const eqSec = page.locator("#inspector details").filter({ has: page.locator("summary", { hasText: "EQ" }) });
+  await expect(compSec).toHaveAttribute("open", "");
+  await expect(eqSec).toHaveAttribute("open", "");
 
   // The values themselves live on the screen now: a copy here would read a snapshot
   // taken at render time and write it back on the next drag.
@@ -67,10 +74,8 @@ test("switching a mono channel to SSMCS swaps the inspector's sections and their
   // Back to COMP->EQ takes the SSMCS section away and resets to COMP off / EQ on.
   await sel.selectOption("0");
   await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(0);
-  const compSection = page.locator("#inspector details").filter({ has: page.locator("summary", { hasText: "COMP" }) });
-  const eqSection = page.locator("#inspector details").filter({ has: page.locator("summary", { hasText: "EQ" }) });
-  await expect(compSection).not.toHaveAttribute("open", ""); // COMP off → folded
-  await expect(eqSection).toHaveAttribute("open", ""); // EQ on → open
+  await expect(compSec).not.toHaveAttribute("open", ""); // COMP off → folded
+  await expect(eqSec).toHaveAttribute("open", ""); // EQ on → open
 });
 
 test("re-entering an SSMCS/COMP->EQ mode resets that bank to factory", async ({ page }) => {
@@ -140,6 +145,39 @@ test.describe("the tuning screen's three faces", () => {
     await expect(box(page).locator("#dyn-ssmcs-band-low")).toHaveAttribute("aria-pressed", "true");
   });
 
+  // The face segment is a SIBLING of the heading rather than a child, so the dialog's
+  // accessible name stays the channel and the bank. Wrapping the heading is free only if
+  // the row occupies what the heading did — measured, it came up 12px until the heading's
+  // own margin moved onto the row — so the space under the title is compared against a
+  // screen that has no faces and therefore no wrapper.
+  test("costs the panel no vertical space, and keeps the buttons out of the dialog's name", async ({ page }) => {
+    const gapUnderTitle = () =>
+      box(page).evaluate((el) => {
+        const head = el.querySelector(".gt-head") ?? el.querySelector("h2")!;
+        const grid = el.querySelector(".prefs-grid")!;
+        return Math.round(grid.getBoundingClientRect().top - head.getBoundingClientRect().bottom);
+      });
+
+    await node(page, "ch1").click();
+    const gate = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^GATE$/ }) });
+    if (!(await gate.evaluate((el) => (el as HTMLDetailsElement).open))) await gate.locator("summary").click();
+    await gate.locator("#btn-gate-screen").click();
+    const plain = await gapUnderTitle();
+    await box(page).locator(".consent-btn-secondary").click();
+
+    await openFace(page, "ssmcs", /^SSMCS$/);
+    expect(await gapUnderTitle()).toBe(plain);
+
+    // The dialog names itself with the heading, so a button inside it joins that name.
+    const name = await box(page).evaluate(() => {
+      const id = document.querySelector("#dyn-screen-modal")!.getAttribute("aria-labelledby")!;
+      const el = document.getElementById(id)!;
+      return { text: el.textContent, buttons: el.querySelectorAll("button").length };
+    });
+    expect(name.buttons).toBe(0);
+    expect(name.text).toBe("CH 1SSMCS");
+  });
+
   test("each section's launcher opens its own face", async ({ page }) => {
     await openFace(page, "ssmcsComp", /^COMP$/);
     await expect(face(page, "comp")).toHaveAttribute("aria-pressed", "true");
@@ -159,6 +197,13 @@ test.describe("the tuning screen's three faces", () => {
 
   test("MAIN shows both curves and four readouts, with no lane rack", async ({ page }) => {
     await openFace(page, "ssmcs", /^SSMCS$/);
+    expect(await box(page).locator(".prefs-row .lbl").allInnerTexts()).toEqual([
+      "Sweet Spot Data",
+      "Comp Drive",
+      "Morphing",
+      "Out Gain",
+    ]);
+    await expect(screenRow(page, "Sweet Spot Data").locator("option")).toHaveCount(34);
     await expect(box(page).locator("#dyn-curve")).toBeVisible();
     await expect(box(page).locator(".gt-ladderbox")).toHaveCount(0);
     await expect(box(page).locator(".gt-ro")).toHaveCount(4);
@@ -196,13 +241,22 @@ test("the CONSOLE strip offers the morphing strip's own chips", async ({ page })
   await node(page, "ch1").click();
   await typeSelect(page).selectOption("1");
   await page.click("#btn-view-console");
-  const strip = page.locator(".con-strip").nth(0); // CH 1, the first strip in the rack
+  const strip = page.locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) });
   // GATE, SSMCS, COMP and EQ each carry a toggle and an opener, in the unit's own
   // chain order.
   await expect(strip.locator(".con-chip", { hasText: /^SSMCS$/ })).toHaveCount(1);
   await expect(strip.locator('.con-chip-open[aria-label="SSMCS screen"]')).toHaveCount(1);
   await expect(strip.locator('.con-chip-open[aria-label="Comp screen"]')).toHaveCount(1);
   await expect(strip.locator('.con-chip-open[aria-label="EQ screen"]')).toHaveCount(1);
-  await strip.locator('.con-chip-open[aria-label="SSMCS screen"]').click();
-  await expect(box(page).locator("#dyn-face-ssmcs-main")).toHaveAttribute("aria-pressed", "true");
+  // The two labels are deliberately the shipped screens' own, so which FACE each opener
+  // opens is the only thing that tells the banks apart here.
+  for (const [label, face] of [
+    ["SSMCS screen", "main"],
+    ["Comp screen", "comp"],
+    ["EQ screen", "eq"],
+  ] as const) {
+    await strip.locator(`.con-chip-open[aria-label="${label}"]`).click();
+    await expect(box(page).locator(`#dyn-face-ssmcs-${face}`)).toHaveAttribute("aria-pressed", "true");
+    await box(page).locator(".consent-btn-secondary").click();
+  }
 });

@@ -34,6 +34,7 @@ import { DYN_PROCESSORS } from "./dyn-registry";
 import type { DynCtx } from "./dyn-screen";
 import { bindControl } from "../core/midi/controls";
 import { COMP_EQ_SSMCS } from "../core/control/params";
+import { defaultPlan } from "../models/initial-state";
 import { setLang, t } from "../i18n";
 
 /** Learn is on, nothing is armed or mapped: every armable control marks itself. */
@@ -82,7 +83,13 @@ afterEach(() => {
 describe("arming surfaces against the control catalog", () => {
   it.each(["URX22", "URX44", "URX44V"] as const)("CONSOLE arms only bindable ids on %s", (modelId) => {
     const armed: string[] = [];
-    ch = consoleHost({ modelId, midi: learnHooks(armed) });
+    // One mono channel into the morphing bank BEFORE the view is built, so its own chip
+    // is among the marked ones. Without it the strip carries no SSMCS chip and this case
+    // cannot see whether that chip's id binds — the catalog offers it under the same
+    // condition the chip appears under, and the two agreeing has nothing else checking it.
+    const plan = defaultPlan(modelId);
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+    ch = consoleHost({ modelId, plan, midi: learnHooks(armed) });
     let marked = 0;
     const first = armEverything(ch.host, armed);
     marked += first.marked;

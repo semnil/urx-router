@@ -243,3 +243,45 @@ describe("the head-height cache", () => {
     expect(measures).toBe(measuredOnce);
   });
 });
+
+// The morphing strip's own master, which is the one head chip whose value does not sit at
+// the top level of `nodeParams` — `boolChip`'s writer cannot reach it, so the strip builds
+// its own. What that costs is a second writer for one flag, and nothing else asserted it
+// wrote anywhere: the E2E case beside it only asks that the chip EXISTS.
+describe("the SSMCS chip", () => {
+  let h: ConsoleHost;
+  afterEach(() => h?.restore());
+
+  const mount = (): ConsoleHost => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+    return consoleHost({ modelId: "URX44V", plan });
+  };
+  const chip = (host: ConsoleHost, label: string): HTMLElement =>
+    [...host.host.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === label)!;
+
+  it("writes the strip's own on flag, and lights with it", () => {
+    h = mount();
+    const c = chip(h, "SSMCS");
+    // It ships on, and the plan's nested value is what the chip reads.
+    expect(c.getAttribute("aria-pressed")).toBe("true");
+
+    c.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(h.plan.nodeParams.ch1?.ssmcs?.on).toBe(false);
+    expect(chip(h, "SSMCS").getAttribute("aria-pressed")).toBe("false");
+
+    // The rest of the strip's values are a level down from the flag and survive it: a
+    // writer that replaced `ssmcs` instead of merging into it would take them with it.
+    expect(h.plan.nodeParams.ch1?.ssmcs?.comp?.attack).toBeDefined();
+
+    chip(h, "SSMCS").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(h.plan.nodeParams.ch1?.ssmcs?.on).toBe(true);
+  });
+
+  it("is not offered on a channel in the other bank", () => {
+    h = consoleHost({ modelId: "URX44V" });
+    expect(chip(h, "SSMCS")).toBeUndefined();
+    // The positive control: the chips this strip DOES carry are found the same way.
+    expect(chip(h, "GATE")).toBeDefined();
+  });
+});
