@@ -1,7 +1,7 @@
 {
   "_": "Every test.skip() in e2e/race is registered here, and scripts/check-race-skips.mjs refuses one that is not. A `title` is the case's full name — every describe title down to the leaf, joined with ' > ' — because a leaf title alone can name two different cases. That is not unique either, so the checker refuses a name matching more than one collected case rather than counting it once. An entry either names the test that keeps its reason true (`guardedBy` — that test failing or disappearing is how the reason's expiry surfaces), or states in `unguarded` that nothing does and what observation would settle it. The prose reason stays in the comment beside the skip; what is here is the link a reader cannot make by eye.",
   "collect": {
-    "_": "A FLOOR on what --project=race collects, per file. Everything else in this ledger asks about the cases Playwright did collect, so a case that stops being collected is invisible to it: short of a total collection failure, deleting a case or a whole file leaves every other assertion satisfied and check:skips green. A minimum rather than an exact count — adding cases must not be a chore, and what this guards against is loss. check-race-skips.mjs prints every file that has grown past its floor, in this shape, so raising one deliberately is a copy-paste.",
+    "_": "A FLOOR on what each project collects, per file — minCases for --project=race, minCasesWebkit for --project=race-webkit, which race.yml runs as its own job and which no other assertion here reaches (a case leaves it by losing its @webkit tag, which the race floor cannot see). Everything else in this ledger asks about the cases Playwright did collect, so a case that stops being collected is invisible to it: short of a total collection failure, deleting a case or a whole file leaves every other assertion satisfied and check:skips green. A minimum rather than an exact count — adding cases must not be a chore, and what this guards against is loss. check-race-skips.mjs prints every file that has grown past its floor, in this shape, so raising one deliberately is a copy-paste.",
     "minCases": {
       "e2e/race/t0-baseline.spec.ts": 5,
       "e2e/race/t0b-sweeps.spec.ts": 6,
@@ -25,6 +25,11 @@
       "e2e/race/t8-stress.spec.ts": 4,
       "e2e/race/t9-probe.spec.ts": 3,
       "e2e/race/tzb-tail.spec.ts": 9
+    },
+    "minCasesWebkit": {
+      "e2e/race/t0b-sweeps.spec.ts": 1,
+      "e2e/race/t3b-undo.spec.ts": 1,
+      "e2e/race/t4-midi.spec.ts": 3
     }
   },
   "skips": [
