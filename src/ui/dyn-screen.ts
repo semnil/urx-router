@@ -1059,8 +1059,12 @@ export class DynScreen {
     const name = el("span", "");
     name.textContent = proc.title(m);
     title.append(ch, name);
+    // The face segment goes in the title ROW, beside the heading rather than inside it:
+    // `#dyn-screen-modal` names itself with `aria-labelledby="dyn-screen-title"`, so three
+    // buttons inside that heading would make the dialog announce itself as
+    // "CH 1 SSMCS MAIN COMP EQ" and put them in the heading's own subtree.
     const faces = proc.faces?.();
-    if (faces) title.append(this.faceBar(faces, proc, m));
+    const head = faces ? wrap("gt-head", title, this.faceBar(faces, proc, m)) : title;
 
     const grid = el("div", "prefs-grid");
     grid.append(this.displayColumn(proc), this.controlColumn(m));
@@ -1071,7 +1075,7 @@ export class DynScreen {
     close.addEventListener("click", () => this.close());
     actions.append(close);
 
-    this.box.append(title, grid, actions);
+    this.box.append(head, grid, actions);
     this.syncCap();
     this.paint();
   }
@@ -1110,16 +1114,17 @@ export class DynScreen {
    * descriptor answers, and with it the fields, the lanes and the address set.
    *
    * `refresh` does the rest — it re-binds, re-subscribes when the addresses moved, and
-   * rebuilds — so the address comparison is not written a second time here. The peak
-   * holds go, because a lane key means a different tap on the next face and a hold
-   * carried across would print one tap's peak under another's caption.
+   * rebuilds — so the address comparison is not written a second time here, and neither
+   * is the verdict on a face that will not bind: `rebind` CLOSES the screen there, which
+   * is the position it already takes when a follow switches the bank away underneath one.
+   * Answering here instead would leave a pressed segment doing nothing at all. The peak
+   * holds go, because a lane key means a different tap on the next face and a hold carried
+   * across would print one tap's peak under another's caption.
    */
   private showFace(next: DynProcessor): void {
     if (!this.proc || next === this.proc) return;
-    const sel = next.persistSel ? (this.sels[next.key] ?? 0) : 0;
-    if (!next.bind({ ...this.ctx(), sel })) return;
     this.proc = next;
-    this.sel = sel;
+    this.sel = next.persistSel ? (this.sels[next.key] ?? 0) : 0;
     this.peaks.clear();
     this.refresh();
   }
@@ -1442,11 +1447,20 @@ export class DynScreen {
     };
     const extra = proc.rows?.(rowCtx);
     if (extra?.lead) params.append(...extra.lead);
+    // A `before` entry names the field it goes in front of, and a binding does not always
+    // carry that field — reordering or renaming one is enough. Dropping the rows silently
+    // would take a processor's only knee selector off the panel with nothing to see, so
+    // what no field claimed is appended instead.
+    const unclaimed = new Set(Object.keys(extra?.before ?? {}));
     for (const f of this.fields) {
       const before = extra?.before?.[f.key];
-      if (before) params.append(...before);
+      if (before) {
+        unclaimed.delete(f.key);
+        params.append(...before);
+      }
       params.append(this.paramRow(f, label(f), value(f.key), this.states.get(f.key)));
     }
+    for (const key of unclaimed) params.append(...(extra?.before?.[key] ?? []));
     if (extra?.tail) params.append(...extra.tail);
 
     const ro = settingsSection(g.readouts);

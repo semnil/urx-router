@@ -3883,8 +3883,23 @@ button.consent-btn-primary {
   align-items: center;
   gap: 10px;
 }
-/* The face segment sits at the right end of the title row, where it cannot collide
-   with the display column's own bar (the EQ face's selects a band). */
+/* The title ROW: the heading and, for a bank with faces, the segment that moves between
+   them. The segment is a sibling of the heading rather than a child, so the dialog's
+   accessible name (aria-labelledby -> #dyn-screen-title) stays the channel and the bank.
+   It sits at the right end, where it cannot collide with the display column's own bar
+   (the EQ face's selects a band). */
+.gt-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* The row stands exactly where the heading stood: the heading's own bottom margin moves
+     onto the row, so wrapping it costs no vertical space. Measured — without this the
+     panel below came up 12px. */
+  margin-bottom: 12px;
+}
+.gt-head > h2 {
+  margin: 0;
+}
 .gt-faces {
   margin-left: auto;
 }

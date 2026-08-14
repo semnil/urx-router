@@ -1888,7 +1888,10 @@ export class Console {
         proc.append(this.dynOpenChip("ssmcs", m.id));
       }
       boolChip(proc, "COMP", "compOn", false);
-      proc.append(this.dynOpenChip(dyn?.comp ? "comp" : "ssmcsComp", m.id));
+      // Gated on `dyn`, not only on the bank it names: a channel with no strip at all has
+      // no COMP screen of either kind, and an opener for a screen that refuses to open is
+      // exactly what asking channelDynamics is meant to prevent.
+      if (dyn) proc.append(this.dynOpenChip(dyn.comp ? "comp" : "ssmcsComp", m.id));
     }
     const rate = this.hooks.getPlan().sampleRate;
     if (m.hasEq) {
