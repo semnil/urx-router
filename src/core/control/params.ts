@@ -359,12 +359,27 @@ export const PARAMS = {
    *  so it rides the string-write path (vd_set_str / vd_get_str), not the numeric
    *  catalog. Confirmed by live read (91:0:0 = "0001").
    *
-   *  NOT marked `sideEffect` even though selecting a preset plainly recomputes the same
-   *  runtime values SSMCS_MORPHING does. Two things are missing and a declaration alone
-   *  would fix neither: it has not been MEASURED here (the morphing write was, and this
-   *  one was only assumed to match it), and the string-write path does not read this
-   *  catalog — `planToNameWrites` emits no owning node, and live.ts's name loop consults
-   *  neither CONVERGE nor REFETCH. Marking it would look like a fix and do nothing. */
+   *  NOT marked `sideEffect`, and what is missing is now the PATH rather than the facts.
+   *  Measured on a URX44V (2026-08-15) rather than assumed to match the morph: a preset write
+   *  recomputes the same seventeen addresses `SSMCS_MORPHING.drives` names and takes `93`
+   *  itself back to 0, and its own address IS announced — first, 0.023 ms ahead of those
+   *  eighteen with none ahead of it. So it has the same shape every other refetch head has,
+   *  including the settle boundary they end on. (A run that reported no echo had not
+   *  SUBSCRIBED to 91, so the filter that keeps another client's traffic out was answering;
+   *  a zero from an address nobody registered says nothing at all.)
+   *
+   *  What it does NOT leave is an unrepaired plan. The announcement is block-wise, so how many
+   *  of the eighteen carry a CHANGED value depends on the preset pair — and only those reach
+   *  device-follow: `isEcho` drops a notify equal to the snapshot as readily as one of our own
+   *  writes. Those drive a scoped reconcile of the owning node, escalating to a full one past
+   *  MAX_CONCENTRATION; either way the plan is repaired once the burst settles (follow.ts).
+   *  The defect is narrower and is a RACE: a converge that runs before that reconcile reads a
+   *  plan still holding pre-preset values and writes them back, undoing the preset the way it
+   *  would have undone a morph before `drives` existed.
+   *
+   *  The path is what a declaration alone cannot supply: `planToNameWrites` emits no owning
+   *  node, and live.ts's name loop consults neither CONVERGE nor REFETCH, so marking this
+   *  would look like a fix and do nothing. */
   SWEET_SPOT_DATA: { id: 91, encoding: "raw" },
   // CH → MIX/FX bus send. The actual ids are computed per channel/bus in
   // translate.ts; these anchors are the MIX1 mono slot and only name the command
