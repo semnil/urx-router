@@ -17,8 +17,8 @@
      is in the checks above — do not restate them here. -->
 
 - [ ] Verified on hardware — model and System firmware:
-- [ ] Ran something the checks do not cover — say what and what it showed (the race harness
-      on a PR that is not a version bump, a measurement, a manual repro):
+- [ ] Ran something the checks do not cover — say what and what it showed (a measurement, a
+      manual repro, the race harness on a PR touching none of the paths its trigger names):
 - [ ] Nothing beyond the checks
 - [ ] Assumptions this PR rests on are listed here, each with what would settle it (a measurement,
       a probe, a device read) — or "none". No check can report the one nobody wrote down

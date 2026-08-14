@@ -9,7 +9,9 @@
 // the jobs and never on the trigger. The third case is the quiet one: a job skipped
 // because something in its `needs:` failed ALSO reports success, so an aggregating gate
 // has to run with `if: always()` and read `needs.*.result` itself rather than lean on
-// `needs:` to fail it.
+// `needs:` to fail it. The fourth arrived with `concurrency:`: a CANCELLED run reports
+// neither success nor failure, so nothing turns red and the pull request merely stops
+// being mergeable — which is why a group that cancels has to be keyed per run.
 //
 //   node scripts/check-merge-gates.mjs            check .github/workflows against the manifest
 //   node scripts/check-merge-gates.mjs --ruleset  also diff the manifest against the live branch
@@ -307,7 +309,34 @@ function checkJob(workflow, id, job, context) {
       `\`${context}\` does not wait for ${uncovered.join(", ")}, so a failure there blocks nothing — add them to \`needs:\` (with \`if: always()\`)`,
     );
   }
-  // 6. A gate that waits for everything and then fails on nothing is the worst outcome
+  // 6. A cancelled run is the FOURTH way a required context fails to arrive, and the one
+  //    the header above had no reason to name until concurrency reached these workflows.
+  //    GitHub accepts `success`, `skipped` and `neutral` as a satisfied required check;
+  //    `cancelled` is neither that nor a failure, so nothing goes red — the pull request
+  //    simply stops being mergeable. A group that cancels therefore has to be one that no
+  //    OTHER run reporting the same context on the same commit can join, and the key that
+  //    guarantees it is a per-run one. Keyed by the ref instead, a `workflow_dispatch` on
+  //    a pull request's branch joins that pull request's own run (CLAUDE.md tells the
+  //    operator to make exactly that dispatch), and a push to the default branch joins the
+  //    next push — which is how a cancelled CI run on main would leave tag-release.yml's
+  //    `conclusion == 'success'` false and a version bump untagged.
+  //
+  //    Coarse in the same way rule 7 below is: it asks whether `github.run_id` appears in
+  //    the key, not what the whole expression evaluates to.
+  const concurrency = workflow.root.children.get("concurrency");
+  if (concurrency) {
+    const group = concurrency.children.get("group")?.value ?? "";
+    const cancels = unquote(concurrency.children.get("cancel-in-progress")?.value ?? "") === "true";
+    if (cancels && !group.includes("github.run_id")) {
+      finding(
+        where,
+        `\`${context}\` comes from a workflow whose concurrency group \`${group}\` cancels in progress and is not keyed ` +
+          `per run — two runs reporting it on one commit share the group, and the cancelled one leaves the context at ` +
+          `\`cancelled\`, which satisfies no merge. Key the non-pull-request case on \`github.run_id\``,
+      );
+    }
+  }
+  // 7. A gate that waits for everything and then fails on nothing is the worst outcome
   //    here: a required check that is green by construction. The rules above are all
   //    about the job's own keys and cannot see that, because the failing part lives in a
   //    step. This one reads the job's text — coarse on purpose, since the alternative is

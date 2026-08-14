@@ -113,7 +113,34 @@ describe("the arrangement a merge condition needs", () => {
     expect(findingsOf(text).join("\n")).toContain("does not wait for extra");
   });
 
-  // Rule 6. The worst outcome: a required check that is green by construction.
+  // Rule 6. A cancelled run reports neither success nor failure, so a group that cancels
+  // has to be one no second run reporting the same context can join. Four keys, and the
+  // healthy one is the mutation base for the three that are wrong.
+  it.each([
+    ["a constant group", "gate-fixed"],
+    ["a ref-keyed group", "gate-${{ github.ref }}"],
+    ["a PR-keyed group with no per-run fallback", "gate-${{ github.event.pull_request.number }}"],
+  ])("rejects %s that cancels in progress", (_name, group) => {
+    const text = HEALTHY.replace("jobs:\n", `concurrency:\n  group: ${group}\n  cancel-in-progress: true\njobs:\n`);
+    expect(findingsOf(text).join("\n")).toContain("cancels in progress and is not keyed per run");
+  });
+
+  it("accepts a group that falls back to the run id, and one that does not cancel at all", () => {
+    const withRunId = HEALTHY.replace(
+      "jobs:\n",
+      "concurrency:\n  group: gate-${{ github.event.pull_request.number || github.run_id }}\n  cancel-in-progress: true\njobs:\n",
+    );
+    expect(findingsOf(withRunId)).toEqual([]);
+    // `cancel-in-progress: false` still cancels a PENDING run, but a run that never
+    // started reported nothing, so it cannot leave a context at `cancelled`.
+    const noCancel = HEALTHY.replace(
+      "jobs:\n",
+      "concurrency:\n  group: gate-${{ github.ref }}\n  cancel-in-progress: false\njobs:\n",
+    );
+    expect(findingsOf(noCancel)).toEqual([]);
+  });
+
+  // Rule 7. The worst outcome: a required check that is green by construction.
   it("rejects a gate whose step cannot fail", () => {
     const text = HEALTHY.replace(
       "      - name: fail unless every job passed\n        if: contains(needs.*.result, 'failure')\n        run: |\n          exit 1\n",

@@ -22,10 +22,13 @@ on:
   workflow_dispatch:
 
 # Keyed by the ref, which for both triggers is the tag: a re-dispatch of a tag already
-# building waits instead of running beside it, so two runs cannot assemble the same draft
+# building queues instead of running beside it, so two runs cannot assemble the same draft
 # Release at once. `cancel-in-progress` stays false — the installers are what this
 # produces, and a build killed part-way leaves a draft holding some platforms and not
-# others. Distinct tags never share the group, so nothing queues in ordinary use.
+# others. Distinct tags never share the group, so nothing queues in ordinary use, and that
+# matters beyond tidiness: `false` holds only ONE run pending, and a third run on the same
+# tag would cancel the queued second. Three concurrent runs on one tag is a hand-made
+# situation, and this is what it would do.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false

@@ -9,16 +9,19 @@ name: Race harness
 # ~800 sequential commands — so it stays its own workflow rather than being folded into
 # the ordinary tier.
 #
-# It runs on a pull request that touches `src/**` or `e2e/race/**`, and on the one that
-# changes the app version. Two clauses, because neither implies the other. The first is
-# where a live-sync break comes from, and the recorded accident is why it is the whole of
-# `src/**` rather than the live-sync files alone: a `page.selectOption` that stopped
-# resolving under a session lock rode 17 merges with this gate green, from a pull request
-# that touched only `src/main.ts`. The second is kept because a version-bump PR carries
-# nothing else (see CLAUDE.md) and therefore touches neither path — dropping it would take
-# the harness out from in front of the only commit a user ever installs, which is a
-# stronger place than the release itself, where a red result would arrive after the tag
-# already exists.
+# It runs on a pull request that touches `src/**`, `e2e/**` or `playwright.config.ts`, and
+# on the one that changes the app version. Two clauses, because neither implies the other.
+# The first is what the harness reads and what it drives, and the recorded accident is why
+# it is the whole of `src/**` rather than the live-sync files alone: a `page.selectOption`
+# that stopped resolving under a session lock rode 17 merges with this gate green, from a
+# pull request that touched only `src/main.ts`. `e2e/**` rather than `e2e/race/**` for the
+# same reason one level out — the harness's specs import `e2e/graph-helpers.ts` — and
+# `playwright.config.ts` because the `race` and `race-webkit` projects are defined there,
+# and `pnpm check:skips` collects only the `race` one. The second clause is kept because a
+# version-bump PR carries nothing else (see CLAUDE.md) and therefore touches none of those
+# paths — dropping it would take the harness out from in front of the only commit a user
+# ever installs, which is a stronger place than the release itself, where a red result
+# would arrive after the tag already exists.
 #
 # `paths:` on the trigger says neither thing. It cannot ask whether the version moved —
 # `paths: package.json` catches Dependabot's weekly npm edits instead — and it would skip
@@ -83,14 +86,42 @@ jobs:
           # history for the version read below, and both endpoints ci.yml has to use
           # instead truncate without saying so (that job carries the ceilings and the
           # guards against them). A diff against the base has no ceiling to guard.
-          if ! files=$(git diff --name-only "${BASE_SHA}" HEAD); then
+          #
+          # Two flags, each measured in a scratch repository rather than added on
+          # principle. `core.quotePath=false`: git prints a path carrying any byte
+          # outside ASCII C-quoted — `"src/\346\227\245..."` — and that leading quote
+          # defeats a `src/` match, so the harness would skip AND print a reason that is
+          # false. `--no-renames`: rename detection prints a moved file at its
+          # DESTINATION alone, so `git mv src/x.ts scripts/x.ts` reads as no src/ change;
+          # with the flag both paths are listed.
+          if ! files=$(git -c core.quotePath=false diff --name-only --no-renames "${BASE_SHA}" HEAD); then
             echo 'run=true' >> "$GITHUB_OUTPUT"
             echo "could not diff against ${BASE_SHA} — running the harness rather than guessing"
             exit 0
           fi
-          if printf '%s\n' "${files}" | grep -qE '^(src/|e2e/race/)'; then
+          # A shell loop, which is the shape ci.yml's preflight already uses over its own
+          # file list, rather than `printf | grep -q`. That pipeline reads a match
+          # correctly under the bare `run:` default (errexit, no pipefail) but folds two
+          # other statuses into "no match": grep's exit 2, and a SIGPIPE on printf once
+          # `grep -q` has exited early — measured, the latter turns an 8000-path diff into
+          # `run=false` the moment a step declares `shell: bash`, which adds pipefail.
+          # Both fold toward not running, which is the direction this whole job is
+          # written against.
+          #
+          # e2e/ whole rather than e2e/race/: the harness's specs import
+          # e2e/graph-helpers.ts, and playwright.config.ts is where the race and
+          # race-webkit projects are defined at all — `pnpm check:skips` collects only
+          # the `race` project, so nothing else on a pull request would notice
+          # race-webkit selecting the wrong engine.
+          touched=false
+          while IFS= read -r file; do
+            case "${file}" in
+              src/*|e2e/*|playwright.config.ts) touched=true ;;
+            esac
+          done <<< "${files}"
+          if [[ "${touched}" == 'true' ]]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
-            echo 'the pull request touches src/ or e2e/race/ — running the harness'
+            echo 'the pull request touches src/, e2e/ or playwright.config.ts — running the harness'
             exit 0
           fi
           head=$(jq -r .version package.json)
@@ -105,12 +136,21 @@ jobs:
             exit 0
           fi
           base=$(printf '%s' "${base_json}" | jq -r .version)
+          # `jq -r` prints the string "null" and exits 0 for a key that is not there, so a
+          # package.json that lost its version would compare equal to itself and skip.
+          # tag-release.yml carries the same guard over the same field and refuses; the
+          # safe answer here is the other one, which is to run.
+          if [[ -z "${base}" || "${base}" == 'null' || -z "${head}" || "${head}" == 'null' ]]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+            echo 'could not read a version on one side — running the harness rather than guessing'
+            exit 0
+          fi
           echo "version: ${base} (base) -> ${head} (head)"
           if [[ "${base}" != "${head}" ]]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
           else
             echo 'run=false' >> "$GITHUB_OUTPUT"
-            echo 'no src/ or e2e/race/ change and the version did not move — the harness is skipped'
+            echo 'no src/, e2e/ or playwright.config.ts change and the version did not move — the harness is skipped'
           fi
       # Both harness jobs run inside the official Playwright image; the tag comes from
       # here. See .github/actions/playwright-version for why it is a job's output.
@@ -119,7 +159,7 @@ jobs:
 
   race:
     needs: detect
-    if: needs.detect.outputs.run == 'true'
+    if: needs.detect.outputs.run != 'false'
     runs-on: ubuntu-latest
     # Same image as the WebKit job below, for the same reason and at the same measured
     # cost — see that job's header. The shards' own exposure is the smaller one (36
@@ -180,7 +220,7 @@ jobs:
   # docs/{en,ja}/live-race-harness.md, not here.
   race-webkit:
     needs: detect
-    if: needs.detect.outputs.run == 'true'
+    if: needs.detect.outputs.run != 'false'
     runs-on: ubuntu-latest
     # The one job in this repository that does not build its environment out of the
     # Ubuntu mirror. `--with-deps webkit` fetches an order of magnitude more .debs than

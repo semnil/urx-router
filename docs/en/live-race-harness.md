@@ -571,7 +571,7 @@ it into:
 | Tier | Machine time | Slowest test | Runs from |
 | --- | --- | --- | --- |
 | `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, sharded three ways, on every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside) |
-| `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways, on a PR touching `src/**` or `e2e/race/**` and on the version bump |
+| `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways, on a PR touching `src/**`, `e2e/**` or `playwright.config.ts`, and on the version bump |
 | `race-webkit` | 2.1 min | 48 s | `race.yml`, its own job, on the same condition |
 
 **Read the ordinary tier's figure as a range rather than a budget.** The same 428 cases measured 5.2
@@ -592,9 +592,9 @@ pull request than to run after the merge, and at twenty-five it is worth asking 
 pull request can break it. Both figures have grown since the tiering was cut and the ratio has barely
 moved, which is the part the boundary actually rests on.
 
-Where it runs is **a pull request that touches `src/**` or `e2e/race/**`, and the one that changes the
-app version**. Two clauses, because neither implies the other. The version-bump PR carries nothing
-else, so it touches neither path, and merging it is what tags a release (`tag-release.yml`) — that
+Where it runs is **a pull request that touches `src/**`, `e2e/**` or `playwright.config.ts`, and the
+one that changes the app version**. Two clauses, because neither implies the other. The version-bump
+PR carries nothing else, so it touches none of those paths, and merging it is what tags a release (`tag-release.yml`) — that
 clause is what keeps the harness directly in front of the only commit a user ever installs, in front
 of the tag rather than behind it, where a release-time run would report on a tag that already exists.
 A `paths: package.json` filter would not have said "version bump" either — Dependabot edits that file
@@ -603,10 +603,23 @@ weekly — so `race.yml`'s `detect` job compares the `version` field across the 
 The path clause is what catches a break at the merge that caused it. It is the whole of `src/**`
 rather than the live-sync files, because the narrower rule would have missed the one recorded accident:
 a `page.selectOption` that stopped resolving under a live-session lock rode 17 merges with this gate
-green, from a pull request that touched only `src/main.ts`. `detect` reads `git diff --name-only`
-against the base rather than the API's file list — it already fetches the whole history for the version
-read, and a diff carries no truncation ceiling, which is a guard `ci.yml`'s `preflight` needs and this
-job does not.
+green, from a pull request that touched only `src/main.ts`. It is `e2e/**` rather than `e2e/race/**`
+for the same reason one level out — `t0b-sweeps.spec.ts` and `t2b-shape-change.spec.ts` import
+`e2e/graph-helpers.ts`, which is outside `e2e/race/` and is exactly the file CLAUDE.md's asset table
+asks the harness to consolidate onto. And `playwright.config.ts` is in the set because the `race` and
+`race-webkit` projects are declared there and nowhere else, while `pnpm check:skips` collects only the
+`race` project — so an edit that made `race-webkit` select the wrong engine or collect nothing would
+be reported by no check on an ordinary pull request.
+
+`detect` reads `git diff --name-only` against the base rather than the API's file list — it already
+fetches the whole history for the version read, and a diff carries no truncation ceiling, which is a
+guard `ci.yml`'s `preflight` needs and this job does not. Two flags on that diff are load-bearing and
+were measured rather than assumed: `-c core.quotePath=false`, because git prints a path with any
+non-ASCII byte C-quoted (`"src/\346\227\245..."`) and the leading quote defeats a `src/` match, and
+`--no-renames`, because rename detection prints a moved file at its destination alone, so lifting a
+module out of `src/` would read as no `src/` change at all. Both failures skip the harness
+**and** print a reason that is untrue, which matters because that log is the only thing distinguishing
+a skip from a pass.
 
 **A comment-only diff is not excluded from the trigger.** That exclusion was measured before being
 dropped: over the 80 most recent first-parent merges on `main` (measured 2026-08-14), 42 touched
@@ -630,8 +643,8 @@ the slowest shard's rather than a third of the machine time. Beside it, `ci.yml`
 pull-request runs (same date) have a median of 3m02s, with 38 of the 40 between 2m32s and 3m56s and
 the other 2 being doc-only runs where the expensive jobs do not run. The required workflows run in
 parallel, so a merge waits for the slowest of them: **about three minutes before this trigger, about
-seven and a half on a pull request the harness now runs on** — 45 of the 80 merges in the sample above,
-counting `e2e/race/**`.
+seven and a half on a pull request the harness now runs on**. In the 80-merge sample above that is 52
+merges — 42 touching `src/**`, 30 touching `e2e/**`, 2 touching `playwright.config.ts`, overlapping.
 
 `race.yml` carries **no trigger filter at all**, so `detect` runs on every pull request. That is what
 makes `race-required` usable as a merge condition: a workflow skipped by a trigger filter reports no
