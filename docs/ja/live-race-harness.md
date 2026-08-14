@@ -223,7 +223,7 @@ param、セッションが無い状態。逆向きの差は意図的に判定し
 | id | 対象 | 何を測るか |
 | --- | --- | --- |
 | `shape-comp-eq-type-bank-swap` | inspector | アドレスの同一性と値の極性が同時に変わる唯一の param |
-| `shape-eq-oneknob-registration-blindspot` | tuning | 再計算を起こした当のブール値が、再計算の通知先を集合から外す自己盲目。落ちた窓の正典 |
+| `shape-eq-oneknob-registration-blindspot` | tuning | 再計算を起こした当のブール値が、再計算の通知先を集合から外す自己盲目。落ちた窓の代表例 |
 | `shape-eq-oneknob-level-refetch-storm` | tuning | ドラッグ中に毎フラッシュ読み戻しが走り、履歴が再基準化され続ける |
 | `shape-insert-fx-select-ordering` | inspector | 値ではなくコマンド 2 件の順序が正しさを決める唯一のケース |
 | `shape-insert-fx-engine-array-collision` | inspector | 2 つのプラン所有者が 1 つのデバイスアドレスを共有する構造的衝突 |
