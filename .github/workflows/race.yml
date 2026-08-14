@@ -9,35 +9,31 @@ name: Race harness
 # ~800 sequential commands — so it stays its own workflow rather than being folded into
 # the ordinary tier.
 #
-# It runs on a pull request that touches `src/**`, `e2e/**`, `playwright.config.ts`,
-# `package.json` or `pnpm-lock.yaml`, and on the one that changes the app version. Two
-# clauses. The first is what the harness reads and what it drives, and the recorded
-# accident is why it is the whole of `src/**` rather than the live-sync files alone: a
-# `page.selectOption` that stopped resolving under a session lock rode 17 merges with this
-# gate green, from a pull request that touched only `src/main.ts`. `e2e/**` rather than
-# `e2e/race/**` for the same reason one level out — the harness's specs import
-# `e2e/graph-helpers.ts`. `playwright.config.ts` because the `race` and `race-webkit`
-# projects are declared there and nowhere else. `pnpm-lock.yaml` because it decides the
-# Playwright version, which .github/actions/playwright-version turns into the container
-# image tag both harness jobs run in.
+# It runs on every pull request EXCEPT one whose diff is documentation alone, and on the
+# one that changes the app version. The first clause is written as an exclusion because
+# three successive attempts to write it as a watch list each left a real dependency out —
+# the list, the leaks and what each cost are beside the `case` in `detect`. What the
+# harness reads reaches well past `e2e/race/`: its specs, the config that declares its two
+# projects, the bundle it serves, the server that serves it, the lockfile that pins the
+# browser, and this file. Documentation is the one class that provably reaches none of it.
 #
-# The second clause no longer decides any pull request on its own: `package.json` is in
-# the path set and a version bump is an edit to it, so the paths reach that PR first.
-# `detect` therefore evaluates and prints both rather than returning on the first —
-# see the note above the final `if`. It is kept because it is the written statement that
-# the harness stands in front of the only commit a user ever installs, and because it is
-# what survives anyone narrowing the paths. In front of the tag rather than behind it,
-# where a red result would arrive after the tag already exists.
+# The second clause no longer decides any pull request on its own — a version bump edits
+# `package.json`, which is not documentation — so `detect` evaluates and prints both rather
+# than returning on the first; see the note above the final `if`. It is kept because it is
+# the written statement that the harness stands in front of the only commit a user ever
+# installs, and because it is what survives anyone narrowing the first clause. In front of
+# the tag rather than behind it, where a red result would arrive after the tag exists.
 #
-# The cost of the last two paths was taken deliberately: Dependabot's npm ecosystem runs
-# weekly, and every one of its pull requests moves `pnpm-lock.yaml`, so each now spends a
-# harness run. That is the trade for a browser build never changing under the suite
-# unmeasured, and it is why `paths:` on the trigger is still the wrong instrument — not
-# because it would catch Dependabot, but because it cannot ask whether the version moved,
-# and because it would skip the WHOLE workflow, which reports no check run at all and
-# leaves `race-required` at "Expected" forever. So the trigger carries no filter, `detect`
-# runs on every pull request and decides there, and away from both clauses the two harness
-# jobs skip on their own condition, which reports success in seconds.
+# The cost is taken deliberately and measured: Dependabot's npm ecosystem runs weekly and
+# every one of its pull requests now spends a harness run. The frequency, against the two
+# narrower rules this replaced, is in docs/{en,ja}/live-race-harness.md.
+#
+# `paths-ignore:` on the trigger would express the first clause and nothing else, and it
+# would express it in the one place that breaks the merge gate: a workflow skipped by a
+# trigger filter reports no check run at all, leaving `race-required` at "Expected"
+# forever. So the trigger carries no filter, `detect` runs on every pull request and
+# decides there, and on a documentation-only one the two harness jobs skip on their own
+# condition, which reports success in seconds.
 #
 # Also runnable on demand against any branch:
 #
@@ -122,11 +118,26 @@ jobs:
           # Both fold toward not running, which is the direction this whole job is
           # written against.
           #
-          # Why each path is in the set is in this file's header, beside what it costs.
+          # An EXCLUSION, not a list of what to watch: everything runs the harness unless
+          # every changed file is documentation. Same rule, same order, same exception as
+          # ci.yml's preflight — the generated model references are Markdown that
+          # skill-export.test.ts diffs, so they are code here too.
+          #
+          # A watch list was tried first and leaked three times in one sitting: it named
+          # neither e2e/graph-helpers.ts (which the harness's own specs import) nor
+          # playwright.config.ts (where its two projects are declared), then not
+          # pnpm-lock.yaml (which decides the container image both harness jobs run in),
+          # then not this workflow, .github/actions/install-browsers, .env.trace,
+          # vite.config.ts or scripts/e2e-serve.mjs. Each leak was a pull request that
+          # could break the harness while race-required stayed green. The failure mode of
+          # a list is a dependency nobody added to it; the failure mode of this is a run
+          # nobody needed.
           touched=false
           while IFS= read -r -d '' file; do
             case "${file}" in
-              src/* | e2e/* | playwright.config.ts | package.json | pnpm-lock.yaml) touched=true ;;
+              .claude/skills/urx-routing-planner/references/model-*.md) touched=true ;;
+              docs/* | *.md) ;;
+              *) touched=true ;;
             esac
           done < "${list}"
           head=$(jq -r .version package.json)
@@ -160,13 +171,13 @@ jobs:
           # version comparison unreachable — code a reader would still take for the thing
           # that keeps the harness in front of a release. It is kept because it is that
           # statement, and it is the clause that survives anyone narrowing the paths.
-          echo "paths touched: ${touched} | version: ${base} (base) -> ${head} (head), moved: ${moved}"
+          echo "beyond documentation: ${touched} | version: ${base} (base) -> ${head} (head), moved: ${moved}"
           if [[ "${touched}" == 'true' || "${moved}" == 'true' ]]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
             echo 'running the harness'
           else
             echo 'run=false' >> "$GITHUB_OUTPUT"
-            echo 'no watched path changed and the version did not move — the harness is skipped'
+            echo 'documentation only and the version did not move — the harness is skipped'
           fi
       # Both harness jobs run inside the official Playwright image; the tag comes from
       # here. See .github/actions/playwright-version for why it is a job's output.

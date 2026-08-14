@@ -571,7 +571,7 @@ it into:
 | Tier | Machine time | Slowest test | Runs from |
 | --- | --- | --- | --- |
 | `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, sharded three ways, on every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside) |
-| `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways, on a PR touching `src/**`, `e2e/**`, `playwright.config.ts`, `package.json` or `pnpm-lock.yaml`, and on the version bump |
+| `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways, on every PR except a documentation-only one, and on the version bump |
 | `race-webkit` | 2.1 min | 48 s | `race.yml`, its own job, on the same condition |
 
 **Read the ordinary tier's figure as a range rather than a budget.** The same 428 cases measured 5.2
@@ -592,44 +592,53 @@ pull request than to run after the merge, and at twenty-five it is worth asking 
 pull request can break it. Both figures have grown since the tiering was cut and the ratio has barely
 moved, which is the part the boundary actually rests on.
 
-Where it runs is **a pull request that touches `src/**`, `e2e/**`, `playwright.config.ts`,
-`package.json` or `pnpm-lock.yaml`, and the one that changes the app version**. Two clauses, and
-`detect` evaluates and prints both rather than returning on the first: the paths now include
-`package.json`, so a version bump satisfies the path clause as well, and an early return would leave
-the version comparison unreachable while still reading as the thing that keeps the harness in front of
-a release. It is kept because it is exactly that statement — and because it is the clause that
-survives anyone narrowing the paths. In front of the tag rather than behind it, since a release-time
-run would report on a tag that already exists. A `paths: package.json` filter on the trigger would not
-have said "version bump" either — Dependabot edits that file weekly — which is why the comparison is a
-job and not a filter.
+Where it runs is **every pull request except one whose diff is documentation alone, and the one that
+changes the app version**. Two clauses, and `detect` evaluates and prints both rather than returning
+on the first: a version bump edits `package.json`, which is not documentation, so it satisfies the
+first clause as well and an early return would leave the version comparison with no path to it while
+it still read as the thing that keeps the harness in front of a release. It is kept because it is
+exactly that statement, and because it survives anyone narrowing the first clause. In front of the tag
+rather than behind it, since a release-time run would report on a tag that already exists. A
+`paths: package.json` filter on the trigger would not have said "version bump" either — Dependabot
+edits that file weekly — which is why the comparison is a job and not a filter.
 
-The path clause is what catches a break at the merge that caused it. It is the whole of `src/**`
-rather than the live-sync files, because the narrower rule would have missed the one recorded accident:
-a `page.selectOption` that stopped resolving under a live-session lock rode 17 merges with this gate
-green, from a pull request that touched only `src/main.ts`. It is `e2e/**` rather than `e2e/race/**`
-for the same reason one level out — `t0b-sweeps.spec.ts` and `t2b-shape-change.spec.ts` import
-`e2e/graph-helpers.ts`, which is outside `e2e/race/` and is exactly the file CLAUDE.md's asset table
-asks the harness to consolidate onto. And `playwright.config.ts` is in the set because the `race` and
-`race-webkit` projects are declared there and nowhere else. `pnpm-lock.yaml` decides the Playwright
-version, which `.github/actions/playwright-version` turns into the container image tag both harness
-jobs run in, so a dependency bump changes the browser build under the suite; `package.json` carries
-the scripts that drive it.
+**The first clause is an exclusion because three attempts to write it as a watch list each leaked.**
+The list is worth reading as a sequence, because each entry was added only after the gap was pointed
+out, and every one of them was a pull request that could break the harness while `race-required`
+stayed green:
+
+| the list said | what it left out | why that file matters |
+| --- | --- | --- |
+| `src/**` and `e2e/race/**` | `e2e/graph-helpers.ts` | `t0b-sweeps.spec.ts` and `t2b-shape-change.spec.ts` import it, and CLAUDE.md's asset table asks the harness to consolidate onto it |
+| — | `playwright.config.ts` | the `race` and `race-webkit` projects are declared there and nowhere else |
+| + those two | `pnpm-lock.yaml` | it pins the Playwright version, which `.github/actions/playwright-version` turns into the container image both harness jobs run in |
+| + `package.json` and the lockfile | `race.yml` itself, `.github/actions/install-browsers/`, `.env.trace`, `vite.config.ts`, `scripts/e2e-serve.mjs` | the job definition, the browser install, the trace build flag, the bundle the tier serves, and the server that serves it |
+
+`src/**` was the whole of the directory from the start, for the same class of reason: the one
+recorded accident — a `page.selectOption` that stopped resolving under a live-session lock and rode 17
+merges with this gate green — came from a pull request that touched only `src/main.ts`. What the
+harness reads simply does not have a boundary anyone has drawn correctly on the first try, and the
+failure mode of a list is a dependency nobody added to it. The failure mode of an exclusion is a run
+nobody needed, so that is the direction the clause now fails in. `detect` applies the same rule, in
+the same order, with the same exception as `ci.yml`'s `preflight`: documentation is `docs/**` and
+`*.md`, except the generated `references/model-*.md`, which `skill-export.test.ts` diffs against its
+generator and which therefore counts as code.
 
 `detect` reads `git diff --name-only` against the base rather than the API's file list — it already
 fetches the whole history for the version read, and a diff carries no truncation ceiling, which is a
 guard `ci.yml`'s `preflight` needs and this job does not. Two flags on that diff are load-bearing and
-were measured rather than assumed: `-c core.quotePath=false`, because git prints a path with any
-non-ASCII byte C-quoted (`"src/\346\227\245..."`) and the leading quote defeats a `src/` match, and
-`--no-renames`, because rename detection prints a moved file at its destination alone, so lifting a
-module out of `src/` would read as no `src/` change at all. Both failures skip the harness
-**and** print a reason that is untrue, which matters because that log is the only thing distinguishing
-a skip from a pass.
+were measured rather than assumed: `-z`, because git C-quotes any path it cannot print literally — a
+non-ASCII byte, but also a `"`, a backslash or a control byte — and the leading quote of
+`"docs/\346\227\245..."` makes the path stop looking like documentation, and `--no-renames`, because
+rename detection prints a moved file at its destination alone, so moving a module into `docs/` would
+read as a documentation-only diff. `core.quotePath=false` closes only the non-ASCII third of the first
+one. `-z` costs a temporary file, since a NUL cannot survive a shell variable.
 
-**A comment-only diff is not excluded from the trigger.** That exclusion was measured before being
-dropped: over the 80 most recent first-parent merges on `main` (measured 2026-08-14), 42 touched
-`src/**`, and normalizing each changed file through esbuild with comments and whitespace stripped left
-3 of those 42 identical on both sides. It would have saved 3 runs, in exchange for a normalizer whose
-verdict has to be correct in the direction that skips.
+**A comment-only diff is not excluded either.** That exclusion was measured before being dropped:
+over the 80 most recent first-parent merges on `main` (measured 2026-08-14), 42 touched `src/**`, and
+normalizing each changed file through esbuild with comments and whitespace stripped left 3 of those 42
+identical on both sides. It would have saved 3 runs, in exchange for a normalizer whose verdict has to
+be correct in the direction that skips.
 
 **What the trigger costs a merge.** Measured 2026-08-14 from run `31794858430` (`workflow_dispatch` on
 main, conclusion success) — wall clock this time, not machine time:
@@ -647,9 +656,10 @@ the slowest shard's rather than a third of the machine time. Beside it, `ci.yml`
 pull-request runs (same date) have a median of 3m02s, with 38 of the 40 between 2m32s and 3m56s and
 the other 2 being doc-only runs where the expensive jobs do not run. The required workflows run in
 parallel, so a merge waits for the slowest of them: **about three minutes before this trigger, about
-seven and a half on a pull request the harness now runs on**. In the 80-merge sample above that is 61
-merges — 42 touching `src/**`, 30 `e2e/**`, 11 `package.json`, 3 `pnpm-lock.yaml`, 2
-`playwright.config.ts`, overlapping.
+seven and a half on a pull request the harness runs on**. Over the same 80 merges, that is **75** —
+the 5 it skips are the documentation-only ones. The two watch lists this replaced would have run on
+52 and on 61 of them, and the four merges between those two figures and 75 are what the third leak
+above would have cost.
 
 `race.yml` carries **no trigger filter at all**, so `detect` runs on every pull request. That is what
 makes `race-required` usable as a merge condition: a workflow skipped by a trigger filter reports no
