@@ -1032,28 +1032,37 @@ mod imp {
             let Some(data) = msg.get("vddp").and_then(|v| v.get("data")) else {
                 continue;
             };
-            // An empty list is Device Center up with no URX — the same state the
-            // casket path reports from an empty getDeviceList.
-            let Some(dev) = data
-                .pointer("/list")
-                .and_then(Value::as_array)
-                .and_then(|l| l.first())
-            else {
-                return Err("no-device".into());
-            };
-            let port = dev
-                .get("vdpport")
-                .and_then(Value::as_u64)
-                .ok_or_else(|| "broker-no-vdpport: the device list carried no port".to_string())?;
-            // Checked, not truncated. A broker answer above 65535 (a bug or a schema
-            // change) used to cast down silently — 65537 becomes 1 — and the connect
-            // then failed naming a port the broker never advertised, which sends the
-            // next reader looking in the wrong place entirely.
-            let port = u16::try_from(port)
-                .map_err(|_| format!("broker-bad-response: vdpport {port} is out of range"))?;
-            return Ok((port, str_or(dev, "model", "URX")));
+            return vdp_target(data);
         }
         Err("broker-no-vdpport: the device list did not answer".into())
+    }
+
+    /// What one `/vddp_srv/devices` answer names: the first device's `vdp` port and
+    /// its model. Separated from the socket loop above because every way this can go
+    /// wrong is a shape of the broker's JSON, and a live broker answers with the one
+    /// shape it is currently written to answer with — the out-of-range port below has
+    /// no way to reach the loop at all from a working Device Center.
+    fn vdp_target(data: &Value) -> Result<(u16, String), String> {
+        // An empty list is Device Center up with no URX — the same state the
+        // casket path reports from an empty getDeviceList.
+        let Some(dev) = data
+            .pointer("/list")
+            .and_then(Value::as_array)
+            .and_then(|l| l.first())
+        else {
+            return Err("no-device".into());
+        };
+        let port = dev
+            .get("vdpport")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "broker-no-vdpport: the device list carried no port".to_string())?;
+        // Checked, not truncated. A broker answer above 65535 (a bug or a schema
+        // change) used to cast down silently — 65537 becomes 1 — and the connect
+        // then failed naming a port the broker never advertised, which sends the
+        // next reader looking in the wrong place entirely.
+        let port = u16::try_from(port)
+            .map_err(|_| format!("broker-bad-response: vdpport {port} is out of range"))?;
+        Ok((port, str_or(dev, "model", "URX")))
     }
 
     /// How long discovery waits for the device list, and how long its socket blocks
@@ -1099,7 +1108,12 @@ mod imp {
         /// JSON — callers treat both as "nothing yet" and loop. Parsed in place out
         /// of `pending`, so a frame is not copied into a `String` on its way to a
         /// parser that would immediately take it apart again.
-        fn read_json(&mut self, sock: &mut TcpStream) -> Result<Option<Value>, String> {
+        ///
+        /// Generic over the source rather than taking the `TcpStream` both callers
+        /// pass, so the chunk-boundary rejoin and the `MAX_PENDING` refusal can be
+        /// driven from a byte source a test owns. Neither of those is reachable
+        /// through a socket without a peer that misbehaves on cue.
+        fn read_json<R: Read>(&mut self, sock: &mut R) -> Result<Option<Value>, String> {
             loop {
                 if let Some(nl) = self.pending.iter().position(|&b| b == b'\n') {
                     let parsed = serde_json::from_slice::<Value>(&self.pending[..nl]).ok();
@@ -2276,6 +2290,199 @@ mod imp {
 
             assert!(reply_for(&mut subs, &ack, base, "get").is_none());
             assert!(reply_for(&mut subs, &value, base, "post").is_none());
+        }
+    }
+
+    #[cfg(test)]
+    mod link_tests {
+        // The two halves of the vdp transport that a live broker cannot drive: the
+        // framing, whose interesting cases are a chunk boundary landing mid-line and a
+        // peer that never terminates one, and the device-list parse, whose interesting
+        // cases are answers Device Center does not currently produce. Both take their
+        // input from the test rather than from a socket, so each case is one shape of
+        // bytes and nothing depends on a peer behaving on cue.
+        use super::{vdp_target, LineReader, MAX_PENDING};
+        use serde_json::json;
+        use std::collections::VecDeque;
+        use std::io::{Error, ErrorKind, Read};
+
+        /// A byte source with a socket's manners: at most one scripted piece per read —
+        /// split when it does not fit the caller's buffer, as a socket splits one — and
+        /// a read timeout once they run out. `WouldBlock` rather than end-of-file on
+        /// purpose: an exhausted `Cursor` reports `Ok(0)`, which this reader is required
+        /// to treat as the peer closing, so a `Cursor` would answer "connection gone"
+        /// everywhere a quiet link is meant.
+        struct Chunks(VecDeque<Vec<u8>>);
+
+        impl Chunks {
+            fn of(parts: &[&str]) -> Self {
+                Chunks(parts.iter().map(|p| p.as_bytes().to_vec()).collect())
+            }
+        }
+
+        impl Read for Chunks {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let Some(mut next) = self.0.pop_front() else {
+                    return Err(Error::new(ErrorKind::WouldBlock, "quiet link"));
+                };
+                let n = next.len().min(buf.len());
+                buf[..n].copy_from_slice(&next[..n]);
+                if n < next.len() {
+                    self.0.push_front(next.split_off(n));
+                }
+                Ok(n)
+            }
+        }
+
+        // The reason this reader owns a `pending` buffer at all. A chunk boundary is not
+        // a message boundary, and the half-line has to survive the read that ends without
+        // one — a reader that parsed each chunk on its own would drop both halves here.
+        #[test]
+        fn a_line_split_across_two_reads_is_rejoined() {
+            let mut reader = LineReader::new();
+            let mut sock = Chunks::of(&["{\"vddp\":{\"seq\"", ":7}}\n"]);
+
+            assert_eq!(
+                reader.read_json(&mut sock).unwrap(),
+                Some(json!({ "vddp": { "seq": 7 } }))
+            );
+        }
+
+        // …and the same buffer is what lets two messages arrive in one read. The second
+        // call must answer out of `pending` without reading: the source is quiet by then,
+        // so a call that reached the socket would report "nothing yet" and lose the frame.
+        #[test]
+        fn two_messages_in_one_chunk_come_back_one_per_call() {
+            let mut reader = LineReader::new();
+            let mut sock = Chunks::of(&["{\"a\":1}\n{\"b\":2}\n"]);
+
+            assert_eq!(reader.read_json(&mut sock).unwrap(), Some(json!({"a": 1})));
+            assert_eq!(reader.read_json(&mut sock).unwrap(), Some(json!({"b": 2})));
+            assert_eq!(reader.read_json(&mut sock).unwrap(), None, "then quiet");
+        }
+
+        // A line that is not JSON is "nothing yet" to the caller, and it must be DRAINED
+        // by the call that declined it. Left in place it would be re-parsed forever and
+        // the message behind it would never be reached.
+        #[test]
+        fn an_unparseable_line_is_dropped_rather_than_re_read() {
+            let mut reader = LineReader::new();
+            let mut sock = Chunks::of(&["not json\n{\"a\":1}\n"]);
+
+            assert_eq!(reader.read_json(&mut sock).unwrap(), None);
+            assert_eq!(reader.read_json(&mut sock).unwrap(), Some(json!({"a": 1})));
+        }
+
+        // A peer that never sends a newline. Without the cap this is a `Vec` growing at
+        // socket speed for the life of the session — a memory climb with nothing in the
+        // log, rather than an error the caller can act on and report.
+        #[test]
+        fn a_peer_that_never_terminates_a_line_is_refused_at_the_cap() {
+            /// Endless bytes, none of them a newline — but only up to four times the cap,
+            /// so a reader that does not stop fails this case instead of running the host
+            /// out of memory. Without that bound the defect's own signature (a buffer
+            /// growing at socket speed) is what the test would reproduce.
+            struct Noise(usize);
+            impl Read for Noise {
+                fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                    self.0 += buf.len();
+                    assert!(self.0 < MAX_PENDING * 4, "unbounded: the cap did not hold");
+                    buf.fill(b'x');
+                    Ok(buf.len())
+                }
+            }
+
+            let mut reader = LineReader::new();
+            let err = reader
+                .read_json(&mut Noise(0))
+                .expect_err("an unterminated stream must end as an error, not as memory");
+
+            assert!(
+                err.starts_with("broker-bad-response:"),
+                "reported as a bad answer from the broker: {err}"
+            );
+            assert!(
+                err.contains("with no line break"),
+                "and says what is wrong with it: {err}"
+            );
+        }
+
+        // The cap is a ceiling on ONE line, so it must sit far above any frame the
+        // protocol carries. The largest is a device list of a few KiB; a frame at 64 KiB
+        // — an order of magnitude past that — still has to come back whole.
+        #[test]
+        fn a_large_but_terminated_frame_is_not_refused() {
+            let big = "y".repeat(64 * 1024);
+            assert!(big.len() < MAX_PENDING, "the cap is a ceiling on one line");
+            let mut reader = LineReader::new();
+            let mut sock = Chunks::of(&["{\"note\":\"", &big, "\"}\n"]);
+
+            let msg = reader.read_json(&mut sock).unwrap().expect("one frame");
+            assert_eq!(msg["note"].as_str().map(str::len), Some(big.len()));
+        }
+
+        fn devices(entry: serde_json::Value) -> serde_json::Value {
+            json!({ "list": [entry] })
+        }
+
+        #[test]
+        fn an_ordinary_device_list_names_its_port_and_model() {
+            assert_eq!(
+                vdp_target(&devices(json!({ "vdpport": 51234, "model": "URX44V" }))),
+                Ok((51234, "URX44V".to_string()))
+            );
+        }
+
+        // The boundary the checked conversion is drawn at: the last port that exists is
+        // still a port. A cap written one short here would refuse a working broker.
+        #[test]
+        fn the_highest_real_port_is_accepted() {
+            assert_eq!(
+                vdp_target(&devices(json!({ "vdpport": 65535 }))).map(|(p, _)| p),
+                Ok(65535)
+            );
+        }
+
+        // What the truncating cast did: 65537 became 1, and the connect that followed
+        // failed naming port 1 — a port the broker never advertised, which sends whoever
+        // reads that error looking at the wrong process entirely.
+        #[test]
+        fn a_port_past_u16_is_refused_naming_the_value_the_broker_sent() {
+            let err = vdp_target(&devices(json!({ "vdpport": 65537 })))
+                .expect_err("out of range is an error, not a truncation");
+
+            assert!(
+                err.starts_with("broker-bad-response:"),
+                "attributed to the broker's answer: {err}"
+            );
+            assert!(
+                err.contains("65537"),
+                "naming what was actually sent, not what it truncates to: {err}"
+            );
+        }
+
+        #[test]
+        fn a_list_entry_with_no_port_is_a_missing_port_rather_than_a_bad_one() {
+            let err = vdp_target(&devices(json!({ "model": "URX22" }))).unwrap_err();
+            assert!(err.starts_with("broker-no-vdpport:"), "{err}");
+        }
+
+        // Device Center up with no URX attached. Distinct from every error above: it is
+        // the state the frontend turns into "connect the unit", not into a fault report.
+        #[test]
+        fn an_empty_list_is_no_device() {
+            assert_eq!(vdp_target(&json!({ "list": [] })), Err("no-device".into()));
+            assert_eq!(vdp_target(&json!({})), Err("no-device".into()));
+        }
+
+        // Both transports fall back to the same word for an unnamed unit, or the two
+        // would show different text for the same unknown device.
+        #[test]
+        fn an_unnamed_device_falls_back_to_the_shared_placeholder() {
+            assert_eq!(
+                vdp_target(&devices(json!({ "vdpport": 51234 }))).map(|(_, m)| m),
+                Ok("URX".to_string())
+            );
         }
     }
 }
