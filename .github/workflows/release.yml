@@ -78,8 +78,18 @@ jobs:
               ;;
           esac
 
+  # `licenses` as well as the tag check, so a notice that cannot be generated stops the
+  # draft from existing rather than leaving an empty one behind.
+  #
+  # `build` already refuses to run without it (`needs.licenses.result == 'success'` below),
+  # but a job skipped by `if:` reports SUCCESS, so that refusal is silent — and nothing
+  # waits on this workflow's conclusion. What the operator would find is a draft Release
+  # holding no .dmg, no NSIS setup and no latest.json, and publishing a draft is what fires
+  # pages.yml, so the demo would go live against a release with no binaries. Depending on
+  # it here means the draft is never created: a `needs:` failure skips this job, and a tag
+  # with no release is a state someone re-runs rather than one they publish.
   create-release:
-    needs: check-tag
+    needs: [check-tag, licenses]
     if: needs.check-tag.outputs.validTag == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
