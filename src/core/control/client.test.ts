@@ -25,7 +25,7 @@ import {
   sendNames,
   setFollowUsb,
 } from "./client";
-import { planToCommands, planToNameWrites, type VdCommand } from "./translate";
+import { addrKey, planToCommands, planToNameWrites, type VdCommand } from "./translate";
 import { NODE_NAME_MAX_CHARS, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { PORT_REF_NONE } from "./vd";
 
@@ -298,6 +298,49 @@ describe("sendConverging", () => {
     expect(r.residual).toEqual([]);
     expect(r.rounds).toBe(1);
     expect([table.get("46:0:0"), table.get("47:0:0"), table.get("48:0:0")]).toEqual([1, 2, 11]);
+  });
+
+  // `exclude` names addresses the caller knows the DEVICE is right about, so the loop must
+  // neither read them nor send them. The live flush is the caller: a refetch head it wrote
+  // has just handed those values to the unit, and the converge is otherwise about to write
+  // the plan's pre-write copies straight back over them.
+  it("neither reads nor sends an excluded address", async () => {
+    const table = installDevice();
+    const plan = dirtyPlan();
+    table.set("139:0:0", 999); // the ch1 fader, away from the plan, so it WOULD be sent
+    vi.mocked(vdGet).mockClear();
+
+    const r = await sendConverging(model, plan, { settleMs: 0, exclude: new Set([addrKey(139, 0, 0)]) });
+    expect(vi.mocked(vdGet).mock.calls.some(([id, x, y]) => id === 139 && x === 0 && y === 0)).toBe(false);
+    expect(table.get("139:0:0")).toBe(999);
+    // And it is not reported as something that failed to converge, which would send the
+    // live flush into its teardown.
+    expect(r.residual.some((d) => d.command.paramId === 139)).toBe(false);
+  });
+
+  // Group expansion is the way an excluded address could be sent without ever being
+  // diffed: a round pulls in every member of a group any differing command belongs to.
+  // The EQ 1-knob chain is the group that exists, so the exclusion is tested against it.
+  it("does not let a group pull an excluded member back in", async () => {
+    const table = installDevice();
+    const inner = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      const wasOn = table.get(`46:${x}:${y}`) ?? 0;
+      await inner(id, x, y, v);
+      if (id === 46 && v === 1 && wasOn !== 1) table.set(`47:${x}:${y}`, 0);
+      if (id === 47) table.set(`48:${x}:${y}`, 0);
+    });
+    table.set("47:0:0", 2);
+    table.set("48:0:0", 11);
+    const plan = dirtyPlan();
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], eqOneKnob: { on: true, type: 2, level: 11 } };
+
+    // 48 differs from nothing here — it is reached only as a member of 46's group.
+    await sendConverging(model, plan, { settleMs: 0, exclude: new Set([addrKey(48, 0, 0)]) });
+    expect(vi.mocked(vdSet).mock.calls.some(([id]) => id === 48)).toBe(false);
+    // The rest of the group still went, so the exclusion dropped one member rather than
+    // suppressing the expansion.
+    expect(vi.mocked(vdSet).mock.calls.some(([id]) => id === 46)).toBe(true);
   });
 
   // A re-diff that cannot read the device leaves the residual unknowable, so the

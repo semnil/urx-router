@@ -49,6 +49,26 @@ export interface ParamSpec {
    */
   sideEffect?: "converge" | "refetch";
   /**
+   * For a `"refetch"` head: the commands whose values the device recomputes from it, so a
+   * converge sharing the same flush can be told to leave them alone.
+   *
+   * Needed because the two repairs collide. Both can land in one flush, the converge runs
+   * first, and it makes the unit match the plan across the whole write scope — so an address
+   * the plan still emits and the unit has just recomputed goes back at its pre-write value,
+   * and the refetch that follows reads what the converge left. What remains is a unit holding
+   * a morph position whose values belong to a different position, with nothing on screen to
+   * say so.
+   *
+   * A refetch head needs this only where the plan AUTHORS the values it drives. Where the
+   * plan merely mirrors them, the addresses leave the emit entirely while the head is engaged
+   * (the EQ 1-knob's bands, `COMP_ONE_KNOB_DRIVEN`), which settles it earlier and better: an
+   * address the plan never sends cannot be pushed back by anything. `SSMCS_MORPHING` cannot
+   * take that route, because the inspector edits the strip's values directly.
+   *
+   * Scoped to the flush that wrote the head, and to that head's own node.
+   */
+  drives?: readonly string[];
+  /**
    * Device-follow application strategy. "direct" marks a node-local scalar whose
    * incoming notify value can be decoded and written straight into the plan with
    * no read-back (fixed placement, no mode coupling, no dependent reset). Absent =
@@ -130,7 +150,10 @@ export const PARAMS = {
   // (planToNameWrites / vd_set_str), not the numeric VdCommand path.
   /** SSMCS section ON (1 = on). */
   SSMCS_ON: { id: 89, encoding: "bool" },
-  /** SSMCS Comp Drive (raw 0..200; display = raw/20). */
+  /** SSMCS Comp Drive (raw 0..200; display = raw/20). NOT a sideEffect: it changes what the
+   *  compressor does with the threshold, and leaves every strip value where it is. Measured
+   *  the same way as the morph below and in the same run (2026-08-15, URX44V): a 60-step
+   *  write announced nothing beside its own echo and moved no address in the block. */
   SSMCS_COMP_DRIVE: { id: 95, encoding: "raw" },
   /** SSMCS Morphing position (raw 0..120). A "refetch", for the same reason the EQ
    *  1-knob is one and measured the same way (2026-08-14, URX44V): writing it makes the
@@ -138,8 +161,37 @@ export const PARAMS = {
    *  addresses across 96…117, block-wise rather than by delta, three of them carrying
    *  values that did not change. Those are the plan's to mirror rather than to author, so
    *  pushing back would undo the morph; two of them are the comp's ratio and knee, which
-   *  a converge would send in their pre-morph state with nothing on screen to say so. */
-  SSMCS_MORPHING: { id: 93, encoding: "raw", sideEffect: "refetch" },
+   *  a converge would send in their pre-morph state with nothing on screen to say so.
+   *
+   *  `drives` is that measured set, re-taken address by address (2026-08-15): every
+   *  CONTINUOUS value in the strip, and none of the five ON switches (SC, EQ, and the three
+   *  bands), which the morph leaves to the operator. The plan authors these as well — the
+   *  inspector edits them — so the emit gate the two 1-knobs use is not available here and
+   *  the converge has to be told instead. */
+  SSMCS_MORPHING: {
+    id: 93,
+    encoding: "raw",
+    sideEffect: "refetch",
+    drives: [
+      "SSMCS_COMP_ATTACK",
+      "SSMCS_COMP_RELEASE",
+      "SSMCS_COMP_RATIO",
+      "SSMCS_COMP_KNEE",
+      "SSMCS_COMP_THRESHOLD",
+      "SSMCS_COMP_MAKEUP",
+      "SSMCS_SC_Q",
+      "SSMCS_SC_FREQ",
+      "SSMCS_SC_GAIN",
+      "SSMCS_EQ_LOW_FREQ",
+      "SSMCS_EQ_LOW_GAIN",
+      "SSMCS_EQ_MID_Q",
+      "SSMCS_EQ_MID_FREQ",
+      "SSMCS_EQ_MID_GAIN",
+      "SSMCS_EQ_HIGH_FREQ",
+      "SSMCS_EQ_HIGH_GAIN",
+      "SSMCS_OUT_GAIN",
+    ],
+  },
   /** SSMCS Out Gain (raw 0..360; 180 = 0 dB). */
   SSMCS_OUT_GAIN: { id: 117, encoding: "raw" },
   /** SSMCS comp attack (raw 57..283; logarithmic 0.092..80 ms). */

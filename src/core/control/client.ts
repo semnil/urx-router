@@ -120,14 +120,21 @@ export interface DiffOptions {
    *  self-test's restore is the only caller that sets it; every other one compares
    *  exactly the set it would write. */
   emit?: EmitOptions;
+  /** Address keys (translate.addrKey) to leave out of the comparison entirely — not read,
+   *  and never reported as differing. For addresses the caller knows the DEVICE is right
+   *  about; a live flush's `ParamSpec.drives` set is the only caller so far. Distinct from
+   *  `emit`, which decides what the plan emits at all: this drops addresses the plan does
+   *  emit and that this one pass must not push back on. */
+  exclude?: ReadonlySet<number>;
 }
 
 export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions = {}): Promise<DiffResult> {
-  const { signal, stopOnError = false, scope = "all", emit = {} } = opts;
+  const { signal, stopOnError = false, scope = "all", emit = {}, exclude } = opts;
   const diffs: CommandDiff[] = [];
   const errors: string[] = [];
   const unread: VdCommand[] = [];
   for (const command of planToCommands(model, plan, scope, emit)) {
+    if (exclude?.has(cmdAddr(command))) continue;
     signal?.throwIfAborted();
     try {
       const current = await vdGet(command.paramId, command.x, command.y);
@@ -281,13 +288,17 @@ function roundCommands(
   scope: WriteScope,
   emit: EmitOptions,
   diffs: CommandDiff[],
+  exclude?: ReadonlySet<number>,
 ): VdCommand[] {
   const groups = new Set<string>();
   for (const d of diffs) if (d.command.group) groups.add(d.command.group);
   if (!groups.size) return diffs.map((d) => d.command);
   const addrs = new Set(diffs.map((d) => cmdAddr(d.command)));
+  // The exclusion has to be applied here too, not only to the read: group expansion pulls
+  // in every member of a group any differing command belongs to, and a member the caller
+  // excluded would ride back in on a sibling's difference without ever having been diffed.
   return planToCommands(model, plan, scope, emit).filter(
-    (c) => addrs.has(cmdAddr(c)) || (c.group !== undefined && groups.has(c.group)),
+    (c) => !exclude?.has(cmdAddr(c)) && (addrs.has(cmdAddr(c)) || (c.group !== undefined && groups.has(c.group))),
   );
 }
 
@@ -316,6 +327,10 @@ export interface ConvergeOptions {
    *  the round sends AND the re-reads, so the residual speaks for the set being
    *  written — the self-test restore is the only caller that sets it. */
   emit?: EmitOptions;
+  /** Addresses this convergence must leave to the device (see DiffOptions.exclude). Applies
+   *  to the seed read, every re-read and every round send, so an excluded address is never
+   *  read, never counted as residual, and never pulled in by a group it belongs to. */
+  exclude?: ReadonlySet<number>;
   /** Keep a per-round record (see ConvergeRound). Diagnostics only. */
   trace?: boolean;
   /**
@@ -369,6 +384,7 @@ export async function sendConverging(
     emit = {},
     trace: wantTrace = false,
     stopOnError = true,
+    exclude,
   } = opts;
   const outcomes: SendOutcome[] = [];
   const readErrors: string[] = [];
@@ -388,7 +404,7 @@ export async function sendConverging(
         timeoutMs: settleMs,
         signal,
       });
-    const seed = await diffPlan(model, plan, { signal, scope, emit, stopOnError });
+    const seed = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude });
     readErrors.push(...seed.errors);
     unread.push(...seed.unread);
     residual = seed.diffs;
@@ -397,7 +413,7 @@ export async function sendConverging(
   while (residual.length > 0 && rounds < maxRounds && !readErrors.length) {
     signal?.throwIfAborted();
     const startedAt = Date.now();
-    const sending = roundCommands(model, plan, scope, emit, residual);
+    const sending = roundCommands(model, plan, scope, emit, residual, exclude);
     const sent = await sendCommands(sending, signal);
     outcomes.push(...sent);
     rounds++;
@@ -421,7 +437,7 @@ export async function sendConverging(
     // its own window. No converge head's reset latency is measured either — only the
     // "refetch" family's, which never reaches this loop.
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
-    const next = await diffPlan(model, plan, { signal, scope, emit, stopOnError });
+    const next = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude });
     readErrors.push(...next.errors);
     unread.push(...next.unread);
     residual = next.diffs;
