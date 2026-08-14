@@ -698,14 +698,37 @@ describe("refresh", () => {
     expect(document.activeElement).toBe(row);
   });
 
-  // The same blur that holds the row inert also clears `grabbed`, so a refresh the press
-  // had deferred runs and rebuilds the column — and that rebuild is what ends the drag
-  // here, by removing the element the engine was tracking. What must not happen is a row
-  // left disabled by the treatment, or focus parked on the node that was replaced. Focus
-  // is not moved to the new row: no rebuild in this app restores focus (the CONSOLE and
-  // the inspector do not either), and doing it on this path alone would make the blur the
+  // Which release lands a deferred refresh is the FIRST one to arrive, not the last: the
+  // same `release` is registered on `pointerup`, on `pointercancel` and on the end of the
+  // app-wide holds, and whichever runs first clears `grabbed` while the others find it
+  // already cleared. The blur is not one of them — it ends this view's own gestures and
+  // leaves `grabbed` set — so the deferral outlives it, and a window that comes back with
+  // the button still down lands the refresh there, before any pointerup.
+  it("lands a deferred refresh on the first release to arrive, not the last", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const row = rowsByKey(host.box).get("threshold")!;
+
+    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], gate: { threshold: -21 } };
+    screen.refresh(); // deferred while the pointer is down
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(rowsByKey(host.box).get("threshold")).toBe(row);
+
+    // Still held, so this is the hold's release running before any pointer event does.
+    window.dispatchEvent(new FocusEvent("focus"));
+    expect(rowsByKey(host.box).get("threshold")).not.toBe(row);
+    expect(row.isConnected).toBe(false);
+  });
+
+  // The other order, and the one an ordinary gesture takes: the press ends while the app is
+  // still in the background, and the refresh lands at that release. What must not happen is
+  // a row left disabled by the treatment, or focus parked on the node that was replaced.
+  // Focus is not moved to the new row: no rebuild in this app restores focus (the CONSOLE
+  // and the inspector do not either), and doing it on this path alone would make this the
   // one repaint that behaves differently.
-  it("leaves no disabled row and no focus on a detached node when a blur lands a deferred refresh", () => {
+  it("leaves no disabled row and no focus on a detached node when a release lands a deferred refresh", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");

@@ -186,9 +186,10 @@ export function wheelStep(slider: HTMLInputElement, blocked?: () => boolean | un
 }
 
 /**
- * End a native slider's drag when the window goes away, and keep it ended until the
- * button comes up. Wired on every `<input type="range">` in the app, for the same reason
- * `wheelStep` is: they either all behave this way or the operator has to remember which.
+ * End a native slider's drag when the window goes away, and keep it ended until the press
+ * is over or the window comes back. Wired on every `<input type="range">` in the app, for
+ * the same reason `wheelStep` is: they either all behave this way or the operator has to
+ * remember which.
  *
  * The engine owns a native drag, so unhooking a listener does nothing — measured on the
  * shipping WKWebView (2026-08-14), a row dragged with the button held went on writing
@@ -199,11 +200,13 @@ export function wheelStep(slider: HTMLInputElement, blocked?: () => boolean | un
  * the document and putting it back ends it too, but on the unit the row RESUMED under the
  * still-held button once focus returned, and `pointer-events: none` never ended it at all.
  *
- * So: disabled at the blur, and held that way until a `pointerup`, a `pointercancel`, or a
- * `pointermove` reporting no buttons — the release the window never heard. Not until focus
- * returns; that was tried and is what resumed. It costs nothing on screen, since these
- * sliders are authored (`appearance: none`, own track and thumb) and the engines have
- * nothing of their own to dim — a row shot enabled and disabled is byte-identical in both.
+ * So: disabled at the blur, and held that way until a `pointerup`, a `pointercancel`, a
+ * `pointermove` reporting no buttons — the release the window never heard — or the window
+ * coming back, which is the release that always arrives (the note on that listener below
+ * carries what makes it safe, and it is a different question from the DETACH treatment,
+ * which resumed on exactly that event). It costs nothing on screen, since these sliders are
+ * authored (`appearance: none`, own track and thumb) and the engines have nothing of their
+ * own to dim — a row shot enabled and disabled is byte-identical in both.
  *
  * `live` names the row as it is NOW, for a surface that rebuilds: the same blur can land a
  * repaint that replaces this element — and it lands FIRST, since a surface registers its
@@ -309,9 +312,9 @@ function trackPointers(): void {
   window.addEventListener("pointerup", (e) => drop(e.pointerId), true);
   window.addEventListener("pointercancel", (e) => drop(e.pointerId), true);
   // A move reporting no buttons proves that pointer is not pressed — the release the
-  // window never heard. Mice and pens report it on the next hover; touch does not, which
-  // is why a touch release lost outside the window still needs the operator to press
-  // again (see the hold's own note in the docs).
+  // window never heard. Mice and pens report it on the next hover; touch does not, so a
+  // touch release taken by another application is corrected by the focus listener below
+  // rather than here.
   window.addEventListener("pointermove", (e) => void (e.buttons === 0 && drop(e.pointerId)), true);
   // The window coming back clears the whole set, because a release taken by another
   // application is never delivered here and a touch id is never reused — so an id lost that
