@@ -348,6 +348,56 @@ test("the threshold cap moves with the value and shares its ruler", async ({ pag
   await expect(slider).toHaveValue("-35");
 });
 
+// A value row is a native range, so the ENGINE owns its drag: dropping a listener does
+// not end it, and measured on the packaged build (2026-08-14) a row dragged with the
+// button held went on writing while another application was frontmost. The app ends it by
+// taking the element out of the document and putting it straight back.
+//
+// This is the tier that can hold it, and the split is deliberate: the DRAG here is real
+// (Playwright's mouse drives the engine's own slider), while the blur is dispatched,
+// because Playwright emulates focus and no tier can take the OS foreground away. The unit
+// suite is the opposite pair — a real blur listener, no engine drag — so neither alone
+// covers this.
+test("a value row stops following the pointer once the window is gone", async ({ page }) => {
+  await openFromInspector(page, "ch1");
+  const slider = paramRow(page, "Threshold").locator("input[type=range]");
+  const value = () => slider.inputValue();
+
+  const b = (await slider.boundingBox())!;
+  const y = b.y + b.height / 2;
+  await page.mouse.move(b.x + b.width * 0.2, y);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width * 0.35, y);
+  const dragged = await value();
+
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
+  await page.mouse.move(b.x + b.width * 0.8, y);
+  expect(await value()).toBe(dragged);
+
+  // The half the first attempt got wrong, found on the unit: coming back with the button
+  // STILL DOWN resumed the row, which the operator read as "not moving smoothly and not
+  // held either". The press stays dead until the button comes up, so a focus return
+  // changes nothing.
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await page.mouse.move(b.x + b.width * 0.95, y);
+  expect(await value()).toBe(dragged);
+
+  await page.mouse.up();
+  // Focus goes back where it was: disabling the row drops it, and a keyboard user must
+  // keep the row they were on. (Chromium focuses a range on press; WebKit does not, so
+  // there this restores nothing.)
+  await expect(slider).toBeFocused();
+
+  // And the row is the same control, in the same place, ready for the next gesture —
+  // the requirement is that the operator resumes from where the interrupted press left
+  // it, not that the row is rebuilt or disabled.
+  await page.mouse.move(b.x + b.width * 0.6, y);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width * 0.65, y);
+  await page.mouse.up();
+  expect(await value()).not.toBe(dragged);
+});
+
 test("prints — for a tap that has not reported, never a floor value", async ({ page }) => {
   await openFromInspector(page, "ch1");
   // Not live: no frame has arrived, and a GR of 0 dB would claim the gate is

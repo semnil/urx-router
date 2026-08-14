@@ -645,6 +645,34 @@ describe("refresh", () => {
     expect(cap.hasPointerCapture(1)).toBe(false);
   });
 
+  // The value rows are native ranges, so the ENGINE owns their drag and this tier cannot
+  // hold that half at all — jsdom has no such drag to end, and a case written here passes
+  // whether or not the row leaves an ender behind (measured: deleting the registration
+  // left this file green). It lives in `e2e/dyntuning.spec.ts` instead, where the drag is
+  // real and only the blur is dispatched.
+  //
+  // The MIDI question: a message applied while the window is away has to reach the
+  // screen. It arrives through the same `refresh()` the deferral above holds, so the
+  // blur RELEASES it rather than blocking it — a value that would have waited for the
+  // operator's release now lands at the blur.
+  it("lets a device- or MIDI-driven value reach the screen at the blur", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const before = rowsByKey(host.box).get("threshold")!;
+
+    // A press defers the repaint: the control under the pointer must not be replaced.
+    host.box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], gate: { threshold: -21 } };
+    screen.refresh();
+    expect(rowsByKey(host.box).get("threshold")).toBe(before);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    const after = rowsByKey(host.box).get("threshold")!;
+    expect(after).not.toBe(before);
+    expect(host.box.querySelector('[data-dyn-val="threshold"]')?.textContent).toContain("-21");
+  });
+
   // The third drag on this screen, and the one with no flag to clear: its move handler
   // asks the engine whether it still holds the capture, and a blur leaves that answer
   // true — so the ender drops the capture instead.

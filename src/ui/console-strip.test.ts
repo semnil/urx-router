@@ -157,6 +157,14 @@ describe("the main fader", () => {
     window.dispatchEvent(new FocusEvent("blur"));
     window.dispatchEvent(new PointerEvent("pointermove", { clientY: 20, pointerId: 1 }));
     expect(main("ch1")).toBe(stillDragging);
+
+    // And it stays ended when the window comes back with the button still down. The
+    // tuning screens' value rows needed a treatment for this (the engine owns their drag
+    // and re-acquired it — measured on the unit); a drag the view runs itself cannot,
+    // since only a fresh `pointerdown` registers the move handler again.
+    window.dispatchEvent(new FocusEvent("focus"));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 5, pointerId: 1 }));
+    expect(main("ch1")).toBe(stillDragging);
     // And the capture goes with it: on this end no engine drops it, and one left behind
     // routes the next press for that pointer id to this fader instead of to the control
     // the operator pressed.

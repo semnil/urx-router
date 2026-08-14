@@ -1427,6 +1427,50 @@ export class DynScreen {
     // A wheel notch over an armed control would move the value the operator is
     // about to bind, so the same gate the console's faders carry applies here.
     wheelStep(input, () => this.hooks.midi?.learnActive());
+    // The row is a native range, so the ENGINE owns its drag and unhooking a listener
+    // does not end it — measured 2026-08-14 on the packaged build: a row dragged with the
+    // button held went on writing thresholds to the plan and out to the unit while
+    // another application was frontmost, exactly like the cap did before this branch.
+    //
+    // Three treatments were measured against it. Taking the element out of the document
+    // and putting it straight back ends the drag in both engines — but only until focus
+    // returns: on the real WKWebView the row resumed under the still-held button, which is
+    // the reading that decided this. `pointer-events: none` does not end it at all (the
+    // row kept writing in both engines). `disabled` ends it AND cannot be re-acquired
+    // while it lasts, so that is what this holds until the button comes up.
+    //
+    // It costs nothing on screen: this slider is authored (`appearance: none`, own track
+    // and thumb), so the engines' disabled rendering has nothing to dim — the row shot
+    // enabled and disabled is byte-identical in both. Focus is restored because disabling
+    // drops it (Chromium focuses a range on press and reports the blur, WebKit does
+    // neither, so there it restores nothing).
+    input.addEventListener("pointerdown", () => {
+      const ender = (): void => {
+        if (this.endDrag === ender) this.endDrag = null;
+        if (input.disabled) return;
+        const focused = document.activeElement === input;
+        input.disabled = true;
+        // Held until the BUTTON comes up, not until the window comes back. Measured on
+        // the shipping WKWebView (2026-08-14): ending the drag once is not enough — with
+        // the button still down, returning to the app resumed the row, "not moving
+        // smoothly and not held either". A disabled control cannot be re-acquired, so
+        // the interrupted press stays dead and only a fresh press moves the value again.
+        const back = (ev?: PointerEvent): void => {
+          // A move that reports no button is the release this never saw: the press ended
+          // somewhere the window did not hear about, and nothing else would re-arm.
+          if (ev?.type === "pointermove" && ev.buttons !== 0) return;
+          window.removeEventListener("pointerup", back);
+          window.removeEventListener("pointercancel", back);
+          window.removeEventListener("pointermove", back);
+          input.disabled = false;
+          if (focused) input.focus();
+        };
+        window.addEventListener("pointerup", back);
+        window.addEventListener("pointercancel", back);
+        window.addEventListener("pointermove", back);
+      };
+      this.endDrag = ender;
+    });
     ctl.append(input, val);
     // The device's push-and-turn fine grid is confirmed for a few values only (the
     // COMP makeup gain, the EQ band gains), so the field table says which (see

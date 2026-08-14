@@ -427,6 +427,33 @@ cascade cannot quietly undo it (menus 40, control popovers 60, tool modals 100, 
 decision gates 130): consent, the load report and the rate choice each ask a question that has to be
 answerable whatever else is open.
 
+### A gesture the window is taken away from
+
+The three drags this screen runs itself — the threshold cap, the plot, and the value rows — end when the
+window loses focus, because no engine ends them for you: taking the OS foreground away with the button
+down fires `blur`, fires **no** `pointercancel`, and keeps the pointer capture (measured 2026-08-14 on
+Chromium and on the shipping WKWebView). Until this existed, a press held through an app switch went on
+writing into the plan and out to the unit while another application was frontmost, and — since
+`history.ts` also ends its press at a `blur` — the remainder landed in a *new* undo entry.
+
+The cap and the plot are the view's own gestures, so ending them is dropping what the view holds. **A
+value row is a native `<input type="range">`, and the engine owns its drag**, which makes it a different
+problem in three ways, each measured:
+
+| Treatment | What it does |
+| --- | --- |
+| Removing the listener | Nothing. The engine drives the control; the app only mirrors `input` |
+| `pointer-events: none` | Nothing. The row kept writing in both engines |
+| Detach + re-insert | Ends the drag — but only until focus returns. On the unit the row **resumed** under the still-held button |
+| `disabled` | Ends it, and cannot be re-acquired while it lasts |
+
+So a row that loses the window is disabled, and stays disabled **until the button comes up** — a
+`pointerup`, a `pointercancel`, or a `pointermove` reporting no buttons, which is the release the window
+never heard. Not until focus returns: that was tried and is what let the row resume. Focus is restored
+with the row, since disabling drops it. It costs nothing on screen: the slider is authored
+(`appearance: none`, its own track and thumb), so the engines have nothing of their own to dim — the row
+shot enabled and disabled is byte-identical in both.
+
 ## Meter subscription ownership
 
 The broker has **one meter subscription slot process-wide**: `vd_meters_subscribe` replaces the
