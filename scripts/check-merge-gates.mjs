@@ -187,30 +187,94 @@ function conditionText(root, job) {
     .trim();
 }
 
-// The `needs.<job>.result == 'success'` terms a condition requires OUTRIGHT — joined by
-// `&&` at the top level, so a term inside parentheses does not count. `(A == 'success' ||
-// A == 'skipped')` says the opposite of a requirement about A and must not be read as one.
-function requiredSuccesses(condition) {
-  const terms = [];
+// Splits on a top-level operator: one inside parentheses or inside quotes is not one.
+function topLevelSplit(expr, op) {
+  const parts = [];
   let depth = 0;
+  let quote = null;
   let start = 0;
-  for (let i = 0; i < condition.length; i++) {
-    const ch = condition[i];
-    if (ch === "(") depth++;
-    else if (ch === ")") depth--;
-    else if (depth === 0 && ch === "&" && condition[i + 1] === "&") {
-      terms.push(condition.slice(start, i));
-      i++;
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+    } else if (ch === "(") {
+      depth++;
+    } else if (ch === ")") {
+      depth--;
+    } else if (depth === 0 && expr.startsWith(op, i)) {
+      parts.push(expr.slice(start, i));
+      i += op.length - 1;
       start = i + 1;
     }
   }
-  terms.push(condition.slice(start));
-  const out = new Set();
-  for (const term of terms) {
-    const match = /^\s*needs\.([A-Za-z_][\w-]*)\.result\s*==\s*'success'\s*$/.exec(term);
-    if (match) out.add(match[1]);
+  parts.push(expr.slice(start));
+  return parts;
+}
+
+// Drops parentheses that wrap the WHOLE term, however many layers. `(a) && (b)` keeps
+// both; `((a))` becomes `a`. A redundant group is a group like any other in GitHub's
+// expression language, so a reader that did not peel would take `(needs.x.result ==
+// 'success')` for something other than the requirement it is.
+function peel(term) {
+  let out = term.trim();
+  for (;;) {
+    if (!out.startsWith("(") || !out.endsWith(")")) return out;
+    let depth = 0;
+    let quote = null;
+    let wrapsWhole = true;
+    for (let i = 0; i < out.length; i++) {
+      const ch = out[i];
+      if (quote) {
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"') quote = ch;
+      else if (ch === "(") depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth === 0 && i < out.length - 1) {
+          wrapsWhole = false;
+          break;
+        }
+      }
+    }
+    if (!wrapsWhole) return out;
+    out = out.slice(1, -1).trim();
   }
-  return out;
+}
+
+// `needs.<id>.result == 'success'` in either accessor form. The bracket form exists
+// because a job id may carry a hyphen, which a dotted path in an expression reads as a
+// subtraction.
+const NEEDS_SUCCESS = /^needs(?:\.([A-Za-z_][\w-]*)|\[\s*(['"])([^'"]+)\2\s*\])\.result\s*==\s*'success'$/;
+
+// What a condition requires OUTRIGHT, and the terms it could not read. Naming the second
+// set is the point: the alternative is a rule that quietly requires less than the author
+// wrote, which is the direction that ships the defect this traversal exists for.
+//
+//   a top-level `||` anywhere        the whole condition is a disjunction: nothing required
+//   `( … || … )` as a term           says the OPPOSITE of a requirement about that job
+//   `(needs.x.result == 'success')`  the requirement it looks like, once peeled
+//   anything else naming a needs result and 'success' is refused rather than dropped
+function requiredSuccesses(expr) {
+  const required = new Set();
+  const unreadable = [];
+  if (topLevelSplit(expr, "||").length > 1) return { required, unreadable };
+  for (const raw of topLevelSplit(expr, "&&")) {
+    const term = peel(raw);
+    const match = NEEDS_SUCCESS.exec(term);
+    if (match) {
+      required.add(match[1] ?? match[3]);
+      continue;
+    }
+    if (topLevelSplit(term, "||").length > 1) continue;
+    if (/needs[.[]/.test(term) && /'success'/.test(term)) unreadable.push(term);
+  }
+  return { required, unreadable };
 }
 
 // Does a concurrency group key give every run of its own a group of its own?
@@ -510,9 +574,18 @@ function checkPreconditionChains(workflows) {
     for (const [id, job] of workflow.jobs) {
       const cond = conditionText(workflow.root, job);
       if (!cond) continue;
-      for (const target of requiredSuccesses(cond)) {
+      const { required, unreadable } = requiredSuccesses(cond);
+      for (const term of unreadable) {
+        finding(
+          `${workflow.path} (${id})`,
+          `\`if:\` names a \`needs\` result and 'success' in a form this checker will not read: \`${term}\`. ` +
+            `Write it as \`needs.<job>.result == 'success'\` joined by \`&&\`, or the rule below requires less ` +
+            `than the condition does and says nothing about the difference`,
+        );
+      }
+      for (const target of required) {
         for (const sibling of needsOf.get(id) ?? []) {
-          if (sibling === target || requiredSuccesses(cond).has(sibling)) continue;
+          if (sibling === target || required.has(sibling)) continue;
           if (reaches(sibling, target)) continue;
           finding(
             `${workflow.path} (${sibling})`,

@@ -552,4 +552,31 @@ jobs:
     const outside = "!cancelled() && needs.notice.result == 'success'";
     expect(chainFindings(chain("check", outside)).join("\n")).toContain("Add `notice` to `draft`'s `needs:`");
   });
+
+  // Parentheses are a legal grouping, so a requirement wearing them is still one. Reading
+  // only the bare shape lost the requirement AND, with it, put a job the condition does
+  // require into the "not required" set — which fired on a chain that was correct.
+  const alsoCheck = (term) => `!cancelled() && needs.check.result == 'success' && ${term}`;
+  it.each([
+    ["redundant parentheses", alsoCheck("(needs.notice.result == 'success')")],
+    ["two layers of them", alsoCheck("((needs.notice.result == 'success'))")],
+    ["the bracket accessor", alsoCheck("needs['notice'].result == 'success'")],
+  ])("reads a requirement written with %s", (_name, cond) => {
+    expect(chainFindings(chain("check", cond)).join("\n")).toContain("Add `notice` to `draft`'s `needs:`");
+    expect(chainFindings(chain("[check, notice]", cond))).toEqual([]);
+  });
+
+  // A top-level `||` makes the whole condition a disjunction: it requires nothing, so the
+  // rule has nothing to say rather than something wrong to say.
+  it("requires nothing from a condition joined at the top level by ||", () => {
+    expect(chainFindings(chain("check", "needs.notice.result == 'success' || always()"))).toEqual([]);
+  });
+
+  // The one direction a reader must not take quietly: a term it cannot parse is a
+  // requirement it may be dropping, and dropping one is how the rule stops firing.
+  it("refuses a needs-result term it cannot read rather than dropping it", () => {
+    const findings = findingsOf(chain("check", "!cancelled() && contains(needs.notice.result, 'success')"));
+    expect(findings.join("\n")).toContain("in a form this checker will not read");
+    expect(findings.filter((f) => /runs ahead of/.test(f))).toEqual([]);
+  });
 });
