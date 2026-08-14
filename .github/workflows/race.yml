@@ -109,21 +109,17 @@ jobs:
           # written against.
           #
           # e2e/ whole rather than e2e/race/: the harness's specs import
-          # e2e/graph-helpers.ts, and playwright.config.ts is where the race and
-          # race-webkit projects are defined at all — `pnpm check:skips` collects only
-          # the `race` project, so nothing else on a pull request would notice
-          # race-webkit selecting the wrong engine.
+          # e2e/graph-helpers.ts. playwright.config.ts is where the race and race-webkit
+          # projects are declared at all. pnpm-lock.yaml decides the Playwright version,
+          # which .github/actions/playwright-version turns into the container image tag
+          # both harness jobs run in — so a dependency bump changes the browser build
+          # under the suite, and package.json carries the scripts that drive it.
           touched=false
           while IFS= read -r file; do
             case "${file}" in
-              src/*|e2e/*|playwright.config.ts) touched=true ;;
+              src/* | e2e/* | playwright.config.ts | package.json | pnpm-lock.yaml) touched=true ;;
             esac
           done <<< "${files}"
-          if [[ "${touched}" == 'true' ]]; then
-            echo 'run=true' >> "$GITHUB_OUTPUT"
-            echo 'the pull request touches src/, e2e/ or playwright.config.ts — running the harness'
-            exit 0
-          fi
           head=$(jq -r .version package.json)
           # Read in two steps, not one pipeline: a pipeline's status is its LAST
           # command's, so `git show ... | jq` returns an empty string and exit 0 when git
@@ -145,12 +141,23 @@ jobs:
             echo 'could not read a version on one side — running the harness rather than guessing'
             exit 0
           fi
-          echo "version: ${base} (base) -> ${head} (head)"
+          moved=false
           if [[ "${base}" != "${head}" ]]; then
+            moved=true
+          fi
+          # Both clauses are evaluated and both are printed, rather than the first one
+          # winning and returning. Since package.json is in the path set the version-bump
+          # PR now satisfies the path clause too, so an early return would have left the
+          # version comparison unreachable — code a reader would still take for the thing
+          # that keeps the harness in front of a release. It is kept because it is that
+          # statement, and it is the clause that survives anyone narrowing the paths.
+          echo "paths touched: ${touched} | version: ${base} (base) -> ${head} (head), moved: ${moved}"
+          if [[ "${touched}" == 'true' || "${moved}" == 'true' ]]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
+            echo 'running the harness'
           else
             echo 'run=false' >> "$GITHUB_OUTPUT"
-            echo 'no src/, e2e/ or playwright.config.ts change and the version did not move — the harness is skipped'
+            echo 'no watched path changed and the version did not move — the harness is skipped'
           fi
       # Both harness jobs run inside the official Playwright image; the tag comes from
       # here. See .github/actions/playwright-version for why it is a job's output.
