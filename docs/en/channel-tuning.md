@@ -156,13 +156,23 @@ row builder. Swapping them in and out moved the panel — a toggle row and a sli
 same height — and dropping Auto Makeup lifted the 1-knob row itself a full row up, out from under
 the pointer that had just clicked it. `e2e/dyntuning.spec.ts` pins both figures.
 
-**The knee is drawn, and its width was measured.** Soft / Medium / Hard publish no widths, so the
-curve would either invent a curvature or leave the selector changing nothing on screen. Measured by
-walking the threshold up until the reduction stopped (the point where the knee's lower edge leaves
-the detector behind): Hard ~0 dB, Medium ~8 dB, Soft ~20 dB of reach, i.e. 0 / 16 / 40 dB under the
-usual symmetric-knee model. Only the lower edge is measured — this signal source could not push the
-detector far enough above the threshold to find where full ratio is reached — so the curvature
-between the edges is the standard quadratic and is an assumption, recorded as one.
+**The knee is drawn, and its width was measured — twice, in opposite directions.** Soft / Medium /
+Hard publish no widths, so the curve would either invent a curvature or leave the selector changing
+nothing on screen. The first pass walked the threshold up until the reduction stopped, which finds
+the knee's LOWER edge, and doubled the reach under a symmetric-knee model: 0 / 16 / 40 dB.
+
+The second pass held the threshold and walked the SIGNAL past it in 1 dB steps — the direction the
+curve is read in — and fitted each candidate width to the result, all three settings sharing one
+detector-versus-meter offset because that offset belongs to the rig rather than to the selector.
+**Medium and Hard came back unchanged; Soft did not.** Its residual minimum is 51 dB against the 40
+that doubling gave, which fits 62% worse, so the constant now carries the measurement (50 / 52 /
+54 dB are indistinguishable in the residual, and it takes the round middle).
+
+Doubling worked for Medium and failed for Soft because **the knee is not symmetric**: a 20 dB lower
+reach against a 51 dB total leaves about 31 dB above the threshold. A symmetric model can only be
+fitted to the best symmetric approximation, which is what the constant holds — so the asymmetry
+itself, and the curvature between the edges, remain the standard quadratic and remain assumptions,
+recorded as ones.
 
 **The output axis runs above 0 dBFS.** Makeup gain reaches +18 dB, so the curve's axis is -54…+18
 while the input spans -54…0. The gate's runs the other way, to the GR floor, for the same reason:
