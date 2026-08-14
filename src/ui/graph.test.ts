@@ -504,6 +504,33 @@ describe("view transform", () => {
     fx.svg.dispatchEvent(new PointerEvent("pointerup", { pointerId: 2, clientX: 300, clientY: 100, bubbles: true }));
   });
 
+  // The blur ender has to do what a `pointercancel` does for one pointer, for all of them.
+  // `cancelInteraction` alone left `pinch` standing, and `onPointerMove` asks about the
+  // pinch before anything that teardown clears — so two fingers kept zooming while another
+  // application was frontmost. The second half is the tracking map: a touch pointer id is
+  // fresh per press, so an entry left behind makes the next single press the second finger.
+  it("ends a pinch at a window blur, and forgets the pointers it was tracking", () => {
+    fx = graphFixture();
+    const zoom = (): number => (fx.graph as unknown as { zoom: number }).zoom;
+    const at = (type: string, id: number, x: number): PointerEvent =>
+      new PointerEvent(type, { pointerId: id, clientX: x, clientY: 100, bubbles: true });
+    fx.svg.dispatchEvent(at("pointerdown", 1, 100));
+    fx.svg.dispatchEvent(at("pointerdown", 2, 140));
+    fx.svg.dispatchEvent(at("pointermove", 2, 300));
+    const pinched = zoom();
+    expect(pinched).not.toBe(1);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    fx.svg.dispatchEvent(at("pointermove", 2, 600));
+    expect(zoom()).toBe(pinched);
+
+    // And the next press is a first finger again, not a second one.
+    fx.svg.dispatchEvent(at("pointerdown", 3, 100));
+    fx.svg.dispatchEvent(at("pointermove", 3, 300));
+    expect(zoom()).toBe(pinched);
+    expect((fx.graph as unknown as { pinch: unknown }).pinch).toBeNull();
+  });
+
   it("re-fits the view without throwing on an unmeasurable host", () => {
     fx = graphFixture();
     expect(() => fx.graph.fitView()).not.toThrow();
