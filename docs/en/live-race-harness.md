@@ -626,13 +626,16 @@ generator and which therefore counts as code.
 
 `detect` reads `git diff --name-only` against the base rather than the API's file list — it already
 fetches the whole history for the version read, and a diff carries no truncation ceiling, which is a
-guard `ci.yml`'s `preflight` needs and this job does not. Two flags on that diff are load-bearing and
-were measured rather than assumed: `-z`, because git C-quotes any path it cannot print literally — a
-non-ASCII byte, but also a `"`, a backslash or a control byte — and the leading quote of
-`"docs/\346\227\245..."` makes the path stop looking like documentation, and `--no-renames`, because
-rename detection prints a moved file at its destination alone, so moving a module into `docs/` would
-read as a documentation-only diff. `core.quotePath=false` closes only the non-ASCII third of the first
-one. `-z` costs a temporary file, since a NUL cannot survive a shell variable.
+guard `ci.yml`'s `preflight` needs and this job does not. Two flags on that diff were measured rather
+than assumed, and since the question became an exclusion they no longer guard the same direction.
+**`--no-renames` is the one that still stops a silent skip**: rename detection prints a moved file at
+its destination alone, so moving a module into `docs/` would print one documentation path and the
+whole diff would read as documentation-only. **`-z` now fails the other way**: git C-quotes any path
+it cannot print literally — a non-ASCII byte, but also a `"`, a backslash or a control byte — and a
+quoted path matches neither `docs/*` nor `*.md`, so it reads as code and the harness runs. It is kept
+so the rule tests real paths rather than a rendering of them. Measured: `core.quotePath=false` closes
+only the non-ASCII third of the quoting, and `-z` does not imply `--no-renames`. `-z` costs a
+temporary file, since a NUL cannot survive a shell variable.
 
 **A comment-only diff is not excluded either.** That exclusion was measured before being dropped:
 over the 80 most recent first-parent merges on `main` (measured 2026-08-14), 42 touched `src/**`, and

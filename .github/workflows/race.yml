@@ -94,15 +94,19 @@ jobs:
           # instead truncate without saying so (that job carries the ceilings and the
           # guards against them). A diff against the base has no ceiling to guard.
           #
-          # Two flags, each measured in a scratch repository rather than added on
-          # principle. `-z`: git C-quotes a path it cannot print literally — any byte
-          # outside ASCII, but also a `"`, a backslash or a control byte — and the
-          # leading quote of `"src/\346\227\245..."` defeats a `src/` match, so the
-          # harness would skip AND print a reason that is false. `core.quotePath=false`
-          # covers the non-ASCII third of that; `-z` covers all of it, at the price of a
-          # file, since a NUL cannot survive a shell variable. `--no-renames`: rename
-          # detection prints a moved file at its DESTINATION alone, so lifting a module
-          # out of src/ reads as no src/ change; measured, `-z` does not imply it.
+          # Two flags, each measured in a scratch repository, and since the question
+          # became an exclusion they no longer guard the same direction.
+          #
+          # `--no-renames` is the one that still stops a silent skip: rename detection
+          # prints a moved file at its DESTINATION alone, so moving a module into docs/
+          # would print one documentation path and the whole diff would read as
+          # documentation-only. `-z` now fails the other way — git C-quotes any path it
+          # cannot print literally (a non-ASCII byte, but also a `"`, a backslash or a
+          # control byte), and a quoted path matches neither `docs/*` nor `*.md`, so it
+          # reads as code and the harness runs. It is kept so the `case` below tests real
+          # paths rather than a rendering of them; measured, `core.quotePath=false` covers
+          # only the non-ASCII third of the quoting and `-z` does not imply --no-renames.
+          # It costs a file, since a NUL cannot survive a shell variable.
           list=$(mktemp)
           if ! git diff --name-only --no-renames -z "${BASE_SHA}" HEAD > "${list}"; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
@@ -166,11 +170,12 @@ jobs:
             moved=true
           fi
           # Both clauses are evaluated and both are printed, rather than the first one
-          # winning and returning. Since package.json is in the path set the version-bump
-          # PR now satisfies the path clause too, so an early return would have left the
-          # version comparison unreachable — code a reader would still take for the thing
-          # that keeps the harness in front of a release. It is kept because it is that
-          # statement, and it is the clause that survives anyone narrowing the paths.
+          # winning and returning. A version bump edits package.json, which is not
+          # documentation, so the exclusion above already answers that pull request and an
+          # early return would have left the version comparison with no path to it — code
+          # a reader would still take for the thing that keeps the harness in front of a
+          # release. It is kept because it is that statement, and it is the clause that
+          # survives anyone narrowing the exclusion.
           echo "beyond documentation: ${touched} | version: ${base} (base) -> ${head} (head), moved: ${moved}"
           if [[ "${touched}" == 'true' || "${moved}" == 'true' ]]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
