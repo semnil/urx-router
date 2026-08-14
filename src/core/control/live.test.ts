@@ -652,10 +652,11 @@ function setCh1Morphing(plan: Plan, morphing: number): void {
 }
 
 // The COMP 1-knob drives the values in COMP_ONE_KNOB_DRIVEN on the device and announces the
-// recomputation (measured 2026-08: the written address goes fresh 0.046 ms before the
-// three dependents when the knob is switched on, 0.111 ms before them on a level change,
-// with none ahead of it). The plan mirrors those three while the knob is on — the screen
-// locks their rows — so this is a refetch, and a converge would push the pre-write copies
+// recomputation (measured 2026-08: the written address goes fresh 0.046 ms before the four
+// dependents when the knob is switched on — threshold, ratio, makeup and the knee — and
+// 0.111 ms before the three a level change moves, which are the same minus the knee; none
+// ahead of it in either direction). The plan mirrors them while the knob is on — the screen
+// locks those rows — so this is a refetch, and a converge would push the pre-write copies
 // back over what the knob just computed.
 function setCh1CompOneKnob(plan: Plan, patch: { oneKnob?: boolean; oneKnobLevel?: number }): void {
   plan.nodeParams.ch1 = {
@@ -793,10 +794,11 @@ describe("LiveSync sideEffect refetch", () => {
   // the plan across the whole write scope, so any address the plan still emits AND the unit
   // has just recomputed is written back at its pre-write value; the refetch that follows
   // then reads what the converge left. Nothing on screen says so, and the unit is left with
-  // a 1-knob level whose three values belong to a different level.
+  // a 1-knob level whose three values belong to a different level (a level write moves
+  // threshold, ratio and makeup; the knee only moves when the knob is switched on).
   //
-  // What keeps it out is that the plan stops emitting those three while the knob is on
-  // (translate.ts) — so this is the flush-level pin under that gate, and removing the gate
+  // What keeps it out is that the plan stops emitting the whole driven set while the knob is
+  // on (translate.ts) — so this is the flush-level pin under that gate, and removing the gate
   // fails here rather than only in the translate suite.
   it("leaves the unit's 1-knob computation alone when a converge shares the flush", async () => {
     const plan = basePlan();
