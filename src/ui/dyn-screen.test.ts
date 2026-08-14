@@ -594,6 +594,179 @@ describe("refresh", () => {
     window.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true }));
     expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
   });
+
+  // The third end, and the one no pointer event announces. Measured 2026-08-14 on
+  // Chromium (driven over its own DevTools socket) and on the shipping WKWebView: a
+  // window that loses the foreground with the button down gets `blur`, gets no
+  // `pointercancel`, and keeps the pointer capture. console.ts's trackDrag has the
+  // readings.
+  it("treats a window blur as a release", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const slider = rowsByKey(host.box).get("threshold")!;
+    host.box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    screen.refresh();
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
+  });
+
+  // And the cap, whose gate is that surviving capture rather than a flag the release
+  // above clears: without an ender of its own it kept writing thresholds to the plan
+  // and the live unit for every later move.
+  it("stops the threshold cap at a window blur, but not at a blur inside the screen", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const cap = host.box.querySelector<HTMLElement>("#dyn-threshold-cap")!;
+    const thr = (): number => (host.plan.nodeParams["ch1"]?.gate as { threshold: number }).threshold;
+    const at = (type: string, clientY: number): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, clientY, pointerId: 1 });
+
+    const start = thr();
+    cap.dispatchEvent(at("pointerdown", 40));
+    cap.dispatchEvent(at("pointermove", 80));
+    const moved = thr();
+    expect(moved).not.toBe(start);
+
+    // The cap carries a tabIndex and every row beside it is focusable, so focus moves
+    // inside the modal while a press is down. The release is registered without
+    // `capture: true` for exactly this: a capturing window listener is handed those
+    // blurs too, and would end the drag — and clear `grabbed`, letting a queued
+    // refresh replace the control under the pointer.
+    cap.dispatchEvent(new FocusEvent("blur"));
+    cap.dispatchEvent(at("pointermove", 120));
+    const stillDragging = thr();
+    expect(stillDragging).not.toBe(moved);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    cap.dispatchEvent(at("pointermove", 150));
+    expect(thr()).toBe(stillDragging);
+    expect(cap.hasPointerCapture(1)).toBe(false);
+  });
+
+  // The value rows are native ranges, so the ENGINE owns their drag and this tier cannot
+  // hold that half at all — jsdom has no such drag to end, and a case written here passes
+  // whether or not the row leaves an ender behind (measured: deleting the registration
+  // left this file green). It lives in `e2e/dyntuning.spec.ts` instead, where the drag is
+  // real and only the blur is dispatched.
+  //
+  // The MIDI question: a message applied while the window is away has to reach the
+  // screen. It arrives through the same `refresh()` the deferral above holds, so the
+  // blur RELEASES it rather than blocking it — a value that would have waited for the
+  // operator's release now lands at the blur.
+  it("lets a device- or MIDI-driven value reach the screen at the blur", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const before = rowsByKey(host.box).get("threshold")!;
+
+    // A press defers the repaint: the control under the pointer must not be replaced.
+    host.box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], gate: { threshold: -21 } };
+    screen.refresh();
+    expect(rowsByKey(host.box).get("threshold")).toBe(before);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    const after = rowsByKey(host.box).get("threshold")!;
+    expect(after).not.toBe(before);
+    expect(host.box.querySelector('[data-dyn-val="threshold"]')?.textContent).toContain("-21");
+  });
+
+  // The row's treatment is for the blur end alone. Run on an ordinary release it left the
+  // row disabled after every finished drag — and the listener that would re-arm it is
+  // added DURING that pointerup's own dispatch, so it does not see it: the row stayed dead
+  // until some later event happened to fire, and a press meanwhile landed on nothing.
+  it("leaves a value row usable after an ordinary release", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const row = rowsByKey(host.box).get("threshold")!;
+
+    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    row.focus();
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+
+    expect(row.disabled).toBe(false);
+    expect(document.activeElement).toBe(row);
+  });
+
+  // The same blur that holds the row inert also clears `grabbed`, so a refresh the press
+  // had deferred runs and rebuilds the column. The restore has to find the row that is on
+  // screen now: re-arming the replaced one put the operator's focus on a detached node.
+  it("restores the row on screen when a blur also lands a deferred refresh", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const row = rowsByKey(host.box).get("threshold")!;
+
+    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    row.focus();
+    host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], gate: { threshold: -21 } };
+    screen.refresh(); // deferred while the pointer is down
+    window.dispatchEvent(new FocusEvent("blur"));
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+
+    const now = rowsByKey(host.box).get("threshold")!;
+    expect(now).not.toBe(row);
+    expect(now.disabled).toBe(false);
+    expect(document.activeElement).toBe(now);
+  });
+
+  // A rebuilt row carries its own disabled state, and the restore must not talk it out of
+  // it: turning COMP's 1-knob on hands threshold / ratio / gain / knee to the device, and
+  // a locked row disables its controls. Re-enabling one here would put a device-driven
+  // value back under the operator's pointer.
+  it("leaves a row the rebuild locked disabled, and does not focus it", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(COMP, "ch1");
+    const row = rowsByKey(host.box).get("threshold")!;
+
+    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    row.focus();
+    // What device follow does when the unit's 1-knob comes on under the operator's hand.
+    const comp = host.plan.nodeParams["ch1"]?.comp as Record<string, unknown>;
+    host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], comp: { ...comp, oneKnob: true } };
+    screen.refresh(); // deferred while the pointer is down
+    window.dispatchEvent(new FocusEvent("blur"));
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+
+    const now = rowsByKey(host.box).get("threshold")!;
+    expect(now).not.toBe(row);
+    expect(now.disabled).toBe(true);
+    expect(document.activeElement).not.toBe(now);
+  });
+
+  // The third drag on this screen, and the one with no flag to clear: its move handler
+  // asks the engine whether it still holds the capture, and a blur leaves that answer
+  // true — so the ender drops the capture instead.
+  it("stops the plot drag at a window blur", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    // GATE opens on the ladder; the curve is the mode that drags.
+    host.box.querySelector<HTMLButtonElement>("#dyn-mode-curve")!.click();
+    host.frame();
+    const cv = host.box.querySelector<HTMLCanvasElement>("#dyn-curve")!;
+    const thr = (): number => (host.plan.nodeParams["ch1"]?.gate as { threshold: number }).threshold;
+    // offsetX is what the plot reads and the constructor does not take it.
+    const at = (type: string, offsetX: number): PointerEvent => {
+      const ev = new PointerEvent(type, { bubbles: true, pointerId: 1 });
+      Object.defineProperty(ev, "offsetX", { value: offsetX });
+      return ev;
+    };
+
+    const start = thr();
+    cv.dispatchEvent(at("pointerdown", 200));
+    cv.dispatchEvent(at("pointermove", 300));
+    const moved = thr();
+    expect(moved).not.toBe(start);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    cv.dispatchEvent(at("pointermove", 500));
+    expect(thr()).toBe(moved);
+  });
 });
 
 describe("localization", () => {

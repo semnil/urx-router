@@ -8,6 +8,7 @@
 // on every run.
 
 import { vi } from "vitest";
+import { recordWindowListeners } from "./listener-scope.test-util";
 import { Graph } from "./graph";
 import type { GraphCallbacks } from "./graph";
 import { getModel } from "../models";
@@ -84,6 +85,11 @@ export function graphFixture(opts: GraphOptions = {}): GraphFixture {
     onChange: vi.fn(),
     onHiddenChange: vi.fn(),
   };
+  // The view registers a window-lifetime listener (its blur ender), and jsdom's window
+  // outlives the file — so without this each fixture leaves one behind and a later
+  // blur reaches every graph an earlier case built. Recorded from here, released in
+  // `restore`, the same way the CONSOLE and tuning-screen fixtures do it.
+  const windowScope = recordWindowListeners();
   const graph = new Graph(host, model, plan, cb as unknown as GraphCallbacks);
   if (identityTransform) {
     // getBoundingClientRect is all zeros, so clientToContent is only the identity
@@ -99,6 +105,8 @@ export function graphFixture(opts: GraphOptions = {}): GraphFixture {
     cb,
     svg: host.querySelector("svg")!,
     restore: () => {
+      windowScope.stop();
+      windowScope.release();
       host.remove();
       restoreGlobals();
     },

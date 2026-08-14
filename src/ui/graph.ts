@@ -623,6 +623,16 @@ export class Graph {
     this.svg.addEventListener("pointermove", (e) => this.onPointerMove(e));
     this.svg.addEventListener("pointerup", (e) => this.onPointerUp(e));
     this.svg.addEventListener("pointercancel", (e) => this.onPointerCancel(e));
+    // Losing the window is the fourth way an interaction ends, and the engine announces
+    // it with a `blur` and nothing else: measured 2026-08-14 on Chromium and on the
+    // shipping WKWebView, the foreground moving away with the button down fires no
+    // `pointercancel` and keeps the pointer capture, so a node drag went on writing
+    // positions while another application was frontmost — into a second undo entry at
+    // that, since history.ts ends its press at the same blur. console.ts's `trackDrag`
+    // carries the readings; the CONSOLE and tuning-screen drags end at this event too.
+    // Window-lifetime, like the view itself: the app builds one Graph and never takes it
+    // down. A suite that builds several takes them back through `recordWindowListeners`.
+    window.addEventListener("blur", () => this.endAllPointers());
     this.svg.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
 
     // The initial fitView() in the constructor can measure a stale viewport size
@@ -1980,6 +1990,31 @@ export class Graph {
   private onPointerCancel(e: PointerEvent): void {
     this.pointers.delete(e.pointerId);
     if (this.pinch && this.pointers.size < 2) this.pinch = null;
+    this.cancelInteraction();
+  }
+
+  /**
+   * Drop every pointer this view is tracking — what a window blur ends, where the two
+   * pointer ends above each speak for one pointer and are told which.
+   *
+   * `cancelInteraction` alone is not that: it clears the interaction but leaves
+   * `pointers`, `pinch` and the captures, all three of which the pointer ends do clear.
+   * A pinch survives that, and `onPointerMove` tests `pinch` before everything the
+   * interaction teardown touched — so two fingers went on zooming while another
+   * application was frontmost. The stale entries are the second half: a touch pointer id
+   * is fresh per press, so one left behind makes the next single press read as a second
+   * finger and the view opens a pinch nobody started.
+   */
+  private endAllPointers(): void {
+    for (const id of this.pointers.keys()) {
+      try {
+        this.svg.releasePointerCapture(id);
+      } catch {
+        /* pointer was not captured */
+      }
+    }
+    this.pointers.clear();
+    this.pinch = null;
     this.cancelInteraction();
   }
 

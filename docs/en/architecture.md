@@ -295,7 +295,7 @@ carries a one-line map of the same directories and points here.
   typing into a textarea / `history.ts` undo / redo (`Ctrl/Cmd+Z`,
   `Ctrl/Cmd+Shift+Z`, `Ctrl/Cmd+Y`): gesture boundaries, the keyboard predicate, and the apply sequence over
   `core/plan-history.ts`. One entry runs from the first edit to the first boundary
-  (`pointerup`/`pointercancel` a macrotask later, so a `click`-handler edit lands inside it — and the next
+  (`pointerup`/`pointercancel`/a window `blur` a macrotask later, so a `click`-handler edit lands inside it — and the next
   `pointerdown` lands that commit first, or a late macrotask merges two clicks; a stepping-key `keyup`
   outside a text field and `focusout`, both committed **at once**, since nothing is dispatched after them on
   the gesture's behalf and deferring lets an autorepeat outrun the macrotask; a re-arming 300 ms idle
@@ -2749,7 +2749,7 @@ one is an edit that silently cannot be undone.
 
 | Boundary | Ends | Timing |
 | --- | --- | --- |
-| `pointerup` / `pointercancel` | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks |
+| `pointerup` / `pointercancel` / window `blur` | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks. The `blur` is there because the window can go away while the button is still down, and neither engine ends the drag when it does — measured 2026-08-14 on Chromium (over its own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): the foreground moves away, `blur` fires, `pointercancel` does not, and the pointer capture is kept, so on the unit-facing build the CONSOLE fader went on following the pointer, and writing, while another application was frontmost. The drags in `console.ts` / `dyn-screen.ts` now end at that same event, confirmed in WKWebView on the fixed build (the same gesture left the value where the window was lost). What macOS does *not* lose is the release itself — letting the button go over another application still ended the gesture — so on that platform this closes the writing done while the window is away rather than a drag standing indefinitely |
 | `keyup` of an Arrow / Page / Home / End / Enter / Space key, outside a text field | Keyboard stepping on a fader or knob, which autorepeats one edit per repeat with no other terminator | At once. Nothing is dispatched after a keyup on the gesture's behalf, and the next press is a new gesture — deferring would let an autorepeat outrun the macrotask and merge two presses |
 | `focusout` | The node-name field and the in-frame note editor, which edit the plan on every keystroke | At once |
 | 300 ms idle, re-arming | A wheel-notch burst and an incoming MIDI sweep, which produce no DOM gesture at all | Only armed for edits with no boundary of their own: suppressed while a pointer is down, and while a text field has focus (its `focusout` is the boundary, so a name typed with a pause between letters must not cost an entry per letter) |

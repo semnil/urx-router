@@ -131,6 +131,83 @@ describe("the main fader", () => {
     window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
   });
 
+  // The other end with no pointerup behind it. Measured 2026-08-14 on Chromium (over its
+  // own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): a
+  // window that loses the foreground with the button down gets `blur`, no `pointercancel`,
+  // and keeps the capture — so the drag went on writing levels to the plan and out to the
+  // unit while another application was frontmost. No E2E tier can reproduce the cause
+  // (Playwright emulates focus), and the readings here are a plan value and the element's
+  // capture, so this is the tier that can hold it either way.
+  it("ends a fader drag when the window loses focus, but not when a control inside it does", () => {
+    h = consoleHost();
+    const fader = h.strip("ch1").fader!;
+    fader.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 100, pointerId: 1 }),
+    );
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 70, pointerId: 1 }));
+    const moved = main("ch1");
+
+    // An element's own blur reaches the window in the capture phase only, and the drag
+    // must survive it: focus moves inside the strip while a press is down.
+    fader.dispatchEvent(new FocusEvent("blur"));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 50, pointerId: 1 }));
+    const stillDragging = main("ch1");
+    expect(stillDragging).not.toBe(moved);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 20, pointerId: 1 }));
+    expect(main("ch1")).toBe(stillDragging);
+
+    // And it stays ended when the window comes back with the button still down. The
+    // tuning screens' value rows needed a treatment for this (the engine owns their drag
+    // and re-acquired it — measured on the unit); a drag the view runs itself cannot,
+    // since only a fresh `pointerdown` registers the move handler again.
+    window.dispatchEvent(new FocusEvent("focus"));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 5, pointerId: 1 }));
+    expect(main("ch1")).toBe(stillDragging);
+    // And the capture goes with it: on this end no engine drops it, and one left behind
+    // routes the next press for that pointer id to this fader instead of to the control
+    // the operator pressed.
+    expect(fader.hasPointerCapture(1)).toBe(false);
+  });
+
+  // The other half of the same registration, and the one nothing else would notice: a
+  // drag that ends normally has to stop listening for blurs too. Left registered, every
+  // completed drag keeps its closure alive on the window and each later focus loss
+  // re-runs all of them — `onEnd` on a knob is `syncPartnerStrip`, i.e. a full re-render
+  // per dead gesture, and the detached strip it closes over is never collected.
+  // Counted rather than observed through a value: what a leaked listener does on the
+  // next blur depends on which control was dragged, and the registration itself is the
+  // thing this is about. `listener-scope.test-util` records additions so a suite can
+  // take them back; it does not net them off against removals, which is the reading here.
+  it("stops listening for a blur once the drag ends", () => {
+    h = consoleHost();
+    const fader = h.strip("ch1").fader!;
+    const realAdd = window.addEventListener;
+    const realRemove = window.removeEventListener;
+    let armed = 0;
+    window.addEventListener = function (this: Window, ...args: Parameters<typeof window.addEventListener>): void {
+      if (args[0] === "blur") armed++;
+      realAdd.apply(this, args);
+    } as typeof window.addEventListener;
+    window.removeEventListener = function (this: Window, ...args: Parameters<typeof window.removeEventListener>): void {
+      if (args[0] === "blur") armed--;
+      realRemove.apply(this, args);
+    } as typeof window.removeEventListener;
+    try {
+      for (const y of [100, 60]) {
+        const down = new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: y, pointerId: 1 });
+        fader.dispatchEvent(down);
+        window.dispatchEvent(new PointerEvent("pointermove", { clientY: y - 30, pointerId: 1 }));
+        window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
+      }
+    } finally {
+      window.addEventListener = realAdd;
+      window.removeEventListener = realRemove;
+    }
+    expect(armed).toBe(0);
+  });
+
   it("steps on a wheel notch and resets on a double-click", () => {
     h = consoleHost();
     const fader = h.strip("ch1").fader!;

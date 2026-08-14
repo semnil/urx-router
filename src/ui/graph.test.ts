@@ -393,6 +393,26 @@ describe("node drag", () => {
     expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
   });
 
+  // Losing the window ends it, like `pointercancel` above. Measured 2026-08-14 on
+  // Chromium and on the shipping WKWebView: the foreground moving away with the button
+  // down fires `blur` and no `pointercancel`, and keeps the capture — so the node kept
+  // following the pointer while another application was frontmost, and since history.ts
+  // ends its press at that same blur, the rest of the travel landed in a second undo
+  // entry. console.ts's `trackDrag` carries the readings.
+  it("ends a node drag when the window loses focus", () => {
+    fx = graphFixture();
+    const rect = faceplate(fx.host, "ch1")!;
+    const at = (type: string, x: number, y: number): PointerEvent =>
+      new PointerEvent(type, { pointerId: 1, clientX: x, clientY: y, bubbles: true, cancelable: true });
+    rect.dispatchEvent(at("pointerdown", 100, 100));
+    fx.svg.dispatchEvent(at("pointermove", 260, 180));
+    const moved = JSON.stringify(fx.plan.positions?.["ch1"]);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    fx.svg.dispatchEvent(at("pointermove", 500, 400));
+    expect(JSON.stringify(fx.plan.positions?.["ch1"])).toBe(moved);
+  });
+
   // The double-press detector times pointerdown to pointerdown and was not invalidated
   // when the first press became a drag — so a flick-drag released at ~250 ms and grabbed
   // again at ~300 ms to keep positioning opened the note editor instead, and on a
@@ -482,6 +502,33 @@ describe("view transform", () => {
     fx.svg.dispatchEvent(new PointerEvent("pointermove", { pointerId: 2, clientX: 300, clientY: 100, bubbles: true }));
     expect(zoom()).not.toBe(before);
     fx.svg.dispatchEvent(new PointerEvent("pointerup", { pointerId: 2, clientX: 300, clientY: 100, bubbles: true }));
+  });
+
+  // The blur ender has to do what a `pointercancel` does for one pointer, for all of them.
+  // `cancelInteraction` alone left `pinch` standing, and `onPointerMove` asks about the
+  // pinch before anything that teardown clears — so two fingers kept zooming while another
+  // application was frontmost. The second half is the tracking map: a touch pointer id is
+  // fresh per press, so an entry left behind makes the next single press the second finger.
+  it("ends a pinch at a window blur, and forgets the pointers it was tracking", () => {
+    fx = graphFixture();
+    const zoom = (): number => (fx.graph as unknown as { zoom: number }).zoom;
+    const at = (type: string, id: number, x: number): PointerEvent =>
+      new PointerEvent(type, { pointerId: id, clientX: x, clientY: 100, bubbles: true });
+    fx.svg.dispatchEvent(at("pointerdown", 1, 100));
+    fx.svg.dispatchEvent(at("pointerdown", 2, 140));
+    fx.svg.dispatchEvent(at("pointermove", 2, 300));
+    const pinched = zoom();
+    expect(pinched).not.toBe(1);
+
+    window.dispatchEvent(new FocusEvent("blur"));
+    fx.svg.dispatchEvent(at("pointermove", 2, 600));
+    expect(zoom()).toBe(pinched);
+
+    // And the next press is a first finger again, not a second one.
+    fx.svg.dispatchEvent(at("pointerdown", 3, 100));
+    fx.svg.dispatchEvent(at("pointermove", 3, 300));
+    expect(zoom()).toBe(pinched);
+    expect((fx.graph as unknown as { pinch: unknown }).pinch).toBeNull();
   });
 
   it("re-fits the view without throwing on an unmeasurable host", () => {
