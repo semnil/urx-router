@@ -103,6 +103,35 @@ export interface ParamSpec {
 
 // Confirmed anchors. Validated: their ids match both the original sniff and the
 // /vd/parameters descriptor (table_id + min/max/default).
+/**
+ * The SSMCS strip values the device recomputes for you: every CONTINUOUS value in the
+ * block, and none of the five ON switches (SC, EQ, and the three bands), which it leaves to
+ * the operator. Measured address by address on a URX44V (2026-08-15).
+ *
+ * One list because TWO heads drive it — the Morphing position and the Sweet Spot Data preset
+ * — and they were measured to drive the same seventeen. A second copy is the thing that
+ * would rot: whichever head was edited last would be the one the converge believes.
+ */
+const SSMCS_STRIP_DRIVEN = [
+  "SSMCS_COMP_ATTACK",
+  "SSMCS_COMP_RELEASE",
+  "SSMCS_COMP_RATIO",
+  "SSMCS_COMP_KNEE",
+  "SSMCS_COMP_THRESHOLD",
+  "SSMCS_COMP_MAKEUP",
+  "SSMCS_SC_Q",
+  "SSMCS_SC_FREQ",
+  "SSMCS_SC_GAIN",
+  "SSMCS_EQ_LOW_FREQ",
+  "SSMCS_EQ_LOW_GAIN",
+  "SSMCS_EQ_MID_Q",
+  "SSMCS_EQ_MID_FREQ",
+  "SSMCS_EQ_MID_GAIN",
+  "SSMCS_EQ_HIGH_FREQ",
+  "SSMCS_EQ_HIGH_GAIN",
+  "SSMCS_OUT_GAIN",
+] as const;
+
 export const PARAMS = {
   /** Input channel main fader → STEREO (level_gain, default 0 dB). */
   CH_FADER: { id: 139, encoding: "level", follow: "direct" },
@@ -172,25 +201,7 @@ export const PARAMS = {
     id: 93,
     encoding: "raw",
     sideEffect: "refetch",
-    drives: [
-      "SSMCS_COMP_ATTACK",
-      "SSMCS_COMP_RELEASE",
-      "SSMCS_COMP_RATIO",
-      "SSMCS_COMP_KNEE",
-      "SSMCS_COMP_THRESHOLD",
-      "SSMCS_COMP_MAKEUP",
-      "SSMCS_SC_Q",
-      "SSMCS_SC_FREQ",
-      "SSMCS_SC_GAIN",
-      "SSMCS_EQ_LOW_FREQ",
-      "SSMCS_EQ_LOW_GAIN",
-      "SSMCS_EQ_MID_Q",
-      "SSMCS_EQ_MID_FREQ",
-      "SSMCS_EQ_MID_GAIN",
-      "SSMCS_EQ_HIGH_FREQ",
-      "SSMCS_EQ_HIGH_GAIN",
-      "SSMCS_OUT_GAIN",
-    ],
+    drives: SSMCS_STRIP_DRIVEN,
   },
   /** SSMCS Out Gain (raw 0..360; 180 = 0 dB). */
   SSMCS_OUT_GAIN: { id: 117, encoding: "raw" },
@@ -355,32 +366,32 @@ export const PARAMS = {
    *  stays until the PAN-ward side effect is measured exhaustively. */
   PAN_BAL: { id: 891, encoding: "enum", sideEffect: "converge" },
   /** SSMCS Sweet Spot Data preset index (MONO IN, SSMCS mode), at the channel input
-   *  index. A 4-digit zero-padded STRING ("0001".."0034"; "0035"+ clamps to "0001"),
-   *  so it rides the string-write path (vd_set_str / vd_get_str), not the numeric
-   *  catalog. Confirmed by live read (91:0:0 = "0001").
+   *  index. A 4-digit zero-padded STRING ("0001".."0034"; "0035"+ clamps to "0001"), so it
+   *  rides the string-write path (vd_set_str / vd_get_str) rather than the numeric one.
+   *  Confirmed by live read (91:0:0 = "0001").
    *
-   *  NOT marked `sideEffect`, and what is missing is now the PATH rather than the facts.
-   *  Measured on a URX44V (2026-08-15) rather than assumed to match the morph: a preset write
-   *  recomputes the same seventeen addresses `SSMCS_MORPHING.drives` names and takes `93`
-   *  itself back to 0, and its own address IS announced — first, 0.023 ms ahead of those
-   *  eighteen with none ahead of it. So it has the same shape every other refetch head has,
-   *  including the settle boundary they end on. (A run that reported no echo had not
-   *  SUBSCRIBED to 91, so the filter that keeps another client's traffic out was answering;
-   *  a zero from an address nobody registered says nothing at all.)
+   *  A `"refetch"` head, and the first one on the string path. Selecting a preset recomputes
+   *  the strip: measured on a URX44V (2026-08-15), a preset write announces the seventeen
+   *  addresses `drives` names below, and its own address IS announced FIRST — 0.319 ms ahead
+   *  of them with none in between — so the settle boundary every other refetch head ends on
+   *  works here unchanged.
    *
-   *  What it does NOT leave is an unrepaired plan. The announcement is block-wise, so how many
-   *  of the eighteen carry a CHANGED value depends on the preset pair — and only those reach
-   *  device-follow: `isEcho` drops a notify equal to the snapshot as readily as one of our own
-   *  writes. Those drive a scoped reconcile of the owning node, escalating to a full one past
-   *  MAX_CONCENTRATION; either way the plan is repaired once the burst settles (follow.ts).
-   *  The defect is narrower and is a RACE: a converge that runs before that reconcile reads a
-   *  plan still holding pre-preset values and writes them back, undoing the preset the way it
-   *  would have undone a morph before `drives` existed.
+   *  `drives` is the same seventeen `SSMCS_MORPHING` drives and NOT `93`. The announcement is
+   *  block-wise, so `93` arrives with the burst whatever it holds; with Morphing parked at 62
+   *  before the write it was announced as 62 and read back as 62, so a preset does not move
+   *  it. (Two earlier runs called it a reset from an announcement taken while Morphing was
+   *  already 0 — the same mistake the COMP knee produced, in the same block.)
    *
-   *  The path is what a declaration alone cannot supply: `planToNameWrites` emits no owning
-   *  node, and live.ts's name loop consults neither CONVERGE nor REFETCH, so marking this
-   *  would look like a fix and do nothing. */
-  SWEET_SPOT_DATA: { id: 91, encoding: "raw" },
+   *  Without the declaration the plan is not left unrepaired — device-follow takes the changed
+   *  dependents and reconciles (follow.ts) — but a converge running before that reconcile
+   *  reads a plan still holding pre-preset values and writes them back, undoing the preset.
+   *  That race is what the declaration closes, the same way `SSMCS_MORPHING`'s does. */
+  SWEET_SPOT_DATA: {
+    id: 91,
+    encoding: "raw",
+    sideEffect: "refetch",
+    drives: SSMCS_STRIP_DRIVEN,
+  },
   // CH → MIX/FX bus send. The actual ids are computed per channel/bus in
   // translate.ts; these anchors are the MIX1 mono slot and only name the command
   // + encoding.

@@ -534,6 +534,26 @@ export class LiveSync {
         this.nameIndex.set(addrKey(nc.param, 0, y), node.id);
       }
     }
+    // The string writes that ARE a catalog row — the SSMCS preset — join it too. Without
+    // this they were in no list at all rather than merely unsubscribed: this method is what
+    // builds the candidate set, and it read `planToNameWrites` only for the name snapshot,
+    // so a catalog string address could never become a candidate however many times the
+    // follow layer re-subscribed. Indexed to the owner rather than into `nameIndex`: it is
+    // not a name, so a notify for it takes that node's scoped read instead of being placed
+    // directly. That is what makes a preset changed ON the unit followable, and what lets
+    // the flush's own settle end on the unit's announcement rather than at its bound.
+    //
+    // From the LIVE plan, not the view — the same split the numeric loop above takes, where
+    // the SHAPE is the plan's and only the VALUES come from the view. A view predates the
+    // read it was taken for, so an edit made during that read is in the plan and not in it;
+    // building the candidate set from the view would drop the address until some later
+    // reconcile, which for a string address means the preset a person just chose is unheard.
+    for (const w of planToNameWrites(model, plan)) {
+      if (w.name === undefined || w.node === undefined) continue;
+      addrs.push([w.param, 0, w.y]);
+      const direct = (PARAMS as Record<string, ParamSpec>)[w.name].follow === "direct";
+      this.index.set(addrKey(w.param, 0, w.y), { name: w.name, node: w.node, direct });
+    }
     // Addresses the app READS but never writes, enumerated by translate beside the emit
     // decision they mirror. Same consumer shape as the loop above: register, and index to
     // the node whose scoped read repairs the value. The registration is therefore no
@@ -609,6 +629,10 @@ export class LiveSync {
       // just computed. Scoped to the node, because the same names on another channel are
       // that channel's own and the converge is right about them.
       const driven = new Map<string, Set<string>>();
+      // Addresses the NAME loop wrote that the refetch may not start before hearing about,
+      // each at the mark taken before its own write. Separate from `writes` because that map
+      // is numeric and the read overlays answers from it; see the name loop.
+      const nameSettle = new Map<number, number>();
       // What this flush wrote and the device acked, keyed the way the snapshot is
       // (translate.addrKey). Handed to the refetch, whose read would otherwise be issued
       // inside the window in which the unit still answers these addresses with the
@@ -698,11 +722,44 @@ export class LiveSync {
         const value = freshNames ? freshNames.get(k) : w.value;
         if (value === undefined) continue;
         if (this.nameSnapshot.get(k) === value) continue;
+        // Before the write, for the reason the numeric loop takes one: only a notify after
+        // it can be this write's announcement.
+        const nameMark = writeSettle.mark();
         await vdSetStr(w.param, 0, w.y, value);
         if (this.sessionGen !== gen) return;
         this.nameSnapshot.set(k, value);
         this.notePending(this.pendingNames, k, value);
         sent++;
+        // A string write can be a sideEffect head too: the SSMCS preset recomputes the strip
+        // exactly as the morphing knob does. Only REFETCH is consulted — no string param is a
+        // converge head, and a branch nothing reaches is a claim no test can hold.
+        if (w.name !== undefined && w.node !== undefined && REFETCH.has(w.name)) {
+          refetch.add(w.node);
+          const drives = DRIVES.get(w.name);
+          if (drives) {
+            let names = driven.get(w.node);
+            if (!names) driven.set(w.node, (names = new Set()));
+            for (const n of drives) names.add(n);
+          }
+          // The read may not start before the unit has spoken for this address — the rule the
+          // numeric writes take. The unit does announce the preset write on its own address,
+          // first (params.ts), and capture() now puts that address in the candidate set so
+          // the app can hear it. What it does NOT decide is WHEN the follow layer subscribes
+          // to a candidate: that happens after a reconcile, so an address the plan grew from
+          // an app-side edit — this one and the numeric SSMCS block alike (measured, t2b) —
+          // is unheard until one runs, and this wait resolves at its bound instead. Either
+          // way the read does not start inside the write's staleness window, which is what
+          // this line is for. It goes into
+          // `mustSettle`, with its mark travelling as `boundaryMarks` rather than in the
+          // `written` map: that map is what the read overlays its answers from, it is numeric,
+          // and a string notify carries its text in a different field — so an entry there
+          // would answer a numeric read with a number the unit never sent. The mark is
+          // separate but not optional: without one the wait is held unconditionally
+          // (settle.ts), so an announcement that arrived while the rest of this flush ran —
+          // which is the ordinary case, the unit answers in about 15 ms — would be missed and
+          // the read would spend the whole bound anyway.
+          nameSettle.set(addrKey(w.param, 0, w.y), nameMark);
+        }
       }
       this.lastFlushConverged = sideEffect;
       if (sideEffect) {
@@ -801,7 +858,13 @@ export class LiveSync {
           if (w.node !== undefined && refetch.has(w.node)) mustSettle.add(k);
           else if (w.changed) mustAnnounce.add(k);
         }
-        const deviceView = await this.hooks.refetchNodes(refetch, { written, mustSettle, mustAnnounce });
+        for (const k of nameSettle.keys()) mustSettle.add(k);
+        const deviceView = await this.hooks.refetchNodes(refetch, {
+          written,
+          mustSettle,
+          mustAnnounce,
+          ...(nameSettle.size ? { boundaryMarks: nameSettle } : {}),
+        });
         if (this.sessionGen !== gen) return;
         // The read ran against its own copy of the plan (readback.readIntoPlan), so the
         // copy is what the device holds: re-base from it and an edit made during the

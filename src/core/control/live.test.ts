@@ -55,6 +55,9 @@ function setCh1Fader(plan: Plan, db: number): void {
 
 beforeEach(() => {
   vi.mocked(vdSet).mockReset().mockResolvedValue(undefined);
+  // vdSetStr was the one of the four this reset left out, so its calls accumulated across
+  // the file and a case asserting the whole call list saw earlier cases' name writes.
+  vi.mocked(vdSetStr).mockReset().mockResolvedValue(undefined);
   vi.mocked(vdGet).mockReset().mockResolvedValue(0);
   vi.mocked(vdGetStr).mockReset().mockResolvedValue("");
   vi.useFakeTimers();
@@ -678,6 +681,97 @@ describe("LiveSync sideEffect refetch", () => {
     const onSwitches = ["SSMCS_SC_ON", "SSMCS_EQ_ON", "SSMCS_EQ_LOW_ON", "SSMCS_EQ_MID_ON", "SSMCS_EQ_HIGH_ON"];
     expect(onSwitches.map((n) => (PARAMS as Record<string, { id: number }>)[n].id)).toEqual([102, 106, 107, 110, 114]);
     for (const n of onSwitches) expect(drives).not.toContain(n);
+    // The preset drives the same seventeen and is measured NOT to move Morphing, so it must
+    // not name `93`: excluding that would stop the converge restoring a morph the operator set.
+    expect(PARAMS.SWEET_SPOT_DATA.drives).toBe(drives);
+    expect(drives).not.toContain("SSMCS_MORPHING");
+  });
+
+  // Registration is a SECOND thing from the flush's refetch, and it was missing in a way a
+  // re-subscribe could never fix: capture() builds the candidate set, and it read
+  // planToNameWrites only for the name snapshot — so a catalog string address was in no list
+  // at all, however often the follow layer re-subscribed. Pinned on `followAddrs()`, which is
+  // the list itself, rather than on what a session happens to have subscribed by some moment.
+  it("offers the preset address for registration, indexed to its owner node", () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      compEqType: COMP_EQ_SSMCS,
+      ssmcs: { ...structuredClone(SSMCS_INITIAL), sweetSpotData: 1 },
+    };
+    const live = liveFor(plan);
+    live.begin();
+    const preset: [number, number, number] = [PARAMS.SWEET_SPOT_DATA.id, 0, 0];
+    expect(live.followAddrs()).toContainEqual(preset);
+    // And routed like a value rather than like a name: a notify for it re-reads ch1, which is
+    // what a preset changed on the unit needs. A name resolves through a different index and
+    // would answer undefined here.
+    expect(live.lookup(...preset)).toEqual({ name: "SWEET_SPOT_DATA", node: "ch1", direct: false });
+
+    // Only while the plan carries one: in COMP->EQ mode there is no preset to follow.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: 0 };
+    live.begin();
+    expect(live.followAddrs()).not.toContainEqual(preset);
+
+    // And the SHAPE comes from the live plan even when a device view is handed over. A view
+    // predates the read it was taken for, so an edit made during that read is in the plan and
+    // not in it — taking the shape from the view would drop the address a person just chose
+    // until some later reconcile. The numeric block is the control: it is present either way,
+    // which is what makes this a statement about the string path rather than about resync.
+    const stale = clonePlanState(plan);
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      compEqType: COMP_EQ_SSMCS,
+      ssmcs: { ...structuredClone(SSMCS_INITIAL), sweetSpotData: 3 },
+    };
+    live.resync(stale);
+    const morph = planToCommands(model, plan).find((c) => c.name === "SSMCS_MORPHING" && c.node === "ch1")!;
+    expect(live.followAddrs()).toContainEqual([morph.paramId, morph.x, morph.y]);
+    expect(live.followAddrs()).toContainEqual(preset);
+  });
+
+  // The preset is a refetch head on the STRING path, which the flush's name loop used to walk
+  // without consulting either set — so declaring it alone would have changed nothing. This
+  // pins the PATH rather than the declaration: it fails if the loop stops reading the flag,
+  // stops resolving the owner node, or stops handing the address to the read.
+  it("reads the node back after a preset write, and holds the read for it", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      compEqType: COMP_EQ_SSMCS,
+      ssmcs: { ...structuredClone(SSMCS_INITIAL), sweetSpotData: 1 },
+    };
+    const nodes: string[][] = [];
+    const held: number[][] = [];
+    const marks: Array<ReadonlyMap<number, number> | undefined> = [];
+    const live = liveFor(plan, async (n, pending) => {
+      nodes.push([...n]);
+      held.push([...pending.mustSettle]);
+      marks.push(pending.boundaryMarks);
+      return null;
+    });
+    live.begin();
+
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      ssmcs: { ...plan.nodeParams.ch1?.ssmcs, sweetSpotData: 2 },
+    };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    // The preset really went out on the string path, and nothing numeric did.
+    expect(vi.mocked(vdSetStr).mock.calls).toEqual([[PARAMS.SWEET_SPOT_DATA.id, 0, 0, "0002"]]);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect(nodes).toEqual([["ch1"]]);
+    // And the read may not start before the unit has spoken for the address it wrote.
+    expect(held).toEqual([[addrKey(PARAMS.SWEET_SPOT_DATA.id, 0, 0)]]);
+    // With the MARK taken before that write, not just the address. Without it the wait
+    // cannot tell this write's announcement from an older one, so an answer that arrived
+    // while the flush was still running — the ordinary case, the unit replies in ~15 ms —
+    // is missed and the read waits out the whole bound instead.
+    expect([...(marks[0] ?? new Map()).keys()]).toEqual([addrKey(PARAMS.SWEET_SPOT_DATA.id, 0, 0)]);
+    expect(typeof [...(marks[0] ?? new Map()).values()][0]).toBe("number");
   });
 
   // A converge and a refetch can land in one flush — PAN/BAL and the morphing knob inside

@@ -241,9 +241,13 @@ export class DeviceFollow {
     if (this.hooks.isEcho(p)) return;
     // A device-side rename, which the numeric filters below cannot judge: it has no
     // catalog entry and no numeric value. Handled here and answered with the node, so
-    // it stays a direct follow: one repaint, no readback. A string notify on an
-    // address that is NOT a name is a shape no URX has ever sent; it falls through
-    // to the unknown-address path, which is where anything unrecognised belongs.
+    // it stays a direct follow: one repaint, no readback.
+    //
+    // A string notify on an address that is NOT a name falls through, and where it lands
+    // depends on whether the catalog knows the address. The SSMCS preset is one it does —
+    // `lookup` resolves it to its owner node, so it takes that node's scoped read like any
+    // other non-direct value. Anything the catalog does not know still reaches the
+    // unknown-address path below, which is where an unrecognised shape belongs.
     if (p.valueStr !== undefined) {
       const node = this.hooks.applyName?.(p.paramId, p.x, p.y, p.valueStr);
       if (node !== undefined) {

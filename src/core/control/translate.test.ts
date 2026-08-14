@@ -360,7 +360,14 @@ describe("planToCommands", () => {
     ensureFixedConnections(model, plan);
     plan.nodeParams["ch1"] = { compEqType: 1, ssmcs: { sweetSpotData: 2 } };
     const writes = planToNameWrites(model, plan).filter((w) => w.param === 91);
-    expect(writes).toEqual([{ param: 91, y: 0, value: "0002" }]);
+    // It carries its catalog name and owner node, which a node's own name does not: that is
+    // what lets the live flush see it is a sideEffect head and which node to read back.
+    expect(writes).toEqual([{ param: 91, y: 0, value: "0002", name: "SWEET_SPOT_DATA", node: "ch1" }]);
+    const named = { ...plan, nodeNames: { ...plan.nodeNames, ch1: "KICK" } };
+    const chName = planToNameWrites(model, named).find((w) => w.value === "KICK");
+    expect(chName).toBeDefined();
+    expect(chName?.name).toBeUndefined();
+    expect(chName?.node).toBeUndefined();
     // COMP->EQ mode (not SSMCS) emits no preset write.
     plan.nodeParams["ch1"] = { compEqType: 0, ssmcs: { sweetSpotData: 2 } };
     expect(planToNameWrites(model, plan).filter((w) => w.param === 91)).toEqual([]);
