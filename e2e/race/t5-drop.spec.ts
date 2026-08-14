@@ -25,7 +25,7 @@ import {
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, type Span } from "./analyze";
-import { CH1_FADER, faderOf, faderReadout, openEqScreen } from "./ui";
+import { CH1_FADER, faderOf, faderReadout } from "./ui";
 
 // T5 drop — failure injection (docs/{en,ja}/live-race-harness.md).
 //
@@ -55,28 +55,13 @@ const UNREGISTERED: Array<[number, number, number]> = [
   [812, 0, 0], // USB_SUPPRESSION
 ];
 
-// ch1's 4-band PEQ addresses: the band block starts 5 params after the EQ-ON anchor
-// (44 → 49) with a 5-param stride, and only LOW/HIGH carry a filter type (translate.ts
-// eqBandsFrom). These are exactly the addresses EQ 1-Knob ON removes from the write set
-// while leaving them in the follow registration.
-const EQ_BAND_ADDRS: string[] = (() => {
-  const out: string[] = [];
-  for (let i = 0; i < 4; i++) {
-    const b = 49 + 5 * i;
-    out.push(`${b}:0:0`);
-    if (i === 0 || i === 3) out.push(`${b + 1}:0:0`);
-    out.push(`${b + 2}:0:0`, `${b + 3}:0:0`, `${b + 4}:0:0`);
-  }
-  return out;
-})();
+/** Sample rate: emitted, registered, and owned by no node (translate.ts owns the block
+ *  to `undefined`), so a notify on it takes follow.ts's whole-device escalation — no
+ *  scoped read can repair an address that belongs to no node. Also the address a full
+ *  readback reads and a scoped one skips, which is what makes a read of it countable as
+ *  one whole-device reconcile. */
+const RATE_ADDR = "766:0:0";
 
-/** The EQ tuning screen's 1-Knob ON/OFF pair, located from the level slider's id (the
- *  only stable anchor in that section) rather than by its localized label. */
-const oneKnobFace = (page: Page, face: 0 | 1) =>
-  page
-    .locator("#dyn-screen-box .prefs-section", { has: page.locator("#dyn-oneknob-level") })
-    .locator(".prefs-toggle button")
-    .nth(face);
 /**
  * Arm a multi-address diff in one flush window: dispatch a fader step onto the
  * first `n` console strips synchronously, so all of them land inside the same
@@ -558,46 +543,52 @@ test.describe("T5 drop", () => {
   });
 
   // drop-unknown-address-notify-storm. Three arms over the same five-notify burst at
-  // the same spacing: once on addresses that are registered but no longer RESOLVE
-  // (arm 1), once on addresses that resolve (arm 2), once on addresses that were never
-  // registered at all (arm 3).
+  // the same spacing: once on an address the app cannot place on a NODE (arm 1), once on
+  // addresses it places directly (arm 2), once on addresses that were never registered
+  // at all (arm 3).
   //
-  // Arm 1 replaces what the case used to push. Its original stimulus was five
-  // planExternal addresses, which the shipped bridge drops before the page sees them
-  // (src-tauri/src/vd.rs Subs::absorb) — the measurement was of nothing. The reachable
-  // version of "the app has no index entry for this address" is the DROPPED WINDOW: a
-  // sideEffect edit's flush re-runs live.ts capture() (shrinking the index) but not
-  // follow.ts subscribe() (which only runs at begin() and after a reconcile), so the
-  // broker keeps delivering addresses live.lookup no longer resolves.
-  test("five unresolvable notifies cost a whole-device read that five registered ones do not, and five unregistered ones cost nothing", async ({
+  // Arm 1's stimulus has been replaced twice, and each replacement is a statement about
+  // what the shipped app can actually receive. The original was five planExternal
+  // addresses, which the bridge drops before the page sees them (src-tauri/src/vd.rs
+  // Subs::absorb) — the measurement was of nothing, which is arm 3 now. The second was
+  // the DROPPED WINDOW: a sideEffect edit's flush re-ran live.ts capture() (shrinking the
+  // index) while follow.ts subscribe() ran at begin() and after a reconcile only, so the
+  // broker kept delivering addresses live.lookup no longer resolved. That window is shut
+  // — a flush whose capture moved the set now re-registers at its own end — so no
+  // gesture leaves an address registered and unindexed for a notify to arrive into.
+  //
+  // What remains reachable is the OTHER half of the same branch (follow.ts: `addr ===
+  // undefined || addr.node === undefined`): an address that is registered, indexed, and
+  // owned by the whole device rather than by a node, so no scoped read can repair it.
+  // Sample rate is the one the app emits — translate.ts owns it to `undefined` — and it
+  // is permanent, which is what the previous two stimuli were not.
+  test("five notifies the app cannot place on a node cost a whole-device read that five placeable ones do not, and five unregistered ones cost nothing", async ({
     page,
   }) => {
     await goLive(page);
-    await openEqScreen(page, "ch1");
     await setLatency(page, { get: 4, set: 8 });
     const registration = await paramAddrsOf(page);
     const regKeys = new Set(registration.map((a) => a.join(":")));
 
-    // Arm 1 — open the dropped window. EQ 1-Knob ON is sideEffect "refetch": the flush
-    // re-reads the owner node and re-captures, which drops the 18 band addresses from
-    // the write set and so from live.ts's index. No reconcile runs, so the broker-side
-    // registration still carries all 18.
-    await mark(page, "oneknob-on");
-    await oneKnobFace(page, 0).click();
-    await settleAfter(page, "oneknob-on", 1200);
-    const dropped = EQ_BAND_ADDRS.slice(0, 5);
+    // The premise, both halves. Registered, so the bridge delivers it; and in the write
+    // set, so the app is not merely ignorant of it — the snapshot's keys ARE the write
+    // set, capture() builds both from the same planToCommands pass. What it has no
+    // owner for is a NODE, which is what leaves the escalation as the only repair.
     const snapshot = await snapshotOf(page);
-    // The premise, both halves: still registered (so the notify is delivered), and out
-    // of the write set (so nothing resolves it). The snapshot's keys ARE the write set —
-    // capture() builds both from the same planToCommands pass.
-    for (const a of dropped) expect(regKeys.has(a)).toBe(true);
-    for (const a of dropped) expect(snapshot?.[a]).toBeUndefined();
-    await page.keyboard.press("Escape");
+    expect(regKeys.has(RATE_ADDR)).toBe(true);
+    expect(snapshot?.[RATE_ADDR]).toBeDefined();
+
+    // …and every pushed value differs from what the snapshot holds, or `isEcho` would
+    // classify it as our own write coming back and the storm would be five silences.
+    // Nothing applies these: the branch under test forces a read instead, and the read
+    // answers with the rate the device actually holds.
+    const rates = [44100, 88200, 96000, 176400, 192000];
+    expect(rates.filter((v) => snapshot?.[RATE_ADDR] === v)).toEqual([]);
 
     await mark(page, "storm-unresolvable");
-    for (const a of dropped) {
-      const [id, x, y] = a.split(":").map(Number);
-      await pushNotifyDelivered(page, [[id, x, y, 300]]);
+    for (const v of rates) {
+      const [id, x, y] = RATE_ADDR.split(":").map(Number);
+      await pushNotifyDelivered(page, [[id, x, y, v]]);
       await page.waitForTimeout(150);
     }
     await waitQuiet(page, 1500);
@@ -610,7 +601,7 @@ test.describe("T5 drop", () => {
     const unregFirst = firstReconcileReads(t1, stormAt);
     const unregWall = doneAt - stormAt;
 
-    // Arm 2 — same burst, addresses that resolve. Three distinct node:name pairs, so
+    // Arm 2 — same burst, addresses that resolve to a node. Three distinct node:name pairs, so
     // the MAX_CONCENTRATION escalation (measured on its own below) is not what is being
     // priced here: all five are direct params, which apply with no read at all.
     await mark(page, "storm-registered");
@@ -689,15 +680,15 @@ test.describe("T5 drop", () => {
     expect((await notifyDropsOf(page)).length - dropsBefore).toBe(UNREGISTERED.length);
     expect(refusedReads).toEqual([]);
 
-    // PINNED. Five notifies the app has no index entry for are classified unknown and
-    // coalesce into ONE forced full reconcile — they do not multiply — but that one
-    // costs a whole-device read, and the 900 ms idle net then charges a second.
+    // PINNED. Five notifies the app cannot place on a node coalesce into ONE forced full
+    // reconcile — they do not multiply — but that one costs a whole-device read, and the
+    // 900 ms idle net then charges a second.
     expect(unregFirst.reads).toBeGreaterThan(500);
     expect(unregReads.length).toBeGreaterThan(unregFirst.reads); // the idle net followed
-    // The same burst on addresses that resolve is applied straight into the plan: its
-    // settle window costs no read at all. What it does still cost is the idle net,
-    // which is armed by every DELIVERED notify whatever its classification — so the
-    // price of no longer resolving is exactly one extra whole-device sweep.
+    // The same burst on addresses that resolve to a node is applied straight into the
+    // plan: its settle window costs no read at all. What it does still cost is the idle
+    // net, which is armed by every DELIVERED notify whatever its classification — so the
+    // price of having no node is exactly one extra whole-device sweep.
     expect(regSettleReads).toHaveLength(0);
     expect(regReads.length).toBeGreaterThan(500); // the idle net, and only the idle net
     expect(unregReads.length - regReads.length).toBeGreaterThan(400);
