@@ -89,7 +89,8 @@ T-1 を飛ばすと T0 の床が意味を持たない。疑似デバイスが指
 | `MAX_CONCENTRATION` | 3 | `src/core/control/follow.ts` |
 | `REFLECT_MIN_MS` | 50 ms | `src/main.ts` |
 | `IDLE_COMMIT_MS` | 300 ms | `src/ui/history.ts` |
-| `RECENT_MS` / `ECHO_MS` | 300 ms | `src/core/midi/engine.ts` |
+| `RECENT_MS` | 300 ms | `src/core/midi/engine.ts` |
+| `ECHO_MS` | 50 ms | `src/core/midi/engine.ts` |
 
 ### 定数の読み方で誤りやすい 3 点
 

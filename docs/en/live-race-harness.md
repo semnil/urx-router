@@ -92,7 +92,8 @@ Each phase-offset value sits on the edge of one of these measured constants.
 | `MAX_CONCENTRATION` | 3 | `src/core/control/follow.ts` |
 | `REFLECT_MIN_MS` | 50 ms | `src/main.ts` |
 | `IDLE_COMMIT_MS` | 300 ms | `src/ui/history.ts` |
-| `RECENT_MS` / `ECHO_MS` | 300 ms | `src/core/midi/engine.ts` |
+| `RECENT_MS` | 300 ms | `src/core/midi/engine.ts` |
+| `ECHO_MS` | 50 ms | `src/core/midi/engine.ts` |
 
 ### Three constants that are easy to read wrong
 
