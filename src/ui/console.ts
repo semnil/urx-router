@@ -2153,6 +2153,21 @@ export class Console {
     // mid-registration sees no unsub, and re-registers the same address set —
     // which on the device is unregister-then-register for every address, the
     // ~1 s stall hide() already documents.
+    //
+    // It closes that window by DISCARDING the re-scope rather than queuing it, and
+    // that is a known defect rather than a subtlety: pick tap A, then pick tap B
+    // inside A's registration (up to ~1 s), and this returns without recording that
+    // B is what is wanted. A resolves, `resubscribeMeters` keeps it because the
+    // signature still matches, and the console then shows B while the broker streams
+    // A — B's lane at the floor and its readout at "—" until some unrelated edit
+    // forces a render. Bars stuck at the floor are the reading `onMeterError` exists
+    // to prevent, and nothing fires here. It is pinned as-is by the race harness
+    // (`meter-rescope-inside-subpending-ladder`, docs/{en,ja}/live-race-harness.md),
+    // whose expectation is the defect, so a fix has to rewrite that case as a set.
+    // What closes it is one line — re-invoking `startMeters()` at the end of
+    // `resubscribeMeters`, which self-guards and no-ops when the kept signature
+    // already matches. Left out of the 2026-08-13 audit's fixes deliberately, as the
+    // one finding of the 51 triaged out; nothing has decided against it since.
     if (!this.subPending && (!this.unsub || sig !== this.subSig)) {
       this.unsub?.();
       this.unsub = null;
