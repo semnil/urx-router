@@ -121,9 +121,12 @@ export async function heldThroughBlur(page: Page, slider: Locator): Promise<void
   expect(await slider.inputValue()).toBe(dragged);
   await expect(slider).toBeDisabled();
 
-  // Focus returning is not the re-arm: the button is still down, and on the unit that is
-  // where the row picked its drag back up.
+  // Coming back releases the hold — measured safe on the shipping WKWebView: re-enabling
+  // under a still-held button does not hand the drag back. (What DID resume there was the
+  // other treatment, detaching the element and re-inserting it.) So the row is live again
+  // and the value still does not move under the held pointer.
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await expect(slider).toBeEnabled();
   await page.mouse.move(at(0.95), y);
   expect(await slider.inputValue()).toBe(dragged);
 

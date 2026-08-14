@@ -34,6 +34,7 @@ import {
   el,
   holdAppInert,
   holdInertOnBlur,
+  onInertHoldsEnd,
   settingsRow,
   settingsSection,
   sliderRow,
@@ -496,6 +497,9 @@ export class DynScreen {
     };
     window.addEventListener("pointerup", release);
     window.addEventListener("pointercancel", release);
+    // A repaint the press deferred is due when the LAST held row is let go, which can be
+    // after this screen's own release ran (the hold outlives the blur, not the press).
+    onInertHoldsEnd(release);
     // A window blur is the third end. The two registered above carry a pointer event;
     // this one carries none, so it needs the ender the gesture left behind. Measured
     // 2026-08-14 on Chromium and on the shipping WKWebView: losing the foreground with
@@ -504,7 +508,13 @@ export class DynScreen {
     // every later move straight to them. console.ts's trackDrag carries the readings.
     // Not `capture: true`: that would also catch the cap's and the canvas's own element
     // blur, which happens whenever focus moves inside the screen.
-    window.addEventListener("blur", release);
+    //
+    // The blur ends the GESTURES this view runs (the cap, the plot) but does not clear
+    // `grabbed`: the press is still in flight, and a rebuild under it would hand the
+    // still-held pointer a live control — which is the state `holdInertOnBlur` exists to
+    // prevent for the value rows. The deferral therefore lasts as long as the press, which
+    // is what it meant before the blur was added as an end at all.
+    window.addEventListener("blur", () => this.endDrag?.());
   }
 
   isOpen(): boolean {

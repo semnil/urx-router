@@ -139,7 +139,7 @@ import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
 import { setLevelText } from "./glyph";
-import { holdInertOnBlur, wheelStep } from "./dom";
+import { holdInertOnBlur, isHoldingInert, wheelStep } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import type { DynKind } from "./dyn-registry";
 import {
@@ -265,7 +265,10 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   // `focusout`, and on `change`, which is what a picker dismissal produces.
   const openPicker = (): boolean =>
     document.activeElement instanceof HTMLSelectElement && host.contains(document.activeElement);
-  const busy = (): boolean => composing || openPicker();
+  // A row held inert is the third kind of in-flight input a rebuild destroys, and the
+  // worst of the three: replacing it hands the still-held pointer a live control, which
+  // is the state the hold exists to prevent. Same seam, one more reason.
+  const busy = (): boolean => composing || openPicker() || isHoldingInert();
   host.addEventListener("compositionstart", () => {
     composing = true;
   });

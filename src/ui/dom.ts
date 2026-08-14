@@ -226,48 +226,123 @@ export function holdInertOnBlur(
   opts: { live?: () => HTMLInputElement | null; beforeDisable?: () => void } = {},
 ): void {
   input.addEventListener("pointerdown", (e) => {
-    const id = e.pointerId;
+    // The tracker is installed lazily, on the first press this helper sees — which is
+    // this one, and by then its own capture-phase listener has already been passed over.
+    // So this press registers itself; every later one arrives through the tracker.
+    trackPointers();
+    pressedPointers.add(e.pointerId);
+    let held: HTMLInputElement | null = null;
+    let focused = false;
     const onBlur = (): void => {
-      disarm();
+      // Snapshot before the commit hook: Device setup's rebuilds its panel there, and a
+      // removed element is no longer the focused one, so asking afterwards always says no.
+      focused = document.activeElement === input;
       opts.beforeDisable?.();
-      const held = opts.live?.() ?? input;
+      const row = opts.live?.() ?? input;
+      focused = focused || document.activeElement === row;
       // Already gone or already inert: the surface ended the drag its own way.
-      if (!held.isConnected || held.disabled) return;
-      const focused = document.activeElement === held || document.activeElement === input;
-      held.disabled = true;
-      const back = (ev: PointerEvent): void => {
-        // This gesture's pointer only. A second one — a finger resting while a mouse moves,
-        // a pen hovering — reports no buttons of its own, and answering it would re-arm the
-        // row while the operator is still holding it.
-        if (ev.pointerId !== id) return;
-        if (ev.type === "pointermove" && ev.buttons !== 0) return;
-        window.removeEventListener("pointerup", back);
-        window.removeEventListener("pointercancel", back);
-        window.removeEventListener("pointermove", back);
-        held.disabled = false;
-        const now = opts.live?.() ?? held;
-        // Only if nothing else took focus meanwhile: the press that ends the hold is often
-        // the operator's next gesture on another control, and stealing focus back from it
-        // puts their arrow keys on a plan value they are no longer looking at.
-        const idle = document.activeElement === null || document.activeElement === document.body;
-        if (focused && idle && now.isConnected && !now.disabled) now.focus();
-      };
-      window.addEventListener("pointerup", back);
-      window.addEventListener("pointercancel", back);
-      window.addEventListener("pointermove", back);
+      if (!row.isConnected || row.disabled) return;
+      row.disabled = true;
+      held = row;
+      inertHolds++;
     };
-    // An ordinary release needs none of this: the engine ends its own drag, and doing it
-    // here would leave the row disabled after every finished gesture — the re-arming
-    // listener above is added during that pointerup's dispatch and never sees it.
-    const disarm = (): void => {
+    const done = (): void => {
       window.removeEventListener("blur", onBlur);
-      window.removeEventListener("pointerup", disarm);
-      window.removeEventListener("pointercancel", disarm);
+      window.removeEventListener("focus", done);
+      pressEnded.delete(done);
+      if (!held) return;
+      held.disabled = false;
+      inertHolds--;
+      const now = opts.live?.() ?? held;
+      held = null;
+      // Only if nothing else took focus meanwhile: the press that ends the hold is often
+      // the operator's next gesture on another control, and stealing focus back from it
+      // puts their arrow keys on a plan value they are no longer looking at.
+      const idle = document.activeElement === null || document.activeElement === document.body;
+      if (focused && idle && now.isConnected && !now.disabled) now.focus();
+      // A repaint the surface deferred while this was held is now due.
+      if (inertHolds === 0) for (const fn of [...holdsEnded]) fn();
     };
     window.addEventListener("blur", onBlur);
-    window.addEventListener("pointerup", disarm);
-    window.addEventListener("pointercancel", disarm);
+    // The window coming back is the second release, and the one that cannot strand a row.
+    // Counting pointers answers "is the press over" from the events, but a release the
+    // window never hears is never counted — a mouse corrects itself on the next hover
+    // move, a touch id is never reused and would leave the row inert with nothing to
+    // clear it. A hold only ever begins with a blur, so returning to the app is on the
+    // path to using that row again, which makes this the one signal that always arrives.
+    //
+    // Safe because re-enabling under a still-held button does not hand the drag back:
+    // measured 2026-08-14 in Chromium and WebKit, and confirmed by hand on the shipping
+    // WKWebView (hold through the switch, return still holding, keep moving — the value
+    // stayed put). That reading is what this release rests on; the detach treatment,
+    // which DID resume there, is why it was worth measuring rather than assuming.
+    window.addEventListener("focus", done);
+    pressEnded.add(done);
   });
+}
+
+/** Pointers the app currently believes are down, app-wide, and what to run when none are.
+ *
+ * One place answers "is the gesture over", rather than each hold reading the events for
+ * itself: a rule per hold has to decide what to make of a SECOND pointer — a finger
+ * resting while a mouse drags, a pen hovering — and the two ways to get that wrong are
+ * symmetric. Answer its events and the hold ends while the operator is still holding;
+ * ignore them by id and a release that never arrives strands the row, since a touch id is
+ * never reused. Counting needs neither judgement. */
+const pressedPointers = new Set<number>();
+const pressEnded = new Set<() => void>();
+/** Rows held inert right now. Surfaces defer their repaints while this is above zero: a
+ *  rebuild would replace the row under the pointer with a live one. */
+let inertHolds = 0;
+const holdsEnded = new Set<() => void>();
+let trackingPointers = false;
+
+function trackPointers(): void {
+  if (trackingPointers) return;
+  trackingPointers = true;
+  const drop = (id: number): void => {
+    if (!pressedPointers.delete(id) || pressedPointers.size > 0) return;
+    for (const fn of [...pressEnded]) fn();
+  };
+  // Capture phase, so the count is right before any element's own handler reads it.
+  window.addEventListener("pointerdown", (e) => void pressedPointers.add(e.pointerId), true);
+  window.addEventListener("pointerup", (e) => drop(e.pointerId), true);
+  window.addEventListener("pointercancel", (e) => drop(e.pointerId), true);
+  // A move reporting no buttons proves that pointer is not pressed — the release the
+  // window never heard. Mice and pens report it on the next hover; touch does not, which
+  // is why a touch release lost outside the window still needs the operator to press
+  // again (see the hold's own note in the docs).
+  window.addEventListener("pointermove", (e) => void (e.buttons === 0 && drop(e.pointerId)), true);
+}
+
+/** Forget every pointer this believes is down. For suites: a case that presses without
+ *  releasing leaves an id behind, and the next case's release then finds the set non-empty
+ *  and holds a row it should have let go — the same shape as the lost release this models,
+ *  arriving from the previous test instead. Paired with the fixtures' `restore`, the way
+ *  `resetSettingsCache` is. */
+export function resetPointerTracking(): void {
+  pressedPointers.clear();
+  // The rest is module state with the same lifetime problem: a case that presses and
+  // never releases leaves its releaser and its hold behind, and a surface built in one
+  // case leaves the repaint hook it registered. jsdom's window outlives them all.
+  pressEnded.clear();
+  holdsEnded.clear();
+  inertHolds = 0;
+  // The listeners go too: a suite that takes back what the code under test registered on
+  // `window` (`listener-scope.test-util`) removes these along with everything else, and a
+  // tracker that believes it is installed while its listeners are gone answers nothing.
+  trackingPointers = false;
+}
+
+/** Is any row held inert? Surfaces ask before rebuilding: replacing a held row hands the
+ *  still-held pointer a live control, which is the state the hold exists to prevent. */
+export function isHoldingInert(): boolean {
+  return inertHolds > 0;
+}
+
+/** Run `fn` when the last hold ends, so a surface can land the repaint it deferred. */
+export function onInertHoldsEnd(fn: () => void): void {
+  holdsEnded.add(fn);
 }
 
 /** How close a floating popover may come to the window edge, on either axis. */

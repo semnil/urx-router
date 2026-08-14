@@ -447,9 +447,14 @@ problem in three ways, each measured:
 | Detach + re-insert | Ends the drag — but only until focus returns. On the unit the row **resumed** under the still-held button |
 | `disabled` | Ends it, and cannot be re-acquired while it lasts |
 
-So a row that loses the window is disabled, and stays disabled **until the button comes up** — a
-`pointerup`, a `pointercancel`, or a `pointermove` reporting no buttons, which is the release the window
-never heard. Not until focus returns: that was tried and is what let the row resume. Focus is restored
+So a row that loses the window is disabled, and stays disabled **until the press is over or the window
+comes back** — a `pointerup`, a `pointercancel`, a `pointermove` reporting no buttons (the release the
+window never heard), or the app regaining focus. Ending it at the blur alone was not enough: with the
+DETACH treatment the row resumed under the still-held button when focus returned, which is what sent that
+treatment back. Disabling does not resume — measured in both engines and confirmed by hand on the unit —
+which is what makes the return a safe release, and it is the one signal that always arrives: a release
+lost outside the window is never counted, and a touch pointer id is never reused, so without it a row
+could stay inert with nothing left to clear it. Focus is restored
 with the row, since disabling drops it. It costs nothing on screen: the slider is authored
 (`appearance: none`, its own track and thumb), so the engines have nothing of their own to dim — the row
 shot enabled and disabled is byte-identical in both.
