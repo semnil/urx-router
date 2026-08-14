@@ -651,8 +651,8 @@ The required workflows run in parallel, so a merge waits for the slowest of them
 this one. Playwright shards by case count and the expensive tiers land together, so its wall clock is
 the slowest shard's rather than a third of the machine time above. No **runner** reading is kept for it
 — a CI clock moves between runs, so a figure written down is a figure that was true once. The local
-one, taken on a known machine in isolation, stays in its own table above and is the only wall clock
-this document states.
+one, taken on a known machine in isolation, stays in its own table above, under the line that claims
+that table as its single home.
 
 `race.yml` carries **no trigger filter at all**, so `detect` runs on every pull request. That is what
 makes `race-required` usable as a merge condition: a workflow skipped by a trigger filter reports no
@@ -1421,9 +1421,9 @@ fixed or withdrawn.
   of those cases ran; the remainder are skipped by their own guards and cost nothing, so the seconds are
   over what executed.) It is not a scheduling accident: T1 (overtake) and T2 (shape change) are the tiers whose
   cases provoke whole-device readbacks of ~800 sequential commands and hold a barrier through them, 33-48 s
-  each, and being adjacent in the ordering they land together. The workflow's wall clock is the slowest
-  shard, so this costs about **2 minutes per release run** (6.4 minutes against the ~4.2 an even split by
-  duration would give). The reading this replaced had the same shape — 749 / 253 / 315 s — so the
+  each, and being adjacent in the ordering they land together. The workflow waits for the slowest shard,
+  so the imbalance costs **about half again** what an even split by duration would (752 s against the
+  492 s a third of 1475 gives). The reading this replaced had the same shape — 749 / 253 / 315 s — so the
   imbalance is a property of the ordering rather than of any one run. Left as it is — a
   release runs the harness once — and recorded because the obvious fix, raising the shard count, lowers the
   maximum without addressing the imbalance, while assigning files to shards by hand makes the split
