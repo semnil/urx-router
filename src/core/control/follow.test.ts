@@ -354,6 +354,62 @@ describe("DeviceFollow", () => {
     expect(h.addrs).toEqual([ADDR, [140, 0, 0]]);
   });
 
+  // `refresh()` is what a flush calls at its end when its capture moved the address set
+  // (live.ts), fire-and-forget: `void follow?.refresh()`. Three things separate it from
+  // `begin()`, and none of the cases above can see any of them.
+  it("refreshes an ended session into nothing, rather than restarting it", async () => {
+    const follow = followFor();
+    await follow.begin();
+    const before = h.subscribeCalls;
+    follow.end();
+    await follow.refresh();
+    // `begin()` sets `active` back to true, so a refresh spelled that way registers a
+    // stream for a session that is over — and the flush that asks cannot know it ended.
+    expect(h.subscribeCalls).toBe(before);
+    expect(follow.isActive()).toBe(false);
+  });
+
+  it("leaves a registration still in flight belonging to this session", async () => {
+    // The generation is how an in-flight registration tells "my session ended" from
+    // "still mine", so a refresh that bumped it would make begin()'s call discard its
+    // own handle with the session live. Held in flight, refreshed on top: the first
+    // call's handle is installed when it arrives, which `end()` is what shows — it
+    // releases the handle it holds and nothing else has one.
+    let release!: (v: () => void) => void;
+    const stalled = new Promise<() => void>((r) => (release = r));
+    const firstUnsub = vi.fn();
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async (addrs, onUpdate) => {
+      void real(addrs, onUpdate);
+      return stalled;
+    });
+
+    const follow = followFor();
+    const first = follow.begin();
+    await follow.refresh();
+    release(firstUnsub);
+    await first;
+    follow.end();
+    expect(firstUnsub).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops and reports when a re-registration fails", async () => {
+    // The rule a failed reconcile takes, on the path a structural edit now reaches every
+    // time. `subscribe` releases the old handle BEFORE it awaits, so a throw leaves the
+    // object with none: a session that stayed active here would be deaf for the rest of
+    // its life with nothing said about it.
+    let addrs: Array<[number, number, number]> = [ADDR];
+    const onError = vi.fn();
+    const follow = followFor({ addrs: () => addrs, onError });
+    await follow.begin();
+    addrs = [ADDR, [140, 0, 0]]; // moved, so the identity check does not short-circuit
+    h.failNext = true;
+    await follow.refresh(); // resolves rather than rejecting: its caller has returned
+    expect(onError).toHaveBeenCalledWith("subscribe rejected");
+    expect(follow.isActive()).toBe(false);
+  });
+
   it("stops and reports when a reconcile fails", async () => {
     const onError = vi.fn();
     const follow = followFor({

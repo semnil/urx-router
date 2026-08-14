@@ -724,6 +724,31 @@ describe("LiveSync follow re-registration", () => {
     expect(seen).toEqual(["refetch(reregistered=false)", "reregister"]);
   });
 
+  // The case above drives a refetch-only flush, so it cannot see a second ask placed on the
+  // converge's own capture — which is the same hazard from the other side, and reachable: both
+  // params dirty in one window is one gesture away (a mode change re-authors the strip). The
+  // converge runs first and the refetch after it, so an ask sitting on the converge's capture
+  // lands while the refetch's settle is waiting for the notifies a re-registration drops.
+  it("does not re-register between the converge and the refetch of one flush", async () => {
+    const plan = basePlan();
+    const seen: string[] = [];
+    const live = liveFor(
+      plan,
+      async () => {
+        seen.push(`refetch(reregistered=${seen.includes("reregister")})`);
+        return clonePlanState(plan);
+      },
+      () => seen.push("reregister"),
+    );
+    live.begin();
+    setCh1CompEqType(plan, COMP_EQ_SSMCS); // converge
+    setCh1Morphing(plan, 60); // refetch, same window
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(seen).toEqual(["refetch(reregistered=false)", "reregister"]);
+  });
+
   // A flush that captured nothing asks for nothing: an ordinary fader move cannot have moved
   // the address set, and the callee's own comparison should not be the only thing standing
   // between a drag and a re-registration per window.
@@ -738,6 +763,35 @@ describe("LiveSync follow re-registration", () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1); // the flush really ran
     expect(calls).toEqual([]);
+  });
+
+  // …and it is the LATCH that keeps it quiet, not the gesture. Once a flush has captured, a
+  // flush that captures nothing must still ask nothing — otherwise every window for the rest
+  // of the session rebuilds the address list and hands it to the callee, once per step of a
+  // drag, which is the cost the case above says the callee's comparison should not be alone in
+  // absorbing.
+  it("asks once per capture, not once per flush after one", async () => {
+    const plan = basePlan();
+    const calls: string[] = [];
+    const live = liveFor(
+      plan,
+      async () => clonePlanState(plan),
+      () => calls.push("reregister"),
+    );
+    live.begin();
+    setCh1CompEqType(plan, COMP_EQ_SSMCS);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(calls).toEqual(["reregister"]);
+
+    const sentBefore = vi.mocked(vdSet).mock.calls.length;
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(vi.mocked(vdSet).mock.calls.length).toBeGreaterThan(sentBefore); // the second flush ran
+    expect(calls).toEqual(["reregister"]);
   });
 });
 
