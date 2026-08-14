@@ -742,6 +742,27 @@ export type EmittedDynField = DynField & { name: ParamName };
  *  filter's three values are prefixed to keep them apart from the compressor's. */
 export type SsmcsFieldKey = "compDrive" | "morphing" | "outGain" | "scQ" | "scFreq" | "scGain";
 
+const SSMCS_SC_PREFIX = /^sc[A-Z]/;
+
+/** Whether a flattened SSMCS key belongs to the side-chain filter rather than the
+ *  compressor — which is what decides the sub-object a read and a write go to. */
+export const isSsmcsScKey = (key: string): boolean => key === "scOn" || SSMCS_SC_PREFIX.test(key);
+
+/**
+ * The plan key a flattened SSMCS key is stored under.
+ *
+ * Only the screen sees the prefixed spelling; the plan, the writer and a control id all
+ * know these as `on` / `q` / `freq` / `gain` under `sc`. Stating the translation once is
+ * what this exists for — spelled out per call site, the MIDI catalog translated it for
+ * the control ID and not for the plan key, so a mapped side-chain Q wrote `ssmcs.sc.scQ`.
+ * Nothing reads that key: the value never reached the wire, the screen never moved, and
+ * `get` read the same private key back, so the controller's feedback confirmed it.
+ */
+export function ssmcsPlanKey(key: string): string {
+  if (key === "scOn") return "on";
+  return SSMCS_SC_PREFIX.test(key) ? key[2].toLowerCase() + key.slice(3) : key;
+}
+
 // GATE detail (29-33) and COMP detail (35-40, the COMP->EQ comp bank). Ranges and
 // defaults in plan units (dB / ms / N:1); the broker bounds come from the encoders.
 // The COMP knee (37) is a separate enum dropdown, not a slider, so it is not here.

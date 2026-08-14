@@ -28,8 +28,10 @@ import {
   eqBandFields,
   eqBandHasType,
   hasEq,
+  isSsmcsScKey,
   ssmcsEqBandFields,
   ssmcsEqBandHasQ,
+  ssmcsPlanKey,
   EQ_BAND_NAMES,
   SSMCS_EQ_BAND_NAMES,
   ssmcsCompFields,
@@ -75,15 +77,10 @@ export const SSMCS_COMP_SCOPE = `${SSMCS_SCOPE}.comp`;
 export const SSMCS_SC_SCOPE = `${SSMCS_SCOPE}.sc`;
 export const ssmcsEqBandScope = (band: SsmcsEqBandName): string => `${SSMCS_SCOPE}.eq.${band}`;
 
-/** The catalog param one SSMCS field key is addressed by. The screen flattens the
- *  side-chain filter onto the compressor's record and prefixes its three values to keep
- *  them apart; in an id the scope does that job, as it does for a send's level. */
-export function ssmcsControlParam(key: string): ControlParam {
-  if (key === "scQ") return "q";
-  if (key === "scFreq") return "freq";
-  if (key === "scGain") return "gain";
-  return key as ControlParam;
-}
+/** The catalog param one SSMCS field key is addressed by. Both this and the plan key a
+ *  write lands on come from ONE translation (`ssmcsPlanKey`): they were two spellings of
+ *  it, and the id took the translation while the write did not. */
+export const ssmcsControlParam = (key: string): ControlParam => ssmcsPlanKey(key) as ControlParam;
 
 /** Param tokens; the UI localizes them (i18n midi.param). */
 export type ControlParam =
@@ -438,15 +435,19 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   const ssmcsDyn = (path: readonly string[], scope: string, f: DynField): BoundControl => {
     const codec = dynCodec(f);
     const param = ssmcsControlParam(f.key);
+    // The SAME translation the id took: the plan stores the side-chain filter's values
+    // un-prefixed, and reading one spelling while writing the other is invisible from
+    // inside the control (its own `get` reads back what its `set` wrote).
+    const planKey = ssmcsPlanKey(f.key);
     return {
       id: controlId(id, param, scope),
       node: id,
       param,
       scope,
       kind: "continuous",
-      get: () => codec.get(typeof ssmcsAt(path)[f.key] === "number" ? (ssmcsAt(path)[f.key] as number) : f.def),
+      get: () => codec.get(typeof ssmcsAt(path)[planKey] === "number" ? (ssmcsAt(path)[planKey] as number) : f.def),
       set: (v) => {
-        writeSsmcs(path, { [f.key]: codec.set(v) });
+        writeSsmcs(path, { [planKey]: codec.set(v) });
         return true;
       },
     };
@@ -478,7 +479,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     out.push(ssmcsFlag([], undefined, "on", "ssmcsOn", SSMCS_INITIAL.on));
     for (const f of ssmcsMainFields()) out.push(ssmcsDyn([], SSMCS_SCOPE, f));
     for (const f of ssmcsCompFields()) {
-      const sc = f.key.startsWith("sc");
+      const sc = isSsmcsScKey(f.key);
       out.push(ssmcsDyn(sc ? ["sc"] : ["comp"], sc ? SSMCS_SC_SCOPE : SSMCS_COMP_SCOPE, f));
     }
     out.push(ssmcsFlag(["sc"], SSMCS_SC_SCOPE, "on", "sideChain", SSMCS_INITIAL.sc.on));

@@ -5,6 +5,7 @@ import type { Plan } from "../plan";
 import { ensureFixedConnections, LEVEL_OFF_DB } from "../plan";
 import { ref } from "../../models/types";
 import { COMP_EQ_SSMCS, EQ_TYPE_PASS } from "../control/params";
+import { planToCommands } from "../control/translate";
 import { bindControl, controlId, listControls, parseControlId } from "./controls";
 import { wireRaw, wireSteps } from "./mapping";
 
@@ -392,6 +393,56 @@ describe("channel tuning screen parameters", () => {
     expect(bindControl(model, plan, "ch1/threshold@comp")).toBeNull();
     expect(bindControl(model, plan, "ch1/gain@eq.low")).toBeNull();
     expect(bindControl(model, plan, "ch1/threshold@gate")).not.toBeNull();
+  });
+});
+
+/**
+ * A write this catalog accepts reaches the wire.
+ *
+ * Everything above asks whether an id resolves and whether a value round-trips through
+ * the control's own `get`, and BOTH are satisfied by a control that reads and writes one
+ * key of its own that nothing else knows about. The value then never reaches
+ * `planToCommands`, the screen never moves, and the controller's own feedback confirms
+ * the position it invented — because the feedback reads the same private key back.
+ *
+ * That is what the SSMCS side-chain controls did: the screen flattens `ssmcs.sc.q` onto
+ * the key `scQ` to keep it apart from the compressor's rows, and the catalog translated
+ * that back for the ID but not for the PLAN KEY. Every assertion above passed. So this
+ * one is stated from OUTSIDE the catalog — move the control, and require the commands
+ * the plan implies to differ.
+ */
+describe("every writable control reaches the device", () => {
+  /** Move to a value the control is not already at, so a no-op cannot pass. A toggle
+   *  has to be flipped rather than nudged: it reads `>= 0.5`, so 0 -> 0.4 writes the
+   *  state it already had and every toggle would report itself inert. */
+  const away = (c: { kind: string; get(): number }): number =>
+    c.kind === "toggle" ? 1 - c.get() : c.get() > 0.5 ? c.get() - 0.4 : c.get() + 0.4;
+  const shape = (list: ReturnType<typeof planToCommands>): string =>
+    list.map((c) => `${c.name}:${c.x}:${c.y}=${c.vdValue}`).join(",");
+
+  it.each(["URX22", "URX44", "URX44V"] as const)("on %s, with both COMP/EQ banks in play", (modelId) => {
+    const m = getModel(modelId);
+    const p = defaultPlan(modelId);
+    ensureFixedConnections(m, p);
+    // One mono channel into the morphing bank, so both banks' controls are listed: a
+    // plan carrying only one of them leaves the other's half of this unasked.
+    p.nodeParams.ch1 = { ...p.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+
+    const inert: string[] = [];
+    let moved = 0;
+    for (const desc of listControls(m, p)) {
+      const c = bindControl(m, p, desc.id)!;
+      const before = shape(planToCommands(m, p));
+      // A control the device owns refuses the write outright; that refusal is its own
+      // assertion elsewhere, and it is not what this one is about.
+      if (!c.set(away(c))) continue;
+      moved++;
+      if (shape(planToCommands(m, p)) === before) inert.push(desc.id);
+    }
+    // The positive control: a run that wrote nothing would report no inert control
+    // either, and read exactly like a pass.
+    expect(moved).toBeGreaterThan(0);
+    expect(inert).toEqual([]);
   });
 });
 

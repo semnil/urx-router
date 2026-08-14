@@ -25,10 +25,12 @@ import { COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS, SWEET_SPOT_DATA_OPTIONS } from ".
 import { COMP_EQ_COMP_FIRST } from "../core/control/params";
 import {
   channelDynamics,
+  isSsmcsScKey,
   ssmcsCompFields,
   ssmcsEqBandFields,
   ssmcsEqBandHasQ,
   ssmcsMainFields,
+  ssmcsPlanKey,
   SSMCS_EQ_BAND_NAMES,
 } from "../core/control/translate";
 import type { DynField, SsmcsEqBandName } from "../core/control/translate";
@@ -488,14 +490,15 @@ export const SSMCS_COMP_DYN: DynProcessor = {
     return { ...v.comp, scOn: v.sc.on, scQ: v.sc.q, scFreq: v.sc.freq, scGain: v.sc.gain };
   },
   // The compressor and its side-chain filter are two sub-objects, so the flat record the
-  // rows edit is split back apart by the prefix that kept them apart.
+  // rows edit is split back apart by the prefix that kept them apart — through the same
+  // translation the catalog uses, not a second spelling of it.
   patch: (ctx, patch) => {
     const s = ssmcsOf(ctx);
     const comp: Record<string, number> = { ...(s.comp ?? {}) };
     const sc: Record<string, number | boolean> = { ...(s.sc ?? {}) };
     for (const [k, v] of Object.entries(patch)) {
       if (k === "scOn") sc.on = v === true;
-      else if (k.startsWith("sc")) sc[k.slice(2).toLowerCase()] = Number(v);
+      else if (isSsmcsScKey(k)) sc[ssmcsPlanKey(k)] = Number(v);
       else comp[k] = Number(v);
     }
     return { ssmcs: { ...s, comp, sc } } as NodeParams;
@@ -508,7 +511,7 @@ export const SSMCS_COMP_DYN: DynProcessor = {
   // filter, and the knee is an enum the catalog does not carry.
   controlId: (ctx, key) => {
     if (key === "knee") return null;
-    const sc = key === "scOn" || key.startsWith("sc");
+    const sc = isSsmcsScKey(key);
     const param = key === "scOn" ? "sideChain" : ssmcsControlParam(key);
     return controlId(ctx.nodeId, param, sc ? SSMCS_SC_SCOPE : SSMCS_COMP_SCOPE);
   },
