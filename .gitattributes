@@ -1,0 +1,6 @@
+# A CRLF checkout turns every .sh here into a hard failure: bash reads the trailing carriage
+# return as part of the last word, so `set -u` is reached as `set -` and the script exits 2
+# before it parses a pattern. Every input answers the same way, which the callers report as
+# this check being broken rather than as a verdict on the tag — fail-closed, but on the
+# Windows checkout only, which is the one place nothing else here would catch it.
+*.sh text eol=lf
