@@ -359,20 +359,25 @@ export const PARAMS = {
    *  so it rides the string-write path (vd_set_str / vd_get_str), not the numeric
    *  catalog. Confirmed by live read (91:0:0 = "0001").
    *
-   *  NOT marked `sideEffect`, and the reason is now ONE thing rather than two. Selecting a
-   *  preset does recompute what SSMCS_MORPHING recomputes — measured on a URX44V (2026-08-15)
-   *  rather than assumed to match it: a preset write announced the same seventeen addresses
-   *  `SSMCS_MORPHING.drives` names, plus `93` itself, which it takes back to 0. So the plan
-   *  holds pre-preset values for eighteen addresses the unit has just moved, and no repair
-   *  runs; a later converge reads that divergence and writes the plan's copies back, undoing
-   *  the preset the way it would have undone a morph.
+   *  NOT marked `sideEffect`, and what is missing is now the PATH rather than the facts.
+   *  Measured on a URX44V (2026-08-15) rather than assumed to match the morph: a preset write
+   *  recomputes the same seventeen addresses `SSMCS_MORPHING.drives` names and takes `93`
+   *  itself back to 0, and its own address IS announced — first, 0.023 ms ahead of those
+   *  eighteen with none ahead of it. So it has the same shape every other refetch head has,
+   *  including the settle boundary they end on. (A run that reported no echo had not
+   *  SUBSCRIBED to 91, so the filter that keeps another client's traffic out was answering;
+   *  a zero from an address nobody registered says nothing at all.)
    *
-   *  What is still missing is the path, not the fact: `planToNameWrites` emits no owning node,
-   *  and live.ts's name loop consults neither CONVERGE nor REFETCH, so a declaration here
-   *  would look like a fix and do nothing. The measurement also left the eventual repair a
-   *  question this catalog cannot answer — a string write is NOT echoed on its own address
-   *  (the eighteen arrived, its own did not), so the settle boundary every other refetch head
-   *  ends on does not exist for this one. */
+   *  What it does NOT leave is an unrepaired plan. The dependent notifies are not echoes of
+   *  anything we wrote, so device-follow takes them, and eighteen distinct controls is past
+   *  MAX_CONCENTRATION — it escalates to a full reconcile once the burst settles (follow.ts).
+   *  The defect is narrower and is a RACE: a converge that runs before that reconcile reads a
+   *  plan still holding pre-preset values and writes them back, undoing the preset the way it
+   *  would have undone a morph before `drives` existed.
+   *
+   *  The path is what a declaration alone cannot supply: `planToNameWrites` emits no owning
+   *  node, and live.ts's name loop consults neither CONVERGE nor REFETCH, so marking this
+   *  would look like a fix and do nothing. */
   SWEET_SPOT_DATA: { id: 91, encoding: "raw" },
   // CH → MIX/FX bus send. The actual ids are computed per channel/bus in
   // translate.ts; these anchors are the MIX1 mono slot and only name the command
