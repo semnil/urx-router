@@ -411,10 +411,35 @@ display column's own bar, which on the EQ face selects a band.
 
 Moving between faces does not close the screen. The three faces are one piece of work on one channel —
 turn Morphing, read the reduction, touch Mid, go back to Comp Drive — and closing and reopening between
-each step would rebuild the modal and hand the meter slot back and take it again. The panel's height
-may differ per face (4 / 8 / 4 rows); the host's "no row is ever removed" invariant forbids an *edit*
-moving the layout under the pointer, and the segment that moves between faces sits above the grid, so
-nothing under the pointer is replaced by pressing it.
+each step would rebuild the modal and hand the meter slot back and take it again.
+
+**The three faces are one height, with their display panels at one top edge.** The segment that moves
+between them is in the title row, so a modal that resized would move the very control that was just
+pressed, and a panel starting at a different y makes the plot jump under the eye reading it. Neither is
+free: the faces carry 4 / 8 / 4 rows, and MAIN has no display bar where COMP and EQ do. Both are
+reserved rather than tuned. The bar's row is built by the same builder the other faces use, hidden with
+`visibility` so it keeps its box and leaves the accessibility tree; the grid takes a `min-height`
+measured from the tallest face (the COMP face's eight rows: 489.4 px in English, 497.4 px in Japanese,
+Chromium/macOS at 960–1440 px windows) with the headroom a wider font stack takes.
+
+**The reserve yields, and the grid scrolls under it.** `.consent-box` clamps itself to the viewport
+and hides its overflow, and the action row carrying Close is its last child, so a floor the box cannot
+honour pushes Close out of sight — measured at the 960x640 minimum window (`tauri.conf.json`), 68 px
+past the box's own edge on each of the six readings (MAIN, COMP and EQ, in both languages). So the
+floor is `min(520px, calc(100vh - 211px))`, where 211 px is the modal's chrome around the grid plus
+the 48 px the box keeps clear of the viewport, and the grid scrolls below it rather than clipping rows
+that then have nowhere to go. The equal height survives the yield: at 640 px every face is the clamped
+592 px, because the scroll absorbs what differs.
+
+Two more consequences follow. The faced bank's hint line gets three lines instead of the usual two —
+the MAIN line has to name Comp Drive, Sweet Spot Data and Morphing, which took a third line in Japanese
+at the 960 px minimum and was silently cut — and its EQ face keeps its plot beside its lanes all the
+way down to 960 px where the shipped 4-band screen wraps instead, since inside a bank that wrap is a
+269 px change on one of three faces. Measured after: **683 px with a panel top of 141 px** at viewport
+heights of 731 px and up, **592 px with the same 141 px** at the 640 px minimum, across 960 / 1000 /
+1100 / 1280 / 1440 px widths in both languages, with Close inside the box at each. `e2e/ssmcs.spec.ts`
+holds it at the default viewport and again at 960x640; jsdom lays nothing out, so there is nowhere
+else it could be held.
 
 **The address set is a subset relation, not an identity.** MAIN's four taps are the union of the other
 two faces', so a face change either narrows the registration or widens it back, and the same comparison
@@ -445,12 +470,31 @@ that it is the less reliable. What stays an assumption is the curvature between 
 is the same assumption the shipped COMP curve carries.
 
 - **The compressor.** Its threshold is an internal value driven by Comp Drive, and the drive adds gain
-  of its own below the knee — so that one knob moves the corner *and* lifts the output, which is what
-  the operator sees on the OUT lane. A drive of zero is not a threshold pushed out of range: it
-  disables the compressor. The knee is **asymmetric**, opening further above the threshold than below,
-  so `dyn-comp.ts`'s `KNEE_WIDTH_DB` — one symmetric width per setting — cannot express it and must not
-  be reused. The full-scale reduction annotation is read off the drawn curve with the gain terms taken
+  of its own — so that one knob moves the corner *and* lifts the output, which is what the operator
+  sees on the OUT lane. A drive of zero is not a threshold pushed out of range: it disables the
+  compressor. The knee is **asymmetric**, opening further above the threshold than below, so
+  `dyn-comp.ts`'s `KNEE_WIDTH_DB` — one symmetric width per setting — cannot express it and must not be
+  reused. The full-scale reduction annotation is read off the drawn curve with the gain terms taken
   back out, not off the asymptote, so a knee still open at 0 dBFS is labelled with what it does there.
+- **The makeup is one gain over the whole curve**, as the shipped COMP screen applies its own. What was
+  measured is what the unit does WHILE COMPRESSING — five raw points, linear, ±6 dB, with the GR meter
+  unmoved. The same run's reading below the threshold is a null result at one threshold setting, and it
+  does not separate "the makeup is off here" from "the block was not engaged here". Both cannot shape
+  one curve: a gain present on one leg and absent on the other is a step at the corner whatever is
+  drawn between the edges, and a Hard knee is 0 dB wide, so there is nothing to draw it across. Carried
+  on the compressed leg alone it put a **step** on Hard and a **peak above the plateau** on Medium —
+  22.97 px and 1.30 px between adjacent samples on a 320 px canvas at 4.44 px/dB, over a sweep where
+  515 of 2100 settings folded and every one of them needed a makeup away from 0 dB. A compressor's
+  transfer curve does neither. Which leg the unit puts it on is the open question; what settles it is
+  walking the input across the corner and reading `111 - 108` on both sides.
+- **The knee's shape** is a cubic through both measured edges carrying each leg's own slope — 1 below,
+  1/ratio above — with the two slopes limited to the cubic's monotone region first. Both halves earn
+  their place. A quadratic cannot do it at all: its endpoint is fixed by its two slopes, so on an
+  asymmetric knee it lands `(1 - 1/ratio)(up - down)/2` from the asymptote, 0.84 dB at the factory
+  settings, drawn as a vertical step at the upper edge. An unlimited cubic overshoots: a Medium knee at
+  infinite ratio leaves the 1:1 leg's slope 3.08x the secant through the knee, past the 3 the monotone
+  region allows. The limit scales both slopes by `3/hypot`, which is 1 wherever the pair is already
+  inside the region, so every knee that does not need it still joins its legs exactly.
 - **The EQ.** Three fixed bands: LOW shelving, MID peaking, HIGH shelving. The shelf convention is the
   4-band model's — the nominal frequency is the point 3 dB below the plateau — and the peaking Q is
   **not**: the 4-band's "the unit's Q is twice the biquad Q" was refuted here, and the two factors sit
@@ -627,11 +671,18 @@ per address, so a batch carrying more than one frame for an address keeps only t
 | GRAPH inspector, GATE / SSMCS / COMP / EQ section | A full-width button below the ON/OFF toggle, its label centred and a caret at the trailing edge |
 | CONSOLE strip | A narrow chip beside each processor chip the strip has, labelled `▸` |
 
-In SSMCS mode the same four sections and the same four chips are there, and what changes is which
-screen each opens: the SSMCS section opens the MAIN face, and the COMP and EQ sections open the COMP
-and EQ faces of the same bank. They keep the shipped screens' own labels ("Comp screen", "EQ screen")
-rather than gaining their own: the launcher sits in the same section and on the same chip, and a
-channel never carries both banks, so the label names exactly one thing on it.
+In SSMCS mode the inspector keeps all four sections and hands each launcher over: the SSMCS section
+opens the MAIN face, and the COMP and EQ sections open the COMP and EQ faces of the same bank. They
+keep the shipped screens' own labels ("Comp screen", "EQ screen") rather than gaining their own: the
+launcher sits in the same section, and a channel never carries both banks, so the label names exactly
+one thing on it.
+
+**The CONSOLE does not hand its chips over.** The strip carries one opener for the whole bank, beside
+the SSMCS chip, and its COMP and EQ chips read exactly as they do on a channel with no strip at all.
+The bank's other two faces are reached from the segment inside the screen, which is where a reader who
+has the screen open already looks for them; a second and third entry point on the strip would put
+three openers on one channel for one modal. What it costs is that the two faces have no direct route
+from the CONSOLE — one press more than the inspector needs.
 
 Both marks point right and both say the same thing, but they are drawn differently on purpose: each
 belongs to the family of the surface it sits on. The inspector's is built exactly like the section
@@ -657,10 +708,13 @@ had 0.9 px of slack at the old 252 px. `--head-h` is 276 px, which takes 24 px f
 every strip, including those with no chips at all. The opener is not offered where the rate has the
 EQ forced off, since the toggle beside it is read-only there.
 
-**A strip in SSMCS mode is one chip pair taller still.** The morphing strip's own master and its
-opener take a fifth row, so switching a mono channel's bank moves the head — which is why the height
-is measured per plan rather than cached per model. It moved the other way before this bank had a
-screen to open: an SSMCS channel then carried no COMP or EQ opener at all.
+**A strip in SSMCS mode is the same height.** The morphing strip's own master and its one opener stand
+exactly where COMP's and EQ's two openers stand, so the chip count does not move with the bank. The
+COMP/EQ type is still a term in the head-height cache key, for the reason the sample rate is: it
+changes what a head CARRIES, and what balances it here is a coincidence of counts rather than a rule.
+It has moved the head in both directions before — an SSMCS channel carried no opener at all until this
+bank had a screen, then three of them for one modal — and the key is what kept a clipped head off the
+screen through both.
 
 ## MIDI assignment
 
@@ -773,7 +827,7 @@ capture.
 | Leaving the COMP knee out of the curve | The selector would change nothing on screen — the same failure the gate's output axis already cost us. Measuring the widths was cheaper than shipping a control with no feedback |
 | A second instance of the screen for COMP | Both would bind the same modal host and the same single meter slot; the processor is chosen per open instead |
 | T / R / G grips dragged on the COMP curve, as the unit does it | Built, then removed. A press that missed a grip fell through to the threshold drag beneath it, so pressing the gain grip moved the threshold; and the grips were drawn clamped inside the plot while hit-tested at their true position, which put the two ~13 px apart at the axis ends. Underneath both defects, three grips on one plot cannot tell which value a press meant |
-| All eighteen SSMCS rows on one screen | The rows alone are ~18 × 42 px ≈ 756 px against `.consent-box`'s `max-height: calc(100vh - 48px)`, which is 752 px at the 800 px window floor — over before the four headings, the title and the action row are added, and into the internal scroll every shipped screen avoids |
+| All eighteen SSMCS rows on one screen | The rows alone are ~18 × 42 px ≈ 756 px against `.consent-box`'s `max-height: calc(100vh - 48px)`, which is 752 px at the 800 px default window and 592 px at the 640 px floor `tauri.conf.json` allows — over before the four headings, the title and the action row are added, and into the internal scroll every shipped screen avoids |
 | A fourth SSMCS face for the side chain, as the unit splits it | The unit splits it because its LCD is small. Eight rows fit one panel here, and the Side Chain toggle doubles as the divider the filter's three rows sit under |
 | The face switch in the display column's heading | It would take the same row as the EQ face's band bar, and again as a third bar once the COMP face has LADDER / CURVE. The title row has room and nothing to collide with |
 | A lane rack on the SSMCS MAIN face | Two plots and a rack in one column leave each plot ~152 px of drawing area at a fixed 320 px height, so the same +6 dB bell reads at three times the slope it has on the EQ face. The lanes are still subscribed and still printed as readouts without one — the host builds lane elements only when a descriptor asks for them |
