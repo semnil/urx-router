@@ -55,7 +55,7 @@ import { DynScreen } from "./dyn-screen";
 import { SSMCS_COMP_DYN, SSMCS_DYN, SSMCS_EQ_DYN } from "./dyn-ssmcs";
 import { COMP_DYN } from "./dyn-comp";
 import { EQ_DYN } from "./dyn-eq";
-import { COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
+import { COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS, COMP_KNEE_OPTIONS } from "../core/control/params";
 import { isSsmcsScKey, ssmcsCompFields, ssmcsMainFields, ssmcsPlanKey } from "../core/control/translate";
 import type { DynField } from "../core/control/translate";
 import { SSMCS_INITIAL } from "../core/plan";
@@ -184,6 +184,32 @@ describe("the MAIN face", () => {
     expect(h!.box.querySelector(".gt-ladderbox")).toBeNull();
   });
 
+  // The GR tile's peak is folded in the subscription's own callback rather than off the
+  // store, because the store is last-write-win: a batch carrying more than one frame for
+  // an address would drop all but the last before any reader saw them. This face has no
+  // lane rack, so the tile is the only place that reduction is shown — and the fold keeps
+  // the DEEPEST reduction, which is the lower number, not the later one.
+  it("holds the deepest reduction on the GR tile", async () => {
+    h!.setLive(true);
+    screen!.refresh();
+    await settleSubs();
+    const paint = (): void => {
+      for (let i = 0; i < 5; i++) h!.frame();
+    };
+    const gr = (): { value: string; peak: string } => readouts(h!.box).find((r) => r.gr)!;
+
+    // COMP GR on CH 1 is meter 110, index 0; the wire is deci-dB, so -95 is -9.5 dB.
+    feedFrame?.({ meterId: 110, x: 0, value: -95 });
+    paint();
+    expect(gr().peak).toContain("9.5");
+
+    // A shallower reduction arrives: the readout follows it, the hold does not.
+    feedFrame?.({ meterId: 110, x: 0, value: -20 });
+    paint();
+    expect(gr().value).toContain("2.0");
+    expect(gr().peak).toContain("9.5");
+  });
+
   it("writes an edit to the strip's own values", () => {
     // A value the factory capture does NOT hold, so "preserved" and "reset to factory"
     // are different readings — and read WITHOUT a fallback, or a patch that wiped the
@@ -248,10 +274,48 @@ describe("the COMP face", () => {
     expect(strip(h!).comp?.ratio).toBe(SSMCS_INITIAL.comp.ratio);
   });
 
+  // The face reuses the shipped COMP screen's own hint rather than getting one of its own,
+  // because the picture and the gesture are the same ones — the line is the same device
+  // point, said once. Asserted because that reuse is a claim the documents make and only
+  // the string itself can settle: a face with its own copy would read the same to a count.
+  it("reuses the COMP screen's curve hint, in CURVE", () => {
+    const modes = [...h!.box.querySelectorAll<HTMLButtonElement>(".gt-modes:not(.gt-faces) button")];
+    expect(modes.length).toBe(2);
+    modes[1].click(); // CURVE
+    expect(h!.box.querySelector(".gt-note")?.textContent).toBe(t().dynTuning.comp.curveHint);
+    // LADDER shows no hint: a fader cap on a meter explains itself, and the reserved box
+    // stays either way so the panel does not move.
+    modes[0].click();
+    expect(h!.box.querySelector(".gt-note")?.textContent).toBe("");
+  });
+
   it("has no threshold cap on its input meter", () => {
     // The bank's corner is driven by a value the unit never shows, so the lane rack's
     // one gesture has no value to carry — the cap element must not be built at all.
     expect(h!.box.querySelector(".gt-cap")).toBeNull();
+  });
+
+  // The knee is the one row here that is a segmented choice rather than a slider, and it
+  // is the only control on this face whose write nothing else reaches: the curve cases set
+  // the knee in the PLAN and read what was drawn, so they would pass with the segment
+  // wired to nothing. Driven from the catalogue rather than from three literals, so an
+  // option added to `COMP_KNEE_OPTIONS` is pressed the day it appears.
+  it("writes the knee the segment selected", () => {
+    const buttons = (): HTMLButtonElement[] => {
+      const row = [...h!.box.querySelectorAll<HTMLElement>(".prefs-row")].find(
+        (r) => r.querySelector(".lbl")?.textContent === t().inspector.dyn.knee,
+      )!;
+      return [...row.querySelectorAll<HTMLButtonElement>("button")];
+    };
+    expect(buttons().map((b) => b.textContent)).toEqual(COMP_KNEE_OPTIONS.map((o) => o.label));
+    for (const [i, opt] of COMP_KNEE_OPTIONS.entries()) {
+      buttons()[i].click();
+      expect(strip(h!).comp?.knee, opt.label).toBe(opt.value);
+      // The pressed segment is the one that reads as pressed, and the compressor's other
+      // values are a different key in the same sub-object and survive.
+      expect(buttons()[i].getAttribute("aria-pressed"), opt.label).toBe("true");
+      expect(strip(h!).comp?.ratio, opt.label).toBe(SSMCS_INITIAL.comp.ratio);
+    }
   });
 
   it("splits a write between the compressor and the filter", () => {
