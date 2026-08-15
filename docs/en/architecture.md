@@ -1661,6 +1661,14 @@ other's. The overwritten handle costs nothing (`vd_params_unsubscribe` takes no 
 connection, so either handle releases the stream); the overwritten settle source is a sink left in `writeSettle`'s
 module singleton that `end()` cannot reach, which is the pairing this section's own registration invariant states.
 
+**A registration belongs to the session that asked for it**, and two places have to say so rather than read the
+generation when they run. A queued call waits for the one in front of it, and that wait outlives its session
+whenever `end()` lands inside it — reading the generation at its turn would make an ended session's re-registration
+run as the NEXT session's, alongside the one that session already has on the wire, which is the pile-up the queue
+exists to prevent. And a rejection leaves the registration by exception, so it never reaches the post-await
+generation guard: `refresh`'s catch compares the generation it started with before it stops anything, or a refusal
+arriving after its session ended stops the live one instead, with nothing to restart it.
+
 **Two read-only addresses join for the same reason**, and the name path is their precedent rather than a
 coincidence: an address the app only READS was in no registration, so the unit's announcement reached nobody and
 the value caught up only at the next full read. Both were measured announcing a front-panel change on a URX44V
@@ -2008,7 +2016,13 @@ anyway ([above](#undo--redo)).
 
 The live session's two registrations — the device-side notify stream and the link watch — are awaited before the
 session counts as started, and the worker replies only once every address is registered with the broker, so a
-refused registration ends the attempt rather than starting a session that cannot do its job.
+refused registration ends the attempt rather than starting a session that cannot do its job. A THIRD registration
+can be refused in that window and is not awaited by anything: `live.begin()` runs first, so a structural edit can
+flush while the notify stream is still being registered, and that flush asks the follow layer to re-register. Its
+refusal stops follow and reports through `stopLiveOnError`, which returns without doing anything while the session
+is not yet up — so the session checks that follow is still following immediately before declaring itself started,
+and fails the attempt when it is not. Without it the app reports "Live sync on" over a follow that discards every
+notify for the rest of the session.
 
 Everything **outside** the device link keeps a softer rule — salvage what can be salvaged, but never in silence. A
 failed MIDI feedback send drops the engine's sent-cache so the next pass re-sends (a one-off heals; a port that
