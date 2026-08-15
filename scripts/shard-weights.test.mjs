@@ -13,7 +13,14 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { caseKey, durations, inspectWeights, weightShapeProblem } from "./shard-weights.mjs";
+import {
+  caseKey,
+  durations,
+  inspectWeights,
+  planMismatch,
+  skippedInLog,
+  weightShapeProblem,
+} from "./shard-weights.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW = readFileSync(join(repo, ".github/workflows/race.yml"), "utf8");
@@ -73,6 +80,52 @@ describe("durations", () => {
     const other = "  ✓  1 [chromium] › e2e/console.spec.ts:10:3 › console › a case (1.0s)";
     const skipped = "  -  23 [race] › e2e/race/t3b-undo.spec.ts:1395:8 › T3b undo › a refused entry";
     expect(durations(`${other}\n${skipped}`).size).toBe(0);
+  });
+});
+
+// A case the RUN skipped, which a listing cannot know about: `expectedStatus` covers the
+// declaration only, so without this reading a complete log from a run with one failure inside
+// a serial block is refused as partial.
+describe("skippedInLog", () => {
+  const SKIPPED = "  -  23 [race] › e2e/race/t3b-undo.spec.ts:1395:8 › T3b undo › a sampleRate-touching entry";
+  const TIMED = "  ✓  1 [race] › e2e/race/t0-baseline.spec.ts:28:3 › T0 › a case (4.6s)";
+
+  it("reads the marker line a skipped case prints", () => {
+    expect([...skippedInLog(SKIPPED)]).toEqual([caseKey("t3b-undo.spec.ts", 1395, "a sampleRate-touching entry")]);
+  });
+
+  // The `-` marker is not what tells them apart — a title may contain one — so the rule is
+  // the absence of a duration, and a timed line has to stay out of this set whatever it says.
+  it("leaves a timed case out, including one whose title carries a dash", () => {
+    const dashed = "  ✓  2 [race] › e2e/race/t5-drop.spec.ts:141:7 › T5 drop › link loss - early (8.2s)";
+    expect(skippedInLog(`${TIMED}\n${dashed}`).size).toBe(0);
+  });
+
+  it("reads nothing out of another project's lines", () => {
+    expect(skippedInLog("  -  4 [chromium] › e2e/console.spec.ts:10:3 › console › a case").size).toBe(0);
+  });
+});
+
+describe("planMismatch", () => {
+  const plan = ["a:1|x", "b:2|y", "c:3|z"];
+
+  it("says nothing when the runner takes the cases the plan cut", () => {
+    expect(planMismatch("--shard=1/3", plan, [...plan])).toBeNull();
+  });
+
+  // The case the sequence comparison exists for: same count, different membership. Reported
+  // by position and by both keys, since the counts are equal and say nothing.
+  it("names the first position and both keys when the counts are equal", () => {
+    const found = planMismatch("--shard=2/3", plan, ["a:1|x", "d:4|w", "c:3|z"]);
+    expect(found).toMatch(/position 1/);
+    expect(found).toMatch(/takes d:4\|w/);
+    expect(found).toMatch(/plan puts b:2\|y/);
+    expect(found).not.toMatch(/3 cases against/);
+  });
+
+  it("adds the counts only when they differ", () => {
+    expect(planMismatch("--shard=3/3", plan, ["a:1|x", "b:2|y"])).toMatch(/2 cases against the plan's 3/);
+    expect(planMismatch("--shard=3/3", plan, [...plan, "d:4|w"])).toMatch(/position 3.*takes d:4\|w.*\(nothing\)/s);
   });
 });
 

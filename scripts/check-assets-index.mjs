@@ -99,6 +99,7 @@ const PROSE_TOKENS = new Map([
   ["PWTEST_SHARD_WEIGHTS_DISABLED", "a rename of that variable, named as the mutation a substring check missed"],
   ["collect.shardWeights", "a key inside e2e/race/skip-ledger.json, not a path"],
   ["includes()", "JavaScript's own method, named as the check that was too loose"],
+  ["test.describe.serial", "a Playwright declaration, named as itself"],
   ["(retry #1)", "the list reporter's retry suffix, quoted as the text a parser has to strip"],
   ["floor(weight × collected ÷ sum)", "Playwright's own shard-size arithmetic, written out"],
 ]);

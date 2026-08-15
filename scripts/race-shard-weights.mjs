@@ -31,7 +31,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
-import { caseKey as key, durations, weightShapeProblem } from "./shard-weights.mjs";
+import { caseKey as key, durations, planMismatch, skippedInLog, weightShapeProblem } from "./shard-weights.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const LEDGER = "e2e/race/skip-ledger.json";
@@ -179,24 +179,30 @@ if (!Number.isInteger(shards) || shards < 1) die(`--shards must be a positive in
 
 const collected = playwright([], {});
 if (shards > collected.length) die(`--shards ${shards} is more shards than there are cases (${collected.length})`);
-const measured = durations(logText());
+const log = logText();
+const measured = durations(log);
 const ms = collected.map((c) => measured.get(c.key) ?? 0);
 const missing = collected.filter((c) => !measured.has(c.key));
 const unused = [...measured.keys()].filter((k) => !collected.some((c) => c.key === k));
 
 console.log(`${collected.length} cases collected, ${measured.size} timed in the log`);
 
-// A declared skip has no duration and belongs at 0. Anything else missing, or anything in
-// the log the checkout does not collect, means the two describe different corpora — and
-// unlike every other input here, that cannot be caught downstream: the resulting array is
-// arithmetically consistent, passes the runner check below and passes check-race-skips.mjs.
-const unexplained = missing.filter((c) => !c.skipped);
+// A case with no duration belongs at 0 when the log ACCOUNTS for it — either the listing
+// declares it skipped, or the log itself reports it as skipped, which is the only evidence
+// for the kind a listing cannot see (a `test.describe.serial` block skips the rest of its
+// cases once one fails, and an in-body `test.skip()` is invisible to `--list`). Anything
+// else missing, or anything in the log the checkout does not collect, means the two describe
+// different corpora — and unlike every other input here, that cannot be caught downstream:
+// the resulting array is arithmetically consistent, passes the runner check below and passes
+// check-race-skips.mjs.
+const skippedThere = skippedInLog(log);
+const unexplained = missing.filter((c) => !c.skipped && !skippedThere.has(c.key));
 if (measured.size === 0) {
   die("no timed lines in the log — wrong run, wrong workflow, or the list reporter's format has moved");
 }
 if (unexplained.length) {
   die(
-    `${unexplained.length} collected case(s) have no duration in the log and are not declared skips — the log is ` +
+    `${unexplained.length} collected case(s) are in neither the log's results nor its skips — the log is ` +
       `partial (a cancelled or timed-out shard), or from another revision:\n    ` +
       unexplained
         .slice(0, 12)
@@ -210,7 +216,14 @@ if (unused.length) {
       unused.slice(0, 12).join("\n    "),
   );
 }
-console.log(`  ${missing.length} declared skip(s) carry no duration and count as 0`);
+{
+  const declared = missing.filter((c) => c.skipped).length;
+  const atRuntime = missing.length - declared;
+  console.log(
+    `  ${missing.length} case(s) carry no duration and count as 0: ${declared} declared skip(s)` +
+      (atRuntime ? `, ${atRuntime} the run itself skipped` : ""),
+  );
+}
 
 const sizes = split(ms, shards);
 const shape = weightShapeProblem(sizes);
@@ -234,8 +247,8 @@ for (const [i, size] of sizes.entries()) {
   const want = collected.slice(at, at + size).map((c) => c.key);
   at += size;
   const got = playwright([`--shard=${i + 1}/${shards}`], env).map((c) => c.key);
-  const same = got.length === want.length && got.every((k, n) => k === want[n]);
-  if (!same) off.push(`--shard=${i + 1}/${shards} takes ${got.length} case(s) where the plan puts ${want.length}`);
+  const mismatch = planMismatch(`--shard=${i + 1}/${shards}`, want, got);
+  if (mismatch) off.push(mismatch);
 }
 
 console.log(
