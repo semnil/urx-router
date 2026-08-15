@@ -523,7 +523,8 @@ export const ja: Messages = {
       faceComp: "COMP",
       faceEq: "EQ",
       tapOut: "Pre Ins FX",
-      mainHint: "Comp Drive と Morphing は 2 つの曲線を同時に動かします。点はコンプ上のライブレベルです。",
+      mainHint:
+        "Comp Drive はコンプの曲線を動かします。Sweet Spot Data と Morphing は両方を、ライブ同期中のみ動かします。",
     },
     ducker: {
       title: "Ducker",

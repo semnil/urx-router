@@ -603,7 +603,9 @@ export const en = {
       faceComp: dev("COMP"),
       faceEq: dev("EQ"),
       tapOut: dev("Pre Ins FX"),
-      mainHint: tr("Comp Drive and Morphing move both curves at once; the dot is the live level on the compressor."),
+      mainHint: tr(
+        "Comp Drive moves the compressor's curve. Sweet Spot Data and Morphing move both, only while Live sync is up.",
+      ),
     },
     ducker: {
       title: dev("Ducker"),
