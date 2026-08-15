@@ -50,6 +50,12 @@ let store: MeterStore | null = null;
 const subscribedAddrs = (): Array<[number, number]> =>
   (meterMocks.subscribe.mock.calls.at(-1)?.[1] as Array<[number, number]>) ?? [];
 
+/** Let the registration queue drain. Registrations are serialized — one is chained
+ *  behind the previous one's SETTLEMENT — so a second one is several microtask turns
+ *  away rather than synchronous, and a fixed number of `await Promise.resolve()` lands
+ *  in the middle of the chain instead of past it. A macrotask drains all of them. */
+const settleSubs = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
 /** Push one meter frame through the subscription the screen holds. */
 function feed(frames: Array<{ meterId: number; x: number; value: number }>): void {
   for (const f of frames) {
@@ -199,6 +205,23 @@ describe("meter subscription", () => {
     expect(meterMocks.unsub).toHaveBeenCalledTimes(1);
   });
 
+  // …but only the registration that is still the current one. `onMeterError` ends the
+  // Live session, so a refusal belonging to a scope the screen has already left would
+  // take down the session that the scope now on screen is being served by. The screen
+  // closes here, which is the cheapest supersession to arrange; a face move or a tap
+  // that moved under the screen supersedes the same counter the same way.
+  it("swallows a registration failure that belongs to a superseded scope", async () => {
+    host = dynHost({ live: true });
+    let refuse: ((e: Error) => void) | undefined;
+    meterMocks.subscribe.mockImplementation(() => new Promise<() => void>((_res, rej) => (refuse = rej)));
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    screen.close();
+    refuse!(new Error("broker refused"));
+    await settleSubs();
+    expect(host.meterErrors).toEqual([]);
+  });
+
   // Bars stuck on the floor look exactly like silence, so a failed registration
   // takes the loud path.
   it("reports a registration failure rather than showing an empty meter", async () => {
@@ -227,7 +250,7 @@ describe("meter subscription", () => {
     host = dynHost({ live: true });
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
-    await Promise.resolve();
+    await settleSubs();
 
     host.setLive(false);
     screen.setLive(false);
@@ -248,7 +271,7 @@ describe("meter subscription", () => {
     host = dynHost({ live: true });
     const screen = new DynScreen(host.hooks);
     screen.open(DYN_PROCESSORS.ducker, "out.ducker1");
-    await Promise.resolve();
+    await settleSubs();
     expect(meterMocks.subscribe).toHaveBeenCalledTimes(1);
     // CH 1 is ducker 1's key source in the factory plan; 113 is its PRE FADER tap.
     expect(subscribedAddrs()[0]).toEqual([113, 0]);
@@ -256,7 +279,7 @@ describe("meter subscription", () => {
     // The unit's own Rec Point moves to PRE GATE, which the follow puts in the plan.
     host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], recPoint: 0 };
     screen.refresh();
-    await Promise.resolve();
+    await settleSubs();
     expect(meterMocks.unsub).toHaveBeenCalledTimes(1);
     expect(meterMocks.subscribe).toHaveBeenCalledTimes(2);
     expect(subscribedAddrs()[0]).toEqual([106, 0]);

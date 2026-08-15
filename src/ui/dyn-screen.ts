@@ -479,6 +479,10 @@ export class DynScreen {
    *  address nothing reads while the lane it belongs to sits at the floor. */
   private subSig = "";
   private subGen = 0;
+  /** The registrations, one after another. The broker's slot is single and replaced
+   *  silently, so overlapping subscriptions must not be in flight together. */
+  private subChain: Promise<void> = Promise.resolve();
+  private subBusy = false;
 
   /** Live readings, folded per lane, written by paint() and read by the overlay. */
   private readings = new Map<string, number | null>();
@@ -737,29 +741,55 @@ export class DynScreen {
     // registration silently, so the console must be told rather than discover it.
     this.hooks.releaseMeters();
     const grLanes = this.lanes.filter((l) => l.kind === "gr" && l.gr);
-    void subscribeMeters(this.store, this.addrs(), (msg) => {
-      // The GR peak folds here, not off the store: the store is last-write-win, so
-      // a batch carrying more than one frame for an address would drop all but the
-      // last before any reader saw them.
-      for (const lane of grLanes) {
-        const gr = lane.gr as readonly [number, number];
-        if (msg.meterId !== gr[0] || msg.x !== gr[1]) continue;
-        const db = decodeGrDb(msg.value);
-        const p = this.peakFor(lane.key, 0);
-        if (p.db === null || db < p.db) {
-          p.db = db;
-          p.age = 0;
+    const addrs = this.addrs();
+    const register = (): Promise<void> => {
+      // Superseded before this one's turn came — another face, another band, or a close.
+      // Not registered at all, rather than registered and immediately taken down.
+      if (gen !== this.subGen) return Promise.resolve();
+      return subscribeMeters(this.store, addrs, (msg) => {
+        // The GR peak folds here, not off the store: the store is last-write-win, so
+        // a batch carrying more than one frame for an address would drop all but the
+        // last before any reader saw them.
+        for (const lane of grLanes) {
+          const gr = lane.gr as readonly [number, number];
+          if (msg.meterId !== gr[0] || msg.x !== gr[1]) continue;
+          const db = decodeGrDb(msg.value);
+          const p = this.peakFor(lane.key, 0);
+          if (p.db === null || db < p.db) {
+            p.db = db;
+            p.age = 0;
+          }
         }
-      }
-    })
-      .then((unsub) => {
-        // Superseded while in flight (a re-scope, or a close) — drop the handle here
-        // rather than installing it over the live one, which would leak the older
-        // registration at the broker.
-        if (this.isOpen() && gen === this.subGen) this.unsub = unsub;
-        else unsub();
       })
-      .catch((e: unknown) => this.hooks.onMeterError(e instanceof Error ? e.message : String(e)));
+        .then((unsub) => {
+          // Superseded while in flight (a re-scope, or a close) — drop the handle here
+          // rather than installing it over the live one, which would leak the older
+          // registration at the broker.
+          if (this.isOpen() && gen === this.subGen) this.unsub = unsub;
+          else unsub();
+        })
+        .catch((e: unknown) => {
+          // A superseded registration's failure belongs to nothing on screen, and
+          // `onMeterError` ends the Live session — so a face left behind must not be able
+          // to close the session that the face now open is being served by.
+          if (gen === this.subGen) this.hooks.onMeterError(e instanceof Error ? e.message : String(e));
+        });
+    };
+    // One registration in flight at a time. The broker keeps a single slot per client and
+    // replaces it silently, so two overlapping subscriptions take the slot in whatever
+    // order the transport delivers them rather than the order the faces were pressed: the
+    // slot ends up on the face that was left, and this screen's handle then unsubscribes a
+    // registration the broker had already replaced. The meters stop with nothing reporting
+    // a failure. Chained on settlement, not on success, so one refusal does not strand it.
+    // With nothing in flight it runs here rather than a microtask later: the slot is free,
+    // and the queue exists to order overlapping registrations, not to delay the first.
+    const run = (): Promise<void> => {
+      this.subBusy = true;
+      return register().finally(() => {
+        this.subBusy = false;
+      });
+    };
+    this.subChain = this.subBusy ? this.subChain.then(run, run) : run();
 
     if (!this.raf) {
       let last = 0;
@@ -1067,6 +1097,12 @@ export class DynScreen {
     const head = faces ? wrap("gt-head", title, this.faceBar(faces, proc, m)) : title;
 
     const grid = el("div", "prefs-grid");
+    // A bank of faces reserves one height for all of them. Its faces carry different row
+    // counts and different displays, so without the reserve the modal resizes under the
+    // pointer on every press of the segment that moves between them — and the segment
+    // itself is in the title row, which the resize then moves. What the reserve costs is
+    // blank space below the shorter faces; `--dyn-face-h` is where the measurement lives.
+    if (faces) grid.classList.add("gt-faced");
     grid.append(this.displayColumn(proc), this.controlColumn(m));
 
     const actions = el("div", "consent-actions");
@@ -1085,9 +1121,24 @@ export class DynScreen {
     const bar = proc.bar?.(ctx);
     const col = el("div", "prefs-col");
     if (bar) col.append(this.displayBar(bar));
+    // A bank's faces do not all carry a display bar, and the one that does not starts its
+    // panel a bar's height above its siblings: the black display jumps up the moment the
+    // segment moves to that face. Reserve the row through the same builder rather than
+    // with a margin, so the space is whatever the bars the other faces draw actually
+    // occupy — a constant would be measured once and then track nothing.
+    else if (proc.faces) col.append(this.reservedBar(proc, ctx.m));
     col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }, ctx));
     col.append(this.hintLine(proc, ctx));
     return col;
+  }
+
+  /** The display bar's space, with nothing in it. `visibility: hidden` rather than a
+   *  height: it keeps the box and takes the heading and the button out of the tab order
+   *  and the accessibility tree, which is what an empty reserve has to do. */
+  private reservedBar(proc: DynProcessor, m: Messages): HTMLElement {
+    const sec = this.displayBar({ label: proc.title(m), items: [{ label: proc.title(m), id: "" }], inert: true });
+    sec.classList.add("gt-reserved");
+    return sec;
   }
 
   /**
@@ -1102,7 +1153,7 @@ export class DynScreen {
       b.id = face.id;
       b.textContent = face.label(m);
       b.setAttribute("aria-pressed", String(face.proc === proc));
-      b.addEventListener("click", () => this.showFace(face.proc));
+      b.addEventListener("click", () => this.pressSegment(face.id, () => this.showFace(face.proc)));
       seg.append(b);
     }
     return seg;
@@ -1129,6 +1180,20 @@ export class DynScreen {
     this.refresh();
   }
 
+  /**
+   * Press a segmented bar's button. Both bars rebuild the DOM they are part of, so the
+   * button that was pressed is replaced and `document.activeElement` falls back to the
+   * body — a keyboard user selecting a face or a band lands nowhere and has to tab in
+   * from the top of the dialog again. Focus goes back onto the NEW button carrying the
+   * same id, and only when the press came from a focused button, so a mouse press is
+   * left as it was.
+   */
+  private pressSegment(id: string, act: () => void): void {
+    const refocus = document.activeElement instanceof HTMLElement && document.activeElement.id === id;
+    act();
+    if (refocus) document.getElementById(id)?.focus({ preventScroll: true });
+  }
+
   /** The segmented bar over the display, in the heading of the section it sits in. */
   private displayBar(bar: DynBar): HTMLElement {
     const sec = settingsSection(bar.label);
@@ -1140,7 +1205,7 @@ export class DynScreen {
       b.textContent = item.label;
       b.setAttribute("aria-pressed", String(!bar.inert && this.sel === i));
       if (bar.inert) b.disabled = true;
-      else b.addEventListener("click", () => this.select(i));
+      else b.addEventListener("click", () => this.pressSegment(item.id, () => this.select(i)));
       seg.append(b);
     }
     if (bar.inert) seg.classList.add("inert");
@@ -1152,9 +1217,11 @@ export class DynScreen {
    *  explains itself, a plot does not say what it is showing — but its box is reserved
    *  whatever the display shows. Adding it only in one mode made the modal grow by its
    *  height on every switch, which moves the Close action and the parameter rows under
-   *  the pointer. `gt-note` reserves TWO lines at a fixed height, which is what keeps a
-   *  longer string from silently reintroducing the jump — and from being cut, which one
-   *  line did on any window narrower than a wide desktop (E2E pins both). */
+   *  the pointer. `gt-note` reserves a fixed height, which is what keeps a longer string
+   *  from silently reintroducing the jump — and from being cut, which one line did on any
+   *  window narrower than a wide desktop (E2E pins both). Two lines by default; a bank of
+   *  faces takes three, since its line has three controls to name and the reserve above
+   *  the grid already leaves that face the room (`style.css`, `.gt-faced .gt-note`). */
   private hintLine(proc: DynProcessor, ctx: DynCtx): HTMLElement {
     const hint = el("p", "gt-note");
     const text = proc.hint?.(ctx);
