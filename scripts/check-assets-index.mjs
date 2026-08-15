@@ -98,6 +98,9 @@ const PROSE_TOKENS = new Map([
   ["PWTEST_SHARD_WEIGHTS", "a Playwright environment variable, named as itself"],
   ["PWTEST_SHARD_WEIGHTS_DISABLED", "a rename of that variable, named as the mutation a substring check missed"],
   ["collect.shardWeights", "a key inside e2e/race/skip-ledger.json, not a path"],
+  ["includes()", "JavaScript's own method, named as the check that was too loose"],
+  ["(retry #1)", "the list reporter's retry suffix, quoted as the text a parser has to strip"],
+  ["floor(weight × collected ÷ sum)", "Playwright's own shard-size arithmetic, written out"],
 ]);
 
 // The same discipline for docs/{en,ja}, keyed `<document>|<token>`: the English and

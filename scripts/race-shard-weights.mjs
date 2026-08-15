@@ -10,69 +10,67 @@
 // Prints the array to paste. It writes nothing: the ledger is where a human decides the
 // split lives, and this is the arithmetic behind it.
 //
-// WHY there is an array at all. Playwright's own sharding takes a CONTIGUOUS slice of the
-// collected order and sizes it by case count (`filterForShard` walks the groups in path
-// order and cuts on a cumulative count). Equal counts are not equal times here: the six
-// t2*-shape-change files are adjacent in that order and are the expensive ones, so one
-// shard inherits them. `PWTEST_SHARD_WEIGHTS` sizes the same contiguous slices, so this
-// only has to choose the two cut points — which it does against measured durations.
+// WHY there is an array at all, and what it buys, are in docs/{en,ja}/live-race-harness.md
+// ("How the shards are sized"). The mechanism this file needs: Playwright's own sharding
+// takes a CONTIGUOUS slice of the collected order and sizes it by case count, so this only
+// has to choose the N-1 cut points — which it does against measured durations, under a model
+// of how a shard actually spends its time (2 workers, next case to whichever is free, plus a
+// fixed worker startup). Those two constants describe the CI runner, not this repository's
+// config, so a runner with a different core count needs them re-measured.
 //
-// The model the cuts are chosen under: each shard runs 2 workers, Playwright hands the
-// next case to whichever is free, and a shard costs about 9 s of worker startup on top.
-// Checked against the run this was first derived from — predicted 381 / 144 / 261 s
-// against 380 / 143 / 261 s observed — which is what makes a predicted wall worth
-// optimizing rather than a number to admire.
-//
-// The result is VERIFIED before it is printed: `--list --shard=k/N` is re-run under the
-// weights and the counts have to come back exactly. A cut cannot land inside an
-// indivisible group (a `test.describe.serial` block travels whole), and rather than model
-// that, the plan is asked of the runner and refused if it does not hold.
+// EVERY INPUT IS REFUSED RATHER THAN ABSORBED. The log is the one input nothing downstream
+// can check — a stale array is caught by check-race-skips.mjs, a bad plan by the runner
+// below, but a log that is short, partial, from another workflow or from a run that was
+// cancelled produces an ARITHMETICALLY VALID array over a suite that did not run. Measured
+// before the refusals existed: an empty log printed `[1, 1, 168]`, claimed 9s/9s/9s balanced
+// shards, exited 0, and would have passed check-race-skips.mjs after being pasted.
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
-import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+
+import { caseKey as key, durations, weightShapeProblem } from "./shard-weights.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const LEDGER = "e2e/race/skip-ledger.json";
 const WORKERS = 2;
 const WORKER_START_MS = 9_000;
 
-const args = process.argv.slice(2);
-const flag = (name) => {
-  const i = args.indexOf(name);
-  return i < 0 ? null : args[i + 1];
-};
-const runId = args.find(
-  (a) => !a.startsWith("--") && args[args.indexOf(a) - 1] !== "--log" && args[args.indexOf(a) - 1] !== "--shards",
-);
+const scratch = mkdtempSync(join(tmpdir(), "urx-shard-weights-"));
+process.on("exit", () => rmSync(scratch, { recursive: true, force: true }));
 
 function die(message) {
   console.error(`FAIL: ${message}`);
   process.exit(1);
 }
 
-// --- the run's own durations -------------------------------------------------
-
-// The list reporter's own line, whatever wraps it: `gh run view --log` prefixes every line
-// with a job name, a step name and a timestamp, and a log read from disk may not.
-const LINE = /[✓✘×✕±-]\s+\d+\s+\[race\]\s+›\s+(\S+?\.spec\.ts):(\d+):\d+\s+›\s+(.+?)\s+\((\d+(?:\.\d+)?)(ms|s|m)\)\s*$/;
-const SCALE = { ms: 1, s: 1_000, m: 60_000 };
-const key = (file, line, title) => `${file.split("/").pop()}:${line}|${title.split(" › ").pop().trim()}`;
-
-function durations(text) {
-  const out = new Map();
-  for (const raw of text.split("\n")) {
-    const m = raw.match(LINE);
-    if (!m) continue;
-    out.set(key(m[1], m[2], m[3]), Number(m[4]) * SCALE[m[5]]);
-  }
-  return out;
+// A flag's value, and "present but unusable" told apart from "absent": `--shards` with
+// nothing after it used to fall through to the ledger's length and print a plan for a shard
+// count nobody asked for.
+const argv = process.argv.slice(2);
+function flag(name) {
+  const i = argv.indexOf(name);
+  if (i < 0) return null;
+  const value = argv[i + 1];
+  if (value === undefined || value.startsWith("--")) die(`${name} needs a value`);
+  return value;
 }
+const flagValues = new Set(["--log", "--shards"].map((f) => flag(f)).filter(Boolean));
+const runId = argv.find((a) => !a.startsWith("--") && !flagValues.has(a));
+
+// --- the run's own durations -------------------------------------------------
 
 function logText() {
   const file = flag("--log");
-  if (file) return readFileSync(file, "utf8");
+  if (file) {
+    try {
+      return readFileSync(file, "utf8");
+    } catch (e) {
+      die(`--log ${file}: ${e.message}`);
+    }
+  }
   if (!runId) die("give a race.yml run id, or --log <file> — see the header");
   // Not piped into anything: a pipeline's status is its last command's, and a `gh` that
   // could not read the run would arrive here as an empty log rather than as a failure.
@@ -85,33 +83,48 @@ function logText() {
 // --- the collected order -----------------------------------------------------
 
 const require = createRequire(import.meta.url);
+let listings = 0;
 function playwright(extra, env) {
   const manifest = require.resolve("@playwright/test/package.json");
   const declared = JSON.parse(readFileSync(manifest, "utf8")).bin;
   const bin = resolve(dirname(manifest), typeof declared === "string" ? declared : declared.playwright);
+  // The report goes to a FILE, the way check-race-skips.mjs takes it: one top-level
+  // console.log in any spec prints ahead of the JSON on stdout, and a tree that is perfectly
+  // healthy then fails to parse.
+  const out = join(scratch, `list-${listings++}.json`);
   const r = spawnSync(process.execPath, [bin, "test", "--project=race", "--list", "--reporter=json", ...extra], {
     cwd: repo,
     encoding: "utf8",
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...env, PLAYWRIGHT_JSON_OUTPUT_NAME: out },
     maxBuffer: 64 * 1024 * 1024,
   });
   if (r.error) die(`playwright could not be started: ${r.error.message}`);
-  const json = (() => {
-    try {
-      return JSON.parse(r.stdout.slice(r.stdout.indexOf("{")));
-    } catch {
-      die(
-        `playwright --list exited ${r.status} and printed no report:\n${r.stderr.trim().split("\n").slice(0, 8).join("\n")}`,
-      );
-    }
-  })();
-  const out = [];
+  let json;
+  try {
+    json = JSON.parse(readFileSync(out, "utf8"));
+  } catch {
+    die(
+      `playwright --list exited ${r.status} and wrote no report:\n${r.stderr.trim().split("\n").slice(0, 8).join("\n")}`,
+    );
+  }
+  // Status AND errors, because `--list` exits 1 with a well-formed report when it finds
+  // nothing (measured: `suites: []`, `errors: [Error: No tests found]`), and a spec that
+  // fails to import leaves a PARTIAL listing behind the same exit code — a split derived
+  // from that is a split over a corpus that is not this one.
+  const errors = (json.errors ?? []).map((e) => e.message?.split("\n")[0] ?? String(e));
+  if (r.status !== 0 || errors.length) die(`playwright --list exited ${r.status}: ${errors.join("; ") || "no report"}`);
+  const cases = [];
   const walk = (suite) => {
     for (const child of suite.suites ?? []) walk(child);
-    for (const spec of suite.specs ?? []) out.push({ key: key(spec.file, spec.line, spec.title), file: spec.file });
+    for (const spec of suite.specs ?? []) {
+      cases.push({
+        key: key(spec.file, spec.line, spec.title),
+        skipped: (spec.tests ?? []).some((t) => t.expectedStatus === "skipped"),
+      });
+    }
   };
   for (const suite of json.suites ?? []) walk(suite);
-  return out;
+  return cases;
 }
 
 // --- the split ---------------------------------------------------------------
@@ -165,24 +178,43 @@ const shards = Number(flag("--shards") ?? ledger.collect?.shardWeights?.length ?
 if (!Number.isInteger(shards) || shards < 1) die(`--shards must be a positive integer, not "${flag("--shards")}"`);
 
 const collected = playwright([], {});
+if (shards > collected.length) die(`--shards ${shards} is more shards than there are cases (${collected.length})`);
 const measured = durations(logText());
 const ms = collected.map((c) => measured.get(c.key) ?? 0);
 const missing = collected.filter((c) => !measured.has(c.key));
 const unused = [...measured.keys()].filter((k) => !collected.some((c) => c.key === k));
 
-// A skipped case has no duration and belongs at 0. Anything else missing means the log and
-// the checkout disagree about what the corpus is, and a split derived across that gap would
-// be arithmetic over a suite that does not exist. Said plainly rather than absorbed: this
-// is the one input that cannot be checked afterwards by re-running the collection.
 console.log(`${collected.length} cases collected, ${measured.size} timed in the log`);
-if (missing.length) console.log(`  ${missing.length} with no duration (skips sit here, and count as 0):`);
-for (const c of missing.slice(0, 12)) console.log(`    ${c.key}`);
-if (unused.length) {
-  console.log(`  ${unused.length} timed case(s) the checkout does not collect — the log is from another revision:`);
-  for (const k of unused.slice(0, 12)) console.log(`    ${k}`);
+
+// A declared skip has no duration and belongs at 0. Anything else missing, or anything in
+// the log the checkout does not collect, means the two describe different corpora — and
+// unlike every other input here, that cannot be caught downstream: the resulting array is
+// arithmetically consistent, passes the runner check below and passes check-race-skips.mjs.
+const unexplained = missing.filter((c) => !c.skipped);
+if (measured.size === 0) {
+  die("no timed lines in the log — wrong run, wrong workflow, or the list reporter's format has moved");
 }
+if (unexplained.length) {
+  die(
+    `${unexplained.length} collected case(s) have no duration in the log and are not declared skips — the log is ` +
+      `partial (a cancelled or timed-out shard), or from another revision:\n    ` +
+      unexplained
+        .slice(0, 12)
+        .map((c) => c.key)
+        .join("\n    "),
+  );
+}
+if (unused.length) {
+  die(
+    `${unused.length} timed case(s) are not in this checkout's collection — the log is from another revision:\n    ` +
+      unused.slice(0, 12).join("\n    "),
+  );
+}
+console.log(`  ${missing.length} declared skip(s) carry no duration and count as 0`);
 
 const sizes = split(ms, shards);
+const shape = weightShapeProblem(sizes);
+if (shape) die(`the derived split is not usable: ${shape}`);
 let at = 0;
 const walls = sizes.map((c) => {
   const w = wallOf(ms, at, at + c);
@@ -190,24 +222,30 @@ const walls = sizes.map((c) => {
   return w;
 });
 
-// Asked of the runner rather than trusted: the weights are a case COUNT, and Playwright
-// assigns whole groups, so a cut inside a `test.describe.serial` block moves cases the
-// arithmetic above put elsewhere.
+// Asked of the runner rather than trusted, and compared as the SEQUENCE of cases rather than
+// as a count: the weights are counts, so a count comparison is satisfied by construction
+// once the sum is right, and it would not notice Playwright assigning a group whole (a
+// `test.describe.serial` block travels as one) or ordering the groups differently from this
+// walk — the two agree only while no race spec declares a file-level beforeAll/afterAll.
 const env = { PWTEST_SHARD_WEIGHTS: sizes.join(":") };
-const actual = sizes.map((_, i) => playwright([`--shard=${i + 1}/${shards}`], env).length);
-const off = actual.map((n, i) => (n === sizes[i] ? null : i)).filter((i) => i !== null);
+const off = [];
+at = 0;
+for (const [i, size] of sizes.entries()) {
+  const want = collected.slice(at, at + size).map((c) => c.key);
+  at += size;
+  const got = playwright([`--shard=${i + 1}/${shards}`], env).map((c) => c.key);
+  const same = got.length === want.length && got.every((k, n) => k === want[n]);
+  if (!same) off.push(`--shard=${i + 1}/${shards} takes ${got.length} case(s) where the plan puts ${want.length}`);
+}
 
 console.log(
-  `\nshard walls (2 workers, +${WORKER_START_MS / 1000}s startup): ${walls.map((w) => (w / 1000).toFixed(0) + "s").join(" / ")}`,
+  `\nshard walls (${WORKERS} workers, +${WORKER_START_MS / 1000}s startup): ` +
+    walls.map((w) => (w / 1000).toFixed(0) + "s").join(" / "),
 );
 console.log(
-  `worst ${(Math.max(...walls) / 1000).toFixed(0)}s, against ${(wallOf(ms, 0, ms.length) / 1000 / shards).toFixed(0)}s if the work divided evenly`,
+  `worst ${(Math.max(...walls) / 1000).toFixed(0)}s, against ` +
+    `${(wallOf(ms, 0, ms.length) / 1000 / shards).toFixed(0)}s if the work divided evenly`,
 );
-if (off.length) {
-  die(
-    `the plan does not hold: ${off
-      .map((i) => `--shard=${i + 1}/${shards} takes ${actual[i]} case(s), not ${sizes[i]}`)
-      .join("; ")} — a cut landed inside a group Playwright assigns whole`,
-  );
-}
+if (off.length)
+  die(`the plan does not hold: ${off.join("; ")} — the cases Playwright assigns are not the ones cut here`);
 console.log(`\npaste into ${LEDGER} (collect.shardWeights):\n    "shardWeights": [${sizes.join(", ")}]`);

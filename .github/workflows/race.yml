@@ -188,19 +188,25 @@ jobs:
       - id: pw
         uses: ./.github/actions/playwright-version
       # How the shards are sized, read from the one file that holds it — the same ledger
-      # `pnpm check:skips` validates it against. Playwright's own split takes a contiguous
-      # slice of the collected order sized by case COUNT, which on this tier is not the same
-      # as by time: the six t2*-shape-change files are adjacent in path order, so the shard
-      # that inherits them carried 12.3 minutes against another's 4.5, over case counts of
-      # 57 / 57 / 56. `PWTEST_SHARD_WEIGHTS` cuts the same order by measured duration instead.
+      # `pnpm check:skips` validates it against. Playwright's own split sizes each shard by
+      # case COUNT, which on this tier is not the same as sizing it by time;
+      # `PWTEST_SHARD_WEIGHTS` cuts the same contiguous slices by measured duration instead.
+      # The readings are in docs/{en,ja}/live-race-harness.md ("How the shards are sized");
+      # this file does not restate them.
       #
-      # `-e`, because the failure to guard against is the quiet one: jq prints nothing and
-      # exits 0 for a key that is not there, an empty variable is not a parse error to
-      # Playwright but a fall back to the equal split, and the run would then be slow rather
-      # than red. The assignment's own status is the command's, so errexit ends the job here.
+      # `jq -er` is not what stops a missing key — measured against jq 1.7.1, `join` refuses
+      # to iterate null and fails on its own. What gets through is the empty LIST, and an
+      # empty variable is not a parse error to Playwright but a silent fall back to the equal
+      # split. So the value is matched against the shape it has to have before it is
+      # published, which also keeps a newline in the ledger from writing a second key into
+      # $GITHUB_OUTPUT.
       - id: weights
         run: |
           weights=$(jq -er '.collect.shardWeights | join(":")' e2e/race/skip-ledger.json)
+          if [[ ! "${weights}" =~ ^[0-9]+(:[0-9]+)*$ ]]; then
+            echo "::error::collect.shardWeights is not a list of case counts: '${weights}'"
+            exit 1
+          fi
           echo "value=${weights}" >> "$GITHUB_OUTPUT"
           echo "shard weights: ${weights}"
 
@@ -254,7 +260,21 @@ jobs:
       # so the matrix is the only place the shard count is written on this side. The other
       # place is the length of the weights array `detect` read, and the two disagreeing is
       # not a silent skew: Playwright refuses a weight list that does not match the total.
-      - run: pnpm test:e2e:race --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      #
+      # The value is checked HERE rather than only where it was produced, because it reaches
+      # this step through four names — a step id, a step output key, a job output key and
+      # this env key — and GitHub resolves a name that does not exist to the empty string
+      # rather than to an error. Playwright then falls back to the equal-count split with no
+      # message of any kind (measured: an empty variable collects 57 cases for --shard=1/3
+      # where the weights give 38), so every signal would say the run worked while the tier
+      # went back to the imbalance this arrangement exists to remove. Checking the value
+      # rather than the spelling is what makes any of those four names fail loudly.
+      - run: |
+          if [[ -z "${PWTEST_SHARD_WEIGHTS}" ]]; then
+            echo "::error::the shard weights did not arrive from detect — Playwright would split by case count instead, and say nothing"
+            exit 1
+          fi
+          pnpm test:e2e:race --shard=${{ matrix.shard }}/${{ strategy.job-total }}
         env:
           PWTEST_SHARD_WEIGHTS: ${{ needs.detect.outputs.weights }}
       # The "list" reporter writes no playwright-report/; traces (trace: on-first-retry,

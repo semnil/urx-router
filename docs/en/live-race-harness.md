@@ -674,13 +674,25 @@ the run this was derived from, shard 1 held `t2`, `t2b`, `t2c`, `t2d`, `t2e` and
 shards carried 12.3, 4.5 and 7.4 minutes of machine time over 57, 57 and 56 cases — a worst shard 53%
 above the 8.1 minutes a third of the work would be.
 `PWTEST_SHARD_WEIGHTS` sizes those same contiguous slices from the durations instead, and the same run
-cuts to 8.3, 8.5 and 7.5. The array is `collect.shardWeights` in `e2e/race/skip-ledger.json`, which is
-the only place it is written: `race.yml` reads it there, and `pnpm check:skips` re-takes the collection
-under it, so a shard that stops taking the number of cases the ledger claims is a red check rather than
-a slower run. That check is also what reports a Playwright upgrade that stopped reading the variable —
-it is a `PWTEST_`-prefixed one, absent from the shipped types. `node scripts/race-shard-weights.mjs
-<run id>` re-derives the array from a race.yml run and refuses a plan whose cuts the runner does not
-reproduce.
+cuts to 8.3, 8.5 and 7.5. The cut points are chosen by minimising the worst shard's predicted wall under
+the model a shard actually runs at — two workers, each taking the next case in declaration order, plus
+about 9 s of worker startup — which reproduced that run's own three shards to 381 / 144 / 261 s against
+380 / 143 / 261 s observed.
+
+The array is `collect.shardWeights` in `e2e/race/skip-ledger.json`, which is the only place it is
+written: `race.yml` reads it there, and `pnpm check:skips` re-takes the collection under it. **What that
+catches is a corpus that changed SIZE** — the sum stops matching, which is how a stale array is normally
+produced — **and a Playwright that stopped reading the variable**, which is a `PWTEST_`-prefixed one,
+absent from the shipped types. A case swapped one-for-one, a file renamed into a different collection
+order, or a case that simply got slower leaves every count intact and needs a re-derivation nothing here
+can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation: it refuses a log that
+does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
+array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
+
+The value reaches the shard step through four names, and GitHub resolves one that does not exist to the
+empty string, which Playwright treats as no weights at all rather than as an error — so the shard step
+refuses an empty value outright instead of running the equal-count split under the weighted split's
+name.
 
 No **runner** reading is kept for any of it — a CI clock moves between runs, so a figure written down is
 a figure that was true once, and the weights are derived from per-test durations rather than from a wall

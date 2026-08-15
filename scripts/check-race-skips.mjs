@@ -77,6 +77,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { inspectWeights, weightShapeProblem } from "./shard-weights.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The ledger writes repo-relative paths with forward slashes on every platform; Windows would
@@ -254,74 +255,34 @@ const ledger = JSON.parse(readFileSync(join(repo, LEDGER), "utf8"));
   }
 }
 
-// How the tier is split across race.yml's matrix. Playwright's own sharding takes a
-// contiguous slice of the collected order sized by case COUNT, which on this tier is not
-// the same as sizing it by time; `collect.shardWeights` sizes the same slices from measured
-// durations, and race.yml hands the array to Playwright as PWTEST_SHARD_WEIGHTS.
-//
-// Two things can go wrong quietly, and both end in a run that is slow rather than red.
-// The array can go stale — a case added anywhere shifts every boundary after it — and
-// the environment variable itself is one Playwright's own types do not document, so an
-// upgrade may stop reading it. Asking the runner settles both at once: the collection is
-// re-taken under the weights, and a shard that no longer takes the number of cases the
-// ledger claims is either a moved corpus or a variable that was ignored. The counts are
-// the whole reading here; which cases landed where is what the durations decide, and this
-// check has none.
+// How the tier is split across race.yml's matrix. The rules are in scripts/shard-weights.mjs
+// — pure, so the arrangements this has to reject can be put in front of them by a test
+// rather than by hand — and what this file adds is the one reading they need: the number of
+// cases Playwright hands each shard under those weights. It is the reading that says whether
+// the variable is being read at all, and it costs one `--list` per shard.
 {
   const weights = ledger.collect?.shardWeights;
-  const bad = !Array.isArray(weights) || weights.length < 1 || weights.some((w) => !Number.isInteger(w) || w < 0);
-  if (bad) {
-    problems.push(`${LEDGER}: collect.shardWeights must be an array of non-negative integers, one per shard`);
-  } else {
-    const total = weights.reduce((a, b) => a + b, 0);
-    if (total !== collected.length) {
-      // Reported on its own rather than left to the per-shard mismatch below, because the
-      // two have different answers: this one means re-derive, that one can also mean the
-      // variable was ignored. Playwright's remainder handling still runs every case, so
-      // nothing is lost while this is red — the split is simply back to being uneven.
-      problems.push(
-        `${LEDGER}: collect.shardWeights sums to ${total} but --project=race collects ${collected.length} case(s) — ` +
-          `re-derive with \`node scripts/race-shard-weights.mjs <run id>\``,
-      );
-    } else {
-      const env = { PWTEST_SHARD_WEIGHTS: weights.join(":") };
-      for (const [i, want] of weights.entries()) {
-        const shard = `${i + 1}/${weights.length}`;
-        const got = playwright("race", { args: [`--shard=${shard}`], env, tag: `race-shard-${i + 1}` }).length;
-        if (got !== want) {
-          problems.push(
-            `${LEDGER}: --shard=${shard} collects ${got} case(s) under collect.shardWeights, not the ${want} the ` +
-              `array claims — either the corpus moved (re-derive) or Playwright stopped reading PWTEST_SHARD_WEIGHTS`,
-          );
-        }
-      }
-    }
-  }
-
-  // …and that race.yml still passes it. The check above proves the variable WORKS; only
-  // the workflow decides whether it is set, and a run with it dropped is the same green as
-  // a run with it honoured. A text scan is the whole of what this is: it cannot see which
-  // step the value reaches, or that the value reaching it came from this ledger. What it
-  // does catch is the deletion, which is the way this arrangement actually goes missing.
-  //
-  // As an env KEY, not as a substring, which is the difference between a scan and a scan
-  // that passes on anything: renaming the variable to PWTEST_SHARD_WEIGHTS_DISABLED — the
-  // shape a `git revert` of half this change would leave — kept `includes()` green while
-  // Playwright read nothing (measured).
-  const workflow = readFileSync(join(repo, RACE_WORKFLOW), "utf8");
-  for (const [what, pattern, why] of [
-    [
-      "PWTEST_SHARD_WEIGHTS as an env key",
-      /^\s*PWTEST_SHARD_WEIGHTS:\s+\S/m,
-      "the split would fall back to Playwright's equal one, and nothing would report it",
-    ],
-    [
-      "collect.shardWeights",
-      /collect\.shardWeights\b/,
-      `the weights would be a second copy rather than a read of ${LEDGER}`,
-    ],
-  ]) {
-    if (!pattern.test(workflow)) problems.push(`${RACE_WORKFLOW}: no longer names ${what} — ${why}`);
+  const sum = Array.isArray(weights) ? weights.reduce((a, b) => a + b, 0) : null;
+  // Not taken when the sum is already wrong: every shard would then be off by the same
+  // arithmetic, and the sum's own message is the one that says what to do about it.
+  const shardCounts =
+    weightShapeProblem(weights) === null && sum === collected.length
+      ? weights.map(
+          (_, i) =>
+            playwright("race", {
+              args: [`--shard=${i + 1}/${weights.length}`],
+              env: { PWTEST_SHARD_WEIGHTS: weights.join(":") },
+              tag: `race-shard-${i + 1}`,
+            }).length,
+        )
+      : null;
+  for (const p of inspectWeights({
+    weights,
+    collectedCount: collected.length,
+    shardCounts,
+    workflowText: readFileSync(join(repo, RACE_WORKFLOW), "utf8"),
+  })) {
+    problems.push(`${p.where === "workflow" ? RACE_WORKFLOW : LEDGER}: ${p.message}`);
   }
 }
 
