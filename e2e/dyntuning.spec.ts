@@ -548,6 +548,10 @@ test.describe("comp", () => {
     // Stereo channels have no COMP section at all.
     await node(page, "ch_5_6").click();
     await expect(page.locator("#btn-comp-screen")).toHaveCount(0);
+    // The positive control: the inspector really is showing this channel. Without it the
+    // count above passes on an inspector that rendered nothing, which is the same reading
+    // as the feature being absent.
+    await expect(page.locator("#btn-eq-screen")).toHaveCount(1);
     // A mono channel switched to SSMCS keeps the section, because the morphing strip
     // has a compressor of its own — what changes is which screen the launcher opens.
     await node(page, "ch1").click();
@@ -556,8 +560,13 @@ test.describe("comp", () => {
     await expect(page.locator("#btn-comp-screen")).toHaveCount(0);
     await expect(page.locator("#btn-ssmcsComp-screen")).toHaveCount(1);
     await page.click("#btn-view-console");
-    // GATE, SSMCS, COMP and EQ each carry one, so this strip has four openers.
-    await expect(page.locator(".con-strip").nth(0).locator(".con-chip-open")).toHaveCount(4);
+    // The CONSOLE does not hand the chip over the way the inspector hands the section
+    // over: the bank's COMP face is reached from inside its own screen, so the strip
+    // carries GATE's opener and the SSMCS chip's and no more. Named as well as counted —
+    // every opener is the same glyph, so a count alone does not say which screen went.
+    const strip = page.locator(".con-strip").nth(0);
+    await expect(strip.locator('.con-chip-open[aria-label="Comp screen"]')).toHaveCount(0);
+    await expect(strip.locator(".con-chip-open")).toHaveCount(2);
   });
 
   test("carries the compressor's own ladder domain", async ({ page }) => {

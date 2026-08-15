@@ -27,8 +27,10 @@ export type DynKind = keyof typeof DYN_PROCESSORS;
 
 /** What a launcher for one kind is called — its button's text and a chip's aria-label.
  *  The morphing strip's COMP and EQ faces reuse the shipped screens' labels: they open
- *  from the same inspector section and the same CONSOLE chip, and a channel never
- *  carries both banks at once, so "Comp screen" names exactly one thing on it. */
+ *  from the same inspector section, and a channel never carries both banks at once, so
+ *  "Comp screen" names exactly one thing on it. Those two are the inspector's launchers
+ *  alone — the CONSOLE strip carries one opener for the whole bank, beside the SSMCS
+ *  chip, and its other faces are reached from the segment inside the screen. */
 export function dynOpenLabel(kind: DynKind, m: Messages): string {
   switch (kind) {
     case "ssmcsComp":

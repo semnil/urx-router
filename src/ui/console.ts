@@ -38,7 +38,7 @@ import {
   type MeterTap,
 } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
-import { COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
+import { COMP_EQ_COMP_FIRST } from "../core/control/params";
 import { dynOpenLabel } from "./dyn-registry";
 import type { DynKind } from "./dyn-registry";
 import { markMidi } from "./midi-learn";
@@ -1705,12 +1705,16 @@ export class Console {
   // fixed head height for every strip. Measure it by laying out the strips off-screen
   // with auto-height heads, then cache by everything that changes what a head CONTAINS.
   //
-  // Model + hidden set alone was not that. The opener chips a head carries also depend
-  // on each channel's COMP/EQ type — an SSMCS channel has no GATE/COMP/EQ openers, so a
-  // plan seeded in SSMCS measured a shorter head, and switching it back to COMP->EQ added
-  // a chip row the cached height had no space for: the head then stayed clipped until
+  // Model + hidden set alone was not that. The chips a head carries also depend on each
+  // channel's COMP/EQ type — an SSMCS channel had no GATE/COMP/EQ openers, so a plan
+  // seeded in SSMCS measured a shorter head, and switching it back to COMP->EQ added a
+  // chip row the cached height had no space for: the head then stayed clipped until
   // something rebuilt the view under a different key (a model switch, a hide/show, a
-  // reload).
+  // reload). The two banks now carry the same NUMBER of chips — the morphing strip's own
+  // master and its one opener stand where COMP's and EQ's two openers stand — so the term
+  // sits where the sample rate's does: kept for what a head carries rather than for a
+  // height seen to move, since what balances it is a coincidence of counts rather than a
+  // rule.
   //
   // The sample rate is in the key too, and it earns its place differently. Measured
   // 2026-08-14 over URX44V / URX44 / URX22 at 48 / 96 / 176.4 / 192 kHz, on each one's
@@ -1888,10 +1892,11 @@ export class Console {
         proc.append(this.dynOpenChip("ssmcs", m.id));
       }
       boolChip(proc, "COMP", "compOn", false);
-      // Gated on `dyn`, not only on the bank it names: a channel with no strip at all has
-      // no COMP screen of either kind, and an opener for a screen that refuses to open is
-      // exactly what asking channelDynamics is meant to prevent.
-      if (dyn) proc.append(this.dynOpenChip(dyn.comp ? "comp" : "ssmcsComp", m.id));
+      // The shipped COMP screen only. A morphing strip's COMP face is reached from the
+      // SSMCS opener above and the face segment inside the screen, so the bank carries one
+      // opener rather than one per face — and the COMP and EQ chips read here exactly as
+      // they do on a channel with no strip at all.
+      if (dyn?.comp) proc.append(this.dynOpenChip("comp", m.id));
     }
     const rate = this.hooks.getPlan().sampleRate;
     if (m.hasEq) {
@@ -1904,13 +1909,11 @@ export class Console {
       else {
         boolChip(proc, t().console.eq, "eqOn", true);
         // The tuning screen's opener, as GATE and COMP have. Not offered where the
-        // rate has the EQ forced off (the toggle beside it is read-only there). In
-        // SSMCS mode the EQ chip is the morphing strip's, so it opens that bank's EQ
-        // face instead. It costs a slot in the two-per-row grid, so the processing
-        // chips take a fourth row and `--head-h` carries it.
+        // rate has the EQ forced off (the toggle beside it is read-only there), nor in
+        // SSMCS mode, where the EQ chip toggles the morphing strip's band section and the
+        // face segment inside the SSMCS screen is what reaches its EQ face.
         const eqType = this.hooks.getPlan().nodeParams[m.id]?.compEqType ?? COMP_EQ_COMP_FIRST;
         if (hasEq(model, m.id, eqType)) proc.append(this.dynOpenChip("eq", m.id));
-        else if (eqType === COMP_EQ_SSMCS && m.isMono) proc.append(this.dynOpenChip("ssmcsEq", m.id));
       }
     }
     if (insertFxControl(model, m.id)) {
