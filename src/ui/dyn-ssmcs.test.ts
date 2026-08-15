@@ -7,13 +7,43 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const subscribed: Array<Array<[number, number]>> = [];
+/** How long a registration takes to come back. Zero is the default, so every case that
+ *  only reads `subscribed` stays synchronous; the overlap case gives it a duration,
+ *  because two registrations cannot be observed overlapping if each finishes inside its
+ *  own call. `peakInFlight` is what that case reads. */
+let subDelayMs = 0;
+let inFlight = 0;
+let peakInFlight = 0;
+/** The live registration's own callback, so a case can push a meter frame the way the
+ *  broker would. The GR peak is folded here rather than off the store, so this is the
+ *  only way in. */
+let feedFrame: ((m: { meterId: number; x: number; value: number }) => void) | undefined;
 vi.mock("../core/meters", async (importOriginal) => {
   const real = await importOriginal<typeof import("../core/meters")>();
   return {
     ...real,
-    subscribeMeters: (_store: unknown, addrs: Array<[number, number]>) => {
+    subscribeMeters: (
+      store: { apply: (m: { meterId: number; x: number; value: number }) => void },
+      addrs: Array<[number, number]>,
+      onUpdate?: (m: { meterId: number; x: number; value: number }) => void,
+    ) => {
       subscribed.push(addrs);
-      return Promise.resolve(() => {});
+      // Both halves of a frame's path, so a case can push one the way the broker would:
+      // the store is what a level lane paints from, and the callback is where the GR
+      // peak is folded (deliberately not off the store, which is last-write-win).
+      feedFrame = (m) => {
+        store.apply(m);
+        onUpdate?.(m);
+      };
+      inFlight++;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      const done = (): (() => void) => {
+        inFlight--;
+        return () => {};
+      };
+      return subDelayMs
+        ? new Promise<() => void>((r) => setTimeout(() => r(done()), subDelayMs))
+        : Promise.resolve(done());
     },
   };
 });
@@ -26,6 +56,8 @@ import { SSMCS_COMP_DYN, SSMCS_DYN, SSMCS_EQ_DYN } from "./dyn-ssmcs";
 import { COMP_DYN } from "./dyn-comp";
 import { EQ_DYN } from "./dyn-eq";
 import { COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
+import { isSsmcsScKey, ssmcsCompFields, ssmcsMainFields, ssmcsPlanKey } from "../core/control/translate";
+import type { DynField } from "../core/control/translate";
 import { SSMCS_INITIAL } from "../core/plan";
 import type { SsmcsParams } from "../core/plan";
 import { setLang, t } from "../i18n";
@@ -61,6 +93,11 @@ const ctxOf = (host: DynHost, sel = 0): DynCtx => ({
 const rowLabels = (box: HTMLElement): string[] =>
   [...box.querySelectorAll<HTMLElement>(".prefs-row")].map((r) => r.querySelector(".lbl")?.textContent ?? "");
 
+/** Let the registration queue drain. Registrations are serialized — one is chained behind
+ *  the previous one's SETTLEMENT — so the next is several microtask turns away rather than
+ *  synchronous, and a counted number of `await Promise.resolve()` lands mid-chain. */
+const settleSubs = (ms = 0): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 /** The plan's SSMCS sub-object after the screen's writes. */
 const strip = (host: DynHost): SsmcsParams => host.plan.nodeParams[ssmcsChannel]?.ssmcs ?? {};
 
@@ -74,6 +111,9 @@ beforeEach(() => {
   setLang("en");
   localStorage.clear();
   subscribed.length = 0;
+  subDelayMs = 0;
+  inFlight = 0;
+  peakInFlight = 0;
 });
 
 afterEach(() => {
@@ -236,6 +276,49 @@ describe("the COMP face", () => {
   });
 });
 
+// The rows' ranges and grid come from the field tables in `core/control/translate.ts`,
+// where every other screen's do — one raw step is one device detent, so a screen that
+// carried its own numbers would let the slider stop between two values the unit has. The
+// assertion is the WIRING, driven from the tables themselves: naming the numbers here
+// would be the same constants written a second time, and they would agree however wrong
+// both were.
+describe("the sliders' ranges", () => {
+  const check = (fields: readonly DynField[], box: HTMLElement): void => {
+    const rows = rowsByKey(box);
+    expect(fields.length).toBeGreaterThan(0);
+    for (const f of fields) {
+      const el = rows.get(f.key);
+      expect(el, f.key).toBeDefined();
+      expect(el!.min, f.key).toBe(String(f.min));
+      expect(el!.max, f.key).toBe(String(f.max));
+      expect(el!.step, f.key).toBe(String(f.step));
+    }
+  };
+
+  it("gives the MAIN face's three sliders the main table's", () => {
+    h = host();
+    screen = open(SSMCS_DYN, h);
+    check(ssmcsMainFields(), h.box);
+  });
+
+  it("gives the COMP face's sliders the compressor table's, side chain included", () => {
+    h = host();
+    screen = open(SSMCS_COMP_DYN, h);
+    check(ssmcsCompFields(), h.box);
+  });
+
+  // The table's default and a fresh channel's value are one fact, not two: both are the
+  // factory capture. A default that drifted from it would seed a new plan with one value
+  // and fall back to another on a plan that never carried the key.
+  it("defaults every field to the factory capture", () => {
+    for (const f of ssmcsMainFields()) expect(f.def, f.key).toBe(SSMCS_INITIAL[f.key as "compDrive"]);
+    for (const f of ssmcsCompFields()) {
+      const from = isSsmcsScKey(f.key) ? SSMCS_INITIAL.sc : SSMCS_INITIAL.comp;
+      expect(f.def, f.key).toBe((from as Record<string, number>)[ssmcsPlanKey(f.key)]);
+    }
+  });
+});
+
 describe("the EQ face", () => {
   beforeEach(() => {
     h = host();
@@ -293,6 +376,28 @@ describe("the EQ face", () => {
     expect(rowsByKey(h!.box).get("freq")!.max).toBe("124");
   });
 
+  // A shelf carries no Q on the device, so the locked row has no value of its own to
+  // show. What stands in it is MID's factory Q — the value, not a zero and not the band's
+  // own missing one, so the row reads as a number the way its neighbours do.
+  it("stands MID's factory Q in the shelves' locked row", () => {
+    const shown = (): string => h!.box.querySelector('[data-dyn-val="q"]')?.textContent ?? "";
+    band("MID").click();
+    const midQ = shown();
+    expect(midQ).not.toBe("");
+    for (const name of ["LOW", "HIGH"] as const) {
+      band(name).click();
+      expect(shown(), name).toBe(midQ);
+    }
+    // And it is the FACTORY value that stands there, not whatever MID happens to hold:
+    // moving MID's Q must not move what the shelves display.
+    band("MID").click();
+    slide(rowsByKey(h!.box).get("q")!, SSMCS_INITIAL.eq.mid.q + 8);
+    const moved = shown();
+    expect(moved).not.toBe(midQ);
+    band("LOW").click();
+    expect(shown()).toBe(midQ);
+  });
+
   it("starts on LOW every time it opens", () => {
     band("HIGH").click();
     expect(band("HIGH").getAttribute("aria-pressed")).toBe("true");
@@ -341,16 +446,90 @@ describe("moving between the faces", () => {
     expect(h!.box.querySelector("#dyn-screen-title")?.textContent).toContain("CH 1");
   });
 
-  it("re-subscribes to the face's own taps", () => {
+  it("re-subscribes to the face's own taps", async () => {
     const last = (): string => subscribed[subscribed.length - 1].map((a) => a.join(":")).join(",");
     const mono = 0; // CH 1's index in the meter tables
     expect(last()).toBe(`108:${mono},110:${mono},111:${mono},112:${mono}`);
     face("comp").click();
+    await settleSubs();
     expect(last()).toBe(`108:${mono},110:${mono},111:${mono}`);
     face("eq").click();
+    await settleSubs();
     expect(last()).toBe(`111:${mono},112:${mono}`);
     face("main").click();
+    await settleSubs();
     expect(last()).toBe(`108:${mono},110:${mono},111:${mono},112:${mono}`);
+  });
+
+  // The registrations are serialized because the broker's slot is single and replaced
+  // silently: two in flight together take that slot in the order the transport delivered
+  // them, which can be the face that was left — and the screen's own handle then
+  // unsubscribes a registration the broker had already replaced, so the meters stop with
+  // nothing raised. What the serialization buys is that the LAST registration issued is
+  // the last one the broker sees. Registration is given a duration here, because two that
+  // each finish inside their own call cannot be caught overlapping.
+  it("never has two registrations in flight at once", async () => {
+    subDelayMs = 5;
+    peakInFlight = 0;
+    face("comp").click();
+    face("eq").click();
+    face("main").click();
+    await settleSubs(80);
+    expect(peakInFlight).toBe(1);
+    const mono = 0;
+    expect(subscribed[subscribed.length - 1].map((a) => a.join(":")).join(",")).toBe(
+      `108:${mono},110:${mono},111:${mono},112:${mono}`,
+    );
+  });
+
+  // A GR peak hold is a caption's worth of history, and every face reads a DIFFERENT
+  // address set. Carried across a move it would print the peak of one tap under another
+  // tap's caption — the COMP face's GR under MAIN's, which is the same lane key and a
+  // different meaning. The hold is dropped rather than re-derived, because the value it
+  // would need has not arrived yet on the face being moved to.
+  it("drops the peak holds when the face moves", async () => {
+    const paint = (): void => {
+      for (let i = 0; i < 5; i++) h!.frame();
+    };
+    const peak = (): string => readouts(h!.box)[0].peak;
+    // The cell prints its prefix whether or not it holds anything, so "nothing held" is
+    // this string and not the empty one — comparing against the bare dash would pass on
+    // every reading there is.
+    const nothing = `${t().dynTuning.peakPrefix} ${t().dynTuning.noReading}`;
+    expect(peak()).toBe(nothing);
+
+    // Pre Comp on CH 1: meter 108, index 0. Loud, so the hold is unmistakably a hold.
+    feedFrame?.({ meterId: 108, x: 0, value: -60 });
+    paint();
+    const held = peak();
+    expect(held).not.toBe(nothing);
+
+    face("comp").click();
+    await settleSubs();
+    paint();
+    // The COMP face reads the same first tap, so the caption is the same one — which is
+    // exactly why a carried hold would be invisible here rather than obviously wrong.
+    expect(peak()).toBe(nothing);
+  });
+
+  // A face is moved to with Enter or Space as well as with the pointer, and the press
+  // replaces the whole dialog body — the button that was pressed included. Without the
+  // restore, `document.activeElement` falls back to the body and a keyboard user has to
+  // tab in from the top of the modal again.
+  it("leaves focus on the face segment it was pressed from", () => {
+    face("comp").focus();
+    face("comp").click();
+    expect(document.activeElement?.id).toBe("dyn-face-ssmcs-comp");
+    // The new button, not the detached one the press was made on.
+    expect(document.activeElement?.isConnected).toBe(true);
+  });
+
+  // The other half of the same rule: a pointer press must not leave focus behind on a
+  // control the operator never focused.
+  it("does not take focus on a press that came from nowhere", () => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    face("eq").click();
+    expect(document.activeElement?.id).not.toBe("dyn-face-ssmcs-eq");
   });
 
   it("closes itself when the channel leaves the morphing bank underneath it", () => {
@@ -412,17 +591,80 @@ describe("what the curves draw", () => {
    * The bound is the 1:1 leg's own rise, which every sample below the knee already has,
    * so a step of any size fails and the ordinary slope does not.
    */
+  /** One sample's rise on the 1:1 leg, in canvas px: the plot's dB-per-px times the
+   *  0.45 dB one of the 120 segments covers. Nothing the curve draws may move faster. */
+  const UNITY_STEP = (320 - 14 - 28) / (18 - -54) / ((0 - -54) / 120) ** -1;
+
+  /** Consecutive-sample deltas of the drawn polyline, in canvas px. Canvas y grows
+   *  downward, so a rising output is a NEGATIVE delta and a positive one is the curve
+   *  turning back on itself. */
+  const deltas = (): number[] => {
+    const ys = curveYs(SSMCS_COMP_DYN);
+    return ys.slice(1).map((y, i) => y - ys[i]);
+  };
+
   it.each([
     ["Soft", 0],
     ["Medium", 1],
   ])("bends rather than steps through a %s knee", (_name, knee) => {
     withComp({ knee });
-    const ys = curveYs(SSMCS_COMP_DYN);
-    const steps = ys.slice(1).map((y, i) => Math.abs(y - ys[i]));
-    const unity = (320 - 14 - 28) / (18 - -54) / ((0 - -54) / 120) ** -1; // px per sample on the 1:1 leg
-    expect(Math.max(...steps)).toBeLessThanOrEqual(unity + 0.01);
+    const steps = deltas().map(Math.abs);
+    expect(Math.max(...steps)).toBeLessThanOrEqual(UNITY_STEP + 0.01);
     // The positive control: a curve that never bent would pass the bound trivially.
-    expect(Math.min(...steps)).toBeLessThan(unity - 0.5);
+    expect(Math.min(...steps)).toBeLessThan(UNITY_STEP - 0.5);
+  });
+
+  /**
+   * The curve never turns back on itself.
+   *
+   * A compressor's transfer curve rises. Two shapes on screen at an infinite ratio said
+   * otherwise, and both came from the makeup being carried by the compressed leg alone:
+   * on Hard the corner STEPPED DOWN by the whole makeup, there being 0 dB of knee to
+   * spread it across, and on Medium the ramp outran the knee's own rise, so the curve
+   * climbed past the plateau and came back down onto it. The case above sees neither —
+   * it asks only at the factory ratio, where the compressed leg still rises fast enough
+   * to cover a factory makeup.
+   *
+   * Swept rather than sampled at one setting, because which combinations fold is exactly
+   * what was not obvious: of the 2100 settings a first sweep covered, 515 folded and every
+   * one of them needed a makeup away from 0 dB.
+   */
+  it("never turns back on itself, at any setting of the four terms that shape it", () => {
+    const folded: string[] = [];
+    for (const knee of [0, 1, 2])
+      for (const ratio of [0, 30, 60, 90, 120])
+        for (const makeup of [0, 50, 100, 150, 200])
+          for (const compDrive of [40, 100, 200]) {
+            h!.plan.nodeParams[ssmcsChannel] = {
+              ...h!.plan.nodeParams[ssmcsChannel],
+              ssmcs: { ...SSMCS_INITIAL, compDrive, comp: { ...SSMCS_INITIAL.comp, knee, ratio, makeup } },
+            };
+            const worst = Math.max(...deltas());
+            if (worst > 0.01)
+              folded.push(`knee=${knee} ratio=${ratio} makeup=${makeup} drive=${compDrive} +${worst.toFixed(2)}px`);
+          }
+    expect(folded).toEqual([]);
+  });
+
+  /**
+   * A Hard knee at an infinite ratio is two straight segments meeting at one point.
+   *
+   * The shape is what the setting means, so it is asserted as a shape: no sample moves
+   * faster than the 1:1 leg (no step at the corner), and the samples fall into exactly two
+   * populations — moving at the 1:1 rate, and not moving at all. A monotonicity check alone
+   * would pass on a step DOWN turned into a step UP, and the step bound alone would pass on
+   * a curve that was one straight line and nothing else.
+   */
+  it("meets the plateau at a single point on a Hard knee", () => {
+    withComp({ knee: 2, ratio: 120, makeup: 0 });
+    const steps = deltas().map(Math.abs);
+    expect(Math.max(...steps)).toBeLessThanOrEqual(UNITY_STEP + 0.01);
+    expect(steps.filter((s) => s > UNITY_STEP - 0.01).length).toBeGreaterThan(10);
+    expect(steps.filter((s) => s < 0.01).length).toBeGreaterThan(10);
+    // One sample in between and no more: the corner falls inside a segment rather than on
+    // a sample, so exactly one of the 120 covers part of each leg. A bend would put a run
+    // of them at intermediate rates.
+    expect(steps.filter((s) => s > 0.01 && s < UNITY_STEP - 0.01).length).toBeLessThanOrEqual(1);
   });
 
   it("draws no reduction label when the drive has the compressor switched out", () => {

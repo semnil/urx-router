@@ -169,8 +169,8 @@ const kneeReach = (knee: number): readonly [number, number] => KNEE_REACH_DB[kne
  * The compressor's response as a function of input level, and the gain it carries there.
  *
  * The threshold is an internal value the unit never shows, driven by Comp Drive, and the
- * drive also adds gain of its own below the knee — so turning that one knob moves the
- * corner AND lifts the output, which is what the operator sees on the OUT lane.
+ * drive also adds gain of its own — so turning that one knob moves the corner AND lifts
+ * the output, which is what the operator sees on the OUT lane.
  * A drive of zero is not a threshold pushed out of range: it disables the compressor.
  *
  * Built once per redraw rather than read per sample point: the curve evaluates it ~120
@@ -190,42 +190,54 @@ function transferOf(v: StripValues): { out: (inDb: number) => number; gain: (inD
   const width = hi - lo;
   const hiOut = thr + up / ratio;
   const inKnee = (inDb: number): boolean => width > 0 && inDb > lo && inDb < hi;
-  // How far through the knee an input is. The makeup only applies while compressing, so
-  // it comes in across the knee rather than stepping in at an edge.
+  // How far through the knee an input is.
   const frac = (inDb: number): number => (inDb - lo) / width;
-  // A Hard knee has no width for the makeup to come in across, so it steps at the corner
-  // by the whole makeup amount. That follows from the two measurements this rests on —
-  // the knee is 0 dB wide on Hard, and the makeup applies only while compressing — and
-  // whether the unit steps there is the open row in the private probe plan.
-  const gain = (inDb: number): number => {
-    if (drive === 0) return 0;
-    if (inKnee(inDb)) return driveGain + makeup * frac(inDb);
-    return inDb <= lo ? driveGain : driveGain + makeup;
-  };
+  // One output gain over the whole curve, as the shipped COMP screen applies its makeup.
+  // The measurement behind the makeup term is what the unit does WHILE COMPRESSING: five
+  // raw points, linear, `110` unmoved. What the same run reports below the threshold is a
+  // null result at one threshold setting, which does not separate "the makeup is off here"
+  // from "the block was not engaged here" — and the two readings cannot both shape the
+  // curve, since a gain present on one leg and absent on the other is a step at the corner
+  // whatever is drawn between the edges, and 0 dB wide on Hard means there is nothing to
+  // draw it across. What would settle it: walk the input across the corner and read
+  // `111 - 108` on both sides of it.
+  const gain = (): number => (drive === 0 ? 0 : driveGain + makeup);
   /**
    * Between the edges: a cubic through both, carrying the slope each side already has —
-   * 1 below, 1/ratio above.
+   * 1 below, 1/ratio above — with the two slopes limited to the cubic's monotone region
+   * first.
    *
-   * A quadratic cannot do it here. Its endpoint is fixed by its two slopes, so for an
-   * ASYMMETRIC knee it lands (1 - 1/ratio)(up - down)/2 away from the asymptote — 0.84 dB
-   * at the factory settings, which the curve drew as a vertical step at the upper edge.
-   * The shipped COMP screen's quadratic is not wrong for the same reason: that block's
-   * knee is one symmetric width, where the two agree.
+   * Both halves are load-bearing. A quadratic cannot do it at all: its endpoint is fixed
+   * by its two slopes, so for an ASYMMETRIC knee it lands (1 - 1/ratio)(up - down)/2 away
+   * from the asymptote — 0.84 dB at the factory settings, which the curve drew as a
+   * vertical step at the upper edge. (The shipped COMP screen's quadratic is not wrong for
+   * the same reason: that block's knee is one symmetric width, where the two agree.) And
+   * an unlimited cubic overshoots: a Medium knee at infinite ratio leaves the 1:1 leg's
+   * slope 3.08x the secant through the knee, past the 3 the monotone region allows, and
+   * the curve then rises above the plateau and comes back down — an input increase drawn
+   * as an output decrease. Limiting scales both slopes by 3/hypot, which is 1 wherever the
+   * pair is already inside the region, so the join stays exact everywhere it can.
    */
+  const secant = width > 0 ? (hiOut - lo) / width : 1;
+  const reach = secant > 0 ? Math.hypot(1 / secant, 1 / ratio / secant) : Number.POSITIVE_INFINITY;
+  const limit = reach > 3 ? 3 / reach : 1;
   const knee = (inDb: number): number => {
     const t = frac(inDb);
     const t2 = t * t;
     const t3 = t2 * t;
     return (
-      (2 * t3 - 3 * t2 + 1) * lo + (t3 - 2 * t2 + t) * width + (-2 * t3 + 3 * t2) * hiOut + (t3 - t2) * (width / ratio)
+      (2 * t3 - 3 * t2 + 1) * lo +
+      (t3 - 2 * t2 + t) * width * limit +
+      (-2 * t3 + 3 * t2) * hiOut +
+      (t3 - t2) * width * (limit / ratio)
     );
   };
   const out = (inDb: number): number => {
     if (drive === 0) return inDb;
-    if (inKnee(inDb)) return knee(inDb) + gain(inDb);
-    return (inDb <= lo ? inDb : thr + (inDb - thr) / ratio) + gain(inDb);
+    if (inKnee(inDb)) return knee(inDb) + gain();
+    return (inDb <= lo ? inDb : thr + (inDb - thr) / ratio) + gain();
   };
-  return { out, gain };
+  return { out, gain: () => gain() };
 }
 
 /** The transfer curve plus the reduction it buys at full scale — the same drawing and the
