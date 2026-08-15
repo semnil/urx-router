@@ -296,6 +296,44 @@ describe("channel tuning screen parameters", () => {
     expect(ids).not.toContain("ch1/type@eq.low");
   });
 
+  // The morphing bank's scopes, and the one row inside it that offers no control at all.
+  // A shelf has no Q on the device — the screen shows that row locked and says why — so a
+  // mapping onto it would drive nothing and report back the value it invented. The
+  // catalog's `continue` is the only thing that keeps it out, and nothing read it.
+  it("scopes the morphing strip's parameters, and offers no Q on a shelf", () => {
+    const p = defaultPlan("URX44V");
+    p.nodeParams.ch1 = { ...p.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+    const ids = new Set(listControls(model, p).map((c) => c.id));
+    for (const id of [
+      // The strip's own master carries no scope: it is the chip beside GATE / COMP / EQ
+      // on the strip, not a parameter inside one of the faces.
+      "ch1/ssmcsOn",
+      "ch1/compDrive@ssmcs",
+      "ch1/morphing@ssmcs",
+      "ch1/outGain@ssmcs",
+      "ch1/attack@ssmcs.comp",
+      "ch1/ratio@ssmcs.comp",
+      "ch1/sideChain@ssmcs.sc",
+      "ch1/q@ssmcs.sc",
+      "ch1/freq@ssmcs.sc",
+      "ch1/bandOn@ssmcs.eq.low",
+      "ch1/freq@ssmcs.eq.low",
+      "ch1/gain@ssmcs.eq.high",
+      "ch1/q@ssmcs.eq.mid",
+    ])
+      expect(ids, id).toContain(id);
+    // The two shelves, and only the two: MID's Q above is the positive control, so a
+    // catalog that dropped every band Q would fail rather than satisfy this.
+    expect(ids).not.toContain("ch1/q@ssmcs.eq.low");
+    expect(ids).not.toContain("ch1/q@ssmcs.eq.high");
+    // The knee is an enum, absent for the same reason COMP's is.
+    expect(ids).not.toContain("ch1/knee@ssmcs.comp");
+    // And the bank is exclusive: the channel is in SSMCS, so the shipped screens' own
+    // controls are not listed for it while the other bank's channels keep theirs.
+    expect(ids).not.toContain("ch1/threshold@comp");
+    expect(ids).toContain("ch2/threshold@comp");
+  });
+
   it("snaps to the field table's own grid, so MIDI and the slider agree", () => {
     // GATE threshold: -72 … 0 dB in 1 dB steps.
     const thr = bindControl(model, plan, "ch1/threshold@gate")!;
@@ -460,13 +498,27 @@ describe("feedback round trip", () => {
   /** Any 14-bit address; `wireRaw` reads only its resolution here. */
   const PAIR = { type: "cc14", channel: 0, controller: 7 } as const;
 
+  /** A plan with one mono channel in the morphing bank. On the factory plan no channel is
+   *  in SSMCS mode, so the strip's own continuous controls — Comp Drive, Morphing, Out
+   *  Gain, the compressor's, the side-chain filter's and each band's — are not listed at
+   *  all, and none of them had ever been asked whether its 14-bit round trip is exact. */
+  const seeded = (id: "URX22" | "URX44" | "URX44V"): Plan => {
+    const p = defaultPlan(id);
+    p.nodeParams.ch1 = { ...p.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+    return p;
+  };
+
   it.each(["URX22", "URX44", "URX44V"] as const)("is exact at 14 bits for every %s control", (id) => {
     const m = getModel(id);
     const offenders = new Set<string>();
-    for (const desc of listControls(m, defaultPlan(id)).filter((d) => d.kind === "continuous")) {
+    const listed = listControls(m, seeded(id)).filter((d) => d.kind === "continuous");
+    // The positive control for the seeding: the strip's own controls have to be among the
+    // ones swept, or this case has quietly gone back to the factory plan's set.
+    expect(listed.filter((d) => d.id.includes("@ssmcs")).length).toBeGreaterThan(10);
+    for (const desc of listed) {
       // One plan per control: `set` is absolute, so a sweep cannot accumulate, but a
       // neighbouring control's writes could change what this one is allowed to hold.
-      const p = defaultPlan(id);
+      const p = seeded(id);
       ensureFixedConnections(m, p);
       const c = bindControl(m, p, desc.id);
       if (!c) continue;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { bandResponse, eqResponse, shelfDesignFreq } from "./eq-response";
+import { bandResponse, eqResponse, shelfDesignFreq, ssmcsEqResponse } from "./eq-response";
+import type { SsmcsBandState } from "./eq-response";
 import type { EqBandState } from "./eq-response";
 import { EQ_TYPE_PASS, EQ_TYPE_PEAKING, EQ_TYPE_SHELVING } from "./control/params";
 
@@ -234,5 +235,78 @@ describe("a mid band is drawn as the peaking filter the device runs", () => {
     expect(lowPass(100)).toBeLessThan(-20);
     const highShelf = bandResponse(band({ index: 3, type: EQ_TYPE_SHELVING, freq: 1000, gain: 12, q: 0.71 }));
     expect(highShelf(4000)).toBeGreaterThan(10);
+  });
+});
+
+// The morphing strip's EQ is a different DSP block: three bands, LOW and HIGH fixed
+// shelving, MID fixed peaking, and no type slot at all. Its shelves executed in no test
+// at all until this block — every band in the factory capture ships at 0 dB, which
+// short-circuits to FLAT before a filter is ever designed, so the branch was reachable
+// only from a plan somebody had edited.
+describe("the SSMCS strip's three-band EQ", () => {
+  const band = (over: Partial<SsmcsBandState> & { kind: SsmcsBandState["kind"] }): SsmcsBandState => ({
+    on: true,
+    freq: 1000,
+    q: 1,
+    gain: 0,
+    ...over,
+  });
+  const only = (b: SsmcsBandState): ((hz: number) => number) => ssmcsEqResponse([b]);
+
+  it("shelves LOW below its frequency and HIGH above it", () => {
+    const low = only(band({ kind: "low", freq: 200, gain: 12 }));
+    expect(low(20)).toBeCloseTo(12, 0); // the plateau
+    expect(low(200)).toBeCloseTo(9, 0); // the nominal, 3 dB below it
+    expect(low(20000)).toBeCloseTo(0, 1); // nothing left at the far end
+
+    const high = only(band({ kind: "high", freq: 4000, gain: -9 }));
+    expect(high(20000)).toBeCloseTo(-9, 0);
+    expect(high(4000)).toBeCloseTo(-6, 0);
+    expect(high(20)).toBeCloseTo(0, 1);
+  });
+
+  // The shelves have no Q parameter on the device, so a value parked on one by a
+  // hand-authored plan must not reach the filter.
+  it("ignores the Q on a shelf, and reads it on the bell", () => {
+    const shelf = (q: number) => only(band({ kind: "low", freq: 200, gain: 12, q }));
+    for (const hz of [50, 200, 800]) expect(shelf(6)(hz)).toBeCloseTo(shelf(0.5)(hz), 6);
+    const bell = (q: number) => only(band({ kind: "mid", freq: 1000, gain: 12, q }));
+    expect(bell(6)(700)).toBeLessThan(bell(0.5)(700) - 1);
+  });
+
+  /**
+   * The bell's width is the device's, not a textbook biquad's.
+   *
+   * `SSMCS_Q_TO_BIQUAD` scales the displayed Q before the filter is designed, and it is
+   * the 4-band block's neighbour in the same file so that neither is carried across. The
+   * bandwidth is what the constant IS, so it is asserted as a bandwidth rather than by
+   * reading the number back — a test that names the number is the number written twice.
+   *
+   * The window is the separation that was actually established, and no tighter: measured
+   * against this case, 1.0 (no scaling at all) and the 4-band block's 0.5 both fail, while
+   * 0.7 and 0.95 pass. Separating the constant from its own neighbourhood needs one more
+   * sweep, finely stepped around the bell; until that runs, a tighter bound here would be
+   * this file asserting a precision nothing measured.
+   */
+  it("gives the bell the device's own width rather than a textbook biquad's", () => {
+    const r = only(band({ kind: "mid", freq: 1000, gain: 12, q: 1 }));
+    expect(r(1000)).toBeCloseTo(12, 1);
+    // Half-gain points, which a wider or narrower bell moves.
+    const halfLo = 1000 / 1.9;
+    const halfHi = 1000 * 1.9;
+    expect(r(halfLo)).toBeGreaterThan(4.5);
+    expect(r(halfLo)).toBeLessThan(7.5);
+    expect(r(halfHi)).toBeGreaterThan(4.5);
+    expect(r(halfHi)).toBeLessThan(7.5);
+  });
+
+  it("sums the three bands and drops the ones switched off", () => {
+    const low = band({ kind: "low", freq: 200, gain: 12 });
+    const mid = band({ kind: "mid", freq: 1000, gain: 6, q: 1 });
+    const both = ssmcsEqResponse([low, mid]);
+    expect(both(20)).toBeCloseTo(only(low)(20) + only(mid)(20), 6);
+    expect(ssmcsEqResponse([{ ...low, on: false }, mid])(20)).toBeCloseTo(only(mid)(20), 6);
+    // A band at 0 dB contributes nothing whether it is on or off.
+    expect(ssmcsEqResponse([{ ...low, gain: 0 }])(20)).toBe(0);
   });
 });
