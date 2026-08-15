@@ -20,7 +20,7 @@ import type {
   SsmcsBand,
   SsmcsParams,
 } from "../plan";
-import { incomingConnection, normalizeNodeName } from "../plan";
+import { incomingConnection, normalizeNodeName, SSMCS_INITIAL } from "../plan";
 import {
   FX_CHANNEL_NODE_INDEX,
   FX_EFFECT_ARRAY_PARAM,
@@ -704,15 +704,23 @@ export function eqOneKnob(model: DeviceModel, nodeId: string, compEqType: number
  *  range. GATE/COMP/DUCKER details and the 4-band PEQ's per-band values all take this
  *  shape, so the screens render them the same way. */
 export interface DynField {
-  /** The GateParams / CompParams / EqBand sub-field this controls. */
-  key: keyof GateParams | keyof CompParams | keyof EqBand;
-  name: ParamName;
+  /** The GateParams / CompParams / EqBand sub-field this controls, or one of the SSMCS
+   *  keys the descriptor flattens its nested sub-objects onto. */
+  key: keyof GateParams | keyof CompParams | keyof EqBand | SsmcsFieldKey;
+  /** The catalog row the numeric writer emits this value through. Absent for the SSMCS
+   *  strip, whose commands are built from the plan's own nested shape
+   *  (`pushSsmcsCommands`) rather than from a field table — a name here would be a
+   *  second spelling of the same address that nothing reads and nothing checks. */
+  name?: ParamName;
   min: number;
   max: number;
   step: number;
   /** Device default in plan units, shown before a fetch. */
   def: number;
-  unit: "db" | "ms" | "ratio" | "hz" | "q";
+  /** How the number reads. `raw` = a broker integer whose display goes through a
+   *  device curve, so the surface printing it supplies the text; `formatDyn` prints
+   *  the integer itself, which is right for the one SSMCS value that has no unit. */
+  unit: "db" | "ms" | "ratio" | "hz" | "q" | "raw";
   /** Slider positions for a value the device sweeps logarithmically (an EQ band
    *  frequency spans three decades, which a linear slider cannot resolve at the
    *  bottom). Absent = the slider carries the value itself. */
@@ -724,10 +732,41 @@ export interface DynField {
   fineStep?: number;
 }
 
+/** A field `pushDynCommands` can emit. The writer reads `name`, so requiring it here
+ *  is what keeps a nameless field (the SSMCS ones) out of that path at compile time
+ *  instead of through a runtime branch nothing could ever reach. */
+export type EmittedDynField = DynField & { name: ParamName };
+
+/** The SSMCS-only value keys, which no plan sub-object of its own is named after: the
+ *  descriptor flattens `ssmcs` and `ssmcs.sc` onto one record, so the side-chain
+ *  filter's three values are prefixed to keep them apart from the compressor's. */
+export type SsmcsFieldKey = "compDrive" | "morphing" | "outGain" | "scQ" | "scFreq" | "scGain";
+
+const SSMCS_SC_PREFIX = /^sc[A-Z]/;
+
+/** Whether a flattened SSMCS key belongs to the side-chain filter rather than the
+ *  compressor — which is what decides the sub-object a read and a write go to. */
+export const isSsmcsScKey = (key: string): boolean => key === "scOn" || SSMCS_SC_PREFIX.test(key);
+
+/**
+ * The plan key a flattened SSMCS key is stored under.
+ *
+ * Only the screen sees the prefixed spelling; the plan, the writer and a control id all
+ * know these as `on` / `q` / `freq` / `gain` under `sc`. Stating the translation once is
+ * what this exists for — spelled out per call site, the MIDI catalog translated it for
+ * the control ID and not for the plan key, so a mapped side-chain Q wrote `ssmcs.sc.scQ`.
+ * Nothing reads that key: the value never reached the wire, the screen never moved, and
+ * `get` read the same private key back, so the controller's feedback confirmed it.
+ */
+export function ssmcsPlanKey(key: string): string {
+  if (key === "scOn") return "on";
+  return SSMCS_SC_PREFIX.test(key) ? key[2].toLowerCase() + key.slice(3) : key;
+}
+
 // GATE detail (29-33) and COMP detail (35-40, the COMP->EQ comp bank). Ranges and
 // defaults in plan units (dB / ms / N:1); the broker bounds come from the encoders.
 // The COMP knee (37) is a separate enum dropdown, not a slider, so it is not here.
-const GATE_FIELDS: DynField[] = [
+const GATE_FIELDS: EmittedDynField[] = [
   { key: "threshold", name: "GATE_THRESHOLD", min: -72, max: 0, step: 1, def: -50, unit: "db" },
   { key: "range", name: "GATE_RANGE", min: GATE_RANGE_OFF_DB, max: 0, step: 1, def: -56, unit: "db" },
   {
@@ -750,7 +789,7 @@ const GATE_FIELDS: DynField[] = [
     unit: "ms",
   },
 ];
-const COMP_FIELDS: DynField[] = [
+const COMP_FIELDS: EmittedDynField[] = [
   { key: "threshold", name: "COMP_THRESHOLD", min: -54, max: 0, step: 1, def: -18, unit: "db" },
   { key: "ratio", name: "COMP_RATIO", min: DYN_RATIO_MIN, max: 20, step: 0.1, def: 3, unit: "ratio" },
   { key: "gain", name: "COMP_GAIN", min: 0, max: 18, step: 0.5, def: 2, unit: "db", fineStep: 0.1 },
@@ -783,7 +822,7 @@ const COMP_FIELDS: DynField[] = [
  * carries the 0.1 dB push-and-turn fine grid, one of the two values on the unit confirmed to
  * have one.
  */
-export function eqBandFields(index: number): DynField[] {
+export function eqBandFields(index: number): EmittedDynField[] {
   return [
     { key: "q", name: "EQ_BAND_Q", min: EQ_Q_MIN, max: EQ_Q_MAX, step: 0.1, def: EQ_Q_DEFAULT, unit: "q" },
     {
@@ -810,9 +849,99 @@ export function eqBandFields(index: number): DynField[] {
   ];
 }
 
+/**
+ * The SSMCS strip's slider fields, in the order the unit's own screens read them.
+ *
+ * Every value is the RAW broker integer, which is also the device's own grid — one
+ * slider step is one detent, so none of these needs `logSteps` even where the device
+ * curve is logarithmic. What that costs is the display: a raw number says nothing, so
+ * the screen supplies the text through `fieldText` and the unit is `raw`.
+ *
+ * `SSMCS_INITIAL` is the factory capture, so a field's default and a fresh channel's
+ * value are one fact rather than two. That is also why these are functions rather than
+ * constants: `plan.ts` reaches this module through `constraints.ts`, so a constant here
+ * would be built while `SSMCS_INITIAL` is still undefined.
+ */
+export const ssmcsMainFields = (): DynField[] => [
+  {
+    key: "compDrive",
+    min: SSMCS_COMP_DRIVE_MIN,
+    max: SSMCS_COMP_DRIVE_MAX,
+    step: 1,
+    def: SSMCS_INITIAL.compDrive,
+    unit: "raw",
+  },
+  {
+    key: "morphing",
+    min: SSMCS_MORPHING_MIN,
+    max: SSMCS_MORPHING_MAX,
+    step: 1,
+    def: SSMCS_INITIAL.morphing,
+    unit: "raw",
+  },
+  { key: "outGain", min: SSMCS_GAIN_MIN, max: SSMCS_GAIN_MAX, step: 1, def: SSMCS_INITIAL.outGain, unit: "raw" },
+];
+
+export const ssmcsCompFields = (): DynField[] => [
+  {
+    key: "attack",
+    min: SSMCS_ATTACK_RAW_MIN,
+    max: SSMCS_ATTACK_RAW_MAX,
+    step: 1,
+    def: SSMCS_INITIAL.comp.attack,
+    unit: "raw",
+  },
+  {
+    key: "release",
+    min: SSMCS_RELEASE_RAW_MIN,
+    max: SSMCS_RELEASE_RAW_MAX,
+    step: 1,
+    def: SSMCS_INITIAL.comp.release,
+    unit: "raw",
+  },
+  {
+    key: "ratio",
+    min: SSMCS_RATIO_RAW_MIN,
+    max: SSMCS_RATIO_RAW_MAX,
+    step: 1,
+    def: SSMCS_INITIAL.comp.ratio,
+    unit: "raw",
+  },
+  { key: "scQ", min: SSMCS_Q_RAW_MIN, max: SSMCS_Q_RAW_MAX, step: 1, def: SSMCS_INITIAL.sc.q, unit: "raw" },
+  { key: "scFreq", min: SSMCS_FREQ_RAW_MIN, max: SSMCS_FREQ_RAW_MAX, step: 1, def: SSMCS_INITIAL.sc.freq, unit: "raw" },
+  { key: "scGain", min: SSMCS_GAIN_MIN, max: SSMCS_GAIN_MAX, step: 1, def: SSMCS_INITIAL.sc.gain, unit: "raw" },
+];
+
+/** The three SSMCS EQ bands, in the order the band bar offers them. */
+export const SSMCS_EQ_BAND_NAMES = ["low", "mid", "high"] as const;
+export type SsmcsEqBandName = (typeof SSMCS_EQ_BAND_NAMES)[number];
+
+/** Whether a band reads a Q at all: MID is peaking, LOW and HIGH are shelves with no Q
+ *  parameter on the device. The Q row is still offered on all three (locked on the
+ *  shelves), so the panel keeps one height across the band bar. */
+export const ssmcsEqBandHasQ = (band: SsmcsEqBandName): boolean => band === "mid";
+
+/** One SSMCS EQ band's fields. The frequency range is the band's own — LOW stops at
+ *  1 kHz and HIGH starts near 500 Hz — which is why this is a function of the band. */
+export function ssmcsEqBandFields(band: SsmcsEqBandName): DynField[] {
+  const init = SSMCS_INITIAL.eq[band];
+  return [
+    { key: "q", min: SSMCS_Q_RAW_MIN, max: SSMCS_Q_RAW_MAX, step: 1, def: SSMCS_INITIAL.eq.mid.q, unit: "raw" },
+    {
+      key: "freq",
+      min: band === "high" ? SSMCS_EQ_HIGH_FREQ_RAW_MIN : SSMCS_FREQ_RAW_MIN,
+      max: band === "low" ? SSMCS_EQ_LOW_FREQ_RAW_MAX : SSMCS_FREQ_RAW_MAX,
+      step: 1,
+      def: init.freq,
+      unit: "raw",
+    },
+    { key: "gain", min: SSMCS_GAIN_MIN, max: SSMCS_GAIN_MAX, step: 1, def: init.gain, unit: "raw" },
+  ];
+}
+
 // device DUCKER screen reads them (Range / Attack / Decay graph handles, then the
 // Threshold box); each field carries its own param name, so order is display-only.
-export const DUCKER_FIELDS: DynField[] = [
+export const DUCKER_FIELDS: EmittedDynField[] = [
   { key: "range", name: "DUCKER_RANGE", min: -70, max: 0, step: 1, def: -56, unit: "db" },
   {
     key: "attack",
@@ -855,6 +984,7 @@ export function dynFromPos(f: DynField, pos: number): number {
 /** Format one dynamics value for display, by its unit. The single source for the
  *  inspector, the gate screen and anything else that prints a DynField. */
 export function formatDyn(v: number, unit: DynField["unit"]): string {
+  if (unit === "raw") return String(v);
   if (unit === "db") return `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
   if (unit === "ratio") return `${v.toFixed(1)}:1`;
   if (unit === "hz") return formatHz(v);
@@ -874,9 +1004,9 @@ export function dynValueText(f: DynField, v: number): string {
 /** GATE/COMP detail controls for a channel: the slider fields and the instance index. */
 export interface ChannelDynamics {
   y: number;
-  gate: DynField[];
+  gate: EmittedDynField[];
   /** COMP slider fields, or null in SSMCS mode (the morphing strip replaces COMP). */
-  comp: DynField[] | null;
+  comp: EmittedDynField[] | null;
 }
 
 /**
@@ -897,7 +1027,7 @@ export function channelDynamics(model: DeviceModel, nodeId: string, compEqType: 
 // raw int/scale bounds, not the per-field dB/ms limits the UI enforces.
 function pushDynCommands(
   out: VdCommand[],
-  fields: DynField[],
+  fields: EmittedDynField[],
   y: number,
   vals: Record<string, number | undefined>,
 ): void {

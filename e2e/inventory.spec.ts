@@ -7,6 +7,7 @@ import { listControls } from "../src/core/midi/controls";
 import { getModel } from "../src/models";
 import { defaultPlan } from "../src/models/initial-state";
 import { selectWire } from "./graph-helpers";
+import { COMP_EQ_SSMCS } from "../src/core/control/params";
 
 // Display-item coverage for every dialog, window, menu and popover: each one is
 // driven through the states it has, and everything the message catalog holds for
@@ -399,7 +400,7 @@ test("the device setup screen shows every page, on the model that has it and the
 test("the channel tuning screens show every processor, both displays and their notes", async ({ page }) => {
   const inv = inventoryOf("dynScreen");
   // The inspector's own section headings, as dyntuning.spec.ts addresses them.
-  const SECTION_OF = { gate: /^GATE$/, comp: /^COMP$/, eq: /^EQ$/, ducker: /^Ducker$/ };
+  const SECTION_OF = { gate: /^GATE$/, comp: /^COMP$/, eq: /^EQ$/, ducker: /^Ducker$/, ssmcs: /^SSMCS$/ };
 
   await page.addInitScript(() => {
     localStorage.setItem("urx-lang", "en");
@@ -474,6 +475,25 @@ test("the channel tuning screens show every processor, both displays and their n
   await page.keyboard.press("Delete");
   await openDucker();
   await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+
+  // The morphing strip replaces COMP and the 4-band EQ, so its three faces are reached
+  // by switching the channel's bank first. Once open they move between each other from
+  // the title row, which is where the face labels are.
+  await page.locator('#graph-host g.node[data-id="ch1"]').click();
+  await page.locator("#inspector .param", { hasText: "COMP/EQ Type" }).locator("select").selectOption("1");
+  await openFromInspector("ssmcs");
+  await inv.take(page, "#dyn-screen-modal");
+  await page.click("#dyn-face-ssmcs-comp");
+  await inv.take(page, "#dyn-screen-modal");
+  await page.click("#dyn-mode-curve");
+  await inv.take(page, "#dyn-screen-modal");
+  await page.click("#dyn-face-ssmcs-eq");
+  // A shelf band is what tags a Q row as unread; MID is the one that reads it.
+  for (const band of ["low", "mid", "high"]) {
+    await page.click(`#dyn-ssmcs-band-${band}`);
+    await inv.take(page, "#dyn-screen-modal");
+  }
 
   expectComplete("dynScreen", inv);
 });
@@ -672,7 +692,12 @@ test("the console popovers name what they set", async ({ page }) => {
 // separately below, for the two messages only a shared address prints.
 function everyControlMapping(): Array<Record<string, unknown>> {
   const model = getModel("URX44V");
-  const controls = listControls(model, defaultPlan("URX44V"));
+  const plan = defaultPlan("URX44V");
+  // ONE mono channel into the morphing bank, so both banks' scopes are in the list:
+  // a default plan carries no SSMCS channel, and switching every mono channel would
+  // take COMP and the 4-band EQ out instead.
+  plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+  const controls = listControls(model, plan);
   return controls.map((c, i) => ({
     control: c.id,
     addr: { type: "cc", channel: Math.floor(i / 128) % 16, controller: i % 128 },

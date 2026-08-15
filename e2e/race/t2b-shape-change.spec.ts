@@ -24,7 +24,7 @@ import {
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter } from "./analyze";
-import { CH1_FADER, CH2_FADER, faderOf, faderReadout, graphNode } from "./ui";
+import { CH1_FADER, CH2_FADER, faderOf, faderReadout, graphNode, openSsmcsScreen, screenRow } from "./ui";
 
 // T2b shape-change — the twelve T2 cases t2-shape-change.spec.ts did not reach
 // (docs/{en,ja}/live-race-harness.md). Same observables as T2: the `addrs` argument of
@@ -426,8 +426,13 @@ test.describe("T2b shape-change", () => {
     // is the control case here: it DOES classify), then the preset, which does not.
     await mark(page, "to-ssmcs");
     await param(page, "COMP/EQ Type").locator("select").selectOption("1");
-    await expect(param(page, "Sweet Spot Data")).toHaveCount(1);
+    await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(1);
     await settleAfter(page, "to-ssmcs", 1800);
+
+    // The preset is on the morphing strip's MAIN face — opened BEFORE the mark, so the
+    // window this case measures carries the preset write and its repair, not the screen's
+    // own opening.
+    await openSsmcsScreen(page, "ch1");
 
     // The device recomputes the strip from the preset, so the plan and the unit disagree on
     // a numeric SSMCS param until something reads. Only a READ can discover it, which is
@@ -439,7 +444,7 @@ test.describe("T2b shape-change", () => {
     const modeAt = markTime(modeTrace, "to-ssmcs")!;
     const regBeforePreset = regKeys(await paramAddrsOf(page));
     await mark(page, "sweet-spot");
-    await param(page, "Sweet Spot Data").locator("select").selectOption("9");
+    await screenRow(page, "Sweet Spot Data").locator("select").selectOption("9");
     await settleAfter(page, "sweet-spot", 1500);
 
     trace = await traceOf(page);

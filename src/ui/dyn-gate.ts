@@ -44,7 +44,13 @@ export const GATE_DYN: DynProcessor = {
   // No grFullDb: a gate's reduction runs the whole ruler (range reaches -∞), so the
   // shared tick column reads for it — a GR bar down to the -56 tick is 56 dB.
   bind: (ctx) =>
-    bindChannelStrip(ctx, { fields: (dyn) => dyn.gate, grKind: "gate", inTapKey: "pregate", outTapKey: "precomp" }),
+    bindChannelStrip(ctx, {
+      fields: (dyn) => dyn.gate,
+      grKind: "gate",
+      inTapKey: "pregate",
+      outTapKey: "precomp",
+      cap: "threshold",
+    }),
   bar: displayBar,
   ...transferPlot({ loDb: LO_DB, outLoDb: OUT_LO_DB, outTicks: OUT_TICKS, hint: (m) => m.dynTuning.gate.curveHint }),
   persistSel: true,

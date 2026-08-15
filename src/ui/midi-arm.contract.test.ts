@@ -33,6 +33,8 @@ import { DynScreen } from "./dyn-screen";
 import { DYN_PROCESSORS } from "./dyn-registry";
 import type { DynCtx } from "./dyn-screen";
 import { bindControl } from "../core/midi/controls";
+import { COMP_EQ_SSMCS } from "../core/control/params";
+import { defaultPlan } from "../models/initial-state";
 import { setLang, t } from "../i18n";
 
 /** Learn is on, nothing is armed or mapped: every armable control marks itself. */
@@ -81,7 +83,13 @@ afterEach(() => {
 describe("arming surfaces against the control catalog", () => {
   it.each(["URX22", "URX44", "URX44V"] as const)("CONSOLE arms only bindable ids on %s", (modelId) => {
     const armed: string[] = [];
-    ch = consoleHost({ modelId, midi: learnHooks(armed) });
+    // One mono channel into the morphing bank BEFORE the view is built, so its own chip
+    // is among the marked ones. Without it the strip carries no SSMCS chip and this case
+    // cannot see whether that chip's id binds — the catalog offers it under the same
+    // condition the chip appears under, and the two agreeing has nothing else checking it.
+    const plan = defaultPlan(modelId);
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+    ch = consoleHost({ modelId, plan, midi: learnHooks(armed) });
     let marked = 0;
     const first = armEverything(ch.host, armed);
     marked += first.marked;
@@ -136,6 +144,10 @@ describe("arming surfaces against the control catalog", () => {
       // and the assertion made against another otherwise, and they would drift silently
       // the day a case passes `opts.plan`. (It also stopped ~88 throwaway clones.)
       const { model, plan } = dh;
+      // ONE mono channel into the morphing bank, so both banks have somewhere to bind:
+      // a default plan carries no SSMCS channel at all, and putting every mono channel
+      // into it would leave COMP and the 4-band EQ with nothing.
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
       const ctxAt = (nodeId: string): DynCtx => ({ model, plan, nodeId, sel: 0, m: t() });
       const nodeId = model.nodes.map((n) => n.id).find((id) => proc.bind(ctxAt(id)) !== null);
       expect(nodeId, `${kind} binds no node of URX44V`).toBeTruthy();

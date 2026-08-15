@@ -17,6 +17,7 @@ import {
   LEVEL_MIN_DB,
   LEVEL_OFF_DB,
   sendConnection,
+  SSMCS_INITIAL,
   type NodeParams,
   type Plan,
   type PlanConnection,
@@ -38,6 +39,7 @@ import {
 } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
 import { COMP_EQ_COMP_FIRST } from "../core/control/params";
+import { dynOpenLabel } from "./dyn-registry";
 import type { DynKind } from "./dyn-registry";
 import { markMidi } from "./midi-learn";
 import type { MidiLearnHooks } from "./midi-learn";
@@ -1388,8 +1390,9 @@ export class Console {
     const chip = el("div", "con-chip con-chip-open");
     chip.textContent = "▸";
     chip.setAttribute("role", "button");
-    chip.title = t().dynTuning[kind].open;
-    chip.setAttribute("aria-label", t().dynTuning[kind].open);
+    const label = dynOpenLabel(kind, t());
+    chip.title = label;
+    chip.setAttribute("aria-label", label);
     this.wireActivate(chip, undefined, () => this.hooks.onOpenDynScreen?.(kind, id));
     return chip;
   }
@@ -1702,12 +1705,16 @@ export class Console {
   // fixed head height for every strip. Measure it by laying out the strips off-screen
   // with auto-height heads, then cache by everything that changes what a head CONTAINS.
   //
-  // Model + hidden set alone was not that. The opener chips a head carries also depend
-  // on each channel's COMP/EQ type — an SSMCS channel has no GATE/COMP/EQ openers, so a
-  // plan seeded in SSMCS measured a shorter head, and switching it back to COMP->EQ added
-  // a chip row the cached height had no space for: the head then stayed clipped until
+  // Model + hidden set alone was not that. The chips a head carries also depend on each
+  // channel's COMP/EQ type — an SSMCS channel had no GATE/COMP/EQ openers, so a plan
+  // seeded in SSMCS measured a shorter head, and switching it back to COMP->EQ added a
+  // chip row the cached height had no space for: the head then stayed clipped until
   // something rebuilt the view under a different key (a model switch, a hide/show, a
-  // reload).
+  // reload). The two banks now carry the same NUMBER of chips — the morphing strip's own
+  // master and its one opener stand where COMP's and EQ's two openers stand — so the term
+  // sits where the sample rate's does: kept for what a head carries rather than for a
+  // height seen to move, since what balances it is a coincidence of counts rather than a
+  // rule.
   //
   // The sample rate is in the key too, and it earns its place differently. Measured
   // 2026-08-14 over URX44V / URX44 / URX22 at 48 / 96 / 176.4 / 192 kHz, on each one's
@@ -1857,12 +1864,38 @@ export class Console {
       // take a third row.
       boolChip(proc, "GATE", "gateOn", false);
       proc.append(this.dynOpenChip("gate", m.id));
-      boolChip(proc, "COMP", "compOn", false);
-      // No COMP screen in SSMCS: the morphing strip replaces the compressor. Asked
-      // of channelDynamics rather than re-derived here, so the opener cannot appear
-      // for a screen that would refuse to open.
+      // Which COMP/EQ bank the channel runs decides which screen the COMP and EQ chips
+      // open, and whether the SSMCS chip is there at all. Asked of channelDynamics
+      // rather than re-derived here, so an opener cannot appear for a screen that
+      // would refuse to open.
       const plan = this.hooks.getPlan();
       const dyn = channelDynamics(this.hooks.getModel(), m.id, plan.nodeParams[m.id]?.compEqType ?? COMP_EQ_COMP_FIRST);
+      // The morphing strip's own master, between GATE and COMP as the inspector orders
+      // them and as the unit chains them. It lives one level down in the plan, so it
+      // gets its own writer rather than boolChip's flat one.
+      if (dyn && !dyn.comp) {
+        const ssmcsOn = (): boolean => planOf().ssmcs?.on ?? SSMCS_INITIAL.on;
+        this.makeChip(
+          m.id,
+          proc,
+          "SSMCS",
+          false,
+          ssmcsOn(),
+          () => {
+            const next = !ssmcsOn();
+            const np = this.nodeParamsOf(m.id);
+            np.ssmcs = { ...np.ssmcs, on: next };
+            return next;
+          },
+          { midiId: controlId(m.id, "ssmcsOn") },
+        );
+        proc.append(this.dynOpenChip("ssmcs", m.id));
+      }
+      boolChip(proc, "COMP", "compOn", false);
+      // The shipped COMP screen only. A morphing strip's COMP face is reached from the
+      // SSMCS opener above and the face segment inside the screen, so the bank carries one
+      // opener rather than one per face — and the COMP and EQ chips read here exactly as
+      // they do on a channel with no strip at all.
       if (dyn?.comp) proc.append(this.dynOpenChip("comp", m.id));
     }
     const rate = this.hooks.getPlan().sampleRate;
@@ -1877,9 +1910,8 @@ export class Console {
         boolChip(proc, t().console.eq, "eqOn", true);
         // The tuning screen's opener, as GATE and COMP have. Not offered where the
         // rate has the EQ forced off (the toggle beside it is read-only there), nor in
-        // SSMCS mode, where the EQ chip is the morphing strip's and there is no 4-band
-        // PEQ to open. It costs a slot in the two-per-row grid, so the processing chips
-        // take a fourth row and `--head-h` carries it.
+        // SSMCS mode, where the EQ chip toggles the morphing strip's band section and the
+        // face segment inside the SSMCS screen is what reaches its EQ face.
         const eqType = this.hooks.getPlan().nodeParams[m.id]?.compEqType ?? COMP_EQ_COMP_FIRST;
         if (hasEq(model, m.id, eqType)) proc.append(this.dynOpenChip("eq", m.id));
       }

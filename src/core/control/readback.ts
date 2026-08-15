@@ -33,7 +33,7 @@ import { writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, FX_SLOT_LEVEL, FX_SLOT_ON, fxParams } from "./fx-effect";
 import { insertFxEngine, insertFxFamilyOf, insertFxWritableSlots } from "./insert-fx-effect";
-import type { DynField, EqControl, EqOneKnobControl } from "./translate";
+import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
   addrKey,
   busBalance,
@@ -1161,7 +1161,7 @@ function decodeDyn(encoding: ParamEncoding, raw: number): number {
 }
 
 // Read a GATE/COMP detail section's slider values from the device (mono channel).
-async function readDyn(source: ParamSource, fields: DynField[], y: number): Promise<Record<string, number>> {
+async function readDyn(source: ParamSource, fields: EmittedDynField[], y: number): Promise<Record<string, number>> {
   const { vdGet } = readers(source);
   const vals: Record<string, number> = {};
   for (const f of fields) {

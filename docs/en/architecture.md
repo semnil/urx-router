@@ -403,12 +403,14 @@ carries a one-line map of the same directories and points here.
   they do. **The host knows nothing about which processor it is showing** — a `DynProcessor` resolves what a
   node has (`bind` → fields + meter lanes), reads and writes its own corner of the plan (`read`/`patch`),
   and arranges its display column out of the parts the host offers (`display` over `parts.lanes()` /
-  `parts.plot()`). It owns the broker's single meter slot while open, so the console is told to release and
-  regain it. `dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` / `dyn-ducker.ts` are the descriptors — DUCKER is
+  `parts.plot()`). It owns the session's one meter subscription while open, so the console is told to release and
+  regain it. `dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` / `dyn-ducker.ts` / `dyn-ssmcs.ts` are the descriptors — DUCKER is
   the one whose node is not the node it tunes, since a ducker hangs under a stereo channel keyed by a wire
   from somewhere else, so its lanes are gathered from three places instead of read off the node the screen
-  opened on — `dyn-chan.ts` the binding the
-  two MONO IN channel-strip processors share, `dyn-plot.ts` the dB×dB transfer plot those two draw, and
+  opened on — and `dyn-ssmcs.ts` the one that is three faces of one bank rather than one processor, moved between from
+  the title row without closing — `dyn-chan.ts` the binding the
+  MONO IN channel-strip processors share, `dyn-plot.ts` the dB×dB transfer plot they draw, `dyn-freq-plot.ts`
+  the frequency×gain plot the two EQs draw, and
   `dyn-registry.ts` the one place that knows which processors exist.
   GATE/COMP show a LADDER of meters —
   where the threshold is dragged as a fader cap on the input meter, the two sharing one coordinate — or a
@@ -886,7 +888,9 @@ bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships 
 `MONITOR_MONO`, ships OFF) chips. Then +48 / φ /
 HPF on mono MIC channels (Hi-Z on CH3/4) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
 chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
-node hung under them). An odd group gets an invisible spacer so its last chip never stretches to
+node hung under them). A mono channel in SSMCS mode carries **SSMCS** between GATE and COMP — the morphing
+strip's own master, and the one head chip whose value is a level down in the plan (`ssmcs.on`), so the strip
+writes it itself rather than through the flat-key chip writer. An odd group gets an invisible spacer so its last chip never stretches to
 full width. At the bottom (knobs bottom-aligned) are rotary knobs (`addKnob`/`wireKnob`, drag / arrow keys)
 — channel **Gain and PAN/BAL** (the CH→STEREO send's pan, L63–C–R63), the **master BALANCE** on the STEREO
 master and MIX buses (the bus output's L/R balance, `nodeParams.pan` → STEREO 583 / MIX 676; it keeps the

@@ -191,6 +191,20 @@ export interface DynRowCtx extends DynCtx {
 export interface DynRows {
   lead?: HTMLElement[];
   tail?: HTMLElement[];
+  /** Rows placed immediately before the slider whose key names them, for a panel whose
+   *  fields fall into groups the device reads in that order. The SSMCS COMP face is the
+   *  one: its side-chain filter's three sliders follow the compressor's, and the Side
+   *  Chain toggle that opens them is what tells the reader where one group ends. `lead`
+   *  would put that toggle above rows it does not govern. */
+  before?: Record<string, HTMLElement[]>;
+}
+
+/** One sibling face of a bank the screen moves between without closing. */
+export interface DynFace {
+  proc: DynProcessor;
+  label: (m: Messages) => string;
+  /** The segment button's element id, so a test and a launcher name the same thing. */
+  id: string;
 }
 
 export interface DynProcessor {
@@ -244,6 +258,11 @@ export interface DynProcessor {
   /** A label for a field whose key the shared `inspector.dyn` table does not name (or
    *  names differently — COMP's `gain` is a makeup gain, the EQ's is a band gain). */
   fieldLabel?: (f: DynField, m: Messages) => string | undefined;
+  /** The display text for a field whose value is not readable from the number alone —
+   *  a raw broker integer, which reaches a millisecond, a ratio or a hertz only through
+   *  a device curve. Undefined falls back to the field's unit, which is what the one
+   *  raw value that IS its own display (the morphing position) takes. */
+  fieldText?: (f: DynField, v: number) => string | undefined;
   /** The MIDI control id one of this processor's value keys is addressable by, or
    *  null where there is none (the enum selectors are deliberately not mappable).
    *  Which processor and which band a key belongs to is the descriptor's business —
@@ -290,6 +309,20 @@ export interface DynProcessor {
    *  value: with several, a press has to guess which one was meant, and one that missed a
    *  grip fell through to this drag (pressing COMP's gain grip moved the threshold). */
   plotDragsCap?: true;
+  /**
+   * The faces of one bank, when a processor is more than the screen can show at once.
+   * A segment in the title row moves between them without closing, so the modal is not
+   * rebuilt and the meter slot is not handed back and taken again for what is one
+   * continuous piece of work on one channel.
+   *
+   * Absent for every processor that is a whole processor: GATE, COMP, the 4-band EQ and
+   * DUCKER are separate things tuned at separate times, and closing one to open another
+   * is what that is.
+   *
+   * A thunk because the faces name each other, and a module's constants are not yet
+   * initialised while its first one is being built.
+   */
+  faces?: () => readonly DynFace[];
 }
 
 /** Peak hold, in notify frames (100 ms each). Nothing on the device sets this —
@@ -317,7 +350,7 @@ export interface DynScreenHooks {
   /** The shared plan-edit funnel (the inspector's own path): flags the plan dirty
    *  and mirrors to the device when live. */
   onUpdateNodeParams: (id: string, patch: NodeParams) => void;
-  /** Hand the broker's single meter slot over / give it back. */
+  /** Hand this session's one meter subscription over / give it back. */
   releaseMeters: () => void;
   regainMeters: () => void;
   /** A meter registration failed. Bars stuck on the floor look exactly like
@@ -446,6 +479,11 @@ export class DynScreen {
    *  address nothing reads while the lane it belongs to sits at the floor. */
   private subSig = "";
   private subGen = 0;
+  /** The registrations, one after another. A session holds one meter subscription and
+   *  `vd_meters_subscribe` replaces it silently, so overlapping ones must not be in
+   *  flight together. */
+  private subChain: Promise<void> = Promise.resolve();
+  private subBusy = false;
 
   /** Live readings, folded per lane, written by paint() and read by the overlay. */
   private readings = new Map<string, number | null>();
@@ -540,9 +578,12 @@ export class DynScreen {
     };
   }
 
-  /** Open one processor for one node. The screen is scoped to what it was opened from
-   *  and stays there — no in-screen node or processor switch, so the subscribed
-   *  address set is fixed for the whole session. */
+  /** Open one processor for one node. The NODE is what the screen is scoped to and stays
+   *  on: there is no in-screen channel switch, because a channel's controls are what a
+   *  screen is opened from. The processor can move between the faces of one bank
+   *  (`faces`), and a lane's tap can move under an open screen (the DUCKER's KEY), so
+   *  the subscribed address set is compared and re-taken in `refresh` rather than being
+   *  fixed for the session. */
   open(proc: DynProcessor, nodeId: string): void {
     const sel = proc.persistSel ? (this.sels[proc.key] ?? 0) : 0;
     const bound = proc.bind({ ...this.ctx(), nodeId, sel });
@@ -647,9 +688,16 @@ export class DynScreen {
       const v = this.val(f.key);
       if (dynFromPos(f, Number(input.value)) !== v) input.value = String(dynToPos(f, v));
       const out = this.box.querySelector<HTMLElement>(`[data-dyn-val="${f.key}"]`);
-      if (out) setLevelText(out, dynValueText(f, v));
+      if (out) setLevelText(out, this.valueText(f, v));
     }
     this.syncCap();
+  }
+
+  /** What a field's value reads as. The descriptor gets first refusal, because a raw
+   *  broker integer becomes a millisecond or a hertz only through a device curve; what
+   *  it declines falls through to the field's own unit. */
+  private valueText(f: DynField, v: number): string {
+    return this.p().fieldText?.(f, v) ?? dynValueText(f, v);
   }
 
   /** Live sync turned on/off while this screen is open. It holds the meter slot
@@ -690,33 +738,60 @@ export class DynScreen {
     // rather than being compared against the set this call is about to install.
     const gen = ++this.subGen;
     this.subSig = this.addrSig();
-    // Take the slot before subscribing: the broker replaces the previous
-    // registration silently, so the console must be told rather than discover it.
+    // Take the subscription before making it: a subscribe replaces the session's
+    // previous one silently, so the console must be told rather than discover it.
     this.hooks.releaseMeters();
     const grLanes = this.lanes.filter((l) => l.kind === "gr" && l.gr);
-    void subscribeMeters(this.store, this.addrs(), (msg) => {
-      // The GR peak folds here, not off the store: the store is last-write-win, so
-      // a batch carrying more than one frame for an address would drop all but the
-      // last before any reader saw them.
-      for (const lane of grLanes) {
-        const gr = lane.gr as readonly [number, number];
-        if (msg.meterId !== gr[0] || msg.x !== gr[1]) continue;
-        const db = decodeGrDb(msg.value);
-        const p = this.peakFor(lane.key, 0);
-        if (p.db === null || db < p.db) {
-          p.db = db;
-          p.age = 0;
+    const addrs = this.addrs();
+    const register = (): Promise<void> => {
+      // Superseded before this one's turn came — another face, another band, or a close.
+      // Not registered at all, rather than registered and immediately taken down.
+      if (gen !== this.subGen) return Promise.resolve();
+      return subscribeMeters(this.store, addrs, (msg) => {
+        // The GR peak folds here, not off the store: the store is last-write-win, so
+        // a batch carrying more than one frame for an address would drop all but the
+        // last before any reader saw them.
+        for (const lane of grLanes) {
+          const gr = lane.gr as readonly [number, number];
+          if (msg.meterId !== gr[0] || msg.x !== gr[1]) continue;
+          const db = decodeGrDb(msg.value);
+          const p = this.peakFor(lane.key, 0);
+          if (p.db === null || db < p.db) {
+            p.db = db;
+            p.age = 0;
+          }
         }
-      }
-    })
-      .then((unsub) => {
-        // Superseded while in flight (a re-scope, or a close) — drop the handle here
-        // rather than installing it over the live one, which would leak the older
-        // registration at the broker.
-        if (this.isOpen() && gen === this.subGen) this.unsub = unsub;
-        else unsub();
       })
-      .catch((e: unknown) => this.hooks.onMeterError(e instanceof Error ? e.message : String(e)));
+        .then((unsub) => {
+          // Superseded while in flight (a re-scope, or a close) — drop the handle here
+          // rather than installing it over the live one, which would leak the older
+          // registration at the broker.
+          if (this.isOpen() && gen === this.subGen) this.unsub = unsub;
+          else unsub();
+        })
+        .catch((e: unknown) => {
+          // A superseded registration's failure belongs to nothing on screen, and
+          // `onMeterError` ends the Live session — so a face left behind must not be able
+          // to close the session that the face now open is being served by.
+          if (gen === this.subGen) this.hooks.onMeterError(e instanceof Error ? e.message : String(e));
+        });
+    };
+    // One registration in flight at a time. A session holds ONE meter subscription — the
+    // control worker unregisters its whole address set and registers the new one on every
+    // subscribe — so two overlapping ones land in whatever order the transport delivers
+    // them rather than the order the faces were pressed: the set left registered is the
+    // face that was left, and this screen's handle then unsubscribes addresses the later
+    // call had already replaced. The meters stop with nothing reporting a failure. Chained
+    // on settlement, not on success, so one refusal does not strand it.
+    // With nothing in flight it runs here rather than a microtask later: the slot is free,
+    // and the queue exists to order overlapping registrations, not to delay the first.
+    const run = (): Promise<void> => {
+      this.subBusy = true;
+      return register().finally(() => {
+        this.subBusy = false;
+      });
+    };
+    this.subChain = this.subBusy ? this.subChain.then(run, run) : run();
 
     if (!this.raf) {
       let last = 0;
@@ -1016,8 +1091,20 @@ export class DynScreen {
     const name = el("span", "");
     name.textContent = proc.title(m);
     title.append(ch, name);
+    // The face segment goes in the title ROW, beside the heading rather than inside it:
+    // `#dyn-screen-modal` names itself with `aria-labelledby="dyn-screen-title"`, so three
+    // buttons inside that heading would make the dialog announce itself as
+    // "CH 1 SSMCS MAIN COMP EQ" and put them in the heading's own subtree.
+    const faces = proc.faces?.();
+    const head = faces ? wrap("gt-head", title, this.faceBar(faces, proc, m)) : title;
 
     const grid = el("div", "prefs-grid");
+    // A bank of faces reserves one height for all of them. Its faces carry different row
+    // counts and different displays, so without the reserve the modal resizes under the
+    // pointer on every press of the segment that moves between them — and the segment
+    // itself is in the title row, which the resize then moves. What the reserve costs is
+    // blank space below the shorter faces; `--dyn-face-h` is where the measurement lives.
+    if (faces) grid.classList.add("gt-faced");
     grid.append(this.displayColumn(proc), this.controlColumn(m));
 
     const actions = el("div", "consent-actions");
@@ -1026,7 +1113,7 @@ export class DynScreen {
     close.addEventListener("click", () => this.close());
     actions.append(close);
 
-    this.box.append(title, grid, actions);
+    this.box.append(head, grid, actions);
     this.syncCap();
     this.paint();
   }
@@ -1036,9 +1123,77 @@ export class DynScreen {
     const bar = proc.bar?.(ctx);
     const col = el("div", "prefs-col");
     if (bar) col.append(this.displayBar(bar));
+    // A bank's faces do not all carry a display bar, and the one that does not starts its
+    // panel a bar's height above its siblings: the black display jumps up the moment the
+    // segment moves to that face. Reserve the row through the same builder rather than
+    // with a margin, so the space is whatever the bars the other faces draw actually
+    // occupy — a constant would be measured once and then track nothing.
+    else if (proc.faces) col.append(this.reservedBar(proc, ctx.m));
     col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }, ctx));
     col.append(this.hintLine(proc, ctx));
     return col;
+  }
+
+  /** The display bar's space, with nothing in it. `visibility: hidden` rather than a
+   *  height: it keeps the box and takes the heading and the button out of the tab order
+   *  and the accessibility tree, which is what an empty reserve has to do. */
+  private reservedBar(proc: DynProcessor, m: Messages): HTMLElement {
+    const sec = this.displayBar({ label: proc.title(m), items: [{ label: proc.title(m), id: "" }], inert: true });
+    sec.classList.add("gt-reserved");
+    return sec;
+  }
+
+  /**
+   * The face segment, in the title row rather than over the display: the EQ face's own
+   * bar selects a band, and two segmented bars in one heading is what a reader has to
+   * tell apart. Above the grid, so pressing one cannot move the row under the pointer.
+   */
+  private faceBar(faces: readonly DynFace[], proc: DynProcessor, m: Messages): HTMLElement {
+    const seg = el("span", "udk-banks gt-modes gt-faces");
+    for (const face of faces) {
+      const b = el("button", "") as HTMLButtonElement;
+      b.id = face.id;
+      b.textContent = face.label(m);
+      b.setAttribute("aria-pressed", String(face.proc === proc));
+      b.addEventListener("click", () => this.pressSegment(face.id, () => this.showFace(face.proc)));
+      seg.append(b);
+    }
+    return seg;
+  }
+
+  /**
+   * Move to a sibling face. The screen stays open on the same node, so the modal, the
+   * app-wide inert hold and the meter registration all survive; what changes is which
+   * descriptor answers, and with it the fields, the lanes and the address set.
+   *
+   * `refresh` does the rest — it re-binds, re-subscribes when the addresses moved, and
+   * rebuilds — so the address comparison is not written a second time here, and neither
+   * is the verdict on a face that will not bind: `rebind` CLOSES the screen there, which
+   * is the position it already takes when a follow switches the bank away underneath one.
+   * Answering here instead would leave a pressed segment doing nothing at all. The peak
+   * holds go, because a lane key means a different tap on the next face and a hold carried
+   * across would print one tap's peak under another's caption.
+   */
+  private showFace(next: DynProcessor): void {
+    if (!this.proc || next === this.proc) return;
+    this.proc = next;
+    this.sel = next.persistSel ? (this.sels[next.key] ?? 0) : 0;
+    this.peaks.clear();
+    this.refresh();
+  }
+
+  /**
+   * Press a segmented bar's button. Both bars rebuild the DOM they are part of, so the
+   * button that was pressed is replaced and `document.activeElement` falls back to the
+   * body — a keyboard user selecting a face or a band lands nowhere and has to tab in
+   * from the top of the dialog again. Focus goes back onto the NEW button carrying the
+   * same id, and only when the press came from a focused button, so a mouse press is
+   * left as it was.
+   */
+  private pressSegment(id: string, act: () => void): void {
+    const refocus = document.activeElement instanceof HTMLElement && document.activeElement.id === id;
+    act();
+    if (refocus) document.getElementById(id)?.focus({ preventScroll: true });
   }
 
   /** The segmented bar over the display, in the heading of the section it sits in. */
@@ -1052,7 +1207,7 @@ export class DynScreen {
       b.textContent = item.label;
       b.setAttribute("aria-pressed", String(!bar.inert && this.sel === i));
       if (bar.inert) b.disabled = true;
-      else b.addEventListener("click", () => this.select(i));
+      else b.addEventListener("click", () => this.pressSegment(item.id, () => this.select(i)));
       seg.append(b);
     }
     if (bar.inert) seg.classList.add("inert");
@@ -1064,9 +1219,11 @@ export class DynScreen {
    *  explains itself, a plot does not say what it is showing — but its box is reserved
    *  whatever the display shows. Adding it only in one mode made the modal grow by its
    *  height on every switch, which moves the Close action and the parameter rows under
-   *  the pointer. `gt-note` reserves TWO lines at a fixed height, which is what keeps a
-   *  longer string from silently reintroducing the jump — and from being cut, which one
-   *  line did on any window narrower than a wide desktop (E2E pins both). */
+   *  the pointer. `gt-note` reserves a fixed height, which is what keeps a longer string
+   *  from silently reintroducing the jump — and from being cut, which one line did on any
+   *  window narrower than a wide desktop (E2E pins both). Two lines by default; a bank of
+   *  faces takes three, since its line has three controls to name and the reserve above
+   *  the grid already leaves that face the room (`style.css`, `.gt-faced .gt-note`). */
   private hintLine(proc: DynProcessor, ctx: DynCtx): HTMLElement {
     const hint = el("p", "gt-note");
     const text = proc.hint?.(ctx);
@@ -1359,7 +1516,20 @@ export class DynScreen {
     };
     const extra = proc.rows?.(rowCtx);
     if (extra?.lead) params.append(...extra.lead);
-    for (const f of this.fields) params.append(this.paramRow(f, label(f), value(f.key), this.states.get(f.key)));
+    // A `before` entry names the field it goes in front of, and a binding does not always
+    // carry that field — reordering or renaming one is enough. Dropping the rows silently
+    // would take a processor's only knee selector off the panel with nothing to see, so
+    // what no field claimed is appended instead.
+    const unclaimed = new Set(Object.keys(extra?.before ?? {}));
+    for (const f of this.fields) {
+      const before = extra?.before?.[f.key];
+      if (before) {
+        unclaimed.delete(f.key);
+        params.append(...before);
+      }
+      params.append(this.paramRow(f, label(f), value(f.key), this.states.get(f.key)));
+    }
+    for (const key of unclaimed) params.append(...(extra?.before?.[key] ?? []));
     if (extra?.tail) params.append(...extra.tail);
 
     const ro = settingsSection(g.readouts);
@@ -1432,7 +1602,7 @@ export class DynScreen {
     }
 
     const show = (v: number): void => {
-      const text = dynValueText(f, v);
+      const text = this.valueText(f, v);
       // GATE range's -∞ notch: the mono font draws ∞ at x-height, so it goes
       // through the shared wrapper like every other dB readout in the app.
       setLevelText(val, text);

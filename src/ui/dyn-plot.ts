@@ -16,13 +16,13 @@ import type { Messages } from "../i18n/en";
 /** Plot-area inset. The left gutter carries the output tick labels, the bottom the
  *  input ones, and both are read back by the host when a press has to become a
  *  value. */
-const CURVE_PAD = { l: 44, r: 14, t: 14, b: 28 };
+export const CURVE_PAD = { l: 44, r: 14, t: 14, b: 28 };
 
 /** Input axis = the processor's threshold domain (so a press on the plot maps to a
  *  threshold linearly); output axis is the processor's own, because what has to stay
  *  on scale differs — a gate's closed shelf runs far below the input floor, a
  *  compressor's makeup gain runs above it. */
-function dbGeo(w: number, h: number, loDb: number, outLoDb: number, outTicks: readonly number[]): DynPlotGeo {
+export function dbGeo(w: number, h: number, loDb: number, outLoDb: number, outTicks: readonly number[]): DynPlotGeo {
   const outHi = Math.max(HI_DB, ...outTicks);
   return {
     w,
@@ -36,7 +36,7 @@ function dbGeo(w: number, h: number, loDb: number, outLoDb: number, outTicks: re
 /** Grid, tick labels, axis names and the unity line — everything under a transfer
  *  curve. Six input gridlines whatever the domain's width; the output ticks are the
  *  processor's own list, since the two axes are not the same length. */
-function drawDbAxes(
+export function drawDbAxes(
   c: CanvasRenderingContext2D,
   g: DynPlotGeo,
   tok: Record<string, string>,
@@ -87,7 +87,7 @@ function drawDbAxes(
  *  coloured by the meter zone it is in. Both dB×dB plots draw the same dot, and
  *  neither draws it without a feed — a dot parked at the floor would read as silence
  *  that is being metered rather than as nothing being metered. */
-function drawLiveDot(
+export function drawLiveDot(
   c: CanvasRenderingContext2D,
   g: DynPlotGeo,
   inDb: number | null,

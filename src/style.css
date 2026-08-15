@@ -3883,6 +3883,84 @@ button.consent-btn-primary {
   align-items: center;
   gap: 10px;
 }
+/* The title ROW: the heading and, for a bank with faces, the segment that moves between
+   them. The segment is a sibling of the heading rather than a child, so the dialog's
+   accessible name (aria-labelledby -> #dyn-screen-title) stays the channel and the bank.
+   It sits at the right end, where it cannot collide with the display column's own bar
+   (the EQ face's selects a band). */
+.gt-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* The row stands exactly where the heading stood: the heading's own bottom margin moves
+     onto the row, so wrapping it costs no vertical space. Measured — without this the
+     panel below came up 12px. */
+  margin-bottom: 12px;
+}
+.gt-head > h2 {
+  margin: 0;
+}
+.gt-faces {
+  margin-left: auto;
+}
+/* Cap the control column rather than halving the modal. A parameter row is a
+   fixed-width slider plus its label, and the readout tiles stretch to whatever column
+   they are given, so the half the shared `.prefs-grid` hands these screens was standing
+   space and the plots are what wants it. Scoped to this modal: Preferences and the
+   device setup use their halves. The narrow-window rule is restated because the one
+   above it matches `.prefs-grid` alone and loses to this selector. */
+#dyn-screen-box .prefs-grid {
+  grid-template-columns: 1fr 400px;
+}
+@media (max-width: 860px) {
+  #dyn-screen-box .prefs-grid {
+    grid-template-columns: 1fr;
+  }
+}
+/* One height for every face of a bank, so moving between them does not resize the modal
+   under the pointer — and the segment that moves between them is in the title row, which
+   a resize moves. The reserve is the tallest face's own grid: the SSMCS COMP face's eight
+   rows, measured at 489.4px in English and 497.4px in Japanese (Chromium, macOS, at 960 /
+   1280 / 1440px windows), plus the headroom a wider font stack takes. A floor, not a cap:
+   `pnpm test:e2e:app ssmcs` fails when the three faces stop agreeing, which is what
+   catches a font or a row that outgrows it. Scoped to a faced bank, so the single-face
+   screens keep their own heights. */
+#dyn-screen-box .prefs-grid.gt-faced {
+  /* The reserve YIELDS when the window is too short to hold it. `.consent-box` clamps
+     itself to the viewport and hides its overflow, and the action row is its last child,
+     so a floor the box cannot honour pushes Close off the bottom — measured at the 960x640
+     minimum window, on the three faces MAIN, COMP and EQ in both languages: 68px past the
+     box's own edge on each of the six readings. 211px is what the
+     modal wraps around the grid (a 683px box over a 520px one) plus the 48px the box keeps
+     clear of the viewport, so the second term is the grid's own share of the shortest
+     window it has to survive. */
+  min-height: min(520px, calc(100vh - 211px));
+  /* Below the reserve the panel would CLIP rather than shrink — a column has nowhere to
+     put its rows and the box hides what overflows — so the grid takes a scroll instead of
+     losing the rows off the bottom. Inert at any window tall enough for the reserve. */
+  overflow-y: auto;
+}
+/* Three lines for a faced bank's hint instead of two. The shortest face's display column
+   sits ~100px inside the reserve above, so the extra line costs no height at all here,
+   while on the single-face screens it would move the modal — which is why the two-line
+   reserve stays the default. The MAIN face needs it: its line has to name Comp Drive,
+   Sweet Spot Data and Morphing, and in Japanese those three took a third line at the
+   960px minimum window and were cut. */
+#dyn-screen-box .prefs-grid.gt-faced .gt-note {
+  height: 4.65em;
+}
+/* The EQ face keeps its plot beside its lanes all the way down to the 960px minimum
+   window, where the shipped 4-band screen wraps instead. Wrapping is the right answer for
+   a screen that is only ever itself — the plot takes the full width on its own row — but
+   inside a bank it is a 269px height change on one of three faces, which is the jump the
+   reserve above exists to remove. Measured: the row has 430px at a 960px window, the lane
+   rack takes 169.7 and the gap 8, so the plot's floor has to be at or below 252.3. The
+   FLEX BASIS is what decides a wrap — the hypothetical main size is the basis clamped by
+   min/max, so lowering `min-width` alone changes nothing and the row wraps at 300 anyway. */
+#dyn-screen-box .prefs-grid.gt-faced .gt-splitdisplay > .gt-curvebox {
+  flex: 1 1 250px;
+  min-width: 250px;
+}
 .gt-ch {
   font-size: 11px;
   color: var(--on-accent-ink);

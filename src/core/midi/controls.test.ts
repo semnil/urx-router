@@ -5,6 +5,7 @@ import type { Plan } from "../plan";
 import { ensureFixedConnections, LEVEL_OFF_DB } from "../plan";
 import { ref } from "../../models/types";
 import { COMP_EQ_SSMCS, EQ_TYPE_PASS } from "../control/params";
+import { planToCommands } from "../control/translate";
 import { bindControl, controlId, listControls, parseControlId } from "./controls";
 import { wireRaw, wireSteps } from "./mapping";
 
@@ -295,6 +296,44 @@ describe("channel tuning screen parameters", () => {
     expect(ids).not.toContain("ch1/type@eq.low");
   });
 
+  // The morphing bank's scopes, and the one row inside it that offers no control at all.
+  // A shelf has no Q on the device — the screen shows that row locked and says why — so a
+  // mapping onto it would drive nothing and report back the value it invented. The
+  // catalog's `continue` is the only thing that keeps it out, and nothing read it.
+  it("scopes the morphing strip's parameters, and offers no Q on a shelf", () => {
+    const p = defaultPlan("URX44V");
+    p.nodeParams.ch1 = { ...p.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+    const ids = new Set(listControls(model, p).map((c) => c.id));
+    for (const id of [
+      // The strip's own master carries no scope: it is the chip beside GATE / COMP / EQ
+      // on the strip, not a parameter inside one of the faces.
+      "ch1/ssmcsOn",
+      "ch1/compDrive@ssmcs",
+      "ch1/morphing@ssmcs",
+      "ch1/outGain@ssmcs",
+      "ch1/attack@ssmcs.comp",
+      "ch1/ratio@ssmcs.comp",
+      "ch1/sideChain@ssmcs.sc",
+      "ch1/q@ssmcs.sc",
+      "ch1/freq@ssmcs.sc",
+      "ch1/bandOn@ssmcs.eq.low",
+      "ch1/freq@ssmcs.eq.low",
+      "ch1/gain@ssmcs.eq.high",
+      "ch1/q@ssmcs.eq.mid",
+    ])
+      expect(ids, id).toContain(id);
+    // The two shelves, and only the two: MID's Q above is the positive control, so a
+    // catalog that dropped every band Q would fail rather than satisfy this.
+    expect(ids).not.toContain("ch1/q@ssmcs.eq.low");
+    expect(ids).not.toContain("ch1/q@ssmcs.eq.high");
+    // The knee is an enum, absent for the same reason COMP's is.
+    expect(ids).not.toContain("ch1/knee@ssmcs.comp");
+    // And the bank is exclusive: the channel is in SSMCS, so the shipped screens' own
+    // controls are not listed for it while the other bank's channels keep theirs.
+    expect(ids).not.toContain("ch1/threshold@comp");
+    expect(ids).toContain("ch2/threshold@comp");
+  });
+
   it("snaps to the field table's own grid, so MIDI and the slider agree", () => {
     // GATE threshold: -72 … 0 dB in 1 dB steps.
     const thr = bindControl(model, plan, "ch1/threshold@gate")!;
@@ -395,6 +434,56 @@ describe("channel tuning screen parameters", () => {
   });
 });
 
+/**
+ * A write this catalog accepts reaches the wire.
+ *
+ * Everything above asks whether an id resolves and whether a value round-trips through
+ * the control's own `get`, and BOTH are satisfied by a control that reads and writes one
+ * key of its own that nothing else knows about. The value then never reaches
+ * `planToCommands`, the screen never moves, and the controller's own feedback confirms
+ * the position it invented — because the feedback reads the same private key back.
+ *
+ * That is what the SSMCS side-chain controls did: the screen flattens `ssmcs.sc.q` onto
+ * the key `scQ` to keep it apart from the compressor's rows, and the catalog translated
+ * that back for the ID but not for the PLAN KEY. Every assertion above passed. So this
+ * one is stated from OUTSIDE the catalog — move the control, and require the commands
+ * the plan implies to differ.
+ */
+describe("every writable control reaches the device", () => {
+  /** Move to a value the control is not already at, so a no-op cannot pass. A toggle
+   *  has to be flipped rather than nudged: it reads `>= 0.5`, so 0 -> 0.4 writes the
+   *  state it already had and every toggle would report itself inert. */
+  const away = (c: { kind: string; get(): number }): number =>
+    c.kind === "toggle" ? 1 - c.get() : c.get() > 0.5 ? c.get() - 0.4 : c.get() + 0.4;
+  const shape = (list: ReturnType<typeof planToCommands>): string =>
+    list.map((c) => `${c.name}:${c.x}:${c.y}=${c.vdValue}`).join(",");
+
+  it.each(["URX22", "URX44", "URX44V"] as const)("on %s, with both COMP/EQ banks in play", (modelId) => {
+    const m = getModel(modelId);
+    const p = defaultPlan(modelId);
+    ensureFixedConnections(m, p);
+    // One mono channel into the morphing bank, so both banks' controls are listed: a
+    // plan carrying only one of them leaves the other's half of this unasked.
+    p.nodeParams.ch1 = { ...p.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+
+    const inert: string[] = [];
+    let moved = 0;
+    for (const desc of listControls(m, p)) {
+      const c = bindControl(m, p, desc.id)!;
+      const before = shape(planToCommands(m, p));
+      // A control the device owns refuses the write outright; that refusal is its own
+      // assertion elsewhere, and it is not what this one is about.
+      if (!c.set(away(c))) continue;
+      moved++;
+      if (shape(planToCommands(m, p)) === before) inert.push(desc.id);
+    }
+    // The positive control: a run that wrote nothing would report no inert control
+    // either, and read exactly like a pass.
+    expect(moved).toBeGreaterThan(0);
+    expect(inert).toEqual([]);
+  });
+});
+
 // The property the engine's echo guard is built on. A feedback message crosses the
 // wire at 7 or 14 bits; if the decoded value snaps to a DIFFERENT plan value, the echo
 // of that message is an edit rather than a no-op, and under Live sync it reaches the
@@ -409,13 +498,27 @@ describe("feedback round trip", () => {
   /** Any 14-bit address; `wireRaw` reads only its resolution here. */
   const PAIR = { type: "cc14", channel: 0, controller: 7 } as const;
 
+  /** A plan with one mono channel in the morphing bank. On the factory plan no channel is
+   *  in SSMCS mode, so the strip's own continuous controls — Comp Drive, Morphing, Out
+   *  Gain, the compressor's, the side-chain filter's and each band's — are not listed at
+   *  all, and none of them had ever been asked whether its 14-bit round trip is exact. */
+  const seeded = (id: "URX22" | "URX44" | "URX44V"): Plan => {
+    const p = defaultPlan(id);
+    p.nodeParams.ch1 = { ...p.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+    return p;
+  };
+
   it.each(["URX22", "URX44", "URX44V"] as const)("is exact at 14 bits for every %s control", (id) => {
     const m = getModel(id);
     const offenders = new Set<string>();
-    for (const desc of listControls(m, defaultPlan(id)).filter((d) => d.kind === "continuous")) {
+    const listed = listControls(m, seeded(id)).filter((d) => d.kind === "continuous");
+    // The positive control for the seeding: the strip's own controls have to be among the
+    // ones swept, or this case has quietly gone back to the factory plan's set.
+    expect(listed.filter((d) => d.id.includes("@ssmcs")).length).toBeGreaterThan(10);
+    for (const desc of listed) {
       // One plan per control: `set` is absolute, so a sweep cannot accumulate, but a
       // neighbouring control's writes could change what this one is allowed to hold.
-      const p = defaultPlan(id);
+      const p = seeded(id);
       ensureFixedConnections(m, p);
       const c = bindControl(m, p, desc.id);
       if (!c) continue;

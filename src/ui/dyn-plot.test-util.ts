@@ -17,9 +17,12 @@ export interface PaintedFace {
   y1: number;
 }
 
-/** One drawn string: the fill style in force, and where its anchor landed. */
+/** One drawn string: the string itself, the fill style in force, and where its anchor
+ *  landed. The text is kept because an annotation's VALUE is the thing a plot asserts —
+ *  a count of drawn labels passes whatever number the model computed. */
 export interface PaintedText {
   style: string;
+  text: string;
   x: number;
   y: number;
 }
@@ -89,7 +92,7 @@ export function recorder(): Recorder {
               if (box) faces.push({ ...box, style });
             };
           case "fillText":
-            return (_s: string, x: number, y: number) => void texts.push({ style, x, y });
+            return (text: string, x: number, y: number) => void texts.push({ style, text, x, y });
           case "measureText":
             return () => ({ width: 8 });
           default:

@@ -8,7 +8,16 @@
 
 import type { DeviceModel } from "../../models/types";
 import { isMonitorBus } from "../constraints";
-import { LEVEL_OFF_DB, sendConnection, type EqBand, type NodeParams, type Plan, type PlanConnection } from "../plan";
+import {
+  LEVEL_OFF_DB,
+  sendConnection,
+  SSMCS_INITIAL,
+  type EqBand,
+  type NodeParams,
+  type Plan,
+  type PlanConnection,
+  type SsmcsParams,
+} from "../plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../levels";
 import {
   busBalance,
@@ -19,9 +28,16 @@ import {
   eqBandFields,
   eqBandHasType,
   hasEq,
+  isSsmcsScKey,
+  ssmcsEqBandFields,
+  ssmcsEqBandHasQ,
+  ssmcsPlanKey,
   EQ_BAND_NAMES,
+  SSMCS_EQ_BAND_NAMES,
+  ssmcsCompFields,
+  ssmcsMainFields,
 } from "../control/translate";
-import type { DynField } from "../control/translate";
+import type { DynField, SsmcsEqBandName } from "../control/translate";
 import {
   COMP_EQ_COMP_FIRST,
   COMP_ONE_KNOB_DRIVEN,
@@ -52,6 +68,19 @@ export const GATE_SCOPE = "gate";
 export const COMP_SCOPE = "comp";
 export const EQ_SCOPE = "eq";
 export const eqBandScope = (index: number): string => `${EQ_SCOPE}.${EQ_BAND_NAMES[index]}`;
+
+/** The SSMCS strip's scopes, one per stage of the morphing bank. They mirror the plan's
+ *  own nesting (`ssmcs`, `ssmcs.comp`, `ssmcs.sc`, `ssmcs.eq.<band>`), so a control id
+ *  reads as the path to the value it edits. */
+export const SSMCS_SCOPE = "ssmcs";
+export const SSMCS_COMP_SCOPE = `${SSMCS_SCOPE}.comp`;
+export const SSMCS_SC_SCOPE = `${SSMCS_SCOPE}.sc`;
+export const ssmcsEqBandScope = (band: SsmcsEqBandName): string => `${SSMCS_SCOPE}.eq.${band}`;
+
+/** The catalog param one SSMCS field key is addressed by. Both this and the plan key a
+ *  write lands on come from ONE translation (`ssmcsPlanKey`): they were two spellings of
+ *  it, and the id took the translation while the write did not. */
+export const ssmcsControlParam = (key: string): ControlParam => ssmcsPlanKey(key) as ControlParam;
 
 /** Param tokens; the UI localizes them (i18n midi.param). */
 export type ControlParam =
@@ -89,7 +118,14 @@ export type ControlParam =
   | "oneKnobLevel"
   | "freq"
   | "q"
-  | "bandOn";
+  | "bandOn"
+  // The SSMCS strip. Attack / Release / Ratio / Q / Freq / Gain / Band ON are the
+  // tokens above, under an `ssmcs.*` scope; these four have no counterpart there.
+  | "ssmcsOn"
+  | "compDrive"
+  | "morphing"
+  | "outGain"
+  | "sideChain";
 
 export type ControlKind = "continuous" | "toggle";
 
@@ -378,6 +414,87 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     },
   });
 
+  // ---- the SSMCS strip ------------------------------------------------------
+  // Its values nest (`ssmcs.comp.attack`, `ssmcs.eq.low.gain`), so a write rebuilds the
+  // chain from the leaf up, cloning every level — the shape a screen edit produces, and
+  // the one the history differ walks.
+
+  /** The sub-object at a path under `ssmcs` ([] = the strip itself). */
+  const ssmcsAt = (path: readonly string[]): Record<string, unknown> => {
+    let cur = (plan.nodeParams[id]?.ssmcs ?? {}) as Record<string, unknown>;
+    for (const k of path) cur = (cur[k] ?? {}) as Record<string, unknown>;
+    return cur;
+  };
+  const writeSsmcs = (path: readonly string[], patch: Record<string, number | boolean>): void => {
+    let node: Record<string, unknown> = { ...ssmcsAt(path), ...patch };
+    for (let i = path.length - 1; i >= 0; i--) node = { ...ssmcsAt(path.slice(0, i)), [path[i]]: node };
+    np().ssmcs = node as SsmcsParams;
+  };
+
+  /** A continuous SSMCS value, on the field table's own raw grid. */
+  const ssmcsDyn = (path: readonly string[], scope: string, f: DynField): BoundControl => {
+    const codec = dynCodec(f);
+    const param = ssmcsControlParam(f.key);
+    // The SAME translation the id took: the plan stores the side-chain filter's values
+    // un-prefixed, and reading one spelling while writing the other is invisible from
+    // inside the control (its own `get` reads back what its `set` wrote).
+    const planKey = ssmcsPlanKey(f.key);
+    return {
+      id: controlId(id, param, scope),
+      node: id,
+      param,
+      scope,
+      kind: "continuous",
+      get: () => codec.get(typeof ssmcsAt(path)[planKey] === "number" ? (ssmcsAt(path)[planKey] as number) : f.def),
+      set: (v) => {
+        writeSsmcs(path, { [planKey]: codec.set(v) });
+        return true;
+      },
+    };
+  };
+
+  /** A flag inside the SSMCS strip. */
+  const ssmcsFlag = (
+    path: readonly string[],
+    scope: string | undefined,
+    key: string,
+    param: ControlParam,
+    def: boolean,
+  ): BoundControl => ({
+    id: controlId(id, param, scope),
+    node: id,
+    param,
+    ...(scope ? { scope } : {}),
+    kind: "toggle",
+    get: () => (((ssmcsAt(path)[key] as boolean | undefined) ?? def) ? 1 : 0),
+    set: (v) => {
+      writeSsmcs(path, { [key]: v >= 0.5 });
+      return true;
+    },
+  });
+
+  const pushSsmcs = (): void => {
+    // The section master, in the bare node scope every other section master on this
+    // strip takes (GATE / COMP / EQ) — the chip beside them is the same kind of chip.
+    out.push(ssmcsFlag([], undefined, "on", "ssmcsOn", SSMCS_INITIAL.on));
+    for (const f of ssmcsMainFields()) out.push(ssmcsDyn([], SSMCS_SCOPE, f));
+    for (const f of ssmcsCompFields()) {
+      const sc = isSsmcsScKey(f.key);
+      out.push(ssmcsDyn(sc ? ["sc"] : ["comp"], sc ? SSMCS_SC_SCOPE : SSMCS_COMP_SCOPE, f));
+    }
+    out.push(ssmcsFlag(["sc"], SSMCS_SC_SCOPE, "on", "sideChain", SSMCS_INITIAL.sc.on));
+    for (const band of SSMCS_EQ_BAND_NAMES) {
+      const scope = ssmcsEqBandScope(band);
+      out.push(ssmcsFlag(["eq", band], scope, "on", "bandOn", SSMCS_INITIAL.eq[band].on));
+      // The two shelves have no Q parameter at all — the screen shows that row locked,
+      // and a mapping onto it would be a mapping onto nothing.
+      for (const f of ssmcsEqBandFields(band)) {
+        if (f.key === "q" && !ssmcsEqBandHasQ(band)) continue;
+        out.push(ssmcsDyn(["eq", band], scope, f));
+      }
+    }
+  };
+
   const pushDynamics = (): void => {
     const compEqType = plan.nodeParams[id]?.compEqType ?? COMP_EQ_COMP_FIRST;
     const dyn = channelDynamics(model, id, compEqType);
@@ -408,6 +525,10 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           ),
         );
       }
+      // The morphing strip stands where COMP and the 4-band PEQ do, so it is offered on
+      // exactly the channels that lose them: `channelDynamics` answering with no COMP is
+      // the same question the tuning screen asks before it opens.
+      else pushSsmcs();
     }
 
     if (!hasEq(model, id, compEqType)) return;

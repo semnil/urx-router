@@ -384,7 +384,9 @@ test.describe("T2 shape-change", () => {
 
     await mark(page, "to-ssmcs");
     await typeSel.selectOption("1"); // SSMCS
-    await expect(param(page, "Sweet Spot Data")).toHaveCount(1);
+    // The bank swap has reached the panel: the morphing strip has a launcher of its own
+    // there, and the values themselves live on the screen it opens.
+    await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(1);
     await settleAfter(page, "to-ssmcs", 1800);
 
     let trace = await traceOf(page);
@@ -437,7 +439,7 @@ test.describe("T2 shape-change", () => {
     await mark(page, "undo");
     await page.keyboard.press("Control+z");
     await expect(param(page, "COMP/EQ Type").locator("select")).toHaveValue("0");
-    await expect(param(page, "Sweet Spot Data")).toHaveCount(0);
+    await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(0);
     await settleAfter(page, "undo", 1800);
 
     trace = await traceOf(page);
@@ -456,7 +458,7 @@ test.describe("T2 shape-change", () => {
     // Back to SSMCS for the notify half of the case.
     await mark(page, "to-ssmcs-again");
     await typeSel.selectOption("1");
-    await expect(param(page, "Sweet Spot Data")).toHaveCount(1);
+    await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(1);
     await settleAfter(page, "to-ssmcs-again", 1800);
 
     // A notify on the ABANDONED bank address vs one on the new bank, same burst

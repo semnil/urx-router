@@ -380,11 +380,13 @@ flowchart TD
   タップの隣に「それが何をしているか」を示すパラメータを並べる。**ホストは今どのプロセッサを表示しているかを
   一切知らない** — `DynProcessor` がノードの持ち物を解決し (`bind` → フィールド + メーターレーン)、プランの
   自分の一角を読み書きし (`read` / `patch`)、ホストが提供する部品から表示列を組み立てる (`parts.lanes()` /
-  `parts.plot()` の上の `display`)。開いている間はブローカーの唯一のメータースロットを所有するので、コンソールには
-  解放と再取得を指示する。`dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` / `dyn-ducker.ts` が記述子 — DUCKER だけは
+  `parts.plot()` の上の `display`)。開いている間はセッションが持つ唯一のメーター購読を所有するので、コンソールには
+  解放と再取得を指示する。`dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` / `dyn-ducker.ts` / `dyn-ssmcs.ts` が記述子 — DUCKER だけは
   開いたノードを調整しない。Ducker はステレオチャンネルの下にぶら下がる別ノードで、キーはよそから来た
-  ワイヤで決まるため、レーンは開いたノードから読むのではなく 3 か所から集める — `dyn-chan.ts` が 2 つの MONO IN
-  チャンネルストリッププロセッサが共有する束縛、`dyn-plot.ts` がその 2 つが描く dB×dB の伝達プロット、
+  ワイヤで決まるため、レーンは開いたノードから読むのではなく 3 か所から集める。`dyn-ssmcs.ts` だけは 1 つの
+  プロセッサではなく 1 つのバンクの 3 面で、題の行から閉じずに行き来する — `dyn-chan.ts` が MONO IN
+  チャンネルストリッププロセッサが共有する束縛、`dyn-plot.ts` がそれらが描く dB×dB の伝達プロット、
+  `dyn-freq-plot.ts` が 2 つの EQ が描く周波数×ゲインのプロット、
   `dyn-registry.ts` がどのプロセッサが存在するかを知る唯一の場所である。GATE/COMP はメーターの**ラダー**
   (しきい値を入力メーター上のフェーダーキャップとしてドラッグし、2 つが 1 つの座標を共有する) か**カーブ**を
   表示し、EQ は応答プロットとレーンのラックを同時に表示し、そのセグメントバーは代わりにバンドを選択する。
@@ -751,7 +753,9 @@ Live sync 中のみ) が各 dBFS 読み値を対応する dB 目盛と同じ位�
 `-10` の桁を縦に揃える)。上部のスクリブルは **ノード名 + 実機 CH SETTING 名** の 2 行 (MONITOR Bus は CH SETTING 名を持たないため、2 行目はリンク先の PHONES 出力名 `Phone 1` / `Phone 2` を表示する)。名前の左には **電源 LED** を置き、スクリブル全体がノード master ON/OFF のボタンになる (下記の inactive 減光を参照)。その下にトグルチップを
 2 列グリッドで 2 グループ置く: ①チャンネル/入力 (HA) — **MUTE** は → STEREO send を持つストリップ (チャンネル・FX チャンネル・MIX Bus) のみが持ち、その固定 → STEREO send の ON/OFF を切り替える (**入力/FX チャンネルは → STEREO アサイン ON**〈ファーム V1.3・フェーダー後段の SEND TO STEREO スイッチ〉、**MIX Bus は MIX → STEREO の TO ST スイッチ**〈`params.on`、muted = TO ST OFF〉)。ノード master (CH_ON / FX チャンネル ON / MIX 675) ではなく、それは電源 LED が担う。STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップを持たず、master ON は電源 LED のみ。MONITOR Bus はさらに **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`、工場 ON) と **MONO** (`mono` → `MONITOR_MONO`、工場 OFF) のチップを持つ。モノ MIC CH は +48 / φ / HPF (CH3/4 は Hi-Z)、
 ステレオ CH は φL / φR (`channelControl` の `phases`/フラグで判定) ②処理チェーン — GATE → COMP → EQ →
-INS FX、ステレオ CH は EQ + DUCKER (直下に吊るした ducker ノードの `duckerOn` をトグル)。チップが奇数の
+INS FX、ステレオ CH は EQ + DUCKER (直下に吊るした ducker ノードの `duckerOn` をトグル)。SSMCS モードの
+mono CH は GATE と COMP の間に **SSMCS** を持つ — モーフィングストリップ自身のマスターで、値がプランの
+1 段下 (`ssmcs.on`) にある唯一のヘッドチップなので、フラットキーのチップ書込ではなくストリップが自前で書く。チップが奇数の
 グループは不可視スペーサで最後のチップが全幅化しないようにする。最下段に回転つまみ
 (`addKnob`/`wireKnob`、ドラッグ/矢印キー) — チャンネルは **Gain と PAN/BAL** (CH→STEREO Send の pan、
 L63–C–R63)、STEREO マスターと MIX Bus は **マスター BALANCE** (Bus 出力の L/R バランス、`nodeParams.pan` →
@@ -2234,7 +2238,7 @@ WebView2 151.0.4129.78・2560x1440 のプライマリと 1920x1080 のセカン�
 `section()`)。GATE / COMP / EQ の各セクションは ON トグルと、その処理の**チャンネル調整画面**を開く
 コントロールを持つ — そのパラメーターを、効果を映すメータータップの隣に置くモーダル (仕様:
 [channel-tuning.md](channel-tuning.md))。CONSOLE のストリップも各処理チップ横のチップから同じ画面を
-開く。開いている間、この画面がブローカーの唯一のメーター購読スロットを持つ。
+開く。開いている間、この画面がセッションの唯一のメーター購読を持つ。
 GATE / COMP / EQ / Ducker は各セクションの ON 状態でヘッダの LED を点灯させ、OFF のセクションは
 自動で畳む。ROUTING は既定で畳む。ノードの ON/OFF (チャンネル ON・各マスター・FX・MONITOR・Ducker・OSC) は
 全種別でパラメータ群の先頭に置き、盤面の OFF 表示と対応させる。手動で開閉したセクションはセクション種別ごとに `localStorage`

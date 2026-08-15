@@ -4,15 +4,7 @@
 
 import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
-import type {
-  ConnParams,
-  FxEffectParams,
-  NodeParams,
-  Plan,
-  PlanConnection,
-  SsmcsBand,
-  SsmcsParams,
-} from "../core/plan";
+import type { ConnParams, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
 import { clipNodeName, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
 import { formatHz, fxEffectTypes, fxParams, resolveFxEffectType } from "../core/control/fx-effect";
@@ -66,7 +58,6 @@ import {
 import {
   COMP_EQ_COMP_FIRST,
   COMP_EQ_OPTIONS,
-  COMP_KNEE_OPTIONS,
   INSERT_FX_NONE,
   OSC_MODE_BURST,
   OSC_MODE_OPTIONS,
@@ -82,7 +73,6 @@ import {
   PAN_BAL_PAN,
   PAN_BAL_OPTIONS,
   COMP_EQ_SSMCS,
-  SWEET_SPOT_DATA_OPTIONS,
   COLOR_PALETTE,
   DELAY_FRAME_RATE_OPTIONS,
   DELAY_FRAME_RATE_DEFAULT,
@@ -95,28 +85,6 @@ import {
   HPF_FREQ_STEP_HZ,
   PAN_MIN,
   PAN_MAX,
-  ssmcsCompDrive,
-  ssmcsAttackMs,
-  ssmcsReleaseMs,
-  ssmcsRatio,
-  SSMCS_COMP_DRIVE_MIN,
-  SSMCS_COMP_DRIVE_MAX,
-  SSMCS_MORPHING_MIN,
-  SSMCS_MORPHING_MAX,
-  SSMCS_GAIN_MIN,
-  SSMCS_GAIN_MAX,
-  SSMCS_ATTACK_RAW_MIN,
-  SSMCS_ATTACK_RAW_MAX,
-  SSMCS_RELEASE_RAW_MIN,
-  SSMCS_RELEASE_RAW_MAX,
-  SSMCS_RATIO_RAW_MIN,
-  SSMCS_RATIO_RAW_MAX,
-  SSMCS_Q_RAW_MIN,
-  SSMCS_Q_RAW_MAX,
-  SSMCS_FREQ_RAW_MIN,
-  SSMCS_FREQ_RAW_MAX,
-  SSMCS_EQ_LOW_FREQ_RAW_MAX,
-  SSMCS_EQ_HIGH_FREQ_RAW_MIN,
   DELAY_TIME_MIN_MS,
   DELAY_TIME_MAX_MS,
   PHONES_LEVEL_MIN,
@@ -141,16 +109,12 @@ import { WIRE_GROUP } from "./graph";
 import { setLevelText } from "./glyph";
 import { holdInertOnBlur, isHoldingInert, onInertHoldsEnd, wheelStep } from "./dom";
 import { fineTag, optInFine } from "./fine";
+import { dynOpenLabel } from "./dyn-registry";
 import type { DynKind } from "./dyn-registry";
 import {
   EQ_FREQ_POS_MAX,
   eqFreqToPos,
   eqPosToHz,
-  fmtSsmcsGain,
-  fmtSsmcsHz,
-  fmtSsmcsMs,
-  fmtSsmcsQ,
-  fmtSsmcsRatio,
   formatDb,
   formatGainDb,
   formatPan,
@@ -583,9 +547,9 @@ export function renderInspector(
       }
       host.append(inSec.el);
 
-      // SSMCS Main section (MONO IN, SSMCS mode): the [SSMCS] on/off plus Sweet
-      // Spot Data / Comp Drive / Morphing / Out Gain. Built here but inserted
-      // between the GATE and COMP sections in the loop below.
+      // SSMCS Main section (MONO IN, SSMCS mode): the [SSMCS] on/off and the launcher
+      // for the morphing strip's MAIN face. Built here but inserted between the GATE
+      // and COMP sections in the loop below.
       const ssmcs = cc?.hasMicStrip && compEqType === COMP_EQ_SSMCS;
       let ssmcsMasterEl: HTMLElement | null = null;
       if (ssmcs) {
@@ -599,7 +563,7 @@ export function renderInspector(
             mergeSsmcs(actions, plan, node.id, { on: v });
           }),
         );
-        body.append(ssmcsMasterBlock(node.id, np, plan, actions, m));
+        body.append(dynLauncher("ssmcs", node.id, actions, m));
         ssmcsMasterEl = el;
       }
 
@@ -621,9 +585,9 @@ export function renderInspector(
         const { el, body } = section(m.inspector[sec.key], { open: on, on, key: sec.key });
         body.append(sectionToggle(node.id, sec.key, on, actions, locked ? m.inspector.eqRateLocked : undefined));
         if (sec.key === "gateOn" && dyn) body.append(dynLauncher("gate", node.id, actions, m));
-        else if (sec.key === "compOn" && ssmcs) body.append(ssmcsCompBlock(node.id, np, plan, actions, m));
+        else if (sec.key === "compOn" && ssmcs) body.append(dynLauncher("ssmcsComp", node.id, actions, m));
         else if (sec.key === "compOn" && dyn?.comp) body.append(dynLauncher("comp", node.id, actions, m));
-        else if (sec.key === "eqOn" && ssmcs) body.append(ssmcsEqBlock(node.id, np, plan, actions, m));
+        else if (sec.key === "eqOn" && ssmcs) body.append(dynLauncher("ssmcsEq", node.id, actions, m));
         else if (sec.key === "eqOn" && ieq && !locked) body.append(dynLauncher("eq", node.id, actions, m));
         host.append(el);
         // Insert the SSMCS Main section right after GATE (before COMP).
@@ -1481,19 +1445,19 @@ function duckerBlock(nodeId: string, np: NodeParams, plan: Plan, actions: Inspec
   return el;
 }
 
-// GATE / COMP section body for a MONO IN channel: the ON toggle (added by the
-// caller) and the control that opens that processor's tuning screen. The detail
+// GATE / COMP / EQ / SSMCS section body for a MONO IN channel: the ON toggle (added
+// by the caller) and the control that opens that processor's tuning screen. The detail
 // sliders used to live here; they moved to that screen, which can show them beside
 // the meters that say what they are doing. Keeping a second copy here would not
-// just duplicate them — `dynFieldSlider` reads the params snapshot captured at
+// just duplicate them — a slider built here reads the params snapshot captured at
 // render time and never re-renders on a value change, so after the screen moved
 // the threshold these sliders would sit at the old position and write it back on
-// the next drag.
+// the next drag. That is what the SSMCS sliders did until they moved too.
 function dynLauncher(kind: DynKind, nodeId: string, actions: InspectorActions, m: Messages): HTMLElement {
   const btn = document.createElement("button");
   btn.className = "gate-open";
   btn.id = `btn-${kind}-screen`;
-  btn.textContent = m.dynTuning[kind].open;
+  btn.textContent = dynOpenLabel(kind, m);
   btn.addEventListener("click", () => actions.onOpenDynScreen(kind, nodeId));
   return btn;
 }
@@ -1503,189 +1467,6 @@ function dynLauncher(kind: DynKind, nodeId: string, actions: InspectorActions, m
 // so sibling slider edits aren't lost.
 function mergeSsmcs(actions: InspectorActions, plan: Plan, nodeId: string, patch: Partial<SsmcsParams>): void {
   actions.onUpdateNodeParams(nodeId, { ssmcs: { ...(plan.nodeParams[nodeId]?.ssmcs ?? {}), ...patch } });
-}
-function mergeSsmcsSub(
-  actions: InspectorActions,
-  plan: Plan,
-  nodeId: string,
-  sub: "comp" | "sc",
-  patch: Record<string, number | boolean>,
-): void {
-  mergeSsmcs(actions, plan, nodeId, { [sub]: { ...(plan.nodeParams[nodeId]?.ssmcs?.[sub] ?? {}), ...patch } });
-}
-function mergeSsmcsBand(
-  actions: InspectorActions,
-  plan: Plan,
-  nodeId: string,
-  band: "low" | "mid" | "high",
-  patch: Partial<SsmcsBand>,
-): void {
-  const eq = plan.nodeParams[nodeId]?.ssmcs?.eq ?? {};
-  mergeSsmcs(actions, plan, nodeId, { eq: { ...eq, [band]: { ...(eq[band] ?? {}), ...patch } } });
-}
-
-// SSMCS Main controls (Sweet Spot Data preset + Comp Drive / Morphing / Out Gain).
-function ssmcsMasterBlock(
-  nodeId: string,
-  np: NodeParams,
-  plan: Plan,
-  actions: InspectorActions,
-  m: Messages,
-): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  const s = np.ssmcs ?? SSMCS_INITIAL;
-  frag.append(
-    enumSelect(
-      m.inspector.ssmcs.sweetSpotData,
-      SWEET_SPOT_DATA_OPTIONS,
-      s.sweetSpotData ?? SSMCS_INITIAL.sweetSpotData,
-      (v) => mergeSsmcs(actions, plan, nodeId, { sweetSpotData: v }),
-    ),
-  );
-  frag.append(
-    rangeSlider(
-      m.inspector.ssmcs.compDrive,
-      SSMCS_COMP_DRIVE_MIN,
-      SSMCS_COMP_DRIVE_MAX,
-      1,
-      s.compDrive ?? SSMCS_INITIAL.compDrive,
-      (v) => ssmcsCompDrive(v).toFixed(2),
-      (v) => mergeSsmcs(actions, plan, nodeId, { compDrive: v }),
-    ),
-  );
-  frag.append(
-    rangeSlider(
-      m.inspector.ssmcs.morphing,
-      SSMCS_MORPHING_MIN,
-      SSMCS_MORPHING_MAX,
-      1,
-      s.morphing ?? SSMCS_INITIAL.morphing,
-      String,
-      (v) => mergeSsmcs(actions, plan, nodeId, { morphing: v }),
-    ),
-  );
-  frag.append(
-    rangeSlider(
-      m.inspector.ssmcs.outGain,
-      SSMCS_GAIN_MIN,
-      SSMCS_GAIN_MAX,
-      1,
-      s.outGain ?? SSMCS_INITIAL.outGain,
-      fmtSsmcsGain,
-      (v) => mergeSsmcs(actions, plan, nodeId, { outGain: v }),
-    ),
-  );
-  return frag;
-}
-
-// SSMCS COMP detail: Attack / Release / Ratio / Knee + the side-chain filter. The
-// device-internal threshold/makeup (not shown on the LCD) are left untouched.
-function ssmcsCompBlock(
-  nodeId: string,
-  np: NodeParams,
-  plan: Plan,
-  actions: InspectorActions,
-  m: Messages,
-): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  const ci = SSMCS_INITIAL.comp;
-  const c = np.ssmcs?.comp ?? ci;
-  const setComp = (patch: Record<string, number>): void => mergeSsmcsSub(actions, plan, nodeId, "comp", patch);
-  frag.append(
-    rangeSlider(
-      m.inspector.dyn.attack,
-      SSMCS_ATTACK_RAW_MIN,
-      SSMCS_ATTACK_RAW_MAX,
-      1,
-      c.attack ?? ci.attack,
-      (v) => fmtSsmcsMs(ssmcsAttackMs(v)),
-      (v) => setComp({ attack: v }),
-    ),
-  );
-  frag.append(
-    rangeSlider(
-      m.inspector.dyn.release,
-      SSMCS_RELEASE_RAW_MIN,
-      SSMCS_RELEASE_RAW_MAX,
-      1,
-      c.release ?? ci.release,
-      (v) => fmtSsmcsMs(ssmcsReleaseMs(v)),
-      (v) => setComp({ release: v }),
-    ),
-  );
-  frag.append(
-    rangeSlider(
-      m.inspector.dyn.ratio,
-      SSMCS_RATIO_RAW_MIN,
-      SSMCS_RATIO_RAW_MAX,
-      1,
-      c.ratio ?? ci.ratio,
-      (v) => fmtSsmcsRatio(ssmcsRatio(v)),
-      (v) => setComp({ ratio: v }),
-    ),
-  );
-  frag.append(enumSelect(m.inspector.dyn.knee, COMP_KNEE_OPTIONS, c.knee ?? ci.knee, (v) => setComp({ knee: v })));
-  const si = SSMCS_INITIAL.sc;
-  const sc = np.ssmcs?.sc ?? si;
-  const setSc = (patch: Record<string, number | boolean>): void => mergeSsmcsSub(actions, plan, nodeId, "sc", patch);
-  frag.append(boolToggle(m.inspector.ssmcs.sideChain, sc.on ?? si.on, (v) => setSc({ on: v })));
-  frag.append(
-    rangeSlider(m.inspector.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX, 1, sc.q ?? si.q, fmtSsmcsQ, (v) => setSc({ q: v })),
-  );
-  frag.append(
-    rangeSlider(m.inspector.frequency, SSMCS_FREQ_RAW_MIN, SSMCS_FREQ_RAW_MAX, 1, sc.freq ?? si.freq, fmtSsmcsHz, (v) =>
-      setSc({ freq: v }),
-    ),
-  );
-  frag.append(
-    rangeSlider(m.inspector.eqGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, sc.gain ?? si.gain, fmtSsmcsGain, (v) =>
-      setSc({ gain: v }),
-    ),
-  );
-  return frag;
-}
-
-// Per-band SSMCS EQ ranges: Low/High are shelving (freq capped/floored, no Q),
-// Mid is peaking (full freq span + Q). Derived once so a band only needs its name.
-const SSMCS_EQ_BANDS = [
-  { key: "low", freqMin: SSMCS_FREQ_RAW_MIN, freqMax: SSMCS_EQ_LOW_FREQ_RAW_MAX, hasQ: false },
-  { key: "mid", freqMin: SSMCS_FREQ_RAW_MIN, freqMax: SSMCS_FREQ_RAW_MAX, hasQ: true },
-  { key: "high", freqMin: SSMCS_EQ_HIGH_FREQ_RAW_MIN, freqMax: SSMCS_FREQ_RAW_MAX, hasQ: false },
-] as const;
-
-// SSMCS 3-band EQ (Low shelf / Mid peak / High shelf). Band order Q → Freq → Gain
-// matches the device EQ screen and the COMP->EQ inspector convention.
-function ssmcsEqBlock(
-  nodeId: string,
-  np: NodeParams,
-  plan: Plan,
-  actions: InspectorActions,
-  m: Messages,
-): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  for (const spec of SSMCS_EQ_BANDS) {
-    const bi = SSMCS_INITIAL.eq[spec.key];
-    const b: SsmcsBand = np.ssmcs?.eq?.[spec.key] ?? bi;
-    const setBand = (patch: Partial<SsmcsBand>): void => mergeSsmcsBand(actions, plan, nodeId, spec.key, patch);
-    frag.append(boolToggle(m.inspector.ssmcs.bands[spec.key], b.on ?? bi.on, (v) => setBand({ on: v })));
-    if (spec.hasQ)
-      frag.append(
-        rangeSlider(m.inspector.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX, 1, b.q ?? SSMCS_INITIAL.eq.mid.q, fmtSsmcsQ, (v) =>
-          setBand({ q: v }),
-        ),
-      );
-    frag.append(
-      rangeSlider(m.inspector.frequency, spec.freqMin, spec.freqMax, 1, b.freq ?? bi.freq, fmtSsmcsHz, (v) =>
-        setBand({ freq: v }),
-      ),
-    );
-    frag.append(
-      rangeSlider(m.inspector.eqGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX, 1, b.gain ?? bi.gain, fmtSsmcsGain, (v) =>
-        setBand({ gain: v }),
-      ),
-    );
-  }
-  return frag;
 }
 
 // A range slider over discrete integer positions: the slider walks [0, posMax] by

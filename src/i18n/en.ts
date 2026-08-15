@@ -274,6 +274,11 @@ export const en = {
       freq: dev("Freq"),
       q: dev("Q"),
       bandOn: dev("Band ON"),
+      ssmcsOn: dev("SSMCS"),
+      compDrive: dev("Comp Drive"),
+      morphing: dev("Morphing"),
+      outGain: dev("Out Gain"),
+      sideChain: dev("Side Chain"),
     },
     // A param whose console caption does not fit a processor scope. `gain` is the
     // only one: the console shouts GAIN because that is what its knob caption says,
@@ -292,6 +297,12 @@ export const en = {
       "eq.lowMid": tr("EQ LOW-MID"),
       "eq.highMid": tr("EQ HIGH-MID"),
       "eq.high": tr("EQ HIGH"),
+      ssmcs: tr("SSMCS"),
+      "ssmcs.comp": tr("SSMCS COMP"),
+      "ssmcs.sc": tr("SSMCS Side Chain"),
+      "ssmcs.eq.low": tr("SSMCS EQ LOW"),
+      "ssmcs.eq.mid": tr("SSMCS EQ MID"),
+      "ssmcs.eq.high": tr("SSMCS EQ HIGH"),
     } as Record<string, Translatable>,
   },
   inspector: {
@@ -581,6 +592,20 @@ export const en = {
         "The device computes all four bands from the 1-knob level. The curve follows it only while Live sync is up.",
       ),
       plotHint: tr("The curve is the EQ's response; each marker shows a band's frequency."),
+    },
+    // The morphing strip's three faces share one title and one launcher label; the
+    // segment beside the title names the face. Its COMP face reuses the COMP screen's
+    // tap names, hint and Knee row, and its EQ face the 4-band screen's plot hint and
+    // band-bar heading — the same device points, said once.
+    ssmcs: {
+      open: tr("SSMCS screen"),
+      faceMain: dev("MAIN"),
+      faceComp: dev("COMP"),
+      faceEq: dev("EQ"),
+      tapOut: dev("Pre Ins FX"),
+      mainHint: tr(
+        "Comp Drive moves the compressor's curve. Sweet Spot Data and Morphing move both, only while Live sync is up.",
+      ),
     },
     ducker: {
       title: dev("Ducker"),

@@ -216,6 +216,11 @@ export const ja: Messages = {
       freq: "Freq",
       q: "Q",
       bandOn: "Band ON",
+      ssmcsOn: "SSMCS",
+      compDrive: "Comp Drive",
+      morphing: "Morphing",
+      outGain: "Out Gain",
+      sideChain: "Side Chain",
     },
     scopedParam: { gain: "Gain" } as Record<string, string>,
     scope: {
@@ -226,6 +231,12 @@ export const ja: Messages = {
       "eq.lowMid": "EQ LOW-MID",
       "eq.highMid": "EQ HIGH-MID",
       "eq.high": "EQ HIGH",
+      ssmcs: "SSMCS",
+      "ssmcs.comp": "SSMCS COMP",
+      "ssmcs.sc": "SSMCS Side Chain",
+      "ssmcs.eq.low": "SSMCS EQ LOW",
+      "ssmcs.eq.mid": "SSMCS EQ MID",
+      "ssmcs.eq.high": "SSMCS EQ HIGH",
     } as Record<string, string>,
   },
   inspector: {
@@ -505,6 +516,15 @@ export const ja: Messages = {
       fixedBand: "このバンドは固定",
       oneKnobDrives: "4 バンドは 1-knob のレベルからデバイスが計算します。カーブが追従するのはライブ同期中のみです。",
       plotHint: "曲線は EQ の周波数特性、各マーカーは各バンドの周波数を示します。",
+    },
+    ssmcs: {
+      open: "SSMCS 画面",
+      faceMain: "MAIN",
+      faceComp: "COMP",
+      faceEq: "EQ",
+      tapOut: "Pre Ins FX",
+      mainHint:
+        "Comp Drive はコンプの曲線を動かします。Sweet Spot Data と Morphing は両方を、ライブ同期中のみ動かします。",
     },
     ducker: {
       title: "Ducker",

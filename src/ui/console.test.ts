@@ -6,6 +6,7 @@ import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
 import type { Plan } from "../core/plan";
+import { t } from "../i18n";
 
 describe("Console UI", () => {
   it("threads modelId URX22 correctly to resolve meters (e.g. ch_3_4 input tap)", () => {
@@ -191,21 +192,35 @@ describe("the head-height cache", () => {
 
   afterEach(() => h?.restore());
 
-  // The finding's own direction: an SSMCS channel carries no COMP or EQ opener, so a
-  // plan seeded in SSMCS measures short, and switching back to COMP->EQ is what needs
-  // the room the cached height did not have.
-  it("re-measures when the COMP/EQ type changes, and the height moves", () => {
+  /** The head's chips as text, over every strip — what a type change actually swaps. */
+  const chipText = (h: ConsoleHost): string =>
+    [...h.host.querySelectorAll<HTMLElement>(".con-head .con-chip")].map((c) => c.textContent).join(",");
+
+  // The type change swaps what a mono strip's chips ARE without changing how many it
+  // carries: the morphing strip's own master and its one opener stand exactly where COMP's
+  // and EQ's two openers stand. So what the type change has to produce is the re-measure —
+  // the height it lands on is the same one, the way a rate change's is. The swap itself is
+  // asserted too: with the counts balancing, every height assertion here would also pass
+  // on a head that never changed at all.
+  it("re-measures when the COMP/EQ type changes, at the same height", () => {
     const plan = defaultPlan("URX44V");
     setCompEq(plan, COMP_EQ_SSMCS);
     h = mount(plan);
-    const short = headH(h);
-    expect(short).toBe(`${tallest(h)}px`);
+    const inSsmcs = headH(h);
+    const chipsInSsmcs = chipText(h);
+    const measuredOnce = measures;
+    expect(measuredOnce).toBeGreaterThan(0);
+    expect(inSsmcs).toBe(`${tallest(h)}px`);
+    expect(chipsInSsmcs).toContain("SSMCS");
 
     setCompEq(plan, COMP_EQ_COMP_FIRST);
     h.view.refresh();
 
+    expect(measures).toBeGreaterThan(measuredOnce);
+    expect(chipText(h)).not.toBe(chipsInSsmcs);
+    expect(chipText(h)).not.toContain("SSMCS");
+    expect(headH(h)).toBe(inSsmcs);
     expect(headH(h)).toBe(`${tallest(h)}px`);
-    expect(Number.parseInt(headH(h))).toBeGreaterThan(Number.parseInt(short));
   });
 
   // The rate is the other key term, and it is in the key for a different reason: it
@@ -238,5 +253,70 @@ describe("the head-height cache", () => {
     h.view.refresh();
 
     expect(measures).toBe(measuredOnce);
+  });
+});
+
+// The morphing strip's own master, which is the one head chip whose value does not sit at
+// the top level of `nodeParams` — `boolChip`'s writer cannot reach it, so the strip builds
+// its own. What that costs is a second writer for one flag, and nothing else asserted it
+// wrote anywhere: the E2E case beside it only asks that the chip EXISTS.
+describe("the SSMCS chip", () => {
+  let h: ConsoleHost;
+  afterEach(() => h?.restore());
+
+  const mount = (): ConsoleHost => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+    return consoleHost({ modelId: "URX44V", plan });
+  };
+  const chip = (host: ConsoleHost, label: string): HTMLElement =>
+    [...host.host.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === label)!;
+
+  it("writes the strip's own on flag, and lights with it", () => {
+    h = mount();
+    const c = chip(h, "SSMCS");
+    // It ships on, and the plan's nested value is what the chip reads.
+    expect(c.getAttribute("aria-pressed")).toBe("true");
+
+    c.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(h.plan.nodeParams.ch1?.ssmcs?.on).toBe(false);
+    expect(chip(h, "SSMCS").getAttribute("aria-pressed")).toBe("false");
+
+    // The rest of the strip's values are a level down from the flag and survive it: a
+    // writer that replaced `ssmcs` instead of merging into it would take them with it.
+    expect(h.plan.nodeParams.ch1?.ssmcs?.comp?.attack).toBeDefined();
+
+    chip(h, "SSMCS").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(h.plan.nodeParams.ch1?.ssmcs?.on).toBe(true);
+  });
+
+  it("is not offered on a channel in the other bank", () => {
+    h = consoleHost({ modelId: "URX44V" });
+    expect(chip(h, "SSMCS")).toBeUndefined();
+    // The positive control: the chips this strip DOES carry are found the same way.
+    expect(chip(h, "GATE")).toBeDefined();
+  });
+
+  /** What each opener chip on CH 1's head says it opens, in the order they are laid out.
+   *  By aria-label rather than by position: every opener carries the same "▸" glyph, so
+   *  a count answers nothing about which screen a press reaches. */
+  const openers = (host: ConsoleHost): string[] =>
+    [...host.strip("ch1").root.querySelectorAll<HTMLElement>(".con-chip-open")].map(
+      (c) => c.getAttribute("aria-label") ?? "",
+    );
+
+  // The morphing bank carries ONE opener, beside its own chip: its COMP and EQ faces are
+  // reached from inside the screen, and the strip's COMP and EQ chips read exactly as they
+  // do on a channel that has no strip at all. Asserted by what each opener opens — the
+  // chips are identical glyphs, and the two banks carry the same NUMBER of chips either
+  // way (the parity spacer takes the slot an opener frees), so a count is satisfied by
+  // both arrangements and a position follows whatever was inserted above it.
+  it("carries one opener in the morphing bank and three in the other", () => {
+    h = mount();
+    expect(openers(h)).toEqual([t().dynTuning.gate.open, t().dynTuning.ssmcs.open]);
+
+    h.restore();
+    h = consoleHost({ modelId: "URX44V" });
+    expect(openers(h)).toEqual([t().dynTuning.gate.open, t().dynTuning.comp.open, t().dynTuning.eq.open]);
   });
 });

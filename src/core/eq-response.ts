@@ -27,6 +27,11 @@
 // measured separately to within the meters' own ±2 dB), and the sample rate moves a
 // high bell by at most 2 dB across 44.1 … 176.4 kHz — so the drawing is computed at 48
 // kHz whatever the plan's rate, and says so rather than pretending otherwise.
+//
+// The SSMCS strip's own 3-band EQ is at the foot of this file. It is a different DSP
+// block reached by switching the channel's COMP/EQ type, so it shares the shelf
+// convention and nothing else: its peaking Q is its own, and the two must not be
+// carried across.
 
 import { EQ_TYPE_PASS, EQ_TYPE_SHELVING } from "./control/params";
 
@@ -77,12 +82,19 @@ function magDb(c: Coefs, hz: number, fs: number): number {
   return 10 * Math.log10(num / den);
 }
 
+/** Displayed Q → biquad Q, per DSP block. Each is measured on its own block and neither
+ *  may be used for the other: the 4-band PEQ's bell is half the width its number says,
+ *  the SSMCS strip's is very nearly the width its number says. Kept adjacent so the two
+ *  are read together — carrying the 4-band factor into SSMCS draws every bell at 0.5. */
+const PEQ_Q_TO_BIQUAD = 0.5;
+const SSMCS_Q_TO_BIQUAD = 0.82;
+
+/** `q` is the BIQUAD Q, already converted from the displayed one by the caller. */
 function peakingCoefs(hz: number, q: number, gainDb: number, fs: number): Coefs {
   const A = Math.pow(10, gainDb / 40);
   const w0 = (2 * Math.PI * hz) / fs;
   const cw = Math.cos(w0);
-  // The unit's Q is twice the biquad Q (measured).
-  const alpha = Math.sin(w0) / (2 * (q / 2));
+  const alpha = Math.sin(w0) / (2 * q);
   return {
     b0: 1 + alpha * A,
     b1: -2 * cw,
@@ -189,18 +201,60 @@ export function bandResponse(b: EqBandState, fs = EQ_RESPONSE_FS): (hz: number) 
     return (hz) => magDb(c, hz, fs);
   }
   if (b.gain === 0) return FLAT;
-  const c = peakingCoefs(b.freq, b.q, b.gain, fs);
+  const c = peakingCoefs(b.freq, b.q * PEQ_Q_TO_BIQUAD, b.gain, fs);
   return (hz) => magDb(c, hz, fs);
 }
 
 /** The whole EQ's response: the bands summed in dB (measured to hold within the
  *  meters' resolution). */
 export function eqResponse(bands: readonly EqBandState[], fs = EQ_RESPONSE_FS): (hz: number) => number {
-  const parts = bands.map((b) => bandResponse(b, fs)).filter((p) => p !== FLAT);
-  if (!parts.length) return FLAT;
+  return sumDb(bands.map((b) => bandResponse(b, fs)));
+}
+
+/** Sum the bands that contribute, or answer flat when none does. */
+function sumDb(parts: ((hz: number) => number)[]): (hz: number) => number {
+  const live = parts.filter((p) => p !== FLAT);
+  if (!live.length) return FLAT;
   return (hz) => {
     let sum = 0;
-    for (const p of parts) sum += p(hz);
+    for (const p of live) sum += p(hz);
     return sum;
   };
+}
+
+// ---------------------------------------------------------------- SSMCS 3-band
+//
+// The morphing strip's EQ, in plan units (Hz / Q / dB — the descriptor converts the raw
+// broker integers). Three fixed bands: LOW shelving, MID peaking, HIGH shelving. There
+// is no type to read and no pass filter, which is why this is a function of its own
+// rather than four bands with two of them switched off.
+//
+// What it shares with the 4-band model above is the shelf convention — the nominal
+// frequency is the point 3 dB below the plateau — and nothing else.
+
+/** One SSMCS band. `kind` decides the filter outright; the device has no type slot. */
+export interface SsmcsBandState {
+  kind: "low" | "mid" | "high";
+  on: boolean;
+  freq: number;
+  /** Displayed Q. Read for MID only — the two shelves have no Q parameter. */
+  q: number;
+  gain: number;
+}
+
+/** One SSMCS band's response in dB, or flat where it contributes nothing. */
+function ssmcsBandResponse(b: SsmcsBandState, fs: number): (hz: number) => number {
+  if (!b.on || b.gain === 0) return FLAT;
+  if (b.kind === "mid") {
+    const c = peakingCoefs(b.freq, b.q * SSMCS_Q_TO_BIQUAD, b.gain, fs);
+    return (hz) => magDb(c, hz, fs);
+  }
+  const high = b.kind === "high";
+  const c = shelfCoefs(shelfDesignFreq(b.freq, b.gain, high, fs), b.gain, high, fs);
+  return (hz) => magDb(c, hz, fs);
+}
+
+/** The SSMCS strip's EQ response: its three bands summed in dB. */
+export function ssmcsEqResponse(bands: readonly SsmcsBandState[], fs = EQ_RESPONSE_FS): (hz: number) => number {
+  return sumDb(bands.map((b) => ssmcsBandResponse(b, fs)));
 }
