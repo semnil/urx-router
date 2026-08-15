@@ -12,7 +12,17 @@
 
 // The list reporter's finished line, whatever wraps it: `gh run view --log` prefixes every
 // line with a job name, a step name and a timestamp, and a log read from disk may not.
-const LINE = /[✓✘×✕±-]\s+\d+\s+\[race\]\s+›\s+(\S+?\.spec\.ts):(\d+):\d+\s+›\s+(.+?)\s+\((\d+(?:\.\d+)?)(ms|s|m)\)\s*$/;
+//
+// The marker class is exactly what the reporter writes for a case that RAN — ✓ for a pass,
+// ✘ for anything else. `-` belongs to the skipped branch alone (its `green("-")` is the only
+// dash marker in the reporter) and used to be in here as well, which made a skipped case
+// whose TITLE ends in a duration shape read as a timed one: `… › a screen closed 2500 ms
+// into a registration waits (8.2s)` yielded a key with the suffix cut off, so the real case
+// went to `unexplained` and the truncated one to `unused`, and the log was refused twice
+// over for reasons neither of them names. A run under a terminal without UTF-8 marks a pass
+// `ok` and a failure `x`, which this does not read — a log from one produces no timed lines
+// at all, which the caller refuses outright rather than deriving anything from.
+const LINE = /[✓✘]\s+\d+\s+\[race\]\s+›\s+(\S+?\.spec\.ts):(\d+):\d+\s+›\s+(.+?)\s+\((\d+(?:\.\d+)?)(ms|s|m)\)\s*$/;
 // Stripped rather than matched into the title. The reporter writes `title (retry #1) (12.3s)`
 // (its own `_retrySuffix` sits between the title and the duration), and the lazy title group
 // swallows it — the key then matches no collected case, which reads downstream as "this log
@@ -23,6 +33,12 @@ const SCALE = { ms: 1, s: 1_000, m: 60_000 };
 
 /** One case's address, from a log line or from a `--list` report. */
 export const caseKey = (file, line, title) => `${file.split("/").pop()}:${line}|${title.split(" › ").pop().trim()}`;
+
+// The same line for a case the run SKIPPED, which carries no duration at all: the reporter
+// puts the `(1.2s)` suffix in the branch it takes for a case that ran, so a skipped one ends
+// at its title — including a title that itself ends in something duration-shaped, which is
+// why the title group runs to the end of the line rather than stopping short of one.
+const SKIP_LINE = /-\s+\d+\s+\[race\]\s+›\s+(\S+?\.spec\.ts):(\d+):\d+\s+›\s+(.+?)\s*$/;
 
 /** Every timed case in a run's log, keyed by caseKey. */
 export function durations(text) {
@@ -35,6 +51,78 @@ export function durations(text) {
     out.set(caseKey(m[1], m[2], m[3].replace(RETRY, "")), Number(m[4]) * SCALE[m[5]]);
   }
   return out;
+}
+
+/**
+ * Every case the run reports as SKIPPED. Separate from `durations` because it answers a
+ * different question — those cases have no weight to contribute, and what matters is that
+ * they are ACCOUNTED FOR: a caller that only knows about timed cases has to treat them as
+ * missing, and "missing" is how a partial log is recognised.
+ *
+ * A declaration-time skip is already knowable from `--list`. This is the other kind, which
+ * is not: a `test.describe.serial` block skips the rest of its cases once one fails (the
+ * harness has such a ladder in e2e/race/t5-drop.spec.ts), an in-body `test.skip()` is
+ * invisible to a listing altogether, and a suite whose setup fails takes the rest of its
+ * file with it.
+ *
+ * A result line is taken out first even though the two markers no longer overlap: a TITLE
+ * may contain anything, a marker-shaped fragment included, and `SKIP_LINE` is not anchored
+ * to the start of the line because the log's own prefix sits there.
+ */
+export function skippedInLog(text) {
+  const out = new Set();
+  for (const raw of text.split("\n")) {
+    if (LINE.test(raw)) continue;
+    const m = raw.match(SKIP_LINE);
+    if (m) out.add(caseKey(m[1], m[2], m[3].replace(RETRY, "")));
+  }
+  return out;
+}
+
+/**
+ * What a log accounts for, against the cases this checkout collects. Each group is decided
+ * by its own evidence rather than by subtracting the others: a count taken as a remainder
+ * describes whatever is left over, which is how "the run skipped these" ends up printed
+ * over cases the log never mentioned.
+ *
+ * `timed` is the only group that carries a weight. The other two are at zero, and they are
+ * NOT the same claim: a declared skip will not run next time either, so zero is its true
+ * cost, while a case the run skipped is one whose cost this log simply did not measure —
+ * near enough to zero for a serial ladder's tail, and badly wrong for a file that never ran.
+ * The caller decides what to do about that; this only says which is which.
+ */
+export function logCoverage(collectedKeys, measured, skippedThere) {
+  const timed = [];
+  const declaredSkips = [];
+  const runtimeSkips = [];
+  const unexplained = [];
+  for (const c of collectedKeys) {
+    if (measured.has(c.key)) timed.push(c.key);
+    else if (c.skipped) declaredSkips.push(c.key);
+    else if (skippedThere.has(c.key)) runtimeSkips.push(c.key);
+    else unexplained.push(c.key);
+  }
+  return { timed, declaredSkips, runtimeSkips, unexplained };
+}
+
+/**
+ * Whether the cases Playwright hands a shard are the ones the plan cut for it, said as the
+ * FIRST position they disagree on. Null when they match.
+ *
+ * The counts are deliberately not the headline. A count comparison is satisfied by
+ * construction once the sum is right, so the one failure this sequence check exists to catch
+ * — the collected order diverging from the order Playwright groups in — arrives with equal
+ * counts, and a message built from them reads "takes 73 case(s) where the plan puts 73".
+ */
+export function planMismatch(label, want, got) {
+  const n = want.findIndex((k, at) => got[at] !== k);
+  if (n < 0 && got.length === want.length) return null;
+  const where = n < 0 ? want.length : n;
+  return (
+    `${label} differs from position ${where}: Playwright takes ${got[where] ?? "(nothing)"} ` +
+    `where the plan puts ${want[where] ?? "(nothing)"}` +
+    (got.length === want.length ? "" : ` (${got.length} cases against the plan's ${want.length})`)
+  );
 }
 
 /** The array itself, before anything is asked of a runner. */
