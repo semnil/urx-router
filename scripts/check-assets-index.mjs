@@ -91,6 +91,13 @@ const PROSE_TOKENS = new Map([
   ["userGesture", "a DevTools-protocol parameter of Runtime.evaluate"],
   ["SetForegroundWindow", "a Win32 call, named as the one the foreground lock silently refuses"],
   ["GetForegroundWindow", "a Win32 call, named as what an armed capture polls"],
+  // The race tier's split. The variable is Playwright's own, undocumented in its shipped
+  // types, which is why the row names it at all; the disabled spelling is the mutation the
+  // scan was tightened against, and the third is a key inside the ledger the row already
+  // names as a file.
+  ["PWTEST_SHARD_WEIGHTS", "a Playwright environment variable, named as itself"],
+  ["PWTEST_SHARD_WEIGHTS_DISABLED", "a rename of that variable, named as the mutation a substring check missed"],
+  ["collect.shardWeights", "a key inside e2e/race/skip-ledger.json, not a path"],
 ]);
 
 // The same discipline for docs/{en,ja}, keyed `<document>|<token>`: the English and
