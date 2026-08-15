@@ -492,10 +492,19 @@ const takePath = (token, line, note, file) => {
   if (r !== true) pathMisses.push(r);
 };
 
+// A variable is mentioned when its name stands ALONE. Substring was the first spelling and it
+// let `PWTEST_SHARD_WEIGHTS_DISABLED` — a name that exists in this repo only as the mutation a
+// pin performs — answer for `PWTEST_SHARD_WEIGHTS`, so deleting the real variable would have
+// left the assertion green. `\b` does the whole job here: `_` is a word character, so a longer
+// shouted name carries no boundary where the shorter one ends.
+const mentionsEnv = (hay, name) => new RegExp(String.raw`\b${name.replace(/[^\w]/g, "\\$&")}\b`).test(hay);
+
 function assertEnv(name, line) {
   checked++;
   const hay = srcText + scriptsText + e2eText + envText;
-  if (!hay.includes(name)) finding(`${DOC}:${line}`, `environment variable ${name} appears nowhere in the repo`);
+  if (!mentionsEnv(hay, name)) {
+    finding(`${DOC}:${line}`, `environment variable ${name} appears nowhere in the repo`);
+  }
 }
 
 function assertTestFilter(script, filter, line) {
