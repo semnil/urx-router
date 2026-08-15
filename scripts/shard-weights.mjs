@@ -12,7 +12,17 @@
 
 // The list reporter's finished line, whatever wraps it: `gh run view --log` prefixes every
 // line with a job name, a step name and a timestamp, and a log read from disk may not.
-const LINE = /[✓✘×✕±-]\s+\d+\s+\[race\]\s+›\s+(\S+?\.spec\.ts):(\d+):\d+\s+›\s+(.+?)\s+\((\d+(?:\.\d+)?)(ms|s|m)\)\s*$/;
+//
+// The marker class is exactly what the reporter writes for a case that RAN — ✓ for a pass,
+// ✘ for anything else. `-` belongs to the skipped branch alone (its `green("-")` is the only
+// dash marker in the reporter) and used to be in here as well, which made a skipped case
+// whose TITLE ends in a duration shape read as a timed one: `… › a screen closed 2500 ms
+// into a registration waits (8.2s)` yielded a key with the suffix cut off, so the real case
+// went to `unexplained` and the truncated one to `unused`, and the log was refused twice
+// over for reasons neither of them names. A run under a terminal without UTF-8 marks a pass
+// `ok` and a failure `x`, which this does not read — a log from one produces no timed lines
+// at all, which the caller refuses outright rather than deriving anything from.
+const LINE = /[✓✘]\s+\d+\s+\[race\]\s+›\s+(\S+?\.spec\.ts):(\d+):\d+\s+›\s+(.+?)\s+\((\d+(?:\.\d+)?)(ms|s|m)\)\s*$/;
 // Stripped rather than matched into the title. The reporter writes `title (retry #1) (12.3s)`
 // (its own `_retrySuffix` sits between the title and the duration), and the lazy title group
 // swallows it — the key then matches no collected case, which reads downstream as "this log
@@ -26,8 +36,8 @@ export const caseKey = (file, line, title) => `${file.split("/").pop()}:${line}|
 
 // The same line for a case the run SKIPPED, which carries no duration at all: the reporter
 // puts the `(1.2s)` suffix in the branch it takes for a case that ran, so a skipped one ends
-// at its title. It cannot be told from a timed line by the marker either, since the `-`
-// marker is the same character a title may contain — what separates them is the duration.
+// at its title — including a title that itself ends in something duration-shaped, which is
+// why the title group runs to the end of the line rather than stopping short of one.
 const SKIP_LINE = /-\s+\d+\s+\[race\]\s+›\s+(\S+?\.spec\.ts):(\d+):\d+\s+›\s+(.+?)\s*$/;
 
 /** Every timed case in a run's log, keyed by caseKey. */
@@ -53,8 +63,11 @@ export function durations(text) {
  * is not: a `test.describe.serial` block skips the rest of its cases once one fails (the
  * harness has such a ladder in e2e/race/t5-drop.spec.ts), an in-body `test.skip()` is
  * invisible to a listing altogether, and a suite whose setup fails takes the rest of its
- * file with it. What separates a skip line from a result line is the DURATION, not the
- * marker — `-` is inside `LINE`'s marker class too — so a timed line is taken out first.
+ * file with it.
+ *
+ * A result line is taken out first even though the two markers no longer overlap: a TITLE
+ * may contain anything, a marker-shaped fragment included, and `SKIP_LINE` is not anchored
+ * to the start of the line because the log's own prefix sits there.
  */
 export function skippedInLog(text) {
   const out = new Set();

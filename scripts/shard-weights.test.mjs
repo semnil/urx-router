@@ -102,15 +102,28 @@ describe("skippedInLog", () => {
     expect([...skippedInLog(prefixed)]).toEqual([KEY]);
   });
 
-  // What separates a skip line from a result line is the DURATION, not the marker: `-` is
-  // inside LINE's own marker class. So the killing case is a `-` line that HAS one — it
-  // belongs to the timed set and to nothing else. Written as a mutation of the line above,
-  // with the positive half asserted too: dropping the `LINE.test` guard turns this into a
-  // key with "(8.2s)" glued to its title, and every other case here stays green.
-  it("leaves a dash-marked line that carries a duration to durations()", () => {
-    const timed = `${LADDER} (8.2s)`;
-    expect(skippedInLog(timed).size).toBe(0);
-    expect(durations(timed).get(KEY)).toBe(8_200);
+  // A title may end in something duration-shaped, and `-` marks a skip and nothing else in
+  // this reporter — so the line below is a SKIP whose title happens to look timed. It read as
+  // a timed case while `-` was in LINE's marker class: the key lost its "(8.2s)", the real
+  // case went to `unexplained` and the truncated one to `unused`, so a complete log was
+  // refused twice over for reasons neither of them names, and --accept-run-skips could not
+  // reach it because nothing had classified it as a skip.
+  it("keeps a skipped case whose title ends in a duration", () => {
+    const titled = `${LADDER} waits (8.2s)`;
+    const key = caseKey("t5-drop.spec.ts", 141, "link loss at the mid of a flush send loop waits (8.2s)");
+    expect([...skippedInLog(titled)]).toEqual([key]);
+    expect(durations(titled).size).toBe(0);
+  });
+
+  // …and a RESULT line is still taken out of the skip set first, which the markers alone no
+  // longer do: a title can carry a marker-shaped fragment, and the line's own prefix keeps
+  // SKIP_LINE from being anchored. Dropping the `LINE.test` guard turns this into a key built
+  // from the middle of a title.
+  it("leaves a timed case out even when its title embeds a marker line", () => {
+    const nested =
+      "  ✓  2 [race] › e2e/race/t5-drop.spec.ts:141:7 › T5 drop › a title reading -  3 [race] › e2e/race/x.spec.ts:2:2 › y (8.2s)";
+    expect(skippedInLog(nested).size).toBe(0);
+    expect(durations(nested).size).toBe(1);
   });
 
   it("strips the retry suffix a skipped attempt carries", () => {
