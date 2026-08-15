@@ -287,7 +287,12 @@ jobs:
       # stitched together: Playwright emits nothing that identifies a run, and a shard's
       # durations mixed with another run's price the split from two machines at two times.
       # The attempt is in it because re-running the failed jobs of a run keeps the run id.
-      - run: |
+      #
+      # Named, because a step without one is named after its own first line: the echo took
+      # that place and left the step that runs the whole tier calling itself `Run echo
+      # "urx-race-run ${GITHUB_RUN_ID}/…"` in the checks list and on every line of its log.
+      - name: Run the race tier
+        run: |
           echo "urx-race-run ${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
           if [ -z "$PWTEST_SHARD_WEIGHTS" ]; then
             echo "::error::the shard weights did not arrive from detect — Playwright would split by case count instead, and say nothing"
