@@ -18,7 +18,9 @@ import {
   durations,
   inspectWeights,
   logCoverage,
+  offsets,
   planMismatch,
+  planProblems,
   skippedInLog,
   weightShapeProblem,
 } from "./shard-weights.mjs";
@@ -200,11 +202,89 @@ describe("planMismatch", () => {
     expect(found).not.toMatch(/3 cases against/);
   });
 
+  // The divergence the whole comparison exists for: Playwright grouping the SAME cases in
+  // another order. A membership check passes it, and passed every other case in this file
+  // when it was tried (measured), so this is the one that says sequence.
+  it("reports the plan's own cases handed back in another order", () => {
+    const found = planMismatch("--shard=1/3", plan, ["b:2|y", "a:1|x", "c:3|z"]);
+    expect(found).toMatch(/position 0: Playwright takes b:2\|y where the plan puts a:1\|x/);
+  });
+
   it("adds the counts only when they differ", () => {
     const short = planMismatch("--shard=3/3", plan, ["a:1|x", "b:2|y"]);
     expect(short).toMatch(/2 cases against the plan's 3/);
     expect(short).toMatch(/takes \(nothing\) where the plan puts c:3\|z/);
     expect(planMismatch("--shard=3/3", plan, [...plan, "d:4|w"])).toMatch(/position 3.*takes d:4\|w.*\(nothing\)/s);
+  });
+});
+
+// The walk that turns a plan into per-shard questions. Its subject is the OFFSET: the caller
+// used to keep one accumulator across this loop and the one that computes shard walls, and a
+// reset that went missing would compare a shard against another shard's slice — printing a
+// well-formed mismatch that blames Playwright for the walk's own error.
+describe("planProblems", () => {
+  const keys = ["a", "b", "c", "d", "e", "f"];
+  const correct = (k) => keys.slice((k - 1) * 2, k * 2);
+
+  // UNEVEN on purpose, and the committed array is `[38, 73, 59]`. With equal sizes every
+  // offset expression built from the wrong element — `sizes[0]`, the last size, `i * stride`
+  // — produces the same windows as the right one, so a suite of equal plans is green under
+  // all of them (measured). The real weights are not equal, so those would refuse a correct
+  // derivation and blame Playwright for it.
+  it("cuts each shard at its own size and offset, not the first one's", () => {
+    const plan = [1, 3, 2];
+    const cut = { 1: ["a"], 2: ["b", "c", "d"], 3: ["e", "f"] };
+    expect(planProblems(plan, keys, (k) => cut[k])).toEqual([]);
+  });
+
+  it("says nothing when every shard takes the slice the plan cut", () => {
+    expect(planProblems([2, 2, 2], keys, correct)).toEqual([]);
+  });
+
+  // A shard the plan gives nothing is still asked and still compared: `weightShapeProblem`
+  // accepts a zero, so the two files would otherwise disagree about whether one is legal.
+  it("asks a zero-size shard too, and holds it against an empty slice", () => {
+    const asked = [];
+    const found = planProblems([0, 2], ["a", "b"], (k) => {
+      asked.push(k);
+      return k === 1 ? [] : ["a", "b"];
+    });
+    expect(asked).toEqual([1, 2]);
+    expect(found).toEqual([]);
+  });
+
+  // The offset itself, stated as a case: shard 2 must be held against positions 2-3. Handed
+  // shard 1's slice for every shard — which is what a lost reset produces — the first shard
+  // agrees and the rest do not.
+  it("holds each shard against its own positions", () => {
+    const found = planProblems([2, 2, 2], keys, () => keys.slice(0, 2));
+    expect(found).toHaveLength(2);
+    expect(found[0]).toMatch(/^--shard=2\/3 differs from position 0: Playwright takes a where the plan puts c/);
+    expect(found[1]).toMatch(/^--shard=3\/3 differs from position 0: Playwright takes a where the plan puts e/);
+  });
+
+  it("numbers the shards from one and counts them from the plan", () => {
+    const found = planProblems([1, 1], ["a", "b"], () => []);
+    expect(found[0]).toMatch(/^--shard=1\/2 /);
+    expect(found[1]).toMatch(/^--shard=2\/2 /);
+  });
+
+  // The offsets themselves, shared with the loop that prices each segment. `[0, 170, 0]` is
+  // there because weightShapeProblem accepts it: a zero-size shard must not move the ones
+  // after it.
+  it("starts each shard where the ones before it end", () => {
+    expect(offsets([38, 73, 59])).toEqual([0, 38, 111]);
+    expect(offsets([0, 170, 0])).toEqual([0, 0, 170]);
+    expect(offsets([])).toEqual([]);
+  });
+
+  it("asks the runner once per shard, in order", () => {
+    const asked = [];
+    planProblems([2, 2, 2], keys, (k) => {
+      asked.push(k);
+      return correct(k);
+    });
+    expect(asked).toEqual([1, 2, 3]);
   });
 });
 

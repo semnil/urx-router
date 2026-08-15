@@ -125,6 +125,42 @@ export function planMismatch(label, want, got) {
   );
 }
 
+/**
+ * Every shard whose cases are not the ones the plan cut for it. `listShard(k)` is asked for
+ * shard k's case keys — the runner's answer, injected so this can be exercised without one.
+ *
+ * The walk lives here rather than at the call site because the offset into the plan is the
+ * part that can go wrong silently: the caller used to carry one `at` accumulator across two
+ * loops, resetting it between them, and a reset that goes missing (or a block landing
+ * between them that touches it) compares shard k against another shard's slice. What that
+ * prints is a mismatch, correctly formatted, blaming Playwright for the walk's own error.
+ */
+export function planProblems(sizes, keys, listShard) {
+  const from = offsets(sizes);
+  const problems = [];
+  for (const [i, size] of sizes.entries()) {
+    const want = keys.slice(from[i], from[i] + size);
+    const mismatch = planMismatch(`--shard=${i + 1}/${sizes.length}`, want, listShard(i + 1));
+    if (mismatch) problems.push(mismatch);
+  }
+  return problems;
+}
+
+/**
+ * Where each shard's slice starts. One home, because both consumers walk the same plan —
+ * this file to compare against the runner, race-shard-weights.mjs to price each segment —
+ * and they used to do it with one accumulator passed between them.
+ */
+export function offsets(sizes) {
+  const out = [];
+  let at = 0;
+  for (const size of sizes) {
+    out.push(at);
+    at += size;
+  }
+  return out;
+}
+
 /** The array itself, before anything is asked of a runner. */
 export function weightShapeProblem(weights) {
   if (!Array.isArray(weights)) return "collect.shardWeights must be an array of case counts, one per shard";

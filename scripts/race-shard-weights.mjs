@@ -37,7 +37,8 @@ import {
   caseKey as key,
   durations,
   logCoverage,
-  planMismatch,
+  offsets,
+  planProblems,
   skippedInLog,
   weightShapeProblem,
 } from "./shard-weights.mjs";
@@ -245,12 +246,10 @@ console.log(
 const sizes = split(ms, shards);
 const shape = weightShapeProblem(sizes);
 if (shape) die(`the derived split is not usable: ${shape}`);
-let at = 0;
-const walls = sizes.map((c) => {
-  const w = wallOf(ms, at, at + c);
-  at += c;
-  return w;
-});
+// The same offsets planProblems walks, rather than a second copy of the arithmetic: what
+// they replaced was one accumulator shared between the two loops and reset in between.
+const bounds = offsets(sizes);
+const walls = sizes.map((c, i) => wallOf(ms, bounds[i], bounds[i] + c));
 
 // Asked of the runner rather than trusted, and compared as the SEQUENCE of cases rather than
 // as a count: the weights are counts, so a count comparison is satisfied by construction
@@ -258,15 +257,11 @@ const walls = sizes.map((c) => {
 // `test.describe.serial` block travels as one) or ordering the groups differently from this
 // walk — the two agree only while no race spec declares a file-level beforeAll/afterAll.
 const env = { PWTEST_SHARD_WEIGHTS: sizes.join(":") };
-const off = [];
-at = 0;
-for (const [i, size] of sizes.entries()) {
-  const want = collected.slice(at, at + size).map((c) => c.key);
-  at += size;
-  const got = playwright([`--shard=${i + 1}/${shards}`], env).map((c) => c.key);
-  const mismatch = planMismatch(`--shard=${i + 1}/${shards}`, want, got);
-  if (mismatch) off.push(mismatch);
-}
+const off = planProblems(
+  sizes,
+  collected.map((c) => c.key),
+  (k) => playwright([`--shard=${k}/${shards}`], env).map((c) => c.key),
+);
 
 console.log(
   `\nshard walls (${WORKERS} workers, +${WORKER_START_MS / 1000}s startup): ` +
