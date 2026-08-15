@@ -54,6 +54,30 @@ export function durations(text) {
 }
 
 /**
+ * Cases the log times more than once WITHOUT a retry marking one of them — which one run
+ * cannot produce, since a case belongs to exactly one shard and a second attempt carries the
+ * reporter's `(retry #N)`. Two runs in one file can, and `durations` resolves that by
+ * last-wins, so whichever log was appended silently supplies every shared duration.
+ *
+ * Its own detector because the thing that used to catch it was a side effect: refusing a log
+ * that carries cases this checkout does not collect. That refusal had to go (a deletion makes
+ * every existing log carry one), and stitching a fresh partial run onto an older one is the
+ * move the situation invites.
+ */
+export function doubledInLog(text) {
+  const seen = new Set();
+  const doubled = new Set();
+  for (const raw of text.split("\n")) {
+    const m = raw.match(LINE);
+    if (!m || RETRY.test(m[3])) continue;
+    const k = caseKey(m[1], m[2], m[3]);
+    if (seen.has(k)) doubled.add(k);
+    seen.add(k);
+  }
+  return doubled;
+}
+
+/**
  * Every case the run reports as SKIPPED. Separate from `durations` because it answers a
  * different question — those cases have no weight to contribute, and what matters is that
  * they are ACCOUNTED FOR: a caller that only knows about timed cases has to treat them as

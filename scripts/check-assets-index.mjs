@@ -91,10 +91,14 @@ const PROSE_TOKENS = new Map([
   ["userGesture", "a DevTools-protocol parameter of Runtime.evaluate"],
   ["SetForegroundWindow", "a Win32 call, named as the one the foreground lock silently refuses"],
   ["GetForegroundWindow", "a Win32 call, named as what an armed capture polls"],
-  // The race tier's split. Its two environment variables are NOT here: a bare screaming-case
-  // token is classified now, so both are held against the repo the way `NAME=value` always
-  // was. What remains is a key inside the ledger the row already names as a file.
+  // The race tier's split. The variable itself is NOT here — an underscored bare token is
+  // classified now, so it is held against the repo the way `NAME=value` always was. These two
+  // are the ones no oracle fits: a key inside the ledger the row already names as a file, and
+  // a name whose whole point is that it must NOT exist — the row cites it as the mutation a
+  // substring check missed, so asserting its presence would make deleting that mutation's
+  // test turn `docs-required` red.
   ["collect.shardWeights", "a key inside e2e/race/skip-ledger.json, not a path"],
+  ["PWTEST_SHARD_WEIGHTS_DISABLED", "a rename that must not resolve — named as a mutation, not as a variable"],
   ["includes()", "JavaScript's own method, named as the check that was too loose"],
   ["test.describe.serial", "a Playwright declaration, named as itself"],
   ["(retry #1)", "the list reporter's retry suffix, quoted as the text a parser has to strip"],
@@ -611,12 +615,6 @@ for (const span of spans) {
     }
   } else if (/^[A-Z][A-Z0-9_]*=\S+$/.test(token)) {
     assertEnv(token.split("=")[0], line);
-  } else if (/^[A-Z][A-Z0-9_]{2,}$/.test(token)) {
-    // The same oracle for a variable named on its own rather than as `NAME=value`. It only
-    // reached the `=` form before, so the section's first bare one had to be pardoned in
-    // PROSE_TOKENS — which is the entry that stops a real anchor being checked, as that list's
-    // own header says. Two underscores' worth of length keeps ordinary shouted prose out.
-    assertEnv(token, line);
   } else if (token.includes("/") || SOURCE_EXT.test(token)) {
     checked++;
     takePath(token, line);
@@ -626,6 +624,15 @@ for (const span of spans) {
     // because the names are ordinary words — accepting `wire` or `test` section-wide
     // would pardon it on a row about a file that exports no such thing.
     checked++;
+  } else if (/^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/.test(token)) {
+    // The same oracle as `NAME=value`, for a variable the section names on its own — which
+    // is how it names one it does not set. It has to be the LAST shape tried and it has to
+    // require an underscore, both measured: this section shouts in prose, and a rule of "any
+    // all-caps run" counted `CONSOLE` as a verified variable (assertions went UP by one)
+    // where the else-branch below had been forcing an author to classify it. An all-caps
+    // EXPORT is checked by the branch above, against the row that owns it, which is the
+    // stronger of the two answers.
+    assertEnv(token, line);
   } else {
     // The load-bearing invariant. A silently-ignored token class is how this check
     // would rot the same way the table does.

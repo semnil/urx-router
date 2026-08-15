@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   caseKey,
+  doubledInLog,
   durations,
   inspectWeights,
   logCoverage,
@@ -29,11 +30,14 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW = readFileSync(join(repo, ".github/workflows/race.yml"), "utf8");
 const LEDGER = JSON.parse(readFileSync(join(repo, "e2e/race/skip-ledger.json"), "utf8"));
 
-/** The committed arrangement, with one thing swapped out per case. */
+/** The committed arrangement, with one thing swapped out per case. Read from the ledger
+ *  rather than written out: hard-coded, these two described the repository as it stood when
+ *  the file was written, and a case deleted from the harness moved both. */
+const WEIGHTS = LEDGER.collect.shardWeights;
 const good = (over = {}) => ({
-  weights: [38, 73, 59],
-  collectedCount: 170,
-  shardCounts: [38, 73, 59],
+  weights: WEIGHTS,
+  collectedCount: WEIGHTS.reduce((a, b) => a + b, 0),
+  shardCounts: WEIGHTS,
   workflowText: WORKFLOW,
   ...over,
 });
@@ -83,6 +87,31 @@ describe("durations", () => {
     const other = "  ✓  1 [chromium] › e2e/console.spec.ts:10:3 › console › a case (1.0s)";
     const skipped = "  -  23 [race] › e2e/race/t3b-undo.spec.ts:1395:8 › T3b undo › a refused entry";
     expect(durations(`${other}\n${skipped}`).size).toBe(0);
+  });
+});
+
+// Two runs in one file. `durations` takes the last line for a key, so whichever log was
+// appended supplies every duration they share — and the thing that used to catch it was a
+// side effect of refusing a log with cases this checkout no longer collects, which a deletion
+// makes every existing log carry.
+describe("doubledInLog", () => {
+  const at = (line, d) => `  ✓  1 [race] › e2e/race/t0-baseline.spec.ts:${line}:3 › T0 › a case (${d})`;
+
+  it("says nothing about one run", () => {
+    expect(doubledInLog(`${at(28, "4.6s")}\n${at(73, "1.2s")}`).size).toBe(0);
+  });
+
+  // The legitimate double: a case that failed and passed carries the reporter's own marker on
+  // the second line, and a tier that retries prints both.
+  it("leaves a retried case alone", () => {
+    const first = "  ✘  7 [race] › e2e/race/t5-drop.spec.ts:141:7 › T5 drop › link loss (120.0s)";
+    const retry = "  ✓  7 [race] › e2e/race/t5-drop.spec.ts:141:7 › T5 drop › link loss (retry #1) (8.2s)";
+    expect(doubledInLog(`${first}\n${retry}`).size).toBe(0);
+  });
+
+  it("names a case timed twice with no retry between them", () => {
+    const doubled = doubledInLog(`${at(28, "4.6s")}\n${at(73, "1.2s")}\n${at(28, "9.9s")}`);
+    expect([...doubled]).toEqual([caseKey("t0-baseline.spec.ts", 28, "a case")]);
   });
 });
 
@@ -315,20 +344,27 @@ describe("inspectWeights", () => {
     expect(inspectWeights(good())).toEqual([]);
   });
 
-  // Mutation 1 as it was run by hand: [39, 73, 59] against a corpus of 170.
+  // Mutation 1 as it was run by hand against the ledger: one shard given a case it does not
+  // have. The corpus is the ledger's own sum, so this stays a mutation of the committed
+  // arrangement however the harness grows or shrinks.
+  const oneOver = [WEIGHTS[0] + 1, ...WEIGHTS.slice(1)];
+  const total = WEIGHTS.reduce((a, b) => a + b, 0);
   it("reports a sum that no longer matches the corpus, and says to re-derive", () => {
-    const found = messages({ weights: [39, 73, 59], shardCounts: null });
+    const found = messages({ weights: oneOver, shardCounts: null });
     expect(found).toHaveLength(1);
-    expect(found[0]).toMatch(/sums to 171 but --project=race collects 170/);
+    expect(found[0]).toMatch(new RegExp(`sums to ${total + 1} but --project=race collects ${total}`));
     expect(found[0]).toMatch(/race-shard-weights\.mjs/);
   });
 
   // Mutation 2: the counts that come back when the variable is ignored are Playwright's own
   // equal-count split. Every shard is wrong, and each says so on its own line.
   it("reports the counts an ignored variable produces", () => {
-    const found = messages({ shardCounts: [57, 57, 56] });
-    expect(found).toHaveLength(3);
-    expect(found[0]).toMatch(/--shard=1\/3 collects 57 case\(s\).*not the 38/s);
+    // Playwright's own equal-count split of the same corpus, derived rather than written out.
+    const n = WEIGHTS.length;
+    const equal = WEIGHTS.map((_, i) => Math.floor(total / n) + (i < total % n ? 1 : 0));
+    const found = messages({ shardCounts: equal });
+    expect(found).toHaveLength(n);
+    expect(found[0]).toMatch(new RegExp(`--shard=1/${n} collects ${equal[0]} case\\(s\\).*not the ${WEIGHTS[0]}`, "s"));
     expect(found.every((m) => /stopped reading PWTEST_SHARD_WEIGHTS/.test(m))).toBe(true);
   });
 
@@ -342,7 +378,7 @@ describe("inspectWeights", () => {
   // The sum is what says "re-derive"; taking the per-shard readings as well would report
   // the same corpus move three more times in a shape that names a different cause.
   it("does not ask for per-shard readings once the sum is wrong", () => {
-    expect(messages({ weights: [39, 73, 59], shardCounts: null })).toHaveLength(1);
+    expect(messages({ weights: oneOver, shardCounts: null })).toHaveLength(1);
   });
 
   describe("what it holds against the workflow", () => {

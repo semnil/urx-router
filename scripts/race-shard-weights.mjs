@@ -35,6 +35,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   caseKey as key,
+  doubledInLog,
   durations,
   logCoverage,
   offsets,
@@ -198,10 +199,13 @@ const skippedThere = skippedInLog(log);
 const ms = collected.map((c) => measured.get(c.key) ?? 0);
 const seen = new Set([...measured.keys(), ...skippedThere]);
 const unused = [...seen].filter((k) => !collected.some((c) => c.key === k));
-const { declaredSkips, runtimeSkips, unexplained } = logCoverage(collected, measured, skippedThere);
+const { timed, declaredSkips, runtimeSkips, unexplained } = logCoverage(collected, measured, skippedThere);
 
 const list = (keys) => keys.slice(0, 12).join("\n    ");
-console.log(`${collected.length} cases collected, ${measured.size} timed in the log`);
+// `timed` rather than the whole map: the two stopped being the same number when a log may
+// carry cases this checkout no longer collects, and the count that means anything here is
+// the one over cases being weighted.
+console.log(`${collected.length} cases collected, ${timed.length} timed in the log`);
 
 // A case with no duration belongs at 0 only when the log ACCOUNTS for it. A declared skip
 // does: it will not run next time either, so zero is its cost. A case the run itself skipped
@@ -217,6 +221,20 @@ console.log(`${collected.length} cases collected, ${measured.size} timed in the 
 if (measured.size === 0) {
   die("no timed lines in the log — wrong run, wrong workflow, or the list reporter's format has moved");
 }
+// Two runs in one file, which the note below cannot be relaxed past: `durations` takes the
+// last line for a key, so the appended run supplies every duration they share and the split
+// is priced from a run nobody chose. Measured before this refusal existed: stitching an older
+// log onto a current one exits 0 with an array the newer run alone does not produce.
+{
+  const doubled = doubledInLog(log);
+  if (doubled.size) {
+    die(
+      `${doubled.size} case(s) are timed twice with no retry between them — a case runs in one shard, so ` +
+        `this file is more than one run and the later one silently wins every duration they share:\n    ` +
+        `${list([...doubled])}`,
+    );
+  }
+}
 if (unexplained.length) {
   die(
     `${unexplained.length} collected case(s) are in neither the log's results nor its skips — the log is ` +
@@ -228,8 +246,14 @@ if (unexplained.length) {
 // extras describe cases this checkout no longer has. Refusing them made the tool unusable in
 // the one situation it is most needed — a case was DELETED, so the ledger's sum no longer
 // matches and the array has to be re-derived, from the only logs that exist, which all
-// predate the deletion. It is still worth saying: the same line is what a log from an
-// unrelated revision looks like, and there the refusal above fires as well.
+// predate the deletion.
+//
+// It rescues a narrow shape, and the narrowness is the key's: `caseKey` carries the line, so
+// only a deletion that shifts nothing below it — the last case in a file, or a whole file —
+// leaves every survivor matching. A deletion from the middle of a file moves every case under
+// it and dies at `unexplained` above, with no path through this tool; what would settle that
+// is a key that survives a line move, which is a change to how a case is addressed rather
+// than to a refusal.
 if (unused.length) {
   console.log(
     `  ${unused.length} case(s) in the log are not in this checkout's collection — from before they were ` +
