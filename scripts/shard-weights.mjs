@@ -103,6 +103,80 @@ export function skippedInLog(text) {
   return out;
 }
 
+// The reporter's own first line, one per sharded run: `Running 38 tests using 2 workers,
+// shard 1 of 3`. The webkit job prints the same line WITHOUT the shard clause, which is why
+// the clause is required rather than optional — one `gh run view --log` carries both jobs.
+const SHARD_HEADER = /Running (\d+) tests? using \d+ workers?, shard (\d+) of (\d+)\s*$/;
+// What .github/workflows/race.yml echoes ahead of the tests. Playwright emits nothing that
+// identifies a run, and a log read from disk has no timestamps either, so the identity has to
+// be put there by the thing that produced it.
+const RUN_MARK = /\burx-race-run (\d+\/\d+)/;
+
+/** What a log says about itself: which shards it is, and which run(s) produced them. */
+export function runShape(text) {
+  const shards = [];
+  const runs = new Set();
+  for (const raw of text.split("\n")) {
+    const h = raw.match(SHARD_HEADER);
+    if (h) shards.push({ tests: Number(h[1]), shard: Number(h[2]), of: Number(h[3]) });
+    const r = raw.match(RUN_MARK);
+    if (r) runs.add(r[1]);
+  }
+  return { shards, runs: [...runs] };
+}
+
+/**
+ * Whether that self-description is ONE complete run of this checkout's corpus. Null when it
+ * is, a sentence naming what is wrong when it is not.
+ *
+ * `doubledInLog` catches a stitch only where the two halves OVERLAP. Two partial logs that do
+ * not — shard 1 from one run and shards 2 and 3 from another — cover the corpus exactly once
+ * between them and leave every other reading here intact, while the durations being cut are
+ * priced from two different machines at two different times. These headers are what makes
+ * that visible: each half brings its own, so the set has to be exactly one per shard.
+ *
+ * The run marker is the exact form of the same question and the headers are the structural
+ * one, and they answer different amounts of it. The marker settles it: two ids, or two
+ * attempts of one id, are two runs whatever the lines say. The headers reach a stitch that
+ * OVERLAPS, one missing a shard, one cut into another number of shards and one whose corpus
+ * is not this one — but a stitch assembled to leave exactly one header per shard passes them,
+ * measured: shard 1 of a run and shards 2 and 3 of another derive an array at exit 0 with no
+ * marker present. Both are kept because only the headers read a log that already exists — no
+ * log written before the workflow echoed a run id carries a marker, and refusing those would
+ * make the tool unusable in the situation that calls for it, which is the trap the `unused`
+ * note already fell into once.
+ */
+export function runShapeProblem({ shards, runs }, want, collectedCount) {
+  if (runs.length > 1) {
+    return `the log is ${runs.length} runs (${runs.join(", ")}) — every duration they share is taken from whichever was appended last`;
+  }
+  if (!shards.length) {
+    return (
+      `no \`shard k of ${want}\` header — this is not a sharded race.yml run, and the split is priced for that ` +
+      `runner's schedule (2 workers, a measured startup) rather than for whatever produced this log`
+    );
+  }
+  const wrongTotal = [...new Set(shards.map((s) => s.of))].filter((of) => of !== want);
+  if (wrongTotal.length) {
+    return `the log is a split into ${wrongTotal.join(" and ")}, not into ${want}`;
+  }
+  const times = new Map();
+  for (const s of shards) times.set(s.shard, (times.get(s.shard) ?? 0) + 1);
+  const twice = [...times].filter(([, n]) => n > 1).map(([k]) => k);
+  if (twice.length) {
+    return `shard ${twice.join(", ")} of ${want} starts more than once — the log is more than one run`;
+  }
+  const missing = Array.from({ length: want }, (_, i) => i + 1).filter((k) => !times.has(k));
+  if (missing.length) {
+    return `shard ${missing.join(", ")} of ${want} never started — the log is part of a run`;
+  }
+  const sum = shards.reduce((a, s) => a + s.tests, 0);
+  if (sum !== collectedCount) {
+    return `the run collected ${sum} case(s) across its shards where this checkout collects ${collectedCount} — the log is from another revision`;
+  }
+  return null;
+}
+
 /**
  * What a log accounts for, against the cases this checkout collects. Each group is decided
  * by its own evidence rather than by subtracting the others: a count taken as a remainder

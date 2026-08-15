@@ -40,6 +40,8 @@ import {
   logCoverage,
   offsets,
   planProblems,
+  runShape,
+  runShapeProblem,
   skippedInLog,
   weightShapeProblem,
 } from "./shard-weights.mjs";
@@ -220,6 +222,13 @@ console.log(`${collected.length} cases collected, ${timed.length} timed in the l
 // arithmetically consistent, passes the runner check below and passes check-race-skips.mjs.
 if (measured.size === 0) {
   die("no timed lines in the log — wrong run, wrong workflow, or the list reporter's format has moved");
+}
+// What the log says it IS, before anything is read out of it: one complete sharded run of
+// this corpus. The two refusals below both need the halves of a stitch to overlap or to leave
+// something uncovered, and two partial logs from different runs need do neither.
+{
+  const problem = runShapeProblem(runShape(log), shards, collected.length);
+  if (problem) die(`the log does not describe one run of this checkout: ${problem}`);
 }
 // Two runs in one file, which the note below cannot be relaxed past: `durations` takes the
 // last line for a key, so the appended run supplies every duration they share and the split

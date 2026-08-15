@@ -22,6 +22,8 @@ import {
   offsets,
   planMismatch,
   planProblems,
+  runShape,
+  runShapeProblem,
   skippedInLog,
   weightShapeProblem,
 } from "./shard-weights.mjs";
@@ -112,6 +114,65 @@ describe("doubledInLog", () => {
   it("names a case timed twice with no retry between them", () => {
     const doubled = doubledInLog(`${at(28, "4.6s")}\n${at(73, "1.2s")}\n${at(28, "9.9s")}`);
     expect([...doubled]).toEqual([caseKey("t0-baseline.spec.ts", 28, "a case")]);
+  });
+});
+
+// The half `doubledInLog` cannot reach. Two partial logs that do not overlap — shard 1 from
+// one run, shards 2 and 3 from another — double nothing and leave nothing uncovered, so every
+// other reading here is satisfied while the durations come from two machines at two times.
+// Lines are verbatim from run 31865018013 (the header the list reporter opens a sharded run
+// with, and the webkit job's, which carries no shard clause).
+describe("runShape / runShapeProblem", () => {
+  const header = (tests, k, of = 3) =>
+    `race (${k})\tRun if [ -z "$PWTEST_SHARD_WEIGHTS" ]; then\t2026-08-15T04:41:44.5107108Z ` +
+    `Running ${tests} tests using 2 workers, shard ${k} of ${of}`;
+  const mark = (id) => `race (1)\tRun echo\t2026-08-15T04:41:40.0000000Z urx-race-run ${id}`;
+  const WEBKIT =
+    "race-webkit\tRun pnpm test:e2e:race:webkit\t2026-08-15T04:41:48.4857372Z Running 5 tests using 2 workers";
+  const RUN = [header(38, 1), header(72, 2), header(59, 3), WEBKIT].join("\n");
+  const problem = (text, collected = 169) => runShapeProblem(runShape(text), 3, collected);
+
+  it("passes one complete run, with or without a run marker", () => {
+    expect(problem(RUN)).toBeNull();
+    expect(problem([mark("31865018013/1"), RUN, mark("31865018013/1")].join("\n"))).toBeNull();
+  });
+
+  // The webkit job runs the same specs in another project and prints the same opening line
+  // without a shard clause. Counted as a shard it would make every complete log a stitch.
+  it("does not read the webkit job's header as a shard", () => {
+    expect(runShape(RUN).shards.map((s) => s.shard)).toEqual([1, 2, 3]);
+  });
+
+  it("refuses a file carrying two runs' markers", () => {
+    const text = [mark("31865018013/1"), RUN, mark("31862345557/1")].join("\n");
+    expect(problem(text)).toMatch(/2 runs \(31865018013\/1, 31862345557\/1\)/);
+  });
+
+  // A re-run of the failed jobs keeps the run id, so the attempt is part of the identity.
+  it("refuses two attempts of the same run", () => {
+    expect(problem([mark("31865018013/1"), RUN, mark("31865018013/2")].join("\n"))).toMatch(/2 runs/);
+  });
+
+  it("refuses a shard that starts twice", () => {
+    expect(problem(`${RUN}\n${header(38, 1)}`)).toMatch(/shard 1 of 3 starts more than once/);
+  });
+
+  // The reviewed defect, in its unmarked form: two disjoint partial logs whose union covers
+  // the corpus exactly once. Nothing else in the derivation objects to it.
+  it("refuses a union of partial runs that leaves a shard unstarted", () => {
+    expect(problem([header(38, 1), header(72, 2)].join("\n"))).toMatch(/shard 3 of 3 never started/);
+  });
+
+  it("refuses a log split into another number of shards", () => {
+    expect(problem([header(85, 1, 2), header(84, 2, 2)].join("\n"), 169)).toMatch(/split into 2, not into 3/);
+  });
+
+  it("refuses a run whose corpus is not this one", () => {
+    expect(problem(RUN, 170)).toMatch(/collected 169 case\(s\) across its shards where this checkout collects 170/);
+  });
+
+  it("refuses a log that was never sharded at all", () => {
+    expect(problem(WEBKIT)).toMatch(/no `shard k of 3` header/);
   });
 });
 

@@ -282,7 +282,13 @@ jobs:
       # the tests — a guard against a silent fallback that was itself silent. Reproduced with
       # dash locally: the bash form leaves an empty value running at exit 0, the form below
       # exits 1.
+      #
+      # The echo is what lets `scripts/race-shard-weights.mjs` tell one run's log from two
+      # stitched together: Playwright emits nothing that identifies a run, and a shard's
+      # durations mixed with another run's price the split from two machines at two times.
+      # The attempt is in it because re-running the failed jobs of a run keeps the run id.
       - run: |
+          echo "urx-race-run ${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
           if [ -z "$PWTEST_SHARD_WEIGHTS" ]; then
             echo "::error::the shard weights did not arrive from detect — Playwright would split by case count instead, and say nothing"
             exit 1

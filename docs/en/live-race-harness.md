@@ -689,6 +689,17 @@ can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation
 does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
 array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
 
+A log assembled from two runs is the case none of that reaches on its own: where the halves overlap, a
+case timed twice with no retry between them gives it away, but halves that do not overlap cover the
+corpus exactly once between them while the durations being cut come from two machines at two times. Two
+readings answer it, and they answer different amounts of it. The list reporter opens a sharded run with
+`Running 38 tests using 2 workers, shard 1 of 3`, so each half brings its own: a header set that is not
+exactly one per shard, summing to what this checkout collects, is refused — and that reads a log written
+at any time, every one that already exists included. What it does not reach is a stitch assembled to
+leave exactly one header per shard, measured at exit 0 with an array derived from two runs. That is what
+the run id and attempt `race.yml` echoes ahead of the tests settle, for logs written from now on:
+Playwright emits nothing that identifies a run, and a log read from a file has no timestamps either.
+
 The value reaches the shard step through four names, and GitHub resolves one that does not exist to the
 empty string, which Playwright treats as no weights at all rather than as an error — so the shard step
 refuses an empty value outright instead of running the equal-count split under the weighted split's
