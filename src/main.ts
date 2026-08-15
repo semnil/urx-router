@@ -2717,6 +2717,14 @@ if (!DEMO) {
         // failLive rather than starting a session that cannot do its job.
         await follow?.begin();
         await vdWatchLink(() => stopLiveOnError(t().error.shell.deviceLost));
+        // …and follow is still following. A structural edit can flush between `live.begin`
+        // above and this line; that flush asks the follow layer to re-register, and a
+        // refusal there stops follow and reports through `stopLiveOnError`, which returns
+        // without doing anything while `liveSessionUp` is false. The lines below are what
+        // would declare the session up, so the check belongs in front of them: otherwise
+        // the app says "Live sync on" over a follow that discards every notify, and
+        // nothing restarts it.
+        if (follow && !follow.isActive()) throw new Error(t().error.liveFollowStopped);
         // Remember which generation the session holds, so deactivateLive releases
         // exactly this one even when its disconnect lands after a later connect.
         liveEpoch = device.epoch;
