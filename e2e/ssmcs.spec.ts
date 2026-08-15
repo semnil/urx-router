@@ -121,6 +121,11 @@ test("SSMCS is a MONO IN feature — stereo channels have no COMP/EQ Type", asyn
   await node(page, "ch_5_6").click();
   await expect(typeSelect(page)).toHaveCount(0);
   await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(0);
+  // The positive control: this channel's inspector really did render, and it carries the
+  // processors it does have. Without it the two counts above are satisfied by an
+  // inspector that failed to build at all, or by a click that selected nothing.
+  await expect(page.locator("#btn-eq-screen")).toHaveCount(1);
+  await expect(param(page, "EQ")).not.toHaveCount(0);
 });
 
 test.describe("the tuning screen's three faces", () => {
@@ -133,9 +138,29 @@ test.describe("the tuning screen's three faces", () => {
     await expect(title).toContainText("SSMCS");
     await expect(face(page, "main")).toHaveAttribute("aria-pressed", "true");
 
+    // Moved, not closed and reopened — counted off the SCRIM's `hidden` flag over the
+    // press. Neither the modal element nor its visibility can answer this: `#dyn-screen-box`
+    // is a fixed element in the markup that outlives every open, and `close()` only hides
+    // the scrim, so a marker put on the box survives a close and a reopen just as `hidden`
+    // being false does on both sides of one. Only the transition itself distinguishes them.
+    await page.evaluate(() => {
+      const scrim = document.getElementById("dyn-screen-modal")!;
+      const w = window as unknown as { __closes: number };
+      w.__closes = 0;
+      // The RECORDS, not the flag's value when the callback runs. A close followed
+      // immediately by a reopen lands both writes in one batch, and by the time the
+      // callback is called `hidden` is false again — so reading the flag there reports a
+      // screen that never closed. Measured: an implementation that closed and reopened on
+      // every face press passed against that reading.
+      new MutationObserver((records) => {
+        w.__closes += records.length;
+      }).observe(scrim, { attributes: true, attributeFilter: ["hidden"] });
+    });
+    const closes = () => page.evaluate(() => (window as unknown as { __closes: number }).__closes);
+
     await face(page, "comp").click();
-    await expect(box(page)).toBeVisible(); // moved, not closed and reopened
     await expect(face(page, "comp")).toHaveAttribute("aria-pressed", "true");
+    expect(await closes()).toBe(0);
     // Naming each face would print the shipped COMP screen's title, and nothing would
     // then say which of the channel's two banks is on screen.
     await expect(title).toContainText("SSMCS");
@@ -143,6 +168,13 @@ test.describe("the tuning screen's three faces", () => {
 
     await face(page, "eq").click();
     await expect(box(page).locator("#dyn-ssmcs-band-low")).toHaveAttribute("aria-pressed", "true");
+    expect(await closes()).toBe(0);
+
+    // The positive control, and it is what makes the two counts above mean anything: an
+    // observer that never attached, or a close that this page reports some other way,
+    // reads exactly like a screen that stayed open.
+    await box(page).locator(".consent-btn-secondary").click();
+    expect(await closes()).toBeGreaterThan(0);
   });
 
   // The face segment is a SIBLING of the heading rather than a child, so the dialog's
@@ -187,6 +219,74 @@ test.describe("the tuning screen's three faces", () => {
     await expect(face(page, "eq")).toHaveAttribute("aria-pressed", "true");
   });
 
+  // Layout, so it is only answerable here: jsdom lays nothing out, and the reserve is two
+  // CSS rules plus a hidden bar the host builds. Both halves are the same requirement —
+  // the segment that moves between the faces is in the title row, so a modal that resizes
+  // moves the control the operator just pressed, and a display panel that starts at a
+  // different y makes the plot jump under the eye that is reading it.
+  // Three runs, and each one is here because the other two cannot see what it sees.
+  //
+  // **Japanese** is where the reserve does its work. Measured with the floor removed: in
+  // English the three faces coincide at 656.4px on their own, so an English run passes
+  // against no reserve at all — while Japanese lands the COMP face at 660.4 and the other
+  // two at 656.4, because a translated row label is wider and its column is the tallest
+  // thing on that face. A guard for a floor has to run in the language whose content
+  // reaches it.
+  //
+  // **960x640** is the smallest window the shell allows (`tauri.conf.json`: minWidth 960,
+  // minHeight 640), and a floor is only safe if it yields there. `.consent-box` clamps
+  // itself to the viewport, and the action row carrying Close is its last child, so a grid
+  // that refuses to shrink pushes Close past the fold — measured before the floor learned
+  // to yield: 68px past the box's own edge.
+  const RUNS = [
+    { lang: "en", size: null },
+    { lang: "ja", size: null },
+    { lang: "en", size: { width: 960, height: 640 } },
+  ] as const;
+  for (const run of RUNS) {
+    const at = `${run.lang}, ${run.size ? `${run.size.width}x${run.size.height}` : "the default window"}`;
+    test(`every face is one height with its display panel at one top edge (${at})`, async ({ page }) => {
+      if (run.size) await page.setViewportSize(run.size);
+      if (run.lang !== "en") {
+        // A second init script rather than a write plus a reload: the suite's own init
+        // script sets the language on EVERY navigation, so a value written into storage is
+        // overwritten by it on the way back in and the run silently stays in English.
+        // Init scripts run in the order they were added, so this one lands after it.
+        await page.addInitScript((l) => localStorage.setItem("urx-lang", l), run.lang);
+        await page.reload();
+        await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+        await expect(page.locator("#btn-view-console")).toHaveText("コンソール");
+      }
+      await openFace(page, "ssmcs", /^SSMCS$/);
+      const geom = () =>
+        box(page).evaluate((el) => {
+          const b = el.getBoundingClientRect();
+          const panel = el.querySelector(".gt-curvebox, .gt-ladderbox")!.getBoundingClientRect();
+          const close = el.querySelector(".consent-btn-secondary")!.getBoundingClientRect();
+          return {
+            height: Math.round(b.height),
+            panelTop: Math.round(panel.top - b.top),
+            closeOverflow: Math.round(close.bottom - b.bottom),
+            rows: el.querySelectorAll(".prefs-row").length,
+          };
+        });
+      const main = await geom();
+      const seen = [main.rows];
+      expect(main.closeOverflow).toBeLessThanOrEqual(0);
+      for (const f of ["comp", "eq"] as const) {
+        await face(page, f).click();
+        const g = await geom();
+        expect(g.height, f).toBe(main.height);
+        expect(g.panelTop, f).toBe(main.panelTop);
+        expect(g.closeOverflow, f).toBeLessThanOrEqual(0);
+        seen.push(g.rows);
+      }
+      // The positive control: the faces really do carry different panels. Without it, a
+      // build that rendered the same face three times would satisfy every line above.
+      expect(new Set(seen).size).toBeGreaterThan(1);
+    });
+  }
+
   test("the face is not carried to the next open", async ({ page }) => {
     await openFace(page, "ssmcs", /^SSMCS$/);
     await face(page, "eq").click();
@@ -218,6 +318,15 @@ test.describe("the tuning screen's three faces", () => {
     // The bank's corner is an internal value the unit never shows, so the lane rack
     // carries no fader cap — the one gesture the rack otherwise has.
     await expect(box(page).locator(".gt-cap")).toHaveCount(0);
+    // The positive control, on the screen next door: the same selector finds one where a
+    // rack DOES carry a cap, so the count above is a statement about this face rather
+    // than about a class that was renamed out from under it.
+    await box(page).locator(".consent-btn-secondary").click();
+    await node(page, "ch2").click();
+    const gate = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^GATE$/ }) });
+    if (!(await gate.evaluate((el) => (el as HTMLDetailsElement).open))) await gate.locator("summary").click();
+    await gate.locator("#btn-gate-screen").click();
+    await expect(box(page).locator(".gt-cap")).toHaveCount(1);
   });
 
   test("the EQ face keeps four rows and one height on every band", async ({ page }) => {
@@ -237,26 +346,27 @@ test.describe("the tuning screen's three faces", () => {
   });
 });
 
-test("the CONSOLE strip offers the morphing strip's own chips", async ({ page }) => {
+test("the CONSOLE strip offers one opener for the whole morphing bank", async ({ page }) => {
+  const openers = (strip: ReturnType<Page["locator"]>) =>
+    strip.locator(".con-chip-open").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
+
+  await page.click("#btn-view-console");
+  const strip = page.locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) });
+  // In the other bank the strip carries three, one beside each processor it can tune.
+  expect(await openers(strip)).toEqual(["Gate screen", "Comp screen", "EQ screen"]);
+
+  await page.click("#btn-view-graph");
   await node(page, "ch1").click();
   await typeSelect(page).selectOption("1");
   await page.click("#btn-view-console");
-  const strip = page.locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) });
-  // GATE, SSMCS, COMP and EQ each carry a toggle and an opener, in the unit's own
-  // chain order.
+  // In the morphing bank the SSMCS chip carries the only one: its COMP and EQ faces are
+  // reached from the segment inside the screen, and the strip's own COMP and EQ chips read
+  // as they do on a channel with no strip at all. By label rather than by count — every
+  // opener is the same glyph, and the two banks carry the same NUMBER of chips either way,
+  // since the parity spacer takes whatever slot an opener frees.
   await expect(strip.locator(".con-chip", { hasText: /^SSMCS$/ })).toHaveCount(1);
-  await expect(strip.locator('.con-chip-open[aria-label="SSMCS screen"]')).toHaveCount(1);
-  await expect(strip.locator('.con-chip-open[aria-label="Comp screen"]')).toHaveCount(1);
-  await expect(strip.locator('.con-chip-open[aria-label="EQ screen"]')).toHaveCount(1);
-  // The two labels are deliberately the shipped screens' own, so which FACE each opener
-  // opens is the only thing that tells the banks apart here.
-  for (const [label, face] of [
-    ["SSMCS screen", "main"],
-    ["Comp screen", "comp"],
-    ["EQ screen", "eq"],
-  ] as const) {
-    await strip.locator(`.con-chip-open[aria-label="${label}"]`).click();
-    await expect(box(page).locator(`#dyn-face-ssmcs-${face}`)).toHaveAttribute("aria-pressed", "true");
-    await box(page).locator(".consent-btn-secondary").click();
-  }
+  expect(await openers(strip)).toEqual(["Gate screen", "SSMCS screen"]);
+
+  await strip.locator('.con-chip-open[aria-label="SSMCS screen"]').click();
+  await expect(box(page).locator("#dyn-face-ssmcs-main")).toHaveAttribute("aria-pressed", "true");
 });
