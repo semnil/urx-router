@@ -163,9 +163,16 @@ export class DeviceFollow {
    * caller is a live flush that has already returned.
    */
   async refresh(): Promise<void> {
+    const gen = this.gen;
     try {
       await this.subscribe();
     } catch (e) {
+      // Whose failure this is. A rejection leaves `subscribeOne` by exception, so it never
+      // reaches the post-await generation guard there, and this catch is the only place
+      // that can tell a refusal for THIS session from one that arrives after the session
+      // ended and another began. Without the check a late refusal stops a follow that is
+      // registered and working, and nothing restarts it.
+      if (this.gen !== gen) return;
       this.active = false;
       this.hooks.onError(e instanceof Error ? e.message : String(e));
     }

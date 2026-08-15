@@ -426,6 +426,37 @@ describe("DeviceFollow", () => {
     expect(h.addrs).toEqual([ADDR, [140, 0, 0]]);
   });
 
+  it("does not stop the session that FOLLOWED the one a failed re-registration belonged to", async () => {
+    // The rejection travels out of `subscribeOne` rather than through its post-await
+    // generation guard, so the catch is the only thing that can tell whose failure it is.
+    // Held until after this session has ended and another has registered: without the
+    // generation check the late refusal reads as the NEW session's, stopping a follow that
+    // is registered and working — and nothing restarts it.
+    let reject!: (e: Error) => void;
+    const stalled = new Promise<() => void>((_, r) => (reject = r));
+    let addrs: Array<[number, number, number]> = [ADDR];
+    const onError = vi.fn();
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+
+    const follow = followFor({ addrs: () => addrs, onError });
+    await follow.begin();
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async () => stalled);
+    addrs = [ADDR, [140, 0, 0]]; // moved, so the refresh does not short-circuit
+    const refreshed = follow.refresh();
+
+    follow.end();
+    addrs = [ADDR];
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(real);
+    await follow.begin(); // a second session, registered and live
+    expect(follow.isActive()).toBe(true);
+
+    reject(new Error("subscribe rejected"));
+    await refreshed;
+    expect(onError).not.toHaveBeenCalled();
+    expect(follow.isActive()).toBe(true);
+  });
+
   it("stops and reports when a re-registration fails", async () => {
     // The rule a failed reconcile takes, on the path a structural edit now reaches every
     // time. `subscribe` releases the old handle BEFORE it awaits, so a throw leaves the
