@@ -403,7 +403,7 @@ carries a one-line map of the same directories and points here.
   they do. **The host knows nothing about which processor it is showing** — a `DynProcessor` resolves what a
   node has (`bind` → fields + meter lanes), reads and writes its own corner of the plan (`read`/`patch`),
   and arranges its display column out of the parts the host offers (`display` over `parts.lanes()` /
-  `parts.plot()`). It owns the broker's single meter slot while open, so the console is told to release and
+  `parts.plot()`). It owns the session's one meter subscription while open, so the console is told to release and
   regain it. `dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` / `dyn-ducker.ts` / `dyn-ssmcs.ts` are the descriptors — DUCKER is
   the one whose node is not the node it tunes, since a ducker hangs under a stereo channel keyed by a wire
   from somewhere else, so its lanes are gathered from three places instead of read off the node the screen

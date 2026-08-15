@@ -13,7 +13,7 @@ decode), `src/style.css` (`.gt-*`), with coverage in `e2e/dyntuning.spec.ts` and
 `e2e/eqoneknob.spec.ts`.
 
 One host serves all three and the processor is chosen per open, so opening any of them replaces
-whatever was on it. Two instances would fight over the same DOM, and the broker's single meter slot
+whatever was on it. Two instances would fight over the same DOM, and this session's one meter subscription
 means two open at once could not both stream anyway.
 
 **Nothing in the host knows which processor it is showing.** A `DynProcessor` resolves what a node
@@ -637,10 +637,16 @@ panel never hears — so the gate subscribes to the hold bookkeeping directly.
 
 ## Meter subscription ownership
 
-The broker has **one meter subscription slot process-wide**: `vd_meters_subscribe` replaces the
-previous registration and `vd_meters_unsubscribe` takes no address. The replacement is silent and
-the CONSOLE does not self-heal, so an unannounced takeover would leave its bars frozen on the floor
-— indistinguishable from silence.
+**This app holds one meter subscription per session, and that is its own arrangement rather than a
+device limit.** The wire carries no subscription object at all — `reg_meter` sends one `regist` /
+`unregist` frame per address. What is single is the worker's own set: `Cmd::MetersSubscribe` in
+`src-tauri/src/vd.rs` unregisters `subs.meter_addrs` entry by entry and then registers the new
+addresses, so `vd_meters_subscribe` replaces rather than adds, and `vd_meters_unsubscribe` takes no
+address because there is only ever one set to drop. The device constraint recorded beside it is a
+different one: never bulk-post to `/vd/meters`, which has been seen to crash Device Center.
+
+The replacement is silent and the CONSOLE does not self-heal, so an unannounced takeover would leave
+its bars frozen on the floor — indistinguishable from silence.
 
 Two mechanisms keep that from biting:
 
@@ -825,7 +831,7 @@ capture.
 | Reading COMP GR as the net applied gain (reduction + makeup) | The idle OVER sentinel on a channel with +18 dB of makeup suggested it, and it would have made the lane useless above modest makeup values. Measured and refuted: the makeup moves the downstream tap and not the GR meter |
 | Sharing the level lanes' dB per pixel for the COMP GR lane | A gate's reduction runs the whole ruler; a compressor's is a few dB of it, and reads as a lane that never moves |
 | Leaving the COMP knee out of the curve | The selector would change nothing on screen — the same failure the gate's output axis already cost us. Measuring the widths was cheaper than shipping a control with no feedback |
-| A second instance of the screen for COMP | Both would bind the same modal host and the same single meter slot; the processor is chosen per open instead |
+| A second instance of the screen for COMP | Both would bind the same modal host and the same single meter subscription; the processor is chosen per open instead |
 | T / R / G grips dragged on the COMP curve, as the unit does it | Built, then removed. A press that missed a grip fell through to the threshold drag beneath it, so pressing the gain grip moved the threshold; and the grips were drawn clamped inside the plot while hit-tested at their true position, which put the two ~13 px apart at the axis ends. Underneath both defects, three grips on one plot cannot tell which value a press meant |
 | All eighteen SSMCS rows on one screen | The rows alone are ~18 × 42 px ≈ 756 px against `.consent-box`'s `max-height: calc(100vh - 48px)`, which is 752 px at the 800 px default window and 592 px at the 640 px floor `tauri.conf.json` allows — over before the four headings, the title and the action row are added, and into the internal scroll every shipped screen avoids |
 | A fourth SSMCS face for the side chain, as the unit splits it | The unit splits it because its LCD is small. Eight rows fit one panel here, and the Side Chain toggle doubles as the divider the filter's three rows sit under |

@@ -350,7 +350,7 @@ export interface DynScreenHooks {
   /** The shared plan-edit funnel (the inspector's own path): flags the plan dirty
    *  and mirrors to the device when live. */
   onUpdateNodeParams: (id: string, patch: NodeParams) => void;
-  /** Hand the broker's single meter slot over / give it back. */
+  /** Hand this session's one meter subscription over / give it back. */
   releaseMeters: () => void;
   regainMeters: () => void;
   /** A meter registration failed. Bars stuck on the floor look exactly like
@@ -479,8 +479,9 @@ export class DynScreen {
    *  address nothing reads while the lane it belongs to sits at the floor. */
   private subSig = "";
   private subGen = 0;
-  /** The registrations, one after another. The broker's slot is single and replaced
-   *  silently, so overlapping subscriptions must not be in flight together. */
+  /** The registrations, one after another. A session holds one meter subscription and
+   *  `vd_meters_subscribe` replaces it silently, so overlapping ones must not be in
+   *  flight together. */
   private subChain: Promise<void> = Promise.resolve();
   private subBusy = false;
 
@@ -737,8 +738,8 @@ export class DynScreen {
     // rather than being compared against the set this call is about to install.
     const gen = ++this.subGen;
     this.subSig = this.addrSig();
-    // Take the slot before subscribing: the broker replaces the previous
-    // registration silently, so the console must be told rather than discover it.
+    // Take the subscription before making it: a subscribe replaces the session's
+    // previous one silently, so the console must be told rather than discover it.
     this.hooks.releaseMeters();
     const grLanes = this.lanes.filter((l) => l.kind === "gr" && l.gr);
     const addrs = this.addrs();
@@ -775,12 +776,13 @@ export class DynScreen {
           if (gen === this.subGen) this.hooks.onMeterError(e instanceof Error ? e.message : String(e));
         });
     };
-    // One registration in flight at a time. The broker keeps a single slot per client and
-    // replaces it silently, so two overlapping subscriptions take the slot in whatever
-    // order the transport delivers them rather than the order the faces were pressed: the
-    // slot ends up on the face that was left, and this screen's handle then unsubscribes a
-    // registration the broker had already replaced. The meters stop with nothing reporting
-    // a failure. Chained on settlement, not on success, so one refusal does not strand it.
+    // One registration in flight at a time. A session holds ONE meter subscription — the
+    // control worker unregisters its whole address set and registers the new one on every
+    // subscribe — so two overlapping ones land in whatever order the transport delivers
+    // them rather than the order the faces were pressed: the set left registered is the
+    // face that was left, and this screen's handle then unsubscribes addresses the later
+    // call had already replaced. The meters stop with nothing reporting a failure. Chained
+    // on settlement, not on success, so one refusal does not strand it.
     // With nothing in flight it runs here rather than a microtask later: the slot is free,
     // and the queue exists to order overlapping registrations, not to delay the first.
     const run = (): Promise<void> => {

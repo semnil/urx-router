@@ -461,10 +461,10 @@ describe("moving between the faces", () => {
     expect(last()).toBe(`108:${mono},110:${mono},111:${mono},112:${mono}`);
   });
 
-  // The registrations are serialized because the broker's slot is single and replaced
-  // silently: two in flight together take that slot in the order the transport delivered
-  // them, which can be the face that was left — and the screen's own handle then
-  // unsubscribes a registration the broker had already replaced, so the meters stop with
+  // The registrations are serialized because a session holds ONE meter subscription and a
+  // subscribe replaces it silently: two in flight together land in the order the transport
+  // delivered them, which can be the face that was left — and the screen's own handle then
+  // unsubscribes addresses the later call had already replaced, so the meters stop with
   // nothing raised. What the serialization buys is that the LAST registration issued is
   // the last one the broker sees. Registration is given a duration here, because two that
   // each finish inside their own call cannot be caught overlapping.
