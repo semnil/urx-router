@@ -534,6 +534,12 @@ consuming it, and Playwright reads everything after a `--` as a positional file 
 `pnpm test:e2e:race -- --shard=1/3` runs the WHOLE harness in every shard and still passes, at three
 times the cost, silently.
 
+**A bare `--shard=k/3` is not CI's shard k.** CI sizes the shards by measured duration
+(`PWTEST_SHARD_WEIGHTS`, "How the shards are sized" below), and without that variable the same flag
+takes an equal-count slice instead — a different set of cases under the same name. To reproduce what a
+red shard ran, prefix the run with the ledger's array:
+`PWTEST_SHARD_WEIGHTS=$(jq -r '.collect.shardWeights | join(":")' e2e/race/skip-ledger.json)`.
+
 The `race` project raises the per-test timeout to **120 s** and drops to **one** CI retry. The longest
 case measured 60 s on a two-worker CI runner — a barrier held across a converge round of ~800
 sequential reads — so at the 30 s default a passing case turns into a timeout that reads like a defect.
@@ -580,7 +586,7 @@ it into:
 | Tier | Machine time | Slowest test | Runs from |
 | --- | --- | --- | --- |
 | `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, sharded three ways, on every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside) |
-| `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways, on every PR except a documentation-only one, and on the version bump |
+| `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways by measured duration (below), on every PR except a documentation-only one, and on the version bump |
 | `race-webkit` | 2.1 min | 48 s | `race.yml`, its own job, on the same condition |
 
 **Read the ordinary tier's figure as a range rather than a budget.** The same 428 cases measured 5.2
@@ -657,11 +663,41 @@ documentation-only ones. The two watch lists this replaced would have run on 52 
 the four merges between those two figures and 75 are what the third leak above would have cost.
 
 The required workflows run in parallel, so a merge waits for the slowest of them, which on those 75 is
-this one. Playwright shards by case count and the expensive tiers land together, so its wall clock is
-the slowest shard's rather than a third of the machine time above. No **runner** reading is kept for it
-— a CI clock moves between runs, so a figure written down is a figure that was true once. The local
-one, taken on a known machine in isolation, stays in its own table above, under the line that claims
-that table as its single home.
+this one. Its wall clock is the **slowest shard's** rather than a third of the machine time above, so
+how the tier is cut decides most of it.
+
+**How the shards are sized.** Playwright's own sharding takes a contiguous slice of the collected order
+and sizes it by case COUNT (`filterForShard` walks the groups in path order and cuts on a cumulative
+count). Equal counts are not equal times here: `t2-shape-change` through `t2f-shape-change` are six
+adjacent files in that order and are among the expensive ones, so one slice inherits them together — on
+the run this was derived from, shard 1 held `t2`, `t2b`, `t2c`, `t2d`, `t2e` and `t2f`. That run's three
+shards carried 12.3, 4.5 and 7.4 minutes of machine time over 57, 57 and 56 cases — a worst shard 53%
+above the 8.1 minutes a third of the work would be.
+`PWTEST_SHARD_WEIGHTS` sizes those same contiguous slices from the durations instead, and the same run
+cuts to 8.3, 8.5 and 7.5. The cut points are chosen by minimising the worst shard's predicted wall under
+the model a shard actually runs at — two workers, each taking the next case in declaration order, plus
+about 9 s of worker startup — which reproduced that run's own three shards to 381 / 144 / 261 s against
+380 / 143 / 261 s observed.
+
+The array is `collect.shardWeights` in `e2e/race/skip-ledger.json`, which is the only place it is
+written: `race.yml` reads it there, and `pnpm check:skips` re-takes the collection under it. **What that
+catches is a corpus that changed SIZE** — the sum stops matching, which is how a stale array is normally
+produced — **and a Playwright that stopped reading the variable**, which is a `PWTEST_`-prefixed one,
+absent from the shipped types. A case swapped one-for-one, a file renamed into a different collection
+order, or a case that simply got slower leaves every count intact and needs a re-derivation nothing here
+can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation: it refuses a log that
+does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
+array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
+
+The value reaches the shard step through four names, and GitHub resolves one that does not exist to the
+empty string, which Playwright treats as no weights at all rather than as an error — so the shard step
+refuses an empty value outright instead of running the equal-count split under the weighted split's
+name.
+
+No **runner** reading is kept for any of it — a CI clock moves between runs, so a figure written down is
+a figure that was true once, and the weights are derived from per-test durations rather than from a wall
+clock for that reason. The local machine-time reading, taken on a known machine in isolation, stays in
+its own table above, under the line that claims that table as its single home.
 
 `race.yml` carries **no trigger filter at all**, so `detect` runs on every pull request. That is what
 makes `race-required` usable as a merge condition: a workflow skipped by a trigger filter reports no
@@ -1440,21 +1476,6 @@ fixed or withdrawn.
   (`core/levels`, `core/plan-history`) are leaves and are safe. The cost is real: `deviceLevelText` in
   `e2e/race/ui.ts` restates the off sentinel and the centi-dB scale that `vd.ts` already owns, and
   `FLUSH_TAIL_MS` copies `DEBOUNCE_MS` rather than deriving from it. Both say so at their definition
-- **The three CI shards are balanced by test COUNT, and the tiers are not equally expensive.** Playwright
-  splits the ordered list into equal-count contiguous chunks, cutting across file boundaries — so the
-  split follows the file names, and the file names follow the tier order. Measured 2026-08-11 on
-  `d85af81`: Playwright assigned the shards **57, 56 and 56** cases — the equal-count split this is about
-  — and shard 1 carried **752 s** of test time against shard 2's 272 s and shard 3's 451 s. (56, 51 and 54
-  of those cases ran; the remainder are skipped by their own guards and cost nothing, so the seconds are
-  over what executed.) It is not a scheduling accident: T1 (overtake) and T2 (shape change) are the tiers whose
-  cases provoke whole-device readbacks of ~800 sequential commands and hold a barrier through them, 33-48 s
-  each, and being adjacent in the ordering they land together. The workflow waits for the slowest shard,
-  so the imbalance costs **about half again** what an even split by duration would (752 s against the
-  492 s a third of 1475 gives). The reading this replaced had the same shape — 749 / 253 / 315 s — so the
-  imbalance is a property of the ordering rather than of any one run. Left as it is — a
-  release runs the harness once — and recorded because the obvious fix, raising the shard count, lowers the
-  maximum without addressing the imbalance, while assigning files to shards by hand makes the split
-  something a new case can silently unbalance
 - **A plan EDIT never appears in the IPC trace** — only its write does, lagged by up to the 120 ms
   flush window and continuing after the read has resolved. So no predicate over the trace can decide
   "did an edit land inside the read's window", which became a load-bearing question once the readback

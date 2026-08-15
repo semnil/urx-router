@@ -70,6 +70,7 @@ jobs:
     outputs:
       run: ${{ steps.check.outputs.run }}
       playwright: ${{ steps.pw.outputs.version }}
+      weights: ${{ steps.weights.outputs.value }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -186,6 +187,34 @@ jobs:
       # here. See .github/actions/playwright-version for why it is a job's output.
       - id: pw
         uses: ./.github/actions/playwright-version
+      # How the shards are sized, read from the one file that holds it — the same ledger
+      # `pnpm check:skips` validates it against. Playwright's own split sizes each shard by
+      # case COUNT, which on this tier is not the same as sizing it by time;
+      # `PWTEST_SHARD_WEIGHTS` cuts the same contiguous slices by measured duration instead.
+      # The readings are in docs/{en,ja}/live-race-harness.md ("How the shards are sized");
+      # this file does not restate them.
+      #
+      # `jq -er` is not what stops a missing key — measured against jq 1.7.1, `join` refuses
+      # to iterate null and fails on its own. What gets through is the empty LIST, and an
+      # empty variable is not a parse error to Playwright but a silent fall back to the equal
+      # split. So the value is matched against the shape it has to have before it is
+      # published, which also keeps a newline in the ledger from writing a second key into
+      # $GITHUB_OUTPUT.
+      #
+      # `shell: bash` is declared rather than inherited: `[[ =~ ]]` is bash's, and the
+      # default shell is not a property of this file. This job has no container and gets
+      # /usr/bin/bash, but the shard step below is inside one and gets `sh` — which is dash
+      # on that image, where `[[` is not a builtin at all.
+      - id: weights
+        shell: bash
+        run: |
+          weights=$(jq -er '.collect.shardWeights | join(":")' e2e/race/skip-ledger.json)
+          if [[ ! "${weights}" =~ ^[0-9]+(:[0-9]+)*$ ]]; then
+            echo "::error::collect.shardWeights is not a list of case counts: '${weights}'"
+            exit 1
+          fi
+          echo "value=${weights}" >> "$GITHUB_OUTPUT"
+          echo "shard weights: ${weights}"
 
   race:
     needs: detect
@@ -200,10 +229,11 @@ jobs:
     # rather than two.
     container: mcr.microsoft.com/playwright:v${{ needs.detect.outputs.playwright }}-noble
     # Several times what the slowest shard takes — and it is the SLOWEST that has to fit,
-    # since Playwright shards by case count and the expensive tiers land together
-    # (docs/{en,ja}/live-race-harness.md carries that reading, and every other figure about
-    # this tier). A backstop against a wedged run holding a runner for the 6-hour job
-    # default, not a budget.
+    # which the weights below level out rather than remove (docs/{en,ja}/live-race-harness.md
+    # carries that reading, and every other figure about this tier). Left where it was when
+    # one shard ran three times another: this is a backstop against a wedged run holding a
+    # runner for the 6-hour job default, not a budget, and a re-balancing is no reason to
+    # narrow it.
     timeout-minutes: 25
     permissions:
       contents: read
@@ -231,7 +261,35 @@ jobs:
       # rather than consuming it, and Playwright reads everything after a `--` as a
       # positional file filter. `pnpm test:e2e:race -- --shard=1/3` therefore runs the
       # WHOLE harness in every shard and still passes — three times the cost, silently.
-      - run: pnpm test:e2e:race --shard=${{ matrix.shard }}/3
+      #
+      # The total comes from `strategy.job-total` (the idiom ci.yml's E2E tier already uses)
+      # so the matrix is the only place the shard count is written on this side. The other
+      # place is the length of the weights array `detect` read, and the two disagreeing is
+      # not a silent skew: Playwright refuses a weight list that does not match the total.
+      #
+      # The value is checked HERE rather than only where it was produced, because it reaches
+      # this step through four names — a step id, a step output key, a job output key and
+      # this env key — and GitHub resolves a name that does not exist to the empty string
+      # rather than to an error. Playwright then falls back to the equal-count split with no
+      # message of any kind (measured: an empty variable collects 57 cases for --shard=1/3
+      # where the weights give 38), so every signal would say the run worked while the tier
+      # went back to the imbalance this arrangement exists to remove. Checking the value
+      # rather than the spelling is what makes any of those four names fail loudly.
+      #
+      # `[ ]`, not `[[ ]]`: a step inside a container gets `shell: sh -e {0}`, and on this
+      # image `sh` is dash, where `[[` is not a builtin. The first version of this guard was
+      # written in bash and run 31859211335 printed `[[: not found` and went straight on to
+      # the tests — a guard against a silent fallback that was itself silent. Reproduced with
+      # dash locally: the bash form leaves an empty value running at exit 0, the form below
+      # exits 1.
+      - run: |
+          if [ -z "$PWTEST_SHARD_WEIGHTS" ]; then
+            echo "::error::the shard weights did not arrive from detect — Playwright would split by case count instead, and say nothing"
+            exit 1
+          fi
+          pnpm test:e2e:race --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+        env:
+          PWTEST_SHARD_WEIGHTS: ${{ needs.detect.outputs.weights }}
       # The "list" reporter writes no playwright-report/; traces (trace: on-first-retry,
       # with the project's one CI retry) and failure attachments land in the default
       # test-results/, so that is what a failing run has to upload. The name carries the

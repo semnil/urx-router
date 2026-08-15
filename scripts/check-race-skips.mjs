@@ -61,6 +61,13 @@
 // that is perfectly healthy — a check that a stray debug line can take down is a check that
 // gets deleted.
 //
+// The ledger carries one more thing the same runner can settle: `collect.shardWeights`,
+// the per-shard case counts race.yml hands to Playwright so the split is sized by measured
+// duration rather than by case count. Re-taking the collection under them is what makes a
+// stale array — or a Playwright that stopped reading an undocumented environment variable —
+// a red check instead of a slower run. It costs one `--list` per shard, about 0.6 s each
+// (measured over six on a 2026 Mac), on top of the two this check already takes.
+//
 // The price of being right is node_modules, so this runs from ci.yml rather than the
 // install-free docs.yml. Nothing is lost by that: the Markdown/docs-only pull request
 // ci.yml skips cannot change a spec or a guarantor.
@@ -70,6 +77,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { inspectWeights, weightShapeProblem } from "./shard-weights.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The ledger writes repo-relative paths with forward slashes on every platform; Windows would
@@ -77,6 +85,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const rel = (p) => relative(repo, p).split(sep).join("/");
 const RACE_DIR = "e2e/race";
 const LEDGER = `${RACE_DIR}/skip-ledger.json`;
+const RACE_WORKFLOW = ".github/workflows/race.yml";
 // What vitest prints between a describe and what it contains; Playwright reports the tree as
 // a tree, and the same join is applied to it.
 const NAME_SEP = " > ";
@@ -128,12 +137,18 @@ function readReport(file, r, what) {
 // "fixme", so reading the annotations misses it while the runner reports both as "skipped".
 // `--list` runs nothing, so a `test.skip()` inside a body cannot appear here in any form.
 // The outermost suite is the file, so the trail starts below it.
-function playwright(project) {
-  const file = join(reports, `playwright-${project}.json`);
-  const what = `playwright --list (${project})`;
-  const r = run("@playwright/test", "playwright", ["test", `--project=${project}`, "--list", "--reporter=json"], {
-    PLAYWRIGHT_JSON_OUTPUT_NAME: file,
-  });
+function playwright(project, { args = [], env = {}, tag = project } = {}) {
+  const file = join(reports, `playwright-${tag}.json`);
+  const what = `playwright --list (${tag})`;
+  const r = run(
+    "@playwright/test",
+    "playwright",
+    ["test", `--project=${project}`, "--list", "--reporter=json", ...args],
+    {
+      PLAYWRIGHT_JSON_OUTPUT_NAME: file,
+      ...env,
+    },
+  );
   const json = readReport(file, r, what);
   const errors = (json.errors ?? []).map((e) => e.message?.split("\n")[0] ?? String(e));
   if (r.status !== 0 || errors.length) fatal([`${what} exited ${r.status}`, ...errors]);
@@ -240,6 +255,37 @@ const ledger = JSON.parse(readFileSync(join(repo, LEDGER), "utf8"));
   }
 }
 
+// How the tier is split across race.yml's matrix. The rules are in scripts/shard-weights.mjs
+// — pure, so the arrangements this has to reject can be put in front of them by a test
+// rather than by hand — and what this file adds is the one reading they need: the number of
+// cases Playwright hands each shard under those weights. It is the reading that says whether
+// the variable is being read at all, and it costs one `--list` per shard.
+{
+  const weights = ledger.collect?.shardWeights;
+  const sum = Array.isArray(weights) ? weights.reduce((a, b) => a + b, 0) : null;
+  // Not taken when the sum is already wrong: every shard would then be off by the same
+  // arithmetic, and the sum's own message is the one that says what to do about it.
+  const shardCounts =
+    weightShapeProblem(weights) === null && sum === collected.length
+      ? weights.map(
+          (_, i) =>
+            playwright("race", {
+              args: [`--shard=${i + 1}/${weights.length}`],
+              env: { PWTEST_SHARD_WEIGHTS: weights.join(":") },
+              tag: `race-shard-${i + 1}`,
+            }).length,
+        )
+      : null;
+  for (const p of inspectWeights({
+    weights,
+    collectedCount: collected.length,
+    shardCounts,
+    workflowText: readFileSync(join(repo, RACE_WORKFLOW), "utf8"),
+  })) {
+    problems.push(`${p.where === "workflow" ? RACE_WORKFLOW : LEDGER}: ${p.message}`);
+  }
+}
+
 const entries = new Map();
 for (const s of ledger.skips) {
   const k = key(s.file, s.title);
@@ -330,5 +376,9 @@ if (problems.length) {
 }
 
 console.log(`OK: ${found.size} permanent skip(s) of ${collected.length} cases Playwright collects in ${RACE_DIR}`);
+console.log(
+  `    split ${ledger.collect.shardWeights.join(":")} — every --shard=k/${ledger.collect.shardWeights.length} takes ` +
+    `the cases collect.shardWeights claims`,
+);
 console.log(`    ${guards.length} guarded by a unit test that runs and passes, ${unguarded.length} held by nothing:`);
 for (const s of unguarded) console.log(`    - ${s.file.replace(`${RACE_DIR}/`, "")} › ${s.title}`);
