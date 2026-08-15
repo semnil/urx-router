@@ -6,6 +6,8 @@
 //   node scripts/race-shard-weights.mjs --log <file>    the same log already on disk
 //   …                                 --shards <N>      a different shard count (default: the
 //                                                       length of the array in the ledger)
+//   …                          --accept-run-skips       weight a case the run skipped at 0,
+//                                                       rather than refusing the log
 //
 // Prints the array to paste. It writes nothing: the ledger is where a human decides the
 // split lives, and this is the arithmetic behind it.
@@ -31,7 +33,14 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
-import { caseKey as key, durations, planMismatch, skippedInLog, weightShapeProblem } from "./shard-weights.mjs";
+import {
+  caseKey as key,
+  durations,
+  logCoverage,
+  planMismatch,
+  skippedInLog,
+  weightShapeProblem,
+} from "./shard-weights.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const LEDGER = "e2e/race/skip-ledger.json";
@@ -59,6 +68,9 @@ function flag(name) {
 }
 const flagValues = new Set(["--log", "--shards"].map((f) => flag(f)).filter(Boolean));
 const runId = argv.find((a) => !a.startsWith("--") && !flagValues.has(a));
+// Weighting a case the run skipped at 0 is a guess about work nobody measured, so it is a
+// thing to ask for rather than a default. What it costs is in the refusal that names it.
+const acceptRunSkips = argv.includes("--accept-run-skips");
 
 // --- the run's own durations -------------------------------------------------
 
@@ -181,49 +193,54 @@ const collected = playwright([], {});
 if (shards > collected.length) die(`--shards ${shards} is more shards than there are cases (${collected.length})`);
 const log = logText();
 const measured = durations(log);
+const skippedThere = skippedInLog(log);
 const ms = collected.map((c) => measured.get(c.key) ?? 0);
-const missing = collected.filter((c) => !measured.has(c.key));
-const unused = [...measured.keys()].filter((k) => !collected.some((c) => c.key === k));
+const seen = new Set([...measured.keys(), ...skippedThere]);
+const unused = [...seen].filter((k) => !collected.some((c) => c.key === k));
+const { declaredSkips, runtimeSkips, unexplained } = logCoverage(collected, measured, skippedThere);
 
+const list = (keys) => keys.slice(0, 12).join("\n    ");
 console.log(`${collected.length} cases collected, ${measured.size} timed in the log`);
 
-// A case with no duration belongs at 0 when the log ACCOUNTS for it — either the listing
-// declares it skipped, or the log itself reports it as skipped, which is the only evidence
-// for the kind a listing cannot see (a `test.describe.serial` block skips the rest of its
-// cases once one fails, and an in-body `test.skip()` is invisible to `--list`). Anything
-// else missing, or anything in the log the checkout does not collect, means the two describe
-// different corpora — and unlike every other input here, that cannot be caught downstream:
-// the resulting array is arithmetically consistent, passes the runner check below and passes
-// check-race-skips.mjs.
-const skippedThere = skippedInLog(log);
-const unexplained = missing.filter((c) => !c.skipped && !skippedThere.has(c.key));
+// A case with no duration belongs at 0 only when the log ACCOUNTS for it. A declared skip
+// does: it will not run next time either, so zero is its cost. A case the run itself skipped
+// does NOT — the log did not measure it, and zero is a guess that is near enough for a
+// serial ladder's tail and badly wrong for a file that never ran. Left as a silent zero it
+// has no ceiling: measured, a log with one timed case out of 170 derived `[1, 1, 168]` and
+// exited 0, which is the array this file's header records as the failure the refusals exist
+// to prevent. So it is refused with the cases named, and taking the guess is a flag.
+//
+// Everything else missing, or anything in the log the checkout does not collect, means the
+// two describe different corpora — and unlike every other input here, that cannot be caught
+// downstream: the resulting array is arithmetically consistent, passes the runner check
+// below and passes check-race-skips.mjs.
 if (measured.size === 0) {
   die("no timed lines in the log — wrong run, wrong workflow, or the list reporter's format has moved");
 }
 if (unexplained.length) {
   die(
     `${unexplained.length} collected case(s) are in neither the log's results nor its skips — the log is ` +
-      `partial (a cancelled or timed-out shard), or from another revision:\n    ` +
-      unexplained
-        .slice(0, 12)
-        .map((c) => c.key)
-        .join("\n    "),
+      `partial (a cancelled or timed-out shard), or from another revision:\n    ${list(unexplained)}`,
   );
 }
 if (unused.length) {
   die(
-    `${unused.length} timed case(s) are not in this checkout's collection — the log is from another revision:\n    ` +
-      unused.slice(0, 12).join("\n    "),
+    `${unused.length} case(s) in the log are not in this checkout's collection — another revision:\n    ${list(unused)}`,
   );
 }
-{
-  const declared = missing.filter((c) => c.skipped).length;
-  const atRuntime = missing.length - declared;
-  console.log(
-    `  ${missing.length} case(s) carry no duration and count as 0: ${declared} declared skip(s)` +
-      (atRuntime ? `, ${atRuntime} the run itself skipped` : ""),
+if (runtimeSkips.length && !acceptRunSkips) {
+  die(
+    `${runtimeSkips.length} case(s) ran in neither shard — the log reports them as skipped, so this run did not ` +
+      `measure what they cost:\n    ${list(runtimeSkips)}\n` +
+      `  Re-derive from a run that executed them, or pass --accept-run-skips to weight them 0 — which under-cuts ` +
+      `whichever shard they land in, by however long they would have taken.`,
   );
 }
+console.log(
+  `  ${declaredSkips.length + runtimeSkips.length} case(s) carry no duration and count as 0: ` +
+    `${declaredSkips.length} declared skip(s)` +
+    (runtimeSkips.length ? `, ${runtimeSkips.length} the run itself skipped (--accept-run-skips)` : ""),
+);
 
 const sizes = split(ms, shards);
 const shape = weightShapeProblem(sizes);

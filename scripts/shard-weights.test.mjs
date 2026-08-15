@@ -17,6 +17,7 @@ import {
   caseKey,
   durations,
   inspectWeights,
+  logCoverage,
   planMismatch,
   skippedInLog,
   weightShapeProblem,
@@ -87,22 +88,82 @@ describe("durations", () => {
 // declaration only, so without this reading a complete log from a run with one failure inside
 // a serial block is refused as partial.
 describe("skippedInLog", () => {
-  const SKIPPED = "  -  23 [race] › e2e/race/t3b-undo.spec.ts:1395:8 › T3b undo › a sampleRate-touching entry";
-  const TIMED = "  ✓  1 [race] › e2e/race/t0-baseline.spec.ts:28:3 › T0 › a case (4.6s)";
+  // The shape this function was added for: the ladder in e2e/race/t5-drop.spec.ts is a
+  // `test.describe.serial`, so a failure in one rung leaves the rest reported like this.
+  const LADDER = "  -  8 [race] › e2e/race/t5-drop.spec.ts:141:7 › T5 drop › link loss at the mid of a flush send loop";
+  const KEY = caseKey("t5-drop.spec.ts", 141, "link loss at the mid of a flush send loop");
 
   it("reads the marker line a skipped case prints", () => {
-    expect([...skippedInLog(SKIPPED)]).toEqual([caseKey("t3b-undo.spec.ts", 1395, "a sampleRate-touching entry")]);
+    expect([...skippedInLog(LADDER)]).toEqual([KEY]);
   });
 
-  // The `-` marker is not what tells them apart — a title may contain one — so the rule is
-  // the absence of a duration, and a timed line has to stay out of this set whatever it says.
-  it("leaves a timed case out, including one whose title carries a dash", () => {
-    const dashed = "  ✓  2 [race] › e2e/race/t5-drop.spec.ts:141:7 › T5 drop › link loss - early (8.2s)";
-    expect(skippedInLog(`${TIMED}\n${dashed}`).size).toBe(0);
+  it("reads it through the prefix gh run view puts on every line", () => {
+    const prefixed = `race (3)\tRun pnpm test:e2e:race --shard=3/3\t2026-08-15T00:38:34.5713414Z ${LADDER}`;
+    expect([...skippedInLog(prefixed)]).toEqual([KEY]);
+  });
+
+  // What separates a skip line from a result line is the DURATION, not the marker: `-` is
+  // inside LINE's own marker class. So the killing case is a `-` line that HAS one — it
+  // belongs to the timed set and to nothing else. Written as a mutation of the line above,
+  // with the positive half asserted too: dropping the `LINE.test` guard turns this into a
+  // key with "(8.2s)" glued to its title, and every other case here stays green.
+  it("leaves a dash-marked line that carries a duration to durations()", () => {
+    const timed = `${LADDER} (8.2s)`;
+    expect(skippedInLog(timed).size).toBe(0);
+    expect(durations(timed).get(KEY)).toBe(8_200);
+  });
+
+  it("strips the retry suffix a skipped attempt carries", () => {
+    expect([...skippedInLog(`${LADDER} (retry #1)`)]).toEqual([KEY]);
   });
 
   it("reads nothing out of another project's lines", () => {
     expect(skippedInLog("  -  4 [chromium] › e2e/console.spec.ts:10:3 › console › a case").size).toBe(0);
+  });
+
+  // The two shapes the reporter's epilogue prints for a FAILED case. Neither is a result
+  // line, and reading one as a skip would let a log that never ran a case account for it.
+  it("reads nothing out of the failure epilogue", () => {
+    const header = "  1) [race] › e2e/race/t5-drop.spec.ts:141:7 › T5 drop › link loss at the mid";
+    const entry = "    [race] › e2e/race/t5-drop.spec.ts:141:7 › T5 drop › link loss at the mid";
+    expect(skippedInLog(`${header}\n${entry}`).size).toBe(0);
+  });
+});
+
+describe("logCoverage", () => {
+  const collected = [
+    { key: "a", skipped: false },
+    { key: "b", skipped: true },
+    { key: "c", skipped: false },
+    { key: "d", skipped: false },
+  ];
+  const split = (measured, runtime) => logCoverage(collected, new Map(measured), new Set(runtime));
+
+  it("puts each case in the group its own evidence names", () => {
+    const found = split([["a", 100]], ["c"]);
+    expect(found).toEqual({ timed: ["a"], declaredSkips: ["b"], runtimeSkips: ["c"], unexplained: ["d"] });
+  });
+
+  // The count that used to be a remainder. On a cancelled run — cases missing for no stated
+  // reason — subtracting the declared skips from everything untimed reported them all as
+  // "the run itself skipped", which is a claim the log never made.
+  it("does not call a case the log never mentions a run-time skip", () => {
+    expect(split([["a", 100]], []).runtimeSkips).toEqual([]);
+    expect(split([["a", 100]], []).unexplained).toEqual(["c", "d"]);
+  });
+
+  it("prefers a duration over either kind of skip", () => {
+    const found = split(
+      [
+        ["a", 1],
+        ["b", 2],
+        ["c", 3],
+      ],
+      ["c"],
+    );
+    expect(found.timed).toEqual(["a", "b", "c"]);
+    expect(found.declaredSkips).toEqual([]);
+    expect(found.runtimeSkips).toEqual([]);
   });
 });
 
@@ -117,6 +178,9 @@ describe("planMismatch", () => {
   // by position and by both keys, since the counts are equal and say nothing.
   it("names the first position and both keys when the counts are equal", () => {
     const found = planMismatch("--shard=2/3", plan, ["a:1|x", "d:4|w", "c:3|z"]);
+    // The label is the only thing saying WHICH shard diverged: the caller joins these into
+    // one string, so a message without it sends the reader to the wrong shard.
+    expect(found).toMatch(/^--shard=2\/3 /);
     expect(found).toMatch(/position 1/);
     expect(found).toMatch(/takes d:4\|w/);
     expect(found).toMatch(/plan puts b:2\|y/);
@@ -124,7 +188,9 @@ describe("planMismatch", () => {
   });
 
   it("adds the counts only when they differ", () => {
-    expect(planMismatch("--shard=3/3", plan, ["a:1|x", "b:2|y"])).toMatch(/2 cases against the plan's 3/);
+    const short = planMismatch("--shard=3/3", plan, ["a:1|x", "b:2|y"]);
+    expect(short).toMatch(/2 cases against the plan's 3/);
+    expect(short).toMatch(/takes \(nothing\) where the plan puts c:3\|z/);
     expect(planMismatch("--shard=3/3", plan, [...plan, "d:4|w"])).toMatch(/position 3.*takes d:4\|w.*\(nothing\)/s);
   });
 });

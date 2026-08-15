@@ -51,9 +51,10 @@ export function durations(text) {
  *
  * A declaration-time skip is already knowable from `--list`. This is the other kind, which
  * is not: a `test.describe.serial` block skips the rest of its cases once one fails (the
- * harness has such a ladder in e2e/race/t5-drop.spec.ts), and an in-body `test.skip()` is
- * invisible to a listing altogether. Without this, a complete log from a run with one
- * failure is refused as "partial, or from another revision".
+ * harness has such a ladder in e2e/race/t5-drop.spec.ts), an in-body `test.skip()` is
+ * invisible to a listing altogether, and a suite whose setup fails takes the rest of its
+ * file with it. What separates a skip line from a result line is the DURATION, not the
+ * marker — `-` is inside `LINE`'s marker class too — so a timed line is taken out first.
  */
 export function skippedInLog(text) {
   const out = new Set();
@@ -63,6 +64,32 @@ export function skippedInLog(text) {
     if (m) out.add(caseKey(m[1], m[2], m[3].replace(RETRY, "")));
   }
   return out;
+}
+
+/**
+ * What a log accounts for, against the cases this checkout collects. Each group is decided
+ * by its own evidence rather than by subtracting the others: a count taken as a remainder
+ * describes whatever is left over, which is how "the run skipped these" ends up printed
+ * over cases the log never mentioned.
+ *
+ * `timed` is the only group that carries a weight. The other two are at zero, and they are
+ * NOT the same claim: a declared skip will not run next time either, so zero is its true
+ * cost, while a case the run skipped is one whose cost this log simply did not measure —
+ * near enough to zero for a serial ladder's tail, and badly wrong for a file that never ran.
+ * The caller decides what to do about that; this only says which is which.
+ */
+export function logCoverage(collectedKeys, measured, skippedThere) {
+  const timed = [];
+  const declaredSkips = [];
+  const runtimeSkips = [];
+  const unexplained = [];
+  for (const c of collectedKeys) {
+    if (measured.has(c.key)) timed.push(c.key);
+    else if (c.skipped) declaredSkips.push(c.key);
+    else if (skippedThere.has(c.key)) runtimeSkips.push(c.key);
+    else unexplained.push(c.key);
+  }
+  return { timed, declaredSkips, runtimeSkips, unexplained };
 }
 
 /**
