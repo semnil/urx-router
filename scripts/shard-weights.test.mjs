@@ -156,20 +156,33 @@ describe("inspectWeights", () => {
       expect(found.some((m) => /as an env key/.test(m))).toBe(true);
     });
 
-    // replaceAll, not replace: the workflow names the key twice (the jq read and the error
-    // it prints), and leaving either behind would satisfy the pattern while the read was
-    // gone — which is the mutation passing rather than the rule holding.
-    it("refuses the weights written into the workflow instead of read from the ledger", () => {
-      const found = messages({ workflowText: WORKFLOW.replaceAll("collect.shardWeights", "weights-inline") });
-      expect(found.some((m) => /no longer names collect\.shardWeights/.test(m))).toBe(true);
+    // The realistic mutation, and the one a bare token match survived: the jq read becomes a
+    // literal while the comment above it and the error below it still name the key. Deleting
+    // every mention instead — which is what this case did at first — tests a rewrite nobody
+    // would make, and left the loose pattern looking like a rule.
+    it("refuses the weights inlined into the workflow with the prose left behind", () => {
+      const mutated = WORKFLOW.replace(/weights=\$\(jq -er .*\)/, "weights=38:73:59");
+      expect(mutated).toContain("collect.shardWeights"); // the comment and the error survive
+      const found = messages({ workflowText: mutated });
+      expect(found.some((m) => /no longer names a jq read of collect\.shardWeights/.test(m))).toBe(true);
+    });
+
+    it("refuses a read that is only a comment", () => {
+      const mutated = WORKFLOW.replace(/^(\s*)weights=\$\(jq -er /m, "$1# weights=$(jq -er ");
+      const found = messages({ workflowText: mutated });
+      expect(found.some((m) => /no longer names a jq read/.test(m))).toBe(true);
     });
 
     // The value travels through four names and GitHub resolves a missing one to "", so the
-    // guard at the consumer is what turns any of them breaking into a failed job.
+    // guard at the consumer is what turns any of them breaking into a failed job. The
+    // mutation deletes whatever line carries the test rather than a spelling of it: written
+    // against `[[ -z … ]]`, this case stopped mutating anything the moment the guard was
+    // rewritten in POSIX syntax for the container's `sh`, and would have passed on a
+    // workflow with no guard at all.
     it("refuses the run step with its emptiness guard removed", () => {
-      const found = messages({
-        workflowText: WORKFLOW.replace(/if \[\[ -z "\$\{PWTEST_SHARD_WEIGHTS\}" \]\]; then/, "if false; then"),
-      });
+      const mutated = WORKFLOW.replace(/^.*-z .*PWTEST_SHARD_WEIGHTS.*$/m, "if false; then");
+      expect(mutated).not.toBe(WORKFLOW);
+      const found = messages({ workflowText: mutated });
       expect(found.some((m) => /guard against an empty PWTEST_SHARD_WEIGHTS/.test(m))).toBe(true);
     });
   });

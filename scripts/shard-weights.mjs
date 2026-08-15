@@ -111,8 +111,12 @@ export function inspectWeights({ weights, collectedCount, shardCounts, workflowT
       "the split would fall back to Playwright's equal one, and nothing would report it",
     ],
     [
-      "collect.shardWeights",
-      /collect\.shardWeights\b/,
+      // Anchored on the jq invocation, not on the key appearing somewhere: the workflow
+      // names it in a comment and in the error it prints, so a bare token match stayed
+      // green with the read itself replaced by a literal (measured against the real file).
+      // The `[^#\n]*` before `jq` is what keeps a commented-out read from counting.
+      "a jq read of collect.shardWeights",
+      /^[^#\n]*\bjq\b[^\n]*\.collect\.shardWeights/m,
       "the weights would be a second copy rather than a read of the ledger",
     ],
     [

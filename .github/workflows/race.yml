@@ -200,7 +200,13 @@ jobs:
       # split. So the value is matched against the shape it has to have before it is
       # published, which also keeps a newline in the ledger from writing a second key into
       # $GITHUB_OUTPUT.
+      #
+      # `shell: bash` is declared rather than inherited: `[[ =~ ]]` is bash's, and the
+      # default shell is not a property of this file. This job has no container and gets
+      # /usr/bin/bash, but the shard step below is inside one and gets `sh` — which is dash
+      # on that image, where `[[` is not a builtin at all.
       - id: weights
+        shell: bash
         run: |
           weights=$(jq -er '.collect.shardWeights | join(":")' e2e/race/skip-ledger.json)
           if [[ ! "${weights}" =~ ^[0-9]+(:[0-9]+)*$ ]]; then
@@ -269,8 +275,15 @@ jobs:
       # where the weights give 38), so every signal would say the run worked while the tier
       # went back to the imbalance this arrangement exists to remove. Checking the value
       # rather than the spelling is what makes any of those four names fail loudly.
+      #
+      # `[ ]`, not `[[ ]]`: a step inside a container gets `shell: sh -e {0}`, and on this
+      # image `sh` is dash, where `[[` is not a builtin. The first version of this guard was
+      # written in bash and run 31859211335 printed `[[: not found` and went straight on to
+      # the tests — a guard against a silent fallback that was itself silent. Reproduced with
+      # dash locally: the bash form leaves an empty value running at exit 0, the form below
+      # exits 1.
       - run: |
-          if [[ -z "${PWTEST_SHARD_WEIGHTS}" ]]; then
+          if [ -z "$PWTEST_SHARD_WEIGHTS" ]; then
             echo "::error::the shard weights did not arrive from detect — Playwright would split by case count instead, and say nothing"
             exit 1
           fi
