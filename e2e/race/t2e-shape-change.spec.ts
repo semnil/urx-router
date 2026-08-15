@@ -18,7 +18,7 @@ import {
   type InstallOptions,
   type TraceEvent,
 } from "./fake-device";
-import { analyze, report, timeline, markTime, setsOf, getsOf } from "./analyze";
+import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter } from "./analyze";
 import { graphNode, strip } from "./ui";
 
 // T2e shape-change — the two catalog cases whose subject is a constraint that lives in
@@ -44,7 +44,9 @@ import { graphNode, strip } from "./ui";
 //     derived set is unchanged (DeviceFollow.subscribe short-circuits). So every
 //     invariant-12 / invariant-6 report here carries the window that registration
 //     describes, and every "the set did not move" assertion is preceded by a measured
-//     reconcile — without one, an untouched registration proves nothing.
+//     reconcile or by the flush the gesture itself produced — the re-post is what makes
+//     an untouched registration mean the derived set did not move rather than that
+//     nothing asked.
 //
 // Read latency is 2 ms throughout, for T2's reason: a whole-device readback is ~800
 // sequential reads and each case here provokes two or three of them. Nothing below is a
@@ -653,12 +655,16 @@ test.describe("T2e shape-change", () => {
     // the selector binds. (An engine-array slot enters only once the plan carries one —
     // ch2's params are unread, so this selection adds the ON and nothing else.)
     expect(added).toEqual([insertFxOnAddr(1)]);
-    // …and it entered WRITTEN but not REGISTERED — the invariant-12 orphan the report at
-    // the end of this test names. subscribe() only re-runs after a reconcile and a plan
-    // edit is not one, so from here the app writes an address a device-side flip of which
-    // it cannot hear. This is the growth half of the file header's snapshot/registration
-    // asymmetry, and the one place in this file where the two sets disagree.
-    expect(regAfterAmp.has(insertFxOnAddr(1))).toBe(false);
+    // …and it entered the REGISTRATION with the write set, in the selection's own flush
+    // (live.ts followSetStale → DeviceFollow.refresh at the end of a flush that
+    // captured). This pinned the opposite while the re-subscribe ran at begin() and after
+    // a reconcile only, which left the app writing an address a device-side flip of which
+    // it could not hear. It is the growth half of the file header's snapshot /
+    // registration asymmetry, and what it now asserts is that the two sets agree.
+    // Attributed to the flush: no reconcile landed inside the settle wait, and one would
+    // have re-registered through follow.ts whatever the flush did.
+    expect(deviceReflectsAfter(trace, ampAt)).toBe(0);
+    expect(regAfterAmp.has(insertFxOnAddr(1))).toBe(true);
     expect(ampWrites.map((s) => s.addr)).toEqual([insertFxAddr(1), insertFxOnAddr(1)]);
     // …and the two nodes whose MENUS the gesture just changed got no insert-FX write of
     // their own. Stated of the flush, not of the run: INSERT_FX is a converge param, and
@@ -732,11 +738,11 @@ test.describe("T2e shape-change", () => {
     console.log(
       report(
         "insert fx rate and slot availability",
-        // A TRUE clause-B finding, and the ordinary shape of one: each channel that took
-        // an effect put its INSERT_FX_ON into the emitted set, no notify is pushed in
-        // this case, and nothing else reconciles — so the window those selections opened
-        // is still open at the instant this pair is read. Reported, not asserted: the
-        // case's subject is the selector's availability, and the window is the backdrop.
+        // Clean on clause B, and the reason is the subject of the assertion above rather
+        // than an absence of gestures: each channel that took an effect put its
+        // INSERT_FX_ON into the emitted set, and each selection's own flush registered
+        // for it. Reported, not asserted: the case's subject is the selector's
+        // availability, and the address sets are the backdrop.
         analyze(trace, {
           registration: [...(await paramAddrsOf(lo))],
           registrationWindow: { from: ampAt },

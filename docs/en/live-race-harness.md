@@ -143,10 +143,14 @@ entries from every device read, so disagreeing with the last send proves nothing
 unit. No existing case supplies it, so none changed verdict.
 
 Invariant 6 was originally phrased as "the registration agrees with the emitted set on every flush".
-It does not: follow calls `subscribe()` only at `begin()` and after a completed reconcile, so an
-app-side structural edit deliberately leaves the registration stale. That is designed behavior. Since
-the fake gained the bridge's registered-set filter it has two clauses, and the number is kept so the
-table, the analyzer and every case that cites it stay aligned:
+For most of this harness's life it did not: follow called `subscribe()` at `begin()` and after a
+completed reconcile only, so an app-side structural edit left the registration stale, and that was
+read as designed behavior until an SSMCS mode change was found unable to hear the answer to its own
+preset write. A flush whose capture moved the set now re-registers at the flush's end, so the original
+phrasing holds again — **at the end of a flush, not inside one**: a write still goes out ahead of the
+subscribe that covers it, in the same flush. Since the fake gained the bridge's registered-set filter
+the invariant has three clauses, and the number is kept so the table, the analyzer and every case that
+cites it stay aligned:
 
 - **Clause A — stimulus reachability.** A `notify-drop` inside `registrationWindow`: the case pushed a
   notify the bridge refused, so whatever it was meant to provoke never reached the app and any absence
@@ -165,9 +169,14 @@ table, the analyzer and every case that cites it stay aligned:
   window the case supplied.
 
 - **Clause B — the grown window**. `emitted ∖ registered`: an address the app is actively writing
-  whose device-side change the bridge would drop, because `follow.subscribe()` re-posts only at
-  `begin()` and after a completed reconcile, so a structural edit leaves the window open until
-  something reconciles. The emitted set is read as the **live snapshot's key set** (`snapshot` in the
+  whose device-side change the bridge would drop. A flush whose `capture()` moved the address set now
+  re-registers at its own end, so a clean reading is the registration having caught up inside the
+  gesture that moved it — while `subscribe()` re-posted at `begin()` and after a completed reconcile
+  only, a structural edit left this open until something reconciled, and the clause reported it. Two
+  cases keep a **firing control** beside the clean assertion (`t2`'s 1-Knob OFF flush, `t2d`'s FX slot
+  family): the same snapshot paired with the registration as it stood one flush earlier, which is
+  exactly the stale pairing the app used to leave behind, so "clean" cannot be a clause that stopped
+  being able to fire. The emitted set is read as the **live snapshot's key set** (`snapshot` in the
   spec, from the trace probe) rather than from writes: invariant 12 already computes the write-based
   form, and as a *state* reading it is wrong in both directions — it goes silent once the grow-flush
   leaves the window while the window is still open, and keeps reporting a window a later `capture()`
@@ -235,7 +244,7 @@ single source of truth. This table states what each case measures.
 | id | Surface | What it measures |
 | --- | --- | --- |
 | `shape-comp-eq-type-bank-swap` | inspector | The only param that changes address identity and value polarity at once |
-| `shape-eq-oneknob-registration-blindspot` | tuning | The boolean that triggers a recomputation is the one that removes its notify addresses — the canonical dropped window |
+| `shape-eq-oneknob-registration-blindspot` | tuning | The boolean that triggers a recomputation is the one that removes its notify addresses, registration included, so the announcement is refused rather than delivered unplaceable — plus clause B's firing control |
 | `shape-eq-oneknob-level-refetch-storm` | tuning | A readback per flush window during a drag, rebasing the history throughout |
 | `shape-insert-fx-select-ordering` | inspector | The only case where correctness depends on the order of two commands, not their values |
 | `shape-insert-fx-engine-array-collision` | inspector | Two plan owners sharing one device address |
@@ -299,7 +308,7 @@ single source of truth. This table states what each case measures.
 | `drop-read-reject-mid-fetch` | mixed | The only path producing a plan object with a live writer still attached to its predecessor |
 | `drop-device-lost-latch` | mixed | The one disconnection shape that does not arrive as a link event, learned only by attrition |
 | `drop-bulk-change-sentinel-mid-drag` | console | The largest device-side event landing on the smallest app state |
-| `drop-unknown-address-notify-storm` | mixed | Three arms: unresolvable (the dropped window), resolvable, unregistered (refused) |
+| `drop-unknown-address-notify-storm` | mixed | Three arms: owned by no node (`SAMPLE_RATE`), placeable on one, never registered (refused) |
 | `drop-missed-notify-idle-net` | console | Whether the safety net has the same trigger as the thing it protects against |
 | `drop-concentration-threshold` | mixed | The only integer threshold in the follow layer, straddled exactly |
 
@@ -755,14 +764,23 @@ agreement, zero findings.
 
 **T2 — address-set shape**
 
-- **The EQ 1-Knob blind spot**, isolated with a single-notify differential: one notify on a band
-  address that left the set costs **two** whole-device reconciles, one on an address still in the set
-  costs **one**. Neither can trip the concentration threshold. The registration is still 796 after the
-  ON flush and drops to 778 only after the first reconcile — exactly the 18 band addresses. **The
-  four-notify burst is confounded with the concentration cliff and discriminates nothing**
-- **1-Knob OFF writes all 18 band addresses to addresses the app is not registered for**
-- **The COMP/EQ bank swap** writes two new-bank addresses that are not yet registered; a notify on the
-  abandoned bank costs two reconciles against one on the live bank
+- **The EQ 1-Knob blind spot**, isolated with a single-notify differential: the ON flush takes the 18
+  band addresses out of the write set and out of the REGISTRATION together, so a notify on one is
+  refused at the bridge and costs **zero** — the settle and the idle net are both armed from inside
+  `onNotify`, which never runs — while one on the address the toggle keeps (1-Knob level, 48) costs
+  **one**. The app stays in step by following the recomputation's CAUSE: 48 is `sideEffect: "refetch"`.
+  Before the flush re-registered, the same differential read two against one, the two being the
+  escalation an address the broker still delivered and `live.lookup` no longer resolved
+- **The four-notify band burst does NOT trip the concentration cliff**, and the reading that says so
+  is the one that replaced it: delivered on registered addresses it costs one scoped read plus the
+  idle net's sweep. `follow.ts` counts `node:name` pairs and the catalog names a band PARAMETER
+  (`EQ_BAND_GAIN` / `EQ_BAND_FREQ`), so four addresses across two bands are two controls. The earlier
+  reading of two whole-device sweeps was the unresolvable-address escalation, not concentration —
+  the case's own comment had claimed the burst was confounded with the cliff, and it was not
+- **1-Knob OFF writes all 18 band addresses and registers for them in the same flush.** The writes
+  still precede the subscribe inside that flush; what closed is the gap that used to outlive it
+- **The COMP/EQ bank swap** registers the new bank and drops the old one in the swap's own flush; a
+  notify on the abandoned bank is refused (zero reconciles) against one on the live bank
 - **Signal Type = STEREO** writes both pair indices and **re-authors the partner node wholesale**; one
   undo restores all of it. But the converge round is a **re-send, not a repair** — it keeps pushing the
   app's value back at a channel the unit has reset
@@ -875,21 +893,29 @@ agreement, zero findings.
   cannot receive. **The fake now mirrors `absorb`** — `pushNotify` filters per entry against the set
   the session registered, traces a refusal as its own `notify-drop` kind, and only `pushBulkChange`
   bypasses it — so those cases now measure the refusal instead. The consequence is worse than the
-  price it replaced: `DeviceFollow.armIdle()` is reachable only from inside `onNotify`, so a session
+  price it replaced: a session's idle sweep is armed from inside `onNotify` (the write settle's own sink
+  is the other way in, and it needs a write the unit did not announce), so a session
   that receives no deliverable notify has no idle safety net either. The change is invisible with
   nothing scheduled to discover it
-- **The registration lags a converge/refetch flush, and that window is the reachable "unknown address
-  escalates".** `live.ts` `capture()` builds the snapshot AND the address index, and runs at
-  `begin()` / `resync()` / after a converge / after a refetch; `follow.ts` `subscribe()` runs only at
-  `begin()` and after a reconcile. So a `sideEffect` edit's flush shrinks the index while the broker
-  keeps the larger registration: an address is still delivered and `live.lookup` no longer resolves
-  it, which is the genuine escalation to a whole-device readback. **An ORDINARY edit opens no such
-  window** — a wire removal re-runs neither `capture()` nor `subscribe()`, so the address still
-  resolves and follow applies it as usual. Three openers exist in the repo: EQ 1-Knob ON
-  (`sideEffect: "refetch"`, drops 18 PEQ band addresses), COMP/EQ Type (`converge`), and Insert FX
-  (`converge`, with the effect seeded before the session — otherwise the slots are a *grown* window
-  instead). The address-free alternative is the `BULK_CHANGE` sentinel, which bypasses the filter by
-  contract
+- **CLOSED — "the registration lags a converge/refetch flush, and that window is the reachable
+  'unknown address escalates'".** It did: `live.ts` `capture()` builds the snapshot AND the address
+  index and runs at `begin()` / `resync()` / after a converge / after a refetch, while `follow.ts`
+  `subscribe()` ran at `begin()` and after a reconcile only — so a `sideEffect` edit's flush shrank
+  the index while the broker kept the larger registration, and an address was still delivered that
+  `live.lookup` no longer resolved. The flush now re-registers at its own end (`followSetStale` →
+  `DeviceFollow.refresh`), so the three openers this entry listed — EQ 1-Knob ON, COMP/EQ Type,
+  Insert FX — open nothing: `capture()` builds the index and the address list in one pass, and the
+  flush posts that list before it returns. The name addresses are the standing exception and always
+  were — they are registered and live in `nameIndex` rather than the numeric index, which `onNotify`
+  reaches through `applyName` before it ever calls `lookup`
+- **The reachable "unknown address escalates" is now the OTHER half of the same branch** (`follow.ts`:
+  `addr === undefined || addr.node === undefined`): an address that is registered, indexed and owned
+  by the whole DEVICE rather than by a node, so no scoped read can repair it. `SAMPLE_RATE` (766) is
+  the one the app emits — `translate.ts` owns that block to `undefined` — and unlike both stimuli it
+  replaces it is permanent rather than a window a later change can shut. Measured on the five-notify
+  storm: **1350 reads** against **675** for a placeable burst and **0** for a refused one, i.e. the
+  escalation's own whole-device sweep plus the idle net's, against the idle net alone. The
+  address-free alternative is still the `BULK_CHANGE` sentinel, which bypasses the filter by contract
 - **WITHDRAWN — "scene write scope doubles the cost of a device-side knob move".** The scene-scoped
   session never registered the address, so its notify is refused: the cost is zero, not double. The
   honest finding is that **the preference silently blinds device follow to the 64 addresses it drops**
@@ -1248,8 +1274,9 @@ not repeat them.
   exactly the state "nothing has happened yet" leaves it in, so an absence verdict passes for free and
   a whole case can measure nothing while staying green. A case whose subject is the app's response
   must assert DELIVERY (`pushNotifyDelivered`) as well as using `settleAfter`; a case that wants an
-  unknown-address escalation must either open the dropped window (a `sideEffect` edit's flush) or use
-  the `BULK_CHANGE` sentinel. Four reconcile-forcing sites were driving a sweep the shipped app would
+  unknown-address escalation must push an address that is registered and belongs to no node
+  (`SAMPLE_RATE`, 766) or use the `BULK_CHANGE` sentinel — the dropped window a `sideEffect` edit's
+  flush used to open is shut. Four reconcile-forcing sites were driving a sweep the shipped app would
   never start (`9999:0:0` ×3, `758:0:0` ×3) before the filter landed
 - **Invariants 6 and 12 need their phases aligned.** The registration is a snapshot of one instant
   while writes and notifies span the run; scope both with `registrationWindow`

@@ -131,6 +131,10 @@ export class DeviceFollow {
    */
   private gen = 0;
 
+  /** The registration currently on the wire and the generation that issued it — see
+   *  `subscribe`. */
+  private subscribeInFlight: { gen: number; tail: Promise<void> } | null = null;
+
   constructor(private readonly hooks: DeviceFollowHooks) {}
 
   isActive(): boolean {
@@ -143,6 +147,35 @@ export class DeviceFollow {
     this.active = true;
     this.gen++;
     await this.subscribe();
+  }
+
+  /**
+   * Re-register against the CURRENT address set, if it has moved.
+   *
+   * Cheap to call and safe to call often: `subscribe` compares the set's identity and
+   * returns without touching the broker when it is unchanged. What it must NOT be is
+   * `begin()` — that bumps the generation, which is how an in-flight registration tells
+   * "my session ended" from "it is still mine", so bumping it for a refresh would make a
+   * registration still in flight drop its own handle with the session still active, and
+   * leave the subscription it stood for orphaned at the broker.
+   *
+   * Errors go the same way a reconcile's do, rather than into a floating rejection: the
+   * caller is a live flush that has already returned.
+   */
+  async refresh(): Promise<void> {
+    const gen = this.gen;
+    try {
+      await this.subscribe();
+    } catch (e) {
+      // Whose failure this is. A rejection leaves `subscribeOne` by exception, so it never
+      // reaches the post-await generation guard there, and this catch is the only place
+      // that can tell a refusal for THIS session from one that arrives after the session
+      // ended and another began. Without the check a late refusal stops a follow that is
+      // registered and working, and nothing restarts it.
+      if (this.gen !== gen) return;
+      this.active = false;
+      this.hooks.onError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   /** Stop following and cancel any pending work. Does not touch the connection. */
@@ -169,9 +202,50 @@ export class DeviceFollow {
   // Register the current follow address set for notifies. The set rarely changes
   // (only a structural plan edit alters it), so when it matches what is already
   // registered this is a no-op rather than re-posting every address to the broker.
-  private async subscribe(): Promise<void> {
-    if (!this.active) return;
+  // Serialized, and that is what lets the identity check below mean anything: the check
+  // reads `this.unsub`, which is nulled BEFORE the await, so a call entering while
+  // another is on the wire cannot short-circuit however unchanged the set is. Two
+  // registrations under one generation then both pass the post-await guard and both
+  // install — the later handle and settle source overwriting the earlier without
+  // releasing it, which leaks a sink into `writeSettle`'s module singleton that `end()`
+  // cannot reach — and `registeredKey` ends up naming the call that STARTED last while
+  // the broker holds the one that FINISHED last. Every later call then short-circuits on
+  // a set the broker does not hold, which is this file's own defect class.
+  //
+  // `refresh()` is what made that reachable: `begin()` is awaited at session start and
+  // `runReconcile`'s call is inside `reconciling`, but a flush ends whenever it ends.
+  // Queued rather than dropped, so `begin()` still returns only once ITS registration has
+  // landed, and a queued call reads the address set when its turn comes rather than when
+  // it was asked. With nothing in flight the registration is issued in this same tick, as
+  // it was before: the cases that end a session between `begin()` and its await depend on
+  // that, and a `.then()` on an already-resolved promise would defer it past the `end()`
+  // and register nothing at all.
+  private subscribe(): Promise<void> {
+    // Within ONE generation only. A new session must not wait behind a registration
+    // stalled at the broker — overtaking it is what the generation guard is for, and
+    // `begin()` has bumped past it by the time it gets here — so a queue that spanned
+    // sessions would hand a stall the power to stop the next session registering at all.
+    // The generation is taken HERE and carried in, not read when the turn comes. A queued
+    // call waits for the one in front of it, and that wait outlives the session that
+    // queued it whenever `end()` lands inside it: reading the generation on execution
+    // makes an ended session's call register as the NEW session's, alongside the
+    // registration that session issued — the double-registration this queue exists to
+    // prevent, rebuilt out of the queue itself.
     const gen = this.gen;
+    const prev = this.subscribeInFlight?.gen === gen ? this.subscribeInFlight.tail : null;
+    const run = prev ? prev.then(() => this.subscribeOne(gen)) : this.subscribeOne(gen);
+    const entry = { gen, tail: run.catch(() => {}) };
+    this.subscribeInFlight = entry;
+    void entry.tail.then(() => {
+      if (this.subscribeInFlight === entry) this.subscribeInFlight = null;
+    });
+    return run;
+  }
+
+  private async subscribeOne(gen: number): Promise<void> {
+    // Whose registration this is, asked before anything is done in its name: a queued call
+    // reaching its turn under a later session has nothing left to register for.
+    if (!this.active || this.gen !== gen) return;
     const addrs = this.hooks.addrs();
     // The address order is deterministic (planToCommands order), so a plain join
     // is a stable identity for the set — no sort needed.

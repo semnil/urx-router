@@ -354,6 +354,167 @@ describe("DeviceFollow", () => {
     expect(h.addrs).toEqual([ADDR, [140, 0, 0]]);
   });
 
+  // `refresh()` is what a flush calls at its end when its capture moved the address set
+  // (live.ts), fire-and-forget: `void follow?.refresh()`. Three things separate it from
+  // `begin()`, and none of the cases above can see any of them.
+  it("refreshes an ended session into nothing, rather than restarting it", async () => {
+    const follow = followFor();
+    await follow.begin();
+    const before = h.subscribeCalls;
+    follow.end();
+    await follow.refresh();
+    // `begin()` sets `active` back to true, so a refresh spelled that way registers a
+    // stream for a session that is over — and the flush that asks cannot know it ended.
+    expect(h.subscribeCalls).toBe(before);
+    expect(follow.isActive()).toBe(false);
+  });
+
+  it("waits for a registration already on the wire instead of starting a second", async () => {
+    // The identity check reads `this.unsub`, which is nulled before the await — so a
+    // refresh entering while begin()'s registration is in flight cannot short-circuit,
+    // and an unserialized one issues a second registration for the SAME set. Both then
+    // install: the later handle and settle source overwrite the earlier without
+    // releasing it, and the earlier is unreachable for the life of the page.
+    let release!: (v: () => void) => void;
+    const stalled = new Promise<() => void>((r) => (release = r));
+    const firstUnsub = vi.fn();
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async (addrs, onUpdate) => {
+      void real(addrs, onUpdate);
+      return stalled;
+    });
+
+    const follow = followFor();
+    const first = follow.begin();
+    const refreshed = follow.refresh(); // queued behind it, not issued alongside
+    release(firstUnsub);
+    await first;
+    await refreshed;
+    // One registration, because by the time the refresh runs the set has not moved.
+    expect(h.subscribeCalls).toBe(1);
+    // …and the handle the session holds is the one that was issued, released once.
+    follow.end();
+    expect(firstUnsub).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes against the set as it stands when its turn comes, not when it was asked", async () => {
+    // The other half of serializing: a refresh queued behind a stalled registration must
+    // register what the plan holds by the time it runs. The set moves while it waits.
+    let release!: (v: () => void) => void;
+    const stalled = new Promise<() => void>((r) => (release = r));
+    let addrs: Array<[number, number, number]> = [ADDR];
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async (a, onUpdate) => {
+      void real(a, onUpdate);
+      return stalled;
+    });
+
+    const follow = followFor({ addrs: () => addrs });
+    const first = follow.begin(); // stalled at the broker
+    addrs = [ADDR, [140, 0, 0]]; // …and the set moves while it waits
+    const refreshed = follow.refresh();
+    await Promise.resolve(); // give an unqueued call the chance to issue
+    // It waited: an unserialized refresh reaches its own await in this tick.
+    expect(h.subscribeCalls).toBe(1);
+    release(() => {});
+    await first;
+    await refreshed;
+    // …and when its turn came it registered the set as it stands, not as it was asked.
+    expect(h.subscribeCalls).toBe(2);
+    expect(h.addrs).toEqual([ADDR, [140, 0, 0]]);
+  });
+
+  it("drops a queued re-registration whose session ended before its turn came", async () => {
+    // A queued call waits for the registration in front of it, and that wait can outlive
+    // the session that queued it. Reading the generation when its turn comes rather than
+    // when it was asked makes it register as the NEW session's — a third registration,
+    // concurrent with the one that session issued, which is the double-registration this
+    // queue exists to prevent.
+    let releaseA!: (v: () => void) => void;
+    let releaseB!: (v: () => void) => void;
+    const stalledA = new Promise<() => void>((r) => (releaseA = r));
+    const stalledB = new Promise<() => void>((r) => (releaseB = r));
+    let addrs: Array<[number, number, number]> = [ADDR];
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+    const held = (p: Promise<() => void>) =>
+      vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async (a, onUpdate) => {
+        void real(a, onUpdate);
+        return p;
+      });
+
+    held(stalledA);
+    const follow = followFor({ addrs: () => addrs });
+    const first = follow.begin(); // session A, stalled at the broker
+    addrs = [ADDR, [140, 0, 0]]; // moved, so the refresh cannot short-circuit
+    const refreshed = follow.refresh(); // queued behind A's registration
+    follow.end();
+
+    held(stalledB);
+    const second = follow.begin(); // session B, also on the wire: it must not wait on a stall
+    expect(h.subscribeCalls).toBe(2);
+
+    // A's registration lands, so the call queued behind it takes its turn — under B, and
+    // with B's own registration still unresolved, so nothing short-circuits it.
+    releaseA(() => {});
+    await first;
+    await refreshed;
+    // A's refresh is A's. Its turn came under B, and it registers nothing: a third
+    // registration here runs alongside B's, which is what the queue exists to prevent.
+    expect(h.subscribeCalls).toBe(2);
+    releaseB(() => {});
+    await second;
+  });
+
+  it("does not stop the session that FOLLOWED the one a failed re-registration belonged to", async () => {
+    // The rejection travels out of `subscribeOne` rather than through its post-await
+    // generation guard, so the catch is the only thing that can tell whose failure it is.
+    // Held until after this session has ended and another has registered: without the
+    // generation check the late refusal reads as the NEW session's, stopping a follow that
+    // is registered and working — and nothing restarts it.
+    let reject!: (e: Error) => void;
+    const stalled = new Promise<() => void>((_, r) => (reject = r));
+    let addrs: Array<[number, number, number]> = [ADDR];
+    const onError = vi.fn();
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+
+    const follow = followFor({ addrs: () => addrs, onError });
+    await follow.begin();
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async () => stalled);
+    addrs = [ADDR, [140, 0, 0]]; // moved, so the refresh does not short-circuit
+    const refreshed = follow.refresh();
+
+    follow.end();
+    addrs = [ADDR];
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(real);
+    await follow.begin(); // a second session, registered and live
+    expect(follow.isActive()).toBe(true);
+
+    reject(new Error("subscribe rejected"));
+    await refreshed;
+    expect(onError).not.toHaveBeenCalled();
+    expect(follow.isActive()).toBe(true);
+  });
+
+  it("stops and reports when a re-registration fails", async () => {
+    // The rule a failed reconcile takes, on the path a structural edit now reaches every
+    // time. `subscribe` releases the old handle BEFORE it awaits, so a throw leaves the
+    // object with none: a session that stayed active here would be deaf for the rest of
+    // its life with nothing said about it.
+    let addrs: Array<[number, number, number]> = [ADDR];
+    const onError = vi.fn();
+    const follow = followFor({ addrs: () => addrs, onError });
+    await follow.begin();
+    addrs = [ADDR, [140, 0, 0]]; // moved, so the identity check does not short-circuit
+    h.failNext = true;
+    await follow.refresh(); // resolves rather than rejecting: its caller has returned
+    expect(onError).toHaveBeenCalledWith("subscribe rejected");
+    expect(follow.isActive()).toBe(false);
+  });
+
   it("stops and reports when a reconcile fails", async () => {
     const onError = vi.fn();
     const follow = followFor({

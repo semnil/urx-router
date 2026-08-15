@@ -864,6 +864,8 @@ export const ja: Messages = {
       "デバイスのファームウェアバージョンを読み取れず、このビルドのパラメーターマッピングが実機に適合するか確認できません。接続し直してからやり直してください。",
     liveReadIncomplete: (n: number): string =>
       `${n} 件の設定を読み取れず、デバイスの状態を完全には把握できません。Live sync の開始には完全な読み取りが必要です。`,
+    liveFollowStopped:
+      "セッション開始中にデバイス追従が停止したため、実機側の変更がプランに届かない状態でした。Live sync は開始していません。",
     followReadIncomplete: (n: number): string =>
       `デバイス側の変更後、${n} 件の設定を読み戻せず、プランが実機と一致しなくなりました。取得し直して同期してください。`,
     clockUnread: (message: string): string =>

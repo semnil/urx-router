@@ -33,6 +33,7 @@ function basePlan(): Plan {
 function liveFor(
   plan: Plan,
   refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites) => Promise<Plan | null>,
+  reregister?: () => void,
 ): LiveSync {
   return new LiveSync({
     getModel: () => model,
@@ -41,6 +42,7 @@ function liveFor(
     onSent: () => {},
     onCollapsed: () => {},
     refetchNodes,
+    reregister,
   });
 }
 
@@ -667,6 +669,152 @@ function setCh1CompOneKnob(plan: Plan, patch: { oneKnob?: boolean; oneKnobLevel?
     comp: { ...plan.nodeParams.ch1?.comp, ...patch },
   };
 }
+
+describe("LiveSync follow re-registration", () => {
+  // A flush's capture rebuilds the follow address set, and nothing asked the follow layer to
+  // re-register against it — so an address a structural edit added stayed unsubscribed until
+  // some later reconcile, and a device-side change to it went unheard.
+  it("asks for a re-registration once a flush that captured has finished", async () => {
+    const plan = basePlan();
+    const calls: string[] = [];
+    const live = liveFor(
+      plan,
+      async () => {
+        calls.push("refetch");
+        return null;
+      },
+      () => calls.push("reregister"),
+    );
+    live.begin();
+    // begin() captured too, and the caller subscribes for the session itself — so that one
+    // must not be left for the first flush to ask about.
+    expect(calls).toEqual([]);
+
+    // A converge param: the flush captures after the converge.
+    setCh1CompEqType(plan, COMP_EQ_SSMCS);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(calls).toEqual(["reregister"]);
+  });
+
+  // Ordering, which is the whole reason it is deferred: a re-registration unsubscribes before
+  // it subscribes, so running it while the flush is still going would drop the notifies the
+  // refetch's settle is waiting for. Asserted from inside the refetch — the hook has not been
+  // called by then — rather than by counting afterwards, when both orders look the same.
+  it("does not re-register before the refetch it shares a flush with", async () => {
+    const plan = basePlan();
+    setCh1CompEqType(plan, COMP_EQ_SSMCS);
+    const seen: string[] = [];
+    const live = liveFor(
+      plan,
+      async () => {
+        seen.push(`refetch(reregistered=${seen.includes("reregister")})`);
+        // A view rather than null, so the flush's own capture runs — a refetch that
+        // re-bases nothing has no set to re-register against.
+        return clonePlanState(plan);
+      },
+      () => seen.push("reregister"),
+    );
+    live.begin();
+    setCh1Morphing(plan, 60);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(seen).toEqual(["refetch(reregistered=false)", "reregister"]);
+  });
+
+  // The case above drives a refetch-only flush, so it cannot see a second ask placed on the
+  // converge's own capture — which is the same hazard from the other side, and reachable: both
+  // params dirty in one window is one gesture away (a mode change re-authors the strip). The
+  // converge runs first and the refetch after it, so an ask sitting on the converge's capture
+  // lands while the refetch's settle is waiting for the notifies a re-registration drops.
+  it("does not re-register between the converge and the refetch of one flush", async () => {
+    const plan = basePlan();
+    const seen: string[] = [];
+    const live = liveFor(
+      plan,
+      async () => {
+        seen.push(`refetch(reregistered=${seen.includes("reregister")})`);
+        return clonePlanState(plan);
+      },
+      () => seen.push("reregister"),
+    );
+    live.begin();
+    setCh1CompEqType(plan, COMP_EQ_SSMCS); // converge
+    setCh1Morphing(plan, 60); // refetch, same window
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(seen).toEqual(["refetch(reregistered=false)", "reregister"]);
+  });
+
+  // A flush that captured nothing asks for nothing: an ordinary fader move cannot have moved
+  // the address set, and the callee's own comparison should not be the only thing standing
+  // between a drag and a re-registration per window.
+  it("stays quiet through a flush that did not capture", async () => {
+    const plan = basePlan();
+    const calls: string[] = [];
+    const live = liveFor(plan, undefined, () => calls.push("reregister"));
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1); // the flush really ran
+    expect(calls).toEqual([]);
+  });
+
+  // A plan whose emitted set moved with no `sideEffect` head behind it, so the flush
+  // reaches neither a converge nor a refetch and so no capture. Built by hand, because no
+  // gesture produces one today: every connection the default plan carries is fixed routing
+  // the graph refuses to cut ("Fixed connection — cannot be removed"), and of the 310
+  // routes the model would let an operator draw, the emitted set moves for none. The flush
+  // compares the set against the follow list rather than trusting that to stay true.
+  it("asks after a flush that reshaped the set with no converge or refetch in it", async () => {
+    const plan = basePlan();
+    const calls: string[] = [];
+    const live = liveFor(plan, undefined, () => calls.push("reregister"));
+    live.begin();
+    const before = live.followAddrs().length;
+    plan.connections = plan.connections.filter((c) => !(c.from === "ch_5_6:out" && c.to === "bus.mix1:in"));
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(500);
+    // The premise: the set really moved, and by the send's own addresses.
+    expect(live.followAddrs().length).toBeLessThan(before);
+    expect(calls).toEqual(["reregister"]);
+  });
+
+  // …and it is the LATCH that keeps it quiet, not the gesture. Once a flush has captured, a
+  // flush that captures nothing must still ask nothing — otherwise every window for the rest
+  // of the session rebuilds the address list and hands it to the callee, once per step of a
+  // drag, which is the cost the case above says the callee's comparison should not be alone in
+  // absorbing.
+  it("asks once per capture, not once per flush after one", async () => {
+    const plan = basePlan();
+    const calls: string[] = [];
+    const live = liveFor(
+      plan,
+      async () => clonePlanState(plan),
+      () => calls.push("reregister"),
+    );
+    live.begin();
+    setCh1CompEqType(plan, COMP_EQ_SSMCS);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(calls).toEqual(["reregister"]);
+
+    const sentBefore = vi.mocked(vdSet).mock.calls.length;
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(vi.mocked(vdSet).mock.calls.length).toBeGreaterThan(sentBefore); // the second flush ran
+    expect(calls).toEqual(["reregister"]);
+  });
+});
 
 describe("LiveSync sideEffect refetch", () => {
   // The measured membership, pinned by address rather than by count: the morph recomputes

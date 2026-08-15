@@ -18,6 +18,7 @@ import { FAKE_LAUNCH_FLAGS_OFF } from "../e2e/race/fake-flags";
 import { $, bootApp, deviceCommands, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
+import { COMP_EQ_SSMCS } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { PARAMS } from "./core/control/params";
 import { nameControl } from "./core/control/translate";
@@ -54,6 +55,13 @@ async function invoked(shell: TauriShell, cmd: string, n = 1, timeout = 25_000):
 }
 
 const live = (): HTMLButtonElement => document.getElementById("btn-live") as HTMLButtonElement;
+
+/** The inspector row a label names (main.flows.test.ts). */
+const row = (label: string): HTMLElement => {
+  const found = $("inspector").querySelector<HTMLElement>(`.param[data-param-label="${label}"]`);
+  expect(found, `the inspector shows a "${label}" row`).not.toBeNull();
+  return found!;
+};
 
 /** Select a node the way a click does, so the inspector renders for it. */
 const selectNode = (id: string): void => {
@@ -386,6 +394,72 @@ describe("the model the device turns out to be", () => {
 });
 
 describe("the live session", () => {
+  // A re-registration that fails while the session is still STARTING.
+  //
+  // `live.begin()` runs before `follow.begin()`, so a structural edit can flush inside the
+  // window where the first registration is still on the wire; that flush captures and asks
+  // the follow layer to re-register, and the ask can be refused. `stopLiveOnError` returns
+  // without doing anything while `liveSessionUp` is false, so the report is dropped — and
+  // the lines that follow would go on to say "Live sync on" over a DeviceFollow that has
+  // already stopped, with `onNotify` discarding every notify for the rest of the session.
+  it("refuses to start a session whose follow stopped on the way up", SLOW, async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    const shell = await bootDevice({
+      vd_params_subscribe: async () => {
+        calls++;
+        // The session's own registration is held open, not failed: what is under test is a
+        // LATER refusal landing inside the start-up window.
+        if (calls === 1) {
+          await held;
+          return null;
+        }
+        throw new Error("subscribe rejected");
+      },
+      // The last await before the session is declared up, stretched so the window this
+      // case is about is wide enough to land in: the flush's ask runs as soon as the
+      // registration it queued behind lands, and its refusal has to arrive while
+      // `liveSessionUp` is still false for `stopLiveOnError` to be the one that drops it.
+      vd_watch_link: async () => new Promise((r) => setTimeout(r, 2_000)),
+    });
+
+    $("btn-live").click();
+    // Parked inside `follow.begin()`, which is after `live.begin()` — so the flush below
+    // belongs to a live session that has not been declared up yet.
+    await vi.waitFor(() => expect(calls).toBe(1), { timeout: 25_000 });
+
+    // A converge param: its flush captures, and a flush that captured asks.
+    selectNode("ch1");
+    const type = row(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    type.value = String(COMP_EQ_SSMCS);
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+    // The ask is made at the END of the flush, and this flush carries a converge — some
+    // 700 reads through the stub. Released before it gets there, the refusal lands after
+    // the session is already up, which is a window the existing machinery already covers.
+    // So: wait for the converge to stop reading, THEN release.
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(0), { timeout: 25_000 });
+    let quiet = 0;
+    let last = -1;
+    await vi.waitFor(
+      () => {
+        const now = shell.count("vd_get");
+        quiet = now === last ? quiet + 1 : 0;
+        last = now;
+        if (quiet < 5) throw new Error(`still reading (${now})`);
+      },
+      { timeout: 25_000, interval: 40 },
+    );
+    release();
+    await vi.waitFor(() => expect(calls).toBeGreaterThan(1), { timeout: 25_000 });
+
+    // The session is not up, and it said WHY — the follow's own refusal rather than any
+    // failure the read path can raise, which is what separates this from a failed readback.
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
+    expect(errors(shell).some((e) => e.includes(t().error.liveFollowStopped))).toBe(true);
+    expect(live().getAttribute("aria-pressed")).not.toBe("true");
+  });
+
   // The undo history survives a reconcile that authored nothing.
   //
   // Pinned HERE rather than only in the race tier because that tier uploads no

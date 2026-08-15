@@ -997,6 +997,9 @@ export const en = {
     ),
     liveReadIncomplete: (n: number): string =>
       `${n} setting${n === 1 ? "" : "s"} could not be read, so the device's state is not fully known. Live sync needs a complete read to start.`,
+    liveFollowStopped: tr(
+      "Device follow stopped while the session was starting, so a change made on the device would not reach the plan. Live sync was not started.",
+    ),
     followReadIncomplete: (n: number): string =>
       `${n} setting${n === 1 ? "" : "s"} could not be read back after a change on the device, so the plan no longer matches it. Fetch again to resync.`,
     clockUnread: (message: string): string =>
