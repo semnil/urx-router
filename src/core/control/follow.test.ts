@@ -426,6 +426,48 @@ describe("DeviceFollow", () => {
     expect(h.addrs).toEqual([ADDR, [140, 0, 0]]);
   });
 
+  it("drops a queued re-registration whose session ended before its turn came", async () => {
+    // A queued call waits for the registration in front of it, and that wait can outlive
+    // the session that queued it. Reading the generation when its turn comes rather than
+    // when it was asked makes it register as the NEW session's — a third registration,
+    // concurrent with the one that session issued, which is the double-registration this
+    // queue exists to prevent.
+    let releaseA!: (v: () => void) => void;
+    let releaseB!: (v: () => void) => void;
+    const stalledA = new Promise<() => void>((r) => (releaseA = r));
+    const stalledB = new Promise<() => void>((r) => (releaseB = r));
+    let addrs: Array<[number, number, number]> = [ADDR];
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+    const held = (p: Promise<() => void>) =>
+      vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async (a, onUpdate) => {
+        void real(a, onUpdate);
+        return p;
+      });
+
+    held(stalledA);
+    const follow = followFor({ addrs: () => addrs });
+    const first = follow.begin(); // session A, stalled at the broker
+    addrs = [ADDR, [140, 0, 0]]; // moved, so the refresh cannot short-circuit
+    const refreshed = follow.refresh(); // queued behind A's registration
+    follow.end();
+
+    held(stalledB);
+    const second = follow.begin(); // session B, also on the wire: it must not wait on a stall
+    expect(h.subscribeCalls).toBe(2);
+
+    // A's registration lands, so the call queued behind it takes its turn — under B, and
+    // with B's own registration still unresolved, so nothing short-circuits it.
+    releaseA(() => {});
+    await first;
+    await refreshed;
+    // A's refresh is A's. Its turn came under B, and it registers nothing: a third
+    // registration here runs alongside B's, which is what the queue exists to prevent.
+    expect(h.subscribeCalls).toBe(2);
+    releaseB(() => {});
+    await second;
+  });
+
   it("does not stop the session that FOLLOWED the one a failed re-registration belonged to", async () => {
     // The rejection travels out of `subscribeOne` rather than through its post-await
     // generation guard, so the catch is the only thing that can tell whose failure it is.

@@ -225,9 +225,16 @@ export class DeviceFollow {
     // stalled at the broker — overtaking it is what the generation guard is for, and
     // `begin()` has bumped past it by the time it gets here — so a queue that spanned
     // sessions would hand a stall the power to stop the next session registering at all.
-    const prev = this.subscribeInFlight?.gen === this.gen ? this.subscribeInFlight.tail : null;
-    const run = prev ? prev.then(() => this.subscribeOne()) : this.subscribeOne();
-    const entry = { gen: this.gen, tail: run.catch(() => {}) };
+    // The generation is taken HERE and carried in, not read when the turn comes. A queued
+    // call waits for the one in front of it, and that wait outlives the session that
+    // queued it whenever `end()` lands inside it: reading the generation on execution
+    // makes an ended session's call register as the NEW session's, alongside the
+    // registration that session issued — the double-registration this queue exists to
+    // prevent, rebuilt out of the queue itself.
+    const gen = this.gen;
+    const prev = this.subscribeInFlight?.gen === gen ? this.subscribeInFlight.tail : null;
+    const run = prev ? prev.then(() => this.subscribeOne(gen)) : this.subscribeOne(gen);
+    const entry = { gen, tail: run.catch(() => {}) };
     this.subscribeInFlight = entry;
     void entry.tail.then(() => {
       if (this.subscribeInFlight === entry) this.subscribeInFlight = null;
@@ -235,9 +242,10 @@ export class DeviceFollow {
     return run;
   }
 
-  private async subscribeOne(): Promise<void> {
-    if (!this.active) return;
-    const gen = this.gen;
+  private async subscribeOne(gen: number): Promise<void> {
+    // Whose registration this is, asked before anything is done in its name: a queued call
+    // reaching its turn under a later session has nothing left to register for.
+    if (!this.active || this.gen !== gen) return;
     const addrs = this.hooks.addrs();
     // The address order is deterministic (planToCommands order), so a plain join
     // is a stable identity for the set — no sort needed.
