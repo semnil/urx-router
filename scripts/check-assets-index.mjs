@@ -91,12 +91,9 @@ const PROSE_TOKENS = new Map([
   ["userGesture", "a DevTools-protocol parameter of Runtime.evaluate"],
   ["SetForegroundWindow", "a Win32 call, named as the one the foreground lock silently refuses"],
   ["GetForegroundWindow", "a Win32 call, named as what an armed capture polls"],
-  // The race tier's split. The variable is Playwright's own, undocumented in its shipped
-  // types, which is why the row names it at all; the disabled spelling is the mutation the
-  // scan was tightened against, and the third is a key inside the ledger the row already
-  // names as a file.
-  ["PWTEST_SHARD_WEIGHTS", "a Playwright environment variable, named as itself"],
-  ["PWTEST_SHARD_WEIGHTS_DISABLED", "a rename of that variable, named as the mutation a substring check missed"],
+  // The race tier's split. Its two environment variables are NOT here: a bare screaming-case
+  // token is classified now, so both are held against the repo the way `NAME=value` always
+  // was. What remains is a key inside the ledger the row already names as a file.
   ["collect.shardWeights", "a key inside e2e/race/skip-ledger.json, not a path"],
   ["includes()", "JavaScript's own method, named as the check that was too loose"],
   ["test.describe.serial", "a Playwright declaration, named as itself"],
@@ -614,6 +611,12 @@ for (const span of spans) {
     }
   } else if (/^[A-Z][A-Z0-9_]*=\S+$/.test(token)) {
     assertEnv(token.split("=")[0], line);
+  } else if (/^[A-Z][A-Z0-9_]{2,}$/.test(token)) {
+    // The same oracle for a variable named on its own rather than as `NAME=value`. It only
+    // reached the `=` form before, so the section's first bare one had to be pardoned in
+    // PROSE_TOKENS — which is the entry that stops a real anchor being checked, as that list's
+    // own header says. Two underscores' worth of length keeps ordinary shouted prose out.
+    assertEnv(token, line);
   } else if (token.includes("/") || SOURCE_EXT.test(token)) {
     checked++;
     takePath(token, line);
