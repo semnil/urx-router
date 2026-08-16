@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { wheelOver } from "./graph-helpers";
+import { pickBand } from "./dyn-helpers";
 
 // Fine-tuning mode (hold Shift), mirroring the device's push-and-turn fine steps.
 // Only params with a device-verified fine grid opt in: EQ band gain and COMP gain
@@ -68,7 +69,7 @@ test.describe("tuning-screen sliders", () => {
     await box.locator(".consent-btn-secondary").click();
     // Nor does Q (0.1 native), on the EQ screen where it lives.
     await openScreen(page, /^EQ$/, "#btn-eq-screen");
-    await box.locator("#dyn-band-lowmid").click(); // a peaking band, so Q is offered
+    await pickBand(page, 1); // a peaking band, so Q is offered
     const q = box.locator(".prefs-row", { hasText: "Q" }).first();
     await expect(q.locator("input[type=range]")).not.toHaveAttribute("data-fine-step", /.+/);
   });

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { panelHeight, pickBand } from "./dyn-helpers";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
@@ -167,7 +168,7 @@ test.describe("the tuning screen's three faces", () => {
     await expect(title).toContainText("CH 1");
 
     await face(page, "eq").click();
-    await expect(box(page).locator("#dyn-ssmcs-band-low")).toHaveAttribute("aria-pressed", "true");
+    await expect(face(page, "eq")).toHaveAttribute("aria-pressed", "true");
     expect(await closes()).toBe(0);
 
     // The positive control, and it is what makes the two counts above mean anything: an
@@ -185,7 +186,7 @@ test.describe("the tuning screen's three faces", () => {
   test("costs the panel no vertical space, and keeps the buttons out of the dialog's name", async ({ page }) => {
     const gapUnderTitle = () =>
       box(page).evaluate((el) => {
-        const head = el.querySelector(".gt-head") ?? el.querySelector("h2")!;
+        const head = el.querySelector("h2")!;
         const grid = el.querySelector(".prefs-grid")!;
         return Math.round(grid.getBoundingClientRect().top - head.getBoundingClientRect().bottom);
       });
@@ -267,23 +268,33 @@ test.describe("the tuning screen's three faces", () => {
             height: Math.round(b.height),
             panelTop: Math.round(panel.top - b.top),
             closeOverflow: Math.round(close.bottom - b.bottom),
-            rows: el.querySelectorAll(".prefs-row").length,
+            hint: (el.querySelector(".gt-note")?.textContent ?? "").trim(),
           };
         });
       const main = await geom();
-      const seen = [main.rows];
+      const seen = [main.hint];
+      const pressed = [(await box(page).locator('.gt-modes button[aria-pressed="true"]').innerText()).trim()];
       expect(main.closeOverflow).toBeLessThanOrEqual(0);
-      for (const f of ["comp", "eq"] as const) {
-        await face(page, f).click();
+      // The Side Chain segment is walked as well as the three faces: it carries the WIDEST
+      // rack (three columns, four readout tiles) and is the one that wrapped against the
+      // measured floor this arrangement replaced, so leaving it out skips the case.
+      for (const f of ["comp", "sidechain", "eq"] as const) {
+        await box(page)
+          .locator(f === "sidechain" ? "#dyn-mode-sidechain" : `#dyn-face-ssmcs-${f}`)
+          .click();
         const g = await geom();
         expect(g.height, f).toBe(main.height);
         expect(g.panelTop, f).toBe(main.panelTop);
         expect(g.closeOverflow, f).toBeLessThanOrEqual(0);
-        seen.push(g.rows);
+        seen.push(g.hint);
+        pressed.push((await box(page).locator('.gt-modes button[aria-pressed="true"]').innerText()).trim());
       }
-      // The positive control: the faces really do carry different panels. Without it, a
-      // build that rendered the same face three times would satisfy every line above.
-      expect(new Set(seen).size).toBeGreaterThan(1);
+      // The positive control: the faces really are different faces. Without it, a build
+      // that rendered the same one three times would satisfy every line above. Read off the
+      // HINT and the pressed segment rather than the row count or the panel kind — all
+      // three faces carry four rows and all three draw a plot, so neither separates them.
+      expect(new Set(seen).size).toBe(4);
+      expect(new Set(pressed).size).toBe(4);
     });
   }
 
@@ -311,10 +322,15 @@ test.describe("the tuning screen's three faces", () => {
     await expect(box(page).locator(".gt-readouts")).toHaveClass(/two/);
   });
 
-  test("COMP reads its eight rows in the unit's own order", async ({ page }) => {
+  test("COMP reads its eight rows in the unit's own order, four per segment", async ({ page }) => {
     await openFace(page, "ssmcsComp", /^COMP$/);
-    const labels = await box(page).locator(".prefs-row .lbl").allInnerTexts();
-    expect(labels).toEqual(["Attack", "Release", "Ratio", "Knee", "Side Chain", "Q", "Freq", "Gain"]);
+    // Each segment carries the sliders whose effect is on the plot beside it, and the two
+    // sets are four rows each — which is what holds this face at the height its siblings
+    // are held at.
+    expect(await box(page).locator(".prefs-row .lbl").allInnerTexts()).toEqual(["Attack", "Release", "Ratio", "Knee"]);
+    await box(page).locator("#dyn-mode-sidechain").click();
+    expect(await box(page).locator(".prefs-row .lbl").allInnerTexts()).toEqual(["Side Chain", "Q", "Freq", "Gain"]);
+    await box(page).locator("#dyn-face-ssmcs-comp").click();
     // The bank's corner is an internal value the unit never shows, so the lane rack
     // carries no fader cap — the one gesture the rack otherwise has.
     await expect(box(page).locator(".gt-cap")).toHaveCount(0);
@@ -329,19 +345,66 @@ test.describe("the tuning screen's three faces", () => {
     await expect(box(page).locator(".gt-cap")).toHaveCount(1);
   });
 
+  // One bar stands in front of the whole bank, and this face is two of its four segments —
+  // because this compressor has an input the shipped one does not: a filter in front of its
+  // detector, whose response the second segment draws. Driven end to end here because the
+  // unit tests hold the model and the drawing; what only the built app answers is whether
+  // the segments are on the bar, whether pressing one switches the panel, and whether the
+  // sliders beside it still reach the plan.
+  test("COMP offers a Side Chain segment, and the filter's sliders move its curve", async ({ page }) => {
+    await openFace(page, "ssmcsComp", /^COMP$/);
+    await expect(box(page).locator(".gt-modes button")).toHaveText(["MAIN", "COMP", "Side Chain", "EQ"]);
+
+    // Each segment is one height, so pressing one does not move the button that was just
+    // pressed. The curve's own height is the reference the other is measured against.
+    const curveHeight = await panelHeight(page);
+    const columns = () => box(page).locator(".gt-ladders .gt-slot").count();
+    // The curve is the compressor's own pair, and the reduction merges into the PRE EQ
+    // column it was taken off — so two, not three.
+    await expect(box(page).locator("#dyn-curve")).toBeVisible();
+    await expect(box(page).locator(".gt-ladderbox")).toHaveCount(1);
+    expect(await columns()).toBe(2);
+
+    await box(page).locator("#dyn-mode-sidechain").click();
+    await expect(box(page).locator("#dyn-mode-sidechain")).toHaveAttribute("aria-pressed", "true");
+    // The plot AND the rack, which is what this segment is for: set the filter, watch the
+    // reduction it buys. It keeps the side-chain lane the curve drops, so three.
+    await expect(box(page).locator("#dyn-curve")).toBeVisible();
+    await expect(box(page).locator(".gt-ladderbox")).toHaveCount(1);
+    expect(await columns()).toBe(3);
+    await expect(box(page).locator(".gt-note")).toHaveText(/side-chain filter/);
+    expect(await panelHeight(page)).toBe(curveHeight);
+
+    // The curve is a canvas, so what an E2E run can hold is that the gesture reaches the
+    // plan the curve is drawn from — the pixels are the unit suite's, against a recording
+    // context that can name what was drawn.
+    const gain = screenRow(page, "Gain").locator("input[type=range]");
+    const readout = screenRow(page, "Gain").locator(".gt-val");
+    const before = await readout.innerText();
+    await gain.fill(String(Number(await gain.inputValue()) + 60)); // +6.0 dB
+    await gain.dispatchEvent("input");
+    await expect(readout).not.toHaveText(before);
+    await expect(readout).toHaveText(/dB/);
+
+    // The choice persists, which is what `persistSel` claims: it is a way of reading the
+    // processor rather than a place in a flow.
+    await box(page).locator(".consent-btn-secondary").click();
+    await openFace(page, "ssmcsComp", /^COMP$/);
+    await expect(box(page).locator("#dyn-mode-sidechain")).toHaveAttribute("aria-pressed", "true");
+  });
+
   test("the EQ face keeps four rows and one height on every band", async ({ page }) => {
     await openFace(page, "ssmcsEq", /^EQ$/);
-    const height = () => box(page).evaluate((el) => el.getBoundingClientRect().height);
-    const first = await height();
-    for (const band of ["low", "mid", "high"] as const) {
-      await box(page).locator(`#dyn-ssmcs-band-${band}`).click();
+    const first = await panelHeight(page);
+    for (const [i, band] of (["low", "mid", "high"] as const).entries()) {
+      await pickBand(page, i);
       const labels = await box(page).locator(".prefs-row .lbl").allInnerTexts();
       expect(labels, band).toEqual(["Band", "Q", "Freq", "Gain"]);
       // A shelf has no Q at all; the row stays and says so, so the panel does not move
       // under the pointer that just pressed the band beside it.
       const locked = band !== "mid";
       await expect(screenRow(page, "Q"), band).toHaveClass(locked ? /locked/ : /^((?!locked).)*$/);
-      expect(await height(), band).toBe(first);
+      expect(await panelHeight(page), band).toBe(first);
     }
   });
 });

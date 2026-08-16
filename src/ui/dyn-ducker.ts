@@ -128,12 +128,24 @@ export const DUCKER_DYN: DynProcessor = {
       readoutCols: 2,
       lanes: [
         key,
-        { key: "in", label: text.tapIn, kind: "level", tap: tapFor(host, "preducker", ctx.model.id) ?? null },
+        {
+          key: "in",
+          label: text.tapIn,
+          caption: ctx.m.dynTuning.laneIn,
+          kind: "level",
+          tap: tapFor(host, "preducker", ctx.model.id) ?? null,
+        },
         // In the PRE DUCKER lane's slot, not a column of its own. The reduction is
         // applied to THAT signal — the key only decides when — so the level going in
         // and the amount taken off it belong in one column, on one ruler. It keeps its
         // own readout tile.
-        { key: "out", label: text.tapOut, kind: "level", tap: tapFor(host, "post", ctx.model.id) ?? null },
+        {
+          key: "out",
+          label: text.tapOut,
+          caption: ctx.m.dynTuning.laneOut,
+          kind: "level",
+          tap: tapFor(host, "post", ctx.model.id) ?? null,
+        },
         { key: "gr", label: text.tapGr, kind: "gr", gr: grAddr("ducker", ctx.nodeId), sameSlot: true },
       ],
     };

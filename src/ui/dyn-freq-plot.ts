@@ -50,10 +50,20 @@ export function freqAt(g: DynPlotGeo, x: number, x0 = 0): number {
   return Math.exp(Math.log(EQ_FREQ_MIN_HZ) + ((x - x0 - g.pad.l) / w) * span);
 }
 
-/** Whether a gain lands inside the frame. Off the scale is off the frame, for a marker
- *  as much as for the curve: pinning one to the floor would mark a frequency at a level
- *  the response never reaches there. */
-export const onGainScale = (db: number): boolean => db <= GAIN_TOP && db >= GAIN_BOTTOM;
+/**
+ * Whether a gain lands inside the frame. Off the scale is off the frame, for a marker as
+ * much as for the curve: pinning one to the floor would mark a frequency at a level the
+ * response never reaches there.
+ *
+ * The tolerance is what makes the EDGE of the scale part of it. A band at the gain range's
+ * own maximum evaluates to the maximum give or take the last bit of a double, and which
+ * side it lands on is arithmetic rather than design: the 4-band bell at +18 dB comes out
+ * 17.999999999999986 and keeps its marker, the morphing strip's comes out
+ * 18.000000000000004 and lost it. 1e-6 dB is some five orders of magnitude under a pixel
+ * on this axis, so nothing a reader could see is let through by it.
+ */
+const SCALE_EPS = 1e-6;
+export const onGainScale = (db: number): boolean => db <= GAIN_TOP + SCALE_EPS && db >= GAIN_BOTTOM - SCALE_EPS;
 
 /** Grid, tick labels, axis names and the 0 dB line the curve is read against. `x0`
  *  offsets it inside a wider canvas, as `freqGeo`'s does. */
@@ -109,9 +119,67 @@ export interface BandMarker {
   active: boolean;
 }
 
+/**
+ * The pill one marker occupies. Both the drawing and the hit test go through this, so a
+ * press cannot land somewhere other than where the letter is — a marker moves with its
+ * band's frequency and with the composite curve under it, so a hit test written from the
+ * same numbers separately would drift the moment either changed.
+ *
+ * The label's width is measured, so the caller has to have set `PLOT_FONT` on the context.
+ */
+function markerRect(
+  c: CanvasRenderingContext2D,
+  g: DynPlotGeo,
+  b: BandMarker,
+): { x: number; y: number; w: number; h: number } {
+  const x = g.px(b.hz);
+  // A pill sized to its own label, not a circle: "LM" and "HM" do not fit a disc
+  // wide enough for "L" without the letters touching the edge.
+  const w = Math.max(15, c.measureText(b.label).width + 9);
+  const h = b.active ? 15 : 13;
+  // Kept whole inside the frame. The host clips the plot area to the axes, and the top
+  // of that area IS the gain range's maximum — so a band at full boost had the upper
+  // half of its pill cut off, which is the setting a side chain reaches most often
+  // (it has one band, and +18 dB is a place people put it). The pill moves; the curve
+  // it marks does not, so the two part company by at most half a pill at the extremes.
+  const lo = g.pad.t + h / 2;
+  const hi = g.h - g.pad.b - h / 2;
+  return { x, y: Math.min(hi, Math.max(lo, g.py(b.db))), w, h };
+}
+
+/**
+ * Which marker a point is on, or null. The markers ARE the band control on the EQ screens,
+ * so this is the whole of what a press has to resolve.
+ *
+ * The pill is 13–15px tall, well under the 44px a pointer target wants, so the box is grown
+ * by `HIT_PAD` on every side — the plot carries nothing else a press means, which is what
+ * makes a generous target safe here and is why the COMP screen's three grips were not.
+ * Later markers win, matching the paint order, so the one drawn on top is the one hit.
+ */
+export function pickBandMarker(
+  c: CanvasRenderingContext2D,
+  g: DynPlotGeo,
+  marks: readonly BandMarker[],
+  at: { x: number; y: number },
+): number | null {
+  c.save();
+  c.font = PLOT_FONT;
+  let hit: number | null = null;
+  for (const [i, b] of marks.entries()) {
+    if (!onGainScale(b.db)) continue;
+    const r = markerRect(c, g, b);
+    if (Math.abs(at.x - r.x) <= r.w / 2 + HIT_PAD && Math.abs(at.y - r.y) <= r.h / 2 + HIT_PAD) hit = i;
+  }
+  c.restore();
+  return hit;
+}
+
+const HIT_PAD = 7;
+
 /** The markers, as letters in pills. Not grips — nothing here is draggable: several
  *  grips on one plot cannot tell which value a press meant (the COMP screen proved that
- *  with three), so the sliders stay the editing path. */
+ *  with three), so the sliders stay the editing path. A press SELECTS the band, which is
+ *  one value and unambiguous; `pickBandMarker` is that half. */
 export function drawBandMarkers(
   c: CanvasRenderingContext2D,
   g: DynPlotGeo,
@@ -126,12 +194,7 @@ export function drawBandMarkers(
   c.lineWidth = 1.5;
   for (const b of marks) {
     if (!onGainScale(b.db)) continue;
-    const x = g.px(b.hz);
-    const y = g.py(b.db);
-    // A pill sized to its own label, not a circle: "LM" and "HM" do not fit a disc
-    // wide enough for "L" without the letters touching the edge.
-    const w = Math.max(15, c.measureText(b.label).width + 9);
-    const h = b.active ? 15 : 13;
+    const { x, y, w, h } = markerRect(c, g, b);
     c.globalAlpha = inert ? 0.3 : b.on ? 1 : 0.35;
     // The ink follows the face. The selected marker is the lit face, so it takes the
     // dark ink every lit face takes; the rest are the dim face and keep the plot's
@@ -149,28 +212,56 @@ export function drawBandMarkers(
   c.textBaseline = "alphabetic";
 }
 
-/** The response as one stroked line, sampled per pixel column. Drawn at its true value:
- *  the host clips the plot area, so where the response runs past the floor — which a
- *  high-pass or low-pass does within an octave of its corner — it leaves the frame
- *  instead of lying along the bottom edge as a response the filter does not have. */
+/**
+ * The response as one stroked line, sampled per pixel column. Drawn at its true value:
+ * the host clips the plot area, so where the response runs past the floor — which a
+ * high-pass or low-pass does within an octave of its corner — it leaves the frame
+ * instead of lying along the bottom edge as a response the filter does not have.
+ *
+ * `fill` shades the area between the curve and the 0 dB line. It is off everywhere the
+ * curve is AUDIO — an EQ's line is read as the level it will produce, and a wash under
+ * it says nothing the line does not. The side-chain screen turns it on because there the
+ * area is the reading: the band the compressor has been made to over- or under-react to.
+ */
 export function drawFreqCurve(
   c: CanvasRenderingContext2D,
   g: DynPlotGeo,
   tok: Record<string, string>,
   resp: (hz: number) => number,
   x0 = 0,
+  fill = false,
 ): void {
   const left = x0 + g.pad.l;
   const right = x0 + g.w - g.pad.r;
+  // Per pixel: the curve is redrawn only when a parameter, the size or the theme
+  // changes, and a sharp Q 16 bell is a few pixels wide at this scale. Sampled into a
+  // list rather than straight into a path, so the wash and the line are drawn from the
+  // same numbers and cannot describe different curves.
+  const ys: number[] = [];
+  for (let x = left; x <= right; x++) ys.push(g.py(resp(freqAt(g, x, x0))));
+  const trace = (): void => {
+    c.beginPath();
+    for (let i = 0; i < ys.length; i++) {
+      if (i === 0) c.moveTo(left, ys[0]);
+      else c.lineTo(left + i, ys[i]);
+    }
+  };
+  if (fill) {
+    // Closed down to the 0 dB line, and drawn first: a wash over the line would eat half
+    // its width.
+    const zero = g.py(0);
+    trace();
+    c.lineTo(right, zero);
+    c.lineTo(left, zero);
+    c.closePath();
+    c.save();
+    c.globalAlpha = 0.16;
+    c.fillStyle = tok["--led"];
+    c.fill();
+    c.restore();
+  }
+  trace();
   c.strokeStyle = tok["--led"];
   c.lineWidth = 2;
-  c.beginPath();
-  // Per pixel: the curve is redrawn only when a parameter, the size or the theme
-  // changes, and a sharp Q 16 bell is a few pixels wide at this scale.
-  for (let x = left; x <= right; x++) {
-    const y = g.py(resp(freqAt(g, x, x0)));
-    if (x === left) c.moveTo(x, y);
-    else c.lineTo(x, y);
-  }
   c.stroke();
 }

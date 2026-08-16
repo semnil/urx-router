@@ -21,6 +21,7 @@ import {
   type NodeParams,
   type Plan,
   type PlanConnection,
+  type SsmcsParams,
 } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
 import {
@@ -74,7 +75,7 @@ import {
 } from "../core/control/vd";
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
 // MIX/FX send targets are shared with the MIDI control catalog.
-import { controlId, MAIN_BUS, SEND_TARGETS, type SendTarget } from "../core/midi/controls";
+import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
 import { el, focusables, onWheelStep, popLeft, popTop, preserveFocus, scrubFloat } from "./dom";
 import { fineActive, fineTag } from "./fine";
@@ -1870,23 +1871,37 @@ export class Console {
       // would refuse to open.
       const plan = this.hooks.getPlan();
       const dyn = channelDynamics(this.hooks.getModel(), m.id, plan.nodeParams[m.id]?.compEqType ?? COMP_EQ_COMP_FIRST);
-      // The morphing strip's own master, between GATE and COMP as the inspector orders
-      // them and as the unit chains them. It lives one level down in the plan, so it
-      // gets its own writer rather than boolChip's flat one.
-      if (dyn && !dyn.comp) {
-        const ssmcsOn = (): boolean => planOf().ssmcs?.on ?? SSMCS_INITIAL.on;
+      // The morphing bank's two on/offs live one level down in the plan, which boolChip's
+      // flat writer cannot reach. One writer for both, so they cannot disagree about the
+      // shape they patch or about how the edit reaches the undo differ.
+      const ssmcsChip = (
+        label: string,
+        read: () => boolean,
+        set: (cur: SsmcsParams, next: boolean) => SsmcsParams,
+        opts: { midiId?: string; title?: string },
+      ): void => {
         this.makeChip(
           m.id,
           proc,
-          "SSMCS",
+          label,
           false,
-          ssmcsOn(),
+          read(),
           () => {
-            const next = !ssmcsOn();
+            const next = !read();
             const np = this.nodeParamsOf(m.id);
-            np.ssmcs = { ...np.ssmcs, on: next };
+            np.ssmcs = set(np.ssmcs ?? {}, next);
             return next;
           },
+          opts,
+        );
+      };
+      // The morphing strip's own master, between GATE and COMP as the inspector orders
+      // them and as the unit chains them.
+      if (dyn && !dyn.comp) {
+        ssmcsChip(
+          "SSMCS",
+          () => planOf().ssmcs?.on ?? SSMCS_INITIAL.on,
+          (cur, next) => ({ ...cur, on: next }),
           { midiId: controlId(m.id, "ssmcsOn") },
         );
         proc.append(this.dynOpenChip("ssmcs", m.id));
@@ -1897,6 +1912,19 @@ export class Console {
       // opener rather than one per face — and the COMP and EQ chips read here exactly as
       // they do on a channel with no strip at all.
       if (dyn?.comp) proc.append(this.dynOpenChip("comp", m.id));
+      // The side-chain filter's own switch, between the two processors it sits between.
+      // Every other on/off in this bank is reachable from the strip — SSMCS's master, the
+      // compressor's, the EQ's — and this one was only inside the COMP screen. It writes
+      // the same plan value and carries the same MIDI id as the row there, so the two are
+      // one control in two places rather than two controls that agree.
+      if (dyn && !dyn.comp) {
+        ssmcsChip(
+          "SC",
+          () => planOf().ssmcs?.sc?.on ?? SSMCS_INITIAL.sc.on,
+          (cur, next) => ({ ...cur, sc: { ...cur.sc, on: next } }),
+          { midiId: controlId(m.id, "sideChain", SSMCS_SC_SCOPE), title: t().inspector.ssmcs.sideChain },
+        );
+      }
     }
     const rate = this.hooks.getPlan().sampleRate;
     if (m.hasEq) {

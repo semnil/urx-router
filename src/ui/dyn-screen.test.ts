@@ -34,7 +34,8 @@ vi.mock("../core/meters", async (importOriginal) => {
 
 import { DynScreen } from "./dyn-screen";
 import { DYN_PROCESSORS } from "./dyn-registry";
-import { barLevels, dynHost, readouts, rowsByKey } from "./dyn-screen.test-util";
+import { COMP_EQ_SSMCS } from "../core/control/params";
+import { barLevels, dynHost, pickBand, readouts, rowsByKey, segments } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import { MeterStore } from "../core/meters";
 import { setLang, t } from "../i18n";
@@ -42,6 +43,7 @@ import { setLang, t } from "../i18n";
 const GATE = DYN_PROCESSORS.gate;
 const COMP = DYN_PROCESSORS.comp;
 const EQ = DYN_PROCESSORS.eq;
+const SSMCS_COMP = DYN_PROCESSORS.ssmcsComp;
 
 let host: DynHost;
 let store: MeterStore | null = null;
@@ -350,6 +352,54 @@ describe("painting", () => {
     expect(Math.max(...barLevels(host.box))).toBeLessThanOrEqual(1);
   });
 
+  /**
+   * A merged reduction's BAR is a different quantity from its readout, and that is the
+   * whole reason the arrangement works.
+   *
+   * Two bars growing from opposite ends of one ruler are unreadable where they overlap, and
+   * the overlap in dBFS is `input + gain` — independent of the reduction — so subtracting
+   * the processor's own gain leaves `input`, which is at or below 0 for a real signal. The
+   * bar is therefore an INDICATION, shortened by the makeup; the readout goes on printing
+   * what the meter reported.
+   *
+   * Read as a ratio between two feeds rather than as an absolute fraction: what the case is
+   * about is the OFFSET, and a fraction would also be asserting the ruler's own ends.
+   */
+  it("shortens a merged reduction's bar by the processor's gain, and not its readout", async () => {
+    host = dynHost({ live: true });
+    // Makeup at its own factory value, so the offset is whatever the descriptor derives
+    // rather than a number this file chose.
+    const screen = new DynScreen(host.hooks);
+    screen.open(COMP, "ch1");
+    await Promise.resolve();
+
+    const gr = subscribedAddrs().find(([id]) => id === 110)!;
+    const barFor = (db: number): number => {
+      feed([{ meterId: gr[0], x: gr[1], value: db * 10 }]);
+      // The readouts are written every Nth frame, so a single one leaves them at "—".
+      for (let i = 0; i < 5; i++) host.frame();
+      // The GR lane is the last one built, and its shade is the second in its slot.
+      return barLevels(host.box).at(-1)!;
+    };
+    const readoutFor = (db: number): string => {
+      barFor(db);
+      return readouts(host.box).find((r) => r.gr)!.value;
+    };
+
+    // The readout is the meter's own reading, unshortened.
+    expect(readoutFor(-12)).toBe("-12.0");
+    expect(readoutFor(-24)).toBe("-24.0");
+
+    // The bar is not: 12 dB more reduction moves it by 12 dB of the ruler, but both are
+    // offset by the same makeup — so the DIFFERENCE is the reduction and the ORIGIN is not.
+    const deep = barFor(-24);
+    const shallow = barFor(-12);
+    expect(deep).toBeGreaterThan(shallow);
+    // A reduction shallower than the makeup is clamped to nothing at all, which is what
+    // "an indication" means here — and what an unoffset bar would draw as a visible one.
+    expect(barFor(-1)).toBe(0);
+  });
+
   // The feed is 10 Hz and each frame is an instantaneous sample; the peak hold is
   // the only thing that makes a caught transient readable.
   it("holds a peak above a level that has since fallen", async () => {
@@ -417,15 +467,15 @@ describe("plot", () => {
     expect(host.canvas.ys).toEqual([]);
   });
 
-  // The ladder mode has no canvas at all — the display bar swaps the whole thing.
-  it("has no plot in the ladder mode and gains one on the curve mode", () => {
+  // The plot and the lane rack are both on screen from the moment the screen opens —
+  // nothing chooses between them any more, so there is no state in which one is absent.
+  it("shows the plot and the lane rack together, with the curve already drawn", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
-    expect(host.box.querySelector("#dyn-curve")).toBeNull();
-
-    host.box.querySelector<HTMLButtonElement>("#dyn-mode-curve")!.click();
+    expect(host.box.querySelector(".gt-splitdisplay")).not.toBeNull();
     expect(host.box.querySelector("#dyn-curve")).not.toBeNull();
+    expect(host.box.querySelector(".gt-ladderbox")).not.toBeNull();
     expect(host.canvas.ys.length).toBeGreaterThan(0);
   });
 
@@ -435,7 +485,6 @@ describe("plot", () => {
     host = dynHost({ live: false });
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
-    host.box.querySelector<HTMLButtonElement>("#dyn-mode-curve")!.click();
     const before = host.canvas.ys.length;
     expect(before).toBeGreaterThan(0);
 
@@ -452,7 +501,6 @@ describe("plot", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
-    host.box.querySelector<HTMLButtonElement>("#dyn-mode-curve")!.click();
     // save / clip / restore bracket the curve; the recorder swallows them, so what
     // is checked here is that the host drew a curve at all under that bracket.
     expect(host.canvas.ys.length).toBeGreaterThan(0);
@@ -484,28 +532,41 @@ describe("parameter rows", () => {
   });
 });
 
-describe("segmented bar", () => {
-  it("selects a band and rebuilds the rows under it", () => {
+describe("selecting within a screen", () => {
+  /** Put ch1 into the morphing bank, which is the one processor here that still carries a
+   *  segmented bar — the shipped screens select nothing, and the EQs' bands moved onto the
+   *  plot. Both mechanisms are the host's, so both are exercised here. */
+  const bank = (): typeof SSMCS_COMP => {
+    host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], compEqType: COMP_EQ_SSMCS };
+    return SSMCS_COMP;
+  };
+  const modes = (): HTMLButtonElement[] => segments(host.box);
+
+  it("selects a segment from the bar and rebuilds the rows under it", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
-    screen.open(EQ, "ch1");
-    const buttons = [...host.box.querySelectorAll<HTMLButtonElement>(".gt-modes button")];
-    expect(buttons.length).toBeGreaterThan(1);
-    expect(buttons[0].getAttribute("aria-pressed")).toBe("true");
+    screen.open(bank(), "ch1");
+    const before = modes();
+    expect(before.length).toBe(4);
+    expect(before[1].getAttribute("aria-pressed")).toBe("true"); // COMP, this face's first
 
-    buttons[1].click();
-    const after = [...host.box.querySelectorAll<HTMLButtonElement>(".gt-modes button")];
-    expect(after[1].getAttribute("aria-pressed")).toBe("true");
-    expect(after[0].getAttribute("aria-pressed")).toBe("false");
+    before[2].click(); // Side Chain, the same face's other segment
+    const after = modes();
+    expect(after[2].getAttribute("aria-pressed")).toBe("true");
+    expect(after[1].getAttribute("aria-pressed")).toBe("false");
+    // The rows under it are the filter's, not the compressor's.
+    expect([...rowsByKey(host.box).keys()]).toContain("scFreq");
   });
 
-  it("ignores a click on the item already selected", () => {
+  it("ignores a click on the segment already selected", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
-    screen.open(EQ, "ch1");
-    const first = host.box.querySelector<HTMLButtonElement>(".gt-modes button")!;
-    first.click();
-    expect(host.box.querySelector<HTMLButtonElement>(".gt-modes button")!.getAttribute("aria-pressed")).toBe("true");
+    screen.open(bank(), "ch1");
+    const rows = rowsByKey(host.box).get("attack")!;
+    modes()[1].click();
+    expect(modes()[1].getAttribute("aria-pressed")).toBe("true");
+    // Nothing was rebuilt, which is what "ignores" means here — a rebuild replaces the row.
+    expect(rowsByKey(host.box).get("attack")).toBe(rows);
   });
 
   // A choice that is a way of READING the processor persists; one that is a cursor
@@ -513,16 +574,30 @@ describe("segmented bar", () => {
   it("remembers a persisted choice across a close and reopen", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
-    const proc = COMP.persistSel ? COMP : GATE;
+    const proc = bank();
+    expect(proc.persistSel).toBe(true);
     screen.open(proc, "ch1");
-    const buttons = [...host.box.querySelectorAll<HTMLButtonElement>(".gt-modes button")];
-    if (buttons.length < 2) return; // the descriptor offers no choice on this node
-    buttons[1].click();
+    modes()[2].click();
     screen.close();
 
     screen.open(proc, "ch1");
-    const after = [...host.box.querySelectorAll<HTMLButtonElement>(".gt-modes button")];
-    expect(after[1].getAttribute("aria-pressed")).toBe(String(proc.persistSel === true));
+    expect(modes()[2].getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("resets a cursor-like choice per open, and moves it from the plot's own markers", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(EQ, "ch1");
+    // No bar: the EQ's bands are picked on the plot, which is one focus stop.
+    expect(modes().filter((b) => !b.disabled)).toEqual([]);
+    const first = rowsByKey(host.box).get("freq")!;
+    pickBand(host.box, 3);
+    expect(rowsByKey(host.box).get("freq")).not.toBe(first);
+
+    screen.close();
+    screen.open(EQ, "ch1");
+    // Back on the first band: EQ does not set `persistSel`.
+    expect(rowsByKey(host.box).get("freq")!.value).toBe(first.value);
   });
 });
 
@@ -823,8 +898,6 @@ describe("refresh", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
-    // GATE opens on the ladder; the curve is the mode that drags.
-    host.box.querySelector<HTMLButtonElement>("#dyn-mode-curve")!.click();
     host.frame();
     const cv = host.box.querySelector<HTMLCanvasElement>("#dyn-curve")!;
     const thr = (): number => (host.plan.nodeParams["ch1"]?.gate as { threshold: number }).threshold;

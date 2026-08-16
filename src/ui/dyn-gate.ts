@@ -10,7 +10,7 @@ import { GATE_RANGE_OFF_DB } from "../core/control/vd";
 import { GR_FLOOR_DB } from "../core/meters";
 import { controlId, GATE_SCOPE } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
-import { bindChannelStrip, displayBar, subObjectIo } from "./dyn-chan";
+import { bindChannelStrip, subObjectIo } from "./dyn-chan";
 import { transferPlot } from "./dyn-plot";
 import { HI_DB } from "./dyn-screen";
 import type { DynProcessor } from "./dyn-screen";
@@ -41,8 +41,11 @@ export const GATE_DYN: DynProcessor = {
   loDb: LO_DB,
   tickStep: 5,
   title: (m) => m.dynTuning.gate.title,
-  // No grFullDb: a gate's reduction runs the whole ruler (range reaches -∞), so the
+  // A gate's reduction runs the whole ruler (range reaches -∞), so the
   // shared tick column reads for it — a GR bar down to the -56 tick is 56 dB.
+  //
+  // No offset either, and none is possible to want: a gate has no makeup, so its reduction
+  // and the level it was taken off cannot run into each other on the shared ruler.
   bind: (ctx) =>
     bindChannelStrip(ctx, {
       fields: (dyn) => dyn.gate,
@@ -51,9 +54,14 @@ export const GATE_DYN: DynProcessor = {
       outTapKey: "precomp",
       cap: "threshold",
     }),
-  bar: displayBar,
-  ...transferPlot({ loDb: LO_DB, outLoDb: OUT_LO_DB, outTicks: OUT_TICKS, hint: (m) => m.dynTuning.gate.curveHint }),
-  persistSel: true,
+  // No Display bar: the rack is two columns since the reduction moved onto PRE COMP, so it
+  // fits beside the curve and both are on screen at once — the EQ and DUCKER arrangement.
+  ...transferPlot({
+    loDb: LO_DB,
+    outLoDb: OUT_LO_DB,
+    outTicks: OUT_TICKS,
+    hint: (m) => m.dynTuning.gate.curveHint,
+  }),
   read: io.read,
   patch: io.patch,
   // Every GATE value is a slider on the catalog's `gate` scope, so the key maps

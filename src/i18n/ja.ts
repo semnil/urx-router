@@ -69,8 +69,10 @@ export const ja: Messages = {
     cue: "C.INT",
     cueFull: "Cue Interrupt",
     mono: "MONO",
-    // ストリップ群の区切りラベル (この master と下の group*)。縦書きで組むため
-    // 全角字は列幅そのものを変える。どの言語でも英語表記のまま。
+    // ストリップ群の区切りラベル (この master と下の group*) と読み値キャプション
+    // (readFader / readMeter)。区切りは縦書きで組むため全角字が列幅そのものを変え、
+    // キャプションはその区切りに合わせる — ストリップ上で 1 語だけ和文になるのを避ける。
+    // どの言語でも英語表記のまま。調整画面の同じ項目は「メーター」と訳す (下の readouts)。
     master: "MASTER",
     meterPoint: "METER POINT",
     meterPointHint: "実機がメーターを出すタップ点のみ表示。",
@@ -480,15 +482,16 @@ export const ja: Messages = {
       recPoint: "Rec Point タップ",
     },
   },
-  // メーターのキャプションと表示モード名は実機のタップ語彙なので ja でも英語のまま
-  // (CONSOLE のメーターポイントバッジと同じ点を指すため表記を揃える)。
+  // レーンのキャプションと表示モード名は実機のタップ語彙なので ja でも英語のまま
+  // (CONSOLE のメーターポイントバッジと同じ点を指すため表記を揃える)。その上の見出しは
+  // 対象外 — ユーザーガイドの日本語が片仮名なので「メーター」と訳す。
   dynTuning: {
     close: "閉じる",
     display: "Display",
-    modeLadder: "Ladder",
-    modeCurve: "Curve",
     parameters: "パラメーター",
-    readouts: "読み値",
+    laneIn: "Input",
+    laneOut: "Output",
+    readouts: "メーター",
     peakPrefix: "pk",
     noReading: "—",
     driven: "本体が制御中",
@@ -498,7 +501,7 @@ export const ja: Messages = {
       tapIn: "Pre Gate",
       tapGr: "Gate GR",
       tapOut: "Pre Comp",
-      curveHint: "曲線のニーを左右にドラッグしてしきい値を設定します。",
+      curveHint: "曲線のニーを左右にドラッグして Threshold を設定します。",
     },
     comp: {
       title: "Comp",
@@ -506,14 +509,14 @@ export const ja: Messages = {
       tapIn: "Pre Comp",
       tapGr: "Comp GR",
       tapOut: "Pre EQ",
-      curveHint: "曲線はスライダーが信号に与える変化、点はライブのレベルです。",
+      curveHint:
+        "曲線はスライダーが信号に与える変化、点はライブのレベルです。近づけるには Attack と Release を調整します。",
     },
     eq: {
       title: "EQ",
       open: "EQ 画面",
-      band: "Band",
-      unusedByType: "この型では無効",
-      fixedBand: "このバンドは固定",
+      unusedByType: "このTypeでは無効",
+      fixedBand: "このBandでは固定",
       oneKnobDrives: "4 バンドは 1-knob のレベルからデバイスが計算します。カーブが追従するのはライブ同期中のみです。",
       plotHint: "曲線は EQ の周波数特性、各マーカーは各バンドの周波数を示します。",
     },
@@ -525,6 +528,8 @@ export const ja: Messages = {
       tapOut: "Pre Ins FX",
       mainHint:
         "Comp Drive はコンプの曲線を動かします。Sweet Spot Data と Morphing は両方を、ライブ同期中のみ動かします。",
+      scHint:
+        "Side Chain が変えるのはコンプの反応する対象で、音そのものではありません。曲線はそれが生むリダクション量なので、下がっている帯域ほどコンプが強くかかります。",
     },
     ducker: {
       title: "Ducker",

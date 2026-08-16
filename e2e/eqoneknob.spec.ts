@@ -1,4 +1,5 @@
 import { test, expect, heldThroughBlur, type Page } from "./fixtures";
+import { pickPlot } from "./dyn-helpers";
 
 // The EQ 1-knob, on the tuning screen where it lives (the inspector keeps the section's
 // ON toggle and a launcher). What it does on the device is measured and recorded in
@@ -83,9 +84,9 @@ test("1-knob on takes the bands away entirely, without moving anything", async (
     await expect(row(page, label)).toHaveCount(1); // still there…
     await expect(row(page, label)).not.toBeVisible(); // …and not shown
   }
-  await expect(box(page).locator(".gt-modes")).not.toBeVisible();
-  await expect(box(page).locator("#dyn-band-low")).toHaveAttribute("aria-pressed", "false");
-  await expect(box(page).locator("#dyn-band-low")).toBeDisabled();
+  // The bands are the device's, so the plot stops taking a press at all — and leaves the
+  // tab order with it, rather than staying a focus stop that does nothing.
+  await expect(pickPlot(page)).toHaveCount(0);
   await expect(params.locator("h3 .prefs-lock")).not.toBeVisible();
   // The space says why, instead of reading as a rendering fault.
   await expect(box(page).locator(".gt-reserved-note")).toBeVisible();

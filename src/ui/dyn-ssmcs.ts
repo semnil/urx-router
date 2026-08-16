@@ -1,9 +1,9 @@
 // The SSMCS (Sweet Spot Morphing Channel Strip) for the channel tuning screen: the bank
 // a MONO IN channel's COMP/EQ type switches to in place of the compressor and the 4-band
-// PEQ. Three faces of ONE processor, moved between from the title row without closing —
-// turning Morphing, reading the reduction, touching Mid and going back to Comp Drive is
-// one piece of work on one channel, and the three faces' address sets are subsets of the
-// MAIN one, so moving between them takes no new tap.
+// PEQ. Three faces of ONE processor, moved between from the bar over the display without
+// closing — turning Morphing, reading the reduction, touching Mid and going back to Comp
+// Drive is one piece of work on one channel, and the three faces' address sets are subsets
+// of the MAIN one, so moving between them takes no new tap.
 //
 //   MAIN  the morphing controls, over the compressor's transfer curve and the EQ's
 //         response side by side — one knob moves both, so both have to be on screen
@@ -43,9 +43,9 @@ import {
   ssmcsRatio,
   ssmcsReleaseMs,
 } from "../core/control/vd";
-import { ssmcsEqResponse } from "../core/eq-response";
-import type { SsmcsBandState } from "../core/eq-response";
-import { tapFor } from "../core/meters";
+import { ssmcsEqResponse, ssmcsScResponse } from "../core/eq-response";
+import type { SsmcsBandState, SsmcsScState } from "../core/eq-response";
+import { sidechainTap, tapFor } from "../core/meters";
 import {
   controlId,
   ssmcsControlParam,
@@ -58,12 +58,13 @@ import type { ControlParam } from "../core/midi/controls";
 import { SSMCS_INITIAL } from "../core/plan";
 import type { NodeParams, SsmcsBand, SsmcsParams } from "../core/plan";
 import { onOff, settingsChoice, settingsRow } from "./dom";
-import { bindChannelStrip, displayBar, enumRow } from "./dyn-chan";
-import { drawBandMarkers, drawFreqAxes, drawFreqCurve, FREQ_PAD, freqGeo } from "./dyn-freq-plot";
+import { bindChannelStrip, enumRow } from "./dyn-chan";
+import { drawBandMarkers, drawFreqAxes, drawFreqCurve, FREQ_PAD, freqGeo, pickBandMarker } from "./dyn-freq-plot";
+import type { BandMarker } from "./dyn-freq-plot";
 import { fmtSsmcsGain, fmtSsmcsHz, fmtSsmcsMs, fmtSsmcsQ, fmtSsmcsRatio } from "./inspector-format";
-import { CURVE_PAD, dbGeo, drawDbAxes, drawLiveDot, transferPlot } from "./dyn-plot";
-import { HI_DB, PLOT_FONT, splitDisplay } from "./dyn-screen";
-import type { DynCtx, DynFace, DynLane, DynPlotGeo, DynProcessor } from "./dyn-screen";
+import { CURVE_PAD, dbGeo, drawDbAxes, drawLiveDot, drawTransferCurve, transferPlot } from "./dyn-plot";
+import { PLOT_FONT, splitDisplay } from "./dyn-screen";
+import type { DynBar, DynCtx, DynLane, DynPlotGeo, DynProcessor } from "./dyn-screen";
 import type { Messages } from "../i18n/en";
 
 /** Level-lane ruler. The stages this bank sits between carry programme level and it
@@ -166,6 +167,36 @@ const KNEE_REACH_DB: readonly (readonly [number, number])[] = [
 const kneeReach = (knee: number): readonly [number, number] => KNEE_REACH_DB[knee] ?? KNEE_REACH_DB[COMP_KNEE_DEFAULT];
 
 /**
+ * Where the corner stops, in the input meter's own dBFS.
+ *
+ * Measured on a URX44V (2026-08-15) with ratio at infinity and a hard knee, reading the
+ * corner as `108` - |`110`|. Both parameters that move it are 0.2 dB per raw and they pull
+ * against each other, so `0.2 * (threshold - drive) - 20` lands on every unclamped point
+ * of two runs — threshold raws 50…175 at drive 200, and drives 100…160 at threshold raw 0
+ * — within 0.1 dB.
+ *
+ * The floor is separated from a REDUCTION ceiling, which the same readings would also fit
+ * while the input sat still: driving the input to -18 / -25 / -30 / -35 dBFS with the
+ * corner asked for -60 gave 36 / 29 / 24 / 19 dB of reduction, which is a corner holding
+ * at -54 and not a reduction saturating at 34. The earlier runs had both read -20 dBFS,
+ * the one level where the two laws agree.
+ */
+const CORNER_FLOOR_DB = -54;
+
+/** The makeup's own range, and the ceiling on what it returns. At its maximum it lifts
+ *  the corner to 0 dBFS — so it is a FRACTION of the corner's depth, not a number of dB —
+ *  and it stops at MAKEUP_MAX_DB. Measured over 22 points in three runs: raw 0 gives
+ *  exactly 0 dB at two different corners, which is also what rules out a gain belonging to
+ *  Comp Drive itself (what looked like one was this term following the corner as the drive
+ *  moved it). */
+const MAKEUP_RAW_MAX = 200;
+const MAKEUP_MAX_DB = 24;
+
+/** The lane rack's reduction scale. The corner floors at -54 dBFS, so the deepest
+ *  reduction this compressor can reach is 54 dB — at a full-scale input — and a shallower
+ *  ruler pins the bar while the readout keeps going. */
+
+/**
  * The compressor's response as a function of input level, and the gain it carries there.
  *
  * The threshold is an internal value the unit never shows, driven by Comp Drive, and the
@@ -176,12 +207,12 @@ const kneeReach = (knee: number): readonly [number, number] => KNEE_REACH_DB[kne
  * Built once per redraw rather than read per sample point: the curve evaluates it ~120
  * times, and each read walks the plan.
  */
-function transferOf(v: StripValues): { out: (inDb: number) => number; gain: (inDb: number) => number } {
+function transferOf(v: StripValues): { out: (inDb: number) => number; gainDb: number } {
   const drive = v.compDrive;
-  const thr = v.comp.threshold / 5 - 44 - 0.21 * (drive - 100);
+  // The corner, on the input meter's own dBFS. The threshold parameter raises it and Comp
+  // Drive lowers it, both at 0.2 dB per raw, and it stops at CORNER_FLOOR_DB.
+  const thr = Math.max(CORNER_FLOOR_DB, 0.2 * (v.comp.threshold - drive) - 20);
   const ratio = Math.max(1, ssmcsRatio(v.comp.ratio));
-  const driveGain = drive * 0.04;
-  const makeup = (v.comp.makeup - 100) * 0.06;
   const [up, down] = kneeReach(v.comp.knee);
   // The knee's two edges, which do not straddle the threshold evenly: below it the curve
   // is still unity, above it the asymptote.
@@ -193,15 +224,20 @@ function transferOf(v: StripValues): { out: (inDb: number) => number; gain: (inD
   // How far through the knee an input is.
   const frac = (inDb: number): number => (inDb - lo) / width;
   // One output gain over the whole curve, as the shipped COMP screen applies its makeup.
-  // The measurement behind the makeup term is what the unit does WHILE COMPRESSING: five
-  // raw points, linear, `110` unmoved. What the same run reports below the threshold is a
-  // null result at one threshold setting, which does not separate "the makeup is off here"
-  // from "the block was not engaged here" — and the two readings cannot both shape the
-  // curve, since a gain present on one leg and absent on the other is a step at the corner
-  // whatever is drawn between the edges, and 0 dB wide on Hard means there is nothing to
-  // draw it across. What would settle it: walk the input across the corner and read
-  // `111 - 108` on both sides of it.
-  const gain = (): number => (drive === 0 ? 0 : driveGain + makeup);
+  // The makeup returns a FRACTION of the corner's own depth rather than a fixed number of
+  // dB: at its maximum it lifts the corner to 0 dBFS, capped at MAKEUP_MAX_DB. Which is
+  // why it has to be computed from `thr` and cannot be a term added beside it.
+  // Out Gain is the strip's output gain, and the unit applies it at the far end — after
+  // the EQ, measured (`117` moves tap `112` one-for-one and leaves `108` and `111` alone,
+  // URX44V 2026-08-15). It is drawn HERE anyway, on the compressor's baseline, and the
+  // reason is the other plot: the EQ's gain axis IS the band gain range, so an offset of
+  // up to 18 dB pushes that response off the frame and takes the shape with it. This axis
+  // has the room — its output already runs to +18 because the drive and the makeup add —
+  // and a strip output gain reads as a lifted baseline, which is where it lands.
+  // It survives a drive of zero, which disables the compressor and nothing else.
+  const outDb = ssmcsGainDb(v.outGain);
+  const makeupDb = Math.min(MAKEUP_MAX_DB, -thr * (v.comp.makeup / MAKEUP_RAW_MAX));
+  const gainDb = (drive === 0 ? 0 : makeupDb) + outDb;
   /**
    * Between the edges: a cubic through both, carrying the slope each side already has —
    * 1 below, 1/ratio above — with the two slopes limited to the cubic's monotone region
@@ -234,47 +270,50 @@ function transferOf(v: StripValues): { out: (inDb: number) => number; gain: (inD
   };
   const out = (inDb: number): number => {
     if (drive === 0) return inDb;
-    if (inKnee(inDb)) return knee(inDb) + gain();
-    return (inDb <= lo ? inDb : thr + (inDb - thr) / ratio) + gain();
+    if (inKnee(inDb)) return knee(inDb) + gainDb;
+    return (inDb <= lo ? inDb : thr + (inDb - thr) / ratio) + gainDb;
   };
-  return { out, gain: () => gain() };
+  return { out, gainDb };
 }
 
-/** The transfer curve plus the reduction it buys at full scale — the same drawing and the
- *  same annotation the shipped COMP screen makes, with this bank's own model behind it. */
+/** The transfer curve and its reduction annotation, from this bank’s own model. The
+ *  drawing itself is shared with the COMP→EQ bank (`drawTransferCurve`): only the response
+ *  differs, and the two would otherwise drift apart the way their annotations already had. */
 function drawTransfer(c: CanvasRenderingContext2D, g: DynPlotGeo, tok: Record<string, string>, v: StripValues): void {
-  const { out, gain } = transferOf(v);
-  c.strokeStyle = tok["--led"];
-  c.lineWidth = 2;
-  c.beginPath();
-  for (let i = 0; i <= 120; i++) {
-    const x = IN_LO_DB + ((HI_DB - IN_LO_DB) * i) / 120;
-    if (i) c.lineTo(g.px(x), g.py(out(x)));
-    else c.moveTo(g.px(x), g.py(out(x)));
-  }
-  c.stroke();
-
-  // The gap between the curve and unity at 0 dBFS with the gain terms taken back out —
-  // read off the curve rather than off the asymptote, so a knee wide enough to still be
-  // open at full scale is labelled with what it actually does there.
-  const top = out(HI_DB) - gain(HI_DB);
-  if (top >= -0.05) return;
-  c.strokeStyle = tok["--gr"];
-  c.setLineDash([3, 3]);
-  c.beginPath();
-  c.moveTo(g.px(HI_DB) - 1, g.py(HI_DB));
-  c.lineTo(g.px(HI_DB) - 1, g.py(top));
-  c.stroke();
-  c.setLineDash([]);
-  c.fillStyle = tok["--gr"];
-  c.textAlign = "right";
-  // Inset from the axis so the label does not sit on the frame.
-  c.fillText(`${top.toFixed(1)} dB`, g.px(HI_DB) - 22, g.py((HI_DB + top) / 2) + 3);
+  const { out, gainDb } = transferOf(v);
+  drawTransferCurve(c, g, tok, { out, gainDb, loDb: IN_LO_DB });
 }
+
+/** The gain the curve carries over its whole length, which the unity reference has to be
+ *  lifted by. It does not vary with the input — the makeup and Out Gain are one offset over
+ *  the whole curve — so the axes layer reads a number rather than calling the curve. */
+const curveGainDb = (v: StripValues): number => transferOf(v).gainDb;
+
+/** The gain that sits between the compressor's two level taps — the makeup alone, since
+ *  Out Gain is applied after the EQ and so reaches neither of them (measured: `117` moves
+ *  `112` one for one and leaves `108` and `111` where they are). What the reduction lane
+ *  is drawn shorter by where it shares a column with `111`. */
+const strapGainDb = (v: StripValues): number => curveGainDb(v) - ssmcsGainDb(v.outGain);
+
+/** dB the output READING is lifted by before it is plotted on the transfer curve — the
+ *  curve carries Out Gain and the `111` tap it reads is upstream of it. `transferPlot`'s
+ *  `outOffsetDb` carries what that costs when it is left out. Both faces that draw this
+ *  curve go through here, so their dots cannot sit at different heights. */
+const outLiftDb = (ctx: DynCtx): number => ssmcsGainDb(ssmcsOf(ctx).outGain ?? SSMCS_INITIAL.outGain);
+
+/** The transfer plot's axes, on either face that draws that curve. The unity reference
+ *  carries the curve's own gain, or the reduction annotation beside it measures from a
+ *  line the curve never touches. */
+const stripDbAxes = (c: CanvasRenderingContext2D, g: DynPlotGeo, tok: Record<string, string>, ctx: DynCtx): void =>
+  drawDbAxes(c, g, tok, { loDb: IN_LO_DB, outTicks: OUT_TICKS, unityOffsetDb: curveGainDb(stripOf(ctx)) });
 
 // ---------------------------------------------------------------- the EQ's response
 
 const MARKER_LABELS: Record<SsmcsEqBandName, string> = { low: "L", mid: "M", high: "H" };
+
+/** The side chain's marker. The unit's own abbreviation for this signal — its COMP and
+ *  COMP Side Chain screens label the meter SC — rather than a word invented here. */
+const SC_MARKER = "SC";
 
 /** The three bands as the response model takes them: plan raw → Hz / Q / dB. */
 const bandStates = (v: StripValues): SsmcsBandState[] =>
@@ -300,18 +339,28 @@ function drawEqResponse(
   const bands = bandStates(v);
   const resp = ssmcsEqResponse(bands);
   drawFreqCurve(c, g, tok, resp, x0);
-  drawBandMarkers(
-    c,
-    g,
-    tok,
-    bands.map((b) => ({
-      label: MARKER_LABELS[b.kind],
-      hz: b.freq,
-      db: resp(b.freq),
-      on: b.on,
-      active: b.kind === sel,
-    })),
-  );
+  drawBandMarkers(c, g, tok, bandMarksOf(bands, resp, sel));
+}
+
+/** The markers, from the strip's bands and which one is selected. One function, because the
+ *  press that selects a band hit-tests exactly what was drawn. */
+function eqBandMarks(v: StripValues, sel: SsmcsEqBandName | null): BandMarker[] {
+  const bands = bandStates(v);
+  return bandMarksOf(bands, ssmcsEqResponse(bands), sel);
+}
+
+function bandMarksOf(
+  bands: readonly SsmcsBandState[],
+  resp: (hz: number) => number,
+  sel: SsmcsEqBandName | null,
+): BandMarker[] {
+  return bands.map((b) => ({
+    label: MARKER_LABELS[b.kind],
+    hz: b.freq,
+    db: resp(b.freq),
+    on: b.on,
+    active: b.kind === sel,
+  }));
 }
 
 // ---------------------------------------------------------------- shared descriptor parts
@@ -321,12 +370,25 @@ function drawEqResponse(
  *  say which of the channel's two banks is on screen. */
 const title = (m: Messages): string => m.inspector.ssmcs.title;
 
-/** The three faces, named once. A thunk because they name each other. */
-const FACES = (): readonly DynFace[] => [
-  { proc: SSMCS_DYN, label: (m) => m.dynTuning.ssmcs.faceMain, id: "dyn-face-ssmcs-main" },
-  { proc: SSMCS_COMP_DYN, label: (m) => m.dynTuning.ssmcs.faceComp, id: "dyn-face-ssmcs-comp" },
-  { proc: SSMCS_EQ_DYN, label: (m) => m.dynTuning.ssmcs.faceEq, id: "dyn-face-ssmcs-eq" },
-];
+/**
+ * The one bar the whole bank is selected from — four segments over three faces, since the
+ * COMP face's two plots answer different questions and are worth naming separately. It is
+ * also where the bank's faces are named, once: the host asks which segment reads as pressed
+ * from the items themselves.
+ *
+ * It replaced a face bar in the title row plus a display bar under it. Two segmented rows
+ * meant the operator had to know which of them held the thing they were looking for, and
+ * the title-row one was the harder to find of the two.
+ */
+const BANK_BAR = (ctx: DynCtx): DynBar => ({
+  label: ctx.m.dynTuning.display,
+  items: [
+    { label: ctx.m.dynTuning.ssmcs.faceMain, id: "dyn-face-ssmcs-main", face: SSMCS_DYN, sel: 0 },
+    { label: ctx.m.dynTuning.ssmcs.faceComp, id: "dyn-face-ssmcs-comp", face: SSMCS_COMP_DYN, sel: 0 },
+    { label: ctx.m.inspector.ssmcs.sideChain, id: "dyn-mode-sidechain", face: SSMCS_COMP_DYN, sel: SC_SEL },
+    { label: ctx.m.dynTuning.ssmcs.faceEq, id: "dyn-face-ssmcs-eq", face: SSMCS_EQ_DYN, sel: 0 },
+  ],
+});
 
 /** Raw → the text the unit prints for it. Every SSMCS value is a broker integer whose
  *  display goes through a device curve; Morphing is the one that is its own display, and
@@ -364,6 +426,16 @@ const strippedLane = (ctx: DynCtx, key: string, label: string, tapKey: string): 
   tap: tapFor(ctx.nodeId, tapKey, ctx.model.id) ?? null,
 });
 
+/** The compressor's key signal — the side-chain filter's output, which is what its
+ *  detector hears. Not a point on the strip, which is why its tap does not come from the
+ *  chain the console offers (`meters.ts` `sidechainTap`). */
+const sidechainLane = (ctx: DynCtx): DynLane => ({
+  key: "sc",
+  label: ctx.m.inspector.ssmcs.sideChain,
+  kind: "level",
+  tap: sidechainTap(ctx.nodeId, ctx.model.id) ?? null,
+});
+
 // ---------------------------------------------------------------- MAIN
 
 /** MAIN's canvas carries two plots. Each half's own coordinates come from the same
@@ -382,7 +454,7 @@ export const SSMCS_DYN: DynProcessor = {
   loDb: LO_DB,
   tickStep: TICK_STEP,
   title,
-  faces: FACES,
+  banked: true,
 
   // Four lanes, which is one more than the strip's own stages: the compressor's output
   // (111) is what the transfer curve's dot has to point at — using the EQ's output would
@@ -391,19 +463,20 @@ export const SSMCS_DYN: DynProcessor = {
   bind: (ctx) => {
     const bound = bindChannelStrip(ctx, {
       fields: (dyn) => (dyn.comp ? null : ssmcsMainFields()),
+      tapCaptions: true,
       grKind: "comp",
       inTapKey: "precomp",
       outTapKey: "preeq",
       // No fader cap: this bank's corner is driven by an internal value, so there is no
       // editable value in the meter's own dBFS to put on it.
       cap: null,
-      grFullDb: 24,
       extraLanes: [strippedLane(ctx, "post", ctx.m.dynTuning.ssmcs.tapOut, "preinsfx")],
     });
     // Four tiles, so two columns — the same arrangement the DUCKER's four take.
     return bound && { ...bound, readoutCols: 2 };
   },
 
+  bar: BANK_BAR,
   hint: (ctx) => ctx.m.dynTuning.ssmcs.mainHint,
   read: (ctx) => {
     const v = stripOf(ctx);
@@ -454,9 +527,9 @@ export const SSMCS_DYN: DynProcessor = {
     };
   },
 
-  drawAxes: (c, g, tok) => {
+  drawAxes: (c, g, tok, ctx) => {
     const { half, left, right } = mainHalves(g.w, g.h);
-    drawDbAxes(c, left, tok, { loDb: IN_LO_DB, outTicks: OUT_TICKS });
+    stripDbAxes(c, left, tok, ctx);
     drawFreqAxes(c, right, tok, half + MAIN_GAP);
     // The divider, and which half is which.
     c.strokeStyle = tok["--plot-line"];
@@ -492,31 +565,121 @@ export const SSMCS_DYN: DynProcessor = {
     inHalf(right, half + MAIN_GAP, () => drawEqResponse(c, right, tok, v, null, half + MAIN_GAP));
   },
 
-  drawLive: (c, g, read, tok) => drawLiveDot(c, g, read("in"), read("out"), tok, { in: IN_LO_DB, out: OUT_LO_DB }),
+  // MAIN's left half is the same transfer curve, so its dot takes the same lift.
+  drawLive: (c, g, read, tok, ctx) => {
+    const out = read("out");
+    const lifted = out === null ? null : out + outLiftDb(ctx);
+    drawLiveDot(c, g, read("in"), lifted, tok, { in: IN_LO_DB, out: OUT_LO_DB });
+  },
 };
 
 // ---------------------------------------------------------------- COMP
+//
+// The one face with two ways to read it, because this compressor has an input the others
+// do not: a filter in front of its detector. The transfer curve is the shipped COMP
+// screen's; SIDE CHAIN is the filter's own response.
+//
+// Two more readings were built here and taken back out: the curve's predicted reduction
+// marked on the reduction lane, and a leader from the live dot to the curve. Both showed
+// how far the compressor was from its curve, and neither was legible to the operator they
+// were built for — the mark could not be picked out of the lane it sat in, and the leader
+// said nothing the dot's own distance did not. What survives of them is a sentence in the
+// CURVE hint naming Attack and Release.
+
+/** This face's two segments, both a plot with the lane rack beside it: the transfer curve
+ *  at 0, the side-chain response here. */
+export const SC_SEL = 1;
+
+/** The side-chain filter as the response model takes it: plan raw → Hz / Q / dB. */
+const scState = (v: StripValues): SsmcsScState => ({
+  on: v.sc.on,
+  freq: ssmcsFreqHz(v.sc.freq),
+  q: ssmcsQ(v.sc.q),
+  gain: ssmcsGainDb(v.sc.gain),
+});
+
+/**
+ * The filter's response, drawn as the REDUCTION it buys rather than as the gain it
+ * applies — so the axis runs the same way the GR meter beside it does.
+ *
+ * The filter is in the detector, and lifting a band there makes the compressor hear more
+ * of it and clamp down harder. Drawn as the filter's own gain, a boost went UP while the
+ * thing it produces went down, and the plot then pointed the opposite way to the
+ * reduction lane a few pixels to its right. Negating it costs the reading nothing — the
+ * shape is the same — and buys one direction for "more" across the whole display. The
+ * MODEL keeps the filter's true sign; only this drawing flips it.
+ *
+ * The area under the curve is shaded, and this is the only plot in the app that shades
+ * one. Everywhere else the curve is audio, where the line already says what the operator
+ * will hear and a wash under it adds nothing. Here the line is not audio at all, so the
+ * area IS the reading: the band the compressor has been made to react to more, or less.
+ *
+ * The marker carries the one thing the curve cannot say about itself. Flat arrives two
+ * ways and they are not the same state: the filter switched out, and the filter engaged
+ * at 0 dB, which the unit runs as an exact bypass. `on` dims the marker for the first.
+ */
+function drawScResponse(c: CanvasRenderingContext2D, g: DynPlotGeo, tok: Record<string, string>, v: StripValues): void {
+  const sc = scState(v);
+  const filter = ssmcsScResponse(sc);
+  const asReduction = (hz: number): number => -filter(hz);
+  drawFreqCurve(c, g, tok, asReduction, 0, true);
+  drawBandMarkers(c, g, tok, [{ label: SC_MARKER, hz: sc.freq, db: asReduction(sc.freq), on: sc.on, active: false }]);
+}
 
 export const SSMCS_COMP_DYN: DynProcessor = {
   key: "ssmcsComp",
   loDb: LO_DB,
   tickStep: TICK_STEP,
   title,
-  faces: FACES,
-  bind: (ctx) =>
-    bindChannelStrip(ctx, {
-      fields: (dyn) => (dyn.comp ? null : ssmcsCompFields()),
+  banked: true,
+  // The reduction hangs on the PRE EQ column it was taken off in every segment, the way
+  // the DUCKER screen has always drawn its own — one arrangement rather than one per
+  // segment. Both segments carry the same three columns, so the rack does not change
+  // width under the pointer when the bar moves between them.
+  bind: (ctx) => {
+    // Each segment carries the sliders whose effect is on the plot beside them: the
+    // compressor's on CURVE, the filter's on SIDE CHAIN. A slider whose curve is not the one
+    // drawn moves nothing the operator can see, and the two sets are four rows each, which
+    // is what holds this face at the height its siblings are held at.
+    const sc = ctx.sel === SC_SEL;
+    const bound = bindChannelStrip(ctx, {
+      fields: (dyn) => (dyn.comp ? null : ssmcsCompFields().filter((f) => isSsmcsScKey(f.key) === sc)),
+      tapCaptions: true,
       grKind: "comp",
       inTapKey: "precomp",
       outTapKey: "preeq",
       cap: null,
-      grFullDb: 24,
-    }),
-  bar: displayBar,
-  // Which of the two ways you read a compressor is a lasting preference, so it persists —
-  // the same judgement, and the same bar, as the shipped COMP screen.
+      // What the compressor is actually listening to, which on this bank is not the input
+      // lane: the side-chain filter sits between them. Its label is the filter's own row
+      // label rather than a second spelling of the device's term.
+      //
+      // SIDE CHAIN keeps all three lanes: what the filter does is the DIFFERENCE between the
+      // input and what the detector hears, so dropping the input leaves that face unable to
+      // answer its own question — and the filter's own output is not metered at all, so there
+      // is no pair to reduce it to. CURVE is the compressor's own pair, so it goes and the
+      // rack is two columns.
+      ...(sc ? { keyLane: sidechainLane(ctx) } : {}),
+      grNetDb: strapGainDb(stripOf(ctx)),
+    });
+    // Four tiles on SIDE CHAIN, on one row (`readoutCols: 4`); a second row is 64px, more
+    // than the height the bank holds its three faces at can absorb.
+    return bound && (sc ? { ...bound, readoutCols: 4 } : bound);
+  },
+  // This face is two of the bank bar's four segments: the transfer curve and the side-chain
+  // response, each with the lane rack beside it.
+  bar: BANK_BAR,
+  // Which of the ways you read a compressor is a lasting preference, so it persists.
   persistSel: true,
-  ...transferPlot({ loDb: IN_LO_DB, outLoDb: OUT_LO_DB, outTicks: OUT_TICKS, hint: (m) => m.dynTuning.comp.curveHint }),
+  // Only `display` and `drawLive` are taken from here — the segments differ in what the
+  // plot IS, so `hint` / `plotGeo` / `drawAxes` are answered per segment below.
+  ...transferPlot({
+    loDb: IN_LO_DB,
+    outLoDb: OUT_LO_DB,
+    outTicks: OUT_TICKS,
+    hint: (m) => m.dynTuning.comp.curveHint,
+    outOffsetDb: outLiftDb,
+    on: (ctx) => ctx.sel !== SC_SEL,
+  }),
 
   read: (ctx) => {
     const v = stripOf(ctx);
@@ -549,31 +712,41 @@ export const SSMCS_COMP_DYN: DynProcessor = {
     return controlId(ctx.nodeId, param, sc ? SSMCS_SC_SCOPE : SSMCS_COMP_SCOPE);
   },
 
-  // Knee closes the compressor's rows and Side Chain opens the filter's, so both sit
-  // between Ratio and the filter's first slider rather than above everything.
-  rows: ({ m, vals, set, midi }) => ({
+  // Knee closes the compressor's rows and Side Chain opens the filter's, each on the segment
+  // that carries the sliders it belongs to. Both are keyed on the filter's first slider: on
+  // SIDE CHAIN that row exists and the toggle lands above it, and on CURVE it does not, so
+  // the host appends the knee after the rows it did place.
+  rows: ({ m, vals, set, midi, sel }) => ({
     before: {
-      scQ: [
-        settingsRow(
-          m.inspector.dyn.knee,
-          settingsChoice(
-            COMP_KNEE_OPTIONS.map((o) => o.label),
-            typeof vals.knee === "number" ? vals.knee : COMP_KNEE_DEFAULT,
-            (i) => set({ knee: COMP_KNEE_OPTIONS[i].value }),
-          ),
-        ),
-        midi(
-          settingsRow(
-            m.inspector.ssmcs.sideChain,
-            onOff(vals.scOn === true, (on) => set({ scOn: on })),
-          ),
-          "scOn",
-        ),
-      ],
+      scQ:
+        sel === SC_SEL
+          ? [
+              midi(
+                settingsRow(
+                  m.inspector.ssmcs.sideChain,
+                  onOff(vals.scOn === true, (on) => set({ scOn: on })),
+                ),
+                "scOn",
+              ),
+            ]
+          : [
+              settingsRow(
+                m.inspector.dyn.knee,
+                settingsChoice(
+                  COMP_KNEE_OPTIONS.map((o) => o.label),
+                  typeof vals.knee === "number" ? vals.knee : COMP_KNEE_DEFAULT,
+                  (i) => set({ knee: COMP_KNEE_OPTIONS[i].value }),
+                ),
+              ),
+            ],
     },
   }),
 
-  drawCurve: (c, g, _v, tok, ctx) => drawTransfer(c, g, tok, stripOf(ctx)),
+  hint: (ctx) => (ctx.sel === SC_SEL ? ctx.m.dynTuning.ssmcs.scHint : ctx.m.dynTuning.comp.curveHint),
+  plotGeo: (w, h, ctx) => (ctx.sel === SC_SEL ? freqGeo(w, h) : dbGeo(w, h, IN_LO_DB, OUT_LO_DB, OUT_TICKS)),
+  drawAxes: (c, g, tok, ctx) => (ctx.sel === SC_SEL ? drawFreqAxes(c, g, tok) : stripDbAxes(c, g, tok, ctx)),
+  drawCurve: (c, g, _v, tok, ctx) =>
+    ctx.sel === SC_SEL ? drawScResponse(c, g, tok, stripOf(ctx)) : drawTransfer(c, g, tok, stripOf(ctx)),
 };
 
 // ---------------------------------------------------------------- EQ
@@ -585,7 +758,7 @@ export const SSMCS_EQ_DYN: DynProcessor = {
   loDb: LO_DB,
   tickStep: TICK_STEP,
   title,
-  faces: FACES,
+  banked: true,
 
   bind: (ctx) => {
     if (!inSsmcsMode(ctx)) return null;
@@ -598,11 +771,13 @@ export const SSMCS_EQ_DYN: DynProcessor = {
     };
   },
 
-  // The bar is a cursor into the parameters rather than a way of reading the processor,
-  // so it resets to LOW per open — the 4-band screen's judgement, and its band bar.
-  bar: (ctx) => ({
-    label: ctx.m.dynTuning.eq.band,
-    items: SSMCS_EQ_BAND_NAMES.map((b) => ({ label: ctx.m.inspector.ssmcs.bands[b], id: `dyn-ssmcs-band-${b}` })),
+  bar: BANK_BAR,
+  // No band bar: the markers ON the plot are the band control, as on the shipped EQ screen.
+  // Which band is selected is a cursor into the parameters rather than a way of reading the
+  // processor, so it still resets to LOW per open.
+  plotPicks: (ctx) => ({
+    count: SSMCS_EQ_BAND_NAMES.length,
+    hit: (c, g, at) => pickBandMarker(c, g, eqBandMarks(stripOf(ctx), bandOf(ctx)), at),
   }),
   paramsTag: (ctx) => ({ text: ctx.m.inspector.ssmcs.bands[bandOf(ctx)], shown: true }),
   hint: (ctx) => ctx.m.dynTuning.eq.plotHint,

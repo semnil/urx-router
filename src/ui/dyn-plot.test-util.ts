@@ -8,20 +8,22 @@
 
 import type { DynValues } from "./dyn-screen";
 
-/** One painted face: the fill style in force, and the box the path covered. */
+/** One painted face: the fill style and opacity in force, and the box the path covered. */
 export interface PaintedFace {
   style: string;
+  alpha: number;
   x0: number;
   y0: number;
   x1: number;
   y1: number;
 }
 
-/** One drawn string: the string itself, the fill style in force, and where its anchor
- *  landed. The text is kept because an annotation's VALUE is the thing a plot asserts —
- *  a count of drawn labels passes whatever number the model computed. */
+/** One drawn string: the string itself, the fill style and opacity in force, and where
+ *  its anchor landed. The text is kept because an annotation's VALUE is the thing a plot
+ *  asserts — a count of drawn labels passes whatever number the model computed. */
 export interface PaintedText {
   style: string;
+  alpha: number;
   text: string;
   x: number;
   y: number;
@@ -51,10 +53,17 @@ export function recorder(): Recorder {
   const faces: PaintedFace[] = [];
   const texts: PaintedText[] = [];
   let style = "";
+  // Opacity is state a descriptor uses to say something — a band switched off is drawn
+  // DIM rather than differently — so a recorder that swallowed it left every "is this
+  // dimmed" assertion comparing two identical readings. `save` / `restore` carry the
+  // pair the descriptors here actually set; the real context saves far more, and a case
+  // that needs the rest should extend this rather than assume it.
+  let alpha = 1;
+  const saved: Array<{ style: string; alpha: number }> = [];
   let box: PaintedFace | null = null;
 
   const cover = (x: number, y: number): void => {
-    if (!box) box = { style, x0: x, y0: y, x1: x, y1: y };
+    if (!box) box = { style, alpha, x0: x, y0: y, x1: x, y1: y };
     else {
       box.x0 = Math.min(box.x0, x);
       box.y0 = Math.min(box.y0, y);
@@ -87,12 +96,19 @@ export function recorder(): Recorder {
             };
           case "beginPath":
             return () => void (box = null);
+          case "save":
+            return () => void saved.push({ style, alpha });
+          case "restore":
+            return () => {
+              const s = saved.pop();
+              if (s) ({ style, alpha } = s);
+            };
           case "fill":
             return () => {
-              if (box) faces.push({ ...box, style });
+              if (box) faces.push({ ...box, style, alpha });
             };
           case "fillText":
-            return (text: string, x: number, y: number) => void texts.push({ style, text, x, y });
+            return (text: string, x: number, y: number) => void texts.push({ style, alpha, text, x, y });
           case "measureText":
             return () => ({ width: 8 });
           default:
@@ -105,6 +121,7 @@ export function recorder(): Recorder {
           style = String(value);
           fills.push(style);
         }
+        if (prop === "globalAlpha") alpha = Number(value);
         return true;
       },
     },

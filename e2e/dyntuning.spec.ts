@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { selectWire } from "./graph-helpers";
+import { panelHeight, pickBand, pickPlot } from "./dyn-helpers";
 
 // Channel tuning screens (GATE / COMP / EQ). The meter half needs a live session,
 // which is desktop-only, so this spec stubs the Tauri IPC bridge before boot — and
@@ -45,11 +46,6 @@ const exactRow = (page: Page, label: string) =>
     .locator(".prefs-row")
     .filter({ has: page.getByText(label, { exact: true }) });
 
-/** The panel's height. Three tests pin it, so they read it the same strict way: a
- *  `boundingBox()?.height ?? 0` would compare 0 to 0 — and pass — if `#dyn-screen-box`
- *  ever stopped resolving, which is exactly what these tests exist to catch. */
-const panelHeight = (page: Page) => box(page).evaluate((el) => el.getBoundingClientRect().height);
-
 /** Push a device-side parameter change, the way turning a knob on the unit does. */
 const pushParam = (page: Page, paramId: number, x: number, y: number, value: number) =>
   page.evaluate(
@@ -64,11 +60,12 @@ const pushMeters = (page: Page, ...frames: Array<[number, number, number]>) =>
     frames,
   );
 
-/** The three taps this screen streams, in signal order. */
+/** The three taps this screen streams, in the RACK's order — which is not signal order:
+ *  the reduction is merged into the output column, so it is registered after it. */
 const GATE_TAPS = [
   [106, 0],
-  [107, 0],
   [108, 0],
+  [107, 0],
 ];
 const expectGateTaps = (page: Page) =>
   expect.poll(() => page.evaluate(() => window.__dynTest.meterAddrs)).toEqual(GATE_TAPS);
@@ -273,55 +270,21 @@ test("the opener does not toggle the gate it sits beside", async ({ page }) => {
   await expect(gateChip).toHaveAttribute("aria-pressed", before ?? "false");
 });
 
-test("switches between the ladder and the curve, replacing one with the other", async ({ page }) => {
+test("shows the plot and the lane rack at once, with nothing to choose between them", async ({ page }) => {
+  // They were exclusive modes behind a LADDER / CURVE bar. Both are on screen from the
+  // open now, so the screen has no state to be in — which is why the three cases that
+  // switched modes, pinned the height across a switch and remembered the pick are one.
   await openFromInspector(page, "ch1");
+  await expect(box(page).locator(".gt-splitdisplay")).toBeVisible();
   await expect(box(page).locator(".gt-ladders")).toBeVisible();
-  await expect(box(page).locator("#dyn-curve")).toHaveCount(0);
-
-  await box(page).locator("#dyn-mode-curve").click();
   await expect(box(page).locator("#dyn-curve")).toBeVisible();
-  await expect(box(page).locator(".gt-ladders")).toHaveCount(0);
-  // The hint earns its place only where the gesture is not self-evident.
-  await expect(box(page).locator(".gt-note")).toBeVisible();
-
-  await box(page).locator("#dyn-mode-ladder").click();
-  await expect(box(page).locator(".gt-ladders")).toBeVisible();
-  await expect(box(page).locator(".gt-note")).toBeEmpty();
-});
-
-test("does not change height when the display mode is switched", async ({ page }) => {
-  // The hint belongs to CURVE alone, but its box is reserved in both modes: adding
-  // it on the switch grew the modal, moving the Close action and the parameter rows
-  // out from under the pointer. A hint that grew to two lines would bring that back,
-  // so this pins the equality rather than the reservation.
-  await openFromInspector(page, "ch1");
-  const height = () => panelHeight(page);
-  const ladder = await height();
-  await box(page).locator("#dyn-mode-curve").click();
-  await expect(box(page).locator("#dyn-curve")).toBeVisible();
-  expect(await height()).toBe(ladder);
-  await box(page).locator("#dyn-mode-ladder").click();
-  await expect(box(page).locator(".gt-ladders")).toBeVisible();
-  expect(await height()).toBe(ladder);
-});
-
-test("remembers the display mode across opens and reloads", async ({ page }) => {
-  await openFromInspector(page, "ch1");
-  await box(page).locator("#dyn-mode-curve").click();
-  await expect(box(page).locator("#dyn-curve")).toBeVisible();
-  await box(page).locator(".consent-btn-secondary").click();
-
-  // Same session, reopened: still CURVE.
-  await openFromInspector(page, "ch1");
-  await expect(box(page).locator("#dyn-curve")).toBeVisible();
-  await box(page).locator(".consent-btn-secondary").click();
-
-  // And across a reload — the pick is stored, not just held in the instance.
-  await page.reload();
-  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
-  await openFromInspector(page, "ch1");
-  await expect(box(page).locator("#dyn-curve")).toBeVisible();
-  await expect(box(page).locator("#dyn-mode-curve")).toHaveAttribute("aria-pressed", "true");
+  // The hint says what the plot shows, and it is there from the open rather than arriving
+  // with a mode — which is what used to grow the modal under the pointer.
+  await expect(box(page).locator(".gt-note")).not.toBeEmpty();
+  // The bar's space is still reserved, so this screen starts at the same height as one
+  // that has a bar; nothing in it is reachable.
+  await expect(box(page).locator(".gt-modes.inert")).toHaveCount(1);
+  await expect(box(page).locator(".gt-modes button:not([disabled])")).toHaveCount(0);
 });
 
 test("the threshold cap moves with the value and shares its ruler", async ({ page }) => {
@@ -581,30 +544,22 @@ test.describe("comp", () => {
     await expect(cap).toHaveAttribute("aria-valuemin", "-54");
   });
 
-  test("gives the reduction a scale of its own, which the gate does not", async ({ page }) => {
-    // A compressor's reduction is a few dB of a 54 dB ruler, so its lane is
-    // labelled separately rather than read off the level lanes' ticks.
-    await openFromInspector(page, "ch1", "comp");
-    await expect(box(page).locator(".gt-grwrap.own .gt-scale")).toHaveCount(1);
-    await box(page).locator(".consent-btn-secondary").click();
-
-    await openFromInspector(page, "ch1", "gate");
-    await expect(box(page).locator(".gt-grwrap.own")).toHaveCount(0);
-  });
-
-  test("remembers a display mode per processor", async ({ page }) => {
-    await openFromInspector(page, "ch1", "comp");
-    await box(page).locator("#dyn-mode-curve").click();
-    await expect(box(page).locator("#dyn-curve")).toBeVisible();
-    await box(page).locator(".consent-btn-secondary").click();
-
-    // The gate's own pick is untouched by the compressor's.
-    await openFromInspector(page, "ch1", "gate");
-    await expect(box(page).locator(".gt-ladders")).toBeVisible();
-    await box(page).locator(".consent-btn-secondary").click();
-
-    await openFromInspector(page, "ch1", "comp");
-    await expect(box(page).locator("#dyn-curve")).toBeVisible();
+  test("merges the reduction into the output column, as the gate does", async ({ page }) => {
+    // One arrangement across every screen: the reduction reads against the level it was
+    // taken off, in that level's own slot, on the shared ruler.
+    for (const kind of ["comp", "gate"] as const) {
+      await openFromInspector(page, "ch1", kind);
+      // Two columns for three lanes — the reduction is drawn in the output lane's slot —
+      // and three readout tiles, because a merged lane keeps its own.
+      await expect(box(page).locator(".gt-slot"), kind).toHaveCount(2);
+      await expect(box(page).locator(".gt-ro"), kind).toHaveCount(3);
+      // Merged means one slot holds two shades — the level's and the reduction's. The
+      // second slot is the output's, and the input's holds only its own.
+      await expect(box(page).locator(".gt-slot").nth(1).locator(".gt-shade"), kind).toHaveCount(2);
+      await expect(box(page).locator(".gt-slot").nth(1).locator(".gt-shade.gr"), kind).toHaveCount(1);
+      await expect(box(page).locator(".gt-slot").nth(0).locator(".gt-shade"), kind).toHaveCount(1);
+      await box(page).locator(".consent-btn-secondary").click();
+    }
   });
 
   test("hands the values the device drives back to it, read-only", async ({ page }) => {
@@ -666,13 +621,14 @@ test.describe("comp", () => {
 
     test("subscribes to the compressor's own three taps", async ({ page }) => {
       await openFromInspector(page, "ch1", "comp");
-      // 108 PRE COMP / 110 COMP GR / 111 PRE EQ, all on CH1's x0.
+      // 108 PRE COMP / 111 PRE EQ / 110 COMP GR, all on CH1's x0 — the rack's order, with
+      // the reduction merged into the output column and so registered after it.
       await expect
         .poll(() => page.evaluate(() => window.__dynTest.meterAddrs))
         .toEqual([
           [108, 0],
-          [110, 0],
           [111, 0],
+          [110, 0],
         ]);
     });
 
@@ -741,14 +697,17 @@ const bandRow = (page: Page, label: string) =>
 const bandPill = (page: Page) => params(page).locator("h3 .prefs-lock");
 
 test.describe("eq", () => {
-  test("shows the response and the levels at once, with the bar selecting a band", async ({ page }) => {
+  test("shows the response and the levels at once, with the plot selecting a band", async ({ page }) => {
     await openFromInspector(page, "ch1", "eq");
     await expect(box(page).locator("#dyn-curve")).toBeVisible();
     await expect(box(page).locator(".gt-ladders")).toBeVisible();
-    // Nothing to switch between, so the display-mode buttons do not exist.
-    await expect(box(page).locator("#dyn-mode-ladder")).toHaveCount(0);
-    await expect(box(page).locator("#dyn-band-low")).toHaveAttribute("aria-pressed", "true");
+    // Nothing to switch between, so no bar has a reachable button.
+    await expect(box(page).locator(".gt-modes button:not([disabled])")).toHaveCount(0);
+    // The plot itself takes the press, and says so by being in the tab order.
+    await expect(pickPlot(page)).toHaveAttribute("tabindex", "0");
     await expect(bandPill(page)).toHaveText("LOW");
+    await pickBand(page, 1);
+    await expect(bandPill(page)).toHaveText("LOW MID");
   });
 
   test("says which values the filter type does not read, and never drops their rows", async ({ page }) => {
@@ -778,7 +737,7 @@ test.describe("eq", () => {
 
     // The two mid bands have no filter type at all — the device rejects the write — so
     // the row offers that one value, locked.
-    await box(page).locator("#dyn-band-lowmid").click();
+    await pickBand(page, 1);
     await expect(bandRow(page, "Type")).toHaveClass(/locked/);
     await expect(bandRow(page, "Type").locator(".prefs-lock")).toHaveText("Fixed on this band");
     await expect(bandRow(page, "Type").locator("option")).toHaveText(["Peaking"]);
@@ -789,11 +748,11 @@ test.describe("eq", () => {
     await openFromInspector(page, "ch1", "eq");
     const height = () => panelHeight(page);
     const first = await height();
-    for (const band of ["low", "lowmid", "highmid", "high"]) {
-      await box(page).locator(`#dyn-band-${band}`).click();
+    for (const [i, band] of ["low", "lowmid", "highmid", "high"].entries()) {
+      await pickBand(page, i);
       expect(await height(), `band ${band}`).toBe(first);
     }
-    await box(page).locator("#dyn-band-low").click();
+    await pickBand(page, 0);
     for (const type of ["0", "1", "2"]) {
       await bandRow(page, "Type").locator("select").selectOption(type);
       expect(await height(), `LOW type ${type}`).toBe(first);
@@ -811,41 +770,49 @@ test.describe("eq", () => {
 
   test("the selected band survives a row that rebuilds the screen", async ({ page }) => {
     await openFromInspector(page, "ch1", "eq");
-    await box(page).locator("#dyn-band-highmid").click();
+    await pickBand(page, 2);
     // Band ON changes which rows exist, so it rebuilds — the band must not snap back.
     await bandRow(page, "Band").locator("button", { hasText: "OFF" }).click();
-    await expect(box(page).locator("#dyn-band-highmid")).toHaveAttribute("aria-pressed", "true");
     await expect(bandPill(page)).toHaveText("HIGH MID");
   });
 
-  test("reopens on LOW, where a display mode is remembered instead", async ({ page }) => {
+  test("reopens on LOW, because the band is a cursor rather than a way of reading", async ({ page }) => {
     await openFromInspector(page, "ch1", "eq");
-    await box(page).locator("#dyn-band-high").click();
+    await pickBand(page, 3);
+    await expect(bandPill(page)).toHaveText("HIGH");
     await box(page).locator(".consent-btn-secondary").click();
     await openFromInspector(page, "ch1", "eq");
-    // The bar is a cursor into the parameters, not a way of reading the processor: it
-    // resets, where GATE's and COMP's LADDER/CURVE choice persists.
-    await expect(box(page).locator("#dyn-band-low")).toHaveAttribute("aria-pressed", "true");
+    // A cursor into the parameters resets per open, where the SSMCS bank's segment — a way
+    // of READING the processor — persists (`ssmcs.spec.ts`).
+    await expect(bandPill(page)).toHaveText("LOW");
   });
 
+  // The captions name the POSITION — this screen is one processor, so "the input" is
+  // unambiguous — and the tile below each lane names the tap. The meter ADDRESS used to be
+  // printed under each caption and is not any more, so the addresses in the comments are
+  // what the tile names below stand for.
   test("carries the taps that bracket the EQ on this kind of node", async ({ page }) => {
     // Mono channel: PRE EQ (111) -> PRE INS FX (112), one bar each.
     await openFromInspector(page, "ch1", "eq");
-    await expect(box(page).locator(".gt-cap-label .sub")).toHaveText(["111", "112"]);
+    await expect(box(page).locator(".gt-cap-label:not([aria-hidden])")).toHaveText(["Input", "Output"]);
+    await expect(box(page).locator(".gt-ro .k")).toHaveText(["PRE EQ", "PRE INS FX"]);
     await expect(box(page).locator(".gt-slot.stereo")).toHaveCount(0);
     await box(page).locator(".consent-btn-secondary").click();
 
     // Stereo channel: its INPUT tap (101) is the pre-EQ point, PRE FADER (114) the post,
     // and both carry L and R — two bars in one lane, under one caption.
     await openFromInspector(page, "ch_5_6", "eq");
-    await expect(box(page).locator(".gt-cap-label .sub")).toHaveText(["101", "114"]);
+    await expect(box(page).locator(".gt-cap-label:not([aria-hidden])")).toHaveText(["Input", "Output"]);
+    await expect(box(page).locator(".gt-ro .k")).toHaveText(["INPUT", "PRE FADER"]);
     await expect(box(page).locator(".gt-slot.stereo")).toHaveCount(2);
     await expect(box(page).locator(".gt-slot.stereo").first().locator(".gt-side")).toHaveCount(2);
     await box(page).locator(".consent-btn-secondary").click();
 
-    // An output bus: the sum (104) and post-EQ (121) taps of the STEREO master.
+    // An output bus: the sum (104) and post-EQ (121) taps of the STEREO master. The
+    // captions are the positions on every kind of node; only the tiles name the taps.
     await openFromInspector(page, "bus.stereo", "eq");
-    await expect(box(page).locator(".gt-cap-label .sub")).toHaveText(["104", "121"]);
+    await expect(box(page).locator(".gt-cap-label:not([aria-hidden])")).toHaveText(["Input", "Output"]);
+    await expect(box(page).locator(".gt-ro .k")).toHaveText(["PRE EQ", "PRE FADER"]);
   });
 
   test("has no gain-reduction lane, because an EQ has no reduction to meter", async ({ page }) => {
@@ -945,12 +912,28 @@ test.describe("ducker", () => {
     await expect(box(page).locator(".gt-slot")).toHaveCount(3);
     await expect(box(page).locator(".gt-ro")).toHaveCount(4);
     await expect(box(page).locator(".gt-readouts.two")).toHaveCount(1);
-    // The reduction has no scale of its own — it cannot, sharing a slot. It rides the
-    // shared ruler, which stays on the threshold's domain.
-    await expect(box(page).locator(".gt-grwrap.own")).toHaveCount(0);
-    // And no display bar: a heading over a segment with nothing to pick would name a
-    // choice that does not exist.
-    await expect(box(page).locator(".gt-modes")).toHaveCount(0);
+    // The reduction rides the shared ruler, which stays on the threshold's domain. Exactly
+    // one slot carries it, and that slot carries a level shade too — which is what merged
+    // means, and what a reduction drawn in a column of its own would not satisfy.
+    await expect(
+      box(page)
+        .locator(".gt-slot")
+        .filter({ has: page.locator(".gt-shade.gr") }),
+    ).toHaveCount(1);
+    // Counted as "at least one" rather than exactly one: this lane's tap is stereo, so it
+    // draws a shade per side.
+    expect(
+      await box(page)
+        .locator(".gt-slot")
+        .filter({ has: page.locator(".gt-shade.gr") })
+        .locator(".gt-shade:not(.gr)")
+        .count(),
+    ).toBeGreaterThanOrEqual(1);
+    // And nothing to pick: the bar's space is reserved so this screen starts at the same
+    // height as one that has a bar, but a heading over a segment with nothing in it would
+    // name a choice that does not exist — so it is inert and out of the tab order.
+    await expect(box(page).locator(".gt-modes.inert")).toHaveCount(1);
+    await expect(box(page).locator(".gt-modes button:not([disabled])")).toHaveCount(0);
   });
 
   test.describe("with a live session", () => {
@@ -1022,7 +1005,7 @@ test.describe("the note under the display fits the space reserved for it", () =>
       .evaluate((n) => ({ text: (n.textContent ?? "").trim(), over: n.scrollHeight - n.clientHeight }));
 
   for (const lang of ["en", "ja"] as const) {
-    test(`in ${lang}, on every screen and every display mode`, async ({ page }) => {
+    test(`in ${lang}, on every screen`, async ({ page }) => {
       await page.addInitScript((l) => localStorage.setItem("urx-lang", l), lang);
       await page.reload();
       await expect(page.locator("#model-picker")).toHaveValue("URX44V");
@@ -1031,17 +1014,13 @@ test.describe("the note under the display fits the space reserved for it", () =>
         const { text, over } = await noteOverflow(page);
         expect(over, `clipped: "${text}"`).toBeLessThanOrEqual(0);
       };
-      for (const [nodeId, kind, second] of [
-        ["ch1", "gate", "#dyn-mode-curve"],
-        ["ch1", "comp", "#dyn-mode-curve"],
-        ["ch1", "eq", null],
+      for (const [nodeId, kind] of [
+        ["ch1", "gate"],
+        ["ch1", "comp"],
+        ["ch1", "eq"],
       ] as const) {
         await openFromInspector(page, nodeId, kind);
         await check();
-        if (second) {
-          await page.click(second);
-          await check();
-        }
         await box(page).locator(".consent-btn-secondary").click();
       }
 

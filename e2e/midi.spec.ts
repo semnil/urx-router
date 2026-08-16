@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { LIVE_COMMANDS } from "./tauri-stub";
+import { pickBand } from "./dyn-helpers";
 
 // External MIDI control is desktop-only (isTauri gate), so these tests stub the
 // Tauri IPC bridge before the app boots: invoke() answers the boot-time queries,
@@ -1117,7 +1118,7 @@ test("an EQ band binds to that band, not to the selected one", async ({ page }) 
 
   // HIGH MID is fixed peaking, which does read Q — the lock follows the type, not
   // the row. Its gain binds under its own scope, leaving LOW's binding alone.
-  await box.locator("#dyn-band-highmid").click();
+  await pickBand(page, 2);
   await expect(row("Q").locator(".midi-target")).toHaveCount(1);
   await row("Gain").locator(".ctl").click();
   await sendMidi(page, [0xb0, 42, 100], [0xb0, 42, 101]);

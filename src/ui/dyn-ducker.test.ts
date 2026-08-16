@@ -173,7 +173,6 @@ describe("binding", () => {
     expect(gr.kind).toBe("gr");
     expect(gr.sameSlot).toBe(true);
     // It shares the ruler by construction, so it must not declare a scale of its own.
-    expect(gr.fullDb).toBeUndefined();
     expect(lanes[lanes.indexOf(gr) - 1].key).toBe("out");
   });
 
